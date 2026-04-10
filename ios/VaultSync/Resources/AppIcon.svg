@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Hintergrund (Dunkles Navy) -->
+  <rect width="1024" height="1024" fill="#0D1B2A" />
+
+  <!-- Zentrierte Gruppe für das Symbol -->
+  <g transform="translate(512, 512)">
+
+    <!-- ÄUSSERER RING: SYNC PFEILE -->
+    <!-- Oberer/Rechter Pfeil (Uhrzeigersinn) -->
+    <!-- Der Pfad zeichnet einen Bogen, an den nahtlos das Polygon als Pfeilspitze andockt -->
+    <path d="M -198 -198 A 280 280 0 0 1 280 0" fill="none" stroke="#FFFFFF" stroke-width="140" />
+    <polygon points="170,-1 390,-1 280,180" fill="#FFFFFF" />
+
+    <!-- Unterer/Linker Pfeil (Uhrzeigersinn) -->
+    <path d="M 198 198 A 280 280 0 0 1 -280 0" fill="none" stroke="#FFFFFF" stroke-width="140" />
+    <polygon points="-170,1 -390,1 -280,-180" fill="#FFFFFF" />
+
+
+    <!-- ZENTRUM: VAULT SCHLOSS -->
+    <!-- Weißer Tresor-Hub -->
+    <circle cx="0" cy="0" r="130" fill="#FFFFFF" />
+
+    <!-- Schlüsselloch-Ausschnitt (Negativraum durch Hintergrundfarbe) -->
+    <!-- Oberer runder Teil des Schlüssellochs -->
+    <circle cx="0" cy="-20" r="32" fill="#0D1B2A" />
+    <!-- Unterer, breiter werdender Teil des Schlüssellochs -->
+    <polygon points="-26,-10 26,-10 40,50 -40,50" fill="#0D1B2A" />
+
+  </g>
+</svg>

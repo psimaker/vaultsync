@@ -1,0 +1,83 @@
+name: VaultSync
+options:
+  bundleIdPrefix: eu.vaultsync
+  deploymentTarget:
+    iOS: "26.0"
+  xcodeVersion: "26.4"
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    # Required: gomobile's xcframework build uses shell scripts in a Run Script phase.
+    # User script sandboxing must be disabled so Xcode can execute them.
+    ENABLE_USER_SCRIPT_SANDBOXING: false
+
+schemes:
+  VaultSync:
+    build:
+      targets:
+        VaultSync: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - VaultSyncTests
+    archive:
+      config: Release
+
+targets:
+  VaultSync:
+    type: application
+    platform: iOS
+    sources:
+      - path: VaultSync
+        excludes:
+          - "**/.gitkeep"
+    info:
+      path: VaultSync/Info.plist
+      properties:
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        BGTaskSchedulerPermittedIdentifiers:
+          - eu.vaultsync.app.sync-refresh
+          - eu.vaultsync.app.sync-continued
+        NSCameraUsageDescription: "VaultSync uses the camera to scan Syncthing device QR codes for easy setup."
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIBackgroundModes:
+          - fetch
+          - processing
+          - remote-notification
+    entitlements:
+      path: VaultSync/VaultSync.entitlements
+      properties:
+        aps-environment: development
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: eu.vaultsync.app
+        SWIFT_EMIT_LOC_STRINGS: "YES"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+    dependencies:
+      - framework: ../go/build/SyncBridge.xcframework
+        embed: true
+
+  VaultSyncTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: VaultSyncTests
+        excludes:
+          - "**/.gitkeep"
+    dependencies:
+      - target: VaultSync
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: eu.vaultsync.app.tests
+        GENERATE_INFOPLIST_FILE: "YES"

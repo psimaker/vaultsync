@@ -1,0 +1,29 @@
+--- a/lib/relay/client/dynamic.go
++++ b/lib/relay/client/dynamic.go
+@@ -95,7 +95,12 @@ func (c *dynamicClient) serve(ctx context.Context) error {
+ 			c.mut.Unlock()
+ 
+ 			err = c.client.Serve(ctx)
+-			l.Debugf("Disconnected from %s://%s: %v", c.client.URI().Scheme, c.client.URI().Host, err)
++
++			if clientURI := client.URI(); clientURI != nil {
++				l.Debugf("Disconnected from %s://%s: %v", clientURI.Scheme, clientURI.Host, err)
++			} else {
++				l.Debugf("Disconnected from relay: %v", err)
++			}
+ 
+ 			c.mut.Lock()
+ 			c.client = nil
+@@ -116,7 +121,11 @@ func (c *dynamicClient) Error() error {
+ }
+ 
+ func (c *dynamicClient) String() string {
+-	return fmt.Sprintf("DynamicClient:%p:%s@%s", c, c.URI(), c.pooladdr)
++	uri := c.URI()
++	if uri == nil {
++		return fmt.Sprintf("DynamicClient:%p@%s", c, c.pooladdr)
++	}
++	return fmt.Sprintf("DynamicClient:%p:%s@%s", c, uri, c.pooladdr)
+ }
+ 
+ func (c *dynamicClient) URI() *url.URL {

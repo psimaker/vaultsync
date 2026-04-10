@@ -1,0 +1,12 @@
+# Generated Xcode project (regenerate via: xcodegen generate)
+*.xcodeproj
+*.xcworkspace
+
+# Xcode build artifacts
+DerivedData/
+build/
+
+# User-specific Xcode files
+*.xcuserstate
+*.xcuserdata
+xcuserdata/

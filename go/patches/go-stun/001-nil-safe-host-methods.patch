@@ -1,0 +1,42 @@
+--- a/stun/host.go
++++ b/stun/host.go
+@@ -46,23 +46,38 @@
+ // Family returns the family type of a host (IPv4 or IPv6).
+ func (h *Host) Family() uint16 {
++	if h == nil {
++		return 0
++	}
+ 	return h.family
+ }
+
+ // IP returns the internet protocol address of the host.
+ func (h *Host) IP() string {
++	if h == nil {
++		return ""
++	}
+ 	return h.ip
+ }
+
+ // Port returns the port number of the host.
+ func (h *Host) Port() uint16 {
++	if h == nil {
++		return 0
++	}
+ 	return h.port
+ }
+
+ // TransportAddr returns the transport layer address of the host.
+ func (h *Host) TransportAddr() string {
++	if h == nil {
++		return ""
++	}
+ 	return net.JoinHostPort(h.ip, strconv.Itoa(int(h.port)))
+ }
+
+ // String returns the string representation of the host address.
+ func (h *Host) String() string {
++	if h == nil {
++		return ""
++	}
+ 	return h.TransportAddr()
+ }

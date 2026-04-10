@@ -1,0 +1,62 @@
+# Architecture
+
+## Overview
+
+VaultSync embeds Syncthing's Go reference implementation as an iOS library via gomobile. This avoids reimplementing the Syncthing protocol in Swift and guarantees protocol compatibility.
+
+```
+┌─────────────────────────────────┐
+│         SwiftUI Frontend        │
+│   (iOS-native UI, Swift 6)      │
+├─────────────────────────────────┤
+│       Swift ↔ Go Bridge         │
+│  (thin API layer via gomobile   │
+│   → exported as .xcframework)   │
+├─────────────────────────────────┤
+│      syncthing/lib (Go)         │
+│  (protocol, discovery, sync)    │
+└─────────────────────────────────┘
+         ↕ filesystem ↕
+┌─────────────────────────────────┐
+│    Obsidian Vault (direct)      │
+│  (access to Obsidian sandbox)   │
+└─────────────────────────────────┘
+```
+
+## Go Bridge (`go/bridge/`)
+
+Minimal API exported via gomobile. Only primitive types + `string` + `[]byte` cross the bridge — complex data is JSON-serialized.
+
+Key exports:
+- **Lifecycle:** `StartSyncthing`, `StopSyncthing`, `IsRunning`
+- **Identity:** `DeviceID`, `GenerateQRCode`
+- **Devices:** `AddDevice`, `RemoveDevice`, `ListDevices`
+- **Folders:** `AddFolder`, `RemoveFolder`, `ListFolders`, `RescanFolder`
+- **Sync:** `SyncStatus`, `GetPendingFolders`, `AcceptPendingFolder`
+- **Conflicts:** `ListConflicts`, `ResolveConflict`, `GetConflictDiff`
+- **Events:** `GetRecentChanges`, `GetLatestEvent`
+
+## Sync Strategy
+
+- **Foreground:** Syncthing runs unrestricted. Immediate, continuous sync.
+- **Background:** `BGAppRefreshTask` (~30s) + `BGContinuedProcessingTask` (iOS 26, longer runtime for user-initiated tasks).
+- **Push sync (Cloud Relay):** Optional. Near-realtime via APNs silent push notifications. See [relay-spec.md](relay-spec.md).
+
+## Cloud Relay (`notify/`)
+
+Optional Docker container for push-based sync notifications. The relay bridges APNs push notifications with Syncthing event monitoring on the user's homeserver, enabling instant sync triggers without polling.
+
+See [relay-spec.md](relay-spec.md) for the protocol specification.
+
+## Operator Guidance
+
+- End-user issue handling: [troubleshooting.md](troubleshooting.md)
+
+## iOS App Structure
+
+```
+ios/VaultSync/
+├── App/          — VaultSyncApp entry point, AppDelegate (push + background tasks)
+├── Views/        — SwiftUI views (ContentView, Onboarding, Settings, Conflicts, QR)
+└── Services/     — SyncBridge, SyncthingManager, BackgroundSync, Relay, Keychain, Subscriptions
+```

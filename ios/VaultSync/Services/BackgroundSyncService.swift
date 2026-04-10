@@ -1,0 +1,543 @@
+import BackgroundTasks
+import Foundation
+import UserNotifications
+import os
+
+private let logger = Logger(subsystem: "eu.vaultsync.app", category: "background")
+
+/// Wrapper to pass non-Sendable BGTask types across concurrency boundaries.
+/// Safe because BGTask ownership is transferred from the system exclusively to our handler.
+private struct UnsafeSendable<T>: @unchecked Sendable {
+    let value: T
+}
+
+/// Tracks whether the foreground (SyncthingManager) owns the Syncthing lifecycle.
+/// Both SyncthingManager and BackgroundSyncService coordinate through this lock
+/// to prevent races where background stops a foreground-managed instance or vice versa.
+struct SyncLifecycleState: Sendable {
+    var foregroundActive = false
+}
+
+/// Manages background sync via BGAppRefreshTask and BGContinuedProcessingTask.
+enum BackgroundSyncService {
+
+    static let appRefreshIdentifier = "eu.vaultsync.app.sync-refresh"
+    static let continuedProcessingIdentifier = "eu.vaultsync.app.sync-continued"
+
+    /// Shared lock coordinating Syncthing bridge start/stop across foreground and background.
+    static let lifecycleLock = OSAllocatedUnfairLock(initialState: SyncLifecycleState())
+
+    /// Whether each background task type was successfully registered.
+    /// Written once during app launch, read-only afterwards — safe without synchronization.
+    nonisolated(unsafe) private(set) static var appRefreshRegistered = false
+    nonisolated(unsafe) private(set) static var continuedProcessingRegistered = false
+    private static let lastSyncOutcomeStorageKey = "background-sync-last-outcome-v1"
+    static let lastSyncOutcomeDidChangeNotification = Notification.Name("BackgroundSyncLastOutcomeDidChange")
+
+    struct SyncOutcome: Codable, Equatable, Sendable {
+        let timestamp: Date
+        let triggerReason: String
+        let result: SyncResult
+        let detail: String?
+    }
+
+    // MARK: - Registration
+
+    /// Register background task handlers. Must be called before app finishes launching.
+    /// Registration may fail in the Simulator (ESRCH) — failures are non-fatal.
+    static func registerTasks() {
+        appRefreshRegistered = BGTaskScheduler.shared.register(
+            forTaskWithIdentifier: appRefreshIdentifier,
+            using: nil
+        ) { task in
+            guard let refreshTask = task as? BGAppRefreshTask else { return }
+            let wrapped = UnsafeSendable(value: refreshTask)
+            Task { await handleAppRefresh(task: wrapped.value) }
+        }
+
+        if !appRefreshRegistered {
+            logger.warning("Failed to register app refresh task — background refresh unavailable")
+        }
+
+        continuedProcessingRegistered = BGTaskScheduler.shared.register(
+            forTaskWithIdentifier: continuedProcessingIdentifier,
+            using: nil
+        ) { task in
+            guard let processingTask = task as? BGContinuedProcessingTask else { return }
+            let wrapped = UnsafeSendable(value: processingTask)
+            Task { await handleContinuedProcessing(task: wrapped.value) }
+        }
+
+        if !continuedProcessingRegistered {
+            logger.warning("Failed to register continued processing task — continued processing unavailable (expected in Simulator)")
+        }
+
+        logger.info("Background task registration complete (refresh=\(appRefreshRegistered), continued=\(continuedProcessingRegistered))")
+    }
+
+    // MARK: - Scheduling
+
+    /// Schedule periodic background refresh (~15 min). Skips if no vaults configured.
+    static func scheduleAppRefresh() {
+        guard appRefreshRegistered else { return }
+
+        let hasAccess = BookmarkService.resolveBookmark(identifier: "obsidian-root") != nil
+        guard hasAccess else {
+            logger.info("No Obsidian directory configured, skipping refresh schedule")
+            return
+        }
+
+        let request = BGAppRefreshTaskRequest(identifier: appRefreshIdentifier)
+        request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
+
+        do {
+            try BGTaskScheduler.shared.submit(request)
+            logger.info("App refresh scheduled")
+        } catch {
+            logger.error("Could not schedule app refresh: \(error)")
+        }
+    }
+
+    /// Submit continued processing for active sync. Call from foreground only.
+    static func submitContinuedProcessing() {
+        guard continuedProcessingRegistered else { return }
+
+        let request = BGContinuedProcessingTaskRequest(
+            identifier: continuedProcessingIdentifier,
+            title: "Syncing Vault",
+            subtitle: "Synchronizing your Obsidian vault..."
+        )
+
+        do {
+            try BGTaskScheduler.shared.submit(request)
+            logger.info("Continued processing submitted")
+        } catch {
+            logger.error("Could not submit continued processing: \(error)")
+        }
+    }
+
+    /// Cancel pending continued processing task.
+    static func cancelContinuedProcessing() {
+        guard continuedProcessingRegistered else { return }
+        BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: continuedProcessingIdentifier)
+    }
+
+    // MARK: - Notifications
+
+    /// Request notification permission for background conflict alerts.
+    @discardableResult
+    static func requestNotificationPermission() async -> Bool {
+        do {
+            return try await UNUserNotificationCenter.current()
+                .requestAuthorization(options: [.alert, .sound, .badge])
+        } catch {
+            logger.error("Notification permission failed: \(error)")
+            return false
+        }
+    }
+
+    // MARK: - Shared Sync Logic
+
+    /// Result of a background sync operation.
+    enum SyncResult: String, Codable, Sendable {
+        case synced
+        case alreadyIdle
+        case noBookmarkAccess
+        case noFoldersConfigured
+        case bridgeStartFailed
+        case notIdleBeforeDeadline
+        case failed
+
+        var isSuccessful: Bool {
+            switch self {
+            case .synced, .alreadyIdle:
+                return true
+            case .noBookmarkAccess, .noFoldersConfigured, .bridgeStartFailed, .notIdleBeforeDeadline, .failed:
+                return false
+            }
+        }
+
+        var shouldSurfaceIssue: Bool {
+            switch self {
+            case .synced, .alreadyIdle:
+                return false
+            case .noBookmarkAccess, .noFoldersConfigured, .bridgeStartFailed, .notIdleBeforeDeadline, .failed:
+                return true
+            }
+        }
+
+        var issueTitle: String {
+            switch self {
+            case .noBookmarkAccess:
+                return "Background Sync Could Not Access Obsidian"
+            case .noFoldersConfigured:
+                return "Background Sync Found No Vaults"
+            case .bridgeStartFailed:
+                return "Background Sync Could Not Start"
+            case .notIdleBeforeDeadline:
+                return "Background Sync Timed Out"
+            case .failed:
+                return "Background Sync Failed"
+            case .synced, .alreadyIdle:
+                return "Background Sync Completed"
+            }
+        }
+
+        var issueMessage: String {
+            switch self {
+            case .noBookmarkAccess:
+                return "VaultSync could not restore bookmark access for the Obsidian folder during a background run."
+            case .noFoldersConfigured:
+                return "No Syncthing folders were available to sync in the background."
+            case .bridgeStartFailed:
+                return "The embedded Syncthing bridge did not start for a background sync."
+            case .notIdleBeforeDeadline:
+                return "Background sync did not reach an idle folder state before the iOS deadline."
+            case .failed:
+                return "Background sync ended with an unexpected failure."
+            case .synced:
+                return "Background sync completed and reached idle."
+            case .alreadyIdle:
+                return "Background sync ran, but folders were already idle."
+            }
+        }
+
+        var remediation: String {
+            switch self {
+            case .noBookmarkAccess:
+                return "Reconnect your Obsidian folder access in VaultSync, then run a foreground rescan."
+            case .noFoldersConfigured:
+                return "Accept or create a shared vault before relying on background sync."
+            case .bridgeStartFailed:
+                return "Open VaultSync once to restart Syncthing, then retry."
+            case .notIdleBeforeDeadline:
+                return "Open VaultSync to allow a longer foreground sync session."
+            case .failed:
+                return "Retry from the app and review relay/background diagnostics in Settings."
+            case .synced, .alreadyIdle:
+                return "No action needed."
+            }
+        }
+    }
+
+    static func lastSyncOutcome() -> SyncOutcome? {
+        guard let data = UserDefaults.standard.data(forKey: lastSyncOutcomeStorageKey),
+              let decoded = try? JSONDecoder().decode(SyncOutcome.self, from: data) else {
+            return nil
+        }
+        return decoded
+    }
+
+    /// Perform a background sync cycle. Manages Syncthing lifecycle if not already running.
+    /// Used by BGAppRefreshTask handler and Silent Push handler.
+    static func performBackgroundSync(
+        reason: String,
+        maxDuration: TimeInterval = 25
+    ) async -> SyncResult {
+        logger.info("Background sync starting (reason=\(reason))")
+
+        // Check lifecycle lock: skip start/stop if foreground owns the instance.
+        let foregroundOwns = lifecycleLock.withLock { $0.foregroundActive }
+        let alreadyRunning = SyncBridgeService.isRunning()
+        let backgroundManaged = !alreadyRunning && !foregroundOwns
+
+        var managedURLs: [URL] = []
+        if backgroundManaged {
+            managedURLs = restoreBookmarkAccess()
+            guard !managedURLs.isEmpty else {
+                logger.info("No bookmarks restored")
+                return completeSync(
+                    reason: reason,
+                    result: .noBookmarkAccess,
+                    detail: "No security-scoped bookmark access was available."
+                )
+            }
+
+            let configDir = syncthingConfigDir()
+            let err = SyncBridgeService.startSyncthing(configDir: configDir)
+            if let err, !err.isEmpty, !SyncBridgeService.isRunning() {
+                logger.error("Background start failed: \(err)")
+                releaseAccess(managedURLs)
+                return completeSync(
+                    reason: reason,
+                    result: .bridgeStartFailed,
+                    detail: err
+                )
+            }
+        }
+
+        let hasFolders = await waitForAnyFolders(maxWait: 3)
+        guard hasFolders else {
+            if backgroundManaged {
+                cleanupBackgroundManaged(managedURLs)
+            }
+            return completeSync(
+                reason: reason,
+                result: .noFoldersConfigured,
+                detail: "No folders were available for background sync."
+            )
+        }
+
+        if allFoldersIdle() {
+            if backgroundManaged {
+                cleanupBackgroundManaged(managedURLs)
+            }
+            return completeSync(reason: reason, result: .alreadyIdle, detail: nil)
+        }
+
+        let deadline = Date(timeIntervalSinceNow: maxDuration)
+        while SyncBridgeService.isRunning() && Date() < deadline {
+            if Task.isCancelled { break }
+            try? await Task.sleep(for: .milliseconds(500))
+            if allFoldersIdle() { break }
+        }
+
+        let idle = allFoldersIdle()
+        if idle {
+            await notifyConflictsIfAny()
+        }
+
+        // Only stop if we started it and foreground hasn't taken over.
+        if backgroundManaged {
+            cleanupBackgroundManaged(managedURLs)
+        }
+
+        let result: SyncResult = idle ? .synced : .notIdleBeforeDeadline
+        let detail = idle ? nil : "Sync did not reach idle before \(Int(maxDuration))s deadline."
+        return completeSync(reason: reason, result: result, detail: detail)
+    }
+
+    // MARK: - BGAppRefreshTask Handler
+
+    private static func handleAppRefresh(task: BGAppRefreshTask) async {
+        logger.info("Background refresh starting")
+        scheduleAppRefresh()
+
+        task.expirationHandler = {
+            SyncBridgeService.stopSyncthing()
+            logger.info("Background refresh expired — Syncthing stopped")
+        }
+
+        let result = await performBackgroundSync(reason: "app-refresh")
+        task.setTaskCompleted(success: result == .synced || result == .alreadyIdle || result == .noFoldersConfigured)
+    }
+
+    // MARK: - BGContinuedProcessingTask Handler
+
+    private static func handleContinuedProcessing(task: BGContinuedProcessingTask) async {
+        logger.info("Continued processing starting")
+
+        let expired = OSAllocatedUnfairLock(initialState: false)
+
+        task.expirationHandler = {
+            expired.withLock { $0 = true }
+            SyncBridgeService.stopSyncthing()
+            logger.info("Continued processing expired — Syncthing stopped")
+        }
+
+        let progress = task.progress
+        progress.totalUnitCount = 100
+
+        while !expired.withLock({ $0 }) {
+            try? await Task.sleep(for: .seconds(1))
+            guard !expired.withLock({ $0 }) else { break }
+
+            let idle = allFoldersIdle()
+            if !SyncBridgeService.isRunning() || idle {
+                if idle {
+                    await notifyConflictsIfAny()
+                }
+                progress.completedUnitCount = 100
+                task.setTaskCompleted(success: true)
+                logger.info("Continued processing completed")
+                return
+            }
+
+            let pct = averageFolderCompletion()
+            progress.completedUnitCount = Int64(pct)
+            task.updateTitle("Syncing Vault", subtitle: "\(Int(pct))% complete")
+        }
+
+        task.setTaskCompleted(success: false)
+        logger.info("Continued processing expired")
+    }
+
+    // MARK: - Helpers
+
+    private static func waitForAnyFolders(maxWait: TimeInterval) async -> Bool {
+        let deadline = Date(timeIntervalSinceNow: maxWait)
+        while Date() < deadline {
+            if hasConfiguredFolders() {
+                return true
+            }
+            if !SyncBridgeService.isRunning() {
+                break
+            }
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        return hasConfiguredFolders()
+    }
+
+    private static func hasConfiguredFolders() -> Bool {
+        let json = SyncBridgeService.getFoldersJSON()
+        guard let data = json.data(using: .utf8),
+              let folders = try? JSONDecoder().decode([FolderStub].self, from: data) else {
+            return false
+        }
+        return !folders.isEmpty
+    }
+
+    private static func cleanupBackgroundManaged(_ managedURLs: [URL]) {
+        let shouldStop = lifecycleLock.withLock { !$0.foregroundActive }
+        if shouldStop && SyncBridgeService.isRunning() {
+            SyncBridgeService.stopSyncthing()
+        }
+        releaseAccess(managedURLs)
+    }
+
+    @discardableResult
+    private static func completeSync(
+        reason: String,
+        result: SyncResult,
+        detail: String?
+    ) -> SyncResult {
+        let outcome = SyncOutcome(
+            timestamp: Date(),
+            triggerReason: reason,
+            result: result,
+            detail: detail
+        )
+        persistSyncOutcome(outcome)
+        logger.info("Background sync completed (reason=\(reason), result=\(result.rawValue))")
+        return result
+    }
+
+    private static func persistSyncOutcome(_ outcome: SyncOutcome) {
+        guard let data = try? JSONEncoder().encode(outcome) else { return }
+        UserDefaults.standard.set(data, forKey: lastSyncOutcomeStorageKey)
+        NotificationCenter.default.post(name: lastSyncOutcomeDidChangeNotification, object: nil)
+    }
+
+    private static func allFoldersIdle() -> Bool {
+        let json = SyncBridgeService.getFoldersJSON()
+        guard let data = json.data(using: .utf8),
+              let folders = try? JSONDecoder().decode([FolderStub].self, from: data),
+              !folders.isEmpty else {
+            // Empty folder list means Syncthing hasn't populated yet — not idle
+            return false
+        }
+
+        for folder in folders {
+            let statusJSON = SyncBridgeService.getFolderStatusJSON(folderID: folder.id)
+            if let statusData = statusJSON.data(using: .utf8),
+               let status = try? JSONDecoder().decode(StatusStub.self, from: statusData),
+               status.state != "idle" {
+                return false
+            }
+        }
+        return true
+    }
+
+    private static func averageFolderCompletion() -> Double {
+        let json = SyncBridgeService.getFoldersJSON()
+        guard let data = json.data(using: .utf8),
+              let folders = try? JSONDecoder().decode([FolderStub].self, from: data),
+              !folders.isEmpty else {
+            return 100
+        }
+
+        var total: Double = 0
+        for folder in folders {
+            let statusJSON = SyncBridgeService.getFolderStatusJSON(folderID: folder.id)
+            if let d = statusJSON.data(using: .utf8),
+               let s = try? JSONDecoder().decode(StatusStub.self, from: d) {
+                total += s.completionPct
+            } else {
+                total += 100
+            }
+        }
+        return total / Double(folders.count)
+    }
+
+    private static func notifyConflictsIfAny() async {
+        let json = SyncBridgeService.getFoldersJSON()
+        guard let data = json.data(using: .utf8),
+              let folders = try? JSONDecoder().decode([FolderStub].self, from: data) else {
+            return
+        }
+
+        var count = 0
+        for folder in folders {
+            let cJSON = SyncBridgeService.getConflictFilesJSON(folderID: folder.id)
+            if let cData = cJSON.data(using: .utf8),
+               let conflicts = try? JSONDecoder().decode([ConflictStub].self, from: cData) {
+                count += conflicts.count
+            }
+        }
+
+        guard count > 0 else { return }
+
+        let content = UNMutableNotificationContent()
+        content.title = "Sync Conflicts"
+        content.body = count == 1
+            ? "1 file has a sync conflict. Open VaultSync to resolve it."
+            : "\(count) files have sync conflicts. Open VaultSync to resolve them."
+        content.sound = .default
+
+        let request = UNNotificationRequest(
+            identifier: "sync-conflict-\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+
+        do {
+            try await UNUserNotificationCenter.current().add(request)
+            logger.info("Conflict notification sent (\(count) conflicts)")
+        } catch {
+            logger.error("Failed to send notification: \(error)")
+        }
+    }
+
+    private static func restoreBookmarkAccess() -> [URL] {
+        let id = "obsidian-root"
+        guard let (url, isStale) = BookmarkService.resolveBookmark(identifier: id) else {
+            return []
+        }
+        guard BookmarkService.startAccessing(url: url) else {
+            return []
+        }
+        if isStale {
+            do {
+                try BookmarkService.saveBookmark(for: url, identifier: id)
+                logger.info("Refreshed stale Obsidian bookmark in background")
+            } catch {
+                logger.warning("Could not refresh stale Obsidian bookmark")
+            }
+        }
+        return [url]
+    }
+
+    private static func releaseAccess(_ urls: [URL]) {
+        urls.forEach { BookmarkService.stopAccessing(url: $0) }
+    }
+
+    private static func syncthingConfigDir() -> String {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        return docs.appendingPathComponent("syncthing", isDirectory: true).path
+    }
+
+    // MARK: - Stub types for JSON decoding
+
+    private struct FolderStub: Decodable {
+        let id: String
+    }
+
+    private struct StatusStub: Decodable {
+        let state: String
+        let completionPct: Double
+    }
+
+    private struct ConflictStub: Decodable {
+        let conflictPath: String
+    }
+}

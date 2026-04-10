@@ -1,0 +1,46 @@
+# Build artifacts
+go/build/
+ios/SyncBridge.xcframework/
+
+# Generated files (regenerate via: cd ios && xcodegen generate)
+ios/VaultSync/Info.plist
+
+# macOS
+.DS_Store
+
+# Xcode
+*.xcuserdata
+DerivedData/
+build/
+
+# Go
+*.test
+*.out
+go/_syncthing_patched/
+go/_go-stun_patched/
+go/vendor/
+
+# Environment files
+.env*
+!notify/.env.example
+
+# Signing keys and certificates
+*.pem
+*.p12
+*.key
+*.p8
+
+# AI agent files (not tracked)
+.omc/
+.claude/
+state/
+CLAUDE.md
+AGENTS.md
+DEVLOG.md
+PHASES.md
+
+# App Store metadata (internal)
+appstore/
+
+# Internal process docs
+docs/release-checklist.md

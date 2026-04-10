@@ -1,0 +1,12 @@
+--- a/lib/api/auto/noassets.go
++++ b/lib/api/auto/noassets.go
+@@ -4,9 +4,6 @@
+ // License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ // You can obtain one at https://mozilla.org/MPL/2.0/.
+ 
+-//go:build noassets
+-// +build noassets
+-
+ package auto
+ 
+ import (

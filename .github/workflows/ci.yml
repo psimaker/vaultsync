@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  go-tests:
+    name: Go Tests
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+
+      - name: Patch vendored dependencies
+        working-directory: go
+        run: make patch
+
+      - name: Run Go tests
+        working-directory: go
+        run: go test -tags noassets ./bridge -count=1
+
+  bridge-schema-regression:
+    name: Bridge Schema Regression
+    runs-on: macos-15
+    needs: go-tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+
+      - name: Patch vendored dependencies
+        working-directory: go
+        run: make patch
+
+      - name: Run status/event schema regression tests
+        working-directory: go
+        run: |
+          go test -tags noassets ./bridge -count=1 -run 'Test(EventInfoUnmarshalMissingPhase3Fields|LegacyEventConsumerIgnoresPhase3Fields|FolderStatusUnmarshalMissingPhase1Fields|LegacyFolderStatusConsumerIgnoresPhase1Fields|GetFolderStatusJSONMissingFolderHasErrorDetails|BridgeEventDataFolderErrors)'
+
+  notify-tests:
+    name: Notify Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: notify/go.mod
+
+      - name: Run notify smoke tests
+        working-directory: notify
+        run: go test ./... -count=1
+
+  build:
+    name: Build & Test
+    runs-on: macos-26  # Xcode 26.2 default, iOS 26 SDK required for BGContinuedProcessingTask
+    needs:
+      - go-tests
+      - bridge-schema-regression
+      - notify-tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+
+      - name: Install gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20250305212854-3a7bc9f8a4de
+          go install golang.org/x/mobile/cmd/gobind@v0.0.0-20250305212854-3a7bc9f8a4de
+          gomobile init
+
+      - name: Patch vendored dependencies
+        working-directory: go
+        run: make patch
+
+      - name: Build xcframework
+        working-directory: go
+        run: make xcframework
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ios
+        run: xcodegen generate
+
+      - name: List available simulators
+        run: xcrun simctl list devices available
+
+      - name: Build & Test
+        working-directory: ios
+        run: |
+          xcodebuild build test \
+            -project VaultSync.xcodeproj \
+            -scheme VaultSync \
+            -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+            -quiet

@@ -1,0 +1,60 @@
+name: Docker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "notify/**"
+    tags:
+      - "notify-v*"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  notify-guard:
+    name: Notify Guard Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: notify/go.mod
+
+      - name: Run notify test suite
+        working-directory: notify
+        run: go test ./... -count=1
+
+  build-and-push:
+    name: Build & Push
+    runs-on: ubuntu-latest
+    needs: notify-guard
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ghcr.io/psimaker/vaultsync-notify
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=match,pattern=notify-v(.*),group=1
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: notify
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

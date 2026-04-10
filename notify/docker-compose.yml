@@ -1,0 +1,25 @@
+services:
+  syncthing:
+    image: syncthing/syncthing:1.29
+    volumes:
+      - syncthing-data:/var/syncthing
+    ports:
+      - "127.0.0.1:8384:8384"   # Web UI
+      - "22000:22000"  # Sync protocol
+    restart: unless-stopped
+
+  vaultsync-notify:
+    image: ghcr.io/psimaker/vaultsync-notify:latest
+    environment:
+      # Values can be generated into .env via scripts/bootstrap.sh
+      SYNCTHING_API_URL: ${SYNCTHING_API_URL:-http://syncthing:8384}
+      SYNCTHING_API_KEY: ${SYNCTHING_API_KEY}
+      RELAY_URL: ${RELAY_URL:-https://relay.vaultsync.eu}
+      DEBOUNCE_SECONDS: ${DEBOUNCE_SECONDS:-5}
+      WATCHED_FOLDERS: ${WATCHED_FOLDERS:-}
+    restart: unless-stopped
+    depends_on:
+      - syncthing
+
+volumes:
+  syncthing-data:
