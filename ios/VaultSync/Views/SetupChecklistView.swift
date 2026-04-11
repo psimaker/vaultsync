@@ -2,7 +2,6 @@ import SwiftUI
 
 struct SetupChecklistView: View {
     var viewModel: SetupChecklistViewModel
-    var onSelectRequirement: (SetupChecklistViewModel.Requirement) -> Void
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
@@ -18,19 +17,6 @@ struct SetupChecklistView: View {
                 checklistRow(item)
             }
 
-            if !viewModel.incompleteRequiredItems.isEmpty {
-                HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .accessibilityHidden(true)
-                    Text(viewModel.continueWarningText)
-                }
-                .font(.caption)
-                .foregroundStyle(.orange)
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .accessibilityElement(children: .combine)
-            }
         }
         .padding(16)
         .background(Color(.secondarySystemBackground))
@@ -135,24 +121,6 @@ struct SetupChecklistView: View {
                 .accessibilityElement(children: .combine)
             }
 
-            if !item.isComplete {
-                HStack {
-                    Spacer()
-                    if item.isOptional {
-                        Button("Go to Step") {
-                            onSelectRequirement(item.requirement)
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                    } else {
-                        Button("Go to Step") {
-                            onSelectRequirement(item.requirement)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                    }
-                }
-            }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
