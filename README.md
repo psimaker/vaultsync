@@ -18,7 +18,6 @@ Your notes, your devices, your server — no third-party cloud required.
 [![Contributors](https://img.shields.io/github/contributors/psimaker/vaultsync?style=flat-square&logo=github&color=2AB5B3&label=Contributors)](https://github.com/psimaker/vaultsync/graphs/contributors)
 [![License: MPL-2.0](https://img.shields.io/badge/License-MPL_2.0-blue.svg?style=flat-square)](LICENSE)
 
-[![Latest Release](https://img.shields.io/github/v/release/psimaker/vaultsync?style=flat-square&label=Latest&color=2ea44f)](https://github.com/psimaker/vaultsync/releases/latest)
 [![CI](https://img.shields.io/github/actions/workflow/status/psimaker/vaultsync/ci.yml?style=flat-square&logo=github-actions&logoColor=white&label=Build)](https://github.com/psimaker/vaultsync/actions/workflows/ci.yml)
 [![Last Commit](https://img.shields.io/github/last-commit/psimaker/vaultsync?style=flat-square&label=Last+Commit)](https://github.com/psimaker/vaultsync/commits)
 
