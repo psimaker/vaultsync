@@ -38,17 +38,14 @@ Your notes, your devices, your server — no third-party cloud required.
 
 ---
 
-## 🆕 What's New — v1.0.0
+## 🆕 What's New — v1.0.1
 
-> **🎉 Initial Release** — Welcome to VaultSync!
+> **🛡️ Smarter Sync** — Obsidian workspace files and the Trash folder are now automatically excluded from sync, preventing the most common conflicts<br>
+> **📡 Reliable Push Notifications** — Cloud Relay token management improved — push sync now self-heals when device tokens rotate<br>
+> **🏠 Cleaner Home Screen** — Activity section streamlined to a single timeline link<br>
+> **🔧 Permissions Fix** — Accepted folder shares now correctly ignore file permissions, fixing sync failures in Docker environments
 >
-> **🔄 Syncthing Integration** — Embedded Go bridge for seamless iOS sync<br>
-> **📋 5-Step Setup** — Interactive checklist for easy configuration<br>
-> **📂 Obsidian Vault Access** — Direct folder access and synchronization<br>
-> **⚔️ Conflict Resolver** — Side-by-side Markdown diffs<br>
-> **📡 Cloud Relay** — Recommended push-based instant sync ($0.99/month)<br>
-> **♿ Accessibility** — Full VoiceOver and Dynamic Type support<br>
-> **🔓 Open Source** — MPL-2.0 licensed
+> See [CHANGELOG.md](CHANGELOG.md) for full details.
 
 
 ---
