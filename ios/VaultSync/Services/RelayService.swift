@@ -149,12 +149,6 @@ enum RelayService {
 
     // MARK: - Health
 
-    /// Check if the relay server is reachable and healthy.
-    static func checkHealth() async -> Bool {
-        let result = await checkHealthResult()
-        return result.isHealthy
-    }
-
     /// Run a relay health check with an explicit timeout policy.
     static func checkHealthResult(timeout: TimeInterval = 6) async -> HealthCheckResult {
         let url = URL(string: "\(relayURL)/api/v1/health")!

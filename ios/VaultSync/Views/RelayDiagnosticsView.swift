@@ -62,7 +62,7 @@ struct RelayDiagnosticsView: View {
                     Text(message)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    if let url = troubleshootingURL(anchor: "relay-unreachable") {
+                    if let url = SyncUserError.troubleshootingURL(anchor: "relay-unreachable") {
                         Link("Learn how to fix", destination: url)
                             .font(.caption2)
                     }
@@ -134,7 +134,7 @@ struct RelayDiagnosticsView: View {
                     Text(reason)
                         .font(.caption)
                         .foregroundStyle(.red)
-                    if let url = troubleshootingURL(anchor: "apns-not-registered") {
+                    if let url = SyncUserError.troubleshootingURL(anchor: "apns-not-registered") {
                         Link("Learn how to fix", destination: url)
                             .font(.caption2)
                     }
@@ -269,7 +269,7 @@ struct RelayDiagnosticsView: View {
                     Text(hint)
                         .font(.caption)
                 }
-                if let url = troubleshootingURL(anchor: "relay-unreachable") {
+                if let url = SyncUserError.troubleshootingURL(anchor: "relay-unreachable") {
                     Link("Open full relay troubleshooting", destination: url)
                         .font(.caption2)
                 }
@@ -341,32 +341,8 @@ struct RelayDiagnosticsView: View {
     }
 
     private func troubleshootingURL(for rawError: String) -> URL? {
-        let mapped = SyncUserError.from(rawMessage: rawError, fallbackTitle: "Relay Error")
-        let details = "\(mapped.message) \(mapped.remediation) \(mapped.technicalDetails ?? "")".lowercased()
-        switch mapped.category {
-        case .relayUnreachable, .relayProvision, .network:
-            return troubleshootingURL(anchor: "relay-unreachable")
-        case .auth:
-            return troubleshootingURL(anchor: "wrong-syncthing-api-key-in-notify")
-        case .permission, .fileAccess:
-            if details.contains("apns") || details.contains("notification") || details.contains("push") {
-                return troubleshootingURL(anchor: "apns-not-registered")
-            }
-            return troubleshootingURL(anchor: "bookmark-access-expired")
-        case .syncthingNotRunning:
-            return troubleshootingURL(anchor: "syncthing-not-running")
-        case .config, .validation:
-            return troubleshootingURL(anchor: "background-sync-not-working")
-        case .unknown:
-            return troubleshootingURL(anchor: "background-sync-not-working")
-        }
+        SyncUserError.troubleshootingURL(forRawError: rawError)
     }
-
-    private func troubleshootingURL(anchor: String) -> URL? {
-        URL(string: "\(Self.troubleshootingBaseURL)#\(anchor)")
-    }
-
-    private static let troubleshootingBaseURL = "https://github.com/psimaker/vaultsync/blob/main/docs/troubleshooting.md"
 
     private func runDiagnostics() async {
         diagnosticsInFlight = true

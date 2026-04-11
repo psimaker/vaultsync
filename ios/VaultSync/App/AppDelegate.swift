@@ -21,9 +21,15 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
     ) {
         let token = deviceToken.map { String(format: "%02x", $0) }.joined()
+        let previousToken = KeychainService.getAPNsDeviceToken()
         _ = KeychainService.setAPNsDeviceToken(token)
         APNsRegistrationStore.markRegistered()
         logger.info("APNs device token received and stored (\(token.prefix(8))...)")
+
+        if previousToken != token {
+            logger.info("APNs device token changed (first=\(previousToken == nil)), notifying for re-provisioning")
+            APNsRegistrationStore.postTokenDidChange()
+        }
     }
 
     func application(

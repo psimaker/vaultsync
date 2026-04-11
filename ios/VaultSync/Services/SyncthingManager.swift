@@ -43,6 +43,16 @@ final class SyncthingManager {
     private static let maxSyncActivityItems = 120
     private static let maxFileEventsPerFolderPerPoll = 6
 
+    /// Default .stignore patterns for Obsidian vaults to prevent sync conflicts
+    /// on device-specific files.
+    private static let defaultIgnorePatterns = [
+        ".Trash",
+        ".obsidian/workspace.json",
+        ".obsidian/workspace-mobile.json",
+    ]
+
+    private var hasAppliedStartupIgnores = false
+
     private static let bridgeDateParser: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
@@ -80,8 +90,17 @@ final class SyncthingManager {
         let deviceID: String
         let name: String
         let connected: Bool
+        let paused: Bool
 
         var id: String { deviceID }
+
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            deviceID = try container.decode(String.self, forKey: .deviceID)
+            name = try container.decode(String.self, forKey: .name)
+            connected = try container.decode(Bool.self, forKey: .connected)
+            paused = try container.decodeIfPresent(Bool.self, forKey: .paused) ?? false
+        }
     }
 
     struct FolderInfo: Codable, Identifiable, Sendable {
@@ -191,10 +210,6 @@ final class SyncthingManager {
 
     var ignoredPendingFolders: [PendingFolderInfo] {
         pendingFolders.filter { ignoredPendingFolderIDs.contains($0.id) }
-    }
-
-    var hasDetectedOrAcceptedFirstShare: Bool {
-        hasSeenPendingFolderOffer || !pendingFolders.isEmpty || !folders.isEmpty
     }
 
     var staleSyncWarning: String? {
@@ -430,6 +445,12 @@ final class SyncthingManager {
         let result = SyncBridgeService.addFolder(id: id, label: label, path: path)
         if result == nil {
             refreshFolders()
+            let folderID = id
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                guard !Task.isCancelled else { return }
+                Self.applyDefaultIgnoresIfNeeded(folderID: folderID)
+            }
         }
         return result
     }
@@ -512,6 +533,7 @@ final class SyncthingManager {
             rescanTask = Task {
                 try? await Task.sleep(for: .seconds(2))
                 guard !Task.isCancelled else { return }
+                Self.applyDefaultIgnoresIfNeeded(folderID: id)
                 _ = SyncBridgeService.rescanFolder(folderID: id)
             }
         }
@@ -533,7 +555,49 @@ final class SyncthingManager {
     /// (e.g., by a BGTask expiration handler). Does NOT call the bridge.
     func resetForRestart() {
         stopPolling()
+        BackgroundSyncService.lifecycleLock.withLock { $0.foregroundActive = false }
         isRunning = false
+        deviceID = ""
+        devices = []
+        folders = []
+        folderStatuses = [:]
+        conflictFiles = [:]
+        pendingFolders = []
+        lastBridgeEventID = 0
+        activityDeduplicationCache = [:]
+        nextSyntheticEventID = -1
+        error = nil
+        userError = nil
+    }
+
+    // MARK: - Default ignore patterns
+
+    /// Apply default .stignore patterns for an Obsidian vault folder.
+    /// Reads existing patterns and merges in any missing defaults.
+    private static func applyDefaultIgnoresIfNeeded(folderID: String) {
+        let currentJSON = SyncBridgeService.getFolderIgnores(folderID: folderID)
+
+        var currentPatterns: [String] = []
+        if let data = currentJSON.data(using: .utf8),
+           let decoded = try? JSONDecoder().decode([String].self, from: data) {
+            currentPatterns = decoded
+        }
+
+        let missing = defaultIgnorePatterns.filter { pattern in
+            !currentPatterns.contains(pattern)
+        }
+        guard !missing.isEmpty else { return }
+
+        let updated = currentPatterns + missing
+        guard let updatedData = try? JSONEncoder().encode(updated),
+              let updatedJSON = String(data: updatedData, encoding: .utf8) else { return }
+
+        let result = SyncBridgeService.setFolderIgnores(folderID: folderID, ignoresJSON: updatedJSON)
+        if let error = result {
+            logger.warning("Failed to set default ignores for \(folderID): \(error)")
+        } else {
+            logger.info("Applied default ignore patterns for folder \(folderID)")
+        }
     }
 
     // MARK: - Private
@@ -572,6 +636,19 @@ final class SyncthingManager {
            let decoded = try? JSONDecoder().decode([FolderInfo].self, from: data) {
             folders = decoded
         }
+
+        // One-time check: apply default .stignore patterns for existing folders.
+        if !hasAppliedStartupIgnores && !folders.isEmpty {
+            hasAppliedStartupIgnores = true
+            let folderIDs = folders.map(\.id)
+            Task {
+                try? await Task.sleep(for: .seconds(3))
+                for id in folderIDs {
+                    Self.applyDefaultIgnoresIfNeeded(folderID: id)
+                }
+            }
+        }
+
         if let data = snapshot.2.data(using: .utf8),
            let decoded = try? JSONDecoder().decode([PendingFolderInfo].self, from: data) {
             pendingFolders = decoded
@@ -733,21 +810,6 @@ final class SyncthingManager {
             markPendingShareSeen()
         }
         pruneIgnoredPendingFolders(availableFolderIDs: Set(decoded.map(\.id)))
-    }
-
-    private func refreshFolderStatuses() {
-        var statuses: [String: FolderStatusInfo] = [:]
-        for folder in folders {
-            guard let payload = SyncBridgeService.getFolderStatus(folderID: folder.id) else {
-                continue
-            }
-            statuses[folder.id] = FolderStatusInfo(payload: payload)
-        }
-        updateSyncHistory(
-            newStatuses: statuses,
-            activeFolderIDs: Set(folders.map(\.id))
-        )
-        folderStatuses = statuses
     }
 
     private func decodeBridgeEvents(_ json: String) -> [BridgeEventInfo] {

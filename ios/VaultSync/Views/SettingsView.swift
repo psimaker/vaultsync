@@ -20,6 +20,7 @@ struct SettingsView: View {
         NavigationStack {
             List {
                 cloudRelaySection
+                aboutSection
 
                 Section("Discovery") {
                     Toggle("Local Discovery", isOn: $localDiscovery)
@@ -49,6 +50,11 @@ struct SettingsView: View {
                             Text(syncthingManager.deviceID)
                                 .font(.system(.caption, design: .monospaced))
                                 .textSelection(.enabled)
+                        }
+                        Button {
+                            UIPasteboard.general.string = syncthingManager.deviceID
+                        } label: {
+                            Label("Copy Device ID", systemImage: "doc.on.doc")
                         }
                     }
                 }
@@ -87,7 +93,7 @@ struct SettingsView: View {
                                 vaultManager: vaultManager,
                                 subscriptionManager: subscriptionManager
                             )
-                        ) { _ in }
+                        )
                         .padding(16)
                     }
                     .navigationTitle("Setup Guide")
@@ -175,48 +181,13 @@ struct SettingsView: View {
                             Text(reason)
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
-                            if let url = troubleshootingURL(for: reason) {
+                            if let url = SyncUserError.troubleshootingURL(forRawError: reason) {
                                 Link("Learn how to fix", destination: url)
                                     .font(.caption2)
                             }
                         }
                     }
                     .padding(.vertical, 2)
-                }
-            }
-
-            // Connection test
-            HStack {
-                Label("Relay Server", systemImage: "server.rack")
-                Spacer()
-                if subscriptionManager.relayHealthCheckInFlight {
-                    ProgressView()
-                        .controlSize(.small)
-                } else if let result = subscriptionManager.relayHealthResult {
-                    Text(result.summary)
-                        .foregroundStyle(result.isHealthy ? .green : .red)
-                } else {
-                    Button("Test") {
-                        Task {
-                            await subscriptionManager.runRelayHealthCheck()
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-            }
-            .accessibilityElement(children: .combine)
-
-            if let healthMessage = subscriptionManager.relayHealthResult?.message,
-               !(subscriptionManager.relayHealthResult?.isHealthy ?? true) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(healthMessage)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    if let url = troubleshootingURL(anchor: "relay-unreachable") {
-                        Link("Learn how to fix", destination: url)
-                            .font(.caption2)
-                    }
                 }
             }
 
@@ -298,7 +269,7 @@ struct SettingsView: View {
                     Text(relayError)
                         .font(.caption)
                         .foregroundStyle(.red)
-                    if let url = troubleshootingURL(for: relayError) {
+                    if let url = SyncUserError.troubleshootingURL(forRawError: relayError) {
                         Link("Learn how to fix", destination: url)
                             .font(.caption2)
                     }
@@ -314,8 +285,15 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
             .padding(.vertical, 2)
+        } header: {
+            Text("Cloud Relay")
+        } footer: {
+            Text("Cloud Relay enables instant sync when files change on your server, instead of waiting for the next background refresh.")
+        }
+    }
 
-            // Legal links (required by App Store Review)
+    private var aboutSection: some View {
+        Section("About") {
             Link(destination: URL(string: "https://github.com/psimaker/vaultsync/blob/main/PRIVACY.md")!) {
                 HStack {
                     Label("Privacy Policy", systemImage: "hand.raised")
@@ -337,10 +315,6 @@ struct SettingsView: View {
                         .accessibilityHidden(true)
                 }
             }
-        } header: {
-            Text("Cloud Relay")
-        } footer: {
-            Text("Cloud Relay enables instant sync when files change on your server, instead of waiting for the next background refresh.")
         }
     }
 
@@ -371,38 +345,6 @@ struct SettingsView: View {
     private func mappedError(_ error: String, fallbackTitle: String = "Settings Error") -> SyncUserError {
         SyncUserError.from(rawMessage: error, fallbackTitle: fallbackTitle)
     }
-
-    private func troubleshootingURL(for rawError: String) -> URL? {
-        let mapped = mappedError(rawError, fallbackTitle: "Settings Error")
-        return troubleshootingURL(for: mapped)
-    }
-
-    private func troubleshootingURL(for error: SyncUserError) -> URL? {
-        let details = "\(error.message) \(error.remediation) \(error.technicalDetails ?? "")".lowercased()
-        switch error.category {
-        case .syncthingNotRunning:
-            return troubleshootingURL(anchor: "syncthing-not-running")
-        case .relayUnreachable, .relayProvision, .network:
-            return troubleshootingURL(anchor: "relay-unreachable")
-        case .auth:
-            return troubleshootingURL(anchor: "wrong-syncthing-api-key-in-notify")
-        case .permission, .fileAccess:
-            if details.contains("apns") || details.contains("notification") || details.contains("push") {
-                return troubleshootingURL(anchor: "apns-not-registered")
-            }
-            return troubleshootingURL(anchor: "bookmark-access-expired")
-        case .config, .validation:
-            return troubleshootingURL(anchor: "obsidian-folder-not-found")
-        case .unknown:
-            return troubleshootingURL(anchor: "background-sync-not-working")
-        }
-    }
-
-    private func troubleshootingURL(anchor: String) -> URL? {
-        URL(string: "\(Self.troubleshootingBaseURL)#\(anchor)")
-    }
-
-    private static let troubleshootingBaseURL = "https://github.com/psimaker/vaultsync/blob/main/docs/troubleshooting.md"
 
     // MARK: - Config
 

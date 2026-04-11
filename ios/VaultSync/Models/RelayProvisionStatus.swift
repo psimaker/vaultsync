@@ -63,6 +63,7 @@ enum APNsRegistrationStore {
     private static let lastFailureAtKey = "apns-registration-last-failure-at"
 
     static let statusDidChangeNotification = Notification.Name("APNsRegistrationStatusDidChange")
+    static let tokenDidChangeNotification = Notification.Name("APNsDeviceTokenDidChange")
     
     struct Snapshot: Equatable, Sendable {
         let status: APNsRegistrationStatus
@@ -132,6 +133,10 @@ enum APNsRegistrationStore {
         postStatusUpdate()
     }
     
+    static func postTokenDidChange() {
+        NotificationCenter.default.post(name: tokenDidChangeNotification, object: nil)
+    }
+
     private static func postStatusUpdate() {
         NotificationCenter.default.post(name: statusDidChangeNotification, object: nil)
     }

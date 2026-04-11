@@ -28,7 +28,6 @@ struct SetupChecklistViewModelTests {
         #expect(incomplete.contains(.desktopDeviceAdded))
         #expect(incomplete.contains(.obsidianConnected))
         #expect(incomplete.contains(.firstShareDetectedOrAccepted))
-        #expect(viewModel.continueWarningText.contains("Syncthing engine started"))
     }
 
     @Test("Checklist transitions when syncthing/device/share states become complete")
@@ -74,6 +73,5 @@ struct SetupChecklistViewModelTests {
         #expect(stateByRequirement[.obsidianConnected] == false)
         #expect(viewModel.completedRequiredCount == 3)
         #expect(!viewModel.isReadyToFinish)
-        #expect(viewModel.continueWarningText.contains("Obsidian connected"))
     }
 }

@@ -32,6 +32,7 @@ final class SubscriptionManager {
     @ObservationIgnored nonisolated(unsafe) private var apnsObserver: NSObjectProtocol?
     @ObservationIgnored nonisolated(unsafe) private var triggerObserver: NSObjectProtocol?
     @ObservationIgnored nonisolated(unsafe) private var relayDiagnosticsObserver: NSObjectProtocol?
+    @ObservationIgnored nonisolated(unsafe) private var tokenChangeObserver: NSObjectProtocol?
 
     init() {
         apnsRegistrationStatus = APNsRegistrationStore.current()
@@ -68,6 +69,16 @@ final class SubscriptionManager {
             }
         }
 
+        tokenChangeObserver = NotificationCenter.default.addObserver(
+            forName: APNsRegistrationStore.tokenDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                await self?.reprovisionOnTokenChange()
+            }
+        }
+
         loadTask = Task(priority: .background) {
             await loadProduct()
         }
@@ -76,6 +87,7 @@ final class SubscriptionManager {
                 await handle(verificationResult)
             }
             await checkSubscriptionStatus()
+            await ensureProvisioningIfNeeded()
         }
         updatesTask = Task(priority: .background) {
             for await verificationResult in Transaction.updates {
@@ -97,6 +109,9 @@ final class SubscriptionManager {
         if let relayDiagnosticsObserver {
             NotificationCenter.default.removeObserver(relayDiagnosticsObserver)
         }
+        if let tokenChangeObserver {
+            NotificationCenter.default.removeObserver(tokenChangeObserver)
+        }
     }
 
     // MARK: - Public
@@ -114,9 +129,13 @@ final class SubscriptionManager {
                 }
             }
         }
+        let wasSubscribed = isRelaySubscribed
         isRelaySubscribed = foundActive
         if !foundActive {
             subscriptionExpiryDate = nil
+            if wasSubscribed {
+                await deprovisionRelay()
+            }
             for deviceID in relayProvisionStatuses.keys {
                 relayProvisionStatuses[deviceID] = .notAttempted
             }
@@ -318,6 +337,47 @@ final class SubscriptionManager {
         }
         refreshStoredRelayDiagnostics()
     }
+
+    // MARK: - Token re-provisioning
+
+    private func reprovisionOnTokenChange() async {
+        guard isRelaySubscribed else { return }
+        guard KeychainService.hasAPNsDeviceToken() else { return }
+
+        let deviceIDs = loadStoredDeviceIDs()
+        guard !deviceIDs.isEmpty else { return }
+
+        logger.info("APNs token changed, re-provisioning relay for \(deviceIDs.count) device(s)")
+        let transactionID = await currentRelayTransactionID() ?? "token-refresh"
+        await provisionRelay(deviceIDs: deviceIDs, transactionID: transactionID)
+    }
+
+    /// Re-provision relay on app launch if the last successful provision was >24h ago.
+    /// Runs silently in the background — no UI, no user interaction needed.
+    private func ensureProvisioningIfNeeded() async {
+        guard isRelaySubscribed else { return }
+        guard KeychainService.hasAPNsDeviceToken() else { return }
+
+        let deviceIDs = loadStoredDeviceIDs()
+        guard !deviceIDs.isEmpty else { return }
+
+        let lastProvision = UserDefaults.standard.object(forKey: Self.lastProvisionDateKey) as? Date
+        if let lastProvision, Date().timeIntervalSince(lastProvision) < Self.provisionRefreshInterval {
+            return
+        }
+
+        logger.info("Periodic relay re-provision (last: \(lastProvision?.description ?? "never"))")
+        let transactionID = await currentRelayTransactionID() ?? "startup-refresh"
+        await provisionRelay(deviceIDs: deviceIDs, transactionID: transactionID)
+
+        // Mark successful provision time (only if at least one device succeeded).
+        if relayProvisionStatuses.values.contains(.provisioned) {
+            UserDefaults.standard.set(Date(), forKey: Self.lastProvisionDateKey)
+        }
+    }
+
+    private static let lastProvisionDateKey = "relay-last-provision-date"
+    private static let provisionRefreshInterval: TimeInterval = 24 * 60 * 60
 
     // MARK: - Device ID Storage
 

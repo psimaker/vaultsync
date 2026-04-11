@@ -167,10 +167,11 @@ final class VaultManager {
             return "Invalid folder name: '\(rawName)'"
         }
 
-        guard let path = obsidianBasePath else {
+        guard let basePath = obsidianBasePath else {
             return "Obsidian directory not accessible."
         }
 
+        let path = (basePath as NSString).appendingPathComponent(folderName)
         logger.info("Accepting share '\(folderName)' (\(folder.id)) → path: \(path)")
 
         if let err = syncthingManager.acceptPendingFolder(

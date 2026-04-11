@@ -1,6 +1,5 @@
 import SwiftUI
 import UIKit
-import UniformTypeIdentifiers
 
 /// SwiftUI wrapper for UIDocumentPickerViewController that opens a folder picker.
 /// The picked URL is a security-scoped URL suitable for bookmark creation.

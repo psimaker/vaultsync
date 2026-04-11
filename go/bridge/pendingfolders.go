@@ -116,6 +116,10 @@ func AcceptPendingFolder(folderID, label, path string) string {
 		}
 	}
 
+	// Note: offeringDevices may be empty if the offer disappeared between
+	// listing and acceptance. The folder is still created with local device
+	// only; the user can manually share it later.
+
 	// Ensure folder path exists.
 	if err := os.MkdirAll(path, 0o700); err != nil {
 		return fmt.Sprintf("create folder path: %v", err)
@@ -141,6 +145,7 @@ func AcceptPendingFolder(folderID, label, path string) string {
 		FSWatcherDelayS:  10,
 		AutoNormalize:    true,
 		MaxConflicts:     10,
+		IgnorePerms:      true, // iOS has no Unix permissions; prevents endless sync loops
 		Devices:          devices,
 	}
 

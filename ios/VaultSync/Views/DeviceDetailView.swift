@@ -82,7 +82,8 @@ struct DeviceDetailView: View {
         let trimmed = editedName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed != device.name else { return }
         if let err = syncthingManager.renameDevice(id: device.deviceID, newName: trimmed) {
-            alertMessage = err
+            let mapped = SyncUserError.from(rawMessage: err, fallbackTitle: "Rename Failed")
+            alertMessage = mapped.userVisibleDescription
             showAlert = true
             editedName = device.name
         }
@@ -90,7 +91,8 @@ struct DeviceDetailView: View {
 
     private func removeDevice() {
         if let err = syncthingManager.removeDevice(id: device.deviceID) {
-            alertMessage = err
+            let mapped = SyncUserError.from(rawMessage: err, fallbackTitle: "Remove Failed")
+            alertMessage = mapped.userVisibleDescription
             showAlert = true
         } else {
             dismiss()

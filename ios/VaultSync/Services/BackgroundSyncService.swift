@@ -314,12 +314,17 @@ enum BackgroundSyncService {
         scheduleAppRefresh()
 
         task.expirationHandler = {
-            SyncBridgeService.stopSyncthing()
-            logger.info("Background refresh expired — Syncthing stopped")
+            let shouldStop = lifecycleLock.withLock { !$0.foregroundActive }
+            if shouldStop {
+                SyncBridgeService.stopSyncthing()
+                logger.info("Background refresh expired — Syncthing stopped")
+            } else {
+                logger.info("Background refresh expired — skipped stop (foreground active)")
+            }
         }
 
         let result = await performBackgroundSync(reason: "app-refresh")
-        task.setTaskCompleted(success: result == .synced || result == .alreadyIdle || result == .noFoldersConfigured)
+        task.setTaskCompleted(success: result.isSuccessful)
     }
 
     // MARK: - BGContinuedProcessingTask Handler
@@ -331,8 +336,13 @@ enum BackgroundSyncService {
 
         task.expirationHandler = {
             expired.withLock { $0 = true }
-            SyncBridgeService.stopSyncthing()
-            logger.info("Continued processing expired — Syncthing stopped")
+            let shouldStop = lifecycleLock.withLock { !$0.foregroundActive }
+            if shouldStop {
+                SyncBridgeService.stopSyncthing()
+                logger.info("Continued processing expired — Syncthing stopped")
+            } else {
+                logger.info("Continued processing expired — skipped stop (foreground active)")
+            }
         }
 
         let progress = task.progress
@@ -429,9 +439,12 @@ enum BackgroundSyncService {
 
         for folder in folders {
             let statusJSON = SyncBridgeService.getFolderStatusJSON(folderID: folder.id)
-            if let statusData = statusJSON.data(using: .utf8),
-               let status = try? JSONDecoder().decode(StatusStub.self, from: statusData),
-               status.state != "idle" {
+            guard let statusData = statusJSON.data(using: .utf8),
+                  let status = try? JSONDecoder().decode(StatusStub.self, from: statusData) else {
+                // Decode failure means we can't confirm state — treat as not idle
+                return false
+            }
+            if status.state != "idle" {
                 return false
             }
         }
@@ -443,7 +456,7 @@ enum BackgroundSyncService {
         guard let data = json.data(using: .utf8),
               let folders = try? JSONDecoder().decode([FolderStub].self, from: data),
               !folders.isEmpty else {
-            return 100
+            return 0
         }
 
         var total: Double = 0
@@ -452,9 +465,8 @@ enum BackgroundSyncService {
             if let d = statusJSON.data(using: .utf8),
                let s = try? JSONDecoder().decode(StatusStub.self, from: d) {
                 total += s.completionPct
-            } else {
-                total += 100
             }
+            // Decode failure contributes 0%, not 100%
         }
         return total / Double(folders.count)
     }

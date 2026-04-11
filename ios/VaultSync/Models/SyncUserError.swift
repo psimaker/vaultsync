@@ -70,7 +70,7 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
                 category: .permission,
                 title: "Permission Required",
                 message: "VaultSync does not have the required permission for this action.",
-                remediation: "Grant folder/notification permissions and retry.",
+                remediation: "Open iOS Settings → VaultSync and check that all permissions are enabled, then retry.",
                 technicalDetails: rawMessage
             )
         }
@@ -80,7 +80,7 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
                 category: .auth,
                 title: "Authentication Error",
                 message: "VaultSync could not verify this request.",
-                remediation: "Retry and ensure certificates/subscription state are valid.",
+                remediation: "Check your subscription status in Settings and retry. If this persists, restart VaultSync.",
                 technicalDetails: rawMessage
             )
         }
@@ -197,10 +197,57 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
             category: .permission,
             title: "Push Registration Failed",
             message: "iOS did not provide a push token required for instant sync.",
-            remediation: "Enable notifications for VaultSync in iOS Settings and retry APNs registration.",
+            remediation: "Enable notifications for VaultSync in iOS Settings → Notifications → VaultSync, then restart the app.",
             technicalDetails: reason
         )
     }
+
+    // MARK: - Troubleshooting URL Routing
+
+    private static let troubleshootingBaseURL = "https://github.com/psimaker/vaultsync/blob/main/docs/troubleshooting.md"
+
+    /// Map an error to its most relevant troubleshooting documentation anchor.
+    static func troubleshootingURL(for error: SyncUserError) -> URL? {
+        let details = "\(error.message) \(error.remediation) \(error.technicalDetails ?? "")".lowercased()
+        let anchor: String
+        switch error.category {
+        case .syncthingNotRunning:
+            anchor = "syncthing-not-running"
+        case .relayUnreachable, .relayProvision, .network:
+            anchor = "relay-unreachable"
+        case .auth:
+            anchor = "wrong-syncthing-api-key-in-notify"
+        case .permission, .fileAccess:
+            if details.contains("apns") || details.contains("notification") || details.contains("push") {
+                anchor = "apns-not-registered"
+            } else {
+                anchor = "bookmark-access-expired"
+            }
+        case .config, .validation:
+            if details.contains("pending") || details.contains("share") {
+                anchor = "no-pending-shares-appear"
+            } else if details.contains("background") {
+                anchor = "background-sync-not-working"
+            } else {
+                anchor = "obsidian-folder-not-found"
+            }
+        case .unknown:
+            anchor = "background-sync-not-working"
+        }
+        return URL(string: "\(troubleshootingBaseURL)#\(anchor)")
+    }
+
+    /// Convenience: map a raw error string to a troubleshooting URL.
+    static func troubleshootingURL(forRawError rawError: String) -> URL? {
+        troubleshootingURL(for: from(rawMessage: rawError))
+    }
+
+    /// Direct anchor-based troubleshooting URL for callers that already know the target section.
+    static func troubleshootingURL(anchor: String) -> URL? {
+        URL(string: "\(troubleshootingBaseURL)#\(anchor)")
+    }
+
+    // MARK: - Error Classification
 
     private static func isNetworkError(_ normalized: String) -> Bool {
         normalized.contains("network")
@@ -240,8 +287,12 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
     }
 
     private static func isValidationError(_ normalized: String) -> Bool {
-        normalized.contains("invalid")
-            || normalized.contains("required")
+        normalized.contains("invalid input")
+            || normalized.contains("invalid value")
+            || normalized.contains("invalid format")
+            || normalized.contains("is required")
+            || normalized.contains("field required")
+            || normalized.contains("must be")
     }
 
     private static func isConfigError(_ normalized: String) -> Bool {

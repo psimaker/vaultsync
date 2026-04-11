@@ -150,8 +150,6 @@ struct SyncIssuesView: View {
         case .staleSync, .backgroundSync:
             anchor = "background-sync-not-working"
         }
-        return URL(string: "\(Self.troubleshootingBaseURL)#\(anchor)")
+        return URL(string: "https://github.com/psimaker/vaultsync/blob/main/docs/troubleshooting.md#\(anchor)")
     }
-
-    private static let troubleshootingBaseURL = "https://github.com/psimaker/vaultsync/blob/main/docs/troubleshooting.md"
 }

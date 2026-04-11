@@ -74,15 +74,6 @@ final class SetupChecklistViewModel {
         incompleteRequiredItems.isEmpty
     }
 
-    var continueWarningText: String {
-        if incompleteRequiredItems.isEmpty {
-            return "Setup is complete."
-        }
-
-        let titles = incompleteRequiredItems.map(\.title).joined(separator: ", ")
-        return "You can continue, but syncing may fail until you finish: \(titles)."
-    }
-
     private var syncthingItem: ChecklistItem {
         if syncthingManager.isRunning, !syncthingManager.deviceID.isEmpty {
             return ChecklistItem(
@@ -125,7 +116,7 @@ final class SetupChecklistViewModel {
             requirement: .desktopDeviceAdded,
             title: "Desktop device paired",
             description: "No desktop or laptop Syncthing device configured yet.",
-            remediation: "Enter your desktop's Device ID in the pairing step above.",
+            remediation: "Add a device from the main screen using its Syncthing Device ID.",
             isOptional: false,
             isComplete: false
         )
@@ -152,7 +143,7 @@ final class SetupChecklistViewModel {
             requirement: .obsidianConnected,
             title: "Obsidian connected",
             description: issue?.message ?? "VaultSync does not have access to your Obsidian directory.",
-            remediation: issue?.remediation ?? "Reconnect the Obsidian folder from the picker.",
+            remediation: issue?.remediation ?? "Connect the Obsidian folder from the main screen.",
             isOptional: false,
             isComplete: false
         )

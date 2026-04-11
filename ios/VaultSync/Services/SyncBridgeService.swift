@@ -91,11 +91,6 @@ struct SyncBridgeService {
 
     // MARK: - Phase 3: Status & events
 
-    /// Get connection status of all devices as JSON.
-    static func getConnectionsJSON() -> String {
-        BridgeGetConnectionsJSON()
-    }
-
     /// Get events since the given event ID as JSON.
     static func getEventsSince(lastID: Int) -> String {
         BridgeGetEventsSince(lastID)

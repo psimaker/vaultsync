@@ -89,9 +89,11 @@ struct ContentView: View {
         source: PendingShareAcceptSource
     ) {
         pendingShareInFlight.insert(folder.id)
-        defer { pendingShareInFlight.remove(folder.id) }
 
-        if let err = vaultManager.acceptPendingShare(folder: folder, syncthingManager: syncthingManager) {
+        let err = vaultManager.acceptPendingShare(folder: folder, syncthingManager: syncthingManager)
+        pendingShareInFlight.remove(folder.id)
+
+        if let err {
             let userError = mappedError(err, fallbackTitle: "Could Not Accept Share")
             pendingShareFailures[folder.id] = userError
             if source == .automatic {
@@ -312,7 +314,7 @@ struct ContentView: View {
                         Text(issue.remediation)
                             .font(.caption2)
                             .foregroundStyle(.secondary)
-                        if let url = troubleshootingURL(anchor: vaultManager.needsReconnect ? "bookmark-access-expired" : "obsidian-folder-not-found") {
+                        if let url = SyncUserError.troubleshootingURL(anchor: vaultManager.needsReconnect ? "bookmark-access-expired" : "obsidian-folder-not-found") {
                             Link("Learn how to fix", destination: url)
                                 .font(.caption2)
                         }
@@ -426,40 +428,7 @@ struct ContentView: View {
                 .font(.subheadline)
                 .accessibilityElement(children: .combine)
             }
-
-            if events.isEmpty {
-                Text("Scanning, sync progress, device connections, and errors will appear here.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(Array(events.prefix(3))) { event in
-                    syncActivityPreviewRow(event)
-                }
-            }
         }
-    }
-
-    private func syncActivityPreviewRow(_ event: SyncEventItem) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: event.symbolName)
-                .foregroundStyle(event.isError ? Color.red : Color.blue)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(event.title)
-                    .font(.subheadline.weight(.medium))
-                if !event.detail.isEmpty {
-                    Text(event.detail)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            Spacer()
-            Text(event.date, style: .relative)
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-        }
-        .padding(.vertical, 2)
-        .accessibilityElement(children: .combine)
     }
 
     private func acceptFirstPendingShareFromIssues() {
@@ -563,16 +532,10 @@ struct ContentView: View {
                 }
             }
             Spacer()
-            if isFolderSyncing(status) {
-                ProgressView()
-                    .controlSize(.small)
-                    .accessibilityHidden(true)
-            } else {
-                Circle()
-                    .fill(stateColor(status?.state ?? "unknown"))
-                    .frame(width: 8, height: 8)
-                    .accessibilityHidden(true)
-            }
+            Image(systemName: stateIcon(status?.state ?? "unknown"))
+                .foregroundStyle(stateColor(status?.state ?? "unknown"))
+                .font(.caption2)
+                .accessibilityHidden(true)
         }
         .accessibilityElement(children: .combine)
     }
@@ -580,6 +543,15 @@ struct ContentView: View {
     private func isFolderSyncing(_ status: SyncthingManager.FolderStatusInfo?) -> Bool {
         guard let state = status?.state else { return false }
         return state == "syncing" || state == "scanning"
+    }
+
+    private func stateIcon(_ state: String) -> String {
+        switch state {
+        case "idle": "checkmark.circle.fill"
+        case "scanning", "syncing": "arrow.triangle.2.circlepath"
+        case "error": "exclamationmark.circle.fill"
+        default: "questionmark.circle"
+        }
     }
 
     private func stateColor(_ state: String) -> Color {
@@ -605,16 +577,10 @@ struct ContentView: View {
             Section("Sync Status") {
                 LabeledContent("State") {
                     HStack(spacing: 6) {
-                        if isFolderSyncing(status) {
-                            ProgressView()
-                                .controlSize(.small)
-                                .accessibilityHidden(true)
-                        } else {
-                            Circle()
-                                .fill(stateColor(status?.state ?? "unknown"))
-                                .frame(width: 8, height: 8)
-                                .accessibilityHidden(true)
-                        }
+                        Image(systemName: stateIcon(status?.state ?? "unknown"))
+                            .foregroundStyle(stateColor(status?.state ?? "unknown"))
+                            .font(.caption2)
+                            .accessibilityHidden(true)
                         Text((status?.state ?? "unknown").capitalized)
                     }
                     .accessibilityElement(children: .combine)
@@ -876,37 +842,8 @@ struct ContentView: View {
     }
 
     private func troubleshootingURL(for error: SyncUserError) -> URL? {
-        let details = "\(error.message) \(error.remediation) \(error.technicalDetails ?? "")".lowercased()
-        switch error.category {
-        case .syncthingNotRunning:
-            return troubleshootingURL(anchor: "syncthing-not-running")
-        case .relayUnreachable, .relayProvision, .network:
-            return troubleshootingURL(anchor: "relay-unreachable")
-        case .auth:
-            return troubleshootingURL(anchor: "wrong-syncthing-api-key-in-notify")
-        case .permission, .fileAccess:
-            if details.contains("apns") || details.contains("notification") || details.contains("push") {
-                return troubleshootingURL(anchor: "apns-not-registered")
-            }
-            return troubleshootingURL(anchor: "bookmark-access-expired")
-        case .config, .validation:
-            if details.contains("pending") || details.contains("share") {
-                return troubleshootingURL(anchor: "no-pending-shares-appear")
-            }
-            if details.contains("background") {
-                return troubleshootingURL(anchor: "background-sync-not-working")
-            }
-            return troubleshootingURL(anchor: "obsidian-folder-not-found")
-        case .unknown:
-            return troubleshootingURL(anchor: "background-sync-not-working")
-        }
+        SyncUserError.troubleshootingURL(for: error)
     }
-
-    private func troubleshootingURL(anchor: String) -> URL? {
-        URL(string: "\(Self.troubleshootingBaseURL)#\(anchor)")
-    }
-
-    private static let troubleshootingBaseURL = "https://github.com/psimaker/vaultsync/blob/main/docs/troubleshooting.md"
 }
 
 #Preview {
