@@ -310,6 +310,27 @@ func TestHandleUploadStoresMarkdownUnderRoot(t *testing.T) {
 	}
 }
 
+func TestHandleUploadAcceptsEmptyMarkdown(t *testing.T) {
+	root := t.TempDir()
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/upload?path=brain/notes/empty.md", strings.NewReader(""))
+	req.Header.Set("Authorization", "Bearer token-123")
+	rec := httptest.NewRecorder()
+
+	handleUpload(rec, req, root, "token-123")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+
+	content, err := os.ReadFile(filepath.Join(root, "brain", "notes", "empty.md"))
+	if err != nil {
+		t.Fatalf("read uploaded file: %v", err)
+	}
+	if len(content) != 0 {
+		t.Fatalf("stored content length = %d, want 0", len(content))
+	}
+}
+
 func TestHandleUploadRejectsPathTraversal(t *testing.T) {
 	root := t.TempDir()
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/upload?path=../../evil.md", strings.NewReader("bad"))

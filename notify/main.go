@@ -479,10 +479,6 @@ func handleUpload(w http.ResponseWriter, r *http.Request, rootDir, authToken str
 		http.Error(w, "failed to read upload body", http.StatusBadRequest)
 		return
 	}
-	if len(data) == 0 {
-		http.Error(w, "empty uploads are not allowed", http.StatusBadRequest)
-		return
-	}
 
 	if err := os.WriteFile(targetPath, data, 0o644); err != nil {
 		http.Error(w, "failed to persist upload", http.StatusInternalServerError)
