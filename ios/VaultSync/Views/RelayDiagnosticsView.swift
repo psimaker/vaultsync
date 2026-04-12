@@ -7,8 +7,6 @@ struct RelayDiagnosticsView: View {
 
     @State private var diagnosticsInFlight = false
     @State private var retryProvisioningInFlight = false
-    @State private var backgroundUploadConfig = BackgroundUploadConfiguration.disabled
-    @State private var backgroundUploadSaveMessage: String?
 
     var body: some View {
         List {
@@ -16,7 +14,6 @@ struct RelayDiagnosticsView: View {
             apnsSection
             provisioningSection
             triggerSection
-            backgroundUploadSection
             actionSection
             troubleshootingSection
         }
@@ -26,7 +23,6 @@ struct RelayDiagnosticsView: View {
             if subscriptionManager.relayHealthResult == nil {
                 await runDiagnostics()
             }
-            backgroundUploadConfig = BackgroundUploadService.configuration()
         }
     }
 
@@ -218,51 +214,6 @@ struct RelayDiagnosticsView: View {
             Text("This timestamp is updated when VaultSync receives a silent push from Cloud Relay.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-        }
-    }
-
-    private var backgroundUploadSection: some View {
-        Section("Background Uploads") {
-            Toggle("Enable direct iPhone uploads", isOn: $backgroundUploadConfig.isEnabled)
-
-            TextField("Upload endpoint URL", text: $backgroundUploadConfig.endpointURL)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .keyboardType(.URL)
-
-            SecureField("Upload auth token", text: $backgroundUploadConfig.authToken)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-
-            Text("Uses a background URLSession upload to send changed Markdown files directly to your homeserver during relay-triggered background wakes. This improves iPhone to server sync, but timing still depends on iOS background delivery.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            if let backgroundUploadSaveMessage {
-                Text(backgroundUploadSaveMessage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Button("Save Upload Settings") {
-                let sanitized = BackgroundUploadConfiguration(
-                    isEnabled: backgroundUploadConfig.isEnabled,
-                    endpointURL: backgroundUploadConfig.trimmedEndpointURL,
-                    authToken: backgroundUploadConfig.trimmedAuthToken
-                )
-                BackgroundUploadService.saveConfiguration(sanitized)
-                backgroundUploadConfig = sanitized
-                backgroundUploadSaveMessage = sanitized.isValid
-                    ? "Background upload settings saved."
-                    : "Saved, but background uploads remain disabled until URL and token are set."
-            }
-
-            Button("Disable Background Uploads") {
-                BackgroundUploadService.clearConfiguration()
-                backgroundUploadConfig = .disabled
-                backgroundUploadSaveMessage = "Background uploads disabled."
-            }
-            .foregroundStyle(.red)
         }
     }
 

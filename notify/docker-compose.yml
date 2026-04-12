@@ -16,13 +16,7 @@ services:
       SYNCTHING_API_KEY: ${SYNCTHING_API_KEY}
       RELAY_URL: ${RELAY_URL:-https://relay.vaultsync.eu}
       DEBOUNCE_SECONDS: ${DEBOUNCE_SECONDS:-5}
-      POKE_INTERVAL_MINUTES: ${POKE_INTERVAL_MINUTES:-0}
-      UPLOAD_LISTEN_ADDR: ${UPLOAD_LISTEN_ADDR:-}
-      UPLOAD_ROOT_DIR: ${UPLOAD_ROOT_DIR:-}
-      UPLOAD_AUTH_TOKEN: ${UPLOAD_AUTH_TOKEN:-}
       WATCHED_FOLDERS: ${WATCHED_FOLDERS:-}
-    ports:
-      - "${UPLOAD_PORT_PUBLISH:-127.0.0.1:8091:8091}"
     volumes:
       - syncthing-data:/var/syncthing
     restart: unless-stopped

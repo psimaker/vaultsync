@@ -12,7 +12,6 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     ) -> Bool {
         application.registerForRemoteNotifications()
         logger.info("Registered for remote notifications")
-        _ = BackgroundUploadService.shared
         Task { await refreshNotificationAuthorizationState() }
         return true
     }
@@ -52,9 +51,6 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         RelayTriggerStore.markReceived()
 
         Task {
-            let uploadSummary = await BackgroundUploadService.shared.enqueueChangedMarkdownFilesIfConfigured(trigger: "silent-push")
-            logger.info("Background upload lane result: \(uploadSummary.detail, privacy: .public)")
-
             let result = await BackgroundSyncService.performBackgroundSync(
                 reason: "silent-push"
             )
@@ -69,17 +65,6 @@ class AppDelegate: NSObject, UIApplicationDelegate {
                 completionHandler(.failed)
             }
         }
-    }
-
-    func application(
-        _ application: UIApplication,
-        handleEventsForBackgroundURLSession identifier: String,
-        completionHandler: @escaping () -> Void
-    ) {
-        BackgroundUploadService.shared.handleEventsForBackgroundURLSession(
-            identifier: identifier,
-            completionHandler: completionHandler
-        )
     }
 
     // MARK: - Private

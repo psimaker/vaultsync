@@ -211,7 +211,6 @@ run_builtin_doctor_if_available() {
 			SYNCTHING_API_KEY="$SYNCTHING_API_KEY" \
 			RELAY_URL="$RELAY_URL" \
 			DEBOUNCE_SECONDS="$DEBOUNCE_SECONDS" \
-			POKE_INTERVAL_MINUTES="$POKE_INTERVAL_MINUTES" \
 			WATCHED_FOLDERS="$WATCHED_FOLDERS" \
 			./vaultsync-notify --doctor
 		)
@@ -225,7 +224,6 @@ run_builtin_doctor_if_available() {
 			SYNCTHING_API_KEY="$SYNCTHING_API_KEY" \
 			RELAY_URL="$RELAY_URL" \
 			DEBOUNCE_SECONDS="$DEBOUNCE_SECONDS" \
-			POKE_INTERVAL_MINUTES="$POKE_INTERVAL_MINUTES" \
 			WATCHED_FOLDERS="$WATCHED_FOLDERS" \
 			go run . --doctor
 		)
@@ -233,7 +231,7 @@ run_builtin_doctor_if_available() {
 	fi
 
 	warn "Go toolchain or local vaultsync-notify binary not found; skipping built-in doctor command."
-	warn "Run this later from notify/: SYNCTHING_API_URL=... SYNCTHING_API_KEY=... RELAY_URL=... POKE_INTERVAL_MINUTES=... ./vaultsync-notify --doctor"
+	warn "Run this later from notify/: SYNCTHING_API_URL=... SYNCTHING_API_KEY=... RELAY_URL=... ./vaultsync-notify --doctor"
 	return 0
 }
 
@@ -265,7 +263,6 @@ SYNCTHING_API_URL="${SYNCTHING_API_URL:-$detected_api_url}"
 SYNCTHING_API_KEY="${SYNCTHING_API_KEY:-$detected_api_key}"
 RELAY_URL="${RELAY_URL:-https://relay.vaultsync.eu}"
 DEBOUNCE_SECONDS="${DEBOUNCE_SECONDS:-5}"
-POKE_INTERVAL_MINUTES="${POKE_INTERVAL_MINUTES:-0}"
 WATCHED_FOLDERS="${WATCHED_FOLDERS:-}"
 
 if [ -t 0 ]; then
@@ -283,7 +280,6 @@ if [ -t 0 ]; then
 
 	RELAY_URL=$(prompt_default "Relay URL" "$RELAY_URL")
 	DEBOUNCE_SECONDS=$(prompt_default "Debounce seconds" "$DEBOUNCE_SECONDS")
-	POKE_INTERVAL_MINUTES=$(prompt_default "Periodic poke interval minutes (0 = disabled)" "$POKE_INTERVAL_MINUTES")
 	WATCHED_FOLDERS=$(prompt_default "Watched folder IDs (comma-separated, blank = all)" "$WATCHED_FOLDERS")
 fi
 
@@ -306,7 +302,6 @@ SYNCTHING_API_URL=$SYNCTHING_API_URL
 SYNCTHING_API_KEY=$SYNCTHING_API_KEY
 RELAY_URL=$RELAY_URL
 DEBOUNCE_SECONDS=$DEBOUNCE_SECONDS
-POKE_INTERVAL_MINUTES=$POKE_INTERVAL_MINUTES
 WATCHED_FOLDERS=$WATCHED_FOLDERS
 EOF
 chmod 600 "$ENV_FILE" 2>/dev/null || true

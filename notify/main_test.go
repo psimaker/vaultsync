@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -38,11 +36,7 @@ func TestLoadConfigParsesBootstrapValues(t *testing.T) {
 	t.Setenv("SYNCTHING_API_KEY", "test-key")
 	t.Setenv("RELAY_URL", "https://relay.example.com")
 	t.Setenv("DEBOUNCE_SECONDS", "7")
-	t.Setenv("POKE_INTERVAL_MINUTES", "15")
 	t.Setenv("WATCHED_FOLDERS", " vault-b, vault-a ,,vault-a ")
-	t.Setenv("UPLOAD_LISTEN_ADDR", ":8081")
-	t.Setenv("UPLOAD_ROOT_DIR", "/tmp/vaultsync-upload")
-	t.Setenv("UPLOAD_AUTH_TOKEN", "secret")
 
 	cfg, err := loadConfig()
 	if err != nil {
@@ -52,9 +46,6 @@ func TestLoadConfigParsesBootstrapValues(t *testing.T) {
 	if cfg.DebounceSeconds != 7 {
 		t.Fatalf("DebounceSeconds = %d, want 7", cfg.DebounceSeconds)
 	}
-	if cfg.PokeIntervalMin != 15 {
-		t.Fatalf("PokeIntervalMin = %d, want 15", cfg.PokeIntervalMin)
-	}
 	if cfg.WatchedFolders == nil {
 		t.Fatal("WatchedFolders should not be nil when WATCHED_FOLDERS is set")
 	}
@@ -63,9 +54,6 @@ func TestLoadConfigParsesBootstrapValues(t *testing.T) {
 	}
 	if len(cfg.WatchedFolders) != 2 {
 		t.Fatalf("expected duplicate/empty watched IDs to be normalized, got %+v", cfg.WatchedFolders)
-	}
-	if cfg.UploadListenAddr != ":8081" || cfg.UploadRootDir != "/tmp/vaultsync-upload" || cfg.UploadAuthToken != "secret" {
-		t.Fatalf("upload config parsed incorrectly: %+v", cfg)
 	}
 }
 
@@ -85,36 +73,6 @@ func TestLoadConfigRejectsInvalidDebounceSeconds(t *testing.T) {
 	}
 }
 
-func TestLoadConfigRejectsInvalidPokeIntervalMinutes(t *testing.T) {
-	t.Setenv("SYNCTHING_API_URL", "http://localhost:8384")
-	t.Setenv("SYNCTHING_API_KEY", "test-key")
-	t.Setenv("RELAY_URL", "https://relay.example.com")
-	t.Setenv("DEBOUNCE_SECONDS", "5")
-	t.Setenv("POKE_INTERVAL_MINUTES", "-1")
-	t.Setenv("WATCHED_FOLDERS", "")
-
-	_, err := loadConfig()
-	if err == nil {
-		t.Fatal("expected POKE_INTERVAL_MINUTES validation error")
-	}
-	if !strings.Contains(err.Error(), "POKE_INTERVAL_MINUTES") {
-		t.Fatalf("unexpected error message: %v", err)
-	}
-}
-
-func TestLoadConfigRequiresCompleteUploadEndpointConfiguration(t *testing.T) {
-	t.Setenv("SYNCTHING_API_URL", "http://localhost:8384")
-	t.Setenv("SYNCTHING_API_KEY", "test-key")
-	t.Setenv("RELAY_URL", "https://relay.example.com")
-	t.Setenv("UPLOAD_LISTEN_ADDR", ":8090")
-	t.Setenv("UPLOAD_ROOT_DIR", "")
-	t.Setenv("UPLOAD_AUTH_TOKEN", "")
-
-	_, err := loadConfig()
-	if err == nil || !strings.Contains(err.Error(), "UPLOAD_LISTEN_ADDR") {
-		t.Fatalf("expected upload endpoint config error, got %v", err)
-	}
-}
 
 func TestRunHealthcheckSkipsTriggerProbe(t *testing.T) {
 	var relayTriggerCalls atomic.Int32
@@ -288,74 +246,6 @@ func TestTriggerCandidateForEventIgnoresSettledFolderCompletion(t *testing.T) {
 	}
 }
 
-func TestHandleUploadStoresMarkdownUnderRoot(t *testing.T) {
-	root := t.TempDir()
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/upload?path=brain/notes/test.md", strings.NewReader("# hello"))
-	req.Header.Set("Authorization", "Bearer token-123")
-	req.Header.Set("X-VaultSync-Device-ID", "DEVICE-123")
-	rec := httptest.NewRecorder()
-
-	handleUpload(rec, req, root, "token-123")
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
-	}
-
-	content, err := os.ReadFile(filepath.Join(root, "brain", "notes", "test.md"))
-	if err != nil {
-		t.Fatalf("read uploaded file: %v", err)
-	}
-	if string(content) != "# hello" {
-		t.Fatalf("stored content = %q", string(content))
-	}
-}
-
-func TestHandleUploadAcceptsEmptyMarkdown(t *testing.T) {
-	root := t.TempDir()
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/upload?path=brain/notes/empty.md", strings.NewReader(""))
-	req.Header.Set("Authorization", "Bearer token-123")
-	rec := httptest.NewRecorder()
-
-	handleUpload(rec, req, root, "token-123")
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
-	}
-
-	content, err := os.ReadFile(filepath.Join(root, "brain", "notes", "empty.md"))
-	if err != nil {
-		t.Fatalf("read uploaded file: %v", err)
-	}
-	if len(content) != 0 {
-		t.Fatalf("stored content length = %d, want 0", len(content))
-	}
-}
-
-func TestHandleUploadRejectsPathTraversal(t *testing.T) {
-	root := t.TempDir()
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/upload?path=../../evil.md", strings.NewReader("bad"))
-	req.Header.Set("Authorization", "Bearer token-123")
-	rec := httptest.NewRecorder()
-
-	handleUpload(rec, req, root, "token-123")
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", rec.Code)
-	}
-}
-
-func TestHandleUploadRequiresAuthorization(t *testing.T) {
-	root := t.TempDir()
-	req := httptest.NewRequest(http.MethodPut, "/api/v1/upload?path=brain/test.md", strings.NewReader("hello"))
-	rec := httptest.NewRecorder()
-
-	handleUpload(rec, req, root, "token-123")
-
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", rec.Code)
-	}
-}
-
 func TestTriggerCandidateForEventHonorsWatchedFolders(t *testing.T) {
 	t.Parallel()
 
@@ -393,25 +283,5 @@ func TestMarkTriggeredCopiesPendingMarkers(t *testing.T) {
 	}
 	if got := lastTriggered["vault-b"]; got != "folder-completion:PEER:3:1:7" {
 		t.Fatalf("vault-b marker = %q, want updated marker", got)
-	}
-}
-
-func TestShouldSendPeriodicPoke(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, 4, 12, 12, 0, 0, 0, time.UTC)
-	interval := 15 * time.Minute
-
-	if !shouldSendPeriodicPoke(now, interval, time.Time{}, 0) {
-		t.Fatal("expected zero last-delivery time to allow periodic poke")
-	}
-	if shouldSendPeriodicPoke(now, interval, now.Add(-5*time.Minute), 0) {
-		t.Fatal("expected recent successful trigger to suppress periodic poke")
-	}
-	if shouldSendPeriodicPoke(now, interval, now.Add(-20*time.Minute), 1) {
-		t.Fatal("expected pending change-trigger work to suppress periodic poke")
-	}
-	if !shouldSendPeriodicPoke(now, interval, now.Add(-20*time.Minute), 0) {
-		t.Fatal("expected stale last trigger with no pending work to allow periodic poke")
 	}
 }
