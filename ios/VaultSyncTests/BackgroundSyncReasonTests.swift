@@ -38,4 +38,27 @@ struct BackgroundSyncReasonTests {
         #expect(BackgroundSyncService.SyncResult.notIdleBeforeDeadline.issueTitle == "Background Sync Timed Out")
         #expect(BackgroundSyncService.SyncResult.noBookmarkAccess.remediation.contains("Reconnect your Obsidian folder"))
     }
+
+    @Test("Silent push restart requires real sync progress before success")
+    func silentPushRestartRequiresMeaningfulProgress() {
+        var tracker = BackgroundSyncService.SilentPushProgressTracker(lastEventID: 10)
+        tracker.requiresMeaningfulProgress = true
+
+        let nonProgressSnapshot = tracker.observe([
+            .init(id: 11, type: "DeviceConnected", data: nil),
+            .init(id: 12, type: "StateChanged", data: ["from": "idle", "to": "idle"]),
+        ])
+
+        #expect(nonProgressSnapshot.requiresMeaningfulProgress)
+        #expect(!nonProgressSnapshot.sawMeaningfulProgress)
+        #expect(nonProgressSnapshot.lastEventID == 12)
+
+        let progressSnapshot = tracker.observe([
+            .init(id: 13, type: "RemoteIndexUpdated", data: nil),
+        ])
+
+        #expect(!progressSnapshot.requiresMeaningfulProgress)
+        #expect(progressSnapshot.sawMeaningfulProgress)
+        #expect(progressSnapshot.lastEventID == 13)
+    }
 }

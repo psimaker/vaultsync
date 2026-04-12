@@ -355,6 +355,14 @@ enum BackgroundSyncService {
             )
         }
 
+        var progressTracker = reason == "silent-push"
+            ? SilentPushProgressTracker(lastEventID: latestBridgeEventID())
+            : nil
+        if let progressTracker {
+            trace("Silent push progress tracking started at event id \(progressTracker.lastEventID).")
+        }
+        var forcedRestartPerformed = false
+
         if reason == "silent-push" {
             let sawWakeEvidence = await waitForSilentPushWakeEvidence(maxWait: 4)
             trace("Silent push wake evidence: \(sawWakeEvidence).")
@@ -376,7 +384,13 @@ enum BackgroundSyncService {
 
                 managedURLs = restart.managedURLs
                 ownsLifecycle = restart.ownsLifecycle
+                forcedRestartPerformed = true
+                progressTracker?.requiresMeaningfulProgress = true
+                progressTracker?.lastEventID = latestBridgeEventID()
                 trace("Forced restart succeeded. Background now owns lifecycle=\(ownsLifecycle).")
+                if let progressTracker {
+                    trace("Silent push progress tracking reset after forced restart at event id \(progressTracker.lastEventID).")
+                }
 
                 let recoveredFolders = await waitForAnyFolders(maxWait: 3)
                 trace("Post-restart folder availability: \(recoveredFolders).")
@@ -393,7 +407,9 @@ enum BackgroundSyncService {
             }
         }
 
-        if allFoldersIdle() {
+        _ = progressTracker?.poll()
+
+        if allFoldersIdle() && !(progressTracker?.requiresMeaningfulProgress == true) {
             trace("Folders already idle after setup checks.")
             if ownsLifecycle {
                 cleanupBackgroundManaged(managedURLs)
@@ -406,10 +422,25 @@ enum BackgroundSyncService {
         while SyncBridgeService.isRunning() && Date() < deadline {
             if Task.isCancelled { break }
             try? await Task.sleep(for: .milliseconds(500))
-            if allFoldersIdle() { break }
+            let idle = allFoldersIdle()
+            if var tracker = progressTracker {
+                let snapshot = tracker.poll()
+                progressTrackerTraceIfNeeded(snapshot)
+                if idle && !snapshot.requiresMeaningfulProgress {
+                    progressTracker = tracker
+                    break
+                }
+                progressTracker = tracker
+            } else if idle {
+                break
+            }
         }
 
         let idle = allFoldersIdle()
+        let progressSnapshot = progressTracker?.poll()
+        if let progressSnapshot {
+            progressTrackerTraceIfNeeded(progressSnapshot)
+        }
         trace("Deadline reached or idle observed. idle=\(idle).")
         if idle {
             await notifyConflictsIfAny()
@@ -420,8 +451,18 @@ enum BackgroundSyncService {
             cleanupBackgroundManaged(managedURLs)
         }
 
-        let result: SyncResult = idle ? .synced : .notIdleBeforeDeadline
-        let detail = idle ? nil : "Sync did not reach idle before \(Int(maxDuration))s deadline."
+        let result: SyncResult
+        let detail: String?
+        if let progressSnapshot, forcedRestartPerformed, progressSnapshot.requiresMeaningfulProgress {
+            result = .failed
+            detail = "Silent push restarted Syncthing, but no real sync progress was observed before the app returned to idle."
+        } else if idle {
+            result = .synced
+            detail = nil
+        } else {
+            result = .notIdleBeforeDeadline
+            detail = "Sync did not reach idle before \(Int(maxDuration))s deadline."
+        }
         return completeSync(reason: reason, result: result, detail: detail)
     }
 
@@ -737,6 +778,24 @@ enum BackgroundSyncService {
         BackgroundDebugStore().record(area: "background", message: message)
     }
 
+    private static func latestBridgeEventID() -> Int {
+        let snapshot = decodeBridgeEvents(from: SyncBridgeService.getEventsSince(lastID: 0))
+        return snapshot.last?.id ?? 0
+    }
+
+    private static func decodeBridgeEvents(from json: String) -> [BridgeEventStub] {
+        guard let data = json.data(using: .utf8),
+              let events = try? JSONDecoder().decode([BridgeEventStub].self, from: data) else {
+            return []
+        }
+        return events
+    }
+
+    private static func progressTrackerTraceIfNeeded(_ snapshot: SilentPushProgressTracker.ProgressSnapshot) {
+        guard let summary = snapshot.summaryForTrace else { return }
+        trace(summary)
+    }
+
     // MARK: - Stub types for JSON decoding
 
     private struct FolderStub: Decodable {
@@ -769,5 +828,68 @@ enum BackgroundSyncService {
 
     private struct ConflictStub: Decodable {
         let conflictPath: String
+    }
+
+    struct SilentPushProgressTracker: Sendable {
+        struct ProgressSnapshot: Sendable {
+            let lastEventID: Int
+            let requiresMeaningfulProgress: Bool
+            let sawMeaningfulProgress: Bool
+            let summaryForTrace: String?
+        }
+
+        var lastEventID: Int
+        var requiresMeaningfulProgress = false
+        private(set) var sawMeaningfulProgress = false
+
+        mutating func poll() -> ProgressSnapshot {
+            let events = BackgroundSyncService.decodeBridgeEvents(
+                from: SyncBridgeService.getEventsSince(lastID: lastEventID)
+            )
+            return observe(events)
+        }
+
+        mutating func observe(_ events: [BridgeEventStub]) -> ProgressSnapshot {
+            var summary: String?
+            for event in events {
+                if event.id > lastEventID {
+                    lastEventID = event.id
+                }
+                if !sawMeaningfulProgress && event.indicatesMeaningfulProgress {
+                    sawMeaningfulProgress = true
+                    requiresMeaningfulProgress = false
+                    summary = "Observed sync progress via \(event.type) (event id \(event.id))."
+                }
+            }
+
+            return ProgressSnapshot(
+                lastEventID: lastEventID,
+                requiresMeaningfulProgress: requiresMeaningfulProgress,
+                sawMeaningfulProgress: sawMeaningfulProgress,
+                summaryForTrace: summary
+            )
+        }
+    }
+
+    struct BridgeEventStub: Decodable, Sendable {
+        let id: Int
+        let type: String
+        let data: [String: String]?
+
+        var indicatesMeaningfulProgress: Bool {
+            switch type {
+            case "RemoteIndexUpdated", "LocalIndexUpdated", "ItemFinished":
+                return true
+            case "StateChanged":
+                let toState = data?["to"]?.lowercased()
+                let fromState = data?["from"]?.lowercased()
+                return toState == "syncing"
+                    || fromState == "syncing"
+                    || toState == "scanning"
+                    || fromState == "scanning"
+            default:
+                return false
+            }
+        }
     }
 }
