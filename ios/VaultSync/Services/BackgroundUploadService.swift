@@ -27,6 +27,8 @@ final class BackgroundUploadService: NSObject {
     private static let pendingDefaultsKey = "background-upload-pending.v1"
     private static let sessionIdentifier = "eu.vaultsync.app.background-upload"
     private static let taskEventsDidChangeNotification = Notification.Name("BackgroundUploadTaskEventsDidChange")
+    private static let candidateWindow: TimeInterval = 10 * 60
+    private static let stabilizationDelay: Duration = .seconds(2)
 
     struct EnqueueSummary: Sendable {
         let isConfigured: Bool
@@ -89,6 +91,7 @@ final class BackgroundUploadService: NSObject {
     }
 
     func enqueueChangedMarkdownFilesIfConfigured(trigger: String) async -> EnqueueSummary {
+        let scanStartedAt = Date()
         let configuration = Self.configuration()
         guard configuration.isValid, let endpointURL = URL(string: configuration.trimmedEndpointURL) else {
             return EnqueueSummary(
@@ -121,15 +124,39 @@ final class BackgroundUploadService: NSObject {
         defer { BookmarkService.stopAccessing(url: rootURL) }
 
         let previousManifest = loadManifest()
-        let snapshots = detectMarkdownSnapshots(rootURL: rootURL)
-        let changed = snapshots.filter { snapshot in
-            previousManifest[snapshot.relativePath] != snapshot
+        let firstPass = detectMarkdownSnapshots(rootURL: rootURL)
+        traceScanPass(label: "pass-1", rootURL: rootURL, snapshots: firstPass)
+
+        try? await Task.sleep(for: Self.stabilizationDelay)
+
+        let secondPass = detectMarkdownSnapshots(rootURL: rootURL)
+        traceScanPass(label: "pass-2", rootURL: rootURL, snapshots: secondPass)
+
+        let changed = determineChangedCandidates(
+            baseline: previousManifest,
+            firstPass: firstPass,
+            secondPass: secondPass,
+            scanStartedAt: scanStartedAt
+        )
+        traceCandidates(changed, label: "changed-candidates")
+
+        if previousManifest.isEmpty {
+            saveManifest(dictionary(for: secondPass))
+            if changed.isEmpty {
+                return EnqueueSummary(
+                    isConfigured: true,
+                    scannedFiles: secondPass.count,
+                    changedFiles: 0,
+                    enqueuedUploads: 0,
+                    detail: "Upload manifest primed from \(secondPass.count) markdown file(s); no recent candidates yet."
+                )
+            }
         }
 
         guard !changed.isEmpty else {
             return EnqueueSummary(
                 isConfigured: true,
-                scannedFiles: snapshots.count,
+                scannedFiles: secondPass.count,
                 changedFiles: 0,
                 enqueuedUploads: 0,
                 detail: "No changed markdown files detected for background upload."
@@ -167,6 +194,10 @@ final class BackgroundUploadService: NSObject {
             request.setValue(trigger, forHTTPHeaderField: "X-VaultSync-Trigger")
 
             let task = session.uploadTask(with: request, fromFile: stagedURL)
+            BackgroundDebugStore().record(
+                area: "upload",
+                message: "Queued upload task \(task.taskIdentifier) for \(snapshot.relativePath)."
+            )
             pending[String(task.taskIdentifier)] = PendingUpload(
                 relativePath: snapshot.relativePath,
                 modifiedAt: snapshot.modifiedAt,
@@ -180,7 +211,7 @@ final class BackgroundUploadService: NSObject {
         savePendingUploads(pending)
         return EnqueueSummary(
             isConfigured: true,
-            scannedFiles: snapshots.count,
+            scannedFiles: secondPass.count,
             changedFiles: changed.count,
             enqueuedUploads: enqueued,
             detail: "Queued \(enqueued) background upload(s) from \(changed.count) changed markdown file(s)."
@@ -215,6 +246,70 @@ final class BackgroundUploadService: NSObject {
         return snapshots
     }
 
+    private func determineChangedCandidates(
+        baseline: [String: FileSnapshot],
+        firstPass: [FileSnapshot],
+        secondPass: [FileSnapshot],
+        scanStartedAt: Date
+    ) -> [FileSnapshot] {
+        let firstByPath = dictionary(for: firstPass)
+        let recentThreshold = scanStartedAt.addingTimeInterval(-Self.candidateWindow)
+
+        let candidates = secondPass.filter { snapshot in
+            let baselineSnapshot = baseline[snapshot.relativePath]
+            let firstPassSnapshot = firstByPath[snapshot.relativePath]
+            let changedSinceBaseline = baselineSnapshot != snapshot
+            let changedDuringStabilization = firstPassSnapshot != snapshot
+            let isRecent = snapshot.modifiedAt >= recentThreshold
+
+            if baseline.isEmpty {
+                return isRecent
+            }
+
+            return changedSinceBaseline || changedDuringStabilization || isRecent
+        }
+
+        return candidates.sorted { lhs, rhs in
+            if lhs.modifiedAt == rhs.modifiedAt {
+                return lhs.relativePath < rhs.relativePath
+            }
+            return lhs.modifiedAt > rhs.modifiedAt
+        }
+    }
+
+    private func dictionary(for snapshots: [FileSnapshot]) -> [String: FileSnapshot] {
+        Dictionary(uniqueKeysWithValues: snapshots.map { ($0.relativePath, $0) })
+    }
+
+    private func traceScanPass(label: String, rootURL: URL, snapshots: [FileSnapshot]) {
+        let recent = snapshots
+            .sorted { $0.modifiedAt > $1.modifiedAt }
+            .prefix(8)
+            .map {
+                "\($0.relativePath) [mtime=\(iso8601String(from: $0.modifiedAt)), size=\($0.size)]"
+            }
+            .joined(separator: " | ")
+
+        BackgroundDebugStore().record(
+            area: "upload",
+            message: "Scan \(label): root=\(rootURL.lastPathComponent), files=\(snapshots.count), recent=\(recent.isEmpty ? "none" : recent)"
+        )
+    }
+
+    private func traceCandidates(_ snapshots: [FileSnapshot], label: String) {
+        let summary = snapshots
+            .prefix(8)
+            .map {
+                "\($0.relativePath) [mtime=\(iso8601String(from: $0.modifiedAt)), size=\($0.size)]"
+            }
+            .joined(separator: " | ")
+
+        BackgroundDebugStore().record(
+            area: "upload",
+            message: "\(label): count=\(snapshots.count), files=\(summary.isEmpty ? "none" : summary)"
+        )
+    }
+
     private func stagedUploadsRoot() -> URL {
         FileManager.default.temporaryDirectory.appendingPathComponent("background-upload-staging", isDirectory: true)
     }
@@ -244,6 +339,12 @@ final class BackgroundUploadService: NSObject {
         guard let data = try? JSONEncoder().encode(pending) else { return }
         UserDefaults.standard.set(data, forKey: Self.pendingDefaultsKey)
         NotificationCenter.default.post(name: Self.taskEventsDidChangeNotification, object: nil)
+    }
+
+    private func iso8601String(from date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.string(from: date)
     }
 }
 
