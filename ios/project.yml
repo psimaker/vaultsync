@@ -1,10 +1,22 @@
 name: VaultSync
 options:
   bundleIdPrefix: eu.vaultsync
+  developmentLanguage: en
   deploymentTarget:
     iOS: "26.0"
+  useBaseInternationalization: true
   xcodeVersion: "26.4"
   generateEmptyDirectories: true
+  postGenCommand: |
+    ruby -e '
+      path = "VaultSync.xcodeproj/project.pbxproj"
+      text = File.read(path)
+      text.sub!(
+        /knownRegions = \(\n\s*Base,\n\s*en,\n\s*\);/,
+        "knownRegions = (\n\t\t\t\tBase,\n\t\t\t\tde,\n\t\t\t\ten,\n\t\t\t\t\"zh-Hans\",\n\t\t\t);"
+      )
+      File.write(path, text)
+    '
 
 settings:
   base:

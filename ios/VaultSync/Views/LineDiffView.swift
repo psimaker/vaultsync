@@ -131,14 +131,14 @@ struct LineDiffView: View {
     }
 
     private func accessibilityDescription(for line: DiffLine) -> String {
-        let text = line.text.isEmpty ? "Empty line" : line.text
+        let text = line.text.isEmpty ? L10n.tr("Empty line") : line.text
         switch line.type {
         case .unchanged:
-            return "Unchanged line. \(text)"
+            return L10n.fmt("Unchanged line. %@", text)
         case .added:
-            return "Added line. \(text)"
+            return L10n.fmt("Added line. %@", text)
         case .removed:
-            return "Removed line. \(text)"
+            return L10n.fmt("Removed line. %@", text)
         }
     }
 }

@@ -11,7 +11,7 @@ struct SetupChecklistView: View {
             ProgressView(value: viewModel.completionProgress)
                 .tint(viewModel.isReadyToFinish ? .green : .orange)
                 .accessibilityLabel("Setup checklist progress")
-                .accessibilityValue("\(viewModel.completedRequiredCount) of \(viewModel.totalRequiredCount) required steps complete")
+                .accessibilityValue(L10n.fmt("%d of %d required steps complete", viewModel.completedRequiredCount, viewModel.totalRequiredCount))
 
             ForEach(viewModel.items) { item in
                 checklistRow(item)
@@ -145,8 +145,8 @@ struct SetupChecklistView: View {
     }
 
     private func statusText(for item: SetupChecklistViewModel.ChecklistItem) -> String {
-        if item.isComplete { return "Complete" }
-        if item.isOptional { return "Optional" }
-        return "Required"
+        if item.isComplete { return L10n.tr("Complete") }
+        if item.isOptional { return L10n.tr("Optional") }
+        return L10n.tr("Required")
     }
 }

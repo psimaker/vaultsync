@@ -216,7 +216,7 @@ final class SyncthingManager {
         guard !folders.isEmpty else { return nil }
         guard !isAnySyncing else { return nil }
         guard let lastSyncTime else {
-            return "No successful sync has been recorded for your vaults yet."
+            return L10n.tr("No successful sync has been recorded for your vaults yet.")
         }
 
         let age = Date().timeIntervalSince(lastSyncTime)
@@ -224,9 +224,18 @@ final class SyncthingManager {
         let staleHours = Int(age / 3600)
         if staleHours >= 24 {
             let staleDays = max(1, staleHours / 24)
-            return "Last successful sync was more than \(staleDays) day\(staleDays == 1 ? "" : "s") ago."
+            return L10n.fmt(
+                "Last successful sync was more than %d %@ ago.",
+                staleDays,
+                staleDays == 1 ? L10n.tr("day") : L10n.tr("days")
+            )
         }
-        return "Last successful sync was about \(max(1, staleHours)) hour\(staleHours == 1 ? "" : "s") ago."
+        let hours = max(1, staleHours)
+        return L10n.fmt(
+            "Last successful sync was about %d %@ ago.",
+            hours,
+            hours == 1 ? L10n.tr("hour") : L10n.tr("hours")
+        )
     }
 
     var folderIDsWithErrors: [String] {
@@ -260,9 +269,9 @@ final class SyncthingManager {
             issues.append(
                 SyncIssueItem(
                     kind: .folderErrors,
-                    title: count == 1 ? "1 Vault Has Sync Errors" : "\(count) Vaults Have Sync Errors",
-                    message: "At least one folder is currently in an error state.",
-                    remediation: "Rescan failed vaults, then verify folder access and permissions.",
+                    title: count == 1 ? L10n.tr("1 Vault Has Sync Errors") : L10n.fmt("%d Vaults Have Sync Errors", count),
+                    message: L10n.tr("At least one folder is currently in an error state."),
+                    remediation: L10n.tr("Rescan failed vaults, then verify folder access and permissions."),
                     severity: .critical,
                     count: count,
                     folderID: folderIDsWithErrors.first,
@@ -276,9 +285,9 @@ final class SyncthingManager {
             issues.append(
                 SyncIssueItem(
                     kind: .disconnectedPeers,
-                    title: count == 1 ? "1 Required Device Is Disconnected" : "\(count) Required Devices Are Disconnected",
-                    message: "Some shared peers are offline or unreachable right now.",
-                    remediation: "Reconnect devices or add missing peers to restore continuous sync.",
+                    title: count == 1 ? L10n.tr("1 Required Device Is Disconnected") : L10n.fmt("%d Required Devices Are Disconnected", count),
+                    message: L10n.tr("Some shared peers are offline or unreachable right now."),
+                    remediation: L10n.tr("Reconnect devices or add missing peers to restore continuous sync."),
                     severity: .warning,
                     count: count,
                     folderID: nil,
@@ -292,9 +301,9 @@ final class SyncthingManager {
             issues.append(
                 SyncIssueItem(
                     kind: .pendingShares,
-                    title: pendingCount == 1 ? "1 Pending Share Needs Attention" : "\(pendingCount) Pending Shares Need Attention",
-                    message: "Pending shares are waiting to be accepted before sync can start.",
-                    remediation: "Accept a share to activate syncing for that vault.",
+                    title: pendingCount == 1 ? L10n.tr("1 Pending Share Needs Attention") : L10n.fmt("%d Pending Shares Need Attention", pendingCount),
+                    message: L10n.tr("Pending shares are waiting to be accepted before sync can start."),
+                    remediation: L10n.tr("Accept a share to activate syncing for that vault."),
                     severity: .warning,
                     count: pendingCount,
                     folderID: actionablePendingFolders.first?.id,
@@ -312,9 +321,9 @@ final class SyncthingManager {
             issues.append(
                 SyncIssueItem(
                     kind: .conflicts,
-                    title: unresolvedConflictCount == 1 ? "1 Conflict Needs Resolution" : "\(unresolvedConflictCount) Conflicts Need Resolution",
-                    message: "Conflicts mean multiple versions exist and need a manual decision.",
-                    remediation: "Open conflicts and choose which version to keep.",
+                    title: unresolvedConflictCount == 1 ? L10n.tr("1 Conflict Needs Resolution") : L10n.fmt("%d Conflicts Need Resolution", unresolvedConflictCount),
+                    message: L10n.tr("Conflicts mean multiple versions exist and need a manual decision."),
+                    remediation: L10n.tr("Open conflicts and choose which version to keep."),
                     severity: .warning,
                     count: unresolvedConflictCount,
                     folderID: firstFolderID,
@@ -327,9 +336,9 @@ final class SyncthingManager {
             issues.append(
                 SyncIssueItem(
                     kind: .staleSync,
-                    title: "Sync Activity Looks Stale",
+                    title: L10n.tr("Sync Activity Looks Stale"),
                     message: staleSyncWarning,
-                    remediation: "Trigger a vault rescan to refresh sync state.",
+                    remediation: L10n.tr("Trigger a vault rescan to refresh sync state."),
                     severity: .warning,
                     count: 1,
                     folderID: nil,
@@ -359,13 +368,13 @@ final class SyncthingManager {
             return nil
         }
 
-        let trigger = outcome.triggerReason.replacingOccurrences(of: "-", with: " ").capitalized
+        let trigger = localizedTriggerReason(outcome.triggerReason)
         let detail = outcome.detail ?? outcome.result.issueMessage
 
         return SyncIssueItem(
             kind: .backgroundSync,
             title: outcome.result.issueTitle,
-            message: "\(detail) (Trigger: \(trigger))",
+            message: L10n.fmt("%@ (Trigger: %@)", detail, trigger),
             remediation: outcome.result.remediation,
             severity: severity,
             count: 1,
@@ -387,7 +396,7 @@ final class SyncthingManager {
             BackgroundSyncService.lifecycleLock.withLock { $0.foregroundActive = false }
             logger.error("Failed to start Syncthing: \(err)")
             error = err
-            userError = SyncUserError.from(rawMessage: err, fallbackTitle: "Could Not Start Sync")
+            userError = SyncUserError.from(rawMessage: err, fallbackTitle: L10n.tr("Could Not Start Sync"))
             return
         }
 
@@ -739,8 +748,8 @@ final class SyncthingManager {
 
         guard outcome.result.shouldSurfaceIssue else { return }
 
-        let trigger = outcome.triggerReason.replacingOccurrences(of: "-", with: " ").capitalized
-        let title = "\(outcome.result.issueTitle) (\(trigger))"
+        let trigger = localizedTriggerReason(outcome.triggerReason)
+        let title = L10n.fmt("%@ (%@)", outcome.result.issueTitle, trigger)
         let detail = outcome.detail ?? outcome.result.issueMessage
         let item = SyncEventItem(
             id: nextSyntheticID(),
@@ -862,14 +871,14 @@ final class SyncthingManager {
             for (folderID, count) in suppressedFileEventsByFolder.sorted(by: { $0.key < $1.key }) where count > 0 {
                 let folderName = displayFolderName(folderID, folderNamesByID: folderNamesByID)
                 let summaryTitle = count == 1
-                    ? "1 additional file synced in \(folderName)"
-                    : "\(count) additional files synced in \(folderName)"
+                    ? L10n.fmt("1 additional file synced in %@", folderName)
+                    : L10n.fmt("%d additional files synced in %@", count, folderName)
                 let summary = SyncEventItem(
                     id: nextSyntheticID(),
                     kind: .summary,
                     date: now,
                     title: summaryTitle,
-                    detail: "Timeline updates were rate-limited to keep activity readable.",
+                    detail: L10n.tr("Timeline updates were rate-limited to keep activity readable."),
                     folderID: folderID,
                     deviceID: nil,
                     filePath: nil
@@ -913,8 +922,8 @@ final class SyncthingManager {
                     id: event.id,
                     kind: .scanStarted,
                     date: timestamp,
-                    title: "Scanning started in \(folderName)",
-                    detail: "Syncthing is scanning local changes.",
+                    title: L10n.fmt("Scanning started in %@", folderName),
+                    detail: L10n.tr("Syncthing is scanning local changes."),
                     folderID: folderID,
                     deviceID: nil,
                     filePath: nil
@@ -925,8 +934,8 @@ final class SyncthingManager {
                     id: event.id,
                     kind: .scanCompleted,
                     date: timestamp,
-                    title: "Scanning completed in \(folderName)",
-                    detail: "The folder scan finished successfully.",
+                    title: L10n.fmt("Scanning completed in %@", folderName),
+                    detail: L10n.tr("The folder scan finished successfully."),
                     folderID: folderID,
                     deviceID: nil,
                     filePath: nil
@@ -937,8 +946,8 @@ final class SyncthingManager {
                     id: event.id,
                     kind: .syncStarted,
                     date: timestamp,
-                    title: "Sync started in \(folderName)",
-                    detail: "Files are being synchronized with peers.",
+                    title: L10n.fmt("Sync started in %@", folderName),
+                    detail: L10n.tr("Files are being synchronized with peers."),
                     folderID: folderID,
                     deviceID: nil,
                     filePath: nil
@@ -949,8 +958,8 @@ final class SyncthingManager {
                     id: event.id,
                     kind: .syncCompleted,
                     date: timestamp,
-                    title: "Sync completed in \(folderName)",
-                    detail: "Folder reached idle state after syncing.",
+                    title: L10n.fmt("Sync completed in %@", folderName),
+                    detail: L10n.tr("Folder reached idle state after syncing."),
                     folderID: folderID,
                     deviceID: nil,
                     filePath: nil
@@ -961,8 +970,8 @@ final class SyncthingManager {
                     id: event.id,
                     kind: .folderError,
                     date: timestamp,
-                    title: "Sync error in \(folderName)",
-                    detail: data["error"] ?? "Folder entered an error state.",
+                    title: L10n.fmt("Sync error in %@", folderName),
+                    detail: data["error"] ?? L10n.tr("Folder entered an error state."),
                     folderID: folderID,
                     deviceID: nil,
                     filePath: nil
@@ -982,8 +991,8 @@ final class SyncthingManager {
                     id: event.id,
                     kind: .fileError,
                     date: timestamp,
-                    title: "Failed to sync file in \(folderName)",
-                    detail: "\(itemPath): \(errorMessage)",
+                    title: L10n.fmt("Failed to sync file in %@", folderName),
+                    detail: L10n.fmt("%@: %@", itemPath, errorMessage),
                     folderID: folderID,
                     deviceID: nil,
                     filePath: itemPath
@@ -993,7 +1002,7 @@ final class SyncthingManager {
                 id: event.id,
                 kind: .fileSynced,
                 date: timestamp,
-                title: "File synced in \(folderName)",
+                title: L10n.fmt("File synced in %@", folderName),
                 detail: itemPath,
                 folderID: folderID,
                 deviceID: nil,
@@ -1007,8 +1016,8 @@ final class SyncthingManager {
                 id: event.id,
                 kind: .deviceConnected,
                 date: timestamp,
-                title: "\(deviceName) connected",
-                detail: data["addr"] ?? "Peer connection is active.",
+                title: L10n.fmt("%@ connected", deviceName),
+                detail: data["addr"] ?? L10n.tr("Peer connection is active."),
                 folderID: nil,
                 deviceID: deviceID,
                 filePath: nil
@@ -1021,8 +1030,8 @@ final class SyncthingManager {
                 id: event.id,
                 kind: .deviceDisconnected,
                 date: timestamp,
-                title: "\(deviceName) disconnected",
-                detail: data["error"] ?? "Connection to peer was closed.",
+                title: L10n.fmt("%@ disconnected", deviceName),
+                detail: data["error"] ?? L10n.tr("Connection to peer was closed."),
                 folderID: nil,
                 deviceID: deviceID,
                 filePath: nil
@@ -1031,10 +1040,10 @@ final class SyncthingManager {
         case "FolderErrors":
             let folderID = data["folder"]
             let folderName = displayFolderName(folderID, folderNamesByID: folderNamesByID)
-            let message = data["message"] ?? "Folder reported an error."
+            let message = data["message"] ?? L10n.tr("Folder reported an error.")
             let detail: String
             if let path = data["path"], !path.isEmpty {
-                detail = "\(path): \(message)"
+                detail = L10n.fmt("%@: %@", path, message)
             } else {
                 detail = message
             }
@@ -1043,7 +1052,7 @@ final class SyncthingManager {
                 id: event.id,
                 kind: .folderError,
                 date: timestamp,
-                title: "Folder error in \(folderName)",
+                title: L10n.fmt("Folder error in %@", folderName),
                 detail: detail,
                 folderID: folderID,
                 deviceID: nil,
@@ -1092,7 +1101,7 @@ final class SyncthingManager {
         _ folderID: String?,
         folderNamesByID: [String: String]
     ) -> String {
-        guard let folderID, !folderID.isEmpty else { return "Unknown Folder" }
+        guard let folderID, !folderID.isEmpty else { return L10n.tr("Unknown Folder") }
         return folderNamesByID[folderID] ?? folderID
     }
 
@@ -1100,8 +1109,19 @@ final class SyncthingManager {
         _ deviceID: String?,
         deviceNamesByID: [String: String]
     ) -> String {
-        guard let deviceID, !deviceID.isEmpty else { return "Unknown Device" }
+        guard let deviceID, !deviceID.isEmpty else { return L10n.tr("Unknown Device") }
         return deviceNamesByID[deviceID] ?? shortDeviceID(deviceID)
+    }
+
+    private func localizedTriggerReason(_ reason: String) -> String {
+        switch reason {
+        case "silent-push":
+            return L10n.tr("Silent Push")
+        case "app-refresh":
+            return L10n.tr("App Refresh")
+        default:
+            return reason.replacingOccurrences(of: "-", with: " ").capitalized
+        }
     }
 
     private func shortDeviceID(_ deviceID: String) -> String {

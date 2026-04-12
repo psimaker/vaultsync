@@ -22,13 +22,13 @@ enum RelayProvisionStatus: Equatable, Sendable {
     var summary: String {
         switch self {
         case .notAttempted:
-            return "Not attempted"
+            return L10n.tr("Not attempted")
         case .inProgress:
-            return "In progress"
+            return L10n.tr("In progress")
         case .provisioned:
-            return "Provisioned"
+            return L10n.tr("Provisioned")
         case .failed:
-            return "Failed"
+            return L10n.tr("Failed")
         }
     }
 
@@ -46,11 +46,11 @@ enum APNsRegistrationStatus: Equatable, Sendable {
     var summary: String {
         switch self {
         case .notAttempted:
-            return "Not attempted"
+            return L10n.tr("Not attempted")
         case .registered:
-            return "Registered"
+            return L10n.tr("Registered")
         case .failed:
-            return "Failed"
+            return L10n.tr("Failed")
         }
     }
 }
@@ -80,7 +80,7 @@ enum APNsRegistrationStore {
         case "registered":
             return .registered
         case "failed":
-            let reason = defaults.string(forKey: reasonKey) ?? "Unknown APNs registration error"
+            let reason = defaults.string(forKey: reasonKey) ?? L10n.tr("Unknown APNs registration error")
             return .failed(reason: reason)
         default:
             return .notAttempted

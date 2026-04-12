@@ -75,7 +75,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 
         // Common in Simulator; APNs token retrieval is unavailable there.
         if nsError.domain == NSCocoaErrorDomain, nsError.code == 3010 {
-            return "Push registration is unavailable in Simulator. Test APNs on a physical iPhone in Settings > Notifications for VaultSync."
+            return L10n.tr("Push registration is unavailable in Simulator. Test APNs on a physical iPhone in Settings > Notifications for VaultSync.")
         }
 
         return base
@@ -85,7 +85,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         let settings = await UNUserNotificationCenter.current().notificationSettings()
         guard settings.authorizationStatus == .denied else { return }
         APNsRegistrationStore.markFailed(
-            reason: "Notifications are disabled for VaultSync. Enable them in iOS Settings > Notifications > VaultSync, then retry APNs registration."
+            reason: L10n.tr("Notifications are disabled for VaultSync. Enable them in iOS Settings > Notifications > VaultSync, then retry APNs registration.")
         )
     }
 }

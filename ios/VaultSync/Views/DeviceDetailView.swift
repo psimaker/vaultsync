@@ -36,10 +36,10 @@ struct DeviceDetailView: View {
                         Image(systemName: device.connected ? "checkmark.circle.fill" : "xmark.circle.fill")
                             .foregroundStyle(device.connected ? .green : .secondary)
                             .accessibilityHidden(true)
-                        Text(device.connected ? "Connected" : "Disconnected")
+                        Text(device.connected ? L10n.tr("Connected") : L10n.tr("Disconnected"))
                     }
                     .accessibilityElement(children: .combine)
-                    .accessibilityLabel(device.connected ? "Connected" : "Disconnected")
+                    .accessibilityLabel(device.connected ? L10n.tr("Connected") : L10n.tr("Disconnected"))
                     .accessibilityHint("Shows whether this Syncthing device is currently reachable.")
                 }
             }
@@ -52,7 +52,7 @@ struct DeviceDetailView: View {
                 }
             }
         }
-        .navigationTitle(device.name.isEmpty ? "Unnamed Device" : device.name)
+        .navigationTitle(device.name.isEmpty ? L10n.tr("Unnamed Device") : device.name)
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             editedName = device.name
@@ -82,7 +82,7 @@ struct DeviceDetailView: View {
         let trimmed = editedName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed != device.name else { return }
         if let err = syncthingManager.renameDevice(id: device.deviceID, newName: trimmed) {
-            let mapped = SyncUserError.from(rawMessage: err, fallbackTitle: "Rename Failed")
+            let mapped = SyncUserError.from(rawMessage: err, fallbackTitle: L10n.tr("Rename Failed"))
             alertMessage = mapped.userVisibleDescription
             showAlert = true
             editedName = device.name
@@ -91,7 +91,7 @@ struct DeviceDetailView: View {
 
     private func removeDevice() {
         if let err = syncthingManager.removeDevice(id: device.deviceID) {
-            let mapped = SyncUserError.from(rawMessage: err, fallbackTitle: "Remove Failed")
+            let mapped = SyncUserError.from(rawMessage: err, fallbackTitle: L10n.tr("Remove Failed"))
             alertMessage = mapped.userVisibleDescription
             showAlert = true
         } else {

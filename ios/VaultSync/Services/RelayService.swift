@@ -20,13 +20,13 @@ enum RelayService {
         var errorDescription: String? {
             switch self {
             case .rateLimited:
-                return "Relay request was rate limited."
+                return L10n.tr("Relay request was rate limited.")
             case .serverError(let statusCode):
-                return "Relay server returned HTTP \(statusCode)."
+                return L10n.fmt("Relay server returned HTTP %d.", statusCode)
             case .networkError(let underlying):
-                return "Relay network error: \(underlying.localizedDescription)"
+                return L10n.fmt("Relay network error: %@", underlying.localizedDescription)
             case .provisionFailed(let reason):
-                return reason.isEmpty ? "Relay provisioning failed." : reason
+                return reason.isEmpty ? L10n.tr("Relay provisioning failed.") : reason
             }
         }
     }
@@ -52,13 +52,13 @@ enum RelayService {
         var summary: String {
             switch state {
             case .healthy:
-                return "Healthy"
+                return L10n.tr("Healthy")
             case .unhealthy:
-                return "Unhealthy"
+                return L10n.tr("Unhealthy")
             case .unreachable:
-                return "Unreachable"
+                return L10n.tr("Unreachable")
             case .timedOut:
-                return "Timed out"
+                return L10n.tr("Timed out")
             }
         }
     }
@@ -95,7 +95,7 @@ enum RelayService {
         let (data, response) = try await perform(request, action: "provision")
 
         guard let http = response as? HTTPURLResponse else {
-            recordLastError(context: "provision", message: "Relay provision returned a non-HTTP response.")
+            recordLastError(context: "provision", message: L10n.tr("Relay provision returned a non-HTTP response."))
             throw RelayError.serverError(statusCode: 0)
         }
 
@@ -106,21 +106,21 @@ enum RelayService {
             logger.info("Device already provisioned, token updated")
         case 429:
             logger.warning("Relay provision: rate limited")
-            recordLastError(context: "provision", message: "Relay provision is rate limited (HTTP 429).")
+            recordLastError(context: "provision", message: L10n.tr("Relay provision is rate limited (HTTP 429)."))
             throw RelayError.rateLimited
         case 500...599:
             let body = String(data: data, encoding: .utf8) ?? ""
             logger.error("Relay provision server error: \(http.statusCode) \(body)")
             recordLastError(
                 context: "provision",
-                message: body.isEmpty ? "Relay provision failed with HTTP \(http.statusCode)." : body
+                message: body.isEmpty ? L10n.fmt("Relay provision failed with HTTP %d.", http.statusCode) : body
             )
             throw RelayError.serverError(statusCode: http.statusCode)
         default:
             let body = String(data: data, encoding: .utf8) ?? ""
             recordLastError(
                 context: "provision",
-                message: body.isEmpty ? "Relay provision failed with HTTP \(http.statusCode)." : body
+                message: body.isEmpty ? L10n.fmt("Relay provision failed with HTTP %d.", http.statusCode) : body
             )
             throw RelayError.provisionFailed(reason: body)
         }
@@ -161,7 +161,7 @@ enum RelayService {
             let latencyMs = Int(Date().timeIntervalSince(startedAt) * 1000)
 
             guard let http = response as? HTTPURLResponse else {
-                let message = "Relay health check returned a non-HTTP response."
+                let message = L10n.tr("Relay health check returned a non-HTTP response.")
                 recordLastError(context: "health", message: message)
                 return HealthCheckResult(
                     state: .unhealthy,
@@ -182,7 +182,7 @@ enum RelayService {
                 )
             }
 
-            let message = "Relay health endpoint returned HTTP \(http.statusCode)."
+            let message = L10n.fmt("Relay health endpoint returned HTTP %d.", http.statusCode)
             recordLastError(context: "health", message: message)
             return HealthCheckResult(
                 state: .unhealthy,
@@ -199,9 +199,9 @@ enum RelayService {
             let state: HealthCheckResult.State = isTimeout ? .timedOut : .unreachable
             let message: String
             if isTimeout {
-                message = "Relay health check timed out after \(Int(timeout))s."
+                message = L10n.fmt("Relay health check timed out after %ds.", Int(timeout))
             } else {
-                message = "Relay health check failed: \(error.localizedDescription)"
+                message = L10n.fmt("Relay health check failed: %@", error.localizedDescription)
             }
             recordLastError(context: "health", message: message)
             return HealthCheckResult(
@@ -239,7 +239,7 @@ enum RelayService {
             return try await session.data(for: request)
         } catch {
             logger.error("Relay \(action) network error: \(error)")
-            recordLastError(context: action, message: "Relay \(action) network error: \(error.localizedDescription)")
+            recordLastError(context: action, message: L10n.fmt("Relay %@ network error: %@", action, error.localizedDescription))
             throw RelayError.networkError(underlying: error)
         }
     }
@@ -251,12 +251,12 @@ enum RelayService {
             (data, response) = try await session.data(for: request)
         } catch {
             logger.error("Relay \(action) network error: \(error)")
-            recordLastError(context: action, message: "Relay \(action) network error: \(error.localizedDescription)")
+            recordLastError(context: action, message: L10n.fmt("Relay %@ network error: %@", action, error.localizedDescription))
             throw RelayError.networkError(underlying: error)
         }
 
         guard let http = response as? HTTPURLResponse else {
-            recordLastError(context: action, message: "Relay \(action) returned a non-HTTP response.")
+            recordLastError(context: action, message: L10n.fmt("Relay %@ returned a non-HTTP response.", action))
             throw RelayError.serverError(statusCode: 0)
         }
 
@@ -265,22 +265,22 @@ enum RelayService {
             return
         case 429:
             logger.warning("Relay \(action): rate limited")
-            recordLastError(context: action, message: "Relay \(action) is rate limited (HTTP 429).")
+            recordLastError(context: action, message: L10n.fmt("Relay %@ is rate limited (HTTP 429).", action))
             throw RelayError.rateLimited
         case 401, 403:
             let body = String(data: data, encoding: .utf8) ?? ""
             logger.error("Relay \(action) unauthorized: \(http.statusCode) \(body)")
             recordLastError(
                 context: action,
-                message: body.isEmpty ? "Relay \(action) unauthorized (HTTP \(http.statusCode))." : body
+                message: body.isEmpty ? L10n.fmt("Relay %@ unauthorized (HTTP %d).", action, http.statusCode) : body
             )
-            throw RelayError.provisionFailed(reason: body.isEmpty ? "Unauthorized request." : body)
+            throw RelayError.provisionFailed(reason: body.isEmpty ? L10n.tr("Unauthorized request.") : body)
         default:
             let body = String(data: data, encoding: .utf8) ?? ""
             logger.error("Relay \(action) failed: \(http.statusCode) \(body)")
             recordLastError(
                 context: action,
-                message: body.isEmpty ? "Relay \(action) failed with HTTP \(http.statusCode)." : body
+                message: body.isEmpty ? L10n.fmt("Relay %@ failed with HTTP %d.", action, http.statusCode) : body
             )
             throw RelayError.serverError(statusCode: http.statusCode)
         }
@@ -299,19 +299,19 @@ enum RelayService {
 
     static func userError(from error: any Error) -> SyncUserError {
         guard let relayError = error as? RelayError else {
-            return SyncUserError.from(error: error, fallbackTitle: "Relay Error")
+            return SyncUserError.from(error: error, fallbackTitle: L10n.tr("Relay Error"))
         }
 
         switch relayError {
         case .networkError(let underlying):
             return SyncUserError.from(
-                rawMessage: "relay network: \(underlying.localizedDescription)",
-                fallbackTitle: "Relay Unreachable"
+                rawMessage: L10n.fmt("relay network: %@", underlying.localizedDescription),
+                fallbackTitle: L10n.tr("Relay Unreachable")
             )
         case .rateLimited:
-            return SyncUserError.relayProvisionFailed(reason: "Relay provisioning is currently rate limited (429).")
+            return SyncUserError.relayProvisionFailed(reason: L10n.tr("Relay provisioning is currently rate limited (429)."))
         case .serverError(let statusCode):
-            return SyncUserError.relayProvisionFailed(reason: "Relay server error (HTTP \(statusCode)).")
+            return SyncUserError.relayProvisionFailed(reason: L10n.fmt("Relay server error (HTTP %d).", statusCode))
         case .provisionFailed(let reason):
             return SyncUserError.relayProvisionFailed(reason: reason)
         }

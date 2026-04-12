@@ -281,19 +281,19 @@ struct RelayDiagnosticsView: View {
         var hints: [String] = []
 
         if !subscriptionManager.isRelaySubscribed {
-            hints.append("Cloud Relay is not currently subscribed. Push-triggered wake-ups are disabled until the subscription is active.")
+            hints.append(L10n.tr("Cloud Relay is not currently subscribed. Push-triggered wake-ups are disabled until the subscription is active."))
         }
 
         if !subscriptionManager.hasAPNsToken {
-            hints.append("APNs token is missing. Enable notifications for VaultSync and retry APNs registration.")
+            hints.append(L10n.tr("APNs token is missing. Enable notifications for VaultSync and retry APNs registration."))
         }
 
         if case .failed = subscriptionManager.apnsRegistrationStatus {
-            hints.append("APNs registration failed. Open iOS Settings > Notifications > VaultSync, allow notifications, then retry.")
+            hints.append(L10n.tr("APNs registration failed. Open iOS Settings > Notifications > VaultSync, allow notifications, then retry."))
         }
 
         if let health = subscriptionManager.relayHealthResult, !health.isHealthy {
-            hints.append("Relay health endpoint is not healthy. Check internet access, VPN/firewall rules, or relay availability.")
+            hints.append(L10n.tr("Relay health endpoint is not healthy. Check internet access, VPN/firewall rules, or relay availability."))
         }
 
         let failedDevices = subscriptionManager.relayProvisionStatuses.values.filter {
@@ -301,11 +301,11 @@ struct RelayDiagnosticsView: View {
             return false
         }.count
         if failedDevices > 0 {
-            hints.append("Some devices are not provisioned. Retry provisioning after APNs and subscription checks are green.")
+            hints.append(L10n.tr("Some devices are not provisioned. Retry provisioning after APNs and subscription checks are green."))
         }
 
         if subscriptionManager.isRelaySubscribed, subscriptionManager.lastRelayTriggerReceivedAt == nil {
-            hints.append("No relay trigger has been received yet. Verify your homeserver `vaultsync-notify` container is running and can reach relay.vaultsync.eu.")
+            hints.append(L10n.tr("No relay trigger has been received yet. Verify your homeserver `vaultsync-notify` container is running and can reach relay.vaultsync.eu."))
         }
 
         return hints

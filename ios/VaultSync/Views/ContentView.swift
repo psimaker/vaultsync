@@ -52,7 +52,7 @@ struct ContentView: View {
                 }) { url in
                     showObsidianPicker = false
                     if let err = vaultManager.grantAccess(url: url) {
-                        alertMessage = mappedError(err, fallbackTitle: "Obsidian Folder Connection Failed").userVisibleDescription
+                        alertMessage = mappedError(err, fallbackTitle: L10n.tr("Obsidian Folder Connection Failed")).userVisibleDescription
                         showAlert = true
                     }
                 }
@@ -93,10 +93,14 @@ struct ContentView: View {
         pendingShareInFlight.remove(folder.id)
 
         if let err {
-            let userError = mappedError(err, fallbackTitle: "Could Not Accept Share")
+            let userError = mappedError(err, fallbackTitle: L10n.tr("Could Not Accept Share"))
             pendingShareFailures[folder.id] = userError
             if source == .automatic {
-                alertMessage = "Could not accept share '\(folder.label.isEmpty ? folder.id : folder.label)'.\n\n\(userError.userVisibleDescription)"
+                alertMessage = L10n.fmt(
+                    "Could not accept share '%@'.\n\n%@",
+                    folder.label.isEmpty ? folder.id : folder.label,
+                    userError.userVisibleDescription
+                )
                 showAlert = true
             }
             return
@@ -131,7 +135,7 @@ struct ContentView: View {
                     Text(syncStatusText)
                         .font(.headline)
                     if let lastSync = syncthingManager.lastSyncTime {
-                        Text("Last sync: \(lastSync, style: .relative) ago")
+                        Text(L10n.tr("Last sync:")) + Text(" \(lastSync, style: .relative) ") + Text(L10n.tr("ago"))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -142,7 +146,7 @@ struct ContentView: View {
                     }
                     if let backgroundOutcome = syncthingManager.lastBackgroundSyncOutcome,
                        backgroundOutcome.result.shouldSurfaceIssue {
-                        Text("Background sync: \(backgroundOutcome.result.issueTitle)")
+                        Text(L10n.fmt("Background sync: %@", backgroundOutcome.result.issueTitle))
                             .font(.caption2)
                             .foregroundStyle(.orange)
                     }
@@ -187,7 +191,7 @@ struct ContentView: View {
                         Text("No devices configured")
                             .foregroundStyle(.secondary)
                     } else {
-                        Text("\(connected) of \(total) devices connected")
+                        Text(L10n.fmt("%d of %d devices connected", connected, total))
                             .foregroundStyle(connected > 0 ? Color.primary : Color.orange)
                     }
                 }
@@ -230,7 +234,7 @@ struct ContentView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(folder?.label ?? folderID)
                                 .font(.subheadline.weight(.semibold))
-                            Text(folderError?.message ?? "Folder is currently in an error state.")
+                            Text(folderError?.message ?? L10n.tr("Folder is currently in an error state."))
                                 .font(.caption)
                             if let remediation = folderError?.remediation {
                                 Text(remediation)
@@ -271,12 +275,12 @@ struct ContentView: View {
     }
 
     private var syncStatusText: String {
-        if currentSyncError != nil { return "Error" }
-        if !syncthingManager.isRunning { return "Starting…" }
-        if !foldersWithErrors.isEmpty { return "Sync Issue" }
-        if isSyncing { return "Syncing…" }
-        if syncthingManager.folders.isEmpty { return "Ready" }
-        return "All Synced"
+        if currentSyncError != nil { return L10n.tr("Error") }
+        if !syncthingManager.isRunning { return L10n.tr("Starting…") }
+        if !foldersWithErrors.isEmpty { return L10n.tr("Sync Issue") }
+        if isSyncing { return L10n.tr("Syncing…") }
+        if syncthingManager.folders.isEmpty { return L10n.tr("Ready") }
+        return L10n.tr("All Synced")
     }
 
     private var foldersWithErrors: [String] {
@@ -426,8 +430,8 @@ struct ContentView: View {
         for id in uniqueIDs {
             if let err = syncthingManager.rescanFolder(id: id) {
                 let folderName = syncthingManager.folders.first(where: { $0.id == id })?.label ?? id
-                let userError = mappedError(err, fallbackTitle: "Rescan Failed")
-                failures.append("\(folderName): \(userError.message)")
+                let userError = mappedError(err, fallbackTitle: L10n.tr("Rescan Failed"))
+                failures.append(L10n.fmt("%@: %@", folderName, userError.message))
             }
         }
 
@@ -490,15 +494,15 @@ struct ContentView: View {
                             .padding(.horizontal, 6)
                             .padding(.vertical, 1)
                             .background(.orange, in: Capsule())
-                            .accessibilityLabel("\(conflicts.count) conflicts")
+                            .accessibilityLabel(L10n.fmt("%d conflicts", conflicts.count))
                     }
                 }
                 if let status {
                     HStack(spacing: 4) {
-                        Text(status.state.capitalized)
+                        Text(localizedState(status.state))
                             .font(.caption2)
                         if status.completionPct < 100, status.completionPct > 0 {
-                            Text("(\(Int(status.completionPct))%)")
+                            Text(L10n.fmt("(%d%%)", Int(status.completionPct)))
                                 .font(.caption2)
                         }
                     }
@@ -555,7 +559,7 @@ struct ContentView: View {
                             .foregroundStyle(stateColor(status?.state ?? "unknown"))
                             .font(.caption2)
                             .accessibilityHidden(true)
-                        Text((status?.state ?? "unknown").capitalized)
+                        Text(localizedState(status?.state ?? "unknown"))
                     }
                     .accessibilityElement(children: .combine)
                 }
@@ -608,7 +612,7 @@ struct ContentView: View {
                     } label: {
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(device.name.isEmpty ? "Unnamed" : device.name)
+                                Text(device.name.isEmpty ? L10n.tr("Unnamed") : device.name)
                                     .font(.body)
                                 Text(device.deviceID)
                                     .font(.system(.caption2, design: .monospaced))
@@ -616,7 +620,7 @@ struct ContentView: View {
                                     .truncationMode(.middle)
                             }
                             Spacer()
-                            Label(isShared ? "Shared" : "Not Shared", systemImage: isShared ? "checkmark.circle.fill" : "circle")
+                            Label(isShared ? L10n.tr("Shared") : L10n.tr("Not Shared"), systemImage: isShared ? "checkmark.circle.fill" : "circle")
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(isShared ? .blue : .secondary)
                                 .accessibilityHidden(true)
@@ -624,8 +628,8 @@ struct ContentView: View {
                     }
                     .tint(.primary)
                     .accessibilityElement(children: .combine)
-                    .accessibilityLabel("\(device.name.isEmpty ? "Unnamed device" : device.name)")
-                    .accessibilityValue(isShared ? "Shared" : "Not shared")
+                    .accessibilityLabel(device.name.isEmpty ? L10n.tr("Unnamed device") : device.name)
+                    .accessibilityValue(isShared ? L10n.tr("Shared") : L10n.tr("Not shared"))
                     .accessibilityHint(isShared ? "Double-tap to stop sharing this vault with this device." : "Double-tap to share this vault with this device.")
                 }
                 if syncthingManager.devices.isEmpty {
@@ -638,7 +642,7 @@ struct ContentView: View {
                 Button {
                     isRescanning = true
                     if let err = syncthingManager.rescanFolder(id: folder.id) {
-                        alertMessage = mappedError(err, fallbackTitle: "Rescan Failed").userVisibleDescription
+                        alertMessage = mappedError(err, fallbackTitle: L10n.tr("Rescan Failed")).userVisibleDescription
                         showAlert = true
                         isRescanning = false
                     } else {
@@ -703,7 +707,7 @@ struct ContentView: View {
                     } label: {
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(device.name.isEmpty ? "Unnamed" : device.name)
+                                Text(device.name.isEmpty ? L10n.tr("Unnamed") : device.name)
                                     .font(.body)
                                 Text(device.deviceID)
                                     .font(.system(.caption2, design: .monospaced))
@@ -716,7 +720,7 @@ struct ContentView: View {
                                 Image(systemName: device.connected ? "checkmark.circle.fill" : "xmark.circle.fill")
                                     .foregroundStyle(device.connected ? .green : .secondary)
                                     .accessibilityHidden(true)
-                                Text(device.connected ? "Connected" : "Offline")
+                                Text(device.connected ? L10n.tr("Connected") : L10n.tr("Offline"))
                                     .font(.caption2.weight(.semibold))
                                     .foregroundStyle(.secondary)
                             }
@@ -796,7 +800,7 @@ struct ContentView: View {
         let name = newDeviceName.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if let err = syncthingManager.addDevice(id: id, name: name) {
-            alertMessage = mappedError(err, fallbackTitle: "Could Not Add Device").userVisibleDescription
+            alertMessage = mappedError(err, fallbackTitle: L10n.tr("Could Not Add Device")).userVisibleDescription
             showAlert = true
         } else {
             resetAddDeviceForm()
@@ -811,12 +815,27 @@ struct ContentView: View {
 
     // MARK: - Error Helpers
 
-    private func mappedError(_ error: String, fallbackTitle: String = "Sync Error") -> SyncUserError {
+    private func mappedError(_ error: String, fallbackTitle: String = L10n.tr("Sync Error")) -> SyncUserError {
         SyncUserError.from(rawMessage: error, fallbackTitle: fallbackTitle)
     }
 
     private func troubleshootingURL(for error: SyncUserError) -> URL? {
         SyncUserError.troubleshootingURL(for: error)
+    }
+
+    private func localizedState(_ state: String) -> String {
+        switch state.lowercased() {
+        case "idle":
+            return L10n.tr("Idle")
+        case "scanning":
+            return L10n.tr("Scanning")
+        case "syncing":
+            return L10n.tr("Syncing")
+        case "error":
+            return L10n.tr("Error")
+        default:
+            return L10n.tr("Unknown")
+        }
     }
 }
 

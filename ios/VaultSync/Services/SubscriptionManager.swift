@@ -150,7 +150,7 @@ final class SubscriptionManager {
     func purchase(homeserverDeviceIDs: [String]) async throws {
         guard let product = availableProduct else {
             logger.error("No product available for purchase")
-            errorMessage = "No Cloud Relay product is currently available."
+            errorMessage = L10n.tr("No Cloud Relay product is currently available.")
             return
         }
 
@@ -216,7 +216,7 @@ final class SubscriptionManager {
 
         await checkSubscriptionStatus()
         guard isRelaySubscribed else {
-            errorMessage = "Cloud Relay is not subscribed. Start a subscription first."
+            errorMessage = L10n.tr("Cloud Relay is not subscribed. Start a subscription first.")
             return
         }
 
@@ -295,7 +295,7 @@ final class SubscriptionManager {
 
         guard !deviceIDs.isEmpty else {
             logger.info("No homeserver device IDs available, skipping relay provision")
-            errorMessage = "No home server devices available for relay provisioning."
+            errorMessage = L10n.tr("No home server devices available for relay provisioning.")
             return
         }
 

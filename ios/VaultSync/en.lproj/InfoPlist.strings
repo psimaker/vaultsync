@@ -1,0 +1,2 @@
+"CFBundleDisplayName" = "VaultSync";
+"NSCameraUsageDescription" = "VaultSync uses the camera to scan Syncthing device QR codes for easy setup.";

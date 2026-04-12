@@ -44,7 +44,7 @@ struct PendingSharesView: View {
             }
 
             if !ignoredFolders.isEmpty {
-                DisclosureGroup("Ignored shares (\(ignoredFolders.count))") {
+                DisclosureGroup(L10n.fmt("Ignored shares (%d)", ignoredFolders.count)) {
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach(ignoredFolders) { folder in
                             HStack {
@@ -87,7 +87,7 @@ struct PendingSharesView: View {
                     HStack(spacing: 6) {
                         Text(displayName(for: folder))
                             .font(.body.weight(.semibold))
-                        Text(hasFailure ? "Needs Attention" : "Ready")
+                        Text(hasFailure ? L10n.tr("Needs Attention") : L10n.tr("Ready"))
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(hasFailure ? .orange : .blue)
                             .padding(.horizontal, 6)
@@ -161,8 +161,8 @@ struct PendingSharesView: View {
             offeredDevice.name.isEmpty ? offeredDevice.deviceID : offeredDevice.name
         }
         if names.isEmpty {
-            return "Shared by an unknown device"
+            return L10n.tr("Shared by an unknown device")
         }
-        return "Shared by: \(names.joined(separator: ", "))"
+        return L10n.fmt("Shared by: %@", names.joined(separator: ", "))
     }
 }

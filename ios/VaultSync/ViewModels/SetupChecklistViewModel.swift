@@ -78,20 +78,20 @@ final class SetupChecklistViewModel {
         if syncthingManager.isRunning, !syncthingManager.deviceID.isEmpty {
             return ChecklistItem(
                 requirement: .syncthingRunning,
-                title: "Syncthing engine started",
-                description: "Device ID is available and Syncthing is running.",
+                title: L10n.tr("Syncthing engine started"),
+                description: L10n.tr("Device ID is available and Syncthing is running."),
                 remediation: "",
                 isOptional: false,
                 isComplete: true
             )
         }
 
-        let message = syncthingManager.userError?.message ?? "VaultSync is still starting Syncthing."
+        let message = syncthingManager.userError?.message ?? L10n.tr("VaultSync is still starting Syncthing.")
         let remediation = syncthingManager.userError?.remediation
-            ?? "Keep the app open for a moment. If this persists, restart VaultSync."
+            ?? L10n.tr("Keep the app open for a moment. If this persists, restart VaultSync.")
         return ChecklistItem(
             requirement: .syncthingRunning,
-            title: "Syncthing engine started",
+            title: L10n.tr("Syncthing engine started"),
             description: message,
             remediation: remediation,
             isOptional: false,
@@ -104,8 +104,8 @@ final class SetupChecklistViewModel {
         if count > 0 {
             return ChecklistItem(
                 requirement: .desktopDeviceAdded,
-                title: "Desktop device paired",
-                description: countDescription(count, singular: "device configured", plural: "devices configured"),
+                title: L10n.tr("Desktop device paired"),
+                description: countDescription(count, singular: L10n.tr("device configured"), plural: L10n.tr("devices configured")),
                 remediation: "",
                 isOptional: false,
                 isComplete: true
@@ -114,9 +114,9 @@ final class SetupChecklistViewModel {
 
         return ChecklistItem(
             requirement: .desktopDeviceAdded,
-            title: "Desktop device paired",
-            description: "No desktop or laptop Syncthing device configured yet.",
-            remediation: "Add a device from the main screen using its Syncthing Device ID.",
+            title: L10n.tr("Desktop device paired"),
+            description: L10n.tr("No desktop or laptop Syncthing device configured yet."),
+            remediation: L10n.tr("Add a device from the main screen using its Syncthing Device ID."),
             isOptional: false,
             isComplete: false
         )
@@ -126,11 +126,11 @@ final class SetupChecklistViewModel {
         if vaultManager.isAccessible {
             let vaultCount = vaultManager.detectedVaults.count
             let detail = vaultCount > 0
-                ? "Connected. \(countDescription(vaultCount, singular: "vault detected", plural: "vaults detected"))"
-                : "Connected. Waiting for vault folders to appear."
+                ? L10n.fmt("Connected. %@", countDescription(vaultCount, singular: L10n.tr("vault detected"), plural: L10n.tr("vaults detected")))
+                : L10n.tr("Connected. Waiting for vault folders to appear.")
             return ChecklistItem(
                 requirement: .obsidianConnected,
-                title: "Obsidian connected",
+                title: L10n.tr("Obsidian connected"),
                 description: detail,
                 remediation: "",
                 isOptional: false,
@@ -141,9 +141,9 @@ final class SetupChecklistViewModel {
         let issue = vaultManager.accessIssue
         return ChecklistItem(
             requirement: .obsidianConnected,
-            title: "Obsidian connected",
-            description: issue?.message ?? "VaultSync does not have access to your Obsidian directory.",
-            remediation: issue?.remediation ?? "Connect the Obsidian folder from the main screen.",
+            title: L10n.tr("Obsidian connected"),
+            description: issue?.message ?? L10n.tr("VaultSync does not have access to your Obsidian directory."),
+            remediation: issue?.remediation ?? L10n.tr("Connect the Obsidian folder from the main screen."),
             isOptional: false,
             isComplete: false
         )
@@ -153,8 +153,8 @@ final class SetupChecklistViewModel {
         if !syncthingManager.folders.isEmpty {
             return ChecklistItem(
                 requirement: .firstShareDetectedOrAccepted,
-                title: "First share detected",
-                description: countDescription(syncthingManager.folders.count, singular: "shared folder active", plural: "shared folders active"),
+                title: L10n.tr("First share detected"),
+                description: countDescription(syncthingManager.folders.count, singular: L10n.tr("shared folder active"), plural: L10n.tr("shared folders active")),
                 remediation: "",
                 isOptional: false,
                 isComplete: true
@@ -164,9 +164,9 @@ final class SetupChecklistViewModel {
         if !syncthingManager.pendingFolders.isEmpty {
             return ChecklistItem(
                 requirement: .firstShareDetectedOrAccepted,
-                title: "First share detected",
-                description: countDescription(syncthingManager.pendingFolders.count, singular: "pending share found", plural: "pending shares found"),
-                remediation: "Open Pending Shares in VaultSync and accept one to start syncing.",
+                title: L10n.tr("First share detected"),
+                description: countDescription(syncthingManager.pendingFolders.count, singular: L10n.tr("pending share found"), plural: L10n.tr("pending shares found")),
+                remediation: L10n.tr("Open Pending Shares in VaultSync and accept one to start syncing."),
                 isOptional: false,
                 isComplete: true
             )
@@ -175,9 +175,9 @@ final class SetupChecklistViewModel {
         if syncthingManager.hasSeenPendingFolderOffer {
             return ChecklistItem(
                 requirement: .firstShareDetectedOrAccepted,
-                title: "First share detected",
-                description: "A share was detected earlier, but there is no active folder yet.",
-                remediation: "If syncing has not started, reshare a vault from desktop Syncthing.",
+                title: L10n.tr("First share detected"),
+                description: L10n.tr("A share was detected earlier, but there is no active folder yet."),
+                remediation: L10n.tr("If syncing has not started, reshare a vault from desktop Syncthing."),
                 isOptional: false,
                 isComplete: false
             )
@@ -185,9 +185,9 @@ final class SetupChecklistViewModel {
 
         return ChecklistItem(
             requirement: .firstShareDetectedOrAccepted,
-            title: "First share detected",
-            description: "No folder share from your desktop has been detected yet.",
-            remediation: "From desktop Syncthing, share one vault to this iPhone Device ID.",
+            title: L10n.tr("First share detected"),
+            description: L10n.tr("No folder share from your desktop has been detected yet."),
+            remediation: L10n.tr("From desktop Syncthing, share one vault to this iPhone Device ID."),
             isOptional: false,
             isComplete: false
         )
@@ -197,8 +197,8 @@ final class SetupChecklistViewModel {
         if subscriptionManager.isRelaySubscribed {
             return ChecklistItem(
                 requirement: .relayConfigured,
-                title: "Cloud Relay configured (optional)",
-                description: "Instant sync via Cloud Relay is active.",
+                title: L10n.tr("Cloud Relay configured (optional)"),
+                description: L10n.tr("Instant sync via Cloud Relay is active."),
                 remediation: "",
                 isOptional: true,
                 isComplete: true
@@ -207,15 +207,15 @@ final class SetupChecklistViewModel {
 
         return ChecklistItem(
             requirement: .relayConfigured,
-            title: "Cloud Relay configured (optional)",
-            description: "Cloud Relay is off.",
-            remediation: "You can enable it later in Settings for instant push-based sync.",
+            title: L10n.tr("Cloud Relay configured (optional)"),
+            description: L10n.tr("Cloud Relay is off."),
+            remediation: L10n.tr("You can enable it later in Settings for instant push-based sync."),
             isOptional: true,
             isComplete: false
         )
     }
 
     private func countDescription(_ count: Int, singular: String, plural: String) -> String {
-        "\(count) \(count == 1 ? singular : plural)."
+        L10n.fmt("%d %@.", count, count == 1 ? singular : plural)
     }
 }

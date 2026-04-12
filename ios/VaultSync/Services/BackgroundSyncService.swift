@@ -153,8 +153,8 @@ enum BackgroundSyncService {
 
         let request = BGContinuedProcessingTaskRequest(
             identifier: continuedProcessingIdentifier,
-            title: "Syncing Vault",
-            subtitle: "Synchronizing your Obsidian vault..."
+            title: L10n.tr("Syncing Vault"),
+            subtitle: L10n.tr("Synchronizing your Obsidian vault...")
         )
 
         do {
@@ -218,53 +218,53 @@ enum BackgroundSyncService {
         var issueTitle: String {
             switch self {
             case .noBookmarkAccess:
-                return "Background Sync Could Not Access Obsidian"
+                return L10n.tr("Background Sync Could Not Access Obsidian")
             case .noFoldersConfigured:
-                return "Background Sync Found No Vaults"
+                return L10n.tr("Background Sync Found No Vaults")
             case .bridgeStartFailed:
-                return "Background Sync Could Not Start"
+                return L10n.tr("Background Sync Could Not Start")
             case .notIdleBeforeDeadline:
-                return "Background Sync Timed Out"
+                return L10n.tr("Background Sync Timed Out")
             case .failed:
-                return "Background Sync Failed"
+                return L10n.tr("Background Sync Failed")
             case .synced, .alreadyIdle:
-                return "Background Sync Completed"
+                return L10n.tr("Background Sync Completed")
             }
         }
 
         var issueMessage: String {
             switch self {
             case .noBookmarkAccess:
-                return "VaultSync could not restore bookmark access for the Obsidian folder during a background run."
+                return L10n.tr("VaultSync could not restore bookmark access for the Obsidian folder during a background run.")
             case .noFoldersConfigured:
-                return "No Syncthing folders were available to sync in the background."
+                return L10n.tr("No Syncthing folders were available to sync in the background.")
             case .bridgeStartFailed:
-                return "The embedded Syncthing bridge did not start for a background sync."
+                return L10n.tr("The embedded Syncthing bridge did not start for a background sync.")
             case .notIdleBeforeDeadline:
-                return "Background sync did not reach an idle folder state before the iOS deadline."
+                return L10n.tr("Background sync did not reach an idle folder state before the iOS deadline.")
             case .failed:
-                return "Background sync ended with an unexpected failure."
+                return L10n.tr("Background sync ended with an unexpected failure.")
             case .synced:
-                return "Background sync completed and reached idle."
+                return L10n.tr("Background sync completed and reached idle.")
             case .alreadyIdle:
-                return "Background sync ran, but folders were already idle."
+                return L10n.tr("Background sync ran, but folders were already idle.")
             }
         }
 
         var remediation: String {
             switch self {
             case .noBookmarkAccess:
-                return "Reconnect your Obsidian folder access in VaultSync, then run a foreground rescan."
+                return L10n.tr("Reconnect your Obsidian folder access in VaultSync, then run a foreground rescan.")
             case .noFoldersConfigured:
-                return "Accept or create a shared vault before relying on background sync."
+                return L10n.tr("Accept or create a shared vault before relying on background sync.")
             case .bridgeStartFailed:
-                return "Open VaultSync once to restart Syncthing, then retry."
+                return L10n.tr("Open VaultSync once to restart Syncthing, then retry.")
             case .notIdleBeforeDeadline:
-                return "Open VaultSync to allow a longer foreground sync session."
+                return L10n.tr("Open VaultSync to allow a longer foreground sync session.")
             case .failed:
-                return "Retry from the app and review relay/background diagnostics in Settings."
+                return L10n.tr("Retry from the app and review relay/background diagnostics in Settings.")
             case .synced, .alreadyIdle:
-                return "No action needed."
+                return L10n.tr("No action needed.")
             }
         }
     }
@@ -319,7 +319,7 @@ enum BackgroundSyncService {
                 return completeSync(
                     reason: reason,
                     result: .noBookmarkAccess,
-                    detail: "No security-scoped bookmark access was available."
+                    detail: L10n.tr("No security-scoped bookmark access was available.")
                 )
             }
             trace("Restored bookmark access for \(managedURLs.count) URL(s).")
@@ -351,7 +351,7 @@ enum BackgroundSyncService {
             return completeSync(
                 reason: reason,
                 result: .noFoldersConfigured,
-                detail: "No folders were available for background sync."
+                detail: L10n.tr("No folders were available for background sync.")
             )
         }
 
@@ -380,7 +380,7 @@ enum BackgroundSyncService {
                     return completeSync(
                         reason: reason,
                         result: .bridgeStartFailed,
-                        detail: restart.errorDetail ?? "Forced silent-push restart failed."
+                        detail: restart.errorDetail ?? L10n.tr("Forced silent-push restart failed.")
                     )
                 }
 
@@ -406,7 +406,7 @@ enum BackgroundSyncService {
                     return completeSync(
                         reason: reason,
                         result: .noFoldersConfigured,
-                        detail: "No folders were available after forced silent-push restart."
+                        detail: L10n.tr("No folders were available after forced silent-push restart.")
                     )
                 }
 
@@ -470,13 +470,13 @@ enum BackgroundSyncService {
         let detail: String?
         if let progressSnapshot, forcedRestartPerformed, progressSnapshot.requiresMeaningfulProgress {
             result = .failed
-            detail = "Silent push restarted Syncthing, but no real sync progress was observed before the app returned to idle."
+            detail = L10n.tr("Silent push restarted Syncthing, but no real sync progress was observed before the app returned to idle.")
         } else if idle {
             result = .synced
             detail = nil
         } else {
             result = .notIdleBeforeDeadline
-            detail = "Sync did not reach idle before \(Int(maxDuration))s deadline."
+            detail = L10n.fmt("Sync did not reach idle before %ds deadline.", Int(maxDuration))
         }
         return completeSync(reason: reason, result: result, detail: detail)
     }

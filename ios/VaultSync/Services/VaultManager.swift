@@ -31,7 +31,7 @@ final class VaultManager {
     /// Returns nil on success, error message on failure.
     func grantAccess(url: URL) -> String? {
         guard BookmarkService.startAccessing(url: url) else {
-            return "Could not access the selected folder."
+            return L10n.tr("Could not access the selected folder.")
         }
 
         if let validationError = validateSelectedDirectory(url: url) {
@@ -43,7 +43,7 @@ final class VaultManager {
             try BookmarkService.saveBookmark(for: url, identifier: Self.obsidianBookmarkID)
         } catch {
             BookmarkService.stopAccessing(url: url)
-            return "Failed to save access permission: \(error.localizedDescription)"
+            return L10n.fmt("Failed to save access permission: %@", error.localizedDescription)
         }
 
         obsidianDirectoryURL = url
@@ -68,7 +68,7 @@ final class VaultManager {
         guard let (url, isStale) = BookmarkService.resolveBookmark(identifier: Self.obsidianBookmarkID) else {
             if BookmarkService.hasBookmark(identifier: Self.obsidianBookmarkID) {
                 markReconnectRequired(
-                    reason: "VaultSync can no longer resolve the saved Obsidian folder permission. Reconnect the Obsidian directory to continue syncing."
+                    reason: L10n.tr("VaultSync can no longer resolve the saved Obsidian folder permission. Reconnect the Obsidian directory to continue syncing.")
                 )
                 logger.warning("Obsidian bookmark exists but could not be resolved")
             } else {
@@ -79,7 +79,7 @@ final class VaultManager {
 
         guard BookmarkService.startAccessing(url: url) else {
             markReconnectRequired(
-                reason: "VaultSync cannot access the saved Obsidian folder anymore. Reconnect the Obsidian directory to continue syncing."
+                reason: L10n.tr("VaultSync cannot access the saved Obsidian folder anymore. Reconnect the Obsidian directory to continue syncing.")
             )
             logger.warning("Cannot access Obsidian directory")
             return
@@ -128,7 +128,7 @@ final class VaultManager {
             BookmarkService.stopAccessing(url: url)
             detectedVaults = []
             markReconnectRequired(
-                reason: "VaultSync can no longer read your Obsidian directory. Reconnect the folder to restore sync access."
+                reason: L10n.tr("VaultSync can no longer read your Obsidian directory. Reconnect the folder to restore sync access.")
             )
             return
         }
@@ -171,12 +171,12 @@ final class VaultManager {
         let folderName = Self.sanitizeDirectoryName(rawName)
 
         guard !folderName.isEmpty else {
-            return "Invalid folder name: '\(rawName)'"
+            return L10n.fmt("Invalid folder name: '%@'", rawName)
         }
 
         guard let basePath = obsidianBasePath,
               let baseURL = obsidianDirectoryURL else {
-            return "Obsidian directory not accessible."
+            return L10n.tr("Obsidian directory not accessible.")
         }
 
         let fm = FileManager.default
@@ -249,7 +249,7 @@ final class VaultManager {
         let fm = FileManager.default
         var isDirectory: ObjCBool = false
         guard fm.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue else {
-            return "Please select a folder. In the picker choose \"On My iPhone\" → \"Obsidian\"."
+            return L10n.tr("Please select a folder. In the picker choose \"On My iPhone\" -> \"Obsidian\".")
         }
 
         let isNamedObsidian = url.lastPathComponent.compare("Obsidian", options: .caseInsensitive) == .orderedSame
@@ -264,7 +264,7 @@ final class VaultManager {
             includingPropertiesForKeys: [.isDirectoryKey],
             options: [.skipsHiddenFiles]
         ) else {
-            return "VaultSync cannot read this folder. Reopen the picker and select \"On My iPhone\" → \"Obsidian\"."
+            return L10n.tr("VaultSync cannot read this folder. Reopen the picker and select \"On My iPhone\" -> \"Obsidian\".")
         }
 
         let containsVaultSubfolders = contents.contains { itemURL in
@@ -277,7 +277,7 @@ final class VaultManager {
             return nil
         }
 
-        return "This folder does not look like your Obsidian directory yet. In the picker choose \"On My iPhone\" → \"Obsidian\"."
+        return L10n.tr("This folder does not look like your Obsidian directory yet. In the picker choose \"On My iPhone\" -> \"Obsidian\".")
     }
 
     private func markReconnectRequired(reason: String) {
@@ -287,9 +287,9 @@ final class VaultManager {
         needsReconnect = true
         accessIssue = SyncUserError(
             category: .fileAccess,
-            title: "Reconnect Obsidian Directory",
+            title: L10n.tr("Reconnect Obsidian Directory"),
             message: reason,
-            remediation: "Open the folder picker again and select your Obsidian directory.",
+            remediation: L10n.tr("Open the folder picker again and select your Obsidian directory."),
             technicalDetails: reason
         )
     }

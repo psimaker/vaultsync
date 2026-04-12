@@ -171,7 +171,7 @@ struct ConflictDiffView: View {
                 .padding(.horizontal)
 
             ScrollView(.horizontal, showsIndicators: false) {
-                Text(content.isEmpty ? "(empty or unreadable)" : content)
+                Text(content.isEmpty ? L10n.tr("(empty or unreadable)") : content)
                     .font(.system(.caption, design: .monospaced))
                     .padding(12)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -190,17 +190,17 @@ struct ConflictDiffView: View {
             let o = SyncBridgeService.readFileContent(folderID: capturedFolderID, relPath: capturedConflict.originalPath)
             let c = SyncBridgeService.readFileContent(folderID: capturedFolderID, relPath: capturedConflict.conflictPath)
             if let oErr = o.error, let cErr = c.error {
-                let oUser = SyncUserError.from(rawMessage: oErr, fallbackTitle: "File Read Failed")
-                let cUser = SyncUserError.from(rawMessage: cErr, fallbackTitle: "File Read Failed")
-                return ("", "", "Could not read files.\n\n\(oUser.message)\n\(cUser.message)")
+                let oUser = SyncUserError.from(rawMessage: oErr, fallbackTitle: L10n.tr("File Read Failed"))
+                let cUser = SyncUserError.from(rawMessage: cErr, fallbackTitle: L10n.tr("File Read Failed"))
+                return ("", "", L10n.fmt("Could not read files.\n\n%@\n%@", oUser.message, cUser.message))
             }
             if let oErr = o.error {
-                let user = SyncUserError.from(rawMessage: oErr, fallbackTitle: "File Read Failed")
-                return ("", c.content ?? "", "Could not read original file.\n\n\(user.userVisibleDescription)")
+                let user = SyncUserError.from(rawMessage: oErr, fallbackTitle: L10n.tr("File Read Failed"))
+                return ("", c.content ?? "", L10n.fmt("Could not read original file.\n\n%@", user.userVisibleDescription))
             }
             if let cErr = c.error {
-                let user = SyncUserError.from(rawMessage: cErr, fallbackTitle: "File Read Failed")
-                return (o.content ?? "", "", "Could not read conflict file.\n\n\(user.userVisibleDescription)")
+                let user = SyncUserError.from(rawMessage: cErr, fallbackTitle: L10n.tr("File Read Failed"))
+                return (o.content ?? "", "", L10n.fmt("Could not read conflict file.\n\n%@", user.userVisibleDescription))
             }
             return (o.content ?? "", c.content ?? "", nil as String?)
         }.value
@@ -221,9 +221,9 @@ struct ConflictDiffView: View {
     private func confirmMessage(for action: ResolveAction) -> String {
         switch action {
         case .keepThis:
-            return "This will permanently discard the version from the other device."
+            return L10n.tr("This will permanently discard the version from the other device.")
         case .keepOther:
-            return "This will permanently discard your local version."
+            return L10n.tr("This will permanently discard your local version.")
         case .keepBoth:
             return ""
         }
@@ -231,9 +231,9 @@ struct ConflictDiffView: View {
     
     private func confirmButtonTitle(for action: ResolveAction) -> String {
         switch action {
-        case .keepThis: return "Keep This Device's Version"
-        case .keepOther: return "Keep Other Device's Version"
-        case .keepBoth: return "Keep Both"
+        case .keepThis: return L10n.tr("Keep This Device's Version")
+        case .keepOther: return L10n.tr("Keep Other Device's Version")
+        case .keepBoth: return L10n.tr("Keep Both")
         }
     }
 
@@ -256,15 +256,15 @@ struct ConflictDiffView: View {
         ) {
             alertMessage = SyncUserError.from(
                 rawMessage: err,
-                fallbackTitle: "Conflict Resolution Failed"
+                fallbackTitle: L10n.tr("Conflict Resolution Failed")
             ).userVisibleDescription
             showAlert = true
         } else {
             let filename = (conflict.originalPath as NSString).lastPathComponent
             if keepConflict {
-                resultSummaryMessage = "The file '\(filename)' was overwritten with the version from the other device."
+                resultSummaryMessage = L10n.fmt("The file '%@' was overwritten with the version from the other device.", filename)
             } else {
-                resultSummaryMessage = "The file '\(filename)' was kept as your local version. The other device's version was discarded."
+                resultSummaryMessage = L10n.fmt("The file '%@' was kept as your local version. The other device's version was discarded.", filename)
             }
             showResultSummary = true
         }
@@ -278,13 +278,17 @@ struct ConflictDiffView: View {
         if let err {
             alertMessage = SyncUserError.from(
                 rawMessage: err,
-                fallbackTitle: "Conflict Resolution Failed"
+                fallbackTitle: L10n.tr("Conflict Resolution Failed")
             ).userVisibleDescription
             showAlert = true
         } else {
             let filename = (conflict.originalPath as NSString).lastPathComponent
-            let renamedFilename = newPath != nil ? (newPath! as NSString).lastPathComponent : "a new name"
-            resultSummaryMessage = "Both versions were kept.\n\nYour local version remains as '\(filename)'.\nThe other device's version was renamed to '\(renamedFilename)'."
+            let renamedFilename = newPath != nil ? (newPath! as NSString).lastPathComponent : L10n.tr("a new name")
+            resultSummaryMessage = L10n.fmt(
+                "Both versions were kept.\n\nYour local version remains as '%@'.\nThe other device's version was renamed to '%@'.",
+                filename,
+                renamedFilename
+            )
             showResultSummary = true
         }
     }

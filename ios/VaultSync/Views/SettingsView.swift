@@ -325,10 +325,10 @@ struct SettingsView: View {
     }
 
     private var relayStatusText: String {
-        if subscriptionManager.isRelaySubscribed { return "Active" }
-        if subscriptionManager.isLoadingProduct { return "Loading…" }
-        if subscriptionManager.availableProduct != nil { return "Not Subscribed" }
-        return "Not Configured"
+        if subscriptionManager.isRelaySubscribed { return L10n.tr("Active") }
+        if subscriptionManager.isLoadingProduct { return L10n.tr("Loading…") }
+        if subscriptionManager.availableProduct != nil { return L10n.tr("Not Subscribed") }
+        return L10n.tr("Not Configured")
     }
 
     private func relayProvisionStatus(for deviceID: String) -> RelayProvisionStatus {
@@ -348,7 +348,7 @@ struct SettingsView: View {
         }
     }
 
-    private func mappedError(_ error: String, fallbackTitle: String = "Settings Error") -> SyncUserError {
+    private func mappedError(_ error: String, fallbackTitle: String = L10n.tr("Settings Error")) -> SyncUserError {
         SyncUserError.from(rawMessage: error, fallbackTitle: fallbackTitle)
     }
 
