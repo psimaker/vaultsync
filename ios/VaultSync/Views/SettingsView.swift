@@ -57,6 +57,12 @@ struct SettingsView: View {
                             Label("Copy Device ID", systemImage: "doc.on.doc")
                         }
                     }
+
+                    NavigationLink {
+                        SyncActivityView(events: Array(syncthingManager.syncActivity.prefix(50)))
+                    } label: {
+                        Label("Log", systemImage: "text.append")
+                    }
                 }
 
                 Section {

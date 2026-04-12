@@ -20,7 +20,6 @@ struct ContentView: View {
                 syncIssuesSection
                 obsidianStatusSection
                 pendingSharesSection
-                syncActivitySection
                 vaultsSection
                 devicesSection
             }
@@ -402,31 +401,6 @@ struct ContentView: View {
                     onAcceptFirstPendingShare: acceptFirstPendingShareFromIssues,
                     onRescanAllVaults: rescanAllVaults
                 )
-            }
-        }
-    }
-
-    // MARK: - Sync Activity Section
-
-    private var syncActivitySection: some View {
-        Section("Recent Activity") {
-            let events = syncthingManager.syncActivity
-            NavigationLink {
-                SyncActivityView(events: events)
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "clock.arrow.circlepath")
-                        .foregroundStyle(.secondary)
-                        .accessibilityHidden(true)
-                    if events.isEmpty {
-                        Text("Open activity timeline")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Text("Open activity timeline (\(events.count))")
-                    }
-                }
-                .font(.subheadline)
-                .accessibilityElement(children: .combine)
             }
         }
     }

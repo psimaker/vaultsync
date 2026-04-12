@@ -223,7 +223,7 @@ struct RelayDiagnosticsView: View {
                 Task { await runDiagnostics() }
             } label: {
                 HStack {
-                    Text("Run Full Diagnostics")
+                    Text("Check Relay Status")
                     Spacer()
                     if diagnosticsInFlight {
                         ProgressView()
