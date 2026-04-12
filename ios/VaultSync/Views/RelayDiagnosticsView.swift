@@ -7,6 +7,8 @@ struct RelayDiagnosticsView: View {
 
     @State private var diagnosticsInFlight = false
     @State private var retryProvisioningInFlight = false
+    @State private var backgroundDebugEntries = BackgroundDebugStore().entries().reversed()
+    @State private var lastBackgroundOutcome = BackgroundSyncService.lastSyncOutcome()
 
     var body: some View {
         List {
@@ -14,6 +16,7 @@ struct RelayDiagnosticsView: View {
             apnsSection
             provisioningSection
             triggerSection
+            backgroundExecutionSection
             actionSection
             troubleshootingSection
         }
@@ -23,6 +26,13 @@ struct RelayDiagnosticsView: View {
             if subscriptionManager.relayHealthResult == nil {
                 await runDiagnostics()
             }
+            refreshBackgroundDebug()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: BackgroundDebugStore.didChangeNotification)) { _ in
+            refreshBackgroundDebug()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: BackgroundSyncService.lastSyncOutcomeDidChangeNotification)) { _ in
+            lastBackgroundOutcome = BackgroundSyncService.lastSyncOutcome()
         }
     }
 
@@ -255,6 +265,58 @@ struct RelayDiagnosticsView: View {
                 }
                 .disabled(retryProvisioningInFlight)
             }
+
+            Button("Clear Background Debug Log") {
+                BackgroundDebugStore().clear()
+                refreshBackgroundDebug()
+            }
+        }
+    }
+
+    private var backgroundExecutionSection: some View {
+        Section("Background Execution") {
+            if let outcome = lastBackgroundOutcome {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(outcome.result.issueTitle)
+                        .font(.subheadline.weight(.semibold))
+                    Text("Last run: \(outcome.timestamp.formatted(date: .abbreviated, time: .standard))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("Trigger: \(outcome.triggerReason)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if let detail = outcome.detail, !detail.isEmpty {
+                        Text(detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.vertical, 2)
+            } else {
+                Text("No background sync run has been recorded yet.")
+                    .foregroundStyle(.secondary)
+            }
+
+            if backgroundDebugEntries.isEmpty {
+                Text("No background debug events recorded yet.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(Array(backgroundDebugEntries.prefix(20))) { entry in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("[\(entry.area)] \(entry.message)")
+                            .font(.caption)
+                        Text(entry.timestamp.formatted(date: .omitted, time: .standard))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+
+            Text("Temporary debug timeline for silent-push and background sync runs.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -350,5 +412,10 @@ struct RelayDiagnosticsView: View {
             homeserverDeviceIDs: syncthingManager.devices.map(\.deviceID)
         )
         diagnosticsInFlight = false
+    }
+
+    private func refreshBackgroundDebug() {
+        backgroundDebugEntries = BackgroundDebugStore().entries().reversed()
+        lastBackgroundOutcome = BackgroundSyncService.lastSyncOutcome()
     }
 }

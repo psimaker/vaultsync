@@ -48,11 +48,16 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
     ) {
         logger.info("Silent push received")
+        BackgroundDebugStore().record(area: "push", message: "Silent push received by app delegate.")
         RelayTriggerStore.markReceived()
 
         Task {
             let result = await BackgroundSyncService.performBackgroundSync(
                 reason: "silent-push"
+            )
+            BackgroundDebugStore().record(
+                area: "push",
+                message: "Silent push finished with result=\(result.rawValue)."
             )
 
             switch result {
