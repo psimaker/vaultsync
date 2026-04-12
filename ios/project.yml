@@ -39,7 +39,7 @@ targets:
       path: VaultSync/Info.plist
       properties:
         CFBundleShortVersionString: "1.0.2"
-        CFBundleVersion: "12"
+        CFBundleVersion: "14"
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false

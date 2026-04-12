@@ -11,7 +11,7 @@ Lightweight sidecar container that watches your Syncthing instance for file chan
 5. Reads this Syncthing instance's Device ID automatically from `/rest/system/status`.
 6. Sends a wake-up signal to `relay.vaultsync.eu` — no file content or metadata leaves your server.
 7. The relay forwards a silent push to your iOS device via APNs.
-8. Optionally exposes an experimental direct-upload endpoint for iPhone-originated Markdown changes.
+8. Optionally exposes a direct-upload endpoint for iPhone-originated Markdown changes.
 
 ## Quick Start (One Command)
 
@@ -73,7 +73,7 @@ Compose values are read from `.env`:
 - `RELAY_URL` (default fallback: `https://relay.vaultsync.eu`)
 - `DEBOUNCE_SECONDS` (default fallback: `5`)
 - `POKE_INTERVAL_MINUTES` (default fallback: `0`, disabled)
-- `UPLOAD_LISTEN_ADDR` (optional; enables the experimental direct-upload endpoint)
+- `UPLOAD_LISTEN_ADDR` (optional; enables the direct-upload endpoint)
 - `UPLOAD_PORT_PUBLISH` (optional Docker publish rule for the upload endpoint)
 - `UPLOAD_ROOT_DIR` (optional; Syncthing folder root where uploaded Markdown files are written)
 - `UPLOAD_AUTH_TOKEN` (required when upload endpoint is enabled)
@@ -105,7 +105,7 @@ The healthcheck validates dependency readiness (Syncthing API + credentials + De
 | `RELAY_URL` | Yes | — | Central relay URL (`https://relay.vaultsync.eu`) |
 | `DEBOUNCE_SECONDS` | No | `5` | Seconds to wait after the last event before sending a trigger. Batches rapid changes into one push. |
 | `POKE_INTERVAL_MINUTES` | No | `0` | Optional periodic silent-push wake-up. Use this to prompt background upload checks from the iPhone even when no server-side event has happened yet. `0` disables the workaround. |
-| `UPLOAD_LISTEN_ADDR` | No | disabled | Optional bind address for the experimental direct-upload endpoint (for example `:8091`). |
+| `UPLOAD_LISTEN_ADDR` | No | disabled | Optional bind address for the direct-upload endpoint (for example `:8091`). |
 | `UPLOAD_PORT_PUBLISH` | No | `127.0.0.1:8091:8091` | Docker port publish rule for the experimental upload endpoint. Replace with a public binding or front it with a reverse proxy if the iPhone must reach it directly. |
 | `UPLOAD_ROOT_DIR` | No | disabled | Absolute or relative filesystem path where uploaded Markdown files are stored. In Docker Compose this should usually be `/var/syncthing/obsidian` so uploads land in the shared Syncthing volume. |
 | `UPLOAD_AUTH_TOKEN` | No | disabled | Bearer token required by the experimental direct-upload endpoint. Must be set when the upload endpoint is enabled. |
@@ -122,7 +122,7 @@ All other events (device connections, config changes, and so on) are ignored.
 
 When `POKE_INTERVAL_MINUTES` is enabled, `vaultsync-notify` also sends a periodic wake-up if no recent trigger succeeded and there is no pending change-trigger already queued. This is intended as a best-effort `iPhone -> server` workaround, not as an instant sync guarantee.
 
-## Experimental Direct Upload Endpoint
+## Direct Upload Endpoint
 
 If `UPLOAD_LISTEN_ADDR`, `UPLOAD_ROOT_DIR`, and `UPLOAD_AUTH_TOKEN` are all set, `vaultsync-notify` also serves:
 
@@ -140,8 +140,8 @@ Current scope and guardrails:
 
 - Only Markdown files (`.md`) are accepted.
 - Path traversal is rejected.
-- Empty uploads are rejected.
-- This is an experimental `iPhone -> server` lane and should not yet be treated as a complete conflict-resolution system.
+- Empty uploads are allowed because freshly created notes can legitimately be zero-byte files.
+- This `iPhone -> server` lane improves reliability under iOS background limits, but it should still be treated as best effort rather than an instant-sync guarantee.
 
 Operational note:
 

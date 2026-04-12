@@ -178,14 +178,17 @@ final class BackgroundUploadService: NSObject {
                 }
                 try FileManager.default.copyItem(at: sourceURL, to: stagedURL)
             } catch {
-                BackgroundDebugStore().record(
-                    area: "upload",
-                    message: "Failed staging \(snapshot.relativePath): \(error.localizedDescription)"
-                )
+                backgroundUploadLogger.error("Failed staging \(snapshot.relativePath, privacy: .public): \(error.localizedDescription, privacy: .public)")
                 continue
             }
 
-            var request = URLRequest(url: endpointURL)
+            guard let requestURL = uploadURL(base: endpointURL, relativePath: snapshot.relativePath) else {
+                backgroundUploadLogger.error("Failed building upload URL for \(snapshot.relativePath, privacy: .public)")
+                try? FileManager.default.removeItem(at: stagedURL)
+                continue
+            }
+
+            var request = URLRequest(url: requestURL)
             request.httpMethod = "PUT"
             request.setValue("Bearer \(configuration.trimmedAuthToken)", forHTTPHeaderField: "Authorization")
             request.setValue(snapshot.relativePath, forHTTPHeaderField: "X-VaultSync-Relative-Path")
@@ -194,10 +197,7 @@ final class BackgroundUploadService: NSObject {
             request.setValue(trigger, forHTTPHeaderField: "X-VaultSync-Trigger")
 
             let task = session.uploadTask(with: request, fromFile: stagedURL)
-            BackgroundDebugStore().record(
-                area: "upload",
-                message: "Queued upload task \(task.taskIdentifier) for \(snapshot.relativePath)."
-            )
+            backgroundUploadLogger.info("Queued upload task \(task.taskIdentifier) for \(snapshot.relativePath, privacy: .public)")
             pending[String(task.taskIdentifier)] = PendingUpload(
                 relativePath: snapshot.relativePath,
                 modifiedAt: snapshot.modifiedAt,
@@ -290,10 +290,7 @@ final class BackgroundUploadService: NSObject {
             }
             .joined(separator: " | ")
 
-        BackgroundDebugStore().record(
-            area: "upload",
-            message: "Scan \(label): root=\(rootURL.lastPathComponent), files=\(snapshots.count), recent=\(recent.isEmpty ? "none" : recent)"
-        )
+        backgroundUploadLogger.debug("Scan \(label, privacy: .public): root=\(rootURL.lastPathComponent, privacy: .public), files=\(snapshots.count), recent=\((recent.isEmpty ? "none" : recent), privacy: .public)")
     }
 
     private func traceCandidates(_ snapshots: [FileSnapshot], label: String) {
@@ -304,14 +301,22 @@ final class BackgroundUploadService: NSObject {
             }
             .joined(separator: " | ")
 
-        BackgroundDebugStore().record(
-            area: "upload",
-            message: "\(label): count=\(snapshots.count), files=\(summary.isEmpty ? "none" : summary)"
-        )
+        backgroundUploadLogger.debug("\(label, privacy: .public): count=\(snapshots.count), files=\((summary.isEmpty ? "none" : summary), privacy: .public)")
     }
 
     private func stagedUploadsRoot() -> URL {
         FileManager.default.temporaryDirectory.appendingPathComponent("background-upload-staging", isDirectory: true)
+    }
+
+    private func uploadURL(base: URL, relativePath: String) -> URL? {
+        guard var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+        var items = components.queryItems ?? []
+        items.removeAll { $0.name == "path" }
+        items.append(URLQueryItem(name: "path", value: relativePath))
+        components.queryItems = items
+        return components.url
     }
 
     private func loadManifest() -> [String: FileSnapshot] {
@@ -362,19 +367,11 @@ extension BackgroundUploadService: URLSessionTaskDelegate, URLSessionDataDelegat
 
             let httpStatus = (task.response as? HTTPURLResponse)?.statusCode ?? 0
             if let error {
-                BackgroundDebugStore().record(
-                    area: "upload",
-                    message: "Upload failed for \(upload.relativePath): \(error.localizedDescription)"
-                )
                 backgroundUploadLogger.error("Background upload failed for \(upload.relativePath, privacy: .public): \(error.localizedDescription, privacy: .public)")
                 return
             }
 
             guard (200...299).contains(httpStatus) else {
-                BackgroundDebugStore().record(
-                    area: "upload",
-                    message: "Upload rejected for \(upload.relativePath): HTTP \(httpStatus)"
-                )
                 backgroundUploadLogger.error("Background upload rejected for \(upload.relativePath, privacy: .public): HTTP \(httpStatus)")
                 return
             }
@@ -386,10 +383,6 @@ extension BackgroundUploadService: URLSessionTaskDelegate, URLSessionDataDelegat
                 size: upload.size
             )
             saveManifest(manifest)
-            BackgroundDebugStore().record(
-                area: "upload",
-                message: "Upload succeeded for \(upload.relativePath) (HTTP \(httpStatus))."
-            )
             backgroundUploadLogger.info("Background upload succeeded for \(upload.relativePath, privacy: .public)")
         }
     }

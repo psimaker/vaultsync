@@ -40,7 +40,23 @@ Key exports:
 
 - **Foreground:** Syncthing runs unrestricted. Immediate, continuous sync.
 - **Background:** `BGAppRefreshTask` (~30s) + `BGContinuedProcessingTask` (iOS 26, longer runtime for user-initiated tasks).
-- **Push sync (Cloud Relay):** Optional. Near-realtime via APNs silent push notifications. See [relay-spec.md](relay-spec.md).
+- **Push sync (Cloud Relay):** Optional. Near-realtime `server -> iPhone` wake-ups via APNs silent push notifications. See [relay-spec.md](relay-spec.md).
+- **Background upload lane:** Optional. Relay-triggered wakes can upload changed Markdown files from iPhone directly to the homeserver, where Syncthing distributes them onward.
+
+## Directional Behavior
+
+VaultSync is intentionally asymmetric in the background:
+
+- **Server -> iPhone**
+  - `vaultsync-notify` watches Syncthing for real outgoing-change markers
+  - Cloud Relay sends a silent push
+  - VaultSync wakes and pulls through Syncthing
+- **iPhone -> Server**
+  - VaultSync cannot rely on always-on file watching under iOS suspension
+  - during relay-triggered wakes it scans the Obsidian vault and uploads changed Markdown files directly to the homeserver
+  - homeserver Syncthing then propagates those writes to the rest of the cluster
+
+This design avoids depending on a full embedded Syncthing reconnect for every background upload attempt while preserving Syncthing as the source of truth for mesh distribution.
 
 ## Cloud Relay (`notify/`)
 

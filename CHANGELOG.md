@@ -8,6 +8,7 @@ All notable changes to VaultSync are documented here.
 
 ### Fixed
 
+- **Direct iPhone-to-server background uploads** — Cloud Relay silent-push wakes can now upload changed Markdown files directly from the iPhone to the homeserver. The server-side upload endpoint accepts both empty and non-empty Markdown files, writes them into the shared Syncthing volume, and lets Syncthing distribute them normally.
 - **Silent-push sync reliability** — Silent pushes from Cloud Relay are now reliably acted upon even after iOS has suspended the process. A stale lifecycle lock previously caused the background sync handler to skip the bridge restart, leaving dead TCP sockets unreconnected. Pushes delivered but never produced a sync.
 - **Direct homeserver edits now wake iPhone again** — `vaultsync-notify` no longer relies on `ItemFinished` alone. It now triggers on real outgoing-change markers (`LocalIndexUpdated`) and on `FolderCompletion` only when a peer is actually behind, so edits made directly on the homeserver once again produce a silent push without reintroducing the old `StateChanged` push storm.
 - **Silent-push recovery fallback** — The iOS background sync path now treats folder rescans as the fast path, but if a silent push produces no real peer or sync activity within a short window it force-restarts the embedded Syncthing bridge and retries inside the same background execution budget. This closes the remaining gap where APNs delivery succeeded but Syncthing stayed on dead suspended sockets.
@@ -17,6 +18,11 @@ All notable changes to VaultSync are documented here.
 - **Vault path nesting** — Accepting a pending share no longer creates a redundant subdirectory when the selected Obsidian root is itself a vault or when its folder name matches the share label (case-insensitive). Previously selecting `On My iPhone/Obsidian/` with a desktop share labelled `obsidian` produced `Obsidian/obsidian/` — Obsidian then couldn't see the synced files as part of the vault.
 - **Background sync completion detection** — The idle-state check used by the silent-push and BGAppRefresh handlers now verifies that folders have no outstanding `needFiles`, `needBytes`, or `inProgressBytes` before declaring success. Previously Syncthing's momentary `idle` state between scan and sync phases was treated as "done", causing the handler to shut Syncthing down before any file was actually pulled. This matches the peer-side observation of connections lasting only ~1 second after a silent push.
 - **vaultsync-notify trigger deduplication** — Trigger delivery is now deduplicated per folder/marker so repeated scan/completion cycles do not fan out into redundant APNs wake-ups for the same logical change.
+
+### Changed
+
+- **Relay Diagnostics cleanup** — Temporary per-run debug timeline UI used during the v1.0.2 reliability investigation has been removed again. Relay Diagnostics now keeps the operator-facing relay and upload controls, while low-level tracing stays in app logs instead of persistent user-visible debug storage.
+- **Background upload lane promotion** — The direct Markdown upload lane is now part of the intended Cloud Relay path for best-effort `iPhone -> server` sync under iOS background limits.
 
 ---
 

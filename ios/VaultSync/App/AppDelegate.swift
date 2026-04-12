@@ -49,25 +49,16 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
     ) {
         logger.info("Silent push received")
-        BackgroundDebugStore().record(area: "push", message: "Silent push received by app delegate.")
         RelayTriggerStore.markReceived()
 
         Task {
-            let uploadSummary = await BackgroundUploadService.shared.enqueueChangedMarkdownFilesIfConfigured(
-                trigger: "silent-push"
-            )
-            BackgroundDebugStore().record(
-                area: "upload",
-                message: uploadSummary.detail
-            )
+            let uploadSummary = await BackgroundUploadService.shared.enqueueChangedMarkdownFilesIfConfigured(trigger: "silent-push")
+            logger.info("Background upload lane result: \(uploadSummary.detail, privacy: .public)")
 
             let result = await BackgroundSyncService.performBackgroundSync(
                 reason: "silent-push"
             )
-            BackgroundDebugStore().record(
-                area: "push",
-                message: "Silent push finished with result=\(result.rawValue)."
-            )
+            logger.info("Silent push finished with result=\(result.rawValue, privacy: .public)")
 
             switch result {
             case .synced:

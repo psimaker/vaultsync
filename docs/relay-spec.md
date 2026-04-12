@@ -46,11 +46,13 @@ Push-Notification-Service that forwards Syncthing file-change events to iOS devi
 **vaultsync-notify (Homeserver Container)**
 - Docker container, runs alongside the user's Syncthing instance
 - Subscribes to Syncthing's REST API event stream (`/rest/events`)
-- Filters for relevant events: `ItemFinished`, `StateChanged`
+- Filters for relevant outgoing-change signals: `LocalIndexUpdated`, plus `FolderCompletion` only when a peer still needs data
 - On file changes: sends a wake-up signal to the central relay
 - Configurable debounce (default: 5s) to batch rapid changes into one push
+- Optional sparse periodic poke to create additional `iPhone -> server` wake opportunities
 - Automatically reads its Syncthing Device ID from `/rest/system/status` at startup
 - No persistent storage required — stateless except for config
+- Optionally exposes a direct Markdown upload endpoint so the iPhone can write changed notes into the server-side Syncthing volume during background wakes
 
 **Central Relay (relay.vaultsync.eu)**
 - Receives wake-up signals from homeserver containers
@@ -168,11 +170,15 @@ Configuration via environment variables:
 | `SYNCTHING_API_KEY` | Yes | Syncthing API key for event subscription |
 | `RELAY_URL` | Yes | Central relay URL (default: `https://relay.vaultsync.eu`) |
 | `DEBOUNCE_SECONDS` | No | Debounce interval for batching events (default: 5) |
+| `POKE_INTERVAL_MINUTES` | No | Sparse periodic silent-push wake-up for best-effort `iPhone -> server` catch-up |
+| `UPLOAD_LISTEN_ADDR` | No | Optional bind address for the direct upload endpoint |
+| `UPLOAD_ROOT_DIR` | No | Syncthing-backed filesystem root where uploaded Markdown files are written |
+| `UPLOAD_AUTH_TOKEN` | No | Bearer token required by the direct upload endpoint |
 | `WATCHED_FOLDERS` | No | Comma-separated folder IDs to watch (default: all) |
 
 The container reads its own Syncthing Device ID automatically from `/rest/system/status` at startup. No manual Device ID configuration needed.
 
-The container exposes no API — it only consumes the Syncthing event stream and pushes outbound to the relay.
+The container consumes the Syncthing event stream and pushes outbound to the relay. If the upload lane is enabled, it also exposes a direct authenticated Markdown upload endpoint for the iPhone.
 
 ---
 
@@ -204,7 +210,27 @@ The container exposes no API — it only consumes the Syncthing event stream and
 - Push type: `background` with `content-available: 1`
 - Topic: app bundle ID (`eu.vaultsync.app`)
 - Priority: 5 (low — allows iOS to batch/defer for power optimization)
-- Expiration: 0 (immediate delivery only, no store-and-forward)
+- Expiration: +1 hour (allows APNs to retry delivery when the device is briefly unreachable)
+
+## Direct Upload Endpoint
+
+If the upload endpoint is enabled in `vaultsync-notify`, VaultSync can send changed Markdown files directly to the homeserver during a relay-triggered background wake:
+
+```text
+PUT /api/v1/upload?path=brain/path/to/file.md
+Authorization: Bearer <token>
+Content-Type: text/markdown
+X-VaultSync-Device-ID: <device-id>
+```
+
+Current scope:
+
+- Markdown files only
+- path traversal rejected
+- empty files allowed
+- writes land in the shared Syncthing volume and are then distributed by Syncthing as normal
+
+This path is intended to improve `iPhone -> server` reliability under iOS background limits. It is not a full replacement for Syncthing conflict semantics.
 
 ---
 

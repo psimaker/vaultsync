@@ -7,8 +7,6 @@ struct RelayDiagnosticsView: View {
 
     @State private var diagnosticsInFlight = false
     @State private var retryProvisioningInFlight = false
-    @State private var backgroundDebugEntries = BackgroundDebugStore().entries().reversed()
-    @State private var lastBackgroundOutcome = BackgroundSyncService.lastSyncOutcome()
     @State private var backgroundUploadConfig = BackgroundUploadConfiguration.disabled
     @State private var backgroundUploadSaveMessage: String?
 
@@ -19,7 +17,6 @@ struct RelayDiagnosticsView: View {
             provisioningSection
             triggerSection
             backgroundUploadSection
-            backgroundExecutionSection
             actionSection
             troubleshootingSection
         }
@@ -29,14 +26,7 @@ struct RelayDiagnosticsView: View {
             if subscriptionManager.relayHealthResult == nil {
                 await runDiagnostics()
             }
-            refreshBackgroundDebug()
             backgroundUploadConfig = BackgroundUploadService.configuration()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: BackgroundDebugStore.didChangeNotification)) { _ in
-            refreshBackgroundDebug()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: BackgroundSyncService.lastSyncOutcomeDidChangeNotification)) { _ in
-            lastBackgroundOutcome = BackgroundSyncService.lastSyncOutcome()
         }
     }
 
@@ -232,7 +222,7 @@ struct RelayDiagnosticsView: View {
     }
 
     private var backgroundUploadSection: some View {
-        Section("Experimental Upload Lane") {
+        Section("Background Uploads") {
             Toggle("Enable direct iPhone uploads", isOn: $backgroundUploadConfig.isEnabled)
 
             TextField("Upload endpoint URL", text: $backgroundUploadConfig.endpointURL)
@@ -244,7 +234,7 @@ struct RelayDiagnosticsView: View {
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
 
-            Text("Uses a background URLSession upload to send changed Markdown files directly to your server-side upload endpoint during silent-push wakes.")
+            Text("Uses a background URLSession upload to send changed Markdown files directly to your homeserver during relay-triggered background wakes. This improves iPhone to server sync, but timing still depends on iOS background delivery.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -263,14 +253,14 @@ struct RelayDiagnosticsView: View {
                 BackgroundUploadService.saveConfiguration(sanitized)
                 backgroundUploadConfig = sanitized
                 backgroundUploadSaveMessage = sanitized.isValid
-                    ? "Experimental upload lane saved."
-                    : "Saved, but the upload lane remains disabled until URL and token are set."
+                    ? "Background upload settings saved."
+                    : "Saved, but background uploads remain disabled until URL and token are set."
             }
 
-            Button("Disable Upload Settings") {
+            Button("Disable Background Uploads") {
                 BackgroundUploadService.clearConfiguration()
                 backgroundUploadConfig = .disabled
-                backgroundUploadSaveMessage = "Experimental upload lane disabled."
+                backgroundUploadSaveMessage = "Background uploads disabled."
             }
             .foregroundStyle(.red)
         }
@@ -314,58 +304,6 @@ struct RelayDiagnosticsView: View {
                 }
                 .disabled(retryProvisioningInFlight)
             }
-
-            Button("Clear Background Debug Log") {
-                BackgroundDebugStore().clear()
-                refreshBackgroundDebug()
-            }
-        }
-    }
-
-    private var backgroundExecutionSection: some View {
-        Section("Background Execution") {
-            if let outcome = lastBackgroundOutcome {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(outcome.result.issueTitle)
-                        .font(.subheadline.weight(.semibold))
-                    Text("Last run: \(outcome.timestamp.formatted(date: .abbreviated, time: .standard))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text("Trigger: \(outcome.triggerReason)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    if let detail = outcome.detail, !detail.isEmpty {
-                        Text(detail)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.vertical, 2)
-            } else {
-                Text("No background sync run has been recorded yet.")
-                    .foregroundStyle(.secondary)
-            }
-
-            if backgroundDebugEntries.isEmpty {
-                Text("No background debug events recorded yet.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(Array(backgroundDebugEntries.prefix(20))) { entry in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("[\(entry.area)] \(entry.message)")
-                            .font(.caption)
-                        Text(entry.timestamp.formatted(date: .omitted, time: .standard))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.vertical, 2)
-                }
-            }
-
-            Text("Temporary debug timeline for silent-push and background sync runs.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
         }
     }
 
@@ -461,10 +399,5 @@ struct RelayDiagnosticsView: View {
             homeserverDeviceIDs: syncthingManager.devices.map(\.deviceID)
         )
         diagnosticsInFlight = false
-    }
-
-    private func refreshBackgroundDebug() {
-        backgroundDebugEntries = BackgroundDebugStore().entries().reversed()
-        lastBackgroundOutcome = BackgroundSyncService.lastSyncOutcome()
     }
 }

@@ -912,7 +912,7 @@ enum BackgroundSyncService {
     }
 
     private static func trace(_ message: String) {
-        BackgroundDebugStore().record(area: "background", message: message)
+        logger.debug("\(message, privacy: .public)")
     }
 
     private static func latestBridgeEventID() -> Int {

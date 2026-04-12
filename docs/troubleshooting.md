@@ -163,6 +163,7 @@ This guide covers the most common VaultSync failures and how to fix them quickly
 - No shared folders configured yet.
 - iOS background execution deadline exceeded.
 - Syncthing bridge failed to start in background.
+- iOS delayed or skipped the wake that would have attempted a background upload.
 
 ### Fix Steps
 1. Open VaultSync in foreground and run a manual rescan.
@@ -171,6 +172,10 @@ This guide covers the most common VaultSync failures and how to fix them quickly
 4. Keep Cloud Relay/APNs healthy if you depend on instant sync.
 5. For relay users, validate `vaultsync-notify --doctor` output and relay health.
 6. Re-check **Last sync** timestamp after the next background window.
+
+### Important Limitation
+
+With Cloud Relay enabled, VaultSync can now attempt `iPhone -> server` uploads automatically in the background. However, iOS still decides when those wakes are delivered. That means background uploads can be delayed even when everything is configured correctly. If a change is time-sensitive, opening VaultSync remains the most reliable way to force an immediate upload.
 
 ## Required Device Disconnected
 

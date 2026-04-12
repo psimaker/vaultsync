@@ -43,6 +43,7 @@ Your notes, your devices, your server — no third-party cloud required.
 > **✅ Reliable Silent-Push Sync** — Background sync now correctly waits for pulls to finish instead of shutting down at the first idle flicker. Fixes the core reason why pushes sometimes arrived but files didn't.<br>
 > **🏠 Server Edits Wake iPhone Again** — vaultsync-notify now reacts to real outgoing change markers on the homeserver, so direct edits on your server trigger an iPhone wake-up again without falling back to noisy state-transition pushes.<br>
 > **🛠️ Recovery When iOS Resumes Cold** — If a silent push wakes VaultSync but Syncthing does not show real peer activity quickly enough, VaultSync now force-restarts the embedded engine and retries within the same background run.<br>
+> **📤 Better iPhone → Server Uploads** — Relay-triggered background wakes can now upload changed Markdown files from iPhone directly to your homeserver, where Syncthing distributes them to the rest of your devices.<br>
 > **⏱️ Longer iOS Grace Period** — The app now holds a background-task assertion on suspend, so Syncthing gets up to ~30 seconds to wrap up in-flight operations.<br>
 > **🧭 Correct Vault Path** — Accepting a pending share no longer creates a redundant nested subfolder when the selected Obsidian root already matches the share name.<br>
 > **🔔 Gentler Push Pressure** — vaultsync-notify now deduplicates wake-ups per real change marker, reducing the chance of iOS throttling while still covering direct server-side edits.<br>
@@ -81,7 +82,7 @@ No third-party cloud, no account required — your data never leaves your device
 <td width="50%" valign="top">
 
 **☁️ Cloud Relay** *(recommended — $0.99/month)*
-Near-realtime push-based sync via silent APNs notifications — no need to open the app
+Near-realtime server wake-ups plus automatic background upload attempts — no need to open the app for every sync
 
 **🐳 vaultsync-notify Sidecar**
 Lightweight Docker container watches Syncthing for changes and signals the relay — only the Device ID is sent, never file content
@@ -128,6 +129,7 @@ Full VoiceOver and Dynamic Type support throughout the app
 2. **VaultSync** receives files directly into Obsidian's sandbox on iOS — open Obsidian and your vault is up to date
 3. **vaultsync-notify** (optional) watches your Syncthing instance, detects when a peer actually needs new data, and signals the Cloud Relay when a wake-up is warranted
 4. **Cloud Relay** sends a silent push notification to wake VaultSync for immediate sync
+5. **Background uploads** can send changed Markdown files from iPhone to your homeserver during relay-triggered wakes, where Syncthing picks them up and distributes them onward
 
 ---
 
@@ -179,13 +181,23 @@ See [notify/README.md](notify/README.md) for full configuration options.
 
 ## 📡 Cloud Relay & vaultsync-notify
 
-Cloud Relay solves a core iOS limitation: apps can't sync in the background in real-time. When files change on your server, the [vaultsync-notify](notify/) container detects that remote peers are behind and sends a wake-up signal to the relay, which pushes a silent notification to your iPhone — VaultSync wakes up and syncs immediately.
+Cloud Relay solves the core iOS limitation that third-party apps cannot run an always-on sync daemon in the background. When files change on your server, the [vaultsync-notify](notify/) container detects that remote peers are behind and sends a wake-up signal to the relay, which pushes a silent notification to your iPhone. VaultSync then wakes up and either pulls server-side changes through Syncthing or uploads changed Markdown files from iPhone to your homeserver when iOS grants background time.
 
 **Privacy-first:** only the Syncthing Device ID is sent as a wake-up signal — **no file names, folder names, or content ever leaves your server**.
 
 Without Cloud Relay, VaultSync still works — just open the app to trigger a sync or rely on iOS background refresh. But for the best experience, Cloud Relay is highly recommended.
 
 See [notify/README.md](notify/README.md) for details.
+
+## iOS Background Limitation
+
+VaultSync can now sync in both directions without opening the app, but iOS still controls when background work is actually allowed to run.
+
+- **Server → iPhone** is near-realtime when silent pushes are delivered.
+- **iPhone → Server** is automatic, but still **best effort**. VaultSync can queue background uploads during relay-triggered wakes, yet iOS may delay or skip some wakes depending on power state, usage patterns, network conditions, and silent-push budget.
+- If a change is time-critical, opening VaultSync remains the most reliable way to force an immediate upload.
+
+The honest product promise is: **automatic background sync with possible delay**, not guaranteed instant delivery in every situation.
 
 ---
 
