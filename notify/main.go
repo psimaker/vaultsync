@@ -1,15 +1,19 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,12 +22,15 @@ import (
 )
 
 type Config struct {
-	SyncthingAPIURL string
-	SyncthingAPIKey string
-	RelayURL        string
-	DebounceSeconds int
-	PokeIntervalMin int
-	WatchedFolders  map[string]bool // nil = watch all
+	SyncthingAPIURL  string
+	SyncthingAPIKey  string
+	RelayURL         string
+	DebounceSeconds  int
+	PokeIntervalMin  int
+	WatchedFolders   map[string]bool // nil = watch all
+	UploadListenAddr string
+	UploadRootDir    string
+	UploadAuthToken  string
 }
 
 type appMode int
@@ -142,12 +149,15 @@ func loadConfig() (Config, error) {
 	}
 
 	cfg := Config{
-		SyncthingAPIURL: required("SYNCTHING_API_URL"),
-		SyncthingAPIKey: required("SYNCTHING_API_KEY"),
-		RelayURL:        required("RELAY_URL"),
-		DebounceSeconds: debounce,
-		PokeIntervalMin: pokeInterval,
-		WatchedFolders:  watched,
+		SyncthingAPIURL:  required("SYNCTHING_API_URL"),
+		SyncthingAPIKey:  required("SYNCTHING_API_KEY"),
+		RelayURL:         required("RELAY_URL"),
+		DebounceSeconds:  debounce,
+		PokeIntervalMin:  pokeInterval,
+		WatchedFolders:   watched,
+		UploadListenAddr: strings.TrimSpace(os.Getenv("UPLOAD_LISTEN_ADDR")),
+		UploadRootDir:    strings.TrimSpace(os.Getenv("UPLOAD_ROOT_DIR")),
+		UploadAuthToken:  strings.TrimSpace(os.Getenv("UPLOAD_AUTH_TOKEN")),
 	}
 
 	missing := make([]string, 0, 3)
@@ -162,6 +172,12 @@ func loadConfig() (Config, error) {
 	}
 	if len(missing) > 0 {
 		return Config{}, fmt.Errorf("required environment variables not set: %s", strings.Join(missing, ", "))
+	}
+	if (cfg.UploadListenAddr == "") != (cfg.UploadRootDir == "") {
+		return Config{}, fmt.Errorf("UPLOAD_LISTEN_ADDR and UPLOAD_ROOT_DIR must either both be set or both be empty")
+	}
+	if cfg.UploadListenAddr != "" && cfg.UploadAuthToken == "" {
+		return Config{}, fmt.Errorf("UPLOAD_AUTH_TOKEN is required when background upload endpoint is enabled")
 	}
 
 	return cfg, nil
@@ -182,6 +198,31 @@ var relevantEventTypes = map[string]bool{
 func runService(cfg Config) int {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
+
+	var uploadServer *http.Server
+	if cfg.UploadListenAddr != "" {
+		absRoot, err := filepath.Abs(cfg.UploadRootDir)
+		if err != nil {
+			slog.Error("invalid upload root directory",
+				"classification", "fatal",
+				"component", "upload-endpoint",
+				"error", err,
+				"action", "exit",
+			)
+			return 1
+		}
+		if err := os.MkdirAll(absRoot, 0o755); err != nil {
+			slog.Error("failed to create upload root directory",
+				"classification", "fatal",
+				"component", "upload-endpoint",
+				"error", err,
+				"action", "exit",
+			)
+			return 1
+		}
+		uploadServer = startUploadServer(cfg.UploadListenAddr, absRoot, cfg.UploadAuthToken)
+		defer shutdownUploadServer(uploadServer)
+	}
 
 	st := NewSyncthingClient(cfg.SyncthingAPIURL, cfg.SyncthingAPIKey)
 	deviceID, err := waitForDeviceID(ctx, st)
@@ -216,6 +257,8 @@ func runService(cfg Config) int {
 		"debounce_seconds", cfg.DebounceSeconds,
 		"poke_interval_minutes", cfg.PokeIntervalMin,
 		"watched_folders", formatWatched(cfg.WatchedFolders),
+		"upload_listen_addr", fallbackString(cfg.UploadListenAddr, "disabled"),
+		"upload_root_dir", fallbackString(cfg.UploadRootDir, "disabled"),
 	)
 
 	events := st.Subscribe(ctx)
@@ -351,6 +394,184 @@ func runService(cfg Config) int {
 			return 0
 		}
 	}
+}
+
+type uploadResponse struct {
+	Status       string `json:"status"`
+	RelativePath string `json:"relative_path"`
+	BytesWritten int64  `json:"bytes_written"`
+}
+
+func startUploadServer(listenAddr, rootDir, authToken string) *http.Server {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/upload", func(w http.ResponseWriter, r *http.Request) {
+		handleUpload(w, r, rootDir, authToken)
+	})
+
+	server := &http.Server{
+		Addr:              listenAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	go func() {
+		slog.Info("background upload endpoint listening",
+			"component", "upload-endpoint",
+			"listen_addr", listenAddr,
+			"root_dir", rootDir,
+		)
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("background upload endpoint stopped unexpectedly",
+				"classification", "fatal",
+				"component", "upload-endpoint",
+				"error", err,
+			)
+		}
+	}()
+
+	return server
+}
+
+func shutdownUploadServer(server *http.Server) {
+	if server == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = server.Shutdown(ctx)
+}
+
+func handleUpload(w http.ResponseWriter, r *http.Request, rootDir, authToken string) {
+	if r.Method != http.MethodPut && r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if authToken != "" {
+		got := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+		if got != authToken {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+	}
+
+	relativePath, err := normalizedUploadPath(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if !strings.HasSuffix(strings.ToLower(relativePath), ".md") {
+		http.Error(w, "only markdown uploads are accepted in the experimental endpoint", http.StatusBadRequest)
+		return
+	}
+
+	targetPath, err := safeUploadTargetPath(rootDir, relativePath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		http.Error(w, "failed to prepare target directory", http.StatusInternalServerError)
+		return
+	}
+
+	data, err := io.ReadAll(io.LimitReader(r.Body, 10<<20))
+	if err != nil {
+		http.Error(w, "failed to read upload body", http.StatusBadRequest)
+		return
+	}
+	if len(data) == 0 {
+		http.Error(w, "empty uploads are not allowed", http.StatusBadRequest)
+		return
+	}
+
+	if err := os.WriteFile(targetPath, data, 0o644); err != nil {
+		http.Error(w, "failed to persist upload", http.StatusInternalServerError)
+		return
+	}
+
+	slog.Info("background upload accepted",
+		"component", "upload-endpoint",
+		"path", relativePath,
+		"bytes", len(data),
+		"device", r.Header.Get("X-VaultSync-Device-ID"),
+	)
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(uploadResponse{
+		Status:       "stored",
+		RelativePath: relativePath,
+		BytesWritten: int64(len(data)),
+	})
+}
+
+func normalizedUploadPath(r *http.Request) (string, error) {
+	if qp := strings.TrimSpace(r.URL.Query().Get("path")); qp != "" {
+		return sanitizeRelativePath(qp)
+	}
+
+	contentType := r.Header.Get("Content-Type")
+	mediaType, _, _ := mime.ParseMediaType(contentType)
+	if mediaType == "application/json" {
+		var payload struct {
+			Path    string `json:"path"`
+			Content string `json:"content"`
+		}
+		buf, err := io.ReadAll(io.LimitReader(r.Body, 10<<20))
+		if err != nil {
+			return "", fmt.Errorf("failed to read json upload body")
+		}
+		if err := json.Unmarshal(buf, &payload); err != nil {
+			return "", fmt.Errorf("invalid json upload payload")
+		}
+		r.Body = io.NopCloser(bytes.NewReader([]byte(payload.Content)))
+		return sanitizeRelativePath(payload.Path)
+	}
+
+	headerPath := strings.TrimSpace(r.Header.Get("X-VaultSync-Relative-Path"))
+	if headerPath == "" {
+		return "", fmt.Errorf("missing relative upload path")
+	}
+	return sanitizeRelativePath(headerPath)
+}
+
+func sanitizeRelativePath(raw string) (string, error) {
+	path := filepath.ToSlash(strings.TrimSpace(raw))
+	path = strings.TrimPrefix(path, "/")
+	path = filepath.Clean(path)
+	path = filepath.ToSlash(path)
+	if path == "." || path == "" {
+		return "", fmt.Errorf("relative upload path is empty")
+	}
+	if strings.HasPrefix(path, "../") || strings.Contains(path, "/../") || strings.HasPrefix(path, "..") {
+		return "", fmt.Errorf("relative upload path escapes root")
+	}
+	return path, nil
+}
+
+func safeUploadTargetPath(rootDir, relativePath string) (string, error) {
+	rootAbs, err := filepath.Abs(rootDir)
+	if err != nil {
+		return "", err
+	}
+	targetAbs, err := filepath.Abs(filepath.Join(rootAbs, filepath.FromSlash(relativePath)))
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(rootAbs, targetAbs)
+	if err != nil {
+		return "", err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("relative upload path escapes root")
+	}
+	return targetAbs, nil
+}
+
+func fallbackString(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 func waitForDeviceID(ctx context.Context, st *SyncthingClient) (string, error) {

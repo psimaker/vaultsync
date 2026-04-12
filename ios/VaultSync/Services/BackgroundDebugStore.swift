@@ -20,7 +20,7 @@ struct BackgroundDebugStore {
     init(
         defaults: UserDefaults = .standard,
         storageKey: String = "background-debug-log.v1",
-        limit: Int = 80
+        limit: Int = 160
     ) {
         self.defaults = defaults
         self.storageKey = storageKey

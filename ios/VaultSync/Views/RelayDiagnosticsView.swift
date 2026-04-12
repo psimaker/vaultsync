@@ -9,6 +9,8 @@ struct RelayDiagnosticsView: View {
     @State private var retryProvisioningInFlight = false
     @State private var backgroundDebugEntries = BackgroundDebugStore().entries().reversed()
     @State private var lastBackgroundOutcome = BackgroundSyncService.lastSyncOutcome()
+    @State private var backgroundUploadConfig = BackgroundUploadConfiguration.disabled
+    @State private var backgroundUploadSaveMessage: String?
 
     var body: some View {
         List {
@@ -16,6 +18,7 @@ struct RelayDiagnosticsView: View {
             apnsSection
             provisioningSection
             triggerSection
+            backgroundUploadSection
             backgroundExecutionSection
             actionSection
             troubleshootingSection
@@ -27,6 +30,7 @@ struct RelayDiagnosticsView: View {
                 await runDiagnostics()
             }
             refreshBackgroundDebug()
+            backgroundUploadConfig = BackgroundUploadService.configuration()
         }
         .onReceive(NotificationCenter.default.publisher(for: BackgroundDebugStore.didChangeNotification)) { _ in
             refreshBackgroundDebug()
@@ -224,6 +228,51 @@ struct RelayDiagnosticsView: View {
             Text("This timestamp is updated when VaultSync receives a silent push from Cloud Relay.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    private var backgroundUploadSection: some View {
+        Section("Experimental Upload Lane") {
+            Toggle("Enable direct iPhone uploads", isOn: $backgroundUploadConfig.isEnabled)
+
+            TextField("Upload endpoint URL", text: $backgroundUploadConfig.endpointURL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .keyboardType(.URL)
+
+            SecureField("Upload auth token", text: $backgroundUploadConfig.authToken)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+
+            Text("Uses a background URLSession upload to send changed Markdown files directly to your server-side upload endpoint during silent-push wakes.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if let backgroundUploadSaveMessage {
+                Text(backgroundUploadSaveMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Button("Save Upload Settings") {
+                let sanitized = BackgroundUploadConfiguration(
+                    isEnabled: backgroundUploadConfig.isEnabled,
+                    endpointURL: backgroundUploadConfig.trimmedEndpointURL,
+                    authToken: backgroundUploadConfig.trimmedAuthToken
+                )
+                BackgroundUploadService.saveConfiguration(sanitized)
+                backgroundUploadConfig = sanitized
+                backgroundUploadSaveMessage = sanitized.isValid
+                    ? "Experimental upload lane saved."
+                    : "Saved, but the upload lane remains disabled until URL and token are set."
+            }
+
+            Button("Disable Upload Settings") {
+                BackgroundUploadService.clearConfiguration()
+                backgroundUploadConfig = .disabled
+                backgroundUploadSaveMessage = "Experimental upload lane disabled."
+            }
+            .foregroundStyle(.red)
         }
     }
 

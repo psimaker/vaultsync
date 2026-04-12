@@ -285,6 +285,7 @@ enum BackgroundSyncService {
     ) async -> SyncResult {
         logger.info("Background sync starting (reason=\(reason))")
         trace("Starting background sync (reason=\(reason), maxDuration=\(Int(maxDuration))s).")
+        var telemetryEventCursor = latestBridgeEventID()
 
         // Silent pushes arrive after iOS has suspended the process. The Go
         // bridge's cached state still reports isRunning=true, but the TCP
@@ -301,6 +302,7 @@ enum BackgroundSyncService {
             } else {
                 trace("Silent push fast path: folder decode failed before rescan.")
             }
+            traceRelevantBridgeEvents(since: &telemetryEventCursor, label: "after-fast-path-rescan")
         }
 
         // Check lifecycle lock: skip start/stop if foreground owns the instance.
@@ -321,6 +323,8 @@ enum BackgroundSyncService {
                 )
             }
             trace("Restored bookmark access for \(managedURLs.count) URL(s).")
+            traceManagedRoots(managedURLs, label: "restored-bookmarks")
+            traceVaultSnapshot(label: "restored-bookmarks")
 
             let configDir = syncthingConfigDir()
             let err = SyncBridgeService.startSyncthing(configDir: configDir)
@@ -339,6 +343,7 @@ enum BackgroundSyncService {
 
         let hasFolders = await waitForAnyFolders(maxWait: 3)
         trace("Folder availability check completed: hasFolders=\(hasFolders).")
+        traceFolderStatuses(label: "post-folder-availability")
         guard hasFolders else {
             if ownsLifecycle {
                 cleanupBackgroundManaged(managedURLs)
@@ -361,6 +366,8 @@ enum BackgroundSyncService {
         if reason == "silent-push" {
             let sawWakeEvidence = await waitForSilentPushWakeEvidence(maxWait: 4)
             trace("Silent push wake evidence: \(sawWakeEvidence).")
+            traceRelevantBridgeEvents(since: &telemetryEventCursor, label: "post-wake-evidence-window")
+            traceFolderStatuses(label: "post-wake-evidence-window")
             if !sawWakeEvidence && !foregroundOwns {
                 logger.warning("Silent push showed no peer/sync activity after rescan — forcing Syncthing restart")
                 trace("No wake evidence after rescan. Forcing Syncthing restart.")
@@ -389,6 +396,9 @@ enum BackgroundSyncService {
 
                 let recoveredFolders = await waitForAnyFolders(maxWait: 3)
                 trace("Post-restart folder availability: \(recoveredFolders).")
+                traceManagedRoots(managedURLs, label: "post-forced-restart")
+                traceVaultSnapshot(label: "post-forced-restart")
+                traceFolderStatuses(label: "post-forced-restart")
                 guard recoveredFolders else {
                     if ownsLifecycle {
                         cleanupBackgroundManaged(managedURLs)
@@ -405,6 +415,7 @@ enum BackgroundSyncService {
                 } else {
                     trace("Post-restart local rescan skipped because folder decode failed.")
                 }
+                traceRelevantBridgeEvents(since: &telemetryEventCursor, label: "after-post-restart-rescan")
             }
         }
 
@@ -443,6 +454,9 @@ enum BackgroundSyncService {
             progressTrackerTraceIfNeeded(progressSnapshot)
         }
         trace("Deadline reached or idle observed. idle=\(idle).")
+        traceRelevantBridgeEvents(since: &telemetryEventCursor, label: "pre-completion")
+        traceFolderStatuses(label: "pre-completion")
+        traceVaultSnapshot(label: "pre-completion")
         if idle {
             await notifyConflictsIfAny()
         }
@@ -787,6 +801,116 @@ enum BackgroundSyncService {
         return (true, true, managedURLs, nil)
     }
 
+    private static func traceManagedRoots(_ urls: [URL], label: String) {
+        let roots = urls.map(\.path)
+        trace("Managed roots [\(label)]: \(roots.isEmpty ? "none" : roots.joined(separator: ", ")).")
+    }
+
+    private static func traceVaultSnapshot(label: String) {
+        let identifier = "obsidian-root"
+        guard let (url, isStale) = BookmarkService.resolveBookmark(identifier: identifier) else {
+            trace("Vault snapshot [\(label)]: no bookmark available.")
+            return
+        }
+
+        let startedAccess = BookmarkService.startAccessing(url: url)
+        defer {
+            if startedAccess {
+                BookmarkService.stopAccessing(url: url)
+            }
+        }
+
+        guard startedAccess else {
+            trace("Vault snapshot [\(label)]: bookmark access failed for \(url.path).")
+            return
+        }
+
+        let fileManager = FileManager.default
+        let resourceKeys: [URLResourceKey] = [.isRegularFileKey, .contentModificationDateKey, .fileSizeKey]
+        guard let enumerator = fileManager.enumerator(
+            at: url,
+            includingPropertiesForKeys: resourceKeys,
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        ) else {
+            trace("Vault snapshot [\(label)]: could not enumerate \(url.path).")
+            return
+        }
+
+        var regularFileCount = 0
+        var markdownFileCount = 0
+        var recentFiles: [(path: String, modified: Date, size: Int?)] = []
+
+        for case let fileURL as URL in enumerator {
+            guard let values = try? fileURL.resourceValues(forKeys: Set(resourceKeys)),
+                  values.isRegularFile == true else {
+                continue
+            }
+
+            regularFileCount += 1
+            if fileURL.pathExtension.lowercased() == "md" {
+                markdownFileCount += 1
+            }
+
+            let modified = values.contentModificationDate ?? .distantPast
+            recentFiles.append((
+                path: fileURL.path.replacingOccurrences(of: url.path + "/", with: ""),
+                modified: modified,
+                size: values.fileSize
+            ))
+        }
+
+        let recentSummary = recentFiles
+            .sorted { $0.modified > $1.modified }
+            .prefix(5)
+            .map {
+                let sizePart = $0.size.map { "\($0)b" } ?? "?"
+                return "\($0.path) [\(sizePart), mtime=\(iso8601String(from: $0.modified))]"
+            }
+            .joined(separator: " | ")
+
+        trace(
+            "Vault snapshot [\(label)]: root=\(url.path), stale=\(isStale), files=\(regularFileCount), markdown=\(markdownFileCount), recent=\(recentSummary.isEmpty ? "none" : recentSummary)."
+        )
+    }
+
+    private static func traceFolderStatuses(label: String) {
+        let json = SyncBridgeService.getFoldersJSON()
+        guard let data = json.data(using: .utf8),
+              let folders = try? JSONDecoder().decode([FolderStub].self, from: data),
+              !folders.isEmpty else {
+            trace("Folder status [\(label)]: no decodable folders.")
+            return
+        }
+
+        let summaries = folders.compactMap { folder -> String? in
+            guard let status = SyncBridgeService.getFolderStatus(folderID: folder.id) else {
+                return "\(folder.id)=decode-failed"
+            }
+            return "\(folder.id):state=\(status.state), needFiles=\(status.needFiles), needBytes=\(status.needBytes), inProgressBytes=\(status.inProgressBytes), localFiles=\(status.localFiles), globalFiles=\(status.globalFiles), completion=\(Int(status.completionPct))%"
+        }
+
+        trace("Folder status [\(label)]: \(summaries.joined(separator: " | ")).")
+    }
+
+    private static func traceRelevantBridgeEvents(since lastEventID: inout Int, label: String) {
+        let events = decodeBridgeEvents(from: SyncBridgeService.getEventsSince(lastID: lastEventID))
+        if let lastSeen = events.last?.id, lastSeen > lastEventID {
+            lastEventID = lastSeen
+        }
+
+        let relevant = events.filter(\.isDiagnosticRelevant)
+        guard !relevant.isEmpty else {
+            trace("Bridge events [\(label)]: none since cursor.")
+            return
+        }
+
+        let summary = relevant
+            .suffix(8)
+            .map(\.diagnosticSummary)
+            .joined(separator: " | ")
+        trace("Bridge events [\(label)]: \(summary).")
+    }
+
     private static func trace(_ message: String) {
         BackgroundDebugStore().record(area: "background", message: message)
     }
@@ -807,6 +931,12 @@ enum BackgroundSyncService {
     private static func progressTrackerTraceIfNeeded(_ snapshot: SilentPushProgressTracker.ProgressSnapshot) {
         guard let summary = snapshot.summaryForTrace else { return }
         trace(summary)
+    }
+
+    private static func iso8601String(from date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.string(from: date)
     }
 
     // MARK: - Stub types for JSON decoding
@@ -888,6 +1018,39 @@ enum BackgroundSyncService {
         let id: Int
         let type: String
         let data: [String: String]?
+
+        var isDiagnosticRelevant: Bool {
+            switch type {
+            case "DeviceConnected", "DeviceDisconnected", "LocalIndexUpdated", "RemoteIndexUpdated",
+                 "ItemStarted", "ItemFinished", "StateChanged", "FolderCompletion", "FolderErrors":
+                return true
+            default:
+                return false
+            }
+        }
+
+        var diagnosticSummary: String {
+            var details: [String] = ["#\(id)", type]
+            if let item = data?["item"] {
+                details.append("item=\(item)")
+            }
+            if let folder = data?["folder"] {
+                details.append("folder=\(folder)")
+            }
+            if let device = data?["device"] {
+                details.append("device=\(device)")
+            }
+            if let from = data?["from"] {
+                details.append("from=\(from)")
+            }
+            if let to = data?["to"] {
+                details.append("to=\(to)")
+            }
+            if let error = data?["error"], !error.isEmpty {
+                details.append("error=\(error)")
+            }
+            return details.joined(separator: " ")
+        }
 
         var indicatesMeaningfulProgress: Bool {
             switch type {
