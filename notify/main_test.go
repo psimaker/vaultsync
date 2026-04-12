@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -166,5 +167,120 @@ func TestRunPreflightDoctorModeIncludesTriggerProbe(t *testing.T) {
 	}
 	if got := relayTriggerCalls.Load(); got != 1 {
 		t.Fatalf("relay trigger probe calls = %d, want 1", got)
+	}
+}
+
+func TestTriggerCandidateForEventLocalIndexUpdated(t *testing.T) {
+	t.Parallel()
+
+	raw, err := json.Marshal(map[string]any{
+		"folder":   "vault-a",
+		"sequence": 42,
+	})
+	if err != nil {
+		t.Fatalf("marshal local index payload: %v", err)
+	}
+
+	candidate, ok := triggerCandidateForEvent(Event{
+		Type: "LocalIndexUpdated",
+		Data: raw,
+	}, nil)
+	if !ok {
+		t.Fatal("expected LocalIndexUpdated to produce a trigger candidate")
+	}
+	if candidate.Folder != "vault-a" {
+		t.Fatalf("folder = %q, want vault-a", candidate.Folder)
+	}
+	if candidate.Marker != "local-index:42" {
+		t.Fatalf("marker = %q, want local-index:42", candidate.Marker)
+	}
+}
+
+func TestTriggerCandidateForEventFolderCompletionNeedsOutstandingWork(t *testing.T) {
+	t.Parallel()
+
+	raw, err := json.Marshal(map[string]any{
+		"folder":    "vault-a",
+		"device":    "PEER-123",
+		"sequence":  77,
+		"needItems": 1,
+		"needBytes": 73,
+	})
+	if err != nil {
+		t.Fatalf("marshal folder completion payload: %v", err)
+	}
+
+	candidate, ok := triggerCandidateForEvent(Event{
+		Type: "FolderCompletion",
+		Data: raw,
+	}, nil)
+	if !ok {
+		t.Fatal("expected FolderCompletion with outstanding work to trigger")
+	}
+	want := "folder-completion:PEER-123:77:1:73"
+	if candidate.Marker != want {
+		t.Fatalf("marker = %q, want %q", candidate.Marker, want)
+	}
+}
+
+func TestTriggerCandidateForEventIgnoresSettledFolderCompletion(t *testing.T) {
+	t.Parallel()
+
+	raw, err := json.Marshal(map[string]any{
+		"folder":    "vault-a",
+		"device":    "PEER-123",
+		"sequence":  77,
+		"needItems": 0,
+		"needBytes": 0,
+	})
+	if err != nil {
+		t.Fatalf("marshal folder completion payload: %v", err)
+	}
+
+	if _, ok := triggerCandidateForEvent(Event{
+		Type: "FolderCompletion",
+		Data: raw,
+	}, nil); ok {
+		t.Fatal("expected settled FolderCompletion to be ignored")
+	}
+}
+
+func TestTriggerCandidateForEventHonorsWatchedFolders(t *testing.T) {
+	t.Parallel()
+
+	raw, err := json.Marshal(map[string]any{
+		"folder":   "vault-b",
+		"sequence": 42,
+	})
+	if err != nil {
+		t.Fatalf("marshal local index payload: %v", err)
+	}
+
+	if _, ok := triggerCandidateForEvent(Event{
+		Type: "LocalIndexUpdated",
+		Data: raw,
+	}, map[string]bool{"vault-a": true}); ok {
+		t.Fatal("expected unwatched folder to be ignored")
+	}
+}
+
+func TestMarkTriggeredCopiesPendingMarkers(t *testing.T) {
+	t.Parallel()
+
+	lastTriggered := map[string]string{
+		"vault-a": "local-index:1",
+	}
+	pending := map[string]string{
+		"vault-a": "local-index:2",
+		"vault-b": "folder-completion:PEER:3:1:7",
+	}
+
+	markTriggered(lastTriggered, pending)
+
+	if got := lastTriggered["vault-a"]; got != "local-index:2" {
+		t.Fatalf("vault-a marker = %q, want local-index:2", got)
+	}
+	if got := lastTriggered["vault-b"]; got != "folder-completion:PEER:3:1:7" {
+		t.Fatalf("vault-b marker = %q, want updated marker", got)
 	}
 }

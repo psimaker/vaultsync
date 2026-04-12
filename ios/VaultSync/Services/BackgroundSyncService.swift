@@ -305,10 +305,10 @@ enum BackgroundSyncService {
 
         // Check lifecycle lock: skip start/stop if foreground owns the instance.
         let foregroundOwns = lifecycleLock.withLock { $0.foregroundActive }
-        let backgroundManaged = !alreadyRunning && !foregroundOwns
+        var ownsLifecycle = !alreadyRunning && !foregroundOwns
 
         var managedURLs: [URL] = []
-        if backgroundManaged {
+        if ownsLifecycle {
             managedURLs = restoreBookmarkAccess()
             guard !managedURLs.isEmpty else {
                 logger.info("No bookmarks restored")
@@ -334,7 +334,7 @@ enum BackgroundSyncService {
 
         let hasFolders = await waitForAnyFolders(maxWait: 3)
         guard hasFolders else {
-            if backgroundManaged {
+            if ownsLifecycle {
                 cleanupBackgroundManaged(managedURLs)
             }
             return completeSync(
@@ -344,8 +344,41 @@ enum BackgroundSyncService {
             )
         }
 
+        if reason == "silent-push" {
+            let sawWakeEvidence = await waitForSilentPushWakeEvidence(maxWait: 4)
+            if !sawWakeEvidence && !foregroundOwns {
+                logger.warning("Silent push showed no peer/sync activity after rescan — forcing Syncthing restart")
+                let restart = await forceRestartForSilentPush(managedURLs: managedURLs)
+                guard restart.success else {
+                    if restart.ownsLifecycle {
+                        cleanupBackgroundManaged(restart.managedURLs)
+                    }
+                    return completeSync(
+                        reason: reason,
+                        result: .bridgeStartFailed,
+                        detail: restart.errorDetail ?? "Forced silent-push restart failed."
+                    )
+                }
+
+                managedURLs = restart.managedURLs
+                ownsLifecycle = restart.ownsLifecycle
+
+                let recoveredFolders = await waitForAnyFolders(maxWait: 3)
+                guard recoveredFolders else {
+                    if ownsLifecycle {
+                        cleanupBackgroundManaged(managedURLs)
+                    }
+                    return completeSync(
+                        reason: reason,
+                        result: .noFoldersConfigured,
+                        detail: "No folders were available after forced silent-push restart."
+                    )
+                }
+            }
+        }
+
         if allFoldersIdle() {
-            if backgroundManaged {
+            if ownsLifecycle {
                 cleanupBackgroundManaged(managedURLs)
             }
             return completeSync(reason: reason, result: .alreadyIdle, detail: nil)
@@ -364,7 +397,7 @@ enum BackgroundSyncService {
         }
 
         // Only stop if we started it and foreground hasn't taken over.
-        if backgroundManaged {
+        if ownsLifecycle {
             cleanupBackgroundManaged(managedURLs)
         }
 
@@ -613,10 +646,74 @@ enum BackgroundSyncService {
         return docs.appendingPathComponent("syncthing", isDirectory: true).path
     }
 
+    private static func waitForSilentPushWakeEvidence(maxWait: TimeInterval) async -> Bool {
+        let deadline = Date(timeIntervalSinceNow: maxWait)
+        while Date() < deadline {
+            if hasAnyConnectedPeer() || !allFoldersIdle() {
+                return true
+            }
+            if !SyncBridgeService.isRunning() {
+                return false
+            }
+            try? await Task.sleep(for: .milliseconds(400))
+        }
+        return hasAnyConnectedPeer() || !allFoldersIdle()
+    }
+
+    private static func hasAnyConnectedPeer() -> Bool {
+        let json = SyncBridgeService.getDevicesJSON()
+        guard let data = json.data(using: .utf8),
+              let devices = try? JSONDecoder().decode([DeviceStub].self, from: data) else {
+            return false
+        }
+        return devices.contains { $0.connected && !$0.paused }
+    }
+
+    private static func forceRestartForSilentPush(
+        managedURLs existingManagedURLs: [URL]
+    ) async -> (success: Bool, ownsLifecycle: Bool, managedURLs: [URL], errorDetail: String?) {
+        var managedURLs = existingManagedURLs
+        if managedURLs.isEmpty {
+            managedURLs = restoreBookmarkAccess()
+            if managedURLs.isEmpty {
+                return (false, true, [], "No security-scoped bookmark access was available for forced restart.")
+            }
+        }
+
+        if SyncBridgeService.isRunning() {
+            SyncBridgeService.stopSyncthing()
+            try? await Task.sleep(for: .milliseconds(350))
+        }
+
+        let configDir = syncthingConfigDir()
+        let err = SyncBridgeService.startSyncthing(configDir: configDir)
+        if let err, !err.isEmpty, !SyncBridgeService.isRunning() {
+            return (false, true, managedURLs, err)
+        }
+
+        return (true, true, managedURLs, nil)
+    }
+
     // MARK: - Stub types for JSON decoding
 
     private struct FolderStub: Decodable {
         let id: String
+    }
+
+    private struct DeviceStub: Decodable {
+        let connected: Bool
+        let paused: Bool
+
+        private enum CodingKeys: String, CodingKey {
+            case connected
+            case paused
+        }
+
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            connected = try container.decode(Bool.self, forKey: .connected)
+            paused = try container.decodeIfPresent(Bool.self, forKey: .paused) ?? false
+        }
     }
 
     private struct StatusStub: Decodable {

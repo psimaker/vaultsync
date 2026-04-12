@@ -41,9 +41,11 @@ Your notes, your devices, your server — no third-party cloud required.
 ## 🆕 What's New — v1.0.2
 
 > **✅ Reliable Silent-Push Sync** — Background sync now correctly waits for pulls to finish instead of shutting down at the first idle flicker. Fixes the core reason why pushes sometimes arrived but files didn't.<br>
+> **🏠 Server Edits Wake iPhone Again** — vaultsync-notify now reacts to real outgoing change markers on the homeserver, so direct edits on your server trigger an iPhone wake-up again without falling back to noisy state-transition pushes.<br>
+> **🛠️ Recovery When iOS Resumes Cold** — If a silent push wakes VaultSync but Syncthing does not show real peer activity quickly enough, VaultSync now force-restarts the embedded engine and retries within the same background run.<br>
 > **⏱️ Longer iOS Grace Period** — The app now holds a background-task assertion on suspend, so Syncthing gets up to ~30 seconds to wrap up in-flight operations.<br>
 > **🧭 Correct Vault Path** — Accepting a pending share no longer creates a redundant nested subfolder when the selected Obsidian root already matches the share name.<br>
-> **🔔 Gentler Push Pressure** — vaultsync-notify now triggers only on real file-sync completions, reducing the chance of iOS throttling.<br>
+> **🔔 Gentler Push Pressure** — vaultsync-notify now deduplicates wake-ups per real change marker, reducing the chance of iOS throttling while still covering direct server-side edits.<br>
 > **♻️ Faster Recovery** — Relay re-provisioning interval reduced from 24h to 6h so a server-side token cleanup heals automatically.
 >
 > See [CHANGELOG.md](CHANGELOG.md) for full details.
@@ -124,7 +126,7 @@ Full VoiceOver and Dynamic Type support throughout the app
 
 1. **Syncthing** runs on your desktop/server and syncs files with VaultSync over the Syncthing protocol
 2. **VaultSync** receives files directly into Obsidian's sandbox on iOS — open Obsidian and your vault is up to date
-3. **vaultsync-notify** (optional) watches your Syncthing instance and signals the Cloud Relay when files change
+3. **vaultsync-notify** (optional) watches your Syncthing instance, detects when a peer actually needs new data, and signals the Cloud Relay when a wake-up is warranted
 4. **Cloud Relay** sends a silent push notification to wake VaultSync for immediate sync
 
 ---
@@ -177,7 +179,7 @@ See [notify/README.md](notify/README.md) for full configuration options.
 
 ## 📡 Cloud Relay & vaultsync-notify
 
-Cloud Relay solves a core iOS limitation: apps can't sync in the background in real-time. When files change on your server, the [vaultsync-notify](notify/) container sends a wake-up signal to the relay, which pushes a silent notification to your iPhone — VaultSync wakes up and syncs immediately.
+Cloud Relay solves a core iOS limitation: apps can't sync in the background in real-time. When files change on your server, the [vaultsync-notify](notify/) container detects that remote peers are behind and sends a wake-up signal to the relay, which pushes a silent notification to your iPhone — VaultSync wakes up and syncs immediately.
 
 **Privacy-first:** only the Syncthing Device ID is sent as a wake-up signal — **no file names, folder names, or content ever leaves your server**.
 

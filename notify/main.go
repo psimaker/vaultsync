@@ -156,13 +156,16 @@ func loadConfig() (Config, error) {
 	return cfg, nil
 }
 
-// Trigger only on ItemFinished. StateChanged fires on every folder transition
-// (idle→scanning→syncing→idle), which can produce 4+ pushes per actual file
-// change. iOS silent-push budget is consumed aggressively by such bursts.
-// ItemFinished alone indicates a real file sync completion and paired with
-// the debounce window covers the wake-up semantics we need.
+// Accept only events that can indicate real sync work for remote peers.
+// StateChanged is intentionally excluded because every idle→scanning→syncing
+// transition would otherwise emit multiple pushes per logical change.
+//
+// LocalIndexUpdated covers direct edits on the homeserver itself.
+// FolderCompletion with outstanding need{Items,Bytes} covers the common case
+// where a remote peer is known to be behind and needs a wake-up to reconnect.
 var relevantEventTypes = map[string]bool{
-	"ItemFinished": true,
+	"LocalIndexUpdated": true,
+	"FolderCompletion":  true,
 }
 
 func runService(cfg Config) int {
@@ -208,15 +211,20 @@ func runService(cfg Config) int {
 
 	var debounceTimer *time.Timer
 	var debounceCh <-chan time.Time
-	pending := false
+	pending := make(map[string]string)
+	lastTriggered := make(map[string]string)
 
 	for {
 		select {
 		case ev, ok := <-events:
 			if !ok {
-				if pending {
+				if len(pending) > 0 {
 					flushCtx, flushCancel := context.WithTimeout(context.Background(), 5*time.Second)
-					if fireTrigger(flushCtx, relay) {
+					delivered, fatal := fireTrigger(flushCtx, relay)
+					if delivered {
+						markTriggered(lastTriggered, pending)
+					}
+					if fatal {
 						flushCancel()
 						return 1
 					}
@@ -234,12 +242,28 @@ func runService(cfg Config) int {
 				return 0
 			}
 
-			if !isRelevant(ev, cfg.WatchedFolders) {
+			candidate, ok := triggerCandidateForEvent(ev, cfg.WatchedFolders)
+			if !ok {
 				continue
 			}
 
-			folder := extractFolder(ev)
-			slog.Debug("relevant event", "type", ev.Type, "folder", folder, "id", ev.ID)
+			if lastTriggered[candidate.Folder] == candidate.Marker {
+				slog.Debug("skipping duplicate trigger candidate",
+					"type", ev.Type,
+					"folder", candidate.Folder,
+					"marker", candidate.Marker,
+					"id", ev.ID,
+				)
+				continue
+			}
+
+			slog.Debug("queued trigger candidate",
+				"type", ev.Type,
+				"folder", candidate.Folder,
+				"marker", candidate.Marker,
+				"id", ev.ID,
+			)
+			pending[candidate.Folder] = candidate.Marker
 
 			if debounceTimer == nil {
 				debounceTimer = time.NewTimer(debounceDur)
@@ -253,21 +277,31 @@ func runService(cfg Config) int {
 				}
 				debounceTimer.Reset(debounceDur)
 			}
-			pending = true
-
 		case <-debounceCh:
-			pending = false
 			debounceTimer = nil
 			debounceCh = nil
-			if fireTrigger(ctx, relay) {
+			if len(pending) == 0 {
+				continue
+			}
+			delivered, fatal := fireTrigger(ctx, relay)
+			if delivered {
+				markTriggered(lastTriggered, pending)
+				clear(pending)
+				continue
+			}
+			if fatal {
 				return 1
 			}
+			debounceTimer = time.NewTimer(debounceDur)
+			debounceCh = debounceTimer.C
 
 		case <-ctx.Done():
 			slog.Info("shutdown signal received")
-			if pending {
+			if len(pending) > 0 {
 				shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-				fireTrigger(shutdownCtx, relay)
+				if delivered, _ := fireTrigger(shutdownCtx, relay); delivered {
+					markTriggered(lastTriggered, pending)
+				}
 				shutdownCancel()
 			}
 			if debounceTimer != nil {
@@ -359,28 +393,84 @@ func warmupRelay(ctx context.Context, relay *RelayClient) error {
 	return nil
 }
 
-func isRelevant(ev Event, watchedFolders map[string]bool) bool {
+type triggerCandidate struct {
+	Folder string
+	Marker string
+}
+
+type localIndexUpdatedData struct {
+	Folder   string `json:"folder"`
+	Sequence int    `json:"sequence"`
+}
+
+type folderCompletionData struct {
+	Folder    string `json:"folder"`
+	Device    string `json:"device"`
+	NeedBytes int64  `json:"needBytes"`
+	NeedItems int    `json:"needItems"`
+	Sequence  int    `json:"sequence"`
+}
+
+func triggerCandidateForEvent(ev Event, watchedFolders map[string]bool) (triggerCandidate, bool) {
 	if !relevantEventTypes[ev.Type] {
+		return triggerCandidate{}, false
+	}
+
+	switch ev.Type {
+	case "LocalIndexUpdated":
+		var data localIndexUpdatedData
+		if err := json.Unmarshal(ev.Data, &data); err != nil {
+			return triggerCandidate{}, false
+		}
+		if !isWatchedFolder(data.Folder, watchedFolders) {
+			return triggerCandidate{}, false
+		}
+		return triggerCandidate{
+			Folder: data.Folder,
+			Marker: fmt.Sprintf("local-index:%d", data.Sequence),
+		}, true
+
+	case "FolderCompletion":
+		var data folderCompletionData
+		if err := json.Unmarshal(ev.Data, &data); err != nil {
+			return triggerCandidate{}, false
+		}
+		if !isWatchedFolder(data.Folder, watchedFolders) {
+			return triggerCandidate{}, false
+		}
+		if data.NeedItems <= 0 && data.NeedBytes <= 0 {
+			return triggerCandidate{}, false
+		}
+		return triggerCandidate{
+			Folder: data.Folder,
+			Marker: fmt.Sprintf("folder-completion:%s:%d:%d:%d", data.Device, data.Sequence, data.NeedItems, data.NeedBytes),
+		}, true
+
+	default:
+		return triggerCandidate{}, false
+	}
+}
+
+func isWatchedFolder(folder string, watchedFolders map[string]bool) bool {
+	if folder == "" {
 		return false
 	}
 	if watchedFolders == nil {
 		return true
 	}
-	folder := extractFolder(ev)
-	return folder != "" && watchedFolders[folder]
+	return watchedFolders[folder]
 }
 
-func extractFolder(ev Event) string {
-	var data EventData
-	if err := json.Unmarshal(ev.Data, &data); err != nil {
-		return ""
+func markTriggered(lastTriggered, pending map[string]string) {
+	for folder, marker := range pending {
+		lastTriggered[folder] = marker
 	}
-	return data.Folder
 }
 
-// fireTrigger sends a relay trigger. Returns true if the error is fatal and
-// the process should exit.
-func fireTrigger(ctx context.Context, relay *RelayClient) bool {
+// fireTrigger sends a relay trigger.
+// Returns `(delivered, fatal)` so the caller can retain pending work on
+// transient relay failures without collapsing the process on recoverable errors.
+func fireTrigger(ctx context.Context, relay *RelayClient) (bool, bool) {
 	slog.Info("sending relay trigger")
 	if err := relay.Trigger(ctx); err != nil {
 		if isFatal(err) {
@@ -390,7 +480,7 @@ func fireTrigger(ctx context.Context, relay *RelayClient) bool {
 				"error", err,
 				"action", "exit",
 			)
-			return true
+			return false, true
 		}
 		slog.Error("relay trigger failed",
 			"classification", "recoverable",
@@ -398,8 +488,9 @@ func fireTrigger(ctx context.Context, relay *RelayClient) bool {
 			"error", err,
 			"action", "continue",
 		)
+		return false, false
 	}
-	return false
+	return true, false
 }
 
 func formatWatched(folders map[string]bool) string {
