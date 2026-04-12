@@ -5,7 +5,7 @@ This guide covers the most common VaultSync failures and how to fix them quickly
 ## Quick Triage
 
 1. Open VaultSync and check **Sync Issues** plus **Settings → Cloud Relay**.
-2. If you use Cloud Relay, open **Relay Diagnostics** and run **Run Full Diagnostics**.
+2. If you use Cloud Relay, open **Relay Diagnostics** and run **Check Relay Status**.
 3. On your homeserver, run:
    - `docker compose logs --tail=200 vaultsync-notify`
    - `docker compose exec vaultsync-notify /app/vaultsync-notify --doctor` (if available in your image)
@@ -71,7 +71,7 @@ This guide covers the most common VaultSync failures and how to fix them quickly
 3. Check homeserver egress rules (firewall, VPN, proxy).
 4. From homeserver shell, test relay health:
    - `curl -fsSL https://relay.vaultsync.eu/api/v1/health`
-5. In app, open **Settings → Cloud Relay → Test** or **Relay Diagnostics → Run Full Diagnostics**.
+5. In app, open **Settings → Cloud Relay → Test** or **Relay Diagnostics → Check Relay Status**.
 6. Retry provisioning after health check is green.
 
 ## No Pending Shares Appear
