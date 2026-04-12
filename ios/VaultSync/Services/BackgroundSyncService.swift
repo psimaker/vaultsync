@@ -296,13 +296,8 @@ enum BackgroundSyncService {
         trace("Bridge state before sync: running=\(alreadyRunning).")
         if reason == "silent-push" && alreadyRunning {
             logger.info("Silent push: triggering folder rescans to wake Syncthing peer dialer")
-            let json = SyncBridgeService.getFoldersJSON()
-            if let data = json.data(using: .utf8),
-               let folders = try? JSONDecoder().decode([FolderStub].self, from: data) {
-                trace("Silent push fast path: rescanning \(folders.count) folder(s).")
-                for folder in folders {
-                    _ = SyncBridgeService.rescanFolder(folderID: folder.id)
-                }
+            if let rescanCount = requestFolderRescans() {
+                trace("Silent push fast path: rescanning \(rescanCount) folder(s).")
             } else {
                 trace("Silent push fast path: folder decode failed before rescan.")
             }
@@ -403,6 +398,12 @@ enum BackgroundSyncService {
                         result: .noFoldersConfigured,
                         detail: "No folders were available after forced silent-push restart."
                     )
+                }
+
+                if let rescanCount = requestFolderRescans() {
+                    trace("Post-restart local rescan requested for \(rescanCount) folder(s).")
+                } else {
+                    trace("Post-restart local rescan skipped because folder decode failed.")
                 }
             }
         }
@@ -713,6 +714,18 @@ enum BackgroundSyncService {
     private static func syncthingConfigDir() -> String {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
         return docs.appendingPathComponent("syncthing", isDirectory: true).path
+    }
+
+    private static func requestFolderRescans() -> Int? {
+        let json = SyncBridgeService.getFoldersJSON()
+        guard let data = json.data(using: .utf8),
+              let folders = try? JSONDecoder().decode([FolderStub].self, from: data) else {
+            return nil
+        }
+        for folder in folders {
+            _ = SyncBridgeService.rescanFolder(folderID: folder.id)
+        }
+        return folders.count
     }
 
     private static func waitForSilentPushWakeEvidence(maxWait: TimeInterval) async -> Bool {
