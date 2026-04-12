@@ -4,6 +4,20 @@ All notable changes to VaultSync are documented here.
 
 ---
 
+## [1.0.2] — 2026-04-12
+
+### Fixed
+
+- **Silent-push sync reliability** — Silent pushes from Cloud Relay are now reliably acted upon even after iOS has suspended the process. A stale lifecycle lock previously caused the background sync handler to skip the bridge restart, leaving dead TCP sockets unreconnected. Pushes delivered but never produced a sync.
+- **iOS suspend grace period** — The app now acquires a `UIApplication` background-task assertion when entering the background, giving pending Syncthing operations up to ~30 seconds to complete instead of being suspended within ~5 seconds.
+- **Relay DB-reset recovery** — Re-provisioning interval reduced from 24 hours to 6 hours, and a re-provision probe is now triggered whenever Relay Diagnostics is opened. Restores push delivery automatically within 6h after a server-side token reset (e.g. from self-healing cleanup).
+- **Cloud Relay push expiration** — Silent pushes were sent with `apns-expiration=0`, causing APNs to drop them after a single failed delivery attempt when the iPhone was briefly unreachable. Expiration is now set to +1 hour so APNs retries delivery until the device wakes.
+- **Vault path nesting** — Accepting a pending share no longer creates a redundant subdirectory when the selected Obsidian root is itself a vault or when its folder name matches the share label (case-insensitive). Previously selecting `On My iPhone/Obsidian/` with a desktop share labelled `obsidian` produced `Obsidian/obsidian/` — Obsidian then couldn't see the synced files as part of the vault.
+- **Background sync completion detection** — The idle-state check used by the silent-push and BGAppRefresh handlers now verifies that folders have no outstanding `needFiles`, `needBytes`, or `inProgressBytes` before declaring success. Previously Syncthing's momentary `idle` state between scan and sync phases was treated as "done", causing the handler to shut Syncthing down before any file was actually pulled. This matches the peer-side observation of connections lasting only ~1 second after a silent push.
+- **vaultsync-notify event filter** — The relay trigger now fires only on `ItemFinished` events. `StateChanged` previously produced multiple pushes per actual file change (one per `idle→scanning→syncing→idle` transition), accelerating iOS silent-push throttling and reducing delivery reliability.
+
+---
+
 ## [1.0.1] — 2026-04-11
 
 ### Added

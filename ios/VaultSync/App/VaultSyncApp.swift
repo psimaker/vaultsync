@@ -42,6 +42,7 @@ struct VaultSyncApp: App {
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
             case .active:
+                BackgroundSyncService.endBackgroundAssertion()
                 BackgroundSyncService.cancelContinuedProcessing()
                 if !SyncBridgeService.isRunning() {
                     // Syncthing may have been stopped by a BGTask expiration handler.
@@ -53,6 +54,17 @@ struct VaultSyncApp: App {
                     syncthingManager.start()
                 }
             case .background:
+                // Release the foreground lifecycle lock so silent-push and
+                // BGAppRefresh handlers can manage Syncthing when the process
+                // is later resumed — without this, backgroundManaged stays
+                // false and no reconnect happens.
+                BackgroundSyncService.releaseForegroundLifecycleLock()
+
+                // Request up to ~30s of continued execution so pending scans,
+                // index updates, and clean socket shutdowns can complete.
+                // Without this assertion iOS may suspend within ~5s.
+                BackgroundSyncService.beginBackgroundAssertion()
+
                 BackgroundSyncService.scheduleAppRefresh()
                 if syncthingManager.isAnySyncing {
                     BackgroundSyncService.submitContinuedProcessing()

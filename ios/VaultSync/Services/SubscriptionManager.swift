@@ -193,6 +193,11 @@ final class SubscriptionManager {
         refreshStoredRelayDiagnostics()
         await checkSubscriptionStatus()
         await runRelayHealthCheck()
+        // Opportunistically re-provision if the last successful provision is
+        // older than the refresh interval. Covers the case where the relay DB
+        // was reset (e.g. from token self-healing) but the app still thinks
+        // it's provisioned and won't trigger re-provision until 24h passed.
+        await ensureProvisioningIfNeeded()
     }
 
     func runRelayHealthCheck(timeout: TimeInterval = 6) async {
@@ -377,7 +382,11 @@ final class SubscriptionManager {
     }
 
     private static let lastProvisionDateKey = "relay-last-provision-date"
-    private static let provisionRefreshInterval: TimeInterval = 24 * 60 * 60
+    // Re-provision every 6h instead of 24h so a relay DB reset (e.g. from
+    // BadDeviceToken self-healing or a stale cache) recovers within a
+    // reasonable window without waiting a full day for push delivery to
+    // resume. The relay's /provision endpoint is idempotent, so this is cheap.
+    private static let provisionRefreshInterval: TimeInterval = 6 * 60 * 60
 
     // MARK: - Device ID Storage
 

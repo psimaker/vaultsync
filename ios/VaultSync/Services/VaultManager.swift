@@ -154,8 +154,15 @@ final class VaultManager {
 
     // MARK: - Pending Share Auto-Accept
 
-    /// Accept a pending folder share, syncing directly into the Obsidian directory.
-    /// The picker-selected path is used as-is — no subdirectories are created.
+    /// Accept a pending folder share, syncing into the Obsidian directory.
+    /// Appends the share's folder name as a subdirectory to keep multiple
+    /// shares isolated, UNLESS:
+    ///   * the selected basePath is already an Obsidian vault (contains
+    ///     `.obsidian/`) — then sync directly into it, or
+    ///   * the selected basePath's last path component already matches the
+    ///     share name (case-insensitive) — avoids `Obsidian/obsidian/`
+    ///     double-nesting when the user picks their Obsidian root and the
+    ///     desktop share is labelled "obsidian".
     func acceptPendingShare(
         folder: SyncthingManager.PendingFolderInfo,
         syncthingManager: SyncthingManager
@@ -167,12 +174,29 @@ final class VaultManager {
             return "Invalid folder name: '\(rawName)'"
         }
 
-        guard let basePath = obsidianBasePath else {
+        guard let basePath = obsidianBasePath,
+              let baseURL = obsidianDirectoryURL else {
             return "Obsidian directory not accessible."
         }
 
-        let path = (basePath as NSString).appendingPathComponent(folderName)
-        logger.info("Accepting share '\(folderName)' (\(folder.id)) → path: \(path)")
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        let baseIsVault = fm.fileExists(
+            atPath: baseURL.appendingPathComponent(".obsidian", isDirectory: true).path,
+            isDirectory: &isDir
+        ) && isDir.boolValue
+
+        let nameMatchesBase = baseURL.lastPathComponent
+            .compare(folderName, options: .caseInsensitive) == .orderedSame
+
+        let path: String
+        if baseIsVault || nameMatchesBase {
+            path = basePath
+            logger.info("Accepting share '\(folderName)' directly into base (baseIsVault=\(baseIsVault), nameMatchesBase=\(nameMatchesBase)) → \(path)")
+        } else {
+            path = (basePath as NSString).appendingPathComponent(folderName)
+            logger.info("Accepting share '\(folderName)' (\(folder.id)) → path: \(path)")
+        }
 
         if let err = syncthingManager.acceptPendingFolder(
             folderID: folder.id,

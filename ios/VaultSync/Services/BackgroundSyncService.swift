@@ -1,5 +1,6 @@
 import BackgroundTasks
 import Foundation
+import UIKit
 import UserNotifications
 import os
 
@@ -26,6 +27,12 @@ enum BackgroundSyncService {
 
     /// Shared lock coordinating Syncthing bridge start/stop across foreground and background.
     static let lifecycleLock = OSAllocatedUnfairLock(initialState: SyncLifecycleState())
+
+    /// Guards the UIApplication background-task assertion used for the
+    /// scene-phase grace period after the app leaves the foreground.
+    private static let backgroundAssertionLock = OSAllocatedUnfairLock(
+        initialState: UIBackgroundTaskIdentifier.invalid
+    )
 
     /// Whether each background task type was successfully registered.
     /// Written once during app launch, read-only afterwards — safe without synchronization.
@@ -73,6 +80,48 @@ enum BackgroundSyncService {
         }
 
         logger.info("Background task registration complete (refresh=\(appRefreshRegistered), continued=\(continuedProcessingRegistered))")
+    }
+
+    // MARK: - Lifecycle lock / background assertion
+
+    /// Release the foreground lifecycle lock. Call when the scene leaves the
+    /// foreground so that silent-push and BGAppRefresh handlers can manage
+    /// the Syncthing bridge. Without this, `performBackgroundSync` stays in
+    /// `backgroundManaged=false` mode and never reconnects dead sockets.
+    static func releaseForegroundLifecycleLock() {
+        lifecycleLock.withLock { $0.foregroundActive = false }
+        logger.info("Foreground lifecycle lock released")
+    }
+
+    /// Begin a UIApplication background-task assertion so iOS grants up to
+    /// ~30 seconds of continued execution after the app is backgrounded.
+    /// Without this the system can suspend the process within ~5s, severing
+    /// Syncthing's peer connections before any scheduled BG task runs.
+    /// Safe to call more than once — ends any previous assertion first.
+    static func beginBackgroundAssertion() {
+        endBackgroundAssertion()
+        let newID = UIApplication.shared.beginBackgroundTask(withName: "VaultSync-Background-Grace") {
+            endBackgroundAssertion()
+        }
+        backgroundAssertionLock.withLock { $0 = newID }
+        if newID == .invalid {
+            logger.warning("beginBackgroundTask returned .invalid — iOS denied the assertion")
+        } else {
+            logger.info("Background assertion acquired (id=\(newID.rawValue))")
+        }
+    }
+
+    /// End the UIApplication background-task assertion if one is active.
+    /// Call when the scene becomes active again so iOS can reclaim resources.
+    static func endBackgroundAssertion() {
+        let previous = backgroundAssertionLock.withLock { current -> UIBackgroundTaskIdentifier in
+            let value = current
+            current = .invalid
+            return value
+        }
+        guard previous != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(previous)
+        logger.info("Background assertion released (id=\(previous.rawValue))")
     }
 
     // MARK: - Scheduling
@@ -236,9 +285,26 @@ enum BackgroundSyncService {
     ) async -> SyncResult {
         logger.info("Background sync starting (reason=\(reason))")
 
+        // Silent pushes arrive after iOS has suspended the process. The Go
+        // bridge's cached state still reports isRunning=true, but the TCP
+        // sockets to peers have been torn down by the kernel. Trigger a
+        // rescan on each known folder — this causes Go's peer dialer to
+        // notice the dead sockets and re-establish connections, without the
+        // 5-15s cost of a full stopSyncthing + startSyncthing cycle.
+        let alreadyRunning = SyncBridgeService.isRunning()
+        if reason == "silent-push" && alreadyRunning {
+            logger.info("Silent push: triggering folder rescans to wake Syncthing peer dialer")
+            let json = SyncBridgeService.getFoldersJSON()
+            if let data = json.data(using: .utf8),
+               let folders = try? JSONDecoder().decode([FolderStub].self, from: data) {
+                for folder in folders {
+                    _ = SyncBridgeService.rescanFolder(folderID: folder.id)
+                }
+            }
+        }
+
         // Check lifecycle lock: skip start/stop if foreground owns the instance.
         let foregroundOwns = lifecycleLock.withLock { $0.foregroundActive }
-        let alreadyRunning = SyncBridgeService.isRunning()
         let backgroundManaged = !alreadyRunning && !foregroundOwns
 
         var managedURLs: [URL] = []
@@ -444,7 +510,16 @@ enum BackgroundSyncService {
                 // Decode failure means we can't confirm state — treat as not idle
                 return false
             }
-            if status.state != "idle" {
+            // A folder is truly idle only when Syncthing is neither scanning
+            // nor syncing AND has no outstanding work. The state field alone
+            // is not enough: Syncthing briefly reports `idle` between scan
+            // and sync phases while needBytes/needFiles still await a pull.
+            // Treating that window as "done" caused background-sync handlers
+            // to shut Syncthing down before any file was actually pulled.
+            let hasPendingWork = status.needFiles > 0
+                || status.needBytes > 0
+                || status.inProgressBytes > 0
+            if status.state != "idle" || hasPendingWork {
                 return false
             }
         }
@@ -547,6 +622,9 @@ enum BackgroundSyncService {
     private struct StatusStub: Decodable {
         let state: String
         let completionPct: Double
+        let needFiles: Int
+        let needBytes: Int64
+        let inProgressBytes: Int64
     }
 
     private struct ConflictStub: Decodable {

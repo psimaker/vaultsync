@@ -156,9 +156,13 @@ func loadConfig() (Config, error) {
 	return cfg, nil
 }
 
+// Trigger only on ItemFinished. StateChanged fires on every folder transition
+// (idle→scanning→syncing→idle), which can produce 4+ pushes per actual file
+// change. iOS silent-push budget is consumed aggressively by such bursts.
+// ItemFinished alone indicates a real file sync completion and paired with
+// the debounce window covers the wake-up semantics we need.
 var relevantEventTypes = map[string]bool{
 	"ItemFinished": true,
-	"StateChanged": true,
 }
 
 func runService(cfg Config) int {
