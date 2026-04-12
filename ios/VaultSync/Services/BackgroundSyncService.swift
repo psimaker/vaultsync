@@ -52,28 +52,31 @@ enum BackgroundSyncService {
 
     /// Register background task handlers. Must be called before app finishes launching.
     /// Registration may fail in the Simulator (ESRCH) — failures are non-fatal.
-    @MainActor
     static func registerTasks() {
-        appRefreshRegistered = BGTaskScheduler.shared.register(
-            forTaskWithIdentifier: appRefreshIdentifier,
-            using: nil
-        ) { task in
-            guard let refreshTask = task as? BGAppRefreshTask else { return }
-            let wrapped = UnsafeSendable(value: refreshTask)
-            Task { await handleAppRefresh(task: wrapped.value) }
+        appRefreshRegistered = MainActor.assumeIsolated {
+            BGTaskScheduler.shared.register(
+                forTaskWithIdentifier: appRefreshIdentifier,
+                using: nil
+            ) { task in
+                guard let refreshTask = task as? BGAppRefreshTask else { return }
+                let wrapped = UnsafeSendable(value: refreshTask)
+                Task { await handleAppRefresh(task: wrapped.value) }
+            }
         }
 
         if !appRefreshRegistered {
             logger.warning("Failed to register app refresh task — background refresh unavailable")
         }
 
-        continuedProcessingRegistered = BGTaskScheduler.shared.register(
-            forTaskWithIdentifier: continuedProcessingIdentifier,
-            using: nil
-        ) { task in
-            guard let processingTask = task as? BGContinuedProcessingTask else { return }
-            let wrapped = UnsafeSendable(value: processingTask)
-            Task { await handleContinuedProcessing(task: wrapped.value) }
+        continuedProcessingRegistered = MainActor.assumeIsolated {
+            BGTaskScheduler.shared.register(
+                forTaskWithIdentifier: continuedProcessingIdentifier,
+                using: nil
+            ) { task in
+                guard let processingTask = task as? BGContinuedProcessingTask else { return }
+                let wrapped = UnsafeSendable(value: processingTask)
+                Task { await handleContinuedProcessing(task: wrapped.value) }
+            }
         }
 
         if !continuedProcessingRegistered {
