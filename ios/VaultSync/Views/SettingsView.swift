@@ -138,7 +138,7 @@ struct SettingsView: View {
 
     private func applyDiscovery() {
         if let err = SyncBridgeService.setDiscoveryEnabled(local: localDiscovery, global: globalDiscovery) {
-            alertMessage = mappedError(err, fallbackTitle: "Discovery Update Failed").userVisibleDescription
+            alertMessage = mappedError(err, fallbackTitle: L10n.tr("Discovery Update Failed")).userVisibleDescription
             showAlert = true
         }
     }
@@ -235,7 +235,7 @@ struct SettingsView: View {
                         } catch {
                             alertMessage = SyncUserError.from(
                                 error: error,
-                                fallbackTitle: "Purchase Failed"
+                                fallbackTitle: L10n.tr("Purchase Failed")
                             ).userVisibleDescription
                             showAlert = true
                         }

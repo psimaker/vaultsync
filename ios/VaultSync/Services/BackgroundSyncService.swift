@@ -52,6 +52,7 @@ enum BackgroundSyncService {
 
     /// Register background task handlers. Must be called before app finishes launching.
     /// Registration may fail in the Simulator (ESRCH) — failures are non-fatal.
+    @MainActor
     static func registerTasks() {
         appRefreshRegistered = BGTaskScheduler.shared.register(
             forTaskWithIdentifier: appRefreshIdentifier,
@@ -98,6 +99,7 @@ enum BackgroundSyncService {
     /// Without this the system can suspend the process within ~5s, severing
     /// Syncthing's peer connections before any scheduled BG task runs.
     /// Safe to call more than once — ends any previous assertion first.
+    @MainActor
     static func beginBackgroundAssertion() {
         endBackgroundAssertion()
         let newID = UIApplication.shared.beginBackgroundTask(withName: "VaultSync-Background-Grace") {
@@ -113,6 +115,7 @@ enum BackgroundSyncService {
 
     /// End the UIApplication background-task assertion if one is active.
     /// Call when the scene becomes active again so iOS can reclaim resources.
+    @MainActor
     static func endBackgroundAssertion() {
         let previous = backgroundAssertionLock.withLock { current -> UIBackgroundTaskIdentifier in
             let value = current
@@ -127,6 +130,7 @@ enum BackgroundSyncService {
     // MARK: - Scheduling
 
     /// Schedule periodic background refresh (~15 min). Skips if no vaults configured.
+    @MainActor
     static func scheduleAppRefresh() {
         guard appRefreshRegistered else { return }
 
@@ -148,6 +152,7 @@ enum BackgroundSyncService {
     }
 
     /// Submit continued processing for active sync. Call from foreground only.
+    @MainActor
     static func submitContinuedProcessing() {
         guard continuedProcessingRegistered else { return }
 
@@ -166,6 +171,7 @@ enum BackgroundSyncService {
     }
 
     /// Cancel pending continued processing task.
+    @MainActor
     static func cancelContinuedProcessing() {
         guard continuedProcessingRegistered else { return }
         BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: continuedProcessingIdentifier)
@@ -485,7 +491,9 @@ enum BackgroundSyncService {
 
     private static func handleAppRefresh(task: BGAppRefreshTask) async {
         logger.info("Background refresh starting")
-        scheduleAppRefresh()
+        await MainActor.run {
+            scheduleAppRefresh()
+        }
 
         task.expirationHandler = {
             let shouldStop = lifecycleLock.withLock { !$0.foregroundActive }
@@ -678,7 +686,7 @@ enum BackgroundSyncService {
         guard count > 0 else { return }
 
         let content = UNMutableNotificationContent()
-        content.title = "Sync Conflicts"
+        content.title = L10n.tr("Sync Conflicts")
         content.body = count == 1
             ? "1 file has a sync conflict. Open VaultSync to resolve it."
             : "\(count) files have sync conflicts. Open VaultSync to resolve them."

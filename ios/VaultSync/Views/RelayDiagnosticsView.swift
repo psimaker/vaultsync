@@ -76,7 +76,13 @@ struct RelayDiagnosticsView: View {
                         .foregroundStyle(.red)
                     Text(relayError.message)
                         .font(.caption)
-                    Text("Context: \(relayError.context) · \(relayError.date.formatted(date: .abbreviated, time: .shortened))")
+                    Text(
+                        L10n.fmt(
+                            "Context: %@ · %@",
+                            relayError.context,
+                            relayError.date.formatted(date: .abbreviated, time: .shortened)
+                        )
+                    )
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                     if let url = troubleshootingURL(for: relayError.message) {
@@ -106,7 +112,7 @@ struct RelayDiagnosticsView: View {
             HStack {
                 Label("APNs Token", systemImage: "key.fill")
                 Spacer()
-                Text(subscriptionManager.hasAPNsToken ? "Present" : "Missing")
+                Text(subscriptionManager.hasAPNsToken ? L10n.tr("Present") : L10n.tr("Missing"))
                     .foregroundStyle(subscriptionManager.hasAPNsToken ? .green : .orange)
             }
             .accessibilityElement(children: .combine)

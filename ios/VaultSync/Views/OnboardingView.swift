@@ -133,7 +133,7 @@ struct OnboardingView: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 
-    private func prerequisiteRow(icon: String, title: String, description: String) -> some View {
+    private func prerequisiteRow(icon: String, title: LocalizedStringKey, description: LocalizedStringKey) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: icon)
                 .font(.title3)
@@ -151,7 +151,7 @@ struct OnboardingView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private func pairingStepRow(number: String, text: String) -> some View {
+    private func pairingStepRow(number: String, text: LocalizedStringKey) -> some View {
         HStack(spacing: 12) {
             Text(number)
                 .font(.caption.bold().monospacedDigit())
@@ -188,7 +188,7 @@ struct OnboardingView: View {
 
     // MARK: - Helpers
 
-    private func featureRow(icon: String, text: String) -> some View {
+    private func featureRow(icon: String, text: LocalizedStringKey) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
                 .foregroundStyle(Color.accentColor)

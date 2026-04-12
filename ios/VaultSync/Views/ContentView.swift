@@ -135,7 +135,7 @@ struct ContentView: View {
                     Text(syncStatusText)
                         .font(.headline)
                     if let lastSync = syncthingManager.lastSyncTime {
-                        Text(L10n.tr("Last sync:")) + Text(" \(lastSync, style: .relative) ") + Text(L10n.tr("ago"))
+                        Text("\(L10n.tr("Last sync:")) \(lastSync, style: .relative) \(L10n.tr("ago"))")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -158,13 +158,13 @@ struct ContentView: View {
                     Image(systemName: syncthingManager.isRunning ? "checkmark.circle.fill" : "xmark.circle.fill")
                         .foregroundStyle(syncthingManager.isRunning ? .green : .secondary)
                         .accessibilityHidden(true)
-                    Text(syncthingManager.isRunning ? "Running" : "Stopped")
+                    Text(syncthingManager.isRunning ? L10n.tr("Running") : L10n.tr("Stopped"))
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(.secondary)
                 }
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel(syncthingManager.isRunning ? "Sync engine running" : "Sync engine stopped")
-                .accessibilityHint("Shows whether Syncthing is currently active.")
+                .accessibilityLabel(syncthingManager.isRunning ? L10n.tr("Sync engine running") : L10n.tr("Sync engine stopped"))
+                .accessibilityHint(L10n.tr("Shows whether Syncthing is currently active."))
             }
             .accessibilityElement(children: .combine)
 
@@ -330,13 +330,14 @@ struct ContentView: View {
                     Button {
                         showObsidianPicker = true
                     } label: {
-                        Label(
-                            vaultManager.needsReconnect ? "Reconnect Obsidian Folder" : "Connect Obsidian Folder",
-                            systemImage: vaultManager.needsReconnect ? "arrow.clockwise" : "folder.badge.plus"
-                        )
-                            .frame(maxWidth: .infinity)
+                        HStack(spacing: 8) {
+                            Image(systemName: vaultManager.needsReconnect ? "arrow.clockwise" : "folder.badge.plus")
+                            Text(vaultManager.needsReconnect ? "Reconnect Obsidian Folder" : "Connect Obsidian Folder")
+                        }
+                        .frame(maxWidth: .infinity, alignment: .center)
                     }
                     .buttonStyle(.borderedProminent)
+                    .frame(maxWidth: .infinity)
 
                     Text("In the picker, choose \"On My iPhone\" → \"Obsidian\", then tap Open.")
                         .font(.caption)

@@ -38,7 +38,7 @@ struct SetupChecklistView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
-                Text("\(viewModel.completedRequiredCount)/\(viewModel.totalRequiredCount) required")
+                Text(L10n.fmt("%d/%d required", viewModel.completedRequiredCount, viewModel.totalRequiredCount))
                     .font(.caption.weight(.semibold).monospacedDigit())
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 10)
@@ -55,7 +55,7 @@ struct SetupChecklistView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Text("\(viewModel.completedRequiredCount)/\(viewModel.totalRequiredCount) required")
+                Text(L10n.fmt("%d/%d required", viewModel.completedRequiredCount, viewModel.totalRequiredCount))
                     .font(.caption.weight(.semibold).monospacedDigit())
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 10)
