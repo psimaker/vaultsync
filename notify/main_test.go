@@ -36,6 +36,7 @@ func TestLoadConfigParsesBootstrapValues(t *testing.T) {
 	t.Setenv("SYNCTHING_API_KEY", "test-key")
 	t.Setenv("RELAY_URL", "https://relay.example.com")
 	t.Setenv("DEBOUNCE_SECONDS", "7")
+	t.Setenv("POKE_INTERVAL_MINUTES", "15")
 	t.Setenv("WATCHED_FOLDERS", " vault-b, vault-a ,,vault-a ")
 
 	cfg, err := loadConfig()
@@ -45,6 +46,9 @@ func TestLoadConfigParsesBootstrapValues(t *testing.T) {
 
 	if cfg.DebounceSeconds != 7 {
 		t.Fatalf("DebounceSeconds = %d, want 7", cfg.DebounceSeconds)
+	}
+	if cfg.PokeIntervalMin != 15 {
+		t.Fatalf("PokeIntervalMin = %d, want 15", cfg.PokeIntervalMin)
 	}
 	if cfg.WatchedFolders == nil {
 		t.Fatal("WatchedFolders should not be nil when WATCHED_FOLDERS is set")
@@ -69,6 +73,23 @@ func TestLoadConfigRejectsInvalidDebounceSeconds(t *testing.T) {
 		t.Fatal("expected DEBOUNCE_SECONDS validation error")
 	}
 	if !strings.Contains(err.Error(), "DEBOUNCE_SECONDS") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+}
+
+func TestLoadConfigRejectsInvalidPokeIntervalMinutes(t *testing.T) {
+	t.Setenv("SYNCTHING_API_URL", "http://localhost:8384")
+	t.Setenv("SYNCTHING_API_KEY", "test-key")
+	t.Setenv("RELAY_URL", "https://relay.example.com")
+	t.Setenv("DEBOUNCE_SECONDS", "5")
+	t.Setenv("POKE_INTERVAL_MINUTES", "-1")
+	t.Setenv("WATCHED_FOLDERS", "")
+
+	_, err := loadConfig()
+	if err == nil {
+		t.Fatal("expected POKE_INTERVAL_MINUTES validation error")
+	}
+	if !strings.Contains(err.Error(), "POKE_INTERVAL_MINUTES") {
 		t.Fatalf("unexpected error message: %v", err)
 	}
 }
@@ -282,5 +303,25 @@ func TestMarkTriggeredCopiesPendingMarkers(t *testing.T) {
 	}
 	if got := lastTriggered["vault-b"]; got != "folder-completion:PEER:3:1:7" {
 		t.Fatalf("vault-b marker = %q, want updated marker", got)
+	}
+}
+
+func TestShouldSendPeriodicPoke(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 4, 12, 12, 0, 0, 0, time.UTC)
+	interval := 15 * time.Minute
+
+	if !shouldSendPeriodicPoke(now, interval, time.Time{}, 0) {
+		t.Fatal("expected zero last-delivery time to allow periodic poke")
+	}
+	if shouldSendPeriodicPoke(now, interval, now.Add(-5*time.Minute), 0) {
+		t.Fatal("expected recent successful trigger to suppress periodic poke")
+	}
+	if shouldSendPeriodicPoke(now, interval, now.Add(-20*time.Minute), 1) {
+		t.Fatal("expected pending change-trigger work to suppress periodic poke")
+	}
+	if !shouldSendPeriodicPoke(now, interval, now.Add(-20*time.Minute), 0) {
+		t.Fatal("expected stale last trigger with no pending work to allow periodic poke")
 	}
 }

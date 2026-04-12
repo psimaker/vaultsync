@@ -22,6 +22,7 @@ type Config struct {
 	SyncthingAPIKey string
 	RelayURL        string
 	DebounceSeconds int
+	PokeIntervalMin int
 	WatchedFolders  map[string]bool // nil = watch all
 }
 
@@ -120,6 +121,15 @@ func loadConfig() (Config, error) {
 		debounce = d
 	}
 
+	pokeInterval := 0
+	if v := os.Getenv("POKE_INTERVAL_MINUTES"); v != "" {
+		d, err := strconv.Atoi(v)
+		if err != nil || d < 0 {
+			return Config{}, fmt.Errorf("POKE_INTERVAL_MINUTES must be a non-negative integer (got %q)", v)
+		}
+		pokeInterval = d
+	}
+
 	var watched map[string]bool
 	if v := os.Getenv("WATCHED_FOLDERS"); v != "" {
 		watched = make(map[string]bool)
@@ -136,6 +146,7 @@ func loadConfig() (Config, error) {
 		SyncthingAPIKey: required("SYNCTHING_API_KEY"),
 		RelayURL:        required("RELAY_URL"),
 		DebounceSeconds: debounce,
+		PokeIntervalMin: pokeInterval,
 		WatchedFolders:  watched,
 	}
 
@@ -203,16 +214,26 @@ func runService(cfg Config) int {
 		"syncthing_url", cfg.SyncthingAPIURL,
 		"relay_url", cfg.RelayURL,
 		"debounce_seconds", cfg.DebounceSeconds,
+		"poke_interval_minutes", cfg.PokeIntervalMin,
 		"watched_folders", formatWatched(cfg.WatchedFolders),
 	)
 
 	events := st.Subscribe(ctx)
 	debounceDur := time.Duration(cfg.DebounceSeconds) * time.Second
+	pokeDur := time.Duration(cfg.PokeIntervalMin) * time.Minute
 
 	var debounceTimer *time.Timer
 	var debounceCh <-chan time.Time
+	var pokeTicker *time.Ticker
+	var pokeCh <-chan time.Time
 	pending := make(map[string]string)
 	lastTriggered := make(map[string]string)
+	var lastDeliveredAt time.Time
+
+	if cfg.PokeIntervalMin > 0 {
+		pokeTicker = time.NewTicker(pokeDur)
+		pokeCh = pokeTicker.C
+	}
 
 	for {
 		select {
@@ -220,9 +241,10 @@ func runService(cfg Config) int {
 			if !ok {
 				if len(pending) > 0 {
 					flushCtx, flushCancel := context.WithTimeout(context.Background(), 5*time.Second)
-					delivered, fatal := fireTrigger(flushCtx, relay)
+					delivered, fatal := fireTrigger(flushCtx, relay, "stream-flush")
 					if delivered {
 						markTriggered(lastTriggered, pending)
+						lastDeliveredAt = time.Now()
 					}
 					if fatal {
 						flushCancel()
@@ -283,10 +305,11 @@ func runService(cfg Config) int {
 			if len(pending) == 0 {
 				continue
 			}
-			delivered, fatal := fireTrigger(ctx, relay)
+			delivered, fatal := fireTrigger(ctx, relay, "change-detected")
 			if delivered {
 				markTriggered(lastTriggered, pending)
 				clear(pending)
+				lastDeliveredAt = time.Now()
 				continue
 			}
 			if fatal {
@@ -295,17 +318,34 @@ func runService(cfg Config) int {
 			debounceTimer = time.NewTimer(debounceDur)
 			debounceCh = debounceTimer.C
 
+		case <-pokeCh:
+			if !shouldSendPeriodicPoke(time.Now(), pokeDur, lastDeliveredAt, len(pending)) {
+				continue
+			}
+			delivered, fatal := fireTrigger(ctx, relay, "periodic-poke")
+			if delivered {
+				lastDeliveredAt = time.Now()
+				continue
+			}
+			if fatal {
+				return 1
+			}
+
 		case <-ctx.Done():
 			slog.Info("shutdown signal received")
 			if len(pending) > 0 {
 				shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-				if delivered, _ := fireTrigger(shutdownCtx, relay); delivered {
+				if delivered, _ := fireTrigger(shutdownCtx, relay, "shutdown-flush"); delivered {
 					markTriggered(lastTriggered, pending)
+					lastDeliveredAt = time.Now()
 				}
 				shutdownCancel()
 			}
 			if debounceTimer != nil {
 				debounceTimer.Stop()
+			}
+			if pokeTicker != nil {
+				pokeTicker.Stop()
 			}
 			slog.Info("vaultsync-notify stopped")
 			return 0
@@ -470,13 +510,27 @@ func markTriggered(lastTriggered, pending map[string]string) {
 // fireTrigger sends a relay trigger.
 // Returns `(delivered, fatal)` so the caller can retain pending work on
 // transient relay failures without collapsing the process on recoverable errors.
-func fireTrigger(ctx context.Context, relay *RelayClient) (bool, bool) {
-	slog.Info("sending relay trigger")
+func shouldSendPeriodicPoke(now time.Time, interval time.Duration, lastDeliveredAt time.Time, pendingCount int) bool {
+	if interval <= 0 {
+		return false
+	}
+	if pendingCount > 0 {
+		return false
+	}
+	if lastDeliveredAt.IsZero() {
+		return true
+	}
+	return now.Sub(lastDeliveredAt) >= interval
+}
+
+func fireTrigger(ctx context.Context, relay *RelayClient, reason string) (bool, bool) {
+	slog.Info("sending relay trigger", "reason", reason)
 	if err := relay.Trigger(ctx); err != nil {
 		if isFatal(err) {
 			slog.Error("relay trigger failed with fatal configuration error",
 				"classification", "fatal",
 				"component", "relay",
+				"reason", reason,
 				"error", err,
 				"action", "exit",
 			)
@@ -485,6 +539,7 @@ func fireTrigger(ctx context.Context, relay *RelayClient) (bool, bool) {
 		slog.Error("relay trigger failed",
 			"classification", "recoverable",
 			"component", "relay",
+			"reason", reason,
 			"error", err,
 			"action", "continue",
 		)
