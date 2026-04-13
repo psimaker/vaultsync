@@ -53,31 +53,31 @@ enum BackgroundSyncService {
     /// Register background task handlers. Must be called before app finishes launching.
     /// Registration may fail in the Simulator (ESRCH) — failures are non-fatal.
     static func registerTasks() {
-        appRefreshRegistered = MainActor.assumeIsolated {
-            BGTaskScheduler.shared.register(
-                forTaskWithIdentifier: appRefreshIdentifier,
-                using: nil
-            ) { task in
-                guard let refreshTask = task as? BGAppRefreshTask else { return }
-                let wrapped = UnsafeSendable(value: refreshTask)
-                Task { await handleAppRefresh(task: wrapped.value) }
-            }
+        let refreshHandler: @Sendable (BGTask) -> Void = { task in
+            guard let refreshTask = task as? BGAppRefreshTask else { return }
+            let wrapped = UnsafeSendable(value: refreshTask)
+            Task { await handleAppRefresh(task: wrapped.value) }
         }
+        appRefreshRegistered = BGTaskScheduler.shared.register(
+            forTaskWithIdentifier: appRefreshIdentifier,
+            using: nil,
+            launchHandler: refreshHandler
+        )
 
         if !appRefreshRegistered {
             logger.warning("Failed to register app refresh task — background refresh unavailable")
         }
 
-        continuedProcessingRegistered = MainActor.assumeIsolated {
-            BGTaskScheduler.shared.register(
-                forTaskWithIdentifier: continuedProcessingIdentifier,
-                using: nil
-            ) { task in
-                guard let processingTask = task as? BGContinuedProcessingTask else { return }
-                let wrapped = UnsafeSendable(value: processingTask)
-                Task { await handleContinuedProcessing(task: wrapped.value) }
-            }
+        let continuedHandler: @Sendable (BGTask) -> Void = { task in
+            guard let processingTask = task as? BGContinuedProcessingTask else { return }
+            let wrapped = UnsafeSendable(value: processingTask)
+            Task { await handleContinuedProcessing(task: wrapped.value) }
         }
+        continuedProcessingRegistered = BGTaskScheduler.shared.register(
+            forTaskWithIdentifier: continuedProcessingIdentifier,
+            using: nil,
+            launchHandler: continuedHandler
+        )
 
         if !continuedProcessingRegistered {
             logger.warning("Failed to register continued processing task — continued processing unavailable (expected in Simulator)")
