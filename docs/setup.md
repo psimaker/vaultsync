@@ -35,7 +35,7 @@ make patch    # creates _syncthing_patched/ with applied fixes
 make xcframework
 ```
 
-This produces `go/build/SyncBridge.xcframework` (~30-50 MB) targeting iOS 26+ (arm64) and iOS Simulator (arm64).
+This produces `go/build/SyncBridge.xcframework` (~30-50 MB) targeting iOS 18+ (arm64) and iOS Simulator (arm64).
 
 ### 5. Generate the Xcode project
 
@@ -50,7 +50,7 @@ xcodegen generate
 open VaultSync.xcodeproj
 ```
 
-Select the **VaultSync** scheme, choose a device or simulator (iOS 26+), and build (Cmd+B).
+Select the **VaultSync** scheme, choose a supported device or simulator (iOS 18+), and build (Cmd+B).
 
 ## Running Tests
 
@@ -71,5 +71,5 @@ cd ios && xcodebuild test \
 - **gomobile not found:** Ensure `$(go env GOPATH)/bin` is in your `$PATH`.
 - **xcframework build fails:** Run `make clean` first, then retry `make xcframework`.
 - **Xcode project missing:** Run `xcodegen generate` in the `ios/` directory.
-- **Simulator not available:** Ensure you have the iOS 26+ simulator runtime installed in Xcode.
+- **Simulator not available:** Ensure you have a supported iOS 18+ simulator runtime installed in Xcode.
 - **Runtime or sync issues after build:** Use [docs/troubleshooting.md](troubleshooting.md).

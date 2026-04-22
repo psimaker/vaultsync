@@ -4,6 +4,20 @@ All notable changes to VaultSync are documented here.
 
 ---
 
+## [1.1.0] — 2026-04-22
+
+### Added
+
+- **Localized setup surfaces** — The new onboarding and setup-status copy now ships in English, German, and Simplified Chinese.
+
+### Changed
+
+- **Calmer first launch** — First-run onboarding is now a short, informational 2-screen introduction. Real setup stays on the VaultSync home screen, where pairing, pending shares, vault activity, and sync status already live.
+- **Setup Guide -> Setup Status** — Settings now open a live setup-status and troubleshooting view instead of the old onboarding-style guide. It focuses on essential sync readiness and points users back to the home screen for action.
+- **More honest vault-sync status** — A pending share no longer counts as “done”. Setup Status now keeps vault syncing marked as needing attention until at least one vault is actually active.
+- **Cleaner Settings** — Discovery controls were removed from Settings to reduce noise. Discovery remains enabled by default.
+- **iOS support messaging corrected** — Project docs and release metadata now consistently reflect VaultSync’s iOS/iPadOS 18+ support, while `BGContinuedProcessingTask` remains an iOS 26+ enhancement when available.
+
 ## [1.0.2] — 2026-04-12
 
 ### Fixed

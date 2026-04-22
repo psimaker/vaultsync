@@ -21,7 +21,7 @@ Your notes, your devices, your server. No managed note-sync cloud required.
 [![CI](https://img.shields.io/github/actions/workflow/status/psimaker/vaultsync/ci.yml?style=flat-square&logo=github-actions&logoColor=white&label=Build)](https://github.com/psimaker/vaultsync/actions/workflows/ci.yml)
 [![Last Commit](https://img.shields.io/github/last-commit/psimaker/vaultsync?style=flat-square&label=Last+Commit)](https://github.com/psimaker/vaultsync/commits)
 
-[![iOS 26+](https://img.shields.io/badge/iOS-26%2B-007AFF?style=flat-square&logo=apple&logoColor=white)](https://developer.apple.com/ios/)
+[![iOS 18+](https://img.shields.io/badge/iOS-18%2B-007AFF?style=flat-square&logo=apple&logoColor=white)](https://developer.apple.com/ios/)
 [![Swift 6](https://img.shields.io/badge/Swift-6-FA7343?style=flat-square&logo=swift&logoColor=white)](https://swift.org)
 [![Xcode 26+](https://img.shields.io/badge/Xcode-26%2B-147EFB?style=flat-square&logo=xcode&logoColor=white)](https://developer.apple.com/xcode/)
 [![Open Issues](https://img.shields.io/github/issues/psimaker/vaultsync?style=flat-square&label=Issues)](https://github.com/psimaker/vaultsync/issues)
@@ -99,21 +99,19 @@ VaultSync is also not a magic always-on Syncthing daemon for iOS. Apple’s back
 
 ---
 
-## What’s New — v1.0.2
+## What’s New — v1.1.0
 
-> **Reliable Silent-Push Sync** — Background sync now correctly waits for pulls to finish instead of shutting down at the first idle flicker. Fixes the core reason why pushes sometimes arrived but files did not.
+> **Calmer First Launch** — First-run onboarding is now a short 2-screen introduction. Setup itself happens on the VaultSync home screen, where the real device, vault, and sync controls already live.
 >
-> **Server Edits Wake iPhone Again** — `vaultsync-notify` now reacts to real outgoing change markers on the homeserver, so direct edits on your server trigger an iPhone wake-up again without falling back to noisy state-transition pushes.
+> **Setup Status in Settings** — The old setup guide is now a live status and troubleshooting view that highlights what is ready, what still needs attention, and where to fix it.
 >
-> **Recovery When iOS Resumes Cold** — If a silent push wakes VaultSync but Syncthing does not show real peer activity quickly enough, VaultSync now force-restarts the embedded engine and retries within the same background run.
+> **Pending Shares Need Action** — A waiting vault offer no longer looks finished. Vault syncing is only marked ready once at least one vault is actually active.
 >
-> **Longer iOS Grace Period** — The app now holds a background-task assertion on suspend, giving Syncthing more time to wrap up in-flight operations.
+> **Cleaner Settings** — The old discovery controls are gone, reducing noise in Settings while leaving discovery enabled by default.
 >
-> **Correct Vault Path** — Accepting a pending share no longer creates a redundant nested subfolder when the selected Obsidian root already matches the share name.
+> **Localized Setup Flow** — The refreshed onboarding and setup-status copy is now available in English, German, and Simplified Chinese.
 >
-> **Gentler Push Pressure** — `vaultsync-notify` now deduplicates wake-ups per real change marker, reducing the chance of iOS throttling while still covering direct server-side edits.
->
-> **Faster Recovery** — Relay re-provisioning interval reduced from 24h to 6h so a server-side token cleanup heals automatically.
+> **iOS 18+** — VaultSync now supports iOS/iPadOS 18 and later.
 
 See [CHANGELOG.md](CHANGELOG.md) for full details.
 
@@ -133,9 +131,9 @@ VaultSync uses Syncthing to sync your vault between your own devices over LAN or
 
 VaultSync syncs directly into Obsidian’s iOS sandbox. Open Obsidian and your vault is where it should be.
 
-### Guided setup
+### Calm onboarding, real setup
 
-A 5-step checklist helps you pair your iPhone or iPad with an existing Syncthing device via QR code.
+A short first-run onboarding explains the flow, and the actual setup happens on the home screen where you can connect Obsidian, pair devices, accept shares, and monitor sync.
 
 ### Markdown conflict resolver
 
@@ -307,7 +305,7 @@ See [notify/README.md](notify/README.md) for full configuration options.
 
 | Requirement | Details |
 |---|---|
-| iPhone or iPad | iOS/iPadOS 26 or later |
+| iPhone or iPad | iOS/iPadOS 18 or later |
 | Obsidian | Installed on iOS/iPadOS |
 | Syncthing | Running on a Mac, Linux machine, NAS, or homeserver |
 | Cloud Relay | Optional, available via in-app purchase |
@@ -346,10 +344,10 @@ Until then, VaultSync works in two modes:
 
 | | |
 |---|---|
-| Platform | iOS/iPadOS 26+ |
+| Platform | iOS/iPadOS 18+ |
 | Language | Swift 6, SwiftUI |
 | Sync engine | Syncthing v2.x via Go/gomobile `.xcframework` |
-| Background execution | `BGAppRefreshTask` + `BGContinuedProcessingTask` |
+| Background execution | `BGAppRefreshTask` + `BGContinuedProcessingTask` (iOS 26+ when available) |
 | Push wake-ups | APNs silent notifications via Cloud Relay |
 | Notify sidecar | Docker container for homeserver/NAS setups |
 | License | MPL-2.0 |

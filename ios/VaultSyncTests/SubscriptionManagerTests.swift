@@ -12,7 +12,7 @@ struct SubscriptionManagerTests {
 
         let failed = RelayProvisionStatus.failed(reason: "network issue")
         #expect(failed.stateKey == "failed")
-        #expect(failed.summary == "Failed")
+        #expect(failed.summary == L10n.tr("Failed"))
         #expect(failed.failureReason == "network issue")
     }
 

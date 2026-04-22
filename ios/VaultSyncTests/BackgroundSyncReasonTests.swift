@@ -32,11 +32,14 @@ struct BackgroundSyncReasonTests {
 
     @Test("Specific reason code copy remains actionable")
     func specificReasonCodeCopy() {
-        #expect(BackgroundSyncService.SyncResult.noBookmarkAccess.issueTitle == "Background Sync Could Not Access Obsidian")
-        #expect(BackgroundSyncService.SyncResult.noFoldersConfigured.issueTitle == "Background Sync Found No Vaults")
-        #expect(BackgroundSyncService.SyncResult.bridgeStartFailed.issueTitle == "Background Sync Could Not Start")
-        #expect(BackgroundSyncService.SyncResult.notIdleBeforeDeadline.issueTitle == "Background Sync Timed Out")
-        #expect(BackgroundSyncService.SyncResult.noBookmarkAccess.remediation.contains("Reconnect your Obsidian folder"))
+        #expect(BackgroundSyncService.SyncResult.noBookmarkAccess.issueTitle == L10n.tr("Background Sync Could Not Access Obsidian"))
+        #expect(BackgroundSyncService.SyncResult.noFoldersConfigured.issueTitle == L10n.tr("Background Sync Found No Vaults"))
+        #expect(BackgroundSyncService.SyncResult.bridgeStartFailed.issueTitle == L10n.tr("Background Sync Could Not Start"))
+        #expect(BackgroundSyncService.SyncResult.notIdleBeforeDeadline.issueTitle == L10n.tr("Background Sync Timed Out"))
+        #expect(
+            BackgroundSyncService.SyncResult.noBookmarkAccess.remediation
+                == L10n.tr("Reconnect your Obsidian folder access in VaultSync, then run a foreground rescan.")
+        )
     }
 
     @Test("Silent push restart requires real sync progress before success")

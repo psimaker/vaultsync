@@ -39,7 +39,7 @@ Key exports:
 ## Sync Strategy
 
 - **Foreground:** Syncthing runs unrestricted. Immediate, continuous sync.
-- **Background:** `BGAppRefreshTask` (~30s) + `BGContinuedProcessingTask` (iOS 26, longer runtime for user-initiated tasks).
+- **Background:** `BGAppRefreshTask` (~30s) + `BGContinuedProcessingTask` (iOS 26+ when available, longer runtime for user-initiated tasks).
 - **Push sync (Cloud Relay):** Optional. Near-realtime `server -> iPhone` wake-ups via APNs silent push notifications. See [relay-spec.md](relay-spec.md).
 
 ## Directional Behavior

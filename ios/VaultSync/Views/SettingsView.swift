@@ -7,12 +7,9 @@ struct SettingsView: View {
     var vaultManager: VaultManager
     var subscriptionManager: SubscriptionManager
 
-    @State private var localDiscovery = true
-    @State private var globalDiscovery = true
-    @State private var didLoadConfig = false
     @State private var alertMessage: String?
     @State private var showAlert = false
-    @State private var showSetupGuide = false
+    @State private var showSetupStatus = false
     @State private var retryProvisioningInProgress = false
     @Environment(\.dismiss) private var dismiss
 
@@ -21,23 +18,6 @@ struct SettingsView: View {
             List {
                 cloudRelaySection
                 aboutSection
-
-                Section("Discovery") {
-                    Toggle("Local Discovery", isOn: $localDiscovery)
-                        .onChange(of: localDiscovery) { _, _ in
-                            guard didLoadConfig else { return }
-                            applyDiscovery()
-                        }
-                    Toggle("Global Discovery", isOn: $globalDiscovery)
-                        .onChange(of: globalDiscovery) { _, _ in
-                            guard didLoadConfig else { return }
-                            applyDiscovery()
-                        }
-
-                    Text("Local discovery finds devices on your WiFi network. Global discovery uses Syncthing's servers to find devices anywhere.")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
 
                 Section("This Device") {
                     if syncthingManager.deviceID.isEmpty {
@@ -67,12 +47,12 @@ struct SettingsView: View {
 
                 Section {
                     Button {
-                        showSetupGuide = true
+                        showSetupStatus = true
                     } label: {
-                        Label("Setup Guide", systemImage: "checklist")
+                        Label(L10n.tr("Setup Status"), systemImage: "checklist")
                     }
                 } footer: {
-                    Text("Review or complete the initial setup checklist.")
+                    Text(L10n.tr("Check setup progress and troubleshooting tips."))
                 }
 
             }
@@ -90,7 +70,7 @@ struct SettingsView: View {
             } message: {
                 Text(alertMessage ?? "")
             }
-            .sheet(isPresented: $showSetupGuide) {
+            .sheet(isPresented: $showSetupStatus) {
                 NavigationStack {
                     ScrollView {
                         SetupChecklistView(
@@ -102,44 +82,24 @@ struct SettingsView: View {
                         )
                         .padding(16)
                     }
-                    .navigationTitle("Setup Guide")
+                    .navigationTitle(L10n.tr("Setup Status"))
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .confirmationAction) {
                             Button("Done") {
-                                showSetupGuide = false
+                                showSetupStatus = false
                             }
                         }
                     }
                 }
             }
             .onAppear {
-                loadDiscoveryState()
                 Task {
                     await subscriptionManager.refreshRelayDiagnostics(
                         homeserverDeviceIDs: syncthingManager.devices.map(\.deviceID)
                     )
                 }
             }
-        }
-    }
-
-    private func loadDiscoveryState() {
-        let json = SyncBridgeService.getConfigJSON()
-        guard let data = json.data(using: .utf8),
-              let cfg = try? JSONDecoder().decode(ConfigOptions.self, from: data) else {
-            didLoadConfig = true
-            return
-        }
-        localDiscovery = cfg.options.localAnnounceEnabled
-        globalDiscovery = cfg.options.globalAnnounceEnabled
-        didLoadConfig = true
-    }
-
-    private func applyDiscovery() {
-        if let err = SyncBridgeService.setDiscoveryEnabled(local: localDiscovery, global: globalDiscovery) {
-            alertMessage = mappedError(err, fallbackTitle: L10n.tr("Discovery Update Failed")).userVisibleDescription
-            showAlert = true
         }
     }
 
@@ -348,17 +308,4 @@ struct SettingsView: View {
         }
     }
 
-    private func mappedError(_ error: String, fallbackTitle: String = L10n.tr("Settings Error")) -> SyncUserError {
-        SyncUserError.from(rawMessage: error, fallbackTitle: fallbackTitle)
-    }
-
-    // MARK: - Config
-
-    private struct ConfigOptions: Codable {
-        let options: Options
-        struct Options: Codable {
-            let localAnnounceEnabled: Bool
-            let globalAnnounceEnabled: Bool
-        }
-    }
 }

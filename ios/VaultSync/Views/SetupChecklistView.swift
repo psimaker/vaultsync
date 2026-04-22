@@ -10,8 +10,8 @@ struct SetupChecklistView: View {
 
             ProgressView(value: viewModel.completionProgress)
                 .tint(viewModel.isReadyToFinish ? .green : .orange)
-                .accessibilityLabel("Setup checklist progress")
-                .accessibilityValue(L10n.fmt("%d of %d required steps complete", viewModel.completedRequiredCount, viewModel.totalRequiredCount))
+                .accessibilityLabel(L10n.tr("Setup status progress"))
+                .accessibilityValue(L10n.fmt("%d of %d essentials ready", viewModel.completedRequiredCount, viewModel.totalRequiredCount))
 
             ForEach(viewModel.items) { item in
                 checklistRow(item)
@@ -31,14 +31,10 @@ struct SetupChecklistView: View {
     private var headerSection: some View {
         if dynamicTypeSize.isAccessibilitySize {
             VStack(alignment: .leading, spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Setup Checklist")
-                        .font(.title3.weight(.semibold))
-                    Text("Finish the required steps so sync stays reliable.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                Text(L10n.fmt("%d/%d required", viewModel.completedRequiredCount, viewModel.totalRequiredCount))
+                Text(L10n.tr("Check the essentials for syncing. You can complete setup actions from the VaultSync home screen."))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Text(L10n.fmt("%d of %d essentials ready", viewModel.completedRequiredCount, viewModel.totalRequiredCount))
                     .font(.caption.weight(.semibold).monospacedDigit())
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 10)
@@ -47,15 +43,11 @@ struct SetupChecklistView: View {
             }
         } else {
             HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Setup Checklist")
-                        .font(.title3.weight(.semibold))
-                    Text("Finish the required steps so sync stays reliable.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
+                Text(L10n.tr("Check the essentials for syncing. You can complete setup actions from the VaultSync home screen."))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
                 Spacer()
-                Text(L10n.fmt("%d/%d required", viewModel.completedRequiredCount, viewModel.totalRequiredCount))
+                Text(L10n.fmt("%d of %d essentials ready", viewModel.completedRequiredCount, viewModel.totalRequiredCount))
                     .font(.caption.weight(.semibold).monospacedDigit())
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 10)
@@ -78,12 +70,14 @@ struct SetupChecklistView: View {
                         Text(item.title)
                             .font(.body.weight(.semibold))
                     }
-                    Text(statusText(for: item))
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(statusColor(for: item))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(statusColor(for: item).opacity(0.15), in: Capsule())
+                    if item.isOptional {
+                        Text(statusText(for: item))
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(statusColor(for: item))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(statusColor(for: item).opacity(0.15), in: Capsule())
+                    }
                 }
                 .accessibilityElement(children: .combine)
             } else {
@@ -91,16 +85,18 @@ struct SetupChecklistView: View {
                     Image(systemName: statusIcon(for: item))
                         .font(.body.weight(.semibold))
                         .foregroundStyle(statusColor(for: item))
-                        .accessibilityHidden(true)
+                            .accessibilityHidden(true)
                     Text(item.title)
                         .font(.body.weight(.semibold))
                     Spacer()
-                    Text(statusText(for: item))
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(statusColor(for: item))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(statusColor(for: item).opacity(0.15), in: Capsule())
+                    if item.isOptional {
+                        Text(statusText(for: item))
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(statusColor(for: item))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(statusColor(for: item).opacity(0.15), in: Capsule())
+                    }
                 }
                 .accessibilityElement(children: .combine)
             }
@@ -133,20 +129,23 @@ struct SetupChecklistView: View {
     }
 
     private func statusIcon(for item: SetupChecklistViewModel.ChecklistItem) -> String {
+        if item.isOptional {
+            return item.isComplete ? "checkmark.circle.fill" : "circle.dashed"
+        }
         if item.isComplete { return "checkmark.circle.fill" }
-        if item.isOptional { return "circle.dashed" }
         return "exclamationmark.circle.fill"
     }
 
     private func statusColor(for item: SetupChecklistViewModel.ChecklistItem) -> Color {
+        if item.isOptional {
+            return item.isComplete ? .green : .secondary
+        }
         if item.isComplete { return .green }
-        if item.isOptional { return .secondary }
         return .orange
     }
 
     private func statusText(for item: SetupChecklistViewModel.ChecklistItem) -> String {
-        if item.isComplete { return L10n.tr("Complete") }
         if item.isOptional { return L10n.tr("Optional") }
-        return L10n.tr("Required")
+        return ""
     }
 }
