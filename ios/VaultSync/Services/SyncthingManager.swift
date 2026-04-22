@@ -1,6 +1,39 @@
 import Foundation
 import Observation
+import WidgetKit
 import os
+
+enum WidgetSnapshotStore {
+    static let appGroupSuiteName = "group.eu.vaultsync.shared"
+    static let snapshotDefaultsKey = "vaultsync.widget.snapshot"
+    static let widgetKind = "VaultSyncWidget"
+
+    struct Snapshot: Codable, Equatable, Sendable {
+        let lastSyncTime: String
+        let lastSyncDuration: Double
+        let status: String
+        let filesSynced: Int
+        let folderCount: Int
+    }
+
+    static func write(snapshot: Snapshot) {
+        guard let defaults = UserDefaults(suiteName: appGroupSuiteName),
+              let data = try? JSONEncoder().encode(snapshot),
+              let json = String(data: data, encoding: .utf8) else {
+            return
+        }
+
+        defaults.set(json, forKey: snapshotDefaultsKey)
+        WidgetCenter.shared.reloadTimelines(ofKind: widgetKind)
+    }
+
+    static func iso8601String(from date: Date?) -> String {
+        guard let date else { return "" }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.string(from: date)
+    }
+}
 
 private let logger = Logger(subsystem: "eu.vaultsync.app", category: "syncthing")
 
@@ -52,6 +85,12 @@ final class SyncthingManager {
     ]
 
     private var hasAppliedStartupIgnores = false
+    private var activeWidgetSyncStart: Date?
+    private var activeWidgetSyncFilesSynced = 0
+    private var lastWidgetSyncCompletionTime: Date?
+    private var lastWidgetSyncDuration: TimeInterval = 0
+    private var lastWidgetSyncFilesSynced = 0
+    private var lastWrittenWidgetSnapshot: WidgetSnapshotStore.Snapshot?
 
     private static let bridgeDateParser: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
@@ -68,6 +107,7 @@ final class SyncthingManager {
         let history = syncHistoryStore.load()
         lastSyncTime = history.globalLastSync
         lastSyncTimeByFolder = history.lastSyncByFolder
+        lastWidgetSyncCompletionTime = history.globalLastSync
 
         lastBackgroundSyncOutcome = BackgroundSyncService.lastSyncOutcome()
         lastBackgroundOutcomeEventDate = lastBackgroundSyncOutcome?.timestamp
@@ -497,6 +537,19 @@ final class SyncthingManager {
         SyncBridgeService.rescanFolder(folderID: id)
     }
 
+    /// Trigger a foreground sync using the same rescan path as the main UI.
+    /// If a sync is already active, ignore the request to keep it idempotent.
+    func triggerForegroundSync(folderID: String? = nil) {
+        guard !isAnySyncing else {
+            logger.info("Ignoring sync request because a sync is already in progress")
+            return
+        }
+
+        Task {
+            await performForegroundSyncRequest(folderID: folderID)
+        }
+    }
+
     // MARK: - Conflict management
 
     /// Resolve a conflict file. Returns nil on success.
@@ -707,7 +760,9 @@ final class SyncthingManager {
             return (statuses, conflicts)
         }.value
 
+        let previousStatuses = folderStatuses
         let newStatuses = statusSnapshot.0
+        updateWidgetSyncMetrics(previousStatuses: previousStatuses, newStatuses: newStatuses)
         updateSyncHistory(
             newStatuses: newStatuses,
             activeFolderIDs: Set(currentFolders.map(\.id))
@@ -721,6 +776,7 @@ final class SyncthingManager {
             }
         }
         conflictFiles = newConflicts
+        writeWidgetSnapshotIfNeeded()
     }
 
     private func stopPolling() {
@@ -855,6 +911,8 @@ final class SyncthingManager {
                 let bucket = item.folderID ?? "unknown"
                 if emittedFileEventsByFolder[bucket, default: 0] >= Self.maxFileEventsPerFolderPerPoll {
                     suppressedFileEventsByFolder[bucket, default: 0] += 1
+                    beginWidgetSyncSessionIfNeeded(startDate: item.date)
+                    activeWidgetSyncFilesSynced += 1
                     continue
                 }
                 emittedFileEventsByFolder[bucket, default: 0] += 1
@@ -862,6 +920,11 @@ final class SyncthingManager {
 
             if isDuplicateActivity(item) {
                 continue
+            }
+
+            if item.kind == .fileSynced {
+                beginWidgetSyncSessionIfNeeded(startDate: item.date)
+                activeWidgetSyncFilesSynced += 1
             }
 
             nextItems.append(item)
@@ -1218,6 +1281,153 @@ final class SyncthingManager {
             globalLastSync: lastSyncTime,
             lastSyncByFolder: lastSyncTimeByFolder
         )
+    }
+
+    private func performForegroundSyncRequest(folderID: String?) async {
+        if !isRunning {
+            start()
+        }
+
+        let normalizedFolderID = folderID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let availableFolders = await waitForFoldersForSyncRequest(maxWait: 3)
+
+        let targetFolderIDs: [String]
+        if let normalizedFolderID, !normalizedFolderID.isEmpty {
+            guard availableFolders.contains(where: { $0.id == normalizedFolderID }) else {
+                logger.warning("Ignoring sync request for unknown folder ID: \(normalizedFolderID, privacy: .public)")
+                return
+            }
+            targetFolderIDs = [normalizedFolderID]
+        } else {
+            guard !availableFolders.isEmpty else {
+                logger.info("Ignoring sync request because no folders are configured")
+                return
+            }
+            targetFolderIDs = availableFolders.map(\.id)
+        }
+
+        guard !isAnySyncing else {
+            logger.info("Ignoring sync request because a sync started while preparing the request")
+            return
+        }
+
+        beginWidgetSyncSessionIfNeeded(startDate: Date())
+
+        var didTriggerSync = false
+        var lastTriggerError: String?
+
+        for id in Array(Set(targetFolderIDs)).sorted() {
+            if let err = rescanFolder(id: id) {
+                lastTriggerError = err
+                logger.error("Foreground sync trigger failed for \(id, privacy: .public): \(err, privacy: .public)")
+            } else {
+                didTriggerSync = true
+            }
+        }
+
+        if didTriggerSync {
+            error = nil
+            userError = nil
+            writeWidgetSnapshotIfNeeded(statusOverride: .syncing)
+            return
+        }
+
+        if let lastTriggerError {
+            error = lastTriggerError
+            userError = SyncUserError.from(
+                rawMessage: lastTriggerError,
+                fallbackTitle: L10n.tr("Could Not Start Sync")
+            )
+        }
+        completeWidgetSyncSession(status: .error, completedAt: Date())
+    }
+
+    private func waitForFoldersForSyncRequest(maxWait: TimeInterval) async -> [FolderInfo] {
+        let deadline = Date(timeIntervalSinceNow: maxWait)
+
+        while Date() < deadline {
+            refreshFolders()
+            if !folders.isEmpty || !SyncBridgeService.isRunning() {
+                return folders
+            }
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+
+        refreshFolders()
+        return folders
+    }
+
+    private enum WidgetSnapshotStatus: String {
+        case idle
+        case syncing
+        case error
+    }
+
+    private func updateWidgetSyncMetrics(
+        previousStatuses: [String: FolderStatusInfo],
+        newStatuses: [String: FolderStatusInfo]
+    ) {
+        let wasSyncing = previousStatuses.values.contains { $0.state == "syncing" || $0.state == "scanning" }
+        let isSyncingNow = newStatuses.values.contains { $0.state == "syncing" || $0.state == "scanning" }
+
+        if isSyncingNow {
+            beginWidgetSyncSessionIfNeeded(startDate: Date())
+        } else if wasSyncing || activeWidgetSyncStart != nil {
+            completeWidgetSyncSession(
+                status: currentWidgetSnapshotStatus(using: newStatuses),
+                completedAt: Date()
+            )
+        }
+    }
+
+    private func beginWidgetSyncSessionIfNeeded(startDate: Date) {
+        guard activeWidgetSyncStart == nil else { return }
+        activeWidgetSyncStart = startDate
+        activeWidgetSyncFilesSynced = 0
+    }
+
+    private func completeWidgetSyncSession(
+        status: WidgetSnapshotStatus,
+        completedAt: Date
+    ) {
+        let startedAt = activeWidgetSyncStart ?? completedAt
+        lastWidgetSyncCompletionTime = completedAt
+        lastWidgetSyncDuration = max(0, completedAt.timeIntervalSince(startedAt))
+        lastWidgetSyncFilesSynced = activeWidgetSyncFilesSynced
+        activeWidgetSyncStart = nil
+        activeWidgetSyncFilesSynced = 0
+        writeWidgetSnapshotIfNeeded(statusOverride: status)
+    }
+
+    private func currentWidgetSnapshotStatus(
+        using statuses: [String: FolderStatusInfo]? = nil
+    ) -> WidgetSnapshotStatus {
+        let statuses = statuses ?? folderStatuses
+
+        if error != nil || userError != nil || statuses.values.contains(where: { $0.state == "error" }) {
+            return .error
+        }
+
+        if activeWidgetSyncStart != nil ||
+            statuses.values.contains(where: { $0.state == "syncing" || $0.state == "scanning" }) {
+            return .syncing
+        }
+
+        return .idle
+    }
+
+    private func writeWidgetSnapshotIfNeeded(statusOverride: WidgetSnapshotStatus? = nil) {
+        let snapshot = WidgetSnapshotStore.Snapshot(
+            lastSyncTime: WidgetSnapshotStore.iso8601String(from: lastWidgetSyncCompletionTime ?? lastSyncTime),
+            lastSyncDuration: activeWidgetSyncStart == nil ? lastWidgetSyncDuration : 0,
+            status: (statusOverride ?? currentWidgetSnapshotStatus()).rawValue,
+            filesSynced: activeWidgetSyncStart == nil ? lastWidgetSyncFilesSynced : activeWidgetSyncFilesSynced,
+            folderCount: folders.count
+        )
+
+        guard snapshot != lastWrittenWidgetSnapshot else { return }
+        lastWrittenWidgetSnapshot = snapshot
+        WidgetSnapshotStore.write(snapshot: snapshot)
     }
 
     func folderUserError(folderID: String) -> SyncUserError? {

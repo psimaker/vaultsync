@@ -1,0 +1,25 @@
+// Status labels reused from the main app
+"Idle" = "Idle";
+"Needs Attention" = "Needs Attention";
+"Open VaultSync" = "Open VaultSync";
+"Syncing" = "Syncing";
+
+// Metric labels
+"widget_last_sync" = "Last Sync";
+"widget_files_synced" = "Files Synced";
+"widget_files_synced_format" = "%d files";
+"widget_vaults" = "Vaults";
+
+// Fallback labels
+"widget_no_sync_yet" = "No sync yet";
+"widget_waiting" = "Waiting";
+"widget_duration_unavailable" = "Duration unavailable";
+"widget_last_run_seconds" = "Last run: %ds";
+"widget_files_tap_to_sync" = "%d files • Tap to sync";
+
+// Actions
+"widget_sync_now" = "Sync Now";
+
+// Widget gallery
+"VaultSync" = "VaultSync";
+"widget_gallery_description" = "Check sync status and open VaultSync.";

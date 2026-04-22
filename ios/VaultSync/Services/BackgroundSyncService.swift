@@ -302,7 +302,9 @@ enum BackgroundSyncService {
     ) async -> SyncResult {
         logger.info("Background sync starting (reason=\(reason))")
         trace("Starting background sync (reason=\(reason), maxDuration=\(Int(maxDuration))s).")
+        let syncStartedAt = Date()
         var telemetryEventCursor = latestBridgeEventID()
+        let syncStartEventCursor = telemetryEventCursor
 
         // Silent pushes arrive after iOS has suspended the process. The Go
         // bridge's cached state still reports isRunning=true, but the TCP
@@ -336,7 +338,9 @@ enum BackgroundSyncService {
                 return completeSync(
                     reason: reason,
                     result: .noBookmarkAccess,
-                    detail: L10n.tr("No security-scoped bookmark access was available.")
+                    detail: L10n.tr("No security-scoped bookmark access was available."),
+                    startedAt: syncStartedAt,
+                    initialEventCursor: syncStartEventCursor
                 )
             }
             trace("Restored bookmark access for \(managedURLs.count) URL(s).")
@@ -352,7 +356,9 @@ enum BackgroundSyncService {
                 return completeSync(
                     reason: reason,
                     result: .bridgeStartFailed,
-                    detail: err
+                    detail: err,
+                    startedAt: syncStartedAt,
+                    initialEventCursor: syncStartEventCursor
                 )
             }
             trace("Bridge start requested for background-owned sync.")
@@ -368,7 +374,9 @@ enum BackgroundSyncService {
             return completeSync(
                 reason: reason,
                 result: .noFoldersConfigured,
-                detail: L10n.tr("No folders were available for background sync.")
+                detail: L10n.tr("No folders were available for background sync."),
+                startedAt: syncStartedAt,
+                initialEventCursor: syncStartEventCursor
             )
         }
 
@@ -397,7 +405,9 @@ enum BackgroundSyncService {
                     return completeSync(
                         reason: reason,
                         result: .bridgeStartFailed,
-                        detail: restart.errorDetail ?? L10n.tr("Forced silent-push restart failed.")
+                        detail: restart.errorDetail ?? L10n.tr("Forced silent-push restart failed."),
+                        startedAt: syncStartedAt,
+                        initialEventCursor: syncStartEventCursor
                     )
                 }
 
@@ -423,7 +433,9 @@ enum BackgroundSyncService {
                     return completeSync(
                         reason: reason,
                         result: .noFoldersConfigured,
-                        detail: L10n.tr("No folders were available after forced silent-push restart.")
+                        detail: L10n.tr("No folders were available after forced silent-push restart."),
+                        startedAt: syncStartedAt,
+                        initialEventCursor: syncStartEventCursor
                     )
                 }
 
@@ -443,7 +455,13 @@ enum BackgroundSyncService {
             if ownsLifecycle {
                 cleanupBackgroundManaged(managedURLs)
             }
-            return completeSync(reason: reason, result: .alreadyIdle, detail: nil)
+            return completeSync(
+                reason: reason,
+                result: .alreadyIdle,
+                detail: nil,
+                startedAt: syncStartedAt,
+                initialEventCursor: syncStartEventCursor
+            )
         }
 
         let deadline = Date(timeIntervalSinceNow: maxDuration)
@@ -495,7 +513,13 @@ enum BackgroundSyncService {
             result = .notIdleBeforeDeadline
             detail = L10n.fmt("Sync did not reach idle before %ds deadline.", Int(maxDuration))
         }
-        return completeSync(reason: reason, result: result, detail: detail)
+        return completeSync(
+            reason: reason,
+            result: result,
+            detail: detail,
+            startedAt: syncStartedAt,
+            initialEventCursor: syncStartEventCursor
+        )
     }
 
     // MARK: - BGAppRefreshTask Handler
@@ -603,7 +627,9 @@ enum BackgroundSyncService {
     private static func completeSync(
         reason: String,
         result: SyncResult,
-        detail: String?
+        detail: String?,
+        startedAt: Date,
+        initialEventCursor: Int
     ) -> SyncResult {
         let outcome = SyncOutcome(
             timestamp: Date(),
@@ -612,6 +638,15 @@ enum BackgroundSyncService {
             detail: detail
         )
         persistSyncOutcome(outcome)
+        WidgetSnapshotStore.write(
+            snapshot: WidgetSnapshotStore.Snapshot(
+                lastSyncTime: WidgetSnapshotStore.iso8601String(from: outcome.timestamp),
+                lastSyncDuration: max(0, outcome.timestamp.timeIntervalSince(startedAt)),
+                status: result.isSuccessful ? "idle" : "error",
+                filesSynced: syncedFileCount(since: initialEventCursor),
+                folderCount: currentFolderCount()
+            )
+        )
         if let detail, !detail.isEmpty {
             trace("Completed with result=\(result.rawValue): \(detail)")
         } else {
@@ -677,6 +712,26 @@ enum BackgroundSyncService {
             // Decode failure contributes 0%, not 100%
         }
         return total / Double(folders.count)
+    }
+
+    private static func currentFolderCount() -> Int {
+        let json = SyncBridgeService.getFoldersJSON()
+        guard let data = json.data(using: .utf8),
+              let folders = try? JSONDecoder().decode([FolderStub].self, from: data) else {
+            return 0
+        }
+        return folders.count
+    }
+
+    private static func syncedFileCount(since lastEventID: Int) -> Int {
+        let events = decodeBridgeEvents(from: SyncBridgeService.getEventsSince(lastID: lastEventID))
+        return events.reduce(into: 0) { count, event in
+            guard event.type == "ItemFinished" else { return }
+            let error = event.data?["error"] ?? ""
+            if error.isEmpty {
+                count += 1
+            }
+        }
     }
 
     private static func notifyConflictsIfAny() async {

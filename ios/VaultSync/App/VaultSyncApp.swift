@@ -24,19 +24,24 @@ struct VaultSyncApp: App {
 
     var body: some Scene {
         WindowGroup {
-            if hasCompletedOnboarding {
-                ContentView(
-                    syncthingManager: syncthingManager,
-                    vaultManager: vaultManager,
-                    subscriptionManager: subscriptionManager
-                )
-            } else {
-                OnboardingView(
-                    hasCompletedOnboarding: $hasCompletedOnboarding,
-                    syncthingManager: syncthingManager,
-                    vaultManager: vaultManager,
-                    subscriptionManager: subscriptionManager
-                )
+            Group {
+                if hasCompletedOnboarding {
+                    ContentView(
+                        syncthingManager: syncthingManager,
+                        vaultManager: vaultManager,
+                        subscriptionManager: subscriptionManager
+                    )
+                } else {
+                    OnboardingView(
+                        hasCompletedOnboarding: $hasCompletedOnboarding,
+                        syncthingManager: syncthingManager,
+                        vaultManager: vaultManager,
+                        subscriptionManager: subscriptionManager
+                    )
+                }
+            }
+            .onOpenURL { url in
+                handleIncomingURL(url)
             }
         }
         .onChange(of: scenePhase) { _, newPhase in
@@ -86,5 +91,23 @@ struct VaultSyncApp: App {
                 }
             }
         }
+    }
+
+    private func handleIncomingURL(_ url: URL) {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              components.scheme?.caseInsensitiveCompare("vaultsync") == .orderedSame,
+              components.host?.caseInsensitiveCompare("sync") == .orderedSame else {
+            logger.debug("Ignoring unsupported incoming URL: \(url.absoluteString, privacy: .public)")
+            return
+        }
+
+        let folderID = components.queryItems?
+            .first(where: { $0.name == "folder" })?
+            .value?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedFolderID = folderID.flatMap { $0.isEmpty ? nil : $0 }
+
+        logger.info("Handling sync URL request (folder=\(normalizedFolderID ?? "all", privacy: .public))")
+        syncthingManager.triggerForegroundSync(folderID: normalizedFolderID)
     }
 }

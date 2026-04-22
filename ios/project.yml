@@ -55,6 +55,11 @@ targets:
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
+        CFBundleURLTypes:
+          - CFBundleTypeRole: Editor
+            CFBundleURLName: eu.vaultsync.app
+            CFBundleURLSchemes:
+              - vaultsync
         BGTaskSchedulerPermittedIdentifiers:
           - eu.vaultsync.app.sync-refresh
           - eu.vaultsync.app.sync-continued
@@ -72,6 +77,8 @@ targets:
       path: VaultSync/VaultSync.entitlements
       properties:
         aps-environment: development
+        com.apple.security.application-groups:
+          - group.eu.vaultsync.shared
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: eu.vaultsync.app
@@ -79,8 +86,33 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
     dependencies:
+      - target: VaultSyncWidget
       - framework: ../go/build/SyncBridge.xcframework
         embed: true
+
+  VaultSyncWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: VaultSyncWidget
+        excludes:
+          - "**/.gitkeep"
+    info:
+      path: VaultSyncWidget/Info.plist
+      properties:
+        CFBundleShortVersionString: "1.0.2"
+        CFBundleVersion: "18"
+        CFBundleDisplayName: VaultSync Widget
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: VaultSyncWidget/VaultSyncWidget.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.eu.vaultsync.shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: eu.vaultsync.app.widget
 
   VaultSyncTests:
     type: bundle.unit-test

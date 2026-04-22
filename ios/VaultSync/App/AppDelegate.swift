@@ -12,6 +12,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     ) -> Bool {
         application.registerForRemoteNotifications()
         logger.info("Registered for remote notifications")
+        logger.debug("Custom URL routing is handled by VaultSyncApp.onOpenURL; AppDelegate remains dedicated to push and background delivery")
         Task { await refreshNotificationAuthorizationState() }
         return true
     }

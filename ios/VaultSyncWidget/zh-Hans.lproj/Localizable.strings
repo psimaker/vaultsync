@@ -1,0 +1,25 @@
+// Status labels reused from the main app
+"Idle" = "空闲";
+"Needs Attention" = "需要处理";
+"Open VaultSync" = "打开 VaultSync";
+"Syncing" = "同步中";
+
+// Metric labels
+"widget_last_sync" = "上次同步";
+"widget_files_synced" = "同步文件";
+"widget_files_synced_format" = "%d 个文件";
+"widget_vaults" = "Vaults";
+
+// Fallback labels
+"widget_no_sync_yet" = "尚未同步";
+"widget_waiting" = "等待中";
+"widget_duration_unavailable" = "时长不可用";
+"widget_last_run_seconds" = "上次运行：%d秒";
+"widget_files_tap_to_sync" = "%d 个文件 • 点按同步";
+
+// Actions
+"widget_sync_now" = "立即同步";
+
+// Widget gallery
+"VaultSync" = "VaultSync";
+"widget_gallery_description" = "查看同步状态并打开 VaultSync。";
