@@ -74,6 +74,7 @@
 "Device" = "设备";
 "Device ID" = "设备 ID";
 "Device ID is available and Syncthing is running." = "设备 ID 可用，且 Syncthing 正在运行。";
+"%d of %d devices connected" = "已连接 %d/%d 台设备";
 "Device name" = "设备名称";
 "Devices" = "设备";
 "Differences" = "差异";

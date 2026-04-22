@@ -4,6 +4,7 @@ struct ContentView: View {
     var syncthingManager: SyncthingManager
     var vaultManager: VaultManager
     var subscriptionManager: SubscriptionManager
+    @Environment(\.colorScheme) private var colorScheme
     @State private var showAddDevice = false
     @State private var showSettings = false
     @State private var showObsidianPicker = false
@@ -12,6 +13,9 @@ struct ContentView: View {
     @State private var pendingShareFailures: [String: SyncUserError] = [:]
     @State private var pendingShareInFlight: Set<String> = []
     @State private var isRescanning = false
+
+    private let slate = Color(red: 38 / 255, green: 50 / 255, blue: 56 / 255)
+    private let teal = Color(red: 0 / 255, green: 137 / 255, blue: 123 / 255)
 
     var body: some View {
         NavigationStack {
@@ -152,30 +156,18 @@ struct ContentView: View {
                     }
                 }
 
-                Spacer()
-
-                HStack(spacing: 4) {
-                    Image(systemName: syncthingManager.isRunning ? "checkmark.circle.fill" : "xmark.circle.fill")
-                        .foregroundStyle(syncthingManager.isRunning ? .green : .secondary)
-                        .accessibilityHidden(true)
-                    Text(syncthingManager.isRunning ? L10n.tr("Running") : L10n.tr("Stopped"))
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(syncthingManager.isRunning ? L10n.tr("Sync engine running") : L10n.tr("Sync engine stopped"))
-                .accessibilityHint(L10n.tr("Shows whether Syncthing is currently active."))
+                Spacer(minLength: 0)
             }
             .accessibilityElement(children: .combine)
 
             if subscriptionManager.isRelaySubscribed {
                 HStack {
                     Image(systemName: "antenna.radiowaves.left.and.right")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(teal)
                         .accessibilityHidden(true)
                     Text("Cloud Relay active")
                         .font(.subheadline)
-                        .foregroundStyle(.green)
+                        .foregroundStyle(teal)
                 }
                 .accessibilityElement(children: .combine)
             }
@@ -185,14 +177,14 @@ struct ContentView: View {
                 let total = syncthingManager.devices.count
                 HStack {
                     Image(systemName: "network")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(connected > 0 ? teal : slate.opacity(colorScheme == .dark ? 0.75 : 0.65))
                         .accessibilityHidden(true)
                     if total == 0 {
                         Text("No devices configured")
                             .foregroundStyle(.secondary)
                     } else {
                         Text(L10n.fmt("%d of %d devices connected", connected, total))
-                            .foregroundStyle(connected > 0 ? Color.primary : Color.orange)
+                            .foregroundStyle(connected > 0 ? teal : Color.orange)
                     }
                 }
                 .font(.subheadline)
@@ -268,10 +260,10 @@ struct ContentView: View {
 
     private var syncStatusColor: Color {
         if currentSyncError != nil { return .red }
-        if !syncthingManager.isRunning { return .gray }
+        if !syncthingManager.isRunning { return slate.opacity(colorScheme == .dark ? 0.78 : 0.68) }
         if !foldersWithErrors.isEmpty { return .orange }
-        if isSyncing { return .blue }
-        return .green
+        if isSyncing { return teal }
+        return teal
     }
 
     private var syncStatusText: String {
@@ -337,6 +329,7 @@ struct ContentView: View {
                         .frame(maxWidth: .infinity, alignment: .center)
                     }
                     .buttonStyle(.borderedProminent)
+                    .tint(teal)
                     .frame(maxWidth: .infinity)
 
                     Text("In the picker, choose \"On My iPhone\" → \"Obsidian\", then tap Open.")

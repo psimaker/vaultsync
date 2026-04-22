@@ -74,6 +74,7 @@
 "Device" = "Gerät";
 "Device ID" = "Geräte-ID";
 "Device ID is available and Syncthing is running." = "Die Geräte-ID ist verfügbar und Syncthing läuft.";
+"%d of %d devices connected" = "%d von %d Geräten verbunden";
 "Device name" = "Gerätename";
 "Devices" = "Geräte";
 "Differences" = "Unterschiede";

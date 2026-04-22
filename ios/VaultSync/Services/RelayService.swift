@@ -101,8 +101,10 @@ enum RelayService {
 
         switch http.statusCode {
         case 200:
+            clearLastError()
             logger.info("Provisioned relay for device \(deviceID.prefix(8))...")
         case 409:
+            clearLastError()
             logger.info("Device already provisioned, token updated")
         case 429:
             logger.warning("Relay provision: rate limited")
@@ -173,6 +175,7 @@ enum RelayService {
             }
 
             if http.statusCode == 200 {
+                clearLastError()
                 return HealthCheckResult(
                     state: .healthy,
                     checkedAt: Date(),
@@ -262,6 +265,7 @@ enum RelayService {
 
         switch http.statusCode {
         case 200...299:
+            clearLastError()
             return
         case 429:
             logger.warning("Relay \(action): rate limited")
@@ -294,6 +298,14 @@ enum RelayService {
         )
         guard let data = try? JSONEncoder().encode(entry) else { return }
         UserDefaults.standard.set(data, forKey: diagnosticsErrorStorageKey)
+        NotificationCenter.default.post(name: diagnosticsDidChangeNotification, object: nil)
+    }
+
+    private static func clearLastError() {
+        if UserDefaults.standard.data(forKey: diagnosticsErrorStorageKey) == nil {
+            return
+        }
+        UserDefaults.standard.removeObject(forKey: diagnosticsErrorStorageKey)
         NotificationCenter.default.post(name: diagnosticsDidChangeNotification, object: nil)
     }
 
