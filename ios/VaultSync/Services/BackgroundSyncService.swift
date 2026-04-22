@@ -68,16 +68,20 @@ enum BackgroundSyncService {
             logger.warning("Failed to register app refresh task — background refresh unavailable")
         }
 
-        let continuedHandler: @Sendable (BGTask) -> Void = { task in
-            guard let processingTask = task as? BGContinuedProcessingTask else { return }
-            let wrapped = UnsafeSendable(value: processingTask)
-            Task { await handleContinuedProcessing(task: wrapped.value) }
+        if #available(iOS 26.0, *) {
+            let continuedHandler: @Sendable (BGTask) -> Void = { task in
+                guard let processingTask = task as? BGContinuedProcessingTask else { return }
+                let wrapped = UnsafeSendable(value: processingTask)
+                Task { await handleContinuedProcessing(task: wrapped.value) }
+            }
+            continuedProcessingRegistered = BGTaskScheduler.shared.register(
+                forTaskWithIdentifier: continuedProcessingIdentifier,
+                using: nil,
+                launchHandler: continuedHandler
+            )
+        } else {
+            continuedProcessingRegistered = false
         }
-        continuedProcessingRegistered = BGTaskScheduler.shared.register(
-            forTaskWithIdentifier: continuedProcessingIdentifier,
-            using: nil,
-            launchHandler: continuedHandler
-        )
 
         if !continuedProcessingRegistered {
             logger.warning("Failed to register continued processing task — continued processing unavailable (expected in Simulator)")
@@ -159,17 +163,21 @@ enum BackgroundSyncService {
     static func submitContinuedProcessing() {
         guard continuedProcessingRegistered else { return }
 
-        let request = BGContinuedProcessingTaskRequest(
-            identifier: continuedProcessingIdentifier,
-            title: L10n.tr("Syncing Vault"),
-            subtitle: L10n.tr("Synchronizing your Obsidian vault...")
-        )
+        if #available(iOS 26.0, *) {
+            let request = BGContinuedProcessingTaskRequest(
+                identifier: continuedProcessingIdentifier,
+                title: L10n.tr("Syncing Vault"),
+                subtitle: L10n.tr("Synchronizing your Obsidian vault...")
+            )
 
-        do {
-            try BGTaskScheduler.shared.submit(request)
-            logger.info("Continued processing submitted")
-        } catch {
-            logger.error("Could not submit continued processing: \(error)")
+            do {
+                try BGTaskScheduler.shared.submit(request)
+                logger.info("Continued processing submitted")
+            } catch {
+                logger.error("Could not submit continued processing: \(error)")
+            }
+        } else {
+            return
         }
     }
 
@@ -514,6 +522,7 @@ enum BackgroundSyncService {
 
     // MARK: - BGContinuedProcessingTask Handler
 
+    @available(iOS 26.0, *)
     private static func handleContinuedProcessing(task: BGContinuedProcessingTask) async {
         logger.info("Continued processing starting")
 

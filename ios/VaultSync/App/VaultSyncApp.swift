@@ -67,7 +67,9 @@ struct VaultSyncApp: App {
 
                 BackgroundSyncService.scheduleAppRefresh()
                 if syncthingManager.isAnySyncing {
-                    BackgroundSyncService.submitContinuedProcessing()
+                    if #available(iOS 26.0, *) {
+                        BackgroundSyncService.submitContinuedProcessing()
+                    }
                 }
             default:
                 break

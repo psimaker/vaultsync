@@ -3,7 +3,7 @@ options:
   bundleIdPrefix: eu.vaultsync
   developmentLanguage: en
   deploymentTarget:
-    iOS: "26.0"
+    iOS: "18.0"
   useBaseInternationalization: true
   xcodeVersion: "26.4"
   generateEmptyDirectories: true

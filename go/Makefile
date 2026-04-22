@@ -14,7 +14,7 @@
 GOPATH_BIN := $(shell go env GOPATH)/bin
 GOMOBILE := $(GOPATH_BIN)/gomobile
 OUTPUT := build/SyncBridge.xcframework
-MIN_IOS := 26
+MIN_IOS := 18
 
 export PATH := $(GOPATH_BIN):$(PATH)
 
