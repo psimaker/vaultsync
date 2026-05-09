@@ -76,13 +76,17 @@ final class SyncthingManager {
     private static let maxSyncActivityItems = 120
     private static let maxFileEventsPerFolderPerPoll = 6
 
-    /// Default `.stignore` patterns auto-applied to NEW folders.
-    /// Derived from `IgnorePreset.recommended` so the catalog stays in sync.
-    /// Existing folders keep whatever they have; the first-run recommendation
-    /// sheet on first vault-detail open lets users review and extend.
-    private static var defaultIgnorePatterns: [String] {
-        IgnorePreset.recommended.flatMap(\.patterns)
-    }
+    /// Migration-safe silent auto-apply patterns. Hard-coded to the historical
+    /// set so future changes to `IgnorePreset.recommended` (which can grow or
+    /// shrink over time) do not silently mutate `.stignore` on existing vaults
+    /// during startup auto-merge. The first-run recommendation sheet uses
+    /// `IgnorePreset.recommended` separately for UI defaults — see
+    /// `SyncFilterRecommendationSheet`.
+    private static let defaultIgnorePatterns: [String] = [
+        ".Trash",
+        ".obsidian/workspace.json",
+        ".obsidian/workspace-mobile.json",
+    ]
 
     private var hasAppliedStartupIgnores = false
     private var activeWidgetSyncStart: Date?

@@ -477,6 +477,7 @@
 "Skipping enabled" = "跳过已启用";
 "'%@' will no longer sync to this iPhone. You can undo this in Sync Filters." = "「%@」将不再同步到此 iPhone。你可以在同步过滤器中撤销。";
 "Could not add filter" = "无法添加过滤器";
+"Could not save filters" = "无法保存过滤器";
 "%@ — %d files" = "%@ — %d 个文件";
 
 /* IgnorePreset labels and descriptions */

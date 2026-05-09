@@ -477,6 +477,7 @@
 "Skipping enabled" = "Überspringen aktiviert";
 "'%@' will no longer sync to this iPhone. You can undo this in Sync Filters." = "„%@“ wird nicht mehr auf dieses iPhone synchronisiert. Du kannst das in den Sync-Filtern rückgängig machen.";
 "Could not add filter" = "Filter konnte nicht hinzugefügt werden";
+"Could not save filters" = "Filter konnten nicht gespeichert werden";
 "%@ — %d files" = "%@ — %d Dateien";
 
 /* IgnorePreset labels and descriptions */

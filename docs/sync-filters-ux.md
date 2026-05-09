@@ -1,9 +1,9 @@
 # Sync Filters — UX Spec
 
-> Status: **draft for review** (issue [#1](https://github.com/psimaker/vaultsync/issues/1))
+> Status: **implemented** (issue [#1](https://github.com/psimaker/vaultsync/issues/1), shipped in v1.2.0)
 > Last updated: 2026-05-09
 
-This document describes the planned UI for excluding files and folders from sync — the feature requested in issue #1 by @vitaly74. It exists so we can agree on the design *before* writing implementation code.
+This document is the design reference for the Sync Filters feature — the UI for excluding files and folders from sync requested in issue #1 by @vitaly74. It captures the rationale behind the layout, preset catalog, migration path, and multi-vault behavior; refer to it when extending or modifying the feature.
 
 ---
 
@@ -161,14 +161,12 @@ Avoiding:
 
 All new strings shipped in English, German, and Simplified Chinese (the existing three locales).
 
-## 10. Open questions for @vitaly74
+## 10. Future considerations
 
-Three things I'd love your input on before I start building:
+Items that were deliberately scoped out of v1.2.0 and may make sense as follow-ups based on real-world usage feedback:
 
-1. **Plugin caches** — you mentioned `.copilot-index` (already covered as its own preset). Are there other specific plugin caches you regularly run into on mobile? E.g. Dataview index, Templater compiled cache, etc. I'd rather ship 2–3 narrow presets than one "Plugin caches" toggle that does the wrong thing.
+1. **Per-plugin cache presets** — A "Plugin caches" umbrella toggle was rejected as too coarse (different plugins store caches in different places). Concrete narrow presets for common offenders (e.g. Dataview index, Templater compiled cache) could be added if usage data shows they're frequently desired.
 
-2. **Other heavy folders to auto-detect** — the vault scan currently looks for `.git`, `.copilot-index`, `node_modules`, and `.obsidian/cache`. What else have you seen eat space on a mobile vault?
+2. **Additional heavy folders for auto-detection** — The vault scan currently looks for `.git`, `.copilot-index`, `node_modules`, and `.obsidian/cache`. Extend `heavyDirCandidates` in `go/bridge/folderscan.go` if other large directories are commonly seen on mobile vaults.
 
-3. **Naming** — does "Sync Filters" feel right to you? An alternative I considered was "Skip on this iPhone" as the section title (more direct, less jargon), with "Filters" as a fallback. No strong opinion either way.
-
-Anything else missing? The whole point of doing this as a draft PR is to catch design issues before code lands.
+3. **Alternative section naming** — "Sync Filters" was chosen over "Skip on this iPhone" as the section title. Re-evaluate based on user feedback if the term proves unclear.

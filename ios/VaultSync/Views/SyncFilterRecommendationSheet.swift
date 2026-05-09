@@ -10,6 +10,7 @@ struct SyncFilterRecommendationSheet: View {
     @State private var enabledPresetIDs: Set<String> = Set(IgnorePreset.recommended.map(\.id))
     @State private var enabledDetectedPatterns: Set<String> = []
     @State private var hasScanned = false
+    @State private var applyErrorMessage: String?
 
     var body: some View {
         NavigationStack {
@@ -45,7 +46,10 @@ struct SyncFilterRecommendationSheet: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(L10n.tr("Done")) {
-                        apply()
+                        if let err = apply() {
+                            applyErrorMessage = err.message
+                            return
+                        }
                         syncthingManager.markRecommendationSheetShown(folderID: folderID)
                         dismiss()
                     }
@@ -53,7 +57,16 @@ struct SyncFilterRecommendationSheet: View {
                 }
             }
             .task { await scan() }
+            .alert(L10n.tr("Could not save filters"), isPresented: errorBinding) {
+                Button(L10n.tr("OK")) { applyErrorMessage = nil }
+            } message: {
+                Text(applyErrorMessage ?? "")
+            }
         }
+    }
+
+    private var errorBinding: Binding<Bool> {
+        Binding(get: { applyErrorMessage != nil }, set: { if !$0 { applyErrorMessage = nil } })
     }
 
     private func presetToggle(_ preset: IgnorePreset) -> some View {
@@ -123,8 +136,19 @@ struct SyncFilterRecommendationSheet: View {
         }
     }
 
-    private func apply() {
-        var patterns = syncthingManager.ignorePatterns(folderID: folderID)
+    /// Compute the final `.stignore` content based on the user's choices, then
+    /// write it. Any pattern that the sheet manages (presets + detected items)
+    /// is removed first, then re-added only if currently enabled. This makes
+    /// deselect actually take effect — including for the recommended patterns
+    /// that addFolder() silently auto-applied just before the sheet appeared.
+    /// Custom/unmanaged patterns the user added previously are preserved.
+    private func apply() -> SyncUserError? {
+        let existing = syncthingManager.ignorePatterns(folderID: folderID)
+        let managed = Set(IgnorePreset.all.flatMap(\.patterns))
+            .union(detected.map(\.pattern))
+
+        var patterns = existing.filter { !managed.contains($0) }
+
         for preset in IgnorePreset.all where enabledPresetIDs.contains(preset.id) {
             for pattern in preset.patterns where !patterns.contains(pattern) {
                 patterns.append(pattern)
@@ -133,7 +157,7 @@ struct SyncFilterRecommendationSheet: View {
         for pattern in enabledDetectedPatterns where !patterns.contains(pattern) {
             patterns.append(pattern)
         }
-        _ = syncthingManager.setIgnorePatterns(folderID: folderID, patterns: patterns)
+        return syncthingManager.setIgnorePatterns(folderID: folderID, patterns: patterns)
     }
 
     private func formattedSize(_ item: DetectedPattern) -> String {
