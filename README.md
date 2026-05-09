@@ -180,13 +180,13 @@ VoiceOver and Dynamic Type support are included throughout the app.
 
 ```text
 ┌──────────────┐     Syncthing protocol      ┌──────────────────┐
-│  Your Mac /  │◄───────────────────────────►│    VaultSync      │
-│  Linux / NAS │     LAN or Internet          │    iOS / iPadOS   │
-│  + Syncthing │                              │                  │
-└──────┬───────┘                              │  Syncs directly   │
-       │                                      │  into Obsidian’s  │
-       │                                      │  iOS sandbox      │
-       │                                      └────────▲─────────┘
+│  Your Mac /  │◄───────────────────────────►│    VaultSync     │
+│  Linux / NAS │     LAN or Internet         │    iOS / iPadOS  │
+│  + Syncthing │                             │                  │
+└──────┬───────┘                             │  Syncs directly  │
+       │                                     │  into Obsidian’s │
+       │                                     │  iOS sandbox     │
+       │                                     └────────▲─────────┘
        │                                               │
        │  Optional                                     │
        │  vaultsync-notify                             │
