@@ -176,6 +176,12 @@ struct SyncBridgeService {
         return result.isEmpty ? nil : result
     }
 
+    /// Scan a folder for known heavy directories (.git, .copilot-index, etc.).
+    /// Returns a JSON envelope; decode with `DetectedScan`.
+    static func scanFolderForKnownPatterns(folderID: String) -> String {
+        BridgeScanFolderForKnownPatterns(folderID)
+    }
+
     // MARK: - Phase 6: Conflict management
 
     /// Get all conflict files in a folder as JSON.

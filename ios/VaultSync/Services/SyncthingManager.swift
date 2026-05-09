@@ -76,13 +76,13 @@ final class SyncthingManager {
     private static let maxSyncActivityItems = 120
     private static let maxFileEventsPerFolderPerPoll = 6
 
-    /// Default .stignore patterns for Obsidian vaults to prevent sync conflicts
-    /// on device-specific files.
-    private static let defaultIgnorePatterns = [
-        ".Trash",
-        ".obsidian/workspace.json",
-        ".obsidian/workspace-mobile.json",
-    ]
+    /// Default `.stignore` patterns auto-applied to NEW folders.
+    /// Derived from `IgnorePreset.recommended` so the catalog stays in sync.
+    /// Existing folders keep whatever they have; the first-run recommendation
+    /// sheet on first vault-detail open lets users review and extend.
+    private static var defaultIgnorePatterns: [String] {
+        IgnorePreset.recommended.flatMap(\.patterns)
+    }
 
     private var hasAppliedStartupIgnores = false
     private var activeWidgetSyncStart: Date?
@@ -1477,5 +1477,86 @@ final class SyncthingManager {
             return []
         }
         return Set(values)
+    }
+
+    // MARK: - Sync Filters (Ignore Patterns)
+
+    private static let recommendationSheetShownKey = "syncthing.recommendationSheetShownFolders"
+
+    /// Read current `.stignore` lines for a folder.
+    func ignorePatterns(folderID: String) -> [String] {
+        let raw = SyncBridgeService.getFolderIgnores(folderID: folderID)
+        guard let data = raw.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode([String].self, from: data) else {
+            return []
+        }
+        return decoded
+    }
+
+    /// Replace all `.stignore` lines for a folder.
+    @discardableResult
+    func setIgnorePatterns(folderID: String, patterns: [String]) -> SyncUserError? {
+        guard let data = try? JSONEncoder().encode(patterns),
+              let json = String(data: data, encoding: .utf8) else {
+            return SyncUserError.from(rawMessage: "encoding ignore patterns failed")
+        }
+        if let err = SyncBridgeService.setFolderIgnores(folderID: folderID, ignoresJSON: json) {
+            return SyncUserError.from(rawMessage: err)
+        }
+        return nil
+    }
+
+    /// True iff every pattern in the preset is currently in the folder's `.stignore`.
+    func isPresetActive(_ preset: IgnorePreset, folderID: String) -> Bool {
+        let current = Set(ignorePatterns(folderID: folderID))
+        return preset.patterns.allSatisfy { current.contains($0) }
+    }
+
+    /// Atomically add or remove a preset's patterns from `.stignore`.
+    @discardableResult
+    func togglePreset(_ preset: IgnorePreset, folderID: String, enabled: Bool) -> SyncUserError? {
+        var current = ignorePatterns(folderID: folderID)
+        let presetSet = Set(preset.patterns)
+        if enabled {
+            for pattern in preset.patterns where !current.contains(pattern) {
+                current.append(pattern)
+            }
+        } else {
+            current.removeAll { presetSet.contains($0) }
+        }
+        return setIgnorePatterns(folderID: folderID, patterns: current)
+    }
+
+    /// Add a single pattern (e.g. exact relPath from a conflict). No-op if already present.
+    @discardableResult
+    func addIgnorePattern(_ pattern: String, folderID: String) -> SyncUserError? {
+        var current = ignorePatterns(folderID: folderID)
+        guard !current.contains(pattern) else { return nil }
+        current.append(pattern)
+        return setIgnorePatterns(folderID: folderID, patterns: current)
+    }
+
+    /// Run the Go-side scanner for known heavy directories.
+    /// `nonisolated static` so views can dispatch it on a detached Task without
+    /// blocking the main actor.
+    nonisolated static func scanFolderForKnownPatterns(folderID: String) -> [DetectedPattern] {
+        let raw = SyncBridgeService.scanFolderForKnownPatterns(folderID: folderID)
+        guard let data = raw.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode(DetectedScan.self, from: data) else {
+            return []
+        }
+        return decoded.detected
+    }
+
+    func hasShownRecommendationSheet(folderID: String) -> Bool {
+        let shown = UserDefaults.standard.array(forKey: Self.recommendationSheetShownKey) as? [String] ?? []
+        return shown.contains(folderID)
+    }
+
+    func markRecommendationSheetShown(folderID: String) {
+        var shown = UserDefaults.standard.array(forKey: Self.recommendationSheetShownKey) as? [String] ?? []
+        guard !shown.contains(folderID) else { return }
+        shown.append(folderID)
+        UserDefaults.standard.set(shown, forKey: Self.recommendationSheetShownKey)
     }
 }
