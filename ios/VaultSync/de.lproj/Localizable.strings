@@ -459,3 +459,37 @@
 "Cloud Relay is available for faster background updates." = "Cloud Relay steht für schnellere Hintergrundaktualisierungen bereit.";
 "Cloud Relay is not enabled." = "Cloud Relay ist nicht aktiviert.";
 "Enable Cloud Relay later in Settings if you want faster background updates." = "Aktiviere Cloud Relay später in den Einstellungen, wenn du schnellere Hintergrundaktualisierungen möchtest.";
+
+/* Sync Filters */
+"Sync Filters" = "Sync-Filter";
+"Recommended" = "Empfohlen";
+"Found in this vault" = "In diesem Vault gefunden";
+"Other presets" = "Weitere Voreinstellungen";
+"Custom patterns" = "Eigene Muster";
+"How filters work" = "Wie Filter funktionieren";
+"Add pattern (e.g. *.tmp)" = "Muster hinzufügen (z. B. *.tmp)";
+"Sync Filter Error" = "Sync-Filter-Fehler";
+"Skip these on this iPhone? You can change this anytime in Sync Filters." = "Diese auf diesem iPhone überspringen? Du kannst das jederzeit in den Sync-Filtern ändern.";
+"Skip" = "Überspringen";
+"Choose what gets synced to this iPhone" = "Wähle, was auf dieses iPhone synchronisiert wird";
+"Always skip on this iPhone" = "Auf diesem iPhone immer überspringen";
+"More actions" = "Weitere Aktionen";
+"Skipping enabled" = "Überspringen aktiviert";
+"'%@' will no longer sync to this iPhone. You can undo this in Sync Filters." = "„%@“ wird nicht mehr auf dieses iPhone synchronisiert. Du kannst das in den Sync-Filtern rückgängig machen.";
+"Could not add filter" = "Filter konnte nicht hinzugefügt werden";
+"%@ — %d files" = "%@ — %d Dateien";
+
+/* IgnorePreset labels and descriptions */
+"Workspace state" = "Arbeitsbereich-Zustand";
+"Prevents sync conflicts on which notes were open." = "Verhindert Sync-Konflikte über zuletzt geöffnete Notizen.";
+"Trash" = "Papierkorb";
+"Files already deleted on other devices." = "Bereits auf anderen Geräten gelöschte Dateien.";
+"Git repository" = "Git-Repository";
+"Version history — rarely useful on iPhone." = "Versionsverlauf — auf dem iPhone selten nützlich.";
+"macOS metadata" = "macOS-Metadaten";
+"Finder metadata files like .DS_Store." = "Finder-Metadatendateien wie .DS_Store.";
+"Copilot index" = "Copilot-Index";
+"Cache of Obsidian Copilot, regenerated automatically." = "Cache von Obsidian Copilot, wird automatisch neu erzeugt.";
+"Obsidian app cache" = "Obsidian-App-Cache";
+"Auto-regenerated Obsidian internal cache." = "Automatisch regenerierter interner Obsidian-Cache.";
+"Node modules" = "Node-Module";

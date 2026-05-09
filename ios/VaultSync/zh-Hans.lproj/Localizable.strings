@@ -459,3 +459,37 @@
 "Cloud Relay is available for faster background updates." = "Cloud Relay 可用于更快的后台更新。";
 "Cloud Relay is not enabled." = "Cloud Relay 未启用。";
 "Enable Cloud Relay later in Settings if you want faster background updates." = "如果你希望更快的后台更新，可以稍后在“设置”中启用 Cloud Relay。";
+
+/* Sync Filters */
+"Sync Filters" = "同步过滤器";
+"Recommended" = "推荐";
+"Found in this vault" = "在此 Vault 中找到";
+"Other presets" = "其他预设";
+"Custom patterns" = "自定义规则";
+"How filters work" = "过滤器工作原理";
+"Add pattern (e.g. *.tmp)" = "添加规则(例如 *.tmp)";
+"Sync Filter Error" = "同步过滤器错误";
+"Skip these on this iPhone? You can change this anytime in Sync Filters." = "在此 iPhone 上跳过这些？你可以随时在同步过滤器中修改。";
+"Skip" = "跳过";
+"Choose what gets synced to this iPhone" = "选择要同步到此 iPhone 的内容";
+"Always skip on this iPhone" = "在此 iPhone 上始终跳过";
+"More actions" = "更多操作";
+"Skipping enabled" = "跳过已启用";
+"'%@' will no longer sync to this iPhone. You can undo this in Sync Filters." = "「%@」将不再同步到此 iPhone。你可以在同步过滤器中撤销。";
+"Could not add filter" = "无法添加过滤器";
+"%@ — %d files" = "%@ — %d 个文件";
+
+/* IgnorePreset labels and descriptions */
+"Workspace state" = "工作区状态";
+"Prevents sync conflicts on which notes were open." = "防止当前打开笔记的同步冲突。";
+"Trash" = "废纸篓";
+"Files already deleted on other devices." = "已在其他设备上删除的文件。";
+"Git repository" = "Git 仓库";
+"Version history — rarely useful on iPhone." = "版本历史 — 在 iPhone 上很少用到。";
+"macOS metadata" = "macOS 元数据";
+"Finder metadata files like .DS_Store." = "Finder 元数据文件，如 .DS_Store。";
+"Copilot index" = "Copilot 索引";
+"Cache of Obsidian Copilot, regenerated automatically." = "Obsidian Copilot 的缓存，会自动重建。";
+"Obsidian app cache" = "Obsidian 应用缓存";
+"Auto-regenerated Obsidian internal cache." = "自动重建的 Obsidian 内部缓存。";
+"Node modules" = "Node 模块";

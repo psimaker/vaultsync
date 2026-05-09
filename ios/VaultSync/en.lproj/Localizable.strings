@@ -460,3 +460,37 @@
 "Cloud Relay is available for faster background updates." = "Cloud Relay is available for faster background updates.";
 "Cloud Relay is not enabled." = "Cloud Relay is not enabled.";
 "Enable Cloud Relay later in Settings if you want faster background updates." = "Enable Cloud Relay later in Settings if you want faster background updates.";
+
+/* Sync Filters */
+"Sync Filters" = "Sync Filters";
+"Recommended" = "Recommended";
+"Found in this vault" = "Found in this vault";
+"Other presets" = "Other presets";
+"Custom patterns" = "Custom patterns";
+"How filters work" = "How filters work";
+"Add pattern (e.g. *.tmp)" = "Add pattern (e.g. *.tmp)";
+"Sync Filter Error" = "Sync Filter Error";
+"Skip these on this iPhone? You can change this anytime in Sync Filters." = "Skip these on this iPhone? You can change this anytime in Sync Filters.";
+"Skip" = "Skip";
+"Choose what gets synced to this iPhone" = "Choose what gets synced to this iPhone";
+"Always skip on this iPhone" = "Always skip on this iPhone";
+"More actions" = "More actions";
+"Skipping enabled" = "Skipping enabled";
+"'%@' will no longer sync to this iPhone. You can undo this in Sync Filters." = "'%@' will no longer sync to this iPhone. You can undo this in Sync Filters.";
+"Could not add filter" = "Could not add filter";
+"%@ — %d files" = "%@ — %d files";
+
+/* IgnorePreset labels and descriptions */
+"Workspace state" = "Workspace state";
+"Prevents sync conflicts on which notes were open." = "Prevents sync conflicts on which notes were open.";
+"Trash" = "Trash";
+"Files already deleted on other devices." = "Files already deleted on other devices.";
+"Git repository" = "Git repository";
+"Version history — rarely useful on iPhone." = "Version history — rarely useful on iPhone.";
+"macOS metadata" = "macOS metadata";
+"Finder metadata files like .DS_Store." = "Finder metadata files like .DS_Store.";
+"Copilot index" = "Copilot index";
+"Cache of Obsidian Copilot, regenerated automatically." = "Cache of Obsidian Copilot, regenerated automatically.";
+"Obsidian app cache" = "Obsidian app cache";
+"Auto-regenerated Obsidian internal cache." = "Auto-regenerated Obsidian internal cache.";
+"Node modules" = "Node modules";
