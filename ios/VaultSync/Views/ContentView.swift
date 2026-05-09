@@ -13,6 +13,7 @@ struct ContentView: View {
     @State private var pendingShareFailures: [String: SyncUserError] = [:]
     @State private var pendingShareInFlight: Set<String> = []
     @State private var isRescanning = false
+    @State private var pendingFilterSheetFolder: SyncthingManager.FolderInfo?
 
     private let slate = Color(red: 38 / 255, green: 50 / 255, blue: 56 / 255)
     private let teal = Color(red: 0 / 255, green: 137 / 255, blue: 123 / 255)
@@ -598,6 +599,19 @@ struct ContentView: View {
                 }
             }
 
+            Section {
+                NavigationLink {
+                    IgnorePatternsView(
+                        folderID: folder.id,
+                        folderLabel: folder.label.isEmpty ? folder.id : folder.label,
+                        syncthingManager: syncthingManager
+                    )
+                } label: {
+                    Label(L10n.tr("Sync Filters"), systemImage: "line.3.horizontal.decrease.circle")
+                }
+                .accessibilityHint(L10n.tr("Choose what gets synced to this iPhone"))
+            }
+
             Section("Shared With") {
                 ForEach(syncthingManager.devices) { device in
                     let isShared = folder.deviceIDs.contains(device.deviceID)
@@ -663,6 +677,18 @@ struct ContentView: View {
         }
         .navigationTitle(folder.label.isEmpty ? folder.id : folder.label)
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            if !syncthingManager.hasShownRecommendationSheet(folderID: folder.id) {
+                pendingFilterSheetFolder = folder
+            }
+        }
+        .sheet(item: $pendingFilterSheetFolder) { folder in
+            SyncFilterRecommendationSheet(
+                folderID: folder.id,
+                folderLabel: folder.label.isEmpty ? folder.id : folder.label,
+                syncthingManager: syncthingManager
+            )
+        }
     }
 
     private func toggleDeviceSharing(folderID: String, deviceID: String, isShared: Bool) {

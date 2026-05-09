@@ -4,6 +4,23 @@ All notable changes to VaultSync are documented here.
 
 ---
 
+## [1.2.0] — 2026-05-09
+
+### Added
+
+- **Sync Filters per vault** — A new "Sync Filters" screen on each vault's detail page lets you toggle preset ignore-pattern groups in plain language: Workspace state, Trash, Git repository, macOS metadata (`.DS_Store`), Copilot index, and Obsidian app cache. No need to learn `.stignore` syntax to skip the obvious stuff.
+- **Vault scan with size figures** — When you open Sync Filters, VaultSync scans the folder for known heavy directories (`.git`, `.copilot-index`, `node_modules`, `.obsidian/cache`) and shows their actual size in MB and file count. "Git repository — 45.2 MB, 1,847 files" makes the choice concrete. Matches are aggregated across all vault subdirectories in multi-vault Obsidian-root setups.
+- **Always skip on this iPhone** — A new menu item in the conflict resolver lets you add the conflicting file's exact path to the folder's ignore list with one tap. The fastest way from "this file conflicts every time" to a permanent fix.
+- **First-run recommendation sheet** — On first opening a vault's detail screen, a sheet pre-checks the recommended presets (Workspace state + Trash) and any heavy folders the scan found. Done applies everything; Skip dismisses without changes. Shown once per vault.
+- **Custom patterns editor** — A section in Sync Filters for free-form `.stignore` patterns with swipe-to-delete and a footer link to the Syncthing pattern docs.
+- **Sync Filters localization** — All new strings translated to English, German, and Simplified Chinese.
+
+### Changed
+
+- **Default ignore patterns** — Now derived from the new `IgnorePreset.recommended` set (Workspace state + Trash) instead of being hardcoded. Existing vaults keep their current `.stignore` lines untouched; the new UI just shows the corresponding presets as already-active.
+
+---
+
 ## [1.1.0] — 2026-04-22
 
 ### Added

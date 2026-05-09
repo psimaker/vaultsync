@@ -99,19 +99,15 @@ VaultSync is also not a magic always-on Syncthing daemon for iOS. Apple’s back
 
 ---
 
-## What’s New — v1.1.0
+## What’s New — v1.2.0
 
-> **Calmer First Launch** — First-run onboarding is now a short 2-screen introduction. Setup itself happens on the VaultSync home screen, where the real device, vault, and sync controls already live.
+> **Sync Filters** — A new per-vault screen lets you toggle preset ignore-pattern groups in plain language: Workspace state, Trash, Git repository, macOS metadata, Copilot index, and Obsidian app cache. No `.stignore` syntax needed.
 >
-> **Setup Status in Settings** — The old setup guide is now a live status and troubleshooting view that highlights what is ready, what still needs attention, and where to fix it.
+> **Vault scan with size figures** — VaultSync scans your folder for heavy directories (`.git`, `.copilot-index`, `node_modules`, `.obsidian/cache`) and shows actual size in MB so you can decide what to skip.
 >
-> **Pending Shares Need Action** — A waiting vault offer no longer looks finished. Vault syncing is only marked ready once at least one vault is actually active.
+> **Always skip on this iPhone** — A one-tap menu item in the conflict resolver permanently excludes the conflicting file from this device.
 >
-> **Cleaner Settings** — The old discovery controls are gone, reducing noise in Settings while leaving discovery enabled by default.
->
-> **Localized Setup Flow** — The refreshed onboarding and setup-status copy is now available in English, German, and Simplified Chinese.
->
-> **iOS 18+** — VaultSync now supports iOS/iPadOS 18 and later.
+> **First-run recommendation sheet** — A friendly intro the first time you open a new vault, with sensible defaults pre-checked.
 
 See [CHANGELOG.md](CHANGELOG.md) for full details.
 

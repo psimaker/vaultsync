@@ -76,9 +76,13 @@ final class SyncthingManager {
     private static let maxSyncActivityItems = 120
     private static let maxFileEventsPerFolderPerPoll = 6
 
-    /// Default .stignore patterns for Obsidian vaults to prevent sync conflicts
-    /// on device-specific files.
-    private static let defaultIgnorePatterns = [
+    /// Migration-safe silent auto-apply patterns. Hard-coded to the historical
+    /// set so future changes to `IgnorePreset.recommended` (which can grow or
+    /// shrink over time) do not silently mutate `.stignore` on existing vaults
+    /// during startup auto-merge. The first-run recommendation sheet uses
+    /// `IgnorePreset.recommended` separately for UI defaults — see
+    /// `SyncFilterRecommendationSheet`.
+    private static let defaultIgnorePatterns: [String] = [
         ".Trash",
         ".obsidian/workspace.json",
         ".obsidian/workspace-mobile.json",
@@ -1477,5 +1481,140 @@ final class SyncthingManager {
             return []
         }
         return Set(values)
+    }
+
+    // MARK: - Sync Filters (Ignore Patterns)
+
+    private static let recommendationSheetShownKey = "syncthing.recommendationSheetShownFolders"
+
+    /// Read current `.stignore` lines, distinguishing "no patterns yet" from
+    /// "could not parse bridge output". Returns nil only on decode failure.
+    /// Used internally by every read-modify-write flow so a malformed bridge
+    /// response can never silently cause `.stignore` to be overwritten with
+    /// an empty list (CodeRabbit data-loss guard).
+    private func readIgnorePatternsOrNil(folderID: String) -> [String]? {
+        let raw = SyncBridgeService.getFolderIgnores(folderID: folderID)
+        guard let data = raw.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode([String].self, from: data) else {
+            return nil
+        }
+        return decoded
+    }
+
+    private func unreadableFiltersError() -> SyncUserError {
+        SyncUserError.from(rawMessage: L10n.tr("Could not read current sync filters. Please try again."))
+    }
+
+    /// Read current `.stignore` lines for a folder. Display-friendly: returns
+    /// an empty list if the bridge response cannot be parsed. Read-modify-write
+    /// flows must use `readIgnorePatternsOrNil` instead.
+    func ignorePatterns(folderID: String) -> [String] {
+        readIgnorePatternsOrNil(folderID: folderID) ?? []
+    }
+
+    /// Replace all `.stignore` lines for a folder.
+    @discardableResult
+    func setIgnorePatterns(folderID: String, patterns: [String]) -> SyncUserError? {
+        guard let data = try? JSONEncoder().encode(patterns),
+              let json = String(data: data, encoding: .utf8) else {
+            return SyncUserError.from(rawMessage: "encoding ignore patterns failed")
+        }
+        if let err = SyncBridgeService.setFolderIgnores(folderID: folderID, ignoresJSON: json) {
+            return SyncUserError.from(rawMessage: err)
+        }
+        return nil
+    }
+
+    /// True iff every pattern in the preset is currently in the folder's `.stignore`.
+    func isPresetActive(_ preset: IgnorePreset, folderID: String) -> Bool {
+        let current = Set(ignorePatterns(folderID: folderID))
+        return preset.patterns.allSatisfy { current.contains($0) }
+    }
+
+    /// Atomically add or remove a preset's patterns from `.stignore`. Aborts
+    /// without writing if the current `.stignore` cannot be parsed, so an
+    /// unreadable bridge response can never wipe existing rules.
+    @discardableResult
+    func togglePreset(_ preset: IgnorePreset, folderID: String, enabled: Bool) -> SyncUserError? {
+        guard var current = readIgnorePatternsOrNil(folderID: folderID) else {
+            return unreadableFiltersError()
+        }
+        let presetSet = Set(preset.patterns)
+        if enabled {
+            for pattern in preset.patterns where !current.contains(pattern) {
+                current.append(pattern)
+            }
+        } else {
+            current.removeAll { presetSet.contains($0) }
+        }
+        return setIgnorePatterns(folderID: folderID, patterns: current)
+    }
+
+    /// Add a single pattern (e.g. exact relPath from a conflict). No-op if
+    /// already present. Aborts without writing if the current `.stignore`
+    /// cannot be parsed.
+    @discardableResult
+    func addIgnorePattern(_ pattern: String, folderID: String) -> SyncUserError? {
+        guard var current = readIgnorePatternsOrNil(folderID: folderID) else {
+            return unreadableFiltersError()
+        }
+        guard !current.contains(pattern) else { return nil }
+        current.append(pattern)
+        return setIgnorePatterns(folderID: folderID, patterns: current)
+    }
+
+    /// Apply a target set of preset toggles and detected-pattern toggles to
+    /// `.stignore`. Sheet-managed entries (preset patterns + the given
+    /// detected items) are removed first, then re-added only if currently
+    /// enabled, so deselecting actually takes effect. Custom patterns the
+    /// user added previously are preserved. Aborts without writing if the
+    /// current `.stignore` cannot be parsed.
+    @discardableResult
+    func applyRecommendedFilters(
+        folderID: String,
+        enabledPresetIDs: Set<String>,
+        detectedPatterns: [String],
+        enabledDetectedPatterns: Set<String>
+    ) -> SyncUserError? {
+        guard let existing = readIgnorePatternsOrNil(folderID: folderID) else {
+            return unreadableFiltersError()
+        }
+        let managed = Set(IgnorePreset.all.flatMap(\.patterns))
+            .union(detectedPatterns)
+        var patterns = existing.filter { !managed.contains($0) }
+
+        for preset in IgnorePreset.all where enabledPresetIDs.contains(preset.id) {
+            for pattern in preset.patterns where !patterns.contains(pattern) {
+                patterns.append(pattern)
+            }
+        }
+        for pattern in enabledDetectedPatterns where !patterns.contains(pattern) {
+            patterns.append(pattern)
+        }
+        return setIgnorePatterns(folderID: folderID, patterns: patterns)
+    }
+
+    /// Run the Go-side scanner for known heavy directories.
+    /// `nonisolated static` so views can dispatch it on a detached Task without
+    /// blocking the main actor.
+    nonisolated static func scanFolderForKnownPatterns(folderID: String) -> [DetectedPattern] {
+        let raw = SyncBridgeService.scanFolderForKnownPatterns(folderID: folderID)
+        guard let data = raw.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode(DetectedScan.self, from: data) else {
+            return []
+        }
+        return decoded.detected
+    }
+
+    func hasShownRecommendationSheet(folderID: String) -> Bool {
+        let shown = UserDefaults.standard.array(forKey: Self.recommendationSheetShownKey) as? [String] ?? []
+        return shown.contains(folderID)
+    }
+
+    func markRecommendationSheetShown(folderID: String) {
+        var shown = UserDefaults.standard.array(forKey: Self.recommendationSheetShownKey) as? [String] ?? []
+        guard !shown.contains(folderID) else { return }
+        shown.append(folderID)
+        UserDefaults.standard.set(shown, forKey: Self.recommendationSheetShownKey)
     }
 }
