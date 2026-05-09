@@ -479,6 +479,7 @@
 "'%@' will no longer sync to this iPhone. You can undo this in Sync Filters." = "'%@' will no longer sync to this iPhone. You can undo this in Sync Filters.";
 "Could not add filter" = "Could not add filter";
 "Could not save filters" = "Could not save filters";
+"Could not read current sync filters. Please try again." = "Could not read current sync filters. Please try again.";
 "%@ — %d files" = "%@ — %d files";
 
 /* IgnorePreset labels and descriptions */

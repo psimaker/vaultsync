@@ -136,28 +136,16 @@ struct SyncFilterRecommendationSheet: View {
         }
     }
 
-    /// Compute the final `.stignore` content based on the user's choices, then
-    /// write it. Any pattern that the sheet manages (presets + detected items)
-    /// is removed first, then re-added only if currently enabled. This makes
-    /// deselect actually take effect — including for the recommended patterns
-    /// that addFolder() silently auto-applied just before the sheet appeared.
-    /// Custom/unmanaged patterns the user added previously are preserved.
+    /// Delegate the deselect-aware, safe-read apply to SyncthingManager so
+    /// the sheet stays presentation-only and the read-modify-write logic
+    /// lives next to the rest of the filter API.
     private func apply() -> SyncUserError? {
-        let existing = syncthingManager.ignorePatterns(folderID: folderID)
-        let managed = Set(IgnorePreset.all.flatMap(\.patterns))
-            .union(detected.map(\.pattern))
-
-        var patterns = existing.filter { !managed.contains($0) }
-
-        for preset in IgnorePreset.all where enabledPresetIDs.contains(preset.id) {
-            for pattern in preset.patterns where !patterns.contains(pattern) {
-                patterns.append(pattern)
-            }
-        }
-        for pattern in enabledDetectedPatterns where !patterns.contains(pattern) {
-            patterns.append(pattern)
-        }
-        return syncthingManager.setIgnorePatterns(folderID: folderID, patterns: patterns)
+        syncthingManager.applyRecommendedFilters(
+            folderID: folderID,
+            enabledPresetIDs: enabledPresetIDs,
+            detectedPatterns: detected.map(\.pattern),
+            enabledDetectedPatterns: enabledDetectedPatterns
+        )
     }
 
     private func formattedSize(_ item: DetectedPattern) -> String {
