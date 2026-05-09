@@ -1,14 +1,20 @@
 // Folder scanner: detects known heavy directories in a vault to power
 // the "Found in this vault" section of the Sync Filters UI.
+//
+// In typical Obsidian setups the sync folder is the Obsidian root, and the
+// actual vaults are immediate subdirectories. The scanner therefore checks
+// both the top level and one level deep, aggregating matches per pattern.
 package bridge
 
 import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
-// DetectedPattern describes one heavy directory found in a vault.
+// DetectedPattern describes one heavy directory (or aggregate of multiple
+// matches) found in a vault.
 type DetectedPattern struct {
 	Pattern   string `json:"pattern"`
 	Label     string `json:"label"`
@@ -31,8 +37,13 @@ var heavyDirCandidates = []struct {
 	{".obsidian/cache", "Obsidian app cache"},
 }
 
-// ScanFolderForKnownPatterns walks a vault for known heavy directories
-// and returns size + file count per match as JSON.
+// ScanFolderForKnownPatterns walks a vault for known heavy directories and
+// returns aggregated size + file count per pattern as JSON.
+//
+// Search depth: the folder root, plus each non-hidden top-level subdirectory
+// (the "vault subdir" pattern). Matches in multiple locations are summed
+// into a single entry per pattern (e.g. ".git in 3 vaults — 127 MB total").
+//
 // Returns {"detected":[]} for unknown folders, missing paths, or empty vaults.
 func ScanFolderForKnownPatterns(folderID string) string {
 	folders := getFolderConfigs()
@@ -44,23 +55,57 @@ func ScanFolderForKnownPatterns(folderID string) string {
 		return `{"detected":[]}`
 	}
 
+	type accum struct {
+		label string
+		bytes int64
+		count int
+	}
+	sums := map[string]*accum{}
+
+	checkLocation := func(base string) {
+		for _, c := range heavyDirCandidates {
+			full := filepath.Join(base, c.Pattern)
+			info, err := os.Stat(full)
+			if err != nil || !info.IsDir() {
+				continue
+			}
+			size, count := dirSizeAndCount(full)
+			if count == 0 {
+				continue
+			}
+			if a, exists := sums[c.Pattern]; exists {
+				a.bytes += size
+				a.count += count
+			} else {
+				sums[c.Pattern] = &accum{label: c.Label, bytes: size, count: count}
+			}
+		}
+	}
+
+	// Top level (single-vault setups, or stray heavy folders next to the vaults).
+	checkLocation(folder.Path)
+
+	// One level deep — the typical "Obsidian root with vault subdirs" layout.
+	if entries, err := os.ReadDir(folder.Path); err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+				continue
+			}
+			checkLocation(filepath.Join(folder.Path, entry.Name()))
+		}
+	}
+
+	// Emit in the order of heavyDirCandidates for stable output.
 	detected := []DetectedPattern{}
 	for _, c := range heavyDirCandidates {
-		full := filepath.Join(folder.Path, c.Pattern)
-		info, err := os.Stat(full)
-		if err != nil || !info.IsDir() {
-			continue
+		if a, exists := sums[c.Pattern]; exists {
+			detected = append(detected, DetectedPattern{
+				Pattern:   c.Pattern,
+				Label:     a.label,
+				SizeBytes: a.bytes,
+				FileCount: a.count,
+			})
 		}
-		size, count := dirSizeAndCount(full)
-		if count == 0 {
-			continue
-		}
-		detected = append(detected, DetectedPattern{
-			Pattern:   c.Pattern,
-			Label:     c.Label,
-			SizeBytes: size,
-			FileCount: count,
-		})
 	}
 
 	data, err := json.Marshal(ScanResult{Detected: detected})

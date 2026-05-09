@@ -63,7 +63,7 @@ Position is intentional: filters are configuration, sharing/rescan are actions. 
 Five sections, each rendered as a `List` section:
 
 1. **Recommended** — always visible. Workspace state + Trash, both ON by default for new vaults.
-2. **Found in this vault** — only renders when the vault scan returned results. Shows actual byte size + file count for each detected heavy folder. The most persuasive piece of UI.
+2. **Found in this vault** — only renders when the vault scan returned results. Shows actual byte size + file count for each detected heavy folder. The scanner checks both the sync folder root and one level deep (the typical "Obsidian root with vault subdirs" layout) and aggregates matches per pattern (e.g. ".git in 3 vaults — 127 MB total"). The most persuasive piece of UI.
 3. **Other presets** — every preset that isn't already in Recommended or Found.
 4. **Custom patterns** — anything in `.stignore` that isn't part of any preset. User can swipe-to-delete or add a new line.
 5. **Footer** — link to the Syncthing pattern docs for power users.
@@ -128,6 +128,12 @@ Tapping it adds the conflict's *exact relative path* to the folder's ignore list
 > "`'.obsidian/plugins/dataview/cache.db'` will no longer sync to this iPhone. You can undo this in Sync Filters."
 
 Reasoning behind exact-path (not smart-glob): predictable. The user knows exactly what they ignored. If they later want to widen to `*.cache.db` or `.obsidian/plugins/dataview/*`, they can do that in the editor.
+
+## 6.5 Multi-vault setups
+
+In typical Obsidian use, the sync folder is the **Obsidian root** and individual vaults live as subdirectories inside it. Pattern matching handles this transparently: Syncthing automatically expands every unanchored pattern (anything without a leading `/`) to also match at any depth, so `.git` covers both `Obsidian/.git` and `Obsidian/Vault1/.git`. No `**/` prefix is needed in the preset definitions.
+
+The vault scanner specifically descends one level into non-hidden subdirectories so that heavy folders inside vaults (e.g. `Obsidian/Personal/.git`, `Obsidian/Work/.git`) are detected and their sizes aggregated into a single "Found in this vault" entry per pattern.
 
 ## 7. Migration
 

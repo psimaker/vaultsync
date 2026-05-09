@@ -128,6 +128,113 @@ func TestScanFolderForKnownPatternsMultipleCandidates(t *testing.T) {
 	}
 }
 
+func TestScanFolderForKnownPatternsAggregatesNestedVaults(t *testing.T) {
+	configDir := testConfigDir(t)
+	if errMsg := StartSyncthing(configDir); errMsg != "" {
+		t.Fatalf("StartSyncthing() failed: %s", errMsg)
+	}
+	defer StopSyncthing()
+
+	// Mimic the typical Obsidian setup: a sync folder that is the Obsidian
+	// root, with each vault as an immediate subdirectory.
+	root := t.TempDir()
+	for _, vault := range []string{"Personal", "Work"} {
+		gitDir := filepath.Join(root, vault, ".git")
+		if err := os.MkdirAll(gitDir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", gitDir, err)
+		}
+		// Two files per .git so total FileCount = 4.
+		if err := os.WriteFile(filepath.Join(gitDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644); err != nil {
+			t.Fatalf("write HEAD in %s: %v", vault, err)
+		}
+		if err := os.WriteFile(filepath.Join(gitDir, "config"), []byte("[core]\n"), 0o644); err != nil {
+			t.Fatalf("write config in %s: %v", vault, err)
+		}
+	}
+	// One vault also has a Copilot index — should appear as its own entry.
+	copilotDir := filepath.Join(root, "Personal", ".copilot-index")
+	if err := os.MkdirAll(copilotDir, 0o755); err != nil {
+		t.Fatalf("mkdir copilot: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(copilotDir, "shard"), []byte("xx"), 0o644); err != nil {
+		t.Fatalf("write copilot: %v", err)
+	}
+
+	folderID := "scan-nested"
+	if errMsg := AddFolder(folderID, "Nested", root); errMsg != "" {
+		t.Fatalf("AddFolder: %s", errMsg)
+	}
+
+	raw := ScanFolderForKnownPatterns(folderID)
+	var result ScanResult
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		t.Fatalf("unmarshal failed: %v (raw=%s)", err, raw)
+	}
+
+	byPattern := map[string]DetectedPattern{}
+	for _, d := range result.Detected {
+		byPattern[d.Pattern] = d
+	}
+
+	git, ok := byPattern[".git"]
+	if !ok {
+		t.Fatalf("expected .git entry in detected (raw=%s)", raw)
+	}
+	if git.FileCount != 4 {
+		t.Errorf(".git fileCount = %d, want 4 (aggregated across 2 vaults)", git.FileCount)
+	}
+	if git.SizeBytes <= 0 {
+		t.Errorf(".git sizeBytes = %d, want > 0", git.SizeBytes)
+	}
+
+	copilot, ok := byPattern[".copilot-index"]
+	if !ok {
+		t.Fatalf("expected .copilot-index entry in detected (raw=%s)", raw)
+	}
+	if copilot.FileCount != 1 {
+		t.Errorf(".copilot-index fileCount = %d, want 1", copilot.FileCount)
+	}
+}
+
+func TestScanFolderForKnownPatternsSkipsHiddenSubdirs(t *testing.T) {
+	configDir := testConfigDir(t)
+	if errMsg := StartSyncthing(configDir); errMsg != "" {
+		t.Fatalf("StartSyncthing() failed: %s", errMsg)
+	}
+	defer StopSyncthing()
+
+	// A hidden top-level dir (e.g. .obsidian) should not be descended into;
+	// its candidates would otherwise be double-counted.
+	root := t.TempDir()
+	cacheDir := filepath.Join(root, ".obsidian", "cache")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cacheDir, "blob"), []byte("xx"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	folderID := "scan-hidden"
+	if errMsg := AddFolder(folderID, "Hidden", root); errMsg != "" {
+		t.Fatalf("AddFolder: %s", errMsg)
+	}
+
+	raw := ScanFolderForKnownPatterns(folderID)
+	var result ScanResult
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if len(result.Detected) != 1 {
+		t.Fatalf("expected 1 detected pattern, got %d (raw=%s)", len(result.Detected), raw)
+	}
+	if result.Detected[0].Pattern != ".obsidian/cache" {
+		t.Errorf("pattern = %q, want .obsidian/cache", result.Detected[0].Pattern)
+	}
+	if result.Detected[0].FileCount != 1 {
+		t.Errorf("fileCount = %d, want 1 (no double-counting)", result.Detected[0].FileCount)
+	}
+}
+
 func TestScanFolderForKnownPatternsIgnoresEmptyDirectories(t *testing.T) {
 	configDir := testConfigDir(t)
 	if errMsg := StartSyncthing(configDir); errMsg != "" {
