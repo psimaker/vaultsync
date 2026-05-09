@@ -4,6 +4,7 @@ ios/SyncBridge.xcframework/
 
 # Generated files (regenerate via: cd ios && xcodegen generate)
 ios/VaultSync/Info.plist
+ios/VaultSyncWidget/Info.plist
 
 # macOS
 .DS_Store
