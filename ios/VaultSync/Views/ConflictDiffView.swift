@@ -20,7 +20,12 @@ struct ConflictDiffView: View {
     // Result summary flow
     @State private var resultSummaryMessage = ""
     @State private var showResultSummary = false
-    
+
+    // Always-skip flow
+    @State private var showSkipConfirmation = false
+    @State private var skipErrorMessage: String?
+    @State private var showSkipError = false
+
     @Environment(\.dismiss) private var dismiss
     
     enum ResolveAction {
@@ -89,6 +94,19 @@ struct ConflictDiffView: View {
         .navigationTitle("Resolve Conflict")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button {
+                        skipThisFile()
+                    } label: {
+                        Label(L10n.tr("Always skip on this iPhone"),
+                              systemImage: "line.3.horizontal.decrease.circle")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .accessibilityLabel(L10n.tr("More actions"))
+                }
+            }
             ToolbarItemGroup(placement: .bottomBar) {
                 Button {
                     confirmAction(.keepThis)
@@ -159,9 +177,29 @@ struct ConflictDiffView: View {
         } message: {
             Text(resultSummaryMessage)
         }
+        .alert(L10n.tr("Skipping enabled"), isPresented: $showSkipConfirmation) {
+            Button("OK") { showSkipConfirmation = false }
+        } message: {
+            Text(L10n.fmt("'%@' will no longer sync to this iPhone. You can undo this in Sync Filters.",
+                          conflict.originalPath))
+        }
+        .alert(L10n.tr("Could not add filter"), isPresented: $showSkipError) {
+            Button("OK") { showSkipError = false }
+        } message: {
+            Text(skipErrorMessage ?? "")
+        }
         .task {
             await loadContent()
         }
+    }
+
+    private func skipThisFile() {
+        if let err = syncthingManager.addIgnorePattern(conflict.originalPath, folderID: folderID) {
+            skipErrorMessage = err.message
+            showSkipError = true
+            return
+        }
+        showSkipConfirmation = true
     }
 
     private func fileSection(title: String, icon: String, content: String) -> some View {
