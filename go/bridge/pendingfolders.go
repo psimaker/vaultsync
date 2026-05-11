@@ -140,7 +140,7 @@ func AcceptPendingFolder(folderID, label, path string) string {
 		Label:            label,
 		Path:             path,
 		Type:             config.FolderTypeSendReceive,
-		RescanIntervalS:  3600,
+		RescanIntervalS:  defaultRescanIntervalS,
 		FSWatcherEnabled: true,
 		FSWatcherDelayS:  10,
 		AutoNormalize:    true,

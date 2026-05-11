@@ -101,6 +101,19 @@ enum BackgroundSyncService {
         logger.info("Foreground lifecycle lock released")
     }
 
+    /// Pure predicate: should the app trigger a foreground rescan when the
+    /// scene returns to `.active`? True when the previous-background duration
+    /// reaches `threshold`. Debounces brief Control-Center swipes that would
+    /// otherwise spam rescans on every minor scene flip.
+    static func shouldRescanOnForeground(
+        now: Date,
+        lastBackgroundedAt: Date?,
+        threshold: TimeInterval
+    ) -> Bool {
+        guard let lastBackgroundedAt else { return false }
+        return now.timeIntervalSince(lastBackgroundedAt) >= threshold
+    }
+
     /// Begin a UIApplication background-task assertion so iOS grants up to
     /// ~30 seconds of continued execution after the app is backgrounded.
     /// Without this the system can suspend the process within ~5s, severing

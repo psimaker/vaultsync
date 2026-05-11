@@ -4,6 +4,19 @@ All notable changes to VaultSync are documented here.
 
 ---
 
+## [1.3.0] — 2026-05-11
+
+### Added
+
+- **Pull-to-refresh on the main screen** — Swipe down on the vault list to trigger an immediate sync, the same gesture you use in Mail or Files. Useful when you've just edited a note in Obsidian and want it on your desktop right away.
+- **Automatic rescan when returning to VaultSync** — If you've been away from the app for more than five seconds, opening it again triggers a fresh scan of your vaults. The "close VaultSync and reopen it" workaround is no longer needed to see recent edits sync through.
+
+### Changed
+
+- **Faster fallback rescan interval** — The safety-net rescan that catches changes the iOS file-system watcher misses (for example edits made in Obsidian's sandbox while VaultSync is in the background) now runs every minute instead of every hour. Existing vaults are migrated on first launch; vaults with a user-customised interval keep their value.
+
+---
+
 ## [1.2.0] — 2026-05-09
 
 ### Added

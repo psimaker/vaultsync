@@ -28,6 +28,9 @@ struct ContentView: View {
                 vaultsSection
                 devicesSection
             }
+            .refreshable {
+                await syncthingManager.performForegroundSync()
+            }
             .navigationTitle("VaultSync")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
