@@ -99,15 +99,13 @@ VaultSync is also not a magic always-on Syncthing daemon for iOS. Apple’s back
 
 ---
 
-## What’s New — v1.2.0
+## What’s New — v1.3.0
 
-> **Sync Filters** — A new per-vault screen lets you toggle preset ignore-pattern groups in plain language: Workspace state, Trash, Git repository, macOS metadata, Copilot index, and Obsidian app cache. No `.stignore` syntax needed.
+> **Pull-to-refresh on the vault list** — Swipe down to force an immediate sync, the same gesture you already use in Mail and Files.
 >
-> **Vault scan with size figures** — VaultSync scans your folder for heavy directories (`.git`, `.copilot-index`, `node_modules`, `.obsidian/cache`) and shows actual size in MB so you can decide what to skip.
+> **Auto-rescan when reopening the app** — Come back after editing in Obsidian and VaultSync scans your vaults straight away. No more "close and reopen" workaround.
 >
-> **Always skip on this iPhone** — A one-tap menu item in the conflict resolver permanently excludes the conflicting file from this device.
->
-> **First-run recommendation sheet** — A friendly intro the first time you open a new vault, with sensible defaults pre-checked.
+> **Faster recovery from missed file-change events** — The fallback rescan interval is now one minute instead of one hour, so even when iOS sandboxing prevents real-time notifications, your edits propagate quickly.
 
 See [CHANGELOG.md](CHANGELOG.md) for full details.
 
