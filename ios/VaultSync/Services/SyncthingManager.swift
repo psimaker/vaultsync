@@ -554,6 +554,17 @@ final class SyncthingManager {
         }
     }
 
+    /// Async variant of `triggerForegroundSync` for callers that want to await
+    /// completion — e.g. SwiftUI `.refreshable`, where the spinner should stay
+    /// visible until the trigger has actually landed in the bridge.
+    func performForegroundSync(folderID: String? = nil) async {
+        guard !isAnySyncing else {
+            logger.info("Ignoring sync request because a sync is already in progress")
+            return
+        }
+        await performForegroundSyncRequest(folderID: folderID)
+    }
+
     // MARK: - Conflict management
 
     /// Resolve a conflict file. Returns nil on success.

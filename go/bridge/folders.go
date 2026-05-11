@@ -10,6 +10,12 @@ import (
 	"github.com/syncthing/syncthing/lib/protocol"
 )
 
+// defaultRescanIntervalS is the safety-net rescan interval applied to folders
+// created by VaultSync. Matches Syncthing's own default — short enough to
+// recover quickly when the FSWatcher misses an event (e.g. cross-sandbox
+// writes from Obsidian via a security-scoped bookmark on iOS).
+const defaultRescanIntervalS = 60
+
 // FolderInfo is the JSON-serializable representation of a configured folder.
 type FolderInfo struct {
 	ID        string   `json:"id"`
@@ -51,7 +57,7 @@ func AddFolder(id, label, path string) string {
 		Label:            label,
 		Path:             path,
 		Type:             config.FolderTypeSendReceive,
-		RescanIntervalS:  3600,
+		RescanIntervalS:  defaultRescanIntervalS,
 		FSWatcherEnabled: true,
 		FSWatcherDelayS:  10,
 		AutoNormalize:    true,

@@ -10,7 +10,10 @@ struct VaultSyncApp: App {
     @State private var syncthingManager = SyncthingManager()
     @State private var vaultManager = VaultManager()
     @State private var subscriptionManager = SubscriptionManager()
+    @State private var lastBackgroundedAt: Date?
     @Environment(\.scenePhase) private var scenePhase
+
+    private static let foregroundRescanThreshold: TimeInterval = 5
 
     init() {
         BackgroundSyncService.registerTasks()
@@ -57,8 +60,22 @@ struct VaultSyncApp: App {
                     }
                     vaultManager.restoreAccess()
                     syncthingManager.start()
+                } else if BackgroundSyncService.shouldRescanOnForeground(
+                    now: Date(),
+                    lastBackgroundedAt: lastBackgroundedAt,
+                    threshold: Self.foregroundRescanThreshold
+                ) {
+                    // Bridge is still alive but the app spent enough time in
+                    // the background that the user likely edited the vault
+                    // from another app (e.g. Obsidian). The iOS FSWatcher
+                    // doesn't reliably see cross-sandbox writes, so trigger
+                    // a fresh scan to pick them up immediately.
+                    syncthingManager.triggerForegroundSync()
                 }
+                lastBackgroundedAt = nil
             case .background:
+                lastBackgroundedAt = Date()
+
                 // Release the foreground lifecycle lock so silent-push and
                 // BGAppRefresh handlers can manage Syncthing when the process
                 // is later resumed — without this, backgroundManaged stays

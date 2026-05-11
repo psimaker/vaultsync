@@ -116,6 +116,23 @@ func StartSyncthing(configDir string) string {
 	}
 	waiter.Wait()
 
+	// Migration: lower the over-conservative 60-minute rescan fallback that
+	// older VaultSync builds wrote to disk down to Syncthing's standard 60 s.
+	// Only touches folders that still carry the legacy default — user-customised
+	// values are preserved.
+	waiter, err = stCfg.Modify(func(cfg *config.Configuration) {
+		for i := range cfg.Folders {
+			if cfg.Folders[i].RescanIntervalS == 3600 {
+				cfg.Folders[i].RescanIntervalS = defaultRescanIntervalS
+			}
+		}
+	})
+	if err != nil {
+		cancel()
+		return fmt.Sprintf("migrate rescan interval: %v", err)
+	}
+	waiter.Wait()
+
 	// Open database.
 	sdb, err := syncthing.OpenDatabase(
 		locations.Get(locations.Database),
