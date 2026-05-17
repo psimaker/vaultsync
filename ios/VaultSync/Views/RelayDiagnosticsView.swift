@@ -63,7 +63,7 @@ struct RelayDiagnosticsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     if let url = SyncUserError.troubleshootingURL(anchor: "relay-unreachable") {
-                        Link("Learn how to fix", destination: url)
+                        ExternalLinkButton(titleKey: "Learn how to fix", url: url)
                             .font(.caption2)
                     }
                 }
@@ -86,7 +86,7 @@ struct RelayDiagnosticsView: View {
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                     if let url = troubleshootingURL(for: relayError.message) {
-                        Link("Learn how to fix", destination: url)
+                        ExternalLinkButton(titleKey: "Learn how to fix", url: url)
                             .font(.caption2)
                     }
                 }
@@ -141,7 +141,7 @@ struct RelayDiagnosticsView: View {
                         .font(.caption)
                         .foregroundStyle(.red)
                     if let url = SyncUserError.troubleshootingURL(anchor: "apns-not-registered") {
-                        Link("Learn how to fix", destination: url)
+                        ExternalLinkButton(titleKey: "Learn how to fix", url: url)
                             .font(.caption2)
                     }
                 }
@@ -191,7 +191,7 @@ struct RelayDiagnosticsView: View {
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                             if let url = troubleshootingURL(for: reason) {
-                                Link("Learn how to fix", destination: url)
+                                ExternalLinkButton(titleKey: "Learn how to fix", url: url)
                                     .font(.caption2)
                             }
                         }
@@ -276,7 +276,7 @@ struct RelayDiagnosticsView: View {
                         .font(.caption)
                 }
                 if let url = SyncUserError.troubleshootingURL(anchor: "relay-unreachable") {
-                    Link("Open full relay troubleshooting", destination: url)
+                    ExternalLinkButton(titleKey: "Open full relay troubleshooting", url: url)
                         .font(.caption2)
                 }
             }

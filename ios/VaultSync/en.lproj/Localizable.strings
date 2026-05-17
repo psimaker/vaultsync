@@ -496,3 +496,14 @@
 "Obsidian app cache" = "Obsidian app cache";
 "Auto-regenerated Obsidian internal cache." = "Auto-regenerated Obsidian internal cache.";
 "Node modules" = "Node modules";
+
+// Sync Issue titles & messages
+"1 Vault Has Sync Errors" = "1 Vault Has Sync Errors";
+"%d Vaults Have Sync Errors" = "%d Vaults Have Sync Errors";
+"At least one folder is currently in an error state." = "At least one folder is currently in an error state.";
+"1 Required Device Is Disconnected" = "1 Required Device Is Disconnected";
+"%d Required Devices Are Disconnected" = "%d Required Devices Are Disconnected";
+"1 Pending Share Needs Attention" = "1 Pending Share Needs Attention";
+"%d Pending Shares Need Attention" = "%d Pending Shares Need Attention";
+"1 Conflict Needs Resolution" = "1 Conflict Needs Resolution";
+"%d Conflicts Need Resolution" = "%d Conflicts Need Resolution";

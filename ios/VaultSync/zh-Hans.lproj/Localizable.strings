@@ -495,3 +495,14 @@
 "Obsidian app cache" = "Obsidian 应用缓存";
 "Auto-regenerated Obsidian internal cache." = "自动重建的 Obsidian 内部缓存。";
 "Node modules" = "Node 模块";
+
+// Sync Issue titles & messages
+"1 Vault Has Sync Errors" = "1 个 Vault 出现同步错误";
+"%d Vaults Have Sync Errors" = "%d 个 Vault 出现同步错误";
+"At least one folder is currently in an error state." = "至少有一个文件夹目前处于错误状态。";
+"1 Required Device Is Disconnected" = "1 台必需设备已断开连接";
+"%d Required Devices Are Disconnected" = "%d 台必需设备已断开连接";
+"1 Pending Share Needs Attention" = "1 个待处理共享需要处理";
+"%d Pending Shares Need Attention" = "%d 个待处理共享需要处理";
+"1 Conflict Needs Resolution" = "1 个冲突待解决";
+"%d Conflicts Need Resolution" = "%d 个冲突待解决";

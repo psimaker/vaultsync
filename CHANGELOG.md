@@ -4,6 +4,22 @@ All notable changes to VaultSync are documented here.
 
 ---
 
+## [1.3.1] — 2026-05-17
+
+### Fixed
+
+- **Conflict button no longer also opens the browser** ([#6](https://github.com/psimaker/vaultsync/issues/6)) — Tapping "Resolve Conflicts" in the home-screen Sync Issues section pushed the conflict list **and** opened Safari at the same time, because the "Learn how to fix" link shared a list row with the navigation control. The link is now a dedicated button that consumes the tap, so the two gestures no longer collide. The same pattern was rolled out to every "Learn how to fix" spot in the app.
+- **Missing German and Simplified Chinese translations for Sync Issue titles** — Strings like "1 Conflict Needs Resolution" appeared in English on non-English locales because the keys were absent from `Localizable.strings`. Added the missing entries for all four issue kinds (folder errors, disconnected devices, pending shares, conflicts).
+
+### Changed
+
+- **Home screen reads as content, not chrome** — The large "VaultSync" navigation title is gone; the bar stays inline so the dashboard and vault list lead the eye.
+- **Device list shows just the name** — The long Syncthing Device ID no longer appears under each peer on the home screen. Tap a device to see the full ID in the detail view.
+- **Cloud Relay settings declutter** — Per-device provisioning rows are now hidden when the device is already provisioned, so only devices that need attention surface. The "Retry Provisioning" button has been removed from Settings; the same action stays available in Relay Diagnostics where the other advanced controls live.
+- **Settings → This Device tightened** — The standalone Device ID display has been removed. The "Copy Device ID" button is sufficient on its own.
+
+---
+
 ## [1.3.0] — 2026-05-11
 
 ### Added
