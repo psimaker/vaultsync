@@ -95,8 +95,7 @@ struct IgnorePatternsView: View {
 
     private var footerSection: some View {
         Section {
-            Link(L10n.tr("How filters work"),
-                 destination: URL(string: "https://docs.syncthing.net/users/ignoring.html")!)
+            ExternalLinkButton(titleKey: "How filters work", url: DocURL.syncthingIgnoring)
         }
     }
 

@@ -148,7 +148,7 @@ struct SettingsView: View {
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                             if let url = SyncUserError.troubleshootingURL(forRawError: reason) {
-                                Link("Learn how to fix", destination: url)
+                                ExternalLinkButton(titleKey: "Learn how to fix", url: url)
                                     .font(.caption2)
                             }
                         }
@@ -236,7 +236,7 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.red)
                     if let url = SyncUserError.troubleshootingURL(forRawError: relayError) {
-                        Link("Learn how to fix", destination: url)
+                        ExternalLinkButton(titleKey: "Learn how to fix", url: url)
                             .font(.caption2)
                     }
                 }
@@ -260,7 +260,7 @@ struct SettingsView: View {
 
     private var aboutSection: some View {
         Section("About") {
-            Link(destination: URL(string: "https://github.com/psimaker/vaultsync/blob/main/PRIVACY.md")!) {
+            Link(destination: DocURL.privacyPolicy) {
                 HStack {
                     Label("Privacy Policy", systemImage: "hand.raised")
                     Spacer()
@@ -271,7 +271,7 @@ struct SettingsView: View {
                 }
             }
 
-            Link(destination: URL(string: "https://github.com/psimaker/vaultsync/blob/main/TERMS.md")!) {
+            Link(destination: DocURL.termsOfUse) {
                 HStack {
                     Label("Terms of Use", systemImage: "doc.text")
                     Spacer()

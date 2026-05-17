@@ -19,20 +19,23 @@ struct SyncIssuesView: View {
                             .accessibilityHidden(true)
 
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(issue.title)
-                                .font(.subheadline.weight(.semibold))
-                            Text(issue.message)
-                                .font(.caption)
-                            Text(issue.remediation)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(issue.title)
+                                    .font(.subheadline.weight(.semibold))
+                                Text(issue.message)
+                                    .font(.caption)
+                                Text(issue.remediation)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .accessibilityElement(children: .combine)
+
                             if let url = troubleshootingURL(for: issue.kind) {
-                                Link("Learn how to fix", destination: url)
+                                ExternalLinkButton(titleKey: "Learn how to fix", url: url)
                                     .font(.caption2)
                             }
                         }
                     }
-                    .accessibilityElement(children: .combine)
 
                     actionView(for: issue)
                 }
@@ -84,7 +87,7 @@ struct SyncIssuesView: View {
             Button("Accept First Pending Share") {
                 onAcceptFirstPendingShare()
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.bordered)
             .controlSize(.small)
             .disabled(syncthingManager.actionablePendingFolders.isEmpty)
 
