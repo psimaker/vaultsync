@@ -99,13 +99,13 @@ VaultSync is also not a magic always-on Syncthing daemon for iOS. Apple’s back
 
 ---
 
-## What’s New — v1.3.0
+## What’s New — v1.3.1
 
-> **Pull-to-refresh on the vault list** — Swipe down to force an immediate sync, the same gesture you already use in Mail and Files.
+> **Conflict button no longer also opens the browser** — Tapping "Resolve Conflicts" on the home screen now just opens the conflict list, instead of also launching Safari at the same time.
 >
-> **Auto-rescan when reopening the app** — Come back after editing in Obsidian and VaultSync scans your vaults straight away. No more "close and reopen" workaround.
+> **Cleaner home screen and settings** — The "VaultSync" page title is gone, devices show just their name, and Settings no longer surfaces per-device rows for relay peers that are already provisioned.
 >
-> **Faster recovery from missed file-change events** — The fallback rescan interval is now one minute instead of one hour, so even when iOS sandboxing prevents real-time notifications, your edits propagate quickly.
+> **German and Simplified Chinese fixes** — The Sync Issues titles ("1 Konflikt muss gelöst werden", "1 个冲突待解决", …) are now translated instead of falling back to English.
 
 See [CHANGELOG.md](CHANGELOG.md) for full details.
 
