@@ -495,3 +495,14 @@
 "Obsidian app cache" = "Obsidian-App-Cache";
 "Auto-regenerated Obsidian internal cache." = "Automatisch regenerierter interner Obsidian-Cache.";
 "Node modules" = "Node-Module";
+
+// Sync Issue titles & messages
+"1 Vault Has Sync Errors" = "1 Vault hat Synchronisationsfehler";
+"%d Vaults Have Sync Errors" = "%d Vaults haben Synchronisationsfehler";
+"At least one folder is currently in an error state." = "Mindestens ein Ordner befindet sich derzeit in einem Fehlerzustand.";
+"1 Required Device Is Disconnected" = "1 erforderliches Gerät ist getrennt";
+"%d Required Devices Are Disconnected" = "%d erforderliche Geräte sind getrennt";
+"1 Pending Share Needs Attention" = "1 ausstehende Freigabe benötigt Aufmerksamkeit";
+"%d Pending Shares Need Attention" = "%d ausstehende Freigaben benötigen Aufmerksamkeit";
+"1 Conflict Needs Resolution" = "1 Konflikt muss gelöst werden";
+"%d Conflicts Need Resolution" = "%d Konflikte müssen gelöst werden";

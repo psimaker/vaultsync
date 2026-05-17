@@ -10,7 +10,6 @@ struct SettingsView: View {
     @State private var alertMessage: String?
     @State private var showAlert = false
     @State private var showSetupStatus = false
-    @State private var retryProvisioningInProgress = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -23,14 +22,6 @@ struct SettingsView: View {
                     if syncthingManager.deviceID.isEmpty {
                         LabeledContent("Device ID", value: "Not available")
                     } else {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Device ID")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text(syncthingManager.deviceID)
-                                .font(.system(.caption, design: .monospaced))
-                                .textSelection(.enabled)
-                        }
                         Button {
                             UIPasteboard.general.string = syncthingManager.deviceID
                         } label: {
@@ -126,34 +117,36 @@ struct SettingsView: View {
             if !syncthingManager.devices.isEmpty {
                 ForEach(syncthingManager.devices) { device in
                     let status = relayProvisionStatus(for: device.deviceID)
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(device.name.isEmpty ? device.deviceID : device.name)
-                                    .font(.subheadline)
-                                Text(device.deviceID)
-                                    .font(.system(.caption2, design: .monospaced))
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                    .foregroundStyle(.secondary)
+                    if status != .provisioned {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(device.name.isEmpty ? device.deviceID : device.name)
+                                        .font(.subheadline)
+                                    Text(device.deviceID)
+                                        .font(.system(.caption2, design: .monospaced))
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Text(status.summary)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(relayProvisionColor(status))
                             }
-                            Spacer()
-                            Text(status.summary)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(relayProvisionColor(status))
-                        }
-                        .accessibilityElement(children: .combine)
-                        if let reason = status.failureReason {
-                            Text(reason)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                            if let url = SyncUserError.troubleshootingURL(forRawError: reason) {
-                                ExternalLinkButton(titleKey: "Learn how to fix", url: url)
+                            .accessibilityElement(children: .combine)
+                            if let reason = status.failureReason {
+                                Text(reason)
                                     .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                if let url = SyncUserError.troubleshootingURL(forRawError: reason) {
+                                    ExternalLinkButton(titleKey: "Learn how to fix", url: url)
+                                        .font(.caption2)
+                                }
                             }
                         }
+                        .padding(.vertical, 2)
                     }
-                    .padding(.vertical, 2)
                 }
             }
 
@@ -165,26 +158,6 @@ struct SettingsView: View {
                         try? await AppStore.showManageSubscriptions(in: windowScene)
                     }
                 }
-
-                Button {
-                    Task {
-                        retryProvisioningInProgress = true
-                        await subscriptionManager.retryRelayProvisioning(
-                            homeserverDeviceIDs: syncthingManager.devices.map(\.deviceID)
-                        )
-                        retryProvisioningInProgress = false
-                    }
-                } label: {
-                    HStack {
-                        Text("Retry Provisioning")
-                        Spacer()
-                        if retryProvisioningInProgress {
-                            ProgressView()
-                                .controlSize(.small)
-                        }
-                    }
-                }
-                .disabled(retryProvisioningInProgress)
             } else {
                 if let product = subscriptionManager.availableProduct {
                     Button {

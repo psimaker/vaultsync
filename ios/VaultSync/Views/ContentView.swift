@@ -31,7 +31,8 @@ struct ContentView: View {
             .refreshable {
                 await syncthingManager.performForegroundSync()
             }
-            .navigationTitle("VaultSync")
+            .navigationTitle("")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
@@ -729,15 +730,8 @@ struct ContentView: View {
                         )
                     } label: {
                         HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(device.name.isEmpty ? L10n.tr("Unnamed") : device.name)
-                                    .font(.body)
-                                Text(device.deviceID)
-                                    .font(.system(.caption2, design: .monospaced))
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                            }
+                            Text(device.name.isEmpty ? L10n.tr("Unnamed") : device.name)
+                                .font(.body)
                             Spacer()
                             HStack(spacing: 4) {
                                 Image(systemName: device.connected ? "checkmark.circle.fill" : "xmark.circle.fill")
