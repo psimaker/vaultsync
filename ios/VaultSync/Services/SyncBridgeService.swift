@@ -213,6 +213,24 @@ struct SyncBridgeService {
         return result.isEmpty ? nil : result
     }
 
+    /// Remove every sync-conflict copy of the file at originalPath inside the folder.
+    /// Returns `(removed, nil)` on success or `(0, errorMessage)` on failure.
+    static func removeConflictFilesForOriginal(folderID: String, originalPath: String) -> (removed: Int, error: String?) {
+        let raw = BridgeRemoveConflictFilesForOriginal(folderID, originalPath)
+        struct Payload: Decodable {
+            let removed: Int
+            let error: String
+        }
+        guard let data = raw.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode(Payload.self, from: data) else {
+            return (0, "unparseable bridge response")
+        }
+        if !decoded.error.isEmpty {
+            return (0, decoded.error)
+        }
+        return (decoded.removed, nil)
+    }
+
     // MARK: - Pending folder shares
 
     /// Get all pending folder offers from remote devices as JSON.

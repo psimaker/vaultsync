@@ -327,6 +327,9 @@
 "Syncing" = "同步中";
 "Syncing Vault" = "正在同步 Vault";
 "Syncing…" = "同步中…";
+"Reconnecting…" = "正在重新连接…";
+"Restoring connection to 1 device" = "正在恢复到 1 个设备的连接";
+"Restoring connection to %d devices" = "正在恢复到 %d 个设备的连接";
 "Syncthing engine started" = "Syncthing 引擎已启动";
 "Syncthing is scanning local changes." = "Syncthing 正在扫描本地更改。";
 "Syncthing no longer has this folder configured." = "Syncthing 已不再配置该文件夹。";
@@ -476,6 +479,10 @@
 "More actions" = "更多操作";
 "Skipping enabled" = "跳过已启用";
 "'%@' will no longer sync to this iPhone. You can undo this in Sync Filters." = "「%@」将不再同步到此 iPhone。你可以在同步过滤器中撤销。";
+"'%@' and its conflict copies will no longer sync to this iPhone. You can undo this in Sync Filters." = "「%@」及其冲突副本将不再同步到此 iPhone。你可以在同步过滤器中撤销。";
+"1 existing conflict copy was removed." = "已移除 1 个现有冲突副本。";
+"%d existing conflict copies were removed." = "已移除 %d 个现有冲突副本。";
+"+ conflict copies" = "+ 冲突副本";
 "Could not add filter" = "无法添加过滤器";
 "Could not save filters" = "无法保存过滤器";
 "Could not read current sync filters. Please try again." = "无法读取当前同步过滤器。请重试。";

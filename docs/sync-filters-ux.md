@@ -1,7 +1,7 @@
 # Sync Filters — UX Spec
 
 > Status: **implemented** (issue [#1](https://github.com/psimaker/vaultsync/issues/1), shipped in v1.2.0)
-> Last updated: 2026-05-09
+> Last updated: 2026-05-23
 
 This document is the design reference for the Sync Filters feature — the UI for excluding files and folders from sync requested in issue #1 by @vitaly74. It captures the rationale behind the layout, preset catalog, migration path, and multi-vault behavior; refer to it when extending or modifying the feature.
 
@@ -116,18 +116,30 @@ The Recommended set is also auto-applied silently when a new folder is added (so
 
 ## 6. Conflict → Ignore
 
-In `ConflictDiffView`, a new toolbar menu appears (top-right `⋯`):
+In `ConflictDiffView`, a toolbar menu appears (top-right `⋯`):
 
-```
+```text
 ⋯ menu
 └─ Always skip on this iPhone
 ```
 
-Tapping it adds the conflict's *exact relative path* to the folder's ignore list. Then a confirmation alert:
+Tapping it performs a **Skip Family** action (added in v1.3.2, see issue [#8](https://github.com/psimaker/vaultsync/issues/8)):
 
-> "`'.obsidian/plugins/dataview/cache.db'` will no longer sync to this iPhone. You can undo this in Sync Filters."
+1. Writes a *pair* of patterns to `.stignore`: the file's exact relative path and a matching `<path>.sync-conflict-*` glob.
+2. Deletes any sync-conflict copies of that file currently on disk.
+3. Rescans the folder and refreshes the conflict cache so the conflict disappears from the home-screen Sync Issues list immediately.
 
-Reasoning behind exact-path (not smart-glob): predictable. The user knows exactly what they ignored. If they later want to widen to `*.cache.db` or `.obsidian/plugins/dataview/*`, they can do that in the editor.
+Confirmation alert:
+
+> "`'.obsidian/plugins/dataview/cache.db'` and its conflict copies will no longer sync to this iPhone. You can undo this in Sync Filters."
+
+If existing conflict copies were removed, a second line is appended:
+
+> "2 existing conflict copies were removed."
+
+Reasoning behind the family approach: the v1.2.0 design used an exact-path pattern for predictability, but that left a hole — a fresh `sync-conflict-…` copy with a new timestamp would arrive from the desktop and the conflict reappeared. Pairing the original path with the conflict-copy glob makes "skip" actually mean skip, without sacrificing predictability: the two `.stignore` lines are still plain, no smart-glob heuristics, no hidden state. In the Sync Filters list the pair is presented as a single row with a `+ conflict copies` caption.
+
+The original file itself is **not** deleted from disk — only the conflict-copy variants. Users who later want to revert can swipe-to-delete the row in Sync Filters; both lines are removed atomically.
 
 ## 6.5 Multi-vault setups
 

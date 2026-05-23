@@ -327,6 +327,9 @@
 "Syncing" = "Synchronisiert";
 "Syncing Vault" = "Vault wird synchronisiert";
 "Syncing…" = "Synchronisiert…";
+"Reconnecting…" = "Verbinde…";
+"Restoring connection to 1 device" = "Verbindung zu 1 Gerät wird wiederhergestellt";
+"Restoring connection to %d devices" = "Verbindung zu %d Geräten wird wiederhergestellt";
 "Syncthing engine started" = "Syncthing-Engine gestartet";
 "Syncthing is scanning local changes." = "Syncthing scannt lokale Änderungen.";
 "Syncthing no longer has this folder configured." = "Syncthing hat diesen Ordner nicht mehr konfiguriert.";
@@ -476,6 +479,10 @@
 "More actions" = "Weitere Aktionen";
 "Skipping enabled" = "Überspringen aktiviert";
 "'%@' will no longer sync to this iPhone. You can undo this in Sync Filters." = "„%@“ wird nicht mehr auf dieses iPhone synchronisiert. Du kannst das in den Sync-Filtern rückgängig machen.";
+"'%@' and its conflict copies will no longer sync to this iPhone. You can undo this in Sync Filters." = "„%@“ und seine Konflikt-Kopien werden nicht mehr auf dieses iPhone synchronisiert. Du kannst das in den Sync-Filtern rückgängig machen.";
+"1 existing conflict copy was removed." = "1 vorhandene Konflikt-Kopie wurde entfernt.";
+"%d existing conflict copies were removed." = "%d vorhandene Konflikt-Kopien wurden entfernt.";
+"+ conflict copies" = "+ Konflikt-Kopien";
 "Could not add filter" = "Filter konnte nicht hinzugefügt werden";
 "Could not save filters" = "Filter konnten nicht gespeichert werden";
 "Could not read current sync filters. Please try again." = "Aktuelle Sync-Filter konnten nicht gelesen werden. Bitte erneut versuchen.";

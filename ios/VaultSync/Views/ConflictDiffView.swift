@@ -23,6 +23,7 @@ struct ConflictDiffView: View {
 
     // Always-skip flow
     @State private var showSkipConfirmation = false
+    @State private var skipRemovedCount: Int = 0
     @State private var skipErrorMessage: String?
     @State private var showSkipError = false
 
@@ -178,10 +179,22 @@ struct ConflictDiffView: View {
             Text(resultSummaryMessage)
         }
         .alert(L10n.tr("Skipping enabled"), isPresented: $showSkipConfirmation) {
-            Button("OK") { showSkipConfirmation = false }
+            Button("OK") {
+                showSkipConfirmation = false
+                dismiss()
+            }
         } message: {
-            Text(L10n.fmt("'%@' will no longer sync to this iPhone. You can undo this in Sync Filters.",
-                          conflict.originalPath))
+            let base = L10n.fmt(
+                "'%@' and its conflict copies will no longer sync to this iPhone. You can undo this in Sync Filters.",
+                conflict.originalPath
+            )
+            if skipRemovedCount == 1 {
+                Text(base + "\n\n" + L10n.tr("1 existing conflict copy was removed."))
+            } else if skipRemovedCount > 1 {
+                Text(base + "\n\n" + L10n.fmt("%d existing conflict copies were removed.", skipRemovedCount))
+            } else {
+                Text(base)
+            }
         }
         .alert(L10n.tr("Could not add filter"), isPresented: $showSkipError) {
             Button("OK") { showSkipError = false }
@@ -194,12 +207,28 @@ struct ConflictDiffView: View {
     }
 
     private func skipThisFile() {
-        if let err = syncthingManager.addIgnorePattern(conflict.originalPath, folderID: folderID) {
-            skipErrorMessage = err.message
-            showSkipError = true
-            return
+        // Wrap the call in a Task so the button handler returns immediately
+        // and SwiftUI can dispatch any UI updates (alert presentation, view
+        // dismiss) cleanly. The work itself still runs on the main actor —
+        // skipFileAndCleanupConflicts is @MainActor-isolated because it
+        // reads/writes SyncthingManager state — so this does not yet move
+        // the file I/O off the main thread. A fuller move to a background
+        // executor would require splitting the bridge cleanup, rescan, and
+        // refresh paths into nonisolated entry points, which is a separate
+        // refactor.
+        Task { @MainActor in
+            let (err, removed) = syncthingManager.skipFileAndCleanupConflicts(
+                folderID: folderID,
+                originalPath: conflict.originalPath
+            )
+            if let err {
+                skipErrorMessage = err.message
+                showSkipError = true
+                return
+            }
+            skipRemovedCount = removed
+            showSkipConfirmation = true
         }
-        showSkipConfirmation = true
     }
 
     private func fileSection(title: String, icon: String, content: String) -> some View {

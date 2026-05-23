@@ -4,6 +4,15 @@ All notable changes to VaultSync are documented here.
 
 ---
 
+## [1.3.2] — 2026-05-23
+
+### Fixed
+
+- **Skip on iPhone now actually skips returning conflicts** ([#8](https://github.com/psimaker/vaultsync/issues/8)) — Tapping "Always skip on this iPhone" in the conflict resolver previously added only the original file's path to `.stignore`, so a fresh `sync-conflict-…` copy with a new timestamp would arrive from the desktop and the conflict reappeared. The Skip flow now also writes a `<path>.sync-conflict-*` glob, deletes any conflict copies of the file already sitting in the vault, and rescans so the conflict disappears from the Sync Issues list immediately. The Sync Filters → Custom Patterns list groups the pair as a single row with a "+ conflict copies" caption.
+- **"Reconnecting…" replaces the transient "device disconnected" warning** — When VaultSync resumes after the app has been away from the foreground for a while, the home screen no longer briefly flashes a "1 Required Device Is Disconnected" warning while the embedded Syncthing process is still rebuilding its connection. Instead, the sync status reads "Reconnecting…" with a calm system spinner for up to 30 seconds. If the peer is genuinely offline beyond that window, the existing warning surfaces normally.
+
+---
+
 ## [1.3.1] — 2026-05-17
 
 ### Fixed

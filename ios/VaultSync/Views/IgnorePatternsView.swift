@@ -77,8 +77,16 @@ struct IgnorePatternsView: View {
 
     private var customSection: some View {
         Section(header: Text(L10n.tr("Custom patterns"))) {
-            ForEach(customPatterns, id: \.self) { pattern in
-                Text(pattern).font(.system(.body, design: .monospaced))
+            ForEach(customEntries, id: \.self) { entry in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(entry.original)
+                        .font(.system(.body, design: .monospaced))
+                    if entry.hasConflictGlob {
+                        Text(L10n.tr("+ conflict copies"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
             .onDelete(perform: deleteCustom)
 
@@ -101,11 +109,12 @@ struct IgnorePatternsView: View {
 
     // MARK: - Derived state
 
-    private var customPatterns: [String] {
+    private var customEntries: [SkipFamilyEntry] {
         let presetPatterns = Set(IgnorePreset.all.flatMap(\.patterns))
-        return ignoredPatterns
+        let lines = ignoredPatterns
             .filter { !presetPatterns.contains($0) }
             .sorted()
+        return SkipFamilyGrouping.group(customLines: lines)
     }
 
     private func isActive(_ preset: IgnorePreset) -> Bool {
@@ -177,13 +186,14 @@ struct IgnorePatternsView: View {
     }
 
     private func deleteCustom(at offsets: IndexSet) {
-        let visible = customPatterns
-        let toRemove = offsets.compactMap { index -> String? in
-            guard index < visible.count else { return nil }
-            return visible[index]
+        let visible = customEntries
+        let toRemoveLines: [String] = offsets.flatMap { index -> [String] in
+            guard index < visible.count else { return [] }
+            return visible[index].underlyingLines
         }
+        let toRemoveSet = Set(toRemoveLines)
         var next = Array(ignoredPatterns)
-        next.removeAll { toRemove.contains($0) }
+        next.removeAll { toRemoveSet.contains($0) }
         if let err = syncthingManager.setIgnorePatterns(folderID: folderID, patterns: next) {
             alertMessage = err.message
             return

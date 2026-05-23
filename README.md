@@ -99,13 +99,9 @@ VaultSync is also not a magic always-on Syncthing daemon for iOS. Apple’s back
 
 ---
 
-## What’s New — v1.3.1
+## What’s New — v1.3.2
 
-> **Conflict button no longer also opens the browser** — Tapping "Resolve Conflicts" on the home screen now just opens the conflict list, instead of also launching Safari at the same time.
->
-> **Cleaner home screen and settings** — The "VaultSync" page title is gone, devices show just their name, and Settings no longer surfaces per-device rows for relay peers that are already provisioned.
->
-> **German and Simplified Chinese fixes** — The Sync Issues titles ("1 Konflikt muss gelöst werden", "1 个冲突待解决", …) are now translated instead of falling back to English.
+> **Skip on iPhone now actually skips returning conflicts** — Tapping "Always skip on this iPhone" in the conflict resolver previously added only the original file's path to the ignore list, so a fresh sync-conflict copy with a new timestamp would arrive from the desktop and the conflict reappeared. Skip now also covers future conflict copies of the same file, removes any existing copies on disk, and groups the pair as a single row in Sync Filters.
 
 See [CHANGELOG.md](CHANGELOG.md) for full details.
 
