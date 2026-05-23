@@ -327,6 +327,9 @@
 "Syncing" = "Synchronisiert";
 "Syncing Vault" = "Vault wird synchronisiert";
 "Syncing…" = "Synchronisiert…";
+"Reconnecting…" = "Verbinde…";
+"Restoring connection to 1 device" = "Verbindung zu 1 Gerät wird wiederhergestellt";
+"Restoring connection to %d devices" = "Verbindung zu %d Geräten wird wiederhergestellt";
 "Syncthing engine started" = "Syncthing-Engine gestartet";
 "Syncthing is scanning local changes." = "Syncthing scannt lokale Änderungen.";
 "Syncthing no longer has this folder configured." = "Syncthing hat diesen Ordner nicht mehr konfiguriert.";

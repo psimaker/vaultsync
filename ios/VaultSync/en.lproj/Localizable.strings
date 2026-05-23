@@ -328,6 +328,9 @@
 "Syncing" = "Syncing";
 "Syncing Vault" = "Syncing Vault";
 "Syncing…" = "Syncing…";
+"Reconnecting…" = "Reconnecting…";
+"Restoring connection to 1 device" = "Restoring connection to 1 device";
+"Restoring connection to %d devices" = "Restoring connection to %d devices";
 "Syncthing engine started" = "Syncthing engine started";
 "Syncthing is scanning local changes." = "Syncthing is scanning local changes.";
 "Syncthing no longer has this folder configured." = "Syncthing no longer has this folder configured.";
