@@ -1652,4 +1652,40 @@ final class SyncthingManager {
         }
         return "\(parent)/\(glob)"
     }
+
+    /// Perform the full "Always skip on this iPhone" action atomically:
+    ///   1. Add both the original-path pattern and its conflict-copies glob to `.stignore`.
+    ///   2. Remove every existing sync-conflict copy of the original file from disk.
+    ///   3. Trigger a folder rescan so Syncthing's in-memory index reflects the changes.
+    ///   4. Refresh the iOS-side conflict cache so the resolved conflict disappears.
+    /// Returns:
+    ///   - `error`: a user-facing error if the `.stignore` write failed; otherwise nil.
+    ///   - `removedConflicts`: the number of on-disk conflict-copy files that were deleted.
+    @discardableResult
+    func skipFileAndCleanupConflicts(folderID: String, originalPath: String) -> (error: SyncUserError?, removedConflicts: Int) {
+        let glob = Self.conflictGlob(forOriginalPath: originalPath)
+
+        guard var current = readIgnorePatternsOrNil(folderID: folderID) else {
+            return (unreadableFiltersError(), 0)
+        }
+        if !current.contains(originalPath) {
+            current.append(originalPath)
+        }
+        if !current.contains(glob) {
+            current.append(glob)
+        }
+        if let err = setIgnorePatterns(folderID: folderID, patterns: current) {
+            return (err, 0)
+        }
+
+        let (removed, _) = SyncBridgeService.removeConflictFilesForOriginal(
+            folderID: folderID,
+            originalPath: originalPath
+        )
+
+        _ = SyncBridgeService.rescanFolder(folderID: folderID)
+        refreshConflicts()
+
+        return (nil, removed)
+    }
 }
