@@ -118,7 +118,7 @@ The Recommended set is also auto-applied silently when a new folder is added (so
 
 In `ConflictDiffView`, a toolbar menu appears (top-right `⋯`):
 
-```
+```text
 ⋯ menu
 └─ Always skip on this iPhone
 ```
