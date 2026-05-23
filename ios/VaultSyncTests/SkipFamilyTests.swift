@@ -101,4 +101,38 @@ final class SkipFamilyTests: XCTestCase {
         let entry = SkipFamilyEntry(original: "*.tmp", hasConflictGlob: false)
         XCTAssertEqual(entry.underlyingLines, ["*.tmp"])
     }
+
+    // MARK: - Wildcard / directory rule guard
+
+    func test_pairing_ignoresWildcardOriginal() {
+        // "*.tmp" looks like a wildcard rule — even if "*.sync-conflict-*"
+        // happens to coexist as a manual entry, they must NOT be paired.
+        let lines = ["*.tmp", "*.sync-conflict-*"]
+        let result = SkipFamilyGrouping.group(customLines: lines).sorted { $0.original < $1.original }
+        XCTAssertEqual(result.count, 2)
+        XCTAssertEqual(result[0].original, "*.sync-conflict-*")
+        XCTAssertFalse(result[0].hasConflictGlob)
+        XCTAssertEqual(result[1].original, "*.tmp")
+        XCTAssertFalse(result[1].hasConflictGlob)
+    }
+
+    func test_pairing_ignoresDirectoryOriginal() {
+        // "drafts/" is a directory rule with trailing slash — even if its
+        // derived conflict glob coincidentally exists, no pairing.
+        let lines = ["drafts/", "drafts.sync-conflict-*"]
+        let result = SkipFamilyGrouping.group(customLines: lines).sorted { $0.original < $1.original }
+        XCTAssertEqual(result.count, 2)
+        XCTAssertEqual(result[0].original, "drafts.sync-conflict-*")
+        XCTAssertFalse(result[0].hasConflictGlob)
+        XCTAssertEqual(result[1].original, "drafts/")
+        XCTAssertFalse(result[1].hasConflictGlob)
+    }
+
+    func test_pairing_ignoresQuestionMarkOriginal() {
+        // "?" character — common glob metacharacter — disqualifies pairing.
+        let lines = ["note?.md", "note?.sync-conflict-*"]
+        let result = SkipFamilyGrouping.group(customLines: lines).sorted { $0.original < $1.original }
+        XCTAssertEqual(result.count, 2)
+        XCTAssertTrue(result.allSatisfy { !$0.hasConflictGlob })
+    }
 }

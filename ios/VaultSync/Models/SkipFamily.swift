@@ -23,16 +23,30 @@ struct SkipFamilyEntry: Hashable {
 }
 
 enum SkipFamilyGrouping {
+    /// Returns true iff `line` looks like a concrete file path that the Skip
+    /// flow could plausibly have written. Excludes wildcard patterns (`*`,
+    /// `?`, `[…]`, `{…}`, `!`) and directory rules (trailing `/`). Used to
+    /// avoid spurious pairing of custom user patterns whose derived conflict
+    /// glob happens to match another entry by coincidence.
+    private static func isConcreteFilePathPattern(_ line: String) -> Bool {
+        if line.hasSuffix("/") { return false }
+        let glob = CharacterSet(charactersIn: "*?[]{}!")
+        return line.rangeOfCharacter(from: glob) == nil
+    }
+
     /// Group raw `.stignore` custom-section lines into Skip-Family entries.
     /// A line `X` is paired with `<dir>/<stem>.sync-conflict-*` if both exist
-    /// in the input. Orphan conflict globs render as their own singleton row.
+    /// in the input AND `X` is a concrete file path (no wildcards, no
+    /// trailing slash). Orphan conflict globs render as their own singleton
+    /// row.
     static func group(customLines: [String]) -> [SkipFamilyEntry] {
         let lineSet = Set(customLines)
-        // Pre-pass: any line that is the conflict-glob of some OTHER line in
-        // the input is "owned" by that original — skip it during emission so
-        // the pair is detected regardless of order.
+        // Pre-pass: any line that is the conflict-glob of some OTHER concrete
+        // file path in the input is "owned" by that original — skip it
+        // during emission so the pair is detected regardless of order.
         var pairedGlobs = Set<String>()
         for line in customLines {
+            guard isConcreteFilePathPattern(line) else { continue }
             let glob = SyncthingManager.conflictGlob(forOriginalPath: line)
             if line != glob, lineSet.contains(glob) {
                 pairedGlobs.insert(glob)
@@ -47,7 +61,10 @@ enum SkipFamilyGrouping {
             // emitted via that original — never as its own row.
             if pairedGlobs.contains(line) { continue }
             let glob = SyncthingManager.conflictGlob(forOriginalPath: line)
-            if line != glob, lineSet.contains(glob), !consumed.contains(glob) {
+            if isConcreteFilePathPattern(line),
+               line != glob,
+               lineSet.contains(glob),
+               !consumed.contains(glob) {
                 result.append(SkipFamilyEntry(original: line, hasConflictGlob: true))
                 consumed.insert(line)
                 consumed.insert(glob)
