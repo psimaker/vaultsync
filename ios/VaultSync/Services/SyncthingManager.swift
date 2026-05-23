@@ -43,6 +43,23 @@ final class SyncthingManager {
     private(set) var isRunning = false
     private(set) var deviceID = ""
     private(set) var devices: [DeviceInfo] = []
+
+    /// First-observed-disconnect timestamp per device ID. Only required
+    /// devices appear here. Mutated by `applyDeviceList(_:)`.
+    private var disconnectedSince: [String: Date] = [:]
+
+    /// Length of the reconnecting grace period. After this many seconds a
+    /// disconnected required device migrates from `reconnectingRequiredDeviceIDs`
+    /// to `disconnectedRequiredDeviceIDs` and surfaces as a real warning.
+    static let reconnectGracePeriod: TimeInterval = 30
+
+    /// Clock source for the grace-period calculation. Production code uses
+    /// the default `{ Date() }`; tests inject a controllable clock via
+    /// direct assignment. Intentionally exposed in release builds — this is
+    /// a standard clock-injection seam and the production default is a
+    /// no-op wrapper over `Date.init()`.
+    var now: () -> Date = { Date() }
+
     private(set) var folders: [FolderInfo] = []
     private(set) var folderStatuses: [String: FolderStatusInfo] = [:]
     private(set) var conflictFiles: [String: [ConflictInfo]] = [:]
@@ -289,16 +306,30 @@ final class SyncthingManager {
             .sorted()
     }
 
-    var disconnectedRequiredDeviceIDs: [String] {
+    /// Required devices whose disconnect started within the last grace period.
+    /// Surfaced as a calm "Reconnecting…" dashboard state, not a warning.
+    var reconnectingRequiredDeviceIDs: [String] {
+        let cutoff = now().addingTimeInterval(-Self.reconnectGracePeriod)
         let required = Set(folders.flatMap(\.deviceIDs))
-        guard !required.isEmpty else { return [] }
-        let disconnectedKnown = Set(
-            devices
-                .filter { required.contains($0.deviceID) && !$0.connected }
-                .map(\.deviceID)
-        )
+        return disconnectedSince
+            .filter { $0.value > cutoff && required.contains($0.key) }
+            .map(\.key)
+            .sorted()
+    }
+
+    /// Required devices that have been disconnected for longer than the grace
+    /// period, plus any required device that has never appeared in the device
+    /// list at all (e.g. peer removed from config but still listed on a folder).
+    var disconnectedRequiredDeviceIDs: [String] {
+        let cutoff = now().addingTimeInterval(-Self.reconnectGracePeriod)
+        let required = Set(folders.flatMap(\.deviceIDs))
+        let stale = disconnectedSince
+            .filter { $0.value <= cutoff && required.contains($0.key) }
+            .map(\.key)
+
         let unresolvedUnknown = required.subtracting(Set(devices.map(\.deviceID)))
-        return Array(disconnectedKnown.union(unresolvedUnknown)).sorted()
+
+        return Array(Set(stale).union(unresolvedUnknown)).sorted()
     }
 
     var unresolvedConflictCount: Int {
@@ -461,6 +492,7 @@ final class SyncthingManager {
         isRunning = false
         deviceID = ""
         devices = []
+        disconnectedSince.removeAll()
         folders = []
         folderStatuses = [:]
         conflictFiles = [:]
@@ -636,6 +668,7 @@ final class SyncthingManager {
         isRunning = false
         deviceID = ""
         devices = []
+        disconnectedSince.removeAll()
         folders = []
         folderStatuses = [:]
         conflictFiles = [:]
@@ -705,13 +738,15 @@ final class SyncthingManager {
         }.value
 
         // Decode on main — lightweight after the bridge calls are done.
-        if let data = snapshot.0.data(using: .utf8),
-           let decoded = try? JSONDecoder().decode([DeviceInfo].self, from: data) {
-            devices = decoded
-        }
+        // Folders must be applied before devices so applyDeviceList sees the
+        // current required-device set when reconciling disconnectedSince.
         if let data = snapshot.1.data(using: .utf8),
            let decoded = try? JSONDecoder().decode([FolderInfo].self, from: data) {
             folders = decoded
+        }
+        if let data = snapshot.0.data(using: .utf8),
+           let decoded = try? JSONDecoder().decode([DeviceInfo].self, from: data) {
+            applyDeviceList(decoded)
         }
 
         // One-time check: apply default .stignore patterns for existing folders.
@@ -846,13 +881,40 @@ final class SyncthingManager {
         )
     }
 
+    /// Apply a new device list AND update the disconnected-since tracking
+    /// dictionary. Single entry point for both `pollBridgeState` and
+    /// `refreshDevices` so the timestamp accounting can't drift.
+    private func applyDeviceList(_ newDevices: [DeviceInfo]) {
+        devices = newDevices
+
+        let required = Set(folders.flatMap(\.deviceIDs))
+        let nowDate = now()
+
+        // Insert timestamps for newly-disconnected required devices; clear
+        // them for devices that are connected or no longer required.
+        for d in newDevices {
+            if required.contains(d.deviceID) && !d.connected {
+                if disconnectedSince[d.deviceID] == nil {
+                    disconnectedSince[d.deviceID] = nowDate
+                }
+            } else {
+                disconnectedSince.removeValue(forKey: d.deviceID)
+            }
+        }
+
+        // Drop entries for device IDs no longer present in the device list
+        // (peer removed from config). Otherwise the dictionary leaks.
+        let presentIDs = Set(newDevices.map(\.deviceID))
+        disconnectedSince = disconnectedSince.filter { presentIDs.contains($0.key) }
+    }
+
     private func refreshDevices() {
         let json = SyncBridgeService.getDevicesJSON()
         guard let data = json.data(using: .utf8),
               let decoded = try? JSONDecoder().decode([DeviceInfo].self, from: data) else {
             return
         }
-        devices = decoded
+        applyDeviceList(decoded)
     }
 
     private func refreshFolders() {
@@ -1688,4 +1750,16 @@ final class SyncthingManager {
 
         return (nil, removed)
     }
+
+    // MARK: - Test hooks
+
+    #if DEBUG
+    func _testApplyDeviceList(_ newDevices: [DeviceInfo]) {
+        applyDeviceList(newDevices)
+    }
+
+    func _testSetFolders(_ newFolders: [FolderInfo]) {
+        folders = newFolders
+    }
+    #endif
 }
