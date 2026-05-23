@@ -341,3 +341,172 @@ func TestRenameDevice(t *testing.T) {
 		t.Errorf("rename when stopped = %q, want 'syncthing not running'", errMsg)
 	}
 }
+
+func TestRemoveConflictFilesForOriginal(t *testing.T) {
+	configDir := testConfigDir(t)
+
+	if errMsg := StartSyncthing(configDir); errMsg != "" {
+		t.Fatalf("StartSyncthing() failed: %s", errMsg)
+	}
+	defer StopSyncthing()
+
+	folderPath := filepath.Join(configDir, "skipfamily")
+	if errMsg := AddFolder("skipfamily", "Skip Family", folderPath); errMsg != "" {
+		t.Fatalf("AddFolder failed: %s", errMsg)
+	}
+
+	// Root-level original + two conflict copies (different timestamps/devices).
+	if err := os.WriteFile(filepath.Join(folderPath, "notes.md"), []byte("original"), 0o644); err != nil {
+		t.Fatalf("write notes.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(folderPath, "notes.sync-conflict-20260520-120000-AAA1111.md"), []byte("c1"), 0o644); err != nil {
+		t.Fatalf("write notes conflict c1: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(folderPath, "notes.sync-conflict-20260521-130000-BBB2222.md"), []byte("c2"), 0o644); err != nil {
+		t.Fatalf("write notes conflict c2: %v", err)
+	}
+
+	// Unrelated file that must not be touched.
+	if err := os.WriteFile(filepath.Join(folderPath, "other.md"), []byte("other"), 0o644); err != nil {
+		t.Fatalf("write other.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(folderPath, "other.sync-conflict-20260520-120000-CCC3333.md"), []byte("o1"), 0o644); err != nil {
+		t.Fatalf("write other conflict: %v", err)
+	}
+
+	// Nested original + nested conflict.
+	subDir := filepath.Join(folderPath, "Personal")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatalf("mkdir subDir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(subDir, "diary.md"), []byte("d"), 0o644); err != nil {
+		t.Fatalf("write diary.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(subDir, "diary.sync-conflict-20260520-120000-DDD4444.md"), []byte("d1"), 0o644); err != nil {
+		t.Fatalf("write diary conflict: %v", err)
+	}
+
+	// Remove conflict copies for "notes.md" only.
+	got := RemoveConflictFilesForOriginal("skipfamily", "notes.md")
+	var result struct {
+		Removed int    `json:"removed"`
+		Error   string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(got), &result); err != nil {
+		t.Fatalf("unmarshal: %v (raw: %s)", err, got)
+	}
+	if result.Error != "" {
+		t.Fatalf("unexpected error: %s", result.Error)
+	}
+	if result.Removed != 2 {
+		t.Errorf("removed = %d, want 2", result.Removed)
+	}
+
+	// Original "notes.md" must survive.
+	if _, err := os.Stat(filepath.Join(folderPath, "notes.md")); err != nil {
+		t.Errorf("notes.md should still exist: %v", err)
+	}
+
+	// Both notes conflict copies must be gone.
+	for _, name := range []string{
+		"notes.sync-conflict-20260520-120000-AAA1111.md",
+		"notes.sync-conflict-20260521-130000-BBB2222.md",
+	} {
+		if _, err := os.Stat(filepath.Join(folderPath, name)); !os.IsNotExist(err) {
+			t.Errorf("%s should have been deleted", name)
+		}
+	}
+
+	// Unrelated "other.*" files must survive.
+	if _, err := os.Stat(filepath.Join(folderPath, "other.md")); err != nil {
+		t.Errorf("other.md should still exist: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(folderPath, "other.sync-conflict-20260520-120000-CCC3333.md")); err != nil {
+		t.Errorf("other.sync-conflict-* should still exist: %v", err)
+	}
+
+	// Nested originals and their conflicts in another directory must survive
+	// when we ask for the root file only.
+	if _, err := os.Stat(filepath.Join(subDir, "diary.sync-conflict-20260520-120000-DDD4444.md")); err != nil {
+		t.Errorf("nested conflict should still exist: %v", err)
+	}
+
+	// Now ask for nested "Personal/diary.md" and verify only the nested copy goes.
+	got = RemoveConflictFilesForOriginal("skipfamily", filepath.Join("Personal", "diary.md"))
+	if err := json.Unmarshal([]byte(got), &result); err != nil {
+		t.Fatalf("unmarshal nested: %v (raw: %s)", err, got)
+	}
+	if result.Removed != 1 || result.Error != "" {
+		t.Errorf("nested call result = %+v, want removed=1 error=\"\"", result)
+	}
+
+	// Dotted-stem regression: archive.tar.gz must match its own conflict copy
+	// but not a sibling that happens to share the inner stem.
+	if err := os.WriteFile(filepath.Join(folderPath, "archive.tar.gz"), []byte("a"), 0o644); err != nil {
+		t.Fatalf("write archive.tar.gz: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(folderPath, "archive.tar.sync-conflict-20260520-120000-EEE5555.gz"), []byte("ac"), 0o644); err != nil {
+		t.Fatalf("write archive conflict copy: %v", err)
+	}
+	// Same inner stem but different extension — must NOT match.
+	if err := os.WriteFile(filepath.Join(folderPath, "archive.tar.sync-conflict-20260520-120000-FFF6666.md"), []byte("decoy"), 0o644); err != nil {
+		t.Fatalf("write decoy: %v", err)
+	}
+
+	got = RemoveConflictFilesForOriginal("skipfamily", "archive.tar.gz")
+	if err := json.Unmarshal([]byte(got), &result); err != nil {
+		t.Fatalf("unmarshal dotted: %v (raw: %s)", err, got)
+	}
+	if result.Removed != 1 || result.Error != "" {
+		t.Errorf("dotted-stem call result = %+v, want removed=1 error=\"\"", result)
+	}
+	if _, err := os.Stat(filepath.Join(folderPath, "archive.tar.sync-conflict-20260520-120000-EEE5555.gz")); !os.IsNotExist(err) {
+		t.Error("archive.tar.gz conflict copy should have been deleted")
+	}
+	if _, err := os.Stat(filepath.Join(folderPath, "archive.tar.sync-conflict-20260520-120000-FFF6666.md")); err != nil {
+		t.Errorf("decoy with different extension should still exist: %v", err)
+	}
+
+	// Idempotency: running again returns removed=0, no error.
+	got = RemoveConflictFilesForOriginal("skipfamily", "notes.md")
+	if err := json.Unmarshal([]byte(got), &result); err != nil {
+		t.Fatalf("unmarshal idempotent: %v (raw: %s)", err, got)
+	}
+	if result.Removed != 0 || result.Error != "" {
+		t.Errorf("idempotent call = %+v, want removed=0 error=\"\"", result)
+	}
+}
+
+func TestRemoveConflictFilesForOriginalErrors(t *testing.T) {
+	configDir := testConfigDir(t)
+
+	if errMsg := StartSyncthing(configDir); errMsg != "" {
+		t.Fatalf("StartSyncthing() failed: %s", errMsg)
+	}
+	defer StopSyncthing()
+
+	folderPath := filepath.Join(configDir, "skipfamilyerr")
+	if errMsg := AddFolder("skipfamilyerr", "Skip Family Err", folderPath); errMsg != "" {
+		t.Fatalf("AddFolder failed: %s", errMsg)
+	}
+
+	// Unknown folder.
+	got := RemoveConflictFilesForOriginal("nonexistent", "x.md")
+	if !strings.Contains(got, `"error":"folder not found"`) {
+		t.Errorf("unknown folder result = %q, want error 'folder not found'", got)
+	}
+
+	// Path traversal.
+	got = RemoveConflictFilesForOriginal("skipfamilyerr", "../../etc/passwd")
+	if !strings.Contains(got, `"error":"invalid path: outside folder root"`) {
+		t.Errorf("traversal result = %q, want invalid-path error", got)
+	}
+
+	// Empty / root-equivalent paths must be rejected (would otherwise scan outside folder root).
+	for _, rp := range []string{"", ".", "/"} {
+		got := RemoveConflictFilesForOriginal("skipfamilyerr", rp)
+		if !strings.Contains(got, `"error":"invalid path: outside folder root"`) {
+			t.Errorf("root path %q result = %q, want invalid-path error", rp, got)
+		}
+	}
+}

@@ -243,3 +243,101 @@ func ResolveConflict(folderID, conflictFileName string, keepConflict bool) strin
 
 	return ""
 }
+
+// RemoveConflictFilesForOriginal removes every sync-conflict copy of the file
+// at originalPath inside the given folder. The original file is NOT touched.
+//
+// Returns a JSON string of the form:
+//
+//	{"removed": <int>, "error": "<msg or empty>"}
+//
+// Possible error envelopes: "syncthing not running", "folder not found",
+// "invalid path: outside folder root", or "remove <name>: <err>" if an
+// individual deletion failed mid-loop.
+//
+// Symmetric with GetConflictFilesJSON's JSON-return style — keeps the gomobile
+// surface uniform (no tuple returns across the bridge).
+func RemoveConflictFilesForOriginal(folderID, originalPath string) string {
+	type result struct {
+		Removed int    `json:"removed"`
+		Error   string `json:"error"`
+	}
+	emit := func(r result) string {
+		data, err := json.Marshal(r)
+		if err != nil {
+			return `{"removed":0,"error":"marshal failed"}`
+		}
+		return string(data)
+	}
+
+	folders := getFolderConfigs()
+	if folders == nil {
+		return emit(result{Error: "syncthing not running"})
+	}
+
+	folder, exists := folders[folderID]
+	if !exists {
+		return emit(result{Error: "folder not found"})
+	}
+
+	// Validate the original path is inside the folder root.
+	absOriginal, err := safePath(folder.Path, originalPath)
+	if err != nil {
+		return emit(result{Error: "invalid path: outside folder root"})
+	}
+	// Reject paths that resolve to the folder root itself — there is no
+	// "original file" at the root, and walking its parent would scan
+	// outside the folder.
+	if absOriginal == folder.Path {
+		return emit(result{Error: "invalid path: outside folder root"})
+	}
+
+	dir := filepath.Dir(absOriginal)
+	baseName := filepath.Base(originalPath)
+	ext := filepath.Ext(baseName)
+	stem := strings.TrimSuffix(baseName, ext)
+	// Common prefix of every conflict copy of this file.
+	conflictPrefix := stem + ".sync-conflict-"
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		// If the directory does not exist there are simply no conflicts to remove.
+		if os.IsNotExist(err) {
+			return emit(result{Removed: 0})
+		}
+		return emit(result{Error: fmt.Sprintf("read dir: %v", err)})
+	}
+
+	removed := 0
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasPrefix(name, conflictPrefix) {
+			continue
+		}
+		// Must also match the canonical conflict regex so we only delete real
+		// Syncthing-generated copies, not user files that happen to share the prefix.
+		matches := conflictPattern.FindStringSubmatch(name)
+		if matches == nil {
+			continue
+		}
+		// Defensive: matched stem must equal what we expected.
+		if matches[1] != stem {
+			continue
+		}
+		// Extension on the conflict copy must equal the original's extension
+		// (handles files where stem itself contains dots).
+		if matches[4] != ext {
+			continue
+		}
+		fullPath := filepath.Join(dir, name)
+		if err := os.Remove(fullPath); err != nil {
+			return emit(result{Removed: removed, Error: fmt.Sprintf("remove %s: %v", name, err)})
+		}
+		removed++
+	}
+
+	return emit(result{Removed: removed})
+}
