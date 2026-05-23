@@ -1628,4 +1628,28 @@ final class SyncthingManager {
         shown.append(folderID)
         UserDefaults.standard.set(shown, forKey: Self.recommendationSheetShownKey)
     }
+
+    // MARK: - Skip Family
+
+    /// Returns the `.stignore` glob that matches every Syncthing conflict copy
+    /// of the given original file (relative path inside the folder).
+    /// Example: "Personal/diary.md" -> "Personal/diary.sync-conflict-*".
+    /// Files with no extension still work: "Makefile" -> "Makefile.sync-conflict-*".
+    nonisolated static func conflictGlob(forOriginalPath originalPath: String) -> String {
+        // Defensive: empty / root-equivalent inputs cannot have meaningful conflict copies.
+        // Return the input unchanged so callers (e.g. group()) treat it as a singleton.
+        let trimmed = originalPath.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty || trimmed == "." || trimmed == "/" {
+            return originalPath
+        }
+        let url = URL(fileURLWithPath: originalPath)
+        let ext = url.pathExtension
+        let stem = ext.isEmpty ? url.lastPathComponent : url.deletingPathExtension().lastPathComponent
+        let parent = url.deletingLastPathComponent().relativePath
+        let glob = "\(stem).sync-conflict-*"
+        if parent.isEmpty || parent == "." {
+            return glob
+        }
+        return "\(parent)/\(glob)"
+    }
 }
