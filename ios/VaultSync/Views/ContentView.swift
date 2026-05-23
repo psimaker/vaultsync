@@ -134,15 +134,30 @@ struct ContentView: View {
     private var dashboardSection: some View {
         Section {
             HStack(spacing: 12) {
-                Image(systemName: syncStatusIcon)
-                    .font(.title2)
-                    .foregroundStyle(syncStatusColor)
-                    .symbolEffect(.pulse, isActive: isSyncing)
-                    .accessibilityHidden(true)
+                if isReconnecting {
+                    ProgressView()
+                        .tint(teal)
+                        .frame(width: 28, height: 28)
+                        .accessibilityHidden(true)
+                } else {
+                    Image(systemName: syncStatusIcon)
+                        .font(.title2)
+                        .foregroundStyle(syncStatusColor)
+                        .symbolEffect(.pulse, isActive: isSyncing)
+                        .accessibilityHidden(true)
+                }
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(syncStatusText)
                         .font(.headline)
+                    if isReconnecting {
+                        let count = syncthingManager.reconnectingRequiredDeviceIDs.count
+                        Text(count == 1
+                             ? L10n.tr("Restoring connection to 1 device")
+                             : L10n.fmt("Restoring connection to %d devices", count))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     if let lastSync = syncthingManager.lastSyncTime {
                         Text("\(L10n.tr("Last sync:")) \(lastSync, style: .relative) \(L10n.tr("ago"))")
                             .font(.caption)
@@ -255,10 +270,15 @@ struct ContentView: View {
         syncthingManager.folderStatuses.values.contains { $0.state == "syncing" || $0.state == "scanning" }
     }
 
+    private var isReconnecting: Bool {
+        !syncthingManager.reconnectingRequiredDeviceIDs.isEmpty
+    }
+
     private var syncStatusIcon: String {
         if currentSyncError != nil { return "exclamationmark.triangle.fill" }
         if !syncthingManager.isRunning { return "arrow.triangle.2.circlepath" }
         if !foldersWithErrors.isEmpty { return "exclamationmark.circle" }
+        if isReconnecting { return "arrow.triangle.2.circlepath" }
         if isSyncing { return "arrow.triangle.2.circlepath" }
         return "checkmark.circle.fill"
     }
@@ -267,6 +287,7 @@ struct ContentView: View {
         if currentSyncError != nil { return .red }
         if !syncthingManager.isRunning { return slate.opacity(colorScheme == .dark ? 0.78 : 0.68) }
         if !foldersWithErrors.isEmpty { return .orange }
+        if isReconnecting { return teal }
         if isSyncing { return teal }
         return teal
     }
@@ -275,6 +296,7 @@ struct ContentView: View {
         if currentSyncError != nil { return L10n.tr("Error") }
         if !syncthingManager.isRunning { return L10n.tr("Starting…") }
         if !foldersWithErrors.isEmpty { return L10n.tr("Sync Issue") }
+        if isReconnecting { return L10n.tr("Reconnecting…") }
         if isSyncing { return L10n.tr("Syncing…") }
         if syncthingManager.folders.isEmpty { return L10n.tr("Ready") }
         return L10n.tr("All Synced")
