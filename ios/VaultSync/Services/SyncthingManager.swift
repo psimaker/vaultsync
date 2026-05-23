@@ -1721,7 +1721,11 @@ final class SyncthingManager {
     ///   3. Trigger a folder rescan so Syncthing's in-memory index reflects the changes.
     ///   4. Refresh the iOS-side conflict cache so the resolved conflict disappears.
     /// Returns:
-    ///   - `error`: a user-facing error if the `.stignore` write failed; otherwise nil.
+    ///   - `error`: a user-facing error if ANY step failed (`.stignore` write,
+    ///     conflict-copy cleanup, or rescan). The `.stignore` write may have
+    ///     succeeded even when a later step reported an error — check
+    ///     `removedConflicts` to see how many copies were actually deleted
+    ///     before the failure.
     ///   - `removedConflicts`: the number of on-disk conflict-copy files that were deleted.
     @discardableResult
     func skipFileAndCleanupConflicts(folderID: String, originalPath: String) -> (error: SyncUserError?, removedConflicts: Int) {
@@ -1740,15 +1744,26 @@ final class SyncthingManager {
             return (err, 0)
         }
 
-        let (removed, _) = SyncBridgeService.removeConflictFilesForOriginal(
+        let cleanup = SyncBridgeService.removeConflictFilesForOriginal(
             folderID: folderID,
             originalPath: originalPath
         )
+        if let cleanupError = cleanup.error {
+            // .stignore write succeeded but on-disk cleanup didn't.
+            // Surface the failure so the user knows the leftover copies
+            // haven't been removed and the home-screen Sync Issues entry
+            // may still flag the file.
+            refreshConflicts()
+            return (SyncUserError.from(rawMessage: cleanupError), cleanup.removed)
+        }
 
-        _ = SyncBridgeService.rescanFolder(folderID: folderID)
+        if let rescanError = SyncBridgeService.rescanFolder(folderID: folderID) {
+            refreshConflicts()
+            return (SyncUserError.from(rawMessage: rescanError), cleanup.removed)
+        }
         refreshConflicts()
 
-        return (nil, removed)
+        return (nil, cleanup.removed)
     }
 
     // MARK: - Test hooks
