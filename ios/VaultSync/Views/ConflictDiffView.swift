@@ -188,7 +188,9 @@ struct ConflictDiffView: View {
                 "'%@' and its conflict copies will no longer sync to this iPhone. You can undo this in Sync Filters.",
                 conflict.originalPath
             )
-            if skipRemovedCount > 0 {
+            if skipRemovedCount == 1 {
+                Text(base + "\n\n" + L10n.tr("1 existing conflict copy was removed."))
+            } else if skipRemovedCount > 1 {
                 Text(base + "\n\n" + L10n.fmt("%d existing conflict copies were removed.", skipRemovedCount))
             } else {
                 Text(base)

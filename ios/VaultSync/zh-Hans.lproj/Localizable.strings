@@ -476,6 +476,10 @@
 "More actions" = "更多操作";
 "Skipping enabled" = "跳过已启用";
 "'%@' will no longer sync to this iPhone. You can undo this in Sync Filters." = "「%@」将不再同步到此 iPhone。你可以在同步过滤器中撤销。";
+"'%@' and its conflict copies will no longer sync to this iPhone. You can undo this in Sync Filters." = "「%@」及其冲突副本将不再同步到此 iPhone。你可以在同步过滤器中撤销。";
+"1 existing conflict copy was removed." = "已移除 1 个现有冲突副本。";
+"%d existing conflict copies were removed." = "已移除 %d 个现有冲突副本。";
+"+ conflict copies" = "+ 冲突副本";
 "Could not add filter" = "无法添加过滤器";
 "Could not save filters" = "无法保存过滤器";
 "Could not read current sync filters. Please try again." = "无法读取当前同步过滤器。请重试。";

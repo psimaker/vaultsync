@@ -477,6 +477,10 @@
 "More actions" = "More actions";
 "Skipping enabled" = "Skipping enabled";
 "'%@' will no longer sync to this iPhone. You can undo this in Sync Filters." = "'%@' will no longer sync to this iPhone. You can undo this in Sync Filters.";
+"'%@' and its conflict copies will no longer sync to this iPhone. You can undo this in Sync Filters." = "'%@' and its conflict copies will no longer sync to this iPhone. You can undo this in Sync Filters.";
+"1 existing conflict copy was removed." = "1 existing conflict copy was removed.";
+"%d existing conflict copies were removed." = "%d existing conflict copies were removed.";
+"+ conflict copies" = "+ conflict copies";
 "Could not add filter" = "Could not add filter";
 "Could not save filters" = "Could not save filters";
 "Could not read current sync filters. Please try again." = "Could not read current sync filters. Please try again.";
