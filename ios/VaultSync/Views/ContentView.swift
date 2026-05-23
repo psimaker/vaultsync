@@ -134,7 +134,7 @@ struct ContentView: View {
     private var dashboardSection: some View {
         Section {
             HStack(spacing: 12) {
-                if isReconnecting {
+                if shouldShowReconnectingUI {
                     ProgressView()
                         .tint(teal)
                         .frame(width: 28, height: 28)
@@ -150,7 +150,7 @@ struct ContentView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(syncStatusText)
                         .font(.headline)
-                    if isReconnecting {
+                    if shouldShowReconnectingUI {
                         let count = syncthingManager.reconnectingRequiredDeviceIDs.count
                         Text(count == 1
                              ? L10n.tr("Restoring connection to 1 device")
@@ -272,6 +272,18 @@ struct ContentView: View {
 
     private var isReconnecting: Bool {
         !syncthingManager.reconnectingRequiredDeviceIDs.isEmpty
+    }
+
+    /// True iff the reconnecting visuals (ProgressView spinner + caption)
+    /// should actually be shown. Mirrors the precedence cascade used by
+    /// `syncStatusText` so higher-priority states (errors, "Starting…",
+    /// folder errors) suppress the reconnecting indicator instead of
+    /// competing with it for visual hierarchy.
+    private var shouldShowReconnectingUI: Bool {
+        currentSyncError == nil
+            && syncthingManager.isRunning
+            && foldersWithErrors.isEmpty
+            && isReconnecting
     }
 
     private var syncStatusIcon: String {
