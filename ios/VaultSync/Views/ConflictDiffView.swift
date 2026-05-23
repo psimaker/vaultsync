@@ -207,17 +207,28 @@ struct ConflictDiffView: View {
     }
 
     private func skipThisFile() {
-        let (err, removed) = syncthingManager.skipFileAndCleanupConflicts(
-            folderID: folderID,
-            originalPath: conflict.originalPath
-        )
-        if let err {
-            skipErrorMessage = err.message
-            showSkipError = true
-            return
+        // Wrap the call in a Task so the button handler returns immediately
+        // and SwiftUI can dispatch any UI updates (alert presentation, view
+        // dismiss) cleanly. The work itself still runs on the main actor —
+        // skipFileAndCleanupConflicts is @MainActor-isolated because it
+        // reads/writes SyncthingManager state — so this does not yet move
+        // the file I/O off the main thread. A fuller move to a background
+        // executor would require splitting the bridge cleanup, rescan, and
+        // refresh paths into nonisolated entry points, which is a separate
+        // refactor.
+        Task { @MainActor in
+            let (err, removed) = syncthingManager.skipFileAndCleanupConflicts(
+                folderID: folderID,
+                originalPath: conflict.originalPath
+            )
+            if let err {
+                skipErrorMessage = err.message
+                showSkipError = true
+                return
+            }
+            skipRemovedCount = removed
+            showSkipConfirmation = true
         }
-        skipRemovedCount = removed
-        showSkipConfirmation = true
     }
 
     private func fileSection(title: String, icon: String, content: String) -> some View {
