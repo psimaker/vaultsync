@@ -1600,12 +1600,6 @@ final class SyncthingManager {
         return nil
     }
 
-    /// True iff every pattern in the preset is currently in the folder's `.stignore`.
-    func isPresetActive(_ preset: IgnorePreset, folderID: String) -> Bool {
-        let current = Set(ignorePatterns(folderID: folderID))
-        return preset.patterns.allSatisfy { current.contains($0) }
-    }
-
     /// Atomically add or remove a preset's patterns from `.stignore`. Aborts
     /// without writing if the current `.stignore` cannot be parsed, so an
     /// unreadable bridge response can never wipe existing rules.

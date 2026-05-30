@@ -66,8 +66,6 @@ enum APNsRegistrationStore {
     static let tokenDidChangeNotification = Notification.Name("APNsDeviceTokenDidChange")
     
     struct Snapshot: Equatable, Sendable {
-        let status: APNsRegistrationStatus
-        let failureReason: String?
         let updatedAt: Date?
         let lastSuccessAt: Date?
         let lastFailureAt: Date?
@@ -89,16 +87,7 @@ enum APNsRegistrationStore {
     
     static func snapshot() -> Snapshot {
         let defaults = UserDefaults.standard
-        let status = current()
-        let failureReason: String?
-        if case .failed(let reason) = status {
-            failureReason = reason
-        } else {
-            failureReason = nil
-        }
         return Snapshot(
-            status: status,
-            failureReason: failureReason,
             updatedAt: defaults.object(forKey: updatedAtKey) as? Date,
             lastSuccessAt: defaults.object(forKey: lastSuccessAtKey) as? Date,
             lastFailureAt: defaults.object(forKey: lastFailureAtKey) as? Date

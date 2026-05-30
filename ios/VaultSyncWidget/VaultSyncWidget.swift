@@ -64,7 +64,7 @@ private struct VaultSyncWidgetSnapshot: Codable, Equatable {
     var statusColor: Color {
         switch status {
         case "syncing":
-            return .blue
+            return .vaultTeal
         case "error":
             return .orange
         default:

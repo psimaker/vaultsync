@@ -2,7 +2,6 @@ import SwiftUI
 
 struct IgnorePatternsView: View {
     let folderID: String
-    let folderLabel: String
     let syncthingManager: SyncthingManager
 
     @State private var ignoredPatterns: Set<String> = []

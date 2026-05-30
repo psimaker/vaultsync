@@ -15,8 +15,8 @@ struct ContentView: View {
     @State private var isRescanning = false
     @State private var pendingFilterSheetFolder: SyncthingManager.FolderInfo?
 
-    private let slate = Color(red: 38 / 255, green: 50 / 255, blue: 56 / 255)
-    private let teal = Color(red: 0 / 255, green: 137 / 255, blue: 123 / 255)
+    private let slate = Color.vaultSlate
+    private let teal = Color.vaultTeal
 
     var body: some View {
         NavigationStack {
@@ -159,7 +159,7 @@ struct ContentView: View {
                             .foregroundStyle(.secondary)
                     }
                     if let lastSync = syncthingManager.lastSyncTime {
-                        Text("\(L10n.tr("Last sync:")) \(lastSync, style: .relative) \(L10n.tr("ago"))")
+                        Text("\(L10n.tr("Last sync:")) \(lastSync, style: .relative)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -551,11 +551,6 @@ struct ContentView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private func isFolderSyncing(_ status: SyncthingManager.FolderStatusInfo?) -> Bool {
-        guard let state = status?.state else { return false }
-        return state == "syncing" || state == "scanning"
-    }
-
     private func stateIcon(_ state: String) -> String {
         switch state {
         case "idle": "checkmark.circle.fill"
@@ -568,7 +563,7 @@ struct ContentView: View {
     private func stateColor(_ state: String) -> Color {
         switch state {
         case "idle": .green
-        case "scanning", "syncing": .blue
+        case "scanning", "syncing": teal
         case "error": .red
         default: .gray
         }
@@ -622,7 +617,6 @@ struct ContentView: View {
                     NavigationLink {
                         ConflictListView(
                             folderID: folder.id,
-                            conflicts: conflicts,
                             syncthingManager: syncthingManager
                         )
                     } label: {
@@ -641,7 +635,6 @@ struct ContentView: View {
                 NavigationLink {
                     IgnorePatternsView(
                         folderID: folder.id,
-                        folderLabel: folder.label.isEmpty ? folder.id : folder.label,
                         syncthingManager: syncthingManager
                     )
                 } label: {
@@ -723,7 +716,6 @@ struct ContentView: View {
         .sheet(item: $pendingFilterSheetFolder) { folder in
             SyncFilterRecommendationSheet(
                 folderID: folder.id,
-                folderLabel: folder.label.isEmpty ? folder.id : folder.label,
                 syncthingManager: syncthingManager
             )
         }
@@ -771,7 +763,7 @@ struct ContentView: View {
                                 Image(systemName: device.connected ? "checkmark.circle.fill" : "xmark.circle.fill")
                                     .foregroundStyle(device.connected ? .green : .secondary)
                                     .accessibilityHidden(true)
-                                Text(device.connected ? L10n.tr("Connected") : L10n.tr("Offline"))
+                                Text(device.connected ? L10n.tr("Connected") : L10n.tr("Disconnected"))
                                     .font(.caption2.weight(.semibold))
                                     .foregroundStyle(.secondary)
                             }

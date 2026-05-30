@@ -28,6 +28,9 @@ final class TipJarManager {
     /// calls `acknowledgeThankYou()` once it has shown its message.
     private(set) var didContribute = false
     private(set) var errorMessage: String?
+    /// Set when a purchase is deferred (e.g. an Ask to Buy awaiting approval).
+    /// Neutral status, not an error — shown so the tap is not silently dropped.
+    private(set) var pendingMessage: String?
 
     @ObservationIgnored nonisolated(unsafe) private var loadTask: Task<Void, Never>?
 
@@ -58,6 +61,7 @@ final class TipJarManager {
     func purchase(_ product: Product) async {
         purchasingProductID = product.id
         errorMessage = nil
+        pendingMessage = nil
         defer { purchasingProductID = nil }
 
         do {
@@ -79,6 +83,7 @@ final class TipJarManager {
                 logger.info("Contribution cancelled by user")
             case .pending:
                 logger.info("Contribution pending (e.g. Ask to Buy)")
+                pendingMessage = L10n.tr("Your contribution is pending approval.")
             @unknown default:
                 break
             }

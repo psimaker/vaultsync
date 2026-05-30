@@ -12,6 +12,8 @@ struct SettingsView: View {
     @State private var showSetupStatus = false
     @State private var tipJar = TipJarManager()
     @State private var showThankYou = false
+    @State private var deviceIDCopied = false
+    @State private var isRestoring = false
     @AppStorage(BackgroundSyncService.conflictNotificationsEnabledKey) private var conflictNotificationsEnabled = true
     @Environment(\.dismiss) private var dismiss
 
@@ -25,12 +27,21 @@ struct SettingsView: View {
 
                 Section("This Device") {
                     if syncthingManager.deviceID.isEmpty {
-                        LabeledContent("Device ID", value: "Not available")
+                        LabeledContent("Device ID", value: L10n.tr("Not available"))
                     } else {
                         Button {
                             UIPasteboard.general.string = syncthingManager.deviceID
+                            UINotificationFeedbackGenerator().notificationOccurred(.success)
+                            deviceIDCopied = true
+                            Task {
+                                try? await Task.sleep(for: .seconds(1.5))
+                                deviceIDCopied = false
+                            }
                         } label: {
-                            Label("Copy Device ID", systemImage: "doc.on.doc")
+                            Label(
+                                deviceIDCopied ? L10n.tr("Copied") : L10n.tr("Copy Device ID"),
+                                systemImage: deviceIDCopied ? "checkmark.circle" : "doc.on.doc"
+                            )
                         }
                     }
 
@@ -193,8 +204,13 @@ struct SettingsView: View {
                         HStack {
                             Text("Subscribe")
                             Spacer()
-                            Text(subscriptionManager.relayPriceText ?? product.displayPrice)
-                                .foregroundStyle(.secondary)
+                            if subscriptionManager.purchaseInProgress {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Text(subscriptionManager.relayPriceText ?? product.displayPrice)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
                     .disabled(subscriptionManager.purchaseInProgress)
@@ -203,11 +219,23 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Button("Restore Purchases") {
+                Button {
                     Task {
+                        isRestoring = true
                         await subscriptionManager.restorePurchases()
+                        isRestoring = false
+                    }
+                } label: {
+                    HStack {
+                        Text("Restore Purchases")
+                        if isRestoring {
+                            Spacer()
+                            ProgressView()
+                                .controlSize(.small)
+                        }
                     }
                 }
+                .disabled(isRestoring)
             }
 
             NavigationLink {
@@ -309,6 +337,12 @@ struct SettingsView: View {
                 Text(error)
                     .font(.caption)
                     .foregroundStyle(.red)
+            }
+
+            if let pending = tipJar.pendingMessage, !pending.isEmpty {
+                Text(pending)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         } header: {
             Text(L10n.tr("Support VaultSync"))

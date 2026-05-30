@@ -774,7 +774,7 @@ enum BackgroundSyncService {
 
             let pct = averageFolderCompletion()
             progress.completedUnitCount = Int64(pct)
-            task.updateTitle("Syncing Vault", subtitle: "\(Int(pct))% complete")
+            task.updateTitle(L10n.tr("Syncing Vault"), subtitle: L10n.fmt("%d%% complete", Int(pct)))
         }
 
         task.setTaskCompleted(success: false)

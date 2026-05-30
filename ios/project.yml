@@ -103,6 +103,9 @@ targets:
       - path: VaultSyncWidget
         excludes:
           - "**/.gitkeep"
+      # Shared brand palette (Color.vaultTeal/.vaultSlate) so the widget
+      # matches the app accent without redefining the RGB.
+      - path: VaultSync/Resources/Theme.swift
     info:
       path: VaultSyncWidget/Info.plist
       properties:

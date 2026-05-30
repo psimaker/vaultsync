@@ -38,7 +38,7 @@ struct ConflictDiffView: View {
     var body: some View {
         Group {
             if isLoading {
-                ProgressView("Loading files...")
+                ProgressView("Loading files…")
             } else if let loadError {
                 ContentUnavailableView(
                     "Cannot Load Files",
@@ -53,7 +53,7 @@ struct ConflictDiffView: View {
                                 .font(.headline)
                             HStack(spacing: 8) {
                                 Label(conflict.deviceShortID, systemImage: "laptopcomputer")
-                                Label(conflict.conflictDate, systemImage: "clock")
+                                Label(conflict.formattedConflictDate, systemImage: "clock")
                             }
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -67,26 +67,7 @@ struct ConflictDiffView: View {
                             .padding(.horizontal)
                             .padding(.bottom, 4)
 
-                        if showLineDiff {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Differences")
-                                    .font(.subheadline.bold())
-                                    .padding(.horizontal)
-                                LineDiffView(original: originalContent, conflict: conflictContent)
-                            }
-                        } else {
-                            fileSection(
-                                title: "This Device",
-                                icon: "iphone",
-                                content: originalContent
-                            )
-
-                            fileSection(
-                                title: "Other Device (\(conflict.deviceShortID))",
-                                icon: "laptopcomputer",
-                                content: conflictContent
-                            )
-                        }
+                        comparisonContent
                     }
                     .padding(.vertical)
                 }
@@ -204,6 +185,50 @@ struct ConflictDiffView: View {
         .task {
             await loadContent()
         }
+    }
+
+    /// The body of the comparison — line-by-line diff (with a colour/sign legend)
+    /// or the two side-by-side file panes. Extracted from `body` to keep each
+    /// view expression small enough for the Swift type-checker.
+    @ViewBuilder
+    private var comparisonContent: some View {
+        if showLineDiff {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Differences")
+                    .font(.subheadline.bold())
+                    .padding(.horizontal)
+                diffLegend
+                LineDiffView(original: originalContent, conflict: conflictContent)
+            }
+        } else {
+            fileSection(
+                title: L10n.tr("This Device"),
+                icon: "iphone",
+                content: originalContent
+            )
+
+            fileSection(
+                title: L10n.fmt("Other Device (%@)", conflict.deviceShortID),
+                icon: "laptopcomputer",
+                content: conflictContent
+            )
+        }
+    }
+
+    /// Legend so the +/green and -/red mapping is explicit (colour is never the
+    /// only signal — the +/- symbols carry the same meaning for colourblind and
+    /// VoiceOver users).
+    private var diffLegend: some View {
+        HStack(spacing: 12) {
+            Label(L10n.tr("Other Device"), systemImage: "plus")
+                .foregroundStyle(Color(uiColor: .systemGreen))
+            Label(L10n.tr("This Device"), systemImage: "minus")
+                .foregroundStyle(Color(uiColor: .systemRed))
+        }
+        .font(.caption2)
+        .padding(.horizontal)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(L10n.tr("Added lines come from the other device; removed lines are your version on this device."))
     }
 
     private func skipThisFile() {

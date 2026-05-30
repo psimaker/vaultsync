@@ -178,8 +178,6 @@ struct RelayDiagnosticsView: View {
             Button("Open iOS Notification Settings") {
                 openSystemSettings()
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
         }
     }
 
@@ -352,7 +350,9 @@ struct RelayDiagnosticsView: View {
         switch subscriptionManager.alertBannerStatus {
         case .allowed: return .green
         case .denied: return .secondary
-        case .unknown: return .yellow
+        // "Not determined" is not an error — keep it neutral rather than a
+        // warning yellow that implies something is wrong.
+        case .unknown: return .secondary
         }
     }
 
