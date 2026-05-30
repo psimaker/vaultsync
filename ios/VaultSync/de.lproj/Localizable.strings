@@ -513,3 +513,7 @@
 "%d Pending Shares Need Attention" = "%d ausstehende Freigaben benötigen Aufmerksamkeit";
 "1 Conflict Needs Resolution" = "1 Konflikt muss gelöst werden";
 "%d Conflicts Need Resolution" = "%d Konflikte müssen gelöst werden";
+
+/* Issue #10 — conflict notification body */
+"1 file has a sync conflict. Open VaultSync to resolve it." = "1 Datei hat einen Sync-Konflikt. Öffne VaultSync, um ihn zu lösen.";
+"%d files have sync conflicts. Open VaultSync to resolve them." = "%d Dateien haben Sync-Konflikte. Öffne VaultSync, um sie zu lösen.";

@@ -514,3 +514,7 @@
 "%d Pending Shares Need Attention" = "%d Pending Shares Need Attention";
 "1 Conflict Needs Resolution" = "1 Conflict Needs Resolution";
 "%d Conflicts Need Resolution" = "%d Conflicts Need Resolution";
+
+/* Issue #10 — conflict notification body */
+"1 file has a sync conflict. Open VaultSync to resolve it." = "1 file has a sync conflict. Open VaultSync to resolve it.";
+"%d files have sync conflicts. Open VaultSync to resolve them." = "%d files have sync conflicts. Open VaultSync to resolve them.";

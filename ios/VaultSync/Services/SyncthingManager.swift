@@ -826,6 +826,7 @@ final class SyncthingManager {
             }
         }
         conflictFiles = newConflicts
+        BackgroundSyncService.reconcileConflictNotificationBaseline(currentCount: unresolvedConflictCount)
         writeWidgetSnapshotIfNeeded()
     }
 
@@ -939,6 +940,7 @@ final class SyncthingManager {
             }
         }
         conflictFiles = allConflicts
+        BackgroundSyncService.reconcileConflictNotificationBaseline(currentCount: unresolvedConflictCount)
     }
 
     private func refreshPendingFolders() {

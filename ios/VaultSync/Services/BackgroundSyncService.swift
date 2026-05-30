@@ -41,6 +41,16 @@ enum BackgroundSyncService {
     private static let lastSyncOutcomeStorageKey = "background-sync-last-outcome-v1"
     static let lastSyncOutcomeDidChangeNotification = Notification.Name("BackgroundSyncLastOutcomeDidChange")
 
+    /// Stable identifier for the conflict banner. Re-posting with the same id
+    /// replaces the existing notification in place instead of stacking a fresh
+    /// one each silent push (issue #10).
+    private static let conflictNotificationIdentifier = "sync-conflict"
+    /// Persisted distinct/visible conflict count last surfaced to the user.
+    /// Used to suppress re-posting an unchanged count. Lives in
+    /// `UserDefaults.standard`, which the in-process silent-push / BGTask
+    /// handlers share with the foreground UI.
+    private static let lastNotifiedConflictCountKey = "conflict-notification-last-count-v1"
+
     struct SyncOutcome: Codable, Equatable, Sendable {
         let timestamp: Date
         let triggerReason: String
@@ -212,6 +222,46 @@ enum BackgroundSyncService {
         } catch {
             logger.error("Notification permission failed: \(error)")
             return false
+        }
+    }
+
+    /// What to do with the conflict banner given the current conflict count and
+    /// the count last surfaced to the user. Pure and deterministic so the
+    /// suppression logic can be unit-tested without the bridge.
+    enum ConflictNotificationAction: Equatable, Sendable {
+        /// Count rose since last notification — post audibly (genuinely new).
+        case alert
+        /// Count fell but conflicts remain — refresh the banner quietly.
+        case updateQuiet
+        /// Count is unchanged — leave the existing banner untouched (no spam).
+        case suppress
+        /// No conflicts remain — remove the banner.
+        case clear
+    }
+
+    static func conflictNotificationAction(
+        currentCount current: Int,
+        lastNotifiedCount last: Int
+    ) -> ConflictNotificationAction {
+        if current <= 0 { return .clear }
+        if current > last { return .alert }
+        if current < last { return .updateQuiet }
+        return .suppress
+    }
+
+    /// Re-baseline conflict-notification suppression to what the user can
+    /// currently see in the app, and clear the banner when no conflicts remain.
+    /// Called from the foreground poll so (a) a banner the user has already seen
+    /// is not re-alerted in the background, and (b) a brand-new conflict that
+    /// appears after a full resolve still alerts instead of being treated as a
+    /// "decrease" against a stale high-water mark.
+    @MainActor
+    static func reconcileConflictNotificationBaseline(currentCount: Int) {
+        UserDefaults.standard.set(max(0, currentCount), forKey: lastNotifiedConflictCountKey)
+        if currentCount <= 0 {
+            UNUserNotificationCenter.current().removeDeliveredNotifications(
+                withIdentifiers: [conflictNotificationIdentifier]
+            )
         }
     }
 
@@ -748,10 +798,61 @@ enum BackgroundSyncService {
     }
 
     private static func notifyConflictsIfAny() async {
+        let count = currentConflictCount()
+        let lastCount = UserDefaults.standard.integer(forKey: lastNotifiedConflictCountKey)
+        let action = conflictNotificationAction(currentCount: count, lastNotifiedCount: lastCount)
+
+        switch action {
+        case .suppress:
+            // Same count as last time — not new information. Leave the existing
+            // banner alone so the screen does not light up every silent push.
+            return
+
+        case .clear:
+            UNUserNotificationCenter.current().removeDeliveredNotifications(
+                withIdentifiers: [conflictNotificationIdentifier]
+            )
+            UserDefaults.standard.set(0, forKey: lastNotifiedConflictCountKey)
+            return
+
+        case .alert, .updateQuiet:
+            let content = UNMutableNotificationContent()
+            content.title = L10n.tr("Sync Conflicts")
+            content.body = count == 1
+                ? L10n.tr("1 file has a sync conflict. Open VaultSync to resolve it.")
+                : L10n.fmt("%d files have sync conflicts. Open VaultSync to resolve them.", count)
+            if action == .alert {
+                content.sound = .default
+                content.interruptionLevel = .active
+            } else {
+                // Count dropped (some resolved) — refresh the number without a
+                // sound or screen-wake.
+                content.interruptionLevel = .passive
+            }
+
+            let request = UNNotificationRequest(
+                identifier: conflictNotificationIdentifier,
+                content: content,
+                trigger: nil
+            )
+
+            do {
+                try await UNUserNotificationCenter.current().add(request)
+                UserDefaults.standard.set(count, forKey: lastNotifiedConflictCountKey)
+                logger.info("Conflict notification \(action == .alert ? "posted" : "updated quietly") (\(count) conflicts)")
+            } catch {
+                logger.error("Failed to send notification: \(error)")
+            }
+        }
+    }
+
+    /// Total conflict copies across all folders, as reported by the bridge's
+    /// on-disk scan. Matches the count shown in the in-app conflict list.
+    private static func currentConflictCount() -> Int {
         let json = SyncBridgeService.getFoldersJSON()
         guard let data = json.data(using: .utf8),
               let folders = try? JSONDecoder().decode([FolderStub].self, from: data) else {
-            return
+            return 0
         }
 
         var count = 0
@@ -762,28 +863,7 @@ enum BackgroundSyncService {
                 count += conflicts.count
             }
         }
-
-        guard count > 0 else { return }
-
-        let content = UNMutableNotificationContent()
-        content.title = L10n.tr("Sync Conflicts")
-        content.body = count == 1
-            ? "1 file has a sync conflict. Open VaultSync to resolve it."
-            : "\(count) files have sync conflicts. Open VaultSync to resolve them."
-        content.sound = .default
-
-        let request = UNNotificationRequest(
-            identifier: "sync-conflict-\(UUID().uuidString)",
-            content: content,
-            trigger: nil
-        )
-
-        do {
-            try await UNUserNotificationCenter.current().add(request)
-            logger.info("Conflict notification sent (\(count) conflicts)")
-        } catch {
-            logger.error("Failed to send notification: \(error)")
-        }
+        return count
     }
 
     private static func restoreBookmarkAccess() -> [URL] {
