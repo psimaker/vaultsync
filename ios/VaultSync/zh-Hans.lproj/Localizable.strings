@@ -531,3 +531,6 @@
 "Alert banners are off at the iOS level. Cloud Relay wake-ups still work — they use silent push, which does not need notification permission." = "提醒横幅已在 iOS 层面关闭。Cloud Relay 唤醒仍然有效——它使用静默推送，无需通知权限。";
 "APNs token is missing. Retry APNs registration; if it keeps failing, check your internet connection. (Silent push does not require notification banners.)" = "缺少 APNs 令牌。请重试 APNs 注册；若持续失败，请检查网络连接。（静默推送无需提醒横幅。）";
 "APNs registration failed. Check your internet connection and retry registration. Silent push does not require notification banners to be enabled." = "APNs 注册失败。请检查网络连接并重试注册。静默推送无需启用提醒横幅。";
+
+/* Issue #10 — background-sync reliability (error-settled outcome) */
+"Background sync settled with at least one folder in an error state." = "后台同步已结束——至少一个文件夹处于错误状态。";

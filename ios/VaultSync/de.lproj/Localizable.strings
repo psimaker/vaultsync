@@ -531,3 +531,6 @@
 "Alert banners are off at the iOS level. Cloud Relay wake-ups still work — they use silent push, which does not need notification permission." = "Hinweis-Banner sind auf iOS-Ebene aus. Cloud-Relay-Weckrufe funktionieren weiterhin — sie nutzen Silent Push, der keine Benachrichtigungsberechtigung benötigt.";
 "APNs token is missing. Retry APNs registration; if it keeps failing, check your internet connection. (Silent push does not require notification banners.)" = "APNs-Token fehlt. Wiederhole die APNs-Registrierung; falls es weiter fehlschlägt, prüfe deine Internetverbindung. (Silent Push benötigt keine Hinweis-Banner.)";
 "APNs registration failed. Check your internet connection and retry registration. Silent push does not require notification banners to be enabled." = "APNs-Registrierung fehlgeschlagen. Prüfe deine Internetverbindung und wiederhole die Registrierung. Silent Push benötigt keine aktivierten Hinweis-Banner.";
+
+/* Issue #10 — background-sync reliability (error-settled outcome) */
+"Background sync settled with at least one folder in an error state." = "Hintergrund-Synchronisierung beendet — mindestens ein Ordner ist im Fehlerzustand.";

@@ -28,6 +28,12 @@ enum BackgroundSyncService {
     /// Shared lock coordinating Syncthing bridge start/stop across foreground and background.
     static let lifecycleLock = OSAllocatedUnfairLock(initialState: SyncLifecycleState())
 
+    /// Single-flight guard: only one background sync may drive the shared
+    /// Syncthing instance at a time. Distinct from `lifecycleLock`, which only
+    /// tracks whether the foreground owns start/stop — this prevents two
+    /// concurrent background wake-ups from tearing down each other's sync.
+    private static let syncInFlightLock = OSAllocatedUnfairLock(initialState: false)
+
     /// Guards the UIApplication background-task assertion used for the
     /// scene-phase grace period after the app leaves the foreground.
     private static let backgroundAssertionLock = OSAllocatedUnfairLock(
@@ -378,6 +384,27 @@ enum BackgroundSyncService {
     ) async -> SyncResult {
         logger.info("Background sync starting (reason=\(reason))")
         trace("Starting background sync (reason=\(reason), maxDuration=\(Int(maxDuration))s).")
+
+        // Single-flight: a second concurrent background wake-up must not drive
+        // the shared Syncthing instance while another sync is mid-flight — one
+        // task's expiration/cleanup could stop the bridge under the other and
+        // silently abort a transfer. The loser just nudges a rescan so its
+        // changes are still picked up, then returns without competing.
+        let didAcquireSyncSlot = syncInFlightLock.withLock { inFlight -> Bool in
+            if inFlight { return false }
+            inFlight = true
+            return true
+        }
+        guard didAcquireSyncSlot else {
+            logger.info("Background sync already in flight — coalescing (reason=\(reason))")
+            trace("Concurrent background sync suppressed (reason=\(reason)); nudging rescan.")
+            if SyncBridgeService.isRunning() {
+                _ = requestFolderRescans()
+            }
+            return .alreadyIdle
+        }
+        defer { syncInFlightLock.withLock { $0 = false } }
+
         let syncStartedAt = Date()
         var telemetryEventCursor = latestBridgeEventID()
         let syncStartEventCursor = telemetryEventCursor
@@ -540,26 +567,35 @@ enum BackgroundSyncService {
             )
         }
 
-        let deadline = Date(timeIntervalSinceNow: maxDuration)
+        // Budget the wait from sync START, not from "now": the silent-push setup
+        // above (folder availability, wake-evidence window, optional forced
+        // restart) already consumed part of iOS's ~30s content-available budget.
+        // An absolute deadline keeps total wall-clock under budget so overruns
+        // don't get future wake-ups throttled.
+        let deadline = syncStartedAt.addingTimeInterval(maxDuration)
         trace("Waiting for idle state until deadline.")
         while SyncBridgeService.isRunning() && Date() < deadline {
             if Task.isCancelled { break }
             try? await Task.sleep(for: .milliseconds(500))
-            let idle = allFoldersIdle()
+            // Stop as soon as no folder can make further progress — either all
+            // idle, or a folder is stuck in a terminal error state. Without the
+            // error case a single stuck folder spins out the whole deadline.
+            let settled = allFoldersSettledOrErrored()
             if var tracker = progressTracker {
                 let snapshot = tracker.poll()
                 progressTrackerTraceIfNeeded(snapshot)
-                if idle && !snapshot.requiresMeaningfulProgress {
+                if settled && !snapshot.requiresMeaningfulProgress {
                     progressTracker = tracker
                     break
                 }
                 progressTracker = tracker
-            } else if idle {
+            } else if settled {
                 break
             }
         }
 
         let idle = allFoldersIdle()
+        let settledWithError = !idle && allFoldersSettledOrErrored()
         let progressSnapshot = progressTracker?.poll()
         if let progressSnapshot {
             progressTrackerTraceIfNeeded(progressSnapshot)
@@ -585,6 +621,12 @@ enum BackgroundSyncService {
         } else if idle {
             result = .synced
             detail = nil
+        } else if settledWithError {
+            // Stopped because a folder is in a terminal error state, not because
+            // we ran out of time. The folder error surfaces via the in-app Sync
+            // Issues panel; don't raise a misleading "Background Sync Timed Out".
+            result = .synced
+            detail = L10n.tr("Background sync settled with at least one folder in an error state.")
         } else {
             result = .notIdleBeforeDeadline
             detail = L10n.fmt("Sync did not reach idle before %ds deadline.", Int(maxDuration))
@@ -738,36 +780,72 @@ enum BackgroundSyncService {
         NotificationCenter.default.post(name: lastSyncOutcomeDidChangeNotification, object: nil)
     }
 
-    private static func allFoldersIdle() -> Bool {
+    /// Settlement classification for one folder, derived purely from its status
+    /// fields so it can be unit-tested without the bridge.
+    enum FolderSettlement: Equatable, Sendable {
+        case idle        // nothing left to do
+        case errored     // terminal error — cannot progress without intervention
+        case active      // scanning, syncing, or outstanding work to pull
+    }
+
+    static func folderSettlement(
+        state: String,
+        needFiles: Int,
+        needBytes: Int64,
+        inProgressBytes: Int64
+    ) -> FolderSettlement {
+        if state == "error" { return .errored }
+        // A folder is truly idle only when Syncthing is neither scanning nor
+        // syncing AND has no outstanding work. The state field alone is not
+        // enough: Syncthing briefly reports `idle` between scan and sync phases
+        // while needBytes/needFiles still await a pull. Treating that window as
+        // "done" caused background-sync handlers to shut Syncthing down before
+        // any file was actually pulled.
+        let hasPendingWork = needFiles > 0 || needBytes > 0 || inProgressBytes > 0
+        if state == "idle" && !hasPendingWork { return .idle }
+        return .active
+    }
+
+    /// Per-folder settlement snapshot, or nil when the folder list is empty or a
+    /// status fails to decode (can't confirm state — caller treats as not-idle).
+    private static func folderSettlements() -> [FolderSettlement]? {
         let json = SyncBridgeService.getFoldersJSON()
         guard let data = json.data(using: .utf8),
               let folders = try? JSONDecoder().decode([FolderStub].self, from: data),
               !folders.isEmpty else {
-            // Empty folder list means Syncthing hasn't populated yet — not idle
-            return false
+            return nil
         }
 
+        var settlements: [FolderSettlement] = []
+        settlements.reserveCapacity(folders.count)
         for folder in folders {
             let statusJSON = SyncBridgeService.getFolderStatusJSON(folderID: folder.id)
             guard let statusData = statusJSON.data(using: .utf8),
                   let status = try? JSONDecoder().decode(StatusStub.self, from: statusData) else {
-                // Decode failure means we can't confirm state — treat as not idle
-                return false
+                return nil
             }
-            // A folder is truly idle only when Syncthing is neither scanning
-            // nor syncing AND has no outstanding work. The state field alone
-            // is not enough: Syncthing briefly reports `idle` between scan
-            // and sync phases while needBytes/needFiles still await a pull.
-            // Treating that window as "done" caused background-sync handlers
-            // to shut Syncthing down before any file was actually pulled.
-            let hasPendingWork = status.needFiles > 0
-                || status.needBytes > 0
-                || status.inProgressBytes > 0
-            if status.state != "idle" || hasPendingWork {
-                return false
-            }
+            settlements.append(folderSettlement(
+                state: status.state,
+                needFiles: status.needFiles,
+                needBytes: status.needBytes,
+                inProgressBytes: status.inProgressBytes
+            ))
         }
-        return true
+        return settlements
+    }
+
+    private static func allFoldersIdle() -> Bool {
+        guard let settlements = folderSettlements() else { return false }
+        return settlements.allSatisfy { $0 == .idle }
+    }
+
+    /// True when no folder can make further progress on its own — every folder
+    /// is either idle or in a terminal error state. Used to stop waiting out the
+    /// full deadline (and raising a misleading "timed out") when a folder is
+    /// stuck in error and nothing more can happen.
+    private static func allFoldersSettledOrErrored() -> Bool {
+        guard let settlements = folderSettlements() else { return false }
+        return settlements.allSatisfy { $0 != .active }
     }
 
     private static func averageFolderCompletion() -> Double {
