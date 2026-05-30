@@ -116,7 +116,7 @@
 "Last Update" = "Letzte Aktualisierung";
 "Last successful sync was about %d %@ ago." = "Die letzte erfolgreiche Synchronisation war vor etwa %d %@.";
 "Last successful sync was more than %d %@ ago." = "Die letzte erfolgreiche Synchronisation ist mehr als %d %@ her.";
-"Last sync:" = "Letzte Synchronisation:";
+"Last sync: %@" = "Letzte Synchronisation: %@";
 "Latency" = "Latenz";
 "Learn how to fix" = "So behebst du es";
 "Loading…" = "Wird geladen…";

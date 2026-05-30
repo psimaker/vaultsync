@@ -116,7 +116,7 @@
 "Last Update" = "上次更新";
 "Last successful sync was about %d %@ ago." = "上次成功同步约在 %d %@ 前。";
 "Last successful sync was more than %d %@ ago." = "上次成功同步已超过 %d %@。";
-"Last sync:" = "上次同步：";
+"Last sync: %@" = "上次同步：%@";
 "Latency" = "延迟";
 "Learn how to fix" = "查看修复方法";
 "Loading…" = "正在加载…";

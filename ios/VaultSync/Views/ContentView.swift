@@ -18,6 +18,16 @@ struct ContentView: View {
     private let slate = Color.vaultSlate
     private let teal = Color.vaultTeal
 
+    /// Cached formatter for the dashboard "Last sync" line. Produces a fully
+    /// localized relative phrase ("2 hours ago" / "vor 2 Stunden" / "2 小时前").
+    /// Output is static (not live-ticking), which is fine for a last-sync label —
+    /// the dashboard re-renders on state changes anyway.
+    private static let lastSyncFormatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .full
+        return f
+    }()
+
     var body: some View {
         NavigationStack {
             List {
@@ -159,7 +169,7 @@ struct ContentView: View {
                             .foregroundStyle(.secondary)
                     }
                     if let lastSync = syncthingManager.lastSyncTime {
-                        Text("\(L10n.tr("Last sync:")) \(lastSync, style: .relative)")
+                        Text(L10n.fmt("Last sync: %@", Self.lastSyncFormatter.localizedString(for: lastSync, relativeTo: Date())))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
