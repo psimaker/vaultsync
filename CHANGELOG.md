@@ -4,6 +4,26 @@ All notable changes to VaultSync are documented here.
 
 ---
 
+## [1.4.0] — 2026-05-30
+
+### Added
+
+- **Turn off conflict notifications** ([#10](https://github.com/psimaker/vaultsync/issues/10)) — A new Settings → Notifications toggle mutes the sync-conflict banner without touching anything else. It gates only the banner, so Cloud Relay wake-ups and background sync keep working, and turning it off no longer requires disabling iOS notifications for the whole app. Defaults on; existing installs keep their current behaviour.
+- **Support VaultSync** — An optional "Support VaultSync" section in Settings offers two one-time contributions (Small and Big). They unlock nothing — VaultSync stays fully functional without them — and you can contribute as often as you like. Localized for English, German, and Simplified Chinese.
+
+### Changed
+
+- **Cloud Relay price shown correctly per region** — The subscribe button and the subscription details previously mixed the localized App Store price with a hard-coded "$0.99/month", so non-US storefronts saw two different currencies. Both now show a single price taken straight from StoreKit (for example "0,99 € / month" or "A$1.99 / month"), so the displayed price is always correct for the user's storefront.
+
+### Fixed
+
+- **Conflict notifications no longer spam the screen** ([#10](https://github.com/psimaker/vaultsync/issues/10)) — The conflict banner was posted with a fresh identifier on every background sync that reached idle, so iOS never coalesced them: the same "28 conflicts" message re-lit the screen over and over and drained battery. VaultSync now uses a stable notification that replaces itself in place, only alerts (with sound) when the conflict count actually grows, refreshes quietly when it shrinks, and clears when the last conflict is resolved.
+- **Disabling notifications no longer reports Cloud Relay as broken** ([#10](https://github.com/psimaker/vaultsync/issues/10)) — Silent push wake-ups do not need alert permission, but the app used to flag APNs/relay as "failed" purely because notifications were turned off, cascading a misleading "relay broken" message across diagnostics. Relay health is now judged from the things that actually matter (subscription, APNs token, provisioning, and a recent silent-push trigger), and the alert-permission state is shown as a separate, informational row.
+- **More reliable background sync** — Two background wake-ups that fired at the same time could tear down each other's sync mid-transfer; a single-flight guard now prevents that. The silent-push time budget is measured from the start of the run so long setups can't overrun iOS's window and get future wake-ups throttled. And a folder stuck in an error state no longer spins out the full background deadline or raises a misleading "Background Sync Timed Out".
+- **Localized conflict notification text** — The conflict banner body was English-only on German and Simplified Chinese devices; it is now translated.
+
+---
+
 ## [1.3.2] — 2026-05-23
 
 ### Fixed
