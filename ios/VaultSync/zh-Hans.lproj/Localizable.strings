@@ -517,3 +517,8 @@
 /* Issue #10 — conflict notification body */
 "1 file has a sync conflict. Open VaultSync to resolve it." = "1 个文件存在同步冲突。打开 VaultSync 解决。";
 "%d files have sync conflicts. Open VaultSync to resolve them." = "%d 个文件存在同步冲突。打开 VaultSync 解决。";
+
+/* Issue #10 — conflict-notifications toggle (Settings) */
+"Notifications" = "通知";
+"Conflict Notifications" = "冲突通知";
+"Show a banner when sync conflicts are detected. Turning this off does not affect Cloud Relay or background sync — your vault keeps syncing." = "检测到同步冲突时显示横幅。关闭此项不会影响 Cloud Relay 或后台同步——你的库会继续同步。";

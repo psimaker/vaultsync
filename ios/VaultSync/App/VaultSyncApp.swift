@@ -16,6 +16,13 @@ struct VaultSyncApp: App {
     private static let foregroundRescanThreshold: TimeInterval = 5
 
     init() {
+        // Conflict banners default ON. Registered defaults are per-process and
+        // not persisted, so the background handler still relies on its own
+        // `?? true` fallback — this only keeps foreground `bool(forKey:)` reads
+        // consistent before the user ever touches the toggle.
+        UserDefaults.standard.register(
+            defaults: [BackgroundSyncService.conflictNotificationsEnabledKey: true]
+        )
         BackgroundSyncService.registerTasks()
         logger.info("VaultSync starting")
         Task.detached(priority: .utility) {

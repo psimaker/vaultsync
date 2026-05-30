@@ -50,6 +50,11 @@ enum BackgroundSyncService {
     /// `UserDefaults.standard`, which the in-process silent-push / BGTask
     /// handlers share with the foreground UI.
     private static let lastNotifiedConflictCountKey = "conflict-notification-last-count-v1"
+    /// In-app toggle gating the conflict banner (Settings → Notifications).
+    /// Defaults ON; an absent key must read as ON so existing installs are not
+    /// silently muted after upgrade. Gates only the banner — never relay
+    /// silent-push wake-ups, which do not depend on alert authorization.
+    static let conflictNotificationsEnabledKey = "conflict-notifications-enabled-v1"
 
     struct SyncOutcome: Codable, Equatable, Sendable {
         let timestamp: Date
@@ -798,6 +803,14 @@ enum BackgroundSyncService {
     }
 
     private static func notifyConflictsIfAny() async {
+        // In-app toggle (default ON). Read the raw object so an absent key —
+        // every install from before this feature shipped — reads as ON, not
+        // false (UserDefaults.bool returns false for a missing key). Gating
+        // here, before the per-folder conflict scan, also skips that disk I/O
+        // when the user has turned banners off.
+        let bannersEnabled = (UserDefaults.standard.object(forKey: conflictNotificationsEnabledKey) as? Bool) ?? true
+        guard bannersEnabled else { return }
+
         let count = currentConflictCount()
         let lastCount = UserDefaults.standard.integer(forKey: lastNotifiedConflictCountKey)
         let action = conflictNotificationAction(currentCount: count, lastNotifiedCount: lastCount)

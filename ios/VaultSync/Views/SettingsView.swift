@@ -10,12 +10,14 @@ struct SettingsView: View {
     @State private var alertMessage: String?
     @State private var showAlert = false
     @State private var showSetupStatus = false
+    @AppStorage(BackgroundSyncService.conflictNotificationsEnabledKey) private var conflictNotificationsEnabled = true
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             List {
                 cloudRelaySection
+                notificationsSection
                 aboutSection
 
                 Section("This Device") {
@@ -228,6 +230,20 @@ struct SettingsView: View {
             Text("Cloud Relay")
         } footer: {
             Text("Cloud Relay enables instant sync when files change on your server, instead of waiting for the next background refresh.")
+        }
+    }
+
+    // MARK: - Notifications Section
+
+    private var notificationsSection: some View {
+        Section {
+            Toggle(isOn: $conflictNotificationsEnabled) {
+                Label(L10n.tr("Conflict Notifications"), systemImage: "exclamationmark.triangle")
+            }
+        } header: {
+            Text(L10n.tr("Notifications"))
+        } footer: {
+            Text(L10n.tr("Show a banner when sync conflicts are detected. Turning this off does not affect Cloud Relay or background sync — your vault keeps syncing."))
         }
     }
 

@@ -518,3 +518,8 @@
 /* Issue #10 — conflict notification body */
 "1 file has a sync conflict. Open VaultSync to resolve it." = "1 file has a sync conflict. Open VaultSync to resolve it.";
 "%d files have sync conflicts. Open VaultSync to resolve them." = "%d files have sync conflicts. Open VaultSync to resolve them.";
+
+/* Issue #10 — conflict-notifications toggle (Settings) */
+"Notifications" = "Notifications";
+"Conflict Notifications" = "Conflict Notifications";
+"Show a banner when sync conflicts are detected. Turning this off does not affect Cloud Relay or background sync — your vault keeps syncing." = "Show a banner when sync conflicts are detected. Turning this off does not affect Cloud Relay or background sync — your vault keeps syncing.";

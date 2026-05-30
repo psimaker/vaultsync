@@ -517,3 +517,8 @@
 /* Issue #10 — conflict notification body */
 "1 file has a sync conflict. Open VaultSync to resolve it." = "1 Datei hat einen Sync-Konflikt. Öffne VaultSync, um ihn zu lösen.";
 "%d files have sync conflicts. Open VaultSync to resolve them." = "%d Dateien haben Sync-Konflikte. Öffne VaultSync, um sie zu lösen.";
+
+/* Issue #10 — conflict-notifications toggle (Settings) */
+"Notifications" = "Benachrichtigungen";
+"Conflict Notifications" = "Konflikt-Benachrichtigungen";
+"Show a banner when sync conflicts are detected. Turning this off does not affect Cloud Relay or background sync — your vault keeps syncing." = "Zeigt einen Banner an, wenn Sync-Konflikte erkannt werden. Das Ausschalten betrifft weder Cloud Relay noch die Hintergrund-Synchronisierung — dein Vault synchronisiert weiter.";
