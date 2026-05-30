@@ -72,7 +72,11 @@ extension SyncthingManager.ConflictInfo {
 
     private static let conflictDateDisplay: DateFormatter = {
         let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd HH:mm"
+        // Localized styles (not a fixed pattern) so the displayed date follows
+        // the user's locale and 12/24-hour preference.
+        f.locale = .autoupdatingCurrent
+        f.dateStyle = .medium
+        f.timeStyle = .short
         return f
     }()
 
