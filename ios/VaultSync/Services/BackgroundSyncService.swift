@@ -253,12 +253,40 @@ enum BackgroundSyncService {
         }
     }
 
-    /// Whether the user has denied alert authorization. Affects ONLY whether a
-    /// conflict banner can appear — silent (content-available) pushes used by
-    /// Cloud Relay are delivered regardless. Surfaced as informational, never
-    /// as a relay/APNs failure.
-    static func isAlertAuthorizationDenied() async -> Bool {
-        await UNUserNotificationCenter.current().notificationSettings().authorizationStatus == .denied
+    /// Whether iOS will actually present a conflict alert banner. Affects ONLY
+    /// the banner — silent (content-available) pushes used by Cloud Relay are
+    /// delivered regardless, so this is surfaced as informational and never as a
+    /// relay/APNs failure.
+    enum AlertBannerStatus: Sendable {
+        case allowed   // authorized AND banners enabled
+        case denied    // denied, or banners explicitly turned off
+        case unknown   // not determined / provisional / not supported
+    }
+
+    /// Resolve the real banner capability from UNNotificationSettings. Authorized
+    /// is not enough on its own — the user can keep authorization but switch
+    /// "Banners" off in iOS Settings (`alertSetting == .disabled`).
+    static func alertBannerStatus() async -> AlertBannerStatus {
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        switch settings.authorizationStatus {
+        case .denied:
+            return .denied
+        case .authorized:
+            switch settings.alertSetting {
+            case .enabled:
+                return .allowed
+            case .disabled:
+                return .denied
+            default:
+                return .unknown
+            }
+        case .notDetermined, .provisional, .ephemeral:
+            // Not requested by VaultSync (full alert auth is requested at
+            // onboarding); provisional/ephemeral deliver quietly, not as banners.
+            return .unknown
+        @unknown default:
+            return .unknown
+        }
     }
 
     /// What to do with the conflict banner given the current conflict count and
@@ -948,7 +976,12 @@ enum BackgroundSyncService {
         let bannersEnabled = (UserDefaults.standard.object(forKey: conflictNotificationsEnabledKey) as? Bool) ?? true
         guard bannersEnabled else { return }
 
-        let count = currentConflictCount()
+        guard let count = currentConflictCount() else {
+            // Unreadable conflict snapshot (transient bridge/decode failure) —
+            // leave the banner and persisted baseline untouched rather than
+            // mistaking it for "no conflicts".
+            return
+        }
         let lastCount = UserDefaults.standard.integer(forKey: lastNotifiedConflictCountKey)
         let action = conflictNotificationAction(currentCount: count, lastNotifiedCount: lastCount)
 
@@ -998,20 +1031,28 @@ enum BackgroundSyncService {
 
     /// Total conflict copies across all folders, as reported by the bridge's
     /// on-disk scan. Matches the count shown in the in-app conflict list.
-    private static func currentConflictCount() -> Int {
+    ///
+    /// Returns nil when the snapshot is UNREADABLE — the folder list or any
+    /// folder's conflict list failed to decode. A transient bridge/decode
+    /// failure must NOT be mistaken for "no conflicts": that would clear the
+    /// banner and reset the baseline, and the next successful read would then
+    /// re-alert the still-present conflicts as if they were new.
+    private static func currentConflictCount() -> Int? {
         let json = SyncBridgeService.getFoldersJSON()
         guard let data = json.data(using: .utf8),
               let folders = try? JSONDecoder().decode([FolderStub].self, from: data) else {
-            return 0
+            return nil
         }
 
         var count = 0
         for folder in folders {
             let cJSON = SyncBridgeService.getConflictFilesJSON(folderID: folder.id)
-            if let cData = cJSON.data(using: .utf8),
-               let conflicts = try? JSONDecoder().decode([ConflictStub].self, from: cData) {
-                count += conflicts.count
+            guard let cData = cJSON.data(using: .utf8),
+                  let conflicts = try? JSONDecoder().decode([ConflictStub].self, from: cData) else {
+                // Suppress rather than undercount this folder's conflicts to 0.
+                return nil
             }
+            count += conflicts.count
         }
         return count
     }

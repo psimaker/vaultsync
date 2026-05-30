@@ -16,7 +16,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         // authorization. Silent (content-available) pushes — the relay's wake
         // mechanism — are delivered regardless of UNAuthorizationStatus. The
         // live alert-permission state is surfaced as informational in Relay
-        // Diagnostics instead (see SubscriptionManager.alertAuthorizationDenied).
+        // Diagnostics instead (see SubscriptionManager.alertBannerStatus).
         return true
     }
 

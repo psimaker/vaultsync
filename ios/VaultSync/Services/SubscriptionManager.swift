@@ -25,10 +25,11 @@ final class SubscriptionManager {
     private(set) var relayHealthCheckInFlight = false
     private(set) var lastRelayTriggerReceivedAt: Date?
     private(set) var lastRelayError: RelayService.RecordedRelayError?
-    /// Whether iOS alert authorization is denied. Informational only — silent
-    /// pushes (Cloud Relay wake-ups) do not depend on it, so this must NOT feed
-    /// any relay/APNs "failure" state.
-    private(set) var alertAuthorizationDenied = false
+    /// Whether iOS will actually present an alert banner (authorized + banners
+    /// enabled), denied, or unknown. Informational only — silent pushes (Cloud
+    /// Relay wake-ups) do not depend on it, so this must NOT feed any relay/APNs
+    /// "failure" state.
+    private(set) var alertBannerStatus: BackgroundSyncService.AlertBannerStatus = .unknown
 
     /// Strong signal: a recent silent-push trigger proves Cloud Relay is
     /// actually delivering wake-ups to THIS device (the only leg that proves
@@ -252,7 +253,7 @@ final class SubscriptionManager {
         }
         refreshAPNsRegistrationStatus()
         refreshStoredRelayDiagnostics()
-        alertAuthorizationDenied = await BackgroundSyncService.isAlertAuthorizationDenied()
+        alertBannerStatus = await BackgroundSyncService.alertBannerStatus()
         await checkSubscriptionStatus()
         await runRelayHealthCheck()
         // Opportunistically re-provision if the last successful provision is

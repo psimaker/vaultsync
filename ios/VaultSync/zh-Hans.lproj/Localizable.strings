@@ -521,7 +521,7 @@
 /* Issue #10 — conflict-notifications toggle (Settings) */
 "Notifications" = "通知";
 "Conflict Notifications" = "冲突通知";
-"Show a banner when sync conflicts are detected. Turning this off does not affect Cloud Relay or background sync — your vault keeps syncing." = "检测到同步冲突时显示横幅。关闭此项不会影响 Cloud Relay 或后台同步——你的库会继续同步。";
+"Show a banner when sync conflicts are detected. Turning this off does not affect Cloud Relay or background sync — your vault keeps syncing." = "检测到同步冲突时显示横幅。关闭此项不会影响 Cloud Relay 或后台同步——你的 Vault 会继续同步。";
 
 /* Issue #10 — relay/alert decoupling (Relay Diagnostics) */
 "Alert Banners" = "提醒横幅";

@@ -129,12 +129,12 @@ struct RelayDiagnosticsView: View {
             HStack {
                 Label(L10n.tr("Alert Banners"), systemImage: "app.badge")
                 Spacer()
-                Text(subscriptionManager.alertAuthorizationDenied ? L10n.tr("Denied") : L10n.tr("Allowed"))
-                    .foregroundStyle(subscriptionManager.alertAuthorizationDenied ? Color.secondary : Color.green)
+                Text(alertBannerText)
+                    .foregroundStyle(alertBannerColor)
             }
             .accessibilityElement(children: .combine)
 
-            if subscriptionManager.alertAuthorizationDenied {
+            if subscriptionManager.alertBannerStatus == .denied {
                 Text(L10n.tr("Alert banners are off at the iOS level. Cloud Relay wake-ups still work — they use silent push, which does not need notification permission."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -338,6 +338,22 @@ struct RelayDiagnosticsView: View {
         }
 
         return hints
+    }
+
+    private var alertBannerText: String {
+        switch subscriptionManager.alertBannerStatus {
+        case .allowed: return L10n.tr("Allowed")
+        case .denied: return L10n.tr("Denied")
+        case .unknown: return L10n.tr("Unknown")
+        }
+    }
+
+    private var alertBannerColor: Color {
+        switch subscriptionManager.alertBannerStatus {
+        case .allowed: return .green
+        case .denied: return .secondary
+        case .unknown: return .yellow
+        }
     }
 
     private var apnsStatusColor: Color {
