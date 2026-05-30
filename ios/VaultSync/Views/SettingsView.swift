@@ -277,7 +277,7 @@ struct SettingsView: View {
         } header: {
             Text("Cloud Relay")
         } footer: {
-            Text("Cloud Relay enables instant sync when files change on your server, instead of waiting for the next background refresh.")
+            Text("When files change on your server, a silent push wakes VaultSync the moment it happens, so sync feels instant without opening the app. The relay only sends a wake-up signal — it never sees your notes.")
         }
     }
 
@@ -347,7 +347,7 @@ struct SettingsView: View {
         } header: {
             Text(L10n.tr("Support VaultSync"))
         } footer: {
-            Text(L10n.tr("A one-time contribution to support development. It unlocks nothing — VaultSync stays fully functional without it — and you can give as often as you like."))
+            Text(L10n.tr("VaultSync is an independent, open-source app (MPL-2.0). A one-time contribution keeps it independent, ad-free, and moving forward. It unlocks nothing — VaultSync stays fully functional without it — and you can give as often as you like."))
         }
     }
 

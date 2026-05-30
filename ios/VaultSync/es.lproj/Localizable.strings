@@ -33,7 +33,7 @@
 "Check your subscription status in Settings and retry. If this persists, restart VaultSync." = "Comprueba el estado de tu suscripción en Ajustes y vuelve a intentarlo. Si continúa, reinicia VaultSync.";
 "Cloud Relay" = "Cloud Relay";
 "Cloud Relay active" = "Cloud Relay activo";
-"Cloud Relay enables instant sync when files change on your server, instead of waiting for the next background refresh." = "Cloud Relay activa la sincronización instantánea cuando cambian archivos en tu servidor, en lugar de esperar a la siguiente actualización en segundo plano.";
+"When files change on your server, a silent push wakes VaultSync the moment it happens, so sync feels instant without opening the app. The relay only sends a wake-up signal — it never sees your notes." = "Cuando cambian archivos en tu servidor, un push silencioso despierta VaultSync en ese mismo momento, así la sincronización se siente inmediata sin abrir la app. El relay solo envía una señal de aviso: nunca ve tus notas.";
 "Cloud Relay is not currently subscribed. Push-triggered wake-ups are disabled until the subscription is active." = "Cloud Relay no está suscrito actualmente. Las activaciones por push están desactivadas hasta que la suscripción esté activa.";
 "Cloud Relay is not subscribed. Start a subscription first." = "Cloud Relay no está suscrito. Inicia primero una suscripción.";
 "Cloud Relay provisioning could not contact the relay backend." = "El aprovisionamiento de Cloud Relay no pudo contactar con el backend del relay.";
@@ -353,7 +353,7 @@
 "onboarding.overview.step3.description" = "Comparte tu Vault de Obsidian desde Syncthing en tu ordenador con este iPhone.";
 "onboarding.overview.step4.title" = "Sigue el estado de sincronización";
 "onboarding.overview.step4.description" = "VaultSync muestra los Vaults activos, los problemas y el progreso de sincronización en la pantalla de inicio.";
-"onboarding.overview.cloudRelay" = "Cloud Relay se puede activar más tarde en Ajustes para obtener actualizaciones en segundo plano más rápidas.";
+"onboarding.overview.cloudRelay" = "Activa Cloud Relay más tarde en Ajustes para recibir los cambios en el momento en que ocurren, sin abrir la app.";
 "onboarding.cta.openVaultSync" = "Abrir VaultSync";
 "onboarding.accessibility.page" = "Página %d de 2";
 "onboarding.accessibility.continueHint" = "Abre una breve descripción general de la configuración.";
@@ -371,7 +371,7 @@
 "Your iPhone is paired with at least one Syncthing device." = "Tu iPhone está emparejado con al menos un dispositivo de Syncthing.";
 "Your iPhone is not paired with a Syncthing device yet." = "Tu iPhone aún no está emparejado con ningún dispositivo de Syncthing.";
 "Add your computer or server from the Devices section on the home screen." = "Añade tu ordenador o servidor desde la sección Dispositivos en la pantalla de inicio.";
-"Vault syncing" = "Sincronizando Vault";
+"Vault syncing" = "Vault sincronizándose";
 "At least one Obsidian vault is active in VaultSync." = "Al menos un Vault de Obsidian está activo en VaultSync.";
 "A vault offer is waiting to be accepted." = "Hay una oferta de Vault esperando a ser aceptada.";
 "A vault offer is waiting. Accept it from Pending Shares on the home screen." = "Hay una oferta de Vault esperando. Acéptala en Comparticiones pendientes en la pantalla de inicio.";
@@ -478,7 +478,7 @@
 "Contributions are currently unavailable." = "Las contribuciones no están disponibles actualmente.";
 "Thank you!" = "¡Gracias!";
 "Your contribution means a lot and directly supports VaultSync development. Thank you!" = "Tu contribución significa mucho y apoya directamente el desarrollo de VaultSync. ¡Gracias!";
-"A one-time contribution to support development. It unlocks nothing — VaultSync stays fully functional without it — and you can give as often as you like." = "Una contribución única para apoyar el desarrollo. No desbloquea nada — VaultSync sigue siendo totalmente funcional sin ella — y puedes contribuir tantas veces como quieras.";
+"VaultSync is an independent, open-source app (MPL-2.0). A one-time contribution keeps it independent, ad-free, and moving forward. It unlocks nothing — VaultSync stays fully functional without it — and you can give as often as you like." = "VaultSync es una app independiente y de código abierto (MPL-2.0). Una contribución única la mantiene independiente, sin anuncios y en marcha. No desbloquea nada — VaultSync sigue siendo totalmente funcional sin ella — y puedes contribuir tantas veces como quieras.";
 /* Cloud Relay price (localized via StoreKit) */
 "Cloud Relay — %@" = "Cloud Relay — %@";
 "Cloud Relay subscription" = "Suscripción a Cloud Relay";

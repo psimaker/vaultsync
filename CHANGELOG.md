@@ -15,6 +15,7 @@ All notable changes to VaultSync are documented here.
 ### Changed
 
 - **Cloud Relay price shown correctly per region** — The subscribe button and the subscription details previously mixed the localized App Store price with a hard-coded "$0.99/month", so non-US storefronts saw two different currencies. Both now show a single price taken straight from StoreKit (for example "0,99 € / month" or "A$1.99 / month"), so the displayed price is always correct for the user's storefront.
+- **Clearer Support and Cloud Relay wording** — The Settings → Support footer now frames a contribution around keeping VaultSync independent, open-source (MPL-2.0), and ad-free — it still unlocks nothing. The Cloud Relay description explains the silent-push wake-up more plainly and honestly: changes on your server wake the app the moment they happen so incoming sync feels instant, and the relay only sends a wake-up signal — it never sees your notes. The German, Spanish, and Simplified Chinese translations were polished for terminology and punctuation consistency in the same pass.
 
 ### Fixed
 

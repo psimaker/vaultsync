@@ -33,7 +33,7 @@
 "Check your subscription status in Settings and retry. If this persists, restart VaultSync." = "Check your subscription status in Settings and retry. If this persists, restart VaultSync.";
 "Cloud Relay" = "Cloud Relay";
 "Cloud Relay active" = "Cloud Relay active";
-"Cloud Relay enables instant sync when files change on your server, instead of waiting for the next background refresh." = "Cloud Relay enables instant sync when files change on your server, instead of waiting for the next background refresh.";
+"When files change on your server, a silent push wakes VaultSync the moment it happens, so sync feels instant without opening the app. The relay only sends a wake-up signal — it never sees your notes." = "When files change on your server, a silent push wakes VaultSync the moment it happens, so sync feels instant without opening the app. The relay only sends a wake-up signal — it never sees your notes.";
 "Cloud Relay is not currently subscribed. Push-triggered wake-ups are disabled until the subscription is active." = "Cloud Relay is not currently subscribed. Push-triggered wake-ups are disabled until the subscription is active.";
 "Cloud Relay is not subscribed. Start a subscription first." = "Cloud Relay is not subscribed. Start a subscription first.";
 "Cloud Relay provisioning could not contact the relay backend." = "Cloud Relay provisioning could not contact the relay backend.";
@@ -353,7 +353,7 @@
 "onboarding.overview.step3.description" = "Share your Obsidian vault from Syncthing on your computer to this iPhone.";
 "onboarding.overview.step4.title" = "Watch sync status";
 "onboarding.overview.step4.description" = "VaultSync shows active vaults, issues, and sync progress on the home screen.";
-"onboarding.overview.cloudRelay" = "Cloud Relay can be enabled later in Settings for faster background updates.";
+"onboarding.overview.cloudRelay" = "Turn on Cloud Relay later in Settings to get changes pushed the moment they happen — without opening the app.";
 "onboarding.cta.openVaultSync" = "Open VaultSync";
 "onboarding.accessibility.page" = "Page %d of 2";
 "onboarding.accessibility.continueHint" = "Opens a short setup overview.";
@@ -478,7 +478,7 @@
 "Contributions are currently unavailable." = "Contributions are currently unavailable.";
 "Thank you!" = "Thank you!";
 "Your contribution means a lot and directly supports VaultSync development. Thank you!" = "Your contribution means a lot and directly supports VaultSync development. Thank you!";
-"A one-time contribution to support development. It unlocks nothing — VaultSync stays fully functional without it — and you can give as often as you like." = "A one-time contribution to support development. It unlocks nothing — VaultSync stays fully functional without it — and you can give as often as you like.";
+"VaultSync is an independent, open-source app (MPL-2.0). A one-time contribution keeps it independent, ad-free, and moving forward. It unlocks nothing — VaultSync stays fully functional without it — and you can give as often as you like." = "VaultSync is an independent, open-source app (MPL-2.0). A one-time contribution keeps it independent, ad-free, and moving forward. It unlocks nothing — VaultSync stays fully functional without it — and you can give as often as you like.";
 /* Cloud Relay price (localized via StoreKit) */
 "Cloud Relay — %@" = "Cloud Relay — %@";
 "Cloud Relay subscription" = "Cloud Relay subscription";

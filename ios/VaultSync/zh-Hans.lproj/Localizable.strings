@@ -33,7 +33,7 @@
 "Check your subscription status in Settings and retry. If this persists, restart VaultSync." = "在设置中检查订阅状态后重试。如果问题持续存在，请重启 VaultSync。";
 "Cloud Relay" = "Cloud Relay";
 "Cloud Relay active" = "Cloud Relay 已启用";
-"Cloud Relay enables instant sync when files change on your server, instead of waiting for the next background refresh." = "Cloud Relay 会在服务器文件发生变化时立即同步，而不是等待下一次后台刷新。";
+"When files change on your server, a silent push wakes VaultSync the moment it happens, so sync feels instant without opening the app. The relay only sends a wake-up signal — it never sees your notes." = "服务器上的文件一发生变化，静默推送就会在第一时间唤醒 VaultSync，无需打开应用，同步仿佛即时完成。Relay 只发送唤醒信号，绝不会看到你的笔记。";
 "Cloud Relay is not currently subscribed. Push-triggered wake-ups are disabled until the subscription is active." = "当前未订阅 Cloud Relay。在订阅激活前，基于推送的唤醒功能将被禁用。";
 "Cloud Relay is not subscribed. Start a subscription first." = "Cloud Relay 尚未订阅。请先开始订阅。";
 "Cloud Relay provisioning could not contact the relay backend." = "Cloud Relay 配置无法连接到 relay 后端。";
@@ -245,8 +245,8 @@
 "Run Foreground Rescan" = "执行前台重扫";
 "Scan QR Code" = "扫描 QR Code";
 "Scanning" = "扫描中";
-"Scanning completed in %@" = "%@ 扫描完成";
-"Scanning started in %@" = "%@ 开始扫描";
+"Scanning completed in %@" = "%@ 中的扫描已完成";
+"Scanning started in %@" = "%@ 中开始扫描";
 "Settings" = "设置";
 "Share a folder from your desktop Syncthing — it will be accepted automatically." = "从桌面 Syncthing 共享一个文件夹——它会被自动接受。";
 "Share requests are shown below, but Accept and Retry are disabled until your Obsidian folder is connected." = "共享请求显示在下方，但在连接 Obsidian 文件夹之前，“接受”和“重试”按钮会被禁用。";
@@ -353,7 +353,7 @@
 "onboarding.overview.step3.description" = "在电脑上的 Syncthing 中将你的 Obsidian Vault 共享到这台 iPhone。";
 "onboarding.overview.step4.title" = "查看同步状态";
 "onboarding.overview.step4.description" = "VaultSync 会在主屏幕显示活动 Vault、问题和同步进度。";
-"onboarding.overview.cloudRelay" = "Cloud Relay 可稍后在“设置”中启用，以获得更快的后台更新。";
+"onboarding.overview.cloudRelay" = "稍后可在“设置”中启用 Cloud Relay，让改动在发生的那一刻就送达，无需打开应用。";
 "onboarding.cta.openVaultSync" = "打开 VaultSync";
 "onboarding.accessibility.page" = "第 %d 页，共 2 页";
 "onboarding.accessibility.continueHint" = "打开简短的设置概览。";
@@ -394,7 +394,7 @@
 "Other presets" = "其他预设";
 "Custom patterns" = "自定义规则";
 "How filters work" = "过滤器工作原理";
-"Add pattern (e.g. *.tmp)" = "添加规则(例如 *.tmp)";
+"Add pattern (e.g. *.tmp)" = "添加规则（例如 *.tmp）";
 "Sync Filter Error" = "同步过滤器错误";
 "Skip these on this iPhone? You can change this anytime in Sync Filters." = "在此 iPhone 上跳过这些？你可以随时在同步过滤器中修改。";
 "Skip" = "跳过";
@@ -478,7 +478,7 @@
 "Contributions are currently unavailable." = "目前无法进行支持。";
 "Thank you!" = "谢谢！";
 "Your contribution means a lot and directly supports VaultSync development. Thank you!" = "你的支持意义重大，将直接用于 VaultSync 的开发。谢谢！";
-"A one-time contribution to support development. It unlocks nothing — VaultSync stays fully functional without it — and you can give as often as you like." = "一次性的开发支持。它不会解锁任何功能——没有它 VaultSync 也完全可用——你可以随时多次贡献。";
+"VaultSync is an independent, open-source app (MPL-2.0). A one-time contribution keeps it independent, ad-free, and moving forward. It unlocks nothing — VaultSync stays fully functional without it — and you can give as often as you like." = "VaultSync 是一款独立的开源应用（MPL-2.0）。一次性的支持就能让它保持独立、无广告并持续更新。它不会解锁任何功能——没有它 VaultSync 也完全可用——你可以随时多次支持。";
 /* Cloud Relay price (localized via StoreKit) */
 "Cloud Relay — %@" = "Cloud Relay — %@";
 "Cloud Relay subscription" = "Cloud Relay 订阅";
@@ -501,7 +501,7 @@
 "a new name" = "一个新名称";
 "Both versions were kept.\n\nYour local version remains as '%@'.\nThe other device's version was renamed to '%@'." = "已保留两个版本。\n\n你的本地版本保留为“%@”。\n其他设备的版本已重命名为“%@”。";
 "%d conflicts" = "%d 个冲突";
-"Your contribution is pending approval." = "你的贡献正在等待批准。";
+"Your contribution is pending approval." = "你的支持正在等待批准。";
 "Could not accept share '%@'.\n\n%@" = "无法接受共享“%@”。\n\n%@";
 "iOS did not provide a push token required for instant sync." = "iOS 未提供即时同步所需的推送令牌。";
 "%@ (Trigger: %@)" = "%@（触发：%@）";
@@ -524,7 +524,7 @@
 "Silent push restarted Syncthing, but no real sync progress was observed before the app returned to idle." = "静默推送已重启 Syncthing，但在应用返回空闲前未观察到实际同步进展。";
 "Sync did not reach idle before %ds deadline." = "同步未在 %d 秒截止时间前进入空闲状态。";
 "Relay %@ failed with HTTP %d." = "Relay %@ 失败，HTTP %d。";
-"Relay %@ is rate limited (HTTP 429)." = "Relay %@ 受到速率限制（HTTP 429）。";
+"Relay %@ is rate limited (HTTP 429)." = "Relay %@ 被限流（HTTP 429）。";
 "Relay %@ network error: %@" = "Relay %@ 网络错误：%@";
 "Relay %@ returned a non-HTTP response." = "Relay %@ 返回了非 HTTP 响应。";
 "Relay %@ unauthorized (HTTP %d)." = "Relay %@ 未授权（HTTP %d）。";

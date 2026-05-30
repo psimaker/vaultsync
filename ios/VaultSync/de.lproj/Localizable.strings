@@ -33,7 +33,7 @@
 "Check your subscription status in Settings and retry. If this persists, restart VaultSync." = "Prüfe deinen Abostatus in den Einstellungen und versuche es erneut. Wenn das Problem bleibt, starte VaultSync neu.";
 "Cloud Relay" = "Cloud Relay";
 "Cloud Relay active" = "Cloud Relay aktiv";
-"Cloud Relay enables instant sync when files change on your server, instead of waiting for the next background refresh." = "Cloud Relay aktiviert sofortige Synchronisation bei Dateiänderungen auf deinem Server, statt bis zur nächsten Hintergrundaktualisierung zu warten.";
+"When files change on your server, a silent push wakes VaultSync the moment it happens, so sync feels instant without opening the app. The relay only sends a wake-up signal — it never sees your notes." = "Ändern sich Dateien auf deinem Server, weckt ein stiller Push VaultSync im selben Moment — Synchronisation wirkt sofort, ohne die App zu öffnen. Das Relay sendet nur ein Wecksignal und sieht deine Notizen nie.";
 "Cloud Relay is not currently subscribed. Push-triggered wake-ups are disabled until the subscription is active." = "Cloud Relay ist derzeit nicht abonniert. Push-ausgelöste Aufweckvorgänge sind deaktiviert, bis das Abo aktiv ist.";
 "Cloud Relay is not subscribed. Start a subscription first." = "Cloud Relay ist nicht abonniert. Starte zuerst ein Abo.";
 "Cloud Relay provisioning could not contact the relay backend." = "Cloud Relay-Provisioning konnte das Relay-Backend nicht erreichen.";
@@ -353,7 +353,7 @@
 "onboarding.overview.step3.description" = "Teile deinen Obsidian Vault in Syncthing von deinem Computer mit diesem iPhone.";
 "onboarding.overview.step4.title" = "Sync-Status verfolgen";
 "onboarding.overview.step4.description" = "VaultSync zeigt aktive Vaults, Probleme und Sync-Fortschritt auf dem Startbildschirm.";
-"onboarding.overview.cloudRelay" = "Cloud Relay kann später in den Einstellungen für schnellere Updates im Hintergrund aktiviert werden.";
+"onboarding.overview.cloudRelay" = "Aktiviere Cloud Relay später in den Einstellungen, damit Änderungen im selben Moment ankommen — ganz ohne die App zu öffnen.";
 "onboarding.cta.openVaultSync" = "VaultSync öffnen";
 "onboarding.accessibility.page" = "Seite %d von 2";
 "onboarding.accessibility.continueHint" = "Öffnet eine kurze Setup-Übersicht.";
@@ -443,7 +443,7 @@
 /* Issue #10 — conflict-notifications toggle (Settings) */
 "Notifications" = "Benachrichtigungen";
 "Conflict Notifications" = "Konflikt-Benachrichtigungen";
-"Show a banner when sync conflicts are detected. Turning this off does not affect Cloud Relay or background sync — your vault keeps syncing." = "Zeigt einen Banner an, wenn Sync-Konflikte erkannt werden. Das Ausschalten betrifft weder Cloud Relay noch die Hintergrund-Synchronisierung — dein Vault synchronisiert weiter.";
+"Show a banner when sync conflicts are detected. Turning this off does not affect Cloud Relay or background sync — your vault keeps syncing." = "Zeigt ein Banner an, wenn Sync-Konflikte erkannt werden. Das Ausschalten betrifft weder Cloud Relay noch die Hintergrundsynchronisation — dein Vault synchronisiert weiter.";
 
 /* Issue #10 — relay/alert decoupling (Relay Diagnostics) */
 "Alert Banners" = "Hinweis-Banner";
@@ -455,7 +455,7 @@
 "APNs registration failed. Check your internet connection and retry registration. Silent push does not require notification banners to be enabled." = "APNs-Registrierung fehlgeschlagen. Prüfe deine Internetverbindung und wiederhole die Registrierung. Silent Push benötigt keine aktivierten Hinweis-Banner.";
 
 /* Issue #10 — background-sync reliability (error-settled outcome) */
-"Background sync settled with at least one folder in an error state." = "Hintergrund-Synchronisierung beendet — mindestens ein Ordner ist im Fehlerzustand.";
+"Background sync settled with at least one folder in an error state." = "Hintergrundsynchronisation beendet — mindestens ein Ordner ist im Fehlerzustand.";
 
 /* Issue #10 — relay reachable (vs delivering) */
 "Cloud Relay looks reachable" = "Cloud Relay scheint erreichbar";
@@ -478,7 +478,7 @@
 "Contributions are currently unavailable." = "Unterstützungen sind derzeit nicht verfügbar.";
 "Thank you!" = "Danke!";
 "Your contribution means a lot and directly supports VaultSync development. Thank you!" = "Deine Unterstützung bedeutet viel und fließt direkt in die Entwicklung von VaultSync. Danke!";
-"A one-time contribution to support development. It unlocks nothing — VaultSync stays fully functional without it — and you can give as often as you like." = "Eine einmalige Unterstützung für die Entwicklung. Sie schaltet nichts frei — VaultSync bleibt auch ohne sie voll funktionsfähig — und du kannst so oft geben, wie du möchtest.";
+"VaultSync is an independent, open-source app (MPL-2.0). A one-time contribution keeps it independent, ad-free, and moving forward. It unlocks nothing — VaultSync stays fully functional without it — and you can give as often as you like." = "VaultSync ist eine unabhängige Open-Source-App (MPL-2.0). Eine einmalige Unterstützung hält sie unabhängig, werbefrei und in Entwicklung. Sie schaltet nichts frei — VaultSync bleibt auch ohne sie voll funktionsfähig — und du kannst so oft geben, wie du möchtest.";
 /* Cloud Relay price (localized via StoreKit) */
 "Cloud Relay — %@" = "Cloud Relay — %@";
 "Cloud Relay subscription" = "Cloud-Relay-Abo";
@@ -510,21 +510,21 @@
 "%@ connected" = "%@ verbunden";
 "%@ disconnected" = "%@ getrennt";
 "%d%% complete" = "%d %% abgeschlossen";
-"Background sync completed and reached idle." = "Hintergrund-Sync abgeschlossen und Leerlauf erreicht.";
-"Background sync did not reach an idle folder state before the iOS deadline." = "Hintergrund-Sync hat vor dem iOS-Zeitlimit keinen Leerlauf-Zustand der Ordner erreicht.";
-"Background sync ended with an unexpected failure." = "Hintergrund-Sync endete mit einem unerwarteten Fehler.";
-"Background sync ran, but folders were already idle." = "Hintergrund-Sync lief, aber die Ordner waren bereits im Leerlauf.";
+"Background sync completed and reached idle." = "Hintergrundsynchronisation abgeschlossen und Leerlauf erreicht.";
+"Background sync did not reach an idle folder state before the iOS deadline." = "Hintergrundsynchronisation hat vor dem iOS-Zeitlimit keinen Leerlauf-Zustand der Ordner erreicht.";
+"Background sync ended with an unexpected failure." = "Hintergrundsynchronisation endete mit einem unerwarteten Fehler.";
+"Background sync ran, but folders were already idle." = "Hintergrundsynchronisation lief, aber die Ordner waren bereits im Leerlauf.";
 "Forced silent-push restart failed." = "Erzwungener Neustart per Silent Push fehlgeschlagen.";
-"No Syncthing folders were available to sync in the background." = "Es waren keine Syncthing-Ordner für die Hintergrund-Synchronisierung verfügbar.";
+"No Syncthing folders were available to sync in the background." = "Es waren keine Syncthing-Ordner für die Hintergrundsynchronisation verfügbar.";
 "No folders were available after forced silent-push restart." = "Nach dem erzwungenen Silent-Push-Neustart waren keine Ordner verfügbar.";
-"No folders were available for background sync." = "Für die Hintergrund-Synchronisierung waren keine Ordner verfügbar.";
+"No folders were available for background sync." = "Für die Hintergrundsynchronisation waren keine Ordner verfügbar.";
 "No security-scoped bookmark access was available." = "Es war kein Security-Scoped-Bookmark-Zugriff verfügbar.";
 "Accept or create a shared vault before relying on background sync." = "Akzeptiere oder erstelle einen geteilten Vault, bevor du dich auf Hintergrund-Sync verlässt.";
 "Retry from the app and review relay/background diagnostics in Settings." = "Versuche es erneut in der App und prüfe die Relay-/Hintergrund-Diagnose in den Einstellungen.";
 "Silent push restarted Syncthing, but no real sync progress was observed before the app returned to idle." = "Silent Push hat Syncthing neu gestartet, aber vor der Rückkehr in den Leerlauf wurde kein echter Sync-Fortschritt beobachtet.";
 "Sync did not reach idle before %ds deadline." = "Sync hat den Leerlauf nicht vor dem %ds-Zeitlimit erreicht.";
 "Relay %@ failed with HTTP %d." = "Relay %@ ist mit HTTP %d fehlgeschlagen.";
-"Relay %@ is rate limited (HTTP 429)." = "Relay %@ ist ratenbegrenzt (HTTP 429).";
+"Relay %@ is rate limited (HTTP 429)." = "Relay %@ ist rate-limitiert (HTTP 429).";
 "Relay %@ network error: %@" = "Relay %@ Netzwerkfehler: %@";
 "Relay %@ returned a non-HTTP response." = "Relay %@ hat eine Nicht-HTTP-Antwort zurückgegeben.";
 "Relay %@ unauthorized (HTTP %d)." = "Relay %@ nicht autorisiert (HTTP %d).";
