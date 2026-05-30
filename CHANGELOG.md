@@ -9,7 +9,8 @@ All notable changes to VaultSync are documented here.
 ### Added
 
 - **Turn off conflict notifications** ([#10](https://github.com/psimaker/vaultsync/issues/10)) — A new Settings → Notifications toggle mutes the sync-conflict banner without touching anything else. It gates only the banner, so Cloud Relay wake-ups and background sync keep working, and turning it off no longer requires disabling iOS notifications for the whole app. Defaults on; existing installs keep their current behaviour.
-- **Support VaultSync** — An optional "Support VaultSync" section in Settings offers two one-time contributions (Small and Big). They unlock nothing — VaultSync stays fully functional without them — and you can contribute as often as you like. Localized for English, German, and Simplified Chinese.
+- **Support VaultSync** — An optional "Support VaultSync" section in Settings offers two one-time contributions (Small and Big). They unlock nothing — VaultSync stays fully functional without them — and you can contribute as often as you like. Localized for English, German, Spanish, and Simplified Chinese.
+- **Spanish localization** — VaultSync is now fully localized in Spanish (`es`), joining English, German, and Simplified Chinese across the app and the home-screen widget.
 
 ### Changed
 

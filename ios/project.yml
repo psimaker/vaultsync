@@ -13,7 +13,7 @@ options:
       text = File.read(path)
       text.sub!(
         /knownRegions = \(\n\s*Base,\n\s*en,\n\s*\);/,
-        "knownRegions = (\n\t\t\t\tBase,\n\t\t\t\tde,\n\t\t\t\ten,\n\t\t\t\t\"zh-Hans\",\n\t\t\t);"
+        "knownRegions = (\n\t\t\t\tBase,\n\t\t\t\tde,\n\t\t\t\ten,\n\t\t\t\tes,\n\t\t\t\t\"zh-Hans\",\n\t\t\t);"
       )
       File.write(path, text)
     '
