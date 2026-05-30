@@ -230,6 +230,14 @@ enum BackgroundSyncService {
         }
     }
 
+    /// Whether the user has denied alert authorization. Affects ONLY whether a
+    /// conflict banner can appear — silent (content-available) pushes used by
+    /// Cloud Relay are delivered regardless. Surfaced as informational, never
+    /// as a relay/APNs failure.
+    static func isAlertAuthorizationDenied() async -> Bool {
+        await UNUserNotificationCenter.current().notificationSettings().authorizationStatus == .denied
+    }
+
     /// What to do with the conflict banner given the current conflict count and
     /// the count last surfaced to the user. Pure and deterministic so the
     /// suppression logic can be unit-tested without the bridge.

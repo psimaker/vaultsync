@@ -25,6 +25,30 @@ final class SubscriptionManager {
     private(set) var relayHealthCheckInFlight = false
     private(set) var lastRelayTriggerReceivedAt: Date?
     private(set) var lastRelayError: RelayService.RecordedRelayError?
+    /// Whether iOS alert authorization is denied. Informational only — silent
+    /// pushes (Cloud Relay wake-ups) do not depend on it, so this must NOT feed
+    /// any relay/APNs "failure" state.
+    private(set) var alertAuthorizationDenied = false
+
+    /// Best-effort "Cloud Relay is actually delivering wake-ups" signal, built
+    /// from the inputs that genuinely matter — an active subscription, an APNs
+    /// token, a provisioned device, and either a recent silent-push trigger or a
+    /// healthy relay endpoint. Deliberately independent of alert-banner
+    /// authorization so muting conflict banners never reads as "relay broken".
+    var relayDeliveryLikelyWorking: Bool {
+        guard isRelaySubscribed, hasAPNsToken else { return false }
+        let provisioned = relayProvisionStatuses.values.contains(.provisioned)
+        let recentTrigger: Bool
+        if let last = lastRelayTriggerReceivedAt {
+            recentTrigger = Date().timeIntervalSince(last) < Self.relayTriggerFreshnessWindow
+        } else {
+            recentTrigger = false
+        }
+        let healthy = relayHealthResult?.isHealthy ?? false
+        return provisioned && (recentTrigger || healthy)
+    }
+
+    private static let relayTriggerFreshnessWindow: TimeInterval = 48 * 60 * 60
 
     @ObservationIgnored nonisolated(unsafe) private var loadTask: Task<Void, Never>?
     @ObservationIgnored nonisolated(unsafe) private var unfinishedTask: Task<Void, Never>?
@@ -191,6 +215,7 @@ final class SubscriptionManager {
         }
         refreshAPNsRegistrationStatus()
         refreshStoredRelayDiagnostics()
+        alertAuthorizationDenied = await BackgroundSyncService.isAlertAuthorizationDenied()
         await checkSubscriptionStatus()
         await runRelayHealthCheck()
         // Opportunistically re-provision if the last successful provision is

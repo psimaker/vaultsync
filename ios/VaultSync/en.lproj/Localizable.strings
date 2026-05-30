@@ -523,3 +523,12 @@
 "Notifications" = "Notifications";
 "Conflict Notifications" = "Conflict Notifications";
 "Show a banner when sync conflicts are detected. Turning this off does not affect Cloud Relay or background sync — your vault keeps syncing." = "Show a banner when sync conflicts are detected. Turning this off does not affect Cloud Relay or background sync — your vault keeps syncing.";
+
+/* Issue #10 — relay/alert decoupling (Relay Diagnostics) */
+"Alert Banners" = "Alert Banners";
+"Allowed" = "Allowed";
+"Denied" = "Denied";
+"Cloud Relay is delivering wake-ups" = "Cloud Relay is delivering wake-ups";
+"Alert banners are off at the iOS level. Cloud Relay wake-ups still work — they use silent push, which does not need notification permission." = "Alert banners are off at the iOS level. Cloud Relay wake-ups still work — they use silent push, which does not need notification permission.";
+"APNs token is missing. Retry APNs registration; if it keeps failing, check your internet connection. (Silent push does not require notification banners.)" = "APNs token is missing. Retry APNs registration; if it keeps failing, check your internet connection. (Silent push does not require notification banners.)";
+"APNs registration failed. Check your internet connection and retry registration. Silent push does not require notification banners to be enabled." = "APNs registration failed. Check your internet connection and retry registration. Silent push does not require notification banners to be enabled.";
