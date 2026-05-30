@@ -58,6 +58,35 @@ final class SubscriptionManager {
 
     private static let relayTriggerFreshnessWindow: TimeInterval = 48 * 60 * 60
 
+    /// Localized "price / period" for the relay subscription, derived entirely
+    /// from StoreKit so it is correct in every storefront — e.g. "0,99 € / month"
+    /// in Germany, "A$1.99 / month" in Australia. Falls back to the bare
+    /// localized price if the subscription period is unavailable. Never hard-code
+    /// a currency or amount in the UI.
+    var relayPriceText: String? {
+        guard let product = availableProduct else { return nil }
+        guard let period = product.subscription?.subscriptionPeriod else {
+            return product.displayPrice
+        }
+        let unit: String
+        switch period.unit {
+        case .day:
+            unit = period.value == 1 ? L10n.tr("day") : L10n.tr("days")
+        case .week:
+            unit = period.value == 1 ? L10n.tr("week") : L10n.tr("weeks")
+        case .month:
+            unit = period.value == 1 ? L10n.tr("month") : L10n.tr("months")
+        case .year:
+            unit = period.value == 1 ? L10n.tr("year") : L10n.tr("years")
+        @unknown default:
+            return product.displayPrice
+        }
+        if period.value == 1 {
+            return L10n.fmt("%@ / %@", product.displayPrice, unit)
+        }
+        return L10n.fmt("%1$@ / %2$d %3$@", product.displayPrice, period.value, unit)
+    }
+
     @ObservationIgnored nonisolated(unsafe) private var loadTask: Task<Void, Never>?
     @ObservationIgnored nonisolated(unsafe) private var unfinishedTask: Task<Void, Never>?
     @ObservationIgnored nonisolated(unsafe) private var updatesTask: Task<Void, Never>?

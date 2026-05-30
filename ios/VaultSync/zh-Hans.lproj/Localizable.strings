@@ -537,3 +537,26 @@
 
 /* Issue #10 — relay reachable (vs delivering) */
 "Cloud Relay looks reachable" = "Cloud Relay 似乎可达";
+
+/* Subscription period units */
+"month" = "月";
+"months" = "个月";
+"week" = "周";
+"weeks" = "周";
+"year" = "年";
+"years" = "年";
+"%@ / %@" = "%@ / %@";
+"%1$@ / %2$d %3$@" = "%1$@ / %2$d %3$@";
+/* Contributions / tip jar */
+"Support VaultSync" = "支持 VaultSync";
+"Small Contribution" = "小额支持";
+"Big Contribution" = "大额支持";
+"Contribution" = "支持";
+"Contribution Failed" = "支持失败";
+"Contributions are currently unavailable." = "目前无法进行支持。";
+"Thank you!" = "谢谢！";
+"Your contribution means a lot and directly supports VaultSync development. Thank you!" = "你的支持意义重大，将直接用于 VaultSync 的开发。谢谢！";
+"A one-time contribution to support development. It unlocks nothing — VaultSync stays fully functional without it — and you can give as often as you like." = "一次性的开发支持。它不会解锁任何功能——没有它 VaultSync 也完全可用——你可以随时多次贡献。";
+/* Cloud Relay price (localized via StoreKit) */
+"Cloud Relay — %@" = "Cloud Relay — %@";
+"Cloud Relay subscription" = "Cloud Relay 订阅";

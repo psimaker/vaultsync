@@ -537,3 +537,26 @@
 
 /* Issue #10 — relay reachable (vs delivering) */
 "Cloud Relay looks reachable" = "Cloud Relay scheint erreichbar";
+
+/* Subscription period units */
+"month" = "Monat";
+"months" = "Monate";
+"week" = "Woche";
+"weeks" = "Wochen";
+"year" = "Jahr";
+"years" = "Jahre";
+"%@ / %@" = "%@ / %@";
+"%1$@ / %2$d %3$@" = "%1$@ / %2$d %3$@";
+/* Contributions / tip jar */
+"Support VaultSync" = "VaultSync unterstützen";
+"Small Contribution" = "Kleine Unterstützung";
+"Big Contribution" = "Große Unterstützung";
+"Contribution" = "Unterstützung";
+"Contribution Failed" = "Unterstützung fehlgeschlagen";
+"Contributions are currently unavailable." = "Unterstützungen sind derzeit nicht verfügbar.";
+"Thank you!" = "Danke!";
+"Your contribution means a lot and directly supports VaultSync development. Thank you!" = "Deine Unterstützung bedeutet viel und fließt direkt in die Entwicklung von VaultSync. Danke!";
+"A one-time contribution to support development. It unlocks nothing — VaultSync stays fully functional without it — and you can give as often as you like." = "Eine einmalige Unterstützung für die Entwicklung. Sie schaltet nichts frei — VaultSync bleibt auch ohne sie voll funktionsfähig — und du kannst so oft geben, wie du möchtest.";
+/* Cloud Relay price (localized via StoreKit) */
+"Cloud Relay — %@" = "Cloud Relay — %@";
+"Cloud Relay subscription" = "Cloud-Relay-Abo";

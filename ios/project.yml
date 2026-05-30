@@ -32,6 +32,7 @@ schemes:
         VaultSync: all
     run:
       config: Debug
+      storeKitConfiguration: VaultSync.storekit
     test:
       config: Debug
       targets:

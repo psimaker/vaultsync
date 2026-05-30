@@ -10,6 +10,8 @@ struct SettingsView: View {
     @State private var alertMessage: String?
     @State private var showAlert = false
     @State private var showSetupStatus = false
+    @State private var tipJar = TipJarManager()
+    @State private var showThankYou = false
     @AppStorage(BackgroundSyncService.conflictNotificationsEnabledKey) private var conflictNotificationsEnabled = true
     @Environment(\.dismiss) private var dismiss
 
@@ -17,6 +19,7 @@ struct SettingsView: View {
         NavigationStack {
             List {
                 cloudRelaySection
+                supportSection
                 notificationsSection
                 aboutSection
 
@@ -92,6 +95,17 @@ struct SettingsView: View {
                         homeserverDeviceIDs: syncthingManager.devices.map(\.deviceID)
                     )
                 }
+            }
+            .onChange(of: tipJar.didContribute) { _, contributed in
+                if contributed {
+                    showThankYou = true
+                    tipJar.acknowledgeThankYou()
+                }
+            }
+            .alert(L10n.tr("Thank you!"), isPresented: $showThankYou) {
+                Button("OK") { }
+            } message: {
+                Text(L10n.tr("Your contribution means a lot and directly supports VaultSync development. Thank you!"))
             }
         }
     }
@@ -179,7 +193,7 @@ struct SettingsView: View {
                         HStack {
                             Text("Subscribe")
                             Spacer()
-                            Text(product.displayPrice + "/mo")
+                            Text(subscriptionManager.relayPriceText ?? product.displayPrice)
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -217,10 +231,16 @@ struct SettingsView: View {
                 }
             }
 
-            // Subscription details (required by App Store Review)
+            // Subscription details (required by App Store Review). Price comes
+            // from StoreKit so it is correct per storefront — never hard-coded.
             VStack(alignment: .leading, spacing: 2) {
-                Text("Cloud Relay — $0.99/month")
-                    .font(.caption)
+                if let priceText = subscriptionManager.relayPriceText {
+                    Text(L10n.fmt("Cloud Relay — %@", priceText))
+                        .font(.caption)
+                } else {
+                    Text(L10n.tr("Cloud Relay subscription"))
+                        .font(.caption)
+                }
                 Text("Auto-renews monthly. Cancel anytime in Settings → Subscriptions.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -245,6 +265,74 @@ struct SettingsView: View {
         } footer: {
             Text(L10n.tr("Show a banner when sync conflicts are detected. Turning this off does not affect Cloud Relay or background sync — your vault keeps syncing."))
         }
+    }
+
+    // MARK: - Support Section
+
+    private var supportSection: some View {
+        Section {
+            if tipJar.products.isEmpty {
+                if tipJar.isLoading {
+                    HStack {
+                        Text(L10n.tr("Loading…"))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                } else {
+                    Text(L10n.tr("Contributions are currently unavailable."))
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                ForEach(tipJar.products, id: \.id) { product in
+                    Button {
+                        Task { await tipJar.purchase(product) }
+                    } label: {
+                        HStack {
+                            Label(contributionTitle(for: product), systemImage: contributionSymbol(for: product))
+                            Spacer()
+                            if tipJar.purchasingProductID == product.id {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Text(product.displayPrice)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .disabled(tipJar.purchasingProductID != nil)
+                }
+            }
+
+            if let error = tipJar.errorMessage, !error.isEmpty {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        } header: {
+            Text(L10n.tr("Support VaultSync"))
+        } footer: {
+            Text(L10n.tr("A one-time contribution to support development. It unlocks nothing — VaultSync stays fully functional without it — and you can give as often as you like."))
+        }
+    }
+
+    private func contributionTitle(for product: Product) -> String {
+        if !product.displayName.isEmpty {
+            return product.displayName
+        }
+        switch product.id {
+        case TipJarManager.smallProductID:
+            return L10n.tr("Small Contribution")
+        case TipJarManager.bigProductID:
+            return L10n.tr("Big Contribution")
+        default:
+            return L10n.tr("Contribution")
+        }
+    }
+
+    private func contributionSymbol(for product: Product) -> String {
+        product.id == TipJarManager.bigProductID ? "heart.fill" : "heart"
     }
 
     private var aboutSection: some View {
