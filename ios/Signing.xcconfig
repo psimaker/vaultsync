@@ -1,0 +1,10 @@
+// Base signing configuration for VaultSync (committed — contains no team).
+//
+// Automatic signing is the default. Your Apple Developer Team ID lives in the
+// gitignored Signing.local.xcconfig (copy it from Signing.local.xcconfig.example).
+// The optional include below is silently skipped when that file is absent, so a
+// fresh clone or CI can `xcodegen generate` and build for the Simulator without
+// forcing any developer team onto contributors.
+CODE_SIGN_STYLE = Automatic
+
+#include? "Signing.local.xcconfig"

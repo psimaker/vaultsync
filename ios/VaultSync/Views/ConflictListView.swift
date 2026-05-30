@@ -2,8 +2,14 @@ import SwiftUI
 
 struct ConflictListView: View {
     let folderID: String
-    let conflicts: [SyncthingManager.ConflictInfo]
     let syncthingManager: SyncthingManager
+
+    /// Read live from the manager so a conflict resolved in the detail view
+    /// disappears immediately. The view previously held a by-value snapshot
+    /// captured at push time, which left resolved files as tappable dead rows.
+    private var conflicts: [SyncthingManager.ConflictInfo] {
+        syncthingManager.conflictFiles[folderID] ?? []
+    }
 
     var body: some View {
         List {
@@ -19,26 +25,31 @@ struct ConflictListView: View {
             }
             
             Section {
-                ForEach(conflicts) { conflict in
-                    NavigationLink {
-                        ConflictDiffView(
-                            folderID: folderID,
-                            conflict: conflict,
-                            syncthingManager: syncthingManager
-                        )
-                    } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(conflict.originalPath)
-                                .font(.body)
-                            HStack(spacing: 8) {
-                                Label(formattedDate(conflict.conflictDate), systemImage: "clock")
-                                Label(conflict.deviceShortID, systemImage: "laptopcomputer")
+                if conflicts.isEmpty {
+                    Label("All conflicts resolved", systemImage: "checkmark.circle")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(conflicts) { conflict in
+                        NavigationLink {
+                            ConflictDiffView(
+                                folderID: folderID,
+                                conflict: conflict,
+                                syncthingManager: syncthingManager
+                            )
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(conflict.originalPath)
+                                    .font(.body)
+                                HStack(spacing: 8) {
+                                    Label(conflict.formattedConflictDate, systemImage: "clock")
+                                    Label(conflict.deviceShortID, systemImage: "laptopcomputer")
+                                }
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                             }
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .padding(.vertical, 2)
+                            .accessibilityElement(children: .combine)
                         }
-                        .padding(.vertical, 2)
-                        .accessibilityElement(children: .combine)
                     }
                 }
             } header: {
@@ -49,6 +60,9 @@ struct ConflictListView: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 
+}
+
+extension SyncthingManager.ConflictInfo {
     private static let conflictDateParser: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyyyMMdd-HHmmss"
@@ -58,12 +72,18 @@ struct ConflictListView: View {
 
     private static let conflictDateDisplay: DateFormatter = {
         let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd HH:mm"
+        // Localized styles (not a fixed pattern) so the displayed date follows
+        // the user's locale and 12/24-hour preference.
+        f.locale = .autoupdatingCurrent
+        f.dateStyle = .medium
+        f.timeStyle = .short
         return f
     }()
 
-    private func formattedDate(_ dateStr: String) -> String {
-        guard let date = Self.conflictDateParser.date(from: dateStr) else { return dateStr }
+    /// Parses the Syncthing conflict-filename timestamp (e.g. "20260530-143000")
+    /// into a locale-aware display string, shared by the list and the diff view.
+    var formattedConflictDate: String {
+        guard let date = Self.conflictDateParser.date(from: conflictDate) else { return conflictDate }
         return Self.conflictDateDisplay.string(from: date)
     }
 }

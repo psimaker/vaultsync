@@ -99,9 +99,9 @@ VaultSync is also not a magic always-on Syncthing daemon for iOS. Apple’s back
 
 ---
 
-## What’s New — v1.3.2
+## What’s New — v1.4.0
 
-> **Skip on iPhone now actually skips returning conflicts** — Tapping "Always skip on this iPhone" in the conflict resolver previously added only the original file's path to the ignore list, so a fresh sync-conflict copy with a new timestamp would arrive from the desktop and the conflict reappeared. Skip now also covers future conflict copies of the same file, removes any existing copies on disk, and groups the pair as a single row in Sync Filters.
+> **Quiet conflict notifications — and a switch to turn them off** ([#10](https://github.com/psimaker/vaultsync/issues/10)) — VaultSync no longer re-posts the same "N conflicts" banner on every background sync. It now replaces a single notification in place, only alerts when the count actually grows, and adds a Settings toggle so you can mute conflict banners without disabling iOS notifications — which no longer makes Cloud Relay look "broken". Background sync is more reliable too, the Cloud Relay price now displays correctly in every region, and you can optionally support development with a one-time contribution. This release also adds full **Spanish** localization, alongside English, German, and Simplified Chinese.
 
 See [CHANGELOG.md](CHANGELOG.md) for full details.
 

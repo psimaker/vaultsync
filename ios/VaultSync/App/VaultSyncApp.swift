@@ -16,6 +16,13 @@ struct VaultSyncApp: App {
     private static let foregroundRescanThreshold: TimeInterval = 5
 
     init() {
+        // Conflict banners default ON. Registered defaults are per-process and
+        // not persisted, so the background handler still relies on its own
+        // `?? true` fallback — this only keeps foreground `bool(forKey:)` reads
+        // consistent before the user ever touches the toggle.
+        UserDefaults.standard.register(
+            defaults: [BackgroundSyncService.conflictNotificationsEnabledKey: true]
+        )
         BackgroundSyncService.registerTasks()
         logger.info("VaultSync starting")
         Task.detached(priority: .utility) {
@@ -50,6 +57,7 @@ struct VaultSyncApp: App {
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
             case .active:
+                BackgroundSyncService.setSceneActive(true)
                 BackgroundSyncService.endBackgroundAssertion()
                 BackgroundSyncService.cancelContinuedProcessing()
                 if !SyncBridgeService.isRunning() {
@@ -75,6 +83,7 @@ struct VaultSyncApp: App {
                 lastBackgroundedAt = nil
             case .background:
                 lastBackgroundedAt = Date()
+                BackgroundSyncService.setSceneActive(false)
 
                 // Release the foreground lifecycle lock so silent-push and
                 // BGAppRefresh handlers can manage Syncthing when the process

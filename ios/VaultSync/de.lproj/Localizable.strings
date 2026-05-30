@@ -6,7 +6,6 @@
 "Active" = "Aktiv";
 "Add" = "Hinzufügen";
 "Add Device" = "Gerät hinzufügen";
-"Add a device from the main screen using its Syncthing Device ID." = "Füge auf dem Hauptbildschirm ein Gerät mit seiner Syncthing-Geräte-ID hinzu.";
 "Add a device using its Syncthing Device ID. Find it in the Syncthing web UI under Actions > Show ID." = "Füge ein Gerät mit seiner Syncthing-Geräte-ID hinzu. Du findest sie in der Syncthing-Weboberfläche unter Actions > Show ID.";
 "Add or Reconnect Device" = "Gerät hinzufügen oder neu verbinden";
 "Added line. %@" = "Hinzugefügte Zeile. %@";
@@ -23,7 +22,6 @@
 "Background Sync Found No Vaults" = "Hintergrundsynchronisation fand keine Vaults";
 "Background Sync Timed Out" = "Zeitüberschreitung bei Hintergrundsynchronisation";
 "Background sync: %@" = "Hintergrundsync: %@";
-"Before you start" = "Bevor du beginnst";
 "Camera Access Required" = "Kamerazugriff erforderlich";
 "Can't find the Obsidian folder?" = "Den Obsidian-Ordner nicht gefunden?";
 "Cancel" = "Abbrechen";
@@ -35,18 +33,13 @@
 "Check your subscription status in Settings and retry. If this persists, restart VaultSync." = "Prüfe deinen Abostatus in den Einstellungen und versuche es erneut. Wenn das Problem bleibt, starte VaultSync neu.";
 "Cloud Relay" = "Cloud Relay";
 "Cloud Relay active" = "Cloud Relay aktiv";
-"Cloud Relay configured (optional)" = "Cloud Relay konfiguriert (optional)";
-"Cloud Relay enables instant sync when files change on your server, instead of waiting for the next background refresh." = "Cloud Relay aktiviert sofortige Synchronisation bei Dateiänderungen auf deinem Server, statt bis zur nächsten Hintergrundaktualisierung zu warten.";
+"When files change on your server, a silent push wakes VaultSync the moment it happens, so sync feels instant without opening the app. The relay only sends a wake-up signal — it never sees your notes." = "Ändern sich Dateien auf deinem Server, weckt ein stiller Push VaultSync im selben Moment — Synchronisation wirkt sofort, ohne die App zu öffnen. Das Relay sendet nur ein Wecksignal und sieht deine Notizen nie.";
 "Cloud Relay is not currently subscribed. Push-triggered wake-ups are disabled until the subscription is active." = "Cloud Relay ist derzeit nicht abonniert. Push-ausgelöste Aufweckvorgänge sind deaktiviert, bis das Abo aktiv ist.";
 "Cloud Relay is not subscribed. Start a subscription first." = "Cloud Relay ist nicht abonniert. Starte zuerst ein Abo.";
-"Cloud Relay is off." = "Cloud Relay ist aus.";
 "Cloud Relay provisioning could not contact the relay backend." = "Cloud Relay-Provisioning konnte das Relay-Backend nicht erreichen.";
 "Cloud Relay provisioning did not complete." = "Cloud Relay-Provisioning wurde nicht abgeschlossen.";
 "Cloud Relay provisioning is temporarily rate limited." = "Cloud Relay-Provisioning ist vorübergehend rate-limitiert.";
-"Cloud Relay — $0.99/month" = "Cloud Relay — 0,99 €/Monat";
-"Complete" = "Abgeschlossen";
 "Completion" = "Fortschritt";
-"Computing diff..." = "Diff wird berechnet...";
 "Configuration Error" = "Konfigurationsfehler";
 "Conflict Resolution Failed" = "Konfliktauflösung fehlgeschlagen";
 "Conflict Resolved" = "Konflikt gelöst";
@@ -55,11 +48,8 @@
 "Conflicts mean multiple versions exist and need a manual decision." = "Konflikte bedeuten, dass mehrere Versionen existieren und manuell entschieden werden muss.";
 "Connect Obsidian to accept shares" = "Obsidian verbinden, um Freigaben anzunehmen";
 "Connect Obsidian Folder" = "Obsidian-Ordner verbinden";
-"Connect the Obsidian folder from the main screen." = "Verbinde den Obsidian-Ordner über den Hauptbildschirm.";
 "Connect to Obsidian first" = "Zuerst mit Obsidian verbinden";
 "Connected" = "Verbunden";
-"Connected. %@" = "Verbunden. %@";
-"Connected. Waiting for vault folders to appear." = "Verbunden. Warte darauf, dass Vault-Ordner erscheinen.";
 "Connection to peer was closed." = "Die Verbindung zum Peer wurde geschlossen.";
 "Copy Device ID" = "Geräte-ID kopieren";
 "Could Not Accept Share" = "Freigabe konnte nicht angenommen werden";
@@ -70,19 +60,15 @@
 "Could not read files.\n\n%@\n%@" = "Dateien konnten nicht gelesen werden.\n\n%@\n%@";
 "Could not read original file.\n\n%@" = "Originaldatei konnte nicht gelesen werden.\n\n%@";
 "Create a vault in Obsidian first. VaultSync will detect it automatically." = "Erstelle zuerst einen Vault in Obsidian. VaultSync erkennt ihn automatisch.";
-"Desktop device paired" = "Desktop-Gerät gekoppelt";
 "Device" = "Gerät";
 "Device ID" = "Geräte-ID";
-"Device ID is available and Syncthing is running." = "Die Geräte-ID ist verfügbar und Syncthing läuft.";
 "%d of %d devices connected" = "%d von %d Geräten verbunden";
 "Device name" = "Gerätename";
 "Devices" = "Geräte";
 "Differences" = "Unterschiede";
 "Discards the version from the other device." = "Verwirft die Version vom anderen Gerät.";
 "Disconnected" = "Getrennt";
-"Discovery" = "Erkennung";
 "Done" = "Fertig";
-"Download Syncthing" = "Syncthing herunterladen";
 "Empty line" = "Leere Zeile";
 "Enable notifications for VaultSync in iOS Settings -> Notifications -> VaultSync, then restart the app." = "Aktiviere Mitteilungen für VaultSync unter iOS Einstellungen -> Mitteilungen -> VaultSync und starte die App dann neu.";
 "Error" = "Fehler";
@@ -92,8 +78,6 @@
 "File Read Failed" = "Datei konnte nicht gelesen werden";
 "File synced in %@" = "Datei in %@ synchronisiert";
 "Files are being synchronized with peers." = "Dateien werden mit Peers synchronisiert.";
-"Finish the required steps so sync stays reliable." = "Schließe die erforderlichen Schritte ab, damit die Synchronisation zuverlässig bleibt.";
-"First share detected" = "Erste Freigabe erkannt";
 "Folder Not Configured" = "Ordner nicht konfiguriert";
 "Folder Path Missing" = "Ordnerpfad fehlt";
 "Folder Permission Error" = "Ordnerberechtigungsfehler";
@@ -103,21 +87,15 @@
 "Folder is currently in an error state." = "Der Ordner befindet sich derzeit in einem Fehlerzustand.";
 "Folder reached idle state after syncing." = "Der Ordner hat nach der Synchronisation den Leerlaufzustand erreicht.";
 "Folder reported an error." = "Der Ordner hat einen Fehler gemeldet.";
-"From desktop Syncthing, share one vault to this iPhone Device ID." = "Teile in Syncthing auf dem Desktop einen Vault mit dieser iPhone-Geräte-ID.";
-"Global Discovery" = "Globale Erkennung";
 "Global Files" = "Globale Dateien";
 "Health Endpoint" = "Health-Endpunkt";
 "Healthy" = "Gesund";
-"How pairing works" = "So funktioniert das Koppeln";
 "How to fix: %@" = "So behebst du es: %@";
 "Idle" = "Leerlauf";
-"If syncing has not started, reshare a vault from desktop Syncthing." = "Wenn die Synchronisation nicht gestartet hat, teile einen Vault erneut aus Syncthing auf dem Desktop.";
 "Ignore for Now" = "Vorerst ignorieren";
 "Ignored shares (%d)" = "Ignorierte Freigaben (%d)";
 "In progress" = "Läuft";
-"In the picker, choose \"On My iPhone\" -> \"Obsidian\", then tap Open." = "Wähle im Picker „Auf meinem iPhone“ -> „Obsidian“ und tippe dann auf „Öffnen“.";
 "Install Obsidian from the App Store and open it once. The folder appears after Obsidian creates it." = "Installiere Obsidian aus dem App Store und öffne es einmal. Der Ordner erscheint, nachdem Obsidian ihn erstellt hat.";
-"Instant sync via Cloud Relay is active." = "Sofortsynchronisation über Cloud Relay ist aktiv.";
 "Invalid Input" = "Ungültige Eingabe";
 "Invalid folder name: '%@'" = "Ungültiger Ordnername: '%@'";
 "Keep Both" = "Beide behalten";
@@ -128,7 +106,6 @@
 "Keep both versions" = "Beide Versionen behalten";
 "Keep other device version" = "Version des anderen Geräts behalten";
 "Keep the app open for a moment and retry. If this persists, restart VaultSync." = "Lass die App einen Moment geöffnet und versuche es erneut. Wenn das Problem bleibt, starte VaultSync neu.";
-"Keep the app open for a moment. If this persists, restart VaultSync." = "Lass die App einen Moment geöffnet. Wenn das Problem bleibt, starte VaultSync neu.";
 "Keep this device version" = "Version dieses Geräts behalten";
 "Keeps your local file and renames the other device's file." = "Behält deine lokale Datei und benennt die Datei des anderen Geräts um.";
 "Last Check" = "Letzte Prüfung";
@@ -139,15 +116,11 @@
 "Last Update" = "Letzte Aktualisierung";
 "Last successful sync was about %d %@ ago." = "Die letzte erfolgreiche Synchronisation war vor etwa %d %@.";
 "Last successful sync was more than %d %@ ago." = "Die letzte erfolgreiche Synchronisation ist mehr als %d %@ her.";
-"Last sync:" = "Letzte Synchronisation:";
+"Last sync: %@" = "Letzte Synchronisation: %@";
 "Latency" = "Latenz";
 "Learn how to fix" = "So behebst du es";
-"Let's Get Started" = "Los geht's";
-"Loading files..." = "Dateien werden geladen...";
 "Loading…" = "Wird geladen…";
-"Local Discovery" = "Lokale Erkennung";
 "Local Files" = "Lokale Dateien";
-"Local discovery finds devices on your WiFi network. Global discovery uses Syncthing's servers to find devices anywhere." = "Die lokale Erkennung findet Geräte in deinem WLAN. Die globale Erkennung nutzt die Server von Syncthing, um Geräte überall zu finden.";
 "Log" = "Protokoll";
 "Manage Subscription" = "Abo verwalten";
 "Name" = "Name";
@@ -159,10 +132,8 @@
 "No Syncthing peers available yet." = "Noch keine Syncthing-Peers verfügbar.";
 "No action needed." = "Keine Aktion erforderlich.";
 "No active pending shares" = "Keine aktiven ausstehenden Freigaben";
-"No desktop or laptop Syncthing device configured yet." = "Noch kein Syncthing-Gerät für Desktop oder Laptop konfiguriert.";
 "No devices configured" = "Keine Geräte konfiguriert";
 "No devices connected" = "Keine Geräte verbunden";
-"No folder share from your desktop has been detected yet." = "Es wurde noch keine Ordnerfreigabe von deinem Desktop erkannt.";
 "No folders syncing yet" = "Noch keine Ordner in Synchronisation";
 "No home server devices available for relay provisioning." = "Keine Home-Server-Geräte für Relay-Provisioning verfügbar.";
 "No immediate relay problems detected." = "Keine unmittelbaren Relay-Probleme erkannt.";
@@ -176,16 +147,12 @@
 "Not attempted" = "Nicht versucht";
 "Not checked" = "Nicht geprüft";
 "Not shared" = "Nicht geteilt";
-"Notifications are disabled for VaultSync. Enable them in iOS Settings > Notifications > VaultSync, then retry APNs registration." = "Mitteilungen sind für VaultSync deaktiviert. Aktiviere sie in iOS Einstellungen > Mitteilungen > VaultSync und versuche die APNs-Registrierung erneut.";
 "OK" = "OK";
 "Obsidian Folder Connection Failed" = "Verbindung zum Obsidian-Ordner fehlgeschlagen";
 "Obsidian Vaults" = "Obsidian-Vaults";
 "Obsidian access expired" = "Obsidian-Zugriff abgelaufen";
-"Obsidian connected" = "Obsidian verbunden";
 "Obsidian directory not accessible." = "Auf das Obsidian-Verzeichnis kann nicht zugegriffen werden.";
 "Obsidian folder not connected" = "Obsidian-Ordner nicht verbunden";
-"Offline" = "Offline";
-"Open Pending Shares in VaultSync and accept one to start syncing." = "Öffne ausstehende Freigaben in VaultSync und nimm eine an, um die Synchronisation zu starten.";
 "Open Relay Diagnostics" = "Relay-Diagnose öffnen";
 "Open Settings" = "Einstellungen öffnen";
 "Open VaultSync" = "VaultSync öffnen";
@@ -249,7 +216,6 @@
 "Rename Failed" = "Umbenennen fehlgeschlagen";
 "Renews" = "Verlängert sich";
 "Requesting camera access…" = "Kamerazugriff wird angefordert…";
-"Required" = "Erforderlich";
 "Rescan Failed" = "Erneuter Scan fehlgeschlagen";
 "Rescan Failed Vaults" = "Fehlgeschlagene Vaults erneut scannen";
 "Rescan Vault" = "Vault erneut scannen";
@@ -258,30 +224,22 @@
 "Resolve Conflicts" = "Konflikte lösen";
 "Restore Purchases" = "Käufe wiederherstellen";
 "Restore Share" = "Freigabe wiederherstellen";
-"%d/%d required" = "%d/%d erforderlich";
 "A conflict happens when a file is edited on two devices at the same time. Syncthing saves both versions to prevent data loss." = "Ein Konflikt entsteht, wenn eine Datei gleichzeitig auf zwei Geräten bearbeitet wird. Syncthing speichert beide Versionen, um Datenverlust zu vermeiden.";
 "APNs Registration" = "APNs-Registrierung";
 "APNs Token" = "APNs-Token";
-"APNs registration failed. Open iOS Settings > Notifications > VaultSync, allow notifications, then retry." = "Die APNs-Registrierung ist fehlgeschlagen. Öffne iOS Einstellungen > Mitteilungen > VaultSync, erlaube Mitteilungen und versuche es dann erneut.";
-"APNs token is missing. Enable notifications for VaultSync and retry APNs registration." = "Der APNs-Token fehlt. Aktiviere Mitteilungen für VaultSync und versuche die APNs-Registrierung erneut.";
 "Context: %@ · %@" = "Kontext: %@ · %@";
-"Discovery Update Failed" = "Aktualisierung der Erkennung fehlgeschlagen";
 "In the picker, choose \"On My iPhone\" → \"Obsidian\", then tap Open." = "Wähle im Picker „Auf meinem iPhone“ → „Obsidian“ und tippe dann auf „Öffnen“.";
 "Missing" = "Fehlt";
 "Present" = "Vorhanden";
 "Purchase Failed" = "Kauf fehlgeschlagen";
 "Rescan All Vaults" = "Alle Vaults erneut scannen";
-"Some devices are not provisioned. Retry provisioning after APNs and subscription checks are green." = "Einige Geräte sind nicht provisioniert. Versuche das Provisioning erneut, sobald APNs und Abo-Prüfungen grün sind.";
 "Sync Conflicts" = "Sync-Konflikte";
-"This timestamp is updated when VaultSync receives a silent push from Cloud Relay." = "Dieser Zeitstempel wird aktualisiert, wenn VaultSync einen stillen Push von Cloud Relay erhält.";
 "XXXXXXX-XXXXXXX-..." = "XXXXXXX-XXXXXXX-...";
-"e.g. My Laptop" = "z. B. Mein Laptop";
 "Retry APNs Registration" = "APNs-Registrierung erneut versuchen";
 "Retry Accept" = "Annahme erneut versuchen";
 "Retry Provisioning" = "Provisioning erneut versuchen";
 "Retry provisioning from Settings. If this persists, verify subscription status." = "Versuche das Provisioning über die Einstellungen erneut. Wenn das Problem bleibt, prüfe den Abostatus.";
 "Retry the action. If it keeps failing, restart the app and check Settings diagnostics." = "Versuche die Aktion erneut. Wenn sie weiter fehlschlägt, starte die App neu und prüfe die Diagnose in den Einstellungen.";
-"Review or complete the initial setup checklist." = "Prüfe oder vervollständige die anfängliche Einrichtungs-Checkliste.";
 "Review the affected device/folder setup in the app and retry." = "Prüfe die betroffene Geräte-/Ordnerkonfiguration in der App und versuche es erneut.";
 "Review the value and try again." = "Prüfe den Wert und versuche es erneut.";
 "Run Foreground Rescan" = "Erneuten Scan im Vordergrund ausführen";
@@ -290,10 +248,6 @@
 "Scanning completed in %@" = "Scan in %@ abgeschlossen";
 "Scanning started in %@" = "Scan in %@ gestartet";
 "Settings" = "Einstellungen";
-"Settings Error" = "Einstellungsfehler";
-"Setup Checklist" = "Einrichtungs-Checkliste";
-"Setup Guide" = "Einrichtungsanleitung";
-"Setup checklist progress" = "Fortschritt der Einrichtungs-Checkliste";
 "Share a folder from your desktop Syncthing — it will be accepted automatically." = "Teile einen Ordner aus Syncthing auf deinem Desktop — er wird automatisch angenommen.";
 "Share requests are shown below, but Accept and Retry are disabled until your Obsidian folder is connected." = "Freigabeanfragen werden unten angezeigt, aber Annehmen und Erneut versuchen sind deaktiviert, bis dein Obsidian-Ordner verbunden ist.";
 "Shared" = "Geteilt";
@@ -301,7 +255,6 @@
 "Shared by an unknown device" = "Geteilt von einem unbekannten Gerät";
 "Shared by: %@" = "Geteilt von: %@";
 "Show Line-by-Line Diff" = "Zeilenweisen Diff anzeigen";
-"Shows whether Syncthing is currently active." = "Zeigt an, ob Syncthing derzeit aktiv ist.";
 "Shows whether this Syncthing device is currently reachable." = "Zeigt an, ob dieses Syncthing-Gerät derzeit erreichbar ist.";
 "Silent Push" = "Stiller Push";
 "Some devices are not provisioned. Retry provisioning after APNs and subscription checks are green." = "Einige Geräte sind nicht provisioniert. Versuche das Provisioning erneut, nachdem APNs und Abo-Prüfungen grün sind.";
@@ -322,15 +275,13 @@
 "Sync completed in %@" = "Synchronisation in %@ abgeschlossen";
 "Sync error in %@" = "Synchronisationsfehler in %@";
 "Sync started in %@" = "Synchronisation in %@ gestartet";
-"Sync your Obsidian vaults privately with Syncthing — no cloud required." = "Synchronisiere deine Obsidian-Vaults privat mit Syncthing — ganz ohne Cloud.";
 "Synchronizing your Obsidian vault..." = "Dein Obsidian-Vault wird synchronisiert...";
-"Syncing" = "Synchronisiert";
+"Syncing" = "Wird synchronisiert";
 "Syncing Vault" = "Vault wird synchronisiert";
 "Syncing…" = "Synchronisiert…";
 "Reconnecting…" = "Verbinde…";
 "Restoring connection to 1 device" = "Verbindung zu 1 Gerät wird wiederhergestellt";
 "Restoring connection to %d devices" = "Verbindung zu %d Geräten wird wiederhergestellt";
-"Syncthing engine started" = "Syncthing-Engine gestartet";
 "Syncthing is scanning local changes." = "Syncthing scannt lokale Änderungen.";
 "Syncthing no longer has this folder configured." = "Syncthing hat diesen Ordner nicht mehr konfiguriert.";
 "Terms of Use" = "Nutzungsbedingungen";
@@ -362,7 +313,6 @@
 "Unreachable" = "Nicht erreichbar";
 "Vault" = "Vault";
 "VaultSync" = "VaultSync";
-"VaultSync Setup" = "VaultSync-Einrichtung";
 "VaultSync can no longer read your Obsidian directory. Reconnect the folder to restore sync access." = "VaultSync kann dein Obsidian-Verzeichnis nicht mehr lesen. Verbinde den Ordner erneut, um den Synchronisationszugriff wiederherzustellen.";
 "VaultSync can no longer resolve the saved Obsidian folder permission. Reconnect the Obsidian directory to continue syncing." = "VaultSync kann die gespeicherte Berechtigung für den Obsidian-Ordner nicht mehr auflösen. Verbinde das Obsidian-Verzeichnis erneut, um weiter zu synchronisieren.";
 "VaultSync cannot access the saved Obsidian folder anymore. Reconnect the Obsidian directory to continue syncing." = "VaultSync kann nicht mehr auf den gespeicherten Obsidian-Ordner zugreifen. Verbinde das Obsidian-Verzeichnis erneut, um weiter zu synchronisieren.";
@@ -373,46 +323,20 @@
 "VaultSync could not reach the Cloud Relay service." = "VaultSync konnte den Cloud Relay-Dienst nicht erreichen.";
 "VaultSync could not restore bookmark access for the Obsidian folder during a background run." = "VaultSync konnte den Bookmark-Zugriff auf den Obsidian-Ordner während eines Hintergrundlaufs nicht wiederherstellen.";
 "VaultSync could not verify this request." = "VaultSync konnte diese Anfrage nicht verifizieren.";
-"VaultSync does not have access to your Obsidian directory." = "VaultSync hat keinen Zugriff auf dein Obsidian-Verzeichnis.";
 "VaultSync does not have the required permission for this action." = "VaultSync hat nicht die erforderliche Berechtigung für diese Aktion.";
 "VaultSync found a configuration problem." = "VaultSync hat ein Konfigurationsproblem erkannt.";
-"VaultSync is still starting Syncthing." = "VaultSync startet Syncthing noch.";
 "VaultSync needs camera access to scan Syncthing Device ID QR codes. Please enable it in Settings." = "VaultSync benötigt Kamerazugriff, um Syncthing-Geräte-QR-Codes zu scannen. Bitte aktiviere ihn in den Einstellungen.";
 "VaultSync needs one-time access to your Obsidian folder before it can accept shares." = "VaultSync benötigt einmaligen Zugriff auf deinen Obsidian-Ordner, bevor Freigaben angenommen werden können.";
 "VaultSync reported an unexpected error." = "VaultSync hat einen unerwarteten Fehler gemeldet.";
 "Wait a moment and retry." = "Warte einen Moment und versuche es erneut.";
-"Welcome to VaultSync" = "Willkommen bei VaultSync";
 "What is a conflict?" = "Was ist ein Konflikt?";
 "day" = "Tag";
 "days" = "Tage";
-"device configured" = "Gerät konfiguriert";
-"devices configured" = "Geräte konfiguriert";
 "e.g. My Laptop" = "z. B. Mein Laptop";
 "hour" = "Stunde";
 "hours" = "Stunden";
-"pending share found" = "ausstehende Freigabe gefunden";
-"pending shares found" = "ausstehende Freigaben gefunden";
-"shared folder active" = "geteilter Ordner aktiv";
-"shared folders active" = "geteilte Ordner aktiv";
-"vault detected" = "Vault erkannt";
-"vaults detected" = "Vaults erkannt";
-"Both devices exchange Device IDs" = "Beide Geräte tauschen Geräte-IDs aus";
-"Both devices should be on the same WiFi, or have global discovery enabled in Syncthing." = "Beide Geräte sollten im selben WLAN sein oder die globale Erkennung in Syncthing aktiviert haben.";
-"End-to-end encrypted" = "Ende-zu-Ende-verschlüsselt";
-"Fast Markdown sync" = "Schneller Markdown-Sync";
-"Install Obsidian on this iPhone and on your desktop." = "Installiere Obsidian auf diesem iPhone und auf deinem Desktop.";
-"Install and run Syncthing on the computer you sync with." = "Installiere und starte Syncthing auf dem Computer, mit dem du synchronisierst.";
 "No Activity Yet" = "Noch keine Aktivität";
-"No cloud required" = "Keine Cloud erforderlich";
-"Obsidian on both devices" = "Obsidian auf beiden Geräten";
-"Running" = "Läuft";
-"Same network or global discovery" = "Gleiches Netzwerk oder globale Erkennung";
 "Sync engine running" = "Sync-Engine läuft";
-"Sync engine stopped" = "Sync-Engine gestoppt";
-"Syncthing on your desktop" = "Syncthing auf deinem Desktop";
-"You can enable it later in Settings for instant push-based sync." = "Du kannst es später in den Einstellungen für sofortige push-basierte Synchronisation aktivieren.";
-"Your desktop shares a vault folder" = "Dein Desktop teilt einen Vault-Ordner";
-"VaultSync keeps everything in sync" = "VaultSync hält alles synchron";
 "onboarding.welcome.title" = "Deine Obsidian-Notizen. Privat synchronisiert.";
 "onboarding.welcome.subtitle" = "Halte deinen Vault zwischen deinen eigenen Geräten synchron — ohne fremden Cloud-Speicher.";
 "onboarding.welcome.benefit.private" = "Privat zwischen deinen Geräten";
@@ -429,7 +353,7 @@
 "onboarding.overview.step3.description" = "Teile deinen Obsidian Vault in Syncthing von deinem Computer mit diesem iPhone.";
 "onboarding.overview.step4.title" = "Sync-Status verfolgen";
 "onboarding.overview.step4.description" = "VaultSync zeigt aktive Vaults, Probleme und Sync-Fortschritt auf dem Startbildschirm.";
-"onboarding.overview.cloudRelay" = "Cloud Relay kann später in den Einstellungen für schnellere Updates im Hintergrund aktiviert werden.";
+"onboarding.overview.cloudRelay" = "Aktiviere Cloud Relay später in den Einstellungen, damit Änderungen im selben Moment ankommen — ganz ohne die App zu öffnen.";
 "onboarding.cta.openVaultSync" = "VaultSync öffnen";
 "onboarding.accessibility.page" = "Seite %d von 2";
 "onboarding.accessibility.continueHint" = "Öffnet eine kurze Setup-Übersicht.";
@@ -478,7 +402,6 @@
 "Always skip on this iPhone" = "Auf diesem iPhone immer überspringen";
 "More actions" = "Weitere Aktionen";
 "Skipping enabled" = "Überspringen aktiviert";
-"'%@' will no longer sync to this iPhone. You can undo this in Sync Filters." = "„%@“ wird nicht mehr auf dieses iPhone synchronisiert. Du kannst das in den Sync-Filtern rückgängig machen.";
 "'%@' and its conflict copies will no longer sync to this iPhone. You can undo this in Sync Filters." = "„%@“ und seine Konflikt-Kopien werden nicht mehr auf dieses iPhone synchronisiert. Du kannst das in den Sync-Filtern rückgängig machen.";
 "1 existing conflict copy was removed." = "1 vorhandene Konflikt-Kopie wurde entfernt.";
 "%d existing conflict copies were removed." = "%d vorhandene Konflikt-Kopien wurden entfernt.";
@@ -501,7 +424,6 @@
 "Cache of Obsidian Copilot, regenerated automatically." = "Cache von Obsidian Copilot, wird automatisch neu erzeugt.";
 "Obsidian app cache" = "Obsidian-App-Cache";
 "Auto-regenerated Obsidian internal cache." = "Automatisch regenerierter interner Obsidian-Cache.";
-"Node modules" = "Node-Module";
 
 // Sync Issue titles & messages
 "1 Vault Has Sync Errors" = "1 Vault hat Synchronisationsfehler";
@@ -513,3 +435,98 @@
 "%d Pending Shares Need Attention" = "%d ausstehende Freigaben benötigen Aufmerksamkeit";
 "1 Conflict Needs Resolution" = "1 Konflikt muss gelöst werden";
 "%d Conflicts Need Resolution" = "%d Konflikte müssen gelöst werden";
+
+/* Issue #10 — conflict notification body */
+"1 file has a sync conflict. Open VaultSync to resolve it." = "1 Datei hat einen Sync-Konflikt. Öffne VaultSync, um ihn zu lösen.";
+"%d files have sync conflicts. Open VaultSync to resolve them." = "%d Dateien haben Sync-Konflikte. Öffne VaultSync, um sie zu lösen.";
+
+/* Issue #10 — conflict-notifications toggle (Settings) */
+"Notifications" = "Benachrichtigungen";
+"Conflict Notifications" = "Konflikt-Benachrichtigungen";
+"Show a banner when sync conflicts are detected. Turning this off does not affect Cloud Relay or background sync — your vault keeps syncing." = "Zeigt ein Banner an, wenn Sync-Konflikte erkannt werden. Das Ausschalten betrifft weder Cloud Relay noch die Hintergrundsynchronisation — dein Vault synchronisiert weiter.";
+
+/* Issue #10 — relay/alert decoupling (Relay Diagnostics) */
+"Alert Banners" = "Hinweis-Banner";
+"Allowed" = "Erlaubt";
+"Denied" = "Verweigert";
+"Cloud Relay is delivering wake-ups" = "Cloud Relay liefert Weckrufe";
+"Alert banners are off at the iOS level. Cloud Relay wake-ups still work — they use silent push, which does not need notification permission." = "Hinweis-Banner sind auf iOS-Ebene aus. Cloud-Relay-Weckrufe funktionieren weiterhin — sie nutzen Silent Push, der keine Benachrichtigungsberechtigung benötigt.";
+"APNs token is missing. Retry APNs registration; if it keeps failing, check your internet connection. (Silent push does not require notification banners.)" = "APNs-Token fehlt. Wiederhole die APNs-Registrierung; falls es weiter fehlschlägt, prüfe deine Internetverbindung. (Silent Push benötigt keine Hinweis-Banner.)";
+"APNs registration failed. Check your internet connection and retry registration. Silent push does not require notification banners to be enabled." = "APNs-Registrierung fehlgeschlagen. Prüfe deine Internetverbindung und wiederhole die Registrierung. Silent Push benötigt keine aktivierten Hinweis-Banner.";
+
+/* Issue #10 — background-sync reliability (error-settled outcome) */
+"Background sync settled with at least one folder in an error state." = "Hintergrundsynchronisation beendet — mindestens ein Ordner ist im Fehlerzustand.";
+
+/* Issue #10 — relay reachable (vs delivering) */
+"Cloud Relay looks reachable" = "Cloud Relay scheint erreichbar";
+
+/* Subscription period units */
+"month" = "Monat";
+"months" = "Monate";
+"week" = "Woche";
+"weeks" = "Wochen";
+"year" = "Jahr";
+"years" = "Jahre";
+"%@ / %@" = "%@ / %@";
+"%1$@ / %2$d %3$@" = "%1$@ / %2$d %3$@";
+/* Contributions / tip jar */
+"Support VaultSync" = "VaultSync unterstützen";
+"Small Contribution" = "Kleine Unterstützung";
+"Big Contribution" = "Große Unterstützung";
+"Contribution" = "Unterstützung";
+"Contribution Failed" = "Unterstützung fehlgeschlagen";
+"Contributions are currently unavailable." = "Unterstützungen sind derzeit nicht verfügbar.";
+"Thank you!" = "Danke!";
+"Your contribution means a lot and directly supports VaultSync development. Thank you!" = "Deine Unterstützung bedeutet viel und fließt direkt in die Entwicklung von VaultSync. Danke!";
+"VaultSync is an independent, open-source app (MPL-2.0). A one-time contribution keeps it independent, ad-free, and moving forward. It unlocks nothing — VaultSync stays fully functional without it — and you can give as often as you like." = "VaultSync ist eine unabhängige Open-Source-App (MPL-2.0). Eine einmalige Unterstützung hält sie unabhängig, werbefrei und in Entwicklung. Sie schaltet nichts frei — VaultSync bleibt auch ohne sie voll funktionsfähig — und du kannst so oft geben, wie du möchtest.";
+/* Cloud Relay price (localized via StoreKit) */
+"Cloud Relay — %@" = "Cloud Relay — %@";
+"Cloud Relay subscription" = "Cloud-Relay-Abo";
+
+/* Issue #10 pre-merge polish — added missing localization keys */
+"Not available" = "Nicht verfügbar";
+"Copied" = "Kopiert";
+"Rescanning…" = "Wird neu gescannt…";
+"Cannot Load Files" = "Dateien können nicht geladen werden";
+"Remove this device?" = "Dieses Gerät entfernen?";
+"Double-tap to share this vault with this device." = "Doppeltippen, um diesen Vault mit diesem Gerät zu teilen.";
+"Double-tap to stop sharing this vault with this device." = "Doppeltippen, um das Teilen dieses Vaults mit diesem Gerät zu beenden.";
+"All conflicts resolved" = "Alle Konflikte gelöst";
+"Loading files…" = "Dateien werden geladen…";
+"Computing diff…" = "Unterschiede werden berechnet…";
+"Other Device" = "Anderes Gerät";
+"Other Device (%@)" = "Anderes Gerät (%@)";
+"Added lines come from the other device; removed lines are your version on this device." = "Hinzugefügte Zeilen stammen vom anderen Gerät; entfernte Zeilen sind deine Version auf diesem Gerät.";
+"(empty or unreadable)" = "(leer oder nicht lesbar)";
+"a new name" = "einen neuen Namen";
+"Both versions were kept.\n\nYour local version remains as '%@'.\nThe other device's version was renamed to '%@'." = "Beide Versionen wurden behalten.\n\nDeine lokale Version bleibt als '%@'.\nDie Version des anderen Geräts wurde in '%@' umbenannt.";
+"%d conflicts" = "%d Konflikte";
+"Your contribution is pending approval." = "Dein Beitrag wartet auf Freigabe.";
+"Could not accept share '%@'.\n\n%@" = "Freigabe '%@' konnte nicht angenommen werden.\n\n%@";
+"iOS did not provide a push token required for instant sync." = "iOS hat kein Push-Token bereitgestellt, das für Sofort-Sync erforderlich ist.";
+"%@ (Trigger: %@)" = "%@ (Auslöser: %@)";
+"1 additional file synced in %@" = "1 weitere Datei in %@ synchronisiert";
+"%d additional files synced in %@" = "%d weitere Dateien in %@ synchronisiert";
+"%@ connected" = "%@ verbunden";
+"%@ disconnected" = "%@ getrennt";
+"%d%% complete" = "%d %% abgeschlossen";
+"Background sync completed and reached idle." = "Hintergrundsynchronisation abgeschlossen und Leerlauf erreicht.";
+"Background sync did not reach an idle folder state before the iOS deadline." = "Hintergrundsynchronisation hat vor dem iOS-Zeitlimit keinen Leerlauf-Zustand der Ordner erreicht.";
+"Background sync ended with an unexpected failure." = "Hintergrundsynchronisation endete mit einem unerwarteten Fehler.";
+"Background sync ran, but folders were already idle." = "Hintergrundsynchronisation lief, aber die Ordner waren bereits im Leerlauf.";
+"Forced silent-push restart failed." = "Erzwungener Neustart per Silent Push fehlgeschlagen.";
+"No Syncthing folders were available to sync in the background." = "Es waren keine Syncthing-Ordner für die Hintergrundsynchronisation verfügbar.";
+"No folders were available after forced silent-push restart." = "Nach dem erzwungenen Silent-Push-Neustart waren keine Ordner verfügbar.";
+"No folders were available for background sync." = "Für die Hintergrundsynchronisation waren keine Ordner verfügbar.";
+"No security-scoped bookmark access was available." = "Es war kein Security-Scoped-Bookmark-Zugriff verfügbar.";
+"Accept or create a shared vault before relying on background sync." = "Akzeptiere oder erstelle einen geteilten Vault, bevor du dich auf Hintergrund-Sync verlässt.";
+"Retry from the app and review relay/background diagnostics in Settings." = "Versuche es erneut in der App und prüfe die Relay-/Hintergrund-Diagnose in den Einstellungen.";
+"Silent push restarted Syncthing, but no real sync progress was observed before the app returned to idle." = "Silent Push hat Syncthing neu gestartet, aber vor der Rückkehr in den Leerlauf wurde kein echter Sync-Fortschritt beobachtet.";
+"Sync did not reach idle before %ds deadline." = "Sync hat den Leerlauf nicht vor dem %ds-Zeitlimit erreicht.";
+"Relay %@ failed with HTTP %d." = "Relay %@ ist mit HTTP %d fehlgeschlagen.";
+"Relay %@ is rate limited (HTTP 429)." = "Relay %@ ist rate-limitiert (HTTP 429).";
+"Relay %@ network error: %@" = "Relay %@ Netzwerkfehler: %@";
+"Relay %@ returned a non-HTTP response." = "Relay %@ hat eine Nicht-HTTP-Antwort zurückgegeben.";
+"Relay %@ unauthorized (HTTP %d)." = "Relay %@ nicht autorisiert (HTTP %d).";
+"Unauthorized request." = "Nicht autorisierte Anfrage.";
+"relay network: %@" = "Relay-Netzwerk: %@";

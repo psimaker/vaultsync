@@ -13,7 +13,7 @@ options:
       text = File.read(path)
       text.sub!(
         /knownRegions = \(\n\s*Base,\n\s*en,\n\s*\);/,
-        "knownRegions = (\n\t\t\t\tBase,\n\t\t\t\tde,\n\t\t\t\ten,\n\t\t\t\t\"zh-Hans\",\n\t\t\t);"
+        "knownRegions = (\n\t\t\t\tBase,\n\t\t\t\tde,\n\t\t\t\ten,\n\t\t\t\tes,\n\t\t\t\t\"zh-Hans\",\n\t\t\t);"
       )
       File.write(path, text)
     '
@@ -25,6 +25,14 @@ settings:
     # User script sandboxing must be disabled so Xcode can execute them.
     ENABLE_USER_SCRIPT_SANDBOXING: false
 
+# Signing comes from Signing.xcconfig (committed, no team), which optionally
+# includes a gitignored Signing.local.xcconfig for your own DEVELOPMENT_TEAM.
+# This survives `xcodegen generate` without committing a team or forcing one on
+# contributors — copy Signing.local.xcconfig.example to Signing.local.xcconfig.
+configFiles:
+  Debug: Signing.xcconfig
+  Release: Signing.xcconfig
+
 schemes:
   VaultSync:
     build:
@@ -32,6 +40,7 @@ schemes:
         VaultSync: all
     run:
       config: Debug
+      storeKitConfiguration: VaultSync.storekit
     test:
       config: Debug
       targets:
@@ -50,8 +59,8 @@ targets:
     info:
       path: VaultSync/Info.plist
       properties:
-        CFBundleShortVersionString: "1.3.2"
-        CFBundleVersion: "24"
+        CFBundleShortVersionString: "1.4.0"
+        CFBundleVersion: "25"
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
@@ -97,11 +106,14 @@ targets:
       - path: VaultSyncWidget
         excludes:
           - "**/.gitkeep"
+      # Shared brand palette (Color.vaultTeal/.vaultSlate) so the widget
+      # matches the app accent without redefining the RGB.
+      - path: VaultSync/Resources/Theme.swift
     info:
       path: VaultSyncWidget/Info.plist
       properties:
-        CFBundleShortVersionString: "1.3.2"
-        CFBundleVersion: "24"
+        CFBundleShortVersionString: "1.4.0"
+        CFBundleVersion: "25"
         CFBundleDisplayName: VaultSync Widget
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension

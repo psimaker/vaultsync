@@ -1,0 +1,74 @@
+{
+  "identifier" : "VAULTSYNC_STOREKIT",
+  "nonRenewingSubscriptions" : [],
+  "products" : [
+    {
+      "displayPrice" : "2.99",
+      "familyShareable" : false,
+      "internalID" : "1001",
+      "localizations" : [
+        {
+          "description" : "A one-time contribution to support VaultSync development. Unlocks nothing.",
+          "displayName" : "Small Contribution",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "eu.vaultsync.app.contribution.small",
+      "referenceName" : "Small Contribution",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "9.99",
+      "familyShareable" : false,
+      "internalID" : "1002",
+      "localizations" : [
+        {
+          "description" : "A larger one-time contribution to support VaultSync development. Unlocks nothing.",
+          "displayName" : "Big Contribution",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "eu.vaultsync.app.contribution.big",
+      "referenceName" : "Big Contribution",
+      "type" : "Consumable"
+    }
+  ],
+  "settings" : {
+    "_locale" : "en_US",
+    "_storefront" : "USA"
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "2001",
+      "localizations" : [],
+      "name" : "Cloud Relay",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [],
+          "codeOffers" : [],
+          "displayPrice" : "0.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "2002",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "Silent push wake-ups for faster server-to-iPhone sync.",
+              "displayName" : "Cloud Relay",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "eu.vaultsync.app.relay.monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "Cloud Relay",
+          "subscriptionGroupID" : "2001",
+          "type" : "RecurringSubscription"
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 4,
+    "minor" : 0
+  }
+}

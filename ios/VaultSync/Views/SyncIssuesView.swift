@@ -96,7 +96,6 @@ struct SyncIssuesView: View {
                 NavigationLink("Resolve Conflicts") {
                     ConflictListView(
                         folderID: destination.folderID,
-                        conflicts: destination.conflicts,
                         syncthingManager: syncthingManager
                     )
                 }
@@ -149,7 +148,11 @@ struct SyncIssuesView: View {
         case .pendingShares:
             anchor = "no-pending-shares-appear"
         case .conflicts:
-            anchor = "background-sync-not-working"
+            // No conflict-resolution section exists in the troubleshooting doc,
+            // and "Background Sync Not Working" is unrelated. The inline
+            // "Resolve Conflicts" action is the correct fix path, so don't
+            // surface a misdirecting link here.
+            return nil
         case .staleSync, .backgroundSync:
             anchor = "background-sync-not-working"
         }

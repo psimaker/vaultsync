@@ -1,0 +1,10 @@
+// Local, per-developer signing — NOT committed (see ios/.gitignore).
+//
+// 1. Copy this file to "Signing.local.xcconfig" in the same folder.
+// 2. Set your Apple Developer Team ID below.
+// 3. Run `xcodegen generate`. Your team now persists across regenerations.
+//
+// Simulator-only builds don't need this; leave it unset and build with
+// CODE_SIGNING_ALLOWED=NO.
+
+DEVELOPMENT_TEAM = ABCDE12345

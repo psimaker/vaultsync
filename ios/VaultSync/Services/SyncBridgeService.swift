@@ -96,18 +96,6 @@ struct SyncBridgeService {
         BridgeGetEventsSince(lastID)
     }
 
-    /// Get current Syncthing configuration as JSON.
-    static func getConfigJSON() -> String {
-        BridgeGetConfigJSON()
-    }
-
-    /// Toggle local and global discovery.
-    /// - Returns: nil on success, error message on failure.
-    static func setDiscoveryEnabled(local: Bool, global: Bool) -> String? {
-        let result = BridgeSetDiscoveryEnabled(local, global)
-        return result.isEmpty ? nil : result
-    }
-
     // MARK: - Phase 4: Folder management
 
     /// Add a new folder with SendReceive type.

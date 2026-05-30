@@ -22,7 +22,7 @@ struct LineDiffView: View {
     var body: some View {
         Group {
             if isComputing {
-                ProgressView("Computing diff...")
+                ProgressView("Computing diff…")
                     .padding()
             } else {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -46,6 +46,11 @@ struct LineDiffView: View {
                         }
                     }
                     .padding()
+                    // Size the column to its widest line so every row's
+                    // highlight fills the same width (inside a horizontal
+                    // ScrollView, maxWidth: .infinity alone clamps to each
+                    // line's own width, leaving ragged backgrounds).
+                    .fixedSize(horizontal: true, vertical: false)
                 }
             }
         }

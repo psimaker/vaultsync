@@ -2,7 +2,6 @@ import SwiftUI
 
 struct SyncFilterRecommendationSheet: View {
     let folderID: String
-    let folderLabel: String
     let syncthingManager: SyncthingManager
     @Environment(\.dismiss) private var dismiss
 

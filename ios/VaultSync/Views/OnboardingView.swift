@@ -25,8 +25,8 @@ struct OnboardingView: View {
         var id: Int { number }
     }
 
-    private let slate = Color(red: 38 / 255, green: 50 / 255, blue: 56 / 255)
-    private let teal = Color(red: 0 / 255, green: 137 / 255, blue: 123 / 255)
+    private let slate = Color.vaultSlate
+    private let teal = Color.vaultTeal
 
     private var overviewSteps: [OverviewStep] {
         [

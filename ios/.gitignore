@@ -10,3 +10,6 @@ build/
 *.xcuserstate
 *.xcuserdata
 xcuserdata/
+
+# Local signing override (your DEVELOPMENT_TEAM) — see Signing.local.xcconfig.example
+Signing.local.xcconfig

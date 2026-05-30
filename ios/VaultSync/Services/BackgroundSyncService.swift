@@ -28,6 +28,29 @@ enum BackgroundSyncService {
     /// Shared lock coordinating Syncthing bridge start/stop across foreground and background.
     static let lifecycleLock = OSAllocatedUnfairLock(initialState: SyncLifecycleState())
 
+    /// Single-flight guard: only one background sync may drive the shared
+    /// Syncthing instance at a time. Distinct from `lifecycleLock`, which only
+    /// tracks whether the foreground owns start/stop — this prevents two
+    /// concurrent background wake-ups from tearing down each other's sync.
+    private static let syncInFlightLock = OSAllocatedUnfairLock(initialState: false)
+
+    /// Whether the scene is currently foreground-active. Drives conflict-banner
+    /// behavior: while active, the in-app UI surfaces conflicts so no banner is
+    /// posted and the foreground poll keeps the suppression baseline in sync;
+    /// while inactive (including the ~30s post-background grace window, when the
+    /// poll is still running) the baseline is frozen and silent-push handlers
+    /// may post banners. This is NOT `lifecycleLock.foregroundActive`, which
+    /// tracks bridge ownership and is released early on `.background`.
+    private static let sceneActiveLock = OSAllocatedUnfairLock(initialState: false)
+
+    static func setSceneActive(_ active: Bool) {
+        sceneActiveLock.withLock { $0 = active }
+    }
+
+    static func isSceneActive() -> Bool {
+        sceneActiveLock.withLock { $0 }
+    }
+
     /// Guards the UIApplication background-task assertion used for the
     /// scene-phase grace period after the app leaves the foreground.
     private static let backgroundAssertionLock = OSAllocatedUnfairLock(
@@ -40,6 +63,21 @@ enum BackgroundSyncService {
     nonisolated(unsafe) private(set) static var continuedProcessingRegistered = false
     private static let lastSyncOutcomeStorageKey = "background-sync-last-outcome-v1"
     static let lastSyncOutcomeDidChangeNotification = Notification.Name("BackgroundSyncLastOutcomeDidChange")
+
+    /// Stable identifier for the conflict banner. Re-posting with the same id
+    /// replaces the existing notification in place instead of stacking a fresh
+    /// one each silent push (issue #10).
+    private static let conflictNotificationIdentifier = "sync-conflict"
+    /// Persisted distinct/visible conflict count last surfaced to the user.
+    /// Used to suppress re-posting an unchanged count. Lives in
+    /// `UserDefaults.standard`, which the in-process silent-push / BGTask
+    /// handlers share with the foreground UI.
+    private static let lastNotifiedConflictCountKey = "conflict-notification-last-count-v1"
+    /// In-app toggle gating the conflict banner (Settings → Notifications).
+    /// Defaults ON; an absent key must read as ON so existing installs are not
+    /// silently muted after upgrade. Gates only the banner — never relay
+    /// silent-push wake-ups, which do not depend on alert authorization.
+    static let conflictNotificationsEnabledKey = "conflict-notifications-enabled-v1"
 
     struct SyncOutcome: Codable, Equatable, Sendable {
         let timestamp: Date
@@ -215,6 +253,94 @@ enum BackgroundSyncService {
         }
     }
 
+    /// Whether iOS will actually present a conflict alert banner. Affects ONLY
+    /// the banner — silent (content-available) pushes used by Cloud Relay are
+    /// delivered regardless, so this is surfaced as informational and never as a
+    /// relay/APNs failure.
+    enum AlertBannerStatus: Sendable {
+        case allowed   // authorized AND banners enabled
+        case denied    // denied, or banners explicitly turned off
+        case unknown   // not determined / provisional / not supported
+    }
+
+    /// Resolve the real banner capability from UNNotificationSettings. Authorized
+    /// is not enough on its own — the user can keep authorization but switch
+    /// "Banners" off in iOS Settings (`alertSetting == .disabled`).
+    static func alertBannerStatus() async -> AlertBannerStatus {
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        switch settings.authorizationStatus {
+        case .denied:
+            return .denied
+        case .authorized:
+            switch settings.alertSetting {
+            case .enabled:
+                return .allowed
+            case .disabled:
+                return .denied
+            default:
+                return .unknown
+            }
+        case .notDetermined, .provisional, .ephemeral:
+            // Not requested by VaultSync (full alert auth is requested at
+            // onboarding); provisional/ephemeral deliver quietly, not as banners.
+            return .unknown
+        @unknown default:
+            return .unknown
+        }
+    }
+
+    /// What to do with the conflict banner given the current conflict count and
+    /// the count last surfaced to the user. Pure and deterministic so the
+    /// suppression logic can be unit-tested without the bridge.
+    enum ConflictNotificationAction: Equatable, Sendable {
+        /// Count rose since last notification — post audibly (genuinely new).
+        case alert
+        /// Count fell but conflicts remain — refresh the banner quietly.
+        case updateQuiet
+        /// Count is unchanged — leave the existing banner untouched (no spam).
+        case suppress
+        /// No conflicts remain — remove the banner.
+        case clear
+    }
+
+    static func conflictNotificationAction(
+        currentCount current: Int,
+        lastNotifiedCount last: Int
+    ) -> ConflictNotificationAction {
+        if current <= 0 { return .clear }
+        if current > last { return .alert }
+        if current < last { return .updateQuiet }
+        return .suppress
+    }
+
+    /// Re-baseline conflict-notification suppression to what the user can
+    /// currently see in the app, and clear the banner when no conflicts remain.
+    /// Called from the foreground poll so (a) a banner the user has already seen
+    /// is not re-alerted in the background, and (b) a brand-new conflict that
+    /// appears after a full resolve still alerts instead of being treated as a
+    /// "decrease" against a stale high-water mark.
+    @MainActor
+    static func reconcileConflictNotificationBaseline(currentCount: Int) {
+        // Only re-baseline while the scene is genuinely active. During the ~30s
+        // post-background grace window the foreground poll keeps running; if it
+        // silently bumped the baseline there, a conflict that arrived in that
+        // window would be read as "unchanged" by the next silent push and never
+        // alert. Freezing the baseline keeps such a conflict a genuine rise.
+        guard isSceneActive() else { return }
+
+        let normalized = max(0, currentCount)
+        // Skip the write/IPC entirely when nothing changed — the 2s poll would
+        // otherwise hit usernotificationsd every tick in the zero-conflict case.
+        guard normalized != UserDefaults.standard.integer(forKey: lastNotifiedConflictCountKey) else { return }
+
+        UserDefaults.standard.set(normalized, forKey: lastNotifiedConflictCountKey)
+        if normalized == 0 {
+            UNUserNotificationCenter.current().removeDeliveredNotifications(
+                withIdentifiers: [conflictNotificationIdentifier]
+            )
+        }
+    }
+
     // MARK: - Shared Sync Logic
 
     /// Result of a background sync operation.
@@ -226,19 +352,25 @@ enum BackgroundSyncService {
         case bridgeStartFailed
         case notIdleBeforeDeadline
         case failed
+        /// The run stopped early because a folder is in a terminal error state
+        /// (nothing more could sync). NOT a timeout — the folder error surfaces
+        /// via the in-app Sync Issues panel, so this must not raise a misleading
+        /// "Timed Out" issue, but it is also not a clean success: the widget
+        /// should still reflect the error rather than a green idle state.
+        case settledWithFolderError
 
         var isSuccessful: Bool {
             switch self {
             case .synced, .alreadyIdle:
                 return true
-            case .noBookmarkAccess, .noFoldersConfigured, .bridgeStartFailed, .notIdleBeforeDeadline, .failed:
+            case .noBookmarkAccess, .noFoldersConfigured, .bridgeStartFailed, .notIdleBeforeDeadline, .failed, .settledWithFolderError:
                 return false
             }
         }
 
         var shouldSurfaceIssue: Bool {
             switch self {
-            case .synced, .alreadyIdle:
+            case .synced, .alreadyIdle, .settledWithFolderError:
                 return false
             case .noBookmarkAccess, .noFoldersConfigured, .bridgeStartFailed, .notIdleBeforeDeadline, .failed:
                 return true
@@ -257,7 +389,7 @@ enum BackgroundSyncService {
                 return L10n.tr("Background Sync Timed Out")
             case .failed:
                 return L10n.tr("Background Sync Failed")
-            case .synced, .alreadyIdle:
+            case .synced, .alreadyIdle, .settledWithFolderError:
                 return L10n.tr("Background Sync Completed")
             }
         }
@@ -278,6 +410,8 @@ enum BackgroundSyncService {
                 return L10n.tr("Background sync completed and reached idle.")
             case .alreadyIdle:
                 return L10n.tr("Background sync ran, but folders were already idle.")
+            case .settledWithFolderError:
+                return L10n.tr("Background sync settled with at least one folder in an error state.")
             }
         }
 
@@ -293,7 +427,7 @@ enum BackgroundSyncService {
                 return L10n.tr("Open VaultSync to allow a longer foreground sync session.")
             case .failed:
                 return L10n.tr("Retry from the app and review relay/background diagnostics in Settings.")
-            case .synced, .alreadyIdle:
+            case .synced, .alreadyIdle, .settledWithFolderError:
                 return L10n.tr("No action needed.")
             }
         }
@@ -315,6 +449,27 @@ enum BackgroundSyncService {
     ) async -> SyncResult {
         logger.info("Background sync starting (reason=\(reason))")
         trace("Starting background sync (reason=\(reason), maxDuration=\(Int(maxDuration))s).")
+
+        // Single-flight: a second concurrent background wake-up must not drive
+        // the shared Syncthing instance while another sync is mid-flight — one
+        // task's expiration/cleanup could stop the bridge under the other and
+        // silently abort a transfer. The loser just nudges a rescan so its
+        // changes are still picked up, then returns without competing.
+        let didAcquireSyncSlot = syncInFlightLock.withLock { inFlight -> Bool in
+            if inFlight { return false }
+            inFlight = true
+            return true
+        }
+        guard didAcquireSyncSlot else {
+            logger.info("Background sync already in flight — coalescing (reason=\(reason))")
+            trace("Concurrent background sync suppressed (reason=\(reason)); nudging rescan.")
+            if SyncBridgeService.isRunning() {
+                _ = requestFolderRescans()
+            }
+            return .alreadyIdle
+        }
+        defer { syncInFlightLock.withLock { $0 = false } }
+
         let syncStartedAt = Date()
         var telemetryEventCursor = latestBridgeEventID()
         let syncStartEventCursor = telemetryEventCursor
@@ -465,6 +620,12 @@ enum BackgroundSyncService {
 
         if allFoldersIdle() && !(progressTracker?.requiresMeaningfulProgress == true) {
             trace("Folders already idle after setup checks.")
+            // Surface conflicts on the fast idle path too — a small change that
+            // conflicts and settles before the deadline loop would otherwise
+            // skip notification. Must run BEFORE cleanup stops the bridge, since
+            // the conflict scan reads through it. notifyConflictsIfAny is
+            // internally gated (foreground/toggle/suppression), so it's cheap.
+            await notifyConflictsIfAny()
             if ownsLifecycle {
                 cleanupBackgroundManaged(managedURLs)
             }
@@ -477,26 +638,35 @@ enum BackgroundSyncService {
             )
         }
 
-        let deadline = Date(timeIntervalSinceNow: maxDuration)
+        // Budget the wait from sync START, not from "now": the silent-push setup
+        // above (folder availability, wake-evidence window, optional forced
+        // restart) already consumed part of iOS's ~30s content-available budget.
+        // An absolute deadline keeps total wall-clock under budget so overruns
+        // don't get future wake-ups throttled.
+        let deadline = syncStartedAt.addingTimeInterval(maxDuration)
         trace("Waiting for idle state until deadline.")
         while SyncBridgeService.isRunning() && Date() < deadline {
             if Task.isCancelled { break }
             try? await Task.sleep(for: .milliseconds(500))
-            let idle = allFoldersIdle()
+            // Stop as soon as no folder can make further progress — either all
+            // idle, or a folder is stuck in a terminal error state. Without the
+            // error case a single stuck folder spins out the whole deadline.
+            let settled = allFoldersSettledOrErrored()
             if var tracker = progressTracker {
                 let snapshot = tracker.poll()
                 progressTrackerTraceIfNeeded(snapshot)
-                if idle && !snapshot.requiresMeaningfulProgress {
+                if settled && !snapshot.requiresMeaningfulProgress {
                     progressTracker = tracker
                     break
                 }
                 progressTracker = tracker
-            } else if idle {
+            } else if settled {
                 break
             }
         }
 
         let idle = allFoldersIdle()
+        let settledWithError = !idle && allFoldersSettledOrErrored()
         let progressSnapshot = progressTracker?.poll()
         if let progressSnapshot {
             progressTrackerTraceIfNeeded(progressSnapshot)
@@ -522,6 +692,14 @@ enum BackgroundSyncService {
         } else if idle {
             result = .synced
             detail = nil
+        } else if settledWithError {
+            // Stopped because a folder is in a terminal error state, not because
+            // we ran out of time. The folder error surfaces via the in-app Sync
+            // Issues panel; don't raise a misleading "Background Sync Timed Out",
+            // but don't report a clean success either (the widget should still
+            // reflect the error, not a green idle state).
+            result = .settledWithFolderError
+            detail = L10n.tr("Background sync settled with at least one folder in an error state.")
         } else {
             result = .notIdleBeforeDeadline
             detail = L10n.fmt("Sync did not reach idle before %ds deadline.", Int(maxDuration))
@@ -596,7 +774,7 @@ enum BackgroundSyncService {
 
             let pct = averageFolderCompletion()
             progress.completedUnitCount = Int64(pct)
-            task.updateTitle("Syncing Vault", subtitle: "\(Int(pct))% complete")
+            task.updateTitle(L10n.tr("Syncing Vault"), subtitle: L10n.fmt("%d%% complete", Int(pct)))
         }
 
         task.setTaskCompleted(success: false)
@@ -675,36 +853,72 @@ enum BackgroundSyncService {
         NotificationCenter.default.post(name: lastSyncOutcomeDidChangeNotification, object: nil)
     }
 
-    private static func allFoldersIdle() -> Bool {
+    /// Settlement classification for one folder, derived purely from its status
+    /// fields so it can be unit-tested without the bridge.
+    enum FolderSettlement: Equatable, Sendable {
+        case idle        // nothing left to do
+        case errored     // terminal error — cannot progress without intervention
+        case active      // scanning, syncing, or outstanding work to pull
+    }
+
+    static func folderSettlement(
+        state: String,
+        needFiles: Int,
+        needBytes: Int64,
+        inProgressBytes: Int64
+    ) -> FolderSettlement {
+        if state == "error" { return .errored }
+        // A folder is truly idle only when Syncthing is neither scanning nor
+        // syncing AND has no outstanding work. The state field alone is not
+        // enough: Syncthing briefly reports `idle` between scan and sync phases
+        // while needBytes/needFiles still await a pull. Treating that window as
+        // "done" caused background-sync handlers to shut Syncthing down before
+        // any file was actually pulled.
+        let hasPendingWork = needFiles > 0 || needBytes > 0 || inProgressBytes > 0
+        if state == "idle" && !hasPendingWork { return .idle }
+        return .active
+    }
+
+    /// Per-folder settlement snapshot, or nil when the folder list is empty or a
+    /// status fails to decode (can't confirm state — caller treats as not-idle).
+    private static func folderSettlements() -> [FolderSettlement]? {
         let json = SyncBridgeService.getFoldersJSON()
         guard let data = json.data(using: .utf8),
               let folders = try? JSONDecoder().decode([FolderStub].self, from: data),
               !folders.isEmpty else {
-            // Empty folder list means Syncthing hasn't populated yet — not idle
-            return false
+            return nil
         }
 
+        var settlements: [FolderSettlement] = []
+        settlements.reserveCapacity(folders.count)
         for folder in folders {
             let statusJSON = SyncBridgeService.getFolderStatusJSON(folderID: folder.id)
             guard let statusData = statusJSON.data(using: .utf8),
                   let status = try? JSONDecoder().decode(StatusStub.self, from: statusData) else {
-                // Decode failure means we can't confirm state — treat as not idle
-                return false
+                return nil
             }
-            // A folder is truly idle only when Syncthing is neither scanning
-            // nor syncing AND has no outstanding work. The state field alone
-            // is not enough: Syncthing briefly reports `idle` between scan
-            // and sync phases while needBytes/needFiles still await a pull.
-            // Treating that window as "done" caused background-sync handlers
-            // to shut Syncthing down before any file was actually pulled.
-            let hasPendingWork = status.needFiles > 0
-                || status.needBytes > 0
-                || status.inProgressBytes > 0
-            if status.state != "idle" || hasPendingWork {
-                return false
-            }
+            settlements.append(folderSettlement(
+                state: status.state,
+                needFiles: status.needFiles,
+                needBytes: status.needBytes,
+                inProgressBytes: status.inProgressBytes
+            ))
         }
-        return true
+        return settlements
+    }
+
+    private static func allFoldersIdle() -> Bool {
+        guard let settlements = folderSettlements() else { return false }
+        return settlements.allSatisfy { $0 == .idle }
+    }
+
+    /// True when no folder can make further progress on its own — every folder
+    /// is either idle or in a terminal error state. Used to stop waiting out the
+    /// full deadline (and raising a misleading "timed out") when a folder is
+    /// stuck in error and nothing more can happen.
+    private static func allFoldersSettledOrErrored() -> Bool {
+        guard let settlements = folderSettlements() else { return false }
+        return settlements.allSatisfy { $0 != .active }
     }
 
     private static func averageFolderCompletion() -> Double {
@@ -748,42 +962,99 @@ enum BackgroundSyncService {
     }
 
     private static func notifyConflictsIfAny() async {
+        // If the app is foreground-active, the in-app conflict UI already
+        // surfaces these — don't also post a banner, and don't race the
+        // foreground poll's baseline reconcile over the shared count key. (A
+        // silent push can arrive while the app is open.)
+        guard !isSceneActive() else { return }
+
+        // In-app toggle (default ON). Read the raw object so an absent key —
+        // every install from before this feature shipped — reads as ON, not
+        // false (UserDefaults.bool returns false for a missing key). Gating
+        // here, before the per-folder conflict scan, also skips that disk I/O
+        // when the user has turned banners off.
+        let bannersEnabled = (UserDefaults.standard.object(forKey: conflictNotificationsEnabledKey) as? Bool) ?? true
+        guard bannersEnabled else { return }
+
+        guard let count = currentConflictCount() else {
+            // Unreadable conflict snapshot (transient bridge/decode failure) —
+            // leave the banner and persisted baseline untouched rather than
+            // mistaking it for "no conflicts".
+            return
+        }
+        let lastCount = UserDefaults.standard.integer(forKey: lastNotifiedConflictCountKey)
+        let action = conflictNotificationAction(currentCount: count, lastNotifiedCount: lastCount)
+
+        switch action {
+        case .suppress:
+            // Same count as last time — not new information. Leave the existing
+            // banner alone so the screen does not light up every silent push.
+            return
+
+        case .clear:
+            UNUserNotificationCenter.current().removeDeliveredNotifications(
+                withIdentifiers: [conflictNotificationIdentifier]
+            )
+            UserDefaults.standard.set(0, forKey: lastNotifiedConflictCountKey)
+            return
+
+        case .alert, .updateQuiet:
+            let content = UNMutableNotificationContent()
+            content.title = L10n.tr("Sync Conflicts")
+            content.body = count == 1
+                ? L10n.tr("1 file has a sync conflict. Open VaultSync to resolve it.")
+                : L10n.fmt("%d files have sync conflicts. Open VaultSync to resolve them.", count)
+            if action == .alert {
+                content.sound = .default
+                content.interruptionLevel = .active
+            } else {
+                // Count dropped (some resolved) — refresh the number without a
+                // sound or screen-wake.
+                content.interruptionLevel = .passive
+            }
+
+            let request = UNNotificationRequest(
+                identifier: conflictNotificationIdentifier,
+                content: content,
+                trigger: nil
+            )
+
+            do {
+                try await UNUserNotificationCenter.current().add(request)
+                UserDefaults.standard.set(count, forKey: lastNotifiedConflictCountKey)
+                logger.info("Conflict notification \(action == .alert ? "posted" : "updated quietly") (\(count) conflicts)")
+            } catch {
+                logger.error("Failed to send notification: \(error)")
+            }
+        }
+    }
+
+    /// Total conflict copies across all folders, as reported by the bridge's
+    /// on-disk scan. Matches the count shown in the in-app conflict list.
+    ///
+    /// Returns nil when the snapshot is UNREADABLE — the folder list or any
+    /// folder's conflict list failed to decode. A transient bridge/decode
+    /// failure must NOT be mistaken for "no conflicts": that would clear the
+    /// banner and reset the baseline, and the next successful read would then
+    /// re-alert the still-present conflicts as if they were new.
+    private static func currentConflictCount() -> Int? {
         let json = SyncBridgeService.getFoldersJSON()
         guard let data = json.data(using: .utf8),
               let folders = try? JSONDecoder().decode([FolderStub].self, from: data) else {
-            return
+            return nil
         }
 
         var count = 0
         for folder in folders {
             let cJSON = SyncBridgeService.getConflictFilesJSON(folderID: folder.id)
-            if let cData = cJSON.data(using: .utf8),
-               let conflicts = try? JSONDecoder().decode([ConflictStub].self, from: cData) {
-                count += conflicts.count
+            guard let cData = cJSON.data(using: .utf8),
+                  let conflicts = try? JSONDecoder().decode([ConflictStub].self, from: cData) else {
+                // Suppress rather than undercount this folder's conflicts to 0.
+                return nil
             }
+            count += conflicts.count
         }
-
-        guard count > 0 else { return }
-
-        let content = UNMutableNotificationContent()
-        content.title = L10n.tr("Sync Conflicts")
-        content.body = count == 1
-            ? "1 file has a sync conflict. Open VaultSync to resolve it."
-            : "\(count) files have sync conflicts. Open VaultSync to resolve them."
-        content.sound = .default
-
-        let request = UNNotificationRequest(
-            identifier: "sync-conflict-\(UUID().uuidString)",
-            content: content,
-            trigger: nil
-        )
-
-        do {
-            try await UNUserNotificationCenter.current().add(request)
-            logger.info("Conflict notification sent (\(count) conflicts)")
-        } catch {
-            logger.error("Failed to send notification: \(error)")
-        }
+        return count
     }
 
     private static func restoreBookmarkAccess() -> [URL] {

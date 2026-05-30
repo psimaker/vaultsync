@@ -44,6 +44,13 @@ cd ../ios
 xcodegen generate
 ```
 
+> **Code signing (device builds only):** No development team is committed to the
+> repo. To build on a physical device, copy `ios/Signing.local.xcconfig.example`
+> to `ios/Signing.local.xcconfig`, set your `DEVELOPMENT_TEAM`, and re-run
+> `xcodegen generate`. That file is gitignored, so your team never lands in the
+> repo and persists across regenerations. Simulator builds need no team — build
+> with `CODE_SIGNING_ALLOWED=NO`.
+
 ### 6. Open and build in Xcode
 
 ```bash

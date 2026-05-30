@@ -25,6 +25,68 @@ final class SubscriptionManager {
     private(set) var relayHealthCheckInFlight = false
     private(set) var lastRelayTriggerReceivedAt: Date?
     private(set) var lastRelayError: RelayService.RecordedRelayError?
+    /// Whether iOS will actually present an alert banner (authorized + banners
+    /// enabled), denied, or unknown. Informational only — silent pushes (Cloud
+    /// Relay wake-ups) do not depend on it, so this must NOT feed any relay/APNs
+    /// "failure" state.
+    private(set) var alertBannerStatus: BackgroundSyncService.AlertBannerStatus = .unknown
+
+    /// Strong signal: a recent silent-push trigger proves Cloud Relay is
+    /// actually delivering wake-ups to THIS device (the only leg that proves
+    /// end-to-end delivery to this device's token). Deliberately independent of
+    /// alert-banner authorization, so muting conflict banners never reads as
+    /// "relay broken".
+    var relayDeliveryConfirmed: Bool {
+        guard isRelaySubscribed, hasAPNsToken,
+              relayProvisionStatuses.values.contains(.provisioned),
+              let last = lastRelayTriggerReceivedAt else {
+            return false
+        }
+        return Date().timeIntervalSince(last) < Self.relayTriggerFreshnessWindow
+    }
+
+    /// Weaker signal: subscribed, provisioned, and the relay endpoint is
+    /// reachable — but no recent trigger has proven delivery to this device yet.
+    /// Use for a "looks reachable" indicator, NOT a definitive "delivering" one.
+    var relayDeliveryLikelyWorking: Bool {
+        if relayDeliveryConfirmed { return true }
+        guard isRelaySubscribed, hasAPNsToken,
+              relayProvisionStatuses.values.contains(.provisioned) else {
+            return false
+        }
+        return relayHealthResult?.isHealthy ?? false
+    }
+
+    private static let relayTriggerFreshnessWindow: TimeInterval = 48 * 60 * 60
+
+    /// Localized "price / period" for the relay subscription, derived entirely
+    /// from StoreKit so it is correct in every storefront — e.g. "0,99 € / month"
+    /// in Germany, "A$1.99 / month" in Australia. Falls back to the bare
+    /// localized price if the subscription period is unavailable. Never hard-code
+    /// a currency or amount in the UI.
+    var relayPriceText: String? {
+        guard let product = availableProduct else { return nil }
+        guard let period = product.subscription?.subscriptionPeriod else {
+            return product.displayPrice
+        }
+        let unit: String
+        switch period.unit {
+        case .day:
+            unit = period.value == 1 ? L10n.tr("day") : L10n.tr("days")
+        case .week:
+            unit = period.value == 1 ? L10n.tr("week") : L10n.tr("weeks")
+        case .month:
+            unit = period.value == 1 ? L10n.tr("month") : L10n.tr("months")
+        case .year:
+            unit = period.value == 1 ? L10n.tr("year") : L10n.tr("years")
+        @unknown default:
+            return product.displayPrice
+        }
+        if period.value == 1 {
+            return L10n.fmt("%@ / %@", product.displayPrice, unit)
+        }
+        return L10n.fmt("%1$@ / %2$d %3$@", product.displayPrice, period.value, unit)
+    }
 
     @ObservationIgnored nonisolated(unsafe) private var loadTask: Task<Void, Never>?
     @ObservationIgnored nonisolated(unsafe) private var unfinishedTask: Task<Void, Never>?
@@ -191,6 +253,7 @@ final class SubscriptionManager {
         }
         refreshAPNsRegistrationStatus()
         refreshStoredRelayDiagnostics()
+        alertBannerStatus = await BackgroundSyncService.alertBannerStatus()
         await checkSubscriptionStatus()
         await runRelayHealthCheck()
         // Opportunistically re-provision if the last successful provision is

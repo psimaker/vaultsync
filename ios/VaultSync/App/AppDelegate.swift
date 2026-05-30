@@ -1,5 +1,4 @@
 import UIKit
-import UserNotifications
 import os
 
 private let logger = Logger(subsystem: "eu.vaultsync.app", category: "appdelegate")
@@ -13,7 +12,11 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         application.registerForRemoteNotifications()
         logger.info("Registered for remote notifications")
         logger.debug("Custom URL routing is handled by VaultSyncApp.onOpenURL; AppDelegate remains dedicated to push and background delivery")
-        Task { await refreshNotificationAuthorizationState() }
+        // NOTE: We deliberately do NOT flag APNs/relay as failed based on alert
+        // authorization. Silent (content-available) pushes — the relay's wake
+        // mechanism — are delivered regardless of UNAuthorizationStatus. The
+        // live alert-permission state is surfaced as informational in Relay
+        // Diagnostics instead (see SubscriptionManager.alertBannerStatus).
         return true
     }
 
@@ -60,7 +63,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             switch result {
             case .synced:
                 completionHandler(.newData)
-            case .alreadyIdle, .noFoldersConfigured:
+            case .alreadyIdle, .noFoldersConfigured, .settledWithFolderError:
                 completionHandler(.noData)
             case .noBookmarkAccess, .bridgeStartFailed, .notIdleBeforeDeadline, .failed:
                 completionHandler(.failed)
@@ -80,13 +83,5 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         }
 
         return base
-    }
-
-    private func refreshNotificationAuthorizationState() async {
-        let settings = await UNUserNotificationCenter.current().notificationSettings()
-        guard settings.authorizationStatus == .denied else { return }
-        APNsRegistrationStore.markFailed(
-            reason: L10n.tr("Notifications are disabled for VaultSync. Enable them in iOS Settings > Notifications > VaultSync, then retry APNs registration.")
-        )
     }
 }

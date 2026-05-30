@@ -28,6 +28,15 @@ struct RelayDiagnosticsView: View {
 
     private var relayHealthSection: some View {
         Section("Relay Backend") {
+            if subscriptionManager.relayDeliveryConfirmed {
+                Label(L10n.tr("Cloud Relay is delivering wake-ups"), systemImage: "checkmark.seal.fill")
+                    .foregroundStyle(.green)
+                    .font(.subheadline)
+            } else if subscriptionManager.relayDeliveryLikelyWorking {
+                Label(L10n.tr("Cloud Relay looks reachable"), systemImage: "checkmark.circle")
+                    .foregroundStyle(.green)
+                    .font(.subheadline)
+            }
             HStack {
                 Label("Health Endpoint", systemImage: "server.rack")
                 Spacer()
@@ -117,6 +126,20 @@ struct RelayDiagnosticsView: View {
             }
             .accessibilityElement(children: .combine)
 
+            HStack {
+                Label(L10n.tr("Alert Banners"), systemImage: "app.badge")
+                Spacer()
+                Text(alertBannerText)
+                    .foregroundStyle(alertBannerColor)
+            }
+            .accessibilityElement(children: .combine)
+
+            if subscriptionManager.alertBannerStatus == .denied {
+                Text(L10n.tr("Alert banners are off at the iOS level. Cloud Relay wake-ups still work — they use silent push, which does not need notification permission."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             if let updatedAt = subscriptionManager.apnsRegistrationSnapshot.updatedAt {
                 LabeledContent("Last Update") {
                     Text(updatedAt, style: .relative)
@@ -155,8 +178,6 @@ struct RelayDiagnosticsView: View {
             Button("Open iOS Notification Settings") {
                 openSystemSettings()
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
         }
     }
 
@@ -291,11 +312,11 @@ struct RelayDiagnosticsView: View {
         }
 
         if !subscriptionManager.hasAPNsToken {
-            hints.append(L10n.tr("APNs token is missing. Enable notifications for VaultSync and retry APNs registration."))
+            hints.append(L10n.tr("APNs token is missing. Retry APNs registration; if it keeps failing, check your internet connection. (Silent push does not require notification banners.)"))
         }
 
         if case .failed = subscriptionManager.apnsRegistrationStatus {
-            hints.append(L10n.tr("APNs registration failed. Open iOS Settings > Notifications > VaultSync, allow notifications, then retry."))
+            hints.append(L10n.tr("APNs registration failed. Check your internet connection and retry registration. Silent push does not require notification banners to be enabled."))
         }
 
         if let health = subscriptionManager.relayHealthResult, !health.isHealthy {
@@ -315,6 +336,24 @@ struct RelayDiagnosticsView: View {
         }
 
         return hints
+    }
+
+    private var alertBannerText: String {
+        switch subscriptionManager.alertBannerStatus {
+        case .allowed: return L10n.tr("Allowed")
+        case .denied: return L10n.tr("Denied")
+        case .unknown: return L10n.tr("Unknown")
+        }
+    }
+
+    private var alertBannerColor: Color {
+        switch subscriptionManager.alertBannerStatus {
+        case .allowed: return .green
+        case .denied: return .secondary
+        // "Not determined" is not an error — keep it neutral rather than a
+        // warning yellow that implies something is wrong.
+        case .unknown: return .secondary
+        }
     }
 
     private var apnsStatusColor: Color {

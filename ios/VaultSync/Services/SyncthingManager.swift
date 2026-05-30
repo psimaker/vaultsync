@@ -439,7 +439,7 @@ final class SyncthingManager {
             severity = .critical
         case .noFoldersConfigured, .notIdleBeforeDeadline:
             severity = .warning
-        case .synced, .alreadyIdle:
+        case .synced, .alreadyIdle, .settledWithFolderError:
             return nil
         }
 
@@ -826,6 +826,7 @@ final class SyncthingManager {
             }
         }
         conflictFiles = newConflicts
+        BackgroundSyncService.reconcileConflictNotificationBaseline(currentCount: unresolvedConflictCount)
         writeWidgetSnapshotIfNeeded()
     }
 
@@ -939,6 +940,7 @@ final class SyncthingManager {
             }
         }
         conflictFiles = allConflicts
+        BackgroundSyncService.reconcileConflictNotificationBaseline(currentCount: unresolvedConflictCount)
     }
 
     private func refreshPendingFolders() {
@@ -1596,12 +1598,6 @@ final class SyncthingManager {
             return SyncUserError.from(rawMessage: err)
         }
         return nil
-    }
-
-    /// True iff every pattern in the preset is currently in the folder's `.stignore`.
-    func isPresetActive(_ preset: IgnorePreset, folderID: String) -> Bool {
-        let current = Set(ignorePatterns(folderID: folderID))
-        return preset.patterns.allSatisfy { current.contains($0) }
     }
 
     /// Atomically add or remove a preset's patterns from `.stignore`. Aborts
