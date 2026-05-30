@@ -2,7 +2,7 @@
 "Idle" = "Leerlauf";
 "Needs Attention" = "Benötigt Aufmerksamkeit";
 "Open VaultSync" = "VaultSync öffnen";
-"Syncing" = "Synchronisiert";
+"Syncing" = "Wird synchronisiert";
 
 // Metric labels
 "widget_last_sync" = "Letzter Sync";
