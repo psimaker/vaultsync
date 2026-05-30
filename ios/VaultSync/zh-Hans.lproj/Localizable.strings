@@ -506,7 +506,7 @@
 "iOS did not provide a push token required for instant sync." = "iOS 未提供即时同步所需的推送令牌。";
 "%@ (Trigger: %@)" = "%@（触发：%@）";
 "1 additional file synced in %@" = "在 %@ 内同步了 1 个额外文件";
-"%d additional files synced in %@" = "在 %@ 内同步了 %d 个额外文件";
+"%d additional files synced in %@" = "在 %2$@ 内同步了 %1$d 个额外文件";
 "%@ connected" = "%@ 已连接";
 "%@ disconnected" = "%@ 已断开连接";
 "%d%% complete" = "已完成 %d%%";
