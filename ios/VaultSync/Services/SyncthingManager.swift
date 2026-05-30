@@ -439,7 +439,7 @@ final class SyncthingManager {
             severity = .critical
         case .noFoldersConfigured, .notIdleBeforeDeadline:
             severity = .warning
-        case .synced, .alreadyIdle:
+        case .synced, .alreadyIdle, .settledWithFolderError:
             return nil
         }
 

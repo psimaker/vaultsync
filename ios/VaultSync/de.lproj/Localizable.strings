@@ -534,3 +534,6 @@
 
 /* Issue #10 — background-sync reliability (error-settled outcome) */
 "Background sync settled with at least one folder in an error state." = "Hintergrund-Synchronisierung beendet — mindestens ein Ordner ist im Fehlerzustand.";
+
+/* Issue #10 — relay reachable (vs delivering) */
+"Cloud Relay looks reachable" = "Cloud Relay scheint erreichbar";

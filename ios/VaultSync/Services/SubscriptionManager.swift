@@ -30,22 +30,30 @@ final class SubscriptionManager {
     /// any relay/APNs "failure" state.
     private(set) var alertAuthorizationDenied = false
 
-    /// Best-effort "Cloud Relay is actually delivering wake-ups" signal, built
-    /// from the inputs that genuinely matter — an active subscription, an APNs
-    /// token, a provisioned device, and either a recent silent-push trigger or a
-    /// healthy relay endpoint. Deliberately independent of alert-banner
-    /// authorization so muting conflict banners never reads as "relay broken".
-    var relayDeliveryLikelyWorking: Bool {
-        guard isRelaySubscribed, hasAPNsToken else { return false }
-        let provisioned = relayProvisionStatuses.values.contains(.provisioned)
-        let recentTrigger: Bool
-        if let last = lastRelayTriggerReceivedAt {
-            recentTrigger = Date().timeIntervalSince(last) < Self.relayTriggerFreshnessWindow
-        } else {
-            recentTrigger = false
+    /// Strong signal: a recent silent-push trigger proves Cloud Relay is
+    /// actually delivering wake-ups to THIS device (the only leg that proves
+    /// end-to-end delivery to this device's token). Deliberately independent of
+    /// alert-banner authorization, so muting conflict banners never reads as
+    /// "relay broken".
+    var relayDeliveryConfirmed: Bool {
+        guard isRelaySubscribed, hasAPNsToken,
+              relayProvisionStatuses.values.contains(.provisioned),
+              let last = lastRelayTriggerReceivedAt else {
+            return false
         }
-        let healthy = relayHealthResult?.isHealthy ?? false
-        return provisioned && (recentTrigger || healthy)
+        return Date().timeIntervalSince(last) < Self.relayTriggerFreshnessWindow
+    }
+
+    /// Weaker signal: subscribed, provisioned, and the relay endpoint is
+    /// reachable — but no recent trigger has proven delivery to this device yet.
+    /// Use for a "looks reachable" indicator, NOT a definitive "delivering" one.
+    var relayDeliveryLikelyWorking: Bool {
+        if relayDeliveryConfirmed { return true }
+        guard isRelaySubscribed, hasAPNsToken,
+              relayProvisionStatuses.values.contains(.provisioned) else {
+            return false
+        }
+        return relayHealthResult?.isHealthy ?? false
     }
 
     private static let relayTriggerFreshnessWindow: TimeInterval = 48 * 60 * 60

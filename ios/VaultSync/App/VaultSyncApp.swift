@@ -57,6 +57,7 @@ struct VaultSyncApp: App {
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
             case .active:
+                BackgroundSyncService.setSceneActive(true)
                 BackgroundSyncService.endBackgroundAssertion()
                 BackgroundSyncService.cancelContinuedProcessing()
                 if !SyncBridgeService.isRunning() {
@@ -82,6 +83,7 @@ struct VaultSyncApp: App {
                 lastBackgroundedAt = nil
             case .background:
                 lastBackgroundedAt = Date()
+                BackgroundSyncService.setSceneActive(false)
 
                 // Release the foreground lifecycle lock so silent-push and
                 // BGAppRefresh handlers can manage Syncthing when the process

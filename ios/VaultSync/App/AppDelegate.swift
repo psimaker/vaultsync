@@ -1,5 +1,4 @@
 import UIKit
-import UserNotifications
 import os
 
 private let logger = Logger(subsystem: "eu.vaultsync.app", category: "appdelegate")
@@ -64,7 +63,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             switch result {
             case .synced:
                 completionHandler(.newData)
-            case .alreadyIdle, .noFoldersConfigured:
+            case .alreadyIdle, .noFoldersConfigured, .settledWithFolderError:
                 completionHandler(.noData)
             case .noBookmarkAccess, .bridgeStartFailed, .notIdleBeforeDeadline, .failed:
                 completionHandler(.failed)

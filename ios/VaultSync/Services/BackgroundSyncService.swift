@@ -34,6 +34,23 @@ enum BackgroundSyncService {
     /// concurrent background wake-ups from tearing down each other's sync.
     private static let syncInFlightLock = OSAllocatedUnfairLock(initialState: false)
 
+    /// Whether the scene is currently foreground-active. Drives conflict-banner
+    /// behavior: while active, the in-app UI surfaces conflicts so no banner is
+    /// posted and the foreground poll keeps the suppression baseline in sync;
+    /// while inactive (including the ~30s post-background grace window, when the
+    /// poll is still running) the baseline is frozen and silent-push handlers
+    /// may post banners. This is NOT `lifecycleLock.foregroundActive`, which
+    /// tracks bridge ownership and is released early on `.background`.
+    private static let sceneActiveLock = OSAllocatedUnfairLock(initialState: false)
+
+    static func setSceneActive(_ active: Bool) {
+        sceneActiveLock.withLock { $0 = active }
+    }
+
+    static func isSceneActive() -> Bool {
+        sceneActiveLock.withLock { $0 }
+    }
+
     /// Guards the UIApplication background-task assertion used for the
     /// scene-phase grace period after the app leaves the foreground.
     private static let backgroundAssertionLock = OSAllocatedUnfairLock(
@@ -276,8 +293,20 @@ enum BackgroundSyncService {
     /// "decrease" against a stale high-water mark.
     @MainActor
     static func reconcileConflictNotificationBaseline(currentCount: Int) {
-        UserDefaults.standard.set(max(0, currentCount), forKey: lastNotifiedConflictCountKey)
-        if currentCount <= 0 {
+        // Only re-baseline while the scene is genuinely active. During the ~30s
+        // post-background grace window the foreground poll keeps running; if it
+        // silently bumped the baseline there, a conflict that arrived in that
+        // window would be read as "unchanged" by the next silent push and never
+        // alert. Freezing the baseline keeps such a conflict a genuine rise.
+        guard isSceneActive() else { return }
+
+        let normalized = max(0, currentCount)
+        // Skip the write/IPC entirely when nothing changed — the 2s poll would
+        // otherwise hit usernotificationsd every tick in the zero-conflict case.
+        guard normalized != UserDefaults.standard.integer(forKey: lastNotifiedConflictCountKey) else { return }
+
+        UserDefaults.standard.set(normalized, forKey: lastNotifiedConflictCountKey)
+        if normalized == 0 {
             UNUserNotificationCenter.current().removeDeliveredNotifications(
                 withIdentifiers: [conflictNotificationIdentifier]
             )
@@ -295,19 +324,25 @@ enum BackgroundSyncService {
         case bridgeStartFailed
         case notIdleBeforeDeadline
         case failed
+        /// The run stopped early because a folder is in a terminal error state
+        /// (nothing more could sync). NOT a timeout — the folder error surfaces
+        /// via the in-app Sync Issues panel, so this must not raise a misleading
+        /// "Timed Out" issue, but it is also not a clean success: the widget
+        /// should still reflect the error rather than a green idle state.
+        case settledWithFolderError
 
         var isSuccessful: Bool {
             switch self {
             case .synced, .alreadyIdle:
                 return true
-            case .noBookmarkAccess, .noFoldersConfigured, .bridgeStartFailed, .notIdleBeforeDeadline, .failed:
+            case .noBookmarkAccess, .noFoldersConfigured, .bridgeStartFailed, .notIdleBeforeDeadline, .failed, .settledWithFolderError:
                 return false
             }
         }
 
         var shouldSurfaceIssue: Bool {
             switch self {
-            case .synced, .alreadyIdle:
+            case .synced, .alreadyIdle, .settledWithFolderError:
                 return false
             case .noBookmarkAccess, .noFoldersConfigured, .bridgeStartFailed, .notIdleBeforeDeadline, .failed:
                 return true
@@ -326,7 +361,7 @@ enum BackgroundSyncService {
                 return L10n.tr("Background Sync Timed Out")
             case .failed:
                 return L10n.tr("Background Sync Failed")
-            case .synced, .alreadyIdle:
+            case .synced, .alreadyIdle, .settledWithFolderError:
                 return L10n.tr("Background Sync Completed")
             }
         }
@@ -347,6 +382,8 @@ enum BackgroundSyncService {
                 return L10n.tr("Background sync completed and reached idle.")
             case .alreadyIdle:
                 return L10n.tr("Background sync ran, but folders were already idle.")
+            case .settledWithFolderError:
+                return L10n.tr("Background sync settled with at least one folder in an error state.")
             }
         }
 
@@ -362,7 +399,7 @@ enum BackgroundSyncService {
                 return L10n.tr("Open VaultSync to allow a longer foreground sync session.")
             case .failed:
                 return L10n.tr("Retry from the app and review relay/background diagnostics in Settings.")
-            case .synced, .alreadyIdle:
+            case .synced, .alreadyIdle, .settledWithFolderError:
                 return L10n.tr("No action needed.")
             }
         }
@@ -555,6 +592,12 @@ enum BackgroundSyncService {
 
         if allFoldersIdle() && !(progressTracker?.requiresMeaningfulProgress == true) {
             trace("Folders already idle after setup checks.")
+            // Surface conflicts on the fast idle path too — a small change that
+            // conflicts and settles before the deadline loop would otherwise
+            // skip notification. Must run BEFORE cleanup stops the bridge, since
+            // the conflict scan reads through it. notifyConflictsIfAny is
+            // internally gated (foreground/toggle/suppression), so it's cheap.
+            await notifyConflictsIfAny()
             if ownsLifecycle {
                 cleanupBackgroundManaged(managedURLs)
             }
@@ -624,8 +667,10 @@ enum BackgroundSyncService {
         } else if settledWithError {
             // Stopped because a folder is in a terminal error state, not because
             // we ran out of time. The folder error surfaces via the in-app Sync
-            // Issues panel; don't raise a misleading "Background Sync Timed Out".
-            result = .synced
+            // Issues panel; don't raise a misleading "Background Sync Timed Out",
+            // but don't report a clean success either (the widget should still
+            // reflect the error, not a green idle state).
+            result = .settledWithFolderError
             detail = L10n.tr("Background sync settled with at least one folder in an error state.")
         } else {
             result = .notIdleBeforeDeadline
@@ -889,6 +934,12 @@ enum BackgroundSyncService {
     }
 
     private static func notifyConflictsIfAny() async {
+        // If the app is foreground-active, the in-app conflict UI already
+        // surfaces these — don't also post a banner, and don't race the
+        // foreground poll's baseline reconcile over the shared count key. (A
+        // silent push can arrive while the app is open.)
+        guard !isSceneActive() else { return }
+
         // In-app toggle (default ON). Read the raw object so an absent key —
         // every install from before this feature shipped — reads as ON, not
         // false (UserDefaults.bool returns false for a missing key). Gating

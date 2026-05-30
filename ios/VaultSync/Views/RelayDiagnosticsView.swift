@@ -28,8 +28,12 @@ struct RelayDiagnosticsView: View {
 
     private var relayHealthSection: some View {
         Section("Relay Backend") {
-            if subscriptionManager.relayDeliveryLikelyWorking {
+            if subscriptionManager.relayDeliveryConfirmed {
                 Label(L10n.tr("Cloud Relay is delivering wake-ups"), systemImage: "checkmark.seal.fill")
+                    .foregroundStyle(.green)
+                    .font(.subheadline)
+            } else if subscriptionManager.relayDeliveryLikelyWorking {
+                Label(L10n.tr("Cloud Relay looks reachable"), systemImage: "checkmark.circle")
                     .foregroundStyle(.green)
                     .font(.subheadline)
             }
@@ -126,7 +130,7 @@ struct RelayDiagnosticsView: View {
                 Label(L10n.tr("Alert Banners"), systemImage: "app.badge")
                 Spacer()
                 Text(subscriptionManager.alertAuthorizationDenied ? L10n.tr("Denied") : L10n.tr("Allowed"))
-                    .foregroundStyle(subscriptionManager.alertAuthorizationDenied ? .secondary : .green)
+                    .foregroundStyle(subscriptionManager.alertAuthorizationDenied ? Color.secondary : Color.green)
             }
             .accessibilityElement(children: .combine)
 
