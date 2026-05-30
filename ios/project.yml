@@ -24,6 +24,11 @@ settings:
     # Required: gomobile's xcframework build uses shell scripts in a Run Script phase.
     # User script sandboxing must be disabled so Xcode can execute them.
     ENABLE_USER_SCRIPT_SANDBOXING: false
+    # Signing configured here (not in the Xcode UI) so it survives `xcodegen
+    # generate` — the .xcodeproj is regenerated and gitignored. Applies to the
+    # app, widget, and test targets.
+    DEVELOPMENT_TEAM: QWTAK63B7C
+    CODE_SIGN_STYLE: Automatic
 
 schemes:
   VaultSync:
