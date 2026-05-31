@@ -62,7 +62,7 @@ VaultSync is **not** a hosted note-sync service and **not** a magic always-on da
 
 ## What’s New — v1.5.0
 
-Cloud Relay now guides you through the one-time server helper it needs (right after you subscribe), adds a **yearly plan**, and shows honest delivery status instead of just “subscribed”. The relay verifies your subscription with Apple and enforces expiry, and an iPhone and iPad sharing one server both receive wake-ups. See [CHANGELOG.md](CHANGELOG.md) for details.
+VaultSync gets a top-to-bottom **visual redesign**: a tabbed home screen (Sync · Devices · Cloud Relay) with a persistent, glanceable status header, a coherent design system that is correct in light and dark mode, status that never relies on color alone, and onboarding whose steps actually run the setup for you. **Cloud Relay** moves into its own tab with honest delivery status and a clearer, privacy-first pitch — and keeps its yearly plan and Apple-verified subscriptions, while its server helper no longer crash-loops on an inactive subscription. See [CHANGELOG.md](CHANGELOG.md) for details.
 
 ---
 

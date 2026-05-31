@@ -8,18 +8,27 @@ All notable changes to VaultSync are documented here.
 
 ### Added
 
-- **Guided Cloud Relay server setup** — Cloud Relay needs a small helper (`vaultsync-notify`) on your server, and the app now says so clearly. A new **Set Up Your Server** screen explains the step and offers a copyable one-line command (with the relay URL pre-filled); it appears right after you subscribe and from Settings → Cloud Relay. Localized in English, German, Spanish, and Simplified Chinese.
+- **A complete visual redesign** — VaultSync moves to a coherent design system: a single brand accent (instead of stray system blue), a status palette that resolves correctly in light and dark mode, and a shared component kit used across the app and the home-screen widget.
+- **Tabbed home screen** — the single overloaded screen is split into **Sync**, **Devices**, and **Cloud Relay** tabs, led by a persistent status header that states one glanceable truth ("All Synced" / "Syncing…" / "Needs Attention").
+- **Onboarding that does it for you** — onboarding steps now launch the real task (choose your Obsidian folder, pair a device, scan a QR code) and turn green as you complete them, instead of describing setup in prose.
+- **Guided Cloud Relay server setup** — Cloud Relay needs a small helper (`vaultsync-notify`) on your server, and the app now says so clearly. A new **Set Up Your Server** screen explains the step and offers a copyable one-line command (with the relay URL pre-filled); it appears right after you subscribe and from the Cloud Relay tab. Localized in English, German, Spanish, and Simplified Chinese.
 - **Yearly Cloud Relay plan** — Cloud Relay is now available as a yearly subscription in addition to monthly, at a lower effective monthly price. Both prices are read from StoreKit and shown correctly per storefront.
 - **In-context Cloud Relay offer** — After your first successful sync, VaultSync offers Cloud Relay in context (with a one-tap path into server setup), and the home screen shows an unobtrusive upgrade row for non-subscribers.
 
 ### Changed
 
-- **Honest Cloud Relay status** — The setup checklist and Settings no longer call Cloud Relay "ready" just because you subscribed. They now reflect real delivery: *waiting for your server* until a wake-up actually arrives, then *delivering wake-ups*.
+- **Cloud Relay has its own tab** — Cloud Relay moved out of Settings into a dedicated tab that brings the subscribe offer, server-helper setup, delivery status, diagnostics, and manage-subscription together. When you're not subscribed it leads with a focused, privacy-first pitch — a tiny wake-up on top of your already-free peer-to-peer sync, not cloud storage — and lists the monthly plan first with the yearly plan shown as savings.
+- **Status is never color-only** — every sync state pairs an icon and a text label with its color, so it is clear for VoiceOver and color-blind users and reads identically on the home screen, the activity log, and the widget.
+- **Clearer conflict resolution and honest progress** — Keep This / Keep Both / Keep Other are full-width buttons that always confirm before changing any files (previously "Keep Both" applied with none); the home screen lists your actual Obsidian vaults instead of the raw sync folder; and the vault rescan reflects the real scan state instead of a fixed timer.
+- **Honest Cloud Relay status** — The setup checklist and the Cloud Relay tab no longer call Cloud Relay "ready" just because you subscribed. They now reflect real delivery: *waiting for your server* until a wake-up actually arrives, then *delivering wake-ups*.
 - **Cloud Relay monthly price** — The monthly price was raised; the app always shows the live, storefront-correct price from StoreKit and never hard-codes an amount.
 - **Verified subscriptions** — The relay now verifies the App Store signed transaction against Apple's certificate chain and enforces the subscription expiry server-side, so an expired or cancelled subscription stops receiving wake-ups.
 
 ### Fixed
 
+- **Cloud Relay server helper no longer crash-loops** — when a subscription is inactive the relay replies with a 4xx; the `vaultsync-notify` helper treated that as fatal and, under `restart: unless-stopped`, restarted in a loop. It now logs the response and keeps running.
+- **The widget can't show a false "all good"** — an unrecognised sync status now surfaces as *needs attention* instead of silently falling back to the green idle state, and the widget gained VoiceOver labels.
+- **Localization** — the redesign's new strings are translated to German, Spanish, and Simplified Chinese with full key parity across all four languages, and existing translation errors and relay terminology drift were corrected.
 - **iPhone and iPad both get wake-ups** — When an iPhone and iPad shared the same server, they could displace each other's push registration so only one received Cloud Relay wake-ups. Both are now kept, and tokens Apple reports as invalid are cleaned up automatically.
 
 ## [1.4.0] — 2026-05-30
