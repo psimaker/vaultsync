@@ -11,10 +11,8 @@
 "Added line. %@" = "已添加行。%@";
 "All Synced" = "全部已同步";
 "App Refresh" = "应用刷新";
-"Applying share" = "正在应用共享";
 "Applying…" = "正在应用…";
 "Authentication Error" = "认证错误";
-"Auto-renews monthly. Cancel anytime in Settings → Subscriptions." = "每月自动续费。可随时在“设置 → 订阅”中取消。";
 "Background Sync Completed" = "后台同步已完成";
 "Background Sync Could Not Access Obsidian" = "后台同步无法访问 Obsidian";
 "Background Sync Could Not Start" = "后台同步无法启动";
@@ -33,7 +31,6 @@
 "Check your subscription status in Settings and retry. If this persists, restart VaultSync." = "在设置中检查订阅状态后重试。如果问题持续存在，请重启 VaultSync。";
 "Cloud Relay" = "Cloud Relay";
 "Cloud Relay active" = "Cloud Relay 已启用";
-"When files change on your server, a silent push wakes VaultSync the moment it happens, so sync feels instant without opening the app. The relay only sends a wake-up signal — it never sees your notes." = "服务器上的文件一发生变化，静默推送就会在第一时间唤醒 VaultSync，无需打开应用，同步仿佛即时完成。Relay 只发送唤醒信号，绝不会看到你的笔记。";
 "Cloud Relay is not currently subscribed. Push-triggered wake-ups are disabled until the subscription is active." = "当前未订阅 Cloud Relay。在订阅激活前，基于推送的唤醒功能将被禁用。";
 "Cloud Relay is not subscribed. Start a subscription first." = "Cloud Relay 尚未订阅。请先开始订阅。";
 "Cloud Relay provisioning could not contact the relay backend." = "Cloud Relay 配置无法连接到 relay 后端。";
@@ -104,9 +101,7 @@
 "Keep This" = "保留此版本";
 "Keep This Device's Version" = "保留此设备版本";
 "Keep both versions" = "保留两个版本";
-"Keep other device version" = "保留另一台设备版本";
 "Keep the app open for a moment and retry. If this persists, restart VaultSync." = "请保持应用打开片刻后重试。如果问题持续存在，请重启 VaultSync。";
-"Keep this device version" = "保留此设备版本";
 "Keeps your local file and renames the other device's file." = "保留你的本地文件，并重命名另一台设备的文件。";
 "Last Check" = "上次检查";
 "Last Failure" = "上次失败";
@@ -128,12 +123,10 @@
 "Needs Attention" = "需要处理";
 "Network Error" = "网络错误";
 "Never" = "从未";
-"No Cloud Relay product is currently available." = "当前没有可用的 Cloud Relay 产品。";
 "No Syncthing peers available yet." = "尚无可用的 Syncthing 对端。";
 "No action needed." = "无需操作。";
 "No active pending shares" = "没有活动的待处理共享";
 "No devices configured" = "未配置任何设备";
-"No devices connected" = "没有已连接的设备";
 "No folders syncing yet" = "尚无正在同步的文件夹";
 "No home server devices available for relay provisioning." = "没有可用于 Relay 配置的家庭服务器设备。";
 "No immediate relay problems detected." = "目前未检测到 Relay 问题。";
@@ -143,7 +136,6 @@
 "No vaults found" = "未找到 Vault";
 "Not Configured" = "未配置";
 "Not Shared" = "未共享";
-"Not Subscribed" = "未订阅";
 "Not attempted" = "未尝试";
 "Not checked" = "未检查";
 "Not shared" = "未共享";
@@ -153,7 +145,6 @@
 "Obsidian access expired" = "Obsidian 访问已过期";
 "Obsidian directory not accessible." = "无法访问 Obsidian 目录。";
 "Obsidian folder not connected" = "Obsidian 文件夹未连接";
-"Open Relay Diagnostics" = "打开 Relay 诊断";
 "Open Settings" = "打开设置";
 "Open VaultSync" = "打开 VaultSync";
 "Open VaultSync once to restart Syncthing, then retry." = "打开 VaultSync 一次以重启 Syncthing，然后重试。";
@@ -346,21 +337,8 @@
 "onboarding.welcome.benefit.obsidian" = "专为 Obsidian Vault 打造";
 "onboarding.welcome.benefit.noCloud" = "无需云账号";
 "onboarding.cta.continue" = "继续";
-"onboarding.overview.title" = "接下来会发生什么";
-"onboarding.overview.subtitle" = "你将在 VaultSync 主屏幕完成设置。此清单只说明步骤顺序。";
-"onboarding.overview.step1.title" = "连接你的 Obsidian 文件夹";
-"onboarding.overview.step1.description" = "允许 VaultSync 访问此 iPhone 上的 Obsidian 文件夹。";
-"onboarding.overview.step2.title" = "添加你的电脑或服务器";
-"onboarding.overview.step2.description" = "扫描二维码或输入 Syncthing 设备 ID。";
-"onboarding.overview.step3.title" = "共享你的 Vault";
-"onboarding.overview.step3.description" = "在电脑上的 Syncthing 中将你的 Obsidian Vault 共享到这台 iPhone。";
-"onboarding.overview.step4.title" = "查看同步状态";
-"onboarding.overview.step4.description" = "VaultSync 会在主屏幕显示活动 Vault、问题和同步进度。";
-"onboarding.overview.cloudRelay" = "想让改动在发生的那一刻就送达、无需打开应用？稍后在“设置”中启用 Cloud Relay——它会在你的服务器上添加一个小助手。";
 "onboarding.cta.openVaultSync" = "打开 VaultSync";
 "onboarding.accessibility.page" = "第 %d 页，共 2 页";
-"onboarding.accessibility.continueHint" = "打开简短的设置概览。";
-"onboarding.accessibility.openVaultSyncHint" = "关闭引导并打开 VaultSync 主屏幕。";
 "Setup Status" = "设置状态";
 "Check setup progress and troubleshooting tips." = "检查设置进度和故障排查提示。";
 "Check the essentials for syncing. You can complete setup actions from the VaultSync home screen." = "检查同步所需的关键项目。你可以在 VaultSync 主屏幕完成设置操作。";
@@ -551,27 +529,11 @@
 "Prefer Docker Compose or a guided one-command installer? The full guide covers both." = "更喜欢 Docker Compose 或引导式的一条命令安装程序？完整指南两者都涵盖。";
 "Set Up Your Server" = "设置你的服务器";
 "Server setup command" = "服务器设置命令";
-"Delivering wake-ups" = "正在送达唤醒信号";
 "Last wake-up" = "上次唤醒";
-"Waiting for your server" = "正在等待你的服务器";
-"Cloud Relay is subscribed, but no wake-up has arrived yet. Finish the one-time setup on your server to start receiving instant updates." = "已订阅 Cloud Relay，但尚未收到唤醒信号。请在你的服务器上完成一次性设置，即可开始接收即时更新。";
-"Subscribe Monthly" = "按月订阅";
-"Subscribe Yearly" = "按年订阅";
-"When files change on your server, a silent push wakes VaultSync the moment it happens, so sync feels instant without opening the app. The relay only sends a wake-up signal — it never sees your notes. It needs a one-time helper on your server — tap Set Up Your Server after subscribing." = "当你的服务器上的文件发生更改时，静默推送会在那一刻唤醒 VaultSync，因此无需打开应用，同步也会即时进行。Relay 只发送唤醒信号——它从不查看你的笔记。它需要在你的服务器上运行一个一次性助手——订阅后请点按“设置你的服务器”。";
 "Auto-renews until canceled. Cancel anytime in Settings → Subscriptions." = "自动续订，直至取消。可随时在“设置 → 订阅”中取消。";
-"Make incoming sync instant" = "让传入的同步即时完成";
-"Your vault already syncs when you open VaultSync. Cloud Relay adds a silent push so changes on your server reach this iPhone the moment they happen — no need to open the app first." = "打开 VaultSync 时，你的 Vault 就已经在同步。Cloud Relay 增加了静默推送，让你服务器上的改动在发生的那一刻就送达这部 iPhone——无需先打开应用。";
-"Near-instant server → iPhone updates" = "近乎即时的服务器 → iPhone 更新";
-"The relay only sends a wake-up — it never sees your notes" = "Relay 只发送唤醒信号——它从不查看你的笔记";
 "Cancel anytime in Settings → Subscriptions" = "可随时在“设置 → 订阅”中取消";
-"You’re subscribed to Cloud Relay" = "你已订阅 Cloud Relay";
-"One step left: Cloud Relay only delivers wake-ups once a small helper is running on your server." = "还差一步：只有当一个小助手在你的服务器上运行时，Cloud Relay 才会送达唤醒信号。";
-"Finish setup" = "完成设置";
-"Cloud Relay needs a one-time helper on your server, shown right after you subscribe." = "Cloud Relay 需要在你的服务器上运行一个一次性助手，订阅后会立即显示。";
-"Not Now" = "暂不";
 "Get instant updates" = "获取即时更新";
 "Turn on Cloud Relay" = "启用 Cloud Relay";
-"Add your server as a Syncthing device before subscribing to Cloud Relay." = "在订阅 Cloud Relay 之前，请先将你的服务器添加为 Syncthing 设备。";
 
 /* Redesign (Vault OS) strings — added in branch redesign/vault-os-foundation */
 "%1$@ — %2$@" = "%1$@ — %2$@";

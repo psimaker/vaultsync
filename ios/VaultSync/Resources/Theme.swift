@@ -76,14 +76,6 @@ extension Color {
         light: (38, 50, 56),        // #263238
         dark: (176, 190, 197)       // #B0BEC5 — readable as a muted accent in dark
     )
-
-    /// A violet token reserved for the Vault OS identity layer (a later phase can
-    /// promote it to the primary accent). Defined now so the dial exists; not yet
-    /// wired as the global tint.
-    static let vaultViolet = vaultColor(
-        light: (124, 92, 255),      // #7C5CFF
-        dark: (167, 139, 250)       // #A78BFA
-    )
 }
 
 // MARK: - Semantic status palette
@@ -119,7 +111,6 @@ enum VaultSpacing {
     static let m: CGFloat = 12
     static let l: CGFloat = 16
     static let xl: CGFloat = 24
-    static let xxl: CGFloat = 32
 }
 
 /// Continuous corner radii. Replaces the 8/10/11/12/14/22/24/28 spread.

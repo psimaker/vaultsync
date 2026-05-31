@@ -12,15 +12,11 @@ final class SubscriptionManager {
     static let monthlyProductID = "eu.vaultsync.app.relay.monthly"
     static let yearlyProductID = "eu.vaultsync.app.relay.yearly"
     static let relayProductIDs: Set<String> = [monthlyProductID, yearlyProductID]
-    /// Back-compat alias for call sites that need a single representative ID.
-    static let relayProductID = monthlyProductID
 
     private(set) var isRelaySubscribed = false
     private(set) var subscriptionExpiryDate: Date?
     private(set) var monthlyProduct: Product?
     private(set) var yearlyProduct: Product?
-    /// Primary product for legacy single-product call sites.
-    var availableProduct: Product? { monthlyProduct ?? yearlyProduct }
     private(set) var purchaseInProgress = false
     private(set) var isLoadingProduct = true
     private(set) var errorMessage: String?
