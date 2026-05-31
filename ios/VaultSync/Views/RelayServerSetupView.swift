@@ -11,7 +11,6 @@ struct RelayServerSetupView: View {
     var isDelivering: Bool = false
 
     @State private var commandCopied = false
-    private let teal = Color.vaultTeal
 
     /// Self-contained command a user can paste into their server shell. The
     /// relay URL is pre-filled; only the Syncthing API key is left as a
@@ -32,7 +31,7 @@ struct RelayServerSetupView: View {
             if isDelivering {
                 Section {
                     Label(L10n.tr("Your server helper is running — wake-ups are being delivered."), systemImage: "checkmark.seal.fill")
-                        .foregroundStyle(.green)
+                        .foregroundStyle(Color.statusSuccess)
                         .font(.subheadline)
                 }
             }

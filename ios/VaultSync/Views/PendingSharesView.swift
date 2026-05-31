@@ -17,7 +17,7 @@ struct PendingSharesView: View {
             if !obsidianAccessible {
                 VStack(alignment: .leading, spacing: 8) {
                     Label("Connect Obsidian to accept shares", systemImage: "folder.badge.questionmark")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Color.statusAttention)
                     Text("Share requests are shown below, but Accept and Retry are disabled until your Obsidian folder is connected.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -29,7 +29,7 @@ struct PendingSharesView: View {
                     .buttonStyle(.borderedProminent)
                 }
                 .padding(12)
-                .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .background(Color.statusAttention.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .accessibilityElement(children: .combine)
             }
 
@@ -80,7 +80,7 @@ struct PendingSharesView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: hasFailure ? "exclamationmark.circle.fill" : "tray.and.arrow.down.fill")
-                    .foregroundStyle(hasFailure ? .orange : .blue)
+                    .foregroundStyle(hasFailure ? Color.statusAttention : Color.statusInfo)
                     .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: 4) {
@@ -88,11 +88,11 @@ struct PendingSharesView: View {
                         Text(displayName(for: folder))
                             .font(.body.weight(.semibold))
                         Text(hasFailure ? L10n.tr("Needs Attention") : L10n.tr("Ready"))
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(hasFailure ? .orange : .blue)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(hasFailure ? Color.statusAttention : Color.statusInfo)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background((hasFailure ? Color.orange : Color.blue).opacity(0.12), in: Capsule())
+                            .background((hasFailure ? Color.statusAttention : Color.statusInfo).opacity(0.12), in: Capsule())
                     }
 
                     Text(offeredByDescription(for: folder))
@@ -102,7 +102,7 @@ struct PendingSharesView: View {
                     if let failure {
                         Text(failure.message)
                             .font(.caption)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(Color.statusAttention)
                         if !failure.remediation.isEmpty {
                             Text(failure.remediation)
                                 .font(.caption2)

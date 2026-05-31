@@ -9,7 +9,7 @@ struct SetupChecklistView: View {
             headerSection
 
             ProgressView(value: viewModel.completionProgress)
-                .tint(viewModel.isReadyToFinish ? .green : .orange)
+                .tint(viewModel.isReadyToFinish ? Color.statusSuccess : Color.statusAttention)
                 .accessibilityLabel(L10n.tr("Setup status progress"))
                 .accessibilityValue(L10n.fmt("%d of %d essentials ready", viewModel.completedRequiredCount, viewModel.totalRequiredCount))
 
@@ -138,10 +138,10 @@ struct SetupChecklistView: View {
 
     private func statusColor(for item: SetupChecklistViewModel.ChecklistItem) -> Color {
         if item.isOptional {
-            return item.isComplete ? .green : .secondary
+            return item.isComplete ? .statusSuccess : .secondary
         }
-        if item.isComplete { return .green }
-        return .orange
+        if item.isComplete { return .statusSuccess }
+        return .statusAttention
     }
 
     private func statusText(for item: SetupChecklistViewModel.ChecklistItem) -> String {
