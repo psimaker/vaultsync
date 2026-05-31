@@ -14,14 +14,14 @@ If you subscribe to the optional Cloud Relay service, the following data is stor
 
 - **Syncthing Device ID** — used to route push notifications to your device
 - **APNs device token** — used to deliver silent push notifications via Apple Push Notification service
-- **StoreKit transaction ID** — used to validate your active subscription with Apple
+- **StoreKit transaction information** (the original transaction ID and the subscription expiry) — verified against Apple's certificate chain to confirm your active subscription
 
 That's it. **No file content, file names, folder names, or any other metadata ever leaves your homeserver.** The relay receives only a wake-up signal containing the Device ID.
 
 ### Data Security
 
 - APNs device tokens are encrypted at rest (AES-256-GCM)
-- Tokens are automatically deleted after 90 days without a successful push delivery
+- Tokens that Apple reports as invalid are deleted automatically
 
 ### Subscriptions
 
