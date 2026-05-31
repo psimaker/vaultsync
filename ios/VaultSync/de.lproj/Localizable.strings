@@ -27,8 +27,8 @@
 "Check folder sharing, connectivity, and permissions, then retry." = "Prüfe Ordnerfreigabe, Verbindung und Berechtigungen und versuche es dann erneut.";
 "Check internet connectivity and retry provisioning." = "Prüfe die Internetverbindung und versuche das Provisioning erneut.";
 "Check your connection and retry." = "Prüfe deine Verbindung und versuche es erneut.";
-"Check your internet connection and try the relay health check again in Settings." = "Prüfe deine Internetverbindung und führe den Relay-Health-Check in den Einstellungen erneut aus.";
-"Check your subscription status in Settings and retry. If this persists, restart VaultSync." = "Prüfe deinen Abostatus in den Einstellungen und versuche es erneut. Wenn das Problem bleibt, starte VaultSync neu.";
+"Check your internet connection and try the relay health check again on the Relay tab." = "Prüfe deine Internetverbindung und führe den Relay-Health-Check im Relay-Tab erneut aus.";
+"Check your subscription status on the Relay tab and retry. If this persists, restart VaultSync." = "Prüfe deinen Abostatus im Relay-Tab und versuche es erneut. Wenn das Problem bleibt, starte VaultSync neu.";
 "Cloud Relay" = "Cloud Relay";
 "Cloud Relay active" = "Cloud Relay aktiv";
 "Cloud Relay is not currently subscribed. Push-triggered wake-ups are disabled until the subscription is active." = "Cloud Relay ist derzeit nicht abonniert. Push-ausgelöste Weck-Signale sind deaktiviert, bis das Abo aktiv ist.";
@@ -510,10 +510,10 @@
 
 /* Cloud Relay activation (2026-05-31): honest server-setup + conversion */
 "Cloud Relay is not enabled. Without it, incoming changes arrive when you open VaultSync." = "Cloud Relay ist nicht aktiviert. Ohne Cloud Relay kommen eingehende Änderungen an, wenn du VaultSync öffnest.";
-"Enable Cloud Relay in Settings if you want changes pushed the moment they happen." = "Aktiviere Cloud Relay in den Einstellungen, wenn Änderungen im selben Moment gepusht werden sollen.";
+"Enable Cloud Relay on the Relay tab if you want changes pushed the moment they happen." = "Aktiviere Cloud Relay im Relay-Tab, wenn Änderungen im selben Moment gepusht werden sollen.";
 "Cloud Relay — finish server setup" = "Cloud Relay — Server-Einrichtung abschließen";
 "You’re subscribed, but no recent wake-up has arrived. Make sure the vaultsync-notify helper is running on your server." = "Du hast ein Abo, aber es ist noch kein aktuelles Weck-Signal angekommen. Stelle sicher, dass der Helfer „vaultsync-notify“ auf deinem Server läuft.";
-"Set up the server helper from Settings → Cloud Relay → Set Up Your Server." = "Richte den Server-Helfer ein unter Einstellungen → Cloud Relay → Server einrichten.";
+"Set up the server helper from the Relay tab → Set Up Your Server." = "Richte den Server-Helfer ein über Relay-Tab → Server einrichten.";
 "Wake-ups are being delivered — incoming changes sync the moment they happen." = "Weck-Signale werden zugestellt — eingehende Änderungen synchronisieren im selben Moment.";
 "Your server helper is running — wake-ups are being delivered." = "Dein Server-Helfer läuft — Weck-Signale werden zugestellt.";
 "Why this step" = "Warum dieser Schritt";
@@ -554,7 +554,7 @@
 "Manage" = "Verwalten";
 "Monthly" = "Monatlich";
 "One step left to activate" = "Noch ein Schritt bis zur Aktivierung";
-"Optional: turn on Cloud Relay later for instant updates — you’ll find it in Settings." = "Optional: Aktiviere Cloud Relay später für sofortige Updates – du findest es in den Einstellungen.";
+"Optional: turn on Cloud Relay later for instant updates — you’ll find it on the Relay tab." = "Optional: Aktiviere Cloud Relay später für sofortige Updates – du findest es im Relay-Tab.";
 "Pair this iPhone with the Syncthing device that hosts your vault, by Device ID or QR code." = "Verbinde dieses iPhone per Geräte-ID oder QR-Code mit dem Syncthing-Gerät, das deinen Vault bereitstellt.";
 "Relay" = "Relay";
 "Relay health & diagnostics" = "Relay-Status & Diagnose";

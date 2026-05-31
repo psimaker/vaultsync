@@ -37,6 +37,9 @@ struct StatusBadge: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(text ?? status.label)
+        // When `text` overrides the label, still expose the status meaning
+        // (e.g. "Needs Attention") as the value so VoiceOver doesn't lose it.
+        .accessibilityValue(text == nil ? "" : status.label)
     }
 }
 

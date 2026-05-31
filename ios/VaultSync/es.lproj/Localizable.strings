@@ -27,8 +27,8 @@
 "Check folder sharing, connectivity, and permissions, then retry." = "Comprueba la compartición de la carpeta, la conectividad y los permisos, y vuelve a intentarlo.";
 "Check internet connectivity and retry provisioning." = "Comprueba la conexión a internet y vuelve a intentar el aprovisionamiento.";
 "Check your connection and retry." = "Comprueba tu conexión y vuelve a intentarlo.";
-"Check your internet connection and try the relay health check again in Settings." = "Comprueba tu conexión a internet y vuelve a ejecutar la comprobación de estado del Relay en Ajustes.";
-"Check your subscription status in Settings and retry. If this persists, restart VaultSync." = "Comprueba el estado de tu suscripción en Ajustes y vuelve a intentarlo. Si continúa, reinicia VaultSync.";
+"Check your internet connection and try the relay health check again on the Relay tab." = "Comprueba tu conexión a internet y vuelve a ejecutar la comprobación de estado del Relay en la pestaña Relay.";
+"Check your subscription status on the Relay tab and retry. If this persists, restart VaultSync." = "Comprueba el estado de tu suscripción en la pestaña Relay y vuelve a intentarlo. Si continúa, reinicia VaultSync.";
 "Cloud Relay" = "Cloud Relay";
 "Cloud Relay active" = "Cloud Relay activo";
 "Cloud Relay is not currently subscribed. Push-triggered wake-ups are disabled until the subscription is active." = "Cloud Relay no está suscrito actualmente. Las señales de activación por push están desactivadas hasta que la suscripción esté activa.";
@@ -510,10 +510,10 @@
 
 /* Cloud Relay activation (2026-05-31): honest server-setup + conversion */
 "Cloud Relay is not enabled. Without it, incoming changes arrive when you open VaultSync." = "Cloud Relay no está activado. Sin él, los cambios entrantes llegan cuando abres VaultSync.";
-"Enable Cloud Relay in Settings if you want changes pushed the moment they happen." = "Activa Cloud Relay en Ajustes si quieres que los cambios se envíen en el momento en que ocurren.";
+"Enable Cloud Relay on the Relay tab if you want changes pushed the moment they happen." = "Activa Cloud Relay en la pestaña Relay si quieres que los cambios se envíen en el momento en que ocurren.";
 "Cloud Relay — finish server setup" = "Cloud Relay: completa la configuración del servidor";
 "You’re subscribed, but no recent wake-up has arrived. Make sure the vaultsync-notify helper is running on your server." = "Tienes una suscripción, pero aún no ha llegado ninguna señal de activación reciente. Asegúrate de que el asistente vaultsync-notify se está ejecutando en tu servidor.";
-"Set up the server helper from Settings → Cloud Relay → Set Up Your Server." = "Configura el asistente del servidor en Ajustes → Cloud Relay → Configura tu servidor.";
+"Set up the server helper from the Relay tab → Set Up Your Server." = "Configura el asistente del servidor en la pestaña Relay → Configura tu servidor.";
 "Wake-ups are being delivered — incoming changes sync the moment they happen." = "Las señales de activación se están entregando: los cambios entrantes se sincronizan en el momento en que ocurren.";
 "Your server helper is running — wake-ups are being delivered." = "Tu asistente del servidor está en marcha: se están entregando las señales de activación.";
 "Why this step" = "Por qué este paso";
@@ -554,7 +554,7 @@
 "Manage" = "Gestionar";
 "Monthly" = "Mensual";
 "One step left to activate" = "Falta un paso para activar";
-"Optional: turn on Cloud Relay later for instant updates — you’ll find it in Settings." = "Opcional: activa Cloud Relay más tarde para recibir actualizaciones instantáneas; lo encontrarás en Ajustes.";
+"Optional: turn on Cloud Relay later for instant updates — you’ll find it on the Relay tab." = "Opcional: activa Cloud Relay más tarde para recibir actualizaciones instantáneas; lo encontrarás en la pestaña Relay.";
 "Pair this iPhone with the Syncthing device that hosts your vault, by Device ID or QR code." = "Vincula este iPhone con el dispositivo de Syncthing que aloja tu Vault, mediante el ID de dispositivo o un código QR.";
 "Relay" = "Relay";
 "Relay health & diagnostics" = "Estado y diagnóstico del Relay";

@@ -46,7 +46,7 @@ struct AddDeviceSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Add") { addDevice() }
-                        .disabled(deviceID.isEmpty)
+                        .disabled(deviceID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
         }
@@ -55,6 +55,7 @@ struct AddDeviceSheet: View {
 
     private func addDevice() {
         let id = deviceID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !id.isEmpty else { return }
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if let err = syncthingManager.addDevice(id: id, name: trimmedName) {
             onError(SyncUserError.from(rawMessage: err, fallbackTitle: L10n.tr("Could Not Add Device")).userVisibleDescription)

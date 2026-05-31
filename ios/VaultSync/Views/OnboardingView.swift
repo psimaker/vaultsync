@@ -167,7 +167,7 @@ struct OnboardingView: View {
                     .font(.body.weight(.semibold))
                     .foregroundStyle(teal)
                     .accessibilityHidden(true)
-                Text(L10n.tr("Optional: turn on Cloud Relay later for instant updates — you’ll find it in Settings."))
+                Text(L10n.tr("Optional: turn on Cloud Relay later for instant updates — you’ll find it on the Relay tab."))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

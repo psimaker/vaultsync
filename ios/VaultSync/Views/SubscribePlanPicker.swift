@@ -41,6 +41,7 @@ struct SubscribePlanPicker: View {
             }
 
             Button {
+                guard !subscriptionManager.purchaseInProgress, !isRestoring else { return }
                 Task {
                     isRestoring = true
                     await subscriptionManager.restorePurchases()
@@ -59,7 +60,7 @@ struct SubscribePlanPicker: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(Color.vaultAccent)
-            .disabled(isRestoring)
+            .disabled(isRestoring || subscriptionManager.purchaseInProgress)
 
             complianceFooter
         }
@@ -159,7 +160,7 @@ struct SubscribePlanPicker: View {
         guard monthlyAnnual > 0 else { return nil }
         let fraction = (monthlyAnnual - yearly.price) / monthlyAnnual
         let percent = NSDecimalNumber(decimal: fraction * 100).intValue
-        guard percent > 0 else { return L10n.tr("Best value") }
+        guard percent > 0 else { return nil }
         return L10n.fmt("Save %d%%", percent)
     }
 

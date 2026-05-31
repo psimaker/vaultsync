@@ -247,7 +247,7 @@ private struct VaultSyncWidgetEntryView: View {
     }
 
     private var buttonLabel: String {
-        entry.snapshot.status == "syncing"
+        entry.snapshot.syncStatus == .syncing
             ? VaultSyncWidgetL10n.tr("Open VaultSync")
             : VaultSyncWidgetL10n.tr("widget_sync_now")
     }
