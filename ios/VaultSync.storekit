@@ -46,7 +46,7 @@
         {
           "adHocOffers" : [],
           "codeOffers" : [],
-          "displayPrice" : "0.99",
+          "displayPrice" : "1.99",
           "familyShareable" : false,
           "groupNumber" : 1,
           "internalID" : "2002",
@@ -61,6 +61,27 @@
           "productID" : "eu.vaultsync.app.relay.monthly",
           "recurringSubscriptionPeriod" : "P1M",
           "referenceName" : "Cloud Relay",
+          "subscriptionGroupID" : "2001",
+          "type" : "RecurringSubscription"
+        },
+        {
+          "adHocOffers" : [],
+          "codeOffers" : [],
+          "displayPrice" : "14.99",
+          "familyShareable" : false,
+          "groupNumber" : 2,
+          "internalID" : "2003",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "Silent push wake-ups for faster server-to-iPhone sync. Best value, billed yearly.",
+              "displayName" : "Cloud Relay (Yearly)",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "eu.vaultsync.app.relay.yearly",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "Cloud Relay Yearly",
           "subscriptionGroupID" : "2001",
           "type" : "RecurringSubscription"
         }

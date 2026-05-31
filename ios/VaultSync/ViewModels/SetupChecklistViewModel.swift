@@ -186,24 +186,39 @@ final class SetupChecklistViewModel {
     }
 
     private var relayItem: ChecklistItem {
-        if subscriptionManager.isRelaySubscribed {
+        if !subscriptionManager.isRelaySubscribed {
             return ChecklistItem(
                 requirement: .relayConfigured,
-                title: L10n.tr("Cloud Relay ready"),
-                description: L10n.tr("Cloud Relay is available for faster background updates."),
-                remediation: "",
+                title: L10n.tr("Cloud Relay"),
+                description: L10n.tr("Cloud Relay is not enabled. Without it, incoming changes arrive when you open VaultSync."),
+                remediation: L10n.tr("Enable Cloud Relay in Settings if you want changes pushed the moment they happen."),
                 isOptional: true,
-                isComplete: true
+                isComplete: false
+            )
+        }
+
+        // Being subscribed does nothing on its own: Cloud Relay only delivers
+        // wake-ups once the vaultsync-notify helper is running on the user's
+        // server. Treat the step as "done" only after a real trigger has
+        // actually reached this device — never on subscription status alone.
+        if subscriptionManager.lastRelayTriggerReceivedAt == nil {
+            return ChecklistItem(
+                requirement: .relayConfigured,
+                title: L10n.tr("Cloud Relay — finish server setup"),
+                description: L10n.tr("You’re subscribed, but no wake-up has arrived yet. Cloud Relay only works once the vaultsync-notify helper is running on your server."),
+                remediation: L10n.tr("Set up the server helper from Settings → Cloud Relay → Set Up Your Server."),
+                isOptional: true,
+                isComplete: false
             )
         }
 
         return ChecklistItem(
             requirement: .relayConfigured,
-            title: L10n.tr("Cloud Relay ready"),
-            description: L10n.tr("Cloud Relay is not enabled."),
-            remediation: L10n.tr("Enable Cloud Relay later in Settings if you want faster background updates."),
+            title: L10n.tr("Cloud Relay active"),
+            description: L10n.tr("Wake-ups are being delivered — incoming changes sync the moment they happen."),
+            remediation: "",
             isOptional: true,
-            isComplete: false
+            isComplete: true
         )
     }
 }

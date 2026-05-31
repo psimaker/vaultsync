@@ -14,6 +14,7 @@ struct SettingsView: View {
     @State private var showThankYou = false
     @State private var deviceIDCopied = false
     @State private var isRestoring = false
+    @State private var showServerSetup = false
     @AppStorage(BackgroundSyncService.conflictNotificationsEnabledKey) private var conflictNotificationsEnabled = true
     @Environment(\.dismiss) private var dismiss
 
@@ -100,6 +101,18 @@ struct SettingsView: View {
                     }
                 }
             }
+            .sheet(isPresented: $showServerSetup) {
+                NavigationStack {
+                    RelayServerSetupView(isDelivering: subscriptionManager.relayDeliveryConfirmed)
+                        .toolbar {
+                            ToolbarItem(placement: .confirmationAction) {
+                                Button("Done") {
+                                    showServerSetup = false
+                                }
+                            }
+                        }
+                }
+            }
             .onAppear {
                 Task {
                     await subscriptionManager.refreshRelayDiagnostics(
@@ -139,6 +152,10 @@ struct SettingsView: View {
                 LabeledContent("Renews") {
                     Text(expiry, style: .date)
                 }
+            }
+
+            if subscriptionManager.isRelaySubscribed {
+                relayDeliveryRow
             }
 
             if !syncthingManager.devices.isEmpty {
@@ -186,34 +203,13 @@ struct SettingsView: View {
                     }
                 }
             } else {
-                if let product = subscriptionManager.availableProduct {
-                    Button {
-                        Task {
-                        do {
-                            let deviceIDs = syncthingManager.devices.map(\.deviceID)
-                            try await subscriptionManager.purchase(homeserverDeviceIDs: deviceIDs)
-                        } catch {
-                            alertMessage = SyncUserError.from(
-                                error: error,
-                                fallbackTitle: L10n.tr("Purchase Failed")
-                            ).userVisibleDescription
-                            showAlert = true
-                        }
+                if subscriptionManager.monthlyProduct != nil || subscriptionManager.yearlyProduct != nil {
+                    if let monthly = subscriptionManager.monthlyProduct {
+                        subscribeButton(for: monthly, label: L10n.tr("Subscribe Monthly"))
                     }
-                    } label: {
-                        HStack {
-                            Text("Subscribe")
-                            Spacer()
-                            if subscriptionManager.purchaseInProgress {
-                                ProgressView()
-                                    .controlSize(.small)
-                            } else {
-                                Text(subscriptionManager.relayPriceText ?? product.displayPrice)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
+                    if let yearly = subscriptionManager.yearlyProduct {
+                        subscribeButton(for: yearly, label: L10n.tr("Subscribe Yearly"), accent: true)
                     }
-                    .disabled(subscriptionManager.purchaseInProgress)
                 } else {
                     Text("Subscription unavailable")
                         .foregroundStyle(.secondary)
@@ -236,6 +232,14 @@ struct SettingsView: View {
                     }
                 }
                 .disabled(isRestoring)
+            }
+
+            if subscriptionManager.isRelaySubscribed {
+                NavigationLink {
+                    RelayServerSetupView(isDelivering: subscriptionManager.relayDeliveryConfirmed)
+                } label: {
+                    Label(L10n.tr("Set Up Your Server"), systemImage: "server.rack")
+                }
             }
 
             NavigationLink {
@@ -262,14 +266,19 @@ struct SettingsView: View {
             // Subscription details (required by App Store Review). Price comes
             // from StoreKit so it is correct per storefront — never hard-coded.
             VStack(alignment: .leading, spacing: 2) {
-                if let priceText = subscriptionManager.relayPriceText {
-                    Text(L10n.fmt("Cloud Relay — %@", priceText))
+                if let monthly = subscriptionManager.monthlyProduct {
+                    Text(L10n.fmt("Cloud Relay — %@", subscriptionManager.priceText(for: monthly)))
                         .font(.caption)
-                } else {
+                }
+                if let yearly = subscriptionManager.yearlyProduct {
+                    Text(L10n.fmt("Cloud Relay — %@", subscriptionManager.priceText(for: yearly)))
+                        .font(.caption)
+                }
+                if subscriptionManager.monthlyProduct == nil, subscriptionManager.yearlyProduct == nil {
                     Text(L10n.tr("Cloud Relay subscription"))
                         .font(.caption)
                 }
-                Text("Auto-renews monthly. Cancel anytime in Settings → Subscriptions.")
+                Text("Auto-renews until canceled. Cancel anytime in Settings → Subscriptions.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -277,8 +286,69 @@ struct SettingsView: View {
         } header: {
             Text("Cloud Relay")
         } footer: {
-            Text("When files change on your server, a silent push wakes VaultSync the moment it happens, so sync feels instant without opening the app. The relay only sends a wake-up signal — it never sees your notes.")
+            Text("When files change on your server, a silent push wakes VaultSync the moment it happens, so sync feels instant without opening the app. The relay only sends a wake-up signal — it never sees your notes. It needs a one-time helper on your server — tap Set Up Your Server after subscribing.")
         }
+    }
+
+    @ViewBuilder
+    private var relayDeliveryRow: some View {
+        if subscriptionManager.relayDeliveryConfirmed {
+            Label(L10n.tr("Delivering wake-ups"), systemImage: "checkmark.seal.fill")
+                .foregroundStyle(.green)
+                .font(.subheadline)
+                .accessibilityElement(children: .combine)
+        } else if let last = subscriptionManager.lastRelayTriggerReceivedAt {
+            LabeledContent(L10n.tr("Last wake-up")) {
+                Text(last, style: .relative)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                Label(L10n.tr("Waiting for your server"), systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .font(.subheadline)
+                Text(L10n.tr("Cloud Relay is subscribed, but no wake-up has arrived yet. Finish the one-time setup on your server to start receiving instant updates."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    @ViewBuilder
+    private func subscribeButton(for product: Product, label: String, accent: Bool = false) -> some View {
+        Button {
+            Task {
+                do {
+                    let deviceIDs = syncthingManager.devices.map(\.deviceID)
+                    try await subscriptionManager.purchase(product, homeserverDeviceIDs: deviceIDs)
+                    // A subscription alone delivers nothing until the server-side
+                    // helper runs — guide the buyer there immediately.
+                    if subscriptionManager.isRelaySubscribed {
+                        showServerSetup = true
+                    }
+                } catch {
+                    alertMessage = SyncUserError.from(
+                        error: error,
+                        fallbackTitle: L10n.tr("Purchase Failed")
+                    ).userVisibleDescription
+                    showAlert = true
+                }
+            }
+        } label: {
+            HStack {
+                Text(label)
+                    .fontWeight(accent ? .semibold : .regular)
+                Spacer()
+                if subscriptionManager.purchaseInProgress {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Text(subscriptionManager.priceText(for: product))
+                        .foregroundStyle(accent ? Color.vaultTeal : Color.secondary)
+                }
+            }
+        }
+        .disabled(subscriptionManager.purchaseInProgress)
     }
 
     // MARK: - Notifications Section

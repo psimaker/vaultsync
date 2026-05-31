@@ -9,11 +9,18 @@ private let logger = Logger(subsystem: "eu.vaultsync.app", category: "subscripti
 @Observable
 final class SubscriptionManager {
 
-    static let relayProductID = "eu.vaultsync.app.relay.monthly"
+    static let monthlyProductID = "eu.vaultsync.app.relay.monthly"
+    static let yearlyProductID = "eu.vaultsync.app.relay.yearly"
+    static let relayProductIDs: Set<String> = [monthlyProductID, yearlyProductID]
+    /// Back-compat alias for call sites that need a single representative ID.
+    static let relayProductID = monthlyProductID
 
     private(set) var isRelaySubscribed = false
     private(set) var subscriptionExpiryDate: Date?
-    private(set) var availableProduct: Product?
+    private(set) var monthlyProduct: Product?
+    private(set) var yearlyProduct: Product?
+    /// Primary product for legacy single-product call sites.
+    var availableProduct: Product? { monthlyProduct ?? yearlyProduct }
     private(set) var purchaseInProgress = false
     private(set) var isLoadingProduct = true
     private(set) var errorMessage: String?
@@ -59,13 +66,11 @@ final class SubscriptionManager {
 
     private static let relayTriggerFreshnessWindow: TimeInterval = 48 * 60 * 60
 
-    /// Localized "price / period" for the relay subscription, derived entirely
-    /// from StoreKit so it is correct in every storefront — e.g. "0,99 € / month"
-    /// in Germany, "A$1.99 / month" in Australia. Falls back to the bare
-    /// localized price if the subscription period is unavailable. Never hard-code
-    /// a currency or amount in the UI.
-    var relayPriceText: String? {
-        guard let product = availableProduct else { return nil }
+    /// Localized "price / period" for any relay product, derived entirely from
+    /// StoreKit so it is correct in every storefront — e.g. "1,99 € / month" or
+    /// "14,99 € / year". Falls back to the bare localized price if the period is
+    /// unavailable. Never hard-code a currency or amount in the UI.
+    func priceText(for product: Product) -> String {
         guard let period = product.subscription?.subscriptionPeriod else {
             return product.displayPrice
         }
@@ -86,6 +91,11 @@ final class SubscriptionManager {
             return L10n.fmt("%@ / %@", product.displayPrice, unit)
         }
         return L10n.fmt("%1$@ / %2$d %3$@", product.displayPrice, period.value, unit)
+    }
+
+    var relayPriceText: String? {
+        guard let product = availableProduct else { return nil }
+        return priceText(for: product)
     }
 
     @ObservationIgnored nonisolated(unsafe) private var loadTask: Task<Void, Never>?
@@ -182,7 +192,7 @@ final class SubscriptionManager {
         var foundActive = false
         for await verificationResult in Transaction.currentEntitlements {
             guard case .verified(let transaction) = verificationResult else { continue }
-            if transaction.productID == Self.relayProductID {
+            if Self.relayProductIDs.contains(transaction.productID) {
                 if let expiry = transaction.expirationDate, expiry > Date() {
                     foundActive = true
                     subscriptionExpiryDate = expiry
@@ -207,15 +217,10 @@ final class SubscriptionManager {
         logger.info("Subscription status: \(foundActive ? "active" : "inactive")")
     }
 
-    /// Purchase the relay subscription. Pass all peer device IDs from SyncthingManager
-    /// so they can be provisioned with the relay after purchase.
-    func purchase(homeserverDeviceIDs: [String]) async throws {
-        guard let product = availableProduct else {
-            logger.error("No product available for purchase")
-            errorMessage = L10n.tr("No Cloud Relay product is currently available.")
-            return
-        }
-
+    /// Purchase a relay subscription product (monthly or yearly). Pass all peer
+    /// device IDs from SyncthingManager so they can be provisioned with the
+    /// relay after purchase.
+    func purchase(_ product: Product, homeserverDeviceIDs: [String]) async throws {
         purchaseInProgress = true
         errorMessage = nil
         ensureProvisionStateEntries(for: homeserverDeviceIDs)
@@ -293,10 +298,11 @@ final class SubscriptionManager {
         isLoadingProduct = true
         defer { isLoadingProduct = false }
         do {
-            let products = try await Product.products(for: [Self.relayProductID])
-            availableProduct = products.first
-            if availableProduct == nil {
-                logger.warning("Relay subscription product not found in App Store")
+            let products = try await Product.products(for: Array(Self.relayProductIDs))
+            monthlyProduct = products.first { $0.id == Self.monthlyProductID }
+            yearlyProduct = products.first { $0.id == Self.yearlyProductID }
+            if monthlyProduct == nil && yearlyProduct == nil {
+                logger.warning("Relay subscription products not found in App Store")
             }
         } catch {
             logger.error("Failed to load products: \(error)")
@@ -333,7 +339,11 @@ final class SubscriptionManager {
                     storeDeviceIDs(ids)
                 }
                 ensureProvisionStateEntries(for: deviceIDs)
-                await provisionRelay(deviceIDs: deviceIDs, transactionID: String(transaction.originalID))
+                // Send the signed JWS representation so the relay can verify the
+                // subscription with Apple (signature + expiry) instead of trusting
+                // a bare transaction ID. The relay stays backward compatible with
+                // the legacy numeric ID sent by older app versions.
+                await provisionRelay(deviceIDs: deviceIDs, transactionID: verificationResult.jwsRepresentation)
             }
         }
 
@@ -487,14 +497,17 @@ final class SubscriptionManager {
         lastRelayError = RelayService.lastRecordedError()
     }
 
+    /// Returns the signed JWS for the current relay entitlement, so re-provision
+    /// paths (token rotation, periodic refresh, manual retry) also let the relay
+    /// re-verify the subscription and refresh the stored expiry with Apple.
     private func currentRelayTransactionID() async -> String? {
         for await verificationResult in Transaction.currentEntitlements {
             guard case .verified(let transaction) = verificationResult else { continue }
-            guard transaction.productID == Self.relayProductID else { continue }
+            guard Self.relayProductIDs.contains(transaction.productID) else { continue }
             if let expiry = transaction.expirationDate, expiry < Date() {
                 continue
             }
-            return String(transaction.originalID)
+            return verificationResult.jwsRepresentation
         }
         return nil
     }

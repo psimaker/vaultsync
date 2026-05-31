@@ -6,6 +6,7 @@ enum DocURL {
     static let privacyPolicy = URL(string: "https://github.com/psimaker/vaultsync/blob/main/PRIVACY.md")!
     static let termsOfUse = URL(string: "https://github.com/psimaker/vaultsync/blob/main/TERMS.md")!
     static let syncthingIgnoring = URL(string: "https://docs.syncthing.net/users/ignoring.html")!
+    static let serverSetupGuide = URL(string: "https://github.com/psimaker/vaultsync/blob/main/notify/README.md")!
 }
 
 /// A link-styled button that opens a URL externally without inheriting the
