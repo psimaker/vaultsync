@@ -262,6 +262,8 @@
 "Some entered data is invalid or incomplete." = "Algunos datos introducidos no son válidos o están incompletos.";
 "Some shared peers are offline or unreachable right now." = "Algunos pares compartidos están desconectados o inaccesibles en este momento.";
 "Starting…" = "Iniciando…";
+"Starting" = "Iniciando";
+"Paused" = "En pausa";
 "State" = "Estado";
 "Status" = "Estado";
 "Subscribe" = "Suscribirse";
@@ -413,6 +415,7 @@
 "Trash" = "Papelera";
 "Files already deleted on other devices." = "Archivos ya eliminados en otros dispositivos.";
 "Git repository" = "Repositorio de Git";
+"Node modules" = "Módulos de Node";
 "Version history — rarely useful on iPhone." = "Historial de versiones — rara vez útil en el iPhone.";
 "macOS metadata" = "Metadatos de macOS";
 "Finder metadata files like .DS_Store." = "Archivos de metadatos de Finder como .DS_Store.";
@@ -549,7 +552,7 @@
 "Set Up Your Server" = "Configura tu servidor";
 "Server setup command" = "Comando de configuración del servidor";
 "Delivering wake-ups" = "Entregando señales de activación";
-"Last wake-up" = "Última activación";
+"Last wake-up" = "Última señal de activación";
 "Waiting for your server" = "Esperando a tu servidor";
 "Cloud Relay is subscribed, but no wake-up has arrived yet. Finish the one-time setup on your server to start receiving instant updates." = "Cloud Relay está suscrito, pero aún no ha llegado ninguna señal de activación. Completa la configuración única en tu servidor para empezar a recibir actualizaciones instantáneas.";
 "Subscribe Monthly" = "Suscripción mensual";
@@ -576,7 +579,7 @@
 "(%d%%)" = "(%d%%)";
 "Add your computer or server" = "Añade tu ordenador o servidor";
 "Add your server first" = "Añade primero tu servidor";
-"Best value" = "La mejor opción";
+"Best value" = "Mejor valor";
 "Cloud Relay wakes a specific device. Pair the computer or server that hosts your vault on the Devices tab, then come back to subscribe." = "Cloud Relay despierta un dispositivo concreto. Vincula en la pestaña «Dispositivos» el ordenador o servidor que aloja tu Vault y luego vuelve para suscribirte.";
 "Complete these steps right here. They light up green as you go — and you can always finish them later from the home screen." = "Completa estos pasos aquí mismo. Se iluminan en verde a medida que avanzas, y siempre puedes terminarlos más tarde desde la pantalla de inicio.";
 "Connect your Obsidian folder" = "Conecta tu carpeta de Obsidian";

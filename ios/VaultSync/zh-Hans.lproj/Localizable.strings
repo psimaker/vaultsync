@@ -99,9 +99,9 @@
 "Invalid Input" = "输入无效";
 "Invalid folder name: '%@'" = "无效的文件夹名称：“%@”";
 "Keep Both" = "两者都保留";
-"Keep Other" = "保留另一方";
+"Keep Other" = "保留对方版本";
 "Keep Other Device's Version" = "保留另一台设备的版本";
-"Keep This" = "保留当前版本";
+"Keep This" = "保留此版本";
 "Keep This Device's Version" = "保留此设备版本";
 "Keep both versions" = "保留两个版本";
 "Keep other device version" = "保留另一台设备版本";
@@ -115,7 +115,7 @@
 "Last Trigger Received" = "上次收到触发";
 "Last Update" = "上次更新";
 "Last successful sync was about %d %@ ago." = "上次成功同步约在 %d %@ 前。";
-"Last successful sync was more than %d %@ ago." = "上次成功同步已超过 %d %@。";
+"Last successful sync was more than %d %@ ago." = "上次成功同步已超过 %d %@ 前。";
 "Last sync: %@" = "上次同步：%@";
 "Latency" = "延迟";
 "Learn how to fix" = "查看修复方法";
@@ -136,7 +136,7 @@
 "No devices connected" = "没有已连接的设备";
 "No folders syncing yet" = "尚无正在同步的文件夹";
 "No home server devices available for relay provisioning." = "没有可用于 Relay 配置的家庭服务器设备。";
-"No immediate relay problems detected." = "未检测到即时 Relay 问题。";
+"No immediate relay problems detected." = "目前未检测到 Relay 问题。";
 "No relay errors recorded." = "未记录到 Relay 错误。";
 "No relay trigger has been received yet. Verify your homeserver `vaultsync-notify` container is running and can reach relay.vaultsync.eu." = "尚未收到 Relay 触发。请确认你的 homeserver `vaultsync-notify` 容器正在运行并且能够访问 relay.vaultsync.eu。";
 "No successful sync has been recorded for your vaults yet." = "你的 Vault 尚未记录到成功同步。";
@@ -185,8 +185,8 @@
 "Reconnect Obsidian Folder" = "重新连接 Obsidian 文件夹";
 "Reconnect Obsidian access or adjust folder permissions on the host device." = "重新连接 Obsidian 访问权限，或在主机设备上调整文件夹权限。";
 "Reconnect devices or add missing peers to restore continuous sync." = "重新连接设备或添加缺失的对端，以恢复持续同步。";
-"Reconnect your Obsidian folder access in VaultSync, then run a foreground rescan." = "在 VaultSync 中重新连接 Obsidian 文件夹访问权限，然后执行一次前台重扫。";
-"Recreate or reselect the folder, then trigger a rescan." = "重新创建或重新选择文件夹，然后触发重扫。";
+"Reconnect your Obsidian folder access in VaultSync, then run a foreground rescan." = "在 VaultSync 中重新连接 Obsidian 文件夹访问权限，然后执行一次前台重新扫描。";
+"Recreate or reselect the folder, then trigger a rescan." = "重新创建或重新选择文件夹，然后触发重新扫描。";
 "Registered" = "已注册";
 "Relay Backend" = "Relay 后端";
 "Relay Diagnostics" = "Relay 诊断";
@@ -216,10 +216,10 @@
 "Rename Failed" = "重命名失败";
 "Renews" = "续订";
 "Requesting camera access…" = "正在请求相机权限…";
-"Rescan Failed" = "重扫失败";
-"Rescan Failed Vaults" = "重扫失败的 Vault";
-"Rescan Vault" = "重扫 Vault";
-"Rescan failed vaults, then verify folder access and permissions." = "重扫失败的 Vault，然后检查文件夹访问和权限。";
+"Rescan Failed" = "重新扫描失败";
+"Rescan Failed Vaults" = "重新扫描失败的 Vault";
+"Rescan Vault" = "重新扫描 Vault";
+"Rescan failed vaults, then verify folder access and permissions." = "重新扫描失败的 Vault，然后检查文件夹访问和权限。";
 "Resolve Conflict" = "解决冲突";
 "Resolve Conflicts" = "解决冲突";
 "Restore Purchases" = "恢复购买";
@@ -230,9 +230,9 @@
 "Context: %@ · %@" = "上下文：%@ · %@";
 "In the picker, choose \"On My iPhone\" → \"Obsidian\", then tap Open." = "在选择器中选择“在我的 iPhone 上” → “Obsidian”，然后点按“打开”。";
 "Missing" = "缺失";
-"Present" = "已提供";
+"Present" = "存在";
 "Purchase Failed" = "购买失败";
-"Rescan All Vaults" = "重扫所有 Vault";
+"Rescan All Vaults" = "重新扫描所有 Vault";
 "Sync Conflicts" = "同步冲突";
 "XXXXXXX-XXXXXXX-..." = "XXXXXXX-XXXXXXX-...";
 "Retry APNs Registration" = "重试 APNs 注册";
@@ -242,8 +242,8 @@
 "Retry the action. If it keeps failing, restart the app and check Settings diagnostics." = "请重试该操作。如果仍然失败，请重启应用并检查设置中的诊断信息。";
 "Review the affected device/folder setup in the app and retry." = "检查应用中相关设备/文件夹设置后再重试。";
 "Review the value and try again." = "请检查该值后重试。";
-"Run Foreground Rescan" = "执行前台重扫";
-"Scan QR Code" = "扫描 QR Code";
+"Run Foreground Rescan" = "执行前台重新扫描";
+"Scan QR Code" = "扫描二维码";
 "Scanning" = "扫描中";
 "Scanning completed in %@" = "%@ 中的扫描已完成";
 "Scanning started in %@" = "%@ 中开始扫描";
@@ -262,6 +262,8 @@
 "Some entered data is invalid or incomplete." = "输入的数据无效或不完整。";
 "Some shared peers are offline or unreachable right now." = "部分共享对端当前离线或无法访问。";
 "Starting…" = "正在启动…";
+"Starting" = "正在启动";
+"Paused" = "已暂停";
 "State" = "状态";
 "Status" = "状态";
 "Subscribe" = "订阅";
@@ -300,7 +302,7 @@
 "Timed out" = "超时";
 "Timeline updates were rate-limited to keep activity readable." = "为了保持活动记录可读，时间线更新已被限流。";
 "Trigger Delivery" = "触发投递";
-"Trigger a vault rescan to refresh sync state." = "触发一次 Vault 重扫以刷新同步状态。";
+"Trigger a vault rescan to refresh sync state." = "触发一次 Vault 重新扫描以刷新同步状态。";
 "Troubleshooting" = "故障排查";
 "Unchanged line. %@" = "未更改行。%@";
 "Unhealthy" = "异常";
@@ -326,7 +328,7 @@
 "VaultSync could not verify this request." = "VaultSync 无法验证该请求。";
 "VaultSync does not have the required permission for this action." = "VaultSync 没有所需的权限来执行此操作。";
 "VaultSync found a configuration problem." = "VaultSync 检测到配置问题。";
-"VaultSync needs camera access to scan Syncthing Device ID QR codes. Please enable it in Settings." = "VaultSync 需要相机权限来扫描 Syncthing 设备 ID 的 QR Code。请在设置中启用。";
+"VaultSync needs camera access to scan Syncthing Device ID QR codes. Please enable it in Settings." = "VaultSync 需要相机权限来扫描 Syncthing 设备 ID 的二维码。请在设置中启用。";
 "VaultSync needs one-time access to your Obsidian folder before it can accept shares." = "VaultSync 需要一次性访问你的 Obsidian 文件夹后，才能接受共享。";
 "VaultSync reported an unexpected error." = "VaultSync 报告了一个意外错误。";
 "Wait a moment and retry." = "请稍等片刻后重试。";
@@ -413,6 +415,7 @@
 "Trash" = "废纸篓";
 "Files already deleted on other devices." = "已在其他设备上删除的文件。";
 "Git repository" = "Git 仓库";
+"Node modules" = "Node 模块";
 "Version history — rarely useful on iPhone." = "版本历史 — 在 iPhone 上很少用到。";
 "macOS metadata" = "macOS 元数据";
 "Finder metadata files like .DS_Store." = "Finder 元数据文件，如 .DS_Store。";
@@ -457,7 +460,7 @@
 "Cloud Relay looks reachable" = "Cloud Relay 似乎可达";
 
 /* Subscription period units */
-"month" = "月";
+"month" = "个月";
 "months" = "个月";
 "week" = "周";
 "weeks" = "周";
@@ -572,7 +575,7 @@
 
 /* Redesign (Vault OS) strings — added in branch redesign/vault-os-foundation */
 "%1$@ — %2$@" = "%1$@ — %2$@";
-"%@: %@" = "%@: %@";
+"%@: %@" = "%@：%@";
 "(%d%%)" = "(%d%%)";
 "Add your computer or server" = "添加你的电脑或服务器";
 "Add your server first" = "请先添加你的服务器";

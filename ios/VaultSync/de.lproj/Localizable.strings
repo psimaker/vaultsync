@@ -89,7 +89,7 @@
 "Folder reported an error." = "Der Ordner hat einen Fehler gemeldet.";
 "Global Files" = "Globale Dateien";
 "Health Endpoint" = "Health-Endpunkt";
-"Healthy" = "Gesund";
+"Healthy" = "Funktionsfähig";
 "How to fix: %@" = "So behebst du es: %@";
 "Idle" = "Leerlauf";
 "Ignore for Now" = "Vorerst ignorieren";
@@ -112,7 +112,7 @@
 "Last Failure" = "Letzter Fehler";
 "Last Relay Error" = "Letzter Relay-Fehler";
 "Last Success" = "Letzter Erfolg";
-"Last Trigger Received" = "Letzter Trigger empfangen";
+"Last Trigger Received" = "Letzter empfangener Trigger";
 "Last Update" = "Letzte Aktualisierung";
 "Last successful sync was about %d %@ ago." = "Die letzte erfolgreiche Synchronisation war vor etwa %d %@.";
 "Last successful sync was more than %d %@ ago." = "Die letzte erfolgreiche Synchronisation ist mehr als %d %@ her.";
@@ -134,7 +134,7 @@
 "No active pending shares" = "Keine aktiven ausstehenden Freigaben";
 "No devices configured" = "Keine Geräte konfiguriert";
 "No devices connected" = "Keine Geräte verbunden";
-"No folders syncing yet" = "Noch keine Ordner in Synchronisation";
+"No folders syncing yet" = "Es werden noch keine Ordner synchronisiert";
 "No home server devices available for relay provisioning." = "Keine Home-Server-Geräte für Relay-Provisioning verfügbar.";
 "No immediate relay problems detected." = "Keine unmittelbaren Relay-Probleme erkannt.";
 "No relay errors recorded." = "Keine Relay-Fehler aufgezeichnet.";
@@ -197,7 +197,7 @@
 "Relay health check failed: %@" = "Relay-Health-Check fehlgeschlagen: %@";
 "Relay health check returned a non-HTTP response." = "Der Relay-Health-Check lieferte keine HTTP-Antwort.";
 "Relay health check timed out after %ds." = "Zeitüberschreitung beim Relay-Health-Check nach %d s.";
-"Relay health endpoint is not healthy. Check internet access, VPN/firewall rules, or relay availability." = "Der Relay-Health-Endpunkt ist nicht gesund. Prüfe Internetzugang, VPN-/Firewall-Regeln oder die Relay-Verfügbarkeit.";
+"Relay health endpoint is not healthy. Check internet access, VPN/firewall rules, or relay availability." = "Der Relay-Health-Endpunkt ist nicht funktionsfähig. Prüfe Internetzugang, VPN-/Firewall-Regeln oder die Relay-Verfügbarkeit.";
 "Relay health endpoint returned HTTP %d." = "Der Relay-Health-Endpunkt lieferte HTTP %d.";
 "Relay network error: %@" = "Relay-Netzwerkfehler: %@";
 "Relay provision failed with HTTP %d." = "Relay-Provisioning mit HTTP %d fehlgeschlagen.";
@@ -262,6 +262,8 @@
 "Some entered data is invalid or incomplete." = "Einige eingegebene Daten sind ungültig oder unvollständig.";
 "Some shared peers are offline or unreachable right now." = "Einige geteilte Peers sind derzeit offline oder nicht erreichbar.";
 "Starting…" = "Startet…";
+"Starting" = "Wird gestartet";
+"Paused" = "Pausiert";
 "State" = "Status";
 "Status" = "Status";
 "Subscribe" = "Abonnieren";
@@ -303,7 +305,7 @@
 "Trigger a vault rescan to refresh sync state." = "Starte einen erneuten Vault-Scan, um den Synchronisationsstatus zu aktualisieren.";
 "Troubleshooting" = "Fehlerbehebung";
 "Unchanged line. %@" = "Unveränderte Zeile. %@";
-"Unhealthy" = "Ungesund";
+"Unhealthy" = "Nicht funktionsfähig";
 "Unknown" = "Unbekannt";
 "Unknown APNs registration error" = "Unbekannter APNs-Registrierungsfehler";
 "Unknown Device" = "Unbekanntes Gerät";
@@ -413,6 +415,7 @@
 "Trash" = "Papierkorb";
 "Files already deleted on other devices." = "Bereits auf anderen Geräten gelöschte Dateien.";
 "Git repository" = "Git-Repository";
+"Node modules" = "Node-Module";
 "Version history — rarely useful on iPhone." = "Versionsverlauf — auf dem iPhone selten nützlich.";
 "macOS metadata" = "macOS-Metadaten";
 "Finder metadata files like .DS_Store." = "Finder-Metadatendateien wie .DS_Store.";
@@ -497,7 +500,7 @@
 "a new name" = "einen neuen Namen";
 "Both versions were kept.\n\nYour local version remains as '%@'.\nThe other device's version was renamed to '%@'." = "Beide Versionen wurden behalten.\n\nDeine lokale Version bleibt als '%@'.\nDie Version des anderen Geräts wurde in '%@' umbenannt.";
 "%d conflicts" = "%d Konflikte";
-"Your contribution is pending approval." = "Dein Beitrag wartet auf Freigabe.";
+"Your contribution is pending approval." = "Deine Unterstützung wartet auf Freigabe.";
 "Could not accept share '%@'.\n\n%@" = "Freigabe '%@' konnte nicht angenommen werden.\n\n%@";
 "iOS did not provide a push token required for instant sync." = "iOS hat kein Push-Token bereitgestellt, das für Sofort-Sync erforderlich ist.";
 "%@ (Trigger: %@)" = "%@ (Auslöser: %@)";
@@ -573,7 +576,7 @@
 /* Redesign (Vault OS) strings — added in branch redesign/vault-os-foundation */
 "%1$@ — %2$@" = "%1$@ — %2$@";
 "%@: %@" = "%@: %@";
-"(%d%%)" = "(%d%%)";
+"(%d%%)" = "(%d %%)";
 "Add your computer or server" = "Computer oder Server hinzufügen";
 "Add your server first" = "Füge zuerst deinen Server hinzu";
 "Best value" = "Bestes Angebot";

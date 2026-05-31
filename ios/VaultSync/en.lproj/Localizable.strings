@@ -262,6 +262,8 @@
 "Some entered data is invalid or incomplete." = "Some entered data is invalid or incomplete.";
 "Some shared peers are offline or unreachable right now." = "Some shared peers are offline or unreachable right now.";
 "Starting…" = "Starting…";
+"Starting" = "Starting";
+"Paused" = "Paused";
 "State" = "State";
 "Status" = "Status";
 "Subscribe" = "Subscribe";
@@ -413,6 +415,7 @@
 "Trash" = "Trash";
 "Files already deleted on other devices." = "Files already deleted on other devices.";
 "Git repository" = "Git repository";
+"Node modules" = "Node modules";
 "Version history — rarely useful on iPhone." = "Version history — rarely useful on iPhone.";
 "macOS metadata" = "macOS metadata";
 "Finder metadata files like .DS_Store." = "Finder metadata files like .DS_Store.";
