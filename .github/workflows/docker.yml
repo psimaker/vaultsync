@@ -15,11 +15,14 @@ concurrency:
 permissions:
   contents: read
   packages: write
+  id-token: write # keyless build provenance attestation
+  attestations: write
 
 jobs:
   notify-guard:
     name: Notify Guard Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -34,9 +37,14 @@ jobs:
   build-and-push:
     name: Build & Push
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: notify-guard
     steps:
       - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3
         with:
@@ -53,8 +61,23 @@ jobs:
             type=match,pattern=notify-v(.*),group=1
 
       - uses: docker/build-push-action@v6
+        id: build
         with:
           context: notify
           push: true
+          platforms: linux/amd64,linux/arm64 # pure CGO_ENABLED=0 Go, arm64 self-host is a real target
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+
+      # Push-then-scan: a HIGH/CRITICAL fixable CVE in the alpine base turns the
+      # run red so you know to bump the base. govulncheck (security.yml) covers
+      # the Go layer; only Trivy sees the OS packages.
+      - name: Scan published image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ghcr.io/psimaker/vaultsync-notify@${{ steps.build.outputs.digest }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
