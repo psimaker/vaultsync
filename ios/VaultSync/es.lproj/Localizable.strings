@@ -572,3 +572,4 @@
 "Not Now" = "Ahora no";
 "Get instant updates" = "Recibe actualizaciones instantáneas";
 "Turn on Cloud Relay" = "Activar Cloud Relay";
+"Add your server as a Syncthing device before subscribing to Cloud Relay." = "Añade tu servidor como dispositivo de Syncthing antes de suscribirte a Cloud Relay.";

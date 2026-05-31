@@ -221,7 +221,7 @@ The container consumes the Syncthing event stream and pushes outbound to the rel
 | **Self-hosted Relay** | Free (roadmap) | User runs everything — no central relay needed |
 
 - Cloud Relay subscription managed via App Store (StoreKit 2, auto-renewable; monthly or yearly). The price is set in App Store Connect and shown in the user's local currency at runtime via StoreKit — never hard-coded (USD reference: ~$1.99/month or ~$14.99/year). No free trial.
-- App provisions the relay after successful purchase using the StoreKit transaction ID
+- App provisions the relay after successful purchase using the StoreKit signed transaction (JWS)
 - Homeserver container works identically regardless of cloud vs self-hosted relay
 - No feature gates in the container itself — the gate is the central relay accepting provisioned Device IDs
 

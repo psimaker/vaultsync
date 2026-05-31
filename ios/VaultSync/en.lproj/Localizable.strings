@@ -572,3 +572,4 @@
 "Not Now" = "Not Now";
 "Get instant updates" = "Get instant updates";
 "Turn on Cloud Relay" = "Turn on Cloud Relay";
+"Add your server as a Syncthing device before subscribing to Cloud Relay." = "Add your server as a Syncthing device before subscribing to Cloud Relay.";

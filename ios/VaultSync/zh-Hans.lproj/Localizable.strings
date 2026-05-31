@@ -572,3 +572,4 @@
 "Not Now" = "暂不";
 "Get instant updates" = "获取即时更新";
 "Turn on Cloud Relay" = "启用 Cloud Relay";
+"Add your server as a Syncthing device before subscribing to Cloud Relay." = "在订阅 Cloud Relay 之前，请先将你的服务器添加为 Syncthing 设备。";

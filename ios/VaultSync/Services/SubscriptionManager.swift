@@ -318,7 +318,7 @@ final class SubscriptionManager {
             return
         }
 
-        if transaction.productID == Self.relayProductID {
+        if Self.relayProductIDs.contains(transaction.productID) {
             if let revocationDate = transaction.revocationDate {
                 logger.info("Subscription revoked on \(revocationDate)")
                 isRelaySubscribed = false

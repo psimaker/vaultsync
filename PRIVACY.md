@@ -33,7 +33,7 @@ VaultSync uses **no tracking SDKs, no analytics, and no advertising**. The only 
 
 ## Your Rights (GDPR)
 
-You can request deletion of all data associated with your device at any time by contacting us. Upon request, we will remove your Device ID, APNs token, and transaction ID from the relay server.
+You can request deletion of all data associated with your device at any time by contacting us. Upon request, we will remove your Device ID, APNs token, and all stored transaction records (original transaction ID and subscription expiry) from the relay server.
 
 ## Contact
 

@@ -317,6 +317,14 @@ struct SettingsView: View {
     @ViewBuilder
     private func subscribeButton(for product: Product, label: String, accent: Bool = false) -> some View {
         Button {
+            // Cloud Relay can only be provisioned for a paired homeserver. Block
+            // the purchase until at least one Syncthing peer exists, otherwise the
+            // user would pay and the relay would have no Device ID to wake.
+            guard !syncthingManager.devices.isEmpty else {
+                alertMessage = L10n.tr("Add your server as a Syncthing device before subscribing to Cloud Relay.")
+                showAlert = true
+                return
+            }
             Task {
                 do {
                     let deviceIDs = syncthingManager.devices.map(\.deviceID)
