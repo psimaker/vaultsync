@@ -30,7 +30,74 @@ struct ContentView: View {
         return f
     }()
 
+    private enum Tab: Hashable {
+        case sync
+        case devices
+    }
+
+    @State private var selectedTab: Tab = .sync
+
     var body: some View {
+        TabView(selection: $selectedTab) {
+            syncTab
+                .tabItem {
+                    Label(L10n.tr("Sync"), systemImage: "arrow.triangle.2.circlepath")
+                }
+                .tag(Tab.sync)
+
+            devicesTab
+                .tabItem {
+                    Label(L10n.tr("Devices"), systemImage: "laptopcomputer.and.iphone")
+                }
+                .tag(Tab.devices)
+        }
+        // Sheets/alerts live at the shell level so cross-tab triggers (e.g. an
+        // "Add Device" remediation tapped from a Sync-tab issue) present
+        // regardless of which tab is active.
+        .alert("Error", isPresented: $showAlert) {
+            Button("OK") { }
+        } message: {
+            Text(alertMessage ?? "")
+        }
+        .sheet(isPresented: $showAddDevice) {
+            addDeviceSheet
+        }
+        .sheet(isPresented: $showSettings) {
+            SettingsView(syncthingManager: syncthingManager, vaultManager: vaultManager, subscriptionManager: subscriptionManager)
+        }
+        .sheet(isPresented: $showObsidianPicker) {
+            FolderPicker(initialDirectoryURL: vaultManager.obsidianDirectoryURL, onCancel: {
+                showObsidianPicker = false
+            }) { url in
+                showObsidianPicker = false
+                if let err = vaultManager.grantAccess(url: url) {
+                    alertMessage = mappedError(err, fallbackTitle: L10n.tr("Obsidian Folder Connection Failed")).userVisibleDescription
+                    showAlert = true
+                }
+            }
+        }
+        .sheet(isPresented: $showRelayUpsell) {
+            NavigationStack {
+                CloudRelayUpsellView(
+                    syncthingManager: syncthingManager,
+                    subscriptionManager: subscriptionManager
+                )
+            }
+        }
+        .onChange(of: syncthingManager.pendingFolders, initial: true) { _, pending in
+            autoAcceptPendingShares(pending)
+        }
+        .onChange(of: syncthingManager.lastSyncTime, initial: true) { _, _ in
+            maybePresentRelayUpsell()
+        }
+        .onChange(of: subscriptionManager.isRelaySubscribed) { _, _ in
+            maybePresentRelayUpsell()
+        }
+    }
+
+    /// The Sync tab — the vault's live-status story: the pinned status header,
+    /// sync issues, Obsidian connection, pending shares, and the vault list.
+    private var syncTab: some View {
         NavigationStack {
             List {
                 dashboardSection
@@ -38,7 +105,6 @@ struct ContentView: View {
                 obsidianStatusSection
                 pendingSharesSection
                 vaultsSection
-                devicesSection
             }
             .refreshable {
                 await syncthingManager.performForegroundSync()
@@ -64,45 +130,17 @@ struct ContentView: View {
                     .accessibilityHint("Opens discovery, relay, and notification settings.")
                 }
             }
-            .alert("Error", isPresented: $showAlert) {
-                Button("OK") { }
-            } message: {
-                Text(alertMessage ?? "")
+        }
+    }
+
+    /// The Devices tab — paired Syncthing peers and the add-device entry point.
+    private var devicesTab: some View {
+        NavigationStack {
+            List {
+                devicesSection
             }
-            .sheet(isPresented: $showAddDevice) {
-                addDeviceSheet
-            }
-            .sheet(isPresented: $showSettings) {
-                SettingsView(syncthingManager: syncthingManager, vaultManager: vaultManager, subscriptionManager: subscriptionManager)
-            }
-            .sheet(isPresented: $showObsidianPicker) {
-                FolderPicker(initialDirectoryURL: vaultManager.obsidianDirectoryURL, onCancel: {
-                    showObsidianPicker = false
-                }) { url in
-                    showObsidianPicker = false
-                    if let err = vaultManager.grantAccess(url: url) {
-                        alertMessage = mappedError(err, fallbackTitle: L10n.tr("Obsidian Folder Connection Failed")).userVisibleDescription
-                        showAlert = true
-                    }
-                }
-            }
-            .sheet(isPresented: $showRelayUpsell) {
-                NavigationStack {
-                    CloudRelayUpsellView(
-                        syncthingManager: syncthingManager,
-                        subscriptionManager: subscriptionManager
-                    )
-                }
-            }
-            .onChange(of: syncthingManager.pendingFolders, initial: true) { _, pending in
-                autoAcceptPendingShares(pending)
-            }
-            .onChange(of: syncthingManager.lastSyncTime, initial: true) { _, _ in
-                maybePresentRelayUpsell()
-            }
-            .onChange(of: subscriptionManager.isRelaySubscribed) { _, _ in
-                maybePresentRelayUpsell()
-            }
+            .navigationTitle(L10n.tr("Devices"))
+            .navigationBarTitleDisplayMode(.inline)
         }
     }
 
@@ -883,7 +921,7 @@ struct ContentView: View {
                 }
             }
         }
-        .presentationDetents([.medium])
+        .presentationDetents([.medium, .large])
     }
 
     private func addDevice() {
