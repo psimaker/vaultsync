@@ -7,7 +7,7 @@
 "Add" = "Añadir";
 "Add Device" = "Añadir dispositivo";
 "Add a device using its Syncthing Device ID. Find it in the Syncthing web UI under Actions > Show ID." = "Añade un dispositivo con su ID de dispositivo de Syncthing. Lo encontrarás en la interfaz web de Syncthing en Actions > Show ID.";
-"Add or Reconnect Device" = "Añadir o volver a conectar dispositivo";
+"Add or Reconnect Device" = "Añadir o reconectar";
 "Added line. %@" = "Línea añadida. %@";
 "All Synced" = "Todo sincronizado";
 "App Refresh" = "Actualización de la app";
@@ -172,7 +172,7 @@
 "Push registration is unavailable in Simulator. Test APNs on a physical iPhone in Settings > Notifications for VaultSync." = "El registro de push no está disponible en el Simulador. Prueba APNs en un iPhone físico en Ajustes > Notificaciones para VaultSync.";
 "Ready" = "Listo";
 "Recent scan, sync, connection, and error events will appear here." = "Aquí aparecerán los eventos recientes de escaneo, sincronización, conexión y error.";
-"Reconnect Obsidian Directory" = "Volver a conectar el directorio de Obsidian";
+"Reconnect Obsidian Directory" = "Reconectar Obsidian";
 "Reconnect Obsidian Folder" = "Volver a conectar la carpeta de Obsidian";
 "Reconnect Obsidian access or adjust folder permissions on the host device." = "Vuelve a conectar el acceso a Obsidian o ajusta los permisos de la carpeta en el dispositivo anfitrión.";
 "Reconnect devices or add missing peers to restore continuous sync." = "Vuelve a conectar dispositivos o añade los pares que falten para restaurar la sincronización continua.";
@@ -233,7 +233,7 @@
 "Retry the action. If it keeps failing, restart the app and check Settings diagnostics." = "Reintenta la acción. Si sigue fallando, reinicia la app y revisa el diagnóstico en Ajustes.";
 "Review the affected device/folder setup in the app and retry." = "Revisa la configuración del dispositivo/carpeta afectado en la app y vuelve a intentarlo.";
 "Review the value and try again." = "Revisa el valor y vuelve a intentarlo.";
-"Run Foreground Rescan" = "Ejecutar reescaneo en primer plano";
+"Run Foreground Rescan" = "Reescanear ahora";
 "Scan QR Code" = "Escanear código QR";
 "Scanning" = "Escaneando";
 "Scanning completed in %@" = "Escaneo completado en %@";
@@ -290,7 +290,7 @@
 "This timestamp is updated when VaultSync receives a silent push from Cloud Relay." = "Esta marca de tiempo se actualiza cuando VaultSync recibe un push silencioso de Cloud Relay.";
 "This will permanently discard the version from the other device." = "Esto descartará permanentemente la versión del otro dispositivo.";
 "This will permanently discard your local version." = "Esto descartará permanentemente tu versión local.";
-"Timed out" = "Tiempo de espera agotado";
+"Timed out" = "Sin respuesta";
 "Timeline updates were rate-limited to keep activity readable." = "Las actualizaciones de la cronología se limitaron por frecuencia para mantener la actividad legible.";
 "Trigger Delivery" = "Entrega de activadores";
 "Trigger a vault rescan to refresh sync state." = "Inicia un reescaneo del Vault para actualizar el estado de sincronización.";

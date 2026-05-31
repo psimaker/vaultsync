@@ -1,5 +1,5 @@
 "About" = "关于";
-"Accept First Pending Share" = "接受第一个待处理共享";
+"Accept First Pending Share" = "接受待处理共享";
 "Accept Share" = "接受共享";
 "Accept a share to activate syncing for that vault." = "接受一个共享以激活该 Vault 的同步。";
 "Actions" = "操作";
@@ -7,7 +7,7 @@
 "Add" = "添加";
 "Add Device" = "添加设备";
 "Add a device using its Syncthing Device ID. Find it in the Syncthing web UI under Actions > Show ID." = "使用 Syncthing 设备 ID 添加设备。你可以在 Syncthing 网页界面的 Actions > Show ID 中找到它。";
-"Add or Reconnect Device" = "添加或重新连接设备";
+"Add or Reconnect Device" = "添加或重连设备";
 "Added line. %@" = "已添加行。%@";
 "All Synced" = "全部已同步";
 "App Refresh" = "应用刷新";

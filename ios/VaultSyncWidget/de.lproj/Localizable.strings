@@ -1,6 +1,6 @@
 // Status labels reused from the main app
 "Idle" = "Leerlauf";
-"Needs Attention" = "Benötigt Aufmerksamkeit";
+"Needs Attention" = "Aktion nötig";
 "Open VaultSync" = "VaultSync öffnen";
 "Syncing" = "Wird synchronisiert";
 

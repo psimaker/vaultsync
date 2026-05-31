@@ -7,7 +7,7 @@
 "Add" = "Hinzufügen";
 "Add Device" = "Gerät hinzufügen";
 "Add a device using its Syncthing Device ID. Find it in the Syncthing web UI under Actions > Show ID." = "Füge ein Gerät mit seiner Syncthing-Geräte-ID hinzu. Du findest sie in der Syncthing-Weboberfläche unter Actions > Show ID.";
-"Add or Reconnect Device" = "Gerät hinzufügen oder neu verbinden";
+"Add or Reconnect Device" = "Gerät verbinden";
 "Added line. %@" = "Hinzugefügte Zeile. %@";
 "All Synced" = "Alles synchron";
 "App Refresh" = "App-Aktualisierung";
@@ -120,7 +120,7 @@
 "Manage Subscription" = "Abo verwalten";
 "Name" = "Name";
 "Name (optional)" = "Name (optional)";
-"Needs Attention" = "Benötigt Aufmerksamkeit";
+"Needs Attention" = "Aktion nötig";
 "Network Error" = "Netzwerkfehler";
 "Never" = "Nie";
 "No Syncthing peers available yet." = "Noch keine Syncthing-Peers verfügbar.";
@@ -208,7 +208,7 @@
 "Renews" = "Verlängert sich";
 "Requesting camera access…" = "Kamerazugriff wird angefordert…";
 "Rescan Failed" = "Erneuter Scan fehlgeschlagen";
-"Rescan Failed Vaults" = "Fehlgeschlagene Vaults erneut scannen";
+"Rescan Failed Vaults" = "Fehler-Vaults neu scannen";
 "Rescan Vault" = "Vault erneut scannen";
 "Rescan failed vaults, then verify folder access and permissions." = "Scanne fehlgeschlagene Vaults erneut und prüfe dann Ordnerzugriff und Berechtigungen.";
 "Resolve Conflict" = "Konflikt lösen";
@@ -233,7 +233,7 @@
 "Retry the action. If it keeps failing, restart the app and check Settings diagnostics." = "Versuche die Aktion erneut. Wenn sie weiter fehlschlägt, starte die App neu und prüfe die Diagnose in den Einstellungen.";
 "Review the affected device/folder setup in the app and retry." = "Prüfe die betroffene Geräte-/Ordnerkonfiguration in der App und versuche es erneut.";
 "Review the value and try again." = "Prüfe den Wert und versuche es erneut.";
-"Run Foreground Rescan" = "Erneuten Scan im Vordergrund ausführen";
+"Run Foreground Rescan" = "Im Vordergrund scannen";
 "Scan QR Code" = "QR Code scannen";
 "Scanning" = "Scannen";
 "Scanning completed in %@" = "Scan in %@ abgeschlossen";
@@ -262,8 +262,8 @@
 "Sync Activity" = "Synchronisationsaktivität";
 "Sync Activity Looks Stale" = "Synchronisationsaktivität wirkt veraltet";
 "Sync Engine Not Running" = "Synchronisations-Engine läuft nicht";
-"Sync Error" = "Synchronisationsfehler";
-"Sync Issue" = "Synchronisationsproblem";
+"Sync Error" = "Sync-Fehler";
+"Sync Issue" = "Sync-Problem";
 "Sync Issues" = "Synchronisationsprobleme";
 "Sync Status" = "Synchronisationsstatus";
 "Sync completed in %@" = "Synchronisation in %@ abgeschlossen";
