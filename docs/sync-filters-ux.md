@@ -1,6 +1,7 @@
 # Sync Filters — UX Spec
 
-> Status: **implemented** (issue [#1](https://github.com/psimaker/vaultsync/issues/1), shipped in v1.2.0)
+> **Internal design reference — not user documentation.** This captures the rationale, layout, and trade-offs behind the Sync Filters feature for maintainers extending it.
+> Status: **implemented** (issue [#1](https://github.com/psimaker/vaultsync/issues/1), shipped in v1.2.0; Conflict→Skip extended to Skip Family in v1.3.2, issue [#8](https://github.com/psimaker/vaultsync/issues/8)). Current app: v1.4.0.
 > Last updated: 2026-05-23
 
 This document is the design reference for the Sync Filters feature — the UI for excluding files and folders from sync requested in issue #1 by @vitaly74. It captures the rationale behind the layout, preset catalog, migration path, and multi-vault behavior; refer to it when extending or modifying the feature.
@@ -171,7 +172,7 @@ Avoiding:
 
 ## 9. Localization
 
-All new strings shipped in English, German, and Simplified Chinese (the existing three locales).
+All new strings shipped in English, German, Spanish, and Simplified Chinese (the four shipping locales).
 
 ## 10. Future considerations
 

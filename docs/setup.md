@@ -35,7 +35,7 @@ make patch    # creates _syncthing_patched/ with applied fixes
 make xcframework
 ```
 
-This produces `go/build/SyncBridge.xcframework` (~30-50 MB) targeting iOS 18+ (arm64) and iOS Simulator (arm64).
+This produces `go/build/SyncBridge.xcframework` (~160 MB) targeting iOS 18+ (arm64 device) and the iOS Simulator (arm64 + x86_64). The large size is expected — it bundles the full Syncthing engine for each slice.
 
 ### 5. Generate the Xcode project
 
@@ -65,13 +65,16 @@ Select the **VaultSync** scheme, choose a supported device or simulator (iOS 18+
 # Go bridge tests
 cd go && make test
 
-# iOS unit tests (from Xcode or CLI)
+# iOS unit tests (from Xcode or CLI; requires the generated project from step 5)
 cd ios && xcodebuild test \
   -project VaultSync.xcodeproj \
   -scheme VaultSync \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+  CODE_SIGNING_ALLOWED=NO \
   -quiet
 ```
+
+> No development team? Append `CODE_SIGNING_ALLOWED=NO` to any `xcodebuild` command for simulator builds — no signing required.
 
 ## Troubleshooting
 

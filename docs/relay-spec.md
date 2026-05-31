@@ -1,8 +1,12 @@
 # VaultSync Cloud Relay — Specification
 
+> **Status:** Shipped in v1.4.0. This document is the protocol and architecture reference for the relay, the `vaultsync-notify` sidecar, and the iOS client. Sections marked _Roadmap_ (self-hosted relay) are not yet built.
+
 ## Overview
 
-Push-Notification-Service that forwards Syncthing file-change events to iOS devices via APNs. Solves the core iOS limitation: no real-time background sync. Instead of polling, the relay wakes the app on demand.
+Push-notification service that forwards Syncthing file-change events to iOS devices via APNs. It solves the core iOS limitation — no real-time background sync — by waking the app on demand instead of polling.
+
+In the app, **Settings → Open Relay Diagnostics** is the live view of this: health endpoint, APNs registration, last trigger received, and whether the relay is actually *delivering wake-ups* versus merely *reachable*.
 
 ---
 
@@ -142,7 +146,7 @@ Wake-up signal from homeserver container. Sends silent push to all devices regis
 
 - Returns 202 Accepted immediately — push delivery is async
 - No file content, no folder names, no metadata — just a wake-up signal
-- Rate limited: max 1 push per Device ID per debounce window (server-side, default 30s)
+- Rate limited server-side (separate from the client `DEBOUNCE_SECONDS`): roughly 1 push per Device ID per ~30s window
 
 ### GET /health
 
@@ -151,10 +155,11 @@ No authentication required.
 ```json
 // Response 200
 {
-  "status": "ok",
-  "version": "1.0.0"
+  "status": "ok"
 }
 ```
+
+The `notify` client validates only `status == "ok"`. A 200 means the relay is *reachable*, not that pushes are delivered end-to-end — end-to-end delivery is confirmed only by an actual received trigger.
 
 ---
 
@@ -205,72 +210,40 @@ The container consumes the Syncthing event stream and pushes outbound to the rel
 - Topic: app bundle ID (`eu.vaultsync.app`)
 - Priority: 5 (low — allows iOS to batch/defer for power optimization)
 - Expiration: +1 hour (allows APNs to retry delivery when the device is briefly unreachable)
+- Environment: `project.yml` ships the `development` entitlement (`aps-environment`); App Store / TestFlight archives use the `production` environment — confirm the entitlement at archive time
 
 ## Pricing
 
 | Tier | Price | What's included |
 |---|---|---|
 | **VaultSync App** | Free | Full sync, background refresh, all features |
-| **Cloud Relay** | $0.99/month | Push notifications via relay.vaultsync.eu |
-| **Self-hosted Relay** | Free (planned) | User runs everything — no central relay needed |
+| **Cloud Relay** | Monthly subscription | Push notifications via relay.vaultsync.eu |
+| **Self-hosted Relay** | Free (roadmap) | User runs everything — no central relay needed |
 
-- Cloud Relay subscription managed via App Store (StoreKit 2, auto-renewable)
+- Cloud Relay subscription managed via App Store (StoreKit 2, auto-renewable). The price is set in App Store Connect and shown in the user's local currency at runtime via StoreKit — never hard-coded (USD reference: ~$0.99/month).
 - App provisions the relay after successful purchase using the StoreKit transaction ID
 - Homeserver container works identically regardless of cloud vs self-hosted relay
 - No feature gates in the container itself — the gate is the central relay accepting provisioned Device IDs
 
 ---
 
-## iOS Integration
+## iOS Integration (shipped in v1.4.0)
 
-### Required Changes
+The iOS client implements the full relay flow; see `AppDelegate.swift`, `RelayService.swift`, and `SubscriptionManager.swift` for detail.
 
-**1. APNs Registration**
+- **APNs registration** — registers for remote notifications at launch and converts the device token to a hex string (`AppDelegate`).
+- **Provisioning** — on a successful StoreKit purchase, the app POSTs each homeserver peer's Device ID, the APNs token, and the transaction ID to `/api/v1/provision`. Provisioned IDs are stored in the Keychain and re-provisioned on token rotation; on subscription expiry the tokens are deprovisioned.
+- **Push reception** — a silent push restores the vault bookmarks, starts Syncthing via the Go bridge, polls for completion within the ~30s background budget, then stops Syncthing and releases the bookmarks. This shares the `BGAppRefreshTask` code path.
+- **Background modes** — `UIBackgroundModes` includes `remote-notification` alongside `fetch` and `processing`.
+- **Subscription management** — StoreKit 2 auto-renewable subscription; status, price, and a Manage Subscription link live in Settings → Cloud Relay. The price is read from StoreKit at runtime and never hard-coded.
 
-- Add Push Notifications capability in Xcode
-- Register for remote notifications at app launch (`UIApplication.shared.registerForRemoteNotifications()`)
-- Implement `application(_:didRegisterForRemoteNotificationsWithDeviceToken:)` in AppDelegate
-- Convert device token to hex string
-
-**2. Provisioning**
-
-- On successful StoreKit purchase: POST to `/api/v1/provision` with homeserver Device ID, APNs token, and transaction ID
-- Homeserver Device ID comes from the peer list — the user has already added their homeserver as a Syncthing device
-- Multiple peers: all peer Device IDs are provisioned (each homeserver gets its own registration)
-- Provisioned Device IDs stored in Keychain for renewal handling
-- On token refresh (iOS can rotate tokens): re-provision with new token
-
-**3. Push Reception**
-
-- Implement `application(_:didReceiveRemoteNotification:fetchCompletionHandler:)` with background mode
-- On silent push received:
-  1. Restore vault bookmarks (security-scoped access)
-  2. Start Syncthing via Go bridge
-  3. Poll for sync completion (max 30s — iOS background execution limit)
-  4. Stop Syncthing, release bookmarks
-  5. Call completion handler with `.newData` or `.noData`
-- This is the same flow as the existing `BGAppRefreshTask` handler — extract shared logic
-
-**4. Background Modes**
-
-- Add `remote-notification` to `UIBackgroundModes` in Info.plist (in addition to existing `fetch` and `processing`)
-
-**5. Subscription Management**
-
-- StoreKit 2 integration for Cloud Relay subscription ($0.99/month)
-- Settings view: subscription status, manage subscription link
-- On subscription expiry: deprovision device tokens from relay
-
-**6. Onboarding Extension**
-
-- New optional step after vault setup: "Enable instant sync with Cloud Relay"
-- Explain what it does: "Get notified instantly when files change on your server"
-- Link to setup guide for homeserver container
-- Option to skip (background refresh still works without relay)
+Cloud Relay is configured from **Settings → Cloud Relay**, not onboarding.
 
 ---
 
 ## Self-Hosted Variant
+
+> **Roadmap — not yet built.** The components below are design exploration, not shipping code. Today `vaultsync-notify` points at the central `relay.vaultsync.eu` by default.
 
 For users who don't want to use the central relay or pay for the subscription.
 
@@ -309,7 +282,7 @@ A simplified variant where the homeserver container sends APNs pushes directly:
 1. **APNs credentials for self-hosted:** Can we distribute our p8 key in a way that allows self-hosted users to send pushes without their own Developer Account? Likely no — security and ToS implications.
 2. **Multi-vault routing:** Should the push signal include which vault changed, so the app can prioritize? Currently: wake up and sync everything. Tradeoff: more metadata leaves the homeserver.
 3. **Fallback behavior:** If push delivery fails (APNs errors, network issues), should the container retry? Or rely on the existing BGAppRefreshTask polling as fallback?
-4. **GDPR:** Device tokens are personal data. Privacy policy update needed. Data processing agreement for EU users?
+4. **GDPR — data processing agreement:** Device tokens are personal data. The privacy policy now ships ([../PRIVACY.md](../PRIVACY.md), surfaced in Settings → About); a data processing agreement for EU users is still open.
 
 ---
 

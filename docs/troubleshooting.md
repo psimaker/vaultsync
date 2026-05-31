@@ -5,11 +5,11 @@ This guide covers the most common VaultSync failures and how to fix them quickly
 ## Quick Triage
 
 1. Open VaultSync and check **Sync Issues** plus **Settings → Cloud Relay**.
-2. If you use Cloud Relay, open **Relay Diagnostics** and run **Check Relay Status**.
+2. If you use Cloud Relay, open **Settings → Open Relay Diagnostics** and tap **Check Relay Status**.
 3. On your homeserver, run:
    - `docker compose logs --tail=200 vaultsync-notify`
-   - `docker compose exec vaultsync-notify /app/vaultsync-notify --doctor` (if available in your image)
-4. Retry from the app after each fix so you can confirm the issue is resolved.
+   - `docker compose run --rm vaultsync-notify --doctor`
+4. Retry from the app after each fix to confirm it worked.
 
 ## Syncthing Not Running
 
@@ -49,14 +49,14 @@ This guide covers the most common VaultSync failures and how to fix them quickly
 4. Restart the container:
    - `docker compose up -d --force-recreate vaultsync-notify`
 5. Run doctor again:
-   - `docker compose exec vaultsync-notify /app/vaultsync-notify --doctor`
+   - `docker compose run --rm vaultsync-notify --doctor`
 6. Confirm logs no longer show `401/403`.
 
 ## Relay Unreachable
 
 ### Symptoms
 - VaultSync shows **Relay Unreachable**.
-- Relay health check fails in Settings/Relay Diagnostics.
+- Relay health check fails in **Relay Diagnostics**.
 - `vaultsync-notify` logs show timeout, DNS, or connection refused errors.
 
 ### Likely Causes
@@ -71,8 +71,8 @@ This guide covers the most common VaultSync failures and how to fix them quickly
 3. Check homeserver egress rules (firewall, VPN, proxy).
 4. From homeserver shell, test relay health:
    - `curl -fsSL https://relay.vaultsync.eu/api/v1/health`
-5. In app, open **Settings → Cloud Relay → Test** or **Relay Diagnostics → Check Relay Status**.
-6. Retry provisioning after health check is green.
+5. In app, open **Settings → Open Relay Diagnostics** and tap **Check Relay Status**.
+6. Once the relay looks reachable, retry provisioning — then trigger a file change and confirm **Last Trigger Received** updates. A green health check only means the relay is reachable; an updated trigger time proves wake-ups are actually delivered.
 
 ## No Pending Shares Appear
 
@@ -107,10 +107,10 @@ This guide covers the most common VaultSync failures and how to fix them quickly
 - Token rotated and provisioning has not been retried.
 
 ### Fix Steps
-1. On iOS: **Settings → Notifications → VaultSync** and enable notifications.
-2. In VaultSync Settings, tap **Retry APNs Registration**.
-3. Re-open **Relay Diagnostics** and confirm APNs token is present.
-4. Tap **Retry Provisioning** to rebind token and device IDs.
+1. **In iOS Settings:** open **Notifications → VaultSync** and enable notifications.
+2. **In VaultSync:** open **Settings → Open Relay Diagnostics**.
+3. Under **Push Registration**, tap **Retry APNs Registration** and confirm the **APNs Token** appears.
+4. Under **Actions**, tap **Retry Provisioning** to rebind the token and device IDs (shown only while subscribed to Cloud Relay).
 5. Trigger a file change and verify **Last Trigger Received** updates.
 
 ## Obsidian Folder Not Found
@@ -175,7 +175,7 @@ This guide covers the most common VaultSync failures and how to fix them quickly
 
 ### Important Limitation
 
-Cloud Relay is designed to make `server -> iPhone` sync feel immediate. For `iPhone -> server`, the reliable path is still to open VaultSync and let it sync in foreground. iOS may grant background refresh time, but that timing is system-controlled and should not be treated as guaranteed outgoing sync.
+Cloud Relay makes `server → iPhone` sync feel instant. For `iPhone → server`, open VaultSync and let it sync in the foreground — iOS background time is system-controlled and not guaranteed.
 
 ## Required Device Disconnected
 

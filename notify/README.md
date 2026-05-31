@@ -11,6 +11,8 @@ Lightweight sidecar container that watches your Syncthing instance for file chan
 5. Sends a wake-up signal to `relay.vaultsync.eu` — no file content or metadata leaves your server.
 6. The relay forwards a silent push to your iOS device via APNs.
 
+> Cloud Relay accelerates **server → iPhone** sync only. For **iPhone → server**, open VaultSync (see [Product Scope](#product-scope)).
+
 ## Quick Start (One Command)
 
 From the `notify/` directory:
@@ -33,15 +35,13 @@ If auto-detection fails, set `SYNCTHING_CONFIG=/path/to/config.xml` and rerun bo
 
 ## Doctor Mode
 
-Run preflight diagnostics with actionable failures:
+Run preflight diagnostics with actionable failures. With Docker (the usual setup), compose reads `.env` for you:
 
 ```bash
-cd notify
-set -a
-. ./.env
-set +a
-./vaultsync-notify --doctor
+docker compose run --rm vaultsync-notify --doctor
 ```
+
+If you built the binary from source, run `./vaultsync-notify --doctor` with the `.env` values exported into your shell.
 
 Doctor validates:
 
@@ -64,23 +64,11 @@ cp .env.example .env
 docker compose up -d vaultsync-notify
 ```
 
-Compose values are read from `.env`:
-
-- `SYNCTHING_API_URL` (default fallback: `http://syncthing:8384`)
-- `SYNCTHING_API_KEY` (required)
-- `RELAY_URL` (default fallback: `https://relay.vaultsync.eu`)
-- `DEBOUNCE_SECONDS` (default fallback: `5`)
-- `WATCHED_FOLDERS` (optional; empty means all folders)
+Compose reads its values from `.env` — see the [Environment Variables](#environment-variables) table below.
 
 ## Runtime Healthcheck
 
-The Docker image includes a real readiness healthcheck:
-
-```text
-vaultsync-notify --healthcheck
-```
-
-The healthcheck validates dependency readiness (Syncthing API + credentials + Device ID + relay health) instead of only checking process liveness.
+The Docker image's `HEALTHCHECK` runs `vaultsync-notify --healthcheck`, validating real readiness — Syncthing API, credentials, Device ID, and relay health — not just process liveness.
 
 ## Troubleshooting
 

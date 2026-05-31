@@ -11,21 +11,12 @@ Your notes, your devices, your server. No managed note-sync cloud required.
   <img src="https://developer.apple.com/assets/elements/badges/download-on-the-app-store.svg" height="44" alt="Download on the App Store">
 </a>
 
-<br>
+<br><br>
 
 [![Stars](https://img.shields.io/github/stars/psimaker/vaultsync?style=flat-square&logo=github&color=2AB5B3&label=Stars)](https://github.com/psimaker/vaultsync/stargazers)
-[![Forks](https://img.shields.io/github/forks/psimaker/vaultsync?style=flat-square&logo=github&color=2AB5B3&label=Forks)](https://github.com/psimaker/vaultsync/network)
-[![Contributors](https://img.shields.io/github/contributors/psimaker/vaultsync?style=flat-square&logo=github&color=2AB5B3&label=Contributors)](https://github.com/psimaker/vaultsync/graphs/contributors)
 [![License: MPL-2.0](https://img.shields.io/badge/License-MPL_2.0-blue.svg?style=flat-square)](LICENSE)
-
-[![CI](https://img.shields.io/github/actions/workflow/status/psimaker/vaultsync/ci.yml?style=flat-square&logo=github-actions&logoColor=white&label=Build)](https://github.com/psimaker/vaultsync/actions/workflows/ci.yml)
-[![Last Commit](https://img.shields.io/github/last-commit/psimaker/vaultsync?style=flat-square&label=Last+Commit)](https://github.com/psimaker/vaultsync/commits)
-
 [![iOS 18+](https://img.shields.io/badge/iOS-18%2B-007AFF?style=flat-square&logo=apple&logoColor=white)](https://developer.apple.com/ios/)
-[![Swift 6](https://img.shields.io/badge/Swift-6-FA7343?style=flat-square&logo=swift&logoColor=white)](https://swift.org)
-[![Xcode 26+](https://img.shields.io/badge/Xcode-26%2B-147EFB?style=flat-square&logo=xcode&logoColor=white)](https://developer.apple.com/xcode/)
-[![Open Issues](https://img.shields.io/github/issues/psimaker/vaultsync?style=flat-square&label=Issues)](https://github.com/psimaker/vaultsync/issues)
-[![Open PRs](https://img.shields.io/github/issues-pr-raw/psimaker/vaultsync?style=flat-square&label=PRs)](https://github.com/psimaker/vaultsync/pulls)
+[![CI](https://img.shields.io/github/actions/workflow/status/psimaker/vaultsync/ci.yml?style=flat-square&logo=github-actions&logoColor=white&label=Build)](https://github.com/psimaker/vaultsync/actions/workflows/ci.yml)
 
 </div>
 
@@ -38,72 +29,40 @@ Your notes, your devices, your server. No managed note-sync cloud required.
 
 ---
 
-## Why VaultSync?
+## What VaultSync does
 
-VaultSync is the missing iOS bridge for people who already trust Syncthing with their Obsidian vault.
+VaultSync is the iOS bridge for people who already trust Syncthing with their Obsidian vault. If your notes live on your own Mac, Linux box, NAS, or homeserver, VaultSync lets your iPhone or iPad join that setup — syncing **directly into Obsidian’s iOS sandbox**, so your vault appears where Obsidian expects it.
 
-If your notes already live on your own Mac, Linux machine, NAS, or homeserver, VaultSync lets your iPhone or iPad join that setup without moving your vault into iCloud, Dropbox, or a managed note-sync cloud.
+- Syncs your vault peer-to-peer with your own devices using **Syncthing** — no note cloud, no account, no tracking
+- Pairs with your desktop/server by **QR code**
+- Resolves Markdown conflicts with **side-by-side diffs**
+- Shows a **sync activity timeline** and **actionable diagnostics** for common issues
+- Optional **Cloud Relay** wakes your iPhone the moment your server changes
+- Full **VoiceOver** and **Dynamic Type** support, localized in **English, German, Spanish, and Simplified Chinese**
 
-VaultSync syncs directly into Obsidian’s iOS sandbox, so your vault appears where Obsidian expects it.
+VaultSync is **free**. Cloud Relay is an optional monthly subscription, priced in your App Store storefront. VaultSync is independent and not affiliated with Obsidian or Syncthing.
 
-**Built for:**
-
-- Obsidian users who want self-hosted iOS sync
-- Syncthing users who already sync notes across desktop and server
-- Homelab and NAS setups
-- Privacy-conscious Markdown users
-- People who want their notes on their own devices
-
-VaultSync is independent and is not affiliated with Obsidian or Syncthing.
+**Built for** Obsidian users who want self-hosted iOS sync, existing Syncthing/homelab/NAS setups, and privacy-conscious Markdown users.
 
 ---
 
 ## The honest sync promise
 
-iOS does not allow third-party apps to run an always-on sync daemon in the background.
+iOS does not let third-party apps run an always-on sync daemon in the background. VaultSync is designed around that limit instead of hiding it:
 
-VaultSync is designed around that limitation instead of hiding it.
+> **Near-realtime incoming sync to iPhone. Reliable outgoing sync when VaultSync is open.**
 
-**What you can expect:**
+- **Server → iPhone/iPad:** near-realtime when Cloud Relay silent pushes are delivered
+- **iPhone/iPad → Server:** most reliable when you open VaultSync
+- **Background refresh** may help opportunistically, but iOS decides when — and whether — it runs
 
-- **Server → iPhone/iPad:** near-realtime incoming sync when Cloud Relay silent pushes are delivered
-- **iPhone/iPad → Server:** most reliable when VaultSync is opened
-- **Background refresh:** may help opportunistically, but iOS controls when and whether it runs
-
-The honest product promise is:
-
-> **Near-realtime incoming sync to iPhone. Reliable outgoing sync when VaultSync is opened.**
-
----
-
-## What VaultSync does
-
-- Syncs Obsidian vaults directly into Obsidian’s iOS folder
-- Uses Syncthing under the hood
-- Pairs with your desktop/server via QR code
-- Works with Mac, Linux, NAS, and homelab Syncthing setups
-- Includes Markdown conflict resolution
-- Shows sync activity, diagnostics, and common setup issues
-- Supports optional Cloud Relay wake-ups for faster server-to-iPhone updates
-- Requires no account, no analytics SDK, and no tracking
-
----
-
-## What VaultSync is not
-
-VaultSync is not a hosted note-sync service.
-
-It does not store your notes, index your vault, or proxy your Markdown files through a cloud backend.
-
-VaultSync is also not a magic always-on Syncthing daemon for iOS. Apple’s background execution model does not allow that. Instead, VaultSync combines foreground sync, iOS background refresh, and optional silent push wake-ups to make Syncthing-based Obsidian sync practical on iPhone and iPad.
+VaultSync is **not** a hosted note-sync service and **not** a magic always-on daemon. It combines foreground sync, iOS background refresh, and optional silent-push wake-ups to make Syncthing-based Obsidian sync practical on iPhone and iPad.
 
 ---
 
 ## What’s New — v1.4.0
 
-> **Quiet conflict notifications — and a switch to turn them off** ([#10](https://github.com/psimaker/vaultsync/issues/10)) — VaultSync no longer re-posts the same "N conflicts" banner on every background sync. It now replaces a single notification in place, only alerts when the count actually grows, and adds a Settings toggle so you can mute conflict banners without disabling iOS notifications — which no longer makes Cloud Relay look "broken". Background sync is more reliable too, the Cloud Relay price now displays correctly in every region, and you can optionally support development with a one-time contribution. This release also adds full **Spanish** localization, alongside English, German, and Simplified Chinese.
-
-See [CHANGELOG.md](CHANGELOG.md) for full details.
+Quiet conflict notifications with a Settings switch to mute them, more reliable background sync, correct Cloud Relay pricing in every region, and optional one-time contributions. Adds full **Spanish** localization. See [CHANGELOG.md](CHANGELOG.md) for details.
 
 ---
 
@@ -115,54 +74,30 @@ See [CHANGELOG.md](CHANGELOG.md) for full details.
 
 ### Syncthing-powered sync
 
-VaultSync uses Syncthing to sync your vault between your own devices over LAN or the Internet.
-
-### Obsidian-first design
-
-VaultSync syncs directly into Obsidian’s iOS sandbox. Open Obsidian and your vault is where it should be.
-
-### Calm onboarding, real setup
-
-A short first-run onboarding explains the flow, and the actual setup happens on the home screen where you can connect Obsidian, pair devices, accept shares, and monitor sync.
+Syncs your vault between your own devices over LAN or the Internet — directly into Obsidian’s iOS sandbox.
 
 ### Markdown conflict resolver
 
-When files conflict, VaultSync shows side-by-side Markdown diffs so you can choose the right version with confidence.
+When files conflict, VaultSync shows side-by-side Markdown diffs so you can pick the right version with confidence.
 
-### Sync activity timeline
+### Sync activity & issues
 
-See what is syncing, when it synced, and where issues may have happened.
-
-### No note cloud
-
-Your notes sync between your own devices. VaultSync does not require a managed note-sync cloud, account, analytics SDK, or tracking.
+A timeline of what synced and when, plus an issues panel with actionable fixes for common setup and runtime problems.
 
 </td>
 <td width="50%" valign="top">
 
 ### Optional Cloud Relay
 
-Cloud Relay can wake your iPhone when your server has changes, making incoming server-to-iPhone sync feel near-realtime.
-
-### vaultsync-notify sidecar
-
-A lightweight Docker container watches Syncthing on your server and signals the relay when your iPhone should wake up.
-
-### Sync issues panel
-
-Actionable diagnostics help you understand and fix common setup and runtime issues without guessing.
+Wakes your iPhone when your server has changes, making incoming server-to-iPhone sync feel near-realtime — via a small Docker helper (a “sidecar”) on your server and APNs silent push.
 
 ### Relay diagnostics
 
-Built-in checks help you confirm whether Cloud Relay, APNs, and your notify sidecar are working correctly.
+Built-in checks help you confirm whether Cloud Relay and APNs are reachable and whether wake-ups are actually being delivered.
 
-### iOS background-aware sync
+### Accessibility & localization
 
-VaultSync supports iOS background execution where available, but never claims to run permanently in the background.
-
-### Accessibility
-
-VoiceOver and Dynamic Type support are included throughout the app.
+VoiceOver and Dynamic Type throughout, localized in English, German, Spanish, and Simplified Chinese.
 
 </td>
 </tr>
@@ -180,12 +115,10 @@ VoiceOver and Dynamic Type support are included throughout the app.
 └──────┬───────┘                             │  Syncs directly  │
        │                                     │  into Obsidian’s │
        │                                     │  iOS sandbox     │
-       │                                     └────────▲─────────┘
-       │                                               │
+       │                                     └─────────▲────────┘
        │  Optional                                     │
        │  vaultsync-notify                             │
        │  Docker sidecar                               │
-       │                                               │
        ▼                                               │
 ┌──────────────────┐        APNs silent push           │
 │ relay.vaultsync  │───────────────────────────────────┘
@@ -194,88 +127,37 @@ VoiceOver and Dynamic Type support are included throughout the app.
 ```
 
 1. **Syncthing** runs on your desktop, server, NAS, or homelab device.
-2. **VaultSync** runs on your iPhone or iPad and syncs files into Obsidian’s iOS sandbox.
-3. **vaultsync-notify** is an optional Docker sidecar that watches your Syncthing instance for real outgoing change markers.
-4. **Cloud Relay** sends a silent push wake-up to your iPhone when your server has new changes.
-5. **VaultSync wakes up** and pulls changes from your own Syncthing device.
-6. **Local iPhone edits** sync most reliably when you open VaultSync.
+2. **VaultSync** syncs files into Obsidian’s iOS sandbox on your iPhone or iPad.
+3. **vaultsync-notify** (optional Docker sidecar) watches your Syncthing instance for real outgoing changes.
+4. **Cloud Relay** sends a silent push wake-up to your iPhone when the server has new changes.
+5. **VaultSync wakes** and pulls the changes. Local iPhone edits sync most reliably when you open the app.
 
 ---
 
-## Cloud Relay privacy
+## Cloud Relay & privacy
 
-Cloud Relay is not a note cloud.
+Cloud Relay is optional and improves only the **server → iPhone** direction: without it, you open VaultSync to sync (iOS background refresh may also help opportunistically); with it, a silent push wakes the app the moment your server changes.
 
-It does not sync, store, read, proxy, or index your Markdown files. It only helps wake your iPhone when your own server has changes waiting.
-
-The relay never receives:
-
-- note content
-- Markdown text
-- filenames
-- folder names
-- vault structure
-- vault metadata
-
-The relay only handles the minimum routing information required to deliver wake-up signals, such as device registration and push delivery data.
-
-For details, see [PRIVACY.md](PRIVACY.md).
-
----
-
-## Cloud Relay vs. no relay
-
-VaultSync works without Cloud Relay.
-
-Without Cloud Relay, you can open VaultSync to trigger sync manually. iOS background refresh may also run opportunistically, but it is not guaranteed and does not run on a fixed schedule.
-
-Cloud Relay improves the experience for server-side changes:
-
-| Scenario | Without Cloud Relay | With Cloud Relay |
-|---|---|---|
-| Server changes while iPhone is locked | Syncs when VaultSync is opened or iOS refreshes opportunistically | Relay can wake VaultSync via silent push |
-| iPhone edits need to go back to server | Most reliable when VaultSync is opened | Still most reliable when VaultSync is opened |
-| Notes pass through VaultSync servers | No | No |
-| File names pass through VaultSync servers | No | No |
-| Requires subscription | No | Yes, via in-app purchase |
+It is **not** a note cloud. It never receives note content, Markdown text, file or folder names, vault structure, or metadata — only the minimal routing info (your Syncthing Device ID and APNs token) needed to deliver a wake-up signal. Full details in [PRIVACY.md](PRIVACY.md).
 
 ---
 
 ## Getting started
 
-### 1. Install VaultSync
+1. **Install** VaultSync from the [App Store](https://apps.apple.com/app/vaultsync/id6761845197).
+2. **Pair your server:** scan your desktop/server Syncthing Device ID by QR code (or enter it manually), then accept the connection on that Syncthing instance.
+3. **Sync your vault:** VaultSync detects Obsidian vaults on iOS. Pick the vault, connect it to your Syncthing share, and let the first sync finish. Open Obsidian — your vault is where it expects it.
+4. **(Optional) Enable Cloud Relay** for faster server-to-iPhone updates: subscribe in the app, then set up the notify sidecar below.
 
-Download VaultSync from the [App Store](https://apps.apple.com/app/vaultsync/id6761845197).
+### Cloud Relay sidecar
 
-### 2. Connect your Syncthing device
-
-Open VaultSync and scan your desktop/server Syncthing Device ID via QR code, or enter it manually.
-
-Then accept the connection on your desktop/server Syncthing instance.
-
-### 3. Sync your vault
-
-VaultSync detects Obsidian vaults on iOS. Select the vault you want to sync, connect it to your Syncthing share, and let the initial sync complete.
-
-Once files are synced, open Obsidian on iOS. Your vault should appear where Obsidian expects it.
-
-### 4. Enable Cloud Relay
-
-Cloud Relay is optional, but recommended if you want faster server-to-iPhone updates.
-
-Subscribe inside the app, then set up the notify container on your homeserver:
+One-command setup — auto-detects your Syncthing instance, configures the container, and starts it:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/psimaker/vaultsync/main/notify/scripts/bootstrap.sh | bash
 ```
 
-The script auto-detects your Syncthing instance, configures the container, and starts it.
-
----
-
-## Manual Docker Compose setup
-
-If you prefer to configure the notify sidecar manually, add this to your existing `docker-compose.yml`:
+Or add it to your existing `docker-compose.yml` manually:
 
 ```yaml
 vaultsync-notify:
@@ -284,10 +166,9 @@ vaultsync-notify:
     SYNCTHING_API_URL: http://syncthing:8384
     SYNCTHING_API_KEY: your-syncthing-api-key
     RELAY_URL: https://relay.vaultsync.eu
-    RELAY_API_KEY: your-relay-api-key
 ```
 
-See [notify/README.md](notify/README.md) for full configuration options.
+Relay authentication uses your Syncthing Device ID, which the sidecar reads automatically — no relay key needed. Optional tuning (`DEBOUNCE_SECONDS`, `WATCHED_FOLDERS`) and full options are in [notify/README.md](notify/README.md).
 
 ---
 
@@ -298,145 +179,77 @@ See [notify/README.md](notify/README.md) for full configuration options.
 | iPhone or iPad | iOS/iPadOS 18 or later |
 | Obsidian | Installed on iOS/iPadOS |
 | Syncthing | Running on a Mac, Linux machine, NAS, or homeserver |
-| Cloud Relay | Optional, available via in-app purchase |
+| Cloud Relay | Optional, monthly in-app subscription |
 | vaultsync-notify | Optional Docker sidecar for server-side wake-ups |
 
----
-
-## iOS background limitation
-
-iOS does not allow third-party apps like VaultSync to run an always-on sync daemon in the background.
-
-That means:
-
-- **Server → iPhone/iPad** can be near-realtime when Cloud Relay silent pushes are delivered.
-- **iPhone/iPad → Server** should be treated as foreground-first.
-- **Opening VaultSync** is the reliable way to push local iPhone edits back to your homeserver.
-- **Background App Refresh** may help sometimes, but iOS controls when it runs.
-- **Silent pushes** can be throttled or delayed by iOS depending on battery, network, system state, and usage patterns.
-
-VaultSync is built to be honest about those constraints.
-
----
-
-## Self-hosted relay
-
-A fully self-hosted relay option, replacing `relay.vaultsync.eu` with your own relay server, is planned for a future release.
-
-Until then, VaultSync works in two modes:
-
-1. **Without relay:** open VaultSync to sync manually, with opportunistic iOS background refresh where available.
-2. **With hosted Cloud Relay:** use silent push wake-ups for faster server-to-iPhone sync.
-
----
-
-## Technical details
-
-| | |
-|---|---|
-| Platform | iOS/iPadOS 18+ |
-| Language | Swift 6, SwiftUI |
-| Sync engine | Syncthing v2.x via Go/gomobile `.xcframework` |
-| Background execution | `BGAppRefreshTask` + `BGContinuedProcessingTask` (iOS 26+ when available) |
-| Push wake-ups | APNs silent notifications via Cloud Relay |
-| Notify sidecar | Docker container for homeserver/NAS setups |
-| License | MPL-2.0 |
+A fully self-hosted relay (replacing `relay.vaultsync.eu` with your own server) is planned for a future release.
 
 ---
 
 ## Building from source
 
-### Requirements
-
-- Xcode 26+
-- Go 1.26+
-- gomobile
-- XcodeGen
-- Make
-
-### Build
+Requires **Xcode 26+**, **Go 1.26+**, **gomobile**, **XcodeGen**, and **Make**.
 
 ```bash
 git clone https://github.com/psimaker/vaultsync.git
 cd vaultsync
 
-# Patch vendored dependencies and build the Go xcframework
-cd go
-make patch
-make xcframework
-cd ..
+# Build the Go xcframework (~160 MB; bundles the Syncthing engine)
+cd go && make patch && make xcframework && cd ..
 
 # Generate and open the Xcode project
-cd ios
-xcodegen generate
-open VaultSync.xcodeproj
+cd ios && xcodegen generate && open VaultSync.xcodeproj
 ```
 
-See [docs/setup.md](docs/setup.md) for detailed build instructions.
+Full build, signing, and test instructions: [docs/setup.md](docs/setup.md).
 
----
+### Technical details
 
-## Project structure
+| | |
+|---|---|
+| Platform | iOS/iPadOS 18+ |
+| Language | Swift 6, SwiftUI |
+| Sync engine | Syncthing 2.x via Go/gomobile `.xcframework` |
+| Background execution | `BGAppRefreshTask` + `BGContinuedProcessingTask` (iOS 26+ when available) |
+| Push wake-ups | APNs silent notifications via Cloud Relay |
+| License | [MPL-2.0](LICENSE) |
+
+### Project structure
 
 ```text
 ├── ios/                  # Swift/SwiftUI iOS app
 ├── go/                   # Go bridge: gomobile → .xcframework
-├── notify/               # vaultsync-notify Docker container
-├── docs/                 # Architecture, setup, and troubleshooting docs
+├── notify/               # vaultsync-notify Docker sidecar
+├── docs/                 # Architecture, setup, troubleshooting, relay spec
 └── .github/workflows/    # CI pipeline
 ```
 
 ---
 
-## Troubleshooting
+## Documentation
 
-Common issues are documented here:
+| Doc | What it covers |
+|---|---|
+| [docs/setup.md](docs/setup.md) | Build and development setup |
+| [docs/troubleshooting.md](docs/troubleshooting.md) | Common runtime failures and exact fixes |
+| [docs/architecture.md](docs/architecture.md) | Codebase structure and sync strategy |
+| [docs/relay-spec.md](docs/relay-spec.md) | Cloud Relay protocol reference |
+| [notify/README.md](notify/README.md) | Notify sidecar setup and diagnostics |
+| [PRIVACY.md](PRIVACY.md) · [TERMS.md](TERMS.md) | Privacy policy and license terms |
 
-- [docs/troubleshooting.md](docs/troubleshooting.md) — Common runtime failures and exact fixes
-- [notify/README.md](notify/README.md) — Notify sidecar setup and diagnostics
-- [docs/setup.md](docs/setup.md) — Build and development setup
-
-If you find a bug, please open an issue with:
-
-- iOS/iPadOS version
-- VaultSync version
-- Syncthing version on your server/desktop
-- Whether Cloud Relay is enabled
-- Whether `vaultsync-notify` is running
-- Relevant logs or screenshots
+Found a bug? Open an issue with your iOS/iPadOS and VaultSync versions, your server’s Syncthing version, whether Cloud Relay and `vaultsync-notify` are running, and relevant logs or screenshots.
 
 ---
 
 ## Contributing
 
-Contributions are welcome.
-
-Please follow the project conventions:
-
-- Swift API Design Guidelines
-- Swift strict concurrency where applicable
-- Standard Go conventions
-- Conventional Commits
-- Clear PR descriptions
-
-Useful docs:
-
-- [docs/setup.md](docs/setup.md) — Build instructions
-- [docs/architecture.md](docs/architecture.md) — Codebase structure
-- [docs/troubleshooting.md](docs/troubleshooting.md) — Common runtime failures and exact fixes
+Contributions are welcome. Please follow the project conventions: Swift API Design Guidelines, Swift strict concurrency where applicable, standard Go conventions, Conventional Commits, and clear PR descriptions. Start with [docs/setup.md](docs/setup.md) and [docs/architecture.md](docs/architecture.md).
 
 ---
 
 ## Acknowledgments
 
-VaultSync is built on top of these projects:
-
-| Project | Description |
-|---|---|
-| [Syncthing](https://syncthing.net/) | The open-source file synchronization program powering VaultSync |
-| [gomobile](https://github.com/golang/mobile) | Go on mobile, enabling the embedded sync engine |
-
-VaultSync is designed for [Obsidian](https://obsidian.md), the powerful knowledge base for local Markdown files.
+Built on [Syncthing](https://syncthing.net/) (the open-source file-synchronization engine powering VaultSync) and [gomobile](https://github.com/golang/mobile) (which embeds it on iOS). Designed for [Obsidian](https://obsidian.md), the knowledge base for local Markdown files.
 
 VaultSync is an independent project and is not affiliated with, endorsed by, or sponsored by Obsidian or Syncthing.
 
@@ -444,4 +257,4 @@ VaultSync is an independent project and is not affiliated with, endorsed by, or 
 
 ## License
 
-[MPL-2.0](LICENSE) — You may freely use, modify, and distribute this software under the terms of the Mozilla Public License 2.0.
+[MPL-2.0](LICENSE) — use, modify, and distribute under the terms of the Mozilla Public License 2.0.

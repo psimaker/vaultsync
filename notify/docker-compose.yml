@@ -1,6 +1,6 @@
 services:
   syncthing:
-    image: syncthing/syncthing:1.29
+    image: syncthing/syncthing:latest
     volumes:
       - syncthing-data:/var/syncthing
     ports:
