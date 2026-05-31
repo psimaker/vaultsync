@@ -60,9 +60,9 @@ struct SyncIssuesView: View {
     private func color(for issue: SyncthingManager.SyncIssueItem) -> Color {
         switch issue.severity {
         case .critical:
-            return .red
+            return .statusError
         case .warning:
-            return .orange
+            return .statusAttention
         }
     }
 

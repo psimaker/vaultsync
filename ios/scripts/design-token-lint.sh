@@ -19,8 +19,10 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DIRS=("$ROOT/VaultSync/Views" "$ROOT/VaultSync/App" "$ROOT/VaultSyncWidget")
 
 # Raw status colors inside a color modifier, bare Color.<status>, hardcoded RGB,
-# and UIColor.system<Status> bridges.
-PATTERN='(foregroundStyle|foregroundColor|tint|fill|background)\(\s*\.(red|green|orange|blue)\b|Color\.(red|green|orange|blue)\b|Color\(red:|Color\(uiColor: ?\.system(Red|Green|Orange|Blue)|Color\(\.system(Red|Green|Orange|Blue)'
+# UIColor.system<Status> bridges, AND return-position / ternary / switch-expression
+# status colors (e.g. `return .red`, `cond ? .green : .red`, `case .x: .orange`) —
+# the return-position blind spot that previously let helper functions slip through.
+PATTERN='(foregroundStyle|foregroundColor|tint|fill|background)\(\s*\.(red|green|orange|blue)\b|Color\.(red|green|orange|blue)\b|Color\(red:|Color\(uiColor: ?\.system(Red|Green|Orange|Blue)|Color\(\.system(Red|Green|Orange|Blue)|return +\.(red|green|orange|blue)\b|[:?] +\.(red|green|orange|blue)\b'
 
 hits="$(grep -rnE "$PATTERN" "${DIRS[@]}" --include='*.swift' 2>/dev/null || true)"
 

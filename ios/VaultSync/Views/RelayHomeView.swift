@@ -69,8 +69,13 @@ struct RelayHomeView: View {
                     Text(L10n.tr("Your vault already syncs free and peer-to-peer. Relay only removes the “open the app to sync” wait — it isn’t cloud storage."))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.leading)
+                        // Force multi-line wrapping at a fixed width and let the
+                        // popover grow to the full text height — without this the
+                        // popover sizes the text to a single line and truncates it.
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(width: 280, alignment: .leading)
                         .padding()
-                        .frame(maxWidth: 320)
                         .presentationCompactAdaptation(.popover)
                 }
             }
