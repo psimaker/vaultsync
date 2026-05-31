@@ -219,6 +219,7 @@ struct SyncStatusHeader: View {
                     Image(systemName: status.symbolName)
                         .font(.title2)
                         .foregroundStyle(status.tint)
+                        .contentTransition(.symbolEffect(.replace))
                         .symbolEffect(.pulse, isActive: status == .syncing && !reduceMotion)
                 }
             }

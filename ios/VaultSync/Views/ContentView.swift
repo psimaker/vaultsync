@@ -12,7 +12,6 @@ struct ContentView: View {
     @State private var showAlert = false
     @State private var pendingShareFailures: [String: SyncUserError] = [:]
     @State private var pendingShareInFlight: Set<String> = []
-    @State private var isRescanning = false
     @State private var pendingFilterSheetFolder: SyncthingManager.FolderInfo?
 
     private static let relayUpsellShownKey = "relay-upsell-shown"
@@ -773,33 +772,26 @@ struct ContentView: View {
             }
 
             Section {
+                // Honest progress: the busy state reflects the folder's REAL
+                // scan state from the engine, not a fixed timer.
+                let isScanning = status?.state == "scanning"
                 Button {
-                    isRescanning = true
                     if let err = syncthingManager.rescanFolder(id: folder.id) {
                         alertMessage = mappedError(err, fallbackTitle: L10n.tr("Rescan Failed")).userVisibleDescription
                         showAlert = true
-                        isRescanning = false
-                    } else {
-                        Task {
-                            try? await Task.sleep(for: .seconds(2))
-                            isRescanning = false
-                        }
                     }
                 } label: {
                     HStack {
-                        Text(isRescanning ? "Rescanning…" : "Rescan Vault")
+                        Text(isScanning ? "Rescanning…" : "Rescan Vault")
                         Spacer()
-                        if isRescanning {
+                        if isScanning {
                             ProgressView()
                                 .controlSize(.small)
                         }
                     }
                 }
-                .disabled(isRescanning)
+                .disabled(isScanning)
             }
-        }
-        .onDisappear {
-            isRescanning = false
         }
         .navigationTitle(folder.label.isEmpty ? folder.id : folder.label)
         .navigationBarTitleDisplayMode(.inline)
