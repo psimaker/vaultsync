@@ -17,6 +17,8 @@ struct RelayHomeView: View {
     let syncthingManager: SyncthingManager
     var subscriptionManager: SubscriptionManager
 
+    @State private var showPrivacyInfo = false
+
     private var deviceIDs: [String] { syncthingManager.devices.map(\.deviceID) }
     private var isDelivering: Bool { subscriptionManager.relayDeliveryConfirmed }
 
@@ -54,18 +56,25 @@ struct RelayHomeView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
-                Label {
-                    Text(L10n.tr("Your vault already syncs free and peer-to-peer. Relay only removes the “open the app to sync” wait — it isn’t cloud storage."))
+                Button {
+                    showPrivacyInfo = true
+                } label: {
+                    Label(L10n.tr("How is this private?"), systemImage: "info.circle")
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                } icon: {
-                    Image(systemName: "lock.shield.fill").foregroundStyle(Color.statusSuccess)
                 }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.vaultAccent)
                 .padding(.top, VaultSpacing.xs)
+                .popover(isPresented: $showPrivacyInfo) {
+                    Text(L10n.tr("Your vault already syncs free and peer-to-peer. Relay only removes the “open the app to sync” wait — it isn’t cloud storage."))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .padding()
+                        .frame(maxWidth: 320)
+                        .presentationCompactAdaptation(.popover)
+                }
             }
             .padding(.vertical, VaultSpacing.s)
-            .accessibilityElement(children: .combine)
         }
 
         Section {
