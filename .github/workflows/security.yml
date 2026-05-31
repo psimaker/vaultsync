@@ -1,0 +1,124 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+  schedule:
+    # Monday 06:00 UTC — surface CVEs disclosed against the vendored Syncthing
+    # fork or the alpine base even when the repo is quiet between releases.
+    # (GitHub pauses scheduled workflows after ~60 days of repo inactivity.)
+    - cron: "0 6 * * 1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  go-lint:
+    name: Go Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: notify/go.mod
+
+      # gofmt is dependency-free, so it checks the hand-written bridge package
+      # without materialising the patched Syncthing tree.
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l go/bridge notify)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet (notify)
+        working-directory: notify
+        run: go vet ./...
+
+      # Optional next step: add golangci-lint here (golangci-lint-action@v9 needs
+      # golangci-lint v2 + a .golangci.yml). Left out for now so every check in
+      # this gate is verified-green.
+
+  govulncheck-go:
+    name: govulncheck (go bridge)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+
+      # Materialise the patched Syncthing/go-stun forks so govulncheck scans the
+      # code actually compiled into the app — the only scanner that sees CVEs
+      # inside the replace-shadowed fork.
+      - name: Patch vendored dependencies
+        working-directory: go
+        run: make patch
+
+      - name: govulncheck
+        working-directory: go
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck -tags noassets ./bridge/...
+
+  govulncheck-notify:
+    name: govulncheck (notify)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: notify/go.mod
+
+      - name: govulncheck
+        working-directory: notify
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+  image-scan:
+    name: Image Scan (published)
+    # Catches base-image CVEs disclosed after the last build. Skipped on PRs
+    # (the PR's image isn't published yet); build-time scanning lives in
+    # docker.yml.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trivy scan of ghcr image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ghcr.io/psimaker/vaultsync-notify:latest
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"

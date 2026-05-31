@@ -73,7 +73,6 @@ func TestLoadConfigRejectsInvalidDebounceSeconds(t *testing.T) {
 	}
 }
 
-
 func TestRunHealthcheckSkipsTriggerProbe(t *testing.T) {
 	var relayTriggerCalls atomic.Int32
 
