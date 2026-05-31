@@ -114,16 +114,16 @@ struct LineDiffView: View {
     private func backgroundColor(for type: DiffLine.LineType) -> Color {
         switch type {
         case .unchanged: return Color.clear
-        case .added: return Color.green.opacity(0.2)
-        case .removed: return Color.red.opacity(0.2)
+        case .added: return Color.statusSuccess.opacity(0.18)
+        case .removed: return Color.statusError.opacity(0.18)
         }
     }
 
     private func foregroundColor(for type: DiffLine.LineType) -> Color {
         switch type {
         case .unchanged: return Color.primary
-        case .added: return Color(uiColor: .systemGreen)
-        case .removed: return Color(uiColor: .systemRed)
+        case .added: return Color.statusSuccess
+        case .removed: return Color.statusError
         }
     }
 

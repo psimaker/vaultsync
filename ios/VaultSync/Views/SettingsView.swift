@@ -143,7 +143,7 @@ struct SettingsView: View {
                 Label("Status", systemImage: subscriptionManager.isRelaySubscribed ? "antenna.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right.slash")
                 Spacer()
                 Text(relayStatusText)
-                    .foregroundStyle(subscriptionManager.isRelaySubscribed ? .green : .secondary)
+                    .foregroundStyle(subscriptionManager.isRelaySubscribed ? Color.statusSuccess : Color.statusInactive)
             }
             .accessibilityElement(children: .combine)
 
@@ -255,7 +255,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(relayError)
                         .font(.caption)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Color.statusError)
                     if let url = SyncUserError.troubleshootingURL(forRawError: relayError) {
                         ExternalLinkButton(titleKey: "Learn how to fix", url: url)
                             .font(.caption2)
@@ -294,7 +294,7 @@ struct SettingsView: View {
     private var relayDeliveryRow: some View {
         if subscriptionManager.relayDeliveryConfirmed {
             Label(L10n.tr("Delivering wake-ups"), systemImage: "checkmark.seal.fill")
-                .foregroundStyle(.green)
+                .foregroundStyle(Color.statusSuccess)
                 .font(.subheadline)
                 .accessibilityElement(children: .combine)
         } else if let last = subscriptionManager.lastRelayTriggerReceivedAt {
@@ -304,7 +304,7 @@ struct SettingsView: View {
         } else {
             VStack(alignment: .leading, spacing: 6) {
                 Label(L10n.tr("Waiting for your server"), systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Color.statusAttention)
                     .font(.subheadline)
                 Text(L10n.tr("Cloud Relay is subscribed, but no wake-up has arrived yet. Finish the one-time setup on your server to start receiving instant updates."))
                     .font(.caption)
@@ -414,7 +414,7 @@ struct SettingsView: View {
             if let error = tipJar.errorMessage, !error.isEmpty {
                 Text(error)
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Color.statusError)
             }
 
             if let pending = tipJar.pendingMessage, !pending.isEmpty {

@@ -102,7 +102,7 @@ struct CloudRelayUpsellView: View {
     private var subscribedContent: some View {
         Section {
             Label(L10n.tr("You’re subscribed to Cloud Relay"), systemImage: "checkmark.seal.fill")
-                .foregroundStyle(.green)
+                .foregroundStyle(Color.statusSuccess)
                 .font(.headline)
         }
         Section {

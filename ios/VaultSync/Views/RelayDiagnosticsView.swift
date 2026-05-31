@@ -30,11 +30,11 @@ struct RelayDiagnosticsView: View {
         Section("Relay Backend") {
             if subscriptionManager.relayDeliveryConfirmed {
                 Label(L10n.tr("Cloud Relay is delivering wake-ups"), systemImage: "checkmark.seal.fill")
-                    .foregroundStyle(.green)
+                    .foregroundStyle(Color.statusSuccess)
                     .font(.subheadline)
             } else if subscriptionManager.relayDeliveryLikelyWorking {
                 Label(L10n.tr("Cloud Relay looks reachable"), systemImage: "checkmark.circle")
-                    .foregroundStyle(.green)
+                    .foregroundStyle(Color.statusSuccess)
                     .font(.subheadline)
             }
             HStack {
@@ -45,7 +45,7 @@ struct RelayDiagnosticsView: View {
                         .controlSize(.small)
                 } else if let result = subscriptionManager.relayHealthResult {
                     Text(result.summary)
-                        .foregroundStyle(result.isHealthy ? .green : .red)
+                        .foregroundStyle(result.isHealthy ? Color.statusSuccess : Color.statusError)
                 } else {
                     Text("Not checked")
                         .foregroundStyle(.secondary)
@@ -82,7 +82,7 @@ struct RelayDiagnosticsView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Last Relay Error")
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Color.statusError)
                     Text(relayError.message)
                         .font(.caption)
                     Text(
@@ -122,7 +122,7 @@ struct RelayDiagnosticsView: View {
                 Label("APNs Token", systemImage: "key.fill")
                 Spacer()
                 Text(subscriptionManager.hasAPNsToken ? L10n.tr("Present") : L10n.tr("Missing"))
-                    .foregroundStyle(subscriptionManager.hasAPNsToken ? .green : .orange)
+                    .foregroundStyle(subscriptionManager.hasAPNsToken ? Color.statusSuccess : Color.statusAttention)
             }
             .accessibilityElement(children: .combine)
 
@@ -162,7 +162,7 @@ struct RelayDiagnosticsView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(reason)
                         .font(.caption)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(Color.statusError)
                     if let url = SyncUserError.troubleshootingURL(anchor: "apns-not-registered") {
                         ExternalLinkButton(titleKey: "Learn how to fix", url: url)
                             .font(.caption2)

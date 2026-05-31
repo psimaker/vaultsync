@@ -34,7 +34,7 @@ struct DeviceDetailView: View {
                 LabeledContent("Status") {
                     HStack(spacing: 6) {
                         Image(systemName: device.connected ? "checkmark.circle.fill" : "xmark.circle.fill")
-                            .foregroundStyle(device.connected ? .green : .secondary)
+                            .foregroundStyle(device.connected ? Color.statusSuccess : Color.statusInactive)
                             .accessibilityHidden(true)
                         Text(device.connected ? L10n.tr("Connected") : L10n.tr("Disconnected"))
                     }
