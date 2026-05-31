@@ -12,7 +12,10 @@ cd "$(dirname "$0")"
 # the original modules (they point to dirs that don't exist yet).
 echo "==> Temporarily removing replace directives..."
 cp go.mod go.mod.bak
-sed -i '' '/^replace /d' go.mod
+# Portable across BSD (macOS) and GNU (Linux) sed: rewrite via a temp file
+# instead of in-place editing, whose `-i` syntax differs between the two.
+# go.mod is restored from go.mod.bak below, so this only affects the download.
+grep -v '^replace ' go.mod > go.mod.tmp && mv go.mod.tmp go.mod
 
 echo "==> Downloading Go modules..."
 go mod download

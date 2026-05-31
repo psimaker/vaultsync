@@ -3,8 +3,20 @@ name: CI
 on:
   push:
     branches: [main]
+    # Docs/markdown-only commits don't affect the Go bridge or the iOS build, so
+    # skip the whole pipeline (incl. the ~10x-priced macOS build job) for them.
+    # NOTE: none of these jobs are required status checks yet. If you later enable
+    # branch protection requiring "Build & Test", replace paths-ignore with a
+    # per-job changed-files gate (dorny/paths-filter) so PRs don't hang waiting
+    # on a check that was skipped.
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
   pull_request:
     branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -16,7 +28,8 @@ permissions:
 jobs:
   go-tests:
     name: Go Tests
-    runs-on: macos-15
+    runs-on: ubuntu-latest # pure-Go bridge suite; needs no macOS/Xcode
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -31,32 +44,15 @@ jobs:
 
       - name: Run Go tests
         working-directory: go
+        # The status/event schema regression tests (Phase 1/3 fields, folder
+        # error details) live in ./bridge and run as part of this package — no
+        # separate runner needed.
         run: go test -tags noassets ./bridge -count=1
-
-  bridge-schema-regression:
-    name: Bridge Schema Regression
-    runs-on: macos-15
-    needs: go-tests
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go/go.mod
-          cache-dependency-path: go/go.sum
-
-      - name: Patch vendored dependencies
-        working-directory: go
-        run: make patch
-
-      - name: Run status/event schema regression tests
-        working-directory: go
-        run: |
-          go test -tags noassets ./bridge -count=1 -run 'Test(EventInfoUnmarshalMissingPhase3Fields|LegacyEventConsumerIgnoresPhase3Fields|FolderStatusUnmarshalMissingPhase1Fields|LegacyFolderStatusConsumerIgnoresPhase1Fields|GetFolderStatusJSONMissingFolderHasErrorDetails|BridgeEventDataFolderErrors)'
 
   notify-tests:
     name: Notify Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -70,10 +66,10 @@ jobs:
 
   build:
     name: Build & Test
-    runs-on: macos-26  # Xcode 26.2 default, iOS 26 SDK required for BGContinuedProcessingTask
+    runs-on: macos-26 # Xcode 26.2 default, iOS 26 SDK required for BGContinuedProcessingTask
+    timeout-minutes: 45 # guard against a hung simulator/xcodebuild burning 10x macOS minutes
     needs:
       - go-tests
-      - bridge-schema-regression
       - notify-tests
     steps:
       - uses: actions/checkout@v4
@@ -83,10 +79,18 @@ jobs:
           go-version-file: go/go.mod
           cache-dependency-path: go/go.sum
 
+      - name: Cache gomobile toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/bin/gomobile
+            ~/go/bin/gobind
+          key: gomobile-${{ runner.os }}-3a7bc9f8a4de
+
       - name: Install gomobile
         run: |
-          go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20250305212854-3a7bc9f8a4de
-          go install golang.org/x/mobile/cmd/gobind@v0.0.0-20250305212854-3a7bc9f8a4de
+          command -v gomobile >/dev/null || go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20250305212854-3a7bc9f8a4de
+          command -v gobind   >/dev/null || go install golang.org/x/mobile/cmd/gobind@v0.0.0-20250305212854-3a7bc9f8a4de
           gomobile init
 
       - name: Patch vendored dependencies
