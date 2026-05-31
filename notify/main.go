@@ -80,7 +80,10 @@ func main() {
 		}
 		return
 	default:
-		os.Exit(runService(cfg))
+		runCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+		code := runService(runCtx, cfg)
+		stop()
+		os.Exit(code)
 	}
 }
 
@@ -167,10 +170,15 @@ var relevantEventTypes = map[string]bool{
 	"FolderCompletion":  true,
 }
 
-func runService(cfg Config) int {
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	defer cancel()
+// inactiveRecheckInterval is how long the run loop waits before re-attempting a
+// trigger the relay declined for an inactive subscription. It is deliberately
+// much slower than the debounce cadence: it resumes delivery on its own soon
+// after the subscription is reactivated — even if no new Syncthing change
+// arrives — without hammering the relay (which allows ~10 triggers/min/device)
+// while the subscription stays inactive. Overridable in tests.
+var inactiveRecheckInterval = 60 * time.Second
 
+func runService(ctx context.Context, cfg Config) int {
 	st := NewSyncthingClient(cfg.SyncthingAPIURL, cfg.SyncthingAPIKey)
 	deviceID, err := waitForDeviceID(ctx, st)
 	if err != nil {
@@ -219,15 +227,14 @@ func runService(cfg Config) int {
 			if !ok {
 				if len(pending) > 0 {
 					flushCtx, flushCancel := context.WithTimeout(context.Background(), 5*time.Second)
-					delivered, fatal := fireTrigger(flushCtx, relay, "stream-flush")
-					if delivered {
+					outcome := fireTrigger(flushCtx, relay, "stream-flush")
+					flushCancel()
+					if outcome == outcomeDelivered {
 						markTriggered(lastTriggered, pending)
 					}
-					if fatal {
-						flushCancel()
+					if outcome == outcomeFatal {
 						return 1
 					}
-					flushCancel()
 				}
 				if ctx.Err() == nil {
 					slog.Error("syncthing event stream closed unexpectedly",
@@ -282,23 +289,33 @@ func runService(cfg Config) int {
 			if len(pending) == 0 {
 				continue
 			}
-			delivered, fatal := fireTrigger(ctx, relay, "change-detected")
-			if delivered {
+			switch fireTrigger(ctx, relay, "change-detected") {
+			case outcomeDelivered:
 				markTriggered(lastTriggered, pending)
 				clear(pending)
-				continue
-			}
-			if fatal {
+			case outcomeFatal:
 				return 1
+			case outcomeRetry:
+				// Transient failure: keep the pending work and retry promptly on
+				// the debounce cadence.
+				debounceTimer = time.NewTimer(debounceDur)
+				debounceCh = debounceTimer.C
+			case outcomeSubscriptionInactive:
+				// No active subscription: keep the pending work and re-check on a
+				// slow cadence (not the fast debounce cadence) so delivery
+				// resumes automatically once the subscription is active again —
+				// even with no further changes — without hammering the relay
+				// while it stays inactive. A new change still re-arms the faster
+				// debounce timer in the event branch.
+				debounceTimer = time.NewTimer(inactiveRecheckInterval)
+				debounceCh = debounceTimer.C
 			}
-			debounceTimer = time.NewTimer(debounceDur)
-			debounceCh = debounceTimer.C
 
 		case <-ctx.Done():
 			slog.Info("shutdown signal received")
 			if len(pending) > 0 {
 				shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-				if delivered, _ := fireTrigger(shutdownCtx, relay, "shutdown-flush"); delivered {
+				if fireTrigger(shutdownCtx, relay, "shutdown-flush") == outcomeDelivered {
 					markTriggered(lastTriggered, pending)
 				}
 				shutdownCancel()
@@ -466,22 +483,56 @@ func markTriggered(lastTriggered, pending map[string]string) {
 	}
 }
 
-// fireTrigger sends a relay trigger.
-// Returns `(delivered, fatal)` so the caller can retain pending work on
-// transient relay failures without collapsing the process on recoverable errors.
-func fireTrigger(ctx context.Context, relay *RelayClient, reason string) (bool, bool) {
+// triggerOutcome classifies the result of a relay trigger so the run loop can
+// react without collapsing the process on recoverable conditions.
+type triggerOutcome int
+
+const (
+	// outcomeDelivered: the relay accepted the wake-up signal.
+	outcomeDelivered triggerOutcome = iota
+	// outcomeRetry: a transient failure (network blip, 5xx, relay rate limit).
+	// Keep the pending work and retry promptly on the debounce cadence.
+	outcomeRetry
+	// outcomeSubscriptionInactive: the relay declined because the device has no
+	// active subscription (expired, cancelled, or not yet provisioned). Keep the
+	// process alive; delivery resumes automatically once the subscription is
+	// active again. This must never bring the sidecar down.
+	outcomeSubscriptionInactive
+	// outcomeFatal: a genuine misconfiguration (wrong RELAY_URL / missing
+	// endpoint) that a runtime retry cannot fix.
+	outcomeFatal
+)
+
+// fireTrigger sends a relay trigger and classifies the result so the caller can
+// retain pending work on transient failures, keep running through inactive
+// subscriptions, and exit only on a real misconfiguration.
+func fireTrigger(ctx context.Context, relay *RelayClient, reason string) triggerOutcome {
 	slog.Info("sending relay trigger", "reason", reason)
-	if err := relay.Trigger(ctx); err != nil {
-		if isFatal(err) {
-			slog.Error("relay trigger failed with fatal configuration error",
-				"classification", "fatal",
-				"component", "relay",
-				"reason", reason,
-				"error", err,
-				"action", "exit",
-			)
-			return false, true
-		}
+	err := relay.Trigger(ctx)
+	if err == nil {
+		return outcomeDelivered
+	}
+
+	switch {
+	case isFatal(err):
+		slog.Error("relay trigger failed with fatal configuration error",
+			"classification", "fatal",
+			"component", "relay",
+			"reason", reason,
+			"error", err,
+			"action", "exit",
+		)
+		return outcomeFatal
+	case isSubscriptionInactive(err):
+		slog.Warn("relay reports no active subscription for this device; keeping notify running",
+			"classification", "recoverable",
+			"component", "relay",
+			"reason", reason,
+			"error", err,
+			"action", "await_active_subscription",
+		)
+		return outcomeSubscriptionInactive
+	default:
 		slog.Error("relay trigger failed",
 			"classification", "recoverable",
 			"component", "relay",
@@ -489,9 +540,8 @@ func fireTrigger(ctx context.Context, relay *RelayClient, reason string) (bool, 
 			"error", err,
 			"action", "continue",
 		)
-		return false, false
+		return outcomeRetry
 	}
-	return true, false
 }
 
 func formatWatched(folders map[string]bool) string {
