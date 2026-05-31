@@ -254,6 +254,7 @@
 "Shared With" = "Geteilt mit";
 "Shared by an unknown device" = "Geteilt von einem unbekannten Gerät";
 "Shared by: %@" = "Geteilt von: %@";
+"Synced as part of your Obsidian directory. Sync filters and devices apply to the whole directory." = "Wird als Teil deines Obsidian-Verzeichnisses synchronisiert. Sync-Filter und Geräte gelten für das gesamte Verzeichnis.";
 "Show Line-by-Line Diff" = "Zeilenweisen Diff anzeigen";
 "Shows whether this Syncthing device is currently reachable." = "Zeigt an, ob dieses Syncthing-Gerät derzeit erreichbar ist.";
 "Silent Push" = "Stiller Push";

@@ -626,33 +626,96 @@ struct ContentView: View {
                 }
                 .padding(.vertical, 4)
             } else {
-                ForEach(syncthingManager.folders) { folder in
+                ForEach(vaultRows) { item in
                     NavigationLink {
-                        vaultDetailView(folder)
+                        vaultDetailView(item)
                     } label: {
-                        folderRow(folder)
+                        vaultRow(item)
                     }
                 }
             }
         }
     }
 
-    private func folderRow(_ folder: SyncthingManager.FolderInfo) -> some View {
-        let status = syncthingManager.folderStatuses[folder.id]
-        let conflicts = syncthingManager.conflictFiles[folder.id] ?? []
+    /// A single row in the "Obsidian Vaults" list. The list is keyed on the
+    /// *vaults* the user actually has — matching the section title and what
+    /// Obsidian itself shows — not on raw Syncthing sync folders. When one sync
+    /// folder covers the whole Obsidian directory (the common setup: pick
+    /// "On My iPhone/Obsidian"), it expands into one row per detected vault
+    /// inside it; a per-vault sync folder maps 1:1. `vaultSubpath`/`relativePrefix`
+    /// are non-nil only for the expanded directory case, where sync status,
+    /// filters and devices are shared by the whole directory.
+    private struct VaultRowItem: Identifiable {
+        let id: String
+        let name: String
+        let folder: SyncthingManager.FolderInfo
+        let vaultSubpath: String?
+        let relativePrefix: String?
+    }
+
+    /// Build the displayed vault list from the detected vaults inside the synced
+    /// Obsidian directory, mapped onto whichever Syncthing folder actually syncs
+    /// them. Falls back to the folder itself when it isn't the Obsidian root
+    /// (per-vault sync, or the root is itself a single vault).
+    private var vaultRows: [VaultRowItem] {
+        let base = vaultManager.obsidianBasePath.map(Self.canonicalPath)
+        var rows: [VaultRowItem] = []
+        for folder in syncthingManager.folders {
+            let isWholeDirectory = base != nil && Self.canonicalPath(folder.path) == base
+            if isWholeDirectory, !vaultManager.detectedVaults.isEmpty {
+                for vault in vaultManager.detectedVaults {
+                    rows.append(VaultRowItem(
+                        id: "\(folder.id)/\(vault)",
+                        name: vault,
+                        folder: folder,
+                        vaultSubpath: (folder.path as NSString).appendingPathComponent(vault),
+                        relativePrefix: vault
+                    ))
+                }
+            } else {
+                rows.append(VaultRowItem(
+                    id: folder.id,
+                    name: folder.label.isEmpty ? folder.id : folder.label,
+                    folder: folder,
+                    vaultSubpath: nil,
+                    relativePrefix: nil
+                ))
+            }
+        }
+        return rows
+    }
+
+    /// Normalize a path so the Syncthing folder path (stored at accept time) and
+    /// the security-scoped bookmark path (resolved at launch) compare equal even
+    /// across `/var`↔`/private/var` symlinks or a trailing slash.
+    private static func canonicalPath(_ path: String) -> String {
+        URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+    }
+
+    /// Conflicts attributed to one vault: inside the vault's subdirectory for a
+    /// directory-sync row, or all of the folder's conflicts for a 1:1 row.
+    private func conflicts(for item: VaultRowItem) -> [SyncthingManager.ConflictInfo] {
+        let all = syncthingManager.conflictFiles[item.folder.id] ?? []
+        guard let vault = item.relativePrefix else { return all }
+        return all.filter { $0.belongs(toVault: vault) }
+    }
+
+    private func vaultRow(_ item: VaultRowItem) -> some View {
+        let status = syncthingManager.folderStatuses[item.folder.id]
+        let conflictCount = conflicts(for: item).count
         return HStack {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    Text(folder.label.isEmpty ? folder.id : folder.label)
+                    Text(item.name)
                         .font(.body)
-                    if !conflicts.isEmpty {
-                        Text("\(conflicts.count)")
+                    if conflictCount > 0 {
+                        Text("\(conflictCount)")
                             .font(.caption2.bold())
                             .foregroundStyle(.white)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 1)
                             .background(Color.statusAttention, in: Capsule())
-                            .accessibilityLabel(L10n.fmt("%d conflicts", conflicts.count))
+                            .accessibilityLabel(L10n.fmt("%d conflicts", conflictCount))
                     }
                 }
                 if let status {
@@ -699,13 +762,20 @@ struct ContentView: View {
 
     // MARK: - Vault Detail
 
-    private func vaultDetailView(_ folder: SyncthingManager.FolderInfo) -> some View {
+    private func vaultDetailView(_ item: VaultRowItem) -> some View {
+        let folder = item.folder
         let status = syncthingManager.folderStatuses[folder.id]
-        let conflicts = syncthingManager.conflictFiles[folder.id] ?? []
+        let conflicts = self.conflicts(for: item)
         return List {
-            Section("Vault") {
-                DetailRow(title: L10n.tr("Name"), value: folder.label.isEmpty ? folder.id : folder.label)
-                DetailRow(title: L10n.tr("Path"), value: folder.path, monospacedValue: true)
+            Section {
+                DetailRow(title: L10n.tr("Name"), value: item.name)
+                DetailRow(title: L10n.tr("Path"), value: item.vaultSubpath ?? folder.path, monospacedValue: true)
+            } header: {
+                Text("Vault")
+            } footer: {
+                if item.relativePrefix != nil {
+                    Text("Synced as part of your Obsidian directory. Sync filters and devices apply to the whole directory.")
+                }
             }
 
             Section("Sync Status") {
@@ -745,6 +815,7 @@ struct ContentView: View {
                     NavigationLink {
                         ConflictListView(
                             folderID: folder.id,
+                            pathPrefix: item.relativePrefix,
                             syncthingManager: syncthingManager
                         )
                     } label: {
@@ -827,7 +898,7 @@ struct ContentView: View {
                 .disabled(isScanning)
             }
         }
-        .navigationTitle(folder.label.isEmpty ? folder.id : folder.label)
+        .navigationTitle(item.name)
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             if !syncthingManager.hasShownRecommendationSheet(folderID: folder.id) {

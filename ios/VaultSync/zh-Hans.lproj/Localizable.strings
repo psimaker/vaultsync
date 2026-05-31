@@ -254,6 +254,7 @@
 "Shared With" = "共享给";
 "Shared by an unknown device" = "由未知设备共享";
 "Shared by: %@" = "共享者：%@";
+"Synced as part of your Obsidian directory. Sync filters and devices apply to the whole directory." = "作为 Obsidian 目录的一部分进行同步。同步过滤器和设备适用于整个目录。";
 "Show Line-by-Line Diff" = "显示逐行差异";
 "Shows whether this Syncthing device is currently reachable." = "显示该 Syncthing 设备当前是否可达。";
 "Silent Push" = "静默推送";
