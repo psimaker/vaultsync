@@ -353,7 +353,7 @@
 "onboarding.overview.step3.description" = "Share your Obsidian vault from Syncthing on your computer to this iPhone.";
 "onboarding.overview.step4.title" = "Watch sync status";
 "onboarding.overview.step4.description" = "VaultSync shows active vaults, issues, and sync progress on the home screen.";
-"onboarding.overview.cloudRelay" = "Turn on Cloud Relay later in Settings to get changes pushed the moment they happen — without opening the app.";
+"onboarding.overview.cloudRelay" = "Want changes the moment they happen, without opening the app? Turn on Cloud Relay in Settings later — it adds a small helper on your server.";
 "onboarding.cta.openVaultSync" = "Open VaultSync";
 "onboarding.accessibility.page" = "Page %d of 2";
 "onboarding.accessibility.continueHint" = "Opens a short setup overview.";
@@ -382,11 +382,6 @@
 "VaultSync’s sync engine is running." = "VaultSync’s sync engine is running.";
 "VaultSync’s sync engine is still starting or unavailable." = "VaultSync’s sync engine is still starting or unavailable.";
 "If this stays unavailable, restart VaultSync and check the home screen for issues." = "If this stays unavailable, restart VaultSync and check the home screen for issues.";
-"Cloud Relay ready" = "Cloud Relay ready";
-"Cloud Relay is available for faster background updates." = "Cloud Relay is available for faster background updates.";
-"Cloud Relay is not enabled." = "Cloud Relay is not enabled.";
-"Enable Cloud Relay later in Settings if you want faster background updates." = "Enable Cloud Relay later in Settings if you want faster background updates.";
-
 /* Sync Filters */
 "Sync Filters" = "Sync Filters";
 "Recommended" = "Recommended";
@@ -530,3 +525,46 @@
 "Relay %@ unauthorized (HTTP %d)." = "Relay %@ unauthorized (HTTP %d).";
 "Unauthorized request." = "Unauthorized request.";
 "relay network: %@" = "relay network: %@";
+
+/* Cloud Relay activation (2026-05-31): honest server-setup + conversion */
+"Cloud Relay is not enabled. Without it, incoming changes arrive when you open VaultSync." = "Cloud Relay is not enabled. Without it, incoming changes arrive when you open VaultSync.";
+"Enable Cloud Relay in Settings if you want changes pushed the moment they happen." = "Enable Cloud Relay in Settings if you want changes pushed the moment they happen.";
+"Cloud Relay — finish server setup" = "Cloud Relay — finish server setup";
+"You’re subscribed, but no recent wake-up has arrived. Make sure the vaultsync-notify helper is running on your server." = "You’re subscribed, but no recent wake-up has arrived. Make sure the vaultsync-notify helper is running on your server.";
+"Set up the server helper from Settings → Cloud Relay → Set Up Your Server." = "Set up the server helper from Settings → Cloud Relay → Set Up Your Server.";
+"Wake-ups are being delivered — incoming changes sync the moment they happen." = "Wake-ups are being delivered — incoming changes sync the moment they happen.";
+"Your server helper is running — wake-ups are being delivered." = "Your server helper is running — wake-ups are being delivered.";
+"Why this step" = "Why this step";
+"Cloud Relay needs a small helper on your server. It watches Syncthing for changes and sends VaultSync a wake-up signal — it never sees your notes. Without it, the subscription has nothing to wake the app with." = "Cloud Relay needs a small helper on your server. It watches Syncthing for changes and sends VaultSync a wake-up signal — it never sees your notes. Without it, the subscription has nothing to wake the app with.";
+"Step 1 — Get your Syncthing API key" = "Step 1 — Get your Syncthing API key";
+"Open the Syncthing web UI on your server, then Actions → Settings → GUI → API Key, and copy the key." = "Open the Syncthing web UI on your server, then Actions → Settings → GUI → API Key, and copy the key.";
+"Step 2 — Run this on your server" = "Step 2 — Run this on your server";
+"Copy Command" = "Copy Command";
+"Replace PASTE_YOUR_KEY with the API key from Step 1. If Syncthing runs in another container, set SYNCTHING_API_URL to its address instead of localhost." = "Replace PASTE_YOUR_KEY with the API key from Step 1. If Syncthing runs in another container, set SYNCTHING_API_URL to its address instead of localhost.";
+"Step 3 — Confirm it works" = "Step 3 — Confirm it works";
+"Come back to VaultSync. The moment a change happens on your server, Relay Diagnostics will confirm that wake-ups are being delivered — that means everything works." = "Come back to VaultSync. The moment a change happens on your server, Relay Diagnostics will confirm that wake-ups are being delivered — that means everything works.";
+"Full setup guide (Docker Compose, one-command install)" = "Full setup guide (Docker Compose, one-command install)";
+"Prefer Docker Compose or a guided one-command installer? The full guide covers both." = "Prefer Docker Compose or a guided one-command installer? The full guide covers both.";
+"Set Up Your Server" = "Set Up Your Server";
+"Server setup command" = "Server setup command";
+"Delivering wake-ups" = "Delivering wake-ups";
+"Last wake-up" = "Last wake-up";
+"Waiting for your server" = "Waiting for your server";
+"Cloud Relay is subscribed, but no wake-up has arrived yet. Finish the one-time setup on your server to start receiving instant updates." = "Cloud Relay is subscribed, but no wake-up has arrived yet. Finish the one-time setup on your server to start receiving instant updates.";
+"Subscribe Monthly" = "Subscribe Monthly";
+"Subscribe Yearly" = "Subscribe Yearly";
+"When files change on your server, a silent push wakes VaultSync the moment it happens, so sync feels instant without opening the app. The relay only sends a wake-up signal — it never sees your notes. It needs a one-time helper on your server — tap Set Up Your Server after subscribing." = "When files change on your server, a silent push wakes VaultSync the moment it happens, so sync feels instant without opening the app. The relay only sends a wake-up signal — it never sees your notes. It needs a one-time helper on your server — tap Set Up Your Server after subscribing.";
+"Auto-renews until canceled. Cancel anytime in Settings → Subscriptions." = "Auto-renews until canceled. Cancel anytime in Settings → Subscriptions.";
+"Make incoming sync instant" = "Make incoming sync instant";
+"Your vault already syncs when you open VaultSync. Cloud Relay adds a silent push so changes on your server reach this iPhone the moment they happen — no need to open the app first." = "Your vault already syncs when you open VaultSync. Cloud Relay adds a silent push so changes on your server reach this iPhone the moment they happen — no need to open the app first.";
+"Near-instant server → iPhone updates" = "Near-instant server → iPhone updates";
+"The relay only sends a wake-up — it never sees your notes" = "The relay only sends a wake-up — it never sees your notes";
+"Cancel anytime in Settings → Subscriptions" = "Cancel anytime in Settings → Subscriptions";
+"You’re subscribed to Cloud Relay" = "You’re subscribed to Cloud Relay";
+"One step left: Cloud Relay only delivers wake-ups once a small helper is running on your server." = "One step left: Cloud Relay only delivers wake-ups once a small helper is running on your server.";
+"Finish setup" = "Finish setup";
+"Cloud Relay needs a one-time helper on your server, shown right after you subscribe." = "Cloud Relay needs a one-time helper on your server, shown right after you subscribe.";
+"Not Now" = "Not Now";
+"Get instant updates" = "Get instant updates";
+"Turn on Cloud Relay" = "Turn on Cloud Relay";
+"Add your server as a Syncthing device before subscribing to Cloud Relay." = "Add your server as a Syncthing device before subscribing to Cloud Relay.";

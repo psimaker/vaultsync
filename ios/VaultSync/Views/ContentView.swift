@@ -14,6 +14,9 @@ struct ContentView: View {
     @State private var pendingShareInFlight: Set<String> = []
     @State private var isRescanning = false
     @State private var pendingFilterSheetFolder: SyncthingManager.FolderInfo?
+    @State private var showRelayUpsell = false
+
+    private static let relayUpsellShownKey = "relay-upsell-shown"
 
     private let slate = Color.vaultSlate
     private let teal = Color.vaultTeal
@@ -76,10 +79,38 @@ struct ContentView: View {
                     }
                 }
             }
+            .sheet(isPresented: $showRelayUpsell) {
+                NavigationStack {
+                    CloudRelayUpsellView(
+                        syncthingManager: syncthingManager,
+                        subscriptionManager: subscriptionManager
+                    )
+                }
+            }
             .onChange(of: syncthingManager.pendingFolders, initial: true) { _, pending in
                 autoAcceptPendingShares(pending)
             }
+            .onChange(of: syncthingManager.lastSyncTime, initial: true) { _, _ in
+                maybePresentRelayUpsell()
+            }
+            .onChange(of: subscriptionManager.isRelaySubscribed) { _, _ in
+                maybePresentRelayUpsell()
+            }
         }
+    }
+
+    // MARK: - Cloud Relay Upsell
+
+    /// Presents the Cloud Relay offer once, at the "aha moment": the first time
+    /// a real sync has completed while the user has at least one vault and is not
+    /// subscribed. Only auto-shown once; the dashboard affordance stays available.
+    private func maybePresentRelayUpsell() {
+        guard !subscriptionManager.isRelaySubscribed else { return }
+        guard !syncthingManager.folders.isEmpty else { return }
+        guard syncthingManager.lastSyncTime != nil else { return }
+        guard !UserDefaults.standard.bool(forKey: Self.relayUpsellShownKey) else { return }
+        UserDefaults.standard.set(true, forKey: Self.relayUpsellShownKey)
+        showRelayUpsell = true
     }
 
     // MARK: - Auto-Accept Pending Shares
@@ -199,6 +230,30 @@ struct ContentView: View {
                         .font(.subheadline)
                         .foregroundStyle(teal)
                 }
+                .accessibilityElement(children: .combine)
+            } else if !syncthingManager.folders.isEmpty {
+                Button {
+                    showRelayUpsell = true
+                } label: {
+                    HStack {
+                        Image(systemName: "antenna.radiowaves.left.and.right")
+                            .foregroundStyle(teal)
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(L10n.tr("Get instant updates"))
+                                .font(.subheadline.weight(.medium))
+                            Text(L10n.tr("Turn on Cloud Relay"))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
+                    }
+                }
+                .tint(.primary)
                 .accessibilityElement(children: .combine)
             }
 

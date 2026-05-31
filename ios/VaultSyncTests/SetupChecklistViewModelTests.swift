@@ -104,4 +104,15 @@ struct SetupChecklistViewModelTests {
         )
         #expect(viewModel.completedRequiredCount == 0)
     }
+
+    @Test("Relay checklist state covers all three branches")
+    func relayChecklistStateTransitions() {
+        // Not subscribed → notSubscribed regardless of delivery signal.
+        #expect(SetupChecklistViewModel.relayChecklistState(isSubscribed: false, isDelivering: false) == .notSubscribed)
+        #expect(SetupChecklistViewModel.relayChecklistState(isSubscribed: false, isDelivering: true) == .notSubscribed)
+        // Subscribed but no fresh wake-up → awaitingDelivery (server setup pending/stale).
+        #expect(SetupChecklistViewModel.relayChecklistState(isSubscribed: true, isDelivering: false) == .awaitingDelivery)
+        // Subscribed and a recent wake-up confirmed → delivering.
+        #expect(SetupChecklistViewModel.relayChecklistState(isSubscribed: true, isDelivering: true) == .delivering)
+    }
 }

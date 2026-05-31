@@ -7,7 +7,7 @@ private let logger = Logger(subsystem: "eu.vaultsync.app", category: "relay")
 /// Authentication is based on Syncthing Device IDs — no API keys or user accounts.
 enum RelayService {
 
-    private static let relayURL = "https://relay.vaultsync.eu"
+    static let relayURL = "https://relay.vaultsync.eu"
     private static let diagnosticsErrorStorageKey = "relay-diagnostics-last-error"
     static let diagnosticsDidChangeNotification = Notification.Name("RelayDiagnosticsDidChange")
 
