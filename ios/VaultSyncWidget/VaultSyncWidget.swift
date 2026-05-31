@@ -155,6 +155,7 @@ private struct VaultSyncWidgetEntryView: View {
         }
         .widgetURL(VaultSyncWidgetConstants.syncURL)
         .containerBackground(.fill.tertiary, for: .widget)
+        .accessibilityElement(children: .combine)
     }
 
     private var mediumWidget: some View {
@@ -197,6 +198,7 @@ private struct VaultSyncWidgetEntryView: View {
         }
         .widgetURL(VaultSyncWidgetConstants.syncURL)
         .containerBackground(.fill.tertiary, for: .widget)
+        .accessibilityElement(children: .combine)
     }
 
     private var accessoryWidget: some View {
@@ -204,6 +206,7 @@ private struct VaultSyncWidgetEntryView: View {
             HStack(spacing: 6) {
                 Image(systemName: entry.snapshot.statusSymbol)
                     .foregroundStyle(entry.snapshot.statusColor)
+                    .accessibilityHidden(true)
                 Text(entry.snapshot.statusLabel)
                     .font(.caption.weight(.semibold))
                     .lineLimit(1)
@@ -218,12 +221,14 @@ private struct VaultSyncWidgetEntryView: View {
         }
         .widgetURL(VaultSyncWidgetConstants.syncURL)
         .containerBackground(.fill.tertiary, for: .widget)
+        .accessibilityElement(children: .combine)
     }
 
     private var statusRow: some View {
         HStack(spacing: 8) {
             Image(systemName: entry.snapshot.statusSymbol)
                 .foregroundStyle(entry.snapshot.statusColor)
+                .accessibilityHidden(true)
             Text(entry.snapshot.statusLabel)
                 .font(.headline)
                 .lineLimit(1)

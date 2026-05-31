@@ -433,12 +433,12 @@ struct ContentView: View {
                         vaultManager.needsReconnect ? "Obsidian access expired" : "Obsidian folder not connected",
                         systemImage: "folder.badge.questionmark"
                     )
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Color.statusAttention)
 
                     if let issue = vaultManager.accessIssue {
                         Text(issue.message)
                             .font(.caption)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(Color.statusAttention)
                         Text(issue.remediation)
                             .font(.caption2)
                             .foregroundStyle(.secondary)
