@@ -53,6 +53,7 @@ struct VaultSyncApp: App {
             .onOpenURL { url in
                 handleIncomingURL(url)
             }
+            .tint(.vaultAccent)
         }
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
