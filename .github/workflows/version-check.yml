@@ -1,0 +1,29 @@
+name: Version Check
+
+# Runs when a release tag is pushed. Can't block the tag (it already exists),
+# but turns the run red if the version in the tag, ios/project.yml and the
+# CHANGELOG don't agree — catching a forgotten bump before you cut the release.
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+
+permissions:
+  contents: read
+
+jobs:
+  version-check:
+    name: Version Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag matches project.yml and CHANGELOG
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          echo "Releasing version: $V"
+          grep -q "CFBundleShortVersionString: \"$V\"" ios/project.yml \
+            || { echo "::error::ios/project.yml CFBundleShortVersionString does not match tag $V"; exit 1; }
+          grep -q "^## \[$V\]" CHANGELOG.md \
+            || { echo "::error::CHANGELOG.md has no '## [$V]' section for tag $V"; exit 1; }
+          echo "OK — tag, ios/project.yml and CHANGELOG.md all agree on $V"
