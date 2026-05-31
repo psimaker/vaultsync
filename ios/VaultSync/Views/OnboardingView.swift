@@ -14,9 +14,6 @@ struct OnboardingView: View {
     // Live setup actions — each step launches the real task instead of describing it.
     @State private var showObsidianPicker = false
     @State private var showAddDevice = false
-    @State private var showQRScanner = false
-    @State private var newDeviceID = ""
-    @State private var newDeviceName = ""
     @State private var alertMessage: String?
     @State private var showAlert = false
 
@@ -58,7 +55,10 @@ struct OnboardingView: View {
                 }
             }
             .sheet(isPresented: $showAddDevice) {
-                addDeviceSheet
+                AddDeviceSheet(syncthingManager: syncthingManager) { message in
+                    alertMessage = message
+                    showAlert = true
+                }
             }
             .alert("Error", isPresented: $showAlert) {
                 Button("OK") { }
@@ -200,13 +200,21 @@ struct OnboardingView: View {
             .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text(title)
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(primaryHeadingColor)
-                Text(description)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                // Group only the text into one VoiceOver element (so title +
+                // description are read together with the completion status) while
+                // leaving the action button as its own focusable, activatable
+                // element — combining the whole card would swallow the button.
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(title)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(primaryHeadingColor)
+                    Text(description)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityValue(isComplete ? L10n.tr("Done") : "")
 
                 if !isComplete, let actionTitle, let action {
                     Button(actionTitle, action: action)
@@ -222,66 +230,9 @@ struct OnboardingView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(cardBackground, in: RoundedRectangle(cornerRadius: VaultRadius.card, style: .continuous))
         .overlay(cardStroke(in: RoundedRectangle(cornerRadius: VaultRadius.card, style: .continuous)))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(title)
-        .accessibilityValue(isComplete ? L10n.tr("Done") : "")
     }
 
-    // MARK: - Add Device sheet (onboarding)
-
-    private var addDeviceSheet: some View {
-        NavigationStack {
-            Form {
-                Section("Device ID") {
-                    TextField("XXXXXXX-XXXXXXX-...", text: $newDeviceID)
-                        .font(.system(.body, design: .monospaced))
-                        .textInputAutocapitalization(.characters)
-                        .autocorrectionDisabled()
-                    Button {
-                        showQRScanner = true
-                    } label: {
-                        Label("Scan QR Code", systemImage: "qrcode.viewfinder")
-                    }
-                }
-                Section("Name (optional)") {
-                    TextField("e.g. My Laptop", text: $newDeviceName)
-                }
-            }
-            .sheet(isPresented: $showQRScanner) {
-                QRScannerView { scannedCode in
-                    newDeviceID = scannedCode
-                }
-            }
-            .navigationTitle("Add Device")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { resetAddDeviceForm() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Add") { addDevice() }
-                        .disabled(newDeviceID.isEmpty)
-                }
-            }
-        }
-        .presentationDetents([.medium, .large])
-    }
-
-    private func addDevice() {
-        let id = newDeviceID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let name = newDeviceName.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let err = syncthingManager.addDevice(id: id, name: name) {
-            present(error: err, fallbackTitle: L10n.tr("Could Not Add Device"))
-        } else {
-            resetAddDeviceForm()
-        }
-    }
-
-    private func resetAddDeviceForm() {
-        newDeviceID = ""
-        newDeviceName = ""
-        showAddDevice = false
-    }
+    // MARK: - Error presentation
 
     private func present(error: String, fallbackTitle: String) {
         alertMessage = SyncUserError.from(rawMessage: error, fallbackTitle: fallbackTitle).userVisibleDescription

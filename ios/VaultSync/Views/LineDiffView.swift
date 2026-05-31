@@ -31,11 +31,11 @@ struct LineDiffView: View {
                             HStack(alignment: .top, spacing: 6) {
                                 Text(linePrefix(for: line.type))
                                     .font(.system(.caption, design: .monospaced).weight(.semibold))
-                                    .foregroundColor(foregroundColor(for: line.type))
+                                    .foregroundStyle(foregroundColor(for: line.type))
                                     .accessibilityHidden(true)
                                 Text(line.text.isEmpty ? " " : line.text)
                                     .font(.system(.caption, design: .monospaced))
-                                    .foregroundColor(foregroundColor(for: line.type))
+                                    .foregroundStyle(foregroundColor(for: line.type))
                             }
                             .padding(.horizontal, 4)
                             .padding(.vertical, 2)

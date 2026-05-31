@@ -348,7 +348,7 @@ struct RelayDiagnosticsView: View {
 
     private var alertBannerColor: Color {
         switch subscriptionManager.alertBannerStatus {
-        case .allowed: return .green
+        case .allowed: return .statusSuccess
         case .denied: return .secondary
         // "Not determined" is not an error — keep it neutral rather than a
         // warning yellow that implies something is wrong.
@@ -359,9 +359,9 @@ struct RelayDiagnosticsView: View {
     private var apnsStatusColor: Color {
         switch subscriptionManager.apnsRegistrationStatus {
         case .registered:
-            return .green
+            return .statusSuccess
         case .failed:
-            return .red
+            return .statusError
         case .notAttempted:
             return .secondary
         }
@@ -370,11 +370,11 @@ struct RelayDiagnosticsView: View {
     private func relayProvisionColor(_ status: RelayProvisionStatus) -> Color {
         switch status {
         case .provisioned:
-            return .green
+            return .statusSuccess
         case .failed:
-            return .red
+            return .statusError
         case .inProgress:
-            return .blue
+            return .statusInfo
         case .notAttempted:
             return .secondary
         }

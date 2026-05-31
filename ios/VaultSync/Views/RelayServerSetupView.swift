@@ -97,7 +97,7 @@ struct RelayServerSetupView: View {
                 .textSelection(.enabled)
                 .padding(10)
         }
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: VaultRadius.control, style: .continuous))
         .accessibilityLabel(L10n.tr("Server setup command"))
         .accessibilityValue(dockerCommand)
     }

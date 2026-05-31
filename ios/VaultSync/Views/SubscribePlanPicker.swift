@@ -114,6 +114,7 @@ struct SubscribePlanPicker: View {
                 Spacer(minLength: VaultSpacing.s)
                 if subscriptionManager.purchaseInProgress {
                     ProgressView()
+                        .accessibilityHidden(true)
                 } else {
                     Image(systemName: "chevron.right")
                         .font(.footnote.weight(.semibold))
@@ -135,8 +136,18 @@ struct SubscribePlanPicker: View {
         .buttonStyle(.plain)
         .disabled(subscriptionManager.purchaseInProgress)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(L10n.fmt("%1$@ — %2$@", title, subscriptionManager.priceText(for: product)))
+        .accessibilityLabel(planAccessibilityLabel(title: title, product: product, recommended: recommended))
         .accessibilityHint(L10n.tr("Starts a subscription purchase."))
+    }
+
+    /// VoiceOver label for a plan card — folds the "best value / save N%" badge into
+    /// the spoken label, which the combined element would otherwise drop.
+    private func planAccessibilityLabel(title: String, product: Product, recommended: Bool) -> String {
+        let base = L10n.fmt("%1$@ — %2$@", title, subscriptionManager.priceText(for: product))
+        if recommended, let savings = yearlySavingsText {
+            return base + ". " + savings
+        }
+        return base
     }
 
     /// "Save N%" for the yearly plan vs. paying monthly for a year. Derived from

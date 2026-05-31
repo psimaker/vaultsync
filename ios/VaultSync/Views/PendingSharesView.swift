@@ -15,22 +15,13 @@ struct PendingSharesView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             if !obsidianAccessible {
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("Connect Obsidian to accept shares", systemImage: "folder.badge.questionmark")
-                        .foregroundStyle(Color.statusAttention)
-                    Text("Share requests are shown below, but Accept and Retry are disabled until your Obsidian folder is connected.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Button {
-                        onReconnectObsidian()
-                    } label: {
-                        Label("Reconnect Obsidian Folder", systemImage: "folder.badge.gearshape")
-                    }
-                    .buttonStyle(.borderedProminent)
-                }
-                .padding(12)
-                .background(Color.statusAttention.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .accessibilityElement(children: .combine)
+                ActionCard(
+                    status: .attention,
+                    title: L10n.tr("Connect Obsidian to accept shares"),
+                    message: L10n.tr("Share requests are shown below, but Accept and Retry are disabled until your Obsidian folder is connected."),
+                    actionTitle: L10n.tr("Reconnect Obsidian Folder"),
+                    action: onReconnectObsidian
+                )
             }
 
             if pendingFolders.isEmpty {
@@ -118,7 +109,7 @@ struct PendingSharesView: View {
                 if inFlightFolderIDs.contains(folder.id) {
                     ProgressView()
                         .controlSize(.small)
-                        .accessibilityLabel("Applying share")
+                        .accessibilityHidden(true)
                     Text("Applying…")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -143,13 +134,8 @@ struct PendingSharesView: View {
                 .disabled(inFlightFolderIDs.contains(folder.id))
             }
         }
-        .padding(12)
-        .background(Color(.secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(Color(.separator), lineWidth: 0.5)
-        )
+        .padding(VaultSpacing.m)
+        .vaultCard()
     }
 
     private func displayName(for folder: SyncthingManager.PendingFolderInfo) -> String {

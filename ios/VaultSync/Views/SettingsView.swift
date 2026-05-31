@@ -7,8 +7,6 @@ struct SettingsView: View {
     var vaultManager: VaultManager
     var subscriptionManager: SubscriptionManager
 
-    @State private var alertMessage: String?
-    @State private var showAlert = false
     @State private var showSetupStatus = false
     @State private var tipJar = TipJarManager()
     @State private var showThankYou = false
@@ -73,11 +71,6 @@ struct SettingsView: View {
                         dismiss()
                     }
                 }
-            }
-            .alert("Error", isPresented: $showAlert) {
-                Button("OK") { }
-            } message: {
-                Text(alertMessage ?? "")
             }
             .sheet(isPresented: $showSetupStatus) {
                 NavigationStack {

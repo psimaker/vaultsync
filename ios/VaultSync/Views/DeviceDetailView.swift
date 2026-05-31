@@ -13,13 +13,13 @@ struct DeviceDetailView: View {
     var body: some View {
         List {
             Section("Device") {
-                LabeledContent("Device ID") {
-                    Text(device.deviceID)
-                        .font(.system(.caption2, design: .monospaced))
-                        .textSelection(.enabled)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.trailing)
+                VStack(alignment: .leading, spacing: VaultSpacing.xs) {
+                    Text("Device ID")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    MonoField(text: device.deviceID, accessibilityName: L10n.tr("Device ID"))
                 }
+                .padding(.vertical, VaultSpacing.xs)
 
                 HStack {
                     Text("Name")
@@ -38,8 +38,6 @@ struct DeviceDetailView: View {
                             .accessibilityHidden(true)
                         Text(device.connected ? L10n.tr("Connected") : L10n.tr("Disconnected"))
                     }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel(device.connected ? L10n.tr("Connected") : L10n.tr("Disconnected"))
                     .accessibilityHint("Shows whether this Syncthing device is currently reachable.")
                 }
             }

@@ -4,7 +4,6 @@ struct ContentView: View {
     var syncthingManager: SyncthingManager
     var vaultManager: VaultManager
     var subscriptionManager: SubscriptionManager
-    @Environment(\.colorScheme) private var colorScheme
     @State private var showAddDevice = false
     @State private var showSettings = false
     @State private var showObsidianPicker = false
@@ -16,7 +15,7 @@ struct ContentView: View {
 
     private static let relayUpsellShownKey = "relay-upsell-shown"
 
-    private let teal = Color.vaultTeal
+    private let accent = Color.vaultAccent
 
     /// Cached formatter for the dashboard "Last sync" line. Produces a fully
     /// localized relative phrase ("2 hours ago" / "vor 2 Stunden" / "2 小时前").
@@ -65,7 +64,10 @@ struct ContentView: View {
             Text(alertMessage ?? "")
         }
         .sheet(isPresented: $showAddDevice) {
-            addDeviceSheet
+            AddDeviceSheet(syncthingManager: syncthingManager) { message in
+                alertMessage = message
+                showAlert = true
+            }
         }
         .sheet(isPresented: $showSettings) {
             SettingsView(syncthingManager: syncthingManager, vaultManager: vaultManager, subscriptionManager: subscriptionManager)
@@ -242,22 +244,51 @@ struct ContentView: View {
             }
 
             if subscriptionManager.isRelaySubscribed {
-                HStack {
-                    Image(systemName: "antenna.radiowaves.left.and.right")
-                        .foregroundStyle(teal)
-                        .accessibilityHidden(true)
-                    Text("Cloud Relay active")
-                        .font(.subheadline)
-                        .foregroundStyle(teal)
+                if subscriptionManager.relayDeliveryLikelyWorking {
+                    HStack {
+                        Image(systemName: "antenna.radiowaves.left.and.right")
+                            .foregroundStyle(accent)
+                            .accessibilityHidden(true)
+                        Text("Cloud Relay active")
+                            .font(.subheadline)
+                            .foregroundStyle(accent)
+                    }
+                    .accessibilityElement(children: .combine)
+                } else {
+                    // Subscribed, but wake-ups aren't actually arriving yet (device
+                    // not provisioned / relay unhealthy). Don't claim "active" — send
+                    // the user to finish the one missing step.
+                    Button {
+                        selectedTab = .relay
+                    } label: {
+                        HStack {
+                            Image(systemName: "antenna.radiowaves.left.and.right")
+                                .foregroundStyle(Color.statusAttention)
+                                .accessibilityHidden(true)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(L10n.tr("One step left to activate"))
+                                    .font(.subheadline.weight(.medium))
+                                Text(L10n.tr("Set up the server helper"))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                    .tint(.primary)
+                    .accessibilityElement(children: .combine)
                 }
-                .accessibilityElement(children: .combine)
             } else if !syncthingManager.folders.isEmpty {
                 Button {
                     selectedTab = .relay
                 } label: {
                     HStack {
                         Image(systemName: "antenna.radiowaves.left.and.right")
-                            .foregroundStyle(teal)
+                            .foregroundStyle(accent)
                             .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(L10n.tr("Get instant updates"))
@@ -462,7 +493,7 @@ struct ContentView: View {
                         .frame(maxWidth: .infinity, alignment: .center)
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(teal)
+                    .tint(accent)
                     .frame(maxWidth: .infinity)
 
                     Text("In the picker, choose \"On My iPhone\" → \"Obsidian\", then tap Open.")
@@ -645,22 +676,25 @@ struct ContentView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private func stateIcon(_ state: String) -> String {
+    /// Map a folder's raw engine state onto the canonical `SyncStatus` registry so
+    /// the folder row's glyph + color stay identical to the rest of the app (one
+    /// source of truth). Unknown states stay neutral rather than being forced to a
+    /// misleading "attention".
+    private func folderSyncStatus(_ state: String) -> SyncStatus? {
         switch state {
-        case "idle": "checkmark.circle.fill"
-        case "scanning", "syncing": "arrow.triangle.2.circlepath"
-        case "error": "exclamationmark.circle.fill"
-        default: "questionmark.circle"
+        case "idle": return .synced
+        case "scanning", "syncing": return .syncing
+        case "error": return .error
+        default: return nil
         }
     }
 
+    private func stateIcon(_ state: String) -> String {
+        folderSyncStatus(state)?.symbolName ?? "questionmark.circle"
+    }
+
     private func stateColor(_ state: String) -> Color {
-        switch state {
-        case "idle": .statusSuccess
-        case "scanning", "syncing": .vaultAccent
-        case "error": .statusError
-        default: .statusInactive
-        }
+        folderSyncStatus(state)?.tint ?? .statusInactive
     }
 
     // MARK: - Vault Detail
@@ -670,8 +704,8 @@ struct ContentView: View {
         let conflicts = syncthingManager.conflictFiles[folder.id] ?? []
         return List {
             Section("Vault") {
-                LabeledContent("Name", value: folder.label.isEmpty ? folder.id : folder.label)
-                LabeledContent("Path", value: folder.path)
+                DetailRow(title: L10n.tr("Name"), value: folder.label.isEmpty ? folder.id : folder.label)
+                DetailRow(title: L10n.tr("Path"), value: folder.path, monospacedValue: true)
             }
 
             Section("Sync Status") {
@@ -827,7 +861,7 @@ struct ContentView: View {
         Section {
             if syncthingManager.devices.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("No devices connected", systemImage: "laptopcomputer.and.iphone")
+                    Label("No devices configured", systemImage: "laptopcomputer.and.iphone")
                         .foregroundStyle(.secondary)
                     Text("Add a device using its Syncthing Device ID. Find it in the Syncthing web UI under Actions > Show ID.")
                         .font(.caption)
@@ -842,19 +876,14 @@ struct ContentView: View {
                             syncthingManager: syncthingManager
                         )
                     } label: {
-                        HStack {
-                            Text(device.name.isEmpty ? L10n.tr("Unnamed") : device.name)
-                                .font(.body)
-                            Spacer()
-                            HStack(spacing: 4) {
-                                Image(systemName: device.connected ? "checkmark.circle.fill" : "xmark.circle.fill")
-                                    .foregroundStyle(device.connected ? Color.statusSuccess : Color.statusInactive)
-                                    .accessibilityHidden(true)
-                                Text(device.connected ? L10n.tr("Connected") : L10n.tr("Disconnected"))
-                                    .font(.caption2.weight(.semibold))
-                                    .foregroundStyle(.secondary)
-                            }
-                            .accessibilityElement(children: .combine)
+                        StatusRow(
+                            device.name.isEmpty ? L10n.tr("Unnamed") : device.name,
+                            status: device.connected ? .synced : .paused,
+                            systemImage: device.connected ? "checkmark.circle.fill" : "xmark.circle.fill"
+                        ) {
+                            Text(device.connected ? L10n.tr("Connected") : L10n.tr("Disconnected"))
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -874,73 +903,6 @@ struct ContentView: View {
                 }
             }
         }
-    }
-
-    // MARK: - Add Device Sheet
-
-    @State private var newDeviceID = ""
-    @State private var newDeviceName = ""
-    @State private var showQRScanner = false
-
-    private var addDeviceSheet: some View {
-        NavigationStack {
-            Form {
-                Section("Device ID") {
-                    TextField("XXXXXXX-XXXXXXX-...", text: $newDeviceID)
-                        .font(.system(.body, design: .monospaced))
-                        .textInputAutocapitalization(.characters)
-                        .autocorrectionDisabled()
-
-                    Button {
-                        showQRScanner = true
-                    } label: {
-                        Label("Scan QR Code", systemImage: "qrcode.viewfinder")
-                    }
-                }
-                Section("Name (optional)") {
-                    TextField("e.g. My Laptop", text: $newDeviceName)
-                }
-            }
-            .sheet(isPresented: $showQRScanner) {
-                QRScannerView { scannedCode in
-                    newDeviceID = scannedCode
-                }
-            }
-            .navigationTitle("Add Device")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        resetAddDeviceForm()
-                    }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Add") {
-                        addDevice()
-                    }
-                    .disabled(newDeviceID.isEmpty)
-                }
-            }
-        }
-        .presentationDetents([.medium, .large])
-    }
-
-    private func addDevice() {
-        let id = newDeviceID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let name = newDeviceName.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if let err = syncthingManager.addDevice(id: id, name: name) {
-            alertMessage = mappedError(err, fallbackTitle: L10n.tr("Could Not Add Device")).userVisibleDescription
-            showAlert = true
-        } else {
-            resetAddDeviceForm()
-        }
-    }
-
-    private func resetAddDeviceForm() {
-        newDeviceID = ""
-        newDeviceName = ""
-        showAddDevice = false
     }
 
     // MARK: - Error Helpers

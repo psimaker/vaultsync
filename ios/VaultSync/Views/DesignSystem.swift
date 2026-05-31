@@ -166,6 +166,11 @@ struct MonoField: View {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             #endif
             withAnimation(.snappy) { copied = true }
+            // Revert the affordance so the field doesn't latch on "copied" forever.
+            Task {
+                try? await Task.sleep(for: .seconds(1.5))
+                withAnimation(.snappy) { copied = false }
+            }
         } label: {
             HStack(alignment: .top, spacing: VaultSpacing.s) {
                 Text(text)
@@ -256,22 +261,20 @@ private struct VaultCardModifier: ViewModifier {
     var tint: Color?
 
     func body(content: Content) -> some View {
+        // Clip the whole surface (background + the 4pt accent strip) to the card
+        // shape, so the strip follows the card's leading rounded corners instead
+        // of being individually rounded on all four of its own corners.
         content
-            .background(
-                Color(.secondarySystemBackground),
-                in: RoundedRectangle(cornerRadius: VaultRadius.card, style: .continuous)
-            )
+            .background(Color(.secondarySystemBackground))
             .overlay(alignment: .leading) {
                 if let tint {
                     Rectangle()
                         .fill(tint)
                         .frame(width: 4)
-                        .clipShape(
-                            RoundedRectangle(cornerRadius: VaultRadius.card, style: .continuous)
-                        )
                         .accessibilityHidden(true)
                 }
             }
+            .clipShape(RoundedRectangle(cornerRadius: VaultRadius.card, style: .continuous))
     }
 }
 
