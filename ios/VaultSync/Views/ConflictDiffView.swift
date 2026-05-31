@@ -157,7 +157,7 @@ struct ConflictDiffView: View {
             Button {
                 confirmAction(.keepThis)
             } label: {
-                Label(L10n.tr("Keep This Device’s Version"), systemImage: "iphone")
+                Label(L10n.tr("Keep This Device's Version"), systemImage: "iphone")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)

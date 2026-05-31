@@ -33,8 +33,8 @@
 "Check your subscription status in Settings and retry. If this persists, restart VaultSync." = "Prüfe deinen Abostatus in den Einstellungen und versuche es erneut. Wenn das Problem bleibt, starte VaultSync neu.";
 "Cloud Relay" = "Cloud Relay";
 "Cloud Relay active" = "Cloud Relay aktiv";
-"When files change on your server, a silent push wakes VaultSync the moment it happens, so sync feels instant without opening the app. The relay only sends a wake-up signal — it never sees your notes." = "Ändern sich Dateien auf deinem Server, weckt ein stiller Push VaultSync im selben Moment — Synchronisation wirkt sofort, ohne die App zu öffnen. Das Relay sendet nur ein Wecksignal und sieht deine Notizen nie.";
-"Cloud Relay is not currently subscribed. Push-triggered wake-ups are disabled until the subscription is active." = "Cloud Relay ist derzeit nicht abonniert. Push-ausgelöste Aufweckvorgänge sind deaktiviert, bis das Abo aktiv ist.";
+"When files change on your server, a silent push wakes VaultSync the moment it happens, so sync feels instant without opening the app. The relay only sends a wake-up signal — it never sees your notes." = "Ändern sich Dateien auf deinem Server, weckt ein stiller Push VaultSync im selben Moment — Synchronisation wirkt sofort, ohne die App zu öffnen. Das Relay sendet nur ein Weck-Signal und sieht deine Notizen nie.";
+"Cloud Relay is not currently subscribed. Push-triggered wake-ups are disabled until the subscription is active." = "Cloud Relay ist derzeit nicht abonniert. Push-ausgelöste Weck-Signale sind deaktiviert, bis das Abo aktiv ist.";
 "Cloud Relay is not subscribed. Start a subscription first." = "Cloud Relay ist nicht abonniert. Starte zuerst ein Abo.";
 "Cloud Relay provisioning could not contact the relay backend." = "Cloud Relay-Provisioning konnte das Relay-Backend nicht erreichen.";
 "Cloud Relay provisioning did not complete." = "Cloud Relay-Provisioning wurde nicht abgeschlossen.";
@@ -444,8 +444,8 @@
 "Alert Banners" = "Hinweis-Banner";
 "Allowed" = "Erlaubt";
 "Denied" = "Verweigert";
-"Cloud Relay is delivering wake-ups" = "Cloud Relay liefert Weckrufe";
-"Alert banners are off at the iOS level. Cloud Relay wake-ups still work — they use silent push, which does not need notification permission." = "Hinweis-Banner sind auf iOS-Ebene aus. Cloud-Relay-Weckrufe funktionieren weiterhin — sie nutzen Silent Push, der keine Benachrichtigungsberechtigung benötigt.";
+"Cloud Relay is delivering wake-ups" = "Cloud Relay liefert Weck-Signale";
+"Alert banners are off at the iOS level. Cloud Relay wake-ups still work — they use silent push, which does not need notification permission." = "Hinweis-Banner sind auf iOS-Ebene aus. Cloud-Relay-Weck-Signale funktionieren weiterhin — sie nutzen Silent Push, der keine Benachrichtigungsberechtigung benötigt.";
 "APNs token is missing. Retry APNs registration; if it keeps failing, check your internet connection. (Silent push does not require notification banners.)" = "APNs-Token fehlt. Wiederhole die APNs-Registrierung; falls es weiter fehlschlägt, prüfe deine Internetverbindung. (Silent Push benötigt keine Hinweis-Banner.)";
 "APNs registration failed. Check your internet connection and retry registration. Silent push does not require notification banners to be enabled." = "APNs-Registrierung fehlgeschlagen. Prüfe deine Internetverbindung und wiederhole die Registrierung. Silent Push benötigt keine aktivierten Hinweis-Banner.";
 
@@ -553,9 +553,9 @@
 "Cloud Relay is subscribed, but no wake-up has arrived yet. Finish the one-time setup on your server to start receiving instant updates." = "Cloud Relay ist abonniert, aber es ist noch kein Weck-Signal angekommen. Schließe die einmalige Einrichtung auf deinem Server ab, um sofortige Updates zu erhalten.";
 "Subscribe Monthly" = "Monatlich abonnieren";
 "Subscribe Yearly" = "Jährlich abonnieren";
-"When files change on your server, a silent push wakes VaultSync the moment it happens, so sync feels instant without opening the app. The relay only sends a wake-up signal — it never sees your notes. It needs a one-time helper on your server — tap Set Up Your Server after subscribing." = "Wenn sich Dateien auf deinem Server ändern, weckt ein stiller Push VaultSync im selben Moment — die Synchronisierung fühlt sich sofort an, ohne die App zu öffnen. Das Relay sendet nur ein Weck-Signal — deine Notizen sieht es nie. Dafür ist ein einmaliger Helfer auf deinem Server nötig — tippe nach dem Abschluss des Abos auf „Server einrichten“.";
+"When files change on your server, a silent push wakes VaultSync the moment it happens, so sync feels instant without opening the app. The relay only sends a wake-up signal — it never sees your notes. It needs a one-time helper on your server — tap Set Up Your Server after subscribing." = "Wenn sich Dateien auf deinem Server ändern, weckt ein stiller Push VaultSync im selben Moment — die Synchronisation wirkt sofort, ohne die App zu öffnen. Das Relay sendet nur ein Weck-Signal — deine Notizen sieht es nie. Dafür ist ein einmaliger Helfer auf deinem Server nötig — tippe nach dem Abschluss des Abos auf „Server einrichten“.";
 "Auto-renews until canceled. Cancel anytime in Settings → Subscriptions." = "Verlängert sich automatisch bis zur Kündigung. Jederzeit kündbar unter Einstellungen → Abonnements.";
-"Make incoming sync instant" = "Eingehende Synchronisierung sofort machen";
+"Make incoming sync instant" = "Eingehende Änderungen sofort synchronisieren";
 "Your vault already syncs when you open VaultSync. Cloud Relay adds a silent push so changes on your server reach this iPhone the moment they happen — no need to open the app first." = "Dein Vault synchronisiert bereits, wenn du VaultSync öffnest. Cloud Relay fügt einen stillen Push hinzu, damit Änderungen auf deinem Server dieses iPhone im selben Moment erreichen — ganz ohne die App vorher zu öffnen.";
 "Near-instant server → iPhone updates" = "Nahezu sofortige Updates Server → iPhone";
 "The relay only sends a wake-up — it never sees your notes" = "Das Relay sendet nur ein Weck-Signal — deine Notizen sieht es nie";
@@ -568,3 +568,41 @@
 "Get instant updates" = "Sofortige Updates erhalten";
 "Turn on Cloud Relay" = "Cloud Relay aktivieren";
 "Add your server as a Syncthing device before subscribing to Cloud Relay." = "Füge deinen Server als Syncthing-Gerät hinzu, bevor du Cloud Relay abonnierst.";
+
+/* Redesign (Vault OS) strings — added in branch redesign/vault-os-foundation */
+"%1$@ — %2$@" = "%1$@ — %2$@";
+"%@: %@" = "%@: %@";
+"(%d%%)" = "(%d%%)";
+"Add your computer or server" = "Computer oder Server hinzufügen";
+"Add your server first" = "Füge zuerst deinen Server hinzu";
+"Best value" = "Bestes Angebot";
+"Cloud Relay wakes a specific device. Pair the computer or server that hosts your vault on the Devices tab, then come back to subscribe." = "Cloud Relay weckt ein bestimmtes Gerät. Verbinde im Tab „Geräte“ den Computer oder Server, der deinen Vault bereitstellt, und komm dann zum Abonnieren zurück.";
+"Complete these steps right here. They light up green as you go — and you can always finish them later from the home screen." = "Erledige diese Schritte direkt hier. Sie leuchten grün auf, während du vorankommst – und du kannst sie jederzeit später vom Startbildschirm aus abschließen.";
+"Connect your Obsidian folder" = "Deinen Obsidian-Ordner verbinden";
+"Double tap to copy" = "Zum Kopieren doppeltippen";
+"Give VaultSync one-time access to your local Obsidian folder so it can sync your notes." = "Gib VaultSync einmaligen Zugriff auf deinen lokalen Obsidian-Ordner, damit es deine Notizen synchronisieren kann.";
+"How is this private?" = "Wie ist das privat?";
+"Instant sync, still private" = "Sofort synchron, weiterhin privat";
+"Let’s get your vault synced" = "Bringen wir deinen Vault zum Synchronisieren";
+"Loading plans…" = "Tarife werden geladen …";
+"Manage" = "Verwalten";
+"Monthly" = "Monatlich";
+"One step left to activate" = "Noch ein Schritt bis zur Aktivierung";
+"Optional: turn on Cloud Relay later for instant updates — you’ll find it in Settings." = "Optional: Aktiviere Cloud Relay später für sofortige Updates – du findest es in den Einstellungen.";
+"Pair this iPhone with the Syncthing device that hosts your vault, by Device ID or QR code." = "Verbinde dieses iPhone per Geräte-ID oder QR-Code mit dem Syncthing-Gerät, das deinen Vault bereitstellt.";
+"Relay" = "Relay";
+"Relay health & diagnostics" = "Relay-Status & Diagnose";
+"Run the one-time vaultsync-notify helper on your server to start receiving instant updates. It only sends a wake-up — it never sees your notes." = "Führe den einmaligen Helfer vaultsync-notify auf deinem Server aus, um sofortige Updates zu erhalten. Er sendet nur ein Weck-Signal – deine Notizen sieht er nie.";
+"Save %d%%" = "%d %% sparen";
+"Server helper setup" = "Server-Helfer-Einrichtung";
+"Set up the server helper" = "Server-Helfer einrichten";
+"Share your Obsidian vault from Syncthing on your computer. VaultSync accepts it automatically — this turns green the moment it arrives." = "Teile deinen Obsidian-Vault über Syncthing auf deinem Computer. VaultSync nimmt ihn automatisch an – das wird grün, sobald er ankommt.";
+"Starts a subscription purchase." = "Startet einen Abo-Kauf.";
+"Sync" = "Sync";
+"Sync your first vault" = "Ersten Vault synchronisieren";
+"Wake-ups are being delivered — changes from your other devices arrive instantly." = "Weck-Signale werden zugestellt – Änderungen von deinen anderen Geräten kommen sofort an.";
+"Yearly" = "Jährlich";
+"Your local version is kept, and the other device’s version is added under a new name. Nothing is discarded." = "Deine lokale Version bleibt erhalten, und die Version des anderen Geräts wird unter einem neuen Namen hinzugefügt. Es wird nichts verworfen.";
+"Your notes never touch our servers. Cloud Relay sends a tiny wake-up so changes from your other devices land the moment they happen — even with the app closed." = "Deine Notizen erreichen nie unsere Server. Cloud Relay sendet nur ein winziges Weck-Signal, damit Änderungen von deinen anderen Geräten im selben Moment ankommen – sogar bei geschlossener App.";
+"Your vault already syncs free and peer-to-peer. Relay only removes the “open the app to sync” wait — it isn’t cloud storage." = "Dein Vault synchronisiert bereits kostenlos und Peer-to-Peer. Relay beseitigt nur die Wartezeit „zum Synchronisieren die App öffnen“ – es ist kein Cloud-Speicher.";
+"You’re subscribed, but no wake-up has arrived yet. Cloud Relay only delivers once the helper is running on your server." = "Du hast abonniert, aber es ist noch kein Weck-Signal angekommen. Cloud Relay liefert erst, wenn der Helfer auf deinem Server läuft.";
