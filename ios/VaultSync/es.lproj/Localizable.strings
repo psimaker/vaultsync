@@ -382,11 +382,6 @@
 "VaultSync’s sync engine is running." = "El motor de sincronización de VaultSync está en ejecución.";
 "VaultSync’s sync engine is still starting or unavailable." = "El motor de sincronización de VaultSync todavía se está iniciando o no está disponible.";
 "If this stays unavailable, restart VaultSync and check the home screen for issues." = "Si sigue sin estar disponible, reinicia VaultSync y revisa la pantalla de inicio en busca de problemas.";
-"Cloud Relay ready" = "Cloud Relay listo";
-"Cloud Relay is available for faster background updates." = "Cloud Relay está disponible para actualizaciones en segundo plano más rápidas.";
-"Cloud Relay is not enabled." = "Cloud Relay no está activado.";
-"Enable Cloud Relay later in Settings if you want faster background updates." = "Activa Cloud Relay más tarde en Ajustes si quieres actualizaciones en segundo plano más rápidas.";
-
 /* Sync Filters */
 "Sync Filters" = "Filtros de sincronización";
 "Recommended" = "Recomendado";
@@ -535,19 +530,19 @@
 "Cloud Relay is not enabled. Without it, incoming changes arrive when you open VaultSync." = "Cloud Relay no está activado. Sin él, los cambios entrantes llegan cuando abres VaultSync.";
 "Enable Cloud Relay in Settings if you want changes pushed the moment they happen." = "Activa Cloud Relay en Ajustes si quieres que los cambios se envíen en el momento en que ocurren.";
 "Cloud Relay — finish server setup" = "Cloud Relay: completa la configuración del servidor";
-"You’re subscribed, but no wake-up has arrived yet. Cloud Relay only works once the vaultsync-notify helper is running on your server." = "Tienes una suscripción, pero aún no ha llegado ninguna señal de activación. Cloud Relay solo funciona cuando el asistente vaultsync-notify se está ejecutando en tu servidor.";
+"You’re subscribed, but no recent wake-up has arrived. Make sure the vaultsync-notify helper is running on your server." = "Tienes una suscripción, pero aún no ha llegado ninguna señal de activación reciente. Asegúrate de que el asistente vaultsync-notify se está ejecutando en tu servidor.";
 "Set up the server helper from Settings → Cloud Relay → Set Up Your Server." = "Configura el asistente del servidor en Ajustes → Cloud Relay → Configura tu servidor.";
 "Wake-ups are being delivered — incoming changes sync the moment they happen." = "Las señales de activación se están entregando: los cambios entrantes se sincronizan en el momento en que ocurren.";
 "Your server helper is running — wake-ups are being delivered." = "Tu asistente del servidor está en marcha: se están entregando las señales de activación.";
 "Why this step" = "Por qué este paso";
 "Cloud Relay needs a small helper on your server. It watches Syncthing for changes and sends VaultSync a wake-up signal — it never sees your notes. Without it, the subscription has nothing to wake the app with." = "Cloud Relay necesita un pequeño asistente en tu servidor. Vigila los cambios en Syncthing y envía a VaultSync una señal de activación; nunca ve tus notas. Sin él, la suscripción no tiene con qué despertar la app.";
 "Step 1 — Get your Syncthing API key" = "Paso 1: Obtén tu clave de API de Syncthing";
-"Open the Syncthing web UI on your server, then Actions → Settings → GUI → API Key, and copy the key." = "Abre la interfaz web de Syncthing en tu servidor, luego Acciones → Ajustes → GUI → Clave de API, y copia la clave.";
+"Open the Syncthing web UI on your server, then Actions → Settings → GUI → API Key, and copy the key." = "Abre la interfaz web de Syncthing en tu servidor, luego Actions → Settings → GUI → API Key, y copia la clave.";
 "Step 2 — Run this on your server" = "Paso 2: Ejecuta esto en tu servidor";
 "Copy Command" = "Copiar comando";
 "Replace PASTE_YOUR_KEY with the API key from Step 1. If Syncthing runs in another container, set SYNCTHING_API_URL to its address instead of localhost." = "Sustituye PASTE_YOUR_KEY por la clave de API del Paso 1. Si Syncthing se ejecuta en otro contenedor, define SYNCTHING_API_URL con su dirección en lugar de localhost.";
 "Step 3 — Confirm it works" = "Paso 3: Confirma que funciona";
-"Come back to VaultSync. The moment a change happens on your server, you’ll see “delivering wake-ups” in Relay Diagnostics — that confirms everything works." = "Vuelve a VaultSync. En cuanto ocurra un cambio en tu servidor, verás «entregando señales de activación» en Diagnóstico del Relay: eso confirma que todo funciona.";
+"Come back to VaultSync. The moment a change happens on your server, Relay Diagnostics will confirm that wake-ups are being delivered — that means everything works." = "Vuelve a VaultSync. En cuanto ocurra un cambio en tu servidor, Diagnóstico del Relay confirmará que se están entregando las señales de activación: eso significa que todo funciona.";
 "Full setup guide (Docker Compose, one-command install)" = "Guía completa (Docker Compose, instalación con un solo comando)";
 "Prefer Docker Compose or a guided one-command installer? The full guide covers both." = "¿Prefieres Docker Compose o un instalador guiado de un solo comando? La guía completa cubre ambos.";
 "Set Up Your Server" = "Configura tu servidor";
@@ -561,7 +556,7 @@
 "When files change on your server, a silent push wakes VaultSync the moment it happens, so sync feels instant without opening the app. The relay only sends a wake-up signal — it never sees your notes. It needs a one-time helper on your server — tap Set Up Your Server after subscribing." = "Cuando los archivos cambian en tu servidor, una notificación silenciosa despierta VaultSync en ese mismo momento, de modo que la sincronización se siente instantánea sin abrir la app. El relay solo envía una señal de activación; nunca ve tus notas. Necesita un asistente único en tu servidor: toca «Configura tu servidor» después de suscribirte.";
 "Auto-renews until canceled. Cancel anytime in Settings → Subscriptions." = "Se renueva automáticamente hasta que se cancele. Cancela cuando quieras en Ajustes → Suscripciones.";
 "Make incoming sync instant" = "Haz que la sincronización entrante sea instantánea";
-"Your vault already syncs when you open VaultSync. Cloud Relay adds a silent push so changes on your server reach this iPhone the moment they happen — no need to open the app first." = "Tu bóveda ya se sincroniza cuando abres VaultSync. Cloud Relay añade una notificación silenciosa para que los cambios en tu servidor lleguen a este iPhone en el momento en que ocurren, sin necesidad de abrir la app primero.";
+"Your vault already syncs when you open VaultSync. Cloud Relay adds a silent push so changes on your server reach this iPhone the moment they happen — no need to open the app first." = "Tu Vault ya se sincroniza cuando abres VaultSync. Cloud Relay añade una notificación silenciosa para que los cambios en tu servidor lleguen a este iPhone en el momento en que ocurren, sin necesidad de abrir la app primero.";
 "Near-instant server → iPhone updates" = "Actualizaciones servidor → iPhone casi instantáneas";
 "The relay only sends a wake-up — it never sees your notes" = "El relay solo envía una señal de activación; nunca ve tus notas";
 "Cancel anytime in Settings → Subscriptions" = "Cancela cuando quieras en Ajustes → Suscripciones";

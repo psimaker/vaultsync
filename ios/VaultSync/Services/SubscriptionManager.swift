@@ -93,11 +93,6 @@ final class SubscriptionManager {
         return L10n.fmt("%1$@ / %2$d %3$@", product.displayPrice, period.value, unit)
     }
 
-    var relayPriceText: String? {
-        guard let product = availableProduct else { return nil }
-        return priceText(for: product)
-    }
-
     @ObservationIgnored nonisolated(unsafe) private var loadTask: Task<Void, Never>?
     @ObservationIgnored nonisolated(unsafe) private var unfinishedTask: Task<Void, Never>?
     @ObservationIgnored nonisolated(unsafe) private var updatesTask: Task<Void, Never>?

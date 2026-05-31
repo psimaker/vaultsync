@@ -48,7 +48,7 @@
           "codeOffers" : [],
           "displayPrice" : "1.99",
           "familyShareable" : false,
-          "groupNumber" : 1,
+          "groupNumber" : 2,
           "internalID" : "2002",
           "introductoryOffer" : null,
           "localizations" : [
@@ -69,7 +69,7 @@
           "codeOffers" : [],
           "displayPrice" : "14.99",
           "familyShareable" : false,
-          "groupNumber" : 2,
+          "groupNumber" : 1,
           "internalID" : "2003",
           "introductoryOffer" : null,
           "localizations" : [

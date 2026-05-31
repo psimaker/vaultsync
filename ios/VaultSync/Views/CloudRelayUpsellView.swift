@@ -27,7 +27,7 @@ struct CloudRelayUpsellView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button(subscriptionManager.isRelaySubscribed ? "Done" : "Not Now") { dismiss() }
+                Button(subscriptionManager.isRelaySubscribed ? L10n.tr("Done") : L10n.tr("Not Now")) { dismiss() }
             }
         }
         .alert("Error", isPresented: $showAlert) {

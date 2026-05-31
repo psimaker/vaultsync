@@ -185,8 +185,28 @@ final class SetupChecklistViewModel {
         )
     }
 
+    enum RelayChecklistState {
+        case notSubscribed
+        case awaitingDelivery
+        case delivering
+    }
+
+    /// Pure decision for the relay checklist state, unit-tested independently of
+    /// SubscriptionManager so the three-state honesty logic can't silently regress.
+    static func relayChecklistState(isSubscribed: Bool, isDelivering: Bool) -> RelayChecklistState {
+        if !isSubscribed { return .notSubscribed }
+        return isDelivering ? .delivering : .awaitingDelivery
+    }
+
     private var relayItem: ChecklistItem {
-        if !subscriptionManager.isRelaySubscribed {
+        // "Delivering" requires a *recent* wake-up — relayDeliveryConfirmed applies
+        // a 48h freshness window — so the checklist agrees with Settings and Relay
+        // Diagnostics instead of staying green after the helper has stopped.
+        switch Self.relayChecklistState(
+            isSubscribed: subscriptionManager.isRelaySubscribed,
+            isDelivering: subscriptionManager.relayDeliveryConfirmed
+        ) {
+        case .notSubscribed:
             return ChecklistItem(
                 requirement: .relayConfigured,
                 title: L10n.tr("Cloud Relay"),
@@ -195,30 +215,24 @@ final class SetupChecklistViewModel {
                 isOptional: true,
                 isComplete: false
             )
-        }
-
-        // Being subscribed does nothing on its own: Cloud Relay only delivers
-        // wake-ups once the vaultsync-notify helper is running on the user's
-        // server. Treat the step as "done" only after a real trigger has
-        // actually reached this device — never on subscription status alone.
-        if subscriptionManager.lastRelayTriggerReceivedAt == nil {
+        case .awaitingDelivery:
             return ChecklistItem(
                 requirement: .relayConfigured,
                 title: L10n.tr("Cloud Relay — finish server setup"),
-                description: L10n.tr("You’re subscribed, but no wake-up has arrived yet. Cloud Relay only works once the vaultsync-notify helper is running on your server."),
+                description: L10n.tr("You’re subscribed, but no recent wake-up has arrived. Make sure the vaultsync-notify helper is running on your server."),
                 remediation: L10n.tr("Set up the server helper from Settings → Cloud Relay → Set Up Your Server."),
                 isOptional: true,
                 isComplete: false
             )
+        case .delivering:
+            return ChecklistItem(
+                requirement: .relayConfigured,
+                title: L10n.tr("Cloud Relay active"),
+                description: L10n.tr("Wake-ups are being delivered — incoming changes sync the moment they happen."),
+                remediation: "",
+                isOptional: true,
+                isComplete: true
+            )
         }
-
-        return ChecklistItem(
-            requirement: .relayConfigured,
-            title: L10n.tr("Cloud Relay active"),
-            description: L10n.tr("Wake-ups are being delivered — incoming changes sync the moment they happen."),
-            remediation: "",
-            isOptional: true,
-            isComplete: true
-        )
     }
 }

@@ -382,11 +382,6 @@
 "VaultSync’s sync engine is running." = "VaultSync’s sync engine is running.";
 "VaultSync’s sync engine is still starting or unavailable." = "VaultSync’s sync engine is still starting or unavailable.";
 "If this stays unavailable, restart VaultSync and check the home screen for issues." = "If this stays unavailable, restart VaultSync and check the home screen for issues.";
-"Cloud Relay ready" = "Cloud Relay ready";
-"Cloud Relay is available for faster background updates." = "Cloud Relay is available for faster background updates.";
-"Cloud Relay is not enabled." = "Cloud Relay is not enabled.";
-"Enable Cloud Relay later in Settings if you want faster background updates." = "Enable Cloud Relay later in Settings if you want faster background updates.";
-
 /* Sync Filters */
 "Sync Filters" = "Sync Filters";
 "Recommended" = "Recommended";
@@ -535,7 +530,7 @@
 "Cloud Relay is not enabled. Without it, incoming changes arrive when you open VaultSync." = "Cloud Relay is not enabled. Without it, incoming changes arrive when you open VaultSync.";
 "Enable Cloud Relay in Settings if you want changes pushed the moment they happen." = "Enable Cloud Relay in Settings if you want changes pushed the moment they happen.";
 "Cloud Relay — finish server setup" = "Cloud Relay — finish server setup";
-"You’re subscribed, but no wake-up has arrived yet. Cloud Relay only works once the vaultsync-notify helper is running on your server." = "You’re subscribed, but no wake-up has arrived yet. Cloud Relay only works once the vaultsync-notify helper is running on your server.";
+"You’re subscribed, but no recent wake-up has arrived. Make sure the vaultsync-notify helper is running on your server." = "You’re subscribed, but no recent wake-up has arrived. Make sure the vaultsync-notify helper is running on your server.";
 "Set up the server helper from Settings → Cloud Relay → Set Up Your Server." = "Set up the server helper from Settings → Cloud Relay → Set Up Your Server.";
 "Wake-ups are being delivered — incoming changes sync the moment they happen." = "Wake-ups are being delivered — incoming changes sync the moment they happen.";
 "Your server helper is running — wake-ups are being delivered." = "Your server helper is running — wake-ups are being delivered.";
@@ -547,7 +542,7 @@
 "Copy Command" = "Copy Command";
 "Replace PASTE_YOUR_KEY with the API key from Step 1. If Syncthing runs in another container, set SYNCTHING_API_URL to its address instead of localhost." = "Replace PASTE_YOUR_KEY with the API key from Step 1. If Syncthing runs in another container, set SYNCTHING_API_URL to its address instead of localhost.";
 "Step 3 — Confirm it works" = "Step 3 — Confirm it works";
-"Come back to VaultSync. The moment a change happens on your server, you’ll see “delivering wake-ups” in Relay Diagnostics — that confirms everything works." = "Come back to VaultSync. The moment a change happens on your server, you’ll see “delivering wake-ups” in Relay Diagnostics — that confirms everything works.";
+"Come back to VaultSync. The moment a change happens on your server, Relay Diagnostics will confirm that wake-ups are being delivered — that means everything works." = "Come back to VaultSync. The moment a change happens on your server, Relay Diagnostics will confirm that wake-ups are being delivered — that means everything works.";
 "Full setup guide (Docker Compose, one-command install)" = "Full setup guide (Docker Compose, one-command install)";
 "Prefer Docker Compose or a guided one-command installer? The full guide covers both." = "Prefer Docker Compose or a guided one-command installer? The full guide covers both.";
 "Set Up Your Server" = "Set Up Your Server";

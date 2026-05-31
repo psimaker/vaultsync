@@ -74,7 +74,7 @@ struct RelayServerSetupView: View {
             }
 
             Section {
-                Text(L10n.tr("Come back to VaultSync. The moment a change happens on your server, you’ll see “delivering wake-ups” in Relay Diagnostics — that confirms everything works."))
+                Text(L10n.tr("Come back to VaultSync. The moment a change happens on your server, Relay Diagnostics will confirm that wake-ups are being delivered — that means everything works."))
                     .font(.subheadline)
             } header: {
                 Text(L10n.tr("Step 3 — Confirm it works"))

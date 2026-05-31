@@ -1,6 +1,6 @@
 # VaultSync Cloud Relay — Specification
 
-> **Status:** Shipped in v1.4.0. This document is the protocol and architecture reference for the relay, the `vaultsync-notify` sidecar, and the iOS client. Sections marked _Roadmap_ (self-hosted relay) are not yet built.
+> **Status:** Shipped in v1.4.0; signed-transaction (JWS) verification and server-side expiry enforcement added in v1.5.0. This document is the protocol and architecture reference for the relay, the `vaultsync-notify` sidecar, and the iOS client. Sections marked _Roadmap_ (self-hosted relay) are not yet built.
 
 ## Overview
 
@@ -227,7 +227,7 @@ The container consumes the Syncthing event stream and pushes outbound to the rel
 
 ---
 
-## iOS Integration (shipped in v1.4.0)
+## iOS Integration (shipped in v1.4.0; signed-transaction (JWS) provisioning in v1.5.0)
 
 The iOS client implements the full relay flow; see `AppDelegate.swift`, `RelayService.swift`, and `SubscriptionManager.swift` for detail.
 
