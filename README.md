@@ -40,7 +40,7 @@ VaultSync is the iOS bridge for people who already trust Syncthing with their Ob
 - Optional **Cloud Relay** wakes your iPhone the moment your server changes
 - Full **VoiceOver** and **Dynamic Type** support, localized in **English, German, Spanish, and Simplified Chinese**
 
-VaultSync is **free**. Cloud Relay is an optional monthly subscription, priced in your App Store storefront. VaultSync is independent and not affiliated with Obsidian or Syncthing.
+VaultSync is **free**. Cloud Relay is an optional monthly or yearly subscription, priced in your App Store storefront. VaultSync is independent and not affiliated with Obsidian or Syncthing.
 
 **Built for** Obsidian users who want self-hosted iOS sync, existing Syncthing/homelab/NAS setups, and privacy-conscious Markdown users.
 
@@ -60,9 +60,9 @@ VaultSync is **not** a hosted note-sync service and **not** a magic always-on da
 
 ---
 
-## What’s New — v1.4.0
+## What’s New — v1.5.0
 
-Quiet conflict notifications with a Settings switch to mute them, more reliable background sync, correct Cloud Relay pricing in every region, and optional one-time contributions. Adds full **Spanish** localization. See [CHANGELOG.md](CHANGELOG.md) for details.
+Cloud Relay now guides you through the one-time server helper it needs (right after you subscribe), adds a **yearly plan**, and shows honest delivery status instead of just “subscribed”. The relay verifies your subscription with Apple and enforces expiry, and an iPhone and iPad sharing one server both receive wake-ups. See [CHANGELOG.md](CHANGELOG.md) for details.
 
 ---
 
@@ -179,7 +179,7 @@ Relay authentication uses your Syncthing Device ID, which the sidecar reads auto
 | iPhone or iPad | iOS/iPadOS 18 or later |
 | Obsidian | Installed on iOS/iPadOS |
 | Syncthing | Running on a Mac, Linux machine, NAS, or homeserver |
-| Cloud Relay | Optional, monthly in-app subscription |
+| Cloud Relay | Optional, monthly or yearly in-app subscription |
 | vaultsync-notify | Optional Docker sidecar for server-side wake-ups |
 
 A fully self-hosted relay (replacing `relay.vaultsync.eu` with your own server) is planned for a future release.

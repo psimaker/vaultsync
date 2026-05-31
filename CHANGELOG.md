@@ -4,6 +4,24 @@ All notable changes to VaultSync are documented here.
 
 ---
 
+## [1.5.0] — 2026-05-31
+
+### Added
+
+- **Guided Cloud Relay server setup** — Cloud Relay needs a small helper (`vaultsync-notify`) on your server, and the app now says so clearly. A new **Set Up Your Server** screen explains the step and offers a copyable one-line command (with the relay URL pre-filled); it appears right after you subscribe and from Settings → Cloud Relay. Localized in English, German, Spanish, and Simplified Chinese.
+- **Yearly Cloud Relay plan** — Cloud Relay is now available as a yearly subscription in addition to monthly, at a lower effective monthly price. Both prices are read from StoreKit and shown correctly per storefront.
+- **In-context Cloud Relay offer** — After your first successful sync, VaultSync offers Cloud Relay in context (with a one-tap path into server setup), and the home screen shows an unobtrusive upgrade row for non-subscribers.
+
+### Changed
+
+- **Honest Cloud Relay status** — The setup checklist and Settings no longer call Cloud Relay "ready" just because you subscribed. They now reflect real delivery: *waiting for your server* until a wake-up actually arrives, then *delivering wake-ups*.
+- **Cloud Relay monthly price** — The monthly price was raised; the app always shows the live, storefront-correct price from StoreKit and never hard-codes an amount.
+- **Verified subscriptions** — The relay now verifies the App Store signed transaction against Apple's certificate chain and enforces the subscription expiry server-side, so an expired or cancelled subscription stops receiving wake-ups.
+
+### Fixed
+
+- **iPhone and iPad both get wake-ups** — When an iPhone and iPad shared the same server, they could displace each other's push registration so only one received Cloud Relay wake-ups. Both are now kept, and tokens Apple reports as invalid are cleaned up automatically.
+
 ## [1.4.0] — 2026-05-30
 
 ### Added
