@@ -1,2 +1,2 @@
 "CFBundleDisplayName" = "VaultSync";
-"NSCameraUsageDescription" = "VaultSync 需要使用相机扫描 Syncthing 设备 QR Code，以便轻松完成设置。";
+"NSCameraUsageDescription" = "VaultSync 需要使用相机扫描 Syncthing 设备二维码，以便轻松完成设置。";

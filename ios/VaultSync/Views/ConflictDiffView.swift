@@ -89,49 +89,10 @@ struct ConflictDiffView: View {
                         .accessibilityLabel(L10n.tr("More actions"))
                 }
             }
-            ToolbarItemGroup(placement: .bottomBar) {
-                Button {
-                    confirmAction(.keepThis)
-                } label: {
-                    VStack(spacing: 2) {
-                        Image(systemName: "iphone")
-                            .accessibilityHidden(true)
-                        Text("Keep This")
-                            .font(.caption2)
-                    }
-                }
-                .accessibilityLabel("Keep this device version")
-                .accessibilityHint("Discards the version from the other device.")
-
-                Spacer()
-
-                Button {
-                    executeAction(.keepBoth)
-                } label: {
-                    VStack(spacing: 2) {
-                        Image(systemName: "doc.on.doc")
-                            .accessibilityHidden(true)
-                        Text("Keep Both")
-                            .font(.caption2)
-                    }
-                }
-                .accessibilityLabel("Keep both versions")
-                .accessibilityHint("Keeps your local file and renames the other device's file.")
-
-                Spacer()
-
-                Button {
-                    confirmAction(.keepOther)
-                } label: {
-                    VStack(spacing: 2) {
-                        Image(systemName: "laptopcomputer")
-                            .accessibilityHidden(true)
-                        Text("Keep Other")
-                            .font(.caption2)
-                    }
-                }
-                .accessibilityLabel("Keep other device version")
-                .accessibilityHint("Overwrites your local file with the version from the other device.")
+        }
+        .safeAreaInset(edge: .bottom) {
+            if !isLoading && loadError == nil {
+                resolutionBar
             }
         }
         .alert("Error", isPresented: $showAlert) {
@@ -145,7 +106,7 @@ struct ConflictDiffView: View {
             titleVisibility: .visible,
             presenting: actionToConfirm
         ) { action in
-            Button(confirmButtonTitle(for: action), role: .destructive) {
+            Button(confirmButtonTitle(for: action), role: action == .keepBoth ? nil : .destructive) {
                 executeAction(action)
             }
             Button("Cancel", role: .cancel) { }
@@ -187,6 +148,47 @@ struct ConflictDiffView: View {
         }
     }
 
+    /// The bottom resolution bar: full-width, ≥44pt buttons (replacing the tiny
+    /// caption2 tab-bar-style icons). Every action routes through confirmAction so
+    /// all three confirm before mutating files — including Keep Both, which used
+    /// to mutate with no confirmation.
+    private var resolutionBar: some View {
+        VStack(spacing: VaultSpacing.s) {
+            Button {
+                confirmAction(.keepThis)
+            } label: {
+                Label(L10n.tr("Keep This Device's Version"), systemImage: "iphone")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .accessibilityHint(L10n.tr("Discards the version from the other device."))
+
+            HStack(spacing: VaultSpacing.s) {
+                Button {
+                    confirmAction(.keepBoth)
+                } label: {
+                    Text(L10n.tr("Keep Both"))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityHint(L10n.tr("Keeps your local file and renames the other device's file."))
+
+                Button(role: .destructive) {
+                    confirmAction(.keepOther)
+                } label: {
+                    Text(L10n.tr("Keep Other"))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityHint(L10n.tr("Overwrites your local file with the version from the other device."))
+            }
+        }
+        .controlSize(.large)
+        .tint(.vaultAccent)
+        .padding(VaultSpacing.l)
+        .background(.bar)
+    }
+
     /// The body of the comparison — line-by-line diff (with a colour/sign legend)
     /// or the two side-by-side file panes. Extracted from `body` to keep each
     /// view expression small enough for the Swift type-checker.
@@ -221,9 +223,9 @@ struct ConflictDiffView: View {
     private var diffLegend: some View {
         HStack(spacing: 12) {
             Label(L10n.tr("Other Device"), systemImage: "plus")
-                .foregroundStyle(Color(uiColor: .systemGreen))
+                .foregroundStyle(Color.statusSuccess)
             Label(L10n.tr("This Device"), systemImage: "minus")
-                .foregroundStyle(Color(uiColor: .systemRed))
+                .foregroundStyle(Color.statusError)
         }
         .font(.caption2)
         .padding(.horizontal)
@@ -317,7 +319,7 @@ struct ConflictDiffView: View {
         case .keepOther:
             return L10n.tr("This will permanently discard your local version.")
         case .keepBoth:
-            return ""
+            return L10n.tr("Your local version is kept, and the other device’s version is added under a new name. Nothing is discarded.")
         }
     }
     

@@ -9,7 +9,7 @@ struct SetupChecklistView: View {
             headerSection
 
             ProgressView(value: viewModel.completionProgress)
-                .tint(viewModel.isReadyToFinish ? .green : .orange)
+                .tint(viewModel.isReadyToFinish ? Color.statusSuccess : Color.statusAttention)
                 .accessibilityLabel(L10n.tr("Setup status progress"))
                 .accessibilityValue(L10n.fmt("%d of %d essentials ready", viewModel.completedRequiredCount, viewModel.totalRequiredCount))
 
@@ -18,13 +18,8 @@ struct SetupChecklistView: View {
             }
 
         }
-        .padding(16)
-        .background(Color(.secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color(.separator), lineWidth: 0.5)
-        )
+        .padding(VaultSpacing.l)
+        .vaultCard()
     }
 
     @ViewBuilder
@@ -70,16 +65,10 @@ struct SetupChecklistView: View {
                         Text(item.title)
                             .font(.body.weight(.semibold))
                     }
-                    if item.isOptional {
-                        Text(statusText(for: item))
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(statusColor(for: item))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(statusColor(for: item).opacity(0.15), in: Capsule())
-                    }
+                    optionalBadge(for: item)
                 }
                 .accessibilityElement(children: .combine)
+                .accessibilityValue(statusAccessibilityValue(for: item))
             } else {
                 HStack(spacing: 8) {
                     Image(systemName: statusIcon(for: item))
@@ -89,16 +78,10 @@ struct SetupChecklistView: View {
                     Text(item.title)
                         .font(.body.weight(.semibold))
                     Spacer()
-                    if item.isOptional {
-                        Text(statusText(for: item))
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(statusColor(for: item))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(statusColor(for: item).opacity(0.15), in: Capsule())
-                    }
+                    optionalBadge(for: item)
                 }
                 .accessibilityElement(children: .combine)
+                .accessibilityValue(statusAccessibilityValue(for: item))
             }
 
             Text(item.description)
@@ -118,12 +101,12 @@ struct SetupChecklistView: View {
             }
 
         }
-        .padding(12)
+        .padding(VaultSpacing.m)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(.systemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: VaultRadius.control, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: VaultRadius.control, style: .continuous)
                 .stroke(Color(.separator), lineWidth: 0.5)
         )
     }
@@ -138,14 +121,29 @@ struct SetupChecklistView: View {
 
     private func statusColor(for item: SetupChecklistViewModel.ChecklistItem) -> Color {
         if item.isOptional {
-            return item.isComplete ? .green : .secondary
+            return item.isComplete ? .statusSuccess : .secondary
         }
-        if item.isComplete { return .green }
-        return .orange
+        if item.isComplete { return .statusSuccess }
+        return .statusAttention
     }
 
-    private func statusText(for item: SetupChecklistViewModel.ChecklistItem) -> String {
+    @ViewBuilder
+    private func optionalBadge(for item: SetupChecklistViewModel.ChecklistItem) -> some View {
+        if item.isOptional {
+            Text(L10n.tr("Optional"))
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(statusColor(for: item))
+                .padding(.horizontal, VaultSpacing.s)
+                .padding(.vertical, 3)
+                .background(statusColor(for: item).opacity(0.15), in: Capsule())
+        }
+    }
+
+    /// VoiceOver status for a checklist item — required items previously exposed no
+    /// completion state at all (their only signal was a decorative, a11y-hidden icon).
+    private func statusAccessibilityValue(for item: SetupChecklistViewModel.ChecklistItem) -> String {
+        if item.isComplete { return L10n.tr("Done") }
         if item.isOptional { return L10n.tr("Optional") }
-        return ""
+        return L10n.tr("Needs Attention")
     }
 }

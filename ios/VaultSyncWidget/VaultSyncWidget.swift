@@ -39,38 +39,16 @@ private struct VaultSyncWidgetSnapshot: Codable, Equatable {
         return VaultSyncWidgetDateFormatters.parseISO8601(lastSyncTime)
     }
 
-    var statusLabel: String {
-        switch status {
-        case "syncing":
-            return VaultSyncWidgetL10n.tr("Syncing")
-        case "error":
-            return VaultSyncWidgetL10n.tr("Needs Attention")
-        default:
-            return VaultSyncWidgetL10n.tr("Idle")
-        }
-    }
+    /// Canonical status decoded from the wire string through the shared registry.
+    /// Unknown values resolve to `.attention` — never silently to "all good" —
+    /// so the widget can no longer lie when the status model drifts.
+    var syncStatus: SyncStatus { SyncStatus.fromWire(status) }
 
-    var statusSymbol: String {
-        switch status {
-        case "syncing":
-            return "arrow.triangle.2.circlepath"
-        case "error":
-            return "exclamationmark.triangle.fill"
-        default:
-            return "checkmark.circle.fill"
-        }
-    }
+    var statusLabel: String { syncStatus.label }
 
-    var statusColor: Color {
-        switch status {
-        case "syncing":
-            return .vaultTeal
-        case "error":
-            return .orange
-        default:
-            return .green
-        }
-    }
+    var statusSymbol: String { syncStatus.symbolName }
+
+    var statusColor: Color { syncStatus.tint }
 
     var lastSyncDescription: String {
         guard let lastSyncDate else { return VaultSyncWidgetL10n.tr("widget_no_sync_yet") }
@@ -168,15 +146,16 @@ private struct VaultSyncWidgetEntryView: View {
                     .font(.subheadline.weight(.semibold))
                 Text(buttonLabel)
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(.blue)
+                    .foregroundStyle(Color.vaultAccent)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
-                    .background(.blue.opacity(0.12), in: Capsule())
+                    .background(Color.vaultAccent.opacity(0.12), in: Capsule())
             }
             Spacer(minLength: 0)
         }
         .widgetURL(VaultSyncWidgetConstants.syncURL)
         .containerBackground(.fill.tertiary, for: .widget)
+        .accessibilityElement(children: .combine)
     }
 
     private var mediumWidget: some View {
@@ -210,7 +189,7 @@ private struct VaultSyncWidgetEntryView: View {
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
                         .frame(maxWidth: .infinity)
-                        .background(.blue, in: Capsule())
+                        .background(Color.vaultAccent, in: Capsule())
                         .foregroundStyle(.white)
                 }
                 .buttonStyle(.plain)
@@ -219,6 +198,7 @@ private struct VaultSyncWidgetEntryView: View {
         }
         .widgetURL(VaultSyncWidgetConstants.syncURL)
         .containerBackground(.fill.tertiary, for: .widget)
+        .accessibilityElement(children: .combine)
     }
 
     private var accessoryWidget: some View {
@@ -226,6 +206,7 @@ private struct VaultSyncWidgetEntryView: View {
             HStack(spacing: 6) {
                 Image(systemName: entry.snapshot.statusSymbol)
                     .foregroundStyle(entry.snapshot.statusColor)
+                    .accessibilityHidden(true)
                 Text(entry.snapshot.statusLabel)
                     .font(.caption.weight(.semibold))
                     .lineLimit(1)
@@ -240,12 +221,14 @@ private struct VaultSyncWidgetEntryView: View {
         }
         .widgetURL(VaultSyncWidgetConstants.syncURL)
         .containerBackground(.fill.tertiary, for: .widget)
+        .accessibilityElement(children: .combine)
     }
 
     private var statusRow: some View {
         HStack(spacing: 8) {
             Image(systemName: entry.snapshot.statusSymbol)
                 .foregroundStyle(entry.snapshot.statusColor)
+                .accessibilityHidden(true)
             Text(entry.snapshot.statusLabel)
                 .font(.headline)
                 .lineLimit(1)
@@ -264,7 +247,7 @@ private struct VaultSyncWidgetEntryView: View {
     }
 
     private var buttonLabel: String {
-        entry.snapshot.status == "syncing"
+        entry.snapshot.syncStatus == .syncing
             ? VaultSyncWidgetL10n.tr("Open VaultSync")
             : VaultSyncWidgetL10n.tr("widget_sync_now")
     }

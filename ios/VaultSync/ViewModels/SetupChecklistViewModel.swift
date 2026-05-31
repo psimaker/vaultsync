@@ -211,7 +211,7 @@ final class SetupChecklistViewModel {
                 requirement: .relayConfigured,
                 title: L10n.tr("Cloud Relay"),
                 description: L10n.tr("Cloud Relay is not enabled. Without it, incoming changes arrive when you open VaultSync."),
-                remediation: L10n.tr("Enable Cloud Relay in Settings if you want changes pushed the moment they happen."),
+                remediation: L10n.tr("Enable Cloud Relay on the Relay tab if you want changes pushed the moment they happen."),
                 isOptional: true,
                 isComplete: false
             )
@@ -220,7 +220,7 @@ final class SetupChecklistViewModel {
                 requirement: .relayConfigured,
                 title: L10n.tr("Cloud Relay — finish server setup"),
                 description: L10n.tr("You’re subscribed, but no recent wake-up has arrived. Make sure the vaultsync-notify helper is running on your server."),
-                remediation: L10n.tr("Set up the server helper from Settings → Cloud Relay → Set Up Your Server."),
+                remediation: L10n.tr("Set up the server helper from the Relay tab → Set Up Your Server."),
                 isOptional: true,
                 isComplete: false
             )

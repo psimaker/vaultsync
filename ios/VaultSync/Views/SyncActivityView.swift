@@ -16,7 +16,7 @@ struct SyncActivityView: View {
                     HStack(alignment: .top, spacing: 12) {
                         Image(systemName: event.symbolName)
                             .font(.body.weight(.semibold))
-                            .foregroundStyle(event.isError ? .red : .blue)
+                            .foregroundStyle(event.isError ? Color.statusError : Color.statusInfo)
                             .accessibilityHidden(true)
 
                         VStack(alignment: .leading, spacing: 3) {

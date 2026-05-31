@@ -2,13 +2,19 @@ import SwiftUI
 
 struct ConflictListView: View {
     let folderID: String
+    /// When this folder syncs the whole Obsidian directory, scope the list to a
+    /// single vault's subdirectory (e.g. "brain"); nil shows the folder's
+    /// conflicts as a whole.
+    var pathPrefix: String? = nil
     let syncthingManager: SyncthingManager
 
     /// Read live from the manager so a conflict resolved in the detail view
     /// disappears immediately. The view previously held a by-value snapshot
     /// captured at push time, which left resolved files as tappable dead rows.
     private var conflicts: [SyncthingManager.ConflictInfo] {
-        syncthingManager.conflictFiles[folderID] ?? []
+        let all = syncthingManager.conflictFiles[folderID] ?? []
+        guard let prefix = pathPrefix else { return all }
+        return all.filter { $0.belongs(toVault: prefix) }
     }
 
     var body: some View {
@@ -63,6 +69,15 @@ struct ConflictListView: View {
 }
 
 extension SyncthingManager.ConflictInfo {
+    /// True when this conflict's folder-relative path lives inside the named vault
+    /// subdirectory (exact `vault/…` match, tolerating a stray leading slash).
+    /// Used to attribute conflicts to a single vault when one Syncthing folder
+    /// covers the whole Obsidian directory.
+    func belongs(toVault vault: String) -> Bool {
+        let path = originalPath.hasPrefix("/") ? String(originalPath.dropFirst()) : originalPath
+        return path == vault || path.hasPrefix(vault + "/")
+    }
+
     private static let conflictDateParser: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyyyMMdd-HHmmss"

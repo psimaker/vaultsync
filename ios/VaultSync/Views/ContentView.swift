@@ -4,7 +4,6 @@ struct ContentView: View {
     var syncthingManager: SyncthingManager
     var vaultManager: VaultManager
     var subscriptionManager: SubscriptionManager
-    @Environment(\.colorScheme) private var colorScheme
     @State private var showAddDevice = false
     @State private var showSettings = false
     @State private var showObsidianPicker = false
@@ -12,14 +11,11 @@ struct ContentView: View {
     @State private var showAlert = false
     @State private var pendingShareFailures: [String: SyncUserError] = [:]
     @State private var pendingShareInFlight: Set<String> = []
-    @State private var isRescanning = false
     @State private var pendingFilterSheetFolder: SyncthingManager.FolderInfo?
-    @State private var showRelayUpsell = false
 
     private static let relayUpsellShownKey = "relay-upsell-shown"
 
-    private let slate = Color.vaultSlate
-    private let teal = Color.vaultTeal
+    private let accent = Color.vaultAccent
 
     /// Cached formatter for the dashboard "Last sync" line. Produces a fully
     /// localized relative phrase ("2 hours ago" / "vor 2 Stunden" / "2 小时前").
@@ -31,7 +27,76 @@ struct ContentView: View {
         return f
     }()
 
+    private enum Tab: Hashable {
+        case sync
+        case devices
+        case relay
+    }
+
+    @State private var selectedTab: Tab = .sync
+
     var body: some View {
+        TabView(selection: $selectedTab) {
+            syncTab
+                .tabItem {
+                    Label(L10n.tr("Sync"), systemImage: "arrow.triangle.2.circlepath")
+                }
+                .tag(Tab.sync)
+
+            devicesTab
+                .tabItem {
+                    Label(L10n.tr("Devices"), systemImage: "laptopcomputer.and.iphone")
+                }
+                .tag(Tab.devices)
+
+            relayTab
+                .tabItem {
+                    Label(L10n.tr("Relay"), systemImage: "antenna.radiowaves.left.and.right")
+                }
+                .tag(Tab.relay)
+        }
+        // Sheets/alerts live at the shell level so cross-tab triggers (e.g. an
+        // "Add Device" remediation tapped from a Sync-tab issue) present
+        // regardless of which tab is active.
+        .alert("Error", isPresented: $showAlert) {
+            Button("OK") { }
+        } message: {
+            Text(alertMessage ?? "")
+        }
+        .sheet(isPresented: $showAddDevice) {
+            AddDeviceSheet(syncthingManager: syncthingManager) { message in
+                alertMessage = message
+                showAlert = true
+            }
+        }
+        .sheet(isPresented: $showSettings) {
+            SettingsView(syncthingManager: syncthingManager, vaultManager: vaultManager, subscriptionManager: subscriptionManager)
+        }
+        .sheet(isPresented: $showObsidianPicker) {
+            FolderPicker(initialDirectoryURL: vaultManager.obsidianDirectoryURL, onCancel: {
+                showObsidianPicker = false
+            }) { url in
+                showObsidianPicker = false
+                if let err = vaultManager.grantAccess(url: url) {
+                    alertMessage = mappedError(err, fallbackTitle: L10n.tr("Obsidian Folder Connection Failed")).userVisibleDescription
+                    showAlert = true
+                }
+            }
+        }
+        .onChange(of: syncthingManager.pendingFolders, initial: true) { _, pending in
+            autoAcceptPendingShares(pending)
+        }
+        .onChange(of: syncthingManager.lastSyncTime, initial: true) { _, _ in
+            maybePresentRelayUpsell()
+        }
+        .onChange(of: subscriptionManager.isRelaySubscribed) { _, _ in
+            maybePresentRelayUpsell()
+        }
+    }
+
+    /// The Sync tab — the vault's live-status story: the pinned status header,
+    /// sync issues, Obsidian connection, pending shares, and the vault list.
+    private var syncTab: some View {
         NavigationStack {
             List {
                 dashboardSection
@@ -39,12 +104,19 @@ struct ContentView: View {
                 obsidianStatusSection
                 pendingSharesSection
                 vaultsSection
-                devicesSection
             }
             .refreshable {
                 await syncthingManager.performForegroundSync()
             }
-            .navigationTitle("")
+            .safeAreaInset(edge: .top, spacing: 0) {
+                SyncStatusHeader(
+                    status: overallStatus,
+                    title: syncStatusText,
+                    subtitle: headerSubtitle,
+                    busy: shouldShowReconnectingUI
+                )
+            }
+            .navigationTitle(L10n.tr("VaultSync"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -57,45 +129,28 @@ struct ContentView: View {
                     .accessibilityHint("Opens discovery, relay, and notification settings.")
                 }
             }
-            .alert("Error", isPresented: $showAlert) {
-                Button("OK") { }
-            } message: {
-                Text(alertMessage ?? "")
+        }
+    }
+
+    /// The Devices tab — paired Syncthing peers and the add-device entry point.
+    private var devicesTab: some View {
+        NavigationStack {
+            List {
+                devicesSection
             }
-            .sheet(isPresented: $showAddDevice) {
-                addDeviceSheet
-            }
-            .sheet(isPresented: $showSettings) {
-                SettingsView(syncthingManager: syncthingManager, vaultManager: vaultManager, subscriptionManager: subscriptionManager)
-            }
-            .sheet(isPresented: $showObsidianPicker) {
-                FolderPicker(initialDirectoryURL: vaultManager.obsidianDirectoryURL, onCancel: {
-                    showObsidianPicker = false
-                }) { url in
-                    showObsidianPicker = false
-                    if let err = vaultManager.grantAccess(url: url) {
-                        alertMessage = mappedError(err, fallbackTitle: L10n.tr("Obsidian Folder Connection Failed")).userVisibleDescription
-                        showAlert = true
-                    }
-                }
-            }
-            .sheet(isPresented: $showRelayUpsell) {
-                NavigationStack {
-                    CloudRelayUpsellView(
-                        syncthingManager: syncthingManager,
-                        subscriptionManager: subscriptionManager
-                    )
-                }
-            }
-            .onChange(of: syncthingManager.pendingFolders, initial: true) { _, pending in
-                autoAcceptPendingShares(pending)
-            }
-            .onChange(of: syncthingManager.lastSyncTime, initial: true) { _, _ in
-                maybePresentRelayUpsell()
-            }
-            .onChange(of: subscriptionManager.isRelaySubscribed) { _, _ in
-                maybePresentRelayUpsell()
-            }
+            .navigationTitle(L10n.tr("Devices"))
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+
+    /// The Relay tab — the unified Cloud Relay home (pitch + subscribe, or the
+    /// cross-linked setup/verify funnel once subscribed).
+    private var relayTab: some View {
+        NavigationStack {
+            RelayHomeView(
+                syncthingManager: syncthingManager,
+                subscriptionManager: subscriptionManager
+            )
         }
     }
 
@@ -110,7 +165,7 @@ struct ContentView: View {
         guard syncthingManager.lastSyncTime != nil else { return }
         guard !UserDefaults.standard.bool(forKey: Self.relayUpsellShownKey) else { return }
         UserDefaults.standard.set(true, forKey: Self.relayUpsellShownKey)
-        showRelayUpsell = true
+        selectedTab = .relay
     }
 
     // MARK: - Auto-Accept Pending Shares
@@ -174,70 +229,66 @@ struct ContentView: View {
 
     private var dashboardSection: some View {
         Section {
-            HStack(spacing: 12) {
-                if shouldShowReconnectingUI {
-                    ProgressView()
-                        .tint(teal)
-                        .frame(width: 28, height: 28)
-                        .accessibilityHidden(true)
-                } else {
-                    Image(systemName: syncStatusIcon)
-                        .font(.title2)
-                        .foregroundStyle(syncStatusColor)
-                        .symbolEffect(.pulse, isActive: isSyncing)
-                        .accessibilityHidden(true)
-                }
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(syncStatusText)
-                        .font(.headline)
-                    if shouldShowReconnectingUI {
-                        let count = syncthingManager.reconnectingRequiredDeviceIDs.count
-                        Text(count == 1
-                             ? L10n.tr("Restoring connection to 1 device")
-                             : L10n.fmt("Restoring connection to %d devices", count))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    if let lastSync = syncthingManager.lastSyncTime {
-                        Text(L10n.fmt("Last sync: %@", Self.lastSyncFormatter.localizedString(for: lastSync, relativeTo: Date())))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    if let staleWarning = syncthingManager.staleSyncWarning {
-                        Text(staleWarning)
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
-                    }
-                    if let backgroundOutcome = syncthingManager.lastBackgroundSyncOutcome,
-                       backgroundOutcome.result.shouldSurfaceIssue {
-                        Text(L10n.fmt("Background sync: %@", backgroundOutcome.result.issueTitle))
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
-                    }
-                }
-
-                Spacer(minLength: 0)
+            if let staleWarning = syncthingManager.staleSyncWarning {
+                Label(staleWarning, systemImage: "clock.badge.exclamationmark")
+                    .font(.caption)
+                    .foregroundStyle(Color.statusAttention)
+                    .accessibilityElement(children: .combine)
             }
-            .accessibilityElement(children: .combine)
+            if let backgroundOutcome = syncthingManager.lastBackgroundSyncOutcome,
+               backgroundOutcome.result.shouldSurfaceIssue {
+                Label(L10n.fmt("Background sync: %@", backgroundOutcome.result.issueTitle), systemImage: "moon.zzz")
+                    .font(.caption)
+                    .foregroundStyle(Color.statusAttention)
+                    .accessibilityElement(children: .combine)
+            }
 
             if subscriptionManager.isRelaySubscribed {
-                HStack {
-                    Image(systemName: "antenna.radiowaves.left.and.right")
-                        .foregroundStyle(teal)
-                        .accessibilityHidden(true)
-                    Text("Cloud Relay active")
-                        .font(.subheadline)
-                        .foregroundStyle(teal)
+                if subscriptionManager.relayDeliveryLikelyWorking {
+                    HStack {
+                        Image(systemName: "antenna.radiowaves.left.and.right")
+                            .foregroundStyle(accent)
+                            .accessibilityHidden(true)
+                        Text("Cloud Relay active")
+                            .font(.subheadline)
+                            .foregroundStyle(accent)
+                    }
+                    .accessibilityElement(children: .combine)
+                } else {
+                    // Subscribed, but wake-ups aren't actually arriving yet (device
+                    // not provisioned / relay unhealthy). Don't claim "active" — send
+                    // the user to finish the one missing step.
+                    Button {
+                        selectedTab = .relay
+                    } label: {
+                        HStack {
+                            Image(systemName: "antenna.radiowaves.left.and.right")
+                                .foregroundStyle(Color.statusAttention)
+                                .accessibilityHidden(true)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(L10n.tr("One step left to activate"))
+                                    .font(.subheadline.weight(.medium))
+                                Text(L10n.tr("Set up the server helper"))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                    .tint(.primary)
+                    .accessibilityElement(children: .combine)
                 }
-                .accessibilityElement(children: .combine)
             } else if !syncthingManager.folders.isEmpty {
                 Button {
-                    showRelayUpsell = true
+                    selectedTab = .relay
                 } label: {
                     HStack {
                         Image(systemName: "antenna.radiowaves.left.and.right")
-                            .foregroundStyle(teal)
+                            .foregroundStyle(accent)
                             .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(L10n.tr("Get instant updates"))
@@ -262,14 +313,14 @@ struct ContentView: View {
                 let total = syncthingManager.devices.count
                 HStack {
                     Image(systemName: "network")
-                        .foregroundStyle(connected > 0 ? teal : slate.opacity(colorScheme == .dark ? 0.75 : 0.65))
+                        .foregroundStyle(connected > 0 ? Color.statusSuccess : Color.statusInactive)
                         .accessibilityHidden(true)
                     if total == 0 {
                         Text("No devices configured")
                             .foregroundStyle(.secondary)
                     } else {
                         Text(L10n.fmt("%d of %d devices connected", connected, total))
-                            .foregroundStyle(connected > 0 ? teal : Color.orange)
+                            .foregroundStyle(connected > 0 ? Color.statusSuccess : Color.statusAttention)
                     }
                 }
                 .font(.subheadline)
@@ -278,8 +329,8 @@ struct ContentView: View {
 
             if let error = currentSyncError {
                 HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.red)
+                    Image(systemName: SyncStatus.error.symbolName)
+                        .foregroundStyle(Color.statusError)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(error.title)
@@ -287,15 +338,15 @@ struct ContentView: View {
                         Text(error.message)
                             .font(.caption)
                         Text(error.remediation)
-                            .font(.caption2)
+                            .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Color.statusError)
                 }
                 .accessibilityElement(children: .combine)
                 if let url = troubleshootingURL(for: error) {
                     ExternalLinkButton(titleKey: "Learn how to fix", url: url)
-                        .font(.caption2)
+                        .font(.footnote)
                 }
             }
 
@@ -306,7 +357,7 @@ struct ContentView: View {
                     let folderError = syncthingManager.folderUserError(folderID: folderID)
                     HStack(spacing: 8) {
                         Image(systemName: "exclamationmark.circle.fill")
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(Color.statusAttention)
                             .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(folder?.label ?? folderID)
@@ -315,13 +366,13 @@ struct ContentView: View {
                                 .font(.caption)
                             if let remediation = folderError?.remediation {
                                 Text(remediation)
-                                    .font(.caption2)
+                                    .font(.footnote)
                                     .foregroundStyle(.secondary)
                             }
                             if let folderError,
                                let url = troubleshootingURL(for: folderError) {
                                 ExternalLinkButton(titleKey: "Learn how to fix", url: url)
-                                    .font(.caption2)
+                                    .font(.footnote)
                             }
                         }
                     }
@@ -351,22 +402,31 @@ struct ContentView: View {
             && isReconnecting
     }
 
-    private var syncStatusIcon: String {
-        if currentSyncError != nil { return "exclamationmark.triangle.fill" }
-        if !syncthingManager.isRunning { return "arrow.triangle.2.circlepath" }
-        if !foldersWithErrors.isEmpty { return "exclamationmark.circle" }
-        if isReconnecting { return "arrow.triangle.2.circlepath" }
-        if isSyncing { return "arrow.triangle.2.circlepath" }
-        return "checkmark.circle.fill"
+    /// Canonical overall status for the header, mirroring the precedence cascade
+    /// of `syncStatusText`. Drives the header glyph + color through the SyncStatus
+    /// registry; the contextual wording stays in `syncStatusText`.
+    private var overallStatus: SyncStatus {
+        if currentSyncError != nil { return .error }
+        if !syncthingManager.isRunning { return .starting }
+        if !foldersWithErrors.isEmpty { return .attention }
+        if isReconnecting { return .starting }
+        if isSyncing { return .syncing }
+        return .synced
     }
 
-    private var syncStatusColor: Color {
-        if currentSyncError != nil { return .red }
-        if !syncthingManager.isRunning { return slate.opacity(colorScheme == .dark ? 0.78 : 0.68) }
-        if !foldersWithErrors.isEmpty { return .orange }
-        if isReconnecting { return teal }
-        if isSyncing { return teal }
-        return teal
+    /// Secondary line for the status header — the reconnecting progress or the
+    /// last-sync relative time.
+    private var headerSubtitle: String? {
+        if shouldShowReconnectingUI {
+            let count = syncthingManager.reconnectingRequiredDeviceIDs.count
+            return count == 1
+                ? L10n.tr("Restoring connection to 1 device")
+                : L10n.fmt("Restoring connection to %d devices", count)
+        }
+        if let lastSync = syncthingManager.lastSyncTime {
+            return L10n.fmt("Last sync: %@", Self.lastSyncFormatter.localizedString(for: lastSync, relativeTo: Date()))
+        }
+        return nil
     }
 
     private var syncStatusText: String {
@@ -404,12 +464,12 @@ struct ContentView: View {
                         vaultManager.needsReconnect ? "Obsidian access expired" : "Obsidian folder not connected",
                         systemImage: "folder.badge.questionmark"
                     )
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Color.statusAttention)
 
                     if let issue = vaultManager.accessIssue {
                         Text(issue.message)
                             .font(.caption)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(Color.statusAttention)
                         Text(issue.remediation)
                             .font(.caption2)
                             .foregroundStyle(.secondary)
@@ -433,7 +493,7 @@ struct ContentView: View {
                         .frame(maxWidth: .infinity, alignment: .center)
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(teal)
+                    .tint(accent)
                     .frame(maxWidth: .infinity)
 
                     Text("In the picker, choose \"On My iPhone\" → \"Obsidian\", then tap Open.")
@@ -566,33 +626,96 @@ struct ContentView: View {
                 }
                 .padding(.vertical, 4)
             } else {
-                ForEach(syncthingManager.folders) { folder in
+                ForEach(vaultRows) { item in
                     NavigationLink {
-                        vaultDetailView(folder)
+                        vaultDetailView(item)
                     } label: {
-                        folderRow(folder)
+                        vaultRow(item)
                     }
                 }
             }
         }
     }
 
-    private func folderRow(_ folder: SyncthingManager.FolderInfo) -> some View {
-        let status = syncthingManager.folderStatuses[folder.id]
-        let conflicts = syncthingManager.conflictFiles[folder.id] ?? []
+    /// A single row in the "Obsidian Vaults" list. The list is keyed on the
+    /// *vaults* the user actually has — matching the section title and what
+    /// Obsidian itself shows — not on raw Syncthing sync folders. When one sync
+    /// folder covers the whole Obsidian directory (the common setup: pick
+    /// "On My iPhone/Obsidian"), it expands into one row per detected vault
+    /// inside it; a per-vault sync folder maps 1:1. `vaultSubpath`/`relativePrefix`
+    /// are non-nil only for the expanded directory case, where sync status,
+    /// filters and devices are shared by the whole directory.
+    private struct VaultRowItem: Identifiable {
+        let id: String
+        let name: String
+        let folder: SyncthingManager.FolderInfo
+        let vaultSubpath: String?
+        let relativePrefix: String?
+    }
+
+    /// Build the displayed vault list from the detected vaults inside the synced
+    /// Obsidian directory, mapped onto whichever Syncthing folder actually syncs
+    /// them. Falls back to the folder itself when it isn't the Obsidian root
+    /// (per-vault sync, or the root is itself a single vault).
+    private var vaultRows: [VaultRowItem] {
+        let base = vaultManager.obsidianBasePath.map(Self.canonicalPath)
+        var rows: [VaultRowItem] = []
+        for folder in syncthingManager.folders {
+            let isWholeDirectory = base != nil && Self.canonicalPath(folder.path) == base
+            if isWholeDirectory, !vaultManager.detectedVaults.isEmpty {
+                for vault in vaultManager.detectedVaults {
+                    rows.append(VaultRowItem(
+                        id: "\(folder.id)/\(vault)",
+                        name: vault,
+                        folder: folder,
+                        vaultSubpath: (folder.path as NSString).appendingPathComponent(vault),
+                        relativePrefix: vault
+                    ))
+                }
+            } else {
+                rows.append(VaultRowItem(
+                    id: folder.id,
+                    name: folder.label.isEmpty ? folder.id : folder.label,
+                    folder: folder,
+                    vaultSubpath: nil,
+                    relativePrefix: nil
+                ))
+            }
+        }
+        return rows
+    }
+
+    /// Normalize a path so the Syncthing folder path (stored at accept time) and
+    /// the security-scoped bookmark path (resolved at launch) compare equal even
+    /// across `/var`↔`/private/var` symlinks or a trailing slash.
+    private static func canonicalPath(_ path: String) -> String {
+        URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+    }
+
+    /// Conflicts attributed to one vault: inside the vault's subdirectory for a
+    /// directory-sync row, or all of the folder's conflicts for a 1:1 row.
+    private func conflicts(for item: VaultRowItem) -> [SyncthingManager.ConflictInfo] {
+        let all = syncthingManager.conflictFiles[item.folder.id] ?? []
+        guard let vault = item.relativePrefix else { return all }
+        return all.filter { $0.belongs(toVault: vault) }
+    }
+
+    private func vaultRow(_ item: VaultRowItem) -> some View {
+        let status = syncthingManager.folderStatuses[item.folder.id]
+        let conflictCount = conflicts(for: item).count
         return HStack {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    Text(folder.label.isEmpty ? folder.id : folder.label)
+                    Text(item.name)
                         .font(.body)
-                    if !conflicts.isEmpty {
-                        Text("\(conflicts.count)")
+                    if conflictCount > 0 {
+                        Text("\(conflictCount)")
                             .font(.caption2.bold())
                             .foregroundStyle(.white)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 1)
-                            .background(.orange, in: Capsule())
-                            .accessibilityLabel(L10n.fmt("%d conflicts", conflicts.count))
+                            .background(Color.statusAttention, in: Capsule())
+                            .accessibilityLabel(L10n.fmt("%d conflicts", conflictCount))
                     }
                 }
                 if let status {
@@ -616,33 +739,43 @@ struct ContentView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private func stateIcon(_ state: String) -> String {
+    /// Map a folder's raw engine state onto the canonical `SyncStatus` registry so
+    /// the folder row's glyph + color stay identical to the rest of the app (one
+    /// source of truth). Unknown states stay neutral rather than being forced to a
+    /// misleading "attention".
+    private func folderSyncStatus(_ state: String) -> SyncStatus? {
         switch state {
-        case "idle": "checkmark.circle.fill"
-        case "scanning", "syncing": "arrow.triangle.2.circlepath"
-        case "error": "exclamationmark.circle.fill"
-        default: "questionmark.circle"
+        case "idle": return .synced
+        case "scanning", "syncing": return .syncing
+        case "error": return .error
+        default: return nil
         }
     }
 
+    private func stateIcon(_ state: String) -> String {
+        folderSyncStatus(state)?.symbolName ?? "questionmark.circle"
+    }
+
     private func stateColor(_ state: String) -> Color {
-        switch state {
-        case "idle": .green
-        case "scanning", "syncing": teal
-        case "error": .red
-        default: .gray
-        }
+        folderSyncStatus(state)?.tint ?? .statusInactive
     }
 
     // MARK: - Vault Detail
 
-    private func vaultDetailView(_ folder: SyncthingManager.FolderInfo) -> some View {
+    private func vaultDetailView(_ item: VaultRowItem) -> some View {
+        let folder = item.folder
         let status = syncthingManager.folderStatuses[folder.id]
-        let conflicts = syncthingManager.conflictFiles[folder.id] ?? []
+        let conflicts = self.conflicts(for: item)
         return List {
-            Section("Vault") {
-                LabeledContent("Name", value: folder.label.isEmpty ? folder.id : folder.label)
-                LabeledContent("Path", value: folder.path)
+            Section {
+                DetailRow(title: L10n.tr("Name"), value: item.name)
+                DetailRow(title: L10n.tr("Path"), value: item.vaultSubpath ?? folder.path, monospacedValue: true)
+            } header: {
+                Text("Vault")
+            } footer: {
+                if item.relativePrefix != nil {
+                    Text("Synced as part of your Obsidian directory. Sync filters and devices apply to the whole directory.")
+                }
             }
 
             Section("Sync Status") {
@@ -682,12 +815,13 @@ struct ContentView: View {
                     NavigationLink {
                         ConflictListView(
                             folderID: folder.id,
+                            pathPrefix: item.relativePrefix,
                             syncthingManager: syncthingManager
                         )
                     } label: {
                         HStack {
                             Label("Conflicts", systemImage: "exclamationmark.triangle")
-                                .foregroundStyle(.orange)
+                                .foregroundStyle(Color.statusAttention)
                             Spacer()
                             Text("\(conflicts.count)")
                                 .foregroundStyle(.secondary)
@@ -726,7 +860,7 @@ struct ContentView: View {
                             Spacer()
                             Label(isShared ? L10n.tr("Shared") : L10n.tr("Not Shared"), systemImage: isShared ? "checkmark.circle.fill" : "circle")
                                 .font(.caption.weight(.semibold))
-                                .foregroundStyle(isShared ? .blue : .secondary)
+                                .foregroundStyle(isShared ? Color.vaultAccent : Color.statusInactive)
                                 .accessibilityHidden(true)
                         }
                     }
@@ -743,35 +877,28 @@ struct ContentView: View {
             }
 
             Section {
+                // Honest progress: the busy state reflects the folder's REAL
+                // scan state from the engine, not a fixed timer.
+                let isScanning = status?.state == "scanning"
                 Button {
-                    isRescanning = true
                     if let err = syncthingManager.rescanFolder(id: folder.id) {
                         alertMessage = mappedError(err, fallbackTitle: L10n.tr("Rescan Failed")).userVisibleDescription
                         showAlert = true
-                        isRescanning = false
-                    } else {
-                        Task {
-                            try? await Task.sleep(for: .seconds(2))
-                            isRescanning = false
-                        }
                     }
                 } label: {
                     HStack {
-                        Text(isRescanning ? "Rescanning…" : "Rescan Vault")
+                        Text(isScanning ? "Rescanning…" : "Rescan Vault")
                         Spacer()
-                        if isRescanning {
+                        if isScanning {
                             ProgressView()
                                 .controlSize(.small)
                         }
                     }
                 }
-                .disabled(isRescanning)
+                .disabled(isScanning)
             }
         }
-        .onDisappear {
-            isRescanning = false
-        }
-        .navigationTitle(folder.label.isEmpty ? folder.id : folder.label)
+        .navigationTitle(item.name)
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             if !syncthingManager.hasShownRecommendationSheet(folderID: folder.id) {
@@ -805,7 +932,7 @@ struct ContentView: View {
         Section {
             if syncthingManager.devices.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("No devices connected", systemImage: "laptopcomputer.and.iphone")
+                    Label("No devices configured", systemImage: "laptopcomputer.and.iphone")
                         .foregroundStyle(.secondary)
                     Text("Add a device using its Syncthing Device ID. Find it in the Syncthing web UI under Actions > Show ID.")
                         .font(.caption)
@@ -820,19 +947,14 @@ struct ContentView: View {
                             syncthingManager: syncthingManager
                         )
                     } label: {
-                        HStack {
-                            Text(device.name.isEmpty ? L10n.tr("Unnamed") : device.name)
-                                .font(.body)
-                            Spacer()
-                            HStack(spacing: 4) {
-                                Image(systemName: device.connected ? "checkmark.circle.fill" : "xmark.circle.fill")
-                                    .foregroundStyle(device.connected ? .green : .secondary)
-                                    .accessibilityHidden(true)
-                                Text(device.connected ? L10n.tr("Connected") : L10n.tr("Disconnected"))
-                                    .font(.caption2.weight(.semibold))
-                                    .foregroundStyle(.secondary)
-                            }
-                            .accessibilityElement(children: .combine)
+                        StatusRow(
+                            device.name.isEmpty ? L10n.tr("Unnamed") : device.name,
+                            status: device.connected ? .synced : .paused,
+                            systemImage: device.connected ? "checkmark.circle.fill" : "xmark.circle.fill"
+                        ) {
+                            Text(device.connected ? L10n.tr("Connected") : L10n.tr("Disconnected"))
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -852,73 +974,6 @@ struct ContentView: View {
                 }
             }
         }
-    }
-
-    // MARK: - Add Device Sheet
-
-    @State private var newDeviceID = ""
-    @State private var newDeviceName = ""
-    @State private var showQRScanner = false
-
-    private var addDeviceSheet: some View {
-        NavigationStack {
-            Form {
-                Section("Device ID") {
-                    TextField("XXXXXXX-XXXXXXX-...", text: $newDeviceID)
-                        .font(.system(.body, design: .monospaced))
-                        .textInputAutocapitalization(.characters)
-                        .autocorrectionDisabled()
-
-                    Button {
-                        showQRScanner = true
-                    } label: {
-                        Label("Scan QR Code", systemImage: "qrcode.viewfinder")
-                    }
-                }
-                Section("Name (optional)") {
-                    TextField("e.g. My Laptop", text: $newDeviceName)
-                }
-            }
-            .sheet(isPresented: $showQRScanner) {
-                QRScannerView { scannedCode in
-                    newDeviceID = scannedCode
-                }
-            }
-            .navigationTitle("Add Device")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        resetAddDeviceForm()
-                    }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Add") {
-                        addDevice()
-                    }
-                    .disabled(newDeviceID.isEmpty)
-                }
-            }
-        }
-        .presentationDetents([.medium])
-    }
-
-    private func addDevice() {
-        let id = newDeviceID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let name = newDeviceName.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if let err = syncthingManager.addDevice(id: id, name: name) {
-            alertMessage = mappedError(err, fallbackTitle: L10n.tr("Could Not Add Device")).userVisibleDescription
-            showAlert = true
-        } else {
-            resetAddDeviceForm()
-        }
-    }
-
-    private func resetAddDeviceForm() {
-        newDeviceID = ""
-        newDeviceName = ""
-        showAddDevice = false
     }
 
     // MARK: - Error Helpers

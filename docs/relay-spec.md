@@ -148,6 +148,19 @@ Wake-up signal from homeserver container. Sends silent push to all devices regis
 - No file content, no folder names, no metadata — just a wake-up signal
 - Rate limited server-side (separate from the client `DEBOUNCE_SECONDS`): roughly 1 push per Device ID per ~30s window
 
+#### Error responses and how `vaultsync-notify` reacts
+
+The trigger endpoint distinguishes a *subscription state* from a *misconfiguration*, and the sidecar reacts accordingly so a normal lapse never turns into a crash-restart loop:
+
+| Status | Meaning | Sidecar behaviour |
+|---|---|---|
+| `400`/`401`/`402`/`403` | No active subscription for this Device ID — expired, cancelled, or not yet provisioned | **Recoverable.** Log and keep running; re-check on a slow cadence so delivery resumes automatically once the subscription is active again. |
+| `404` | Endpoint missing — wrong `RELAY_URL` or a broken relay deployment | **Fatal.** Exit so the operator fixes the configuration (normally caught earlier by the startup `/health` check). |
+| `429` | Server-side rate limit | Recoverable. Retry honouring `Retry-After`. |
+| `5xx` / other | Transient relay/network fault | Recoverable. Retry with exponential backoff. |
+
+The sidecar never exits on a subscription-state response; only a genuine misconfiguration (`404`) is fatal.
+
 ### GET /health
 
 No authentication required.

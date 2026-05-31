@@ -80,8 +80,17 @@ func (c *RelayClient) CheckHealth(ctx context.Context) error {
 }
 
 // Trigger sends a wake-up signal to the relay. Retries transient errors with
-// exponential backoff (max 5 attempts). Returns fatal errors for invalid
-// request/endpoint configuration.
+// exponential backoff (max 5 attempts).
+//
+// Two non-transient outcomes short-circuit the retry loop and are surfaced to
+// the caller unchanged:
+//   - *fatalError for a genuine misconfiguration (endpoint missing / wrong
+//     RELAY_URL), which a runtime retry cannot fix.
+//   - *subscriptionInactiveError when the relay declines the trigger because
+//     the device has no active subscription (expired, cancelled, or not yet
+//     provisioned). This is a normal, self-resolving runtime state: the caller
+//     keeps the process running and resumes delivery once the subscription is
+//     active again — it must never bring the sidecar down.
 func (c *RelayClient) Trigger(ctx context.Context) error {
 	body, err := json.Marshal(triggerRequest{DeviceID: c.deviceID})
 	if err != nil {
@@ -102,7 +111,10 @@ func (c *RelayClient) Trigger(ctx context.Context) error {
 			return nil
 		}
 
-		if isFatal(err) {
+		// A misconfiguration or an inactive-subscription verdict is stable;
+		// retrying the same request within seconds cannot change it, so return
+		// immediately and let the caller decide how to react.
+		if isFatal(err) || isSubscriptionInactive(err) {
 			return err
 		}
 
@@ -144,6 +156,13 @@ func (c *RelayClient) ProbeTrigger(ctx context.Context) error {
 		if errors.As(err, &rateLimited) {
 			return nil
 		}
+		// A rate-limit or subscription verdict both prove the trigger endpoint
+		// is reachable and behaving — which is all the doctor probe checks.
+		// Subscription state is managed in the iOS app, not by the operator, so
+		// it must not fail the connectivity diagnostic.
+		if isSubscriptionInactive(err) {
+			return nil
+		}
 	}
 	return err
 }
@@ -171,27 +190,39 @@ func (c *RelayClient) doTrigger(ctx context.Context, url string, body []byte) er
 		slog.Info("relay trigger accepted", "devices_notified", tr.DevicesNotified)
 		return nil
 
-	case http.StatusBadRequest:
-		return &fatalError{msg: "relay rejected request (400 Bad Request): check device ID"}
-
 	case http.StatusNotFound:
+		// The endpoint is missing: wrong RELAY_URL or a broken relay deployment.
+		// A runtime retry cannot fix this, so it stays fatal. (A wrong RELAY_URL
+		// is normally caught earlier by the startup health check.)
 		return &fatalError{msg: "relay endpoint not found (404): check RELAY_URL"}
 
 	case http.StatusTooManyRequests:
 		ra := parseRetryAfter(resp.Header.Get("Retry-After"))
 		return &rateLimitError{retryAfter: ra}
 
-	case http.StatusUnauthorized, http.StatusForbidden:
-		return &fatalError{msg: fmt.Sprintf("relay rejected request (%d): check RELAY_URL or relay auth policy", resp.StatusCode)}
+	case http.StatusBadRequest, http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden:
+		// The relay reached us but declined this device. The trigger endpoint
+		// has no auth and the device ID is read straight from Syncthing (always
+		// well-formed), so these codes mean the subscription is expired,
+		// cancelled, or not yet provisioned — the relay gates pushes on the
+		// verified StoreKit expiry. That is a self-resolving runtime state, not
+		// a misconfiguration — never fatal.
+		body := strings.TrimSpace(string(readBodySnippet(resp.Body)))
+		return &subscriptionInactiveError{statusCode: resp.StatusCode, body: body}
 
 	default:
-		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
-			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-			return &fatalError{msg: fmt.Sprintf("relay rejected request (%d): %s", resp.StatusCode, respBody)}
-		}
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return &transientError{err: fmt.Errorf("unexpected status %d: %s", resp.StatusCode, respBody)}
+		// Any other status (5xx, or an undocumented 4xx such as a proxy-level
+		// 405/422) is treated as transient: keep retrying and stay alive rather
+		// than crash, and log the raw code honestly instead of guessing it is a
+		// subscription issue.
+		body := strings.TrimSpace(string(readBodySnippet(resp.Body)))
+		return &transientError{err: fmt.Errorf("unexpected status %d: %s", resp.StatusCode, body)}
 	}
+}
+
+func readBodySnippet(r io.Reader) []byte {
+	snippet, _ := io.ReadAll(io.LimitReader(r, 512))
+	return snippet
 }
 
 type fatalError struct{ msg string }
@@ -208,9 +239,31 @@ func (e *rateLimitError) Error() string {
 	return fmt.Sprintf("rate limited (retry after %s)", e.retryAfter)
 }
 
+// subscriptionInactiveError indicates the relay declined a trigger because the
+// device's subscription is not active: expired, cancelled, or not yet
+// provisioned. It is a normal runtime condition, not a misconfiguration, so the
+// notify sidecar keeps running and resumes delivery automatically once the
+// subscription is active again.
+type subscriptionInactiveError struct {
+	statusCode int
+	body       string
+}
+
+func (e *subscriptionInactiveError) Error() string {
+	if e.body == "" {
+		return fmt.Sprintf("relay declined trigger (HTTP %d): no active subscription for this device (expired, cancelled, or not yet provisioned)", e.statusCode)
+	}
+	return fmt.Sprintf("relay declined trigger (HTTP %d): no active subscription for this device (expired, cancelled, or not yet provisioned): %s", e.statusCode, e.body)
+}
+
 func isFatal(err error) bool {
 	_, ok := err.(*fatalError)
 	return ok
+}
+
+func isSubscriptionInactive(err error) bool {
+	var e *subscriptionInactiveError
+	return errors.As(err, &e)
 }
 
 func retryAfter(err error) (time.Duration, bool) {

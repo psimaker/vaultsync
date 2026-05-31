@@ -219,21 +219,6 @@ final class VaultManager {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    // MARK: - Lifecycle
-
-    /// Stop security-scoped access. Call when Syncthing is stopped.
-    func stopAccess() {
-        if let url = obsidianDirectoryURL {
-            BookmarkService.stopAccessing(url: url)
-            logger.info("Stopped Obsidian directory access")
-        }
-        obsidianDirectoryURL = nil
-        isAccessible = false
-        detectedVaults = []
-        accessIssue = nil
-        needsReconnect = false
-    }
-
     // MARK: - Legacy Migration
 
     /// Remove old per-vault bookmarks after migration to obsidian-root.

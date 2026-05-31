@@ -64,6 +64,18 @@ jobs:
         working-directory: notify
         run: go test ./... -count=1
 
+  design-lint:
+    name: Design Token Lint
+    runs-on: ubuntu-latest # pure bash/grep guardrail; no Xcode needed
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check design tokens
+        # Fails if views reintroduce raw status colors instead of Theme.swift
+        # tokens — keeps the redesign's single source of truth from eroding.
+        run: ios/scripts/design-token-lint.sh
+
   build:
     name: Build & Test
     runs-on: macos-26 # Xcode 26.2 default, iOS 26 SDK required for BGContinuedProcessingTask
@@ -71,6 +83,7 @@ jobs:
     needs:
       - go-tests
       - notify-tests
+      - design-lint
     steps:
       - uses: actions/checkout@v6
 

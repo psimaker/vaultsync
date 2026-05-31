@@ -53,6 +53,8 @@ struct VaultSyncApp: App {
             .onOpenURL { url in
                 handleIncomingURL(url)
             }
+            .tint(.vaultAccent)
+            .animation(.easeInOut(duration: 0.3), value: hasCompletedOnboarding)
         }
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
