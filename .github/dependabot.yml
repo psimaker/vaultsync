@@ -1,0 +1,31 @@
+version: 2
+updates:
+  # Go bridge dependencies. The patched Syncthing and go-stun forks are local
+  # replace-shadowed copies pinned to a 2.x pseudo-version, so Dependabot can't
+  # reason about them — ignore to avoid noise. They are tracked manually against
+  # upstream security advisories (see go/patches/README.md).
+  - package-ecosystem: gomod
+    directory: /go
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: github.com/syncthing/syncthing
+      - dependency-name: github.com/ccding/go-stun
+
+  # GitHub Actions across all workflows. Also migrates mutable tags to commit
+  # SHAs and keeps them current once you pin them.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  # notify relay container base images (golang:1.24-alpine, alpine:3.21).
+  # Dependabot will also propose @sha256 digest pins for these.
+  - package-ecosystem: docker
+    directory: /notify
+    schedule:
+      interval: weekly
+
+  # NOTE: /notify Go modules are intentionally not tracked — the relay is pure
+  # stdlib (no third-party require block), so there is nothing for gomod to bump.

@@ -12,9 +12,9 @@ import (
 
 // PendingFolderInfo represents a folder offered by one or more remote devices.
 type PendingFolderInfo struct {
-	ID          string                `json:"id"`
-	Label       string                `json:"label"`
-	OfferedBy   []PendingDeviceInfo   `json:"offeredBy"`
+	ID        string              `json:"id"`
+	Label     string              `json:"label"`
+	OfferedBy []PendingDeviceInfo `json:"offeredBy"`
 }
 
 // PendingDeviceInfo identifies a device that offered a pending folder.
