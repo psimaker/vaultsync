@@ -1,13 +1,18 @@
+import StoreKit
 import SwiftUI
+import UIKit
 
-/// The Relay tab — the single home for the paid Cloud Relay feature. Replaces the
-/// three disconnected altitudes (marketing paywall, Docker setup wall, engineer
-/// diagnostics dump) with one progressively-disclosed flow that cross-links them:
+/// The Relay tab — the single home for the paid Cloud Relay feature. It has two
+/// deliberately different shapes:
 ///
-///  - Not subscribed: plain-language pitch + the canonical `SubscribePlanPicker`.
-///  - Subscribed: a status header + a three-step spine (Subscribe → run the
-///    server helper → verify delivery) whose steps link into Server Setup and
-///    Diagnostics, finally closing the funnel that previously had no links.
+///  - **Not subscribed:** a focused, decluttered pitch that frames Relay honestly
+///    (a tiny private wake-up on top of the already-free P2P sync — NOT cloud
+///    storage), then the canonical `SubscribePlanPicker`.
+///  - **Subscribed:** an operational control center. Activation is the real lever
+///    (most subscriptions never finish the server setup), so when wake-ups aren't
+///    arriving yet the setup step is front and center; otherwise it's a calm
+///    "active" status plus manage / diagnostics. Relay diagnostics live here now —
+///    the old Settings → Cloud Relay section has been removed.
 struct RelayHomeView: View {
     let syncthingManager: SyncthingManager
     var subscriptionManager: SubscriptionManager
@@ -18,38 +23,49 @@ struct RelayHomeView: View {
     var body: some View {
         List {
             if subscriptionManager.isRelaySubscribed {
-                subscribedSections
+                subscribedContent
             } else {
-                pitchSections
+                pitchContent
             }
         }
         .navigationTitle(L10n.tr("Cloud Relay"))
         .navigationBarTitleDisplayMode(.inline)
+        .task {
+            await subscriptionManager.refreshRelayDiagnostics(homeserverDeviceIDs: deviceIDs)
+        }
     }
 
     // MARK: - Not subscribed
 
     @ViewBuilder
-    private var pitchSections: some View {
+    private var pitchContent: some View {
         Section {
-            VStack(alignment: .leading, spacing: VaultSpacing.s) {
+            VStack(alignment: .leading, spacing: VaultSpacing.m) {
                 Image(systemName: "antenna.radiowaves.left.and.right")
-                    .font(.largeTitle)
+                    .font(.system(size: 34))
                     .foregroundStyle(Color.vaultAccent)
                     .accessibilityHidden(true)
-                Text(L10n.tr("Make incoming sync instant"))
-                    .font(.title3.weight(.bold))
-                Text(L10n.tr("Your vault already syncs when you open VaultSync. Cloud Relay adds a silent push so changes on your server reach this iPhone the moment they happen — no need to open the app first."))
+
+                Text(L10n.tr("Instant sync, still private"))
+                    .font(.title2.weight(.bold))
+
+                Text(L10n.tr("Your notes never touch our servers. Cloud Relay sends a tiny wake-up so changes from your other devices land the moment they happen — even with the app closed."))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-            }
-            .padding(.vertical, VaultSpacing.xs)
-        }
+                    .fixedSize(horizontal: false, vertical: true)
 
-        Section {
-            benefitRow(icon: "bolt.fill", L10n.tr("Near-instant server → iPhone updates"))
-            benefitRow(icon: "lock.shield.fill", L10n.tr("The relay only sends a wake-up — it never sees your notes"))
-            benefitRow(icon: "xmark.circle.fill", L10n.tr("Cancel anytime in Settings → Subscriptions"))
+                Label {
+                    Text(L10n.tr("Your vault already syncs free and peer-to-peer. Relay only removes the “open the app to sync” wait — it isn’t cloud storage."))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "lock.shield.fill").foregroundStyle(Color.statusSuccess)
+                }
+                .padding(.top, VaultSpacing.xs)
+            }
+            .padding(.vertical, VaultSpacing.s)
+            .accessibilityElement(children: .combine)
         }
 
         Section {
@@ -57,44 +73,62 @@ struct RelayHomeView: View {
                 subscriptionManager: subscriptionManager,
                 homeserverDeviceIDs: deviceIDs
             )
-        } footer: {
-            Text(L10n.tr("Cloud Relay needs a one-time helper on your server, shown right after you subscribe."))
         }
     }
 
     // MARK: - Subscribed
 
     @ViewBuilder
-    private var subscribedSections: some View {
+    private var subscribedContent: some View {
         Section {
-            StatusBadge(
-                isDelivering ? .synced : .attention,
-                text: isDelivering
-                    ? L10n.tr("Cloud Relay active")
-                    : L10n.tr("Finish server setup")
-            )
-            .font(.headline)
-            Text(isDelivering
-                 ? L10n.tr("Wake-ups are being delivered — incoming changes sync the moment they happen.")
-                 : L10n.tr("You’re subscribed. Cloud Relay only delivers wake-ups once the helper is running on your server."))
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            if let expiry = subscriptionManager.subscriptionExpiryDate {
-                DetailRow(title: L10n.tr("Renews"), value: expiry.formatted(date: .abbreviated, time: .omitted))
+            VStack(alignment: .leading, spacing: VaultSpacing.s) {
+                StatusBadge(
+                    isDelivering ? .synced : .attention,
+                    text: isDelivering
+                        ? L10n.tr("Cloud Relay active")
+                        : L10n.tr("One step left to activate")
+                )
+                .font(.headline)
+
+                Text(isDelivering
+                     ? L10n.tr("Wake-ups are being delivered — changes from your other devices arrive instantly.")
+                     : L10n.tr("You’re subscribed, but no wake-up has arrived yet. Cloud Relay only delivers once the helper is running on your server."))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if isDelivering, let last = subscriptionManager.lastRelayTriggerReceivedAt {
+                    LabeledContent(L10n.tr("Last wake-up")) {
+                        Text(last, style: .relative)
+                    }
+                    .font(.subheadline)
+                }
+            }
+            .padding(.vertical, VaultSpacing.xs)
+            .accessibilityElement(children: .combine)
+        }
+
+        // Activation lever — prominent while wake-ups aren't arriving yet.
+        if !isDelivering {
+            Section {
+                NavigationLink {
+                    RelayServerSetupView(isDelivering: isDelivering)
+                } label: {
+                    Label(L10n.tr("Set up the server helper"), systemImage: "server.rack")
+                        .font(.headline)
+                }
+            } footer: {
+                Text(L10n.tr("Run the one-time vaultsync-notify helper on your server to start receiving instant updates. It only sends a wake-up — it never sees your notes."))
             }
         }
 
         Section {
-            spineRow(done: true, title: L10n.tr("Subscribe"), detail: L10n.tr("Your Cloud Relay subscription is active."))
-
-            NavigationLink {
-                RelayServerSetupView(isDelivering: isDelivering)
-            } label: {
-                spineLabel(
-                    done: isDelivering,
-                    title: L10n.tr("Run the server helper"),
-                    detail: L10n.tr("Start vaultsync-notify on your server — copyable command inside.")
-                )
+            if isDelivering {
+                NavigationLink {
+                    RelayServerSetupView(isDelivering: isDelivering)
+                } label: {
+                    Label(L10n.tr("Server helper setup"), systemImage: "server.rack")
+                }
             }
 
             NavigationLink {
@@ -103,49 +137,37 @@ struct RelayHomeView: View {
                     subscriptionManager: subscriptionManager
                 )
             } label: {
-                spineLabel(
-                    done: isDelivering,
-                    title: L10n.tr("Verify delivery"),
-                    detail: L10n.tr("Check relay health, push token, and per-device provisioning.")
-                )
+                Label(L10n.tr("Relay health & diagnostics"), systemImage: "stethoscope")
+            }
+
+            Button {
+                Task {
+                    guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene else { return }
+                    try? await AppStore.showManageSubscriptions(in: scene)
+                }
+            } label: {
+                Label(L10n.tr("Manage Subscription"), systemImage: "creditcard")
+            }
+
+            if let expiry = subscriptionManager.subscriptionExpiryDate {
+                LabeledContent(L10n.tr("Renews")) {
+                    Text(expiry, style: .date)
+                }
             }
         } header: {
-            Text(L10n.tr("Finish setup"))
-        } footer: {
-            Text(L10n.tr("Manage or cancel your subscription anytime in Settings → Subscriptions."))
+            Text(L10n.tr("Manage"))
         }
-    }
 
-    // MARK: - Helpers
-
-    private func benefitRow(icon: String, _ text: String) -> some View {
-        Label {
-            Text(text).font(.subheadline)
-        } icon: {
-            Image(systemName: icon).foregroundStyle(Color.vaultAccent)
-        }
-        .accessibilityElement(children: .combine)
-    }
-
-    private func spineRow(done: Bool, title: String, detail: String) -> some View {
-        spineLabel(done: done, title: title, detail: detail)
-    }
-
-    private func spineLabel(done: Bool, title: String, detail: String) -> some View {
-        HStack(spacing: VaultSpacing.m) {
-            Image(systemName: done ? "checkmark.circle.fill" : "circle")
-                .font(.title3)
-                .foregroundStyle(done ? Color.statusSuccess : Color.statusInactive)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.body)
-                Text(detail)
+        if let relayError = subscriptionManager.errorMessage, !relayError.isEmpty {
+            Section {
+                Text(relayError)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.statusError)
+                if let url = SyncUserError.troubleshootingURL(forRawError: relayError) {
+                    ExternalLinkButton(titleKey: "Learn how to fix", url: url)
+                        .font(.footnote)
+                }
             }
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityValue(done ? L10n.tr("Done") : "")
     }
 }

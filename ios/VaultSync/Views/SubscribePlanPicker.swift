@@ -1,14 +1,15 @@
 import StoreKit
 import SwiftUI
 
-/// The single canonical Cloud Relay subscription picker. Yearly is listed first
-/// and highlighted as the recommended plan; monthly sits below; restore and a
-/// prominent, compliant price / term / auto-renew disclosure with Terms & Privacy
-/// links follow (App Store guideline 3.1.2(a)).
+/// The single canonical Cloud Relay subscription picker. Monthly is listed first
+/// (the low-commitment entry point — leading with the small price avoids the
+/// "annual sticker shock" that makes people reach for a full cloud-sync product
+/// instead); yearly follows, framed as savings and marked as the best value.
+/// Prominent, compliant price / term / auto-renew disclosure with Terms & Privacy
+/// links follows (App Store guideline 3.1.2(a)).
 ///
-/// Used by both the Relay tab and the in-context upsell so the two can never
-/// drift in ordering or copy again — replacing the previously duplicated blocks
-/// that listed the plans in opposite orders.
+/// Relay can only be provisioned for a paired homeserver, so with no devices the
+/// picker shows a guide instead of letting the user pay for nothing to wake.
 struct SubscribePlanPicker: View {
     var subscriptionManager: SubscriptionManager
     let homeserverDeviceIDs: [String]
@@ -19,7 +20,9 @@ struct SubscribePlanPicker: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: VaultSpacing.m) {
-            if subscriptionManager.yearlyProduct == nil && subscriptionManager.monthlyProduct == nil {
+            if homeserverDeviceIDs.isEmpty {
+                noDeviceNotice
+            } else if subscriptionManager.yearlyProduct == nil && subscriptionManager.monthlyProduct == nil {
                 if subscriptionManager.isLoadingProduct {
                     HStack(spacing: VaultSpacing.s) {
                         ProgressView()
@@ -29,11 +32,11 @@ struct SubscribePlanPicker: View {
                     Text(L10n.tr("Subscription unavailable")).foregroundStyle(.secondary)
                 }
             } else {
-                if let yearly = subscriptionManager.yearlyProduct {
-                    planCard(product: yearly, title: L10n.tr("Yearly"), recommended: true)
-                }
                 if let monthly = subscriptionManager.monthlyProduct {
                     planCard(product: monthly, title: L10n.tr("Monthly"), recommended: false)
+                }
+                if let yearly = subscriptionManager.yearlyProduct {
+                    planCard(product: yearly, title: L10n.tr("Yearly"), recommended: true)
                 }
             }
 
@@ -68,6 +71,24 @@ struct SubscribePlanPicker: View {
         }
     }
 
+    private var noDeviceNotice: some View {
+        HStack(alignment: .top, spacing: VaultSpacing.m) {
+            Image(systemName: "laptopcomputer.slash")
+                .font(.title3)
+                .foregroundStyle(Color.statusAttention)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(L10n.tr("Add your server first"))
+                    .font(.headline)
+                Text(L10n.tr("Cloud Relay wakes a specific device. Pair the computer or server that hosts your vault on the Devices tab, then come back to subscribe."))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
     private func planCard(product: Product, title: String, recommended: Bool) -> some View {
         Button {
             purchase(product)
@@ -77,8 +98,8 @@ struct SubscribePlanPicker: View {
                     HStack(spacing: VaultSpacing.s) {
                         Text(title)
                             .font(.headline)
-                        if recommended {
-                            Text(L10n.tr("Best value"))
+                        if recommended, let savings = yearlySavingsText {
+                            Text(savings)
                                 .font(.caption2.weight(.bold))
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 2)
@@ -116,6 +137,19 @@ struct SubscribePlanPicker: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(L10n.fmt("%1$@ — %2$@", title, subscriptionManager.priceText(for: product)))
         .accessibilityHint(L10n.tr("Starts a subscription purchase."))
+    }
+
+    /// "Save N%" for the yearly plan vs. paying monthly for a year. Derived from
+    /// StoreKit prices so it is correct per storefront; nil if not computable.
+    private var yearlySavingsText: String? {
+        guard let monthly = subscriptionManager.monthlyProduct,
+              let yearly = subscriptionManager.yearlyProduct else { return nil }
+        let monthlyAnnual = monthly.price * 12
+        guard monthlyAnnual > 0 else { return nil }
+        let fraction = (monthlyAnnual - yearly.price) / monthlyAnnual
+        let percent = NSDecimalNumber(decimal: fraction * 100).intValue
+        guard percent > 0 else { return L10n.tr("Best value") }
+        return L10n.fmt("Save %d%%", percent)
     }
 
     private var complianceFooter: some View {
