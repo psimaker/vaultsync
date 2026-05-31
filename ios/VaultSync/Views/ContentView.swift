@@ -14,7 +14,6 @@ struct ContentView: View {
     @State private var pendingShareInFlight: Set<String> = []
     @State private var isRescanning = false
     @State private var pendingFilterSheetFolder: SyncthingManager.FolderInfo?
-    @State private var showRelayUpsell = false
 
     private static let relayUpsellShownKey = "relay-upsell-shown"
 
@@ -33,6 +32,7 @@ struct ContentView: View {
     private enum Tab: Hashable {
         case sync
         case devices
+        case relay
     }
 
     @State private var selectedTab: Tab = .sync
@@ -50,6 +50,12 @@ struct ContentView: View {
                     Label(L10n.tr("Devices"), systemImage: "laptopcomputer.and.iphone")
                 }
                 .tag(Tab.devices)
+
+            relayTab
+                .tabItem {
+                    Label(L10n.tr("Relay"), systemImage: "antenna.radiowaves.left.and.right")
+                }
+                .tag(Tab.relay)
         }
         // Sheets/alerts live at the shell level so cross-tab triggers (e.g. an
         // "Add Device" remediation tapped from a Sync-tab issue) present
@@ -74,14 +80,6 @@ struct ContentView: View {
                     alertMessage = mappedError(err, fallbackTitle: L10n.tr("Obsidian Folder Connection Failed")).userVisibleDescription
                     showAlert = true
                 }
-            }
-        }
-        .sheet(isPresented: $showRelayUpsell) {
-            NavigationStack {
-                CloudRelayUpsellView(
-                    syncthingManager: syncthingManager,
-                    subscriptionManager: subscriptionManager
-                )
             }
         }
         .onChange(of: syncthingManager.pendingFolders, initial: true) { _, pending in
@@ -144,6 +142,17 @@ struct ContentView: View {
         }
     }
 
+    /// The Relay tab — the unified Cloud Relay home (pitch + subscribe, or the
+    /// cross-linked setup/verify funnel once subscribed).
+    private var relayTab: some View {
+        NavigationStack {
+            RelayHomeView(
+                syncthingManager: syncthingManager,
+                subscriptionManager: subscriptionManager
+            )
+        }
+    }
+
     // MARK: - Cloud Relay Upsell
 
     /// Presents the Cloud Relay offer once, at the "aha moment": the first time
@@ -155,7 +164,7 @@ struct ContentView: View {
         guard syncthingManager.lastSyncTime != nil else { return }
         guard !UserDefaults.standard.bool(forKey: Self.relayUpsellShownKey) else { return }
         UserDefaults.standard.set(true, forKey: Self.relayUpsellShownKey)
-        showRelayUpsell = true
+        selectedTab = .relay
     }
 
     // MARK: - Auto-Accept Pending Shares
@@ -245,7 +254,7 @@ struct ContentView: View {
                 .accessibilityElement(children: .combine)
             } else if !syncthingManager.folders.isEmpty {
                 Button {
-                    showRelayUpsell = true
+                    selectedTab = .relay
                 } label: {
                     HStack {
                         Image(systemName: "antenna.radiowaves.left.and.right")

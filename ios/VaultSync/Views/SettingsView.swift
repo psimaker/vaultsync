@@ -266,12 +266,12 @@ struct SettingsView: View {
             // Subscription details (required by App Store Review). Price comes
             // from StoreKit so it is correct per storefront — never hard-coded.
             VStack(alignment: .leading, spacing: 2) {
-                if let monthly = subscriptionManager.monthlyProduct {
-                    Text(L10n.fmt("Cloud Relay — %@", subscriptionManager.priceText(for: monthly)))
-                        .font(.caption)
-                }
                 if let yearly = subscriptionManager.yearlyProduct {
                     Text(L10n.fmt("Cloud Relay — %@", subscriptionManager.priceText(for: yearly)))
+                        .font(.caption)
+                }
+                if let monthly = subscriptionManager.monthlyProduct {
+                    Text(L10n.fmt("Cloud Relay — %@", subscriptionManager.priceText(for: monthly)))
                         .font(.caption)
                 }
                 if subscriptionManager.monthlyProduct == nil, subscriptionManager.yearlyProduct == nil {
