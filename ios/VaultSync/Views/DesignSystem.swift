@@ -192,6 +192,63 @@ struct MonoField: View {
     }
 }
 
+// MARK: - Persistent sync-status header
+
+/// The "answer at a glance" header: a floating material bar that states one
+/// unambiguous truth about the vault — the canonical `SyncStatus` drives the
+/// glyph + color, and the title/subtitle carry the contextual detail. Pinned
+/// above the content via `.safeAreaInset(edge: .top)`. On iOS 26 the material
+/// adopts the Liquid Glass look automatically.
+struct SyncStatusHeader: View {
+    let status: SyncStatus
+    let title: String
+    var subtitle: String?
+    /// When true, show an indeterminate spinner instead of the status glyph
+    /// (used while reconnecting to peers).
+    var busy: Bool = false
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        HStack(spacing: VaultSpacing.m) {
+            ZStack {
+                if busy {
+                    ProgressView()
+                        .tint(status.tint)
+                } else {
+                    Image(systemName: status.symbolName)
+                        .font(.title2)
+                        .foregroundStyle(status.tint)
+                        .symbolEffect(.pulse, isActive: status == .syncing && !reduceMotion)
+                }
+            }
+            .frame(width: 30, height: 30)
+            .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.headline)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, VaultSpacing.l)
+        .padding(.vertical, VaultSpacing.m)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.regularMaterial)
+        .overlay(alignment: .bottom) {
+            Divider()
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(title)
+        .accessibilityValue(subtitle ?? "")
+    }
+}
+
 // MARK: - Card surface
 
 private struct VaultCardModifier: ViewModifier {

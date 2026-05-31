@@ -18,7 +18,6 @@ struct ContentView: View {
 
     private static let relayUpsellShownKey = "relay-upsell-shown"
 
-    private let slate = Color.vaultSlate
     private let teal = Color.vaultTeal
 
     /// Cached formatter for the dashboard "Last sync" line. Produces a fully
@@ -44,7 +43,15 @@ struct ContentView: View {
             .refreshable {
                 await syncthingManager.performForegroundSync()
             }
-            .navigationTitle("")
+            .safeAreaInset(edge: .top, spacing: 0) {
+                SyncStatusHeader(
+                    status: overallStatus,
+                    title: syncStatusText,
+                    subtitle: headerSubtitle,
+                    busy: shouldShowReconnectingUI
+                )
+            }
+            .navigationTitle(L10n.tr("VaultSync"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -174,52 +181,19 @@ struct ContentView: View {
 
     private var dashboardSection: some View {
         Section {
-            HStack(spacing: 12) {
-                if shouldShowReconnectingUI {
-                    ProgressView()
-                        .tint(teal)
-                        .frame(width: 28, height: 28)
-                        .accessibilityHidden(true)
-                } else {
-                    Image(systemName: syncStatusIcon)
-                        .font(.title2)
-                        .foregroundStyle(syncStatusColor)
-                        .symbolEffect(.pulse, isActive: isSyncing)
-                        .accessibilityHidden(true)
-                }
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(syncStatusText)
-                        .font(.headline)
-                    if shouldShowReconnectingUI {
-                        let count = syncthingManager.reconnectingRequiredDeviceIDs.count
-                        Text(count == 1
-                             ? L10n.tr("Restoring connection to 1 device")
-                             : L10n.fmt("Restoring connection to %d devices", count))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    if let lastSync = syncthingManager.lastSyncTime {
-                        Text(L10n.fmt("Last sync: %@", Self.lastSyncFormatter.localizedString(for: lastSync, relativeTo: Date())))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    if let staleWarning = syncthingManager.staleSyncWarning {
-                        Text(staleWarning)
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
-                    }
-                    if let backgroundOutcome = syncthingManager.lastBackgroundSyncOutcome,
-                       backgroundOutcome.result.shouldSurfaceIssue {
-                        Text(L10n.fmt("Background sync: %@", backgroundOutcome.result.issueTitle))
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
-                    }
-                }
-
-                Spacer(minLength: 0)
+            if let staleWarning = syncthingManager.staleSyncWarning {
+                Label(staleWarning, systemImage: "clock.badge.exclamationmark")
+                    .font(.caption)
+                    .foregroundStyle(Color.statusAttention)
+                    .accessibilityElement(children: .combine)
             }
-            .accessibilityElement(children: .combine)
+            if let backgroundOutcome = syncthingManager.lastBackgroundSyncOutcome,
+               backgroundOutcome.result.shouldSurfaceIssue {
+                Label(L10n.fmt("Background sync: %@", backgroundOutcome.result.issueTitle), systemImage: "moon.zzz")
+                    .font(.caption)
+                    .foregroundStyle(Color.statusAttention)
+                    .accessibilityElement(children: .combine)
+            }
 
             if subscriptionManager.isRelaySubscribed {
                 HStack {
@@ -262,14 +236,14 @@ struct ContentView: View {
                 let total = syncthingManager.devices.count
                 HStack {
                     Image(systemName: "network")
-                        .foregroundStyle(connected > 0 ? teal : slate.opacity(colorScheme == .dark ? 0.75 : 0.65))
+                        .foregroundStyle(connected > 0 ? Color.statusSuccess : Color.statusInactive)
                         .accessibilityHidden(true)
                     if total == 0 {
                         Text("No devices configured")
                             .foregroundStyle(.secondary)
                     } else {
                         Text(L10n.fmt("%d of %d devices connected", connected, total))
-                            .foregroundStyle(connected > 0 ? teal : Color.orange)
+                            .foregroundStyle(connected > 0 ? Color.statusSuccess : Color.statusAttention)
                     }
                 }
                 .font(.subheadline)
@@ -278,8 +252,8 @@ struct ContentView: View {
 
             if let error = currentSyncError {
                 HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.red)
+                    Image(systemName: SyncStatus.error.symbolName)
+                        .foregroundStyle(Color.statusError)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(error.title)
@@ -287,15 +261,15 @@ struct ContentView: View {
                         Text(error.message)
                             .font(.caption)
                         Text(error.remediation)
-                            .font(.caption2)
+                            .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Color.statusError)
                 }
                 .accessibilityElement(children: .combine)
                 if let url = troubleshootingURL(for: error) {
                     ExternalLinkButton(titleKey: "Learn how to fix", url: url)
-                        .font(.caption2)
+                        .font(.footnote)
                 }
             }
 
@@ -306,7 +280,7 @@ struct ContentView: View {
                     let folderError = syncthingManager.folderUserError(folderID: folderID)
                     HStack(spacing: 8) {
                         Image(systemName: "exclamationmark.circle.fill")
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(Color.statusAttention)
                             .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(folder?.label ?? folderID)
@@ -315,13 +289,13 @@ struct ContentView: View {
                                 .font(.caption)
                             if let remediation = folderError?.remediation {
                                 Text(remediation)
-                                    .font(.caption2)
+                                    .font(.footnote)
                                     .foregroundStyle(.secondary)
                             }
                             if let folderError,
                                let url = troubleshootingURL(for: folderError) {
                                 ExternalLinkButton(titleKey: "Learn how to fix", url: url)
-                                    .font(.caption2)
+                                    .font(.footnote)
                             }
                         }
                     }
@@ -351,22 +325,31 @@ struct ContentView: View {
             && isReconnecting
     }
 
-    private var syncStatusIcon: String {
-        if currentSyncError != nil { return "exclamationmark.triangle.fill" }
-        if !syncthingManager.isRunning { return "arrow.triangle.2.circlepath" }
-        if !foldersWithErrors.isEmpty { return "exclamationmark.circle" }
-        if isReconnecting { return "arrow.triangle.2.circlepath" }
-        if isSyncing { return "arrow.triangle.2.circlepath" }
-        return "checkmark.circle.fill"
+    /// Canonical overall status for the header, mirroring the precedence cascade
+    /// of `syncStatusText`. Drives the header glyph + color through the SyncStatus
+    /// registry; the contextual wording stays in `syncStatusText`.
+    private var overallStatus: SyncStatus {
+        if currentSyncError != nil { return .error }
+        if !syncthingManager.isRunning { return .starting }
+        if !foldersWithErrors.isEmpty { return .attention }
+        if isReconnecting { return .starting }
+        if isSyncing { return .syncing }
+        return .synced
     }
 
-    private var syncStatusColor: Color {
-        if currentSyncError != nil { return .red }
-        if !syncthingManager.isRunning { return slate.opacity(colorScheme == .dark ? 0.78 : 0.68) }
-        if !foldersWithErrors.isEmpty { return .orange }
-        if isReconnecting { return teal }
-        if isSyncing { return teal }
-        return teal
+    /// Secondary line for the status header — the reconnecting progress or the
+    /// last-sync relative time.
+    private var headerSubtitle: String? {
+        if shouldShowReconnectingUI {
+            let count = syncthingManager.reconnectingRequiredDeviceIDs.count
+            return count == 1
+                ? L10n.tr("Restoring connection to 1 device")
+                : L10n.fmt("Restoring connection to %d devices", count)
+        }
+        if let lastSync = syncthingManager.lastSyncTime {
+            return L10n.fmt("Last sync: %@", Self.lastSyncFormatter.localizedString(for: lastSync, relativeTo: Date()))
+        }
+        return nil
     }
 
     private var syncStatusText: String {
@@ -591,7 +574,7 @@ struct ContentView: View {
                             .foregroundStyle(.white)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 1)
-                            .background(.orange, in: Capsule())
+                            .background(Color.statusAttention, in: Capsule())
                             .accessibilityLabel(L10n.fmt("%d conflicts", conflicts.count))
                     }
                 }
@@ -627,10 +610,10 @@ struct ContentView: View {
 
     private func stateColor(_ state: String) -> Color {
         switch state {
-        case "idle": .green
-        case "scanning", "syncing": teal
-        case "error": .red
-        default: .gray
+        case "idle": .statusSuccess
+        case "scanning", "syncing": .vaultAccent
+        case "error": .statusError
+        default: .statusInactive
         }
     }
 
@@ -687,7 +670,7 @@ struct ContentView: View {
                     } label: {
                         HStack {
                             Label("Conflicts", systemImage: "exclamationmark.triangle")
-                                .foregroundStyle(.orange)
+                                .foregroundStyle(Color.statusAttention)
                             Spacer()
                             Text("\(conflicts.count)")
                                 .foregroundStyle(.secondary)
@@ -726,7 +709,7 @@ struct ContentView: View {
                             Spacer()
                             Label(isShared ? L10n.tr("Shared") : L10n.tr("Not Shared"), systemImage: isShared ? "checkmark.circle.fill" : "circle")
                                 .font(.caption.weight(.semibold))
-                                .foregroundStyle(isShared ? .blue : .secondary)
+                                .foregroundStyle(isShared ? Color.vaultAccent : Color.statusInactive)
                                 .accessibilityHidden(true)
                         }
                     }
@@ -826,7 +809,7 @@ struct ContentView: View {
                             Spacer()
                             HStack(spacing: 4) {
                                 Image(systemName: device.connected ? "checkmark.circle.fill" : "xmark.circle.fill")
-                                    .foregroundStyle(device.connected ? .green : .secondary)
+                                    .foregroundStyle(device.connected ? Color.statusSuccess : Color.statusInactive)
                                     .accessibilityHidden(true)
                                 Text(device.connected ? L10n.tr("Connected") : L10n.tr("Disconnected"))
                                     .font(.caption2.weight(.semibold))
