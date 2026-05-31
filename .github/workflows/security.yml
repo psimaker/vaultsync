@@ -99,10 +99,12 @@ jobs:
 
   image-scan:
     name: Image Scan (published)
-    # Catches base-image CVEs disclosed after the last build. Skipped on PRs
-    # (the PR's image isn't published yet); build-time scanning lives in
-    # docker.yml.
-    if: github.event_name != 'pull_request'
+    # Schedule only: catches base-image / Go-binary CVEs disclosed against the
+    # published image after the last build, without a commit. Build-time scanning
+    # (the moment the image changes) is owned by docker.yml. Running this on push
+    # would only race the docker.yml rebuild on the same commit and scan a stale
+    # :latest.
+    if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
