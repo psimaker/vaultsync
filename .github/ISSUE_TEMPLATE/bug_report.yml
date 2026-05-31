@@ -1,0 +1,45 @@
+name: Bug report
+description: Report a problem with VaultSync (iOS app, bridge, or relay)
+labels: [bug]
+body:
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - iOS app
+        - Widget
+        - go bridge / Syncthing
+        - notify relay
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: VaultSync version & build
+      description: Settings → About (e.g. 1.4.0 build 25)
+      placeholder: "1.4.0 (25)"
+    validations:
+      required: true
+  - type: input
+    id: ios_version
+    attributes:
+      label: iOS version & device
+      placeholder: "iOS 26.2, iPhone 15 Pro"
+    validations:
+      required: false
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / screenshots
+      description: Optional — anything that helps narrow it down.
+    validations:
+      required: false
