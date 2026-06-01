@@ -206,6 +206,20 @@ final class VaultManager {
             return err
         }
 
+        // Record where this folder lives relative to the Obsidian root so its
+        // absolute path can be re-derived after an iOS container change (#25).
+        // Derive from the resolved path, not the share name, so the whole-dir
+        // and subdirectory cases are both captured correctly. If the resolved
+        // path unexpectedly isn't under the root, leave the mapping unset and
+        // let the next launch's reconcile backfill it, rather than mislabeling a
+        // subdirectory as the whole directory.
+        if let rel = FolderPathReconciler.relativeIfUnder(
+            FolderPathReconciler.canonical(path),
+            root: FolderPathReconciler.canonical(basePath)
+        ) {
+            FolderPathReconciler.setRel(rel, forFolder: folder.id)
+        }
+
         scanForVaults()
         logger.info("Auto-accepted pending share: \(folderName) (\(folder.id))")
         return nil

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/protocol"
@@ -103,6 +104,71 @@ func RemoveFolder(id string) string {
 			}
 		}
 		cfg.Folders = filtered
+	})
+	if err != nil {
+		return fmt.Sprintf("modify config: %v", err)
+	}
+	waiter.Wait()
+
+	return ""
+}
+
+// SetFolderPath rewrites the on-disk path of an existing folder IN PLACE,
+// preserving its devices, label, ignore patterns, and index database. The
+// database is keyed by folder ID, so Syncthing restarts the folder runner at
+// the new path WITHOUT re-hashing the data or re-downloading it from peers
+// (changing Path is a restart-only config change in lib/model).
+//
+// VaultSync uses this to re-point a folder at the current sandbox location
+// after iOS changes the absolute container path (which it does on reinstall,
+// restore, or migration). The new path MUST already exist as a directory that
+// physically holds the folder's data and its `.stfolder` marker. This call
+// deliberately does NOT create the directory: pointing a send-receive folder at
+// a fresh empty directory looks like "all files deleted" and could propagate
+// deletions to peers, and an already-indexed folder will not recreate its
+// marker (yielding ErrMarkerMissing).
+//
+// Returns empty string on success — including a no-op when the path is already
+// equivalent — or an error message on failure.
+func SetFolderPath(folderID, newPath string) string {
+	mu.Lock()
+	defer mu.Unlock()
+
+	if !stRunning || stCfg == nil {
+		return "syncthing not running"
+	}
+
+	folders := stCfg.Folders()
+	folder, exists := folders[folderID]
+	if !exists {
+		return "folder not found"
+	}
+
+	// No-op when the path is effectively unchanged — avoids a needless folder
+	// restart on every launch in the common (already-correct) case.
+	if filepath.Clean(folder.Path) == filepath.Clean(newPath) {
+		return ""
+	}
+
+	// Refuse to rebase onto a path that does not already exist as a directory.
+	info, err := os.Stat(newPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "target path does not exist"
+		}
+		return fmt.Sprintf("stat target path: %v", err)
+	}
+	if !info.IsDir() {
+		return "target path is not a directory"
+	}
+
+	waiter, err := stCfg.Modify(func(cfg *config.Configuration) {
+		for i := range cfg.Folders {
+			if cfg.Folders[i].ID == folderID {
+				cfg.Folders[i].Path = newPath
+				break
+			}
+		}
 	})
 	if err != nil {
 		return fmt.Sprintf("modify config: %v", err)

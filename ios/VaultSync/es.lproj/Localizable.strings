@@ -572,3 +572,14 @@
 "Your notes never touch our servers. Cloud Relay sends a tiny wake-up so changes from your other devices land the moment they happen — even with the app closed." = "Tus notas nunca pasan por nuestros servidores. Cloud Relay envía una pequeña señal de activación para que los cambios de tus otros dispositivos lleguen en el momento en que ocurren, incluso con la app cerrada.";
 "Your vault already syncs free and peer-to-peer. Relay only removes the “open the app to sync” wait — it isn’t cloud storage." = "Tu Vault ya se sincroniza gratis y de igual a igual. Relay solo elimina la espera de «abrir la app para sincronizar»; no es almacenamiento en la nube.";
 "You’re subscribed, but no wake-up has arrived yet. Cloud Relay only delivers once the helper is running on your server." = "Estás suscrito, pero aún no ha llegado ninguna señal de activación. Cloud Relay solo entrega una vez que el asistente se está ejecutando en tu servidor.";
+
+/* Folder path resilience (#25) */
+"Remove Vault" = "Eliminar Vault";
+"Remove This Vault" = "Eliminar este Vault";
+"Reconnect to Obsidian" = "Volver a conectar con Obsidian";
+"Could Not Remove Vault" = "No se pudo eliminar el Vault";
+"Remove this vault from this iPhone?" = "¿Eliminar este Vault de este iPhone?";
+"“%@” will stop syncing on this iPhone. Files already on your other devices are not deleted." = "«%@» dejará de sincronizarse en este iPhone. Los archivos que ya están en tus otros dispositivos no se eliminan.";
+"Removing a vault only stops syncing it on this iPhone. The notes on your other devices are not affected." = "Eliminar un Vault solo detiene su sincronización en este iPhone. Las notas en tus otros dispositivos no se ven afectadas.";
+"This vault points to storage that no longer exists on this iPhone, so it can no longer sync." = "Este Vault apunta a un almacenamiento que ya no existe en este iPhone, por lo que ya no puede sincronizarse.";
+"Stops syncing this vault on this iPhone. The notes on your other devices are not affected." = "Detiene la sincronización de este Vault en este iPhone. Las notas en tus otros dispositivos no se ven afectadas.";

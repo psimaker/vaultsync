@@ -212,6 +212,78 @@ func SetFolderIgnores(folderID, ignoresJSON string) string {
 	return ""
 }
 
+// EnsureDefaultIgnores merges the given default ignore patterns into a folder's
+// `.stignore`, adding only the patterns that are missing and preserving all
+// existing custom lines and their order. defaultsJSON must be a JSON array of
+// strings.
+//
+// Unlike a naive read-modify-write across the bridge, this distinguishes "no
+// .stignore yet" (safe to create) from "could not read .stignore" (a transient
+// error). On any read error other than not-exist it ABORTS without writing, so
+// a momentary read failure can never overwrite a populated `.stignore` with
+// just the defaults. Returns empty string on success — including the no-op case
+// where every default is already present — or an error message on failure.
+func EnsureDefaultIgnores(folderID, defaultsJSON string) string {
+	var defaults []string
+	if err := json.Unmarshal([]byte(defaultsJSON), &defaults); err != nil {
+		return fmt.Sprintf("invalid JSON: %v", err)
+	}
+
+	internals := getInternals()
+	if internals == nil {
+		return "syncthing not running"
+	}
+
+	folders := getFolderConfigs()
+	if folders == nil {
+		return "syncthing not running"
+	}
+	folder, exists := folders[folderID]
+	if !exists {
+		return "folder not found"
+	}
+
+	// Read existing lines directly from disk with precise error handling:
+	// a missing file is fine (treat as empty), any OTHER error aborts.
+	var existing []string
+	raw, err := os.ReadFile(filepath.Join(folder.Path, ".stignore"))
+	switch {
+	case err == nil:
+		content := strings.ReplaceAll(strings.TrimSpace(string(raw)), "\r\n", "\n")
+		if content != "" {
+			existing = strings.Split(content, "\n")
+		}
+	case os.IsNotExist(err):
+		// No .stignore yet — safe to create one with the defaults.
+	default:
+		return fmt.Sprintf("read ignores: %v", err)
+	}
+
+	// Append only the defaults that are not already present, preserving order.
+	present := make(map[string]struct{}, len(existing))
+	for _, line := range existing {
+		present[line] = struct{}{}
+	}
+	merged := existing
+	added := false
+	for _, def := range defaults {
+		if _, ok := present[def]; ok {
+			continue
+		}
+		merged = append(merged, def)
+		present[def] = struct{}{}
+		added = true
+	}
+	if !added {
+		return ""
+	}
+
+	if err := internals.SetIgnores(folderID, merged); err != nil {
+		return fmt.Sprintf("set ignores: %v", err)
+	}
+	return ""
+}
+
 // RescanFolder triggers a rescan of all files in the folder.
 // Returns empty string on success, error message on failure.
 func RescanFolder(folderID string) string {

@@ -70,6 +70,7 @@ struct VaultSyncApp: App {
                     }
                     vaultManager.restoreAccess()
                     syncthingManager.start()
+                    syncthingManager.reconcileFolderPaths(obsidianRoot: vaultManager.obsidianBasePath)
                 } else if BackgroundSyncService.shouldRescanOnForeground(
                     now: Date(),
                     lastBackgroundedAt: lastBackgroundedAt,
@@ -113,6 +114,7 @@ struct VaultSyncApp: App {
                 if !syncthingManager.isRunning {
                     vaultManager.restoreAccess()
                     syncthingManager.start()
+                    syncthingManager.reconcileFolderPaths(obsidianRoot: vaultManager.obsidianBasePath)
                 }
                 Task {
                     await BackgroundSyncService.requestNotificationPermission()

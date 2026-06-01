@@ -12,6 +12,15 @@ struct ContentView: View {
     @State private var pendingShareFailures: [String: SyncUserError] = [:]
     @State private var pendingShareInFlight: Set<String> = []
     @State private var pendingFilterSheetFolder: SyncthingManager.FolderInfo?
+    @State private var vaultPendingRemoval: VaultRemovalTarget?
+
+    /// A vault the user has asked to remove, pending confirmation. Drives the
+    /// shared removal confirmation dialog used by both the "needs attention"
+    /// card and the vault detail screen.
+    private struct VaultRemovalTarget: Identifiable {
+        let id: String
+        let label: String
+    }
 
     private static let relayUpsellShownKey = "relay-upsell-shown"
 
@@ -80,8 +89,26 @@ struct ContentView: View {
                 if let err = vaultManager.grantAccess(url: url) {
                     alertMessage = mappedError(err, fallbackTitle: L10n.tr("Obsidian Folder Connection Failed")).userVisibleDescription
                     showAlert = true
+                } else {
+                    // Re-picking the Obsidian directory may resolve to a new
+                    // container path — rebase any mapped folders onto it so a
+                    // previously-unreachable vault reconnects.
+                    syncthingManager.reconcileFolderPaths(obsidianRoot: vaultManager.obsidianBasePath)
                 }
             }
+        }
+        .confirmationDialog(
+            L10n.tr("Remove this vault from this iPhone?"),
+            isPresented: removalBinding,
+            titleVisibility: .visible,
+            presenting: vaultPendingRemoval
+        ) { target in
+            Button(L10n.tr("Remove Vault"), role: .destructive) {
+                removeVault(id: target.id)
+            }
+            Button(L10n.tr("Cancel"), role: .cancel) { vaultPendingRemoval = nil }
+        } message: { target in
+            Text(L10n.fmt("“%@” will stop syncing on this iPhone. Files already on your other devices are not deleted.", target.label))
         }
         .onChange(of: syncthingManager.pendingFolders, initial: true) { _, pending in
             autoAcceptPendingShares(pending)
@@ -103,6 +130,7 @@ struct ContentView: View {
                 syncIssuesSection
                 obsidianStatusSection
                 pendingSharesSection
+                unreachableVaultsSection
                 vaultsSection
             }
             .refreshable {
@@ -599,6 +627,64 @@ struct ContentView: View {
         }
     }
 
+    // MARK: - Unreachable Vaults
+
+    /// Surfaces folders the launch-time path reconcile could not heal (a stale
+    /// app-container path, issue #25) with a guided way out — reconnect to the
+    /// Obsidian directory if the folder maps to it, or remove it outright.
+    @ViewBuilder
+    private var unreachableVaultsSection: some View {
+        let unreachable = syncthingManager.unreachableFolders
+        if !unreachable.isEmpty {
+            Section {
+                ForEach(unreachable) { folder in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label {
+                            Text(folder.label).font(.body)
+                        } icon: {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(Color.statusAttention)
+                        }
+                        Text("This vault points to storage that no longer exists on this iPhone, so it can no longer sync.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        HStack(spacing: 12) {
+                            if folder.hasObsidianMapping {
+                                Button(L10n.tr("Reconnect to Obsidian")) {
+                                    showObsidianPicker = true
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                            Button(role: .destructive) {
+                                vaultPendingRemoval = VaultRemovalTarget(id: folder.id, label: folder.label)
+                            } label: {
+                                Text(L10n.tr("Remove This Vault"))
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            } header: {
+                Text(L10n.tr("Needs Attention"))
+            } footer: {
+                Text(L10n.tr("Removing a vault only stops syncing it on this iPhone. The notes on your other devices are not affected."))
+            }
+        }
+    }
+
+    private var removalBinding: Binding<Bool> {
+        Binding(get: { vaultPendingRemoval != nil }, set: { if !$0 { vaultPendingRemoval = nil } })
+    }
+
+    private func removeVault(id: String) {
+        vaultPendingRemoval = nil
+        if let err = syncthingManager.removeFolder(id: id) {
+            alertMessage = mappedError(err, fallbackTitle: L10n.tr("Could Not Remove Vault")).userVisibleDescription
+            showAlert = true
+        }
+    }
+
     // MARK: - Vaults Section
 
     private var vaultsSection: some View {
@@ -689,7 +775,7 @@ struct ContentView: View {
     /// the security-scoped bookmark path (resolved at launch) compare equal even
     /// across `/var`↔`/private/var` symlinks or a trailing slash.
     private static func canonicalPath(_ path: String) -> String {
-        URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+        FolderPathReconciler.canonical(path)
     }
 
     /// Conflicts attributed to one vault: inside the vault's subdirectory for a
@@ -897,11 +983,32 @@ struct ContentView: View {
                 }
                 .disabled(isScanning)
             }
+
+            // A 1:1 sync folder maps to exactly one vault, so removing it is
+            // unambiguous. For an expanded directory row (relativePrefix != nil)
+            // a single folder backs many vaults, so per-vault removal is omitted
+            // to avoid silently dropping the whole directory.
+            if item.relativePrefix == nil {
+                Section {
+                    Button(role: .destructive) {
+                        vaultPendingRemoval = VaultRemovalTarget(
+                            id: folder.id,
+                            label: item.name
+                        )
+                    } label: {
+                        Label(L10n.tr("Remove Vault"), systemImage: "trash")
+                    }
+                } footer: {
+                    Text("Stops syncing this vault on this iPhone. The notes on your other devices are not affected.")
+                }
+            }
         }
         .navigationTitle(item.name)
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
-            if !syncthingManager.hasShownRecommendationSheet(folderID: folder.id) {
+            // Don't nudge sync filters for a vault that can't sync at all.
+            let isUnreachable = syncthingManager.unreachableFolders.contains { $0.id == folder.id }
+            if !isUnreachable, !syncthingManager.hasShownRecommendationSheet(folderID: folder.id) {
                 pendingFilterSheetFolder = folder
             }
         }

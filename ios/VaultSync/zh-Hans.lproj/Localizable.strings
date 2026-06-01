@@ -572,3 +572,14 @@
 "Your notes never touch our servers. Cloud Relay sends a tiny wake-up so changes from your other devices land the moment they happen — even with the app closed." = "你的笔记绝不会经过我们的服务器。Cloud Relay 只发送一个微小的唤醒信号，让来自你其他设备的更改在发生的那一刻就送达——即使应用已关闭。";
 "Your vault already syncs free and peer-to-peer. Relay only removes the “open the app to sync” wait — it isn’t cloud storage." = "你的 Vault 本身就已经免费、点对点地同步。Relay 只是免去了“打开应用才能同步”的等待——它不是云存储。";
 "You’re subscribed, but no wake-up has arrived yet. Cloud Relay only delivers once the helper is running on your server." = "你已订阅，但尚未收到唤醒信号。只有当助手在你的服务器上运行时，Cloud Relay 才会送达。";
+
+/* Folder path resilience (#25) */
+"Remove Vault" = "移除 Vault";
+"Remove This Vault" = "移除此 Vault";
+"Reconnect to Obsidian" = "重新连接 Obsidian";
+"Could Not Remove Vault" = "无法移除 Vault";
+"Remove this vault from this iPhone?" = "从此 iPhone 移除此 Vault？";
+"“%@” will stop syncing on this iPhone. Files already on your other devices are not deleted." = "“%@”将停止在此 iPhone 上同步。已在你其他设备上的文件不会被删除。";
+"Removing a vault only stops syncing it on this iPhone. The notes on your other devices are not affected." = "移除 Vault 只会停止在此 iPhone 上的同步。你其他设备上的笔记不受影响。";
+"This vault points to storage that no longer exists on this iPhone, so it can no longer sync." = "此 Vault 指向的存储位置在此 iPhone 上已不存在，因此无法再同步。";
+"Stops syncing this vault on this iPhone. The notes on your other devices are not affected." = "停止在此 iPhone 上同步此 Vault。你其他设备上的笔记不受影响。";
