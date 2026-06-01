@@ -2,6 +2,7 @@
 package bridge
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -162,6 +163,18 @@ func SetFolderPath(folderID, newPath string) string {
 		return "target path is not a directory"
 	}
 
+	// Defense in depth against a destructive rebase: only re-point a folder at a
+	// directory that already holds THIS folder's data. Syncthing's marker is a
+	// `.stfolder` directory containing `syncthing-folder-<hash(folderID)>.txt`,
+	// so the presence of that exact file proves the target was this very
+	// folder's root (not an empty dir, and not a foreign folder). Without this,
+	// rebasing a send-receive folder onto an empty or mismatched directory would
+	// make Syncthing treat every indexed file as deleted and propagate those
+	// deletions to peers.
+	if markerErr := verifyFolderMarker(folder, newPath); markerErr != "" {
+		return markerErr
+	}
+
 	waiter, err := stCfg.Modify(func(cfg *config.Configuration) {
 		for i := range cfg.Folders {
 			if cfg.Folders[i].ID == folderID {
@@ -175,6 +188,33 @@ func SetFolderPath(folderID, newPath string) string {
 	}
 	waiter.Wait()
 
+	return ""
+}
+
+// verifyFolderMarker returns "" if newPath holds the Syncthing folder marker for
+// this folder, or a user-facing error string if it does not. For the default
+// `.stfolder` marker it checks the folder-ID-specific fingerprint file
+// (`syncthing-folder-<hash>.txt`), which proves the target was this very
+// folder's root rather than an empty or foreign directory. For a custom marker
+// name it falls back to checking the marker entry's presence.
+func verifyFolderMarker(folder config.FolderConfiguration, newPath string) string {
+	markerName := folder.MarkerName
+	if markerName == "" {
+		markerName = config.DefaultMarkerName
+	}
+
+	markerPath := filepath.Join(newPath, markerName)
+	if markerName == config.DefaultMarkerName {
+		h := sha256.Sum256([]byte(folder.ID))
+		markerPath = filepath.Join(markerPath, fmt.Sprintf("syncthing-folder-%x.txt", h[:3]))
+	}
+
+	if _, err := os.Stat(markerPath); err != nil {
+		if os.IsNotExist(err) {
+			return "target does not contain this folder's data (marker missing)"
+		}
+		return fmt.Sprintf("stat folder marker: %v", err)
+	}
 	return ""
 }
 

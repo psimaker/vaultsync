@@ -1,7 +1,9 @@
 package bridge
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -194,11 +196,27 @@ func TestSetFolderPath(t *testing.T) {
 		t.Fatalf("SetFolderPath file target = %q, want 'target path is not a directory'", errMsg)
 	}
 
-	// Valid in-place rebase to an existing directory.
-	pathB := filepath.Join(configDir, "vaultB")
-	if err := os.MkdirAll(pathB, 0o700); err != nil {
+	// An existing but empty directory is refused: it lacks this folder's marker,
+	// and pointing a send-receive folder there would propagate deletions.
+	emptyDir := filepath.Join(configDir, "emptyVault")
+	if err := os.MkdirAll(emptyDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
+	if errMsg := SetFolderPath("pathtest", emptyDir); errMsg != "target does not contain this folder's data (marker missing)" {
+		t.Fatalf("SetFolderPath empty target = %q, want marker-missing refusal", errMsg)
+	}
+
+	// A directory whose marker belongs to a DIFFERENT folder is also refused.
+	foreignDir := filepath.Join(configDir, "foreignVault")
+	writeFolderMarker(t, foreignDir, "some-other-folder")
+	if errMsg := SetFolderPath("pathtest", foreignDir); errMsg != "target does not contain this folder's data (marker missing)" {
+		t.Fatalf("SetFolderPath foreign target = %q, want marker-missing refusal", errMsg)
+	}
+
+	// Valid in-place rebase to a directory that holds THIS folder's data
+	// (marker with this folder's fingerprint present).
+	pathB := filepath.Join(configDir, "vaultB")
+	writeFolderMarker(t, pathB, "pathtest")
 	if errMsg := SetFolderPath("pathtest", pathB); errMsg != "" {
 		t.Fatalf("SetFolderPath valid rebase = %q, want ''", errMsg)
 	}
@@ -295,6 +313,21 @@ func TestEnsureDefaultIgnores(t *testing.T) {
 		if got3 := readIgnoreLines(t, "ensuretest"); len(got3) != len(want) {
 			t.Errorf("content changed despite read error: %v", got3)
 		}
+	}
+}
+
+// writeFolderMarker creates the default `.stfolder` marker for the given folder
+// ID inside root, matching what Syncthing writes when it creates a folder.
+func writeFolderMarker(t *testing.T, root, folderID string) {
+	t.Helper()
+	markerDir := filepath.Join(root, ".stfolder")
+	if err := os.MkdirAll(markerDir, 0o700); err != nil {
+		t.Fatalf("create marker dir: %v", err)
+	}
+	h := sha256.Sum256([]byte(folderID))
+	markerFile := filepath.Join(markerDir, fmt.Sprintf("syncthing-folder-%x.txt", h[:3]))
+	if err := os.WriteFile(markerFile, []byte("test marker"), 0o600); err != nil {
+		t.Fatalf("write marker file: %v", err)
 	}
 }
 
