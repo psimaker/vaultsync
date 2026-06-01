@@ -99,7 +99,7 @@ final class SyncthingManager {
     /// during startup auto-merge. The first-run recommendation sheet uses
     /// `IgnorePreset.recommended` separately for UI defaults — see
     /// `SyncFilterRecommendationSheet`.
-    private static let defaultIgnorePatterns: [String] = [
+    private nonisolated static let defaultIgnorePatterns: [String] = [
         ".Trash",
         ".obsidian/workspace.json",
         ".obsidian/workspace-mobile.json",
@@ -339,8 +339,14 @@ final class SyncthingManager {
     var unresolvedIssues: [SyncIssueItem] {
         var issues: [SyncIssueItem] = []
 
-        if !folderIDsWithErrors.isEmpty {
-            let count = folderIDsWithErrors.count
+        // Folders stuck on a stale/inaccessible path are surfaced by their own
+        // guided "remove / reconnect" card, so exclude them here to avoid
+        // double-listing them with the generic (and, for them, useless)
+        // "rescan failed vaults" remediation.
+        let unreachableIDs = Set(unreachableFolders.map(\.id))
+        let erroredFolderIDs = folderIDsWithErrors.filter { !unreachableIDs.contains($0) }
+        if !erroredFolderIDs.isEmpty {
+            let count = erroredFolderIDs.count
             issues.append(
                 SyncIssueItem(
                     kind: .folderErrors,
@@ -349,7 +355,7 @@ final class SyncthingManager {
                     remediation: L10n.tr("Rescan failed vaults, then verify folder access and permissions."),
                     severity: .critical,
                     count: count,
-                    folderID: folderIDsWithErrors.first,
+                    folderID: erroredFolderIDs.first,
                     deviceID: nil
                 )
             )
@@ -484,6 +490,27 @@ final class SyncthingManager {
         startPolling()
     }
 
+    /// Re-derive and correct every folder's absolute path from the current
+    /// Obsidian root before a stale path can strand a folder in a permanent
+    /// access error (issue #25). Safe to call on every engine start — unchanged
+    /// paths are a no-op. The blocking bridge work runs off the main actor.
+    func reconcileFolderPaths(obsidianRoot: String?) {
+        guard isRunning else { return }
+        // Run the blocking bridge work off the main actor; only the final
+        // folder-list refresh hops back to the main actor.
+        Task.detached(priority: .utility) { [weak self] in
+            // Wait briefly for the engine to load its folder list after start.
+            for _ in 0..<12 {
+                guard SyncBridgeService.isRunning() else { return }
+                let json = SyncBridgeService.getFoldersJSON()
+                if json != "[]", !json.isEmpty { break }
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            FolderPathReconciler.reconcileLive(obsidianRoot: obsidianRoot)
+            await self?.refreshFolders()
+        }
+    }
+
     /// Stop the running Syncthing instance.
     func stop() {
         stopPolling()
@@ -531,7 +558,7 @@ final class SyncthingManager {
         if result == nil {
             refreshFolders()
             let folderID = id
-            Task {
+            Task.detached {
                 try? await Task.sleep(for: .seconds(2))
                 guard !Task.isCancelled else { return }
                 Self.applyDefaultIgnoresIfNeeded(folderID: folderID)
@@ -546,6 +573,9 @@ final class SyncthingManager {
         if result == nil {
             refreshFolders()
             folderStatuses.removeValue(forKey: id)
+            // Drop the path mapping so a future folder reusing this ID does not
+            // inherit a stale relative path.
+            FolderPathReconciler.removeRel(forFolder: id)
         }
         return result
     }
@@ -639,7 +669,7 @@ final class SyncthingManager {
             // before we request the scan.
             let id = folderID
             rescanTask?.cancel()
-            rescanTask = Task {
+            rescanTask = Task.detached {
                 try? await Task.sleep(for: .seconds(2))
                 guard !Task.isCancelled else { return }
                 Self.applyDefaultIgnoresIfNeeded(folderID: id)
@@ -683,30 +713,21 @@ final class SyncthingManager {
     // MARK: - Default ignore patterns
 
     /// Apply default .stignore patterns for an Obsidian vault folder.
-    /// Reads existing patterns and merges in any missing defaults.
-    private static func applyDefaultIgnoresIfNeeded(folderID: String) {
-        let currentJSON = SyncBridgeService.getFolderIgnores(folderID: folderID)
+    ///
+    /// Delegates the read-merge-write to the Go bridge's `EnsureDefaultIgnores`,
+    /// which distinguishes "no .stignore yet" (safe to create) from "could not
+    /// read .stignore" (transient error) and aborts on the latter. A naive
+    /// Swift-side read could see a momentary empty/unreadable result and
+    /// overwrite a populated `.stignore` with just the defaults — this avoids
+    /// that data-loss path entirely.
+    /// `nonisolated` so callers can run the bridge read-merge-write off the main
+    /// actor — it touches no main-actor state, only the bridge and the logger.
+    private nonisolated static func applyDefaultIgnoresIfNeeded(folderID: String) {
+        guard let data = try? JSONEncoder().encode(defaultIgnorePatterns),
+              let json = String(data: data, encoding: .utf8) else { return }
 
-        var currentPatterns: [String] = []
-        if let data = currentJSON.data(using: .utf8),
-           let decoded = try? JSONDecoder().decode([String].self, from: data) {
-            currentPatterns = decoded
-        }
-
-        let missing = defaultIgnorePatterns.filter { pattern in
-            !currentPatterns.contains(pattern)
-        }
-        guard !missing.isEmpty else { return }
-
-        let updated = currentPatterns + missing
-        guard let updatedData = try? JSONEncoder().encode(updated),
-              let updatedJSON = String(data: updatedData, encoding: .utf8) else { return }
-
-        let result = SyncBridgeService.setFolderIgnores(folderID: folderID, ignoresJSON: updatedJSON)
-        if let error = result {
-            logger.warning("Failed to set default ignores for \(folderID): \(error)")
-        } else {
-            logger.info("Applied default ignore patterns for folder \(folderID)")
+        if let error = SyncBridgeService.ensureDefaultIgnores(folderID: folderID, defaultsJSON: json) {
+            logger.warning("Failed to ensure default ignores for \(folderID, privacy: .private): \(error, privacy: .private)")
         }
     }
 
@@ -753,7 +774,7 @@ final class SyncthingManager {
         if !hasAppliedStartupIgnores && !folders.isEmpty {
             hasAppliedStartupIgnores = true
             let folderIDs = folders.map(\.id)
-            Task {
+            Task.detached {
                 try? await Task.sleep(for: .seconds(3))
                 for id in folderIDs {
                     Self.applyDefaultIgnoresIfNeeded(folderID: id)
@@ -1516,6 +1537,44 @@ final class SyncthingManager {
             message: status.errorMessage,
             path: status.errorPath
         )
+    }
+
+    /// A folder stuck in a path-related error that the launch-time path
+    /// reconcile could not auto-heal — typically a legacy folder pointing at a
+    /// since-removed app-container location (issue #25). Surfaced to the user as
+    /// a guided "remove this vault" (or "reconnect") prompt instead of an inert
+    /// permanent error.
+    struct UnreachableFolder: Identifiable, Sendable {
+        let id: String
+        let label: String
+        let path: String
+        let reason: String
+        /// True if the folder has a recorded Obsidian-relative mapping, meaning
+        /// re-picking the Obsidian directory can rebase it (vs. a legacy folder
+        /// that only ever lived in app storage and should just be removed).
+        let hasObsidianMapping: Bool
+    }
+
+    var unreachableFolders: [UnreachableFolder] {
+        let pathErrorReasons: Set<String> = [
+            "folder_path_missing",
+            "permission_denied",
+            "folder_path_invalid",
+            "folder_path_unreadable",
+        ]
+        let rel = FolderPathReconciler.loadRel()
+        return folders.compactMap { folder in
+            guard let status = folderStatuses[folder.id], status.state == "error",
+                  let reason = status.errorReason, pathErrorReasons.contains(reason)
+            else { return nil }
+            return UnreachableFolder(
+                id: folder.id,
+                label: folder.label.isEmpty ? folder.id : folder.label,
+                path: status.errorPath ?? folder.path,
+                reason: reason,
+                hasObsidianMapping: rel[folder.id] != nil
+            )
+        }
     }
 
     func ignorePendingFolder(id: String) {

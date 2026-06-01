@@ -117,6 +117,16 @@ struct SyncBridgeService {
         BridgeGetFoldersJSON()
     }
 
+    /// Rewrite a folder's on-disk path IN PLACE, preserving its devices, label,
+    /// ignore patterns, and index database (Syncthing restarts the folder runner
+    /// at the new path without re-hashing or re-downloading). The target path
+    /// must already exist as a directory holding the folder's data.
+    /// - Returns: nil on success (incl. a no-op when unchanged), error message on failure.
+    static func setFolderPath(folderID: String, path: String) -> String? {
+        let result = BridgeSetFolderPath(folderID, path)
+        return result.isEmpty ? nil : result
+    }
+
     /// Share a folder with a peer device.
     /// - Returns: nil on success, error message on failure.
     static func shareFolderWithDevice(folderID: String, deviceID: String) -> String? {
@@ -154,6 +164,16 @@ struct SyncBridgeService {
     /// - Returns: nil on success, error message on failure.
     static func setFolderIgnores(folderID: String, ignoresJSON: String) -> String? {
         let result = BridgeSetFolderIgnores(folderID, ignoresJSON)
+        return result.isEmpty ? nil : result
+    }
+
+    /// Merge default ignore patterns into a folder's .stignore safely: adds only
+    /// missing lines, preserves existing custom lines, and never overwrites when
+    /// the current .stignore cannot be read (transient error). defaultsJSON is a
+    /// JSON array of strings.
+    /// - Returns: nil on success (incl. the no-op when all present), error message on failure.
+    static func ensureDefaultIgnores(folderID: String, defaultsJSON: String) -> String? {
+        let result = BridgeEnsureDefaultIgnores(folderID, defaultsJSON)
         return result.isEmpty ? nil : result
     }
 

@@ -572,3 +572,14 @@
 "Your notes never touch our servers. Cloud Relay sends a tiny wake-up so changes from your other devices land the moment they happen — even with the app closed." = "Your notes never touch our servers. Cloud Relay sends a tiny wake-up so changes from your other devices land the moment they happen — even with the app closed.";
 "Your vault already syncs free and peer-to-peer. Relay only removes the “open the app to sync” wait — it isn’t cloud storage." = "Your vault already syncs free and peer-to-peer. Relay only removes the “open the app to sync” wait — it isn’t cloud storage.";
 "You’re subscribed, but no wake-up has arrived yet. Cloud Relay only delivers once the helper is running on your server." = "You’re subscribed, but no wake-up has arrived yet. Cloud Relay only delivers once the helper is running on your server.";
+
+/* Folder path resilience (#25) */
+"Remove Vault" = "Remove Vault";
+"Remove This Vault" = "Remove This Vault";
+"Reconnect to Obsidian" = "Reconnect to Obsidian";
+"Could Not Remove Vault" = "Could Not Remove Vault";
+"Remove this vault from this iPhone?" = "Remove this vault from this iPhone?";
+"“%@” will stop syncing on this iPhone. Files already on your other devices are not deleted." = "“%@” will stop syncing on this iPhone. Files already on your other devices are not deleted.";
+"Removing a vault only stops syncing it on this iPhone. The notes on your other devices are not affected." = "Removing a vault only stops syncing it on this iPhone. The notes on your other devices are not affected.";
+"This vault points to storage that no longer exists on this iPhone, so it can no longer sync." = "This vault points to storage that no longer exists on this iPhone, so it can no longer sync.";
+"Stops syncing this vault on this iPhone. The notes on your other devices are not affected." = "Stops syncing this vault on this iPhone. The notes on your other devices are not affected.";

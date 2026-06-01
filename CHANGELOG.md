@@ -4,6 +4,16 @@ All notable changes to VaultSync are documented here.
 
 ---
 
+## [1.5.1] — 2026-06-01
+
+### Fixed
+
+- **A vault stuck on "VaultSync cannot access this folder" can now recover** ([#25](https://github.com/psimaker/vaultsync/issues/25)) — iOS can change an app's private storage location (on reinstall, restore, or device migration), which left an older vault pointing at a path that no longer exists and stuck in a permanent error with no way out. VaultSync now re-derives every vault's location from your Obsidian folder each time it starts: a change to the app's own storage is repaired automatically, and after a device restore or migration you reconnect the Obsidian folder once and every vault is rebased onto its existing data — no re-download and no lost history. A vault that still can't be reached shows a clear **Remove this vault** (and, where possible, **Reconnect to Obsidian**) instead of an inert error, and every vault detail screen gained a **Remove Vault** action. Localized in English, German, Spanish, and Simplified Chinese.
+
+### Changed
+
+- **Sync Filters are safer to write** — applying the default ignore patterns now reads, merges, and writes your `.stignore` in one step and refuses to write if it can't first read the current rules, so a transient read error can never overwrite your custom filters with just the defaults.
+
 ## [1.5.0] — 2026-05-31
 
 ### Added

@@ -572,3 +572,14 @@
 "Your notes never touch our servers. Cloud Relay sends a tiny wake-up so changes from your other devices land the moment they happen — even with the app closed." = "Deine Notizen erreichen nie unsere Server. Cloud Relay sendet nur ein winziges Weck-Signal, damit Änderungen von deinen anderen Geräten im selben Moment ankommen – sogar bei geschlossener App.";
 "Your vault already syncs free and peer-to-peer. Relay only removes the “open the app to sync” wait — it isn’t cloud storage." = "Dein Vault synchronisiert bereits kostenlos und Peer-to-Peer. Relay beseitigt nur die Wartezeit „zum Synchronisieren die App öffnen“ – es ist kein Cloud-Speicher.";
 "You’re subscribed, but no wake-up has arrived yet. Cloud Relay only delivers once the helper is running on your server." = "Du hast abonniert, aber es ist noch kein Weck-Signal angekommen. Cloud Relay liefert erst, wenn der Helfer auf deinem Server läuft.";
+
+/* Folder path resilience (#25) */
+"Remove Vault" = "Vault entfernen";
+"Remove This Vault" = "Diesen Vault entfernen";
+"Reconnect to Obsidian" = "Mit Obsidian neu verbinden";
+"Could Not Remove Vault" = "Vault konnte nicht entfernt werden";
+"Remove this vault from this iPhone?" = "Diesen Vault von diesem iPhone entfernen?";
+"“%@” will stop syncing on this iPhone. Files already on your other devices are not deleted." = "„%@“ wird auf diesem iPhone nicht mehr synchronisiert. Dateien auf deinen anderen Geräten werden nicht gelöscht.";
+"Removing a vault only stops syncing it on this iPhone. The notes on your other devices are not affected." = "Das Entfernen eines Vaults stoppt nur die Synchronisierung auf diesem iPhone. Die Notizen auf deinen anderen Geräten sind nicht betroffen.";
+"This vault points to storage that no longer exists on this iPhone, so it can no longer sync." = "Dieser Vault verweist auf einen Speicherort, den es auf diesem iPhone nicht mehr gibt – Synchronisierung ist daher nicht möglich.";
+"Stops syncing this vault on this iPhone. The notes on your other devices are not affected." = "Stoppt die Synchronisierung dieses Vaults auf diesem iPhone. Die Notizen auf deinen anderen Geräten sind nicht betroffen.";

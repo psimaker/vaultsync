@@ -60,9 +60,11 @@ VaultSync is **not** a hosted note-sync service and **not** a magic always-on da
 
 ---
 
-## What’s New — v1.5.0
+## What’s New — v1.5.1
 
-VaultSync gets a top-to-bottom **visual redesign**: a tabbed home screen (Sync · Devices · Cloud Relay) with a persistent, glanceable status header, a coherent design system that is correct in light and dark mode, status that never relies on color alone, and onboarding whose steps actually run the setup for you. **Cloud Relay** moves into its own tab with honest delivery status and a clearer, privacy-first pitch — and keeps its yearly plan and Apple-verified subscriptions, while its server helper no longer crash-loops on an inactive subscription. See [CHANGELOG.md](CHANGELOG.md) for details.
+**v1.5.1** makes vault locations self-healing: iOS can move an app’s private storage (on reinstall, restore, or device migration), which used to strand an older vault on a permanent “cannot access this folder” error. VaultSync now re-derives every vault’s location from your Obsidian folder on launch, and a vault that still can’t be reached offers a one-tap **Remove this vault** or **Reconnect to Obsidian** instead of a dead end ([#25](https://github.com/psimaker/vaultsync/issues/25)).
+
+It builds on the **v1.5.0** redesign: a tabbed home screen (Sync · Devices · Cloud Relay) with a persistent, glanceable status header, a coherent design system that is correct in light and dark mode, status that never relies on color alone, onboarding whose steps actually run the setup for you, and **Cloud Relay** in its own tab with honest delivery status, a privacy-first pitch, a yearly plan, and Apple-verified subscriptions. See [CHANGELOG.md](CHANGELOG.md) for details.
 
 ---
 

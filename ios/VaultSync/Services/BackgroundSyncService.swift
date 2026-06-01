@@ -548,6 +548,12 @@ enum BackgroundSyncService {
             )
         }
 
+        if ownsLifecycle {
+            // Re-point any folder whose stored absolute path went stale after an
+            // iOS container change, before syncing against it (issue #25).
+            FolderPathReconciler.reconcileLive(obsidianRoot: managedURLs.first?.path)
+        }
+
         var progressTracker = reason == "silent-push"
             ? SilentPushProgressTracker(lastEventID: latestBridgeEventID())
             : nil
@@ -605,6 +611,10 @@ enum BackgroundSyncService {
                         startedAt: syncStartedAt,
                         initialEventCursor: syncStartEventCursor
                     )
+                }
+
+                if ownsLifecycle {
+                    FolderPathReconciler.reconcileLive(obsidianRoot: managedURLs.first?.path)
                 }
 
                 if let rescanCount = requestFolderRescans() {
