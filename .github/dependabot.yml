@@ -4,28 +4,57 @@ updates:
   # replace-shadowed copies pinned to a 2.x pseudo-version, so Dependabot can't
   # reason about them — ignore to avoid noise. They are tracked manually against
   # upstream security advisories (see go/patches/README.md).
+  # NOT auto-merged: a behaviour regression in the native bridge needs human
+  # judgement even when Go Tests + govulncheck are green.
   - package-ecosystem: gomod
     directory: /go
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # Let a freshly-cut release settle before filing a PR, so we skip the churn
+    # of x.y.0 -> x.y.1 same-week re-bumps.
+    cooldown:
+      default-days: 7
     ignore:
       - dependency-name: github.com/syncthing/syncthing
       - dependency-name: github.com/ccding/go-stun
 
-  # GitHub Actions across all workflows. Also migrates mutable tags to commit
-  # SHAs and keeps them current once you pin them.
+  # GitHub Actions across all workflows. Grouped into ONE weekly PR, split so the
+  # auto-merge workflow (.github/workflows/dependabot-auto-merge.yml) can act on
+  # minor/patch only — those are the bumps actually exercised by the PR's
+  # required checks (ci.yml + security.yml run on pull_request). Majors land in a
+  # separate PR for manual review, because actions used only in docker.yml /
+  # version-check.yml are NOT run on pull_request, so a green PR proves nothing
+  # about them. Also migrates mutable tags to commit SHAs once you pin them.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      actions-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      actions-major:
+        patterns: ["*"]
+        update-types: ["major"]
+    # Let a tag age before adopting it; bad action releases are usually
+    # yanked/fixed within a day or two.
+    cooldown:
+      semver-major-days: 14
+      semver-minor-days: 3
+      semver-patch-days: 3
 
-  # notify relay container base images (golang:1.24-alpine, alpine:3.21).
+  # notify relay container base images (golang:1.26-alpine, alpine:3.23).
   # Dependabot will also propose @sha256 digest pins for these.
+  # NOT auto-merged: docker.yml (build + multi-arch + Trivy scan) runs only on
+  # push/tag, never on pull_request, so a base-image bump PR is never actually
+  # built or scanned. Review by building/scanning locally first.
   - package-ecosystem: docker
     directory: /notify
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
 
   # NOTE: /notify Go modules are intentionally not tracked — the relay is pure
   # stdlib (no third-party require block), so there is nothing for gomod to bump.

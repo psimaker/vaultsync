@@ -1,0 +1,47 @@
+name: Dependabot auto-merge
+
+# Enables GitHub native auto-merge for low-risk Dependabot PRs only:
+# github-actions MINOR/PATCH bumps. Those are the bumps actually exercised by
+# the PR's required checks (ci.yml + security.yml run on pull_request), so a
+# green PR is meaningful for them.
+#
+# Deliberately NOT auto-merged — left for weekly manual review — because their
+# changed code never runs on a pull_request, so a green PR proves nothing:
+#   - github-actions MAJOR bumps (input / Node-runtime / behaviour changes)
+#   - gomod                      (native bridge; judgement call)
+#   - /notify base images        (docker.yml builds + Trivy-scans only on push/tag)
+#
+# `--auto` hands the merge to GitHub, which still blocks on the branch-protection
+# required checks (Go Tests, Notify Tests, PR Title). No approval step is needed:
+# main's protection requires status checks, not reviews.
+
+on: pull_request
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    if: github.actor == 'dependabot[bot]'
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v3
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # For a grouped PR, update-type reflects the HIGHEST bump in the group, so
+      # the actions-minor-patch group reports minor/patch and merges, while the
+      # actions-major group reports major and is held for review. Matching on the
+      # branch prefix avoids any github_actions vs github-actions naming ambiguity.
+      - name: Enable auto-merge (github-actions minor/patch only)
+        if: >-
+          startsWith(github.head_ref, 'dependabot/github_actions/') &&
+          (steps.meta.outputs.update-type == 'version-update:semver-minor' ||
+           steps.meta.outputs.update-type == 'version-update:semver-patch')
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
