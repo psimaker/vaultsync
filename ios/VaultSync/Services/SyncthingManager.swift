@@ -99,7 +99,7 @@ final class SyncthingManager {
     /// during startup auto-merge. The first-run recommendation sheet uses
     /// `IgnorePreset.recommended` separately for UI defaults — see
     /// `SyncFilterRecommendationSheet`.
-    private static let defaultIgnorePatterns: [String] = [
+    private nonisolated static let defaultIgnorePatterns: [String] = [
         ".Trash",
         ".obsidian/workspace.json",
         ".obsidian/workspace-mobile.json",
@@ -496,13 +496,18 @@ final class SyncthingManager {
     /// paths are a no-op. The blocking bridge work runs off the main actor.
     func reconcileFolderPaths(obsidianRoot: String?) {
         guard isRunning else { return }
-        Task {
-            // Let the engine load its folder list after start before reconciling.
-            _ = await waitForFoldersForSyncRequest(maxWait: 3)
-            await Task.detached {
-                FolderPathReconciler.reconcileLive(obsidianRoot: obsidianRoot)
-            }.value
-            refreshFolders()
+        // Run the blocking bridge work off the main actor; only the final
+        // folder-list refresh hops back to the main actor.
+        Task.detached(priority: .utility) { [weak self] in
+            // Wait briefly for the engine to load its folder list after start.
+            for _ in 0..<12 {
+                guard SyncBridgeService.isRunning() else { return }
+                let json = SyncBridgeService.getFoldersJSON()
+                if json != "[]", !json.isEmpty { break }
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            FolderPathReconciler.reconcileLive(obsidianRoot: obsidianRoot)
+            await self?.refreshFolders()
         }
     }
 
@@ -553,7 +558,7 @@ final class SyncthingManager {
         if result == nil {
             refreshFolders()
             let folderID = id
-            Task {
+            Task.detached {
                 try? await Task.sleep(for: .seconds(2))
                 guard !Task.isCancelled else { return }
                 Self.applyDefaultIgnoresIfNeeded(folderID: folderID)
@@ -664,7 +669,7 @@ final class SyncthingManager {
             // before we request the scan.
             let id = folderID
             rescanTask?.cancel()
-            rescanTask = Task {
+            rescanTask = Task.detached {
                 try? await Task.sleep(for: .seconds(2))
                 guard !Task.isCancelled else { return }
                 Self.applyDefaultIgnoresIfNeeded(folderID: id)
@@ -715,12 +720,14 @@ final class SyncthingManager {
     /// Swift-side read could see a momentary empty/unreadable result and
     /// overwrite a populated `.stignore` with just the defaults — this avoids
     /// that data-loss path entirely.
-    private static func applyDefaultIgnoresIfNeeded(folderID: String) {
+    /// `nonisolated` so callers can run the bridge read-merge-write off the main
+    /// actor — it touches no main-actor state, only the bridge and the logger.
+    private nonisolated static func applyDefaultIgnoresIfNeeded(folderID: String) {
         guard let data = try? JSONEncoder().encode(defaultIgnorePatterns),
               let json = String(data: data, encoding: .utf8) else { return }
 
         if let error = SyncBridgeService.ensureDefaultIgnores(folderID: folderID, defaultsJSON: json) {
-            logger.warning("Failed to ensure default ignores for \(folderID): \(error)")
+            logger.warning("Failed to ensure default ignores for \(folderID, privacy: .private): \(error, privacy: .private)")
         }
     }
 
@@ -767,7 +774,7 @@ final class SyncthingManager {
         if !hasAppliedStartupIgnores && !folders.isEmpty {
             hasAppliedStartupIgnores = true
             let folderIDs = folders.map(\.id)
-            Task {
+            Task.detached {
                 try? await Task.sleep(for: .seconds(3))
                 for id in folderIDs {
                     Self.applyDefaultIgnoresIfNeeded(folderID: id)

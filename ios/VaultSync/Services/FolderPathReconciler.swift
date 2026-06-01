@@ -31,29 +31,36 @@ enum FolderPathReconciler {
     /// value (e.g. "Personal") is a vault subdirectory inside it.
     private static let relStoreKey = "vaultsync.folderRelPath"
 
+    /// Serializes the read-modify-write of the sidecar so concurrent reconciles
+    /// (foreground + background) and `setRel`/`removeRel` (from the main actor)
+    /// cannot lose a mapping through interleaved updates. The blocks only touch
+    /// UserDefaults, so `sync` never risks a main-thread deadlock.
+    private static let queue = DispatchQueue(label: "eu.vaultsync.folderpaths.sidecar")
+
     static func loadRel() -> [String: String] {
-        UserDefaults.standard.dictionary(forKey: relStoreKey) as? [String: String] ?? [:]
+        queue.sync { UserDefaults.standard.dictionary(forKey: relStoreKey) as? [String: String] ?? [:] }
     }
 
-    static func saveRel(_ map: [String: String]) {
-        UserDefaults.standard.set(map, forKey: relStoreKey)
-    }
-
-    /// Record the relative path for a folder (called when a folder is created).
+    /// Record the relative path for a folder (when it is created, and when a
+    /// healthy folder is adopted during reconcile). Atomic read-modify-write.
     static func setRel(_ rel: String, forFolder folderID: String) {
-        var map = loadRel()
-        guard map[folderID] != rel else { return }
-        map[folderID] = rel
-        saveRel(map)
+        queue.sync {
+            var map = UserDefaults.standard.dictionary(forKey: relStoreKey) as? [String: String] ?? [:]
+            guard map[folderID] != rel else { return }
+            map[folderID] = rel
+            UserDefaults.standard.set(map, forKey: relStoreKey)
+        }
     }
 
-    /// Drop a folder's mapping (called when a folder is removed) so a later
-    /// folder reusing the same ID does not inherit a stale relative path.
+    /// Drop a folder's mapping (when a folder is removed) so a later folder
+    /// reusing the same ID does not inherit a stale relative path. Atomic.
     static func removeRel(forFolder folderID: String) {
-        var map = loadRel()
-        guard map[folderID] != nil else { return }
-        map.removeValue(forKey: folderID)
-        saveRel(map)
+        queue.sync {
+            var map = UserDefaults.standard.dictionary(forKey: relStoreKey) as? [String: String] ?? [:]
+            guard map[folderID] != nil else { return }
+            map.removeValue(forKey: folderID)
+            UserDefaults.standard.set(map, forKey: relStoreKey)
+        }
     }
 
     // MARK: - Path helpers
@@ -89,8 +96,11 @@ enum FolderPathReconciler {
     /// so it is exhaustively unit-testable.
     struct Environment {
         var obsidianRoot: String?
+        /// A snapshot of the current mappings, read once for decisions.
         var loadRel: () -> [String: String]
-        var saveRel: ([String: String]) -> Void
+        /// Atomically record one folder's mapping (no bulk overwrite, so it can't
+        /// clobber a concurrent writer's update to a different folder).
+        var recordRel: (_ folderID: String, _ rel: String) -> Void
         /// Whether `path` currently exists as a directory.
         var dirExists: (String) -> Bool
         /// Apply a path change; returns an error message or nil.
@@ -114,8 +124,9 @@ enum FolderPathReconciler {
         guard let rawRoot = env.obsidianRoot else { return }
         let canonRoot = canonical(rawRoot)
 
-        var rel = env.loadRel()
-        var relChanged = false
+        // Snapshot used only for per-folder decisions; writes go through the
+        // atomic `recordRel`, so a concurrent reconcile/setRel can't be clobbered.
+        let rel = env.loadRel()
 
         for folder in folders {
             let storedCanon = canonical(folder.path)
@@ -126,13 +137,13 @@ enum FolderPathReconciler {
                 let desired = desiredPath(root: rawRoot, rel: r)
                 guard canonical(desired) != storedCanon else { continue }
                 guard env.dirExists(desired) else {
-                    logger.warning("Skip rebase for \(folder.id, privacy: .public): target missing")
+                    logger.warning("Skip rebase for folder \(folder.id, privacy: .private): target missing")
                     continue
                 }
                 if let err = env.setPath(folder.id, desired) {
-                    logger.warning("Rebase failed for \(folder.id, privacy: .public): \(err, privacy: .public)")
+                    logger.warning("Rebase failed for folder \(folder.id, privacy: .private): \(err, privacy: .private)")
                 } else {
-                    logger.info("Rebased folder \(folder.id, privacy: .public) to current Obsidian path")
+                    logger.info("Rebased folder \(folder.id, privacy: .private) to current Obsidian path")
                 }
                 continue
             }
@@ -140,13 +151,8 @@ enum FolderPathReconciler {
             // No mapping yet: adopt a folder that currently lives under the root
             // (first launch after the update) so future launches can rebase it.
             if let r = relativeIfUnder(storedCanon, root: canonRoot) {
-                rel[folder.id] = r
-                relChanged = true
+                env.recordRel(folder.id, r)
             }
-        }
-
-        if relChanged {
-            env.saveRel(rel)
         }
     }
 
@@ -172,7 +178,7 @@ enum FolderPathReconciler {
         let env = Environment(
             obsidianRoot: obsidianRoot,
             loadRel: loadRel,
-            saveRel: saveRel,
+            recordRel: { folderID, rel in setRel(rel, forFolder: folderID) },
             dirExists: { path in
                 var isDir: ObjCBool = false
                 return FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue

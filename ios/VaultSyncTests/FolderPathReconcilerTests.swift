@@ -22,7 +22,7 @@ struct FolderPathReconcilerTests {
         FolderPathReconciler.Environment(
             obsidianRoot: root,
             loadRel: { spy.rel },
-            saveRel: { spy.rel = $0 },
+            recordRel: { id, rel in spy.rel[id] = rel },
             dirExists: { spy.existingDirs.contains(FolderPathReconciler.canonical($0)) },
             setPath: { id, path in
                 spy.setPathCalls.append((id, path))

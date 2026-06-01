@@ -601,7 +601,10 @@ struct ContentView: View {
     }
 
     private func rescanFailedVaults() {
-        rescanFolders(ids: syncthingManager.folderIDsWithErrors)
+        // Don't rescan folders surfaced as unreachable — a rescan can't fix a
+        // stale/missing path, so it would be a no-op recovery for those.
+        let unreachable = Set(syncthingManager.unreachableFolders.map(\.id))
+        rescanFolders(ids: syncthingManager.folderIDsWithErrors.filter { !unreachable.contains($0) })
     }
 
     private func rescanAllVaults() {
