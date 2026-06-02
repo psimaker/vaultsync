@@ -12,16 +12,20 @@ struct RelayServerSetupView: View {
 
     @State private var commandCopied = false
 
-    /// Self-contained command a user can paste into their server shell. The
-    /// relay URL is pre-filled; only the Syncthing API key is left as a
-    /// placeholder because it lives on the user's server, not in the app.
+    /// Self-contained command a user can paste into their server shell. The relay
+    /// URL is pre-filled and there is no API key to copy — the helper reads the
+    /// Syncthing key (and address) straight from the mounted config.xml. `--network
+    /// host` is kept so the address auto-inferred from config.xml (typically
+    /// 127.0.0.1:8384) reaches a same-host Syncthing. We interpolate
+    /// `productionRelayURL` (never the DEBUG-overridable `relayURL`) so a lab build
+    /// pointed at a mock can't leak that URL into the command shown to the user.
     private var dockerCommand: String {
         """
         docker run -d --name vaultsync-notify --restart unless-stopped \\
           --network host \\
-          -e SYNCTHING_API_URL=http://localhost:8384 \\
-          -e SYNCTHING_API_KEY=PASTE_YOUR_KEY \\
-          -e RELAY_URL=\(RelayService.relayURL) \\
+          -v /PATH/TO/syncthing:/config:ro \\
+          -e SYNCTHING_CONFIG=/config/config.xml \\
+          -e RELAY_URL=\(RelayService.productionRelayURL) \\
           ghcr.io/psimaker/vaultsync-notify:latest
         """
     }
@@ -44,13 +48,6 @@ struct RelayServerSetupView: View {
             }
 
             Section {
-                Text(L10n.tr("Open the Syncthing web UI on your server, then Actions → Settings → GUI → API Key, and copy the key."))
-                    .font(.subheadline)
-            } header: {
-                Text(L10n.tr("Step 1 — Get your Syncthing API key"))
-            }
-
-            Section {
                 commandBox
                 Button {
                     UIPasteboard.general.string = dockerCommand
@@ -67,16 +64,16 @@ struct RelayServerSetupView: View {
                     )
                 }
             } header: {
-                Text(L10n.tr("Step 2 — Run this on your server"))
+                Text(L10n.tr("Step 1 — Run this on your server"))
             } footer: {
-                Text(L10n.tr("Replace PASTE_YOUR_KEY with the API key from Step 1. If Syncthing runs in another container, set SYNCTHING_API_URL to its address instead of localhost."))
+                Text(L10n.tr("No API key to copy — the helper reads it straight from Syncthing’s config.xml. Replace /PATH/TO/syncthing with your Syncthing config folder (often ~/.local/state/syncthing or ~/.config/syncthing). If you get a permission error, add -u <uid>:<gid> for the user that owns config.xml."))
             }
 
             Section {
-                Text(L10n.tr("That’s it. As soon as the helper starts, it wakes this iPhone once on its own — VaultSync flips to “Cloud Relay active” automatically, with no change needed. After that, every edit on your other devices arrives instantly. Keep the helper running on a machine that stays on (your server or NAS)."))
+                Text(L10n.tr("That’s it. As soon as the helper starts, it wakes this iPhone once on its own — VaultSync flips to “Cloud Relay active” the moment that first wake-up arrives, with no change needed. After that, changes from your other devices wake the app in the background. Keep the helper running on a machine that stays on (your server or NAS)."))
                     .font(.subheadline)
             } header: {
-                Text(L10n.tr("Step 3 — It activates itself"))
+                Text(L10n.tr("Step 2 — It activates itself"))
             }
 
             Section {
