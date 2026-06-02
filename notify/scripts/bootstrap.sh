@@ -87,8 +87,14 @@ extract_api_key() {
 
 extract_gui_address() {
 	config_path="$1"
+	# Scope to the <gui> element. A top-level <device><address>dynamic</address>
+	# appears before <gui> in document order, so a naive "first <address>" scan
+	# wrongly returns "dynamic" and builds http://dynamic. Only read <address>
+	# once we are inside <gui>…</gui> (matches the Go encoding/xml parser, which
+	# resolves configuration>gui>address precisely).
 	awk '
-		/<address>/ {
+		/<gui[ >]/ { in_gui = 1 }
+		in_gui && /<address>/ {
 			line = $0
 			sub(/^.*<address>[[:space:]]*/, "", line)
 			sub(/[[:space:]]*<\/address>.*$/, "", line)
@@ -97,6 +103,7 @@ extract_gui_address() {
 				exit
 			}
 		}
+		/<\/gui>/ { in_gui = 0 }
 	' "$config_path"
 }
 
@@ -156,10 +163,16 @@ find_syncthing_config() {
 		return 0
 	fi
 
+	# Probe order mirrors the Go binary's candidate list: Syncthing 1.27+ moved the
+	# default to ~/.local/state (state) before the legacy ~/.config, and the
+	# container paths include the official image (/var/syncthing/config) and
+	# linuxserver (/config).
 	for candidate in \
-		"$HOME/.config/syncthing/config.xml" \
 		"$HOME/.local/state/syncthing/config.xml" \
+		"$HOME/.config/syncthing/config.xml" \
 		"$HOME/Library/Application Support/Syncthing/config.xml" \
+		"/var/syncthing/config/config.xml" \
+		"/config/config.xml" \
 		"/var/syncthing/config.xml" \
 		"/var/lib/syncthing/config.xml" \
 		"/etc/syncthing/config.xml"; do

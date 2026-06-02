@@ -122,6 +122,73 @@ func TestLoadConfigExplicitEnvWinsOverConfigXML(t *testing.T) {
 	}
 }
 
+func TestLoadConfigAwaitingSyncthingWaitsForConfigXML(t *testing.T) {
+	// First-boot race: the helper starts before Syncthing has written config.xml.
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.xml") // does NOT exist yet
+
+	t.Setenv("SYNCTHING_API_URL", "")
+	t.Setenv("SYNCTHING_API_KEY", "")
+	t.Setenv("RELAY_URL", "https://relay.example.com")
+	t.Setenv("DEBOUNCE_SECONDS", "")
+	t.Setenv("WATCHED_FOLDERS", "")
+	t.Setenv("SYNCTHING_CONFIG_WAIT_SECONDS", "5")
+
+	restore := syncthingConfigCandidatesFn
+	syncthingConfigCandidatesFn = func() []string { return []string{cfgPath} }
+	t.Cleanup(func() { syncthingConfigCandidatesFn = restore })
+
+	restorePoll := configWaitPollInterval
+	configWaitPollInterval = 20 * time.Millisecond
+	t.Cleanup(func() { configWaitPollInterval = restorePoll })
+
+	// Syncthing writes config.xml shortly after the helper starts.
+	go func() {
+		time.Sleep(60 * time.Millisecond)
+		_ = os.WriteFile(cfgPath, []byte(deviceBeforeGUIConfigXML), 0o600)
+	}()
+
+	cfg, err := loadConfigAwaitingSyncthing(context.Background())
+	if err != nil {
+		t.Fatalf("loadConfigAwaitingSyncthing should ride out the first-boot race, got: %v", err)
+	}
+	if cfg.SyncthingAPIKey != "fixture-api-key-12345" {
+		t.Fatalf("SyncthingAPIKey = %q, want the key from the config.xml that appeared", cfg.SyncthingAPIKey)
+	}
+}
+
+func TestLoadConfigAwaitingSyncthingFailsFastWithoutRelayURL(t *testing.T) {
+	// A missing RELAY_URL is a real misconfiguration, not a first-boot race: it
+	// must fail immediately even with a wait budget set, never burn the budget,
+	// and never silently default to production.
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.xml") // never created
+
+	t.Setenv("SYNCTHING_API_URL", "")
+	t.Setenv("SYNCTHING_API_KEY", "")
+	t.Setenv("RELAY_URL", "")
+	t.Setenv("DEBOUNCE_SECONDS", "")
+	t.Setenv("WATCHED_FOLDERS", "")
+	t.Setenv("SYNCTHING_CONFIG_WAIT_SECONDS", "10")
+
+	restore := syncthingConfigCandidatesFn
+	syncthingConfigCandidatesFn = func() []string { return []string{cfgPath} }
+	t.Cleanup(func() { syncthingConfigCandidatesFn = restore })
+
+	start := time.Now()
+	_, err := loadConfigAwaitingSyncthing(context.Background())
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected an immediate error when RELAY_URL is missing")
+	}
+	if elapsed > time.Second {
+		t.Fatalf("must fail fast without RELAY_URL, but waited %v", elapsed)
+	}
+	if !strings.Contains(err.Error(), "RELAY_URL") {
+		t.Fatalf("error %q should mention the missing RELAY_URL", err)
+	}
+}
+
 func TestLoadConfigParsesBootstrapValues(t *testing.T) {
 	t.Setenv("SYNCTHING_API_URL", "http://localhost:8384")
 	t.Setenv("SYNCTHING_API_KEY", "test-key")

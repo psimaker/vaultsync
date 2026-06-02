@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -11,6 +12,13 @@ import (
 	"strconv"
 	"strings"
 )
+
+// errNoSyncthingConfig marks the specific "no readable config.xml exists (yet)"
+// condition, so a first-boot waiter can tell it apart from a permission denial
+// (which has a uid fix) or a malformed file (which won't fix itself) and retry
+// until Syncthing writes the file. errors.Is reports it through the wrapping
+// error returned to loadConfig.
+var errNoSyncthingConfig = errors.New("no Syncthing config.xml found")
 
 // syncthingConfig is the minimal subset of Syncthing's config.xml we read: the
 // <gui> block, which holds the REST API key and the address/TLS the API is
@@ -169,7 +177,7 @@ func detectSyncthingFromCandidates(candidates []string) (detectedSyncthing, erro
 	if len(probed) == 0 {
 		return detectedSyncthing{}, fmt.Errorf("no Syncthing config.xml location to probe; set SYNCTHING_CONFIG to its path, or set SYNCTHING_API_KEY and SYNCTHING_API_URL explicitly")
 	}
-	return detectedSyncthing{}, fmt.Errorf("no Syncthing config.xml found (looked in: %s); set SYNCTHING_CONFIG to its path, or set SYNCTHING_API_KEY and SYNCTHING_API_URL explicitly", strings.Join(probed, ", "))
+	return detectedSyncthing{}, fmt.Errorf("%w (looked in: %s); set SYNCTHING_CONFIG to its path, or set SYNCTHING_API_KEY and SYNCTHING_API_URL explicitly", errNoSyncthingConfig, strings.Join(probed, ", "))
 }
 
 // permissionDeniedError wraps os.ErrPermission (so errors.Is works upstream) and

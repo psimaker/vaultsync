@@ -52,7 +52,7 @@ func main() {
 		Level: slog.LevelInfo,
 	})))
 
-	cfg, err := loadConfig()
+	cfg, err := loadConfigAwaitingSyncthing(context.Background())
 	if err != nil {
 		slog.Error("invalid runtime configuration",
 			"classification", "fatal",
@@ -230,6 +230,75 @@ func loadConfig() (Config, error) {
 		return Config{}, fmt.Errorf("required configuration not set: %s. Set them explicitly; the Syncthing key/URL can also be auto-detected by pointing SYNCTHING_CONFIG at your config.xml", strings.Join(missing, ", "))
 	}
 	return cfg, nil
+}
+
+// configWaitPollInterval is how often loadConfigAwaitingSyncthing re-checks for a
+// not-yet-written config.xml. A package var so tests can shrink it.
+var configWaitPollInterval = 2 * time.Second
+
+// loadConfigAwaitingSyncthing wraps loadConfig with a bounded wait for the common
+// first-boot race where the helper starts before Syncthing has written config.xml
+// (e.g. a fresh `docker compose up`). It retries ONLY while the sole problem is a
+// not-yet-present config.xml AND RELAY_URL is set; a missing RELAY_URL, a
+// permission denial, or a malformed config still fails immediately. The wait
+// budget is SYNCTHING_CONFIG_WAIT_SECONDS (0/unset = no wait — the unchanged
+// fail-fast for a bare invocation; docker-compose sets it to 60).
+func loadConfigAwaitingSyncthing(ctx context.Context) (Config, error) {
+	cfg, err := loadConfig()
+	if err == nil {
+		return cfg, nil
+	}
+
+	wait := configWaitDuration()
+	if wait <= 0 || !errors.Is(err, errNoSyncthingConfig) || strings.TrimSpace(os.Getenv("RELAY_URL")) == "" {
+		return Config{}, err
+	}
+
+	slog.Warn("Syncthing config.xml not found yet; waiting for it to appear",
+		"classification", "recoverable",
+		"component", "config",
+		"wait", wait,
+		"action", "retry",
+	)
+
+	deadline := time.NewTimer(wait)
+	defer deadline.Stop()
+	ticker := time.NewTicker(configWaitPollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return Config{}, err
+		case <-deadline.C:
+			return Config{}, err
+		case <-ticker.C:
+			cfg, retryErr := loadConfig()
+			if retryErr == nil {
+				slog.Info("Syncthing config.xml appeared; continuing startup", "component", "config")
+				return cfg, nil
+			}
+			// A different failure (permission, malformed, missing RELAY_URL) will
+			// not fix itself by waiting — surface it now instead of burning the
+			// whole budget.
+			if !errors.Is(retryErr, errNoSyncthingConfig) {
+				return Config{}, retryErr
+			}
+			err = retryErr
+		}
+	}
+}
+
+func configWaitDuration() time.Duration {
+	v := strings.TrimSpace(os.Getenv("SYNCTHING_CONFIG_WAIT_SECONDS"))
+	if v == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return time.Duration(n) * time.Second
 }
 
 // Accept only events that can indicate real sync work for remote peers.

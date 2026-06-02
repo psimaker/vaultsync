@@ -24,7 +24,18 @@ services:
       # Syncthing runs in a sibling container, so reach it by service name (the
       # API key still comes from config.xml; only the URL is set explicitly).
       SYNCTHING_API_URL: ${SYNCTHING_API_URL:-http://syncthing:8384}
+      # The relay this helper wakes. Defaults to the production relay, so a plain
+      # `docker compose up` sends ONE wake-up to it right away — the intended
+      # self-activation that flips the iPhone to "Cloud Relay active". Override it
+      # when testing against a local/mock relay so you never hit production.
       RELAY_URL: ${RELAY_URL:-https://relay.vaultsync.eu}
+      # On by default: send that one startup wake-up. Set false to suppress it
+      # (e.g. while testing); change-driven delivery still works either way.
+      STARTUP_ANNOUNCE: ${STARTUP_ANNOUNCE:-true}
+      # First boot: wait up to this many seconds for Syncthing to write config.xml
+      # before giving up, so the helper rides out the race in-process instead of
+      # crash-looping via the restart policy. 0 disables the wait (fail fast).
+      SYNCTHING_CONFIG_WAIT_SECONDS: ${SYNCTHING_CONFIG_WAIT_SECONDS:-60}
       DEBOUNCE_SECONDS: ${DEBOUNCE_SECONDS:-5}
       WATCHED_FOLDERS: ${WATCHED_FOLDERS:-}
     volumes:
