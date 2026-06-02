@@ -81,11 +81,16 @@ The Docker image's `HEALTHCHECK` runs `vaultsync-notify --healthcheck`, validati
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `SYNCTHING_API_URL` | Yes | — | Syncthing REST API URL (e.g. `http://syncthing:8384` or `http://localhost:8384`) |
-| `SYNCTHING_API_KEY` | Yes | — | Syncthing API key (Settings > GUI > API Key in Syncthing Web UI) |
-| `RELAY_URL` | Yes | — | Central relay URL (`https://relay.vaultsync.eu`) |
+| `SYNCTHING_API_URL` | No | auto / `http://localhost:8384` | Syncthing REST API URL. Auto-detected from `config.xml` (`<gui><address>`) when unset. Set explicitly when Syncthing runs in a sibling container (e.g. `http://syncthing:8384`). |
+| `SYNCTHING_API_KEY` | No | auto-detected | Syncthing API key. Auto-detected from `config.xml` (`<gui><apikey>`) when unset — no need to copy it from the Web UI. Set explicitly to override. |
+| `SYNCTHING_CONFIG` | No | standard locations | Explicit path to Syncthing's `config.xml` for auto-detection. When unset, standard per-platform and container paths are probed (incl. `/var/syncthing/config/config.xml` and `/config/config.xml`). |
+| `RELAY_URL` | **Yes** | — | Central relay URL (`https://relay.vaultsync.eu`). Has no built-in default on purpose, so the helper never triggers a relay you didn't choose. `docker-compose.yml` and the in-app setup command supply it for you. |
 | `DEBOUNCE_SECONDS` | No | `5` | Seconds to wait after the last event before sending a trigger. Batches rapid changes into one push. |
 | `WATCHED_FOLDERS` | No | all | Comma-separated Syncthing folder IDs to watch. If unset/empty, watches all folders. |
+
+> **Auto-detection (no API key to copy).** When `SYNCTHING_API_KEY`/`SYNCTHING_API_URL` are unset, the helper reads them directly from Syncthing's `config.xml`. Running next to Syncthing on the same host, the only thing you supply is `RELAY_URL`. In Docker, share Syncthing's config dir into the helper **read-only** and run it as the same uid that owns `config.xml` (the images default to `1000`); `config.xml` is mode `0600`, so a mismatched uid cannot read it (you'll get a clear permission error telling you so). Explicit env always wins over auto-detection.
+>
+> **First boot.** On a brand-new `docker compose up`, the helper may start before Syncthing has written `config.xml`; it then exits and `restart: unless-stopped` retries until the file exists (a few noisy seconds, then it settles). The helper also needs Syncthing to be running — `docker compose up vaultsync-notify` alone (empty volume, no Syncthing) will not find a config.
 
 ## Syncthing Events
 

@@ -272,7 +272,11 @@ struct ContentView: View {
             }
 
             if subscriptionManager.isRelaySubscribed {
-                if subscriptionManager.relayDeliveryLikelyWorking {
+                if subscriptionManager.needsRelayReactivation {
+                    reactivationCard
+                } else if subscriptionManager.relayDeliveryConfirmed {
+                    // "active" means a REAL wake-up has actually reached this
+                    // device — not merely "provisioned + reachable" (K1).
                     HStack {
                         Image(systemName: "antenna.radiowaves.left.and.right")
                             .foregroundStyle(accent)
@@ -282,10 +286,13 @@ struct ContentView: View {
                             .foregroundStyle(accent)
                     }
                     .accessibilityElement(children: .combine)
+                } else if subscriptionManager.lastRelayTriggerReceivedAt != nil {
+                    // Delivered before, but no recent wake-up — setup IS done; the
+                    // helper just went quiet. Don't tell them to "set up" again.
+                    relayRecoveryRow
                 } else {
-                    // Subscribed, but wake-ups aren't actually arriving yet (device
-                    // not provisioned / relay unhealthy). Don't claim "active" — send
-                    // the user to finish the one missing step.
+                    // Subscribed but never delivered yet (within grace, so not the
+                    // reactivation card) — finish the one missing setup step.
                     Button {
                         selectedTab = .relay
                     } label: {
@@ -408,6 +415,70 @@ struct ContentView: View {
                 }
             }
         }
+    }
+
+    /// A1 — prominent, non-dismissable card for a paid-but-never-activated relay
+    /// subscription (the "dead sub" cohort: subscribed, never woken, past the
+    /// grace period). Routes into the Relay tab to finish setup. Only shown while
+    /// `needsRelayReactivation` holds; a self-test does NOT clear it — only a real
+    /// server wake-up does (it keys on the real trigger timestamp).
+    private var reactivationCard: some View {
+        Button {
+            selectedTab = .relay
+        } label: {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "antenna.radiowaves.left.and.right.slash")
+                    .font(.title3)
+                    .foregroundStyle(Color.statusAttention)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(L10n.tr("Finish activating Cloud Relay"))
+                        .font(.subheadline.weight(.semibold))
+                    Text(L10n.tr("You’re subscribed, but your server has never woken this iPhone. One step finishes setup."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+            }
+            .padding(.vertical, 4)
+        }
+        .tint(.primary)
+        .accessibilityElement(children: .combine)
+        .accessibilityHint(L10n.tr("Opens Cloud Relay setup."))
+    }
+
+    /// Subscribed and previously delivering, but no wake-up has arrived in a while
+    /// — the helper likely stopped. A recovery nudge, NOT a "set up" prompt (setup
+    /// is already done). Taps through to the Relay tab.
+    private var relayRecoveryRow: some View {
+        Button {
+            selectedTab = .relay
+        } label: {
+            HStack {
+                Image(systemName: "antenna.radiowaves.left.and.right")
+                    .foregroundStyle(Color.statusAttention)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(L10n.tr("Cloud Relay went quiet"))
+                        .font(.subheadline.weight(.medium))
+                    Text(L10n.tr("No wake-up in a while — is your server still on?"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+            }
+        }
+        .tint(.primary)
+        .accessibilityElement(children: .combine)
     }
 
     private var isSyncing: Bool {

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -17,17 +19,106 @@ func TestLoadConfigRequiresBootstrapEnvironment(t *testing.T) {
 	t.Setenv("RELAY_URL", "")
 	t.Setenv("DEBOUNCE_SECONDS", "")
 	t.Setenv("WATCHED_FOLDERS", "")
+	t.Setenv("SYNCTHING_CONFIG", "")
+
+	// Disable config.xml auto-detection so the test is hermetic (it must not pick
+	// up a real Syncthing config on the developer's machine).
+	restore := syncthingConfigCandidatesFn
+	syncthingConfigCandidatesFn = func() []string { return nil }
+	t.Cleanup(func() { syncthingConfigCandidatesFn = restore })
 
 	_, err := loadConfig()
 	if err == nil {
-		t.Fatal("expected configuration error when required env vars are missing")
+		t.Fatal("expected configuration error when nothing is set and config is not auto-detectable")
 	}
 
+	// RELAY_URL stays required (no production default), alongside the Syncthing
+	// values when auto-detection finds nothing.
 	msg := err.Error()
 	for _, required := range []string{"SYNCTHING_API_URL", "SYNCTHING_API_KEY", "RELAY_URL"} {
 		if !strings.Contains(msg, required) {
 			t.Fatalf("error %q should mention missing %s", msg, required)
 		}
+	}
+}
+
+func TestLoadConfigRelayURLIsRequired(t *testing.T) {
+	// Syncthing values are set explicitly (so auto-detection never runs), but
+	// RELAY_URL is omitted — loadConfig must refuse rather than default to prod.
+	t.Setenv("SYNCTHING_API_URL", "http://localhost:8384")
+	t.Setenv("SYNCTHING_API_KEY", "test-key")
+	t.Setenv("RELAY_URL", "")
+	t.Setenv("DEBOUNCE_SECONDS", "")
+	t.Setenv("WATCHED_FOLDERS", "")
+
+	_, err := loadConfig()
+	if err == nil {
+		t.Fatal("expected an error: RELAY_URL must be required (no production default)")
+	}
+	if !strings.Contains(err.Error(), "RELAY_URL") {
+		t.Fatalf("error %q should mention the missing RELAY_URL", err)
+	}
+}
+
+func TestLoadConfigAutoDetectsSyncthingFromConfigXML(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.xml")
+	if err := os.WriteFile(cfgPath, []byte(deviceBeforeGUIConfigXML), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	// Only RELAY_URL is set explicitly; the Syncthing values must come from the
+	// config.xml, with no manual key paste.
+	t.Setenv("SYNCTHING_API_URL", "")
+	t.Setenv("SYNCTHING_API_KEY", "")
+	t.Setenv("RELAY_URL", "https://relay.example.com")
+	t.Setenv("DEBOUNCE_SECONDS", "")
+	t.Setenv("WATCHED_FOLDERS", "")
+
+	restore := syncthingConfigCandidatesFn
+	syncthingConfigCandidatesFn = func() []string { return []string{cfgPath} }
+	t.Cleanup(func() { syncthingConfigCandidatesFn = restore })
+
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig returned unexpected error: %v", err)
+	}
+	if cfg.SyncthingAPIKey != "fixture-api-key-12345" {
+		t.Fatalf("SyncthingAPIKey = %q, want the key from config.xml", cfg.SyncthingAPIKey)
+	}
+	if cfg.SyncthingAPIURL != "http://127.0.0.1:8384" {
+		t.Fatalf("SyncthingAPIURL = %q, want http://127.0.0.1:8384 (from <gui><address>, not a device address)", cfg.SyncthingAPIURL)
+	}
+}
+
+func TestLoadConfigExplicitEnvWinsOverConfigXML(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.xml")
+	if err := os.WriteFile(cfgPath, []byte(deviceBeforeGUIConfigXML), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	// A separate-container deployment sets the URL by service name explicitly;
+	// only the key should be auto-detected from the shared config volume.
+	t.Setenv("SYNCTHING_API_URL", "http://syncthing:8384")
+	t.Setenv("SYNCTHING_API_KEY", "")
+	t.Setenv("RELAY_URL", "https://relay.example.com")
+	t.Setenv("DEBOUNCE_SECONDS", "")
+	t.Setenv("WATCHED_FOLDERS", "")
+
+	restore := syncthingConfigCandidatesFn
+	syncthingConfigCandidatesFn = func() []string { return []string{cfgPath} }
+	t.Cleanup(func() { syncthingConfigCandidatesFn = restore })
+
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig returned unexpected error: %v", err)
+	}
+	if cfg.SyncthingAPIURL != "http://syncthing:8384" {
+		t.Fatalf("explicit SYNCTHING_API_URL must win, got %q", cfg.SyncthingAPIURL)
+	}
+	if cfg.SyncthingAPIKey != "fixture-api-key-12345" {
+		t.Fatalf("SyncthingAPIKey = %q, want the auto-detected key", cfg.SyncthingAPIKey)
 	}
 }
 
@@ -336,6 +427,9 @@ func TestRunServiceSurvivesInactiveSubscription(t *testing.T) {
 		SyncthingAPIKey: "test-key",
 		RelayURL:        relay.URL,
 		DebounceSeconds: 1,
+		// Announce disabled: these tests isolate change-detection / inactive /
+		// fatal-on-change behavior; the startup announce has its own tests.
+		StartupAnnounce: false,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -422,6 +516,9 @@ func TestRunServiceResumesAfterSubscriptionActivates(t *testing.T) {
 		SyncthingAPIKey: "test-key",
 		RelayURL:        relay.URL,
 		DebounceSeconds: 1,
+		// Announce disabled: these tests isolate change-detection / inactive /
+		// fatal-on-change behavior; the startup announce has its own tests.
+		StartupAnnounce: false,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -483,6 +580,9 @@ func TestRunServiceExitsOnFatalTrigger(t *testing.T) {
 		SyncthingAPIKey: "test-key",
 		RelayURL:        relay.URL,
 		DebounceSeconds: 1,
+		// Announce disabled: these tests isolate change-detection / inactive /
+		// fatal-on-change behavior; the startup announce has its own tests.
+		StartupAnnounce: false,
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -498,6 +598,293 @@ func TestRunServiceExitsOnFatalTrigger(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("runService did not exit on a fatal trigger")
+	}
+}
+
+// newQuietSyncthingStub reports a fixed Device ID and NEVER emits a change
+// event — every /rest/events poll long-polls until the client disconnects and
+// returns []. This isolates the startup announce: the only relay trigger a test
+// sees is the announce itself, not a change-driven one.
+func newQuietSyncthingStub(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/rest/system/status":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"myID":"DEVICE-QUIET"}`))
+		case "/rest/events":
+			select {
+			case <-r.Context().Done():
+			case <-time.After(2 * time.Second):
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestRunServiceStartupAnnounceDelivers proves B1: with no Syncthing change at
+// all, a successful startup fires exactly one wake-up (the announce) so the
+// helper proves liveness to the iPhone immediately.
+func TestRunServiceStartupAnnounceDelivers(t *testing.T) {
+	syncthing := newQuietSyncthingStub(t)
+
+	var triggerCalls atomic.Int32
+	announced := make(chan struct{}, 1)
+	relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/health":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		case "/api/v1/trigger":
+			triggerCalls.Add(1)
+			select {
+			case announced <- struct{}{}:
+			default:
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"status":"accepted","devices_notified":1}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(relay.Close)
+
+	cfg := Config{
+		SyncthingAPIURL: syncthing.URL,
+		SyncthingAPIKey: "test-key",
+		RelayURL:        relay.URL,
+		DebounceSeconds: 1,
+		StartupAnnounce: true,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	codeCh := make(chan int, 1)
+	go func() { codeCh <- runService(ctx, cfg) }()
+
+	select {
+	case <-announced:
+	case code := <-codeCh:
+		t.Fatalf("runService exited with code %d before the startup announce fired", code)
+	case <-time.After(10 * time.Second):
+		t.Fatal("startup announce never reached the relay")
+	}
+
+	// No Syncthing changes are emitted, so the announce must be the only trigger.
+	time.Sleep(1500 * time.Millisecond)
+	if got := triggerCalls.Load(); got != 1 {
+		t.Fatalf("relay triggered %d times; want exactly 1 (a single startup announce)", got)
+	}
+
+	cancel()
+	select {
+	case code := <-codeCh:
+		if code != 0 {
+			t.Fatalf("runService exit code = %d after graceful shutdown, want 0", code)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("runService did not shut down after context cancel")
+	}
+}
+
+// TestRunServiceStartupAnnounceDisabled proves the opt-out: with
+// StartupAnnounce=false and no change events, the relay is never triggered.
+func TestRunServiceStartupAnnounceDisabled(t *testing.T) {
+	syncthing := newQuietSyncthingStub(t)
+
+	var triggerCalls atomic.Int32
+	relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/health":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		case "/api/v1/trigger":
+			triggerCalls.Add(1)
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"status":"accepted","devices_notified":1}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(relay.Close)
+
+	cfg := Config{
+		SyncthingAPIURL: syncthing.URL,
+		SyncthingAPIKey: "test-key",
+		RelayURL:        relay.URL,
+		DebounceSeconds: 1,
+		StartupAnnounce: false,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	codeCh := make(chan int, 1)
+	go func() { codeCh <- runService(ctx, cfg) }()
+
+	time.Sleep(1500 * time.Millisecond)
+	if got := triggerCalls.Load(); got != 0 {
+		t.Fatalf("relay triggered %d times with announce disabled and no changes; want 0", got)
+	}
+
+	cancel()
+	select {
+	case code := <-codeCh:
+		if code != 0 {
+			t.Fatalf("runService exit code = %d after graceful shutdown, want 0", code)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("runService did not shut down after context cancel")
+	}
+}
+
+// TestRunServiceStartupAnnounceInactiveKeepsRunning proves the announce is
+// best-effort: an inactive-subscription verdict (HTTP 400) at startup is logged
+// and ignored — the service keeps running and shuts down cleanly, never exit 1.
+func TestRunServiceStartupAnnounceInactiveKeepsRunning(t *testing.T) {
+	syncthing := newQuietSyncthingStub(t)
+
+	declined := make(chan struct{}, 1)
+	relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/health":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		case "/api/v1/trigger":
+			select {
+			case declined <- struct{}{}:
+			default:
+			}
+			http.Error(w, `{"error":"subscription expired"}`, http.StatusBadRequest)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(relay.Close)
+
+	cfg := Config{
+		SyncthingAPIURL: syncthing.URL,
+		SyncthingAPIKey: "test-key",
+		RelayURL:        relay.URL,
+		DebounceSeconds: 1,
+		StartupAnnounce: true,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	codeCh := make(chan int, 1)
+	go func() { codeCh <- runService(ctx, cfg) }()
+
+	select {
+	case <-declined:
+	case code := <-codeCh:
+		t.Fatalf("runService exited with code %d before the announce was declined", code)
+	case <-time.After(10 * time.Second):
+		t.Fatal("startup announce never reached the relay")
+	}
+
+	// A declined announce must not bring the service down.
+	select {
+	case code := <-codeCh:
+		t.Fatalf("runService exited with code %d on a declined startup announce; expected it to keep running", code)
+	case <-time.After(1500 * time.Millisecond):
+	}
+
+	cancel()
+	select {
+	case code := <-codeCh:
+		if code != 0 {
+			t.Fatalf("runService exit code = %d after graceful shutdown, want 0", code)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("runService did not shut down after context cancel")
+	}
+}
+
+// TestRunServiceStartupAnnounceFatalExits proves a genuine misconfiguration at
+// the announce stage (404 trigger while health is 200) exits 1, mirroring the
+// change-driven fatal path.
+func TestRunServiceStartupAnnounceFatalExits(t *testing.T) {
+	syncthing := newQuietSyncthingStub(t)
+	relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/health":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		default:
+			http.NotFound(w, r) // trigger 404 -> fatal misconfiguration
+		}
+	}))
+	t.Cleanup(relay.Close)
+
+	cfg := Config{
+		SyncthingAPIURL: syncthing.URL,
+		SyncthingAPIKey: "test-key",
+		RelayURL:        relay.URL,
+		DebounceSeconds: 1,
+		StartupAnnounce: true,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	codeCh := make(chan int, 1)
+	go func() { codeCh <- runService(ctx, cfg) }()
+
+	select {
+	case code := <-codeCh:
+		if code != 1 {
+			t.Fatalf("runService exit code = %d for a fatal 404 startup announce, want 1", code)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("runService did not exit on a fatal startup announce")
+	}
+}
+
+func TestLoadConfigStartupAnnounceDefaultAndOverride(t *testing.T) {
+	set := func(announce string) (Config, error) {
+		t.Setenv("SYNCTHING_API_URL", "http://localhost:8384")
+		t.Setenv("SYNCTHING_API_KEY", "test-key")
+		t.Setenv("RELAY_URL", "https://relay.example.com")
+		t.Setenv("DEBOUNCE_SECONDS", "")
+		t.Setenv("WATCHED_FOLDERS", "")
+		t.Setenv("STARTUP_ANNOUNCE", announce)
+		return loadConfig()
+	}
+
+	cfg, err := set("")
+	if err != nil {
+		t.Fatalf("default loadConfig error: %v", err)
+	}
+	if !cfg.StartupAnnounce {
+		t.Fatal("StartupAnnounce should default to true when STARTUP_ANNOUNCE is unset")
+	}
+
+	for _, falsey := range []string{"false", "0", "no", "off", "FALSE"} {
+		cfg, err := set(falsey)
+		if err != nil {
+			t.Fatalf("loadConfig(%q) error: %v", falsey, err)
+		}
+		if cfg.StartupAnnounce {
+			t.Fatalf("STARTUP_ANNOUNCE=%q should disable the announce", falsey)
+		}
+	}
+
+	cfg, err = set("true")
+	if err != nil || !cfg.StartupAnnounce {
+		t.Fatalf("STARTUP_ANNOUNCE=true should enable announce (cfg=%v err=%v)", cfg.StartupAnnounce, err)
+	}
+
+	if _, err := set("maybe"); err == nil {
+		t.Fatal("STARTUP_ANNOUNCE=maybe should be rejected")
 	}
 }
 

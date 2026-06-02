@@ -583,3 +583,20 @@
 "Removing a vault only stops syncing it on this iPhone. The notes on your other devices are not affected." = "Removing a vault only stops syncing it on this iPhone. The notes on your other devices are not affected.";
 "This vault points to storage that no longer exists on this iPhone, so it can no longer sync." = "This vault points to storage that no longer exists on this iPhone, so it can no longer sync.";
 "Stops syncing this vault on this iPhone. The notes on your other devices are not affected." = "Stops syncing this vault on this iPhone. The notes on your other devices are not affected.";
+
+/* Cloud Relay activation (lab → wave 1; es/zh-Hans need a native review) */
+"Could not accept share '%@'.\n\n%@" = "Could not accept share '%@'.\n\n%@";
+"Finish activating Cloud Relay" = "Finish activating Cloud Relay";
+"You’re subscribed, but your server has never woken this iPhone. One step finishes setup." = "You’re subscribed, but your server has never woken this iPhone. One step finishes setup.";
+"Opens Cloud Relay setup." = "Opens Cloud Relay setup.";
+"Cloud Relay went quiet" = "Cloud Relay went quiet";
+"No wake-up in a while — is your server still on?" = "No wake-up in a while — is your server still on?";
+"Your server just reached this iPhone. Incoming changes now sync the moment they happen." = "Your server just reached this iPhone. Incoming changes now sync the moment they happen.";
+"Great" = "Great";
+"No wake-up has arrived in a while. Make sure the helper is still running on the computer or server you keep on." = "No wake-up has arrived in a while. Make sure the helper is still running on the computer or server you keep on.";
+"Not active yet" = "Not active yet";
+"You’re subscribed. Wake-ups start once the helper is running on the computer or server you keep on — finish setup below. This screen updates automatically the moment the first wake-up arrives." = "You’re subscribed. Wake-ups start once the helper is running on the computer or server you keep on — finish setup below. This screen updates automatically the moment the first wake-up arrives.";
+"Relay reachable — but no wake-up has arrived recently. Check the helper is still running on your server." = "Relay reachable — but no wake-up has arrived recently. Check the helper is still running on your server.";
+"Relay reachable — but no wake-up delivered yet. Run the helper on your server." = "Relay reachable — but no wake-up delivered yet. Run the helper on your server.";
+"That’s it. As soon as the helper starts, it wakes this iPhone once on its own — VaultSync flips to “Cloud Relay active” automatically, with no change needed. After that, every edit on your other devices arrives instantly. Keep the helper running on a machine that stays on (your server or NAS)." = "That’s it. As soon as the helper starts, it wakes this iPhone once on its own — VaultSync flips to “Cloud Relay active” automatically, with no change needed. After that, every edit on your other devices arrives instantly. Keep the helper running on a machine that stays on (your server or NAS).";
+"Step 3 — It activates itself" = "Step 3 — It activates itself";

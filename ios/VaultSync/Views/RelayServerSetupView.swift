@@ -73,10 +73,10 @@ struct RelayServerSetupView: View {
             }
 
             Section {
-                Text(L10n.tr("Come back to VaultSync. The moment a change happens on your server, Relay Diagnostics will confirm that wake-ups are being delivered — that means everything works."))
+                Text(L10n.tr("That’s it. As soon as the helper starts, it wakes this iPhone once on its own — VaultSync flips to “Cloud Relay active” automatically, with no change needed. After that, every edit on your other devices arrives instantly. Keep the helper running on a machine that stays on (your server or NAS)."))
                     .font(.subheadline)
             } header: {
-                Text(L10n.tr("Step 3 — Confirm it works"))
+                Text(L10n.tr("Step 3 — It activates itself"))
             }
 
             Section {

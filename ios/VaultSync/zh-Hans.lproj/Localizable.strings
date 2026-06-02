@@ -583,3 +583,20 @@
 "Removing a vault only stops syncing it on this iPhone. The notes on your other devices are not affected." = "移除 Vault 只会停止在此 iPhone 上的同步。你其他设备上的笔记不受影响。";
 "This vault points to storage that no longer exists on this iPhone, so it can no longer sync." = "此 Vault 指向的存储位置在此 iPhone 上已不存在，因此无法再同步。";
 "Stops syncing this vault on this iPhone. The notes on your other devices are not affected." = "停止在此 iPhone 上同步此 Vault。你其他设备上的笔记不受影响。";
+
+/* Cloud Relay activation (lab → wave 1; es/zh-Hans need a native review) */
+"Could not accept share '%@'.\n\n%@" = "无法接受共享“%@”。\n\n%@";
+"Finish activating Cloud Relay" = "完成 Cloud Relay 的激活";
+"You’re subscribed, but your server has never woken this iPhone. One step finishes setup." = "你已订阅，但你的服务器从未唤醒过此 iPhone。一步即可完成设置。";
+"Opens Cloud Relay setup." = "打开 Cloud Relay 设置。";
+"Cloud Relay went quiet" = "Cloud Relay 已沉寂";
+"No wake-up in a while — is your server still on?" = "已有一段时间没有唤醒信号了——你的服务器还开着吗？";
+"Your server just reached this iPhone. Incoming changes now sync the moment they happen." = "你的服务器刚刚联系到此 iPhone。传入的更改现在会在发生的瞬间同步。";
+"Great" = "好的";
+"No wake-up has arrived in a while. Make sure the helper is still running on the computer or server you keep on." = "已有一段时间没有收到唤醒信号。请确认助手仍在你常开的电脑或服务器上运行。";
+"Not active yet" = "尚未激活";
+"You’re subscribed. Wake-ups start once the helper is running on the computer or server you keep on — finish setup below. This screen updates automatically the moment the first wake-up arrives." = "你已订阅。当助手在你常开的电脑或服务器上运行后，唤醒信号即会开始——请在下方完成设置。首个唤醒信号到达时，此界面会自动更新。";
+"Relay reachable — but no wake-up has arrived recently. Check the helper is still running on your server." = "Relay 可达——但最近没有收到唤醒信号。请检查助手是否仍在你的服务器上运行。";
+"Relay reachable — but no wake-up delivered yet. Run the helper on your server." = "Relay 可达——但尚未送达唤醒信号。请在你的服务器上运行助手。";
+"That’s it. As soon as the helper starts, it wakes this iPhone once on its own — VaultSync flips to “Cloud Relay active” automatically, with no change needed. After that, every edit on your other devices arrives instantly. Keep the helper running on a machine that stays on (your server or NAS)." = "就这样。助手一启动，就会自行唤醒此 iPhone 一次——VaultSync 会自动切换为“Cloud Relay 已激活”，无需任何更改。此后，你其他设备上的每次编辑都会即时送达。请让助手在一台保持常开的设备（你的服务器或 NAS）上持续运行。";
+"Step 3 — It activates itself" = "第 3 步 — 它会自行激活";

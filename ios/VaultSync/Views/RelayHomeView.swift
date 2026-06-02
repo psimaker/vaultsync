@@ -18,6 +18,10 @@ struct RelayHomeView: View {
     var subscriptionManager: SubscriptionManager
 
     @State private var showPrivacyInfo = false
+    /// One-time "Connected" celebration on the FIRST real wake-up (K1). Set when
+    /// the user acknowledges it; survives backgrounding, so a wake-up that arrived
+    /// while the app was away still celebrates on next open.
+    @AppStorage("relay-connected-celebrated") private var connectedCelebrated = false
 
     private var deviceIDs: [String] { syncthingManager.devices.map(\.deviceID) }
     private var isDelivering: Bool { subscriptionManager.relayDeliveryConfirmed }
@@ -94,32 +98,68 @@ struct RelayHomeView: View {
 
     @ViewBuilder
     private var subscribedContent: some View {
+        // Honest status (K1): "delivering" means a REAL wake-up has reached this
+        // device (relayDeliveryConfirmed) — never merely "provisioned/reachable".
+        // Three states: first-delivery celebration → steady delivering → actively
+        // waiting for the helper's first check-in.
         Section {
             VStack(alignment: .leading, spacing: VaultSpacing.s) {
-                StatusBadge(
-                    isDelivering ? .synced : .attention,
-                    text: isDelivering
-                        ? L10n.tr("Cloud Relay active")
-                        : L10n.tr("One step left to activate")
-                )
-                .font(.headline)
-
-                Text(isDelivering
-                     ? L10n.tr("Wake-ups are being delivered — changes from your other devices arrive instantly.")
-                     : L10n.tr("You’re subscribed, but no wake-up has arrived yet. Cloud Relay only delivers once the helper is running on your server."))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                if isDelivering, let last = subscriptionManager.lastRelayTriggerReceivedAt {
-                    LabeledContent(L10n.tr("Last wake-up")) {
-                        Text(last, style: .relative)
+                if isDelivering && !connectedCelebrated {
+                    // [5] First real wake-up. Celebrate — but no fantasy latency
+                    // ("in 2s"): the app can't honestly time a server-driven push.
+                    StatusBadge(.synced, text: L10n.tr("Connected"))
+                        .font(.headline)
+                    Text(L10n.tr("Your server just reached this iPhone. Incoming changes now sync the moment they happen."))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button(L10n.tr("Great")) {
+                        connectedCelebrated = true
                     }
-                    .font(.subheadline)
+                    .buttonStyle(.borderedProminent)
+                    .tint(Color.vaultAccent)
+                    .padding(.top, VaultSpacing.xs)
+                } else if isDelivering {
+                    StatusBadge(.synced, text: L10n.tr("Cloud Relay active"))
+                        .font(.headline)
+                    Text(L10n.tr("Wake-ups are being delivered — changes from your other devices arrive instantly."))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let last = subscriptionManager.lastRelayTriggerReceivedAt {
+                        LabeledContent(L10n.tr("Last wake-up")) {
+                            Text(last, style: .relative)
+                        }
+                        .font(.subheadline)
+                    }
+                } else if subscriptionManager.lastRelayTriggerReceivedAt != nil {
+                    // [6] Delivered before, now quiet — recovery, NOT "set up again".
+                    StatusBadge(.attention, text: L10n.tr("Cloud Relay went quiet"))
+                        .font(.headline)
+                    Text(L10n.tr("No wake-up has arrived in a while. Make sure the helper is still running on the computer or server you keep on."))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    // Never delivered: blocked on finishing setup (below), not on a
+                    // live handshake — so no spinner (the app waits for a push, it
+                    // doesn't poll). Updates by itself once the first wake-up lands.
+                    StatusBadge(.attention, text: L10n.tr("Not active yet"))
+                        .font(.headline)
+                    Text(L10n.tr("You’re subscribed. Wake-ups start once the helper is running on the computer or server you keep on — finish setup below. This screen updates automatically the moment the first wake-up arrives."))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding(.vertical, VaultSpacing.xs)
-            .accessibilityElement(children: .combine)
+            // `.contain`, NOT `.combine`: the celebration branch holds an
+            // interactive "Great" button, and `.combine` flattens the VStack into
+            // one static element that can strand the button for VoiceOver users
+            // (review finding V4). `.contain` groups the status while keeping the
+            // button — the only way to dismiss the celebration — independently
+            // focusable and activatable.
+            .accessibilityElement(children: .contain)
         }
 
         // Activation lever — prominent while wake-ups aren't arriving yet.

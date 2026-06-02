@@ -10,16 +10,31 @@ services:
 
   vaultsync-notify:
     image: ghcr.io/psimaker/vaultsync-notify:latest
+    # Run as the same uid/gid that owns Syncthing's config.xml (the official
+    # image defaults to 1000:1000). config.xml is mode 0600, so a different uid
+    # could not read the API key off the shared volume — even read-only.
+    user: "${PUID:-1000}:${PGID:-1000}"
     environment:
-      # Values can be generated into .env via scripts/bootstrap.sh
+      # SYNCTHING_API_KEY is auto-detected from the shared config.xml below — no
+      # need to copy it from the Syncthing Web UI. Set it here only to override.
+      SYNCTHING_API_KEY: ${SYNCTHING_API_KEY:-}
+      # Path to Syncthing's config.xml inside this container. The official
+      # syncthing/syncthing image stores it at /var/syncthing/config/config.xml.
+      SYNCTHING_CONFIG: ${SYNCTHING_CONFIG:-/var/syncthing/config/config.xml}
+      # Syncthing runs in a sibling container, so reach it by service name (the
+      # API key still comes from config.xml; only the URL is set explicitly).
       SYNCTHING_API_URL: ${SYNCTHING_API_URL:-http://syncthing:8384}
-      SYNCTHING_API_KEY: ${SYNCTHING_API_KEY}
       RELAY_URL: ${RELAY_URL:-https://relay.vaultsync.eu}
       DEBOUNCE_SECONDS: ${DEBOUNCE_SECONDS:-5}
       WATCHED_FOLDERS: ${WATCHED_FOLDERS:-}
     volumes:
-      - syncthing-data:/var/syncthing
+      # Read-only: the helper only reads config.xml; it never writes to the volume.
+      - syncthing-data:/var/syncthing:ro
     restart: unless-stopped
+    # On first boot the helper may start before Syncthing has written config.xml;
+    # it exits and restart: unless-stopped retries until the file exists. (depends_on
+    # only orders startup, not readiness.) Running this service alone — without the
+    # syncthing service — leaves an empty volume and no config to detect.
     depends_on:
       - syncthing
 

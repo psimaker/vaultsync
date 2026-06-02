@@ -583,3 +583,20 @@
 "Removing a vault only stops syncing it on this iPhone. The notes on your other devices are not affected." = "Eliminar un Vault solo detiene su sincronización en este iPhone. Las notas en tus otros dispositivos no se ven afectadas.";
 "This vault points to storage that no longer exists on this iPhone, so it can no longer sync." = "Este Vault apunta a un almacenamiento que ya no existe en este iPhone, por lo que ya no puede sincronizarse.";
 "Stops syncing this vault on this iPhone. The notes on your other devices are not affected." = "Detiene la sincronización de este Vault en este iPhone. Las notas en tus otros dispositivos no se ven afectadas.";
+
+/* Cloud Relay activation (lab → wave 1; es/zh-Hans need a native review) */
+"Could not accept share '%@'.\n\n%@" = "No se pudo aceptar el recurso compartido «%@».\n\n%@";
+"Finish activating Cloud Relay" = "Termina de activar Cloud Relay";
+"You’re subscribed, but your server has never woken this iPhone. One step finishes setup." = "Estás suscrito, pero tu servidor nunca ha despertado este iPhone. Un paso completa la configuración.";
+"Opens Cloud Relay setup." = "Abre la configuración de Cloud Relay.";
+"Cloud Relay went quiet" = "Cloud Relay quedó en silencio";
+"No wake-up in a while — is your server still on?" = "Hace tiempo que no hay señal de activación: ¿tu servidor sigue encendido?";
+"Your server just reached this iPhone. Incoming changes now sync the moment they happen." = "Tu servidor acaba de alcanzar este iPhone. Los cambios entrantes ahora se sincronizan en el momento en que ocurren.";
+"Great" = "Genial";
+"No wake-up has arrived in a while. Make sure the helper is still running on the computer or server you keep on." = "Hace tiempo que no llega ninguna señal de activación. Asegúrate de que el ayudante siga ejecutándose en el ordenador o servidor que mantienes encendido.";
+"Not active yet" = "Aún no activo";
+"You’re subscribed. Wake-ups start once the helper is running on the computer or server you keep on — finish setup below. This screen updates automatically the moment the first wake-up arrives." = "Estás suscrito. Las señales de activación comienzan cuando el ayudante se ejecuta en el ordenador o servidor que mantienes encendido: completa la configuración abajo. Esta pantalla se actualiza automáticamente en cuanto llega la primera señal.";
+"Relay reachable — but no wake-up has arrived recently. Check the helper is still running on your server." = "Relay accesible, pero hace poco que no llega ninguna señal de activación. Comprueba que el ayudante siga ejecutándose en tu servidor.";
+"Relay reachable — but no wake-up delivered yet. Run the helper on your server." = "Relay accesible, pero aún no se ha entregado ninguna señal de activación. Ejecuta el ayudante en tu servidor.";
+"That’s it. As soon as the helper starts, it wakes this iPhone once on its own — VaultSync flips to “Cloud Relay active” automatically, with no change needed. After that, every edit on your other devices arrives instantly. Keep the helper running on a machine that stays on (your server or NAS)." = "Eso es todo. En cuanto el ayudante arranca, despierta este iPhone una vez por sí solo: VaultSync cambia a «Cloud Relay activo» automáticamente, sin necesidad de ningún cambio. A partir de ahí, cada edición en tus otros dispositivos llega al instante. Mantén el ayudante en funcionamiento en un equipo que permanezca encendido (tu servidor o NAS).";
+"Step 3 — It activates itself" = "Paso 3 — Se activa solo";
