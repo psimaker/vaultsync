@@ -62,7 +62,9 @@ VaultSync is **not** a hosted note-sync service and **not** a magic always-on da
 
 ## What’s New — v1.5.1
 
-**v1.5.1** makes vault locations self-healing: iOS can move an app’s private storage (on reinstall, restore, or device migration), which used to strand an older vault on a permanent “cannot access this folder” error. VaultSync now re-derives every vault’s location from your Obsidian folder on launch, and a vault that still can’t be reached offers a one-tap **Remove this vault** or **Reconnect to Obsidian** instead of a dead end ([#25](https://github.com/psimaker/vaultsync/issues/25)).
+**v1.5.1 makes Cloud Relay activate itself.** After you subscribe, the server helper (`vaultsync-notify`) sends one wake-up the moment it starts, so VaultSync flips to **Cloud Relay active** on its own the moment that wake-up arrives — no waiting for the next change. Setting up the helper no longer asks for an API key: it reads the Syncthing key (and address) straight from `config.xml`, so the in-app command and `docker compose up -d` are key-free. A reactivation card reaches subscribers whose server has never woken their iPhone, and the Cloud Relay screen shows honest live states — **not active yet**, **active**, or **went quiet**.
+
+It also makes vault locations self-healing: iOS can move an app’s private storage (on reinstall, restore, or device migration), which used to strand an older vault on a permanent “cannot access this folder” error. VaultSync now re-derives every vault’s location from your Obsidian folder on launch, and a vault that still can’t be reached offers a one-tap **Remove this vault** or **Reconnect to Obsidian** instead of a dead end ([#25](https://github.com/psimaker/vaultsync/issues/25)).
 
 It builds on the **v1.5.0** redesign: a tabbed home screen (Sync · Devices · Cloud Relay) with a persistent, glanceable status header, a coherent design system that is correct in light and dark mode, status that never relies on color alone, onboarding whose steps actually run the setup for you, and **Cloud Relay** in its own tab with honest delivery status, a privacy-first pitch, a yearly plan, and Apple-verified subscriptions. See [CHANGELOG.md](CHANGELOG.md) for details.
 
@@ -153,21 +155,26 @@ It is **not** a note cloud. It never receives note content, Markdown text, file 
 
 ### Cloud Relay sidecar
 
-One-command setup — auto-detects your Syncthing instance, configures the container, and starts it:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/psimaker/vaultsync/main/notify/scripts/bootstrap.sh | bash
-```
-
-Or add it to your existing `docker-compose.yml` manually:
+The simplest setup runs Syncthing and the helper together with Docker Compose. The helper reads the Syncthing API key from the shared config volume, so there is **no key to copy** — the only value you supply is `RELAY_URL`:
 
 ```yaml
 vaultsync-notify:
   image: ghcr.io/psimaker/vaultsync-notify:latest
+  user: "1000:1000"                    # match the uid that owns Syncthing's config.xml
   environment:
     SYNCTHING_API_URL: http://syncthing:8384
-    SYNCTHING_API_KEY: your-syncthing-api-key
+    SYNCTHING_CONFIG: /var/syncthing/config/config.xml
     RELAY_URL: https://relay.vaultsync.eu
+  volumes:
+    - syncthing-data:/var/syncthing:ro  # share Syncthing's config volume read-only
+```
+
+> A plain `docker compose up` sends one real wake-up to production (the intended self-activation). Point `RELAY_URL` at a mock when testing locally.
+
+Running Syncthing **natively on the host** instead? `bootstrap.sh` is a guided helper for that case — it auto-detects your `config.xml`, validates connectivity, writes a `notify/.env`, and tells you how to run the binary (it does not start the Compose stack):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/psimaker/vaultsync/main/notify/scripts/bootstrap.sh | bash
 ```
 
 Relay authentication uses your Syncthing Device ID, which the sidecar reads automatically — no relay key needed. Optional tuning (`DEBOUNCE_SECONDS`, `WATCHED_FOLDERS`) and full options are in [notify/README.md](notify/README.md).
