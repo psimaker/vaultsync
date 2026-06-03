@@ -30,7 +30,7 @@ Your notes sync peer-to-peer over Syncthing, straight into Obsidian's iOS sandbo
 - **Peer-to-peer & private** — syncs directly between your own devices over [Syncthing](https://syncthing.net/). No note cloud, no account, no tracking.
 - **Lands in Obsidian** — files sync into Obsidian's iOS sandbox, where the app already looks for them.
 - **Pair by QR, resolve conflicts** — connect your server in seconds; settle Markdown conflicts with side-by-side diffs.
-- **Honest about iOS limits** — optional Cloud Relay wakes the app when your server changes; an activity timeline and actionable diagnostics show what's happening.
+- **Server changes wake your iPhone** — optional Cloud Relay nudges the app the moment your server updates, so incoming notes land even while it's closed. An activity timeline and diagnostics show exactly what synced.
 
 *VoiceOver and Dynamic Type throughout. Localized in English, German, Spanish, and Simplified Chinese. Independent project — not affiliated with Obsidian or Syncthing.*
 
@@ -61,29 +61,27 @@ Syncthing runs on a machine you keep on; VaultSync joins as a peer and syncs int
 
 ## ☁️ Cloud Relay (optional)
 
-Cloud Relay sends your iPhone an APNs silent push the moment your server changes, so incoming sync feels near-realtime instead of waiting for the next time you open the app. It **self-activates**: as soon as the helper starts it sends one wake-up, and VaultSync flips to **Cloud Relay active** on its own — no extra step.
+Without it, VaultSync pulls server changes when you open the app. **With it, your iPhone wakes on its own the moment your server changes** — notes from your other devices land even while VaultSync is closed.
 
-> **The honest sync promise.** iOS forbids always-on background daemons. **Server → iPhone** is near-realtime when relay pushes arrive; **iPhone → server** is most reliable when VaultSync is open. Background refresh may help, but iOS decides if and when it runs.
+Setup is one paste-and-go step, and it switches itself on:
 
-Run the helper next to Syncthing with Docker Compose. It's **key-free** — the helper reads the Syncthing API key from the shared `config.xml`, so the only value you supply is `RELAY_URL`:
+1. **Subscribe** in the app — monthly or yearly, at your App Store's local price.
+2. **Paste the command** VaultSync gives you onto the computer or NAS that hosts your vault. There's **no API key to copy** — the helper reads what it needs from Syncthing itself.
+3. **Done.** The helper wakes your iPhone once on startup, and VaultSync flips to **Cloud Relay active** by itself.
 
-```yaml
-vaultsync-notify:
-  image: ghcr.io/psimaker/vaultsync-notify:latest
-  user: "1000:1000"                     # uid that owns Syncthing's config.xml
-  environment:
-    SYNCTHING_API_URL: http://syncthing:8384
-    SYNCTHING_CONFIG: /var/syncthing/config/config.xml
-    RELAY_URL: https://relay.vaultsync.eu
-  volumes:
-    - syncthing-data:/var/syncthing:ro  # Syncthing's config volume, read-only
+```bash
+# VaultSync generates this for you — paste it on the machine that runs Syncthing
+docker run -d --name vaultsync-notify --restart unless-stopped \
+  --network host \
+  -v /PATH/TO/syncthing:/config:ro \
+  -e SYNCTHING_CONFIG=/config/config.xml \
+  -e RELAY_URL=https://relay.vaultsync.eu \
+  ghcr.io/psimaker/vaultsync-notify:latest
 ```
 
-A plain `docker compose up` sends one real wake-up to production (the intended self-activation) — point `RELAY_URL` at a mock when testing locally.
+Replace `/PATH/TO/syncthing` with your Syncthing config folder — that's the only edit. Prefer Docker Compose, or on a NAS? The [full guide](notify/README.md) covers both.
 
-> **NAS users:** `user:` must match the uid that owns `config.xml` (mode `0600`, so a mismatched uid can't read it). linuxserver = `911`, Unraid = `99:100`; Synology/QNAP also need `SYNCTHING_CONFIG` set to the real `config.xml`. Details in [notify/README.md](notify/README.md).
-
-Cloud Relay is an optional monthly or yearly subscription, priced in your App Store storefront (read from StoreKit at runtime). It **never** receives note content, file or folder names, vault structure, or metadata — only the Syncthing Device ID and APNs token needed to route a wake-up ([PRIVACY.md](PRIVACY.md)). A self-hosted relay is on the roadmap.
+**Private by design:** the relay only ever sees the Syncthing Device ID and APNs token needed to route a wake-up — never your notes, file or folder names, or vault structure ([PRIVACY.md](PRIVACY.md)). Incoming `server → iPhone` changes arrive the moment they happen; sending from iPhone is most reliable with VaultSync open. A self-hosted relay is on the roadmap.
 
 ---
 
