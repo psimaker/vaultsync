@@ -581,21 +581,21 @@
 
 /* Cloud Relay activation (lab → wave 1; es/zh-Hans need a native review) */
 "Could not accept share '%@'.\n\n%@" = "Freigabe „%@“ konnte nicht angenommen werden.\n\n%@";
-"Finish activating Cloud Relay" = "Cloud Relay fertig aktivieren";
+"Finish activating Cloud Relay" = "Cloud-Relay-Aktivierung abschließen";
 "You’re subscribed, but your server has never woken this iPhone. One step finishes setup." = "Du hast ein Abo, aber dein Server hat dieses iPhone noch nie geweckt. Ein Schritt schließt die Einrichtung ab.";
 "Opens Cloud Relay setup." = "Öffnet die Cloud-Relay-Einrichtung.";
 "Cloud Relay went quiet" = "Cloud Relay ist verstummt";
 "No wake-up in a while — is your server still on?" = "Seit einer Weile kein Weck-Signal — läuft dein Server noch?";
-"Your server just reached this iPhone. Incoming changes now sync the moment they happen." = "Dein Server hat dieses iPhone gerade erreicht. Eingehende Änderungen werden jetzt sofort synchronisiert.";
+"Your server just reached this iPhone. Incoming changes now sync the moment they happen." = "Dein Server hat dieses iPhone gerade erreicht. Eingehende Änderungen synchronisieren jetzt im selben Moment.";
 "Great" = "Super";
 "No wake-up has arrived in a while. Make sure the helper is still running on the computer or server you keep on." = "Seit einer Weile ist kein Weck-Signal angekommen. Stelle sicher, dass der Helfer auf dem dauerhaft laufenden Computer oder Server noch läuft.";
 "Not active yet" = "Noch nicht aktiv";
 "You’re subscribed. Wake-ups start once the helper is running on the computer or server you keep on — finish setup below. This screen updates automatically the moment the first wake-up arrives." = "Du hast ein Abo. Weck-Signale beginnen, sobald der Helfer auf dem dauerhaft laufenden Computer oder Server läuft — schließe die Einrichtung unten ab. Diese Ansicht aktualisiert sich automatisch, sobald das erste Weck-Signal eintrifft.";
-"Relay reachable — but no wake-up has arrived recently. Check the helper is still running on your server." = "Relay erreichbar — aber seit Kurzem kein Weck-Signal. Prüfe, ob der Helfer auf deinem Server noch läuft.";
+"Relay reachable — but no wake-up has arrived recently. Check the helper is still running on your server." = "Relay erreichbar — aber in letzter Zeit kein Weck-Signal. Prüfe, ob der Helfer auf deinem Server noch läuft.";
 "Relay reachable — but no wake-up delivered yet. Run the helper on your server." = "Relay erreichbar — aber noch kein Weck-Signal zugestellt. Starte den Helfer auf deinem Server.";
 
 /* Cloud Relay setup — key-free server command (Phase 3 A+C) */
 "Step 1 — Run this on your server" = "Schritt 1 — Führe dies auf deinem Server aus";
 "No API key to copy — the helper reads it straight from Syncthing’s config.xml. Replace /PATH/TO/syncthing with your Syncthing config folder (often ~/.local/state/syncthing or ~/.config/syncthing). If you get a permission error, add -u <uid>:<gid> for the user that owns config.xml." = "Kein API-Schlüssel zum Kopieren — der Helfer liest ihn direkt aus Syncthings config.xml. Ersetze /PATH/TO/syncthing durch deinen Syncthing-Konfigurationsordner (oft ~/.local/state/syncthing oder ~/.config/syncthing). Bei einem Berechtigungsfehler füge -u <uid>:<gid> für den Benutzer hinzu, dem config.xml gehört.";
 "Step 2 — It activates itself" = "Schritt 2 — Es aktiviert sich selbst";
-"That’s it. As soon as the helper starts, it wakes this iPhone once on its own — VaultSync flips to “Cloud Relay active” the moment that first wake-up arrives, with no change needed. After that, changes from your other devices wake the app in the background. Keep the helper running on a machine that stays on (your server or NAS)." = "Das war’s. Sobald der Helfer startet, weckt er dieses iPhone einmal von selbst — VaultSync wechselt zu „Cloud Relay aktiv“, sobald diese erste Lieferung ankommt, ganz ohne Änderung. Danach wecken Änderungen von deinen anderen Geräten die App im Hintergrund. Lass den Helfer auf einem dauerhaft laufenden Gerät (Server oder NAS) laufen.";
+"That’s it. As soon as the helper starts, it wakes this iPhone once on its own — VaultSync flips to “Cloud Relay active” the moment that first wake-up arrives, with no change needed. After that, changes from your other devices wake the app in the background. Keep the helper running on a machine that stays on (your server or NAS)." = "Das war’s. Sobald der Helfer startet, weckt er dieses iPhone einmal von selbst — VaultSync wechselt zu „Cloud Relay aktiv“, sobald das erste Weck-Signal eintrifft, ganz ohne weiteres Zutun. Danach wecken Änderungen von deinen anderen Geräten die App im Hintergrund. Lass den Helfer auf einem dauerhaft laufenden Gerät (Server oder NAS) laufen.";

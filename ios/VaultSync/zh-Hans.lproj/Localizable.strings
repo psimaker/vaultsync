@@ -581,16 +581,16 @@
 
 /* Cloud Relay activation (lab → wave 1; es/zh-Hans need a native review) */
 "Could not accept share '%@'.\n\n%@" = "无法接受共享“%@”。\n\n%@";
-"Finish activating Cloud Relay" = "完成 Cloud Relay 的激活";
+"Finish activating Cloud Relay" = "完成激活 Cloud Relay";
 "You’re subscribed, but your server has never woken this iPhone. One step finishes setup." = "你已订阅，但你的服务器从未唤醒过此 iPhone。一步即可完成设置。";
 "Opens Cloud Relay setup." = "打开 Cloud Relay 设置。";
-"Cloud Relay went quiet" = "Cloud Relay 已沉寂";
+"Cloud Relay went quiet" = "Cloud Relay 暂无动静";
 "No wake-up in a while — is your server still on?" = "已有一段时间没有唤醒信号了——你的服务器还开着吗？";
-"Your server just reached this iPhone. Incoming changes now sync the moment they happen." = "你的服务器刚刚联系到此 iPhone。传入的更改现在会在发生的瞬间同步。";
+"Your server just reached this iPhone. Incoming changes now sync the moment they happen." = "你的服务器刚刚联系上了此 iPhone。现在，传入的改动会在发生的那一刻同步。";
 "Great" = "好的";
 "No wake-up has arrived in a while. Make sure the helper is still running on the computer or server you keep on." = "已有一段时间没有收到唤醒信号。请确认助手仍在你常开的电脑或服务器上运行。";
 "Not active yet" = "尚未激活";
-"You’re subscribed. Wake-ups start once the helper is running on the computer or server you keep on — finish setup below. This screen updates automatically the moment the first wake-up arrives." = "你已订阅。当助手在你常开的电脑或服务器上运行后，唤醒信号即会开始——请在下方完成设置。首个唤醒信号到达时，此界面会自动更新。";
+"You’re subscribed. Wake-ups start once the helper is running on the computer or server you keep on — finish setup below. This screen updates automatically the moment the first wake-up arrives." = "你已订阅。当助手在你常开的电脑或服务器上运行后，唤醒信号即会开始送达——请在下方完成设置。首个唤醒信号到达时，此界面会自动更新。";
 "Relay reachable — but no wake-up has arrived recently. Check the helper is still running on your server." = "Relay 可达——但最近没有收到唤醒信号。请检查助手是否仍在你的服务器上运行。";
 "Relay reachable — but no wake-up delivered yet. Run the helper on your server." = "Relay 可达——但尚未送达唤醒信号。请在你的服务器上运行助手。";
 
@@ -598,4 +598,4 @@
 "Step 1 — Run this on your server" = "第 1 步 — 在你的服务器上运行此命令";
 "No API key to copy — the helper reads it straight from Syncthing’s config.xml. Replace /PATH/TO/syncthing with your Syncthing config folder (often ~/.local/state/syncthing or ~/.config/syncthing). If you get a permission error, add -u <uid>:<gid> for the user that owns config.xml." = "无需复制 API 密钥——助手会直接从 Syncthing 的 config.xml 读取。请将 /PATH/TO/syncthing 替换为你的 Syncthing 配置文件夹（通常是 ~/.local/state/syncthing 或 ~/.config/syncthing）。如果出现权限错误，请为拥有 config.xml 的用户添加 -u <uid>:<gid>。";
 "Step 2 — It activates itself" = "第 2 步 — 它会自行激活";
-"That’s it. As soon as the helper starts, it wakes this iPhone once on its own — VaultSync flips to “Cloud Relay active” the moment that first wake-up arrives, with no change needed. After that, changes from your other devices wake the app in the background. Keep the helper running on a machine that stays on (your server or NAS)." = "就这样。助手一启动，就会自行唤醒此 iPhone 一次——一旦首次唤醒送达，VaultSync 就会切换为“Cloud Relay 已激活”，无需任何更改。此后，你其他设备上的更改会在后台唤醒此应用。请让助手在一台保持常开的设备（你的服务器或 NAS）上持续运行。";
+"That’s it. As soon as the helper starts, it wakes this iPhone once on its own — VaultSync flips to “Cloud Relay active” the moment that first wake-up arrives, with no change needed. After that, changes from your other devices wake the app in the background. Keep the helper running on a machine that stays on (your server or NAS)." = "就这样。助手一启动，就会自行唤醒此 iPhone 一次——一旦首次唤醒送达，VaultSync 就会切换为“Cloud Relay 已启用”，无需任何更改。此后，你其他设备上的更改会在后台唤醒此应用。请让助手在一台保持常开的设备（你的服务器或 NAS）上持续运行。";
