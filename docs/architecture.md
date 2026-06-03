@@ -1,33 +1,44 @@
 # Architecture
 
-## Overview
-
-VaultSync embeds Syncthing's Go reference implementation as an iOS library via gomobile. This avoids reimplementing the Syncthing protocol in Swift and guarantees protocol compatibility.
+VaultSync embeds Syncthing's Go reference implementation as an iOS library via gomobile — no reimplementation of the protocol in Swift, and guaranteed wire compatibility.
 
 ```
 ┌─────────────────────────────────┐
-│         SwiftUI Frontend        │
-│   (iOS-native UI, Swift 6)      │
+│         SwiftUI Frontend        │   iOS-native UI, Swift 6
 ├─────────────────────────────────┤
-│       Swift ↔ Go Bridge         │
-│  (thin API layer via gomobile   │
-│   → exported as .xcframework)   │
+│       Swift ↔ Go Bridge         │   thin API via gomobile
+│                                 │   → exported as .xcframework
 ├─────────────────────────────────┤
-│      syncthing/lib (Go)         │
-│  (protocol, discovery, sync)    │
+│        syncthing/lib (Go)       │   protocol, discovery, sync
 └─────────────────────────────────┘
-         ↕ filesystem ↕
+              ↕ filesystem
 ┌─────────────────────────────────┐
-│    Obsidian Vault (direct)      │
-│  (access to Obsidian sandbox)   │
+│    Obsidian Vault (direct)      │   Obsidian's iOS sandbox
 └─────────────────────────────────┘
 ```
 
-## Go Bridge (`go/bridge/`)
+## 🔄 Sync strategy
 
-Minimal API exported via gomobile. Only primitive types + `string` + `[]byte` cross the bridge — complex data is JSON-serialized.
+- **Foreground** — Syncthing runs unrestricted: immediate, continuous sync.
+- **Background** — `BGAppRefreshTask` (requested ~15 min out; iOS decides the actual timing) + `BGContinuedProcessingTask` (iOS 26+, longer runtime for user-initiated tasks). A ~30s grace window after backgrounding lets in-flight work finish.
+- **Push (Cloud Relay)** — optional. Near-realtime `server → iPhone` wake-ups via APNs silent push. See [relay-spec.md](relay-spec.md).
 
-Key exports (read-only accessors return JSON and are named `Get…JSON`):
+VaultSync is intentionally **asymmetric**:
+
+| Direction | Path |
+|---|---|
+| **Server → iPhone** | `vaultsync-notify` spots outgoing changes → Cloud Relay silent push → VaultSync wakes and pulls. |
+| **iPhone → Server** | iOS doesn't guarantee timely background execution for local edits. The reliable path is to open VaultSync and let embedded Syncthing run in the foreground. |
+
+Cloud Relay is a `server → iPhone` *acceleration* path, not a guarantee of symmetric real-time background sync.
+
+## 🌉 Go bridge (`go/bridge/`)
+
+Minimal API exported via gomobile. Only primitives + `string` + `[]byte` cross the bridge; complex data is JSON-serialized (read accessors are named `Get…JSON`). QR scanning and conflict diffs are produced on the iOS side, not via the bridge.
+
+<details>
+<summary>Key exports</summary>
+
 - **Lifecycle:** `StartSyncthing`, `StopSyncthing`, `IsRunning`
 - **Identity:** `DeviceID`
 - **Devices:** `AddDevice`, `RemoveDevice`, `RenameDevice`, `GetDevicesJSON`
@@ -37,46 +48,17 @@ Key exports (read-only accessors return JSON and are named `Get…JSON`):
 - **Conflicts:** `GetConflictFilesJSON`, `ResolveConflict`, `KeepBothConflict`, `ReadFileContent`, `RemoveConflictFilesForOriginal`
 - **Filters:** `GetFolderIgnores`, `SetFolderIgnores`, `ScanFolderForKnownPatterns`
 - **Events:** `GetEventsSince`
+</details>
 
-QR codes (scan-only) and conflict diffs are produced on the iOS side (`QRScannerView`, `ConflictDiffView`/`LineDiffView`), not via the bridge.
+## 📱 iOS app structure (`ios/VaultSync/`)
 
-## Sync Strategy
+| Group | Contents |
+|---|---|
+| `App/` | `VaultSyncApp` entry point, `AppDelegate` (push + background tasks) |
+| `Models/` | data types (`SyncEventItem`, `IgnorePreset`, `RelayProvisionStatus`, …) |
+| `ViewModels/` | `SetupChecklistViewModel` |
+| `Views/` | SwiftUI views (Content, Onboarding, Cloud Relay, Relay Diagnostics, Sync Issues, Conflicts, QR scanner, …) |
+| `Services/` | `SyncBridgeService`, `SyncthingManager`, `BackgroundSyncService`, `RelayService`, `KeychainService`, `SubscriptionManager`, `TipJarManager`, `BookmarkService`, `VaultManager`, `SyncHistoryStore` |
+| `Resources/` · `*.lproj/` | assets, theme, localization helpers (en, de, es, zh-Hans) |
 
-- **Foreground:** Syncthing runs unrestricted. Immediate, continuous sync.
-- **Background:** `BGAppRefreshTask` (requested ~15 min out; iOS decides the actual timing) + `BGContinuedProcessingTask` (iOS 26+ when available, longer runtime for user-initiated tasks). A ~30s grace window after backgrounding lets in-flight sync work finish.
-- **Push sync (Cloud Relay):** Optional. Near-realtime `server → iPhone` wake-ups via APNs silent push notifications. See [relay-spec.md](relay-spec.md).
-
-## Directional Behavior
-
-VaultSync is intentionally asymmetric in the background:
-
-- **Server -> iPhone**
-  - `vaultsync-notify` watches Syncthing for real outgoing-change markers
-  - Cloud Relay sends a silent push
-  - VaultSync wakes and pulls through Syncthing
-- **iPhone -> Server**
-  - iOS does not guarantee timely background execution for local file changes originating in Obsidian
-  - the reliable path is to open VaultSync, let embedded Syncthing run in foreground, and push changes normally
-  - background refresh may help opportunistically, but it is not a contractual part of the product
-
-Cloud Relay is a `server → iPhone` acceleration path, not a guarantee of symmetric real-time background sync.
-
-## Cloud Relay (`notify/`)
-
-Optional Docker sidecar that watches Syncthing on the homeserver and sends APNs silent-push wake-ups to the iPhone. See [relay-spec.md](relay-spec.md) for the protocol; [troubleshooting.md](troubleshooting.md) for end-user issue handling.
-
-## iOS App Structure
-
-```
-ios/VaultSync/
-├── App/          — VaultSyncApp entry point, AppDelegate (push + background tasks)
-├── Models/       — data types (SyncEventItem, IgnorePreset, RelayProvisionStatus, …)
-├── ViewModels/   — view models (SetupChecklistViewModel)
-├── Views/        — SwiftUI views (ContentView, Onboarding, Settings, RelayDiagnostics,
-│                   SyncIssues, IgnorePatterns, Conflicts, QR scanner)
-├── Services/     — SyncBridgeService, SyncthingManager, BackgroundSyncService, RelayService,
-│                   KeychainService, SubscriptionManager, TipJarManager, BookmarkService,
-│                   VaultManager, SyncHistoryStore
-├── Resources/    — assets, theme, localization helpers
-└── *.lproj/      — localizations (en, de, es, zh-Hans)
-```
+The optional `notify/` sidecar watches Syncthing on the homeserver and sends APNs wake-ups; see [relay-spec.md](relay-spec.md) for the protocol and [troubleshooting.md](troubleshooting.md) for end-user issues.
