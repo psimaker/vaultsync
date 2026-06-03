@@ -364,8 +364,9 @@ fi
 # self-contained topology (Syncthing + helper together) and is key-free on its own.
 info ""
 info "Next — start the helper next to your host Syncthing:"
-info "  cd \"$NOTIFY_DIR\" && go build -o vaultsync-notify && ./vaultsync-notify"
-info "  (or install that binary as a systemd service that reads $ENV_FILE)."
+info "  cd \"$NOTIFY_DIR\" && go build -o vaultsync-notify"
+info "  set -a; . \"$ENV_FILE\"; set +a; ./vaultsync-notify   # load RELAY_URL etc. from .env"
+info "  (or install it as a systemd service with EnvironmentFile=$ENV_FILE)."
 info ""
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
 	info "Prefer Docker? The Docker Compose stack runs Syncthing AND the helper together"
