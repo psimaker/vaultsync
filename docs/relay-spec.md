@@ -1,12 +1,12 @@
 # VaultSync Cloud Relay — Specification
 
-> **Status:** Shipped in v1.4.0; signed-transaction (JWS) verification and server-side expiry enforcement added in v1.5.0. This document is the protocol and architecture reference for the relay, the `vaultsync-notify` sidecar, and the iOS client. Sections marked _Roadmap_ (self-hosted relay) are not yet built.
+> **Status:** Shipped in v1.4.0; signed-transaction (JWS) verification and server-side expiry enforcement added in v1.5.0; key-free auto-detection and self-activation (startup-announce) added in v1.5.1. This document is the protocol and architecture reference for the relay, the `vaultsync-notify` sidecar, and the iOS client. Sections marked _Roadmap_ (self-hosted relay) are not yet built.
 
 ## Overview
 
 Push-notification service that forwards Syncthing file-change events to iOS devices via APNs. It solves the core iOS limitation — no real-time background sync — by waking the app on demand instead of polling.
 
-In the app, **Settings → Open Relay Diagnostics** is the live view of this: health endpoint, APNs registration, last trigger received, and whether the relay is actually *delivering wake-ups* versus merely *reachable*.
+In the app, the **Cloud Relay** tab → **Relay health & diagnostics** is the live view of this: health endpoint, APNs registration, last trigger received, and whether the relay is actually *delivering wake-ups* versus merely *reachable*.
 
 ---
 
@@ -53,7 +53,9 @@ In the app, **Settings → Open Relay Diagnostics** is the live view of this: he
 - Filters for relevant outgoing-change signals: `LocalIndexUpdated`, plus `FolderCompletion` only when a peer still needs data
 - On file changes: sends a wake-up signal to the central relay
 - Configurable debounce (default: 5s) to batch rapid changes into one push
-- Automatically reads its Syncthing Device ID from `/rest/system/status` at startup
+- Auto-detects the Syncthing API key and URL from `config.xml` — no key to copy (override via env if needed)
+- Reads its Syncthing Device ID from `/rest/system/status` at startup
+- **Startup-announce** (`STARTUP_ANNOUNCE`, default on): sends one wake-up the moment it starts, so a freshly-subscribed device flips to "Cloud Relay active" without waiting for the next change
 - No persistent storage required — stateless except for config
 
 **Central Relay (relay.vaultsync.eu)**
@@ -147,6 +149,7 @@ Wake-up signal from homeserver container. Sends silent push to all devices regis
 - Returns 202 Accepted immediately — push delivery is async
 - No file content, no folder names, no metadata — just a wake-up signal
 - Rate limited server-side (separate from the client `DEBOUNCE_SECONDS`): roughly 1 push per Device ID per ~30s window
+- The sidecar's **startup-announce** posts here too — every silent push is a genuine relay delivery (the iOS app sends no triggers), so "Cloud Relay active" can't be faked
 
 #### Error responses and how `vaultsync-notify` reacts
 
@@ -178,19 +181,20 @@ The `notify` client validates only `status == "ok"`. A 200 means the relay is *r
 
 ## API — Homeserver Container (vaultsync-notify)
 
-Configuration via environment variables:
+Configuration via environment variables. `RELAY_URL` is the only required value — the Syncthing key and URL are auto-detected from `config.xml`:
 
 | Variable | Required | Description |
 |---|---|---|
-| `SYNCTHING_API_URL` | Yes | Syncthing REST API URL (e.g. `http://localhost:8384`) |
-| `SYNCTHING_API_KEY` | Yes | Syncthing API key for event subscription |
-| `RELAY_URL` | Yes | Central relay URL (default: `https://relay.vaultsync.eu`) |
-| `DEBOUNCE_SECONDS` | No | Debounce interval for batching events (default: 5) |
-| `WATCHED_FOLDERS` | No | Comma-separated folder IDs to watch (default: all) |
+| `RELAY_URL` | Yes | Central relay URL (`https://relay.vaultsync.eu`). No built-in default, so the helper never wakes a relay you didn't choose. |
+| `SYNCTHING_API_KEY` | No | Auto-detected from `config.xml`; set to override. |
+| `SYNCTHING_API_URL` | No | Auto-detected from `config.xml`; set for a sibling container (e.g. `http://syncthing:8384`). |
+| `SYNCTHING_CONFIG` | No | Explicit path to `config.xml` when not in a standard location. |
+| `STARTUP_ANNOUNCE` | No | Send one wake-up on startup (default `true`). |
+| `SYNCTHING_CONFIG_WAIT_SECONDS` | No | First-boot wait for `config.xml` (default `60`). |
+| `DEBOUNCE_SECONDS` | No | Debounce interval for batching events (default `5`). |
+| `WATCHED_FOLDERS` | No | Comma-separated folder IDs to watch (default: all). |
 
-The container reads its own Syncthing Device ID automatically from `/rest/system/status` at startup. No manual Device ID configuration needed.
-
-The container consumes the Syncthing event stream and pushes outbound to the relay.
+The container reads its own Syncthing Device ID automatically from `/rest/system/status` at startup — no manual Device ID configuration. It consumes the Syncthing event stream and pushes outbound to the relay. Full operator reference: [../notify/README.md](../notify/README.md).
 
 ---
 
@@ -248,9 +252,9 @@ The iOS client implements the full relay flow; see `AppDelegate.swift`, `RelaySe
 - **Provisioning** — on a successful StoreKit purchase, the app POSTs each homeserver peer's Device ID, the APNs token, and the signed transaction (JWS) to `/api/v1/provision`. Provisioned IDs are stored in the Keychain and re-provisioned on token rotation; on subscription expiry the tokens are deprovisioned.
 - **Push reception** — a silent push restores the vault bookmarks, starts Syncthing via the Go bridge, polls for completion within the ~30s background budget, then stops Syncthing and releases the bookmarks. This shares the `BGAppRefreshTask` code path.
 - **Background modes** — `UIBackgroundModes` includes `remote-notification` alongside `fetch` and `processing`.
-- **Subscription management** — StoreKit 2 auto-renewable subscription; status, price, and a Manage Subscription link live in Settings → Cloud Relay. The price is read from StoreKit at runtime and never hard-coded.
+- **Subscription management** — StoreKit 2 auto-renewable subscription; status, price, and a Manage Subscription link live in the Cloud Relay tab. The price is read from StoreKit at runtime and never hard-coded.
 
-Cloud Relay is configured from **Settings → Cloud Relay**, not onboarding.
+Cloud Relay is configured from its own **Cloud Relay** tab, not onboarding.
 
 ---
 
