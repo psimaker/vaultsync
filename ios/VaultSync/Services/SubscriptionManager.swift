@@ -439,15 +439,27 @@ final class SubscriptionManager {
     }
 
     private func deprovisionRelay() async {
-        // Clear the per-activation "Connected" celebration on every transition to
-        // inactive (revocation/expiration paths route here, not just
-        // checkSubscriptionStatus), so a later resubscribe celebrates again.
-        // Done before the token guard so it still clears when no token exists.
-        UserDefaults.standard.removeObject(forKey: "relay-connected-celebrated")
-        guard let token = KeychainService.getAPNsDeviceToken() else { return }
-
+        // Clear and persist the provision state up front. Transaction.updates routes
+        // revoke/expire here directly, sometimes with no APNs token — so doing this
+        // before the token guard ensures a later cold launch can't rehydrate stale
+        // `.provisioned` entries (relay-provisioned-device-ids) and briefly fake a
+        // "likely working" state until the next refresh.
         let deviceIDs = loadStoredDeviceIDs()
         ensureProvisionStateEntries(for: deviceIDs)
+        for deviceID in deviceIDs {
+            relayProvisionStatuses[deviceID] = .notAttempted
+        }
+        persistProvisionedDeviceIDs()
+
+        // Clear the per-activation "Connected" celebration on every transition to
+        // inactive, so a later resubscribe celebrates again. Done before the token
+        // guard so it still clears when no token exists.
+        UserDefaults.standard.removeObject(forKey: "relay-connected-celebrated")
+        guard let token = KeychainService.getAPNsDeviceToken() else {
+            refreshStoredRelayDiagnostics()
+            return
+        }
+
         for deviceID in deviceIDs {
             do {
                 try await RelayService.deprovision(deviceID: deviceID, apnsToken: token)

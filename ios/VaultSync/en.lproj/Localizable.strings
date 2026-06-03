@@ -479,7 +479,6 @@
 "Both versions were kept.\n\nYour local version remains as '%@'.\nThe other device's version was renamed to '%@'." = "Both versions were kept.\n\nYour local version remains as '%@'.\nThe other device's version was renamed to '%@'.";
 "%d conflicts" = "%d conflicts";
 "Your contribution is pending approval." = "Your contribution is pending approval.";
-"Could not accept share '%@'.\n\n%@" = "Could not accept share '%@'.\n\n%@";
 "iOS did not provide a push token required for instant sync." = "iOS did not provide a push token required for instant sync.";
 "%@ (Trigger: %@)" = "%@ (Trigger: %@)";
 "1 additional file synced in %@" = "1 additional file synced in %@";

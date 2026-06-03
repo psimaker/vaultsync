@@ -479,7 +479,6 @@
 "Both versions were kept.\n\nYour local version remains as '%@'.\nThe other device's version was renamed to '%@'." = "已保留两个版本。\n\n你的本地版本保留为“%@”。\n其他设备的版本已重命名为“%@”。";
 "%d conflicts" = "%d 个冲突";
 "Your contribution is pending approval." = "你的支持正在等待批准。";
-"Could not accept share '%@'.\n\n%@" = "无法接受共享“%@”。\n\n%@";
 "iOS did not provide a push token required for instant sync." = "iOS 未提供即时同步所需的推送令牌。";
 "%@ (Trigger: %@)" = "%@（触发：%@）";
 "1 additional file synced in %@" = "在 %@ 内同步了 1 个额外文件";

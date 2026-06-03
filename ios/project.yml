@@ -73,16 +73,15 @@ targets:
           - eu.vaultsync.app.sync-refresh
           - eu.vaultsync.app.sync-continued
         NSCameraUsageDescription: "VaultSync uses the camera to scan Syncthing device QR codes for easy setup."
-        # Cloud Relay's DEBUG mock loop reaches http://127.0.0.1 (provision/health
-        # via RELAY_BASE_URL_OVERRIDE). NSAllowsLocalNetworking relaxes ATS for
-        # loopback/local hosts ONLY — never arbitrary remote cleartext — so it is
-        # low-risk in Release, where the app has no http:// request path (the
-        # production relay is https-only and the trigger endpoint no longer
-        # exists). Kept here so it survives `xcodegen generate` instead of living
-        # only in the gitignored generated Info.plist. Promotion refinement: drop
-        # it from Release via a Debug-only Info.plist for a strict ATS posture.
-        NSAppTransportSecurity:
-          NSAllowsLocalNetworking: true
+        # NOTE: NSAppTransportSecurity / NSAllowsLocalNetworking is deliberately NOT
+        # set here, so shipping (Release) builds keep the strictest ATS posture. The
+        # production app only talks HTTPS to the relay; the loopback exception is
+        # needed only for the DEBUG mock-relay loop, which a developer adds to the
+        # local (gitignored) generated Info.plist when testing against
+        # http://127.0.0.1 (see METHODS.md §1.3). It is not baked into the project
+        # because a Release strip via a build script is unreliable (the Info.plist
+        # is finalized after script phases run) and per-config plists are not worth
+        # the complexity here.
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationPortraitUpsideDown

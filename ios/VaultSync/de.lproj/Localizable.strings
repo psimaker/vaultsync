@@ -479,7 +479,6 @@
 "Both versions were kept.\n\nYour local version remains as '%@'.\nThe other device's version was renamed to '%@'." = "Beide Versionen wurden behalten.\n\nDeine lokale Version bleibt als '%@'.\nDie Version des anderen Geräts wurde in '%@' umbenannt.";
 "%d conflicts" = "%d Konflikte";
 "Your contribution is pending approval." = "Deine Unterstützung wartet auf Freigabe.";
-"Could not accept share '%@'.\n\n%@" = "Freigabe '%@' konnte nicht angenommen werden.\n\n%@";
 "iOS did not provide a push token required for instant sync." = "iOS hat kein Push-Token bereitgestellt, das für Sofort-Sync erforderlich ist.";
 "%@ (Trigger: %@)" = "%@ (Auslöser: %@)";
 "1 additional file synced in %@" = "1 weitere Datei in %@ synchronisiert";
