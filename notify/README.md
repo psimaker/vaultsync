@@ -2,7 +2,7 @@
 
 Small sidecar that watches your Syncthing instance and sends a **wake-up signal** to the VaultSync Cloud Relay when your server changes. The relay forwards a silent APNs push, so VaultSync syncs promptly instead of waiting for the next background refresh. No file content or metadata leaves your server — only a Device ID.
 
-> Cloud Relay accelerates **server → iPhone** only. For **iPhone → server**, open VaultSync (see [Product scope](#product-scope)).
+> Cloud Relay accelerates **server → iPhone** only. For **iPhone → server**, open VaultSync (see **Product scope** below).
 
 ---
 

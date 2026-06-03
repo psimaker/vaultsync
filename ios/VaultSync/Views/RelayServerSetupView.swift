@@ -77,10 +77,10 @@ struct RelayServerSetupView: View {
             }
 
             Section {
-                ExternalLinkButton(titleKey: "Full setup guide (Docker Compose, one-command install)", url: DocURL.serverSetupGuide)
+                ExternalLinkButton(titleKey: "Full setup guide (Docker Compose or guided setup script)", url: DocURL.serverSetupGuide)
                     .font(.subheadline)
             } footer: {
-                Text(L10n.tr("Prefer Docker Compose or a guided one-command installer? The full guide covers both."))
+                Text(L10n.tr("Prefer Docker Compose or a guided setup script? The full guide covers both."))
             }
         }
         .navigationTitle(L10n.tr("Set Up Your Server"))

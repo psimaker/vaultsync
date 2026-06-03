@@ -81,7 +81,7 @@ docker run -d --name vaultsync-notify --restart unless-stopped \
 
 Replace `/PATH/TO/syncthing` with your Syncthing config folder — that's the only edit. Prefer Docker Compose, or on a NAS? The [full guide](notify/README.md) covers both.
 
-**Private by design:** the relay only ever sees the Syncthing Device ID and APNs token needed to route a wake-up — never your notes, file or folder names, or vault structure ([PRIVACY.md](PRIVACY.md)). Incoming `server → iPhone` changes arrive the moment they happen; sending from iPhone is most reliable with VaultSync open. A self-hosted relay is on the roadmap.
+**Private by design:** the relay only ever sees the Syncthing Device ID and APNs token needed to route a wake-up — never your notes, file or folder names, or vault structure ([PRIVACY.md](PRIVACY.md)). Incoming `server → iPhone` changes arrive near-realtime, usually within seconds; sending from iPhone is most reliable with VaultSync open. A self-hosted relay is on the roadmap.
 
 ---
 

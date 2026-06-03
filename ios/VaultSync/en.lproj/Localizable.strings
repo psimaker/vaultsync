@@ -520,8 +520,8 @@
 "Copy Command" = "Copy Command";
 "Step 3 — Confirm it works" = "Step 3 — Confirm it works";
 "Come back to VaultSync. The moment a change happens on your server, Relay Diagnostics will confirm that wake-ups are being delivered — that means everything works." = "Come back to VaultSync. The moment a change happens on your server, Relay Diagnostics will confirm that wake-ups are being delivered — that means everything works.";
-"Full setup guide (Docker Compose, one-command install)" = "Full setup guide (Docker Compose, one-command install)";
-"Prefer Docker Compose or a guided one-command installer? The full guide covers both." = "Prefer Docker Compose or a guided one-command installer? The full guide covers both.";
+"Full setup guide (Docker Compose or guided setup script)" = "Full setup guide (Docker Compose or guided setup script)";
+"Prefer Docker Compose or a guided setup script? The full guide covers both." = "Prefer Docker Compose or a guided setup script? The full guide covers both.";
 "Set Up Your Server" = "Set Up Your Server";
 "Server setup command" = "Server setup command";
 "Last wake-up" = "Last wake-up";

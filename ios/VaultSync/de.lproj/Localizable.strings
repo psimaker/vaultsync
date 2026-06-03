@@ -520,8 +520,8 @@
 "Copy Command" = "Befehl kopieren";
 "Step 3 — Confirm it works" = "Schritt 3 — Bestätige, dass es funktioniert";
 "Come back to VaultSync. The moment a change happens on your server, Relay Diagnostics will confirm that wake-ups are being delivered — that means everything works." = "Komm zurück zu VaultSync. Sobald sich auf deinem Server etwas ändert, bestätigt die Relay-Diagnose, dass Weck-Signale zugestellt werden — dann funktioniert alles.";
-"Full setup guide (Docker Compose, one-command install)" = "Vollständige Anleitung (Docker Compose, Ein-Befehl-Installation)";
-"Prefer Docker Compose or a guided one-command installer? The full guide covers both." = "Lieber Docker Compose oder ein geführter Ein-Befehl-Installer? Die vollständige Anleitung deckt beides ab.";
+"Full setup guide (Docker Compose or guided setup script)" = "Vollständige Anleitung (Docker Compose oder geführtes Setup-Skript)";
+"Prefer Docker Compose or a guided setup script? The full guide covers both." = "Lieber Docker Compose oder ein geführtes Setup-Skript? Die vollständige Anleitung deckt beides ab.";
 "Set Up Your Server" = "Server einrichten";
 "Server setup command" = "Server-Einrichtungsbefehl";
 "Last wake-up" = "Letztes Weck-Signal";

@@ -26,10 +26,10 @@
 ## Platform / robustness follow-ups (not release blockers, but document for users)
 
 4. **Compose `user:` default is `1000:1000`.** Correct for the official `syncthing/syncthing` image,
-   but **wrong** for linuxserver/Unraid (PUID/PGID default **99:100**) and Synology (`sc-syncthing`).
-   Those users must set `PUID`/`PGID`. **Synology/QNAP** configs are not in the binary's candidate
-   list — they need `SYNCTHING_CONFIG` (and the spec's Synology path `…/syncthing/var/config.xml` was
-   wrong; correct is `/volume1/@appdata/syncthing/config.xml`). See `EVAL-bweg-ac.md` §5.
+   but **wrong** for linuxserver (PUID/PGID default **911:911**), Unraid (**99:100**) and Synology
+   (`sc-syncthing`). Those users must set `PUID`/`PGID`. **Synology/QNAP** configs are not in the
+   binary's candidate list — they need `SYNCTHING_CONFIG` (and the spec's Synology path
+   `…/syncthing/var/config.xml` was wrong; correct is `/volume1/@appdata/syncthing/config.xml`).
 5. **`bootstrap.sh`** now `<gui>`-scopes its address `awk` (no more `http://dynamic`) and its candidate
    list matches the binary. Longer term, prefer the binary's detection over the shell script to avoid
    two detection paths.

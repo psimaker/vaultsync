@@ -520,8 +520,8 @@
 "Copy Command" = "复制命令";
 "Step 3 — Confirm it works" = "第 3 步 — 确认其正常工作";
 "Come back to VaultSync. The moment a change happens on your server, Relay Diagnostics will confirm that wake-ups are being delivered — that means everything works." = "回到 VaultSync。一旦你的服务器上发生改动，“Relay 诊断”就会确认唤醒信号正在送达——这表示一切正常。";
-"Full setup guide (Docker Compose, one-command install)" = "完整设置指南（Docker Compose、一条命令安装）";
-"Prefer Docker Compose or a guided one-command installer? The full guide covers both." = "更喜欢 Docker Compose 或引导式的一条命令安装程序？完整指南两者都涵盖。";
+"Full setup guide (Docker Compose or guided setup script)" = "完整设置指南（Docker Compose 或引导式设置脚本）";
+"Prefer Docker Compose or a guided setup script? The full guide covers both." = "更喜欢 Docker Compose 或引导式设置脚本？完整指南两者都涵盖。";
 "Set Up Your Server" = "设置你的服务器";
 "Server setup command" = "服务器设置命令";
 "Last wake-up" = "上次唤醒";
