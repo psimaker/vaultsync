@@ -33,30 +33,30 @@ Position is intentional: filters are configuration, sharing/rescan are actions. 
 
 ```
 ┌─ Sync Filters — "My Vault" ─────────────┐
-│                                          │
-│  Recommended                             │
-│  ☑ Workspace state                       │
-│    Prevents sync conflicts on which     │
-│    notes were open.                      │
-│  ☑ Trash                                 │
+│                                         │
+│  Recommended                            │
+│  ☑ Workspace state                      │
+│    Prevents sync conflicts on which      │
+│    notes were open.                     │
+│  ☑ Trash                                │
 │    Files already deleted on other       │
-│    devices.                              │
-│                                          │
-│  Found in this vault                     │
-│  ☐ Git repository                        │
+│    devices.                             │
+│                                         │
+│  Found in this vault                    │
+│  ☐ Git repository                       │
 │    45.2 MB — 1,847 files                 │
-│  ☐ Copilot index                         │
+│  ☐ Copilot index                        │
 │    12.8 MB — 4,219 files                 │
-│                                          │
-│  Other presets                           │
-│  ☐ macOS metadata                        │
-│  ☐ Obsidian app cache                    │
-│                                          │
-│  Custom patterns                         │
-│  *.tmp                                   │
-│  Drafts/                                 │
-│  [ Add pattern (e.g. *.tmp) ] [ Add ]    │
-│                                          │
+│                                         │
+│  Other presets                          │
+│  ☐ macOS metadata                       │
+│  ☐ Obsidian app cache                   │
+│                                         │
+│  Custom patterns                        │
+│  *.tmp                                  │
+│  Drafts/                                │
+│  [ Add pattern (e.g. *.tmp) ] [ Add ]   │
+│                                         │
 │  How filters work →                      │
 └─────────────────────────────────────────┘
 ```
@@ -91,19 +91,19 @@ Two presets that the issue thread mentioned but I'm **not** including in the ini
 
 ```
 ┌─ Sync Filters ──────────────────────────┐
-│                              [Skip] [Done]│
-│                                          │
+│                            [Skip] [Done]│
+│                                         │
 │  Skip these on this iPhone? You can     │
-│  change this anytime in Sync Filters.    │
-│                                          │
-│  Recommended                             │
-│  ☑ Workspace state                       │
-│  ☑ Trash                                 │
-│                                          │
-│  Found in this vault                     │
-│  ☑ Git repository    45.2 MB             │
-│  ☑ Copilot index     12.8 MB             │
-│                                          │
+│  change this anytime in Sync Filters.   │
+│                                         │
+│  Recommended                            │
+│  ☑ Workspace state                      │
+│  ☑ Trash                                │
+│                                         │
+│  Found in this vault                    │
+│  ☑ Git repository    45.2 MB            │
+│  ☑ Copilot index     12.8 MB            │
+│                                         │
 └─────────────────────────────────────────┘
 ```
 

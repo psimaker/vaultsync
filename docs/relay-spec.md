@@ -17,9 +17,9 @@ In the app, the **Cloud Relay** tab → **Relay health & diagnostics** is the li
 │        User's Homeserver         │
 │                                  │
 │  ┌────────────┐  ┌────────────┐  │
-│  │  Syncthing  │  │ vaultsync- │  │
-│  │  Instance   │──│   notify   │  │
-│  │             │  │ (Docker)   │  │
+│  │  Syncthing │  │ vaultsync- │  │
+│  │  Instance  │──│   notify   │  │
+│  │            │  │ (Docker)   │  │
 │  └────────────┘  └─────┬──────┘  │
 │                        │         │
 └────────────────────────┼─────────┘
