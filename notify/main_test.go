@@ -142,10 +142,16 @@ func TestLoadConfigAwaitingSyncthingWaitsForConfigXML(t *testing.T) {
 	configWaitPollInterval = 20 * time.Millisecond
 	t.Cleanup(func() { configWaitPollInterval = restorePoll })
 
-	// Syncthing writes config.xml shortly after the helper starts.
+	// Syncthing writes config.xml shortly after the helper starts. Publish it
+	// atomically (temp file + rename) so a poll can never observe a half-written
+	// or empty file mid-write and fail on a transient parse error — a flaky-test
+	// race, not a code bug (the helper correctly treats a malformed config as
+	// non-retryable).
 	go func() {
 		time.Sleep(60 * time.Millisecond)
-		_ = os.WriteFile(cfgPath, []byte(deviceBeforeGUIConfigXML), 0o600)
+		tmp := cfgPath + ".tmp"
+		_ = os.WriteFile(tmp, []byte(deviceBeforeGUIConfigXML), 0o600)
+		_ = os.Rename(tmp, cfgPath)
 	}()
 
 	cfg, err := loadConfigAwaitingSyncthing(context.Background())
