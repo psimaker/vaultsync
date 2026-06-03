@@ -3,20 +3,8 @@ name: CI
 on:
   push:
     branches: [main]
-    # Docs/markdown-only commits don't affect the Go bridge or the iOS build, so
-    # skip the whole pipeline (incl. the ~10x-priced macOS build job) for them.
-    # NOTE: none of these jobs are required status checks yet. If you later enable
-    # branch protection requiring "Build & Test", replace paths-ignore with a
-    # per-job changed-files gate (dorny/paths-filter) so PRs don't hang waiting
-    # on a check that was skipped.
-    paths-ignore:
-      - "**/*.md"
-      - "docs/**"
   pull_request:
     branches: [main]
-    paths-ignore:
-      - "**/*.md"
-      - "docs/**"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -26,6 +14,37 @@ permissions:
   contents: read
 
 jobs:
+  # The required checks (Go Tests, Notify Tests) are cheap ubuntu jobs and ALWAYS
+  # run, so branch-protection PRs never hang on a never-reported status — the trap
+  # a bare top-level `paths-ignore:` creates once a job is a required check (a
+  # path-filtered *workflow* stays "Expected" forever, blocking the PR). Instead
+  # the only thing gated is the ~10x-priced macOS "Build & Test" job, on whether
+  # any non-docs file changed, detected here.
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read # dorny lists PR files via the API (no checkout here)
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          # "code" = anything that can affect the Go bridge or the iOS build.
+          # Docs-only changes (**/*.md, docs/**, LICENSE, …) match nothing here,
+          # so the macOS build is skipped. Add new top-level code trees here if
+          # the repo layout grows. (Per-pattern OR semantics make a "!docs/**"
+          # negation list unreliable, hence the positive allow-list.)
+          filters: |
+            code:
+              - 'go/**'
+              - 'ios/**'
+              - 'notify/**'
+              - '.github/**'
+
   go-tests:
     name: Go Tests
     runs-on: ubuntu-latest # pure-Go bridge suite; needs no macOS/Xcode
@@ -81,9 +100,15 @@ jobs:
     runs-on: macos-26 # Xcode 26.2 default, iOS 26 SDK required for BGContinuedProcessingTask
     timeout-minutes: 45 # guard against a hung simulator/xcodebuild burning 10x macOS minutes
     needs:
+      - changes
       - go-tests
       - notify-tests
       - design-lint
+    # Skip the expensive macOS build on docs-only changes. It is not a required
+    # status check, so skipping never blocks a PR. The plain expression (no
+    # always()/status function) keeps the implicit "all needs succeeded" gate,
+    # so a failed test job still skips the build exactly as before.
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v6
 
