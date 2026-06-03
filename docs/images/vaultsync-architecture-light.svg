@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 460" width="940" height="460" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" role="img" aria-label="VaultSync architecture: your server running Syncthing syncs peer-to-peer with the VaultSync iOS app, which places notes into your Obsidian vault. An optional Cloud Relay sends silent push wake-ups to the app.">
+  <defs>
+    <marker id="arrTeal" viewBox="0 0 10 10" refX="8.2" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2AB5B3"/>
+    </marker>
+    <marker id="arrMuted" viewBox="0 0 10 10" refX="8.2" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9aa4af"/>
+    </marker>
+  </defs>
+
+  <!-- EDGES (drawn first, boxes overlay the ends) -->
+  <!-- Server <-> VaultSync : core sync, bidirectional -->
+  <path d="M258,322 H362" fill="none" stroke="#2AB5B3" stroke-width="2.5" marker-start="url(#arrTeal)" marker-end="url(#arrTeal)"/>
+  <!-- VaultSync -> Obsidian -->
+  <path d="M578,322 H682" fill="none" stroke="#2AB5B3" stroke-width="2.5" marker-end="url(#arrTeal)"/>
+  <!-- Server -> Relay : optional sidecar (dashed) -->
+  <path d="M150,268 C150,205 192,138 243,136" fill="none" stroke="#9aa4af" stroke-width="2" stroke-dasharray="5 5" marker-end="url(#arrMuted)"/>
+  <!-- Relay -> VaultSync : APNs wake-up (dashed) -->
+  <path d="M372,136 C420,182 470,196 470,268" fill="none" stroke="#9aa4af" stroke-width="2" stroke-dasharray="5 5" marker-end="url(#arrMuted)"/>
+
+  <!-- EDGE LABELS -->
+  <text x="310" y="284" text-anchor="middle" font-size="11" fill="#424a53">Syncthing protocol</text>
+  <text x="310" y="299" text-anchor="middle" font-size="11" fill="#57606a">LAN or Internet</text>
+  <text x="630" y="310" text-anchor="middle" font-size="11" fill="#57606a">into the vault</text>
+  <text x="100" y="200" text-anchor="middle" font-size="10.5" fill="#57606a">optional sidecar</text>
+  <text x="100" y="214" text-anchor="middle" font-size="10.5" fill="#57606a">vaultsync-notify</text>
+  <text x="566" y="190" text-anchor="middle" font-size="10.5" fill="#57606a">APNs silent push</text>
+  <text x="566" y="204" text-anchor="middle" font-size="10.5" fill="#57606a">wake-up only</text>
+
+  <!-- SERVER -->
+  <g transform="translate(44,270)">
+    <rect x="0" y="0" width="212" height="104" rx="16" fill="#fff" stroke="#d8dee4" stroke-width="1.5"/>
+    <rect x="18" y="34" width="36" height="36" rx="10" fill="#f3f5f7"/>
+    <g fill="none" stroke="#57606a" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="25" y="41" width="22" height="8.5" rx="2"/>
+      <rect x="25" y="54.5" width="22" height="8.5" rx="2"/>
+    </g>
+    <circle cx="42" cy="45.25" r="1.5" fill="#57606a"/>
+    <circle cx="42" cy="58.75" r="1.5" fill="#57606a"/>
+    <text x="68" y="46" font-size="15" font-weight="600" fill="#1f2328">Your server</text>
+    <text x="68" y="64" font-size="11.5" fill="#57606a">Mac · Linux · NAS</text>
+    <text x="68" y="81" font-size="11.5" fill="#57606a">+ Syncthing</text>
+  </g>
+
+  <!-- VAULTSYNC (hero) -->
+  <g transform="translate(364,270)">
+    <rect x="0" y="0" width="212" height="104" rx="16" fill="#e9f8f7" stroke="#2AB5B3" stroke-width="2"/>
+    <rect x="18" y="34" width="36" height="36" rx="10" fill="#d4f1ef"/>
+    <g fill="none" stroke="#1b9e9c" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="29" y="38" width="14" height="28" rx="3"/>
+      <line x1="33" y1="62.5" x2="39" y2="62.5"/>
+      <path d="M32.4,47.2 A3.7,3.7 0 0 1 39.4,46.6"/>
+      <path d="M39.6,50.8 A3.7,3.7 0 0 1 32.6,51.4"/>
+    </g>
+    <path d="M39.4,46.6 l1.3,-1.0 l-0.2,2.0 z" fill="#1b9e9c"/>
+    <path d="M32.6,51.4 l-1.3,1.0 l0.2,-2.0 z" fill="#1b9e9c"/>
+    <text x="68" y="50" font-size="16" font-weight="700" fill="#0f1b1a">VaultSync</text>
+    <text x="68" y="69" font-size="11.5" fill="#1b6360">iOS · iPadOS</text>
+  </g>
+
+  <!-- OBSIDIAN -->
+  <g transform="translate(684,270)">
+    <rect x="0" y="0" width="212" height="104" rx="16" fill="#fff" stroke="#d8dee4" stroke-width="1.5"/>
+    <rect x="18" y="34" width="36" height="36" rx="10" fill="#f3f5f7"/>
+    <g fill="none" stroke="#57606a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M28,38 h11 l7,7 v17 a2,2 0 0 1 -2,2 h-16 a2,2 0 0 1 -2,-2 v-22 a2,2 0 0 1 2,-2 z"/>
+      <path d="M39,38 v7 h7"/>
+      <line x1="31" y1="50" x2="42" y2="50"/>
+      <line x1="31" y1="54.5" x2="42" y2="54.5"/>
+      <line x1="31" y1="59" x2="38" y2="59"/>
+    </g>
+    <text x="68" y="50" font-size="15" font-weight="600" fill="#1f2328">Obsidian vault</text>
+    <text x="68" y="69" font-size="11.5" fill="#57606a">iOS sandbox</text>
+  </g>
+
+  <!-- RELAY (optional) -->
+  <g transform="translate(208,40)">
+    <rect x="0" y="0" width="204" height="96" rx="16" fill="#fff" stroke="#cfd6dd" stroke-width="1.5" stroke-dasharray="5 5"/>
+    <rect x="16" y="30" width="36" height="36" rx="10" fill="#f3f5f7"/>
+    <path d="M25,53 a5.3,5.3 0 0 1 0.7,-10.4 a6.5,6.5 0 0 1 12.2,-1 a4.7,4.7 0 0 1 1.1,11.4 z" fill="none" stroke="#57606a" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="64" y="39" font-size="9" font-weight="700" letter-spacing="0.8" fill="#2AB5B3">OPTIONAL</text>
+    <text x="64" y="57" font-size="14" font-weight="600" fill="#1f2328">Cloud Relay</text>
+    <text x="64" y="74" font-size="10.5" fill="#57606a">relay.vaultsync.eu</text>
+  </g>
+</svg>

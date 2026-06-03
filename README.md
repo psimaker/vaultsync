@@ -38,13 +38,14 @@ Your notes sync peer-to-peer over Syncthing, straight into Obsidian's iOS sandbo
 
 ## 🧭 How it works
 
-```mermaid
-flowchart LR
-    S["🖥️ Your Mac / Linux / NAS<br/>+ Syncthing"] <-->|"Syncthing protocol<br/>LAN or Internet"| A["📱 VaultSync<br/>iOS / iPadOS"]
-    A --> O["📝 Obsidian vault<br/>iOS sandbox"]
-    S -. "optional sidecar<br/>vaultsync-notify" .-> R["☁️ relay.vaultsync.eu"]
-    R -. "APNs silent push<br/>wake-up only" .-> A
-```
+<div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/vaultsync-architecture-dark.svg">
+  <img alt="VaultSync architecture: your server with Syncthing syncs peer-to-peer with the VaultSync iOS app, which writes notes into your Obsidian vault. An optional Cloud Relay sends silent push wake-ups." src="docs/images/vaultsync-architecture-light.svg" width="100%">
+</picture>
+
+</div>
 
 Syncthing runs on a machine you keep on; VaultSync joins as a peer and syncs into Obsidian. The optional sidecar + Cloud Relay wake your iPhone when the server changes.
 
