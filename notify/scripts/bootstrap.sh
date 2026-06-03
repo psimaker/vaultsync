@@ -272,6 +272,15 @@ else
 	warn "Could not auto-detect Syncthing config.xml. Set SYNCTHING_CONFIG to a custom path if needed."
 fi
 
+# If detection only succeeded because the operator pointed SYNCTHING_CONFIG at a
+# non-standard path, remember it so the generated .env can pin it. Otherwise a
+# later bare-binary/systemd start would probe only the standard locations and miss
+# the custom config (the commented auto-detect lines below would not help then).
+custom_config_path=""
+if [ -n "${SYNCTHING_CONFIG:-}" ] && [ "$detected_config_path" = "${SYNCTHING_CONFIG:-}" ]; then
+	custom_config_path="$SYNCTHING_CONFIG"
+fi
+
 SYNCTHING_API_URL="${SYNCTHING_API_URL:-$detected_api_url}"
 SYNCTHING_API_KEY="${SYNCTHING_API_KEY:-$detected_api_key}"
 RELAY_URL="${RELAY_URL:-https://relay.vaultsync.eu}"
@@ -320,6 +329,11 @@ umask 077
 	printf '%s\n' "RELAY_URL=$RELAY_URL"
 	printf '%s\n' "DEBOUNCE_SECONDS=$DEBOUNCE_SECONDS"
 	printf '%s\n' "WATCHED_FOLDERS=$WATCHED_FOLDERS"
+	if [ -n "$custom_config_path" ]; then
+		printf '%s\n' "# Custom config path you set — pinned so the binary finds the same config"
+		printf '%s\n' "# (auto-detection would otherwise only probe the standard locations)."
+		printf '%s\n' "SYNCTHING_CONFIG=$custom_config_path"
+	fi
 	if [ "$SYNCTHING_API_URL" != "$detected_api_url" ]; then
 		printf '%s\n' "SYNCTHING_API_URL=$SYNCTHING_API_URL"
 	else
