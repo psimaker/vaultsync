@@ -26,10 +26,15 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
-      pull-requests: read # dorny lists PR files via the API (no checkout here)
+      pull-requests: read # dorny lists PR files via the API on pull_request events
     outputs:
       code: ${{ steps.filter.outputs.code }}
     steps:
+      # Required for push events (e.g. merge to main): with no PR to query, dorny
+      # falls back to a local git diff and needs a working copy. On pull_request
+      # it uses the API, but the checkout is harmless there.
+      - uses: actions/checkout@v6
+
       - uses: dorny/paths-filter@v3
         id: filter
         with:
