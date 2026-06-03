@@ -1,3 +1,10 @@
+# Zero-config self-activation: RELAY_URL defaults to the production relay
+# (relay.vaultsync.eu) and STARTUP_ANNOUNCE is on, so a plain `docker compose up`
+# sends one wake-up and the app self-activates — exactly what a subscriber wants,
+# with no config to fill in. Developing/testing only: override RELAY_URL to a local
+# mock first, e.g.:
+#   RELAY_URL=http://host.docker.internal:8787 docker compose up
+# (or set RELAY_URL in .env).
 services:
   syncthing:
     image: syncthing/syncthing:latest
@@ -10,9 +17,13 @@ services:
 
   vaultsync-notify:
     image: ghcr.io/psimaker/vaultsync-notify:latest
-    # Run as the same uid/gid that owns Syncthing's config.xml (the official
-    # image defaults to 1000:1000). config.xml is mode 0600, so a different uid
-    # could not read the API key off the shared volume — even read-only.
+    # Run as the same uid/gid that owns Syncthing's config.xml. config.xml is mode
+    # 0600, so a mismatched uid cannot read the API key off the shared volume — even
+    # read-only. The 1000:1000 default fits the OFFICIAL syncthing/syncthing image;
+    # set PUID/PGID for others: linuxserver image = 911:911, Unraid template = 99:100,
+    # Synology (SynoCommunity) runs as the `syncthing` user. NAS configs outside the
+    # probed paths (Synology/QNAP) additionally need SYNCTHING_CONFIG pointed at the
+    # real config.xml.
     user: "${PUID:-1000}:${PGID:-1000}"
     environment:
       # SYNCTHING_API_KEY is auto-detected from the shared config.xml below — no

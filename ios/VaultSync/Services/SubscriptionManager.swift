@@ -446,7 +446,13 @@ final class SubscriptionManager {
         // "likely working" state until the next refresh.
         let deviceIDs = loadStoredDeviceIDs()
         ensureProvisionStateEntries(for: deviceIDs)
-        for deviceID in deviceIDs {
+        // Sweep EVERY known provision status (not just the keychain-stored IDs) to
+        // .notAttempted before persisting. A status rehydrated from UserDefaults that
+        // has diverged from the keychain (e.g. a transient keychain read miss) would
+        // otherwise stay `.provisioned` and get re-persisted here, briefly faking a
+        // "likely working" state on the next cold launch. Mirrors the cleanup in
+        // checkSubscriptionStatus()'s !foundActive branch.
+        for deviceID in relayProvisionStatuses.keys {
             relayProvisionStatuses[deviceID] = .notAttempted
         }
         persistProvisionedDeviceIDs()

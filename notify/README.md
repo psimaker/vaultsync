@@ -13,25 +13,25 @@ Lightweight sidecar container that watches your Syncthing instance for file chan
 
 > Cloud Relay accelerates **server → iPhone** sync only. For **iPhone → server**, open VaultSync (see [Product Scope](#product-scope)).
 
-## Quick Start (One Command)
+## Quick Start — Docker Compose (key-free)
 
-From the `notify/` directory:
+The simplest setup runs Syncthing and the helper together. The helper reads the
+Syncthing API key straight from the shared `config.xml`, so there is **no key to copy**.
 
 ```bash
-./scripts/bootstrap.sh
+cd notify
+cp .env.example .env        # set RELAY_URL (it defaults to the production relay)
+docker compose up -d
 ```
 
-What bootstrap does:
+The only value you supply is `RELAY_URL`. **Note:** a plain `docker compose up` sends one
+real wake-up to production — intended for subscribers. When testing locally, override
+`RELAY_URL` to a mock first (see the warning at the top of `docker-compose.yml`).
 
-1. Auto-detects Syncthing `config.xml` in common Linux/macOS locations.
-2. Extracts the Syncthing API key from `config.xml` automatically.
-3. Infers a default Syncthing API URL from Syncthing GUI config.
-4. Validates Syncthing API access and relay health with retries/timeouts.
-5. Writes `notify/.env` with secure permissions.
-6. Runs built-in `--doctor` checks (when local binary or Go toolchain is available).
-7. Optionally starts `docker compose up -d vaultsync-notify`.
-
-If auto-detection fails, set `SYNCTHING_CONFIG=/path/to/config.xml` and rerun bootstrap.
+> Running Syncthing **natively** on the host instead of in Compose? Use the in-app
+> server-setup command (a key-free `docker run …`) or the bare binary — the helper
+> auto-detects the key from your `config.xml` either way. `bootstrap.sh` (below) gives
+> a guided version of that host setup.
 
 ## Doctor Mode
 
@@ -53,18 +53,22 @@ Doctor validates:
 
 Each check uses retries and per-attempt timeouts to avoid false negatives during transient network jitter.
 
-## Advanced / Manual Docker Setup
+## Guided setup next to a host Syncthing (`bootstrap.sh`)
 
-Manual setup remains fully supported for operators who prefer explicit control.
+If you run Syncthing **natively on the host** (not in Compose), `bootstrap.sh` is an
+interactive helper for that topology:
 
 ```bash
 cd notify
-cp .env.example .env
-# edit .env with your values
-docker compose up -d vaultsync-notify
+./scripts/bootstrap.sh
 ```
 
-Compose reads its values from `.env` — see the [Environment Variables](#environment-variables) table below.
+It detects your `config.xml`, validates Syncthing + relay connectivity, writes a
+compose-safe `notify/.env` (only `RELAY_URL` and tunables — the key/URL stay
+auto-detected), runs the built-in `--doctor` checks, and points you at running the
+binary or installing it as a service. It does **not** start the Compose stack — that is
+the separate, self-contained topology in the Quick Start above. If detection fails, set
+`SYNCTHING_CONFIG=/path/to/config.xml` and rerun.
 
 ## Runtime Healthcheck
 

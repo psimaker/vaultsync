@@ -73,15 +73,16 @@ targets:
           - eu.vaultsync.app.sync-refresh
           - eu.vaultsync.app.sync-continued
         NSCameraUsageDescription: "VaultSync uses the camera to scan Syncthing device QR codes for easy setup."
-        # NOTE: NSAppTransportSecurity / NSAllowsLocalNetworking is deliberately NOT
-        # set here, so shipping (Release) builds keep the strictest ATS posture. The
-        # production app only talks HTTPS to the relay; the loopback exception is
-        # needed only for the DEBUG mock-relay loop, which a developer adds to the
-        # local (gitignored) generated Info.plist when testing against
-        # http://127.0.0.1 (see METHODS.md §1.3). It is not baked into the project
-        # because a Release strip via a build script is unreliable (the Info.plist
-        # is finalized after script phases run) and per-config plists are not worth
-        # the complexity here.
+        # NOTE: NSAppTransportSecurity is deliberately NOT set, so shipping (Release)
+        # builds keep the strictest ATS posture. The production app only talks HTTPS to
+        # the relay. The DEBUG mock-relay loop targets http://127.0.0.1 (loopback),
+        # which ATS does NOT enforce against — a cleartext loopback load needs no ATS
+        # exception at all. (NSAllowsLocalNetworking never governed numeric IP literals;
+        # it only relaxes ATS for unqualified / .local *named* hosts — Apple DTS — so it
+        # was never the key that made the 127.0.0.1 loop work. On iOS 17+, non-loopback
+        # IP literals would need an NSExceptionDomains entry, but loopback stays exempt.)
+        # For maximum robustness use the name "localhost" over the numeric literal in
+        # the DEBUG RELAY_BASE_URL_OVERRIDE.
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationPortraitUpsideDown
