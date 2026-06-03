@@ -6,6 +6,11 @@ All notable changes to VaultSync are documented here.
 
 ## [1.5.1] — 2026-06-01
 
+### Added
+
+- **Cloud Relay activates itself** — after you subscribe, VaultSync registers your devices with the relay automatically, and the server helper (`vaultsync-notify`) now confirms activation on its own: the moment it starts it sends one wake-up, and the app flips to **Cloud Relay active** on its own the moment that wake-up arrives — no extra step or change needed. A reactivation card reaches subscribers whose server has never woken their iPhone, and the Cloud Relay screen shows honest live states — **not active yet**, **active**, or **went quiet** — instead of guessing. Localized in English, German, Spanish, and Simplified Chinese.
+- **No API key to copy when setting up the server helper** — `vaultsync-notify` reads the Syncthing API key (and address) straight from Syncthing's `config.xml`, so server setup no longer asks you to open the Syncthing web UI and paste a key. The in-app command and `docker compose up -d` are key-free; running next to Syncthing, the only value you supply is the relay URL (which stays explicit, so the helper never wakes a relay you didn't choose). A first-boot wait lets the helper ride out a fresh `docker compose up` while Syncthing is still writing its config.
+
 ### Fixed
 
 - **A vault stuck on "VaultSync cannot access this folder" can now recover** ([#25](https://github.com/psimaker/vaultsync/issues/25)) — iOS can change an app's private storage location (on reinstall, restore, or device migration), which left an older vault pointing at a path that no longer exists and stuck in a permanent error with no way out. VaultSync now re-derives every vault's location from your Obsidian folder each time it starts: a change to the app's own storage is repaired automatically, and after a device restore or migration you reconnect the Obsidian folder once and every vault is rebased onto its existing data — no re-download and no lost history. A vault that still can't be reached shows a clear **Remove this vault** (and, where possible, **Reconnect to Obsidian**) instead of an inert error, and every vault detail screen gained a **Remove Vault** action. Localized in English, German, Spanish, and Simplified Chinese.

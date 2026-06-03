@@ -1,3 +1,3 @@
 module github.com/psimaker/vaultsync/notify
 
-go 1.26.3
+go 1.26.4

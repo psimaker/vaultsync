@@ -52,6 +52,11 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
     ) {
         logger.info("Silent push received")
+        // Every silent push is a genuine relay delivery — the server helper
+        // triggered it (a vault change, or the helper's startup-announce). The app
+        // no longer sends any trigger of its own, so there is nothing to
+        // disambiguate: record it as a real delivery, which drives
+        // relayDeliveryConfirmed and clears the reactivation card.
         RelayTriggerStore.markReceived()
 
         Task {

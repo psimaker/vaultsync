@@ -25,6 +25,11 @@ struct VaultSyncApp: App {
         )
         BackgroundSyncService.registerTasks()
         logger.info("VaultSync starting")
+        #if DEBUG
+        // LAB: make the effective relay target visible/verifiable. Production
+        // unless RELAY_BASE_URL_OVERRIDE is set (DEBUG only). Compiled out of release.
+        logger.info("Relay base URL in use: \(RelayService.relayURL, privacy: .public)")
+        #endif
         Task.detached(priority: .utility) {
             logger.info("Go bridge ping: \(SyncBridgeService.ping())")
             logger.info("Go version: \(SyncBridgeService.goVersion())")
@@ -124,6 +129,23 @@ struct VaultSyncApp: App {
     }
 
     private func handleIncomingURL(_ url: URL) {
+        #if DEBUG
+        // LAB: the iOS Simulator cannot deliver real silent pushes — `simctl push`
+        // content-available is received as a scene action but never invokes
+        // didReceiveRemoteNotification (confirmed empirically). So the mock relay
+        // simulates ONLY the transport leg of a REAL delivery by opening
+        // `vaultsync://relay-wake`; everything downstream (markReceived →
+        // freshness → "active"/celebration) then runs for real. Compiled out of
+        // release builds, so it can never affect shipping behaviour.
+        if let comps = URLComponents(url: url, resolvingAgainstBaseURL: false),
+           comps.scheme?.caseInsensitiveCompare("vaultsync") == .orderedSame,
+           comps.host?.caseInsensitiveCompare("relay-wake") == .orderedSame {
+            logger.info("DEBUG: simulated real relay delivery via deep link (lab)")
+            RelayTriggerStore.markReceived()
+            return
+        }
+        #endif
+
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               components.scheme?.caseInsensitiveCompare("vaultsync") == .orderedSame,
               components.host?.caseInsensitiveCompare("sync") == .orderedSame else {

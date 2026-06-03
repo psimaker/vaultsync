@@ -7,7 +7,34 @@ private let logger = Logger(subsystem: "eu.vaultsync.app", category: "relay")
 /// Authentication is based on Syncthing Device IDs — no API keys or user accounts.
 enum RelayService {
 
-    static let relayURL = "https://relay.vaultsync.eu"
+    /// Canonical production relay. NEVER experiment against this — it serves real
+    /// paying users (lab golden rules #3/#4).
+    static let productionRelayURL = "https://relay.vaultsync.eu"
+
+    /// Base URL for all relay API calls. Production by default. In **DEBUG builds
+    /// only** it can be redirected to a local mock relay via the
+    /// `RELAY_BASE_URL_OVERRIDE` UserDefault — e.g. an Xcode scheme launch
+    /// argument `-RELAY_BASE_URL_OVERRIDE http://127.0.0.1:8787`. The override is
+    /// compiled out of release builds entirely, so a shipped app can NEVER point
+    /// anywhere but production: trigger/provision experiments cannot reach real
+    /// users.
+    static var relayURL: String {
+        #if DEBUG
+        if let override = UserDefaults.standard.string(forKey: relayBaseURLOverrideKey),
+           !override.isEmpty {
+            return override
+        }
+        #endif
+        return productionRelayURL
+    }
+
+    #if DEBUG
+    static let relayBaseURLOverrideKey = "RELAY_BASE_URL_OVERRIDE"
+    /// True when relay API calls are pointed at a mock instead of production.
+    /// Surfaced in Relay Diagnostics so it is never silently the case.
+    static var isUsingRelayOverride: Bool { relayURL != productionRelayURL }
+    #endif
+
     private static let diagnosticsErrorStorageKey = "relay-diagnostics-last-error"
     static let diagnosticsDidChangeNotification = Notification.Name("RelayDiagnosticsDidChange")
 

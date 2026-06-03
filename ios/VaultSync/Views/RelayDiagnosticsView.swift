@@ -7,7 +7,6 @@ struct RelayDiagnosticsView: View {
 
     @State private var diagnosticsInFlight = false
     @State private var retryProvisioningInFlight = false
-
     var body: some View {
         List {
             relayHealthSection
@@ -28,14 +27,40 @@ struct RelayDiagnosticsView: View {
 
     private var relayHealthSection: some View {
         Section("Relay Backend") {
+            #if DEBUG
+            if RelayService.isUsingRelayOverride {
+                Label(L10n.fmt("DEBUG: pointed at mock relay %@", RelayService.relayURL), systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.statusAttention)
+            } else {
+                // Inverse of the mock banner: make it loud when a DEBUG/lab build
+                // is silently on PRODUCTION, so the operator notices that
+                // provision / health calls are hitting the real relay (golden
+                // rule #3 — point lab builds at the mock).
+                Label(L10n.tr("DEBUG: pointed at PRODUCTION relay. Relaunch with -RELAY_BASE_URL_OVERRIDE to use the local mock."), systemImage: "exclamationmark.octagon.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.statusError)
+            }
+            #endif
             if subscriptionManager.relayDeliveryConfirmed {
                 Label(L10n.tr("Cloud Relay is delivering wake-ups"), systemImage: "checkmark.seal.fill")
                     .foregroundStyle(Color.statusSuccess)
                     .font(.subheadline)
             } else if subscriptionManager.relayDeliveryLikelyWorking {
-                Label(L10n.tr("Cloud Relay looks reachable"), systemImage: "checkmark.circle")
-                    .foregroundStyle(Color.statusSuccess)
-                    .font(.subheadline)
+                // "Reachable" is NOT "delivering" — keep it neutral and qualified so
+                // it never reads as success. Distinguish never-delivered (finish
+                // setup) from previously-delivered-now-stale ("went quiet") so this
+                // surface agrees with the dashboard / RelayHomeView (review
+                // finding: cross-surface contradiction).
+                if subscriptionManager.lastRelayTriggerReceivedAt != nil {
+                    Label(L10n.tr("Relay reachable — but no wake-up has arrived recently. Check the helper is still running on your server."), systemImage: "dot.radiowaves.left.and.right")
+                        .foregroundStyle(Color.statusAttention)
+                        .font(.subheadline)
+                } else {
+                    Label(L10n.tr("Relay reachable — but no wake-up delivered yet. Run the helper on your server."), systemImage: "dot.radiowaves.left.and.right")
+                        .foregroundStyle(.secondary)
+                        .font(.subheadline)
+                }
             }
             HStack {
                 Label("Health Endpoint", systemImage: "server.rack")
@@ -241,6 +266,21 @@ struct RelayDiagnosticsView: View {
             Text("This timestamp is updated when VaultSync receives a silent push from Cloud Relay.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            #if DEBUG
+            // LAB: the Simulator can't deliver real silent pushes, so this drives
+            // the REAL receive→UI path (markReceived → freshness → "active" /
+            // first-delivery celebration) to demo the activation states. The mock
+            // relay's `-deliver openurl` does the same via the
+            // vaultsync://relay-wake deep link. Compiled out of release builds.
+            Button {
+                RelayTriggerStore.markReceived()
+            } label: {
+                Label(L10n.tr("DEBUG: Simulate real wake-up arrival"), systemImage: "ladybug.fill")
+            }
+            .font(.footnote)
+            .foregroundStyle(Color.statusAttention)
+            #endif
         }
     }
 

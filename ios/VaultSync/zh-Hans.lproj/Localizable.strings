@@ -479,7 +479,6 @@
 "Both versions were kept.\n\nYour local version remains as '%@'.\nThe other device's version was renamed to '%@'." = "已保留两个版本。\n\n你的本地版本保留为“%@”。\n其他设备的版本已重命名为“%@”。";
 "%d conflicts" = "%d 个冲突";
 "Your contribution is pending approval." = "你的支持正在等待批准。";
-"Could not accept share '%@'.\n\n%@" = "无法接受共享“%@”。\n\n%@";
 "iOS did not provide a push token required for instant sync." = "iOS 未提供即时同步所需的推送令牌。";
 "%@ (Trigger: %@)" = "%@（触发：%@）";
 "1 additional file synced in %@" = "在 %@ 内同步了 1 个额外文件";
@@ -518,15 +517,11 @@
 "Your server helper is running — wake-ups are being delivered." = "你的服务器助手正在运行——唤醒信号正在送达。";
 "Why this step" = "为什么需要这一步";
 "Cloud Relay needs a small helper on your server. It watches Syncthing for changes and sends VaultSync a wake-up signal — it never sees your notes. Without it, the subscription has nothing to wake the app with." = "Cloud Relay 需要在你的服务器上运行一个小助手。它监视 Syncthing 的改动并向 VaultSync 发送唤醒信号——它从不查看你的笔记。没有它，订阅就无法唤醒应用。";
-"Step 1 — Get your Syncthing API key" = "第 1 步 — 获取你的 Syncthing API 密钥";
-"Open the Syncthing web UI on your server, then Actions → Settings → GUI → API Key, and copy the key." = "在你的服务器上打开 Syncthing 网页界面，然后进入 Actions → Settings → GUI → API Key，复制该密钥。";
-"Step 2 — Run this on your server" = "第 2 步 — 在你的服务器上运行此命令";
 "Copy Command" = "复制命令";
-"Replace PASTE_YOUR_KEY with the API key from Step 1. If Syncthing runs in another container, set SYNCTHING_API_URL to its address instead of localhost." = "将 PASTE_YOUR_KEY 替换为第 1 步中的 API 密钥。如果 Syncthing 运行在另一个容器中，请将 SYNCTHING_API_URL 设置为它的地址，而不是 localhost。";
 "Step 3 — Confirm it works" = "第 3 步 — 确认其正常工作";
 "Come back to VaultSync. The moment a change happens on your server, Relay Diagnostics will confirm that wake-ups are being delivered — that means everything works." = "回到 VaultSync。一旦你的服务器上发生改动，“Relay 诊断”就会确认唤醒信号正在送达——这表示一切正常。";
-"Full setup guide (Docker Compose, one-command install)" = "完整设置指南（Docker Compose、一条命令安装）";
-"Prefer Docker Compose or a guided one-command installer? The full guide covers both." = "更喜欢 Docker Compose 或引导式的一条命令安装程序？完整指南两者都涵盖。";
+"Full setup guide (Docker Compose or guided setup script)" = "完整设置指南（Docker Compose 或引导式设置脚本）";
+"Prefer Docker Compose or a guided setup script? The full guide covers both." = "更喜欢 Docker Compose 或引导式设置脚本？完整指南两者都涵盖。";
 "Set Up Your Server" = "设置你的服务器";
 "Server setup command" = "服务器设置命令";
 "Last wake-up" = "上次唤醒";
@@ -583,3 +578,24 @@
 "Removing a vault only stops syncing it on this iPhone. The notes on your other devices are not affected." = "移除 Vault 只会停止在此 iPhone 上的同步。你其他设备上的笔记不受影响。";
 "This vault points to storage that no longer exists on this iPhone, so it can no longer sync." = "此 Vault 指向的存储位置在此 iPhone 上已不存在，因此无法再同步。";
 "Stops syncing this vault on this iPhone. The notes on your other devices are not affected." = "停止在此 iPhone 上同步此 Vault。你其他设备上的笔记不受影响。";
+
+/* Cloud Relay activation (lab → wave 1; es/zh-Hans need a native review) */
+"Could not accept share '%@'.\n\n%@" = "无法接受共享“%@”。\n\n%@";
+"Finish activating Cloud Relay" = "完成激活 Cloud Relay";
+"You’re subscribed, but your server has never woken this iPhone. One step finishes setup." = "你已订阅，但你的服务器从未唤醒过此 iPhone。一步即可完成设置。";
+"Opens Cloud Relay setup." = "打开 Cloud Relay 设置。";
+"Cloud Relay went quiet" = "Cloud Relay 暂无动静";
+"No wake-up in a while — is your server still on?" = "已有一段时间没有唤醒信号了——你的服务器还开着吗？";
+"Your server just reached this iPhone. Incoming changes now sync the moment they happen." = "你的服务器刚刚联系上了此 iPhone。现在，传入的改动会在发生的那一刻同步。";
+"Great" = "好的";
+"No wake-up has arrived in a while. Make sure the helper is still running on the computer or server you keep on." = "已有一段时间没有收到唤醒信号。请确认助手仍在你常开的电脑或服务器上运行。";
+"Not active yet" = "尚未激活";
+"You’re subscribed. Wake-ups start once the helper is running on the computer or server you keep on — finish setup below. This screen updates automatically the moment the first wake-up arrives." = "你已订阅。当助手在你常开的电脑或服务器上运行后，唤醒信号即会开始送达——请在下方完成设置。首个唤醒信号到达时，此界面会自动更新。";
+"Relay reachable — but no wake-up has arrived recently. Check the helper is still running on your server." = "Relay 可达——但最近没有收到唤醒信号。请检查助手是否仍在你的服务器上运行。";
+"Relay reachable — but no wake-up delivered yet. Run the helper on your server." = "Relay 可达——但尚未送达唤醒信号。请在你的服务器上运行助手。";
+
+/* Cloud Relay setup — key-free server command (Phase 3 A+C) */
+"Step 1 — Run this on your server" = "第 1 步 — 在你的服务器上运行此命令";
+"No API key to copy — the helper reads it straight from Syncthing’s config.xml. Replace /PATH/TO/syncthing with your Syncthing config folder (often ~/.local/state/syncthing or ~/.config/syncthing). If you get a permission error, add -u <uid>:<gid> for the user that owns config.xml." = "无需复制 API 密钥——助手会直接从 Syncthing 的 config.xml 读取。请将 /PATH/TO/syncthing 替换为你的 Syncthing 配置文件夹（通常是 ~/.local/state/syncthing 或 ~/.config/syncthing）。如果出现权限错误，请为拥有 config.xml 的用户添加 -u <uid>:<gid>。";
+"Step 2 — It activates itself" = "第 2 步 — 它会自行激活";
+"That’s it. As soon as the helper starts, it wakes this iPhone once on its own — VaultSync flips to “Cloud Relay active” the moment that first wake-up arrives, with no change needed. After that, changes from your other devices wake the app in the background. Keep the helper running on a machine that stays on (your server or NAS)." = "就这样。助手一启动，就会自行唤醒此 iPhone 一次——一旦首次唤醒送达，VaultSync 就会切换为“Cloud Relay 已启用”，无需任何更改。此后，你其他设备上的更改会在后台唤醒此应用。请让助手在一台保持常开的设备（你的服务器或 NAS）上持续运行。";

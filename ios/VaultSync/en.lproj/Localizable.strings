@@ -479,7 +479,6 @@
 "Both versions were kept.\n\nYour local version remains as '%@'.\nThe other device's version was renamed to '%@'." = "Both versions were kept.\n\nYour local version remains as '%@'.\nThe other device's version was renamed to '%@'.";
 "%d conflicts" = "%d conflicts";
 "Your contribution is pending approval." = "Your contribution is pending approval.";
-"Could not accept share '%@'.\n\n%@" = "Could not accept share '%@'.\n\n%@";
 "iOS did not provide a push token required for instant sync." = "iOS did not provide a push token required for instant sync.";
 "%@ (Trigger: %@)" = "%@ (Trigger: %@)";
 "1 additional file synced in %@" = "1 additional file synced in %@";
@@ -518,15 +517,11 @@
 "Your server helper is running — wake-ups are being delivered." = "Your server helper is running — wake-ups are being delivered.";
 "Why this step" = "Why this step";
 "Cloud Relay needs a small helper on your server. It watches Syncthing for changes and sends VaultSync a wake-up signal — it never sees your notes. Without it, the subscription has nothing to wake the app with." = "Cloud Relay needs a small helper on your server. It watches Syncthing for changes and sends VaultSync a wake-up signal — it never sees your notes. Without it, the subscription has nothing to wake the app with.";
-"Step 1 — Get your Syncthing API key" = "Step 1 — Get your Syncthing API key";
-"Open the Syncthing web UI on your server, then Actions → Settings → GUI → API Key, and copy the key." = "Open the Syncthing web UI on your server, then Actions → Settings → GUI → API Key, and copy the key.";
-"Step 2 — Run this on your server" = "Step 2 — Run this on your server";
 "Copy Command" = "Copy Command";
-"Replace PASTE_YOUR_KEY with the API key from Step 1. If Syncthing runs in another container, set SYNCTHING_API_URL to its address instead of localhost." = "Replace PASTE_YOUR_KEY with the API key from Step 1. If Syncthing runs in another container, set SYNCTHING_API_URL to its address instead of localhost.";
 "Step 3 — Confirm it works" = "Step 3 — Confirm it works";
 "Come back to VaultSync. The moment a change happens on your server, Relay Diagnostics will confirm that wake-ups are being delivered — that means everything works." = "Come back to VaultSync. The moment a change happens on your server, Relay Diagnostics will confirm that wake-ups are being delivered — that means everything works.";
-"Full setup guide (Docker Compose, one-command install)" = "Full setup guide (Docker Compose, one-command install)";
-"Prefer Docker Compose or a guided one-command installer? The full guide covers both." = "Prefer Docker Compose or a guided one-command installer? The full guide covers both.";
+"Full setup guide (Docker Compose or guided setup script)" = "Full setup guide (Docker Compose or guided setup script)";
+"Prefer Docker Compose or a guided setup script? The full guide covers both." = "Prefer Docker Compose or a guided setup script? The full guide covers both.";
 "Set Up Your Server" = "Set Up Your Server";
 "Server setup command" = "Server setup command";
 "Last wake-up" = "Last wake-up";
@@ -583,3 +578,24 @@
 "Removing a vault only stops syncing it on this iPhone. The notes on your other devices are not affected." = "Removing a vault only stops syncing it on this iPhone. The notes on your other devices are not affected.";
 "This vault points to storage that no longer exists on this iPhone, so it can no longer sync." = "This vault points to storage that no longer exists on this iPhone, so it can no longer sync.";
 "Stops syncing this vault on this iPhone. The notes on your other devices are not affected." = "Stops syncing this vault on this iPhone. The notes on your other devices are not affected.";
+
+/* Cloud Relay activation (lab → wave 1; es/zh-Hans need a native review) */
+"Could not accept share '%@'.\n\n%@" = "Could not accept share '%@'.\n\n%@";
+"Finish activating Cloud Relay" = "Finish activating Cloud Relay";
+"You’re subscribed, but your server has never woken this iPhone. One step finishes setup." = "You’re subscribed, but your server has never woken this iPhone. One step finishes setup.";
+"Opens Cloud Relay setup." = "Opens Cloud Relay setup.";
+"Cloud Relay went quiet" = "Cloud Relay went quiet";
+"No wake-up in a while — is your server still on?" = "No wake-up in a while — is your server still on?";
+"Your server just reached this iPhone. Incoming changes now sync the moment they happen." = "Your server just reached this iPhone. Incoming changes now sync the moment they happen.";
+"Great" = "Great";
+"No wake-up has arrived in a while. Make sure the helper is still running on the computer or server you keep on." = "No wake-up has arrived in a while. Make sure the helper is still running on the computer or server you keep on.";
+"Not active yet" = "Not active yet";
+"You’re subscribed. Wake-ups start once the helper is running on the computer or server you keep on — finish setup below. This screen updates automatically the moment the first wake-up arrives." = "You’re subscribed. Wake-ups start once the helper is running on the computer or server you keep on — finish setup below. This screen updates automatically the moment the first wake-up arrives.";
+"Relay reachable — but no wake-up has arrived recently. Check the helper is still running on your server." = "Relay reachable — but no wake-up has arrived recently. Check the helper is still running on your server.";
+"Relay reachable — but no wake-up delivered yet. Run the helper on your server." = "Relay reachable — but no wake-up delivered yet. Run the helper on your server.";
+
+/* Cloud Relay setup — key-free server command (Phase 3 A+C) */
+"Step 1 — Run this on your server" = "Step 1 — Run this on your server";
+"No API key to copy — the helper reads it straight from Syncthing’s config.xml. Replace /PATH/TO/syncthing with your Syncthing config folder (often ~/.local/state/syncthing or ~/.config/syncthing). If you get a permission error, add -u <uid>:<gid> for the user that owns config.xml." = "No API key to copy — the helper reads it straight from Syncthing’s config.xml. Replace /PATH/TO/syncthing with your Syncthing config folder (often ~/.local/state/syncthing or ~/.config/syncthing). If you get a permission error, add -u <uid>:<gid> for the user that owns config.xml.";
+"Step 2 — It activates itself" = "Step 2 — It activates itself";
+"That’s it. As soon as the helper starts, it wakes this iPhone once on its own — VaultSync flips to “Cloud Relay active” the moment that first wake-up arrives, with no change needed. After that, changes from your other devices wake the app in the background. Keep the helper running on a machine that stays on (your server or NAS)." = "That’s it. As soon as the helper starts, it wakes this iPhone once on its own — VaultSync flips to “Cloud Relay active” the moment that first wake-up arrives, with no change needed. After that, changes from your other devices wake the app in the background. Keep the helper running on a machine that stays on (your server or NAS).";

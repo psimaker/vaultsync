@@ -479,7 +479,6 @@
 "Both versions were kept.\n\nYour local version remains as '%@'.\nThe other device's version was renamed to '%@'." = "Se conservaron ambas versiones.\n\nTu versión local permanece como '%@'.\nLa versión del otro dispositivo se renombró a '%@'.";
 "%d conflicts" = "%d conflictos";
 "Your contribution is pending approval." = "Tu contribución está pendiente de aprobación.";
-"Could not accept share '%@'.\n\n%@" = "No se pudo aceptar la compartición '%@'.\n\n%@";
 "iOS did not provide a push token required for instant sync." = "iOS no proporcionó un token de push necesario para la sincronización instantánea.";
 "%@ (Trigger: %@)" = "%@ (Activador: %@)";
 "1 additional file synced in %@" = "1 archivo adicional sincronizado en %@";
@@ -518,15 +517,11 @@
 "Your server helper is running — wake-ups are being delivered." = "Tu asistente del servidor está en marcha: se están entregando las señales de activación.";
 "Why this step" = "Por qué este paso";
 "Cloud Relay needs a small helper on your server. It watches Syncthing for changes and sends VaultSync a wake-up signal — it never sees your notes. Without it, the subscription has nothing to wake the app with." = "Cloud Relay necesita un pequeño asistente en tu servidor. Vigila los cambios en Syncthing y envía a VaultSync una señal de activación; nunca ve tus notas. Sin él, la suscripción no tiene con qué despertar la app.";
-"Step 1 — Get your Syncthing API key" = "Paso 1: Obtén tu clave de API de Syncthing";
-"Open the Syncthing web UI on your server, then Actions → Settings → GUI → API Key, and copy the key." = "Abre la interfaz web de Syncthing en tu servidor, luego Actions → Settings → GUI → API Key, y copia la clave.";
-"Step 2 — Run this on your server" = "Paso 2: Ejecuta esto en tu servidor";
 "Copy Command" = "Copiar comando";
-"Replace PASTE_YOUR_KEY with the API key from Step 1. If Syncthing runs in another container, set SYNCTHING_API_URL to its address instead of localhost." = "Sustituye PASTE_YOUR_KEY por la clave de API del Paso 1. Si Syncthing se ejecuta en otro contenedor, define SYNCTHING_API_URL con su dirección en lugar de localhost.";
 "Step 3 — Confirm it works" = "Paso 3: Confirma que funciona";
 "Come back to VaultSync. The moment a change happens on your server, Relay Diagnostics will confirm that wake-ups are being delivered — that means everything works." = "Vuelve a VaultSync. En cuanto ocurra un cambio en tu servidor, Diagnóstico del Relay confirmará que se están entregando las señales de activación: eso significa que todo funciona.";
-"Full setup guide (Docker Compose, one-command install)" = "Guía completa (Docker Compose, instalación con un solo comando)";
-"Prefer Docker Compose or a guided one-command installer? The full guide covers both." = "¿Prefieres Docker Compose o un instalador guiado de un solo comando? La guía completa cubre ambos.";
+"Full setup guide (Docker Compose or guided setup script)" = "Guía completa (Docker Compose o script de configuración guiado)";
+"Prefer Docker Compose or a guided setup script? The full guide covers both." = "¿Prefieres Docker Compose o un script de configuración guiado? La guía completa cubre ambos.";
 "Set Up Your Server" = "Configura tu servidor";
 "Server setup command" = "Comando de configuración del servidor";
 "Last wake-up" = "Última señal de activación";
@@ -583,3 +578,24 @@
 "Removing a vault only stops syncing it on this iPhone. The notes on your other devices are not affected." = "Eliminar un Vault solo detiene su sincronización en este iPhone. Las notas en tus otros dispositivos no se ven afectadas.";
 "This vault points to storage that no longer exists on this iPhone, so it can no longer sync." = "Este Vault apunta a un almacenamiento que ya no existe en este iPhone, por lo que ya no puede sincronizarse.";
 "Stops syncing this vault on this iPhone. The notes on your other devices are not affected." = "Detiene la sincronización de este Vault en este iPhone. Las notas en tus otros dispositivos no se ven afectadas.";
+
+/* Cloud Relay activation (lab → wave 1; es/zh-Hans need a native review) */
+"Could not accept share '%@'.\n\n%@" = "No se pudo aceptar el recurso compartido «%@».\n\n%@";
+"Finish activating Cloud Relay" = "Termina de activar Cloud Relay";
+"You’re subscribed, but your server has never woken this iPhone. One step finishes setup." = "Estás suscrito, pero tu servidor nunca ha despertado este iPhone. Un paso completa la configuración.";
+"Opens Cloud Relay setup." = "Abre la configuración de Cloud Relay.";
+"Cloud Relay went quiet" = "Cloud Relay está en silencio";
+"No wake-up in a while — is your server still on?" = "Hace tiempo que no hay señal de activación: ¿tu servidor sigue encendido?";
+"Your server just reached this iPhone. Incoming changes now sync the moment they happen." = "Tu servidor acaba de conectarse con este iPhone. Los cambios entrantes ahora se sincronizan en el momento en que ocurren.";
+"Great" = "Genial";
+"No wake-up has arrived in a while. Make sure the helper is still running on the computer or server you keep on." = "Hace tiempo que no llega ninguna señal de activación. Asegúrate de que el asistente siga ejecutándose en el ordenador o servidor que mantienes encendido.";
+"Not active yet" = "Aún no activo";
+"You’re subscribed. Wake-ups start once the helper is running on the computer or server you keep on — finish setup below. This screen updates automatically the moment the first wake-up arrives." = "Estás suscrito. Las señales de activación comienzan cuando el asistente esté en marcha en el ordenador o servidor que mantienes encendido: completa la configuración abajo. Esta pantalla se actualiza automáticamente en cuanto llega la primera señal.";
+"Relay reachable — but no wake-up has arrived recently. Check the helper is still running on your server." = "Relay accesible, pero últimamente no ha llegado ninguna señal de activación. Comprueba que el asistente siga ejecutándose en tu servidor.";
+"Relay reachable — but no wake-up delivered yet. Run the helper on your server." = "Relay accesible, pero aún no se ha entregado ninguna señal de activación. Ejecuta el asistente en tu servidor.";
+
+/* Cloud Relay setup — key-free server command (Phase 3 A+C) */
+"Step 1 — Run this on your server" = "Paso 1: Ejecuta esto en tu servidor";
+"No API key to copy — the helper reads it straight from Syncthing’s config.xml. Replace /PATH/TO/syncthing with your Syncthing config folder (often ~/.local/state/syncthing or ~/.config/syncthing). If you get a permission error, add -u <uid>:<gid> for the user that owns config.xml." = "No hay que copiar ninguna clave de API: el asistente la lee directamente del config.xml de Syncthing. Sustituye /PATH/TO/syncthing por tu carpeta de configuración de Syncthing (a menudo ~/.local/state/syncthing o ~/.config/syncthing). Si aparece un error de permisos, añade -u <uid>:<gid> para el usuario propietario de config.xml.";
+"Step 2 — It activates itself" = "Paso 2: Se activa solo";
+"That’s it. As soon as the helper starts, it wakes this iPhone once on its own — VaultSync flips to “Cloud Relay active” the moment that first wake-up arrives, with no change needed. After that, changes from your other devices wake the app in the background. Keep the helper running on a machine that stays on (your server or NAS)." = "Eso es todo. En cuanto el asistente arranca, despierta este iPhone una vez por sí solo: VaultSync cambia a «Cloud Relay activo» en cuanto llega esa primera señal de activación, sin necesidad de ningún cambio. A partir de ahí, los cambios de tus otros dispositivos despiertan la app en segundo plano. Mantén el asistente en funcionamiento en un equipo que permanezca encendido (tu servidor o NAS).";

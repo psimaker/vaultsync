@@ -45,4 +45,9 @@ appstore/
 
 # Internal process docs
 docs/release-checklist.md
+docs/relay-activation-release-checklist.md
+docs/app-store-connect-relay.md
 docs/superpowers/
+
+# Go build artifact (binary named after the dir)
+/notify/notify

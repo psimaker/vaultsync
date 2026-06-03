@@ -1,122 +1,123 @@
 # vaultsync-notify
 
-Lightweight sidecar container that watches your Syncthing instance for file changes and sends a wake-up signal to the VaultSync Cloud Relay. This triggers an instant push notification to your iOS device, so VaultSync can sync immediately instead of waiting for the next background refresh.
+Small sidecar that watches your Syncthing instance and sends a **wake-up signal** to the VaultSync Cloud Relay when your server changes. The relay forwards a silent APNs push, so VaultSync syncs promptly instead of waiting for the next background refresh. No file content or metadata leaves your server — only a Device ID.
 
-## How It Works
+> Cloud Relay accelerates **server → iPhone** only. For **iPhone → server**, open VaultSync (see **Product scope** below).
 
-1. Subscribes to Syncthing's `/rest/events` API via long-polling.
-2. Filters for real change indicators from Syncthing (`LocalIndexUpdated`, `FolderCompletion` with outstanding remote work).
-3. Debounces rapid changes (default: 5 seconds) into a single notification.
-4. Reads this Syncthing instance's Device ID automatically from `/rest/system/status`.
-5. Sends a wake-up signal to `relay.vaultsync.eu` — no file content or metadata leaves your server.
-6. The relay forwards a silent push to your iOS device via APNs.
+---
 
-> Cloud Relay accelerates **server → iPhone** sync only. For **iPhone → server**, open VaultSync (see [Product Scope](#product-scope)).
+## 🚀 Quick start — Docker Compose (key-free)
 
-## Quick Start (One Command)
-
-From the `notify/` directory:
+Runs Syncthing and the helper together. The helper reads the Syncthing API key from the shared `config.xml`, so there's **no key to copy** — the only value you supply is `RELAY_URL`.
 
 ```bash
-./scripts/bootstrap.sh
+cd notify
+cp .env.example .env        # RELAY_URL defaults to the production relay
+docker compose up -d
 ```
 
-What bootstrap does:
+The moment the helper starts it sends one wake-up, and VaultSync flips to **Cloud Relay active** on its own.
 
-1. Auto-detects Syncthing `config.xml` in common Linux/macOS locations.
-2. Extracts the Syncthing API key from `config.xml` automatically.
-3. Infers a default Syncthing API URL from Syncthing GUI config.
-4. Validates Syncthing API access and relay health with retries/timeouts.
-5. Writes `notify/.env` with secure permissions.
-6. Runs built-in `--doctor` checks (when local binary or Go toolchain is available).
-7. Optionally starts `docker compose up -d vaultsync-notify`.
+> A plain `docker compose up` sends one **real** wake-up to production — intended for subscribers. Testing locally? Override `RELAY_URL` to a mock first (see the header of [`docker-compose.yml`](docker-compose.yml)).
 
-If auto-detection fails, set `SYNCTHING_CONFIG=/path/to/config.xml` and rerun bootstrap.
+---
 
-## Doctor Mode
+## 🖥️ Run next to a host Syncthing
 
-Run preflight diagnostics with actionable failures. With Docker (the usual setup), compose reads `.env` for you:
+Syncthing running **natively on the host** (not in Compose)? Use either path — both auto-detect the key from `config.xml`.
+
+**A. Paste-and-go `docker run`** (the command VaultSync shows after you subscribe):
+
+```bash
+docker run -d --name vaultsync-notify --restart unless-stopped \
+  --network host \
+  -v /PATH/TO/syncthing:/config:ro \
+  -e SYNCTHING_CONFIG=/config/config.xml \
+  -e RELAY_URL=https://relay.vaultsync.eu \
+  ghcr.io/psimaker/vaultsync-notify:latest
+```
+
+Replace `/PATH/TO/syncthing` with your Syncthing config folder (often `~/.local/state/syncthing` or `~/.config/syncthing`). Permission error? Add `-u <uid>:<gid>` for the user that owns `config.xml`.
+
+**B. Guided `bootstrap.sh`** — detects `config.xml`, validates Syncthing + relay connectivity, writes a Compose-safe `notify/.env`, and runs `--doctor`. It does **not** start the Compose stack.
+
+```bash
+cd notify && ./scripts/bootstrap.sh
+```
+
+If detection fails, set `SYNCTHING_CONFIG=/path/to/config.xml` and rerun.
+
+---
+
+## ⚙️ Environment variables
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `RELAY_URL` | **Yes** | — (binary) | Relay endpoint. No built-in default on purpose, so the helper never wakes a relay you didn't choose. `docker-compose.yml` and the in-app command set it to `https://relay.vaultsync.eu`. |
+| `SYNCTHING_API_KEY` | No | auto-detected | Read from `config.xml` (`<gui><apikey>`) when unset — no need to copy it from the Web UI. Set to override. |
+| `SYNCTHING_API_URL` | No | auto / `http://localhost:8384` | Read from `config.xml` (`<gui><address>`) when unset. Set when Syncthing is a sibling container (e.g. `http://syncthing:8384`). |
+| `SYNCTHING_CONFIG` | No | standard locations | Explicit path to `config.xml`. When unset, standard per-platform and container paths are probed (incl. `/var/syncthing/config/config.xml`, `/config/config.xml`). Needed for Synology/QNAP. |
+| `STARTUP_ANNOUNCE` | No | `true` | Send one wake-up on startup so the app self-activates. Set `false` to suppress it — change-driven delivery still works. |
+| `SYNCTHING_CONFIG_WAIT_SECONDS` | No | `60` | First boot: wait up to this many seconds for Syncthing to write `config.xml` before exiting. `0` disables the wait (fail fast). |
+| `DEBOUNCE_SECONDS` | No | `5` | Wait after the last event before triggering. Batches rapid changes into one push. |
+| `WATCHED_FOLDERS` | No | all | Comma-separated Syncthing folder IDs to watch. Empty = all. |
+
+> **NAS users (the common footgun).** `config.xml` is mode `0600`, so the helper must run as the uid that owns it or it can't read the key (you'll get a clear permission error). The `1000` default fits the official `syncthing/syncthing` image; set `PUID`/`PGID` for others — linuxserver = `911`, Unraid = `99:100`, Synology runs as the `syncthing` user. Synology/QNAP also need `SYNCTHING_CONFIG` pointed at the real `config.xml`.
+
+<details>
+<summary>First boot is briefly noisy — that's expected</summary>
+
+On a fresh `docker compose up`, the helper can start before Syncthing has written `config.xml`. It waits up to `SYNCTHING_CONFIG_WAIT_SECONDS`, then (if still missing) exits and `restart: unless-stopped` retries until the file exists — a few noisy seconds, then it settles. The helper also needs Syncthing running: `docker compose up vaultsync-notify` alone (empty volume, no Syncthing) finds no config.
+</details>
+
+---
+
+## 🩺 Diagnostics
+
+**Doctor mode** — preflight checks with actionable failures (Compose reads `.env` for you):
 
 ```bash
 docker compose run --rm vaultsync-notify --doctor
 ```
 
-If you built the binary from source, run `./vaultsync-notify --doctor` with the `.env` values exported into your shell.
+Validates: Syncthing API reachable · API key valid · Device ID readable · relay health reachable · trigger endpoint sane. Each check retries with per-attempt timeouts to ride out transient jitter.
 
-Doctor validates:
+**Runtime healthcheck** — the image's `HEALTHCHECK` runs `vaultsync-notify --healthcheck`, validating real readiness (Syncthing API, credentials, Device ID, relay health), not just process liveness.
 
-- Syncthing API reachable
-- API key valid
-- Device ID readable
-- Relay health endpoint reachable
-- Relay trigger endpoint response sanity
+---
 
-Each check uses retries and per-attempt timeouts to avoid false negatives during transient network jitter.
+## 🔧 Troubleshooting
 
-## Advanced / Manual Docker Setup
+| Symptom | Fix |
+|---|---|
+| `401`/`403` / permission reading the key | [Wrong / unreadable Syncthing API key](../docs/troubleshooting.md#wrong-syncthing-api-key-in-notify) |
+| Relay timeouts, DNS, connection refused | [Relay unreachable](../docs/troubleshooting.md#relay-unreachable) |
+| Subscribed but no wake-ups | [APNs not registered](../docs/troubleshooting.md#apns-not-registered) |
+| Anything else | [End-to-end issue matrix](../docs/troubleshooting.md) |
 
-Manual setup remains fully supported for operators who prefer explicit control.
+---
+
+## 📡 Product scope
+
+Cloud Relay accelerates `server → iPhone` by waking VaultSync when the homeserver has outgoing changes. The container watches two Syncthing event types and ignores everything else:
+
+- **`LocalIndexUpdated`** — a direct change on the homeserver itself.
+- **`FolderCompletion`** with `needItems > 0` or `needBytes > 0` — a remote peer is behind and should be woken.
+
+`iPhone → server` stays foreground-first on iOS: open VaultSync to push local edits back. Background refresh may help opportunistically, but the helper exposes no upload path. See the [Cloud Relay spec](../docs/relay-spec.md) for the protocol.
+
+---
+
+## 🛠️ Build from source
 
 ```bash
 cd notify
-cp .env.example .env
-# edit .env with your values
-docker compose up -d vaultsync-notify
+go build -o vaultsync-notify        # native binary
+docker build -t vaultsync-notify .  # Docker image
 ```
 
-Compose reads its values from `.env` — see the [Environment Variables](#environment-variables) table below.
+---
 
-## Runtime Healthcheck
+## Privacy & license
 
-The Docker image's `HEALTHCHECK` runs `vaultsync-notify --healthcheck`, validating real readiness — Syncthing API, credentials, Device ID, and relay health — not just process liveness.
-
-## Troubleshooting
-
-- Wrong API key (`401/403`): [docs/troubleshooting.md#wrong-syncthing-api-key-in-notify](../docs/troubleshooting.md#wrong-syncthing-api-key-in-notify)
-- Relay connectivity failures: [docs/troubleshooting.md#relay-unreachable](../docs/troubleshooting.md#relay-unreachable)
-- iOS push token/provisioning issues: [docs/troubleshooting.md#apns-not-registered](../docs/troubleshooting.md#apns-not-registered)
-- End-to-end issue matrix: [docs/troubleshooting.md](../docs/troubleshooting.md)
-
-## Environment Variables
-
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `SYNCTHING_API_URL` | Yes | — | Syncthing REST API URL (e.g. `http://syncthing:8384` or `http://localhost:8384`) |
-| `SYNCTHING_API_KEY` | Yes | — | Syncthing API key (Settings > GUI > API Key in Syncthing Web UI) |
-| `RELAY_URL` | Yes | — | Central relay URL (`https://relay.vaultsync.eu`) |
-| `DEBOUNCE_SECONDS` | No | `5` | Seconds to wait after the last event before sending a trigger. Batches rapid changes into one push. |
-| `WATCHED_FOLDERS` | No | all | Comma-separated Syncthing folder IDs to watch. If unset/empty, watches all folders. |
-
-## Syncthing Events
-
-The container watches these event types:
-
-- **LocalIndexUpdated** — A direct change happened on the homeserver itself
-- **FolderCompletion** with `needItems > 0` or `needBytes > 0` — a remote peer is behind and should be woken
-
-All other events (device connections, config changes, and so on) are ignored.
-
-## Product Scope
-
-Cloud Relay is intended to accelerate `server -> iPhone` sync by waking VaultSync when the homeserver has outgoing changes.
-
-`iPhone -> server` remains foreground-first on iOS. Opening VaultSync is the reliable way to push local iPhone edits back to the homeserver. iOS background refresh may still help opportunistically, but `vaultsync-notify` does not expose a separate public upload endpoint as part of the standard product path.
-
-## Building from Source
-
-```bash
-# Native binary
-cd notify
-go build -o vaultsync-notify
-
-# Docker image
-docker build -t vaultsync-notify .
-```
-
-## Privacy
-
-Only the Syncthing Device ID is sent to the relay as an identifier for push routing. No file names, folder names, file sizes, or any other metadata leaves your server.
-
-## License
-
-MPL-2.0 — see [LICENSE](../LICENSE) in the repository root.
+Only the Syncthing Device ID is sent to the relay, as a routing identifier. No file names, folder names, file sizes, or other metadata leave your server. Licensed [MPL-2.0](../LICENSE).

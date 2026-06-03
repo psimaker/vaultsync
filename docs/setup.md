@@ -1,85 +1,51 @@
-# Setup — Build Instructions
+# Build & development setup
 
-## Prerequisites
+## 🧰 Prerequisites
 
-- **macOS** with Xcode 26+ installed
-- **Go 1.26+** (`brew install go`)
-- **gomobile** and **gobind** (installed via `make setup`)
-- **XcodeGen** (`brew install xcodegen`)
+| Tool | Install |
+|---|---|
+| macOS + Xcode 26+ | App Store |
+| Go 1.26+ | `brew install go` |
+| gomobile + gobind | `make setup` (step 2) |
+| XcodeGen | `brew install xcodegen` |
 
-## Build Steps
-
-### 1. Clone the repository
-
-```bash
-git clone https://github.com/psimaker/vaultsync.git
-cd vaultsync
-```
-
-### 2. Install Go build tools
+## 🔨 Build
 
 ```bash
+git clone https://github.com/psimaker/vaultsync.git && cd vaultsync
+
 cd go
-make setup    # installs gomobile + gobind, runs gomobile init
-```
+make setup        # 1. install gomobile + gobind, run gomobile init
+make patch        # 2. create _syncthing_patched/ with applied fixes
+make xcframework  # 3. build go/build/SyncBridge.xcframework (~160 MB)
 
-### 3. Apply dependency patches
-
-```bash
-make patch    # creates _syncthing_patched/ with applied fixes
-```
-
-### 4. Build the Go xcframework
-
-```bash
-make xcframework
-```
-
-This produces `go/build/SyncBridge.xcframework` (~160 MB) targeting iOS 18+ (arm64 device) and the iOS Simulator (arm64 + x86_64). The large size is expected — it bundles the full Syncthing engine for each slice.
-
-### 5. Generate the Xcode project
-
-```bash
 cd ../ios
-xcodegen generate
-```
-
-> **Code signing (device builds only):** No development team is committed to the
-> repo. To build on a physical device, copy `ios/Signing.local.xcconfig.example`
-> to `ios/Signing.local.xcconfig`, set your `DEVELOPMENT_TEAM`, and re-run
-> `xcodegen generate`. That file is gitignored, so your team never lands in the
-> repo and persists across regenerations. Simulator builds need no team — build
-> with `CODE_SIGNING_ALLOWED=NO`.
-
-### 6. Open and build in Xcode
-
-```bash
+xcodegen generate # 4. generate VaultSync.xcodeproj
 open VaultSync.xcodeproj
 ```
 
-Select the **VaultSync** scheme, choose a supported device or simulator (iOS 18+), and build (Cmd+B).
+The xcframework targets iOS 18+ (arm64 device) and the Simulator (arm64 + x86_64). The ~160 MB size is expected — it bundles the full Syncthing engine per slice. In Xcode, select the **VaultSync** scheme, pick an iOS 18+ destination, and build (⌘B).
 
-## Running Tests
+> **Device builds need a signing team.** No team is committed. Copy `ios/Signing.local.xcconfig.example` to `ios/Signing.local.xcconfig`, set your `DEVELOPMENT_TEAM`, and re-run `xcodegen generate`. That file is gitignored and survives regeneration. Simulator builds need no team — pass `CODE_SIGNING_ALLOWED=NO`.
+
+## 🧪 Tests
 
 ```bash
-# Go bridge tests
-cd go && make test
+cd go && make test     # Go bridge tests
 
-# iOS unit tests (from Xcode or CLI; requires the generated project from step 5)
 cd ios && xcodebuild test \
   -project VaultSync.xcodeproj \
   -scheme VaultSync \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
-  CODE_SIGNING_ALLOWED=NO \
-  -quiet
+  CODE_SIGNING_ALLOWED=NO -quiet
 ```
 
-> No development team? Append `CODE_SIGNING_ALLOWED=NO` to any `xcodebuild` command for simulator builds — no signing required.
+## 🩺 Build troubleshooting
 
-## Troubleshooting
-
-- **gomobile not found:** Ensure `$(go env GOPATH)/bin` is in your `$PATH`.
-- **xcframework build fails:** Run `make clean` first, then retry `make xcframework`.
-- **Xcode project missing:** Run `xcodegen generate` in the `ios/` directory.
-- **Simulator not available:** Ensure you have a supported iOS 18+ simulator runtime installed in Xcode.
-- **Runtime or sync issues after build:** Use [docs/troubleshooting.md](troubleshooting.md).
+| Problem | Fix |
+|---|---|
+| `gomobile` not found | Add `$(go env GOPATH)/bin` to `$PATH` |
+| xcframework build fails | `make clean`, then retry `make xcframework` |
+| Xcode project missing | Run `xcodegen generate` in `ios/` |
+| Simulator unavailable | Install an iOS 18+ simulator runtime in Xcode |
+| Runtime / sync issues | See [troubleshooting.md](troubleshooting.md) |

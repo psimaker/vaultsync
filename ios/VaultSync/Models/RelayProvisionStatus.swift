@@ -135,6 +135,12 @@ enum RelayTriggerStore {
     private static let lastReceivedAtKey = "relay-last-trigger-received-at"
     static let triggerDidChangeNotification = Notification.Name("RelayTriggerDidChange")
 
+    /// A real wake-up reached this device — the silent push the relay delivers
+    /// when the server helper triggers it (a vault change, or the helper's
+    /// startup-announce). This is the single signal that drives
+    /// `relayDeliveryConfirmed` ("wake-ups are being delivered"). It is the ONLY
+    /// delivery path: the app itself no longer sends any trigger, so every silent
+    /// push is a genuine delivery and needs no attribution heuristic.
     static func markReceived(date: Date = Date()) {
         UserDefaults.standard.set(date, forKey: lastReceivedAtKey)
         NotificationCenter.default.post(name: triggerDidChangeNotification, object: nil)

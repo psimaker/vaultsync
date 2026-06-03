@@ -1,3 +1,10 @@
+# Zero-config self-activation: RELAY_URL defaults to the production relay
+# (relay.vaultsync.eu) and STARTUP_ANNOUNCE is on, so a plain `docker compose up`
+# sends one wake-up and the app self-activates — exactly what a subscriber wants,
+# with no config to fill in. Developing/testing only: override RELAY_URL to a local
+# mock first, e.g.:
+#   RELAY_URL=http://host.docker.internal:8787 docker compose up
+# (or set RELAY_URL in .env).
 services:
   syncthing:
     image: syncthing/syncthing:latest
@@ -10,16 +17,46 @@ services:
 
   vaultsync-notify:
     image: ghcr.io/psimaker/vaultsync-notify:latest
+    # Run as the same uid/gid that owns Syncthing's config.xml. config.xml is mode
+    # 0600, so a mismatched uid cannot read the API key off the shared volume — even
+    # read-only. The 1000:1000 default fits the OFFICIAL syncthing/syncthing image;
+    # set PUID/PGID for others: linuxserver image = 911:911, Unraid template = 99:100,
+    # Synology (SynoCommunity) runs as the `syncthing` user. NAS configs outside the
+    # probed paths (Synology/QNAP) additionally need SYNCTHING_CONFIG pointed at the
+    # real config.xml.
+    user: "${PUID:-1000}:${PGID:-1000}"
     environment:
-      # Values can be generated into .env via scripts/bootstrap.sh
+      # SYNCTHING_API_KEY is auto-detected from the shared config.xml below — no
+      # need to copy it from the Syncthing Web UI. Set it here only to override.
+      SYNCTHING_API_KEY: ${SYNCTHING_API_KEY:-}
+      # Path to Syncthing's config.xml inside this container. The official
+      # syncthing/syncthing image stores it at /var/syncthing/config/config.xml.
+      SYNCTHING_CONFIG: ${SYNCTHING_CONFIG:-/var/syncthing/config/config.xml}
+      # Syncthing runs in a sibling container, so reach it by service name (the
+      # API key still comes from config.xml; only the URL is set explicitly).
       SYNCTHING_API_URL: ${SYNCTHING_API_URL:-http://syncthing:8384}
-      SYNCTHING_API_KEY: ${SYNCTHING_API_KEY}
+      # The relay this helper wakes. Defaults to the production relay, so a plain
+      # `docker compose up` sends ONE wake-up to it right away — the intended
+      # self-activation that flips the iPhone to "Cloud Relay active". Override it
+      # when testing against a local/mock relay so you never hit production.
       RELAY_URL: ${RELAY_URL:-https://relay.vaultsync.eu}
+      # On by default: send that one startup wake-up. Set false to suppress it
+      # (e.g. while testing); change-driven delivery still works either way.
+      STARTUP_ANNOUNCE: ${STARTUP_ANNOUNCE:-true}
+      # First boot: wait up to this many seconds for Syncthing to write config.xml
+      # before giving up, so the helper rides out the race in-process instead of
+      # crash-looping via the restart policy. 0 disables the wait (fail fast).
+      SYNCTHING_CONFIG_WAIT_SECONDS: ${SYNCTHING_CONFIG_WAIT_SECONDS:-60}
       DEBOUNCE_SECONDS: ${DEBOUNCE_SECONDS:-5}
       WATCHED_FOLDERS: ${WATCHED_FOLDERS:-}
     volumes:
-      - syncthing-data:/var/syncthing
+      # Read-only: the helper only reads config.xml; it never writes to the volume.
+      - syncthing-data:/var/syncthing:ro
     restart: unless-stopped
+    # On first boot the helper may start before Syncthing has written config.xml;
+    # it exits and restart: unless-stopped retries until the file exists. (depends_on
+    # only orders startup, not readiness.) Running this service alone — without the
+    # syncthing service — leaves an empty volume and no config to detect.
     depends_on:
       - syncthing
 

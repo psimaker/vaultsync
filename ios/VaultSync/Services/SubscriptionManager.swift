@@ -15,6 +15,9 @@ final class SubscriptionManager {
 
     private(set) var isRelaySubscribed = false
     private(set) var subscriptionExpiryDate: Date?
+    /// When the relay subscription originally started (StoreKit
+    /// originalPurchaseDate). Drives the A1 reactivation grace period.
+    private(set) var subscriptionStartDate: Date?
     private(set) var monthlyProduct: Product?
     private(set) var yearlyProduct: Product?
     private(set) var purchaseInProgress = false
@@ -60,6 +63,31 @@ final class SubscriptionManager {
         return relayHealthResult?.isHealthy ?? false
     }
 
+    /// A1 — the reactivation signal: subscribed, but NO real wake-up has ever
+    /// reached this device (not even a stale one), and the subscription is old
+    /// enough that the buyer isn't simply mid-setup. Targets the already-paying-
+    /// but-never-activated cohort (the "dead" subs). Keyed on the REAL trigger
+    /// timestamp (`lastRelayTriggerReceivedAt`), NOT the self-test key — so
+    /// running a self-test never dismisses it (a self-test ≠ the helper actually
+    /// delivering real changes; see K3/K5).
+    var needsRelayReactivation: Bool {
+        guard isRelaySubscribed, lastRelayTriggerReceivedAt == nil else { return false }
+        guard let start = subscriptionStartDate else { return false }
+        return Date().timeIntervalSince(start) > Self.reactivationGracePeriod
+    }
+
+    /// Grace before nagging a fresh buyer who may still be setting up. Tunable;
+    /// in DEBUG it can be overridden (including 0 for demos) via the
+    /// `RELAY_REACTIVATION_GRACE_SECONDS` UserDefault / launch argument.
+    static var reactivationGracePeriod: TimeInterval {
+        #if DEBUG
+        if UserDefaults.standard.object(forKey: "RELAY_REACTIVATION_GRACE_SECONDS") != nil {
+            return UserDefaults.standard.double(forKey: "RELAY_REACTIVATION_GRACE_SECONDS")
+        }
+        #endif
+        return 6 * 60 * 60
+    }
+
     private static let relayTriggerFreshnessWindow: TimeInterval = 48 * 60 * 60
 
     /// Localized "price / period" for any relay product, derived entirely from
@@ -101,6 +129,15 @@ final class SubscriptionManager {
         apnsRegistrationStatus = APNsRegistrationStore.current()
         apnsRegistrationSnapshot = APNsRegistrationStore.snapshot()
         refreshStoredRelayDiagnostics()
+        // Rehydrate the last-known-good provisioned device IDs synchronously so
+        // `relayDeliveryConfirmed` reflects reality on cold launch. Without this,
+        // `relayProvisionStatuses` is empty until an async (re)provision runs —
+        // and since re-provision is skipped within `provisionRefreshInterval`, a
+        // genuinely delivering sub would falsely read "Cloud Relay went quiet" on
+        // every relaunch. `relayDeliveryConfirmed` still requires a real trigger
+        // within the 48h freshness window, so a stale-but-true flag never fakes
+        // "active"; the periodic idempotent re-provision corrects it server-side.
+        rehydrateProvisionedStatuses()
 
         apnsObserver = NotificationCenter.default.addObserver(
             forName: APNsRegistrationStore.statusDidChangeNotification,
@@ -181,27 +218,38 @@ final class SubscriptionManager {
 
     func checkSubscriptionStatus() async {
         var foundActive = false
+        var foundStart: Date?
         for await verificationResult in Transaction.currentEntitlements {
             guard case .verified(let transaction) = verificationResult else { continue }
             if Self.relayProductIDs.contains(transaction.productID) {
                 if let expiry = transaction.expirationDate, expiry > Date() {
                     foundActive = true
                     subscriptionExpiryDate = expiry
+                    foundStart = transaction.originalPurchaseDate
                 } else if transaction.expirationDate == nil {
                     foundActive = true
+                    foundStart = transaction.originalPurchaseDate
                 }
             }
         }
         let wasSubscribed = isRelaySubscribed
         isRelaySubscribed = foundActive
+        subscriptionStartDate = foundActive ? foundStart : nil
         if !foundActive {
             subscriptionExpiryDate = nil
+            // Reset the one-time "Connected" celebration so a re-subscribe can
+            // celebrate its first real wake-up again (it's per activation, not
+            // per install).
+            UserDefaults.standard.removeObject(forKey: "relay-connected-celebrated")
             if wasSubscribed {
                 await deprovisionRelay()
             }
             for deviceID in relayProvisionStatuses.keys {
                 relayProvisionStatuses[deviceID] = .notAttempted
             }
+            // Drop the persisted provisioned set so a lapsed sub doesn't rehydrate
+            // a stale ".provisioned" on the next cold launch.
+            persistProvisionedDeviceIDs()
         }
         refreshAPNsRegistrationStatus()
         refreshStoredRelayDiagnostics()
@@ -323,6 +371,7 @@ final class SubscriptionManager {
             } else {
                 isRelaySubscribed = true
                 subscriptionExpiryDate = transaction.expirationDate
+                subscriptionStartDate = transaction.originalPurchaseDate
 
                 // Use explicitly passed device IDs (from purchase flow) or stored ones (from renewal)
                 let deviceIDs = provisionDeviceIDs ?? loadStoredDeviceIDs()
@@ -385,14 +434,38 @@ final class SubscriptionManager {
         if !hadFailure {
             errorMessage = nil
         }
+        persistProvisionedDeviceIDs()
         refreshStoredRelayDiagnostics()
     }
 
     private func deprovisionRelay() async {
-        guard let token = KeychainService.getAPNsDeviceToken() else { return }
-
+        // Clear and persist the provision state up front. Transaction.updates routes
+        // revoke/expire here directly, sometimes with no APNs token — so doing this
+        // before the token guard ensures a later cold launch can't rehydrate stale
+        // `.provisioned` entries (relay-provisioned-device-ids) and briefly fake a
+        // "likely working" state until the next refresh.
         let deviceIDs = loadStoredDeviceIDs()
         ensureProvisionStateEntries(for: deviceIDs)
+        // Sweep EVERY known provision status (not just the keychain-stored IDs) to
+        // .notAttempted before persisting. A status rehydrated from UserDefaults that
+        // has diverged from the keychain (e.g. a transient keychain read miss) would
+        // otherwise stay `.provisioned` and get re-persisted here, briefly faking a
+        // "likely working" state on the next cold launch. Mirrors the cleanup in
+        // checkSubscriptionStatus()'s !foundActive branch.
+        for deviceID in relayProvisionStatuses.keys {
+            relayProvisionStatuses[deviceID] = .notAttempted
+        }
+        persistProvisionedDeviceIDs()
+
+        // Clear the per-activation "Connected" celebration on every transition to
+        // inactive, so a later resubscribe celebrates again. Done before the token
+        // guard so it still clears when no token exists.
+        UserDefaults.standard.removeObject(forKey: "relay-connected-celebrated")
+        guard let token = KeychainService.getAPNsDeviceToken() else {
+            refreshStoredRelayDiagnostics()
+            return
+        }
+
         for deviceID in deviceIDs {
             do {
                 try await RelayService.deprovision(deviceID: deviceID, apnsToken: token)
@@ -473,6 +546,32 @@ final class SubscriptionManager {
     private func ensureProvisionStateEntries(for deviceIDs: [String]) {
         for deviceID in deviceIDs where relayProvisionStatuses[deviceID] == nil {
             relayProvisionStatuses[deviceID] = .notAttempted
+        }
+    }
+
+    // MARK: - Provisioned-status persistence (cold-launch rehydration)
+
+    private static let provisionedDeviceIDsKey = "relay-provisioned-device-ids"
+
+    /// Persist which device IDs are currently `.provisioned` so the in-memory
+    /// `relayProvisionStatuses` (which is otherwise empty on every cold launch)
+    /// can be rehydrated, keeping `relayDeliveryConfirmed` accurate at startup.
+    private func persistProvisionedDeviceIDs() {
+        let provisioned = relayProvisionStatuses
+            .filter { $0.value == .provisioned }
+            .map(\.key)
+            .sorted()
+        UserDefaults.standard.set(provisioned, forKey: Self.provisionedDeviceIDsKey)
+    }
+
+    /// Restore the last-known-good `.provisioned` entries on launch. Safe because
+    /// `relayDeliveryConfirmed` additionally requires a real trigger within 48h,
+    /// so a stale flag can never by itself fake "active"; the periodic idempotent
+    /// re-provision and `deprovisionRelay`/unsubscribe paths correct the set.
+    private func rehydrateProvisionedStatuses() {
+        let ids = UserDefaults.standard.stringArray(forKey: Self.provisionedDeviceIDsKey) ?? []
+        for id in ids {
+            relayProvisionStatuses[id] = .provisioned
         }
     }
 
