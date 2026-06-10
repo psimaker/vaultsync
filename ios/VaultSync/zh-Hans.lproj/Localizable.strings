@@ -599,3 +599,9 @@
 "No API key to copy — the helper reads it straight from Syncthing’s config.xml. Replace /PATH/TO/syncthing with your Syncthing config folder (often ~/.local/state/syncthing or ~/.config/syncthing). If you get a permission error, add -u <uid>:<gid> for the user that owns config.xml." = "无需复制 API 密钥——助手会直接从 Syncthing 的 config.xml 读取。请将 /PATH/TO/syncthing 替换为你的 Syncthing 配置文件夹（通常是 ~/.local/state/syncthing 或 ~/.config/syncthing）。如果出现权限错误，请为拥有 config.xml 的用户添加 -u <uid>:<gid>。";
 "Step 2 — It activates itself" = "第 2 步 — 它会自行激活";
 "That’s it. As soon as the helper starts, it wakes this iPhone once on its own — VaultSync flips to “Cloud Relay active” the moment that first wake-up arrives, with no change needed. After that, changes from your other devices wake the app in the background. Keep the helper running on a machine that stays on (your server or NAS)." = "就这样。助手一启动，就会自行唤醒此 iPhone 一次——一旦首次唤醒送达，VaultSync 就会切换为“Cloud Relay 已启用”，无需任何更改。此后，你其他设备上的更改会在后台唤醒此应用。请让助手在一台保持常开的设备（你的服务器或 NAS）上持续运行。";
+
+/* Relay diagnostics — delivery visibility (force-quit / Low Power education, 7-day counter) */
+"Wake-ups (Last 7 Days)" = "唤醒信号（最近 7 天）";
+"Low Power Mode is on — iOS defers silent wake-ups until it is off or the iPhone is charging." = "低电量模式已开启——iOS 会推迟静默唤醒信号，直到关闭该模式或 iPhone 充电。";
+"Keep VaultSync in the background: if you force-quit it from the app switcher, iOS stops delivering wake-ups until you open the app again." = "请让 VaultSync 保留在后台：如果在应用切换器中强制退出，iOS 将停止递送唤醒信号，直到你再次打开应用。";
+"Wake-ups went quiet. The most common cause is force-quitting VaultSync from the app switcher — iOS then blocks wake-ups until the next manual launch. Also check that the helper on your server is still running." = "唤醒信号已中断。最常见的原因是在应用切换器中强制退出了 VaultSync——iOS 会在下次手动启动前阻止唤醒信号。同时请检查服务器上的助手是否仍在运行。";

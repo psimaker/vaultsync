@@ -30,6 +30,9 @@ final class SubscriptionManager {
     private(set) var relayHealthResult: RelayService.HealthCheckResult?
     private(set) var relayHealthCheckInFlight = false
     private(set) var lastRelayTriggerReceivedAt: Date?
+    /// Wake-ups that actually arrived in the trailing 7 days (local count, see
+    /// `RelayTriggerStore.receivedCount`). Surfaces how much iOS lets through.
+    private(set) var relayWakeupsLast7Days: Int = 0
     private(set) var lastRelayError: RelayService.RecordedRelayError?
     /// Whether iOS will actually present an alert banner (authorized + banners
     /// enabled), denied, or unknown. Informational only — silent pushes (Cloud
@@ -584,6 +587,7 @@ final class SubscriptionManager {
     private func refreshStoredRelayDiagnostics() {
         hasAPNsToken = KeychainService.hasAPNsDeviceToken()
         lastRelayTriggerReceivedAt = RelayTriggerStore.lastReceivedAt()
+        relayWakeupsLast7Days = RelayTriggerStore.receivedCount(within: 7 * 24 * 60 * 60)
         lastRelayError = RelayService.lastRecordedError()
     }
 
