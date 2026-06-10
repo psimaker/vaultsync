@@ -96,7 +96,7 @@ struct RelayDiagnosticsView: View {
 
             if let message = subscriptionManager.relayHealthResult?.message,
                !(subscriptionManager.relayHealthResult?.isHealthy ?? true) {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: VaultSpacing.xxs) {
                     Text(message)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -108,7 +108,7 @@ struct RelayDiagnosticsView: View {
             }
 
             if let relayError = subscriptionManager.lastRelayError {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: VaultSpacing.xs) {
                     Text("Last Relay Error")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(Color.statusError)
@@ -128,7 +128,7 @@ struct RelayDiagnosticsView: View {
                             .font(.caption2)
                     }
                 }
-                .padding(.vertical, 2)
+                .padding(.vertical, VaultSpacing.xxs)
             } else {
                 Text("No relay errors recorded.")
                     .font(.caption)
@@ -188,7 +188,7 @@ struct RelayDiagnosticsView: View {
             }
 
             if case .failed(let reason) = subscriptionManager.apnsRegistrationStatus {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: VaultSpacing.xxs) {
                     Text(reason)
                         .font(.caption)
                         .foregroundStyle(Color.statusError)
@@ -218,9 +218,9 @@ struct RelayDiagnosticsView: View {
             } else {
                 ForEach(syncthingManager.devices) { device in
                     let status = subscriptionManager.relayProvisionStatuses[device.deviceID] ?? .notAttempted
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: VaultSpacing.xs) {
                         HStack {
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: VaultSpacing.xxs) {
                                 Text(device.name.isEmpty ? device.deviceID : device.name)
                                     .font(.subheadline)
                                 Text(device.deviceID)
@@ -246,7 +246,7 @@ struct RelayDiagnosticsView: View {
                             }
                         }
                     }
-                    .padding(.vertical, 2)
+                    .padding(.vertical, VaultSpacing.xxs)
                 }
             }
         }

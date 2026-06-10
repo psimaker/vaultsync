@@ -90,9 +90,9 @@ struct RelayServerSetupView: View {
     private var commandBox: some View {
         ScrollView(.horizontal, showsIndicators: true) {
             Text(dockerCommand)
-                .font(.system(.caption, design: .monospaced))
+                .font(.vaultMono(.caption))
                 .textSelection(.enabled)
-                .padding(10)
+                .padding(VaultSpacing.m)
         }
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: VaultRadius.control, style: .continuous))
         .accessibilityLabel(L10n.tr("Server setup command"))

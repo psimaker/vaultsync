@@ -37,9 +37,9 @@ struct OnboardingView: View {
                     .tabViewStyle(.page(indexDisplayMode: .never))
 
                     bottomBar
-                        .padding(.horizontal, 20)
-                        .padding(.top, 12)
-                        .padding(.bottom, 8)
+                        .padding(.horizontal, VaultSpacing.l)
+                        .padding(.top, VaultSpacing.m)
+                        .padding(.bottom, VaultSpacing.s)
                         .background(.bar)
                 }
                 .toolbar(.hidden, for: .navigationBar)
@@ -74,11 +74,11 @@ struct OnboardingView: View {
 
     private func page<Content: View>(_ content: Content) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: VaultSpacing.xl) {
                 content
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 28)
+            .padding(.horizontal, VaultSpacing.l)
+            .padding(.vertical, VaultSpacing.xl)
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
     }
@@ -86,8 +86,8 @@ struct OnboardingView: View {
     // MARK: - Welcome
 
     private var welcomeScreen: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: VaultSpacing.l) {
+            VStack(alignment: .leading, spacing: VaultSpacing.m) {
                 topAccentBar
 
                 Text(L10n.tr("onboarding.welcome.title"))
@@ -100,17 +100,17 @@ struct OnboardingView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(24)
+            .padding(VaultSpacing.xl)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(cardBackground, in: RoundedRectangle(cornerRadius: VaultRadius.hero, style: .continuous))
             .overlay(cardStroke(in: RoundedRectangle(cornerRadius: VaultRadius.hero, style: .continuous)))
 
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: VaultSpacing.l) {
                 benefitRow(icon: "lock.shield.fill", textKey: "onboarding.welcome.benefit.private")
                 benefitRow(icon: "books.vertical.fill", textKey: "onboarding.welcome.benefit.obsidian")
                 benefitRow(icon: "icloud.slash.fill", textKey: "onboarding.welcome.benefit.noCloud")
             }
-            .padding(20)
+            .padding(VaultSpacing.l)
             .background(cardBackground, in: RoundedRectangle(cornerRadius: VaultRadius.card, style: .continuous))
             .overlay(cardStroke(in: RoundedRectangle(cornerRadius: VaultRadius.card, style: .continuous)))
         }
@@ -119,8 +119,8 @@ struct OnboardingView: View {
     // MARK: - Setup (live, actionable)
 
     private var setupScreen: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: VaultSpacing.l) {
+            VStack(alignment: .leading, spacing: VaultSpacing.s) {
                 Text(L10n.tr("Let’s get your vault synced"))
                     .font(titleFont)
                     .foregroundStyle(primaryHeadingColor)
@@ -130,7 +130,7 @@ struct OnboardingView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(24)
+            .padding(VaultSpacing.xl)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(cardBackground, in: RoundedRectangle(cornerRadius: VaultRadius.hero, style: .continuous))
             .overlay(cardStroke(in: RoundedRectangle(cornerRadius: VaultRadius.hero, style: .continuous)))
@@ -162,7 +162,7 @@ struct OnboardingView: View {
                 action: nil
             )
 
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: VaultSpacing.m) {
                 Image(systemName: "antenna.radiowaves.left.and.right")
                     .font(.body.weight(.semibold))
                     .foregroundStyle(teal)
@@ -172,7 +172,7 @@ struct OnboardingView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(18)
+            .padding(VaultSpacing.l)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(cardBackground, in: RoundedRectangle(cornerRadius: VaultRadius.card, style: .continuous))
             .overlay(cardStroke(in: RoundedRectangle(cornerRadius: VaultRadius.card, style: .continuous)))
@@ -188,10 +188,10 @@ struct OnboardingView: View {
         actionTitle: String?,
         action: (() -> Void)?
     ) -> some View {
-        HStack(alignment: .top, spacing: 14) {
+        HStack(alignment: .top, spacing: VaultSpacing.m) {
             ZStack {
                 Circle()
-                    .fill(isComplete ? Color.statusSuccess : teal.opacity(colorScheme == .dark ? 0.22 : 0.14))
+                    .fill(isComplete ? Color.statusSuccess : Color.vaultAccentFill)
                     .frame(width: 34, height: 34)
                 Image(systemName: isComplete ? "checkmark" : icon)
                     .font(.subheadline.weight(.semibold))
@@ -221,12 +221,12 @@ struct OnboardingView: View {
                         .buttonStyle(.borderedProminent)
                         .controlSize(.regular)
                         .tint(teal)
-                        .padding(.top, 4)
+                        .padding(.top, VaultSpacing.xs)
                 }
             }
             Spacer(minLength: 0)
         }
-        .padding(18)
+        .padding(VaultSpacing.l)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(cardBackground, in: RoundedRectangle(cornerRadius: VaultRadius.card, style: .continuous))
         .overlay(cardStroke(in: RoundedRectangle(cornerRadius: VaultRadius.card, style: .continuous)))
@@ -242,7 +242,7 @@ struct OnboardingView: View {
     // MARK: - Bottom bar
 
     private var bottomBar: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: VaultSpacing.m) {
             pageDots
 
             Button {
@@ -259,10 +259,10 @@ struct OnboardingView: View {
     }
 
     private var pageDots: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: VaultSpacing.s) {
             ForEach(0..<2, id: \.self) { index in
                 Circle()
-                    .fill(index == page ? teal : slate.opacity(colorScheme == .dark ? 0.34 : 0.20))
+                    .fill(index == page ? teal : Color.vaultSlateFill)
                     .frame(width: 8, height: 8)
             }
         }
@@ -286,13 +286,13 @@ struct OnboardingView: View {
                 .ignoresSafeArea()
 
             Circle()
-                .fill(teal.opacity(colorScheme == .dark ? 0.14 : 0.08))
+                .fill(Color.vaultAccentFillSubtle)
                 .frame(width: 220, height: 220)
                 .blur(radius: 18)
                 .offset(x: -120, y: -70)
 
             Circle()
-                .fill(slate.opacity(colorScheme == .dark ? 0.10 : 0.05))
+                .fill(Color.vaultSlateFillSubtle)
                 .frame(width: 240, height: 240)
                 .blur(radius: 22)
                 .offset(x: 130, y: -110)
@@ -301,10 +301,10 @@ struct OnboardingView: View {
     }
 
     private func benefitRow(icon: String, textKey: String) -> some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: VaultSpacing.m) {
             ZStack {
-                RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .fill(teal.opacity(colorScheme == .dark ? 0.22 : 0.14))
+                RoundedRectangle(cornerRadius: VaultRadius.control, style: .continuous)
+                    .fill(Color.vaultAccentFill)
                     .frame(width: 36, height: 36)
                 Image(systemName: icon)
                     .font(.subheadline.weight(.semibold))
@@ -320,12 +320,12 @@ struct OnboardingView: View {
     }
 
     private var topAccentBar: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: VaultSpacing.s) {
             Capsule()
                 .fill(teal)
                 .frame(width: 64, height: 8)
             Capsule()
-                .fill(slate.opacity(colorScheme == .dark ? 0.42 : 0.20))
+                .fill(Color.vaultSlateFill)
                 .frame(width: 24, height: 8)
         }
         .accessibilityHidden(true)
@@ -344,9 +344,6 @@ struct OnboardingView: View {
     }
 
     private func cardStroke<S: Shape>(in shape: S) -> some View {
-        shape.stroke(
-            Color(uiColor: .separator).opacity(colorScheme == .dark ? 0.45 : 0.18),
-            lineWidth: 1
-        )
+        shape.stroke(Color.vaultHairline, lineWidth: 1)
     }
 }

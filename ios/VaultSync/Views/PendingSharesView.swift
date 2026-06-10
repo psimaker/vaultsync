@@ -13,7 +13,7 @@ struct PendingSharesView: View {
     var onReconnectObsidian: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: VaultSpacing.l) {
             if !obsidianAccessible {
                 ActionCard(
                     status: .attention,
@@ -36,10 +36,10 @@ struct PendingSharesView: View {
 
             if !ignoredFolders.isEmpty {
                 DisclosureGroup(L10n.fmt("Ignored shares (%d)", ignoredFolders.count)) {
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: VaultSpacing.s) {
                         ForEach(ignoredFolders) { folder in
                             HStack {
-                                VStack(alignment: .leading, spacing: 2) {
+                                VStack(alignment: .leading, spacing: VaultSpacing.xxs) {
                                     Text(displayName(for: folder))
                                         .font(.subheadline.weight(.semibold))
                                     Text(offeredByDescription(for: folder))
@@ -51,39 +51,37 @@ struct PendingSharesView: View {
                                     onRestoreIgnored(folder)
                                 }
                                 .buttonStyle(.bordered)
-                                .controlSize(.small)
+                                .controlSize(.regular)
                             }
                         }
                     }
-                    .padding(.top, 8)
+                    .padding(.top, VaultSpacing.s)
                 }
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, VaultSpacing.xs)
     }
 
     @ViewBuilder
     private func pendingRow(_ folder: SyncthingManager.PendingFolderInfo) -> some View {
         let failure = failureByFolderID[folder.id]
         let hasFailure = failure != nil
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 8) {
+        VStack(alignment: .leading, spacing: VaultSpacing.s) {
+            HStack(alignment: .top, spacing: VaultSpacing.s) {
                 Image(systemName: hasFailure ? "exclamationmark.circle.fill" : "tray.and.arrow.down.fill")
                     .foregroundStyle(hasFailure ? Color.statusAttention : Color.statusInfo)
                     .accessibilityHidden(true)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: VaultSpacing.xs) {
+                    HStack(spacing: VaultSpacing.xs) {
                         Text(displayName(for: folder))
                             .font(.body.weight(.semibold))
-                        Text(hasFailure ? L10n.tr("Needs Attention") : L10n.tr("Ready"))
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(hasFailure ? Color.statusAttention : Color.statusInfo)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background((hasFailure ? Color.statusAttention : Color.statusInfo).opacity(0.12), in: Capsule())
+                        StatusTag(
+                            text: hasFailure ? L10n.tr("Needs Attention") : L10n.tr("Ready"),
+                            tint: hasFailure ? Color.statusAttention : Color.statusInfo
+                        )
                     }
 
                     Text(offeredByDescription(for: folder))
@@ -105,7 +103,7 @@ struct PendingSharesView: View {
             }
             .accessibilityElement(children: .combine)
 
-            HStack(spacing: 8) {
+            HStack(spacing: VaultSpacing.s) {
                 if inFlightFolderIDs.contains(folder.id) {
                     ProgressView()
                         .controlSize(.small)

@@ -20,14 +20,14 @@ struct ConflictListView: View {
     var body: some View {
         List {
             Section {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: VaultSpacing.s) {
                     Text("What is a conflict?")
                         .font(.headline)
                     Text("A conflict happens when a file is edited on two devices at the same time. Syncthing saves both versions to prevent data loss.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
-                .padding(.vertical, 4)
+                .padding(.vertical, VaultSpacing.xs)
             }
             
             Section {
@@ -43,17 +43,17 @@ struct ConflictListView: View {
                                 syncthingManager: syncthingManager
                             )
                         } label: {
-                            VStack(alignment: .leading, spacing: 4) {
+                            VStack(alignment: .leading, spacing: VaultSpacing.xs) {
                                 Text(conflict.originalPath)
                                     .font(.body)
-                                HStack(spacing: 8) {
+                                HStack(spacing: VaultSpacing.s) {
                                     Label(conflict.formattedConflictDate, systemImage: "clock")
                                     Label(conflict.deviceShortID, systemImage: "laptopcomputer")
                                 }
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             }
-                            .padding(.vertical, 2)
+                            .padding(.vertical, VaultSpacing.xxs)
                             .accessibilityElement(children: .combine)
                         }
                     }

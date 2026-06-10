@@ -78,7 +78,7 @@ struct SubscribePlanPicker: View {
                 .font(.title3)
                 .foregroundStyle(Color.statusAttention)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: VaultSpacing.xxs) {
                 Text(L10n.tr("Add your server first"))
                     .font(.headline)
                 Text(L10n.tr("Cloud Relay wakes a specific device. Pair the computer or server that hosts your vault on the Devices tab, then come back to subscribe."))
@@ -95,17 +95,12 @@ struct SubscribePlanPicker: View {
             purchase(product)
         } label: {
             HStack(spacing: VaultSpacing.m) {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: VaultSpacing.xs) {
                     HStack(spacing: VaultSpacing.s) {
                         Text(title)
                             .font(.headline)
                         if recommended, let savings = yearlySavingsText {
-                            Text(savings)
-                                .font(.caption2.weight(.bold))
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 2)
-                                .background(Color.vaultAccent, in: Capsule())
-                                .foregroundStyle(.white)
+                            StatusTag(text: savings, tint: .vaultAccent, filled: true)
                         }
                     }
                     Text(subscriptionManager.priceText(for: product))

@@ -266,12 +266,12 @@ struct ConflictDiffView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(content.isEmpty ? L10n.tr("(empty or unreadable)") : content)
-                    .font(.system(.caption, design: .monospaced))
-                    .padding(12)
+                    .font(.vaultMono(.caption))
+                    .padding(VaultSpacing.m)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .background(Color(.secondarySystemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .clipShape(RoundedRectangle(cornerRadius: VaultRadius.control, style: .continuous))
             .padding(.horizontal)
         }
     }

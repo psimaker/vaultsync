@@ -13,7 +13,7 @@ struct SyncActivityView: View {
                 )
             } else {
                 ForEach(events) { event in
-                    HStack(alignment: .top, spacing: 12) {
+                    HStack(alignment: .top, spacing: VaultSpacing.m) {
                         Image(systemName: event.symbolName)
                             .font(.body.weight(.semibold))
                             .foregroundStyle(event.isError ? Color.statusError : Color.statusInfo)
@@ -34,7 +34,7 @@ struct SyncActivityView: View {
 
                         Spacer(minLength: 0)
                     }
-                    .padding(.vertical, 2)
+                    .padding(.vertical, VaultSpacing.xxs)
                     .accessibilityElement(children: .combine)
                 }
             }

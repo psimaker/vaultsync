@@ -48,7 +48,7 @@ struct RelayHomeView: View {
         Section {
             VStack(alignment: .leading, spacing: VaultSpacing.m) {
                 Image(systemName: "antenna.radiowaves.left.and.right")
-                    .font(.system(size: 34))
+                    .font(.largeTitle)
                     .foregroundStyle(Color.vaultAccent)
                     .accessibilityHidden(true)
 
