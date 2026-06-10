@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -151,8 +152,44 @@ func TestDetectSyncthingFromCandidatesPermissionDenied(t *testing.T) {
 	if !errors.Is(err, os.ErrPermission) {
 		t.Fatalf("error should wrap os.ErrPermission, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "uid 1000") {
-		t.Fatalf("error should hint the uid fix, got: %v", err)
+	uid, gid, ok := fileOwner(p)
+	if !ok {
+		t.Fatalf("fileOwner should resolve the fixture owner on unix")
+	}
+	wantHint := fmt.Sprintf("-u %d:%d", uid, gid)
+	if !strings.Contains(err.Error(), wantHint) {
+		t.Fatalf("error should carry the exact %q fix, got: %v", wantHint, err)
+	}
+}
+
+// An unreadable config *directory* (0700, foreign owner) denies the stat of
+// config.xml itself; the owner hint must then come from the directory, which
+// Syncthing keeps under the same user as the file.
+func TestPermissionDeniedHintFallsBackToDirectoryOwner(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root bypasses file permission checks")
+	}
+	p := writeFixture(t, deviceBeforeGUIConfigXML)
+	dir := filepath.Dir(p)
+	if err := os.Chmod(dir, 0o000); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) }) // let TempDir cleanup remove it
+
+	_, err := detectSyncthingFromCandidates([]string{p})
+	if err == nil {
+		t.Fatal("expected a permission error for a config behind an unreadable directory")
+	}
+	if !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("error should wrap os.ErrPermission, got: %v", err)
+	}
+	uid, gid, ok := fileOwner(dir)
+	if !ok {
+		t.Fatalf("fileOwner should resolve the directory owner on unix")
+	}
+	wantHint := fmt.Sprintf("-u %d:%d", uid, gid)
+	if !strings.Contains(err.Error(), wantHint) {
+		t.Fatalf("error should carry the directory-derived %q fix, got: %v", wantHint, err)
 	}
 }
 

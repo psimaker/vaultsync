@@ -6,7 +6,25 @@ Small sidecar that watches your Syncthing instance and sends a **wake-up signal*
 
 ---
 
-## 🚀 Quick start — Docker Compose (key-free)
+## 🚀 Quick start — one line
+
+On the machine that runs Syncthing (server, NAS, or an always-on computer):
+
+```bash
+curl -fsSL https://vaultsync.eu/notify.sh | sh
+```
+
+The installer ([`scripts/install.sh`](scripts/install.sh)) finds your `config.xml`, runs the helper as the uid:gid that owns it (the #1 setup failure), and starts it — as a Docker container when Docker is available, otherwise as a [prebuilt binary](#-prebuilt-binaries) behind a systemd service (Linux) or launchd agent (macOS). It ends with the helper's own `--doctor` preflight, so a misconfiguration fails loudly with the fix spelled out.
+
+The moment the helper starts it sends one wake-up, and VaultSync flips to **Cloud Relay active** on its own.
+
+- Skeptical of `curl | sh`? Append `-s -- --dry-run` to preview every action without changing anything, or read the script first.
+- Config in a non-standard place (Synology/QNAP usually is)? `SYNCTHING_CONFIG=/path/to/config.xml curl -fsSL https://vaultsync.eu/notify.sh | sh`
+- The script contains nothing user-specific — identity comes from your own Syncthing's Device ID at runtime.
+
+---
+
+## 🐳 Docker Compose (key-free)
 
 Runs Syncthing and the helper together. The helper reads the Syncthing API key from the shared `config.xml`, so there's **no key to copy** — the only value you supply is `RELAY_URL`.
 
@@ -16,8 +34,6 @@ cp .env.example .env        # RELAY_URL defaults to the production relay
 docker compose up -d
 ```
 
-The moment the helper starts it sends one wake-up, and VaultSync flips to **Cloud Relay active** on its own.
-
 > A plain `docker compose up` sends one **real** wake-up to production — intended for subscribers. Testing locally? Override `RELAY_URL` to a mock first (see the header of [`docker-compose.yml`](docker-compose.yml)).
 
 ---
@@ -26,7 +42,7 @@ The moment the helper starts it sends one wake-up, and VaultSync flips to **Clou
 
 Syncthing running **natively on the host** (not in Compose)? Use either path — both auto-detect the key from `config.xml`.
 
-**A. Paste-and-go `docker run`** (the command VaultSync shows after you subscribe):
+**A. Paste-and-go `docker run`** (the manual alternative VaultSync shows after you subscribe):
 
 ```bash
 docker run -d --name vaultsync-notify --restart unless-stopped \
@@ -46,6 +62,18 @@ cd notify && ./scripts/bootstrap.sh
 ```
 
 If detection fails, set `SYNCTHING_CONFIG=/path/to/config.xml` and rerun.
+
+---
+
+## 📦 Prebuilt binaries
+
+Every `notify-v*` release ships static binaries for **linux/amd64**, **linux/arm64**, **darwin/amd64**, **darwin/arm64**, and **windows/amd64** — no Docker, no Go toolchain. The [one-line installer](#-quick-start--one-line) downloads and verifies these automatically on Linux (systemd service) and macOS (launchd agent); grab them manually from the [releases page](https://github.com/psimaker/vaultsync/releases) for anything else, and check the download against the release's `SHA256SUMS`.
+
+Run manually — the only required value is `RELAY_URL`; the Syncthing key and URL are auto-detected from `config.xml`:
+
+```bash
+RELAY_URL=https://relay.vaultsync.eu ./vaultsync-notify
+```
 
 ---
 

@@ -48,7 +48,8 @@ In the app, the **Cloud Relay** tab → **Relay health & diagnostics** is the li
 ### Components
 
 **vaultsync-notify (Homeserver Container)**
-- Docker container, runs alongside the user's Syncthing instance
+- Docker container or prebuilt static binary, runs alongside the user's Syncthing instance
+- One-line installer (`curl -fsSL https://vaultsync.eu/notify.sh | sh`): detects `config.xml`, runs the helper as the uid:gid owning it, picks Docker or a binary-backed system service, and finishes with the `--doctor` preflight
 - Subscribes to Syncthing's REST API event stream (`/rest/events`)
 - Filters for relevant outgoing-change signals: `LocalIndexUpdated`, plus `FolderCompletion` only when a peer still needs data
 - On file changes: sends a wake-up signal to the central relay
