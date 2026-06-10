@@ -410,7 +410,8 @@ if CONFIG_PATH=$(find_syncthing_config); then
 	info "Found Syncthing config: $CONFIG_PATH"
 else
 	fail "Could not find Syncthing's config.xml. Is Syncthing installed on THIS machine?
-  - If it lives elsewhere, re-run with its path:  SYNCTHING_CONFIG=/path/to/config.xml sh -s
+  - If it lives elsewhere, re-run with its path (the variable must prefix sh, not curl):
+      curl -fsSL https://vaultsync.eu/notify.sh | SYNCTHING_CONFIG=/path/to/config.xml sh
   - Synology/QNAP and custom setups: https://github.com/$REPO/blob/main/notify/README.md"
 fi
 

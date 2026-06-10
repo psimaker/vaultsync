@@ -95,11 +95,18 @@ jobs:
     permissions:
       contents: write
     steps:
+      # This job holds a contents:write token for the release upload, so keep
+      # the checkout credential out of the workspace and skip the shared Go
+      # module cache — release binaries must not be assembled from cacheable
+      # state another workflow run could have written.
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-go@v6
         with:
           go-version-file: notify/go.mod
+          cache: false
 
       - name: Cross-compile helper binaries
         working-directory: notify

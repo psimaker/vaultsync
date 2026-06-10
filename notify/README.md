@@ -19,7 +19,7 @@ The installer ([`scripts/install.sh`](scripts/install.sh)) finds your `config.xm
 The moment the helper starts it sends one wake-up, and VaultSync flips to **Cloud Relay active** on its own.
 
 - Skeptical of `curl | sh`? Append `-s -- --dry-run` to preview every action without changing anything, or read the script first.
-- Config in a non-standard place (Synology/QNAP usually is)? `SYNCTHING_CONFIG=/path/to/config.xml curl -fsSL https://vaultsync.eu/notify.sh | sh`
+- Config in a non-standard place (typical on Synology/QNAP)? `curl -fsSL https://vaultsync.eu/notify.sh | SYNCTHING_CONFIG=/path/to/config.xml sh` — the variable must prefix `sh` (the installer), not `curl`.
 - The script contains nothing user-specific — identity comes from your own Syncthing's Device ID at runtime.
 
 ---
