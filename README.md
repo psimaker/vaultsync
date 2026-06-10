@@ -128,6 +128,7 @@ Full build, signing, and test steps: [docs/setup.md](docs/setup.md).
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Common failures and exact fixes |
 | [docs/architecture.md](docs/architecture.md) | Codebase structure and sync strategy |
 | [docs/relay-spec.md](docs/relay-spec.md) | Cloud Relay protocol reference |
+| [docs/instant-upload.md](docs/instant-upload.md) | Instant iPhone → server uploads via a Shortcuts automation |
 | [notify/README.md](notify/README.md) | Notify sidecar setup and diagnostics |
 | [PRIVACY.md](PRIVACY.md) · [TERMS.md](TERMS.md) | Privacy policy and license terms |
 

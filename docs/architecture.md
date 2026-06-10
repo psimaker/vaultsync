@@ -28,7 +28,7 @@ VaultSync is intentionally **asymmetric**:
 | Direction | Path |
 |---|---|
 | **Server → iPhone** | `vaultsync-notify` spots outgoing changes → Cloud Relay silent push → VaultSync wakes and pulls. |
-| **iPhone → Server** | iOS doesn't guarantee timely background execution for local edits. The reliable path is to open VaultSync and let embedded Syncthing run in the foreground. |
+| **iPhone → Server** | iOS doesn't guarantee timely background execution for local edits. The reliable path is to open VaultSync and let embedded Syncthing run in the foreground — a [Shortcuts automation](instant-upload.md) can do that automatically whenever you leave Obsidian. |
 
 Cloud Relay is a `server → iPhone` *acceleration* path, not a guarantee of symmetric real-time background sync.
 
