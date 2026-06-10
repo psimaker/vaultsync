@@ -45,7 +45,7 @@ In the app: **Cloud Relay** tab → **Relay health & diagnostics** → **Check R
 **Looks like:** logs show `401`, `403`, `unauthorized`, or `permission denied`; `--doctor` fails the Syncthing API check; no triggers are sent.
 
 **Fix:**
-1. **Run as the right user.** `config.xml` is mode `0600`, so the helper must run as the uid that owns it. In Compose set `PUID`/`PGID` (official image `1000`, linuxserver `911`, Unraid `99:100`); with `docker run`, add `-u <uid>:<gid>`.
+1. **Run as the right user.** `config.xml` is mode `0600`, so the helper must run as the uid that owns it — the permission error names the file's actual owner and the exact `-u <uid>:<gid>` to use (helper 1.6.1+). The [one-line installer](../notify/README.md#-quick-start--one-line) gets this right automatically; manually: in Compose set `PUID`/`PGID` (official image `1000`, linuxserver `911`, Unraid `99:100`), with `docker run` add `-u <uid>:<gid>`.
 2. **Point at the real config.** Set `SYNCTHING_CONFIG=/path/to/config.xml` if it isn't auto-detected (needed for Synology/QNAP).
 3. **Clear a bad override.** If you set `SYNCTHING_API_KEY` yourself, it wins over auto-detect — remove it to fall back to `config.xml`, or update it to match Syncthing's current key.
 4. **Recreate and re-check:**
