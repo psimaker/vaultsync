@@ -81,3 +81,57 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
+
+  # Prebuilt helper binaries for the no-Docker path: install.sh downloads these
+  # (with checksum verification) and installs a systemd service or launchd
+  # agent. Pure CGO_ENABLED=0 Go, so a plain cross-compile loop covers every
+  # target — no QEMU, no goreleaser.
+  release-binaries:
+    name: Release Binaries
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: notify-guard
+    if: startsWith(github.ref, 'refs/tags/notify-v')
+    permissions:
+      contents: write
+    steps:
+      # This job holds a contents:write token for the release upload, so keep
+      # the checkout credential out of the workspace and skip the shared Go
+      # module cache — release binaries must not be assembled from cacheable
+      # state another workflow run could have written.
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: notify/go.mod
+          cache: false
+
+      - name: Cross-compile helper binaries
+        working-directory: notify
+        run: |
+          set -eu
+          mkdir -p dist
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            export GOOS="${target%/*}" GOARCH="${target#*/}"
+            out="dist/vaultsync-notify_${GOOS}_${GOARCH}"
+            [ "$GOOS" = windows ] && out="$out.exe"
+            CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o "$out" .
+          done
+          (cd dist && sha256sum -- * > SHA256SUMS)
+
+      # --latest=false keeps the app release (v*) as the repo's "latest";
+      # install.sh resolves notify releases by tag prefix, not by latest.
+      - name: Publish release with binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          tag="${GITHUB_REF_NAME}"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --verify-tag --latest=false \
+              --title "vaultsync-notify ${tag#notify-v}" \
+              --notes "Prebuilt \`vaultsync-notify\` helper binaries for the [Cloud Relay server setup](https://github.com/${GITHUB_REPOSITORY}/blob/main/notify/README.md). The one-line installer picks these up automatically; verify manual downloads against \`SHA256SUMS\`."
+          fi
+          gh release upload "$tag" --clobber notify/dist/*

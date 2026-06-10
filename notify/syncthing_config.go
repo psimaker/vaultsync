@@ -181,8 +181,13 @@ func detectSyncthingFromCandidates(candidates []string) (detectedSyncthing, erro
 }
 
 // permissionDeniedError wraps os.ErrPermission (so errors.Is works upstream) and
-// spells out the uid-match fix specific to Syncthing's 0600 config.xml.
+// spells out the uid-match fix specific to Syncthing's 0600 config.xml. When the
+// owner is stat-able the message carries the exact `-u uid:gid` to use, so the
+// operator copies a fix instead of hunting for the right uid.
 func permissionDeniedError(path string, err error) error {
+	if uid, gid, ok := fileOwner(path); ok {
+		return fmt.Errorf("found Syncthing config at %s but cannot read it: %w — it is owned by uid:gid %d:%d; run the helper as that user (Docker: add -u %d:%d), or set SYNCTHING_API_KEY/SYNCTHING_API_URL explicitly", path, err, uid, gid, uid, gid)
+	}
 	return fmt.Errorf("found Syncthing config at %s but cannot read it: %w — run the helper as the user that owns config.xml (the Docker images default to uid 1000), or set SYNCTHING_API_KEY/SYNCTHING_API_URL explicitly", path, err)
 }
 
