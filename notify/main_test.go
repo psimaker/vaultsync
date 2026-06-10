@@ -1047,8 +1047,11 @@ func newStaleSyncthingStub(t *testing.T, needBytes *atomic.Int64) *httptest.Serv
 				{"deviceID":"PAUSED-PEER","paused":true}
 			]`))
 		case "/rest/db/completion":
-			if r.URL.Query().Get("device") == "PAUSED-PEER" {
+			switch r.URL.Query().Get("device") {
+			case "PAUSED-PEER":
 				t.Error("stale sweep queried completion for a paused device")
+			case "DEVICE-STALE":
+				t.Error("stale sweep queried completion for the local device")
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"completion":99,"needBytes":` + strconv.FormatInt(needBytes.Load(), 10) + `,"needItems":0,"needDeletes":0}`))
