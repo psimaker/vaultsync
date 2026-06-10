@@ -139,7 +139,7 @@ iOS controls background time and may delay or skip it. Cloud Relay makes `server
 4. For relay users, confirm `vaultsync-notify --doctor` is green and **Last Trigger Received** is recent.
 5. Re-check the **Last sync** timestamp after the next background window.
 
-> For `iPhone → server`, open VaultSync and let it sync in the foreground. iOS background time is system-controlled and not guaranteed.
+> For `iPhone → server`, open VaultSync and let it sync in the foreground. iOS background time is system-controlled and not guaranteed. A one-time Shortcuts automation can do the opening for you every time you leave Obsidian — see [instant-upload.md](instant-upload.md).
 
 ---
 

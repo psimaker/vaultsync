@@ -133,6 +133,10 @@ enum APNsRegistrationStore {
 
 enum RelayTriggerStore {
     private static let lastReceivedAtKey = "relay-last-trigger-received-at"
+    private static let receivedHistoryKey = "relay-trigger-received-history-v1"
+    /// Rolling cap on stored arrival timestamps. 200 entries cover weeks of
+    /// realistic delivery volume while keeping the UserDefaults blob tiny.
+    private static let historyLimit = 200
     static let triggerDidChangeNotification = Notification.Name("RelayTriggerDidChange")
 
     /// A real wake-up reached this device — the silent push the relay delivers
@@ -143,10 +147,30 @@ enum RelayTriggerStore {
     /// push is a genuine delivery and needs no attribution heuristic.
     static func markReceived(date: Date = Date()) {
         UserDefaults.standard.set(date, forKey: lastReceivedAtKey)
+        var history = receivedHistory()
+        history.append(date)
+        if history.count > historyLimit {
+            history.removeFirst(history.count - historyLimit)
+        }
+        UserDefaults.standard.set(history, forKey: receivedHistoryKey)
         NotificationCenter.default.post(name: triggerDidChangeNotification, object: nil)
     }
 
     static func lastReceivedAt() -> Date? {
         UserDefaults.standard.object(forKey: lastReceivedAtKey) as? Date
+    }
+
+    /// All recorded wake-up arrivals, oldest first, capped at `historyLimit`.
+    /// Purely local diagnostics — nothing is reported anywhere.
+    static func receivedHistory() -> [Date] {
+        UserDefaults.standard.array(forKey: receivedHistoryKey) as? [Date] ?? []
+    }
+
+    /// Number of wake-ups that arrived within the trailing interval. Drives the
+    /// diagnostics counter that makes delivery (or its absence) visible —
+    /// "Never"/"3 days ago" alone hides how much iOS is actually letting through.
+    static func receivedCount(within interval: TimeInterval, now: Date = Date()) -> Int {
+        let cutoff = now.addingTimeInterval(-interval)
+        return receivedHistory().filter { $0 >= cutoff }.count
     }
 }

@@ -43,6 +43,46 @@ struct StatusBadge: View {
     }
 }
 
+/// A compact capsule tag for counts and short state words — conflict counts,
+/// "Save N%", "Ready"/"Needs Attention". One look for the three capsule badges
+/// that were hand-rolled with divergent paddings and opacities.
+struct StatusTag: View {
+    let text: String
+    var tint: Color = .statusAttention
+    /// High emphasis: solid tint capsule. The text picks black or white by the
+    /// resolved fill's luminance — a scheme-flipped color (`systemBackground`)
+    /// gave white-on-amber ~2.5:1 in light mode, while the lifted dark-mode
+    /// tints genuinely need dark text.
+    var filled: Bool = false
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        Text(text)
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(filled ? filledForeground : tint)
+            .padding(.horizontal, VaultSpacing.s)
+            .padding(.vertical, VaultSpacing.xxs)
+            .background(filled ? tint : tint.opacity(0.15), in: Capsule())
+    }
+
+    /// Black or white — whichever has more WCAG contrast against the tint as
+    /// resolved for the current scheme. Break-even is relative luminance
+    /// ~0.179: above it black always yields the higher contrast ratio.
+    private var filledForeground: Color {
+        let resolved = UIColor(tint).resolvedColor(
+            with: UITraitCollection(userInterfaceStyle: colorScheme == .dark ? .dark : .light)
+        )
+        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0
+        guard resolved.getRed(&red, green: &green, blue: &blue, alpha: nil) else { return .black }
+        func linear(_ channel: CGFloat) -> CGFloat {
+            channel <= 0.03928 ? channel / 12.92 : pow((channel + 0.055) / 1.055, 2.4)
+        }
+        let luminance = 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue)
+        return luminance > 0.179 ? .black : .white
+    }
+}
+
 /// A list row: leading status glyph, primary title, optional secondary line, and
 /// optional trailing content. Replaces the title+caption `VStack(spacing: 2)` that
 /// was copy-pasted across five views.
@@ -51,6 +91,9 @@ struct StatusRow<Trailing: View>: View {
     var subtitle: String?
     var status: SyncStatus?
     var systemImage: String?
+    /// Optional glyph-color override for the rare row whose color isn't carried
+    /// by a `SyncStatus` (e.g. a neutral "unknown" placeholder).
+    var glyphTint: Color?
     @ViewBuilder var trailing: () -> Trailing
 
     init(
@@ -58,12 +101,14 @@ struct StatusRow<Trailing: View>: View {
         subtitle: String? = nil,
         status: SyncStatus? = nil,
         systemImage: String? = nil,
+        glyphTint: Color? = nil,
         @ViewBuilder trailing: @escaping () -> Trailing = { EmptyView() }
     ) {
         self.title = title
         self.subtitle = subtitle
         self.status = status
         self.systemImage = systemImage
+        self.glyphTint = glyphTint
         self.trailing = trailing
     }
 
@@ -74,7 +119,7 @@ struct StatusRow<Trailing: View>: View {
             if let glyph {
                 Image(systemName: glyph)
                     .font(.title3)
-                    .foregroundStyle(status?.tint ?? Color.vaultAccent)
+                    .foregroundStyle(glyphTint ?? status?.tint ?? Color.vaultAccent)
                     .frame(width: 28)
                     .accessibilityHidden(true)
             }
@@ -107,7 +152,7 @@ struct DetailRow: View {
                 .foregroundStyle(.secondary)
             Spacer(minLength: VaultSpacing.s)
             Text(value)
-                .font(monospacedValue ? .system(.body, design: .monospaced) : .body)
+                .font(monospacedValue ? .vaultMono(.body) : .body)
                 .multilineTextAlignment(.trailing)
         }
         .font(.subheadline)
@@ -177,7 +222,7 @@ struct MonoField: View {
         } label: {
             HStack(alignment: .top, spacing: VaultSpacing.s) {
                 Text(text)
-                    .font(.system(.footnote, design: .monospaced))
+                    .font(.vaultMono(.footnote))
                     .lineLimit(3)
                     .truncationMode(.middle)
                     .frame(maxWidth: .infinity, alignment: .leading)

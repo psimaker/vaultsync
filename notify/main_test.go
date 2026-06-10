@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -958,6 +959,229 @@ func TestLoadConfigStartupAnnounceDefaultAndOverride(t *testing.T) {
 
 	if _, err := set("maybe"); err == nil {
 		t.Fatal("STARTUP_ANNOUNCE=maybe should be rejected")
+	}
+}
+
+func TestLoadConfigStaleRetriggerDefaultAndOverride(t *testing.T) {
+	set := func(value string) (Config, error) {
+		t.Setenv("SYNCTHING_API_URL", "http://localhost:8384")
+		t.Setenv("SYNCTHING_API_KEY", "test-key")
+		t.Setenv("RELAY_URL", "https://relay.example.com")
+		t.Setenv("DEBOUNCE_SECONDS", "")
+		t.Setenv("WATCHED_FOLDERS", "")
+		t.Setenv("STALE_RETRIGGER_SECONDS", value)
+		return loadConfig()
+	}
+
+	cfg, err := set("")
+	if err != nil {
+		t.Fatalf("default loadConfig error: %v", err)
+	}
+	if cfg.StaleRetriggerSeconds != 6*60*60 {
+		t.Fatalf("StaleRetriggerSeconds default = %d, want %d", cfg.StaleRetriggerSeconds, 6*60*60)
+	}
+
+	cfg, err = set("0")
+	if err != nil {
+		t.Fatalf("loadConfig(0) error: %v", err)
+	}
+	if cfg.StaleRetriggerSeconds != 0 {
+		t.Fatalf("STALE_RETRIGGER_SECONDS=0 should disable the sweep, got %d", cfg.StaleRetriggerSeconds)
+	}
+
+	cfg, err = set("900")
+	if err != nil || cfg.StaleRetriggerSeconds != 900 {
+		t.Fatalf("STALE_RETRIGGER_SECONDS=900 parsed as %d (err=%v), want 900", cfg.StaleRetriggerSeconds, err)
+	}
+
+	for _, invalid := range []string{"-1", "soon"} {
+		if _, err := set(invalid); err == nil || !strings.Contains(err.Error(), "STALE_RETRIGGER_SECONDS") {
+			t.Fatalf("STALE_RETRIGGER_SECONDS=%q should be rejected, got err=%v", invalid, err)
+		}
+	}
+}
+
+func TestCompletionNeedsWakeup(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name       string
+		completion DeviceCompletion
+		want       bool
+	}{
+		{"fully synced", DeviceCompletion{}, false},
+		{"needs bytes", DeviceCompletion{NeedBytes: 1}, true},
+		{"needs items", DeviceCompletion{NeedItems: 1}, true},
+		{"needs only deletes", DeviceCompletion{NeedDeletes: 1}, true},
+	}
+	for _, tc := range cases {
+		if got := completionNeedsWakeup(tc.completion); got != tc.want {
+			t.Errorf("%s: completionNeedsWakeup = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// newStaleSyncthingStub reports a fixed Device ID, never emits change events,
+// and serves a device list plus per-device completion — the surface the
+// stale-peer sweep reads. The peer's outstanding needBytes is adjustable so
+// tests can flip between a behind and a fully-synced peer.
+func newStaleSyncthingStub(t *testing.T, needBytes *atomic.Int64) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/rest/system/status":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"myID":"DEVICE-STALE"}`))
+		case "/rest/events":
+			select {
+			case <-r.Context().Done():
+			case <-time.After(2 * time.Second):
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
+		case "/rest/config/devices":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[
+				{"deviceID":"DEVICE-STALE","paused":false},
+				{"deviceID":"PHONE-PEER","paused":false},
+				{"deviceID":"PAUSED-PEER","paused":true}
+			]`))
+		case "/rest/db/completion":
+			switch r.URL.Query().Get("device") {
+			case "PAUSED-PEER":
+				t.Error("stale sweep queried completion for a paused device")
+			case "DEVICE-STALE":
+				t.Error("stale sweep queried completion for the local device")
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"completion":99,"needBytes":` + strconv.FormatInt(needBytes.Load(), 10) + `,"needItems":0,"needDeletes":0}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestRunServiceStaleRetriggerWakesBehindPeer proves the missed-push recovery:
+// with NO Syncthing change at all, a peer that still needs data causes a
+// wake-up on the stale-retrigger cadence.
+func TestRunServiceStaleRetriggerWakesBehindPeer(t *testing.T) {
+	var needBytes atomic.Int64
+	needBytes.Store(4096)
+	syncthing := newStaleSyncthingStub(t, &needBytes)
+
+	triggered := make(chan struct{}, 1)
+	relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/health":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		case "/api/v1/trigger":
+			select {
+			case triggered <- struct{}{}:
+			default:
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"status":"accepted","devices_notified":1}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(relay.Close)
+
+	cfg := Config{
+		SyncthingAPIURL: syncthing.URL,
+		SyncthingAPIKey: "test-key",
+		RelayURL:        relay.URL,
+		DebounceSeconds: 1,
+		// Announce disabled so the only possible trigger is the stale sweep.
+		StartupAnnounce:       false,
+		StaleRetriggerSeconds: 1,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	codeCh := make(chan int, 1)
+	go func() { codeCh <- runService(ctx, cfg) }()
+
+	select {
+	case <-triggered:
+	case code := <-codeCh:
+		t.Fatalf("runService exited with code %d before the stale sweep fired", code)
+	case <-time.After(10 * time.Second):
+		t.Fatal("stale sweep did not re-trigger for a behind peer")
+	}
+
+	cancel()
+	select {
+	case code := <-codeCh:
+		if code != 0 {
+			t.Fatalf("runService exit code = %d after graceful shutdown, want 0", code)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("runService did not shut down after context cancel")
+	}
+}
+
+// TestRunServiceStaleRetriggerQuietWhenPeersCurrent is the anti-spam half: a
+// fully-synced peer must NOT cause any wake-up, sweep after sweep.
+func TestRunServiceStaleRetriggerQuietWhenPeersCurrent(t *testing.T) {
+	var needBytes atomic.Int64 // zero: peer fully synced
+	syncthing := newStaleSyncthingStub(t, &needBytes)
+
+	var triggerCalls atomic.Int32
+	relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/health":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		case "/api/v1/trigger":
+			triggerCalls.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"status":"accepted","devices_notified":1}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(relay.Close)
+
+	cfg := Config{
+		SyncthingAPIURL:       syncthing.URL,
+		SyncthingAPIKey:       "test-key",
+		RelayURL:              relay.URL,
+		DebounceSeconds:       1,
+		StartupAnnounce:       false,
+		StaleRetriggerSeconds: 1,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	codeCh := make(chan int, 1)
+	go func() { codeCh <- runService(ctx, cfg) }()
+
+	// Let several sweeps run; none may trigger.
+	select {
+	case code := <-codeCh:
+		t.Fatalf("runService exited early with code %d", code)
+	case <-time.After(2500 * time.Millisecond):
+	}
+	if got := triggerCalls.Load(); got != 0 {
+		t.Fatalf("stale sweep sent %d wake-ups for a fully-synced peer, want 0", got)
+	}
+
+	cancel()
+	select {
+	case code := <-codeCh:
+		if code != 0 {
+			t.Fatalf("runService exit code = %d after graceful shutdown, want 0", code)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("runService did not shut down after context cancel")
 	}
 }
 

@@ -28,6 +28,7 @@ enum TestSupport {
             "apns-registration-last-success-at",
             "apns-registration-last-failure-at",
             "relay-last-trigger-received-at",
+            "relay-trigger-received-history-v1",
             "relay-diagnostics-last-error",
         ] {
             defaults.removeObject(forKey: key)

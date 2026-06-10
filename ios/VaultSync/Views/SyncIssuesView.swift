@@ -66,6 +66,9 @@ struct SyncIssuesView: View {
         }
     }
 
+    // Buttons are `.regular` (the 44pt minimum touch target — `.small` violated
+    // it), and a button that could do nothing is hidden instead of disabled with
+    // no explanation: the prose remediation above it remains the guidance.
     @ViewBuilder
     private func actionView(for issue: SyncthingManager.SyncIssueItem) -> some View {
         switch issue.kind {
@@ -74,22 +77,23 @@ struct SyncIssuesView: View {
                 onRescanFailedFolders()
             }
             .buttonStyle(.borderedProminent)
-            .controlSize(.small)
+            .controlSize(.regular)
 
         case .disconnectedPeers:
             Button("Add or Reconnect Device") {
                 onOpenAddDevice()
             }
             .buttonStyle(.bordered)
-            .controlSize(.small)
+            .controlSize(.regular)
 
         case .pendingShares:
-            Button("Accept First Pending Share") {
-                onAcceptFirstPendingShare()
+            if !syncthingManager.actionablePendingFolders.isEmpty {
+                Button("Accept First Pending Share") {
+                    onAcceptFirstPendingShare()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .disabled(syncthingManager.actionablePendingFolders.isEmpty)
 
         case .conflicts:
             if let destination = firstConflictDestination(preferredFolderID: issue.folderID) {
@@ -100,24 +104,26 @@ struct SyncIssuesView: View {
                     )
                 }
                 .buttonStyle(.bordered)
-                .controlSize(.small)
+                .controlSize(.regular)
             }
 
         case .staleSync:
-            Button("Rescan All Vaults") {
-                onRescanAllVaults()
+            if !syncthingManager.folders.isEmpty {
+                Button("Rescan All Vaults") {
+                    onRescanAllVaults()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .disabled(syncthingManager.folders.isEmpty)
 
         case .backgroundSync:
-            Button("Run Foreground Rescan") {
-                onRescanAllVaults()
+            if !syncthingManager.folders.isEmpty {
+                Button("Run Foreground Rescan") {
+                    onRescanAllVaults()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .disabled(syncthingManager.folders.isEmpty)
         }
     }
 

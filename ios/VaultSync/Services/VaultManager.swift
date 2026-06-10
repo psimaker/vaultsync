@@ -248,7 +248,7 @@ final class VaultManager {
         let fm = FileManager.default
         var isDirectory: ObjCBool = false
         guard fm.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue else {
-            return L10n.tr("Please select a folder. In the picker choose \"On My iPhone\" -> \"Obsidian\".")
+            return L10n.tr("Please select a folder. In the picker choose \"On My iPhone\" → \"Obsidian\".")
         }
 
         let isNamedObsidian = url.lastPathComponent.compare("Obsidian", options: .caseInsensitive) == .orderedSame
@@ -263,7 +263,7 @@ final class VaultManager {
             includingPropertiesForKeys: [.isDirectoryKey],
             options: [.skipsHiddenFiles]
         ) else {
-            return L10n.tr("VaultSync cannot read this folder. Reopen the picker and select \"On My iPhone\" -> \"Obsidian\".")
+            return L10n.tr("VaultSync cannot read this folder. Reopen the picker and select \"On My iPhone\" → \"Obsidian\".")
         }
 
         let containsVaultSubfolders = contents.contains { itemURL in
@@ -276,7 +276,7 @@ final class VaultManager {
             return nil
         }
 
-        return L10n.tr("This folder does not look like your Obsidian directory yet. In the picker choose \"On My iPhone\" -> \"Obsidian\".")
+        return L10n.tr("This folder does not look like your Obsidian directory yet. In the picker choose \"On My iPhone\" → \"Obsidian\".")
     }
 
     private func markReconnectRequired(reason: String) {

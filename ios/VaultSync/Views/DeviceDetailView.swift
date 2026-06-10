@@ -5,6 +5,7 @@ struct DeviceDetailView: View {
     let syncthingManager: SyncthingManager
 
     @State private var editedName = ""
+    @State private var nameSaved = false
     @State private var showRemoveConfirm = false
     @State private var alertMessage: String?
     @State private var showAlert = false
@@ -29,6 +30,14 @@ struct DeviceDetailView: View {
                         .onSubmit {
                             saveName()
                         }
+                    // Transient saved confirmation, mirroring MonoField's
+                    // copy feedback — the rename otherwise commits invisibly.
+                    if nameSaved {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(Color.statusSuccess)
+                            .transition(.scale.combined(with: .opacity))
+                            .accessibilityLabel(L10n.tr("Name saved"))
+                    }
                 }
 
                 LabeledContent("Status") {
@@ -84,6 +93,12 @@ struct DeviceDetailView: View {
             alertMessage = mapped.userVisibleDescription
             showAlert = true
             editedName = device.name
+            return
+        }
+        withAnimation(.snappy) { nameSaved = true }
+        Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            withAnimation(.snappy) { nameSaved = false }
         }
     }
 

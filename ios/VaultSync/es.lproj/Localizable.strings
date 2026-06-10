@@ -67,7 +67,7 @@
 "Disconnected" = "Desconectado";
 "Done" = "Listo";
 "Empty line" = "Línea vacía";
-"Enable notifications for VaultSync in iOS Settings -> Notifications -> VaultSync, then restart the app." = "Activa las notificaciones de VaultSync en Ajustes de iOS -> Notificaciones -> VaultSync y luego reinicia la app.";
+"Enable notifications for VaultSync in iOS Settings → Notifications → VaultSync, then restart the app." = "Activa las notificaciones de VaultSync en Ajustes de iOS → Notificaciones → VaultSync y luego reinicia la app.";
 "Error" = "Error";
 "Failed" = "Fallido";
 "Failed to save access permission: %@" = "No se pudo guardar el permiso de acceso: %@";
@@ -94,7 +94,7 @@
 "In progress" = "En curso";
 "Install Obsidian from the App Store and open it once. The folder appears after Obsidian creates it." = "Instala Obsidian desde la App Store y ábrelo una vez. La carpeta aparece después de que Obsidian la cree.";
 "Invalid Input" = "Entrada no válida";
-"Invalid folder name: '%@'" = "Nombre de carpeta no válido: '%@'";
+"Invalid folder name: '%@'" = "Nombre de carpeta no válido: «%@»";
 "Keep Both" = "Conservar ambas";
 "Keep Other" = "Conservar la otra";
 "Keep Other Device's Version" = "Conservar la versión del otro dispositivo";
@@ -107,7 +107,7 @@
 "Last Failure" = "Último fallo";
 "Last Relay Error" = "Último error del Relay";
 "Last Success" = "Último éxito";
-"Last Trigger Received" = "Último activador recibido";
+"Last Wake-up Received" = "Última señal de activación recibida";
 "Last Update" = "Última actualización";
 "Last successful sync was about %d %@ ago." = "La última sincronización correcta fue hace unos %d %@.";
 "Last successful sync was more than %d %@ ago." = "La última sincronización correcta fue hace más de %d %@.";
@@ -120,6 +120,7 @@
 "Manage Subscription" = "Gestionar suscripción";
 "Name" = "Nombre";
 "Name (optional)" = "Nombre (opcional)";
+"Name saved" = "Nombre guardado";
 "Needs Attention" = "Requiere atención";
 "Network Error" = "Error de red";
 "Never" = "Nunca";
@@ -131,10 +132,11 @@
 "No home server devices available for relay provisioning." = "No hay dispositivos de servidor doméstico disponibles para el aprovisionamiento del relay.";
 "No immediate relay problems detected." = "No se detectaron problemas inmediatos del relay.";
 "No relay errors recorded." = "No se registraron errores del relay.";
-"No relay trigger has been received yet. Verify your homeserver `vaultsync-notify` container is running and can reach relay.vaultsync.eu." = "Aún no se ha recibido ningún activador del relay. Verifica que el contenedor `vaultsync-notify` de tu servidor doméstico esté en ejecución y pueda acceder a relay.vaultsync.eu.";
+"No wake-up has been received yet. Check that the vaultsync-notify helper is running on your server and can reach relay.vaultsync.eu." = "Aún no ha llegado ninguna señal de activación. Comprueba que el asistente vaultsync-notify se esté ejecutando en tu servidor y pueda acceder a relay.vaultsync.eu.";
 "No successful sync has been recorded for your vaults yet." = "Aún no se ha registrado ninguna sincronización correcta para tus Vaults.";
 "No vaults found" = "No se encontraron Vaults";
 "Not Configured" = "No configurado";
+"Not now" = "Ahora no";
 "Not Shared" = "No compartido";
 "Not attempted" = "No intentado";
 "Not checked" = "No comprobado";
@@ -146,13 +148,14 @@
 "Obsidian directory not accessible." = "No se puede acceder al directorio de Obsidian.";
 "Obsidian folder not connected" = "Carpeta de Obsidian no conectada";
 "Open Settings" = "Abrir Ajustes";
+"Open the Relay tab" = "Abrir la pestaña Relay";
 "Open VaultSync" = "Abrir VaultSync";
 "Open VaultSync once to restart Syncthing, then retry." = "Abre VaultSync una vez para reiniciar Syncthing y vuelve a intentarlo.";
 "Open VaultSync to allow a longer foreground sync session." = "Abre VaultSync para permitir una sesión de sincronización más larga en primer plano.";
 "Open conflicts and choose which version to keep." = "Abre los conflictos y elige qué versión conservar.";
 "Open full relay troubleshooting" = "Abrir la resolución de problemas completa del relay";
 "Open iOS Notification Settings" = "Abrir los ajustes de notificaciones de iOS";
-"Open iOS Settings -> VaultSync and check that all permissions are enabled, then retry." = "Abre Ajustes de iOS -> VaultSync y comprueba que todos los permisos estén activados, luego vuelve a intentarlo.";
+"Open iOS Settings → VaultSync and check that all permissions are enabled, then retry." = "Abre Ajustes de iOS → VaultSync y comprueba que todos los permisos estén activados, luego vuelve a intentarlo.";
 "Open the folder picker again and select your Obsidian directory." = "Vuelve a abrir el selector de carpetas y elige tu directorio de Obsidian.";
 "Opens discovery, relay, and notification settings." = "Abre los ajustes de detección, relay y notificaciones.";
 "Opens the form to add a Syncthing device." = "Abre el formulario para añadir un dispositivo de Syncthing.";
@@ -164,15 +167,15 @@
 "Pending shares are waiting to be accepted before sync can start." = "Las comparticiones pendientes esperan a ser aceptadas antes de que pueda comenzar la sincronización.";
 "Per-Device Provisioning" = "Aprovisionamiento por dispositivo";
 "Permission Required" = "Permiso requerido";
-"Please select a folder. In the picker choose \"On My iPhone\" -> \"Obsidian\"." = "Selecciona una carpeta. En el selector elige \"En mi iPhone\" -> \"Obsidian\".";
+"Please select a folder. In the picker choose \"On My iPhone\" → \"Obsidian\"." = "Selecciona una carpeta. En el selector elige \"En mi iPhone\" → \"Obsidian\".";
 "Privacy Policy" = "Política de privacidad";
 "Provisioned" = "Aprovisionado";
 "Push Registration" = "Registro de push";
 "Push Registration Failed" = "Error en el registro de push";
 "Push registration is unavailable in Simulator. Test APNs on a physical iPhone in Settings > Notifications for VaultSync." = "El registro de push no está disponible en el Simulador. Prueba APNs en un iPhone físico en Ajustes > Notificaciones para VaultSync.";
-"Ready" = "Listo";
+"Ready" = "Preparado";
 "Recent scan, sync, connection, and error events will appear here." = "Aquí aparecerán los eventos recientes de escaneo, sincronización, conexión y error.";
-"Reconnect Obsidian Directory" = "Reconectar Obsidian";
+"Reconnect Obsidian Directory" = "Volver a conectar Obsidian";
 "Reconnect Obsidian Folder" = "Volver a conectar la carpeta de Obsidian";
 "Reconnect Obsidian access or adjust folder permissions on the host device." = "Vuelve a conectar el acceso a Obsidian o ajusta los permisos de la carpeta en el dispositivo anfitrión.";
 "Reconnect devices or add missing peers to restore continuous sync." = "Vuelve a conectar dispositivos o añade los pares que falten para restaurar la sincronización continua.";
@@ -225,6 +228,7 @@
 "Purchase Failed" = "La compra falló";
 "Rescan All Vaults" = "Reescanear todos los Vaults";
 "Sync Conflicts" = "Conflictos de sincronización";
+"View Cloud Relay" = "Ver Cloud Relay";
 "XXXXXXX-XXXXXXX-..." = "XXXXXXX-XXXXXXX-...";
 "Retry APNs Registration" = "Reintentar registro de APNs";
 "Retry Accept" = "Reintentar aceptar";
@@ -269,7 +273,7 @@
 "Sync completed in %@" = "Sincronización completada en %@";
 "Sync error in %@" = "Error de sincronización en %@";
 "Sync started in %@" = "Sincronización iniciada en %@";
-"Synchronizing your Obsidian vault..." = "Sincronizando tu Vault de Obsidian...";
+"Synchronizing your Obsidian vault…" = "Sincronizando tu Vault de Obsidian…";
 "Syncing" = "Sincronizando";
 "Syncing Vault" = "Sincronizando Vault";
 "Syncing…" = "Sincronizando…";
@@ -281,18 +285,18 @@
 "Terms of Use" = "Términos de uso";
 "The device will be disconnected and removed from all shared folders." = "El dispositivo se desconectará y se eliminará de todas las carpetas compartidas.";
 "The embedded Syncthing bridge did not start for a background sync." = "El puente integrado de Syncthing no se inició para una sincronización en segundo plano.";
-"The file '%@' was kept as your local version. The other device's version was discarded." = "El archivo '%@' se conservó como tu versión local. La versión del otro dispositivo se descartó.";
-"The file '%@' was overwritten with the version from the other device." = "El archivo '%@' se sobrescribió con la versión del otro dispositivo.";
+"The file '%@' was kept as your local version. The other device's version was discarded." = "El archivo «%@» se conservó como tu versión local. La versión del otro dispositivo se descartó.";
+"The file '%@' was overwritten with the version from the other device." = "El archivo «%@» se sobrescribió con la versión del otro dispositivo.";
 "The folder path no longer exists%@." = "La ruta de la carpeta ya no existe%@.";
 "The folder scan finished successfully." = "El escaneo de la carpeta finalizó correctamente.";
 "This Device" = "Este dispositivo";
-"This folder does not look like your Obsidian directory yet. In the picker choose \"On My iPhone\" -> \"Obsidian\"." = "Esta carpeta todavía no parece tu directorio de Obsidian. En el selector elige \"En mi iPhone\" -> \"Obsidian\".";
+"This folder does not look like your Obsidian directory yet. In the picker choose \"On My iPhone\" → \"Obsidian\"." = "Esta carpeta todavía no parece tu directorio de Obsidian. En el selector elige \"En mi iPhone\" → \"Obsidian\".";
 "This timestamp is updated when VaultSync receives a silent push from Cloud Relay." = "Esta marca de tiempo se actualiza cuando VaultSync recibe un push silencioso de Cloud Relay.";
 "This will permanently discard the version from the other device." = "Esto descartará permanentemente la versión del otro dispositivo.";
 "This will permanently discard your local version." = "Esto descartará permanentemente tu versión local.";
-"Timed out" = "Sin respuesta";
+"Timed out" = "Tiempo agotado";
 "Timeline updates were rate-limited to keep activity readable." = "Las actualizaciones de la cronología se limitaron por frecuencia para mantener la actividad legible.";
-"Trigger Delivery" = "Entrega de activadores";
+"Wake-up Delivery" = "Entrega de señales de activación";
 "Trigger a vault rescan to refresh sync state." = "Inicia un reescaneo del Vault para actualizar el estado de sincronización.";
 "Troubleshooting" = "Resolución de problemas";
 "Unchanged line. %@" = "Línea sin cambios. %@";
@@ -311,7 +315,7 @@
 "VaultSync can no longer resolve the saved Obsidian folder permission. Reconnect the Obsidian directory to continue syncing." = "VaultSync ya no puede resolver el permiso guardado de la carpeta de Obsidian. Vuelve a conectar el directorio de Obsidian para seguir sincronizando.";
 "VaultSync cannot access the saved Obsidian folder anymore. Reconnect the Obsidian directory to continue syncing." = "VaultSync ya no puede acceder a la carpeta de Obsidian guardada. Vuelve a conectar el directorio de Obsidian para seguir sincronizando.";
 "VaultSync cannot access this folder%@." = "VaultSync no puede acceder a esta carpeta%@.";
-"VaultSync cannot read this folder. Reopen the picker and select \"On My iPhone\" -> \"Obsidian\"." = "VaultSync no puede leer esta carpeta. Vuelve a abrir el selector y elige \"En mi iPhone\" -> \"Obsidian\".";
+"VaultSync cannot read this folder. Reopen the picker and select \"On My iPhone\" → \"Obsidian\"." = "VaultSync no puede leer esta carpeta. Vuelve a abrir el selector y elige \"En mi iPhone\" → \"Obsidian\".";
 "VaultSync cannot talk to Syncthing right now." = "VaultSync no puede comunicarse con Syncthing en este momento.";
 "VaultSync could not complete the request due to a network issue." = "VaultSync no pudo completar la solicitud debido a un problema de red.";
 "VaultSync could not reach the Cloud Relay service." = "VaultSync no pudo acceder al servicio de Cloud Relay.";
@@ -349,6 +353,7 @@
 "VaultSync cannot access your local Obsidian folder." = "VaultSync no puede acceder a tu carpeta local de Obsidian.";
 "Connect your Obsidian folder from the VaultSync home screen." = "Conecta tu carpeta de Obsidian desde la pantalla de inicio de VaultSync.";
 "Computer or server added" = "Ordenador o servidor añadido";
+"Your first sync is done. Cloud Relay wakes this iPhone the moment your notes change — even while the app is closed." = "Tu primera sincronización está lista. Cloud Relay envía una señal de activación a este iPhone en cuanto cambian tus notas, incluso con la app cerrada.";
 "Your iPhone is paired with at least one Syncthing device." = "Tu iPhone está emparejado con al menos un dispositivo de Syncthing.";
 "Your iPhone is not paired with a Syncthing device yet." = "Tu iPhone aún no está emparejado con ningún dispositivo de Syncthing.";
 "Add your computer or server from the Devices section on the home screen." = "Añade tu ordenador o servidor desde la sección Dispositivos en la pantalla de inicio.";
@@ -378,7 +383,7 @@
 "Always skip on this iPhone" = "Omitir siempre en este iPhone";
 "More actions" = "Más acciones";
 "Skipping enabled" = "Omisión activada";
-"'%@' and its conflict copies will no longer sync to this iPhone. You can undo this in Sync Filters." = "'%@' y sus copias de conflicto dejarán de sincronizarse en este iPhone. Puedes deshacerlo en Filtros de sincronización.";
+"'%@' and its conflict copies will no longer sync to this iPhone. You can undo this in Sync Filters." = "«%@» y sus copias de conflicto dejarán de sincronizarse en este iPhone. Puedes deshacerlo en Filtros de sincronización.";
 "1 existing conflict copy was removed." = "Se eliminó 1 copia de conflicto existente.";
 "%d existing conflict copies were removed." = "Se eliminaron %d copias de conflicto existentes.";
 "+ conflict copies" = "+ copias de conflicto";
@@ -455,7 +460,7 @@
 "Contributions are currently unavailable." = "Las contribuciones no están disponibles actualmente.";
 "Thank you!" = "¡Gracias!";
 "Your contribution means a lot and directly supports VaultSync development. Thank you!" = "Tu contribución significa mucho y apoya directamente el desarrollo de VaultSync. ¡Gracias!";
-"VaultSync is an independent, open-source app (MPL-2.0). A one-time contribution keeps it independent, ad-free, and moving forward. It unlocks nothing — VaultSync stays fully functional without it — and you can give as often as you like." = "VaultSync es una app independiente y de código abierto (MPL-2.0). Una contribución única la mantiene independiente, sin anuncios y en marcha. No desbloquea nada — VaultSync sigue siendo totalmente funcional sin ella — y puedes contribuir tantas veces como quieras.";
+"VaultSync is an independent, open-source app (MPL-2.0). A one-time contribution keeps it independent, ad-free, and moving forward — it unlocks nothing, and the app stays fully functional without it." = "VaultSync es una app independiente y de código abierto (MPL-2.0). Una contribución única la mantiene independiente, sin anuncios y en marcha: no desbloquea nada y la app sigue siendo totalmente funcional sin ella.";
 /* Cloud Relay price (localized via StoreKit) */
 "Cloud Relay — %@" = "Cloud Relay — %@";
 "Cloud Relay subscription" = "Suscripción a Cloud Relay";
@@ -476,7 +481,7 @@
 "Added lines come from the other device; removed lines are your version on this device." = "Las líneas añadidas provienen del otro dispositivo; las líneas eliminadas son tu versión en este dispositivo.";
 "(empty or unreadable)" = "(vacío o ilegible)";
 "a new name" = "un nombre nuevo";
-"Both versions were kept.\n\nYour local version remains as '%@'.\nThe other device's version was renamed to '%@'." = "Se conservaron ambas versiones.\n\nTu versión local permanece como '%@'.\nLa versión del otro dispositivo se renombró a '%@'.";
+"Both versions were kept.\n\nYour local version remains as '%@'.\nThe other device's version was renamed to '%@'." = "Se conservaron ambas versiones.\n\nTu versión local permanece como «%@».\nLa versión del otro dispositivo se renombró a «%@».";
 "%d conflicts" = "%d conflictos";
 "Your contribution is pending approval." = "Tu contribución está pendiente de aprobación.";
 "iOS did not provide a push token required for instant sync." = "iOS no proporcionó un token de push necesario para la sincronización instantánea.";
@@ -536,7 +541,7 @@
 "(%d%%)" = "(%d%%)";
 "Add your computer or server" = "Añade tu ordenador o servidor";
 "Add your server first" = "Añade primero tu servidor";
-"Best value" = "Mejor valor";
+"Best value" = "La mejor opción";
 "Cloud Relay wakes a specific device. Pair the computer or server that hosts your vault on the Devices tab, then come back to subscribe." = "Cloud Relay despierta un dispositivo concreto. Vincula en la pestaña «Dispositivos» el ordenador o servidor que aloja tu Vault y luego vuelve para suscribirte.";
 "Complete these steps right here. They light up green as you go — and you can always finish them later from the home screen." = "Completa estos pasos aquí mismo. Se iluminan en verde a medida que avanzas, y siempre puedes terminarlos más tarde desde la pantalla de inicio.";
 "Connect your Obsidian folder" = "Conecta tu carpeta de Obsidian";
@@ -580,7 +585,7 @@
 "Stops syncing this vault on this iPhone. The notes on your other devices are not affected." = "Detiene la sincronización de este Vault en este iPhone. Las notas en tus otros dispositivos no se ven afectadas.";
 
 /* Cloud Relay activation (lab → wave 1; es/zh-Hans need a native review) */
-"Could not accept share '%@'.\n\n%@" = "No se pudo aceptar el recurso compartido «%@».\n\n%@";
+"Could not accept share '%@'.\n\n%@" = "No se pudo aceptar la compartición «%@».\n\n%@";
 "Finish activating Cloud Relay" = "Termina de activar Cloud Relay";
 "You’re subscribed, but your server has never woken this iPhone. One step finishes setup." = "Estás suscrito, pero tu servidor nunca ha despertado este iPhone. Un paso completa la configuración.";
 "Opens Cloud Relay setup." = "Abre la configuración de Cloud Relay.";
@@ -590,12 +595,18 @@
 "Great" = "Genial";
 "No wake-up has arrived in a while. Make sure the helper is still running on the computer or server you keep on." = "Hace tiempo que no llega ninguna señal de activación. Asegúrate de que el asistente siga ejecutándose en el ordenador o servidor que mantienes encendido.";
 "Not active yet" = "Aún no activo";
-"You’re subscribed. Wake-ups start once the helper is running on the computer or server you keep on — finish setup below. This screen updates automatically the moment the first wake-up arrives." = "Estás suscrito. Las señales de activación comienzan cuando el asistente esté en marcha en el ordenador o servidor que mantienes encendido: completa la configuración abajo. Esta pantalla se actualiza automáticamente en cuanto llega la primera señal.";
+"You’re subscribed. Wake-ups start once the helper is running on the computer or server you keep on — finish setup below." = "Estás suscrito. Las señales de activación comienzan cuando el asistente esté en marcha en el ordenador o servidor que mantienes encendido: completa la configuración abajo.";
 "Relay reachable — but no wake-up has arrived recently. Check the helper is still running on your server." = "Relay accesible, pero últimamente no ha llegado ninguna señal de activación. Comprueba que el asistente siga ejecutándose en tu servidor.";
 "Relay reachable — but no wake-up delivered yet. Run the helper on your server." = "Relay accesible, pero aún no se ha entregado ninguna señal de activación. Ejecuta el asistente en tu servidor.";
 
 /* Cloud Relay setup — key-free server command (Phase 3 A+C) */
 "Step 1 — Run this on your server" = "Paso 1: Ejecuta esto en tu servidor";
-"No API key to copy — the helper reads it straight from Syncthing’s config.xml. Replace /PATH/TO/syncthing with your Syncthing config folder (often ~/.local/state/syncthing or ~/.config/syncthing). If you get a permission error, add -u <uid>:<gid> for the user that owns config.xml." = "No hay que copiar ninguna clave de API: el asistente la lee directamente del config.xml de Syncthing. Sustituye /PATH/TO/syncthing por tu carpeta de configuración de Syncthing (a menudo ~/.local/state/syncthing o ~/.config/syncthing). Si aparece un error de permisos, añade -u <uid>:<gid> para el usuario propietario de config.xml.";
+"No API key needed — the helper reads it from Syncthing’s config.xml. Replace /PATH/TO/syncthing with your Syncthing config folder (often ~/.local/state/syncthing or ~/.config/syncthing). Permission error? Add -u <uid>:<gid> for the user that owns config.xml." = "No necesitas ninguna clave de API: el asistente la lee directamente del config.xml de Syncthing. Sustituye /PATH/TO/syncthing por tu carpeta de configuración de Syncthing (a menudo ~/.local/state/syncthing o ~/.config/syncthing). ¿Error de permisos? Añade -u <uid>:<gid> para el usuario propietario de config.xml.";
 "Step 2 — It activates itself" = "Paso 2: Se activa solo";
-"That’s it. As soon as the helper starts, it wakes this iPhone once on its own — VaultSync flips to “Cloud Relay active” the moment that first wake-up arrives, with no change needed. After that, changes from your other devices wake the app in the background. Keep the helper running on a machine that stays on (your server or NAS)." = "Eso es todo. En cuanto el asistente arranca, despierta este iPhone una vez por sí solo: VaultSync cambia a «Cloud Relay activo» en cuanto llega esa primera señal de activación, sin necesidad de ningún cambio. A partir de ahí, los cambios de tus otros dispositivos despiertan la app en segundo plano. Mantén el asistente en funcionamiento en un equipo que permanezca encendido (tu servidor o NAS).";
+"That’s it — the helper wakes this iPhone once on its own, and VaultSync flips to “Cloud Relay active” as soon as that first wake-up arrives. From then on, changes from your other devices wake the app in the background. Keep the helper running on a machine that stays on (server or NAS)." = "Eso es todo: el asistente despierta este iPhone una vez por sí solo y VaultSync cambia a «Cloud Relay activo» en cuanto llega esa primera señal de activación. A partir de ahí, los cambios de tus otros dispositivos despiertan la app en segundo plano. Mantén el asistente en un equipo que permanezca encendido (servidor o NAS).";
+
+/* Relay diagnostics — delivery visibility (force-quit / Low Power education, 7-day counter) */
+"Wake-ups (Last 7 Days)" = "Señales de activación (últimos 7 días)";
+"Low Power Mode is on — iOS defers silent wake-ups until it is off or the iPhone is charging." = "El modo de bajo consumo está activado: iOS aplaza las señales de activación silenciosas hasta que se desactive o el iPhone se cargue.";
+"Keep VaultSync in the background: if you force-quit it from the app switcher, iOS stops delivering wake-ups until you open the app again." = "Mantén VaultSync en segundo plano: si la cierras desde el selector de aplicaciones, iOS dejará de entregar señales de activación hasta que vuelvas a abrir la app.";
+"Wake-ups went quiet. The most common cause is force-quitting VaultSync from the app switcher — iOS then blocks wake-ups until the next manual launch. Also check that the helper on your server is still running." = "Las señales de activación han dejado de llegar. La causa más común es cerrar VaultSync desde el selector de aplicaciones: iOS bloquea entonces las señales de activación hasta el siguiente inicio manual. Comprueba también que el asistente sigue ejecutándose en tu servidor.";

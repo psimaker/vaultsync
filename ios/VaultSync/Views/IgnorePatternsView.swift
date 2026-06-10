@@ -77,9 +77,9 @@ struct IgnorePatternsView: View {
     private var customSection: some View {
         Section(header: Text(L10n.tr("Custom patterns"))) {
             ForEach(customEntries, id: \.self) { entry in
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: VaultSpacing.xxs) {
                     Text(entry.original)
-                        .font(.system(.body, design: .monospaced))
+                        .font(.vaultMono(.body))
                     if entry.hasConflictGlob {
                         Text(L10n.tr("+ conflict copies"))
                             .font(.caption)
@@ -91,7 +91,7 @@ struct IgnorePatternsView: View {
 
             HStack {
                 TextField(L10n.tr("Add pattern (e.g. *.tmp)"), text: $newPattern)
-                    .font(.system(.body, design: .monospaced))
+                    .font(.vaultMono(.body))
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
                 Button(L10n.tr("Add")) { addCustom() }

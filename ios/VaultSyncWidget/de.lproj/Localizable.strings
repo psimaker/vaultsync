@@ -12,13 +12,13 @@
 
 // Fallback labels
 "widget_no_sync_yet" = "Noch kein Sync";
-"widget_waiting" = "Warten";
+"widget_waiting" = "Wartet";
 "widget_duration_unavailable" = "Dauer unbekannt";
 "widget_last_run_seconds" = "Letzter Lauf: %ds";
 "widget_files_tap_to_sync" = "%d Dateien • Zum Sync tippen";
 
 // Actions
-"widget_sync_now" = "Jetzt syncen";
+"widget_sync_now" = "Jetzt synchronisieren";
 
 // Widget gallery
 "VaultSync" = "VaultSync";

@@ -30,15 +30,15 @@ struct LineDiffView: View {
                         ForEach(diffLines) { line in
                             HStack(alignment: .top, spacing: 6) {
                                 Text(linePrefix(for: line.type))
-                                    .font(.system(.caption, design: .monospaced).weight(.semibold))
+                                    .font(.vaultMono(.caption, weight: .semibold))
                                     .foregroundStyle(foregroundColor(for: line.type))
                                     .accessibilityHidden(true)
                                 Text(line.text.isEmpty ? " " : line.text)
-                                    .font(.system(.caption, design: .monospaced))
+                                    .font(.vaultMono(.caption))
                                     .foregroundStyle(foregroundColor(for: line.type))
                             }
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 2)
+                            .padding(.horizontal, VaultSpacing.xs)
+                            .padding(.vertical, VaultSpacing.xxs)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(backgroundColor(for: line.type))
                             .accessibilityElement(children: .ignore)

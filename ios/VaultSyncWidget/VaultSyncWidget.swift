@@ -173,6 +173,10 @@ private struct VaultSyncWidgetEntryView: View {
                 if let lastSyncDate = entry.snapshot.lastSyncDate {
                     Text(lastSyncDate, style: .time)
                         .font(.title3.monospacedDigit())
+                        // Without a label VoiceOver reads a bare clock time with
+                        // no hint of what it refers to.
+                        .accessibilityLabel(VaultSyncWidgetL10n.tr("widget_last_sync"))
+                        .accessibilityValue(Text(lastSyncDate, style: .time))
                 } else {
                     Text(VaultSyncWidgetL10n.tr("widget_waiting"))
                         .font(.title3.weight(.semibold))

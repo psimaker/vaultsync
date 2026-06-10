@@ -40,9 +40,10 @@ struct QRScannerView: View {
     }
 
     private var permissionDeniedView: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: VaultSpacing.l) {
             Image(systemName: "camera.fill")
-                .font(.system(size: 48))
+                .font(.largeTitle)
+                .imageScale(.large)
                 .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
 
@@ -53,7 +54,7 @@ struct QRScannerView: View {
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-                .padding(.horizontal, 32)
+                .padding(.horizontal, VaultSpacing.xl)
 
             Button("Open Settings") {
                 if let url = URL(string: UIApplication.openSettingsURLString) {

@@ -61,6 +61,7 @@ If detection fails, set `SYNCTHING_CONFIG=/path/to/config.xml` and rerun.
 | `SYNCTHING_CONFIG_WAIT_SECONDS` | No | `60` | First boot: wait up to this many seconds for Syncthing to write `config.xml` before exiting. `0` disables the wait (fail fast). |
 | `DEBOUNCE_SECONDS` | No | `5` | Wait after the last event before triggering. Batches rapid changes into one push. |
 | `WATCHED_FOLDERS` | No | all | Comma-separated Syncthing folder IDs to watch. Empty = all. |
+| `STALE_RETRIGGER_SECONDS` | No | `21600` (6 h) | While a peer still needs data, re-send a wake-up on this cadence. Recovers phones that missed a push (APNs silent pushes expire after ~1 h) without waiting for the next vault change. `0` disables. |
 
 > **NAS users (the common footgun).** `config.xml` is mode `0600`, so the helper must run as the uid that owns it or it can't read the key (you'll get a clear permission error). The `1000` default fits the official `syncthing/syncthing` image; set `PUID`/`PGID` for others — linuxserver = `911`, Unraid = `99:100`, Synology runs as the `syncthing` user. Synology/QNAP also need `SYNCTHING_CONFIG` pointed at the real `config.xml`.
 

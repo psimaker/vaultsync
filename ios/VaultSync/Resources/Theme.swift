@@ -19,11 +19,15 @@ import UIKit
 #if canImport(UIKit)
 /// A Display-P3 color that resolves light/dark and optional increased-contrast
 /// variants from the active trait collection. Channels are 0–255 for legibility.
+/// The optional alphas produce muted *fills* (icon chips, decorative washes)
+/// without per-call-site `colorScheme == .dark ? … : …` opacity math.
 private func vaultColor(
     light: (CGFloat, CGFloat, CGFloat),
     dark: (CGFloat, CGFloat, CGFloat),
     lightHC: (CGFloat, CGFloat, CGFloat)? = nil,
-    darkHC: (CGFloat, CGFloat, CGFloat)? = nil
+    darkHC: (CGFloat, CGFloat, CGFloat)? = nil,
+    lightAlpha: CGFloat = 1,
+    darkAlpha: CGFloat = 1
 ) -> Color {
     Color(uiColor: UIColor { traits in
         let highContrast = traits.accessibilityContrast == .high
@@ -38,7 +42,7 @@ private func vaultColor(
             displayP3Red: channels.0 / 255,
             green: channels.1 / 255,
             blue: channels.2 / 255,
-            alpha: 1
+            alpha: traits.userInterfaceStyle == .dark ? darkAlpha : lightAlpha
         )
     })
 }
@@ -47,9 +51,12 @@ private func vaultColor(
     light: (CGFloat, CGFloat, CGFloat),
     dark: (CGFloat, CGFloat, CGFloat),
     lightHC: (CGFloat, CGFloat, CGFloat)? = nil,
-    darkHC: (CGFloat, CGFloat, CGFloat)? = nil
+    darkHC: (CGFloat, CGFloat, CGFloat)? = nil,
+    lightAlpha: CGFloat = 1,
+    darkAlpha: CGFloat = 1
 ) -> Color {
     Color(red: light.0 / 255, green: light.1 / 255, blue: light.2 / 255)
+        .opacity(lightAlpha)
 }
 #endif
 
@@ -76,6 +83,56 @@ extension Color {
         light: (38, 50, 56),        // #263238
         dark: (176, 190, 197)       // #B0BEC5 — readable as a muted accent in dark
     )
+
+    // Muted decorative fills. These retire the last of the hand-rolled
+    // `colorScheme == .dark ? 0.22 : 0.14` opacity math (onboarding chips, page
+    // dots, blurred background circles). Two emphasis levels per hue are enough.
+
+    /// Brand-accent wash for icon chips and selected decorations.
+    static let vaultAccentFill = vaultColor(
+        light: (0, 137, 123), dark: (38, 196, 176),
+        lightAlpha: 0.14, darkAlpha: 0.22
+    )
+    /// Fainter accent wash for large background decorations.
+    static let vaultAccentFillSubtle = vaultColor(
+        light: (0, 137, 123), dark: (38, 196, 176),
+        lightAlpha: 0.08, darkAlpha: 0.14
+    )
+    /// Neutral slate wash for inactive decorations (page dots, accent bars).
+    static let vaultSlateFill = vaultColor(
+        light: (38, 50, 56), dark: (176, 190, 197),
+        lightAlpha: 0.20, darkAlpha: 0.34
+    )
+    /// Fainter slate wash for large background decorations.
+    static let vaultSlateFillSubtle = vaultColor(
+        light: (38, 50, 56), dark: (176, 190, 197),
+        lightAlpha: 0.05, darkAlpha: 0.10
+    )
+
+    /// Hairline stroke for card borders — the system separator, tuned per scheme
+    /// so it reads on elevated cards in dark without dominating in light.
+    static let vaultHairline: Color = {
+        #if canImport(UIKit)
+        Color(uiColor: UIColor { traits in
+            UIColor.separator.withAlphaComponent(
+                traits.userInterfaceStyle == .dark ? 0.45 : 0.18
+            )
+        })
+        #else
+        Color.gray.opacity(0.18)
+        #endif
+    }()
+}
+
+// MARK: - Typography
+
+extension Font {
+    /// Monospaced rendering for genuine machine strings — Device IDs, paths,
+    /// `.stignore` globs, file contents. One call site to change instead of the
+    /// `.system(_, design: .monospaced)` literals that were scattered per view.
+    static func vaultMono(_ style: Font.TextStyle = .footnote, weight: Font.Weight = .regular) -> Font {
+        .system(style, design: .monospaced).weight(weight)
+    }
 }
 
 // MARK: - Semantic status palette
@@ -106,6 +163,7 @@ extension Color {
 
 /// 8pt soft grid. Replaces the 14-value padding literal soup.
 enum VaultSpacing {
+    static let xxs: CGFloat = 2
     static let xs: CGFloat = 4
     static let s: CGFloat = 8
     static let m: CGFloat = 12

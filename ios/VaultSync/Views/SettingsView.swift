@@ -6,6 +6,10 @@ struct SettingsView: View {
     let syncthingManager: SyncthingManager
     var vaultManager: VaultManager
     var subscriptionManager: SubscriptionManager
+    /// Routes a tapped checklist remediation to its in-app action. The host
+    /// (ContentView) owns the folder picker, the add-device sheet, and the tab
+    /// selection, so the action must travel up through this sheet.
+    var onChecklistAction: ((SetupChecklistViewModel.ChecklistAction) -> Void)? = nil
 
     @State private var showSetupStatus = false
     @State private var tipJar = TipJarManager()
@@ -80,9 +84,19 @@ struct SettingsView: View {
                                 syncthingManager: syncthingManager,
                                 vaultManager: vaultManager,
                                 subscriptionManager: subscriptionManager
-                            )
+                            ),
+                            onAction: onChecklistAction.map { handler in
+                                { action in
+                                    // Collapse both sheets first; the host delays
+                                    // its own presentation until the dismissal
+                                    // transition has finished.
+                                    showSetupStatus = false
+                                    dismiss()
+                                    handler(action)
+                                }
+                            }
                         )
-                        .padding(16)
+                        .padding(VaultSpacing.l)
                     }
                     .navigationTitle(L10n.tr("Setup Status"))
                     .navigationBarTitleDisplayMode(.inline)
@@ -175,7 +189,7 @@ struct SettingsView: View {
         } header: {
             Text(L10n.tr("Support VaultSync"))
         } footer: {
-            Text(L10n.tr("VaultSync is an independent, open-source app (MPL-2.0). A one-time contribution keeps it independent, ad-free, and moving forward. It unlocks nothing — VaultSync stays fully functional without it — and you can give as often as you like."))
+            Text(L10n.tr("VaultSync is an independent, open-source app (MPL-2.0). A one-time contribution keeps it independent, ad-free, and moving forward — it unlocks nothing, and the app stays fully functional without it."))
         }
     }
 

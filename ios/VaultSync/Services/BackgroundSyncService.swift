@@ -24,6 +24,7 @@ enum BackgroundSyncService {
 
     static let appRefreshIdentifier = "eu.vaultsync.app.sync-refresh"
     static let continuedProcessingIdentifier = "eu.vaultsync.app.sync-continued"
+    static let processingIdentifier = "eu.vaultsync.app.sync-processing"
 
     /// Shared lock coordinating Syncthing bridge start/stop across foreground and background.
     static let lifecycleLock = OSAllocatedUnfairLock(initialState: SyncLifecycleState())
@@ -61,6 +62,7 @@ enum BackgroundSyncService {
     /// Written once during app launch, read-only afterwards — safe without synchronization.
     nonisolated(unsafe) private(set) static var appRefreshRegistered = false
     nonisolated(unsafe) private(set) static var continuedProcessingRegistered = false
+    nonisolated(unsafe) private(set) static var processingRegistered = false
     private static let lastSyncOutcomeStorageKey = "background-sync-last-outcome-v1"
     static let lastSyncOutcomeDidChangeNotification = Notification.Name("BackgroundSyncLastOutcomeDidChange")
 
@@ -106,6 +108,21 @@ enum BackgroundSyncService {
             logger.warning("Failed to register app refresh task — background refresh unavailable")
         }
 
+        let processingHandler: @Sendable (BGTask) -> Void = { task in
+            guard let processingTask = task as? BGProcessingTask else { return }
+            let wrapped = UnsafeSendable(value: processingTask)
+            Task { await handleProcessing(task: wrapped.value) }
+        }
+        processingRegistered = BGTaskScheduler.shared.register(
+            forTaskWithIdentifier: processingIdentifier,
+            using: nil,
+            launchHandler: processingHandler
+        )
+
+        if !processingRegistered {
+            logger.warning("Failed to register processing task — overnight catch-up sync unavailable")
+        }
+
         if #available(iOS 26.0, *) {
             let continuedHandler: @Sendable (BGTask) -> Void = { task in
                 guard let processingTask = task as? BGContinuedProcessingTask else { return }
@@ -125,7 +142,7 @@ enum BackgroundSyncService {
             logger.warning("Failed to register continued processing task — continued processing unavailable (expected in Simulator)")
         }
 
-        logger.info("Background task registration complete (refresh=\(appRefreshRegistered), continued=\(continuedProcessingRegistered))")
+        logger.info("Background task registration complete (refresh=\(appRefreshRegistered), processing=\(processingRegistered), continued=\(continuedProcessingRegistered))")
     }
 
     // MARK: - Lifecycle lock / background assertion
@@ -209,6 +226,34 @@ enum BackgroundSyncService {
         }
     }
 
+    /// Schedule the overnight catch-up sync. iOS runs it when conditions are
+    /// right — typically while charging at night — with a multi-minute budget,
+    /// unlike the ~30s BGAppRefreshTask. This is the safety net for catch-ups
+    /// too large for the refresh/silent-push budget.
+    @MainActor
+    static func scheduleProcessing() {
+        guard processingRegistered else { return }
+
+        let hasAccess = BookmarkService.resolveBookmark(identifier: "obsidian-root") != nil
+        guard hasAccess else {
+            logger.info("No Obsidian directory configured, skipping processing schedule")
+            return
+        }
+
+        let request = BGProcessingTaskRequest(identifier: processingIdentifier)
+        request.requiresNetworkConnectivity = true
+        // Charger-time only: the long catch-up must never cost battery.
+        request.requiresExternalPower = true
+        request.earliestBeginDate = Date(timeIntervalSinceNow: 60 * 60)
+
+        do {
+            try BGTaskScheduler.shared.submit(request)
+            logger.info("Processing task scheduled")
+        } catch {
+            logger.error("Could not schedule processing task: \(error)")
+        }
+    }
+
     /// Submit continued processing for active sync. Call from foreground only.
     @MainActor
     static func submitContinuedProcessing() {
@@ -218,7 +263,7 @@ enum BackgroundSyncService {
             let request = BGContinuedProcessingTaskRequest(
                 identifier: continuedProcessingIdentifier,
                 title: L10n.tr("Syncing Vault"),
-                subtitle: L10n.tr("Synchronizing your Obsidian vault...")
+                subtitle: L10n.tr("Synchronizing your Obsidian vault…")
             )
 
             do {
@@ -742,6 +787,33 @@ enum BackgroundSyncService {
         }
 
         let result = await performBackgroundSync(reason: "app-refresh")
+        task.setTaskCompleted(success: result.isSuccessful)
+    }
+
+    // MARK: - BGProcessingTask Handler
+
+    /// Overnight catch-up: the same sync cycle as app refresh, but with the
+    /// multi-minute budget BGProcessingTask grants (charging + network
+    /// required). If iOS expires the task before our own deadline, the
+    /// expiration handler stops the bridge and the wait loop exits on
+    /// isRunning() == false.
+    private static func handleProcessing(task: BGProcessingTask) async {
+        logger.info("Background processing starting")
+        await MainActor.run {
+            scheduleProcessing()
+        }
+
+        task.expirationHandler = {
+            let shouldStop = lifecycleLock.withLock { !$0.foregroundActive }
+            if shouldStop {
+                SyncBridgeService.stopSyncthing()
+                logger.info("Background processing expired — Syncthing stopped")
+            } else {
+                logger.info("Background processing expired — skipped stop (foreground active)")
+            }
+        }
+
+        let result = await performBackgroundSync(reason: "processing", maxDuration: 180)
         task.setTaskCompleted(success: result.isSuccessful)
     }
 

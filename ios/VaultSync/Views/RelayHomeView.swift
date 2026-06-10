@@ -48,7 +48,7 @@ struct RelayHomeView: View {
         Section {
             VStack(alignment: .leading, spacing: VaultSpacing.m) {
                 Image(systemName: "antenna.radiowaves.left.and.right")
-                    .font(.system(size: 34))
+                    .font(.largeTitle)
                     .foregroundStyle(Color.vaultAccent)
                     .accessibilityHidden(true)
 
@@ -146,7 +146,7 @@ struct RelayHomeView: View {
                     // doesn't poll). Updates by itself once the first wake-up lands.
                     StatusBadge(.attention, text: L10n.tr("Not active yet"))
                         .font(.headline)
-                    Text(L10n.tr("You’re subscribed. Wake-ups start once the helper is running on the computer or server you keep on — finish setup below. This screen updates automatically the moment the first wake-up arrives."))
+                    Text(L10n.tr("You’re subscribed. Wake-ups start once the helper is running on the computer or server you keep on — finish setup below."))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)

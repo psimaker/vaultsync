@@ -7,6 +7,7 @@ struct RelayDiagnosticsView: View {
 
     @State private var diagnosticsInFlight = false
     @State private var retryProvisioningInFlight = false
+    @State private var lowPowerModeEnabled = ProcessInfo.processInfo.isLowPowerModeEnabled
     var body: some View {
         List {
             relayHealthSection
@@ -22,6 +23,9 @@ struct RelayDiagnosticsView: View {
             if subscriptionManager.relayHealthResult == nil {
                 await runDiagnostics()
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)) { _ in
+            lowPowerModeEnabled = ProcessInfo.processInfo.isLowPowerModeEnabled
         }
     }
 
@@ -92,7 +96,7 @@ struct RelayDiagnosticsView: View {
 
             if let message = subscriptionManager.relayHealthResult?.message,
                !(subscriptionManager.relayHealthResult?.isHealthy ?? true) {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: VaultSpacing.xxs) {
                     Text(message)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -104,7 +108,7 @@ struct RelayDiagnosticsView: View {
             }
 
             if let relayError = subscriptionManager.lastRelayError {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: VaultSpacing.xs) {
                     Text("Last Relay Error")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(Color.statusError)
@@ -124,7 +128,7 @@ struct RelayDiagnosticsView: View {
                             .font(.caption2)
                     }
                 }
-                .padding(.vertical, 2)
+                .padding(.vertical, VaultSpacing.xxs)
             } else {
                 Text("No relay errors recorded.")
                     .font(.caption)
@@ -184,7 +188,7 @@ struct RelayDiagnosticsView: View {
             }
 
             if case .failed(let reason) = subscriptionManager.apnsRegistrationStatus {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: VaultSpacing.xxs) {
                     Text(reason)
                         .font(.caption)
                         .foregroundStyle(Color.statusError)
@@ -214,9 +218,9 @@ struct RelayDiagnosticsView: View {
             } else {
                 ForEach(syncthingManager.devices) { device in
                     let status = subscriptionManager.relayProvisionStatuses[device.deviceID] ?? .notAttempted
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: VaultSpacing.xs) {
                         HStack {
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: VaultSpacing.xxs) {
                                 Text(device.name.isEmpty ? device.deviceID : device.name)
                                     .font(.subheadline)
                                 Text(device.deviceID)
@@ -242,16 +246,16 @@ struct RelayDiagnosticsView: View {
                             }
                         }
                     }
-                    .padding(.vertical, 2)
+                    .padding(.vertical, VaultSpacing.xxs)
                 }
             }
         }
     }
 
     private var triggerSection: some View {
-        Section("Trigger Delivery") {
+        Section("Wake-up Delivery") {
             HStack {
-                Label("Last Trigger Received", systemImage: "bolt.badge.clock")
+                Label("Last Wake-up Received", systemImage: "bolt.badge.clock")
                 Spacer()
                 if let lastTrigger = subscriptionManager.lastRelayTriggerReceivedAt {
                     Text(lastTrigger, style: .relative)
@@ -263,7 +267,25 @@ struct RelayDiagnosticsView: View {
             }
             .accessibilityElement(children: .combine)
 
+            HStack {
+                Label(L10n.tr("Wake-ups (Last 7 Days)"), systemImage: "bolt.circle")
+                Spacer()
+                Text("\(subscriptionManager.relayWakeupsLast7Days)")
+                    .foregroundStyle(subscriptionManager.relayWakeupsLast7Days > 0 ? .primary : .secondary)
+            }
+            .accessibilityElement(children: .combine)
+
             Text("This timestamp is updated when VaultSync receives a silent push from Cloud Relay.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if lowPowerModeEnabled {
+                Label(L10n.tr("Low Power Mode is on — iOS defers silent wake-ups until it is off or the iPhone is charging."), systemImage: "battery.25percent")
+                    .font(.caption)
+                    .foregroundStyle(Color.statusAttention)
+            }
+
+            Text(L10n.tr("Keep VaultSync in the background: if you force-quit it from the app switcher, iOS stops delivering wake-ups until you open the app again."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -372,7 +394,20 @@ struct RelayDiagnosticsView: View {
         }
 
         if subscriptionManager.isRelaySubscribed, subscriptionManager.lastRelayTriggerReceivedAt == nil {
-            hints.append(L10n.tr("No relay trigger has been received yet. Verify your homeserver `vaultsync-notify` container is running and can reach relay.vaultsync.eu."))
+            hints.append(L10n.tr("No wake-up has been received yet. Check that the vaultsync-notify helper is running on your server and can reach relay.vaultsync.eu."))
+        }
+
+        if lowPowerModeEnabled {
+            hints.append(L10n.tr("Low Power Mode is on — iOS defers silent wake-ups until it is off or the iPhone is charging."))
+        }
+
+        // Delivered before, but nothing within the freshness window: the most
+        // common cause by far is a force-quit (iOS then drops silent pushes on
+        // the floor until the next manual launch), not a broken helper.
+        if subscriptionManager.isRelaySubscribed,
+           subscriptionManager.lastRelayTriggerReceivedAt != nil,
+           !subscriptionManager.relayDeliveryConfirmed {
+            hints.append(L10n.tr("Wake-ups went quiet. The most common cause is force-quitting VaultSync from the app switcher — iOS then blocks wake-ups until the next manual launch. Also check that the helper on your server is still running."))
         }
 
         return hints
