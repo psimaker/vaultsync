@@ -67,21 +67,15 @@ Without it, VaultSync syncs server changes when you open the app. **With it, you
 ### Turn it on — about 2 minutes
 
 1. **Subscribe** in the app (monthly or yearly, at your local App Store price).
-2. After you subscribe, VaultSync shows the command below with a **Copy** button — copy it.
-3. **Change one thing** (the folder path), then **run it on the computer or NAS that runs Syncthing** — paste it into a terminal there.
+2. **Run one line on the computer or NAS that runs Syncthing** (the app shows it with a **Copy** button after you subscribe):
 
 ```bash
-docker run -d --name vaultsync-notify --restart unless-stopped \
-  --network host \
-  -v /PATH/TO/syncthing:/config:ro \
-  -e SYNCTHING_CONFIG=/config/config.xml \
-  -e RELAY_URL=https://relay.vaultsync.eu \
-  ghcr.io/psimaker/vaultsync-notify:latest
+curl -fsSL https://vaultsync.eu/notify.sh | sh
 ```
 
-> 👉 **The only edit:** replace `/PATH/TO/syncthing` with your Syncthing config folder — usually `~/.local/state/syncthing` or `~/.config/syncthing`. There's **no API key to copy.**
+> 👉 **Nothing to edit, no API key to copy.** The installer finds your Syncthing config, sets the right permissions, and starts the helper — via Docker when available, otherwise as a system service from a [prebuilt binary](notify/README.md#-prebuilt-binaries). Skeptical of `curl | sh`? Append `-s -- --dry-run` to preview every action without changing anything, or read [the script](notify/scripts/install.sh) first.
 
-Done — the helper wakes your iPhone once on startup and VaultSync flips to **Cloud Relay active** by itself; sending edits *from* your iPhone stays most reliable with the app open. The relay only ever sees the Device ID and push token needed to route a wake-up — never your notes, file or folder names, or vault structure ([PRIVACY.md](PRIVACY.md)). On a NAS or prefer Docker Compose? The [full guide](notify/README.md) covers both.
+Done — the helper wakes your iPhone once on startup and VaultSync flips to **Cloud Relay active** by itself; sending edits *from* your iPhone stays most reliable with the app open. The relay only ever sees the Device ID and push token needed to route a wake-up — never your notes, file or folder names, or vault structure ([PRIVACY.md](PRIVACY.md)). Prefer Docker Compose or a manual `docker run`? The [full guide](notify/README.md) covers them all.
 
 ---
 
