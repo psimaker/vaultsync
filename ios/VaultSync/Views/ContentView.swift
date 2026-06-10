@@ -7,6 +7,7 @@ struct ContentView: View {
     @State private var showAddDevice = false
     @State private var showSettings = false
     @State private var showObsidianPicker = false
+    @State private var pendingChecklistAction: SetupChecklistViewModel.ChecklistAction?
     @State private var alertMessage: String?
     @State private var showAlert = false
     @State private var pendingShareFailures: [String: SyncUserError] = [:]
@@ -79,7 +80,7 @@ struct ContentView: View {
                 showAlert = true
             }
         }
-        .sheet(isPresented: $showSettings) {
+        .sheet(isPresented: $showSettings, onDismiss: runPendingChecklistAction) {
             SettingsView(
                 syncthingManager: syncthingManager,
                 vaultManager: vaultManager,
@@ -227,20 +228,25 @@ struct ContentView: View {
 
     // MARK: - Checklist Actions
 
-    /// Route a tapped checklist remediation to its in-app action. The settings
-    /// sheet is dismissing when this fires, so presenting the next sheet must
-    /// wait for that transition — presenting during it gets silently dropped.
+    /// Remember a tapped checklist remediation. The settings sheet is
+    /// dismissing when this fires, and presenting the next sheet during that
+    /// transition gets silently dropped — so the action runs from the sheet's
+    /// `onDismiss`, which fires only after the transition has fully completed
+    /// (no timing guess).
     private func handleChecklistAction(_ action: SetupChecklistViewModel.ChecklistAction) {
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(450))
-            switch action {
-            case .connectObsidian:
-                showObsidianPicker = true
-            case .addDevice:
-                showAddDevice = true
-            case .openRelayTab:
-                selectedTab = .relay
-            }
+        pendingChecklistAction = action
+    }
+
+    private func runPendingChecklistAction() {
+        guard let action = pendingChecklistAction else { return }
+        pendingChecklistAction = nil
+        switch action {
+        case .connectObsidian:
+            showObsidianPicker = true
+        case .addDevice:
+            showAddDevice = true
+        case .openRelayTab:
+            selectedTab = .relay
         }
     }
 
