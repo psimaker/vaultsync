@@ -20,7 +20,7 @@ VaultSync embeds Syncthing's Go reference implementation as an iOS library via g
 ## 🔄 Sync strategy
 
 - **Foreground** — Syncthing runs unrestricted: immediate, continuous sync.
-- **Background** — `BGAppRefreshTask` (requested ~15 min out; iOS decides the actual timing) + `BGContinuedProcessingTask` (iOS 26+, longer runtime for user-initiated tasks). A ~30s grace window after backgrounding lets in-flight work finish.
+- **Background** — `BGAppRefreshTask` (requested ~15 min out; iOS decides the actual timing) + `BGProcessingTask` (overnight catch-up: multi-minute budget while charging with network) + `BGContinuedProcessingTask` (iOS 26+, longer runtime for user-initiated tasks). A ~30s grace window after backgrounding lets in-flight work finish.
 - **Push (Cloud Relay)** — optional. Near-realtime `server → iPhone` wake-ups via APNs silent push. See [relay-spec.md](relay-spec.md).
 
 VaultSync is intentionally **asymmetric**:

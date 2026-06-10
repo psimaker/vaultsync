@@ -72,6 +72,7 @@ targets:
         BGTaskSchedulerPermittedIdentifiers:
           - eu.vaultsync.app.sync-refresh
           - eu.vaultsync.app.sync-continued
+          - eu.vaultsync.app.sync-processing
         NSCameraUsageDescription: "VaultSync uses the camera to scan Syncthing device QR codes for easy setup."
         # NOTE: NSAppTransportSecurity is deliberately NOT set, so shipping (Release)
         # builds keep the strictest ATS posture. The production app only talks HTTPS to
