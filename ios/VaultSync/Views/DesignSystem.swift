@@ -43,6 +43,26 @@ struct StatusBadge: View {
     }
 }
 
+/// A compact capsule tag for counts and short state words — conflict counts,
+/// "Save N%", "Ready"/"Needs Attention". One look for the three capsule badges
+/// that were hand-rolled with divergent paddings and opacities.
+struct StatusTag: View {
+    let text: String
+    var tint: Color = .statusAttention
+    /// High emphasis: solid tint capsule. The text uses `systemBackground` so it
+    /// stays readable on the lifted dark-mode tints (instead of hardcoded white).
+    var filled: Bool = false
+
+    var body: some View {
+        Text(text)
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(filled ? Color(.systemBackground) : tint)
+            .padding(.horizontal, VaultSpacing.s)
+            .padding(.vertical, VaultSpacing.xxs)
+            .background(filled ? tint : tint.opacity(0.15), in: Capsule())
+    }
+}
+
 /// A list row: leading status glyph, primary title, optional secondary line, and
 /// optional trailing content. Replaces the title+caption `VStack(spacing: 2)` that
 /// was copy-pasted across five views.
@@ -51,6 +71,9 @@ struct StatusRow<Trailing: View>: View {
     var subtitle: String?
     var status: SyncStatus?
     var systemImage: String?
+    /// Optional glyph-color override for the rare row whose color isn't carried
+    /// by a `SyncStatus` (e.g. a neutral "unknown" placeholder).
+    var glyphTint: Color?
     @ViewBuilder var trailing: () -> Trailing
 
     init(
@@ -58,12 +81,14 @@ struct StatusRow<Trailing: View>: View {
         subtitle: String? = nil,
         status: SyncStatus? = nil,
         systemImage: String? = nil,
+        glyphTint: Color? = nil,
         @ViewBuilder trailing: @escaping () -> Trailing = { EmptyView() }
     ) {
         self.title = title
         self.subtitle = subtitle
         self.status = status
         self.systemImage = systemImage
+        self.glyphTint = glyphTint
         self.trailing = trailing
     }
 
@@ -74,7 +99,7 @@ struct StatusRow<Trailing: View>: View {
             if let glyph {
                 Image(systemName: glyph)
                     .font(.title3)
-                    .foregroundStyle(status?.tint ?? Color.vaultAccent)
+                    .foregroundStyle(glyphTint ?? status?.tint ?? Color.vaultAccent)
                     .frame(width: 28)
                     .accessibilityHidden(true)
             }
@@ -107,7 +132,7 @@ struct DetailRow: View {
                 .foregroundStyle(.secondary)
             Spacer(minLength: VaultSpacing.s)
             Text(value)
-                .font(monospacedValue ? .system(.body, design: .monospaced) : .body)
+                .font(monospacedValue ? .vaultMono(.body) : .body)
                 .multilineTextAlignment(.trailing)
         }
         .font(.subheadline)
@@ -177,7 +202,7 @@ struct MonoField: View {
         } label: {
             HStack(alignment: .top, spacing: VaultSpacing.s) {
                 Text(text)
-                    .font(.system(.footnote, design: .monospaced))
+                    .font(.vaultMono(.footnote))
                     .lineLimit(3)
                     .truncationMode(.middle)
                     .frame(maxWidth: .infinity, alignment: .leading)
