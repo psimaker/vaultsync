@@ -253,9 +253,9 @@ struct RelayDiagnosticsView: View {
     }
 
     private var triggerSection: some View {
-        Section("Trigger Delivery") {
+        Section("Wake-up Delivery") {
             HStack {
-                Label("Last Trigger Received", systemImage: "bolt.badge.clock")
+                Label("Last Wake-up Received", systemImage: "bolt.badge.clock")
                 Spacer()
                 if let lastTrigger = subscriptionManager.lastRelayTriggerReceivedAt {
                     Text(lastTrigger, style: .relative)
@@ -394,7 +394,7 @@ struct RelayDiagnosticsView: View {
         }
 
         if subscriptionManager.isRelaySubscribed, subscriptionManager.lastRelayTriggerReceivedAt == nil {
-            hints.append(L10n.tr("No relay trigger has been received yet. Verify your homeserver `vaultsync-notify` container is running and can reach relay.vaultsync.eu."))
+            hints.append(L10n.tr("No wake-up has been received yet. Check that the vaultsync-notify helper is running on your server and can reach relay.vaultsync.eu."))
         }
 
         if lowPowerModeEnabled {

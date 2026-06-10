@@ -70,7 +70,7 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
                 category: .permission,
                 title: L10n.tr("Permission Required"),
                 message: L10n.tr("VaultSync does not have the required permission for this action."),
-                remediation: L10n.tr("Open iOS Settings -> VaultSync and check that all permissions are enabled, then retry."),
+                remediation: L10n.tr("Open iOS Settings → VaultSync and check that all permissions are enabled, then retry."),
                 technicalDetails: rawMessage
             )
         }
@@ -197,7 +197,7 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
             category: .permission,
             title: L10n.tr("Push Registration Failed"),
             message: L10n.tr("iOS did not provide a push token required for instant sync."),
-            remediation: L10n.tr("Enable notifications for VaultSync in iOS Settings -> Notifications -> VaultSync, then restart the app."),
+            remediation: L10n.tr("Enable notifications for VaultSync in iOS Settings → Notifications → VaultSync, then restart the app."),
             technicalDetails: reason
         )
     }

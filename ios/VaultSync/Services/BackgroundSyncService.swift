@@ -263,7 +263,7 @@ enum BackgroundSyncService {
             let request = BGContinuedProcessingTaskRequest(
                 identifier: continuedProcessingIdentifier,
                 title: L10n.tr("Syncing Vault"),
-                subtitle: L10n.tr("Synchronizing your Obsidian vault...")
+                subtitle: L10n.tr("Synchronizing your Obsidian vault…")
             )
 
             do {

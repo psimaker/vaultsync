@@ -1,5 +1,5 @@
 "About" = "关于";
-"Accept First Pending Share" = "接受待处理共享";
+"Accept First Pending Share" = "接受第一个待处理共享";
 "Accept Share" = "接受共享";
 "Accept a share to activate syncing for that vault." = "接受一个共享以激活该 Vault 的同步。";
 "Actions" = "操作";
@@ -67,7 +67,7 @@
 "Disconnected" = "已断开";
 "Done" = "完成";
 "Empty line" = "空行";
-"Enable notifications for VaultSync in iOS Settings -> Notifications -> VaultSync, then restart the app." = "请在 iOS 设置 -> 通知 -> VaultSync 中启用通知，然后重新启动应用。";
+"Enable notifications for VaultSync in iOS Settings → Notifications → VaultSync, then restart the app." = "请在 iOS 设置 → 通知 → VaultSync 中启用通知，然后重新启动应用。";
 "Error" = "错误";
 "Failed" = "失败";
 "Failed to save access permission: %@" = "保存访问权限失败：%@";
@@ -107,7 +107,7 @@
 "Last Failure" = "上次失败";
 "Last Relay Error" = "上次 Relay 错误";
 "Last Success" = "上次成功";
-"Last Trigger Received" = "上次收到触发";
+"Last Wake-up Received" = "上次收到唤醒信号";
 "Last Update" = "上次更新";
 "Last successful sync was about %d %@ ago." = "上次成功同步约在 %d %@ 前。";
 "Last successful sync was more than %d %@ ago." = "距离上次成功同步已超过 %d %@。";
@@ -131,7 +131,7 @@
 "No home server devices available for relay provisioning." = "没有可用于 Relay 配置的家庭服务器设备。";
 "No immediate relay problems detected." = "目前未检测到 Relay 问题。";
 "No relay errors recorded." = "未记录到 Relay 错误。";
-"No relay trigger has been received yet. Verify your homeserver `vaultsync-notify` container is running and can reach relay.vaultsync.eu." = "尚未收到 Relay 触发。请确认你的 homeserver `vaultsync-notify` 容器正在运行并且能够访问 relay.vaultsync.eu。";
+"No wake-up has been received yet. Check that the vaultsync-notify helper is running on your server and can reach relay.vaultsync.eu." = "尚未收到唤醒信号。请确认 vaultsync-notify 助手正在你的服务器上运行，并且能够访问 relay.vaultsync.eu。";
 "No successful sync has been recorded for your vaults yet." = "你的 Vault 尚未记录到成功同步。";
 "No vaults found" = "未找到 Vault";
 "Not Configured" = "未配置";
@@ -152,7 +152,7 @@
 "Open conflicts and choose which version to keep." = "打开冲突并选择要保留的版本。";
 "Open full relay troubleshooting" = "打开完整 Relay 故障排查";
 "Open iOS Notification Settings" = "打开 iOS 通知设置";
-"Open iOS Settings -> VaultSync and check that all permissions are enabled, then retry." = "打开 iOS 设置 -> VaultSync，检查所有权限都已启用，然后重试。";
+"Open iOS Settings → VaultSync and check that all permissions are enabled, then retry." = "打开 iOS 设置 → VaultSync，检查所有权限都已启用，然后重试。";
 "Open the folder picker again and select your Obsidian directory." = "重新打开文件夹选择器并选择你的 Obsidian 目录。";
 "Opens discovery, relay, and notification settings." = "打开发现、Relay 和通知设置。";
 "Opens the form to add a Syncthing device." = "打开添加 Syncthing 设备的表单。";
@@ -164,7 +164,7 @@
 "Pending shares are waiting to be accepted before sync can start." = "待处理共享需要先被接受，同步才能开始。";
 "Per-Device Provisioning" = "按设备配置";
 "Permission Required" = "需要权限";
-"Please select a folder. In the picker choose \"On My iPhone\" -> \"Obsidian\"." = "请选择一个文件夹。在选择器中选择“在我的 iPhone 上” -> “Obsidian”。";
+"Please select a folder. In the picker choose \"On My iPhone\" → \"Obsidian\"." = "请选择一个文件夹。在选择器中选择“在我的 iPhone 上” → “Obsidian”。";
 "Privacy Policy" = "隐私政策";
 "Provisioned" = "已配置";
 "Push Registration" = "推送注册";
@@ -269,7 +269,7 @@
 "Sync completed in %@" = "%@ 中的同步已完成";
 "Sync error in %@" = "%@ 中发生同步错误";
 "Sync started in %@" = "%@ 中开始同步";
-"Synchronizing your Obsidian vault..." = "正在同步你的 Obsidian Vault...";
+"Synchronizing your Obsidian vault…" = "正在同步你的 Obsidian Vault…";
 "Syncing" = "同步中";
 "Syncing Vault" = "正在同步 Vault";
 "Syncing…" = "同步中…";
@@ -286,13 +286,13 @@
 "The folder path no longer exists%@." = "该文件夹路径已不存在%@。";
 "The folder scan finished successfully." = "文件夹扫描已成功完成。";
 "This Device" = "此设备";
-"This folder does not look like your Obsidian directory yet. In the picker choose \"On My iPhone\" -> \"Obsidian\"." = "这个文件夹目前看起来还不像你的 Obsidian 目录。请在选择器中选择“在我的 iPhone 上” -> “Obsidian”。";
+"This folder does not look like your Obsidian directory yet. In the picker choose \"On My iPhone\" → \"Obsidian\"." = "这个文件夹目前看起来还不像你的 Obsidian 目录。请在选择器中选择“在我的 iPhone 上” → “Obsidian”。";
 "This timestamp is updated when VaultSync receives a silent push from Cloud Relay." = "当 VaultSync 收到来自 Cloud Relay 的静默推送时，此时间戳会更新。";
 "This will permanently discard the version from the other device." = "这将永久丢弃另一台设备上的版本。";
 "This will permanently discard your local version." = "这将永久丢弃你的本地版本。";
 "Timed out" = "超时";
 "Timeline updates were rate-limited to keep activity readable." = "为了保持活动记录可读，时间线更新已被限流。";
-"Trigger Delivery" = "触发投递";
+"Wake-up Delivery" = "唤醒信号投递";
 "Trigger a vault rescan to refresh sync state." = "触发一次 Vault 重新扫描以刷新同步状态。";
 "Troubleshooting" = "故障排查";
 "Unchanged line. %@" = "未更改行。%@";
@@ -311,7 +311,7 @@
 "VaultSync can no longer resolve the saved Obsidian folder permission. Reconnect the Obsidian directory to continue syncing." = "VaultSync 已无法解析已保存的 Obsidian 文件夹权限。请重新连接 Obsidian 目录以继续同步。";
 "VaultSync cannot access the saved Obsidian folder anymore. Reconnect the Obsidian directory to continue syncing." = "VaultSync 已无法访问已保存的 Obsidian 文件夹。请重新连接 Obsidian 目录以继续同步。";
 "VaultSync cannot access this folder%@." = "VaultSync 无法访问此文件夹%@。";
-"VaultSync cannot read this folder. Reopen the picker and select \"On My iPhone\" -> \"Obsidian\"." = "VaultSync 无法读取此文件夹。请重新打开选择器并选择“在我的 iPhone 上” -> “Obsidian”。";
+"VaultSync cannot read this folder. Reopen the picker and select \"On My iPhone\" → \"Obsidian\"." = "VaultSync 无法读取此文件夹。请重新打开选择器并选择“在我的 iPhone 上” → “Obsidian”。";
 "VaultSync cannot talk to Syncthing right now." = "VaultSync 当前无法与 Syncthing 通信。";
 "VaultSync could not complete the request due to a network issue." = "由于网络问题，VaultSync 无法完成该请求。";
 "VaultSync could not reach the Cloud Relay service." = "VaultSync 无法连接到 Cloud Relay 服务。";
@@ -444,7 +444,7 @@
 "weeks" = "周";
 "year" = "年";
 "years" = "年";
-"%@ / %@" = "%@ / %@";
+"%@ / %@" = "每%2$@ %1$@";
 "%1$@ / %2$d %3$@" = "%1$@ / %2$d %3$@";
 /* Contributions / tip jar */
 "Support VaultSync" = "支持 VaultSync";
@@ -455,7 +455,7 @@
 "Contributions are currently unavailable." = "目前无法进行支持。";
 "Thank you!" = "谢谢！";
 "Your contribution means a lot and directly supports VaultSync development. Thank you!" = "你的支持意义重大，将直接用于 VaultSync 的开发。谢谢！";
-"VaultSync is an independent, open-source app (MPL-2.0). A one-time contribution keeps it independent, ad-free, and moving forward. It unlocks nothing — VaultSync stays fully functional without it — and you can give as often as you like." = "VaultSync 是一款独立的开源应用（MPL-2.0）。一次性的支持就能让它保持独立、无广告并持续更新。它不会解锁任何功能——没有它 VaultSync 也完全可用——你可以随时多次支持。";
+"VaultSync is an independent, open-source app (MPL-2.0). A one-time contribution keeps it independent, ad-free, and moving forward — it unlocks nothing, and the app stays fully functional without it." = "VaultSync 是一款独立的开源应用（MPL-2.0）。一次性的支持能让它保持独立、无广告并持续更新——它不解锁任何功能，没有它应用也完全可用。";
 /* Cloud Relay price (localized via StoreKit) */
 "Cloud Relay — %@" = "Cloud Relay — %@";
 "Cloud Relay subscription" = "Cloud Relay 订阅";
@@ -481,8 +481,8 @@
 "Your contribution is pending approval." = "你的支持正在等待批准。";
 "iOS did not provide a push token required for instant sync." = "iOS 未提供即时同步所需的推送令牌。";
 "%@ (Trigger: %@)" = "%@（触发：%@）";
-"1 additional file synced in %@" = "在 %@ 内同步了 1 个额外文件";
-"%d additional files synced in %@" = "在 %2$@ 内同步了 %1$d 个额外文件";
+"1 additional file synced in %@" = "在 %@ 中同步了 1 个额外文件";
+"%d additional files synced in %@" = "在 %2$@ 中同步了 %1$d 个额外文件";
 "%@ connected" = "%@ 已连接";
 "%@ disconnected" = "%@ 已断开连接";
 "%d%% complete" = "已完成 %d%%";
@@ -587,18 +587,18 @@
 "Cloud Relay went quiet" = "Cloud Relay 暂无动静";
 "No wake-up in a while — is your server still on?" = "已有一段时间没有唤醒信号了——你的服务器还开着吗？";
 "Your server just reached this iPhone. Incoming changes now sync the moment they happen." = "你的服务器刚刚联系上了此 iPhone。现在，传入的改动会在发生的那一刻同步。";
-"Great" = "好的";
+"Great" = "太好了";
 "No wake-up has arrived in a while. Make sure the helper is still running on the computer or server you keep on." = "已有一段时间没有收到唤醒信号。请确认助手仍在你常开的电脑或服务器上运行。";
 "Not active yet" = "尚未激活";
-"You’re subscribed. Wake-ups start once the helper is running on the computer or server you keep on — finish setup below. This screen updates automatically the moment the first wake-up arrives." = "你已订阅。当助手在你常开的电脑或服务器上运行后，唤醒信号即会开始送达——请在下方完成设置。首个唤醒信号到达时，此界面会自动更新。";
+"You’re subscribed. Wake-ups start once the helper is running on the computer or server you keep on — finish setup below." = "你已订阅。当助手在你常开的电脑或服务器上运行后，唤醒信号即会开始送达——请在下方完成设置。";
 "Relay reachable — but no wake-up has arrived recently. Check the helper is still running on your server." = "Relay 可达——但最近没有收到唤醒信号。请检查助手是否仍在你的服务器上运行。";
 "Relay reachable — but no wake-up delivered yet. Run the helper on your server." = "Relay 可达——但尚未送达唤醒信号。请在你的服务器上运行助手。";
 
 /* Cloud Relay setup — key-free server command (Phase 3 A+C) */
 "Step 1 — Run this on your server" = "第 1 步 — 在你的服务器上运行此命令";
-"No API key to copy — the helper reads it straight from Syncthing’s config.xml. Replace /PATH/TO/syncthing with your Syncthing config folder (often ~/.local/state/syncthing or ~/.config/syncthing). If you get a permission error, add -u <uid>:<gid> for the user that owns config.xml." = "无需复制 API 密钥——助手会直接从 Syncthing 的 config.xml 读取。请将 /PATH/TO/syncthing 替换为你的 Syncthing 配置文件夹（通常是 ~/.local/state/syncthing 或 ~/.config/syncthing）。如果出现权限错误，请为拥有 config.xml 的用户添加 -u <uid>:<gid>。";
+"No API key needed — the helper reads it from Syncthing’s config.xml. Replace /PATH/TO/syncthing with your Syncthing config folder (often ~/.local/state/syncthing or ~/.config/syncthing). Permission error? Add -u <uid>:<gid> for the user that owns config.xml." = "无需 API 密钥——助手会直接从 Syncthing 的 config.xml 读取。请将 /PATH/TO/syncthing 替换为你的 Syncthing 配置文件夹（通常是 ~/.local/state/syncthing 或 ~/.config/syncthing）。遇到权限错误？请为拥有 config.xml 的用户添加 -u <uid>:<gid>。";
 "Step 2 — It activates itself" = "第 2 步 — 它会自行激活";
-"That’s it. As soon as the helper starts, it wakes this iPhone once on its own — VaultSync flips to “Cloud Relay active” the moment that first wake-up arrives, with no change needed. After that, changes from your other devices wake the app in the background. Keep the helper running on a machine that stays on (your server or NAS)." = "就这样。助手一启动，就会自行唤醒此 iPhone 一次——一旦首次唤醒送达，VaultSync 就会切换为“Cloud Relay 已启用”，无需任何更改。此后，你其他设备上的更改会在后台唤醒此应用。请让助手在一台保持常开的设备（你的服务器或 NAS）上持续运行。";
+"That’s it — the helper wakes this iPhone once on its own, and VaultSync flips to “Cloud Relay active” as soon as that first wake-up arrives. From then on, changes from your other devices wake the app in the background. Keep the helper running on a machine that stays on (server or NAS)." = "就这样——助手会自行唤醒此 iPhone 一次，首个唤醒信号一到，VaultSync 就会切换为“Cloud Relay 已启用”。此后，你其他设备上的更改会在后台唤醒应用。请让助手在一台常开的设备（服务器或 NAS）上持续运行。";
 
 /* Relay diagnostics — delivery visibility (force-quit / Low Power education, 7-day counter) */
 "Wake-ups (Last 7 Days)" = "唤醒信号（最近 7 天）";

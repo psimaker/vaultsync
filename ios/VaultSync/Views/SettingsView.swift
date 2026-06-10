@@ -175,7 +175,7 @@ struct SettingsView: View {
         } header: {
             Text(L10n.tr("Support VaultSync"))
         } footer: {
-            Text(L10n.tr("VaultSync is an independent, open-source app (MPL-2.0). A one-time contribution keeps it independent, ad-free, and moving forward. It unlocks nothing — VaultSync stays fully functional without it — and you can give as often as you like."))
+            Text(L10n.tr("VaultSync is an independent, open-source app (MPL-2.0). A one-time contribution keeps it independent, ad-free, and moving forward — it unlocks nothing, and the app stays fully functional without it."))
         }
     }
 
