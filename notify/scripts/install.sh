@@ -99,11 +99,12 @@ find_syncthing_config() {
 
 	# Probe order mirrors the helper binary (notify/syncthing_config.go):
 	# current XDG state dir, legacy config dir, macOS, then container/system
-	# service layouts.
+	# service layouts. ${HOME:-} keeps set -u happy in HOME-less contexts
+	# (containers, cron) — the unusable candidates simply never match.
 	for candidate in \
-		"${XDG_STATE_HOME:-$HOME/.local/state}/syncthing/config.xml" \
-		"${XDG_CONFIG_HOME:-$HOME/.config}/syncthing/config.xml" \
-		"$HOME/Library/Application Support/Syncthing/config.xml" \
+		"${XDG_STATE_HOME:-${HOME:-}/.local/state}/syncthing/config.xml" \
+		"${XDG_CONFIG_HOME:-${HOME:-}/.config}/syncthing/config.xml" \
+		"${HOME:-}/Library/Application Support/Syncthing/config.xml" \
 		"/var/syncthing/config/config.xml" \
 		"/config/config.xml" \
 		"/var/syncthing/config.xml" \
@@ -180,6 +181,14 @@ install_docker() {
 		-e SYNCTHING_CONFIG="/config/$config_name" \
 		-e RELAY_URL="$RELAY_URL" \
 		"$IMAGE" >/dev/null
+
+	# Doctor passing makes a crash here unlikely, but verify the container
+	# actually stayed up rather than reporting success on a restart loop.
+	sleep 3
+	if [ "$($DOCKER inspect -f '{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null)" != "true" ]; then
+		$DOCKER logs --tail 20 "$CONTAINER_NAME" >&2 || true
+		fail "The helper container did not stay up — the log above explains why. Fix it and re-run this installer."
+	fi
 }
 
 # --- 3b. Binary path ---------------------------------------------------------

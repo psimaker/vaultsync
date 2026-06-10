@@ -4,21 +4,13 @@ All notable changes to VaultSync are documented here.
 
 ---
 
-## [Unreleased]
+## [1.6.0] — 2026-06-10
 
 ### Added
 
 - **Cloud Relay server setup is now one line** — `curl -fsSL https://vaultsync.eu/notify.sh | sh` on the server replaces the edit-this-command Docker snippet: the installer finds Syncthing's `config.xml` on its own, runs the helper as exactly the user that owns it (the #1 setup failure), starts it via Docker — or, without Docker, installs a prebuilt binary behind a systemd service (Linux) or launchd agent (macOS) — and finishes with the helper's `--doctor` preflight so problems surface immediately with the fix spelled out. Skeptics can append `--dry-run` to preview every action without changing anything. The in-app setup screen now leads with the one-liner; the manual `docker run` command remains as the alternative. Localized in English, German, Spanish, and Simplified Chinese.
 - **Prebuilt `vaultsync-notify` binaries** — every `notify-v*` release now ships static helper binaries for linux/amd64, linux/arm64, macOS (Intel and Apple silicon), and Windows, with a `SHA256SUMS` file — running the helper without Docker no longer requires a Go toolchain.
-
-### Changed
-
-- **Permission errors now spell out the exact fix** — when the helper cannot read `config.xml`, the error names the file's actual owner and the exact `-u uid:gid` flag to use, instead of a generic "match the owner" hint (it also resolves the owner through an unreadable config directory).
-
-## [1.6.0] — 2026-06-10
-
-### Added
-
+- **Helper permission errors now spell out the exact fix** — when the helper cannot read `config.xml`, the error names the file's actual owner and the exact `-u uid:gid` flag to use, instead of a generic "match the owner" hint (it also resolves the owner through an unreadable config directory).
 - **Missed wake-ups now catch up on their own** — A device that misses a Cloud Relay wake-up (offline too long, push expired) no longer stays stale until the next vault change: the server helper (`vaultsync-notify`) now re-sends a wake-up on a slow cadence while any of your devices still needs data (default every 6 hours; `STALE_RETRIGGER_SECONDS`, `0` disables). Fully synced devices never cause a push, and a wake-up that is already on its way is never duplicated.
 - **Overnight catch-up sync** — VaultSync now also schedules a long-running background task that iOS runs while the iPhone is charging with a network connection — typically overnight. It gets a multi-minute budget instead of the ~30 seconds of a normal background refresh, so large catch-ups complete on the charger instead of timing out.
 - **See what Cloud Relay actually delivers** — Relay Diagnostics now counts the wake-ups received in the last 7 days (stored only on your device, never reported anywhere), warns live when Low Power Mode is deferring silent pushes, and explains the most common silent killer: force-quitting VaultSync from the app switcher stops all wake-ups until the next manual launch. Localized in English, German, Spanish, and Simplified Chinese.
