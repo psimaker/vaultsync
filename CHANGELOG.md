@@ -4,6 +4,19 @@ All notable changes to VaultSync are documented here.
 
 ---
 
+## [1.6.0] — 2026-06-10
+
+### Added
+
+- **Missed wake-ups now catch up on their own** — A device that misses a Cloud Relay wake-up (offline too long, push expired) no longer stays stale until the next vault change: the server helper (`vaultsync-notify`) now re-sends a wake-up on a slow cadence while any of your devices still needs data (default every 6 hours; `STALE_RETRIGGER_SECONDS`, `0` disables). Fully synced devices never cause a push, and a wake-up that is already on its way is never duplicated.
+- **Overnight catch-up sync** — VaultSync now also schedules a long-running background task that iOS runs while the iPhone is charging with a network connection — typically overnight. It gets a multi-minute budget instead of the ~30 seconds of a normal background refresh, so large catch-ups complete on the charger instead of timing out.
+- **See what Cloud Relay actually delivers** — Relay Diagnostics now counts the wake-ups received in the last 7 days (stored only on your device, never reported anywhere), warns live when Low Power Mode is deferring silent pushes, and explains the most common silent killer: force-quitting VaultSync from the app switcher stops all wake-ups until the next manual launch. Localized in English, German, Spanish, and Simplified Chinese.
+- **Instant iPhone → server uploads, automated** — A new guide ([docs/instant-upload.md](docs/instant-upload.md)) shows the one-time Shortcuts automation that opens VaultSync every time you leave Obsidian, so your edits reach the server seconds after you close the app. The home-screen and lock-screen widgets are already tap-to-sync.
+
+### Changed
+
+- **Honest self-hosted relay documentation** — The relay specification no longer advertises a free self-hosted relay tier as roadmap. It now explains the real constraint: Apple's push service only accepts wake-ups for the App Store app signed with VaultSync's own key, which can never be distributed. Building the entire stack from source with your own Apple Developer account remains possible under MPL-2.0.
+
 ## [1.5.1] — 2026-06-01
 
 ### Added
