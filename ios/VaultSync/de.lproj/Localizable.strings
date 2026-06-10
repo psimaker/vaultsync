@@ -525,10 +525,13 @@
 "Copy Command" = "Befehl kopieren";
 "Step 3 — Confirm it works" = "Schritt 3 – Bestätige, dass es funktioniert";
 "Come back to VaultSync. The moment a change happens on your server, Relay Diagnostics will confirm that wake-ups are being delivered — that means everything works." = "Komm zurück zu VaultSync. Sobald sich auf deinem Server etwas ändert, bestätigt die Relay-Diagnose, dass Weck-Signale zugestellt werden – dann funktioniert alles.";
-"Full setup guide (Docker Compose or guided setup script)" = "Vollständige Anleitung (Docker Compose oder geführtes Setup-Skript)";
-"Prefer Docker Compose or a guided setup script? The full guide covers both." = "Lieber Docker Compose oder ein geführtes Setup-Skript? Die vollständige Anleitung deckt beides ab.";
+"Full setup guide (Docker Compose, prebuilt binaries, NAS notes)" = "Vollständige Anleitung (Docker Compose, vorkompilierte Binaries, NAS-Hinweise)";
+"Prefer Docker Compose, a NAS package, or a plain binary? The full guide covers them all." = "Lieber Docker Compose, ein NAS-Setup oder ein einfaches Binary? Die vollständige Anleitung deckt alles ab.";
 "Set Up Your Server" = "Server einrichten";
 "Server setup command" = "Server-Einrichtungsbefehl";
+"Installer command" = "Installer-Befehl";
+"The installer finds your Syncthing config, sets the right permissions, and starts the helper — with Docker if available, otherwise as a system service. It’s open source; add --dry-run to preview every action without changing anything." = "Der Installer findet deine Syncthing-Konfiguration, setzt die richtigen Berechtigungen und startet den Helfer – mit Docker, falls vorhanden, sonst als Systemdienst. Er ist Open Source; mit --dry-run siehst du vorab jede Aktion, ohne dass etwas verändert wird.";
+"Manual alternative — run the container yourself" = "Manuelle Alternative – Container selbst starten";
 "Last wake-up" = "Letztes Weck-Signal";
 "Auto-renews until canceled. Cancel anytime in Settings → Subscriptions." = "Verlängert sich automatisch bis zur Kündigung. Jederzeit kündbar unter Einstellungen → Abonnements.";
 "Cancel anytime in Settings → Subscriptions" = "Jederzeit kündbar unter Einstellungen → Abonnements";

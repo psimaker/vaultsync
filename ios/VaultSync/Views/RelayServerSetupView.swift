@@ -10,15 +10,25 @@ struct RelayServerSetupView: View {
     /// true the helper is confirmed running and we show a success banner.
     var isDelivering: Bool = false
 
+    @State private var installerCopied = false
     @State private var commandCopied = false
 
-    /// Self-contained command a user can paste into their server shell. The relay
-    /// URL is pre-filled and there is no API key to copy — the helper reads the
-    /// Syncthing key (and address) straight from the mounted config.xml. `--network
-    /// host` is kept so the address auto-inferred from config.xml (typically
-    /// 127.0.0.1:8384) reaches a same-host Syncthing. We interpolate
-    /// `productionRelayURL` (never the DEBUG-overridable `relayURL`) so a lab build
-    /// pointed at a mock can't leak that URL into the command shown to the user.
+    /// The primary setup path: a one-line installer that finds config.xml on the
+    /// server, runs the helper as the uid:gid owning it (the #1 setup failure),
+    /// and picks Docker or a prebuilt-binary service automatically. Nothing in
+    /// it is user-specific — identity comes from the server's own Syncthing at
+    /// runtime — so it is a stable constant, short enough to type by hand when
+    /// copy-paste can't reach the server shell.
+    private static let installerCommand = "curl -fsSL https://vaultsync.eu/notify.sh | sh"
+
+    /// Self-contained command for users who prefer to run the container
+    /// themselves. The relay URL is pre-filled and there is no API key to copy —
+    /// the helper reads the Syncthing key (and address) straight from the
+    /// mounted config.xml. `--network host` is kept so the address auto-inferred
+    /// from config.xml (typically 127.0.0.1:8384) reaches a same-host Syncthing.
+    /// We interpolate `productionRelayURL` (never the DEBUG-overridable
+    /// `relayURL`) so a lab build pointed at a mock can't leak that URL into the
+    /// command shown to the user.
     private var dockerCommand: String {
         """
         docker run -d --name vaultsync-notify --restart unless-stopped \\
@@ -48,25 +58,12 @@ struct RelayServerSetupView: View {
             }
 
             Section {
-                commandBox
-                Button {
-                    UIPasteboard.general.string = dockerCommand
-                    UINotificationFeedbackGenerator().notificationOccurred(.success)
-                    commandCopied = true
-                    Task {
-                        try? await Task.sleep(for: .seconds(1.5))
-                        commandCopied = false
-                    }
-                } label: {
-                    Label(
-                        commandCopied ? L10n.tr("Copied") : L10n.tr("Copy Command"),
-                        systemImage: commandCopied ? "checkmark.circle" : "doc.on.doc"
-                    )
-                }
+                commandBox(Self.installerCommand, accessibilityLabelKey: "Installer command")
+                copyButton(for: Self.installerCommand, copied: $installerCopied)
             } header: {
                 Text(L10n.tr("Step 1 — Run this on your server"))
             } footer: {
-                Text(L10n.tr("No API key needed — the helper reads it from Syncthing’s config.xml. Replace /PATH/TO/syncthing with your Syncthing config folder (often ~/.local/state/syncthing or ~/.config/syncthing). Permission error? Add -u <uid>:<gid> for the user that owns config.xml."))
+                Text(L10n.tr("The installer finds your Syncthing config, sets the right permissions, and starts the helper — with Docker if available, otherwise as a system service. It’s open source; add --dry-run to preview every action without changing anything."))
             }
 
             Section {
@@ -77,25 +74,51 @@ struct RelayServerSetupView: View {
             }
 
             Section {
-                ExternalLinkButton(titleKey: "Full setup guide (Docker Compose or guided setup script)", url: DocURL.serverSetupGuide)
+                commandBox(dockerCommand, accessibilityLabelKey: "Server setup command")
+                copyButton(for: dockerCommand, copied: $commandCopied)
+            } header: {
+                Text(L10n.tr("Manual alternative — run the container yourself"))
+            } footer: {
+                Text(L10n.tr("No API key needed — the helper reads it from Syncthing’s config.xml. Replace /PATH/TO/syncthing with your Syncthing config folder (often ~/.local/state/syncthing or ~/.config/syncthing). Permission error? Add -u <uid>:<gid> for the user that owns config.xml."))
+            }
+
+            Section {
+                ExternalLinkButton(titleKey: "Full setup guide (Docker Compose, prebuilt binaries, NAS notes)", url: DocURL.serverSetupGuide)
                     .font(.subheadline)
             } footer: {
-                Text(L10n.tr("Prefer Docker Compose or a guided setup script? The full guide covers both."))
+                Text(L10n.tr("Prefer Docker Compose, a NAS package, or a plain binary? The full guide covers them all."))
             }
         }
         .navigationTitle(L10n.tr("Set Up Your Server"))
         .navigationBarTitleDisplayMode(.inline)
     }
 
-    private var commandBox: some View {
+    private func commandBox(_ command: String, accessibilityLabelKey: String) -> some View {
         ScrollView(.horizontal, showsIndicators: true) {
-            Text(dockerCommand)
+            Text(command)
                 .font(.vaultMono(.caption))
                 .textSelection(.enabled)
                 .padding(VaultSpacing.m)
         }
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: VaultRadius.control, style: .continuous))
-        .accessibilityLabel(L10n.tr("Server setup command"))
-        .accessibilityValue(dockerCommand)
+        .accessibilityLabel(L10n.tr(accessibilityLabelKey))
+        .accessibilityValue(command)
+    }
+
+    private func copyButton(for command: String, copied: Binding<Bool>) -> some View {
+        Button {
+            UIPasteboard.general.string = command
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            copied.wrappedValue = true
+            Task {
+                try? await Task.sleep(for: .seconds(1.5))
+                copied.wrappedValue = false
+            }
+        } label: {
+            Label(
+                copied.wrappedValue ? L10n.tr("Copied") : L10n.tr("Copy Command"),
+                systemImage: copied.wrappedValue ? "checkmark.circle" : "doc.on.doc"
+            )
+        }
     }
 }

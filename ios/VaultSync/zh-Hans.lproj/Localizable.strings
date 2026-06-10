@@ -525,10 +525,13 @@
 "Copy Command" = "复制命令";
 "Step 3 — Confirm it works" = "第 3 步 — 确认其正常工作";
 "Come back to VaultSync. The moment a change happens on your server, Relay Diagnostics will confirm that wake-ups are being delivered — that means everything works." = "回到 VaultSync。一旦你的服务器上发生改动，“Relay 诊断”就会确认唤醒信号正在送达——这表示一切正常。";
-"Full setup guide (Docker Compose or guided setup script)" = "完整设置指南（Docker Compose 或引导式设置脚本）";
-"Prefer Docker Compose or a guided setup script? The full guide covers both." = "更喜欢 Docker Compose 或引导式设置脚本？完整指南两者都涵盖。";
+"Full setup guide (Docker Compose, prebuilt binaries, NAS notes)" = "完整设置指南（Docker Compose、预编译二进制文件、NAS 说明）";
+"Prefer Docker Compose, a NAS package, or a plain binary? The full guide covers them all." = "更喜欢 Docker Compose、NAS 方案还是直接运行二进制文件？完整指南全部涵盖。";
 "Set Up Your Server" = "设置你的服务器";
 "Server setup command" = "服务器设置命令";
+"Installer command" = "安装程序命令";
+"The installer finds your Syncthing config, sets the right permissions, and starts the helper — with Docker if available, otherwise as a system service. It’s open source; add --dry-run to preview every action without changing anything." = "安装程序会找到你的 Syncthing 配置、设置正确的权限并启动助手——有 Docker 时使用 Docker，否则作为系统服务运行。它是开源的；添加 --dry-run 可预览每个操作而不做任何更改。";
+"Manual alternative — run the container yourself" = "手动方式——自行运行容器";
 "Last wake-up" = "上次唤醒";
 "Auto-renews until canceled. Cancel anytime in Settings → Subscriptions." = "自动续订，直至取消。可随时在“设置 → 订阅”中取消。";
 "Cancel anytime in Settings → Subscriptions" = "可随时在“设置 → 订阅”中取消";
