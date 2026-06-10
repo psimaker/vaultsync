@@ -15,6 +15,11 @@ All notable changes to VaultSync are documented here.
 
 ### Changed
 
+- **A calmer, more consistent home screen** — the dashboard's Cloud Relay hints, sync errors, and the Obsidian connection prompt now share the app's standard card and row styles, and every error card carries a real action button instead of prose directions. Vaults get the same full-size status treatment as devices, with conflict counts as a clear badge.
+- **Friendlier first run** — "no vaults yet" and "no devices yet" are now proper empty-state screens with guidance and an **Add Device** button; adding a device moved to the navigation bar of the Devices tab.
+- **The Cloud Relay offer no longer switches tabs on its own** — after your first successful sync it appears as a dismissable card on the Sync tab (**View Cloud Relay** / **Not now**) instead of pulling you out of what you were doing.
+- **Tappable setup checklist** — checklist steps with an in-app fix (connect your Obsidian folder, add a device, open the Relay tab) now carry a button that takes you straight there.
+- **Design and accessibility polish** — onboarding, badges, spacing, and monospaced text now come from the shared design tokens (correct in light, dark, and increased-contrast mode), action buttons meet the 44pt touch-target minimum, renaming a device shows a saved confirmation, and the widget's last-sync time is labeled for VoiceOver. Localized in English, German, Spanish, and Simplified Chinese.
 - **Honest self-hosted relay documentation** — The relay specification no longer advertises a free self-hosted relay tier as roadmap. It now explains the real constraint: Apple's push service only accepts wake-ups for the App Store app signed with VaultSync's own key, which can never be distributed. Building the entire stack from source with your own Apple Developer account remains possible under MPL-2.0.
 
 ## [1.5.1] — 2026-06-01
