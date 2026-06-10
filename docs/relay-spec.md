@@ -1,6 +1,6 @@
 # VaultSync Cloud Relay — Specification
 
-> **Status:** Shipped in v1.4.0; signed-transaction (JWS) verification and server-side expiry enforcement added in v1.5.0; key-free auto-detection and self-activation (startup-announce) added in v1.5.1. This document is the protocol and architecture reference for the relay, the `vaultsync-notify` sidecar, and the iOS client. Sections marked _Roadmap_ (self-hosted relay) are not yet built.
+> **Status:** Shipped in v1.4.0; signed-transaction (JWS) verification and server-side expiry enforcement added in v1.5.0; key-free auto-detection and self-activation (startup-announce) added in v1.5.1. This document is the protocol and architecture reference for the relay, the `vaultsync-notify` sidecar, and the iOS client.
 
 ## Overview
 
@@ -237,11 +237,9 @@ The container reads its own Syncthing Device ID automatically from `/rest/system
 |---|---|---|
 | **VaultSync App** | Free | Full sync, background refresh, all features |
 | **Cloud Relay** | Monthly or yearly subscription | Push notifications via relay.vaultsync.eu |
-| **Self-hosted Relay** | Free (roadmap) | User runs everything — no central relay needed |
 
 - Cloud Relay subscription managed via App Store (StoreKit 2, auto-renewable; monthly or yearly). The price is set in App Store Connect and shown in the user's local currency at runtime via StoreKit — never hard-coded (USD reference: ~$1.99/month or ~$14.99/year). No free trial.
 - App provisions the relay after successful purchase using the StoreKit signed transaction (JWS)
-- Homeserver container works identically regardless of cloud vs self-hosted relay
 - No feature gates in the container itself — the gate is the central relay accepting provisioned Device IDs
 
 ---
@@ -260,48 +258,24 @@ Cloud Relay is configured from its own **Cloud Relay** tab, not onboarding.
 
 ---
 
-## Self-Hosted Variant
+## Why there is no self-hosted relay
 
-> **Roadmap — not yet built.** The components below are design exploration, not shipping code. Today `vaultsync-notify` points at the central `relay.vaultsync.eu` by default.
+The relay's only job is sending APNs pushes — and APNs only accepts pushes for `eu.vaultsync.app` that are signed with VaultSync's own APNs key (a `p8` key bound to the app's bundle ID and developer team). That key cannot be distributed: anyone holding it could push to every VaultSync install, and sharing it violates Apple's terms. This is an APNs constraint, not a pricing decision — a self-hosted relay that wakes the App Store build is technically impossible no matter who runs the server.
 
-For users who don't want to use the central relay or pay for the subscription.
+What IS open:
 
-### What the User Deploys
+- **`RELAY_URL` is configurable** in `vaultsync-notify` — used for development and testing against a mock relay. It exists so the helper never wakes a relay the operator didn't choose, not as a self-hosting path for the shipped app.
+- **VaultSync is open source (MPL-2.0).** A developer building the app from source with their own bundle ID and Apple Developer account can run the entire stack themselves — own APNs key, own relay, own build. The architecture supports it; it is not a supported product configuration.
 
-**1. vaultsync-notify container** (same Docker image as cloud variant)
-- Configured with `RELAY_URL` pointing to their own relay server instead of relay.vaultsync.eu
-
-**2. vaultsync-relay-server** (additional component)
-- Minimal server that receives triggers and sends APNs pushes
-- Requires the user's own Apple Developer Account ($99/year) for APNs credentials
-- OR: uses the VaultSync APNs credentials bundled in a self-hosted-friendly way (TBD — licensing/security implications)
-- Docker image provided, single binary
-
-### Self-Hosted Limitations
-
-- User must manage their own APNs credentials (p8 key from Apple Developer Portal)
-- No automatic token rotation handling — user manages the database
-- No SLA or uptime guarantees
-- User responsible for TLS termination (reverse proxy like Caddy/nginx)
-
-### Self-Hosted Alternative: Direct Push (No Relay Server)
-
-A simplified variant where the homeserver container sends APNs pushes directly:
-
-- vaultsync-relay container configured with APNs credentials directly
-- No intermediate relay server needed
-- Simplest setup but requires Apple Developer Account
-- Single container, no database
-- Config: `APNS_KEY_FILE`, `APNS_KEY_ID`, `APNS_TEAM_ID`, `DEVICE_TOKEN` (hardcoded for single device)
+Everything else about the system is already self-hosted: notes sync peer-to-peer between the user's own devices, and the only thing that ever touches VaultSync infrastructure is an anonymous wake-up signal.
 
 ---
 
 ## Open Questions
 
-1. **APNs credentials for self-hosted:** Can we distribute our p8 key in a way that allows self-hosted users to send pushes without their own Developer Account? Likely no — security and ToS implications.
-2. **Multi-vault routing:** Should the push signal include which vault changed, so the app can prioritize? Currently: wake up and sync everything. Tradeoff: more metadata leaves the homeserver.
-3. **Fallback behavior:** If push delivery fails (APNs errors, network issues), should the container retry? Or rely on the existing BGAppRefreshTask polling as fallback?
-4. **GDPR — data processing agreement:** Device tokens are personal data. The privacy policy now ships ([../PRIVACY.md](../PRIVACY.md), surfaced in Settings → About); a data processing agreement for EU users is still open.
+1. **Multi-vault routing:** Should the push signal include which vault changed, so the app can prioritize? Currently: wake up and sync everything. Tradeoff: more metadata leaves the homeserver.
+2. **Fallback behavior:** The sidecar's stale-peer sweep (`STALE_RETRIGGER_SECONDS`) now re-sends a wake-up while a peer still needs data, recovering missed/expired pushes. Remaining question: should the central relay also retry failed APNs sends itself, or is the sweep + BGAppRefreshTask polling enough?
+3. **GDPR — data processing agreement:** Device tokens are personal data. The privacy policy now ships ([../PRIVACY.md](../PRIVACY.md), surfaced in Settings → About); a data processing agreement for EU users is still open.
 
 ---
 
