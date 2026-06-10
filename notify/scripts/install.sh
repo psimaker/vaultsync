@@ -88,13 +88,13 @@ need_root() {
 
 # --- 1. Locate config.xml ----------------------------------------------------
 
+# NOTE: runs in a command substitution, so fail() here would exit only the
+# subshell and the caller would print its generic error on top — explicit
+# SYNCTHING_CONFIG is therefore validated in the main flow below.
 find_syncthing_config() {
 	if [ -n "${SYNCTHING_CONFIG:-}" ]; then
-		if [ -e "${SYNCTHING_CONFIG}" ]; then
-			printf '%s\n' "$SYNCTHING_CONFIG"
-			return 0
-		fi
-		fail "SYNCTHING_CONFIG is set to $SYNCTHING_CONFIG but no file exists there."
+		printf '%s\n' "$SYNCTHING_CONFIG"
+		return 0
 	fi
 
 	# Probe order mirrors the helper binary (notify/syncthing_config.go):
@@ -401,6 +401,10 @@ install_binary() {
 
 info "VaultSync Cloud Relay — server helper installer"
 [ "$DRY_RUN" = 1 ] && info "(dry run — nothing will be changed)"
+
+if [ -n "${SYNCTHING_CONFIG:-}" ] && [ ! -e "${SYNCTHING_CONFIG}" ]; then
+	fail "SYNCTHING_CONFIG is set to $SYNCTHING_CONFIG but no file exists there."
+fi
 
 if CONFIG_PATH=$(find_syncthing_config); then
 	info "Found Syncthing config: $CONFIG_PATH"
