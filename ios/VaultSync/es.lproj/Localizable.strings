@@ -120,6 +120,7 @@
 "Manage Subscription" = "Gestionar suscripción";
 "Name" = "Nombre";
 "Name (optional)" = "Nombre (opcional)";
+"Name saved" = "Nombre guardado";
 "Needs Attention" = "Requiere atención";
 "Network Error" = "Error de red";
 "Never" = "Nunca";
@@ -135,6 +136,7 @@
 "No successful sync has been recorded for your vaults yet." = "Aún no se ha registrado ninguna sincronización correcta para tus Vaults.";
 "No vaults found" = "No se encontraron Vaults";
 "Not Configured" = "No configurado";
+"Not now" = "Ahora no";
 "Not Shared" = "No compartido";
 "Not attempted" = "No intentado";
 "Not checked" = "No comprobado";
@@ -146,6 +148,7 @@
 "Obsidian directory not accessible." = "No se puede acceder al directorio de Obsidian.";
 "Obsidian folder not connected" = "Carpeta de Obsidian no conectada";
 "Open Settings" = "Abrir Ajustes";
+"Open the Relay tab" = "Abrir la pestaña Relay";
 "Open VaultSync" = "Abrir VaultSync";
 "Open VaultSync once to restart Syncthing, then retry." = "Abre VaultSync una vez para reiniciar Syncthing y vuelve a intentarlo.";
 "Open VaultSync to allow a longer foreground sync session." = "Abre VaultSync para permitir una sesión de sincronización más larga en primer plano.";
@@ -225,6 +228,7 @@
 "Purchase Failed" = "La compra falló";
 "Rescan All Vaults" = "Reescanear todos los Vaults";
 "Sync Conflicts" = "Conflictos de sincronización";
+"View Cloud Relay" = "Ver Cloud Relay";
 "XXXXXXX-XXXXXXX-..." = "XXXXXXX-XXXXXXX-...";
 "Retry APNs Registration" = "Reintentar registro de APNs";
 "Retry Accept" = "Reintentar aceptar";
@@ -349,6 +353,7 @@
 "VaultSync cannot access your local Obsidian folder." = "VaultSync no puede acceder a tu carpeta local de Obsidian.";
 "Connect your Obsidian folder from the VaultSync home screen." = "Conecta tu carpeta de Obsidian desde la pantalla de inicio de VaultSync.";
 "Computer or server added" = "Ordenador o servidor añadido";
+"Your first sync is done. Cloud Relay wakes this iPhone the moment your notes change — even while the app is closed." = "Tu primera sincronización está lista. Cloud Relay envía una señal de activación a este iPhone en cuanto cambian tus notas, incluso con la app cerrada.";
 "Your iPhone is paired with at least one Syncthing device." = "Tu iPhone está emparejado con al menos un dispositivo de Syncthing.";
 "Your iPhone is not paired with a Syncthing device yet." = "Tu iPhone aún no está emparejado con ningún dispositivo de Syncthing.";
 "Add your computer or server from the Devices section on the home screen." = "Añade tu ordenador o servidor desde la sección Dispositivos en la pantalla de inicio.";

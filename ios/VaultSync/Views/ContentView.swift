@@ -13,6 +13,7 @@ struct ContentView: View {
     @State private var pendingShareInFlight: Set<String> = []
     @State private var pendingFilterSheetFolder: SyncthingManager.FolderInfo?
     @State private var vaultPendingRemoval: VaultRemovalTarget?
+    @State private var showRelayUpsellCard = false
 
     /// A vault the user has asked to remove, pending confirmation. Drives the
     /// shared removal confirmation dialog used by both the "needs attention"
@@ -79,7 +80,12 @@ struct ContentView: View {
             }
         }
         .sheet(isPresented: $showSettings) {
-            SettingsView(syncthingManager: syncthingManager, vaultManager: vaultManager, subscriptionManager: subscriptionManager)
+            SettingsView(
+                syncthingManager: syncthingManager,
+                vaultManager: vaultManager,
+                subscriptionManager: subscriptionManager,
+                onChecklistAction: handleChecklistAction
+            )
         }
         .sheet(isPresented: $showObsidianPicker) {
             FolderPicker(initialDirectoryURL: vaultManager.obsidianDirectoryURL, onCancel: {
@@ -161,6 +167,7 @@ struct ContentView: View {
     }
 
     /// The Devices tab — paired Syncthing peers and the add-device entry point.
+    /// "Add" lives in the toolbar (the idiomatic spot), not in a section header.
     private var devicesTab: some View {
         NavigationStack {
             List {
@@ -168,6 +175,18 @@ struct ContentView: View {
             }
             .navigationTitle(L10n.tr("Devices"))
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showAddDevice = true
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                    .disabled(!syncthingManager.isRunning)
+                    .accessibilityLabel("Add Device")
+                    .accessibilityHint("Opens the form to add a Syncthing device.")
+                }
+            }
         }
     }
 
@@ -184,16 +203,45 @@ struct ContentView: View {
 
     // MARK: - Cloud Relay Upsell
 
-    /// Presents the Cloud Relay offer once, at the "aha moment": the first time
-    /// a real sync has completed while the user has at least one vault and is not
-    /// subscribed. Only auto-shown once; the dashboard affordance stays available.
+    /// Presents the Cloud Relay offer at the "aha moment": the first time a real
+    /// sync has completed while the user has at least one vault and is not
+    /// subscribed. Shown as a dismissable dashboard card — never by silently
+    /// switching tabs out from under the user. Acting on it (either way) retires
+    /// it for good; the permanent dashboard affordance stays available.
     private func maybePresentRelayUpsell() {
-        guard !subscriptionManager.isRelaySubscribed else { return }
+        guard !subscriptionManager.isRelaySubscribed else {
+            showRelayUpsellCard = false
+            return
+        }
         guard !syncthingManager.folders.isEmpty else { return }
         guard syncthingManager.lastSyncTime != nil else { return }
         guard !UserDefaults.standard.bool(forKey: Self.relayUpsellShownKey) else { return }
+        showRelayUpsellCard = true
+    }
+
+    private func dismissRelayUpsell(openRelay: Bool) {
         UserDefaults.standard.set(true, forKey: Self.relayUpsellShownKey)
-        selectedTab = .relay
+        withAnimation(.snappy) { showRelayUpsellCard = false }
+        if openRelay { selectedTab = .relay }
+    }
+
+    // MARK: - Checklist Actions
+
+    /// Route a tapped checklist remediation to its in-app action. The settings
+    /// sheet is dismissing when this fires, so presenting the next sheet must
+    /// wait for that transition — presenting during it gets silently dropped.
+    private func handleChecklistAction(_ action: SetupChecklistViewModel.ChecklistAction) {
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(450))
+            switch action {
+            case .connectObsidian:
+                showObsidianPicker = true
+            case .addDevice:
+                showAddDevice = true
+            case .openRelayTab:
+                selectedTab = .relay
+            }
+        }
     }
 
     // MARK: - Auto-Accept Pending Shares
@@ -257,6 +305,9 @@ struct ContentView: View {
 
     private var dashboardSection: some View {
         Section {
+            if showRelayUpsellCard {
+                relayUpsellCard
+            }
             if let staleWarning = syncthingManager.staleSyncWarning {
                 Label(staleWarning, systemImage: "clock.badge.exclamationmark")
                     .font(.caption)
@@ -273,74 +324,49 @@ struct ContentView: View {
 
             if subscriptionManager.isRelaySubscribed {
                 if subscriptionManager.needsRelayReactivation {
-                    reactivationCard
+                    // A1 — paid-but-never-activated relay subscription (the "dead
+                    // sub" cohort: subscribed, never woken, past the grace period).
+                    // A self-test does NOT clear this — only a real server wake-up
+                    // does (it keys on the real trigger timestamp).
+                    relayNavRow(
+                        title: L10n.tr("Finish activating Cloud Relay"),
+                        subtitle: L10n.tr("You’re subscribed, but your server has never woken this iPhone. One step finishes setup."),
+                        status: .attention,
+                        systemImage: "antenna.radiowaves.left.and.right.slash"
+                    )
+                    .accessibilityHint(L10n.tr("Opens Cloud Relay setup."))
                 } else if subscriptionManager.relayDeliveryConfirmed {
                     // "active" means a REAL wake-up has actually reached this
-                    // device — not merely "provisioned + reachable" (K1).
-                    HStack {
-                        Image(systemName: "antenna.radiowaves.left.and.right")
-                            .foregroundStyle(accent)
-                            .accessibilityHidden(true)
-                        Text("Cloud Relay active")
-                            .font(.subheadline)
-                            .foregroundStyle(accent)
-                    }
-                    .accessibilityElement(children: .combine)
+                    // device — not merely "provisioned + reachable" (K1). Same
+                    // badge as the Relay tab's steady state, so the two screens
+                    // can never disagree about what "active" looks like.
+                    StatusBadge(.synced, text: L10n.tr("Cloud Relay active"))
                 } else if subscriptionManager.lastRelayTriggerReceivedAt != nil {
                     // Delivered before, but no recent wake-up — setup IS done; the
                     // helper just went quiet. Don't tell them to "set up" again.
-                    relayRecoveryRow
+                    relayNavRow(
+                        title: L10n.tr("Cloud Relay went quiet"),
+                        subtitle: L10n.tr("No wake-up in a while — is your server still on?"),
+                        status: .attention,
+                        systemImage: "antenna.radiowaves.left.and.right"
+                    )
                 } else {
                     // Subscribed but never delivered yet (within grace, so not the
                     // reactivation card) — finish the one missing setup step.
-                    Button {
-                        selectedTab = .relay
-                    } label: {
-                        HStack {
-                            Image(systemName: "antenna.radiowaves.left.and.right")
-                                .foregroundStyle(Color.statusAttention)
-                                .accessibilityHidden(true)
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(L10n.tr("One step left to activate"))
-                                    .font(.subheadline.weight(.medium))
-                                Text(L10n.tr("Set up the server helper"))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .accessibilityHidden(true)
-                        }
-                    }
-                    .tint(.primary)
-                    .accessibilityElement(children: .combine)
+                    relayNavRow(
+                        title: L10n.tr("One step left to activate"),
+                        subtitle: L10n.tr("Set up the server helper"),
+                        status: .attention,
+                        systemImage: "antenna.radiowaves.left.and.right"
+                    )
                 }
-            } else if !syncthingManager.folders.isEmpty {
-                Button {
-                    selectedTab = .relay
-                } label: {
-                    HStack {
-                        Image(systemName: "antenna.radiowaves.left.and.right")
-                            .foregroundStyle(accent)
-                            .accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(L10n.tr("Get instant updates"))
-                                .font(.subheadline.weight(.medium))
-                            Text(L10n.tr("Turn on Cloud Relay"))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .accessibilityHidden(true)
-                    }
-                }
-                .tint(.primary)
-                .accessibilityElement(children: .combine)
+            } else if !syncthingManager.folders.isEmpty, !showRelayUpsellCard {
+                relayNavRow(
+                    title: L10n.tr("Get instant updates"),
+                    subtitle: L10n.tr("Turn on Cloud Relay"),
+                    status: nil,
+                    systemImage: "antenna.radiowaves.left.and.right"
+                )
             }
 
             if syncthingManager.isRunning {
@@ -363,122 +389,102 @@ struct ContentView: View {
             }
 
             if let error = currentSyncError {
-                HStack(spacing: 8) {
-                    Image(systemName: SyncStatus.error.symbolName)
-                        .foregroundStyle(Color.statusError)
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(error.title)
-                            .font(.subheadline.weight(.semibold))
-                        Text(error.message)
-                            .font(.caption)
-                        Text(error.remediation)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                    .foregroundStyle(Color.statusError)
-                }
-                .accessibilityElement(children: .combine)
-                if let url = troubleshootingURL(for: error) {
-                    ExternalLinkButton(titleKey: "Learn how to fix", url: url)
-                        .font(.footnote)
-                }
+                ActionCard(
+                    status: .error,
+                    title: error.title,
+                    message: joinedErrorMessage(error.message, error.remediation),
+                    secondary: troubleshootingSecondary(for: error)
+                )
             }
 
-            let errorFolders = foldersWithErrors
-            if !errorFolders.isEmpty {
-                ForEach(errorFolders, id: \.self) { folderID in
-                    let folder = syncthingManager.folders.first { $0.id == folderID }
-                    let folderError = syncthingManager.folderUserError(folderID: folderID)
-                    HStack(spacing: 8) {
-                        Image(systemName: "exclamationmark.circle.fill")
-                            .foregroundStyle(Color.statusAttention)
-                            .accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(folder?.label ?? folderID)
-                                .font(.subheadline.weight(.semibold))
-                            Text(folderError?.message ?? L10n.tr("Folder is currently in an error state."))
-                                .font(.caption)
-                            if let remediation = folderError?.remediation {
-                                Text(remediation)
-                                    .font(.footnote)
-                                    .foregroundStyle(.secondary)
-                            }
-                            if let folderError,
-                               let url = troubleshootingURL(for: folderError) {
-                                ExternalLinkButton(titleKey: "Learn how to fix", url: url)
-                                    .font(.footnote)
-                            }
-                        }
-                    }
-                    .accessibilityElement(children: .combine)
-                }
+            ForEach(foldersWithErrors, id: \.self) { folderID in
+                let folder = syncthingManager.folders.first { $0.id == folderID }
+                let folderError = syncthingManager.folderUserError(folderID: folderID)
+                ActionCard(
+                    status: .attention,
+                    title: folder?.label ?? folderID,
+                    message: joinedErrorMessage(
+                        folderError?.message ?? L10n.tr("Folder is currently in an error state."),
+                        folderError?.remediation ?? ""
+                    ),
+                    secondary: folderError.flatMap { troubleshootingSecondary(for: $0) }
+                )
             }
         }
     }
 
-    /// A1 — prominent, non-dismissable card for a paid-but-never-activated relay
-    /// subscription (the "dead sub" cohort: subscribed, never woken, past the
-    /// grace period). Routes into the Relay tab to finish setup. Only shown while
-    /// `needsRelayReactivation` holds; a self-test does NOT clear it — only a real
-    /// server wake-up does (it keys on the real trigger timestamp).
-    private var reactivationCard: some View {
+    /// Message + remediation as one ActionCard body, skipping empty parts.
+    private func joinedErrorMessage(_ message: String, _ remediation: String) -> String {
+        [message, remediation].filter { !$0.isEmpty }.joined(separator: "\n\n")
+    }
+
+    /// The "Learn how to fix" link as an ActionCard secondary slot, when the
+    /// error maps to a troubleshooting anchor.
+    private func troubleshootingSecondary(for error: SyncUserError) -> (() -> AnyView)? {
+        guard let url = troubleshootingURL(for: error) else { return nil }
+        return {
+            AnyView(
+                ExternalLinkButton(titleKey: "Learn how to fix", url: url)
+                    .font(.footnote)
+            )
+        }
+    }
+
+    /// One dashboard row that routes into the Relay tab — shared by the upsell,
+    /// "finish setup", recovery, and reactivation states so all four read as the
+    /// same kind of row instead of four hand-built HStacks.
+    private func relayNavRow(
+        title: String,
+        subtitle: String,
+        status: SyncStatus?,
+        systemImage: String
+    ) -> some View {
         Button {
             selectedTab = .relay
         } label: {
-            HStack(alignment: .top, spacing: 12) {
-                Image(systemName: "antenna.radiowaves.left.and.right.slash")
-                    .font(.title3)
-                    .foregroundStyle(Color.statusAttention)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(L10n.tr("Finish activating Cloud Relay"))
-                        .font(.subheadline.weight(.semibold))
-                    Text(L10n.tr("You’re subscribed, but your server has never woken this iPhone. One step finishes setup."))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 4)
+            StatusRow(title, subtitle: subtitle, status: status, systemImage: systemImage) {
                 Image(systemName: "chevron.right")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.tertiary)
                     .accessibilityHidden(true)
             }
-            .padding(.vertical, 4)
         }
         .tint(.primary)
-        .accessibilityElement(children: .combine)
-        .accessibilityHint(L10n.tr("Opens Cloud Relay setup."))
     }
 
-    /// Subscribed and previously delivering, but no wake-up has arrived in a while
-    /// — the helper likely stopped. A recovery nudge, NOT a "set up" prompt (setup
-    /// is already done). Taps through to the Relay tab.
-    private var relayRecoveryRow: some View {
-        Button {
-            selectedTab = .relay
-        } label: {
-            HStack {
+    /// The one-time Cloud Relay offer, shown as a dismissable dashboard card the
+    /// first time a real sync completes (the "aha moment"). Replaces the old
+    /// behavior of silently switching the selected tab, which yanked users out
+    /// of whatever they were doing mid-celebration.
+    private var relayUpsellCard: some View {
+        VStack(alignment: .leading, spacing: VaultSpacing.s) {
+            HStack(spacing: VaultSpacing.s) {
                 Image(systemName: "antenna.radiowaves.left.and.right")
-                    .foregroundStyle(Color.statusAttention)
+                    .foregroundStyle(accent)
                     .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(L10n.tr("Cloud Relay went quiet"))
-                        .font(.subheadline.weight(.medium))
-                    Text(L10n.tr("No wake-up in a while — is your server still on?"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .accessibilityHidden(true)
+                Text(L10n.tr("Get instant updates"))
+                    .font(.headline)
             }
+            Text(L10n.tr("Your first sync is done. Cloud Relay wakes this iPhone the moment your notes change — even while the app is closed."))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: VaultSpacing.m) {
+                Button(L10n.tr("View Cloud Relay")) {
+                    dismissRelayUpsell(openRelay: true)
+                }
+                .buttonStyle(.borderedProminent)
+                Button(L10n.tr("Not now")) {
+                    dismissRelayUpsell(openRelay: false)
+                }
+                .buttonStyle(.bordered)
+            }
+            .padding(.top, VaultSpacing.xxs)
         }
-        .tint(.primary)
-        .accessibilityElement(children: .combine)
+        .padding(.vertical, VaultSpacing.xs)
+        // `.contain`, not `.combine`: the card holds two buttons that must stay
+        // independently focusable for VoiceOver.
+        .accessibilityElement(children: .contain)
     }
 
     private var isSyncing: Bool {
@@ -558,59 +564,52 @@ struct ContentView: View {
     private var obsidianStatusSection: some View {
         if !vaultManager.isAccessible {
             Section {
-                VStack(alignment: .leading, spacing: 14) {
-                    Label(
-                        vaultManager.needsReconnect ? "Obsidian access expired" : "Obsidian folder not connected",
-                        systemImage: "folder.badge.questionmark"
-                    )
-                        .foregroundStyle(Color.statusAttention)
-
-                    if let issue = vaultManager.accessIssue {
-                        Text(issue.message)
-                            .font(.caption)
-                            .foregroundStyle(Color.statusAttention)
-                        Text(issue.remediation)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                        if let url = SyncUserError.troubleshootingURL(anchor: vaultManager.needsReconnect ? "bookmark-access-expired" : "obsidian-folder-not-found") {
-                            ExternalLinkButton(titleKey: "Learn how to fix", url: url)
-                                .font(.caption2)
-                        }
-                    } else {
-                        Text("VaultSync needs one-time access to your Obsidian folder before it can accept shares.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Button {
-                        showObsidianPicker = true
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: vaultManager.needsReconnect ? "arrow.clockwise" : "folder.badge.plus")
-                            Text(vaultManager.needsReconnect ? "Reconnect Obsidian Folder" : "Connect Obsidian Folder")
-                        }
-                        .frame(maxWidth: .infinity, alignment: .center)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(accent)
-                    .frame(maxWidth: .infinity)
-
-                    Text("In the picker, choose \"On My iPhone\" → \"Obsidian\", then tap Open.")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-
-                    DisclosureGroup("Can't find the Obsidian folder?") {
-                        Text("Install Obsidian from the App Store and open it once. The folder appears after Obsidian creates it.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .padding(.top, 4)
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 6)
+                ActionCard(
+                    status: .attention,
+                    title: vaultManager.needsReconnect
+                        ? L10n.tr("Obsidian access expired")
+                        : L10n.tr("Obsidian folder not connected"),
+                    message: obsidianAccessMessage,
+                    actionTitle: vaultManager.needsReconnect
+                        ? L10n.tr("Reconnect Obsidian Folder")
+                        : L10n.tr("Connect Obsidian Folder"),
+                    action: { showObsidianPicker = true },
+                    secondary: { AnyView(obsidianAccessFooter) }
+                )
             }
         }
+    }
+
+    private var obsidianAccessMessage: String {
+        if let issue = vaultManager.accessIssue {
+            return joinedErrorMessage(issue.message, issue.remediation)
+        }
+        return L10n.tr("VaultSync needs one-time access to your Obsidian folder before it can accept shares.")
+    }
+
+    /// Picker guidance + first-install help below the connect button.
+    private var obsidianAccessFooter: some View {
+        VStack(alignment: .leading, spacing: VaultSpacing.s) {
+            if vaultManager.accessIssue != nil,
+               let url = SyncUserError.troubleshootingURL(anchor: vaultManager.needsReconnect ? "bookmark-access-expired" : "obsidian-folder-not-found") {
+                ExternalLinkButton(titleKey: "Learn how to fix", url: url)
+                    .font(.caption)
+            }
+
+            Text("In the picker, choose \"On My iPhone\" → \"Obsidian\", then tap Open.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+
+            DisclosureGroup("Can't find the Obsidian folder?") {
+                Text("Install Obsidian from the App Store and open it once. The folder appears after Obsidian creates it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, VaultSpacing.xs)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .padding(.top, VaultSpacing.xs)
     }
 
     // MARK: - Pending Shares Section
@@ -764,27 +763,7 @@ struct ContentView: View {
     private var vaultsSection: some View {
         Section("Obsidian Vaults") {
             if syncthingManager.folders.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    if vaultManager.isAccessible {
-                        if vaultManager.detectedVaults.isEmpty {
-                            Label("No vaults found", systemImage: "folder.badge.questionmark")
-                                .foregroundStyle(.secondary)
-                            Text("Create a vault in Obsidian first. VaultSync will detect it automatically.")
-                                .font(.caption)
-                                .foregroundStyle(.tertiary)
-                        } else {
-                            Label("No folders syncing yet", systemImage: "arrow.triangle.2.circlepath")
-                                .foregroundStyle(.secondary)
-                            Text("Share a folder from your desktop Syncthing — it will be accepted automatically.")
-                                .font(.caption)
-                                .foregroundStyle(.tertiary)
-                        }
-                    } else {
-                        Label("Connect to Obsidian first", systemImage: "folder.badge.gearshape")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.vertical, 4)
+                vaultsEmptyState
             } else {
                 ForEach(vaultRows) { item in
                     NavigationLink {
@@ -793,6 +772,32 @@ struct ContentView: View {
                         vaultRow(item)
                     }
                 }
+            }
+        }
+    }
+
+    /// A designed first-run state instead of a degenerate caption row — this is
+    /// the screen a brand-new user stares at the longest. The "connect" case
+    /// carries no button of its own: the ActionCard above already owns that CTA.
+    @ViewBuilder
+    private var vaultsEmptyState: some View {
+        if !vaultManager.isAccessible {
+            ContentUnavailableView {
+                Label(L10n.tr("Connect to Obsidian first"), systemImage: "folder.badge.gearshape")
+            } description: {
+                Text("VaultSync needs one-time access to your Obsidian folder before it can accept shares.")
+            }
+        } else if vaultManager.detectedVaults.isEmpty {
+            ContentUnavailableView {
+                Label(L10n.tr("No vaults found"), systemImage: "folder.badge.questionmark")
+            } description: {
+                Text("Create a vault in Obsidian first. VaultSync will detect it automatically.")
+            }
+        } else {
+            ContentUnavailableView {
+                Label(L10n.tr("No folders syncing yet"), systemImage: "arrow.triangle.2.circlepath")
+            } description: {
+                Text("Share a folder from your desktop Syncthing — it will be accepted automatically.")
             }
         }
     }
@@ -860,43 +865,34 @@ struct ContentView: View {
         return all.filter { $0.belongs(toVault: vault) }
     }
 
+    /// Vaults are the app's hero object — give them the same StatusRow treatment
+    /// as devices (full-size status glyph, headline title) instead of the old
+    /// plain-text row with a tiny trailing caption icon.
     private func vaultRow(_ item: VaultRowItem) -> some View {
         let status = syncthingManager.folderStatuses[item.folder.id]
         let conflictCount = conflicts(for: item).count
-        return HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(item.name)
-                        .font(.body)
-                    if conflictCount > 0 {
-                        Text("\(conflictCount)")
-                            .font(.caption2.bold())
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 1)
-                            .background(Color.statusAttention, in: Capsule())
-                            .accessibilityLabel(L10n.fmt("%d conflicts", conflictCount))
-                    }
-                }
-                if let status {
-                    HStack(spacing: 4) {
-                        Text(localizedState(status.state))
-                            .font(.caption2)
-                        if status.completionPct < 100, status.completionPct > 0 {
-                            Text(L10n.fmt("(%d%%)", Int(status.completionPct)))
-                                .font(.caption2)
-                        }
-                    }
-                    .foregroundStyle(stateColor(status.state))
-                }
+        let syncStatus = folderSyncStatus(status?.state ?? "unknown")
+
+        var subtitle: String?
+        if let status {
+            subtitle = localizedState(status.state)
+            if status.completionPct < 100, status.completionPct > 0 {
+                subtitle! += " " + L10n.fmt("(%d%%)", Int(status.completionPct))
             }
-            Spacer()
-            Image(systemName: stateIcon(status?.state ?? "unknown"))
-                .foregroundStyle(stateColor(status?.state ?? "unknown"))
-                .font(.caption2)
-                .accessibilityHidden(true)
         }
-        .accessibilityElement(children: .combine)
+
+        return StatusRow(
+            item.name,
+            subtitle: subtitle,
+            status: syncStatus,
+            systemImage: syncStatus == nil ? "questionmark.circle" : nil,
+            glyphTint: syncStatus == nil ? Color.statusInactive : nil
+        ) {
+            if conflictCount > 0 {
+                StatusTag(text: "\(conflictCount)", filled: true)
+                    .accessibilityLabel(L10n.fmt("%d conflicts", conflictCount))
+            }
+        }
     }
 
     /// Map a folder's raw engine state onto the canonical `SyncStatus` registry so
@@ -1013,7 +1009,7 @@ struct ContentView: View {
                                 Text(device.name.isEmpty ? L10n.tr("Unnamed") : device.name)
                                     .font(.body)
                                 Text(device.deviceID)
-                                    .font(.system(.caption2, design: .monospaced))
+                                    .font(.vaultMono(.caption2))
                                     .lineLimit(1)
                                     .truncationMode(.middle)
                             }
@@ -1112,14 +1108,17 @@ struct ContentView: View {
     private var devicesSection: some View {
         Section {
             if syncthingManager.devices.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("No devices configured", systemImage: "laptopcomputer.and.iphone")
-                        .foregroundStyle(.secondary)
+                ContentUnavailableView {
+                    Label(L10n.tr("No devices configured"), systemImage: "laptopcomputer.and.iphone")
+                } description: {
                     Text("Add a device using its Syncthing Device ID. Find it in the Syncthing web UI under Actions > Show ID.")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
+                } actions: {
+                    Button(L10n.tr("Add Device")) {
+                        showAddDevice = true
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!syncthingManager.isRunning)
                 }
-                .padding(.vertical, 4)
             } else {
                 ForEach(syncthingManager.devices) { device in
                     NavigationLink {
@@ -1138,20 +1137,6 @@ struct ContentView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                }
-            }
-        } header: {
-            HStack {
-                Text("Devices")
-                Spacer()
-                if syncthingManager.isRunning {
-                    Button {
-                        showAddDevice = true
-                    } label: {
-                        Image(systemName: "plus")
-                    }
-                    .accessibilityLabel("Add Device")
-                    .accessibilityHint("Opens the form to add a Syncthing device.")
                 }
             }
         }

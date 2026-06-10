@@ -2,6 +2,10 @@ import SwiftUI
 
 struct SetupChecklistView: View {
     var viewModel: SetupChecklistViewModel
+    /// When set, incomplete items with an in-app entry point render a real action
+    /// button below their remediation text — instead of leaving the user to
+    /// navigate there by prose directions.
+    var onAction: ((SetupChecklistViewModel.ChecklistAction) -> Void)? = nil
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
@@ -32,8 +36,8 @@ struct SetupChecklistView: View {
                 Text(L10n.fmt("%d of %d essentials ready", viewModel.completedRequiredCount, viewModel.totalRequiredCount))
                     .font(.caption.weight(.semibold).monospacedDigit())
                     .foregroundStyle(.secondary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
+                    .padding(.horizontal, VaultSpacing.s)
+                    .padding(.vertical, VaultSpacing.xs)
                     .background(Color(.tertiarySystemBackground), in: Capsule())
             }
         } else {
@@ -45,8 +49,8 @@ struct SetupChecklistView: View {
                 Text(L10n.fmt("%d of %d essentials ready", viewModel.completedRequiredCount, viewModel.totalRequiredCount))
                     .font(.caption.weight(.semibold).monospacedDigit())
                     .foregroundStyle(.secondary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
+                    .padding(.horizontal, VaultSpacing.s)
+                    .padding(.vertical, VaultSpacing.xs)
                     .background(Color(.tertiarySystemBackground), in: Capsule())
             }
         }
@@ -100,6 +104,15 @@ struct SetupChecklistView: View {
                 .accessibilityElement(children: .combine)
             }
 
+            if !item.isComplete, let action = item.action, let onAction {
+                Button(actionTitle(for: action)) {
+                    onAction(action)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.regular)
+                .padding(.top, VaultSpacing.xxs)
+            }
+
         }
         .padding(VaultSpacing.m)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -127,15 +140,21 @@ struct SetupChecklistView: View {
         return .statusAttention
     }
 
+    private func actionTitle(for action: SetupChecklistViewModel.ChecklistAction) -> String {
+        switch action {
+        case .connectObsidian:
+            return L10n.tr("Connect Obsidian Folder")
+        case .addDevice:
+            return L10n.tr("Add Device")
+        case .openRelayTab:
+            return L10n.tr("Open the Relay tab")
+        }
+    }
+
     @ViewBuilder
     private func optionalBadge(for item: SetupChecklistViewModel.ChecklistItem) -> some View {
         if item.isOptional {
-            Text(L10n.tr("Optional"))
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(statusColor(for: item))
-                .padding(.horizontal, VaultSpacing.s)
-                .padding(.vertical, 3)
-                .background(statusColor(for: item).opacity(0.15), in: Capsule())
+            StatusTag(text: L10n.tr("Optional"), tint: statusColor(for: item))
         }
     }
 

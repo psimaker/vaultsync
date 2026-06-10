@@ -14,6 +14,15 @@ final class SetupChecklistViewModel {
         var id: String { rawValue }
     }
 
+    /// An in-app action that directly advances a checklist item, so remediations
+    /// are a tappable button instead of prose-only "go to the home screen and…"
+    /// directions. Only items with a real in-app entry point carry one.
+    enum ChecklistAction: Hashable {
+        case connectObsidian
+        case addDevice
+        case openRelayTab
+    }
+
     struct ChecklistItem: Identifiable, Hashable {
         let requirement: Requirement
         let title: String
@@ -21,6 +30,7 @@ final class SetupChecklistViewModel {
         let remediation: String
         let isOptional: Bool
         let isComplete: Bool
+        var action: ChecklistAction? = nil
 
         var id: Requirement { requirement }
     }
@@ -115,7 +125,8 @@ final class SetupChecklistViewModel {
             description: L10n.tr("Your iPhone is not paired with a Syncthing device yet."),
             remediation: L10n.tr("Add your computer or server from the Devices section on the home screen."),
             isOptional: false,
-            isComplete: false
+            isComplete: false,
+            action: .addDevice
         )
     }
 
@@ -137,7 +148,8 @@ final class SetupChecklistViewModel {
             description: L10n.tr("VaultSync cannot access your local Obsidian folder."),
             remediation: L10n.tr("Connect your Obsidian folder from the VaultSync home screen."),
             isOptional: false,
-            isComplete: false
+            isComplete: false,
+            action: .connectObsidian
         )
     }
 
@@ -213,7 +225,8 @@ final class SetupChecklistViewModel {
                 description: L10n.tr("Cloud Relay is not enabled. Without it, incoming changes arrive when you open VaultSync."),
                 remediation: L10n.tr("Enable Cloud Relay on the Relay tab if you want changes pushed the moment they happen."),
                 isOptional: true,
-                isComplete: false
+                isComplete: false,
+                action: .openRelayTab
             )
         case .awaitingDelivery:
             return ChecklistItem(
@@ -222,7 +235,8 @@ final class SetupChecklistViewModel {
                 description: L10n.tr("You’re subscribed, but no recent wake-up has arrived. Make sure the vaultsync-notify helper is running on your server."),
                 remediation: L10n.tr("Set up the server helper from the Relay tab → Set Up Your Server."),
                 isOptional: true,
-                isComplete: false
+                isComplete: false,
+                action: .openRelayTab
             )
         case .delivering:
             return ChecklistItem(

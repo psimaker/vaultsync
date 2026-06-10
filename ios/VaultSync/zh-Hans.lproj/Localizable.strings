@@ -120,6 +120,7 @@
 "Manage Subscription" = "管理订阅";
 "Name" = "名称";
 "Name (optional)" = "名称（可选）";
+"Name saved" = "名称已保存";
 "Needs Attention" = "需要处理";
 "Network Error" = "网络错误";
 "Never" = "从未";
@@ -135,6 +136,7 @@
 "No successful sync has been recorded for your vaults yet." = "你的 Vault 尚未记录到成功同步。";
 "No vaults found" = "未找到 Vault";
 "Not Configured" = "未配置";
+"Not now" = "暂不";
 "Not Shared" = "未共享";
 "Not attempted" = "未尝试";
 "Not checked" = "未检查";
@@ -146,6 +148,7 @@
 "Obsidian directory not accessible." = "无法访问 Obsidian 目录。";
 "Obsidian folder not connected" = "Obsidian 文件夹未连接";
 "Open Settings" = "打开设置";
+"Open the Relay tab" = "打开 Relay 标签页";
 "Open VaultSync" = "打开 VaultSync";
 "Open VaultSync once to restart Syncthing, then retry." = "打开 VaultSync 一次以重启 Syncthing，然后重试。";
 "Open VaultSync to allow a longer foreground sync session." = "打开 VaultSync，以允许更长的前台同步会话。";
@@ -225,6 +228,7 @@
 "Purchase Failed" = "购买失败";
 "Rescan All Vaults" = "重新扫描所有 Vault";
 "Sync Conflicts" = "同步冲突";
+"View Cloud Relay" = "查看 Cloud Relay";
 "XXXXXXX-XXXXXXX-..." = "XXXXXXX-XXXXXXX-...";
 "Retry APNs Registration" = "重试 APNs 注册";
 "Retry Accept" = "重试接受";
@@ -349,6 +353,7 @@
 "VaultSync cannot access your local Obsidian folder." = "VaultSync 无法访问你的本地 Obsidian 文件夹。";
 "Connect your Obsidian folder from the VaultSync home screen." = "请在 VaultSync 主屏幕连接你的 Obsidian 文件夹。";
 "Computer or server added" = "已添加电脑或服务器";
+"Your first sync is done. Cloud Relay wakes this iPhone the moment your notes change — even while the app is closed." = "首次同步已完成。Cloud Relay 会在笔记发生变化时立即发送唤醒信号唤醒这部 iPhone——即使应用已关闭。";
 "Your iPhone is paired with at least one Syncthing device." = "你的 iPhone 已与至少一台 Syncthing 设备配对。";
 "Your iPhone is not paired with a Syncthing device yet." = "你的 iPhone 尚未与 Syncthing 设备配对。";
 "Add your computer or server from the Devices section on the home screen." = "请在主屏幕的“设备”部分添加你的电脑或服务器。";

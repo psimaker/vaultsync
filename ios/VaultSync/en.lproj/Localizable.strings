@@ -120,6 +120,7 @@
 "Manage Subscription" = "Manage Subscription";
 "Name" = "Name";
 "Name (optional)" = "Name (optional)";
+"Name saved" = "Name saved";
 "Needs Attention" = "Needs Attention";
 "Network Error" = "Network Error";
 "Never" = "Never";
@@ -135,6 +136,7 @@
 "No successful sync has been recorded for your vaults yet." = "No successful sync has been recorded for your vaults yet.";
 "No vaults found" = "No vaults found";
 "Not Configured" = "Not Configured";
+"Not now" = "Not now";
 "Not Shared" = "Not Shared";
 "Not attempted" = "Not attempted";
 "Not checked" = "Not checked";
@@ -146,6 +148,7 @@
 "Obsidian directory not accessible." = "Obsidian directory not accessible.";
 "Obsidian folder not connected" = "Obsidian folder not connected";
 "Open Settings" = "Open Settings";
+"Open the Relay tab" = "Open the Relay tab";
 "Open VaultSync" = "Open VaultSync";
 "Open VaultSync once to restart Syncthing, then retry." = "Open VaultSync once to restart Syncthing, then retry.";
 "Open VaultSync to allow a longer foreground sync session." = "Open VaultSync to allow a longer foreground sync session.";
@@ -225,6 +228,7 @@
 "Purchase Failed" = "Purchase Failed";
 "Rescan All Vaults" = "Rescan All Vaults";
 "Sync Conflicts" = "Sync Conflicts";
+"View Cloud Relay" = "View Cloud Relay";
 "XXXXXXX-XXXXXXX-..." = "XXXXXXX-XXXXXXX-...";
 "Retry APNs Registration" = "Retry APNs Registration";
 "Retry Accept" = "Retry Accept";
@@ -349,6 +353,7 @@
 "VaultSync cannot access your local Obsidian folder." = "VaultSync cannot access your local Obsidian folder.";
 "Connect your Obsidian folder from the VaultSync home screen." = "Connect your Obsidian folder from the VaultSync home screen.";
 "Computer or server added" = "Computer or server added";
+"Your first sync is done. Cloud Relay wakes this iPhone the moment your notes change — even while the app is closed." = "Your first sync is done. Cloud Relay wakes this iPhone the moment your notes change — even while the app is closed.";
 "Your iPhone is paired with at least one Syncthing device." = "Your iPhone is paired with at least one Syncthing device.";
 "Your iPhone is not paired with a Syncthing device yet." = "Your iPhone is not paired with a Syncthing device yet.";
 "Add your computer or server from the Devices section on the home screen." = "Add your computer or server from the Devices section on the home screen.";

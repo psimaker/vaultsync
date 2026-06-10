@@ -6,6 +6,10 @@ struct SettingsView: View {
     let syncthingManager: SyncthingManager
     var vaultManager: VaultManager
     var subscriptionManager: SubscriptionManager
+    /// Routes a tapped checklist remediation to its in-app action. The host
+    /// (ContentView) owns the folder picker, the add-device sheet, and the tab
+    /// selection, so the action must travel up through this sheet.
+    var onChecklistAction: ((SetupChecklistViewModel.ChecklistAction) -> Void)? = nil
 
     @State private var showSetupStatus = false
     @State private var tipJar = TipJarManager()
@@ -80,9 +84,19 @@ struct SettingsView: View {
                                 syncthingManager: syncthingManager,
                                 vaultManager: vaultManager,
                                 subscriptionManager: subscriptionManager
-                            )
+                            ),
+                            onAction: onChecklistAction.map { handler in
+                                { action in
+                                    // Collapse both sheets first; the host delays
+                                    // its own presentation until the dismissal
+                                    // transition has finished.
+                                    showSetupStatus = false
+                                    dismiss()
+                                    handler(action)
+                                }
+                            }
                         )
-                        .padding(16)
+                        .padding(VaultSpacing.l)
                     }
                     .navigationTitle(L10n.tr("Setup Status"))
                     .navigationBarTitleDisplayMode(.inline)
