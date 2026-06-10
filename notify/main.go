@@ -31,6 +31,15 @@ type Config struct {
 	// false, so Config literals that don't set it (e.g. focused runService tests)
 	// keep announce off; only loadConfig turns it on for the real service.
 	StartupAnnounce bool
+	// StaleRetriggerSeconds re-sends a wake-up on a slow cadence while any
+	// unpaused remote device still needs data from this instance. This closes
+	// the missed-push gap: APNs silent pushes expire after ~1h, and a phone
+	// that was offline for the only change of the day would otherwise stay
+	// stale until the next change or a manual app open — the change-driven
+	// dedup markers never fire twice for the same change. 0 disables the
+	// sweep. NOTE: like StartupAnnounce, the zero value keeps the feature off
+	// for focused Config-literal tests; only loadConfig applies the default.
+	StaleRetriggerSeconds int
 }
 
 type appMode int
@@ -131,6 +140,16 @@ func loadConfig() (Config, error) {
 		debounce = d
 	}
 
+	// Stale re-trigger defaults to every 6 hours; 0 disables.
+	staleRetrigger := 6 * 60 * 60
+	if v := os.Getenv("STALE_RETRIGGER_SECONDS"); v != "" {
+		s, err := strconv.Atoi(v)
+		if err != nil || s < 0 {
+			return Config{}, fmt.Errorf("STALE_RETRIGGER_SECONDS must be a non-negative integer (got %q)", v)
+		}
+		staleRetrigger = s
+	}
+
 	// Startup announce (B1) defaults ON; opt out with a falsey STARTUP_ANNOUNCE.
 	startupAnnounce := true
 	if v := strings.TrimSpace(strings.ToLower(os.Getenv("STARTUP_ANNOUNCE"))); v != "" {
@@ -199,12 +218,13 @@ func loadConfig() (Config, error) {
 	// the app's setup command both supply it explicitly, so this costs the
 	// operator nothing in practice; only the Syncthing key/URL are auto-detected.
 	cfg := Config{
-		SyncthingAPIURL: apiURL,
-		SyncthingAPIKey: apiKey,
-		RelayURL:        required("RELAY_URL"),
-		DebounceSeconds: debounce,
-		WatchedFolders:  watched,
-		StartupAnnounce: startupAnnounce,
+		SyncthingAPIURL:       apiURL,
+		SyncthingAPIKey:       apiKey,
+		RelayURL:              required("RELAY_URL"),
+		DebounceSeconds:       debounce,
+		WatchedFolders:        watched,
+		StartupAnnounce:       startupAnnounce,
+		StaleRetriggerSeconds: staleRetrigger,
 	}
 
 	missing := make([]string, 0, 3)
@@ -355,6 +375,7 @@ func runService(ctx context.Context, cfg Config) int {
 		"debounce_seconds", cfg.DebounceSeconds,
 		"watched_folders", formatWatched(cfg.WatchedFolders),
 		"startup_announce", cfg.StartupAnnounce,
+		"stale_retrigger_seconds", cfg.StaleRetriggerSeconds,
 	)
 
 	// B1 — startup announce. Fire one wake-up now so a freshly (re)started helper
@@ -386,6 +407,18 @@ func runService(ctx context.Context, cfg Config) int {
 	var debounceCh <-chan time.Time
 	pending := make(map[string]string)
 	lastTriggered := make(map[string]string)
+
+	// Stale-peer sweep: while a peer still needs data, re-send a wake-up on a
+	// slow cadence. The change-driven path dedups by marker and APNs pushes
+	// expire after ~1h, so a phone that misses its one push would otherwise
+	// stay stale until the next change. The first sweep runs a full interval
+	// after startup — the startup announce already covers boot-time liveness.
+	var staleCh <-chan time.Time
+	if cfg.StaleRetriggerSeconds > 0 {
+		staleTicker := time.NewTicker(time.Duration(cfg.StaleRetriggerSeconds) * time.Second)
+		defer staleTicker.Stop()
+		staleCh = staleTicker.C
+	}
 
 	for {
 		select {
@@ -477,6 +510,38 @@ func runService(ctx context.Context, cfg Config) int {
 				debounceCh = debounceTimer.C
 			}
 
+		case <-staleCh:
+			if len(pending) > 0 {
+				// A change-driven trigger is already debouncing; it will wake
+				// the phone anyway.
+				continue
+			}
+			sweepCtx, sweepCancel := context.WithTimeout(ctx, 30*time.Second)
+			behind, err := anyPeerNeedsData(sweepCtx, st, deviceID, cfg.WatchedFolders)
+			sweepCancel()
+			if err != nil {
+				slog.Warn("stale-peer sweep failed; retrying next interval",
+					"classification", "recoverable",
+					"component", "syncthing",
+					"error", err,
+					"action", "continue",
+				)
+				continue
+			}
+			if !behind {
+				continue
+			}
+			slog.Info("peer still needs data; re-sending wake-up",
+				"component", "relay",
+				"reason", "stale-retrigger",
+			)
+			// Delivered, transient, and inactive outcomes all just wait for
+			// the next sweep — it re-evaluates from live completion data, so
+			// nothing needs to be retained or marked here.
+			if fireTrigger(ctx, relay, "stale-retrigger") == outcomeFatal {
+				return 1
+			}
+
 		case <-ctx.Done():
 			slog.Info("shutdown signal received")
 			if len(pending) > 0 {
@@ -493,6 +558,66 @@ func runService(ctx context.Context, cfg Config) int {
 			return 0
 		}
 	}
+}
+
+// completionNeedsWakeup reports whether a completion snapshot shows work a
+// wake-up could help deliver. Deletes count: they need to propagate too.
+func completionNeedsWakeup(c DeviceCompletion) bool {
+	return c.NeedItems > 0 || c.NeedBytes > 0 || c.NeedDeletes > 0
+}
+
+// anyPeerNeedsData reports whether at least one unpaused remote device still
+// needs items, bytes, or deletes from this instance. With watched folders
+// configured the check is per watched folder; otherwise it uses Syncthing's
+// aggregate completion across all folders shared with the device.
+//
+// A per-device HTTP status error (e.g. a watched folder not shared with that
+// device) skips just that check — it is configuration-shaped, not a sweep
+// failure. Transport errors fail the sweep so the caller logs and retries.
+func anyPeerNeedsData(ctx context.Context, st *SyncthingClient, selfID string, watchedFolders map[string]bool) (bool, error) {
+	devices, err := st.ListDevices(ctx)
+	if err != nil {
+		return false, err
+	}
+
+	var firstErr error
+	for _, dev := range devices {
+		if dev.DeviceID == selfID || dev.Paused {
+			continue
+		}
+
+		folders := []string{""}
+		if watchedFolders != nil {
+			folders = folders[:0]
+			for folder := range watchedFolders {
+				folders = append(folders, folder)
+			}
+		}
+
+		for _, folder := range folders {
+			completion, err := st.Completion(ctx, dev.DeviceID, folder)
+			if err != nil {
+				var statusErr *HTTPStatusError
+				if errors.As(err, &statusErr) {
+					slog.Debug("skipping completion check",
+						"device", dev.DeviceID,
+						"folder", folder,
+						"error", err,
+					)
+					continue
+				}
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+			if completionNeedsWakeup(completion) {
+				return true, nil
+			}
+		}
+	}
+
+	return false, firstErr
 }
 
 func waitForDeviceID(ctx context.Context, st *SyncthingClient) (string, error) {

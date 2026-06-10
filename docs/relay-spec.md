@@ -56,6 +56,7 @@ In the app, the **Cloud Relay** tab → **Relay health & diagnostics** is the li
 - Auto-detects the Syncthing API key and URL from `config.xml` — no key to copy (override via env if needed)
 - Reads its Syncthing Device ID from `/rest/system/status` at startup
 - **Startup-announce** (`STARTUP_ANNOUNCE`, default on): sends one wake-up the moment it starts, so a freshly-subscribed device flips to "Cloud Relay active" without waiting for the next change
+- **Stale-peer sweep** (`STALE_RETRIGGER_SECONDS`, default 6 h): while any unpaused peer still reports outstanding `need{Items,Bytes,Deletes}` via `/rest/db/completion`, re-sends a wake-up on a slow cadence. This recovers a phone that missed its push (APNs expiry is ~1 h) without waiting for the next vault change
 - No persistent storage required — stateless except for config
 
 **Central Relay (relay.vaultsync.eu)**
@@ -193,6 +194,7 @@ Configuration via environment variables. `RELAY_URL` is the only required value 
 | `SYNCTHING_CONFIG_WAIT_SECONDS` | No | First-boot wait for `config.xml` (default `60`). |
 | `DEBOUNCE_SECONDS` | No | Debounce interval for batching events (default `5`). |
 | `WATCHED_FOLDERS` | No | Comma-separated folder IDs to watch (default: all). |
+| `STALE_RETRIGGER_SECONDS` | No | Re-send a wake-up on this cadence while a peer still needs data (default `21600` = 6 h; `0` disables). Recovers devices that missed a push — APNs silent pushes expire after ~1 h, and the change-driven path never fires twice for the same change. |
 
 The container reads its own Syncthing Device ID automatically from `/rest/system/status` at startup — no manual Device ID configuration. It consumes the Syncthing event stream and pushes outbound to the relay. Full operator reference: [../notify/README.md](../notify/README.md).
 

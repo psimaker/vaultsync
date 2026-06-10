@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -172,6 +173,74 @@ func (c *SyncthingClient) getSystemStatus(ctx context.Context, withAPIKey bool) 
 	}
 
 	return status, resp.StatusCode, nil
+}
+
+// remoteDeviceConfig is the subset of /rest/config/devices needed to decide
+// which peers to include in the stale-peer sweep.
+type remoteDeviceConfig struct {
+	DeviceID string `json:"deviceID"`
+	Paused   bool   `json:"paused"`
+}
+
+// DeviceCompletion is the subset of /rest/db/completion used to decide whether
+// a peer still needs data from this instance.
+type DeviceCompletion struct {
+	NeedBytes   int64 `json:"needBytes"`
+	NeedItems   int   `json:"needItems"`
+	NeedDeletes int   `json:"needDeletes"`
+}
+
+// ListDevices returns all configured devices, including this one.
+func (c *SyncthingClient) ListDevices(ctx context.Context) ([]remoteDeviceConfig, error) {
+	var devices []remoteDeviceConfig
+	if err := c.getJSON(ctx, c.apiURL+"/rest/config/devices", &devices); err != nil {
+		return nil, err
+	}
+	return devices, nil
+}
+
+// Completion reads sync completion for a device. An empty folder aggregates
+// across all folders shared with that device.
+func (c *SyncthingClient) Completion(ctx context.Context, deviceID, folder string) (DeviceCompletion, error) {
+	query := url.Values{"device": {deviceID}}
+	if folder != "" {
+		query.Set("folder", folder)
+	}
+
+	var completion DeviceCompletion
+	if err := c.getJSON(ctx, c.apiURL+"/rest/db/completion?"+query.Encode(), &completion); err != nil {
+		return DeviceCompletion{}, err
+	}
+	return completion, nil
+}
+
+func (c *SyncthingClient) getJSON(ctx context.Context, url string, out any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("X-API-Key", c.apiKey)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return &HTTPStatusError{
+			Component:  "syncthing",
+			URL:        url,
+			StatusCode: resp.StatusCode,
+			Body:       string(body),
+		}
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		return fmt.Errorf("decode response: %w", err)
+	}
+	return nil
 }
 
 func (c *SyncthingClient) poll(ctx context.Context, since int) ([]Event, error) {
