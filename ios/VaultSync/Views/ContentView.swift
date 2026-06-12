@@ -902,7 +902,9 @@ struct ContentView: View {
     /// plain-text row with a tiny trailing caption icon.
     private func vaultRow(_ item: VaultRowItem) -> some View {
         let status = syncthingManager.folderStatuses[item.folder.id]
-        let conflictCount = conflicts(for: item).count
+        // Distinct conflicted files, not copies — same semantics as the
+        // home-screen issue banner (SyncthingManager.unresolvedConflictCount).
+        let conflictCount = Set(conflicts(for: item).map(\.originalPath)).count
         let syncStatus = folderSyncStatus(status?.state ?? "unknown")
 
         var subtitle: String?
@@ -1011,7 +1013,7 @@ struct ContentView: View {
                             Label("Conflicts", systemImage: "exclamationmark.triangle")
                                 .foregroundStyle(Color.statusAttention)
                             Spacer()
-                            Text("\(conflicts.count)")
+                            Text("\(Set(conflicts.map(\.originalPath)).count)")
                                 .foregroundStyle(.secondary)
                         }
                     }

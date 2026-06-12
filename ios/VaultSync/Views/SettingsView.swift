@@ -16,6 +16,7 @@ struct SettingsView: View {
     @State private var showThankYou = false
     @State private var deviceIDCopied = false
     @AppStorage(BackgroundSyncService.conflictNotificationsEnabledKey) private var conflictNotificationsEnabled = true
+    @AppStorage(SyncthingManager.autoResolveStateConflictsKey) private var autoResolveStateConflicts = true
     @Environment(\.dismiss) private var dismiss
 
     // Cloud Relay now lives entirely in its own tab (RelayHomeView) — subscribe,
@@ -26,6 +27,7 @@ struct SettingsView: View {
         NavigationStack {
             List {
                 supportSection
+                conflictsSection
                 notificationsSection
                 aboutSection
 
@@ -120,6 +122,20 @@ struct SettingsView: View {
             } message: {
                 Text(L10n.tr("Your contribution means a lot and directly supports VaultSync development. Thank you!"))
             }
+        }
+    }
+
+    // MARK: - Conflicts Section
+
+    private var conflictsSection: some View {
+        Section {
+            Toggle(isOn: $autoResolveStateConflicts) {
+                Label(L10n.tr("Auto-Resolve Settings Conflicts"), systemImage: "wand.and.stars")
+            }
+        } header: {
+            Text(L10n.tr("Conflicts"))
+        } footer: {
+            Text(L10n.tr("Conflicts in Obsidian's app settings and plugin state (.obsidian) are resolved automatically — the newest version wins. Conflicts in your notes always wait for your decision."))
         }
     }
 

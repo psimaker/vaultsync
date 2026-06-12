@@ -148,6 +148,34 @@ In typical Obsidian use, the sync folder is the **Obsidian root** and individual
 
 The vault scanner specifically descends one level into non-hidden subdirectories so that heavy folders inside vaults (e.g. `Obsidian/Personal/.git`, `Obsidian/Work/.git`) are detected and their sizes aggregated into a single "Found in this vault" entry per pattern.
 
+## 6.6 Conflict auto-resolution (v1.7.0)
+
+Presets prevent the *predictable* conflict sources, but `.obsidian` holds many
+more files that churn on every device (`app.json`, `graph.json`, per-plugin
+`data.json`, …) — and ignoring all of them by default would also stop plugin
+*settings* from syncing, which users do want. So v1.7.0 attacks the noise from
+the other side:
+
+- **Auto-resolve, not ignore.** Conflict copies of any file inside a
+  `.obsidian` directory (any depth — covers vault-subdir layouts) are resolved
+  automatically with last-writer-wins: the newer mtime becomes the original,
+  the loser is deleted. A copy whose original vanished is promoted instead of
+  deleted, so nothing is ever lost. Implemented in the Go bridge
+  (`AutoResolveStateConflicts`, `go/bridge/conflicts.go`); triggered from the
+  foreground 2s poll (gated on the conflict scan actually containing a state
+  conflict) and from the background-sync path *before* the conflict
+  notification fires.
+- **Notes are exempt by design.** Anything outside `.obsidian` keeps the full
+  manual flow (diff view, Keep This/Other/Both, Skip Family) — last-writer-wins
+  on user content would mean silent data loss.
+- **Opt-out, not opt-in.** Settings → Conflicts → "Auto-Resolve Settings
+  Conflicts" (`SyncthingManager.autoResolveStateConflictsKey`, missing key =
+  ON). Users who turn it off see state conflicts in the normal manual flow
+  again.
+- **Counts mean files now.** The home banner, vault badges, and notifications
+  count distinct conflicted files instead of conflict copies — with
+  `MaxConflicts: 10` a single churn-prone file used to read as "10 conflicts".
+
 ## 7. Migration
 
 For users updating from a current build:

@@ -615,3 +615,7 @@
 "Low Power Mode is on — iOS defers silent wake-ups until it is off or the iPhone is charging." = "Der Stromsparmodus ist aktiv – iOS verzögert stille Weck-Signale, bis er ausgeschaltet ist oder das iPhone lädt.";
 "Keep VaultSync in the background: if you force-quit it from the app switcher, iOS stops delivering wake-ups until you open the app again." = "Lass VaultSync im Hintergrund: Wenn du die App im App-Umschalter wegwischst, stellt iOS keine Weck-Signale mehr zu, bis du die App wieder öffnest.";
 "Wake-ups went quiet. The most common cause is force-quitting VaultSync from the app switcher — iOS then blocks wake-ups until the next manual launch. Also check that the helper on your server is still running." = "Die Weck-Signale sind verstummt. Häufigste Ursache: VaultSync wurde im App-Umschalter weggewischt – iOS blockiert Weck-Signale dann bis zum nächsten manuellen Start. Prüfe auch, ob der Helfer auf deinem Server noch läuft.";
+
+/* Conflict auto-resolution — .obsidian state files, last-writer-wins (Settings) */
+"Auto-Resolve Settings Conflicts" = "Einstellungs-Konflikte automatisch lösen";
+"Conflicts in Obsidian's app settings and plugin state (.obsidian) are resolved automatically — the newest version wins. Conflicts in your notes always wait for your decision." = "Konflikte in Obsidians App-Einstellungen und Plugin-Daten (.obsidian) werden automatisch gelöst – die neueste Version gewinnt. Konflikte in deinen Notizen warten immer auf deine Entscheidung.";
