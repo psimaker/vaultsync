@@ -39,8 +39,8 @@ How peers are reached, fastest first:
 1. **Direct LAN (TCP/QUIC to a private address)** — requires the iOS *Local
    Network* permission (`NSLocalNetworkUsageDescription`, prompt shown on first
    LAN dial). Peer LAN addresses come from global discovery; without this
-   permission iOS silently blocks the dial and every connection detours through
-   a relay.
+   permission iOS silently blocks LAN dials — peers reachable over a direct
+   WAN path (2) still connect directly, only the rest fall back to a relay (3).
 2. **Direct WAN (TCP/QUIC)** — depends on the peer's NAT/port-mapping.
 3. **Syncthing relays** — slowest; the fallback when 1–2 fail.
 

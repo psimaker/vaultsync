@@ -41,14 +41,15 @@ final class ReconnectingGracePeriodTests: XCTestCase {
         return try! JSONDecoder().decode(SyncthingManager.FolderInfo.self, from: data)
     }
 
-    private func makeDevice(id: String, connected: Bool) -> SyncthingManager.DeviceInfo {
-        // DeviceInfo.paused uses decodeIfPresent so we can omit it; provide
-        // the three required fields. Custom init does the actual decoding.
+    private func makeDevice(id: String, connected: Bool, paused: Bool = false) -> SyncthingManager.DeviceInfo {
+        // DeviceInfo decodes via a custom init; provide the three required
+        // fields plus paused.
         let json = """
         {
           "deviceID": "\(id)",
           "name": "Device-\(id.prefix(4))",
-          "connected": \(connected)
+          "connected": \(connected),
+          "paused": \(paused)
         }
         """
         let data = Data(json.utf8)
@@ -116,6 +117,21 @@ final class ReconnectingGracePeriodTests: XCTestCase {
 
         XCTAssertTrue(h.manager.reconnectingRequiredDeviceIDs.isEmpty)
         XCTAssertEqual(h.manager.disconnectedRequiredDeviceIDs, ["DEVICE-X"])
+    }
+
+    func test_pausedDevice_neverRaisesDisconnectedWarning() {
+        let h = Harness()
+        h.manager._testSetFolders([makeFolder(id: "f1", deviceIDs: ["DEVICE-A"])])
+        h.manager._testApplyDeviceList([makeDevice(id: "DEVICE-A", connected: false, paused: true)])
+
+        // Within grace: paused is not "reconnecting".
+        XCTAssertTrue(h.manager.reconnectingRequiredDeviceIDs.isEmpty)
+        XCTAssertTrue(h.manager.disconnectedRequiredDeviceIDs.isEmpty)
+
+        // Past grace: paused still must not raise the disconnected issue.
+        h.advance(31)
+        XCTAssertTrue(h.manager.reconnectingRequiredDeviceIDs.isEmpty)
+        XCTAssertTrue(h.manager.disconnectedRequiredDeviceIDs.isEmpty)
     }
 
     func test_nonRequiredDisconnect_isIgnored() {

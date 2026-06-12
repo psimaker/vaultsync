@@ -366,11 +366,17 @@ final class SyncthingManager {
 
     /// Required devices whose disconnect is still within its grace period.
     /// Surfaced as a calm "Connecting…" dashboard state, not a warning.
+    /// Paused devices are excluded — pausing is intentional, not a reconnect.
     var reconnectingRequiredDeviceIDs: [String] {
         let nowDate = now()
         let required = Set(folders.flatMap(\.deviceIDs))
+        let paused = Set(devices.filter(\.paused).map(\.deviceID))
         return disconnectedSince
-            .filter { graceDeadline(firstDisconnected: $0.value) > nowDate && required.contains($0.key) }
+            .filter {
+                graceDeadline(firstDisconnected: $0.value) > nowDate
+                    && required.contains($0.key)
+                    && !paused.contains($0.key)
+            }
             .map(\.key)
             .sorted()
     }
@@ -378,11 +384,18 @@ final class SyncthingManager {
     /// Required devices that have been disconnected for longer than their grace
     /// period, plus any required device that has never appeared in the device
     /// list at all (e.g. peer removed from config but still listed on a folder).
+    /// Paused devices are excluded — an intentionally paused peer must not
+    /// raise the "required device disconnected" issue.
     var disconnectedRequiredDeviceIDs: [String] {
         let nowDate = now()
         let required = Set(folders.flatMap(\.deviceIDs))
+        let paused = Set(devices.filter(\.paused).map(\.deviceID))
         let stale = disconnectedSince
-            .filter { graceDeadline(firstDisconnected: $0.value) <= nowDate && required.contains($0.key) }
+            .filter {
+                graceDeadline(firstDisconnected: $0.value) <= nowDate
+                    && required.contains($0.key)
+                    && !paused.contains($0.key)
+            }
             .map(\.key)
 
         let unresolvedUnknown = required.subtracting(Set(devices.map(\.deviceID)))

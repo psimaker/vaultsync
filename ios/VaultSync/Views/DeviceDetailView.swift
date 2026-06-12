@@ -47,9 +47,10 @@ struct DeviceDetailView: View {
 
                 LabeledContent("Status") {
                     // Mirrors the device-list row: calm "Connecting…" during
-                    // the reconnect grace window, neutral "Offline" after it —
-                    // no ✕ glyph for a state that is normal when the other
-                    // device is simply not running.
+                    // the reconnect grace window, "Paused" for intentionally
+                    // disabled peers, neutral "Offline" after the grace — no ✕
+                    // glyph for a state that is normal when the other device
+                    // is simply not running.
                     HStack(spacing: 6) {
                         if isConnecting {
                             ProgressView()
@@ -57,6 +58,11 @@ struct DeviceDetailView: View {
                                 .tint(Color.statusStarting)
                                 .accessibilityHidden(true)
                             Text(L10n.tr("Connecting…"))
+                        } else if device.paused {
+                            Image(systemName: "pause.circle.fill")
+                                .foregroundStyle(Color.statusInactive)
+                                .accessibilityHidden(true)
+                            Text(L10n.tr("Paused"))
                         } else if device.connected {
                             Image(systemName: "checkmark.circle.fill")
                                 .foregroundStyle(Color.statusSuccess)

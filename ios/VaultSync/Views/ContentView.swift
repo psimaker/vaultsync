@@ -383,9 +383,12 @@ struct ContentView: View {
                 // problem — show a calm connecting state instead of a warning
                 // color. The orange treatment is reserved for devices that
                 // stayed disconnected beyond the grace period.
-                let isWarmingUp = connected == 0 && total > 0 && syncthingManager.devices.contains {
-                    !$0.connected && syncthingManager.isWithinReconnectGrace(deviceID: $0.deviceID)
-                }
+                let reconnectingDevices = syncthingManager.devices.filter { !$0.connected && !$0.paused }
+                let isWarmingUp = connected == 0 && total > 0
+                    && !reconnectingDevices.isEmpty
+                    && reconnectingDevices.allSatisfy {
+                        syncthingManager.isWithinReconnectGrace(deviceID: $0.deviceID)
+                    }
                 HStack {
                     if isWarmingUp {
                         ProgressView()
