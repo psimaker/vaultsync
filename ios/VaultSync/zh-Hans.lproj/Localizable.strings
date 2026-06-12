@@ -47,6 +47,11 @@
 "Connect Obsidian Folder" = "连接 Obsidian 文件夹";
 "Connect to Obsidian first" = "请先连接 Obsidian";
 "Connected" = "已连接";
+"Connecting to %@…" = "正在连接 %@…";
+"Connecting to 1 device…" = "正在连接 1 个设备…";
+"Connecting to %d devices…" = "正在连接 %d 个设备…";
+"Connecting to devices…" = "正在连接设备…";
+"Connecting…" = "正在连接…";
 "Connection to peer was closed." = "与对端的连接已关闭。";
 "Copy Device ID" = "复制设备 ID";
 "Could Not Accept Share" = "无法接受共享";
@@ -64,7 +69,6 @@
 "Devices" = "设备";
 "Differences" = "差异";
 "Discards the version from the other device." = "丢弃另一台设备的版本。";
-"Disconnected" = "已断开";
 "Done" = "完成";
 "Empty line" = "空行";
 "Enable notifications for VaultSync in iOS Settings → Notifications → VaultSync, then restart the app." = "请在 iOS 设置 → 通知 → VaultSync 中启用通知，然后重新启动应用。";
@@ -147,6 +151,7 @@
 "Obsidian access expired" = "Obsidian 访问已过期";
 "Obsidian directory not accessible." = "无法访问 Obsidian 目录。";
 "Obsidian folder not connected" = "Obsidian 文件夹未连接";
+"Offline" = "离线";
 "Open Settings" = "打开设置";
 "Open the Relay tab" = "打开 Relay 标签页";
 "Open VaultSync" = "打开 VaultSync";
@@ -277,9 +282,6 @@
 "Syncing" = "同步中";
 "Syncing Vault" = "正在同步 Vault";
 "Syncing…" = "同步中…";
-"Reconnecting…" = "正在重新连接…";
-"Restoring connection to 1 device" = "正在恢复到 1 个设备的连接";
-"Restoring connection to %d devices" = "正在恢复到 %d 个设备的连接";
 "Syncthing is scanning local changes." = "Syncthing 正在扫描本地更改。";
 "Syncthing no longer has this folder configured." = "Syncthing 已不再配置该文件夹。";
 "Terms of Use" = "使用条款";

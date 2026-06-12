@@ -47,6 +47,11 @@
 "Connect Obsidian Folder" = "Obsidian-Ordner verbinden";
 "Connect to Obsidian first" = "Zuerst mit Obsidian verbinden";
 "Connected" = "Verbunden";
+"Connecting to %@…" = "Verbindung zu %@ wird hergestellt…";
+"Connecting to 1 device…" = "Verbindung zu 1 Gerät wird hergestellt…";
+"Connecting to %d devices…" = "Verbindung zu %d Geräten wird hergestellt…";
+"Connecting to devices…" = "Geräte werden verbunden…";
+"Connecting…" = "Wird verbunden…";
 "Connection to peer was closed." = "Die Verbindung zum Peer wurde geschlossen.";
 "Copy Device ID" = "Geräte-ID kopieren";
 "Could Not Accept Share" = "Freigabe konnte nicht angenommen werden";
@@ -64,7 +69,6 @@
 "Devices" = "Geräte";
 "Differences" = "Unterschiede";
 "Discards the version from the other device." = "Verwirft die Version vom anderen Gerät.";
-"Disconnected" = "Getrennt";
 "Done" = "Fertig";
 "Empty line" = "Leere Zeile";
 "Enable notifications for VaultSync in iOS Settings → Notifications → VaultSync, then restart the app." = "Aktiviere Mitteilungen für VaultSync unter iOS Einstellungen → Mitteilungen → VaultSync und starte die App dann neu.";
@@ -147,6 +151,7 @@
 "Obsidian access expired" = "Obsidian-Zugriff abgelaufen";
 "Obsidian directory not accessible." = "Auf das Obsidian-Verzeichnis kann nicht zugegriffen werden.";
 "Obsidian folder not connected" = "Obsidian-Ordner nicht verbunden";
+"Offline" = "Offline";
 "Open Settings" = "Einstellungen öffnen";
 "Open the Relay tab" = "Relay-Tab öffnen";
 "Open VaultSync" = "VaultSync öffnen";
@@ -277,9 +282,6 @@
 "Syncing" = "Wird synchronisiert";
 "Syncing Vault" = "Vault wird synchronisiert";
 "Syncing…" = "Synchronisiert…";
-"Reconnecting…" = "Verbindet neu…";
-"Restoring connection to 1 device" = "Verbindung zu 1 Gerät wird wiederhergestellt";
-"Restoring connection to %d devices" = "Verbindung zu %d Geräten wird wiederhergestellt";
 "Syncthing is scanning local changes." = "Syncthing scannt lokale Änderungen.";
 "Syncthing no longer has this folder configured." = "Syncthing hat diesen Ordner nicht mehr konfiguriert.";
 "Terms of Use" = "Nutzungsbedingungen";

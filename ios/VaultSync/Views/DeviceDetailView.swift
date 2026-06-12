@@ -11,6 +11,11 @@ struct DeviceDetailView: View {
     @State private var showAlert = false
     @Environment(\.dismiss) private var dismiss
 
+    private var isConnecting: Bool {
+        !device.connected && !device.paused
+            && syncthingManager.isWithinReconnectGrace(deviceID: device.deviceID)
+    }
+
     var body: some View {
         List {
             Section("Device") {
@@ -41,11 +46,28 @@ struct DeviceDetailView: View {
                 }
 
                 LabeledContent("Status") {
+                    // Mirrors the device-list row: calm "Connecting…" during
+                    // the reconnect grace window, neutral "Offline" after it —
+                    // no ✕ glyph for a state that is normal when the other
+                    // device is simply not running.
                     HStack(spacing: 6) {
-                        Image(systemName: device.connected ? "checkmark.circle.fill" : "xmark.circle.fill")
-                            .foregroundStyle(device.connected ? Color.statusSuccess : Color.statusInactive)
-                            .accessibilityHidden(true)
-                        Text(device.connected ? L10n.tr("Connected") : L10n.tr("Disconnected"))
+                        if isConnecting {
+                            ProgressView()
+                                .controlSize(.small)
+                                .tint(Color.statusStarting)
+                                .accessibilityHidden(true)
+                            Text(L10n.tr("Connecting…"))
+                        } else if device.connected {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(Color.statusSuccess)
+                                .accessibilityHidden(true)
+                            Text(L10n.tr("Connected"))
+                        } else {
+                            Image(systemName: "moon.zzz.fill")
+                                .foregroundStyle(Color.statusInactive)
+                                .accessibilityHidden(true)
+                            Text(L10n.tr("Offline"))
+                        }
                     }
                     .accessibilityHint("Shows whether this Syncthing device is currently reachable.")
                 }

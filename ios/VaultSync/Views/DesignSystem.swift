@@ -94,6 +94,9 @@ struct StatusRow<Trailing: View>: View {
     /// Optional glyph-color override for the rare row whose color isn't carried
     /// by a `SyncStatus` (e.g. a neutral "unknown" placeholder).
     var glyphTint: Color?
+    /// When true, an indeterminate spinner replaces the status glyph — for
+    /// transient in-progress rows (e.g. a device reconnecting after launch).
+    var busy: Bool = false
     @ViewBuilder var trailing: () -> Trailing
 
     init(
@@ -102,6 +105,7 @@ struct StatusRow<Trailing: View>: View {
         status: SyncStatus? = nil,
         systemImage: String? = nil,
         glyphTint: Color? = nil,
+        busy: Bool = false,
         @ViewBuilder trailing: @escaping () -> Trailing = { EmptyView() }
     ) {
         self.title = title
@@ -109,6 +113,7 @@ struct StatusRow<Trailing: View>: View {
         self.status = status
         self.systemImage = systemImage
         self.glyphTint = glyphTint
+        self.busy = busy
         self.trailing = trailing
     }
 
@@ -116,7 +121,12 @@ struct StatusRow<Trailing: View>: View {
 
     var body: some View {
         HStack(spacing: VaultSpacing.m) {
-            if let glyph {
+            if busy {
+                ProgressView()
+                    .tint(glyphTint ?? status?.tint ?? Color.vaultAccent)
+                    .frame(width: 28)
+                    .accessibilityHidden(true)
+            } else if let glyph {
                 Image(systemName: glyph)
                     .font(.title3)
                     .foregroundStyle(glyphTint ?? status?.tint ?? Color.vaultAccent)

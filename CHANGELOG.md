@@ -4,6 +4,14 @@ All notable changes to VaultSync are documented here.
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- **Much faster reconnect after a cold start** — three layers: the app now asks for the iOS *Local Network* permission, so devices on the same Wi-Fi connect directly instead of detouring through a relay; VaultSync remembers where each device was last reached and dials that address immediately on launch instead of waiting for a discovery round trip; and the embedded sync engine retries failed dials every second (was 5 s) while warming up and gives up on dead addresses twice as fast, so the relay fallback kicks in sooner when it is genuinely needed.
+- **A calm launch instead of false alarms** — reconnecting after a cold start is normal warm-up, and the app now treats it that way. The status header keeps its positive state with a small spinner and "Connecting to *device*…" instead of switching to "Reconnecting…"; the dashboard shows a neutral "Connecting to devices…" instead of an orange "0 of 1 devices connected"; and the Devices list shows a spinner + "Connecting…" while a reconnect is in progress. A device that stays away reads as a neutral gray "Offline" (the ✕ badge is gone — disconnected peers are a normal state for an offline-first sync tool), and paused devices are labeled "Paused". After a cold start, nothing is reported as a problem for 60 seconds (mid-session disconnects keep the 30-second window). Localized in English, German, Spanish, and Simplified Chinese.
+- **Smoother launch** — the sync engine's startup work (certificates, config, index database) no longer runs on the UI thread.
+
 ## [1.6.0] — 2026-06-10
 
 ### Added

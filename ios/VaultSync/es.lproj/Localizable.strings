@@ -47,6 +47,11 @@
 "Connect Obsidian Folder" = "Conectar carpeta de Obsidian";
 "Connect to Obsidian first" = "Conecta primero con Obsidian";
 "Connected" = "Conectado";
+"Connecting to %@…" = "Conectando con %@…";
+"Connecting to 1 device…" = "Conectando con 1 dispositivo…";
+"Connecting to %d devices…" = "Conectando con %d dispositivos…";
+"Connecting to devices…" = "Conectando con los dispositivos…";
+"Connecting…" = "Conectando…";
 "Connection to peer was closed." = "Se cerró la conexión con el par.";
 "Copy Device ID" = "Copiar ID del dispositivo";
 "Could Not Accept Share" = "No se pudo aceptar la compartición";
@@ -64,7 +69,6 @@
 "Devices" = "Dispositivos";
 "Differences" = "Diferencias";
 "Discards the version from the other device." = "Descarta la versión del otro dispositivo.";
-"Disconnected" = "Desconectado";
 "Done" = "Listo";
 "Empty line" = "Línea vacía";
 "Enable notifications for VaultSync in iOS Settings → Notifications → VaultSync, then restart the app." = "Activa las notificaciones de VaultSync en Ajustes de iOS → Notificaciones → VaultSync y luego reinicia la app.";
@@ -147,6 +151,7 @@
 "Obsidian access expired" = "El acceso a Obsidian caducó";
 "Obsidian directory not accessible." = "No se puede acceder al directorio de Obsidian.";
 "Obsidian folder not connected" = "Carpeta de Obsidian no conectada";
+"Offline" = "Sin conexión";
 "Open Settings" = "Abrir Ajustes";
 "Open the Relay tab" = "Abrir la pestaña Relay";
 "Open VaultSync" = "Abrir VaultSync";
@@ -277,9 +282,6 @@
 "Syncing" = "Sincronizando";
 "Syncing Vault" = "Sincronizando Vault";
 "Syncing…" = "Sincronizando…";
-"Reconnecting…" = "Reconectando…";
-"Restoring connection to 1 device" = "Restaurando la conexión con 1 dispositivo";
-"Restoring connection to %d devices" = "Restaurando la conexión con %d dispositivos";
 "Syncthing is scanning local changes." = "Syncthing está escaneando los cambios locales.";
 "Syncthing no longer has this folder configured." = "Syncthing ya no tiene esta carpeta configurada.";
 "Terms of Use" = "Términos de uso";

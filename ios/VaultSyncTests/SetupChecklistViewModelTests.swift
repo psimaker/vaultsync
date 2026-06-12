@@ -31,7 +31,7 @@ struct SetupChecklistViewModelTests {
     }
 
     @Test("Checklist transitions when syncthing/device/share states become complete")
-    func checklistTransitionsAcrossCoreRequirements() {
+    func checklistTransitionsAcrossCoreRequirements() async {
         TestSupport.resetSyncthingState()
         TestSupport.resetRelayState()
 
@@ -44,7 +44,7 @@ struct SetupChecklistViewModelTests {
             subscriptionManager: subscriptionManager
         )
 
-        syncthingManager.start()
+        await syncthingManager.start()
         defer {
             syncthingManager.stop()
             TestSupport.resetSyncthingState()

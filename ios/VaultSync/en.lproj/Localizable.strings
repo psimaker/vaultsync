@@ -47,6 +47,11 @@
 "Connect Obsidian Folder" = "Connect Obsidian Folder";
 "Connect to Obsidian first" = "Connect to Obsidian first";
 "Connected" = "Connected";
+"Connecting to %@…" = "Connecting to %@…";
+"Connecting to 1 device…" = "Connecting to 1 device…";
+"Connecting to %d devices…" = "Connecting to %d devices…";
+"Connecting to devices…" = "Connecting to devices…";
+"Connecting…" = "Connecting…";
 "Connection to peer was closed." = "Connection to peer was closed.";
 "Copy Device ID" = "Copy Device ID";
 "Could Not Accept Share" = "Could Not Accept Share";
@@ -64,7 +69,6 @@
 "Devices" = "Devices";
 "Differences" = "Differences";
 "Discards the version from the other device." = "Discards the version from the other device.";
-"Disconnected" = "Disconnected";
 "Done" = "Done";
 "Empty line" = "Empty line";
 "Enable notifications for VaultSync in iOS Settings → Notifications → VaultSync, then restart the app." = "Enable notifications for VaultSync in iOS Settings → Notifications → VaultSync, then restart the app.";
@@ -147,6 +151,7 @@
 "Obsidian access expired" = "Obsidian access expired";
 "Obsidian directory not accessible." = "Obsidian directory not accessible.";
 "Obsidian folder not connected" = "Obsidian folder not connected";
+"Offline" = "Offline";
 "Open Settings" = "Open Settings";
 "Open the Relay tab" = "Open the Relay tab";
 "Open VaultSync" = "Open VaultSync";
@@ -277,9 +282,6 @@
 "Syncing" = "Syncing";
 "Syncing Vault" = "Syncing Vault";
 "Syncing…" = "Syncing…";
-"Reconnecting…" = "Reconnecting…";
-"Restoring connection to 1 device" = "Restoring connection to 1 device";
-"Restoring connection to %d devices" = "Restoring connection to %d devices";
 "Syncthing is scanning local changes." = "Syncthing is scanning local changes.";
 "Syncthing no longer has this folder configured." = "Syncthing no longer has this folder configured.";
 "Terms of Use" = "Terms of Use";
