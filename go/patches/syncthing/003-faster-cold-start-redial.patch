@@ -1,0 +1,22 @@
+--- a/lib/connections/service.go	2026-04-06 18:07:51
++++ b/lib/connections/service.go	2026-06-12 07:09:12
+@@ -77,7 +77,7 @@
+ const (
+ 	perDeviceWarningIntv          = 15 * time.Minute
+ 	tlsHandshakeTimeout           = 10 * time.Second
+-	minConnectionLoopSleep        = 5 * time.Second
++	minConnectionLoopSleep        = time.Second
+ 	stdConnectionLoopSleep        = time.Minute
+ 	worstDialerPriority           = math.MaxInt32
+ 	recentlySeenCutoff            = 7 * 24 * time.Hour
+--- a/lib/connections/tcp_dial.go	2026-04-06 18:07:51
++++ b/lib/connections/tcp_dial.go	2026-06-12 07:09:14
+@@ -34,7 +34,7 @@
+ func (d *tcpDialer) Dial(ctx context.Context, _ protocol.DeviceID, uri *url.URL) (internalConn, error) {
+ 	uri = fixupPort(uri, config.DefaultTCPPort)
+ 
+-	timeoutCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
++	timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+ 	defer cancel()
+ 	conn, err := dialer.DialContextReusePortFunc(d.registry)(timeoutCtx, uri.Scheme, uri.Host)
+ 	if err != nil {

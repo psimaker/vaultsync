@@ -74,6 +74,13 @@ targets:
           - eu.vaultsync.app.sync-continued
           - eu.vaultsync.app.sync-processing
         NSCameraUsageDescription: "VaultSync uses the camera to scan Syncthing device QR codes for easy setup."
+        # Without this, iOS 14+ Local Network privacy silently blocks direct
+        # TCP/QUIC dials to peers on the same Wi-Fi, forcing every connection
+        # through public relays — the slowest reconnect path after a cold start.
+        # (Syncthing's multicast *discovery* additionally needs the restricted
+        # com.apple.developer.networking.multicast entitlement, which requires
+        # Apple approval — see docs/architecture.md.)
+        NSLocalNetworkUsageDescription: "VaultSync connects directly to your other devices on the same network so your vaults sync instantly, without a detour through the internet."
         # NOTE: NSAppTransportSecurity is deliberately NOT set, so shipping (Release)
         # builds keep the strictest ATS posture. The production app only talks HTTPS to
         # the relay. The DEBUG mock-relay loop targets http://127.0.0.1 (loopback),
