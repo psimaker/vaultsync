@@ -64,18 +64,31 @@ Syncthing runs on a machine you keep on; VaultSync joins as a peer and syncs int
 
 Without it, VaultSync syncs server changes when you open the app. **With it, your iPhone wakes on its own the moment your server changes** — even while VaultSync is closed.
 
-### Turn it on — about 2 minutes
+### ⚡ One-step setup
 
-1. **Subscribe** in the app (monthly or yearly, at your local App Store price).
-2. **Run one line on the computer or NAS that runs Syncthing** (the app shows it with a **Copy** button after you subscribe):
+Subscribe in the app (monthly or yearly, at your local App Store price), then run this one line on the computer or NAS that runs Syncthing — the app shows it with a **Copy** button:
+
+<div align="center">
 
 ```bash
 curl -fsSL https://vaultsync.eu/notify.sh | sh
 ```
 
-> 👉 **Nothing to edit, no API key to copy.** The installer finds your Syncthing config, sets the right permissions, and starts the helper — via Docker when available, otherwise as a system service from a [prebuilt binary](notify/README.md#-prebuilt-binaries). Skeptical of `curl | sh`? Append `-s -- --dry-run` to preview every action without changing anything, or read [the script](notify/scripts/install.sh) first.
+**That's the whole setup — nothing to edit, no API key to copy.**
 
-Done — the helper wakes your iPhone once on startup and VaultSync flips to **Cloud Relay active** by itself; sending edits *from* your iPhone stays most reliable with the app open. The relay only ever sees the Device ID and push token needed to route a wake-up — never your notes, file or folder names, or vault structure ([PRIVACY.md](PRIVACY.md)). Prefer Docker Compose or a manual `docker run`? The [full guide](notify/README.md) covers them all.
+</div>
+
+The installer finds your Syncthing config, sets the right permissions, and starts the helper. The helper wakes your iPhone once on startup and VaultSync flips to **Cloud Relay active** by itself; sending edits *from* your iPhone stays most reliable with the app open. The relay only ever sees the Device ID and push token needed to route a wake-up — never your notes, file or folder names, or vault structure ([PRIVACY.md](PRIVACY.md)).
+
+<details>
+<summary><b>🔧 Manual &amp; advanced setup</b> — Docker Compose, <code>docker run</code>, prebuilt binaries, NAS notes, <code>--dry-run</code></summary>
+<br>
+
+- **Skeptical of `curl | sh`?** Append `-s -- --dry-run` to preview every action without changing anything, or read [the script](notify/scripts/install.sh) first.
+- **Syncthing config in a non-standard place** (typical on Synology/QNAP)? Prefix the installer with the path: `curl -fsSL https://vaultsync.eu/notify.sh | SYNCTHING_CONFIG=/path/to/config.xml sh`
+- **Prefer to run things yourself?** The [manual & advanced guide](notify/README.md#-manual--advanced-setup) covers Docker Compose, a paste-and-go `docker run`, prebuilt binaries for Linux/macOS/Windows, every environment variable, and NAS specifics.
+
+</details>
 
 ---
 

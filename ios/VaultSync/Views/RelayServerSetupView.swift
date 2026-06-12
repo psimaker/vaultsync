@@ -61,30 +61,29 @@ struct RelayServerSetupView: View {
                 commandBox(Self.installerCommand, accessibilityLabelKey: "Installer command")
                 copyButton(for: Self.installerCommand, copied: $installerCopied)
             } header: {
-                Text(L10n.tr("Step 1 — Run this on your server"))
+                Text(L10n.tr("One step — run this on your server"))
             } footer: {
-                Text(L10n.tr("The installer finds your Syncthing config, sets the right permissions, and starts the helper — with Docker if available, otherwise as a system service. It’s open source; add --dry-run to preview every action without changing anything."))
+                Text(L10n.tr("That’s the whole setup — nothing to edit, no API key to copy. The installer finds your Syncthing config, sets the right permissions, and starts the helper. The helper then wakes this iPhone once on its own, and VaultSync flips to “Cloud Relay active” as soon as that first wake-up arrives. Keep it running on a machine that stays on (server or NAS)."))
             }
 
+            // The manual path stays collapsed by default: the one-liner above is
+            // the whole setup for most users, and surfacing Docker flags up front
+            // made it read as required homework.
             Section {
-                Text(L10n.tr("That’s it — the helper wakes this iPhone once on its own, and VaultSync flips to “Cloud Relay active” as soon as that first wake-up arrives. From then on, changes from your other devices wake the app in the background. Keep the helper running on a machine that stays on (server or NAS)."))
-                    .font(.subheadline)
-            } header: {
-                Text(L10n.tr("Step 2 — It activates itself"))
-            }
-
-            Section {
-                commandBox(dockerCommand, accessibilityLabelKey: "Server setup command")
-                copyButton(for: dockerCommand, copied: $commandCopied)
-            } header: {
-                Text(L10n.tr("Manual alternative — run the container yourself"))
-            } footer: {
-                Text(L10n.tr("No API key needed — the helper reads it from Syncthing’s config.xml. Replace /PATH/TO/syncthing with your Syncthing config folder (often ~/.local/state/syncthing or ~/.config/syncthing). Permission error? Add -u <uid>:<gid> for the user that owns config.xml."))
-            }
-
-            Section {
-                ExternalLinkButton(titleKey: "Full setup guide (Docker Compose, prebuilt binaries, NAS notes)", url: DocURL.serverSetupGuide)
-                    .font(.subheadline)
+                DisclosureGroup {
+                    Text(L10n.tr("The installer is open source — add --dry-run to preview every action without changing anything. Prefer to run the container yourself? Use this command:"))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    commandBox(dockerCommand, accessibilityLabelKey: "Server setup command")
+                    copyButton(for: dockerCommand, copied: $commandCopied)
+                    Text(L10n.tr("No API key needed — the helper reads it from Syncthing’s config.xml. Replace /PATH/TO/syncthing with your Syncthing config folder (often ~/.local/state/syncthing or ~/.config/syncthing). Permission error? Add -u <uid>:<gid> for the user that owns config.xml."))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    ExternalLinkButton(titleKey: "Full setup guide (Docker Compose, prebuilt binaries, NAS notes)", url: DocURL.serverSetupGuide)
+                        .font(.subheadline)
+                } label: {
+                    Label(L10n.tr("Manual & advanced setup"), systemImage: "wrench.and.screwdriver")
+                }
             } footer: {
                 Text(L10n.tr("Prefer Docker Compose, a NAS package, or a plain binary? The full guide covers them all."))
             }

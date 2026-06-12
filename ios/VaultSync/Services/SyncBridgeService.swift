@@ -239,6 +239,23 @@ struct SyncBridgeService {
         return (decoded.removed, nil)
     }
 
+    /// Auto-resolve conflict copies of Obsidian state files (anything inside a
+    /// `.obsidian` directory) using last-writer-wins. Returns the number of
+    /// resolved copies; `error` is non-nil when the loop failed partway, with
+    /// `resolved` carrying the partial count.
+    static func autoResolveStateConflicts(folderID: String) -> (resolved: Int, error: String?) {
+        let raw = BridgeAutoResolveStateConflicts(folderID)
+        struct Payload: Decodable {
+            let resolved: Int
+            let error: String
+        }
+        guard let data = raw.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode(Payload.self, from: data) else {
+            return (0, "unparseable bridge response")
+        }
+        return (decoded.resolved, decoded.error.isEmpty ? nil : decoded.error)
+    }
+
     // MARK: - Pending folder shares
 
     /// Get all pending folder offers from remote devices as JSON.

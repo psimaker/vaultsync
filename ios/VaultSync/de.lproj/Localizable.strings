@@ -47,6 +47,11 @@
 "Connect Obsidian Folder" = "Obsidian-Ordner verbinden";
 "Connect to Obsidian first" = "Zuerst mit Obsidian verbinden";
 "Connected" = "Verbunden";
+"Connecting to %@…" = "Verbindung zu %@ wird hergestellt…";
+"Connecting to 1 device…" = "Verbindung zu 1 Gerät wird hergestellt…";
+"Connecting to %d devices…" = "Verbindung zu %d Geräten wird hergestellt…";
+"Connecting to devices…" = "Geräte werden verbunden…";
+"Connecting…" = "Wird verbunden…";
 "Connection to peer was closed." = "Die Verbindung zum Peer wurde geschlossen.";
 "Copy Device ID" = "Geräte-ID kopieren";
 "Could Not Accept Share" = "Freigabe konnte nicht angenommen werden";
@@ -64,7 +69,6 @@
 "Devices" = "Geräte";
 "Differences" = "Unterschiede";
 "Discards the version from the other device." = "Verwirft die Version vom anderen Gerät.";
-"Disconnected" = "Getrennt";
 "Done" = "Fertig";
 "Empty line" = "Leere Zeile";
 "Enable notifications for VaultSync in iOS Settings → Notifications → VaultSync, then restart the app." = "Aktiviere Mitteilungen für VaultSync unter iOS Einstellungen → Mitteilungen → VaultSync und starte die App dann neu.";
@@ -147,6 +151,7 @@
 "Obsidian access expired" = "Obsidian-Zugriff abgelaufen";
 "Obsidian directory not accessible." = "Auf das Obsidian-Verzeichnis kann nicht zugegriffen werden.";
 "Obsidian folder not connected" = "Obsidian-Ordner nicht verbunden";
+"Offline" = "Offline";
 "Open Settings" = "Einstellungen öffnen";
 "Open the Relay tab" = "Relay-Tab öffnen";
 "Open VaultSync" = "VaultSync öffnen";
@@ -277,9 +282,6 @@
 "Syncing" = "Wird synchronisiert";
 "Syncing Vault" = "Vault wird synchronisiert";
 "Syncing…" = "Synchronisiert…";
-"Reconnecting…" = "Verbindet neu…";
-"Restoring connection to 1 device" = "Verbindung zu 1 Gerät wird wiederhergestellt";
-"Restoring connection to %d devices" = "Verbindung zu %d Geräten wird wiederhergestellt";
 "Syncthing is scanning local changes." = "Syncthing scannt lokale Änderungen.";
 "Syncthing no longer has this folder configured." = "Syncthing hat diesen Ordner nicht mehr konfiguriert.";
 "Terms of Use" = "Nutzungsbedingungen";
@@ -523,15 +525,15 @@
 "Why this step" = "Warum dieser Schritt";
 "Cloud Relay needs a small helper on your server. It watches Syncthing for changes and sends VaultSync a wake-up signal — it never sees your notes. Without it, the subscription has nothing to wake the app with." = "Cloud Relay braucht einen kleinen Helfer auf deinem Server. Er beobachtet Syncthing auf Änderungen und sendet VaultSync ein Weck-Signal – deine Notizen sieht er nie. Ohne ihn hat das Abo nichts, womit es die App wecken könnte.";
 "Copy Command" = "Befehl kopieren";
-"Step 3 — Confirm it works" = "Schritt 3 – Bestätige, dass es funktioniert";
-"Come back to VaultSync. The moment a change happens on your server, Relay Diagnostics will confirm that wake-ups are being delivered — that means everything works." = "Komm zurück zu VaultSync. Sobald sich auf deinem Server etwas ändert, bestätigt die Relay-Diagnose, dass Weck-Signale zugestellt werden – dann funktioniert alles.";
 "Full setup guide (Docker Compose, prebuilt binaries, NAS notes)" = "Vollständige Anleitung (Docker Compose, vorkompilierte Binaries, NAS-Hinweise)";
 "Prefer Docker Compose, a NAS package, or a plain binary? The full guide covers them all." = "Lieber Docker Compose, ein NAS-Setup oder ein einfaches Binary? Die vollständige Anleitung deckt alles ab.";
 "Set Up Your Server" = "Server einrichten";
 "Server setup command" = "Server-Einrichtungsbefehl";
 "Installer command" = "Installer-Befehl";
-"The installer finds your Syncthing config, sets the right permissions, and starts the helper — with Docker if available, otherwise as a system service. It’s open source; add --dry-run to preview every action without changing anything." = "Der Installer findet deine Syncthing-Konfiguration, setzt die richtigen Berechtigungen und startet den Helfer – mit Docker, falls vorhanden, sonst als Systemdienst. Er ist Open Source; mit --dry-run siehst du vorab jede Aktion, ohne dass etwas verändert wird.";
-"Manual alternative — run the container yourself" = "Manuelle Alternative – Container selbst starten";
+"One step — run this on your server" = "Ein Schritt – führe dies auf deinem Server aus";
+"That’s the whole setup — nothing to edit, no API key to copy. The installer finds your Syncthing config, sets the right permissions, and starts the helper. The helper then wakes this iPhone once on its own, and VaultSync flips to “Cloud Relay active” as soon as that first wake-up arrives. Keep it running on a machine that stays on (server or NAS)." = "Das ist schon die ganze Einrichtung – nichts zu bearbeiten, kein API-Schlüssel zu kopieren. Der Installer findet deine Syncthing-Konfiguration, setzt die richtigen Berechtigungen und startet den Helfer. Der Helfer weckt dieses iPhone dann einmal von selbst, und VaultSync wechselt zu „Cloud Relay aktiv“, sobald dieses erste Weck-Signal eintrifft. Lass ihn auf einem dauerhaft laufenden Gerät (Server oder NAS) laufen.";
+"Manual & advanced setup" = "Manuelle & erweiterte Einrichtung";
+"The installer is open source — add --dry-run to preview every action without changing anything. Prefer to run the container yourself? Use this command:" = "Der Installer ist Open Source – mit --dry-run siehst du vorab jede Aktion, ohne dass etwas verändert wird. Lieber den Container selbst starten? Nutze diesen Befehl:";
 "Last wake-up" = "Letztes Weck-Signal";
 "Auto-renews until canceled. Cancel anytime in Settings → Subscriptions." = "Verlängert sich automatisch bis zur Kündigung. Jederzeit kündbar unter Einstellungen → Abonnements.";
 "Cancel anytime in Settings → Subscriptions" = "Jederzeit kündbar unter Einstellungen → Abonnements";
@@ -561,7 +563,7 @@
 "Pair this iPhone with the Syncthing device that hosts your vault, by Device ID or QR code." = "Verbinde dieses iPhone per Geräte-ID oder QR-Code mit dem Syncthing-Gerät, das deinen Vault bereitstellt.";
 "Relay" = "Relay";
 "Relay health & diagnostics" = "Relay-Status & Diagnose";
-"Run the one-time vaultsync-notify helper on your server to start receiving instant updates. It only sends a wake-up — it never sees your notes." = "Führe den einmaligen Helfer vaultsync-notify auf deinem Server aus, um sofortige Updates zu erhalten. Er sendet nur ein Weck-Signal – deine Notizen sieht er nie.";
+"One step left: run a single line on your server and instant updates start. The helper only sends a wake-up — it never sees your notes." = "Noch ein Schritt: Führe eine einzige Zeile auf deinem Server aus, und sofortige Updates starten. Der Helfer sendet nur ein Weck-Signal – deine Notizen sieht er nie.";
 "Save %d%%" = "%d %% sparen";
 "Server helper setup" = "Server-Helfer-Einrichtung";
 "Set up the server helper" = "Server-Helfer einrichten";
@@ -573,6 +575,7 @@
 "Yearly" = "Jährlich";
 "Your local version is kept, and the other device’s version is added under a new name. Nothing is discarded." = "Deine lokale Version bleibt erhalten, und die Version des anderen Geräts wird unter einem neuen Namen hinzugefügt. Es wird nichts verworfen.";
 "Your notes never touch our servers. Cloud Relay sends a tiny wake-up so changes from your other devices land the moment they happen — even with the app closed." = "Deine Notizen erreichen nie unsere Server. Cloud Relay sendet nur ein winziges Weck-Signal, damit Änderungen von deinen anderen Geräten im selben Moment ankommen – sogar bei geschlossener App.";
+"One-step setup: a single line on your server." = "Einrichtung in einem Schritt: eine einzige Zeile auf deinem Server.";
 "Your vault already syncs free and peer-to-peer. Relay only removes the “open the app to sync” wait — it isn’t cloud storage." = "Dein Vault synchronisiert bereits kostenlos und Peer-to-Peer. Relay beseitigt nur die Wartezeit „zum Synchronisieren die App öffnen“ – es ist kein Cloud-Speicher.";
 "You’re subscribed, but no wake-up has arrived yet. Cloud Relay only delivers once the helper is running on your server." = "Du hast abonniert, aber es ist noch kein Weck-Signal angekommen. Cloud Relay liefert erst, wenn der Helfer auf deinem Server läuft.";
 
@@ -603,13 +606,14 @@
 "Relay reachable — but no wake-up delivered yet. Run the helper on your server." = "Relay erreichbar – aber noch kein Weck-Signal zugestellt. Starte den Helfer auf deinem Server.";
 
 /* Cloud Relay setup — key-free server command (Phase 3 A+C) */
-"Step 1 — Run this on your server" = "Schritt 1 – Führe dies auf deinem Server aus";
 "No API key needed — the helper reads it from Syncthing’s config.xml. Replace /PATH/TO/syncthing with your Syncthing config folder (often ~/.local/state/syncthing or ~/.config/syncthing). Permission error? Add -u <uid>:<gid> for the user that owns config.xml." = "Kein API-Schlüssel nötig – der Helfer liest ihn direkt aus Syncthings config.xml. Ersetze /PATH/TO/syncthing durch deinen Syncthing-Konfigurationsordner (oft ~/.local/state/syncthing oder ~/.config/syncthing). Berechtigungsfehler? Ergänze -u <uid>:<gid> für den Benutzer, dem config.xml gehört.";
-"Step 2 — It activates itself" = "Schritt 2 – Es aktiviert sich selbst";
-"That’s it — the helper wakes this iPhone once on its own, and VaultSync flips to “Cloud Relay active” as soon as that first wake-up arrives. From then on, changes from your other devices wake the app in the background. Keep the helper running on a machine that stays on (server or NAS)." = "Das war’s – der Helfer weckt dieses iPhone einmal von selbst, und VaultSync wechselt zu „Cloud Relay aktiv“, sobald dieses erste Weck-Signal eintrifft. Ab dann wecken Änderungen von deinen anderen Geräten die App im Hintergrund. Lass den Helfer auf einem dauerhaft laufenden Gerät (Server oder NAS) laufen.";
 
 /* Relay diagnostics — delivery visibility (force-quit / Low Power education, 7-day counter) */
 "Wake-ups (Last 7 Days)" = "Weck-Signale (letzte 7 Tage)";
 "Low Power Mode is on — iOS defers silent wake-ups until it is off or the iPhone is charging." = "Der Stromsparmodus ist aktiv – iOS verzögert stille Weck-Signale, bis er ausgeschaltet ist oder das iPhone lädt.";
 "Keep VaultSync in the background: if you force-quit it from the app switcher, iOS stops delivering wake-ups until you open the app again." = "Lass VaultSync im Hintergrund: Wenn du die App im App-Umschalter wegwischst, stellt iOS keine Weck-Signale mehr zu, bis du die App wieder öffnest.";
 "Wake-ups went quiet. The most common cause is force-quitting VaultSync from the app switcher — iOS then blocks wake-ups until the next manual launch. Also check that the helper on your server is still running." = "Die Weck-Signale sind verstummt. Häufigste Ursache: VaultSync wurde im App-Umschalter weggewischt – iOS blockiert Weck-Signale dann bis zum nächsten manuellen Start. Prüfe auch, ob der Helfer auf deinem Server noch läuft.";
+
+/* Conflict auto-resolution — .obsidian state files, last-writer-wins (Settings) */
+"Auto-Resolve Settings Conflicts" = "Einstellungs-Konflikte automatisch lösen";
+"Conflicts in Obsidian's app settings and plugin state (.obsidian) are resolved automatically — the newest version wins. Conflicts in your notes always wait for your decision." = "Konflikte in Obsidians App-Einstellungen und Plugin-Daten (.obsidian) werden automatisch gelöst – die neueste Version gewinnt. Konflikte in deinen Notizen warten immer auf deine Entscheidung.";

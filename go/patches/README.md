@@ -34,6 +34,11 @@ Two safety nets compensate:
   (crash fix). **Security-relevant**: re-validate against Syncthing relay
   advisories on each bump.
 - `syncthing/002-api-auto-noassets.patch` — build with `-tags noassets`.
+- `syncthing/003-faster-cold-start-redial.patch` — faster reconnect after an
+  app cold start: `minConnectionLoopSleep` 5s→1s (the dial loop's initial
+  rampup is otherwise clamped to 5s rounds while the discovery cache is still
+  empty) and TCP dial timeout 10s→5s (a stale cached LAN address must fail
+  over to the relay path quickly). iOS-specific tuning, not for upstreaming.
 - `go-stun/001-nil-safe-host-methods.patch` — nil-safe host methods.
 
 ## Before each release
@@ -43,5 +48,5 @@ Two safety nets compensate:
    - https://github.com/ccding/go-stun/security/advisories
    (Use **Watch → Custom → Security alerts** on both repos so they reach you.)
 2. If a fix lands, bump the `require` pin in `go/go.mod` (+ `go.sum`),
-   run `make patch`, and confirm the three patches still apply cleanly.
+   run `make patch`, and confirm all patches still apply cleanly.
 3. Confirm `govulncheck` (security workflow) is green for `./bridge/...`.

@@ -32,6 +32,26 @@ VaultSync is intentionally **asymmetric**:
 
 Cloud Relay is a `server → iPhone` *acceleration* path, not a guarantee of symmetric real-time background sync.
 
+### Connection paths & iOS network privacy
+
+How peers are reached, fastest first:
+
+1. **Direct LAN (TCP/QUIC to a private address)** — requires the iOS *Local
+   Network* permission (`NSLocalNetworkUsageDescription`, prompt shown on first
+   LAN dial). Peer LAN addresses come from global discovery; without this
+   permission iOS silently blocks LAN dials — peers reachable over a direct
+   WAN path (2) still connect directly, only the rest fall back to a relay (3).
+2. **Direct WAN (TCP/QUIC)** — depends on the peer's NAT/port-mapping.
+3. **Syncthing relays** — slowest; the fallback when 1–2 fail.
+
+Syncthing's *local* (multicast/broadcast) discovery additionally needs the
+restricted `com.apple.developer.networking.multicast` entitlement, which Apple
+grants only on request (Developer portal → entitlement request form). Until
+that is granted, LAN peers are found via **global discovery + direct LAN dial**,
+which is nearly as fast. After a connection succeeds, the bridge caches the
+dialed address in the device's config (`addresscache.go`), so the next cold
+start dials it immediately without waiting for discovery.
+
 ## 🌉 Go bridge (`go/bridge/`)
 
 Minimal API exported via gomobile. Only primitives + `string` + `[]byte` cross the bridge; complex data is JSON-serialized (read accessors are named `Get…JSON`). QR scanning and conflict diffs are produced on the iOS side, not via the bridge.

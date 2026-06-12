@@ -68,7 +68,9 @@ struct OnboardingView: View {
         }
         .onAppear {
             vaultManager.restoreAccess()
-            syncthingManager.start()
+            Task {
+                await syncthingManager.start()
+            }
         }
     }
 

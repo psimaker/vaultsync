@@ -167,6 +167,11 @@ func StartSyncthing(configDir string) string {
 	sub := stEvLogger.Subscribe(events.AllEvents)
 	stEventSub = events.NewBufferedSubscription(sub, 200)
 
+	// Remember successful outbound connection addresses so the next cold
+	// start can dial peers immediately, without a discovery round trip.
+	// Stops when the early-supervisor context is canceled in StopSyncthing.
+	startAddressCache(ctx, stCfg, stEvLogger)
+
 	stRunning = true
 	return ""
 }

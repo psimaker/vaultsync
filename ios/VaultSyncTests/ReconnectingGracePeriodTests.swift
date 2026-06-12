@@ -41,14 +41,15 @@ final class ReconnectingGracePeriodTests: XCTestCase {
         return try! JSONDecoder().decode(SyncthingManager.FolderInfo.self, from: data)
     }
 
-    private func makeDevice(id: String, connected: Bool) -> SyncthingManager.DeviceInfo {
-        // DeviceInfo.paused uses decodeIfPresent so we can omit it; provide
-        // the three required fields. Custom init does the actual decoding.
+    private func makeDevice(id: String, connected: Bool, paused: Bool = false) -> SyncthingManager.DeviceInfo {
+        // DeviceInfo decodes via a custom init; provide the three required
+        // fields plus paused.
         let json = """
         {
           "deviceID": "\(id)",
           "name": "Device-\(id.prefix(4))",
-          "connected": \(connected)
+          "connected": \(connected),
+          "paused": \(paused)
         }
         """
         let data = Data(json.utf8)
@@ -118,6 +119,21 @@ final class ReconnectingGracePeriodTests: XCTestCase {
         XCTAssertEqual(h.manager.disconnectedRequiredDeviceIDs, ["DEVICE-X"])
     }
 
+    func test_pausedDevice_neverRaisesDisconnectedWarning() {
+        let h = Harness()
+        h.manager._testSetFolders([makeFolder(id: "f1", deviceIDs: ["DEVICE-A"])])
+        h.manager._testApplyDeviceList([makeDevice(id: "DEVICE-A", connected: false, paused: true)])
+
+        // Within grace: paused is not "reconnecting".
+        XCTAssertTrue(h.manager.reconnectingRequiredDeviceIDs.isEmpty)
+        XCTAssertTrue(h.manager.disconnectedRequiredDeviceIDs.isEmpty)
+
+        // Past grace: paused still must not raise the disconnected issue.
+        h.advance(31)
+        XCTAssertTrue(h.manager.reconnectingRequiredDeviceIDs.isEmpty)
+        XCTAssertTrue(h.manager.disconnectedRequiredDeviceIDs.isEmpty)
+    }
+
     func test_nonRequiredDisconnect_isIgnored() {
         let h = Harness()
         h.manager._testSetFolders([])  // no folders → no required devices
@@ -139,5 +155,65 @@ final class ReconnectingGracePeriodTests: XCTestCase {
         // The second disconnect gets a fresh 30s window.
         XCTAssertEqual(h.manager.reconnectingRequiredDeviceIDs, ["DEVICE-A"])
         XCTAssertTrue(h.manager.disconnectedRequiredDeviceIDs.isEmpty)
+    }
+
+    // MARK: - Startup grace period
+
+    func test_coldStartDisconnect_getsStartupGrace() {
+        let h = Harness()
+        h.manager._testSetEngineStartedAt(h.clock)
+        h.manager._testSetFolders([makeFolder(id: "f1", deviceIDs: ["DEVICE-A"])])
+        // First poll observes the disconnect 2s after engine start.
+        h.advance(2)
+        h.manager._testApplyDeviceList([makeDevice(id: "DEVICE-A", connected: false)])
+
+        // 45s after engine start: past the 30s mid-session window, but still
+        // inside the 60s startup grace — stays calm.
+        h.advance(43)
+        XCTAssertEqual(h.manager.reconnectingRequiredDeviceIDs, ["DEVICE-A"])
+        XCTAssertTrue(h.manager.disconnectedRequiredDeviceIDs.isEmpty)
+
+        // 61s after engine start: startup grace expired.
+        h.advance(16)
+        XCTAssertTrue(h.manager.reconnectingRequiredDeviceIDs.isEmpty)
+        XCTAssertEqual(h.manager.disconnectedRequiredDeviceIDs, ["DEVICE-A"])
+    }
+
+    func test_midSessionDisconnect_keepsShortGrace() {
+        let h = Harness()
+        h.manager._testSetEngineStartedAt(h.clock)
+        h.manager._testSetFolders([makeFolder(id: "f1", deviceIDs: ["DEVICE-A"])])
+
+        // Disconnect observed well after the startup window → 30s rule.
+        h.advance(120)
+        h.manager._testApplyDeviceList([makeDevice(id: "DEVICE-A", connected: false)])
+
+        h.advance(31)
+        XCTAssertTrue(h.manager.reconnectingRequiredDeviceIDs.isEmpty)
+        XCTAssertEqual(h.manager.disconnectedRequiredDeviceIDs, ["DEVICE-A"])
+    }
+
+    func test_isWithinReconnectGrace_coversNonRequiredDevices() {
+        let h = Harness()
+        // No folders → DEVICE-A is not required, but the Devices tab still
+        // shows the calm connecting state through the per-device API.
+        h.manager._testSetFolders([])
+        h.manager._testApplyDeviceList([makeDevice(id: "DEVICE-A", connected: false)])
+
+        XCTAssertTrue(h.manager.isWithinReconnectGrace(deviceID: "DEVICE-A"))
+
+        h.advance(31)
+        XCTAssertFalse(h.manager.isWithinReconnectGrace(deviceID: "DEVICE-A"))
+
+        // Unknown devices are never "connecting".
+        XCTAssertFalse(h.manager.isWithinReconnectGrace(deviceID: "DEVICE-B"))
+    }
+
+    func test_connectedDevice_isNotWithinGrace() {
+        let h = Harness()
+        h.manager._testSetFolders([makeFolder(id: "f1", deviceIDs: ["DEVICE-A"])])
+        h.manager._testApplyDeviceList([makeDevice(id: "DEVICE-A", connected: true)])
+
+        XCTAssertFalse(h.manager.isWithinReconnectGrace(deviceID: "DEVICE-A"))
     }
 }

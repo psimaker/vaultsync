@@ -41,17 +41,36 @@ private let logger = Logger(subsystem: "eu.vaultsync.app", category: "syncthing"
 @Observable @MainActor
 final class SyncthingManager {
     private(set) var isRunning = false
+    /// True while `start()` is awaiting the (off-main) bridge start. The UI
+    /// keeps showing the calm "Starting…" state during this window.
+    private(set) var isStarting = false
     private(set) var deviceID = ""
     private(set) var devices: [DeviceInfo] = []
 
-    /// First-observed-disconnect timestamp per device ID. Only required
-    /// devices appear here. Mutated by `applyDeviceList(_:)`.
+    /// First-observed-disconnect timestamp per device ID, for every configured
+    /// device (the required-device filter is applied by the computed
+    /// properties). Mutated by `applyDeviceList(_:)`.
     private var disconnectedSince: [String: Date] = [:]
 
-    /// Length of the reconnecting grace period. After this many seconds a
-    /// disconnected required device migrates from `reconnectingRequiredDeviceIDs`
-    /// to `disconnectedRequiredDeviceIDs` and surfaces as a real warning.
+    /// When the engine last (re)started. Disconnects observed shortly after
+    /// this get the longer startup grace period. Cleared on stop.
+    private(set) var engineStartedAt: Date?
+
+    /// Length of the reconnecting grace period for a disconnect observed
+    /// mid-session. After this many seconds a disconnected required device
+    /// migrates from `reconnectingRequiredDeviceIDs` to
+    /// `disconnectedRequiredDeviceIDs` and surfaces as a real warning.
     static let reconnectGracePeriod: TimeInterval = 30
+
+    /// Grace period for disconnects observed right after an engine start.
+    /// Cold-start reconnects legitimately take longer (empty discovery cache,
+    /// possible relay fallback), so the calm "Connecting…" treatment holds
+    /// longer before anything looks like a warning.
+    static let startupGracePeriod: TimeInterval = 60
+
+    /// How long after engine start a first-observed disconnect still counts
+    /// as a cold-start reconnect (and gets `startupGracePeriod`).
+    static let startupWindow: TimeInterval = 30
 
     /// Clock source for the grace-period calculation. Production code uses
     /// the default `{ Date() }`; tests inject a controllable clock via
@@ -104,6 +123,17 @@ final class SyncthingManager {
         ".obsidian/workspace.json",
         ".obsidian/workspace-mobile.json",
     ]
+
+    /// Opt-out switch for automatic last-writer-wins resolution of conflicts
+    /// on `.obsidian` state files. A missing key reads as ON so existing
+    /// installs get the calmer behaviour without migration. Shared with
+    /// `BackgroundSyncService` (background sync resolves before notifying)
+    /// and `SettingsView` (the toggle).
+    nonisolated static let autoResolveStateConflictsKey = "auto-resolve-state-conflicts-v1"
+
+    nonisolated static var isAutoResolveStateConflictsEnabled: Bool {
+        (UserDefaults.standard.object(forKey: autoResolveStateConflictsKey) as? Bool) ?? true
+    }
 
     private var hasAppliedStartupIgnores = false
     private var activeWidgetSyncStart: Date?
@@ -214,6 +244,14 @@ final class SyncthingManager {
         let deviceShortID: String
 
         var id: String { conflictPath }
+
+        /// True when the conflicted file is Obsidian app state (lives inside a
+        /// `.obsidian` directory at any depth) rather than a user note. State
+        /// conflicts are eligible for automatic last-writer-wins resolution.
+        /// Mirrors the Go bridge's `isStateFilePath`.
+        var isStateConflict: Bool {
+            originalPath.split(separator: "/").dropLast().contains(".obsidian")
+        }
     }
 
     struct PendingFolderInfo: Codable, Identifiable, Hashable, Sendable {
@@ -306,25 +344,58 @@ final class SyncthingManager {
             .sorted()
     }
 
-    /// Required devices whose disconnect started within the last grace period.
-    /// Surfaced as a calm "Reconnecting…" dashboard state, not a warning.
+    /// When a device's reconnect grace window ends. Disconnects first observed
+    /// within `startupWindow` of an engine start get the longer
+    /// `startupGracePeriod` (measured from engine start); everything else gets
+    /// `reconnectGracePeriod` from the disconnect itself.
+    private func graceDeadline(firstDisconnected: Date) -> Date {
+        if let engineStartedAt,
+           firstDisconnected.timeIntervalSince(engineStartedAt) >= 0,
+           firstDisconnected.timeIntervalSince(engineStartedAt) < Self.startupWindow {
+            return engineStartedAt.addingTimeInterval(Self.startupGracePeriod)
+        }
+        return firstDisconnected.addingTimeInterval(Self.reconnectGracePeriod)
+    }
+
+    /// True while a disconnected device is still inside its reconnect grace
+    /// window — the UI shows a calm "Connecting…" instead of a warning state.
+    func isWithinReconnectGrace(deviceID: String) -> Bool {
+        guard let since = disconnectedSince[deviceID] else { return false }
+        return graceDeadline(firstDisconnected: since) > now()
+    }
+
+    /// Required devices whose disconnect is still within its grace period.
+    /// Surfaced as a calm "Connecting…" dashboard state, not a warning.
+    /// Paused devices are excluded — pausing is intentional, not a reconnect.
     var reconnectingRequiredDeviceIDs: [String] {
-        let cutoff = now().addingTimeInterval(-Self.reconnectGracePeriod)
+        let nowDate = now()
         let required = Set(folders.flatMap(\.deviceIDs))
+        let paused = Set(devices.filter(\.paused).map(\.deviceID))
         return disconnectedSince
-            .filter { $0.value > cutoff && required.contains($0.key) }
+            .filter {
+                graceDeadline(firstDisconnected: $0.value) > nowDate
+                    && required.contains($0.key)
+                    && !paused.contains($0.key)
+            }
             .map(\.key)
             .sorted()
     }
 
-    /// Required devices that have been disconnected for longer than the grace
+    /// Required devices that have been disconnected for longer than their grace
     /// period, plus any required device that has never appeared in the device
     /// list at all (e.g. peer removed from config but still listed on a folder).
+    /// Paused devices are excluded — an intentionally paused peer must not
+    /// raise the "required device disconnected" issue.
     var disconnectedRequiredDeviceIDs: [String] {
-        let cutoff = now().addingTimeInterval(-Self.reconnectGracePeriod)
+        let nowDate = now()
         let required = Set(folders.flatMap(\.deviceIDs))
+        let paused = Set(devices.filter(\.paused).map(\.deviceID))
         let stale = disconnectedSince
-            .filter { $0.value <= cutoff && required.contains($0.key) }
+            .filter {
+                graceDeadline(firstDisconnected: $0.value) <= nowDate
+                    && required.contains($0.key)
+                    && !paused.contains($0.key)
+            }
             .map(\.key)
 
         let unresolvedUnknown = required.subtracting(Set(devices.map(\.deviceID)))
@@ -332,8 +403,24 @@ final class SyncthingManager {
         return Array(Set(stale).union(unresolvedUnknown)).sorted()
     }
 
+    /// Number of distinct files that currently have at least one conflict
+    /// copy. Counts files, not copies: with `MaxConflicts: 10` a single
+    /// churn-prone file can accumulate many copies, and counting each copy
+    /// made the home-screen banner shout "10 conflicts" for what is one
+    /// decision.
     var unresolvedConflictCount: Int {
-        conflictFiles.values.reduce(0) { $0 + $1.count }
+        conflictFiles.values.reduce(0) { $0 + Set($1.map(\.originalPath)).count }
+    }
+
+    /// Decode a conflict-scan payload and report whether any entry is an
+    /// auto-resolvable state conflict. Gates the auto-resolve walk in the
+    /// poll loop on folders that actually need it.
+    nonisolated static func containsStateConflict(conflictsJSON: String) -> Bool {
+        guard let data = conflictsJSON.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode([ConflictInfo].self, from: data) else {
+            return false
+        }
+        return decoded.contains { $0.isStateConflict }
     }
 
     var unresolvedIssues: [SyncIssueItem] {
@@ -465,15 +552,27 @@ final class SyncthingManager {
     }
 
     /// Start Syncthing using the app's Documents directory.
-    func start() {
-        guard !isRunning else { return }
+    ///
+    /// The bridge call loads certificates, parses the config, and opens the
+    /// SQLite index database — blocking work that used to stall the main
+    /// thread (and the launch frame) on big vaults, so it runs detached and
+    /// the method is `async`. Re-entrant calls during an in-flight start are
+    /// no-ops, mirroring the `isRunning` guard.
+    func start() async {
+        guard !isRunning, !isStarting else { return }
+        isStarting = true
+        defer { isStarting = false }
 
         let configDir = Self.configDirectory()
         logger.info("Starting Syncthing with configDir: \(configDir)")
 
         BackgroundSyncService.lifecycleLock.withLock { $0.foregroundActive = true }
 
-        if let err = SyncBridgeService.startSyncthing(configDir: configDir) {
+        let startError = await Task.detached(priority: .userInitiated) {
+            SyncBridgeService.startSyncthing(configDir: configDir)
+        }.value
+
+        if let err = startError {
             BackgroundSyncService.lifecycleLock.withLock { $0.foregroundActive = false }
             logger.error("Failed to start Syncthing: \(err)")
             error = err
@@ -481,6 +580,7 @@ final class SyncthingManager {
             return
         }
 
+        engineStartedAt = now()
         isRunning = true
         deviceID = SyncBridgeService.deviceID()
         error = nil
@@ -520,6 +620,7 @@ final class SyncthingManager {
         deviceID = ""
         devices = []
         disconnectedSince.removeAll()
+        engineStartedAt = nil
         folders = []
         folderStatuses = [:]
         conflictFiles = [:]
@@ -699,6 +800,7 @@ final class SyncthingManager {
         deviceID = ""
         devices = []
         disconnectedSince.removeAll()
+        engineStartedAt = nil
         folders = []
         folderStatuses = [:]
         conflictFiles = [:]
@@ -819,11 +921,25 @@ final class SyncthingManager {
         let statusSnapshot = await Task.detached {
             var statuses: [String: FolderStatusInfo] = [:]
             var conflicts: [String: Data] = [:]
+            let autoResolve = Self.isAutoResolveStateConflictsEnabled
             for folder in currentFolders {
                 if let status = SyncBridgeService.getFolderStatus(folderID: folder.id) {
                     statuses[folder.id] = FolderStatusInfo(payload: status)
                 }
-                let cJSON = SyncBridgeService.getConflictFilesJSON(folderID: folder.id)
+                var cJSON = SyncBridgeService.getConflictFilesJSON(folderID: folder.id)
+                // Gate the (extra) auto-resolve walk on the scan we already
+                // have, so the 2s poll only pays for it when a state conflict
+                // actually exists.
+                if autoResolve, Self.containsStateConflict(conflictsJSON: cJSON) {
+                    let result = SyncBridgeService.autoResolveStateConflicts(folderID: folder.id)
+                    if result.resolved > 0 {
+                        // Keep Syncthing's index in line with the on-disk
+                        // changes, then re-read so this poll already reports
+                        // the calmer state.
+                        _ = SyncBridgeService.rescanFolder(folderID: folder.id)
+                        cJSON = SyncBridgeService.getConflictFilesJSON(folderID: folder.id)
+                    }
+                }
                 if let d = cJSON.data(using: .utf8) {
                     conflicts[folder.id] = d
                 }
@@ -909,13 +1025,14 @@ final class SyncthingManager {
     private func applyDeviceList(_ newDevices: [DeviceInfo]) {
         devices = newDevices
 
-        let required = Set(folders.flatMap(\.deviceIDs))
         let nowDate = now()
 
-        // Insert timestamps for newly-disconnected required devices; clear
-        // them for devices that are connected or no longer required.
+        // Insert timestamps for newly-disconnected devices; clear them for
+        // connected ones. All devices are tracked (the Devices tab needs the
+        // per-device grace state); the required-device filter is applied by
+        // the computed warning properties.
         for d in newDevices {
-            if required.contains(d.deviceID) && !d.connected {
+            if !d.connected {
                 if disconnectedSince[d.deviceID] == nil {
                     disconnectedSince[d.deviceID] = nowDate
                 }
@@ -1385,7 +1502,7 @@ final class SyncthingManager {
 
     private func performForegroundSyncRequest(folderID: String?) async {
         if !isRunning {
-            start()
+            await start()
         }
 
         let normalizedFolderID = folderID?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1830,6 +1947,14 @@ final class SyncthingManager {
 
     func _testSetFolders(_ newFolders: [FolderInfo]) {
         folders = newFolders
+    }
+
+    func _testSetEngineStartedAt(_ date: Date?) {
+        engineStartedAt = date
+    }
+
+    func _testSetConflictFiles(_ newConflicts: [String: [ConflictInfo]]) {
+        conflictFiles = newConflicts
     }
     #endif
 }

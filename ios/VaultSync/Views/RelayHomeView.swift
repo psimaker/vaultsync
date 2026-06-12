@@ -60,6 +60,10 @@ struct RelayHomeView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
+                Label(L10n.tr("One-step setup: a single line on your server."), systemImage: "terminal")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
                 Button {
                     showPrivacyInfo = true
                 } label: {
@@ -172,7 +176,7 @@ struct RelayHomeView: View {
                         .font(.headline)
                 }
             } footer: {
-                Text(L10n.tr("Run the one-time vaultsync-notify helper on your server to start receiving instant updates. It only sends a wake-up — it never sees your notes."))
+                Text(L10n.tr("One step left: run a single line on your server and instant updates start. The helper only sends a wake-up — it never sees your notes."))
             }
         }
 

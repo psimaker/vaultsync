@@ -47,6 +47,11 @@
 "Connect Obsidian Folder" = "Connect Obsidian Folder";
 "Connect to Obsidian first" = "Connect to Obsidian first";
 "Connected" = "Connected";
+"Connecting to %@…" = "Connecting to %@…";
+"Connecting to 1 device…" = "Connecting to 1 device…";
+"Connecting to %d devices…" = "Connecting to %d devices…";
+"Connecting to devices…" = "Connecting to devices…";
+"Connecting…" = "Connecting…";
 "Connection to peer was closed." = "Connection to peer was closed.";
 "Copy Device ID" = "Copy Device ID";
 "Could Not Accept Share" = "Could Not Accept Share";
@@ -64,7 +69,6 @@
 "Devices" = "Devices";
 "Differences" = "Differences";
 "Discards the version from the other device." = "Discards the version from the other device.";
-"Disconnected" = "Disconnected";
 "Done" = "Done";
 "Empty line" = "Empty line";
 "Enable notifications for VaultSync in iOS Settings → Notifications → VaultSync, then restart the app." = "Enable notifications for VaultSync in iOS Settings → Notifications → VaultSync, then restart the app.";
@@ -147,6 +151,7 @@
 "Obsidian access expired" = "Obsidian access expired";
 "Obsidian directory not accessible." = "Obsidian directory not accessible.";
 "Obsidian folder not connected" = "Obsidian folder not connected";
+"Offline" = "Offline";
 "Open Settings" = "Open Settings";
 "Open the Relay tab" = "Open the Relay tab";
 "Open VaultSync" = "Open VaultSync";
@@ -277,9 +282,6 @@
 "Syncing" = "Syncing";
 "Syncing Vault" = "Syncing Vault";
 "Syncing…" = "Syncing…";
-"Reconnecting…" = "Reconnecting…";
-"Restoring connection to 1 device" = "Restoring connection to 1 device";
-"Restoring connection to %d devices" = "Restoring connection to %d devices";
 "Syncthing is scanning local changes." = "Syncthing is scanning local changes.";
 "Syncthing no longer has this folder configured." = "Syncthing no longer has this folder configured.";
 "Terms of Use" = "Terms of Use";
@@ -523,15 +525,15 @@
 "Why this step" = "Why this step";
 "Cloud Relay needs a small helper on your server. It watches Syncthing for changes and sends VaultSync a wake-up signal — it never sees your notes. Without it, the subscription has nothing to wake the app with." = "Cloud Relay needs a small helper on your server. It watches Syncthing for changes and sends VaultSync a wake-up signal — it never sees your notes. Without it, the subscription has nothing to wake the app with.";
 "Copy Command" = "Copy Command";
-"Step 3 — Confirm it works" = "Step 3 — Confirm it works";
-"Come back to VaultSync. The moment a change happens on your server, Relay Diagnostics will confirm that wake-ups are being delivered — that means everything works." = "Come back to VaultSync. The moment a change happens on your server, Relay Diagnostics will confirm that wake-ups are being delivered — that means everything works.";
 "Full setup guide (Docker Compose, prebuilt binaries, NAS notes)" = "Full setup guide (Docker Compose, prebuilt binaries, NAS notes)";
 "Prefer Docker Compose, a NAS package, or a plain binary? The full guide covers them all." = "Prefer Docker Compose, a NAS package, or a plain binary? The full guide covers them all.";
 "Set Up Your Server" = "Set Up Your Server";
 "Server setup command" = "Server setup command";
 "Installer command" = "Installer command";
-"The installer finds your Syncthing config, sets the right permissions, and starts the helper — with Docker if available, otherwise as a system service. It’s open source; add --dry-run to preview every action without changing anything." = "The installer finds your Syncthing config, sets the right permissions, and starts the helper — with Docker if available, otherwise as a system service. It’s open source; add --dry-run to preview every action without changing anything.";
-"Manual alternative — run the container yourself" = "Manual alternative — run the container yourself";
+"One step — run this on your server" = "One step — run this on your server";
+"That’s the whole setup — nothing to edit, no API key to copy. The installer finds your Syncthing config, sets the right permissions, and starts the helper. The helper then wakes this iPhone once on its own, and VaultSync flips to “Cloud Relay active” as soon as that first wake-up arrives. Keep it running on a machine that stays on (server or NAS)." = "That’s the whole setup — nothing to edit, no API key to copy. The installer finds your Syncthing config, sets the right permissions, and starts the helper. The helper then wakes this iPhone once on its own, and VaultSync flips to “Cloud Relay active” as soon as that first wake-up arrives. Keep it running on a machine that stays on (server or NAS).";
+"Manual & advanced setup" = "Manual & advanced setup";
+"The installer is open source — add --dry-run to preview every action without changing anything. Prefer to run the container yourself? Use this command:" = "The installer is open source — add --dry-run to preview every action without changing anything. Prefer to run the container yourself? Use this command:";
 "Last wake-up" = "Last wake-up";
 "Auto-renews until canceled. Cancel anytime in Settings → Subscriptions." = "Auto-renews until canceled. Cancel anytime in Settings → Subscriptions.";
 "Cancel anytime in Settings → Subscriptions" = "Cancel anytime in Settings → Subscriptions";
@@ -561,7 +563,7 @@
 "Pair this iPhone with the Syncthing device that hosts your vault, by Device ID or QR code." = "Pair this iPhone with the Syncthing device that hosts your vault, by Device ID or QR code.";
 "Relay" = "Relay";
 "Relay health & diagnostics" = "Relay health & diagnostics";
-"Run the one-time vaultsync-notify helper on your server to start receiving instant updates. It only sends a wake-up — it never sees your notes." = "Run the one-time vaultsync-notify helper on your server to start receiving instant updates. It only sends a wake-up — it never sees your notes.";
+"One step left: run a single line on your server and instant updates start. The helper only sends a wake-up — it never sees your notes." = "One step left: run a single line on your server and instant updates start. The helper only sends a wake-up — it never sees your notes.";
 "Save %d%%" = "Save %d%%";
 "Server helper setup" = "Server helper setup";
 "Set up the server helper" = "Set up the server helper";
@@ -573,6 +575,7 @@
 "Yearly" = "Yearly";
 "Your local version is kept, and the other device’s version is added under a new name. Nothing is discarded." = "Your local version is kept, and the other device’s version is added under a new name. Nothing is discarded.";
 "Your notes never touch our servers. Cloud Relay sends a tiny wake-up so changes from your other devices land the moment they happen — even with the app closed." = "Your notes never touch our servers. Cloud Relay sends a tiny wake-up so changes from your other devices land the moment they happen — even with the app closed.";
+"One-step setup: a single line on your server." = "One-step setup: a single line on your server.";
 "Your vault already syncs free and peer-to-peer. Relay only removes the “open the app to sync” wait — it isn’t cloud storage." = "Your vault already syncs free and peer-to-peer. Relay only removes the “open the app to sync” wait — it isn’t cloud storage.";
 "You’re subscribed, but no wake-up has arrived yet. Cloud Relay only delivers once the helper is running on your server." = "You’re subscribed, but no wake-up has arrived yet. Cloud Relay only delivers once the helper is running on your server.";
 
@@ -603,13 +606,14 @@
 "Relay reachable — but no wake-up delivered yet. Run the helper on your server." = "Relay reachable — but no wake-up delivered yet. Run the helper on your server.";
 
 /* Cloud Relay setup — key-free server command (Phase 3 A+C) */
-"Step 1 — Run this on your server" = "Step 1 — Run this on your server";
 "No API key needed — the helper reads it from Syncthing’s config.xml. Replace /PATH/TO/syncthing with your Syncthing config folder (often ~/.local/state/syncthing or ~/.config/syncthing). Permission error? Add -u <uid>:<gid> for the user that owns config.xml." = "No API key needed — the helper reads it from Syncthing’s config.xml. Replace /PATH/TO/syncthing with your Syncthing config folder (often ~/.local/state/syncthing or ~/.config/syncthing). Permission error? Add -u <uid>:<gid> for the user that owns config.xml.";
-"Step 2 — It activates itself" = "Step 2 — It activates itself";
-"That’s it — the helper wakes this iPhone once on its own, and VaultSync flips to “Cloud Relay active” as soon as that first wake-up arrives. From then on, changes from your other devices wake the app in the background. Keep the helper running on a machine that stays on (server or NAS)." = "That’s it — the helper wakes this iPhone once on its own, and VaultSync flips to “Cloud Relay active” as soon as that first wake-up arrives. From then on, changes from your other devices wake the app in the background. Keep the helper running on a machine that stays on (server or NAS).";
 
 /* Relay diagnostics — delivery visibility (force-quit / Low Power education, 7-day counter) */
 "Wake-ups (Last 7 Days)" = "Wake-ups (Last 7 Days)";
 "Low Power Mode is on — iOS defers silent wake-ups until it is off or the iPhone is charging." = "Low Power Mode is on — iOS defers silent wake-ups until it is off or the iPhone is charging.";
 "Keep VaultSync in the background: if you force-quit it from the app switcher, iOS stops delivering wake-ups until you open the app again." = "Keep VaultSync in the background: if you force-quit it from the app switcher, iOS stops delivering wake-ups until you open the app again.";
 "Wake-ups went quiet. The most common cause is force-quitting VaultSync from the app switcher — iOS then blocks wake-ups until the next manual launch. Also check that the helper on your server is still running." = "Wake-ups went quiet. The most common cause is force-quitting VaultSync from the app switcher — iOS then blocks wake-ups until the next manual launch. Also check that the helper on your server is still running.";
+
+/* Conflict auto-resolution — .obsidian state files, last-writer-wins (Settings) */
+"Auto-Resolve Settings Conflicts" = "Auto-Resolve Settings Conflicts";
+"Conflicts in Obsidian's app settings and plugin state (.obsidian) are resolved automatically — the newest version wins. Conflicts in your notes always wait for your decision." = "Conflicts in Obsidian's app settings and plugin state (.obsidian) are resolved automatically — the newest version wins. Conflicts in your notes always wait for your decision.";

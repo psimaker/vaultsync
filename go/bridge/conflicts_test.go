@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGetConflictFilesJSON(t *testing.T) {
@@ -508,5 +509,148 @@ func TestRemoveConflictFilesForOriginalErrors(t *testing.T) {
 		if !strings.Contains(got, `"error":"invalid path: outside folder root"`) {
 			t.Errorf("root path %q result = %q, want invalid-path error", rp, got)
 		}
+	}
+}
+
+func TestIsStateFilePath(t *testing.T) {
+	cases := []struct {
+		relPath string
+		want    bool
+	}{
+		{".obsidian/workspace.json", true},
+		{".obsidian/plugins/dataview/data.json", true},
+		{"MyVault/.obsidian/app.json", true},
+		{"MyVault/.obsidian/plugins/calendar/data.json", true},
+		{"notes.md", false},
+		{"Personal/diary.md", false},
+		{".obsidian.md", false},
+		{"docs/.obsidian-guide/readme.md", false},
+	}
+	for _, c := range cases {
+		if got := isStateFilePath(c.relPath); got != c.want {
+			t.Errorf("isStateFilePath(%q) = %v, want %v", c.relPath, got, c.want)
+		}
+	}
+}
+
+func TestAutoResolveStateConflicts(t *testing.T) {
+	configDir := testConfigDir(t)
+
+	if errMsg := StartSyncthing(configDir); errMsg != "" {
+		t.Fatalf("StartSyncthing() failed: %s", errMsg)
+	}
+	defer StopSyncthing()
+
+	folderPath := filepath.Join(configDir, "autoresolve")
+	if errMsg := AddFolder("autoresolve", "Auto Resolve", folderPath); errMsg != "" {
+		t.Fatalf("AddFolder failed: %s", errMsg)
+	}
+
+	mustWrite := func(rel, content string) string {
+		full := filepath.Join(folderPath, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir for %s: %v", rel, err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+		return full
+	}
+	setMtime := func(path string, offsetSeconds int) {
+		ts := time.Now().Add(time.Duration(offsetSeconds) * time.Second)
+		if err := os.Chtimes(path, ts, ts); err != nil {
+			t.Fatalf("chtimes %s: %v", path, err)
+		}
+	}
+
+	// Case 1: original newer than copy -> copy discarded, original content kept.
+	origNewer := mustWrite(".obsidian/workspace.json", "original-newer")
+	copyOlder := mustWrite(".obsidian/workspace.sync-conflict-20260601-100000-AAA1111.json", "copy-older")
+	setMtime(origNewer, 0)
+	setMtime(copyOlder, -3600)
+
+	// Case 2: copy newer than original -> copy promoted over original.
+	origOlder := mustWrite("MyVault/.obsidian/app.json", "original-older")
+	copyNewer := mustWrite("MyVault/.obsidian/app.sync-conflict-20260601-110000-BBB2222.json", "copy-newer")
+	setMtime(origOlder, -3600)
+	setMtime(copyNewer, 0)
+
+	// Case 3: original missing -> copy promoted, no data loss.
+	orphanCopy := mustWrite("MyVault/.obsidian/plugins/calendar/data.sync-conflict-20260601-120000-CCC3333.json", "orphan")
+	_ = orphanCopy
+
+	// Case 4: note conflict outside .obsidian -> untouched.
+	noteOrig := mustWrite("MyVault/diary.md", "note-original")
+	noteCopy := mustWrite("MyVault/diary.sync-conflict-20260601-130000-DDD4444.md", "note-copy")
+	setMtime(noteOrig, -3600)
+	setMtime(noteCopy, 0)
+
+	got := AutoResolveStateConflicts("autoresolve")
+	var res struct {
+		Resolved int    `json:"resolved"`
+		Error    string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(got), &res); err != nil {
+		t.Fatalf("unmarshal %q: %v", got, err)
+	}
+	if res.Error != "" {
+		t.Fatalf("error = %q, want empty", res.Error)
+	}
+	if res.Resolved != 3 {
+		t.Errorf("resolved = %d, want 3", res.Resolved)
+	}
+
+	readFile := func(rel string) string {
+		data, err := os.ReadFile(filepath.Join(folderPath, filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		return string(data)
+	}
+	mustBeGone := func(rel string) {
+		if _, err := os.Stat(filepath.Join(folderPath, filepath.FromSlash(rel))); !os.IsNotExist(err) {
+			t.Errorf("%s still exists, want removed", rel)
+		}
+	}
+
+	// Case 1: original kept, copy gone.
+	if c := readFile(".obsidian/workspace.json"); c != "original-newer" {
+		t.Errorf("workspace.json = %q, want 'original-newer'", c)
+	}
+	mustBeGone(".obsidian/workspace.sync-conflict-20260601-100000-AAA1111.json")
+
+	// Case 2: copy promoted, copy file gone.
+	if c := readFile("MyVault/.obsidian/app.json"); c != "copy-newer" {
+		t.Errorf("app.json = %q, want 'copy-newer'", c)
+	}
+	mustBeGone("MyVault/.obsidian/app.sync-conflict-20260601-110000-BBB2222.json")
+
+	// Case 3: orphan promoted to original.
+	if c := readFile("MyVault/.obsidian/plugins/calendar/data.json"); c != "orphan" {
+		t.Errorf("data.json = %q, want 'orphan'", c)
+	}
+	mustBeGone("MyVault/.obsidian/plugins/calendar/data.sync-conflict-20260601-120000-CCC3333.json")
+
+	// Case 4: note conflict untouched.
+	if c := readFile("MyVault/diary.md"); c != "note-original" {
+		t.Errorf("diary.md = %q, want 'note-original'", c)
+	}
+	if c := readFile("MyVault/diary.sync-conflict-20260601-130000-DDD4444.md"); c != "note-copy" {
+		t.Errorf("diary conflict copy = %q, want 'note-copy'", c)
+	}
+
+	// Idempotent: a second run finds nothing to resolve.
+	got = AutoResolveStateConflicts("autoresolve")
+	if err := json.Unmarshal([]byte(got), &res); err != nil {
+		t.Fatalf("unmarshal second run %q: %v", got, err)
+	}
+	if res.Resolved != 0 || res.Error != "" {
+		t.Errorf("second run = %+v, want resolved 0 and no error", res)
+	}
+
+	// Unknown folder -> error envelope.
+	got = AutoResolveStateConflicts("nonexistent")
+	if !strings.Contains(got, `"error":"folder not found"`) {
+		t.Errorf("unknown folder result = %q, want 'folder not found'", got)
 	}
 }

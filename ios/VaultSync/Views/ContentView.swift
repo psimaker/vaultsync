@@ -378,12 +378,33 @@ struct ContentView: View {
             if syncthingManager.isRunning {
                 let connected = syncthingManager.devices.filter(\.connected).count
                 let total = syncthingManager.devices.count
+                // While every disconnected device is still inside its reconnect
+                // grace window, "0 of N connected" is normal warm-up, not a
+                // problem — show a calm connecting state instead of a warning
+                // color. The orange treatment is reserved for devices that
+                // stayed disconnected beyond the grace period.
+                let reconnectingDevices = syncthingManager.devices.filter { !$0.connected && !$0.paused }
+                let isWarmingUp = connected == 0 && total > 0
+                    && !reconnectingDevices.isEmpty
+                    && reconnectingDevices.allSatisfy {
+                        syncthingManager.isWithinReconnectGrace(deviceID: $0.deviceID)
+                    }
                 HStack {
-                    Image(systemName: "network")
-                        .foregroundStyle(connected > 0 ? Color.statusSuccess : Color.statusInactive)
-                        .accessibilityHidden(true)
+                    if isWarmingUp {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(Color.statusStarting)
+                            .accessibilityHidden(true)
+                    } else {
+                        Image(systemName: "network")
+                            .foregroundStyle(connected > 0 ? Color.statusSuccess : Color.statusInactive)
+                            .accessibilityHidden(true)
+                    }
                     if total == 0 {
                         Text("No devices configured")
+                            .foregroundStyle(.secondary)
+                    } else if isWarmingUp {
+                        Text(L10n.tr("Connecting to devices…"))
                             .foregroundStyle(.secondary)
                     } else {
                         Text(L10n.fmt("%d of %d devices connected", connected, total))
@@ -501,11 +522,11 @@ struct ContentView: View {
         !syncthingManager.reconnectingRequiredDeviceIDs.isEmpty
     }
 
-    /// True iff the reconnecting visuals (ProgressView spinner + caption)
-    /// should actually be shown. Mirrors the precedence cascade used by
-    /// `syncStatusText` so higher-priority states (errors, "Starting…",
-    /// folder errors) suppress the reconnecting indicator instead of
-    /// competing with it for visual hierarchy.
+    /// True iff the reconnecting visuals (ProgressView spinner + "Connecting
+    /// to…" caption) should actually be shown. Higher-priority states (errors,
+    /// "Starting…", folder errors) suppress the indicator instead of competing
+    /// with it for visual hierarchy. The header title itself stays positive —
+    /// a grace-window reconnect is normal warm-up, not a problem state.
     private var shouldShowReconnectingUI: Bool {
         currentSyncError == nil
             && syncthingManager.isRunning
@@ -516,11 +537,15 @@ struct ContentView: View {
     /// Canonical overall status for the header, mirroring the precedence cascade
     /// of `syncStatusText`. Drives the header glyph + color through the SyncStatus
     /// registry; the contextual wording stays in `syncStatusText`.
+    ///
+    /// A reconnect inside its grace window deliberately does NOT change the
+    /// status: being briefly disconnected after a cold start is Syncthing's
+    /// normal warm-up, so the header keeps its positive state and only the
+    /// busy spinner + subtitle communicate "connecting".
     private var overallStatus: SyncStatus {
         if currentSyncError != nil { return .error }
         if !syncthingManager.isRunning { return .starting }
         if !foldersWithErrors.isEmpty { return .attention }
-        if isReconnecting { return .starting }
         if isSyncing { return .syncing }
         return .synced
     }
@@ -529,10 +554,15 @@ struct ContentView: View {
     /// last-sync relative time.
     private var headerSubtitle: String? {
         if shouldShowReconnectingUI {
-            let count = syncthingManager.reconnectingRequiredDeviceIDs.count
-            return count == 1
-                ? L10n.tr("Restoring connection to 1 device")
-                : L10n.fmt("Restoring connection to %d devices", count)
+            let ids = syncthingManager.reconnectingRequiredDeviceIDs
+            if ids.count == 1,
+               let device = syncthingManager.devices.first(where: { $0.deviceID == ids[0] }),
+               !device.name.isEmpty {
+                return L10n.fmt("Connecting to %@…", device.name)
+            }
+            return ids.count == 1
+                ? L10n.tr("Connecting to 1 device…")
+                : L10n.fmt("Connecting to %d devices…", ids.count)
         }
         if let lastSync = syncthingManager.lastSyncTime {
             return L10n.fmt("Last sync: %@", Self.lastSyncFormatter.localizedString(for: lastSync, relativeTo: Date()))
@@ -544,7 +574,6 @@ struct ContentView: View {
         if currentSyncError != nil { return L10n.tr("Error") }
         if !syncthingManager.isRunning { return L10n.tr("Starting…") }
         if !foldersWithErrors.isEmpty { return L10n.tr("Sync Issue") }
-        if isReconnecting { return L10n.tr("Reconnecting…") }
         if isSyncing { return L10n.tr("Syncing…") }
         if syncthingManager.folders.isEmpty { return L10n.tr("Ready") }
         return L10n.tr("All Synced")
@@ -876,7 +905,9 @@ struct ContentView: View {
     /// plain-text row with a tiny trailing caption icon.
     private func vaultRow(_ item: VaultRowItem) -> some View {
         let status = syncthingManager.folderStatuses[item.folder.id]
-        let conflictCount = conflicts(for: item).count
+        // Distinct conflicted files, not copies — same semantics as the
+        // home-screen issue banner (SyncthingManager.unresolvedConflictCount).
+        let conflictCount = Set(conflicts(for: item).map(\.originalPath)).count
         let syncStatus = folderSyncStatus(status?.state ?? "unknown")
 
         var subtitle: String?
@@ -985,7 +1016,7 @@ struct ContentView: View {
                             Label("Conflicts", systemImage: "exclamationmark.triangle")
                                 .foregroundStyle(Color.statusAttention)
                             Spacer()
-                            Text("\(conflicts.count)")
+                            Text("\(Set(conflicts.map(\.originalPath)).count)")
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -1133,18 +1164,52 @@ struct ContentView: View {
                             syncthingManager: syncthingManager
                         )
                     } label: {
-                        StatusRow(
-                            device.name.isEmpty ? L10n.tr("Unnamed") : device.name,
-                            status: device.connected ? .synced : .paused,
-                            systemImage: device.connected ? "checkmark.circle.fill" : "xmark.circle.fill"
-                        ) {
-                            Text(device.connected ? L10n.tr("Connected") : L10n.tr("Disconnected"))
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                        }
+                        deviceRow(device)
                     }
                 }
             }
+        }
+    }
+
+    /// One device row. Disconnection is presented in escalating, honest steps:
+    /// a spinner + "Connecting…" while the reconnect grace window runs (normal
+    /// after a cold start), then a neutral gray "Offline" — never a red ✕,
+    /// which reads as failure although disconnected peers are a normal state
+    /// for an offline-first sync tool.
+    private func deviceRow(_ device: SyncthingManager.DeviceInfo) -> some View {
+        let isConnecting = !device.connected && !device.paused
+            && syncthingManager.isWithinReconnectGrace(deviceID: device.deviceID)
+
+        let status: SyncStatus
+        let label: String
+        let glyph: String?
+        if device.connected {
+            status = .synced
+            label = L10n.tr("Connected")
+            glyph = "checkmark.circle.fill"
+        } else if device.paused {
+            status = .paused
+            label = L10n.tr("Paused")
+            glyph = "pause.circle.fill"
+        } else if isConnecting {
+            status = .starting
+            label = L10n.tr("Connecting…")
+            glyph = nil
+        } else {
+            status = .paused
+            label = L10n.tr("Offline")
+            glyph = "moon.zzz.fill"
+        }
+
+        return StatusRow(
+            device.name.isEmpty ? L10n.tr("Unnamed") : device.name,
+            status: status,
+            systemImage: glyph,
+            busy: isConnecting
+        ) {
+            Text(label)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
         }
     }
 
