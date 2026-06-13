@@ -1800,11 +1800,44 @@ final class SyncthingManager {
     /// cannot be parsed.
     @discardableResult
     func addIgnorePattern(_ pattern: String, folderID: String) -> SyncUserError? {
+        addIgnorePatterns([pattern], folderID: folderID)
+    }
+
+    /// Add multiple patterns at once, preserving the order of existing lines and
+    /// appending only those not already present (intra-batch duplicates are also
+    /// skipped). No-op if every pattern is already present. Aborts without
+    /// writing if the current `.stignore` cannot be parsed, so an unreadable
+    /// bridge response can never wipe or reorder existing rules.
+    @discardableResult
+    func addIgnorePatterns(_ patterns: [String], folderID: String) -> SyncUserError? {
         guard var current = readIgnorePatternsOrNil(folderID: folderID) else {
             return unreadableFiltersError()
         }
-        guard !current.contains(pattern) else { return nil }
-        current.append(pattern)
+        var seen = Set(current)
+        var appended = false
+        for pattern in patterns where !seen.contains(pattern) {
+            current.append(pattern)
+            seen.insert(pattern)
+            appended = true
+        }
+        guard appended else { return nil }
+        return setIgnorePatterns(folderID: folderID, patterns: current)
+    }
+
+    /// Remove the given patterns from `.stignore`, preserving the order of every
+    /// remaining line. No-op if none are present. Aborts without writing if the
+    /// current `.stignore` cannot be parsed — so a delete never silently
+    /// reorders the file (Syncthing matches first-pattern-wins, so order is
+    /// semantically significant, e.g. for `!` un-ignore rules).
+    @discardableResult
+    func removeIgnorePatterns(_ patterns: [String], folderID: String) -> SyncUserError? {
+        guard var current = readIgnorePatternsOrNil(folderID: folderID) else {
+            return unreadableFiltersError()
+        }
+        let removeSet = Set(patterns)
+        let before = current.count
+        current.removeAll { removeSet.contains($0) }
+        guard current.count != before else { return nil }
         return setIgnorePatterns(folderID: folderID, patterns: current)
     }
 

@@ -76,3 +76,17 @@ enum SkipFamilyGrouping {
         return result
     }
 }
+
+enum IgnorePatternInput {
+    /// Parse a (possibly multi-line) "Add pattern" field value into individual
+    /// `.stignore` patterns: one per line, trimmed. Splitting is on newlines
+    /// only — never on spaces — so a pattern that legitimately contains a space
+    /// (e.g. `My Notes/`) stays whole. Blank lines and `//` comment lines —
+    /// common when a whole `.stignore` block is pasted — are dropped, so a paste
+    /// yields the real patterns instead of one unusable single-line blob (#43).
+    static func parse(_ raw: String) -> [String] {
+        raw.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && !$0.hasPrefix("//") }
+    }
+}

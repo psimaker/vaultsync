@@ -135,4 +135,62 @@ final class SkipFamilyTests: XCTestCase {
         XCTAssertEqual(result.count, 2)
         XCTAssertTrue(result.allSatisfy { !$0.hasConflictGlob })
     }
+
+    // MARK: - IgnorePatternInput.parse (multi-line / multi-pattern paste, #43)
+
+    func test_parse_singlePattern() {
+        XCTAssertEqual(IgnorePatternInput.parse("*.tmp"), ["*.tmp"])
+    }
+
+    func test_parse_trimsSurroundingWhitespace() {
+        XCTAssertEqual(IgnorePatternInput.parse("   *.tmp  "), ["*.tmp"])
+    }
+
+    func test_parse_splitsOnNewlines() {
+        XCTAssertEqual(
+            IgnorePatternInput.parse("*.tmp\n.DS_Store\nThumbs.db"),
+            ["*.tmp", ".DS_Store", "Thumbs.db"]
+        )
+    }
+
+    func test_parse_handlesCRLFAndBlankLines() {
+        let raw = "*.tmp\r\n\r\n.DS_Store\n   \nThumbs.db\n"
+        XCTAssertEqual(IgnorePatternInput.parse(raw), ["*.tmp", ".DS_Store", "Thumbs.db"])
+    }
+
+    func test_parse_dropsCommentLines() {
+        let raw = "// OS junk\n*.tmp\n//another\n.DS_Store"
+        XCTAssertEqual(IgnorePatternInput.parse(raw), ["*.tmp", ".DS_Store"])
+    }
+
+    func test_parse_preservesSpacesInsidePattern() {
+        // Split is on newlines only — a pattern containing a space stays whole.
+        XCTAssertEqual(
+            IgnorePatternInput.parse("My Notes/\nAttachments/"),
+            ["My Notes/", "Attachments/"]
+        )
+    }
+
+    func test_parse_pastedStignoreBlock_yieldsOnlyRealPatterns() {
+        // Regression for #43: a pasted multi-line .stignore block must become
+        // individual patterns — not one blob — with comments/blank lines removed.
+        let raw = """
+        // OS junk anywhere
+        (?d)**/.DS_Store
+        (?d)**/Thumbs.db
+
+        // Windows system junk
+        (?d)$RECYCLE.BIN/
+        """
+        XCTAssertEqual(
+            IgnorePatternInput.parse(raw),
+            ["(?d)**/.DS_Store", "(?d)**/Thumbs.db", "(?d)$RECYCLE.BIN/"]
+        )
+    }
+
+    func test_parse_emptyAndCommentOnly_returnEmpty() {
+        XCTAssertEqual(IgnorePatternInput.parse(""), [])
+        XCTAssertEqual(IgnorePatternInput.parse("   \n\n  "), [])
+        XCTAssertEqual(IgnorePatternInput.parse("// just a comment"), [])
+    }
 }
