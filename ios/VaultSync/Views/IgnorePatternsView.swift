@@ -89,13 +89,14 @@ struct IgnorePatternsView: View {
             }
             .onDelete(perform: deleteCustom)
 
-            HStack {
-                TextField(L10n.tr("Add pattern (e.g. *.tmp)"), text: $newPattern)
+            HStack(alignment: .top) {
+                TextField(L10n.tr("Add pattern (e.g. *.tmp)"), text: $newPattern, axis: .vertical)
                     .font(.vaultMono(.body))
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
+                    .lineLimit(1...6)
                 Button(L10n.tr("Add")) { addCustom() }
-                    .disabled(newPattern.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(IgnorePatternInput.parse(newPattern).isEmpty)
             }
         }
     }
@@ -160,9 +161,7 @@ struct IgnorePatternsView: View {
                         alertMessage = err.message
                     }
                 } else {
-                    var next = Array(ignoredPatterns)
-                    next.removeAll { $0 == item.pattern }
-                    if let err = syncthingManager.setIgnorePatterns(folderID: folderID, patterns: next) {
+                    if let err = syncthingManager.removeIgnorePatterns([item.pattern], folderID: folderID) {
                         alertMessage = err.message
                     }
                 }
@@ -174,9 +173,14 @@ struct IgnorePatternsView: View {
     // MARK: - Mutations
 
     private func addCustom() {
-        let trimmed = newPattern.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return }
-        if let err = syncthingManager.addIgnorePattern(trimmed, folderID: folderID) {
+        // Accept a multi-line / multi-pattern paste: one pattern per line, with
+        // blank and `//` comment lines dropped. See IgnorePatternInput.parse.
+        let patterns = IgnorePatternInput.parse(newPattern)
+        guard !patterns.isEmpty else {
+            newPattern = ""
+            return
+        }
+        if let err = syncthingManager.addIgnorePatterns(patterns, folderID: folderID) {
             alertMessage = err.message
             return
         }
@@ -190,10 +194,8 @@ struct IgnorePatternsView: View {
             guard index < visible.count else { return [] }
             return visible[index].underlyingLines
         }
-        let toRemoveSet = Set(toRemoveLines)
-        var next = Array(ignoredPatterns)
-        next.removeAll { toRemoveSet.contains($0) }
-        if let err = syncthingManager.setIgnorePatterns(folderID: folderID, patterns: next) {
+        guard !toRemoveLines.isEmpty else { return }
+        if let err = syncthingManager.removeIgnorePatterns(toRemoveLines, folderID: folderID) {
             alertMessage = err.message
             return
         }
