@@ -1,8 +1,8 @@
 # Sync Filters — UX Spec
 
 > **Internal design reference — not user documentation.** This captures the rationale, layout, and trade-offs behind the Sync Filters feature for maintainers extending it.
-> Status: **implemented** (issue [#1](https://github.com/psimaker/vaultsync/issues/1), shipped in v1.2.0; Conflict→Skip extended to Skip Family in v1.3.2, issue [#8](https://github.com/psimaker/vaultsync/issues/8); conflict auto-resolution for `.obsidian` state files added in v1.7.0, §6.6). Current app: v1.7.0.
-> Last updated: 2026-06-12
+> Status: **implemented** (issue [#1](https://github.com/psimaker/vaultsync/issues/1), shipped in v1.2.0; Conflict→Skip extended to Skip Family in v1.3.2, issue [#8](https://github.com/psimaker/vaultsync/issues/8); conflict auto-resolution for `.obsidian` state files added in v1.7.0, §6.6; multi-line paste + order-preserving filter writes in v1.7.1, issue [#43](https://github.com/psimaker/vaultsync/issues/43), §6.7). Current app: v1.7.1.
+> Last updated: 2026-06-13
 
 This document is the design reference for the Sync Filters feature — the UI for excluding files and folders from sync requested in issue #1 by @vitaly74. It captures the rationale behind the layout, preset catalog, migration path, and multi-vault behavior; refer to it when extending or modifying the feature.
 
@@ -175,6 +175,29 @@ the other side:
 - **Counts mean files now.** The home banner, vault badges, and notifications
   count distinct conflicted files instead of conflict copies — with
   `MaxConflicts: 10` a single churn-prone file used to read as "10 conflicts".
+
+## 6.7 Multi-line paste & order-preserving writes (v1.7.1)
+
+Two fixes from issue [#43](https://github.com/psimaker/vaultsync/issues/43):
+
+- **The "Add pattern" field is multi-line.** It was a single-line `TextField`,
+  so iOS flattened a pasted multi-line `.stignore` block into one line
+  (newlines → spaces) and stored it as a single custom pattern — usually inert,
+  since such a paste typically starts with a `//` comment (which Syncthing
+  treats as a comment line). The field now uses `axis: .vertical`, and input is
+  parsed by `IgnorePatternInput.parse` (`Models/SkipFamily.swift`): split on
+  newlines only (so patterns containing spaces survive), trimmed, with blank and
+  `//` comment lines dropped. Patterns are written in one ordered, de-duplicated
+  pass via `SyncthingManager.addIgnorePatterns`.
+- **Deletes preserve `.stignore` order.** `deleteCustom` and the detected-pattern
+  off-toggle rebuilt the file from an unordered `Set`, reshuffling line order on
+  every change. Since Syncthing matches first-pattern-wins (an earlier
+  `!`-include can override a later rule), both paths now route through
+  `SyncthingManager.removeIgnorePatterns`, which reads the file, removes the
+  targeted lines, and keeps the order of the rest.
+
+Removal remains swipe-to-delete on the custom row (§3, item 4); no visible
+delete button was added.
 
 ## 7. Migration
 
