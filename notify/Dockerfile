@@ -3,7 +3,7 @@ WORKDIR /app
 COPY go.mod *.go ./
 RUN CGO_ENABLED=0 go build -o /vaultsync-notify
 
-FROM alpine:3.23
+FROM alpine:3.24
 # Upgrade base packages: security fixes often land in the apk repos before
 # the alpine base image is re-released (e.g. CVE-2026-45447 in libcrypto3).
 RUN apk --no-cache upgrade && \
