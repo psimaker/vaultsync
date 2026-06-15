@@ -53,7 +53,7 @@ final class VaultManager {
         scanForVaults()
         cleanupLegacyBookmarks()
 
-        logger.info("Obsidian directory access granted: \(url.path)")
+        logger.info("Obsidian directory access granted: \(url.path, privacy: .private)")
         return nil
     }
 
@@ -107,7 +107,7 @@ final class VaultManager {
         accessIssue = nil
         scanForVaults()
 
-        logger.info("Obsidian directory restored: \(url.path)")
+        logger.info("Obsidian directory restored: \(url.path, privacy: .private)")
     }
 
     // MARK: - Vault Discovery
@@ -200,7 +200,7 @@ final class VaultManager {
             occupiedCanonLower: occupied,
             canonicalize: FolderPathReconciler.canonical
         )
-        logger.info("Accepting share '\(folderName)' (\(folder.id)) → path: \(path) (baseIsVault=\(baseIsVault), nameMatchesBase=\(nameMatchesBase), occupied=\(occupied.count))")
+        logger.info("Accepting share '\(folderName, privacy: .private)' (\(folder.id)) → path: \(path, privacy: .private) (baseIsVault=\(baseIsVault), nameMatchesBase=\(nameMatchesBase), occupied=\(occupied.count))")
 
         if let err = syncthingManager.acceptPendingFolder(
             folderID: folder.id,
@@ -225,7 +225,7 @@ final class VaultManager {
         }
 
         scanForVaults()
-        logger.info("Auto-accepted pending share: \(folderName) (\(folder.id))")
+        logger.info("Auto-accepted pending share: \(folderName, privacy: .private) (\(folder.id))")
         return nil
     }
 
