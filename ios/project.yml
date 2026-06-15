@@ -78,8 +78,8 @@ targets:
         # TCP/QUIC dials to peers on the same Wi-Fi, forcing every connection
         # through public relays — the slowest reconnect path after a cold start.
         # (Syncthing's multicast *discovery* additionally needs the restricted
-        # com.apple.developer.networking.multicast entitlement, which requires
-        # Apple approval — see docs/architecture.md.)
+        # com.apple.developer.networking.multicast entitlement — Apple-approved
+        # for this App ID and enabled in the entitlements below; see docs/architecture.md.)
         NSLocalNetworkUsageDescription: "VaultSync connects directly to your other devices on the same network so your vaults sync instantly, without a detour through the internet."
         # NOTE: NSAppTransportSecurity is deliberately NOT set, so shipping (Release)
         # builds keep the strictest ATS posture. The production app only talks HTTPS to
@@ -106,6 +106,9 @@ targets:
         aps-environment: development
         com.apple.security.application-groups:
           - group.eu.vaultsync.shared
+        # Apple-approved restricted entitlement: lets Syncthing's local discovery
+        # use multicast so same-Wi-Fi peers are found directly, without a relay.
+        com.apple.developer.networking.multicast: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: eu.vaultsync.app
