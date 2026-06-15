@@ -13,6 +13,10 @@ All notable changes to VaultSync are documented here.
 - **Pasting a block of sync filters now works** ([#43](https://github.com/psimaker/vaultsync/issues/43)) — the Sync Filters "Add pattern" field was single-line, so pasting a multi-line list of patterns collapsed into one unusable entry — and because such a paste usually begins with a `//` comment, it silently matched nothing. The field is now multi-line and adds **one pattern per line**: blank lines and `//` comments are skipped, and patterns that contain spaces stay intact.
 - **Editing one filter no longer reshuffles the rest** — removing a custom pattern, or turning off a detected one, used to rewrite the entire `.stignore` in an arbitrary order. Syncthing applies patterns top to bottom (so an earlier `!`-include can override a later rule), so the original line order is now preserved on every change.
 
+### Changed
+
+- **More reliable local discovery on the same Wi-Fi** — now that Apple has approved the multicast networking entitlement, VaultSync uses multicast for Syncthing's local peer discovery, so your other devices on the same network are found directly and quickly instead of leaning on global discovery or a relay. This completes the local-network work started in 1.7.0 (the Local Network permission and direct dialing).
+
 ## [1.7.0] — 2026-06-12
 
 ### Added
