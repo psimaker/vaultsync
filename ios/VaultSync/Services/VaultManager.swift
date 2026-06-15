@@ -154,15 +154,10 @@ final class VaultManager {
 
     // MARK: - Pending Share Auto-Accept
 
-    /// Accept a pending folder share, syncing into the Obsidian directory.
-    /// Appends the share's folder name as a subdirectory to keep multiple
-    /// shares isolated, UNLESS:
-    ///   * the selected basePath is already an Obsidian vault (contains
-    ///     `.obsidian/`) — then sync directly into it, or
-    ///   * the selected basePath's last path component already matches the
-    ///     share name (case-insensitive) — avoids `Obsidian/obsidian/`
-    ///     double-nesting when the user picks their Obsidian root and the
-    ///     desktop share is labelled "obsidian".
+    /// Accept a pending folder share, syncing it into its own subdirectory under
+    /// the Obsidian directory. Each vault is mapped to a distinct local path so
+    /// two shares can never be merged into one directory and pushed back to both
+    /// peers (issue #45). See `resolveSharePath` for the exact mapping rule.
     func acceptPendingShare(
         folder: SyncthingManager.PendingFolderInfo,
         syncthingManager: SyncthingManager
@@ -189,14 +184,23 @@ final class VaultManager {
         let nameMatchesBase = baseURL.lastPathComponent
             .compare(folderName, options: .caseInsensitive) == .orderedSame
 
-        let path: String
-        if baseIsVault || nameMatchesBase {
-            path = basePath
-            logger.info("Accepting share '\(folderName)' directly into base (baseIsVault=\(baseIsVault), nameMatchesBase=\(nameMatchesBase)) → \(path)")
-        } else {
-            path = (basePath as NSString).appendingPathComponent(folderName)
-            logger.info("Accepting share '\(folderName)' (\(folder.id)) → path: \(path)")
-        }
+        // Canonical, lowercased paths already held by *other* folders. The share
+        // must never reuse one of these — that is exactly the merge that corrupts
+        // both vaults (#45). `folders` is refreshed synchronously after every
+        // accept, so sequential auto-accepts each see the prior vault's path.
+        let occupied = Set(syncthingManager.folders.map {
+            FolderPathReconciler.canonical($0.path).lowercased()
+        })
+
+        let path = Self.resolveSharePath(
+            rawRoot: basePath,
+            baseIsVault: baseIsVault,
+            nameMatchesBase: nameMatchesBase,
+            folderName: folderName,
+            occupiedCanonLower: occupied,
+            canonicalize: FolderPathReconciler.canonical
+        )
+        logger.info("Accepting share '\(folderName)' (\(folder.id)) → path: \(path) (baseIsVault=\(baseIsVault), nameMatchesBase=\(nameMatchesBase), occupied=\(occupied.count))")
 
         if let err = syncthingManager.acceptPendingFolder(
             folderID: folder.id,
@@ -223,6 +227,58 @@ final class VaultManager {
         scanForVaults()
         logger.info("Auto-accepted pending share: \(folderName) (\(folder.id))")
         return nil
+    }
+
+    /// Decide the local directory an incoming share syncs into, guaranteeing it
+    /// never reuses a path already held by a *different* folder.
+    ///
+    /// The Obsidian root stays a pure container: each vault gets its own
+    /// subdirectory `root/<name>`. The two legacy shortcuts that sync a share
+    /// straight into the root — `baseIsVault` (the root itself is a single vault)
+    /// and `nameMatchesBase` (avoid `Obsidian/obsidian` double-nesting) — are
+    /// honoured ONLY while the root is still free. The instant it is occupied a
+    /// distinct vault is given its own subdirectory instead of being merged on
+    /// top of the existing one (issue #45). A genuine name clash between two
+    /// vaults is disambiguated deterministically (`<name> (2)`, `(3)`, …) rather
+    /// than silently merged.
+    ///
+    /// Pure (no filesystem, no bridge) so the collision logic is exhaustively
+    /// unit-testable; `canonicalize` is injected (production:
+    /// `FolderPathReconciler.canonical`). Membership is tested case-insensitively
+    /// because the iOS data volume is case-folding APFS.
+    nonisolated static func resolveSharePath(
+        rawRoot: String,
+        baseIsVault: Bool,
+        nameMatchesBase: Bool,
+        folderName: String,
+        occupiedCanonLower: Set<String>,
+        canonicalize: (String) -> String
+    ) -> String {
+        func isFree(_ candidate: String) -> Bool {
+            !occupiedCanonLower.contains(canonicalize(candidate).lowercased())
+        }
+
+        // Collapse into the root only when it is genuinely unoccupied.
+        if (baseIsVault || nameMatchesBase) && isFree(rawRoot) {
+            return rawRoot
+        }
+
+        // Default: the vault's own subdirectory under the root.
+        let subfolder = (rawRoot as NSString).appendingPathComponent(folderName)
+        if isFree(subfolder) {
+            return subfolder
+        }
+
+        // Name clash with another vault — append the first free numeric suffix.
+        // Bounded by the finite occupied set, so this always terminates.
+        var suffix = 2
+        while true {
+            let candidate = (rawRoot as NSString).appendingPathComponent("\(folderName) (\(suffix))")
+            if isFree(candidate) {
+                return candidate
+            }
+            suffix += 1
+        }
     }
 
     /// Replace characters that are invalid in iOS directory names.
