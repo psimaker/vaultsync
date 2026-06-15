@@ -273,6 +273,7 @@ final class SyncthingManager {
 
     struct SyncIssueItem: Identifiable, Hashable, Sendable {
         enum Kind: String, Sendable {
+            case pathCollision
             case folderErrors
             case disconnectedPeers
             case pendingShares
@@ -425,6 +426,32 @@ final class SyncthingManager {
 
     var unresolvedIssues: [SyncIssueItem] {
         var issues: [SyncIssueItem] = []
+
+        // Two or more folders sharing one local path is active data corruption
+        // (issue #45): Syncthing merges their contents and pushes the mix to
+        // every peer. The launch-time guard pauses them to stop the bleeding;
+        // this is the most severe issue, so it leads the list and stays up until
+        // the user separates the vaults. Same canonical-path rule as the
+        // accept-time guard so detection can never disagree with it.
+        let collisionGroups = PathCollisionGuard.collidingFolderGroups(
+            folders.map { (id: $0.id, path: $0.path) },
+            canonicalize: FolderPathReconciler.canonical
+        )
+        if !collisionGroups.isEmpty {
+            let affectedCount = collisionGroups.reduce(0) { $0 + $1.count }
+            issues.append(
+                SyncIssueItem(
+                    kind: .pathCollision,
+                    title: L10n.tr("Two Vaults Are Sharing One Folder"),
+                    message: L10n.tr("Two or more vaults sync into the same local folder, so their contents are being mixed together. The affected vaults have been paused to stop further damage."),
+                    remediation: L10n.tr("Remove an affected vault on this iPhone — it is added back automatically into its own folder. If the files are already mixed, restore the clean copy on your computer first."),
+                    severity: .critical,
+                    count: affectedCount,
+                    folderID: collisionGroups.flatMap { $0 }.min(),
+                    deviceID: nil
+                )
+            )
+        }
 
         // Folders stuck on a stale/inaccessible path are surfaced by their own
         // guided "remove / reconnect" card, so exclude them here to avoid
@@ -607,6 +634,11 @@ final class SyncthingManager {
                 try? await Task.sleep(for: .milliseconds(250))
             }
             FolderPathReconciler.reconcileLive(obsidianRoot: obsidianRoot)
+            // With paths settled, pause any folders an older version already
+            // merged onto one local path (#45 migration shield) — once each.
+            // Runs before the refresh below so the new paused state and the
+            // critical banner surface on this same launch.
+            PathCollisionGuard.pauseCollisionsLive()
             await self?.refreshFolders()
         }
     }
@@ -677,6 +709,10 @@ final class SyncthingManager {
             // Drop the path mapping so a future folder reusing this ID does not
             // inherit a stale relative path.
             FolderPathReconciler.removeRel(forFolder: id)
+            // Forget any #45 auto-pause record so a future folder reusing this
+            // ID can be paused again if it collides (removing a colliding vault
+            // is the sanctioned recovery, after which it is re-added unpaused).
+            PathCollisionGuard.clearAutoPaused(id)
         }
         return result
     }

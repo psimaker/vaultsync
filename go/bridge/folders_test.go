@@ -237,6 +237,83 @@ func TestSetFolderPath(t *testing.T) {
 	}
 }
 
+func TestSetFolderPaused(t *testing.T) {
+	configDir := testConfigDir(t)
+
+	// Not running.
+	if errMsg := SetFolderPaused("x", true); errMsg != "syncthing not running" {
+		t.Fatalf("SetFolderPaused when stopped = %q, want 'syncthing not running'", errMsg)
+	}
+
+	if errMsg := StartSyncthing(configDir); errMsg != "" {
+		t.Fatalf("StartSyncthing() failed: %s", errMsg)
+	}
+	defer StopSyncthing()
+
+	folderPath := filepath.Join(configDir, "pausetest")
+	if errMsg := AddFolder("pausetest", "Pause Test", folderPath); errMsg != "" {
+		t.Fatalf("AddFolder failed: %s", errMsg)
+	}
+
+	// Unknown folder.
+	if errMsg := SetFolderPaused("nope", true); errMsg != "folder not found" {
+		t.Fatalf("SetFolderPaused unknown = %q, want 'folder not found'", errMsg)
+	}
+
+	// A freshly added folder starts unpaused.
+	if got := folderPausedState(t, "pausetest"); got {
+		t.Fatalf("new folder paused = %v, want false", got)
+	}
+
+	// Pause it.
+	if errMsg := SetFolderPaused("pausetest", true); errMsg != "" {
+		t.Fatalf("SetFolderPaused pause = %q, want ''", errMsg)
+	}
+	if got := folderPausedState(t, "pausetest"); !got {
+		t.Errorf("paused = %v after pause, want true", got)
+	}
+
+	// Pausing an already-paused folder is an idempotent no-op.
+	if errMsg := SetFolderPaused("pausetest", true); errMsg != "" {
+		t.Fatalf("SetFolderPaused pause no-op = %q, want ''", errMsg)
+	}
+	if got := folderPausedState(t, "pausetest"); !got {
+		t.Errorf("paused = %v after no-op pause, want true", got)
+	}
+
+	// Resume it (the user's manual recovery path must stay possible).
+	if errMsg := SetFolderPaused("pausetest", false); errMsg != "" {
+		t.Fatalf("SetFolderPaused resume = %q, want ''", errMsg)
+	}
+	if got := folderPausedState(t, "pausetest"); got {
+		t.Errorf("paused = %v after resume, want false", got)
+	}
+
+	// Resuming an already-running folder is an idempotent no-op.
+	if errMsg := SetFolderPaused("pausetest", false); errMsg != "" {
+		t.Fatalf("SetFolderPaused resume no-op = %q, want ''", errMsg)
+	}
+	if got := folderPausedState(t, "pausetest"); got {
+		t.Errorf("paused = %v after no-op resume, want false", got)
+	}
+}
+
+// folderPausedState reads the paused flag of one folder via GetFoldersJSON.
+func folderPausedState(t *testing.T, folderID string) bool {
+	t.Helper()
+	var folders []FolderInfo
+	if err := json.Unmarshal([]byte(GetFoldersJSON()), &folders); err != nil {
+		t.Fatalf("GetFoldersJSON unmarshal: %v", err)
+	}
+	for _, f := range folders {
+		if f.ID == folderID {
+			return f.Paused
+		}
+	}
+	t.Fatalf("folder %q not found in GetFoldersJSON", folderID)
+	return false
+}
+
 func TestEnsureDefaultIgnores(t *testing.T) {
 	configDir := testConfigDir(t)
 

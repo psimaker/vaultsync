@@ -127,6 +127,16 @@ struct SyncBridgeService {
         return result.isEmpty ? nil : result
     }
 
+    /// Pause or resume a configured folder. A paused folder is neither scanned
+    /// nor exchanged with peers — the non-destructive way to halt a folder that
+    /// shares a local path with another and is merging into it (issue #45).
+    /// Nothing on disk changes, so it is fully reversible by the user.
+    /// - Returns: nil on success (incl. a no-op when already in that state), error message on failure.
+    static func setFolderPaused(folderID: String, paused: Bool) -> String? {
+        let result = BridgeSetFolderPaused(folderID, paused)
+        return result.isEmpty ? nil : result
+    }
+
     /// Share a folder with a peer device.
     /// - Returns: nil on success, error message on failure.
     static func shareFolderWithDevice(folderID: String, deviceID: String) -> String? {
