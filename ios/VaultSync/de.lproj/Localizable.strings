@@ -617,3 +617,8 @@
 /* Conflict auto-resolution — .obsidian state files, last-writer-wins (Settings) */
 "Auto-Resolve Settings Conflicts" = "Einstellungs-Konflikte automatisch lösen";
 "Conflicts in Obsidian's app settings and plugin state (.obsidian) are resolved automatically — the newest version wins. Conflicts in your notes always wait for your decision." = "Konflikte in Obsidians App-Einstellungen und Plugin-Daten (.obsidian) werden automatisch gelöst – die neueste Version gewinnt. Konflikte in deinen Notizen warten immer auf deine Entscheidung.";
+
+/* Path collision migration shield (#45) — vaults an older version already merged onto one folder */
+"Two Vaults Are Sharing One Folder" = "Zwei Vaults teilen sich einen Ordner";
+"Two or more vaults sync into the same local folder, so their contents are being mixed together. The affected vaults have been paused to stop further damage." = "Zwei oder mehr Vaults synchronisieren in denselben lokalen Ordner, sodass ihre Inhalte vermischt werden. Die betroffenen Vaults wurden pausiert, um weiteren Schaden zu verhindern.";
+"Remove an affected vault on this iPhone — it is added back automatically into its own folder. If the files are already mixed, restore the clean copy on your computer first." = "Entferne einen betroffenen Vault auf diesem iPhone – er wird automatisch wieder in seinem eigenen Ordner hinzugefügt. Sind die Dateien bereits vermischt, stelle zuerst die saubere Kopie auf deinem Computer wieder her.";

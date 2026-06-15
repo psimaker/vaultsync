@@ -75,6 +75,46 @@ func TestAcceptPendingFolderDuplicate(t *testing.T) {
 	}
 }
 
+func TestAcceptPendingFolderPathCollision(t *testing.T) {
+	configDir := testConfigDir(t)
+
+	if errMsg := StartSyncthing(configDir); errMsg != "" {
+		t.Fatalf("StartSyncthing() failed: %s", errMsg)
+	}
+	defer StopSyncthing()
+
+	// Configure a first folder at a local path.
+	vaultPath := filepath.Join(configDir, "VaultA")
+	if errMsg := AddFolder("vault-a", "Vault A", vaultPath); errMsg != "" {
+		t.Fatalf("AddFolder failed: %s", errMsg)
+	}
+
+	const wantCollision = "another folder already syncs to this path"
+
+	// A second, distinct folder ID targeting the SAME path must be rejected —
+	// otherwise the two vaults merge into one directory and propagate the mix
+	// back to both peers (issue #45).
+	if errMsg := AcceptPendingFolder("vault-b", "Vault B", vaultPath); errMsg != wantCollision {
+		t.Fatalf("AcceptPendingFolder same path = %q, want %q", errMsg, wantCollision)
+	}
+
+	// Trailing-slash and case variants resolve to the same directory and must
+	// be rejected too (cleaned + case-insensitive comparison).
+	if errMsg := AcceptPendingFolder("vault-c", "Vault C", vaultPath+"/"); errMsg != wantCollision {
+		t.Fatalf("AcceptPendingFolder trailing-slash variant = %q, want %q", errMsg, wantCollision)
+	}
+	caseVariant := filepath.Join(configDir, "vaulta")
+	if errMsg := AcceptPendingFolder("vault-d", "Vault D", caseVariant); errMsg != wantCollision {
+		t.Fatalf("AcceptPendingFolder case variant = %q, want %q", errMsg, wantCollision)
+	}
+
+	// A genuinely distinct path is still accepted.
+	otherPath := filepath.Join(configDir, "VaultB")
+	if errMsg := AcceptPendingFolder("vault-e", "Vault E", otherPath); errMsg != "" {
+		t.Fatalf("AcceptPendingFolder distinct path = %q, want success", errMsg)
+	}
+}
+
 func TestAcceptPendingFolderCreatesPath(t *testing.T) {
 	configDir := testConfigDir(t)
 

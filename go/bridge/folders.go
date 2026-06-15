@@ -218,6 +218,52 @@ func verifyFolderMarker(folder config.FolderConfiguration, newPath string) strin
 	return ""
 }
 
+// SetFolderPaused pauses or resumes an existing folder by ID. A paused folder is
+// neither scanned nor exchanged with peers, so pausing is the non-destructive way
+// to immediately halt an in-progress collision where two folders share one local
+// path and keep merging their contents into each other (issue #45). Nothing on
+// disk is touched — only the folder's run state changes — so it is fully
+// reversible by the user.
+//
+// Idempotent: a no-op (and no folder-runner restart) when the folder is already
+// in the requested state. Returns empty string on success, error message on
+// failure.
+func SetFolderPaused(folderID string, paused bool) string {
+	mu.Lock()
+	defer mu.Unlock()
+
+	if !stRunning || stCfg == nil {
+		return "syncthing not running"
+	}
+
+	folders := stCfg.Folders()
+	folder, exists := folders[folderID]
+	if !exists {
+		return "folder not found"
+	}
+
+	// No-op when already in the requested state — avoids a needless folder
+	// runner restart on every launch in the common (already-correct) case.
+	if folder.Paused == paused {
+		return ""
+	}
+
+	waiter, err := stCfg.Modify(func(cfg *config.Configuration) {
+		for i := range cfg.Folders {
+			if cfg.Folders[i].ID == folderID {
+				cfg.Folders[i].Paused = paused
+				break
+			}
+		}
+	})
+	if err != nil {
+		return fmt.Sprintf("modify config: %v", err)
+	}
+	waiter.Wait()
+
+	return ""
+}
+
 // GetFoldersJSON returns a JSON array of all configured folders.
 func GetFoldersJSON() string {
 	mu.Lock()

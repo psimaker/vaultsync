@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/protocol"
@@ -103,6 +105,18 @@ func AcceptPendingFolder(folderID, label, path string) string {
 		return "folder already exists"
 	}
 
+	// Reject if another configured folder already occupies this local path.
+	// Two distinct folder IDs pointing at one directory makes Syncthing merge
+	// their contents into each other and push the mix back to every peer —
+	// silent, destructive data loss (issue #45). The local path is the safety
+	// boundary, so enforce it here as the hard floor even if the client computed
+	// a colliding path.
+	for _, f := range stCfg.Folders() {
+		if sameFolderPath(f.Path, path) {
+			return "another folder already syncs to this path"
+		}
+	}
+
 	// Look up which devices offered this folder.
 	var offeringDevices []protocol.DeviceID
 	if stApp.Internals != nil {
@@ -158,4 +172,12 @@ func AcceptPendingFolder(folderID, label, path string) string {
 	waiter.Wait()
 
 	return ""
+}
+
+// sameFolderPath reports whether two folder paths resolve to the same local
+// directory. Paths are cleaned (so `./` and trailing-slash differences do not
+// matter) and compared case-insensitively: the iOS data volume is case-folding
+// APFS, where "Vault" and "vault" are one and the same directory.
+func sameFolderPath(a, b string) bool {
+	return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
 }
