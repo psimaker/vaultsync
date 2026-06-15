@@ -4,10 +4,11 @@ All notable changes to VaultSync are documented here.
 
 ---
 
-## [1.7.1] — 2026-06-13
+## [1.7.1] — 2026-06-15
 
 ### Fixed
 
+- **Multiple vaults from one server no longer merge into the same folder** ([#45](https://github.com/psimaker/vaultsync/issues/45)) — when a server shared more than one vault, the second vault could be assigned the same local location as the first, so Syncthing merged their contents and pushed the mixed result back to both peers — silently. Each vault now always syncs into its own folder under your Obsidian directory, and two vaults can never be pointed at the same location (a same-named second vault gets its own distinct folder instead of being merged). Existing single-vault setups are unchanged.
 - **Pasting a block of sync filters now works** ([#43](https://github.com/psimaker/vaultsync/issues/43)) — the Sync Filters "Add pattern" field was single-line, so pasting a multi-line list of patterns collapsed into one unusable entry — and because such a paste usually begins with a `//` comment, it silently matched nothing. The field is now multi-line and adds **one pattern per line**: blank lines and `//` comments are skipped, and patterns that contain spaces stay intact.
 - **Editing one filter no longer reshuffles the rest** — removing a custom pattern, or turning off a detected one, used to rewrite the entire `.stignore` in an arbitrary order. Syncthing applies patterns top to bottom (so an earlier `!`-include can override a later rule), so the original line order is now preserved on every change.
 
