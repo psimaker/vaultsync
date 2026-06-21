@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v6
         with:
@@ -40,7 +40,7 @@ jobs:
     timeout-minutes: 20
     needs: notify-guard
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: docker/setup-qemu-action@v4
 
@@ -99,7 +99,7 @@ jobs:
       # the checkout credential out of the workspace and skip the shared Go
       # module cache — release binaries must not be assembled from cacheable
       # state another workflow run could have written.
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 

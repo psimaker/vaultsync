@@ -33,7 +33,7 @@ jobs:
       # Required for push events (e.g. merge to main): with no PR to query, dorny
       # falls back to a local git diff and needs a working copy. On pull_request
       # it uses the API, but the checkout is harmless there.
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: dorny/paths-filter@v4
         id: filter
@@ -55,7 +55,7 @@ jobs:
     runs-on: ubuntu-latest # pure-Go bridge suite; needs no macOS/Xcode
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v6
         with:
@@ -78,7 +78,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v6
         with:
@@ -93,7 +93,7 @@ jobs:
     runs-on: ubuntu-latest # pure bash/grep guardrail; no Xcode needed
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Check design tokens
         # Fails if views reintroduce raw status colors instead of Theme.swift
@@ -115,7 +115,7 @@ jobs:
     # so a failed test job still skips the build exactly as before.
     if: needs.changes.outputs.code == 'true'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v6
         with:
