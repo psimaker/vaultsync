@@ -80,10 +80,17 @@ struct OnboardingView: View {
             }
         }
         .onAppear {
-            vaultManager.restoreAccess()
-            Task {
-                await syncthingManager.start()
-            }
+            // The unit-test host must never manage the process-global engine
+            // lifecycle — see TestHost.
+            guard !TestHost.isActive else { return }
+            // Third consumer of the #60 state (#61): a background handler can
+            // have started the engine before onboarding ever renders — a
+            // direct start() here raced the scene handler and could flash
+            // the Go floor's "already running" as an error mid-onboarding.
+            EngineAttach.onForeground(
+                syncthingManager: syncthingManager,
+                vaultManager: vaultManager
+            )
         }
     }
 

@@ -548,15 +548,13 @@ enum BackgroundSyncService {
         var telemetryEventCursor = latestBridgeEventID()
         let syncStartEventCursor = telemetryEventCursor
 
-        // Silent pushes arrive after iOS has suspended the process. The Go
-        // bridge's cached state still reports isRunning=true, but the TCP
-        // sockets to peers have been torn down by the kernel. Trigger a
-        // rescan on each known folder — this causes Go's peer dialer to
-        // notice the dead sockets and re-establish connections, without the
-        // 5-15s cost of a full stopSyncthing + startSyncthing cycle.
-        let alreadyRunning = SyncBridgeService.isRunning()
+        // Lifecycle decisions run through the injectable guard core — the
+        // decision logic and its read-timing are pinned by unit tests (#61).
+        let guards = BackgroundSyncGuards(environment: .live)
+
+        let alreadyRunning = guards.bridgeSnapshot()
         trace("Bridge state before sync: running=\(alreadyRunning).")
-        if reason == "silent-push" && alreadyRunning {
+        if BackgroundSyncGuards.shouldFastPathRescan(reason: reason, bridgeAlreadyRunning: alreadyRunning) {
             logger.info("Silent push: triggering folder rescans to wake Syncthing peer dialer")
             if let rescanCount = requestFolderRescans() {
                 trace("Silent push fast path: rescanning \(rescanCount) folder(s).")
@@ -567,9 +565,9 @@ enum BackgroundSyncService {
         }
 
         // Check lifecycle lock: skip start/stop if foreground owns the instance.
-        let foregroundOwns = lifecycleLock.withLock { $0.foregroundActive }
-        var ownsLifecycle = !alreadyRunning && !foregroundOwns
-        trace("Lifecycle ownership: foregroundOwns=\(foregroundOwns), backgroundOwns=\(ownsLifecycle).")
+        let ownership = guards.lifecycleOwnership(bridgeAlreadyRunning: alreadyRunning)
+        var ownsLifecycle = ownership.backgroundOwns
+        trace("Lifecycle ownership: foregroundOwns=\(ownership.foregroundOwns), backgroundOwns=\(ownsLifecycle).")
 
         var managedURLs: [URL] = []
         if ownsLifecycle {
@@ -641,15 +639,11 @@ enum BackgroundSyncService {
             trace("Silent push wake evidence: \(sawWakeEvidence).")
             traceRelevantBridgeEvents(since: &telemetryEventCursor, label: "post-wake-evidence-window")
             traceFolderStatuses(label: "post-wake-evidence-window")
-            // Re-read the lifecycle lock at decision time: the snapshot from
-            // before the wake-evidence window goes stale exactly when the
-            // user opens the app mid-push and the foreground adopts the
-            // running engine (#60) — a stale `foregroundOwns == false` here
-            // would stop and restart the engine right under the adopted
-            // foreground manager. The expiration handlers already re-read
-            // the same way.
-            let foregroundOwnsNow = lifecycleLock.withLock { $0.foregroundActive }
-            if !sawWakeEvidence && !foregroundOwnsNow {
+            // The guard re-reads the lifecycle lock at decision time — the
+            // cycle-start snapshot goes stale exactly when the user opens
+            // the app mid-push and the foreground adopts the running engine
+            // (#60); see BackgroundSyncGuards.
+            if guards.shouldForceRestartForSilentPush(sawWakeEvidence: sawWakeEvidence) {
                 logger.warning("Silent push showed no peer/sync activity after rescan — forcing Syncthing restart")
                 trace("No wake evidence after rescan. Forcing Syncthing restart.")
                 let restart = await forceRestartForSilentPush(managedURLs: managedURLs)

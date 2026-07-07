@@ -109,6 +109,17 @@ final class SyncthingManager {
 
     private var pollTask: Task<Void, Never>?
     private var rescanTask: Task<Void, Never>?
+    /// True once this externally initiated engine generation has used its one
+    /// automatic restart after a detected engine death (#61). Reset by every
+    /// external lifecycle transition (`stop`, `resetForRestart`,
+    /// `adoptRunningEngine`) — deliberately NOT by the auto-restart's own
+    /// `start()`, or a crash-looping engine would restart forever.
+    private var engineDeathAutoRestartConsumed = false
+    /// The Obsidian root the last `reconcileFolderPaths` call used. The
+    /// death-detection auto-restart reconciles against it — the root cannot
+    /// change mid-session (only a scene-level reconnect updates it, which
+    /// triggers its own reconcile).
+    private var lastReconcileObsidianRoot: String?
     private var previousFolderStates: [String: String] = [:]
     private var lastBridgeEventID = 0
     private var activityDeduplicationCache: [String: Date] = [:]
@@ -710,6 +721,9 @@ final class SyncthingManager {
         deviceID = SyncBridgeService.deviceID()
         error = nil
         userError = nil
+        // Adoption is an external lifecycle transition: the adopted
+        // generation gets a fresh death-auto-restart budget (#61).
+        engineDeathAutoRestartConsumed = false
         logger.info("Adopted running Syncthing engine started by a background handler. Device ID: \(self.deviceID)")
 
         startPolling()
@@ -727,6 +741,7 @@ final class SyncthingManager {
     /// when the user is repairing a container move (#53).
     @discardableResult
     func reconcileFolderPaths(obsidianRoot: String?) -> Task<Void, Never> {
+        lastReconcileObsidianRoot = obsidianRoot
         guard isRunning else { return Task {} }
         // Mark paths unsettled BEFORE the detached work exists: the poll loop
         // can deliver pendingFolders at any suspension point, and an accept
@@ -793,6 +808,7 @@ final class SyncthingManager {
         nextSyntheticEventID = -1
         error = nil
         userError = nil
+        engineDeathAutoRestartConsumed = false
         logger.info("Syncthing stopped")
     }
 
@@ -997,6 +1013,47 @@ final class SyncthingManager {
         nextSyntheticEventID = -1
         error = nil
         userError = nil
+        engineDeathAutoRestartConsumed = false
+    }
+
+    /// The poll loop found the bridge dead under an attached manager — the
+    /// residual #60 adoption race or an engine crash. Without this the
+    /// manager keeps polling empty JSON and the UI shows "Ready" while
+    /// nothing syncs (#61). Transition to a clean stopped state and restart
+    /// once per external generation; a second death in the same generation
+    /// stays stopped and tells the user, because blind restarts would just
+    /// flap a crash-looping engine.
+    private func handleEngineDeath() {
+        guard isRunning else { return }
+        let restartAllowed = !engineDeathAutoRestartConsumed
+        logger.warning("Sync engine died under an attached manager (autoRestartAllowed=\(restartAllowed))")
+
+        // Same reset as the scene-activation cold-start path. It also clears
+        // engineDeathAutoRestartConsumed, so consume AFTER the reset — the
+        // flag must survive into the restarted generation.
+        resetForRestart()
+        engineDeathAutoRestartConsumed = true
+
+        guard restartAllowed else {
+            userError = SyncUserError(
+                category: .syncthingNotRunning,
+                title: L10n.tr("Sync Engine Stopped"),
+                message: L10n.tr("The sync engine stopped unexpectedly."),
+                remediation: L10n.tr("Close and reopen VaultSync to restart syncing."),
+                technicalDetails: nil
+            )
+            return
+        }
+
+        Task {
+            await start()
+            // Reconcile against the last known root so accept decisions do
+            // not stay held until the next scene cycle (decision 008): a
+            // restarted engine with no completed reconcile would park every
+            // share accept indefinitely, because a scene return over a
+            // running engine (`alreadyAttached`) never fires one.
+            reconcileFolderPaths(obsidianRoot: lastReconcileObsidianRoot)
+        }
     }
 
     // MARK: - Default ignore patterns
@@ -1039,13 +1096,24 @@ final class SyncthingManager {
     /// Run bridge calls off the main thread, then update @MainActor properties.
     private func pollBridgeState() async {
         let currentEventCursor = lastBridgeEventID
-        let snapshot = await Task.detached {
+        let snapshot: (String, String, String, String)? = await Task.detached {
+            // A dead bridge under an attached manager — the residual adoption
+            // race from #60 (a background stop that passed its lock re-read
+            // just before the foreground claimed) or an engine crash — must
+            // never poll empty JSON into a healthy-looking "Ready" display
+            // (#61). Detect it here, before decoding.
+            guard SyncBridgeService.isRunning() else { return nil }
             let devicesJSON = SyncBridgeService.getDevicesJSON()
             let foldersJSON = SyncBridgeService.getFoldersJSON()
             let pendingJSON = SyncBridgeService.getPendingFoldersJSON()
             let eventsJSON = SyncBridgeService.getEventsSince(lastID: currentEventCursor)
             return (devicesJSON, foldersJSON, pendingJSON, eventsJSON)
         }.value
+
+        guard let snapshot else {
+            handleEngineDeath()
+            return
+        }
 
         // Decode on main — lightweight after the bridge calls are done.
         // Folders must be applied before devices so applyDeviceList sees the
@@ -2182,6 +2250,14 @@ final class SyncthingManager {
 
     func _testSetEngineStartedAt(_ date: Date?) {
         engineStartedAt = date
+    }
+
+    func _testEngineDeathAutoRestartConsumed() -> Bool {
+        engineDeathAutoRestartConsumed
+    }
+
+    func _testMarkEngineDeathAutoRestartConsumed() {
+        engineDeathAutoRestartConsumed = true
     }
 
     func _testSetConflictFiles(_ newConflicts: [String: [ConflictInfo]]) {
