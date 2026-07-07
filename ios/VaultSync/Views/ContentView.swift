@@ -195,6 +195,15 @@ struct ContentView: View {
         .onChange(of: syncthingManager.pendingFolders, initial: true) { _, pending in
             autoAcceptPendingShares(pending)
         }
+        .onChange(of: syncthingManager.pathSettlement.settled) { _, settled in
+            // Paths just settled: run the pass that was held during the
+            // reconcile (#56). pendingFolders itself did not change, so the
+            // standing trigger above stays silent — the same gap #53 closed
+            // for the reconnect flow.
+            if settled {
+                autoAcceptPendingShares(syncthingManager.pendingFolders)
+            }
+        }
         .onChange(of: syncthingManager.lastSyncTime, initial: true) { _, _ in
             maybePresentRelayUpsell()
         }
@@ -332,6 +341,12 @@ struct ContentView: View {
         pendingShareFailures = pendingShareFailures.filter { pendingIDs.contains($0.key) }
         pendingShareInFlight = pendingShareInFlight.intersection(pendingIDs)
 
+        // Accept decisions only run on settled paths (#56, decision 008): a
+        // pass during a pending path reconcile would judge overlap against
+        // pre-reconcile folder paths — stale exactly after a container move.
+        // Held passes re-fire from the settled onChange trigger above.
+        guard syncthingManager.pathSettlement.settled else { return }
+
         guard vaultManager.isAccessible else { return }
 
         // Auto-accept skips shares whose folder the user removed on this
@@ -350,6 +365,13 @@ struct ContentView: View {
         folder: SyncthingManager.PendingFolderInfo,
         targetName: String
     ) -> String? {
+        // Accept decisions only run on settled paths (#56, decision 008) —
+        // the picker's empty-target and overlap validation (#52) reads the
+        // same occupied-path set the reconcile is still rewriting.
+        guard syncthingManager.pathSettlement.settled else {
+            return L10n.tr("Vault locations are still being checked. Try again in a moment.")
+        }
+
         pendingShareInFlight.insert(folder.id)
         let err = vaultManager.acceptPendingShare(
             folder: folder,
@@ -376,6 +398,21 @@ struct ContentView: View {
         source: PendingShareAcceptSource,
         mergeConfirmed: Bool = false
     ) {
+        // Accept decisions only run on settled paths (#56, decision 008). The
+        // automatic pass is already held in autoAcceptPendingShares and
+        // re-fires on settle; this guard also covers the manual paths (retry,
+        // merge confirmation — #54's re-validation would otherwise judge the
+        // same stale occupied set). A manual tap gets the transient
+        // explanation, never a silent no-op (002). No failure is recorded, so
+        // nothing blocks the automatic re-fire.
+        guard syncthingManager.pathSettlement.settled else {
+            if source == .manual {
+                alertMessage = L10n.tr("Vault locations are still being checked. Try again in a moment.")
+                showAlert = true
+            }
+            return
+        }
+
         pendingShareInFlight.insert(folder.id)
 
         let outcome = vaultManager.acceptPendingShare(
