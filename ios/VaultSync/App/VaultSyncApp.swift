@@ -67,7 +67,11 @@ struct VaultSyncApp: App {
                 BackgroundSyncService.setSceneActive(true)
                 BackgroundSyncService.endBackgroundAssertion()
                 BackgroundSyncService.cancelContinuedProcessing()
-                if !SyncBridgeService.isRunning() {
+                switch BackgroundSyncService.sceneActivationAction(
+                    bridgeRunning: SyncBridgeService.isRunning(),
+                    managerRunning: syncthingManager.isRunning
+                ) {
+                case .coldStart:
                     // Syncthing may have been stopped by a BGTask expiration handler.
                     // Reset Swift-side state so start() works.
                     if syncthingManager.isRunning {
@@ -78,17 +82,38 @@ struct VaultSyncApp: App {
                         await syncthingManager.start()
                         syncthingManager.reconcileFolderPaths(obsidianRoot: vaultManager.obsidianBasePath)
                     }
-                } else if BackgroundSyncService.shouldRescanOnForeground(
-                    now: Date(),
-                    lastBackgroundedAt: lastBackgroundedAt,
-                    threshold: Self.foregroundRescanThreshold
-                ) {
-                    // Bridge is still alive but the app spent enough time in
-                    // the background that the user likely edited the vault
-                    // from another app (e.g. Obsidian). The iOS FSWatcher
-                    // doesn't reliably see cross-sandbox writes, so trigger
-                    // a fresh scan to pick them up immediately.
-                    syncthingManager.triggerForegroundSync()
+                case .adoptRunningEngine:
+                    // A background handler started the engine in a
+                    // background-launched process and the manager never
+                    // attached: without adoption neither polling nor a path
+                    // reconcile runs, and the background cleanup would stop
+                    // the engine under the active scene (#60). The foreground
+                    // needs its own security-scoped access — the background
+                    // handler releases its own when it finishes.
+                    vaultManager.restoreAccess()
+                    if syncthingManager.adoptRunningEngine() {
+                        syncthingManager.reconcileFolderPaths(obsidianRoot: vaultManager.obsidianBasePath)
+                    } else {
+                        // The engine stopped between the check and the claim —
+                        // cold-start instead.
+                        Task {
+                            await syncthingManager.start()
+                            syncthingManager.reconcileFolderPaths(obsidianRoot: vaultManager.obsidianBasePath)
+                        }
+                    }
+                case .alreadyAttached:
+                    if BackgroundSyncService.shouldRescanOnForeground(
+                        now: Date(),
+                        lastBackgroundedAt: lastBackgroundedAt,
+                        threshold: Self.foregroundRescanThreshold
+                    ) {
+                        // Bridge is still alive but the app spent enough time in
+                        // the background that the user likely edited the vault
+                        // from another app (e.g. Obsidian). The iOS FSWatcher
+                        // doesn't reliably see cross-sandbox writes, so trigger
+                        // a fresh scan to pick them up immediately.
+                        syncthingManager.triggerForegroundSync()
+                    }
                 }
                 lastBackgroundedAt = nil
             case .background:

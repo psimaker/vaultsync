@@ -672,6 +672,50 @@ final class SyncthingManager {
         startPolling()
     }
 
+    /// Attach this manager to an engine that is already running but was
+    /// started outside the manager — by a background handler
+    /// (`BackgroundSyncService.performBackgroundSync`) in a process iOS
+    /// launched in the background, before the foreground scene ever ran
+    /// `start()` (#60). Restores manager state and starts polling; the caller
+    /// must fire `reconcileFolderPaths` afterwards — until that reconcile
+    /// completes, the adopted engine's paths count as unsettled and accept
+    /// decisions stay held (decision 008; the fresh `pathSettlement`
+    /// generation enforces this without a special case).
+    ///
+    /// Returns false when there is no running engine to adopt after all (it
+    /// stopped between the caller's check and the claim) — the caller should
+    /// fall back to a cold `start()`.
+    func adoptRunningEngine() -> Bool {
+        guard !isRunning, !isStarting else { return isRunning }
+
+        // Claim the lifecycle lock BEFORE verifying the engine still runs —
+        // never the other way around. The background handlers re-read this
+        // lock immediately before their stop (`cleanupBackgroundManaged`, the
+        // BGTask expiration handlers), so claiming first closes the window in
+        // which a finishing background sync would stop the engine under the
+        // freshly adopted foreground. Verify-then-claim re-opens that window:
+        // the engine could pass the check and be stopped before the claim
+        // lands, leaving the manager attached to nothing.
+        BackgroundSyncService.lifecycleLock.withLock { $0.foregroundActive = true }
+
+        guard SyncBridgeService.isRunning() else {
+            // Nothing to adopt — release the claim so background handlers
+            // regain lifecycle ownership, and let the caller cold-start.
+            BackgroundSyncService.lifecycleLock.withLock { $0.foregroundActive = false }
+            return false
+        }
+
+        engineStartedAt = now()
+        isRunning = true
+        deviceID = SyncBridgeService.deviceID()
+        error = nil
+        userError = nil
+        logger.info("Adopted running Syncthing engine started by a background handler. Device ID: \(self.deviceID)")
+
+        startPolling()
+        return true
+    }
+
     /// Re-derive and correct every folder's absolute path from the current
     /// Obsidian root before a stale path can strand a folder in a permanent
     /// access error (issue #25). Safe to call on every engine start — unchanged
