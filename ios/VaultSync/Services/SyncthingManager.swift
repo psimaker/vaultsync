@@ -672,11 +672,17 @@ final class SyncthingManager {
     /// Obsidian root before a stale path can strand a folder in a permanent
     /// access error (issue #25). Safe to call on every engine start — unchanged
     /// paths are a no-op. The blocking bridge work runs off the main actor.
-    func reconcileFolderPaths(obsidianRoot: String?) {
-        guard isRunning else { return }
+    ///
+    /// Returns the reconcile task so a caller can sequence work after paths
+    /// have settled: an accept pass that runs concurrently would compute its
+    /// occupied-path set from the pre-reconcile folder list — stale exactly
+    /// when the user is repairing a container move (#53).
+    @discardableResult
+    func reconcileFolderPaths(obsidianRoot: String?) -> Task<Void, Never> {
+        guard isRunning else { return Task {} }
         // Run the blocking bridge work off the main actor; only the final
         // folder-list refresh hops back to the main actor.
-        Task.detached(priority: .utility) { [weak self] in
+        return Task.detached(priority: .utility) { [weak self] in
             // Wait briefly for the engine to load its folder list after start.
             for _ in 0..<12 {
                 guard SyncBridgeService.isRunning() else { return }

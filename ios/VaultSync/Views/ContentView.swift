@@ -103,22 +103,40 @@ struct ContentView: View {
                 showObsidianPicker = false
             }) { url in
                 showObsidianPicker = false
-                if let err = vaultManager.grantAccess(url: url) {
-                    alertMessage = mappedError(err, fallbackTitle: L10n.tr("Obsidian Folder Connection Failed")).userVisibleDescription
-                    showAlert = true
-                } else {
-                    // Re-picking the Obsidian directory may resolve to a new
-                    // container path — rebase any mapped folders onto it so a
-                    // previously-unreachable vault reconnects.
-                    syncthingManager.reconcileFolderPaths(obsidianRoot: vaultManager.obsidianBasePath)
-                    // A share that had no safe location under the old root
-                    // (e.g. the root was itself a vault, #45 follow-up) may
-                    // succeed under the new one — let auto-accept try again.
-                    pendingShareFailures.removeAll()
-                    if let advisory = vaultManager.selectionAdvisory {
-                        infoMessage = advisory
-                        showInfoAlert = true
-                        vaultManager.clearSelectionAdvisory()
+                Task {
+                    if let err = await ObsidianReconnectFlow.run(
+                        grantAccess: { vaultManager.grantAccess(url: url) },
+                        onGrantSucceeded: {
+                            // A share that had no safe location under the old
+                            // root (e.g. the root was itself a vault, #45
+                            // follow-up) may succeed under the new one — clear
+                            // the failures so the retry pass attempts it.
+                            pendingShareFailures.removeAll()
+                            if let advisory = vaultManager.selectionAdvisory {
+                                infoMessage = advisory
+                                showInfoAlert = true
+                                vaultManager.clearSelectionAdvisory()
+                            }
+                        },
+                        reconcile: {
+                            // Re-picking the Obsidian directory may resolve to
+                            // a new container path — rebase any mapped folders
+                            // onto it so a previously-unreachable vault
+                            // reconnects.
+                            await syncthingManager.reconcileFolderPaths(
+                                obsidianRoot: vaultManager.obsidianBasePath
+                            ).value
+                        },
+                        retryPendingShares: {
+                            // Reconnecting produces no pendingFolders change
+                            // event, so the standing onChange trigger stays
+                            // silent — run the accept pass explicitly, on
+                            // settled paths (#53).
+                            autoAcceptPendingShares(syncthingManager.pendingFolders)
+                        }
+                    ) {
+                        alertMessage = mappedError(err, fallbackTitle: L10n.tr("Obsidian Folder Connection Failed")).userVisibleDescription
+                        showAlert = true
                     }
                 }
             }

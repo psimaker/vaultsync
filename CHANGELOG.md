@@ -14,6 +14,10 @@ All notable changes to VaultSync are documented here.
 
 - **Choose where a share syncs** ([#52](https://github.com/psimaker/vaultsync/issues/52)) — a new "Choose Vault…" option on every pending share lets you pick an existing *empty* vault (create the vault in Obsidian first, then link the share to it) or create a folder with a name of your choice, instead of the automatic folder named after the share — share names like "Obsidian-Vault-Life" no longer dictate your local vault name. VaultSync remembers the choice: remove the vault and accept the share again, and it returns to the folder you picked — never silently to the automatic one. Locations that overlap another vault's folder are refused at every layer, and only empty vaults can be linked, so two vaults can never mix (the #45 guarantees are untouched). Localized in English, German, Spanish, and Simplified Chinese.
 
+### Fixed
+
+- **Waiting shares are picked up right after reconnecting the Obsidian folder** ([#53](https://github.com/psimaker/vaultsync/issues/53)) — after re-selecting the Obsidian folder, a share that had been waiting (for example because the folder connection was broken, or because there was no safe location under the previously selected folder) was not retried until some unrelated event — often not before an app restart. Reconnecting now retries waiting shares immediately — and only after the vault locations have settled against the newly selected folder, so the safety checks judge against current locations, never stale ones.
+
 ## [1.7.2] — 2026-07-07
 
 ### Fixed
