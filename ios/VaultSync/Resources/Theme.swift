@@ -148,9 +148,13 @@ extension Font {
 
 extension Color {
     /// Idle / all-synced / connected.
+    /// Light green is #1A784E (5.47:1 on white) — the previous (46, 158, 107)
+    /// measured 3.38:1 and colors the device-count text (#74, same class as
+    /// #68's amber). The HC variant deepens to 7.70:1 so Increase Contrast
+    /// still increases it.
     static let statusSuccess = vaultColor(
-        light: (46, 158, 107), dark: (52, 199, 127),
-        lightHC: (23, 117, 76), darkHC: (94, 222, 158)
+        light: (26, 120, 78), dark: (52, 199, 127),
+        lightHC: (17, 95, 60), darkHC: (94, 222, 158)
     )
     /// Active transfer in progress (alias of the brand accent).
     static let statusSyncing = Color.vaultAccent

@@ -1834,12 +1834,6 @@ final class SyncthingManager {
         return folders
     }
 
-    private enum WidgetSnapshotStatus: String {
-        case idle
-        case syncing
-        case error
-    }
-
     private func updateWidgetSyncMetrics(
         previousStatuses: [String: FolderStatusInfo],
         newStatuses: [String: FolderStatusInfo]
@@ -1864,7 +1858,7 @@ final class SyncthingManager {
     }
 
     private func completeWidgetSyncSession(
-        status: WidgetSnapshotStatus,
+        status: SyncStatus,
         completedAt: Date
     ) {
         let startedAt = activeWidgetSyncStart ?? completedAt
@@ -1876,28 +1870,39 @@ final class SyncthingManager {
         writeWidgetSnapshotIfNeeded(statusOverride: status)
     }
 
+    /// Status tier persisted for the widget. Derives from the SAME issue list
+    /// the dashboard header and the "Sync Issues" section render (#73,
+    /// decision 012) — before this, the widget only knew idle/syncing/error
+    /// and kept a green check while a share was parked or a required peer was
+    /// offline. Freshly polled statuses arrive via `using:` because this runs
+    /// before `folderStatuses` is published, so a folder error in them is not
+    /// yet visible to `unresolvedIssues`.
     private func currentWidgetSnapshotStatus(
         using statuses: [String: FolderStatusInfo]? = nil
-    ) -> WidgetSnapshotStatus {
+    ) -> SyncStatus {
         let statuses = statuses ?? folderStatuses
 
-        if error != nil || userError != nil || statuses.values.contains(where: { $0.state == "error" }) {
-            return .error
+        var severities = unresolvedIssues.map(\.severity)
+        if statuses.values.contains(where: { $0.state == "error" }) {
+            severities.append(.critical)
         }
 
-        if activeWidgetSyncStart != nil ||
-            statuses.values.contains(where: { $0.state == "syncing" || $0.state == "scanning" }) {
-            return .syncing
-        }
-
-        return .idle
+        return SyncHeaderModel.deriveWidgetStatus(
+            hasEngineError: error != nil || userError != nil,
+            engineRunning: isRunning,
+            issueSeverities: severities,
+            hasUnreachableFolders: !unreachableFolders.isEmpty,
+            isSyncing: activeWidgetSyncStart != nil ||
+                statuses.values.contains(where: { $0.state == "syncing" || $0.state == "scanning" }),
+            hasSyncFolders: !folders.isEmpty
+        )
     }
 
-    private func writeWidgetSnapshotIfNeeded(statusOverride: WidgetSnapshotStatus? = nil) {
+    private func writeWidgetSnapshotIfNeeded(statusOverride: SyncStatus? = nil) {
         let snapshot = WidgetSnapshotStore.Snapshot(
             lastSyncTime: WidgetSnapshotStore.iso8601String(from: lastWidgetSyncCompletionTime ?? lastSyncTime),
             lastSyncDuration: activeWidgetSyncStart == nil ? lastWidgetSyncDuration : 0,
-            status: (statusOverride ?? currentWidgetSnapshotStatus()).rawValue,
+            status: (statusOverride ?? currentWidgetSnapshotStatus()).wireValue,
             filesSynced: activeWidgetSyncStart == nil ? lastWidgetSyncFilesSynced : activeWidgetSyncFilesSynced,
             folderCount: folders.count
         )

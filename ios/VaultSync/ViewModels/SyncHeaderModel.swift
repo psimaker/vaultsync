@@ -79,4 +79,32 @@ enum SyncHeaderModel {
         // one in Obsidian. A calm waiting state, never a green check.
         return State(status: .starting, titleKey: "No Vaults Yet")
     }
+
+    /// Widget-snapshot tier (#73). The widget carries no vault-setup surface,
+    /// so the vault tiers are pinned "armed" and the cascade reduces to the
+    /// engine / issue / transfer tiers — but it IS the same cascade above
+    /// (decision 012), so an issue kind that reaches the header can never
+    /// miss the widget again. Before this, the widget only knew
+    /// idle/syncing/error and kept a green check while a share sat parked or
+    /// a required peer was offline.
+    static func deriveWidgetStatus(
+        hasEngineError: Bool,
+        engineRunning: Bool,
+        issueSeverities: [SyncthingManager.SyncIssueSeverity],
+        hasUnreachableFolders: Bool,
+        isSyncing: Bool,
+        hasSyncFolders: Bool
+    ) -> SyncStatus {
+        derive(.init(
+            hasEngineError: hasEngineError,
+            engineRunning: engineRunning,
+            issueSeverities: issueSeverities,
+            hasUnreachableFolders: hasUnreachableFolders,
+            isSyncing: isSyncing,
+            hasSyncFolders: hasSyncFolders,
+            vaultAccessible: true,
+            vaultNeedsReconnect: false,
+            hasDetectedVaults: true
+        )).status
+    }
 }
