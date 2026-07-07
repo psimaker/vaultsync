@@ -169,6 +169,35 @@ enum BackgroundSyncService {
         return now.timeIntervalSince(lastBackgroundedAt) >= threshold
     }
 
+    /// How the scene-activation handler should attach to the sync engine,
+    /// given who is currently running. Pure so the branch matrix is
+    /// unit-testable without the bridge (#60).
+    enum SceneActivationAction: Equatable, Sendable {
+        /// Engine not running: reset stale manager state if needed, then start.
+        case coldStart
+        /// Engine running but the manager never started it — a background
+        /// handler brought it up in a background-launched process. Adopt it:
+        /// restore manager state, start polling, then reconcile paths so
+        /// accept decisions gate correctly (#60, decision 008).
+        case adoptRunningEngine
+        /// Engine running and manager attached: normal foreground return, at
+        /// most a debounced rescan (`shouldRescanOnForeground`).
+        case alreadyAttached
+    }
+
+    /// Pure decision for the `.active` scene-phase branch. Guarding on the
+    /// bridge alone (the pre-#60 behavior) conflated `adoptRunningEngine`
+    /// with `alreadyAttached`, so a bridge-running / manager-cold engine got
+    /// neither polling nor a reconcile — and was later stopped under the
+    /// active scene by the background handler's cleanup.
+    static func sceneActivationAction(
+        bridgeRunning: Bool,
+        managerRunning: Bool
+    ) -> SceneActivationAction {
+        if !bridgeRunning { return .coldStart }
+        return managerRunning ? .alreadyAttached : .adoptRunningEngine
+    }
+
     /// Begin a UIApplication background-task assertion so iOS grants up to
     /// ~30 seconds of continued execution after the app is backgrounded.
     /// Without this the system can suspend the process within ~5s, severing
@@ -612,7 +641,15 @@ enum BackgroundSyncService {
             trace("Silent push wake evidence: \(sawWakeEvidence).")
             traceRelevantBridgeEvents(since: &telemetryEventCursor, label: "post-wake-evidence-window")
             traceFolderStatuses(label: "post-wake-evidence-window")
-            if !sawWakeEvidence && !foregroundOwns {
+            // Re-read the lifecycle lock at decision time: the snapshot from
+            // before the wake-evidence window goes stale exactly when the
+            // user opens the app mid-push and the foreground adopts the
+            // running engine (#60) — a stale `foregroundOwns == false` here
+            // would stop and restart the engine right under the adopted
+            // foreground manager. The expiration handlers already re-read
+            // the same way.
+            let foregroundOwnsNow = lifecycleLock.withLock { $0.foregroundActive }
+            if !sawWakeEvidence && !foregroundOwnsNow {
                 logger.warning("Silent push showed no peer/sync activity after rescan — forcing Syncthing restart")
                 trace("No wake evidence after rescan. Forcing Syncthing restart.")
                 let restart = await forceRestartForSilentPush(managedURLs: managedURLs)
