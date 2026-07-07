@@ -80,6 +80,9 @@ struct OnboardingView: View {
             }
         }
         .onAppear {
+            // The unit-test host must never manage the process-global engine
+            // lifecycle — see TestHost.
+            guard !TestHost.isActive else { return }
             vaultManager.restoreAccess()
             Task {
                 await syncthingManager.start()

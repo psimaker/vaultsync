@@ -32,6 +32,7 @@
 "Choose Vault" = "选择 Vault";
 "Choose Vault…" = "选择 Vault…";
 "Choose where \"%@\" syncs on this iPhone. The share keeps its name on your other devices." = "选择“%@”在此 iPhone 上的同步位置。共享在你其他设备上的名称保持不变。";
+"Close and reopen VaultSync to restart syncing." = "关闭并重新打开 VaultSync 以重新开始同步。";
 "Cloud Relay" = "Cloud Relay";
 "Cloud Relay active" = "Cloud Relay 已启用";
 "Cloud Relay is not currently subscribed. Push-triggered wake-ups are disabled until the subscription is active." = "当前未订阅 Cloud Relay。在订阅激活前，基于推送的唤醒功能将被禁用。";
@@ -285,6 +286,7 @@
 "Sync Activity" = "同步活动";
 "Sync Activity Looks Stale" = "同步活动似乎过旧";
 "Sync Engine Not Running" = "同步引擎未运行";
+"Sync Engine Stopped" = "同步引擎已停止";
 "Sync Error" = "同步错误";
 "Sync Issue" = "同步问题";
 "Sync Issues" = "同步问题";
@@ -305,6 +307,7 @@
 "The file '%@' was overwritten with the version from the other device." = "文件“%@”已被另一台设备的版本覆盖。";
 "The folder path no longer exists%@." = "该文件夹路径已不存在%@。";
 "The folder scan finished successfully." = "文件夹扫描已成功完成。";
+"The sync engine stopped unexpectedly." = "同步引擎意外停止。";
 "This Device" = "此设备";
 "This folder does not look like your Obsidian directory yet. In the picker choose \"On My iPhone\" → \"Obsidian\"." = "这个文件夹目前看起来还不像你的 Obsidian 目录。请在选择器中选择“在我的 iPhone 上” → “Obsidian”。";
 "This timestamp is updated when VaultSync receives a silent push from Cloud Relay." = "当 VaultSync 收到来自 Cloud Relay 的静默推送时，此时间戳会更新。";

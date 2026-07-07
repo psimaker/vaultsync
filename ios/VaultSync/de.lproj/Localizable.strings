@@ -32,6 +32,7 @@
 "Choose Vault" = "Vault wählen";
 "Choose Vault…" = "Vault wählen…";
 "Choose where \"%@\" syncs on this iPhone. The share keeps its name on your other devices." = "Wähle, wohin „%@“ auf diesem iPhone synchronisiert wird. Auf deinen anderen Geräten behält die Freigabe ihren Namen.";
+"Close and reopen VaultSync to restart syncing." = "Schließe VaultSync und öffne es erneut, um die Synchronisierung neu zu starten.";
 "Cloud Relay" = "Cloud Relay";
 "Cloud Relay active" = "Cloud Relay aktiv";
 "Cloud Relay is not currently subscribed. Push-triggered wake-ups are disabled until the subscription is active." = "Cloud Relay ist derzeit nicht abonniert. Push-ausgelöste Weck-Signale sind deaktiviert, bis das Abo aktiv ist.";
@@ -285,6 +286,7 @@
 "Sync Activity" = "Sync-Aktivität";
 "Sync Activity Looks Stale" = "Sync-Aktivität wirkt veraltet";
 "Sync Engine Not Running" = "Sync-Engine läuft nicht";
+"Sync Engine Stopped" = "Sync-Engine gestoppt";
 "Sync Error" = "Sync-Fehler";
 "Sync Issue" = "Sync-Problem";
 "Sync Issues" = "Sync-Probleme";
@@ -305,6 +307,7 @@
 "The file '%@' was overwritten with the version from the other device." = "Die Datei „%@“ wurde mit der Version des anderen Geräts überschrieben.";
 "The folder path no longer exists%@." = "Der Ordnerpfad existiert nicht mehr%@.";
 "The folder scan finished successfully." = "Der Ordnerscan wurde erfolgreich abgeschlossen.";
+"The sync engine stopped unexpectedly." = "Die Sync-Engine wurde unerwartet beendet.";
 "This Device" = "Dieses Gerät";
 "This folder does not look like your Obsidian directory yet. In the picker choose \"On My iPhone\" → \"Obsidian\"." = "Dieser Ordner sieht noch nicht wie dein Obsidian-Verzeichnis aus. Wähle im Picker „Auf meinem iPhone“ → „Obsidian“.";
 "This timestamp is updated when VaultSync receives a silent push from Cloud Relay." = "Dieser Zeitstempel wird aktualisiert, wenn VaultSync einen stillen Push von Cloud Relay empfängt.";

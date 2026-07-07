@@ -47,6 +47,14 @@ enum TestSupport {
         return defaults
     }
 
+    /// The config directory the live app uses (`SyncthingManager.configDirectory()`
+    /// and `BackgroundSyncService.syncthingConfigDir()` derive the same path).
+    /// Exposed so bridge-state tests can start a real engine exactly the way a
+    /// background handler does (#61).
+    static func syncthingConfigPath() -> String {
+        syncthingConfigDirectory().path
+    }
+
     private static func syncthingConfigDirectory() -> URL {
         let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
         return documentsURL.appendingPathComponent("syncthing", isDirectory: true)

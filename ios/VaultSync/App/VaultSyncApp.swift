@@ -62,6 +62,9 @@ struct VaultSyncApp: App {
             .animation(.easeInOut(duration: 0.3), value: hasCompletedOnboarding)
         }
         .onChange(of: scenePhase) { _, newPhase in
+            // The unit-test host must never manage the process-global engine
+            // lifecycle — see TestHost.
+            guard !TestHost.isActive else { return }
             switch newPhase {
             case .active:
                 BackgroundSyncService.setSceneActive(true)
@@ -143,14 +146,40 @@ struct VaultSyncApp: App {
             }
         }
         .onChange(of: hasCompletedOnboarding) { _, completed in
+            guard !TestHost.isActive else { return }
             if completed {
-                if !syncthingManager.isRunning {
+                // Second consumer of the #60 state: guarding on the manager
+                // alone made this call start() against an engine a background
+                // handler already runs, surfacing the Go floor's "already
+                // running" as a user error in the first-run moment (#61).
+                // Route through the same three-way decision as the scene
+                // branch above.
+                switch BackgroundSyncService.sceneActivationAction(
+                    bridgeRunning: SyncBridgeService.isRunning(),
+                    managerRunning: syncthingManager.isRunning
+                ) {
+                case .coldStart:
+                    if syncthingManager.isRunning {
+                        syncthingManager.resetForRestart()
+                    }
                     vaultManager.restoreAccess()
                     Task {
                         await syncthingManager.start()
                         syncthingManager.reconcileFolderPaths(obsidianRoot: vaultManager.obsidianBasePath)
                     }
-                } else {
+                case .adoptRunningEngine:
+                    vaultManager.restoreAccess()
+                    if syncthingManager.adoptRunningEngine() {
+                        syncthingManager.reconcileFolderPaths(obsidianRoot: vaultManager.obsidianBasePath)
+                    } else {
+                        // The engine stopped between the check and the claim —
+                        // cold-start instead.
+                        Task {
+                            await syncthingManager.start()
+                            syncthingManager.reconcileFolderPaths(obsidianRoot: vaultManager.obsidianBasePath)
+                        }
+                    }
+                case .alreadyAttached:
                     // Onboarding may have started the engine itself (its own
                     // start can win against the scene-active start above) — in
                     // that case no reconcile ran this launch, and accept

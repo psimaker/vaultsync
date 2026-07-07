@@ -32,6 +32,7 @@
 "Choose Vault" = "Elegir Vault";
 "Choose Vault…" = "Elegir Vault…";
 "Choose where \"%@\" syncs on this iPhone. The share keeps its name on your other devices." = "Elige dónde se sincroniza \"%@\" en este iPhone. La compartición conserva su nombre en tus otros dispositivos.";
+"Close and reopen VaultSync to restart syncing." = "Cierra y vuelve a abrir VaultSync para reiniciar la sincronización.";
 "Cloud Relay" = "Cloud Relay";
 "Cloud Relay active" = "Cloud Relay activo";
 "Cloud Relay is not currently subscribed. Push-triggered wake-ups are disabled until the subscription is active." = "Cloud Relay no está suscrito actualmente. Las señales de activación por push están desactivadas hasta que la suscripción esté activa.";
@@ -285,6 +286,7 @@
 "Sync Activity" = "Actividad de sincronización";
 "Sync Activity Looks Stale" = "La actividad de sincronización parece desactualizada";
 "Sync Engine Not Running" = "El motor de sincronización no está en ejecución";
+"Sync Engine Stopped" = "Motor de sincronización detenido";
 "Sync Error" = "Error de sincronización";
 "Sync Issue" = "Problema de sincronización";
 "Sync Issues" = "Problemas de sincronización";
@@ -305,6 +307,7 @@
 "The file '%@' was overwritten with the version from the other device." = "El archivo «%@» se sobrescribió con la versión del otro dispositivo.";
 "The folder path no longer exists%@." = "La ruta de la carpeta ya no existe%@.";
 "The folder scan finished successfully." = "El escaneo de la carpeta finalizó correctamente.";
+"The sync engine stopped unexpectedly." = "El motor de sincronización se detuvo inesperadamente.";
 "This Device" = "Este dispositivo";
 "This folder does not look like your Obsidian directory yet. In the picker choose \"On My iPhone\" → \"Obsidian\"." = "Esta carpeta todavía no parece tu directorio de Obsidian. En el selector elige \"En mi iPhone\" → \"Obsidian\".";
 "This timestamp is updated when VaultSync receives a silent push from Cloud Relay." = "Esta marca de tiempo se actualiza cuando VaultSync recibe un push silencioso de Cloud Relay.";

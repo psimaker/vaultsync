@@ -32,6 +32,7 @@
 "Choose Vault" = "Choose Vault";
 "Choose Vault…" = "Choose Vault…";
 "Choose where \"%@\" syncs on this iPhone. The share keeps its name on your other devices." = "Choose where \"%@\" syncs on this iPhone. The share keeps its name on your other devices.";
+"Close and reopen VaultSync to restart syncing." = "Close and reopen VaultSync to restart syncing.";
 "Cloud Relay" = "Cloud Relay";
 "Cloud Relay active" = "Cloud Relay active";
 "Cloud Relay is not currently subscribed. Push-triggered wake-ups are disabled until the subscription is active." = "Cloud Relay is not currently subscribed. Push-triggered wake-ups are disabled until the subscription is active.";
@@ -285,6 +286,7 @@
 "Sync Activity" = "Sync Activity";
 "Sync Activity Looks Stale" = "Sync Activity Looks Stale";
 "Sync Engine Not Running" = "Sync Engine Not Running";
+"Sync Engine Stopped" = "Sync Engine Stopped";
 "Sync Error" = "Sync Error";
 "Sync Issue" = "Sync Issue";
 "Sync Issues" = "Sync Issues";
@@ -305,6 +307,7 @@
 "The file '%@' was overwritten with the version from the other device." = "The file '%@' was overwritten with the version from the other device.";
 "The folder path no longer exists%@." = "The folder path no longer exists%@.";
 "The folder scan finished successfully." = "The folder scan finished successfully.";
+"The sync engine stopped unexpectedly." = "The sync engine stopped unexpectedly.";
 "This Device" = "This Device";
 "This folder does not look like your Obsidian directory yet. In the picker choose \"On My iPhone\" → \"Obsidian\"." = "This folder does not look like your Obsidian directory yet. In the picker choose \"On My iPhone\" → \"Obsidian\".";
 "This timestamp is updated when VaultSync receives a silent push from Cloud Relay." = "This timestamp is updated when VaultSync receives a silent push from Cloud Relay.";
