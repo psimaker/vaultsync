@@ -29,6 +29,9 @@
 "Check your connection and retry." = "检查网络连接后重试。";
 "Check your internet connection and try the relay health check again on the Relay tab." = "检查网络连接，然后在 Relay 标签页中重新执行 Relay 健康检查。";
 "Check your subscription status on the Relay tab and retry. If this persists, restart VaultSync." = "在 Relay 标签页中检查订阅状态后重试。如果问题持续存在，请重启 VaultSync。";
+"Choose Vault" = "选择 Vault";
+"Choose Vault…" = "选择 Vault…";
+"Choose where \"%@\" syncs on this iPhone. The share keeps its name on your other devices." = "选择“%@”在此 iPhone 上的同步位置。共享在你其他设备上的名称保持不变。";
 "Cloud Relay" = "Cloud Relay";
 "Cloud Relay active" = "Cloud Relay 已启用";
 "Cloud Relay is not currently subscribed. Push-triggered wake-ups are disabled until the subscription is active." = "当前未订阅 Cloud Relay。在订阅激活前，基于推送的唤醒功能将被禁用。";
@@ -62,6 +65,7 @@
 "Could not read files.\n\n%@\n%@" = "无法读取文件。\n\n%@\n%@";
 "Could not read original file.\n\n%@" = "无法读取原始文件。\n\n%@";
 "Create a vault in Obsidian first. VaultSync will detect it automatically." = "请先在 Obsidian 中创建一个 Vault。VaultSync 会自动检测到它。";
+"Creates a folder with this name in your Obsidian directory and syncs the share into it." = "在你的 Obsidian 目录中创建一个此名称的文件夹，并将共享同步到其中。";
 "Device" = "设备";
 "Device ID" = "设备 ID";
 "%d of %d devices connected" = "已连接 %d/%d 台设备";
@@ -72,13 +76,16 @@
 "Done" = "完成";
 "Empty line" = "空行";
 "Enable notifications for VaultSync in iOS Settings → Notifications → VaultSync, then restart the app." = "请在 iOS 设置 → 通知 → VaultSync 中启用通知，然后重新启动应用。";
+"Enter a folder name." = "请输入文件夹名称。";
 "Error" = "错误";
+"Existing Empty Vaults" = "现有的空 Vault";
 "Failed" = "失败";
 "Failed to save access permission: %@" = "保存访问权限失败：%@";
 "Failed to sync file in %@" = "同步 %@ 中的文件失败";
 "File Read Failed" = "读取文件失败";
 "File synced in %@" = "已同步 %@ 中的文件";
 "Files are being synchronized with peers." = "文件正在与对端同步。";
+"Folder name" = "文件夹名称";
 "Folder Not Configured" = "文件夹未配置";
 "Folder Path Missing" = "文件夹路径缺失";
 "Folder Permission Error" = "文件夹权限错误";
@@ -118,6 +125,7 @@
 "Last sync: %@" = "上次同步：%@";
 "Latency" = "延迟";
 "Learn how to fix" = "查看修复方法";
+"Link Share" = "关联共享";
 "Loading…" = "正在加载…";
 "Local Files" = "本地文件";
 "Log" = "日志";
@@ -128,6 +136,8 @@
 "Needs Attention" = "需要处理";
 "Network Error" = "网络错误";
 "Never" = "从未";
+"New Folder" = "新文件夹";
+"No empty vaults found. Create the vault in Obsidian first, or use a new folder below." = "未找到空 Vault。请先在 Obsidian 中创建 Vault，或在下方使用新文件夹。";
 "No Syncthing peers available yet." = "尚无可用的 Syncthing 对端。";
 "No action needed." = "无需操作。";
 "No active pending shares" = "没有活动的待处理共享";
@@ -152,6 +162,7 @@
 "Obsidian directory not accessible." = "无法访问 Obsidian 目录。";
 "Obsidian folder not connected" = "Obsidian 文件夹未连接";
 "Offline" = "离线";
+"Only vaults without any notes yet can be linked to a share." = "只有尚未包含笔记的 Vault 才能与共享关联。";
 "Open Settings" = "打开设置";
 "Open the Relay tab" = "打开 Relay 标签页";
 "Open VaultSync" = "打开 VaultSync";
@@ -233,6 +244,9 @@
 "Purchase Failed" = "购买失败";
 "Rescan All Vaults" = "重新扫描所有 Vault";
 "Sync Conflicts" = "同步冲突";
+"The folder \"%@\" already contains files. A share can only be linked to an empty vault — choose an empty vault, or enter a new folder name." = "文件夹“%@”中已包含文件。共享只能与空 Vault 关联——请选择一个空 Vault，或输入新的文件夹名称。";
+"The target folder \"%@\" is already synced by another vault — the same folder, or one above or inside it. Choose a different folder, or remove the vault that syncs there first." = "目标文件夹“%@”已由另一个 Vault 同步——同一文件夹，或其上层或内部的文件夹。请选择其他文件夹，或先移除同步到该位置的 Vault。";
+"This share is set to sync into \"%@\", but that location now overlaps a folder another vault already syncs. Tap \"Choose Vault…\" on the share to pick a new location, or remove the vault that syncs there, then accept the share again." = "此共享设置为同步到“%@”，但该位置现在与另一个 Vault 已同步的文件夹重叠。请在共享上点按“选择 Vault…”选择新位置，或移除同步到该位置的 Vault，然后重新接受此共享。";
 "View Cloud Relay" = "查看 Cloud Relay";
 "XXXXXXX-XXXXXXX-..." = "XXXXXXX-XXXXXXX-...";
 "Retry APNs Registration" = "重试 APNs 注册";
@@ -621,12 +635,12 @@
 /* Path collision migration shield (#45) — vaults an older version already merged onto one folder */
 "Two Vaults Are Sharing One Folder" = "两个 Vault 共用同一个文件夹";
 "Two or more vaults sync into the same local folder, so their contents are being mixed together. The affected vaults have been paused to stop further damage." = "两个或更多 Vault 同步到同一个本地文件夹，导致它们的内容被混在一起。受影响的 Vault 已被暂停，以防止进一步损坏。";
-"Remove an affected vault on this iPhone — it is added back automatically into its own folder. If the files are already mixed, restore the clean copy on your computer first." = "在此 iPhone 上移除一个受影响的 Vault——它会自动重新添加到自己的文件夹中。如果文件已经混在一起，请先在电脑上恢复干净的副本。";
+"Remove an affected vault on this iPhone, then accept it again under Pending Shares — it moves into its own folder. If the files are already mixed, restore the clean copy on your computer first." = "在此 iPhone 上移除一个受影响的 Vault，然后在“待处理共享”中重新接受它——它会移入自己的文件夹。如果文件已经混在一起，请先在电脑上恢复干净的副本。";
 
 /* Nested vaults (#45 follow-up) — a share may never nest inside another vault's folder */
 "One Vault Is Nested Inside Another" = "一个 Vault 嵌套在另一个 Vault 中";
 "A vault's folder is inside another vault's folder, so the outer vault syncs the inner vault's notes to its own devices. The affected vaults have been paused to stop further mixing." = "一个 Vault 的文件夹位于另一个 Vault 的文件夹内，因此外层 Vault 会把内层 Vault 的笔记同步到它自己的设备上。受影响的 Vault 已被暂停，以防止进一步混合。";
-"Select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") as VaultSync's Obsidian directory, then remove the inner vault on this iPhone — it is added back into its own folder. Only afterwards, delete the leftover copy inside the outer vault on your other devices." = "将包含所有 Vault 的文件夹（“在我的 iPhone 上” → “Obsidian”）设为 VaultSync 的 Obsidian 目录，然后在此 iPhone 上移除内层 Vault——它会自动重新添加到自己的文件夹中。之后再删除其他设备上外层 Vault 中遗留的副本。";
+"Select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") as VaultSync's Obsidian directory, then remove the inner vault on this iPhone and accept it again under Pending Shares — it gets its own folder. Only afterwards, delete the leftover copy inside the outer vault on your other devices." = "将包含所有 Vault 的文件夹（“在我的 iPhone 上” → “Obsidian”）设为 VaultSync 的 Obsidian 目录，然后在此 iPhone 上移除内层 Vault 并在“待处理共享”中重新接受它——它会获得自己的文件夹。之后再删除其他设备上外层 Vault 中遗留的副本。";
 "This share needs its own folder, but the folder selected for VaultSync is itself a vault, so everything inside it belongs to that vault. Re-select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") — new vaults then sync side by side instead of inside each other." = "此共享需要自己的文件夹，但为 VaultSync 选择的文件夹本身就是一个 Vault，其中的所有内容都属于该 Vault。请重新选择包含所有 Vault 的文件夹（“在我的 iPhone 上” → “Obsidian”）——这样新的 Vault 会并排同步，而不会嵌套在一起。";
 "The folder you selected is itself a vault. Syncing this one vault works, but additional vaults cannot get their own folder next to it. If you plan to sync more than one vault, select the folder that contains your vaults instead (\"On My iPhone\" → \"Obsidian\")." = "所选文件夹本身就是一个 Vault。这样同步这一个 Vault 没有问题，但其他 Vault 将无法在它旁边获得自己的文件夹。如果你打算同步多个 Vault，请改为选择包含所有 Vault 的文件夹（“在我的 iPhone 上” → “Obsidian”）。";
 "Note" = "提示";

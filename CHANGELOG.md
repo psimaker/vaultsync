@@ -4,6 +4,16 @@ All notable changes to VaultSync are documented here.
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- **A vault you remove now stays removed** ([#52](https://github.com/psimaker/vaultsync/issues/52)) — as long as another device still shares a removed folder, its share request reappears within moments, and VaultSync used to accept it again automatically — silently undoing the removal. A share whose vault you removed now stays under "Pending Shares" until you accept it yourself. The recovery steps for overlapping vaults are now explicit for the same reason: remove the affected vault, then accept the returning share — nothing is re-added behind your back.
+
+### Added
+
+- **Choose where a share syncs** ([#52](https://github.com/psimaker/vaultsync/issues/52)) — a new "Choose Vault…" option on every pending share lets you pick an existing *empty* vault (create the vault in Obsidian first, then link the share to it) or create a folder with a name of your choice, instead of the automatic folder named after the share — share names like "Obsidian-Vault-Life" no longer dictate your local vault name. VaultSync remembers the choice: remove the vault and accept the share again, and it returns to the folder you picked — never silently to the automatic one. Locations that overlap another vault's folder are refused at every layer, and only empty vaults can be linked, so two vaults can never mix (the #45 guarantees are untouched). Localized in English, German, Spanish, and Simplified Chinese.
+
 ## [1.7.2] — 2026-07-07
 
 ### Fixed

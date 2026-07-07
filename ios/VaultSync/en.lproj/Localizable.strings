@@ -29,6 +29,9 @@
 "Check your connection and retry." = "Check your connection and retry.";
 "Check your internet connection and try the relay health check again on the Relay tab." = "Check your internet connection and try the relay health check again on the Relay tab.";
 "Check your subscription status on the Relay tab and retry. If this persists, restart VaultSync." = "Check your subscription status on the Relay tab and retry. If this persists, restart VaultSync.";
+"Choose Vault" = "Choose Vault";
+"Choose Vault…" = "Choose Vault…";
+"Choose where \"%@\" syncs on this iPhone. The share keeps its name on your other devices." = "Choose where \"%@\" syncs on this iPhone. The share keeps its name on your other devices.";
 "Cloud Relay" = "Cloud Relay";
 "Cloud Relay active" = "Cloud Relay active";
 "Cloud Relay is not currently subscribed. Push-triggered wake-ups are disabled until the subscription is active." = "Cloud Relay is not currently subscribed. Push-triggered wake-ups are disabled until the subscription is active.";
@@ -62,6 +65,7 @@
 "Could not read files.\n\n%@\n%@" = "Could not read files.\n\n%@\n%@";
 "Could not read original file.\n\n%@" = "Could not read original file.\n\n%@";
 "Create a vault in Obsidian first. VaultSync will detect it automatically." = "Create a vault in Obsidian first. VaultSync will detect it automatically.";
+"Creates a folder with this name in your Obsidian directory and syncs the share into it." = "Creates a folder with this name in your Obsidian directory and syncs the share into it.";
 "Device" = "Device";
 "Device ID" = "Device ID";
 "%d of %d devices connected" = "%d of %d devices connected";
@@ -72,13 +76,16 @@
 "Done" = "Done";
 "Empty line" = "Empty line";
 "Enable notifications for VaultSync in iOS Settings → Notifications → VaultSync, then restart the app." = "Enable notifications for VaultSync in iOS Settings → Notifications → VaultSync, then restart the app.";
+"Enter a folder name." = "Enter a folder name.";
 "Error" = "Error";
+"Existing Empty Vaults" = "Existing Empty Vaults";
 "Failed" = "Failed";
 "Failed to save access permission: %@" = "Failed to save access permission: %@";
 "Failed to sync file in %@" = "Failed to sync file in %@";
 "File Read Failed" = "File Read Failed";
 "File synced in %@" = "File synced in %@";
 "Files are being synchronized with peers." = "Files are being synchronized with peers.";
+"Folder name" = "Folder name";
 "Folder Not Configured" = "Folder Not Configured";
 "Folder Path Missing" = "Folder Path Missing";
 "Folder Permission Error" = "Folder Permission Error";
@@ -118,6 +125,7 @@
 "Last sync: %@" = "Last sync: %@";
 "Latency" = "Latency";
 "Learn how to fix" = "Learn how to fix";
+"Link Share" = "Link Share";
 "Loading…" = "Loading…";
 "Local Files" = "Local Files";
 "Log" = "Log";
@@ -128,6 +136,8 @@
 "Needs Attention" = "Needs Attention";
 "Network Error" = "Network Error";
 "Never" = "Never";
+"New Folder" = "New Folder";
+"No empty vaults found. Create the vault in Obsidian first, or use a new folder below." = "No empty vaults found. Create the vault in Obsidian first, or use a new folder below.";
 "No Syncthing peers available yet." = "No Syncthing peers available yet.";
 "No action needed." = "No action needed.";
 "No active pending shares" = "No active pending shares";
@@ -152,6 +162,7 @@
 "Obsidian directory not accessible." = "Obsidian directory not accessible.";
 "Obsidian folder not connected" = "Obsidian folder not connected";
 "Offline" = "Offline";
+"Only vaults without any notes yet can be linked to a share." = "Only vaults without any notes yet can be linked to a share.";
 "Open Settings" = "Open Settings";
 "Open the Relay tab" = "Open the Relay tab";
 "Open VaultSync" = "Open VaultSync";
@@ -233,6 +244,9 @@
 "Purchase Failed" = "Purchase Failed";
 "Rescan All Vaults" = "Rescan All Vaults";
 "Sync Conflicts" = "Sync Conflicts";
+"The folder \"%@\" already contains files. A share can only be linked to an empty vault — choose an empty vault, or enter a new folder name." = "The folder \"%@\" already contains files. A share can only be linked to an empty vault — choose an empty vault, or enter a new folder name.";
+"The target folder \"%@\" is already synced by another vault — the same folder, or one above or inside it. Choose a different folder, or remove the vault that syncs there first." = "The target folder \"%@\" is already synced by another vault — the same folder, or one above or inside it. Choose a different folder, or remove the vault that syncs there first.";
+"This share is set to sync into \"%@\", but that location now overlaps a folder another vault already syncs. Tap \"Choose Vault…\" on the share to pick a new location, or remove the vault that syncs there, then accept the share again." = "This share is set to sync into \"%@\", but that location now overlaps a folder another vault already syncs. Tap \"Choose Vault…\" on the share to pick a new location, or remove the vault that syncs there, then accept the share again.";
 "View Cloud Relay" = "View Cloud Relay";
 "XXXXXXX-XXXXXXX-..." = "XXXXXXX-XXXXXXX-...";
 "Retry APNs Registration" = "Retry APNs Registration";
@@ -621,12 +635,12 @@
 /* Path collision migration shield (#45) — vaults an older version already merged onto one folder */
 "Two Vaults Are Sharing One Folder" = "Two Vaults Are Sharing One Folder";
 "Two or more vaults sync into the same local folder, so their contents are being mixed together. The affected vaults have been paused to stop further damage." = "Two or more vaults sync into the same local folder, so their contents are being mixed together. The affected vaults have been paused to stop further damage.";
-"Remove an affected vault on this iPhone — it is added back automatically into its own folder. If the files are already mixed, restore the clean copy on your computer first." = "Remove an affected vault on this iPhone — it is added back automatically into its own folder. If the files are already mixed, restore the clean copy on your computer first.";
+"Remove an affected vault on this iPhone, then accept it again under Pending Shares — it moves into its own folder. If the files are already mixed, restore the clean copy on your computer first." = "Remove an affected vault on this iPhone, then accept it again under Pending Shares — it moves into its own folder. If the files are already mixed, restore the clean copy on your computer first.";
 
 /* Nested vaults (#45 follow-up) — a share may never nest inside another vault's folder */
 "One Vault Is Nested Inside Another" = "One Vault Is Nested Inside Another";
 "A vault's folder is inside another vault's folder, so the outer vault syncs the inner vault's notes to its own devices. The affected vaults have been paused to stop further mixing." = "A vault's folder is inside another vault's folder, so the outer vault syncs the inner vault's notes to its own devices. The affected vaults have been paused to stop further mixing.";
-"Select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") as VaultSync's Obsidian directory, then remove the inner vault on this iPhone — it is added back into its own folder. Only afterwards, delete the leftover copy inside the outer vault on your other devices." = "Select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") as VaultSync's Obsidian directory, then remove the inner vault on this iPhone — it is added back into its own folder. Only afterwards, delete the leftover copy inside the outer vault on your other devices.";
+"Select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") as VaultSync's Obsidian directory, then remove the inner vault on this iPhone and accept it again under Pending Shares — it gets its own folder. Only afterwards, delete the leftover copy inside the outer vault on your other devices." = "Select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") as VaultSync's Obsidian directory, then remove the inner vault on this iPhone and accept it again under Pending Shares — it gets its own folder. Only afterwards, delete the leftover copy inside the outer vault on your other devices.";
 "This share needs its own folder, but the folder selected for VaultSync is itself a vault, so everything inside it belongs to that vault. Re-select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") — new vaults then sync side by side instead of inside each other." = "This share needs its own folder, but the folder selected for VaultSync is itself a vault, so everything inside it belongs to that vault. Re-select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") — new vaults then sync side by side instead of inside each other.";
 "The folder you selected is itself a vault. Syncing this one vault works, but additional vaults cannot get their own folder next to it. If you plan to sync more than one vault, select the folder that contains your vaults instead (\"On My iPhone\" → \"Obsidian\")." = "The folder you selected is itself a vault. Syncing this one vault works, but additional vaults cannot get their own folder next to it. If you plan to sync more than one vault, select the folder that contains your vaults instead (\"On My iPhone\" → \"Obsidian\").";
 "Note" = "Note";

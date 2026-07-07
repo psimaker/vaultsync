@@ -29,6 +29,9 @@
 "Check your connection and retry." = "Prüfe deine Verbindung und versuche es erneut.";
 "Check your internet connection and try the relay health check again on the Relay tab." = "Prüfe deine Internetverbindung und führe den Relay-Health-Check im Relay-Tab erneut aus.";
 "Check your subscription status on the Relay tab and retry. If this persists, restart VaultSync." = "Prüfe deinen Abostatus im Relay-Tab und versuche es erneut. Wenn das Problem bleibt, starte VaultSync neu.";
+"Choose Vault" = "Vault wählen";
+"Choose Vault…" = "Vault wählen…";
+"Choose where \"%@\" syncs on this iPhone. The share keeps its name on your other devices." = "Wähle, wohin „%@“ auf diesem iPhone synchronisiert wird. Auf deinen anderen Geräten behält die Freigabe ihren Namen.";
 "Cloud Relay" = "Cloud Relay";
 "Cloud Relay active" = "Cloud Relay aktiv";
 "Cloud Relay is not currently subscribed. Push-triggered wake-ups are disabled until the subscription is active." = "Cloud Relay ist derzeit nicht abonniert. Push-ausgelöste Weck-Signale sind deaktiviert, bis das Abo aktiv ist.";
@@ -62,6 +65,7 @@
 "Could not read files.\n\n%@\n%@" = "Dateien konnten nicht gelesen werden.\n\n%@\n%@";
 "Could not read original file.\n\n%@" = "Originaldatei konnte nicht gelesen werden.\n\n%@";
 "Create a vault in Obsidian first. VaultSync will detect it automatically." = "Erstelle zuerst einen Vault in Obsidian. VaultSync erkennt ihn automatisch.";
+"Creates a folder with this name in your Obsidian directory and syncs the share into it." = "Erstellt einen Ordner mit diesem Namen in deinem Obsidian-Verzeichnis und synchronisiert die Freigabe dorthin.";
 "Device" = "Gerät";
 "Device ID" = "Geräte-ID";
 "%d of %d devices connected" = "%d von %d Geräten verbunden";
@@ -72,13 +76,16 @@
 "Done" = "Fertig";
 "Empty line" = "Leere Zeile";
 "Enable notifications for VaultSync in iOS Settings → Notifications → VaultSync, then restart the app." = "Aktiviere Mitteilungen für VaultSync unter iOS Einstellungen → Mitteilungen → VaultSync und starte die App dann neu.";
+"Enter a folder name." = "Gib einen Ordnernamen ein.";
 "Error" = "Fehler";
+"Existing Empty Vaults" = "Bestehende leere Vaults";
 "Failed" = "Fehlgeschlagen";
 "Failed to save access permission: %@" = "Zugriffsberechtigung konnte nicht gespeichert werden: %@";
 "Failed to sync file in %@" = "Datei in %@ konnte nicht synchronisiert werden";
 "File Read Failed" = "Datei konnte nicht gelesen werden";
 "File synced in %@" = "Datei in %@ synchronisiert";
 "Files are being synchronized with peers." = "Dateien werden mit Peers synchronisiert.";
+"Folder name" = "Ordnername";
 "Folder Not Configured" = "Ordner nicht konfiguriert";
 "Folder Path Missing" = "Ordnerpfad fehlt";
 "Folder Permission Error" = "Ordnerberechtigungsfehler";
@@ -118,6 +125,7 @@
 "Last sync: %@" = "Letzter Sync: %@";
 "Latency" = "Latenz";
 "Learn how to fix" = "Lösung anzeigen";
+"Link Share" = "Freigabe verknüpfen";
 "Loading…" = "Wird geladen…";
 "Local Files" = "Lokale Dateien";
 "Log" = "Protokoll";
@@ -128,6 +136,8 @@
 "Needs Attention" = "Aktion nötig";
 "Network Error" = "Netzwerkfehler";
 "Never" = "Nie";
+"New Folder" = "Neuer Ordner";
+"No empty vaults found. Create the vault in Obsidian first, or use a new folder below." = "Keine leeren Vaults gefunden. Erstelle den Vault zuerst in Obsidian oder verwende unten einen neuen Ordner.";
 "No Syncthing peers available yet." = "Noch keine Syncthing-Peers verfügbar.";
 "No action needed." = "Keine Aktion erforderlich.";
 "No active pending shares" = "Keine aktiven ausstehenden Freigaben";
@@ -152,6 +162,7 @@
 "Obsidian directory not accessible." = "Auf das Obsidian-Verzeichnis kann nicht zugegriffen werden.";
 "Obsidian folder not connected" = "Obsidian-Ordner nicht verbunden";
 "Offline" = "Offline";
+"Only vaults without any notes yet can be linked to a share." = "Nur Vaults, die noch keine Notizen enthalten, können mit einer Freigabe verknüpft werden.";
 "Open Settings" = "Einstellungen öffnen";
 "Open the Relay tab" = "Relay-Tab öffnen";
 "Open VaultSync" = "VaultSync öffnen";
@@ -233,6 +244,9 @@
 "Purchase Failed" = "Kauf fehlgeschlagen";
 "Rescan All Vaults" = "Alle Vaults erneut scannen";
 "Sync Conflicts" = "Sync-Konflikte";
+"The folder \"%@\" already contains files. A share can only be linked to an empty vault — choose an empty vault, or enter a new folder name." = "Der Ordner „%@“ enthält bereits Dateien. Eine Freigabe kann nur mit einem leeren Vault verknüpft werden – wähle einen leeren Vault oder gib einen neuen Ordnernamen ein.";
+"The target folder \"%@\" is already synced by another vault — the same folder, or one above or inside it. Choose a different folder, or remove the vault that syncs there first." = "Der Zielordner „%@“ wird bereits von einem anderen Vault synchronisiert – derselbe Ordner oder einer darüber oder darin. Wähle einen anderen Ordner oder entferne zuerst den Vault, der dorthin synchronisiert.";
+"This share is set to sync into \"%@\", but that location now overlaps a folder another vault already syncs. Tap \"Choose Vault…\" on the share to pick a new location, or remove the vault that syncs there, then accept the share again." = "Diese Freigabe soll nach „%@“ synchronisieren, aber dieser Ort überlappt jetzt einen Ordner, den ein anderer Vault bereits synchronisiert. Tippe bei der Freigabe auf „Vault wählen…“, um einen neuen Ort zu wählen, oder entferne den Vault, der dorthin synchronisiert, und nimm die Freigabe erneut an.";
 "View Cloud Relay" = "Cloud Relay ansehen";
 "XXXXXXX-XXXXXXX-..." = "XXXXXXX-XXXXXXX-...";
 "Retry APNs Registration" = "APNs-Registrierung erneut versuchen";
@@ -621,12 +635,12 @@
 /* Path collision migration shield (#45) — vaults an older version already merged onto one folder */
 "Two Vaults Are Sharing One Folder" = "Zwei Vaults teilen sich einen Ordner";
 "Two or more vaults sync into the same local folder, so their contents are being mixed together. The affected vaults have been paused to stop further damage." = "Zwei oder mehr Vaults synchronisieren in denselben lokalen Ordner, sodass ihre Inhalte vermischt werden. Die betroffenen Vaults wurden pausiert, um weiteren Schaden zu verhindern.";
-"Remove an affected vault on this iPhone — it is added back automatically into its own folder. If the files are already mixed, restore the clean copy on your computer first." = "Entferne einen betroffenen Vault auf diesem iPhone – er wird automatisch wieder in seinem eigenen Ordner hinzugefügt. Sind die Dateien bereits vermischt, stelle zuerst die saubere Kopie auf deinem Computer wieder her.";
+"Remove an affected vault on this iPhone, then accept it again under Pending Shares — it moves into its own folder. If the files are already mixed, restore the clean copy on your computer first." = "Entferne einen betroffenen Vault auf diesem iPhone und nimm ihn unter „Ausstehende Freigaben“ erneut an – er zieht in seinen eigenen Ordner. Sind die Dateien bereits vermischt, stelle zuerst die saubere Kopie auf deinem Computer wieder her.";
 
 /* Nested vaults (#45 follow-up) — a share may never nest inside another vault's folder */
 "One Vault Is Nested Inside Another" = "Ein Vault liegt in einem anderen Vault";
 "A vault's folder is inside another vault's folder, so the outer vault syncs the inner vault's notes to its own devices. The affected vaults have been paused to stop further mixing." = "Der Ordner eines Vaults liegt im Ordner eines anderen Vaults, daher synchronisiert der äußere Vault die Notizen des inneren Vaults auf seine eigenen Geräte. Die betroffenen Vaults wurden pausiert, um weitere Vermischung zu stoppen.";
-"Select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") as VaultSync's Obsidian directory, then remove the inner vault on this iPhone — it is added back into its own folder. Only afterwards, delete the leftover copy inside the outer vault on your other devices." = "Wähle als Obsidian-Verzeichnis von VaultSync den Ordner aus, der deine Vaults enthält („Auf meinem iPhone“ → „Obsidian“), und entferne dann den inneren Vault auf diesem iPhone – er wird automatisch wieder in seinem eigenen Ordner hinzugefügt. Lösche erst danach die übrig gebliebene Kopie im äußeren Vault auf deinen anderen Geräten.";
+"Select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") as VaultSync's Obsidian directory, then remove the inner vault on this iPhone and accept it again under Pending Shares — it gets its own folder. Only afterwards, delete the leftover copy inside the outer vault on your other devices." = "Wähle als Obsidian-Verzeichnis von VaultSync den Ordner aus, der deine Vaults enthält („Auf meinem iPhone“ → „Obsidian“), entferne dann den inneren Vault auf diesem iPhone und nimm ihn unter „Ausstehende Freigaben“ erneut an – er erhält seinen eigenen Ordner. Lösche erst danach die übrig gebliebene Kopie im äußeren Vault auf deinen anderen Geräten.";
 "This share needs its own folder, but the folder selected for VaultSync is itself a vault, so everything inside it belongs to that vault. Re-select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") — new vaults then sync side by side instead of inside each other." = "Diese Freigabe braucht einen eigenen Ordner, aber der für VaultSync ausgewählte Ordner ist selbst ein Vault – alles darin gehört zu diesem Vault. Wähle den Ordner neu aus, der deine Vaults enthält („Auf meinem iPhone“ → „Obsidian“) – neue Vaults synchronisieren dann nebeneinander statt ineinander.";
 "The folder you selected is itself a vault. Syncing this one vault works, but additional vaults cannot get their own folder next to it. If you plan to sync more than one vault, select the folder that contains your vaults instead (\"On My iPhone\" → \"Obsidian\")." = "Der ausgewählte Ordner ist selbst ein Vault. Diesen einen Vault kannst du so synchronisieren, aber weitere Vaults können keinen eigenen Ordner daneben bekommen. Wenn du mehr als einen Vault synchronisieren möchtest, wähle stattdessen den Ordner aus, der deine Vaults enthält („Auf meinem iPhone“ → „Obsidian“).";
 "Note" = "Hinweis";

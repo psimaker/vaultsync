@@ -16,6 +16,7 @@ struct ContentView: View {
     @State private var showInfoAlert = false
     @State private var pendingShareFailures: [String: SyncUserError] = [:]
     @State private var pendingShareInFlight: Set<String> = []
+    @State private var shareTargetPickerFolder: SyncthingManager.PendingFolderInfo?
     @State private var pendingFilterSheetFolder: SyncthingManager.FolderInfo?
     @State private var vaultPendingRemoval: VaultRemovalTarget?
     @State private var showRelayUpsellCard = false
@@ -134,6 +135,16 @@ struct ContentView: View {
             Button(L10n.tr("Cancel"), role: .cancel) { vaultPendingRemoval = nil }
         } message: { target in
             Text(L10n.fmt("“%@” will stop syncing on this iPhone. Files already on your other devices are not deleted.", target.label))
+        }
+        .sheet(item: $shareTargetPickerFolder) { folder in
+            ShareTargetPickerView(
+                shareLabel: folder.label.isEmpty ? folder.id : folder.label,
+                defaultName: VaultManager.sanitizeDirectoryName(folder.label.isEmpty ? folder.id : folder.label),
+                eligibleVaults: vaultManager.eligibleShareTargets(syncthingManager: syncthingManager),
+                onConfirm: { targetName in
+                    manualAcceptPendingShare(folder: folder, targetName: targetName)
+                }
+            )
         }
         .onChange(of: syncthingManager.pendingFolders, initial: true) { _, pending in
             autoAcceptPendingShares(pending)
@@ -277,10 +288,36 @@ struct ContentView: View {
 
         guard vaultManager.isAccessible else { return }
 
-        for folder in syncthingManager.actionablePendingFolders where pendingShareFailures[folder.id] == nil {
+        // Auto-accept skips shares whose folder the user removed on this
+        // iPhone (doctrine 002 / #52) — those stay visible as pending rows
+        // until the user accepts them explicitly.
+        for folder in syncthingManager.autoAcceptEligiblePendingFolders where pendingShareFailures[folder.id] == nil {
             guard !pendingShareInFlight.contains(folder.id) else { continue }
             performPendingShareAccept(folder: folder, source: .automatic)
         }
+    }
+
+    /// Accept a share into a user-picked target (#52). Returns the error to
+    /// show inline in the picker sheet, or nil on success (the sheet then
+    /// dismisses itself).
+    private func manualAcceptPendingShare(
+        folder: SyncthingManager.PendingFolderInfo,
+        targetName: String
+    ) -> String? {
+        pendingShareInFlight.insert(folder.id)
+        let err = vaultManager.acceptPendingShare(
+            folder: folder,
+            intoTargetNamed: targetName,
+            syncthingManager: syncthingManager
+        )
+        pendingShareInFlight.remove(folder.id)
+
+        if let err {
+            return mappedError(err, fallbackTitle: L10n.tr("Could Not Accept Share")).userVisibleDescription
+        }
+        pendingShareFailures.removeValue(forKey: folder.id)
+        syncthingManager.unignorePendingFolder(id: folder.id)
+        return nil
     }
 
     private enum PendingShareAcceptSource {
@@ -690,6 +727,9 @@ struct ContentView: View {
                     },
                     onRestoreIgnored: { folder in
                         syncthingManager.unignorePendingFolder(id: folder.id)
+                    },
+                    onChooseTarget: { folder in
+                        shareTargetPickerFolder = folder
                     },
                     onReconnectObsidian: {
                         showObsidianPicker = true

@@ -10,6 +10,7 @@ struct PendingSharesView: View {
     var onRetry: (SyncthingManager.PendingFolderInfo) -> Void
     var onIgnore: (SyncthingManager.PendingFolderInfo) -> Void
     var onRestoreIgnored: (SyncthingManager.PendingFolderInfo) -> Void
+    var onChooseTarget: (SyncthingManager.PendingFolderInfo) -> Void
     var onReconnectObsidian: () -> Void
 
     var body: some View {
@@ -47,11 +48,22 @@ struct PendingSharesView: View {
                                         .foregroundStyle(.secondary)
                                 }
                                 Spacer()
-                                Button("Restore Share") {
-                                    onRestoreIgnored(folder)
+                                // Restoring hands the share back to auto-accept;
+                                // "Choose Vault…" accepts it directly into a
+                                // picked target instead (#52).
+                                VStack(alignment: .trailing, spacing: VaultSpacing.xs) {
+                                    Button("Restore Share") {
+                                        onRestoreIgnored(folder)
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.regular)
+                                    Button("Choose Vault…") {
+                                        onChooseTarget(folder)
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.regular)
+                                    .disabled(!obsidianAccessible)
                                 }
-                                .buttonStyle(.bordered)
-                                .controlSize(.regular)
                             }
                         }
                     }
@@ -130,6 +142,16 @@ struct PendingSharesView: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(inFlightFolderIDs.contains(folder.id))
+            }
+
+            // The per-share manual path (#52): pick an existing empty vault or
+            // create a custom-named folder instead of the share-label default.
+            if !inFlightFolderIDs.contains(folder.id) {
+                Button("Choose Vault…") {
+                    onChooseTarget(folder)
+                }
+                .buttonStyle(.bordered)
+                .disabled(!obsidianAccessible)
             }
         }
         .padding(VaultSpacing.m)
