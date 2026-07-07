@@ -27,6 +27,55 @@ enum WidgetSnapshotStore {
         WidgetCenter.shared.reloadTimelines(ofKind: widgetKind)
     }
 
+    /// Read back the last persisted snapshot (app side). The background
+    /// completion write carries values forward from it that a finished run
+    /// cannot re-read honestly (#76 follow-up): the bridge reports an empty
+    /// folder list once stopped, and a failed run has no sync completion of
+    /// its own to stamp.
+    static func read() -> Snapshot? {
+        guard let defaults = UserDefaults(suiteName: appGroupSuiteName),
+              let json = defaults.string(forKey: snapshotDefaultsKey),
+              let data = json.data(using: .utf8) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(Snapshot.self, from: data)
+    }
+
+    /// Issue-severity floor persisted for the background completion write
+    /// (#76). The foreground manager derives it from the same issue list the
+    /// header and widget render (decision 012); `BackgroundSyncService
+    /// .completeSync` — a static context with no manager and usually a
+    /// stopped bridge — reads it so a successful background run cannot
+    /// overwrite an honest attention snapshot with a green idle. Only issue
+    /// kinds a background sync cannot resolve on its own are recorded (see
+    /// `SyncthingManager.durableIssueFloor`).
+    enum IssueFloor: String, Sendable {
+        case none
+        case warning
+        case critical
+
+        /// Decode the persisted floor. Absent reads as `.none` (fresh install
+        /// or first run after update — matches the pre-#76 behavior until the
+        /// foreground writes one); an unknown value maps to `.warning`, never
+        /// silently to `.none` — same doctrine as `SyncStatus.fromWire`.
+        static func decode(_ raw: String?) -> IssueFloor {
+            guard let raw else { return .none }
+            return IssueFloor(rawValue: raw) ?? .warning
+        }
+    }
+
+    static let issueFloorDefaultsKey = "vaultsync.widget.issue-floor"
+
+    static func writeIssueFloor(_ floor: IssueFloor) {
+        UserDefaults(suiteName: appGroupSuiteName)?.set(floor.rawValue, forKey: issueFloorDefaultsKey)
+    }
+
+    static func readIssueFloor() -> IssueFloor {
+        IssueFloor.decode(
+            UserDefaults(suiteName: appGroupSuiteName)?.string(forKey: issueFloorDefaultsKey)
+        )
+    }
+
     static func iso8601String(from date: Date?) -> String {
         guard let date else { return "" }
         let formatter = ISO8601DateFormatter()
@@ -164,6 +213,7 @@ final class SyncthingManager {
     private var lastWidgetSyncDuration: TimeInterval = 0
     private var lastWidgetSyncFilesSynced = 0
     private var lastWrittenWidgetSnapshot: WidgetSnapshotStore.Snapshot?
+    private var lastWrittenIssueFloor: WidgetSnapshotStore.IssueFloor?
 
     private static let bridgeDateParser: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
@@ -1844,9 +1894,13 @@ final class SyncthingManager {
         if isSyncingNow {
             beginWidgetSyncSessionIfNeeded(startDate: Date())
         } else if wasSyncing || activeWidgetSyncStart != nil {
-            completeWidgetSyncSession(
-                status: currentWidgetSnapshotStatus(using: newStatuses),
-                completedAt: Date()
+            // Close the session BEFORE deriving the tier: with the session
+            // still open, the cascade reports .syncing and the completion
+            // write persists a stale snapshot the poll-end write immediately
+            // replaces — two writes and widget reloads per completion (#77).
+            finalizeWidgetSyncSession(completedAt: Date())
+            writeWidgetSnapshotIfNeeded(
+                statusOverride: currentWidgetSnapshotStatus(using: newStatuses)
             )
         }
     }
@@ -1857,16 +1911,22 @@ final class SyncthingManager {
         activeWidgetSyncFilesSynced = 0
     }
 
-    private func completeWidgetSyncSession(
-        status: SyncStatus,
-        completedAt: Date
-    ) {
+    /// Roll the just-ended session into the last-sync metrics and clear it.
+    /// Must run before the completion tier is derived (#77).
+    private func finalizeWidgetSyncSession(completedAt: Date) {
         let startedAt = activeWidgetSyncStart ?? completedAt
         lastWidgetSyncCompletionTime = completedAt
         lastWidgetSyncDuration = max(0, completedAt.timeIntervalSince(startedAt))
         lastWidgetSyncFilesSynced = activeWidgetSyncFilesSynced
         activeWidgetSyncStart = nil
         activeWidgetSyncFilesSynced = 0
+    }
+
+    private func completeWidgetSyncSession(
+        status: SyncStatus,
+        completedAt: Date
+    ) {
+        finalizeWidgetSyncSession(completedAt: completedAt)
         writeWidgetSnapshotIfNeeded(statusOverride: status)
     }
 
@@ -1898,7 +1958,43 @@ final class SyncthingManager {
         )
     }
 
+    /// Max severity among issues that persist across a background sync — the
+    /// floor `BackgroundSyncService.completeSync` folds into its widget write
+    /// (#76). Excluded kinds are the ones a background run itself
+    /// invalidates: `.staleSync` (a successful sync resolves staleness by
+    /// definition) and `.backgroundSync` (the completion write knows the
+    /// fresh outcome, which supersedes the persisted one) — including either
+    /// would stick a false amber on the widget that only a foreground open
+    /// could clear. Unreachable folders count as critical, mirroring the
+    /// header cascade.
+    nonisolated static func durableIssueFloor(
+        issues: [(kind: SyncIssueItem.Kind, severity: SyncIssueSeverity)],
+        hasUnreachableFolders: Bool
+    ) -> WidgetSnapshotStore.IssueFloor {
+        if hasUnreachableFolders { return .critical }
+        var floor = WidgetSnapshotStore.IssueFloor.none
+        for issue in issues where issue.kind != .staleSync && issue.kind != .backgroundSync {
+            switch issue.severity {
+            case .critical: return .critical
+            case .warning: floor = .warning
+            }
+        }
+        return floor
+    }
+
     private func writeWidgetSnapshotIfNeeded(statusOverride: SyncStatus? = nil) {
+        // Keep the persisted issue floor current on every write attempt, even
+        // a deduped one — the floor can change (e.g. stale-sync warning joins
+        // an existing attention state) without the snapshot changing.
+        let issueFloor = Self.durableIssueFloor(
+            issues: unresolvedIssues.map { ($0.kind, $0.severity) },
+            hasUnreachableFolders: !unreachableFolders.isEmpty
+        )
+        if issueFloor != lastWrittenIssueFloor {
+            lastWrittenIssueFloor = issueFloor
+            WidgetSnapshotStore.writeIssueFloor(issueFloor)
+        }
+
         let snapshot = WidgetSnapshotStore.Snapshot(
             lastSyncTime: WidgetSnapshotStore.iso8601String(from: lastWidgetSyncCompletionTime ?? lastSyncTime),
             lastSyncDuration: activeWidgetSyncStart == nil ? lastWidgetSyncDuration : 0,
@@ -2287,6 +2383,36 @@ final class SyncthingManager {
 
     func _testSetFolderStatuses(_ newStatuses: [String: FolderStatusInfo]) {
         folderStatuses = newStatuses
+    }
+
+    func _testSetRunning(_ running: Bool) {
+        isRunning = running
+    }
+
+    func _testUpdateWidgetSyncMetrics(
+        previousStatuses: [String: FolderStatusInfo],
+        newStatuses: [String: FolderStatusInfo]
+    ) {
+        updateWidgetSyncMetrics(previousStatuses: previousStatuses, newStatuses: newStatuses)
+    }
+
+    func _testWriteWidgetSnapshot() {
+        writeWidgetSnapshotIfNeeded()
+    }
+
+    func _testLastWrittenWidgetSnapshot() -> WidgetSnapshotStore.Snapshot? {
+        lastWrittenWidgetSnapshot
+    }
+
+    func _testLastWrittenIssueFloor() -> WidgetSnapshotStore.IssueFloor? {
+        lastWrittenIssueFloor
+    }
+
+    /// Init restores the last background outcome from `UserDefaults.standard`,
+    /// which parallel suites share — tests that assert on the issue cascade
+    /// clear it to stay hermetic.
+    func _testSetLastBackgroundSyncOutcome(_ outcome: BackgroundSyncService.SyncOutcome?) {
+        lastBackgroundSyncOutcome = outcome
     }
     #endif
 }

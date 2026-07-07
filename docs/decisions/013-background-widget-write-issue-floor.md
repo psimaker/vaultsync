@@ -1,0 +1,11 @@
+# 013 — Background widget writes fold in a persisted issue floor
+
+**Context:** `BackgroundSyncService.completeSync` wrote "idle"/"error" straight to the widget snapshot; the issue-derived tier (decision 012, #73) existed only in the foreground manager, so a successful background run overwrote an honest attention snapshot with a green idle (#76). The static background context cannot recompute `unresolvedIssues`: the bridge is already stopped on the background-owned path, and grace-window state (disconnected peers) lives only in the manager.
+
+**Decision:** The foreground persists a severity floor (app-group key `vaultsync.widget.issue-floor`) on every widget write: the max severity of `unresolvedIssues` plus unreachable folders, **excluding** the kinds a background run itself invalidates (`.staleSync` — a successful sync resolves staleness by definition; `.backgroundSync` — the completion write knows the fresher outcome). `completeSync` maps its result to the same severities `backgroundSyncIssueItem` surfaces in-app, folds the floor in, and derives the tier through `SyncHeaderModel.deriveWidgetStatus` — one cascade for every status surface. An unknown persisted floor decodes as `.warning`, never `.none`. The snapshot's metrics follow the same direction: the completion write runs before cleanup stops the bridge, a stopped bridge's empty folder list never zeroes the count (the previous snapshot stands in), and only a successful run stamps the last-sync triple — a failure carries the previous one forward.
+
+**Why:** A stale floor errs amber (cleared on the next foreground open); dropping it errs green — the exact lie-class #73 closed. Excluding the self-resolving kinds keeps the amber from sticking when background syncs are the only thing running for days.
+
+**Rejected alternatives:** Recomputing the issue list in the background at completion time (bridge stopped, manager-only state — cannot work); carrying the previous snapshot's status forward wholesale (sticks a false amber for stale-sync/background-outcome issues that only a foreground open could clear).
+
+**Links:** issue #76; `BackgroundSyncService.backgroundCompletionWidgetStatus`; `SyncthingManager.durableIssueFloor`; `BackgroundWidgetStatusTests`.

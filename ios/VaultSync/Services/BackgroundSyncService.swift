@@ -609,16 +609,17 @@ enum BackgroundSyncService {
         trace("Folder availability check completed: hasFolders=\(hasFolders).")
         traceFolderStatuses(label: "post-folder-availability")
         guard hasFolders else {
-            if ownsLifecycle {
-                cleanupBackgroundManaged(managedURLs)
-            }
-            return completeSync(
+            let completion = completeSync(
                 reason: reason,
                 result: .noFoldersConfigured,
                 detail: L10n.tr("No folders were available for background sync."),
                 startedAt: syncStartedAt,
                 initialEventCursor: syncStartEventCursor
             )
+            if ownsLifecycle {
+                cleanupBackgroundManaged(managedURLs)
+            }
+            return completion
         }
 
         if ownsLifecycle {
@@ -650,16 +651,17 @@ enum BackgroundSyncService {
                 let restart = await forceRestartForSilentPush(managedURLs: managedURLs)
                 guard restart.success else {
                     trace("Forced restart failed: \(restart.errorDetail ?? "unknown error").")
-                    if restart.ownsLifecycle {
-                        cleanupBackgroundManaged(restart.managedURLs)
-                    }
-                    return completeSync(
+                    let completion = completeSync(
                         reason: reason,
                         result: .bridgeStartFailed,
                         detail: restart.errorDetail ?? L10n.tr("Forced silent-push restart failed."),
                         startedAt: syncStartedAt,
                         initialEventCursor: syncStartEventCursor
                     )
+                    if restart.ownsLifecycle {
+                        cleanupBackgroundManaged(restart.managedURLs)
+                    }
+                    return completion
                 }
 
                 managedURLs = restart.managedURLs
@@ -678,16 +680,17 @@ enum BackgroundSyncService {
                 traceVaultSnapshot(label: "post-forced-restart")
                 traceFolderStatuses(label: "post-forced-restart")
                 guard recoveredFolders else {
-                    if ownsLifecycle {
-                        cleanupBackgroundManaged(managedURLs)
-                    }
-                    return completeSync(
+                    let completion = completeSync(
                         reason: reason,
                         result: .noFoldersConfigured,
                         detail: L10n.tr("No folders were available after forced silent-push restart."),
                         startedAt: syncStartedAt,
                         initialEventCursor: syncStartEventCursor
                     )
+                    if ownsLifecycle {
+                        cleanupBackgroundManaged(managedURLs)
+                    }
+                    return completion
                 }
 
                 if ownsLifecycle {
@@ -713,16 +716,17 @@ enum BackgroundSyncService {
             // the conflict scan reads through it. notifyConflictsIfAny is
             // internally gated (foreground/toggle/suppression), so it's cheap.
             await notifyConflictsIfAny()
-            if ownsLifecycle {
-                cleanupBackgroundManaged(managedURLs)
-            }
-            return completeSync(
+            let completion = completeSync(
                 reason: reason,
                 result: .alreadyIdle,
                 detail: nil,
                 startedAt: syncStartedAt,
                 initialEventCursor: syncStartEventCursor
             )
+            if ownsLifecycle {
+                cleanupBackgroundManaged(managedURLs)
+            }
+            return completion
         }
 
         // Budget the wait from sync START, not from "now": the silent-push setup
@@ -766,11 +770,6 @@ enum BackgroundSyncService {
             await notifyConflictsIfAny()
         }
 
-        // Only stop if we started it and foreground hasn't taken over.
-        if ownsLifecycle {
-            cleanupBackgroundManaged(managedURLs)
-        }
-
         let result: SyncResult
         let detail: String?
         if let progressSnapshot, forcedRestartPerformed, progressSnapshot.requiresMeaningfulProgress {
@@ -791,13 +790,18 @@ enum BackgroundSyncService {
             result = .notIdleBeforeDeadline
             detail = L10n.fmt("Sync did not reach idle before %ds deadline.", Int(maxDuration))
         }
-        return completeSync(
+        let completion = completeSync(
             reason: reason,
             result: result,
             detail: detail,
             startedAt: syncStartedAt,
             initialEventCursor: syncStartEventCursor
         )
+        // Only stop if we started it and foreground hasn't taken over.
+        if ownsLifecycle {
+            cleanupBackgroundManaged(managedURLs)
+        }
+        return completion
     }
 
     // MARK: - BGAppRefreshTask Handler
@@ -928,6 +932,90 @@ enum BackgroundSyncService {
         releaseAccess(managedURLs)
     }
 
+    /// Widget tier for a background completion (#76). Pure so the matrix is
+    /// unit-testable. Routes through the SAME header cascade as the
+    /// foreground write (decision 012): the run's own result maps to the
+    /// severities `backgroundSyncIssueItem` will surface in-app, combined
+    /// with the foreground-persisted floor of issues a background run cannot
+    /// resolve — so a successful background sync can never overwrite an
+    /// honest attention snapshot with a green idle. Engine/vault tiers are
+    /// pinned: a stopped bridge is the normal end state of a background-owned
+    /// run, not the "Starting" anomaly the foreground tier expresses.
+    static func backgroundCompletionWidgetStatus(
+        result: SyncResult,
+        issueFloor: WidgetSnapshotStore.IssueFloor
+    ) -> SyncStatus {
+        var severities: [SyncthingManager.SyncIssueSeverity] = []
+        switch issueFloor {
+        case .none: break
+        case .warning: severities.append(.warning)
+        case .critical: severities.append(.critical)
+        }
+        switch result {
+        case .synced, .alreadyIdle:
+            break
+        case .noFoldersConfigured, .notIdleBeforeDeadline:
+            severities.append(.warning)
+        case .noBookmarkAccess, .bridgeStartFailed, .failed, .settledWithFolderError:
+            // settledWithFolderError surfaces in-app via the folderErrors
+            // issue (critical), not via backgroundSyncIssueItem — same tier.
+            severities.append(.critical)
+        }
+        return SyncHeaderModel.deriveWidgetStatus(
+            hasEngineError: false,
+            engineRunning: true,
+            issueSeverities: severities,
+            hasUnreachableFolders: false,
+            isSyncing: false,
+            hasSyncFolders: true
+        )
+    }
+
+    /// Snapshot assembly for a background completion (#76 follow-up). Pure
+    /// so the fallback matrix is unit-testable. Two rules keep the widget's
+    /// numbers honest when the run cannot supply fresh values:
+    /// - The last-sync triple (time, duration, files) is stamped only by a
+    ///   successful run; a failure carries the previous snapshot's triple
+    ///   forward so "last synced" keeps naming the last real sync, never the
+    ///   failure moment.
+    /// - The folder count comes from the bridge only while it is readable;
+    ///   once a background-owned run stopped it, the bridge reports an empty
+    ///   folder list — writing that through rendered "Vaults: 0" on the
+    ///   widget, so the previous snapshot's count stands in instead.
+    static func backgroundCompletionSnapshot(
+        result: SyncResult,
+        issueFloor: WidgetSnapshotStore.IssueFloor,
+        completedAt: Date,
+        startedAt: Date,
+        bridgeRunning: Bool,
+        liveFolderCount: Int,
+        liveSyncedFiles: Int,
+        previous: WidgetSnapshotStore.Snapshot?
+    ) -> WidgetSnapshotStore.Snapshot {
+        let status = backgroundCompletionWidgetStatus(result: result, issueFloor: issueFloor)
+        let folderCount = bridgeRunning ? liveFolderCount : (previous?.folderCount ?? 0)
+        if result.isSuccessful {
+            return WidgetSnapshotStore.Snapshot(
+                lastSyncTime: WidgetSnapshotStore.iso8601String(from: completedAt),
+                lastSyncDuration: max(0, completedAt.timeIntervalSince(startedAt)),
+                status: status.wireValue,
+                filesSynced: liveSyncedFiles,
+                folderCount: folderCount
+            )
+        }
+        return WidgetSnapshotStore.Snapshot(
+            lastSyncTime: previous?.lastSyncTime ?? "",
+            lastSyncDuration: previous?.lastSyncDuration ?? 0,
+            status: status.wireValue,
+            filesSynced: previous?.filesSynced ?? 0,
+            folderCount: folderCount
+        )
+    }
+
+    /// Persist the outcome and the widget snapshot. Call BEFORE
+    /// `cleanupBackgroundManaged` — the snapshot reads the folder count and
+    /// the synced-file events through the bridge, and cleanup may stop it
+    /// (#76 follow-up).
     @discardableResult
     private static func completeSync(
         reason: String,
@@ -944,12 +1032,15 @@ enum BackgroundSyncService {
         )
         persistSyncOutcome(outcome)
         WidgetSnapshotStore.write(
-            snapshot: WidgetSnapshotStore.Snapshot(
-                lastSyncTime: WidgetSnapshotStore.iso8601String(from: outcome.timestamp),
-                lastSyncDuration: max(0, outcome.timestamp.timeIntervalSince(startedAt)),
-                status: result.isSuccessful ? "idle" : "error",
-                filesSynced: syncedFileCount(since: initialEventCursor),
-                folderCount: currentFolderCount()
+            snapshot: backgroundCompletionSnapshot(
+                result: result,
+                issueFloor: WidgetSnapshotStore.readIssueFloor(),
+                completedAt: outcome.timestamp,
+                startedAt: startedAt,
+                bridgeRunning: SyncBridgeService.isRunning(),
+                liveFolderCount: currentFolderCount(),
+                liveSyncedFiles: syncedFileCount(since: initialEventCursor),
+                previous: WidgetSnapshotStore.read()
             )
         )
         if let detail, !detail.isEmpty {
