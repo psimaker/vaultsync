@@ -102,14 +102,18 @@ struct DeviceDetailView: View {
         .onDisappear {
             saveName()
         }
-        .confirmationDialog(
+        // Consent decisions are presented as .alert, never .confirmationDialog:
+        // on iOS 26 the latter renders without a visible Cancel — and this
+        // dialog declared none at all, offering "Remove" as the only choice
+        // (#64, decision 011).
+        .alert(
             "Remove this device?",
-            isPresented: $showRemoveConfirm,
-            titleVisibility: .visible
+            isPresented: $showRemoveConfirm
         ) {
             Button("Remove", role: .destructive) {
                 removeDevice()
             }
+            Button("Cancel", role: .cancel) { }
         } message: {
             Text("The device will be disconnected and removed from all shared folders.")
         }
