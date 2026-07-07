@@ -139,22 +139,45 @@ extension Font {
 //
 // Six pinned meanings, each ALWAYS paired with a symbol + text label by the
 // `SyncStatus` registry so status is never conveyed by color alone.
+//
+// These tokens color body/caption TEXT (not just glyphs), so the light values
+// must clear WCAG 4.5:1 on white; each token also carries lightHC/darkHC
+// variants so the system Increase Contrast setting actually increases
+// contrast (#68). statusSyncing aliases vaultAccent (which has its own HC
+// pair); statusInactive is the system secondary color, which adapts on its own.
 
 extension Color {
     /// Idle / all-synced / connected.
-    static let statusSuccess = vaultColor(light: (46, 158, 107), dark: (52, 199, 127))
+    static let statusSuccess = vaultColor(
+        light: (46, 158, 107), dark: (52, 199, 127),
+        lightHC: (23, 117, 76), darkHC: (94, 222, 158)
+    )
     /// Active transfer in progress (alias of the brand accent).
     static let statusSyncing = Color.vaultAccent
     /// Transient "starting/preparing" — a calm blue so it is never mistaken for
     /// an error (today it is wrongly conflated with attention/orange).
-    static let statusStarting = vaultColor(light: (78, 124, 168), dark: (127, 168, 208))
+    static let statusStarting = vaultColor(
+        light: (78, 124, 168), dark: (127, 168, 208),
+        lightHC: (50, 92, 133), darkHC: (162, 197, 235)
+    )
     /// Warning / action-needed (conflicts, pending shares, setup gaps).
-    static let statusAttention = vaultColor(light: (224, 146, 47), dark: (242, 169, 59))
+    /// Light amber is #A06400 (4.86:1 on white) — the previous (224, 146, 47)
+    /// measured 2.52:1 and was used for failure-message text (#68).
+    static let statusAttention = vaultColor(
+        light: (160, 100, 0), dark: (242, 169, 59),
+        lightHC: (122, 76, 0), darkHC: (255, 193, 101)
+    )
     /// Error / unreachable — reserved for genuine failures.
-    static let statusError = vaultColor(light: (210, 69, 59), dark: (232, 92, 82))
+    static let statusError = vaultColor(
+        light: (210, 69, 59), dark: (232, 92, 82),
+        lightHC: (166, 42, 34), darkHC: (255, 128, 118)
+    )
     /// Informational / shared-with — replaces the off-brand system blue used for
     /// "Shared With" checkmarks.
-    static let statusInfo = vaultColor(light: (78, 111, 181), dark: (110, 143, 216))
+    static let statusInfo = vaultColor(
+        light: (78, 111, 181), dark: (110, 143, 216),
+        lightHC: (52, 82, 148), darkHC: (150, 178, 240)
+    )
     /// Paused / offline / inactive.
     static let statusInactive = Color.secondary
 }

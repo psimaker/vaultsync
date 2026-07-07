@@ -1,7 +1,9 @@
 "About" = "Über";
 "Accept First Pending Share" = "Erste Freigabe annehmen";
+"Accept Pending Share" = "Ausstehende Freigabe annehmen";
 "Accept Share" = "Freigabe annehmen";
 "Accept a share to activate syncing for that vault." = "Nimm eine Freigabe an, um die Synchronisation für diesen Vault zu aktivieren.";
+"Action Needed" = "Aktion erforderlich";
 "Actions" = "Aktionen";
 "Active" = "Aktiv";
 "Add" = "Hinzufügen";
@@ -76,6 +78,7 @@
 "Discards the version from the other device." = "Verwirft die Version vom anderen Gerät.";
 "Done" = "Fertig";
 "Empty line" = "Leere Zeile";
+"Enable Notifications" = "Mitteilungen aktivieren";
 "Enable notifications for VaultSync in iOS Settings → Notifications → VaultSync, then restart the app." = "Aktiviere Mitteilungen für VaultSync unter iOS Einstellungen → Mitteilungen → VaultSync und starte die App dann neu.";
 "Enter a folder name." = "Gib einen Ordnernamen ein.";
 "Error" = "Fehler";
@@ -86,6 +89,7 @@
 "File Read Failed" = "Datei konnte nicht gelesen werden";
 "File synced in %@" = "Datei in %@ synchronisiert";
 "Files are being synchronized with peers." = "Dateien werden mit Peers synchronisiert.";
+"Finish Setup" = "Einrichtung abschließen";
 "Folder name" = "Ordnername";
 "Folder Not Configured" = "Ordner nicht konfiguriert";
 "Folder Path Missing" = "Ordnerpfad fehlt";
@@ -96,11 +100,13 @@
 "Folder is currently in an error state." = "Der Ordner befindet sich derzeit in einem Fehlerzustand.";
 "Folder reached idle state after syncing." = "Der Ordner hat nach der Synchronisation den Leerlaufzustand erreicht.";
 "Folder reported an error." = "Der Ordner hat einen Fehler gemeldet.";
+"Get notified about conflicts" = "Bei Konflikten benachrichtigt werden";
 "Global Files" = "Globale Dateien";
 "Health Endpoint" = "Health-Endpunkt";
 "Healthy" = "Funktionsfähig";
 "How to fix: %@" = "So behebst du es: %@";
-"Idle" = "Leerlauf";
+"How to share from your computer" = "So gibst du vom Computer frei";
+"If a note changes on two devices at the same time, VaultSync can alert you so you can choose which version to keep." = "Wenn sich eine Notiz auf zwei Geräten gleichzeitig ändert, kann VaultSync dich benachrichtigen, damit du entscheidest, welche Version bleibt.";
 "Ignore for Now" = "Vorerst ignorieren";
 "Ignored shares (%d)" = "Ignorierte Freigaben (%d)";
 "In progress" = "Läuft";
@@ -147,6 +153,7 @@
 "No home server devices available for relay provisioning." = "Keine Home-Server-Geräte für Relay-Provisioning verfügbar.";
 "No immediate relay problems detected." = "Keine unmittelbaren Relay-Probleme erkannt.";
 "No relay errors recorded." = "Keine Relay-Fehler aufgezeichnet.";
+"No Vaults Yet" = "Noch keine Vaults";
 "No wake-up has been received yet. Check that the vaultsync-notify helper is running on your server and can reach relay.vaultsync.eu." = "Es ist noch kein Weck-Signal angekommen. Prüfe, ob der Helfer vaultsync-notify auf deinem Server läuft und relay.vaultsync.eu erreichen kann.";
 "No successful sync has been recorded for your vaults yet." = "Für deine Vaults wurde noch keine erfolgreiche Synchronisation aufgezeichnet.";
 "No vaults found" = "Keine Vaults gefunden";
@@ -163,6 +170,7 @@
 "Obsidian directory not accessible." = "Auf das Obsidian-Verzeichnis kann nicht zugegriffen werden.";
 "Obsidian folder not connected" = "Obsidian-Ordner nicht verbunden";
 "Offline" = "Offline";
+"onboarding.cta.finishLater" = "Einrichtung später abschließen";
 "Only vaults without any notes yet can be linked to a share." = "Nur Vaults, die noch keine Notizen enthalten, können mit einer Freigabe verknüpft werden.";
 "Open Settings" = "Einstellungen öffnen";
 "Open the Relay tab" = "Relay-Tab öffnen";
@@ -244,14 +252,18 @@
 "Present" = "Vorhanden";
 "Purchase Failed" = "Kauf fehlgeschlagen";
 "Rescan All Vaults" = "Alle Vaults erneut scannen";
+"Review and Accept" = "Prüfen und annehmen";
+"Selects this plan." = "Wählt diesen Tarif aus.";
+"Something Went Wrong" = "Etwas ist schiefgelaufen";
 "Sync Conflicts" = "Sync-Konflikte";
+"Tap \"Review and Accept\" to decide, or \"Choose Vault…\" to pick a different location." = "Tippe auf „Prüfen und annehmen“, um zu entscheiden, oder wähle über „Vault wählen…“ einen anderen Ort.";
 "The folder \"%@\" already contains files. A share can only be linked to an empty vault — choose an empty vault, or enter a new folder name." = "Der Ordner „%@“ enthält bereits Dateien. Eine Freigabe kann nur mit einem leeren Vault verknüpft werden – wähle einen leeren Vault oder gib einen neuen Ordnernamen ein.";
 "The target folder \"%@\" is already synced by another vault — the same folder, or one above or inside it. Choose a different folder, or remove the vault that syncs there first." = "Der Zielordner „%@“ wird bereits von einem anderen Vault synchronisiert – derselbe Ordner oder einer darüber oder darin. Wähle einen anderen Ordner oder entferne zuerst den Vault, der dorthin synchronisiert.";
 "This share is set to sync into \"%@\", but that location now overlaps a folder another vault already syncs. Tap \"Choose Vault…\" on the share to pick a new location, or remove the vault that syncs there, then accept the share again." = "Diese Freigabe soll nach „%@“ synchronisieren, aber dieser Ort überlappt jetzt einen Ordner, den ein anderer Vault bereits synchronisiert. Tippe bei der Freigabe auf „Vault wählen…“, um einen neuen Ort zu wählen, oder entferne den Vault, der dorthin synchronisiert, und nimm die Freigabe erneut an.";
+"Up to Date" = "Aktuell";
 "View Cloud Relay" = "Cloud Relay ansehen";
 "XXXXXXX-XXXXXXX-..." = "XXXXXXX-XXXXXXX-...";
 "Retry APNs Registration" = "APNs-Registrierung erneut versuchen";
-"Retry Accept" = "Annahme erneut versuchen";
 "Retry Provisioning" = "Provisioning erneut versuchen";
 "Retry provisioning from Settings. If this persists, verify subscription status." = "Versuche das Provisioning über die Einstellungen erneut. Wenn das Problem bleibt, prüfe den Abostatus.";
 "Retry the action. If it keeps failing, restart the app and check Settings diagnostics." = "Versuche die Aktion erneut. Wenn sie weiter fehlschlägt, starte die App neu und prüfe die Diagnose in den Einstellungen.";
@@ -653,7 +665,6 @@
 "The folder \"%@\" already contains files. If you accept, those files and the contents of the shared vault \"%@\" will be combined and synced to the other devices sharing this vault. Accept only if this folder holds this vault's own earlier notes — for example after removing the vault and accepting its share again. If it is a different vault or unrelated files, cancel and use \"Choose Vault…\" to pick a different location." = "Der Ordner „%@“ enthält bereits Dateien. Wenn du annimmst, werden diese Dateien und der Inhalt des geteilten Vaults „%@“ zusammengeführt und mit den anderen Geräten synchronisiert, die diesen Vault teilen. Nimm nur an, wenn dieser Ordner die früheren Notizen genau dieses Vaults enthält – zum Beispiel nachdem du den Vault entfernt und seine Freigabe erneut angenommen hast. Ist es ein anderer Vault oder sind es fremde Dateien, brich ab und wähle über „Vault wählen…“ einen anderen Ort.";
 "Folder Already Contains Files" = "Ordner enthält bereits Dateien";
 "The folder \"%@\" already contains files. Accepting this share would combine its contents with the shared vault and sync the result to the other devices." = "Der Ordner „%@“ enthält bereits Dateien. Die Freigabe anzunehmen würde seinen Inhalt mit dem geteilten Vault zusammenführen und das Ergebnis mit den anderen Geräten synchronisieren.";
-"Tap \"Retry Accept\" to review and confirm, or \"Choose Vault…\" to pick a different location." = "Tippe auf „Annahme erneut versuchen“, um zu prüfen und zu bestätigen, oder wähle über „Vault wählen…“ einen anderen Ort.";
 "Vault Folder Was Moved or Deleted" = "Vault-Ordner wurde verschoben oder gelöscht";
 "VaultSync can no longer verify that this folder still holds this vault's data%@ — the folder was likely moved, renamed, replaced, or deleted outside VaultSync. Syncing has stopped to protect your notes." = "VaultSync kann nicht mehr überprüfen, ob dieser Ordner noch die Daten dieses Vaults enthält%@ — der Ordner wurde vermutlich außerhalb von VaultSync verschoben, umbenannt, ersetzt oder gelöscht. Die Synchronisierung wurde gestoppt, um deine Notizen zu schützen.";
 "If you moved or renamed the folder, move it back to its original place. If it is gone, remove this vault on this iPhone and accept it again under Pending Shares. VaultSync never moves, recreates, or deletes folders on its own." = "Hast du den Ordner verschoben oder umbenannt, verschiebe ihn an seinen ursprünglichen Ort zurück. Ist er nicht mehr vorhanden, entferne diesen Vault auf diesem iPhone und nimm ihn unter „Ausstehende Freigaben“ erneut an. VaultSync verschiebt, erstellt oder löscht Ordner nie von selbst.";

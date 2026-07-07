@@ -7,6 +7,9 @@ enum DocURL {
     static let termsOfUse = URL(string: "https://github.com/psimaker/vaultsync/blob/main/TERMS.md")!
     static let syncthingIgnoring = URL(string: "https://docs.syncthing.net/users/ignoring.html")!
     static let serverSetupGuide = URL(string: "https://github.com/psimaker/vaultsync/blob/main/notify/README.md")!
+    /// Desktop-side steps for offering a folder to this iPhone — the one
+    /// onboarding step that happens on another machine (#69).
+    static let desktopShareHelp = URL(string: "https://github.com/psimaker/vaultsync/blob/main/docs/troubleshooting.md#no-pending-shares-appear")!
 }
 
 /// A link-styled button that opens a URL externally without inheriting the

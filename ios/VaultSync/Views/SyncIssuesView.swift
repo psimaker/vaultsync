@@ -102,7 +102,11 @@ struct SyncIssuesView: View {
 
         case .pendingShares:
             if !syncthingManager.actionablePendingFolders.isEmpty {
-                Button("Accept First Pending Share") {
+                // "First" only when there IS a queue — for a single share the
+                // qualifier read as if more were hiding somewhere (#71).
+                Button(syncthingManager.actionablePendingFolders.count == 1
+                    ? L10n.tr("Accept Pending Share")
+                    : L10n.tr("Accept First Pending Share")) {
                     onAcceptFirstPendingShare()
                 }
                 .buttonStyle(.bordered)

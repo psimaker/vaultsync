@@ -1,7 +1,9 @@
 "About" = "About";
 "Accept First Pending Share" = "Accept First Pending Share";
+"Accept Pending Share" = "Accept Pending Share";
 "Accept Share" = "Accept Share";
 "Accept a share to activate syncing for that vault." = "Accept a share to activate syncing for that vault.";
+"Action Needed" = "Action Needed";
 "Actions" = "Actions";
 "Active" = "Active";
 "Add" = "Add";
@@ -76,6 +78,7 @@
 "Discards the version from the other device." = "Discards the version from the other device.";
 "Done" = "Done";
 "Empty line" = "Empty line";
+"Enable Notifications" = "Enable Notifications";
 "Enable notifications for VaultSync in iOS Settings → Notifications → VaultSync, then restart the app." = "Enable notifications for VaultSync in iOS Settings → Notifications → VaultSync, then restart the app.";
 "Enter a folder name." = "Enter a folder name.";
 "Error" = "Error";
@@ -86,6 +89,7 @@
 "File Read Failed" = "File Read Failed";
 "File synced in %@" = "File synced in %@";
 "Files are being synchronized with peers." = "Files are being synchronized with peers.";
+"Finish Setup" = "Finish Setup";
 "Folder name" = "Folder name";
 "Folder Not Configured" = "Folder Not Configured";
 "Folder Path Missing" = "Folder Path Missing";
@@ -96,11 +100,13 @@
 "Folder is currently in an error state." = "Folder is currently in an error state.";
 "Folder reached idle state after syncing." = "Folder reached idle state after syncing.";
 "Folder reported an error." = "Folder reported an error.";
+"Get notified about conflicts" = "Get notified about conflicts";
 "Global Files" = "Global Files";
 "Health Endpoint" = "Health Endpoint";
 "Healthy" = "Healthy";
 "How to fix: %@" = "How to fix: %@";
-"Idle" = "Idle";
+"How to share from your computer" = "How to share from your computer";
+"If a note changes on two devices at the same time, VaultSync can alert you so you can choose which version to keep." = "If a note changes on two devices at the same time, VaultSync can alert you so you can choose which version to keep.";
 "Ignore for Now" = "Ignore for Now";
 "Ignored shares (%d)" = "Ignored shares (%d)";
 "In progress" = "In progress";
@@ -147,6 +153,7 @@
 "No home server devices available for relay provisioning." = "No home server devices available for relay provisioning.";
 "No immediate relay problems detected." = "No immediate relay problems detected.";
 "No relay errors recorded." = "No relay errors recorded.";
+"No Vaults Yet" = "No Vaults Yet";
 "No wake-up has been received yet. Check that the vaultsync-notify helper is running on your server and can reach relay.vaultsync.eu." = "No wake-up has been received yet. Check that the vaultsync-notify helper is running on your server and can reach relay.vaultsync.eu.";
 "No successful sync has been recorded for your vaults yet." = "No successful sync has been recorded for your vaults yet.";
 "No vaults found" = "No vaults found";
@@ -163,6 +170,7 @@
 "Obsidian directory not accessible." = "Obsidian directory not accessible.";
 "Obsidian folder not connected" = "Obsidian folder not connected";
 "Offline" = "Offline";
+"onboarding.cta.finishLater" = "Finish Setup Later";
 "Only vaults without any notes yet can be linked to a share." = "Only vaults without any notes yet can be linked to a share.";
 "Open Settings" = "Open Settings";
 "Open the Relay tab" = "Open the Relay tab";
@@ -244,14 +252,18 @@
 "Present" = "Present";
 "Purchase Failed" = "Purchase Failed";
 "Rescan All Vaults" = "Rescan All Vaults";
+"Review and Accept" = "Review and Accept";
+"Selects this plan." = "Selects this plan.";
+"Something Went Wrong" = "Something Went Wrong";
 "Sync Conflicts" = "Sync Conflicts";
+"Tap \"Review and Accept\" to decide, or \"Choose Vault…\" to pick a different location." = "Tap \"Review and Accept\" to decide, or \"Choose Vault…\" to pick a different location.";
 "The folder \"%@\" already contains files. A share can only be linked to an empty vault — choose an empty vault, or enter a new folder name." = "The folder \"%@\" already contains files. A share can only be linked to an empty vault — choose an empty vault, or enter a new folder name.";
 "The target folder \"%@\" is already synced by another vault — the same folder, or one above or inside it. Choose a different folder, or remove the vault that syncs there first." = "The target folder \"%@\" is already synced by another vault — the same folder, or one above or inside it. Choose a different folder, or remove the vault that syncs there first.";
 "This share is set to sync into \"%@\", but that location now overlaps a folder another vault already syncs. Tap \"Choose Vault…\" on the share to pick a new location, or remove the vault that syncs there, then accept the share again." = "This share is set to sync into \"%@\", but that location now overlaps a folder another vault already syncs. Tap \"Choose Vault…\" on the share to pick a new location, or remove the vault that syncs there, then accept the share again.";
+"Up to Date" = "Up to Date";
 "View Cloud Relay" = "View Cloud Relay";
 "XXXXXXX-XXXXXXX-..." = "XXXXXXX-XXXXXXX-...";
 "Retry APNs Registration" = "Retry APNs Registration";
-"Retry Accept" = "Retry Accept";
 "Retry Provisioning" = "Retry Provisioning";
 "Retry provisioning from Settings. If this persists, verify subscription status." = "Retry provisioning from Settings. If this persists, verify subscription status.";
 "Retry the action. If it keeps failing, restart the app and check Settings diagnostics." = "Retry the action. If it keeps failing, restart the app and check Settings diagnostics.";
@@ -653,7 +665,6 @@
 "The folder \"%@\" already contains files. If you accept, those files and the contents of the shared vault \"%@\" will be combined and synced to the other devices sharing this vault. Accept only if this folder holds this vault's own earlier notes — for example after removing the vault and accepting its share again. If it is a different vault or unrelated files, cancel and use \"Choose Vault…\" to pick a different location." = "The folder \"%@\" already contains files. If you accept, those files and the contents of the shared vault \"%@\" will be combined and synced to the other devices sharing this vault. Accept only if this folder holds this vault's own earlier notes — for example after removing the vault and accepting its share again. If it is a different vault or unrelated files, cancel and use \"Choose Vault…\" to pick a different location.";
 "Folder Already Contains Files" = "Folder Already Contains Files";
 "The folder \"%@\" already contains files. Accepting this share would combine its contents with the shared vault and sync the result to the other devices." = "The folder \"%@\" already contains files. Accepting this share would combine its contents with the shared vault and sync the result to the other devices.";
-"Tap \"Retry Accept\" to review and confirm, or \"Choose Vault…\" to pick a different location." = "Tap \"Retry Accept\" to review and confirm, or \"Choose Vault…\" to pick a different location.";
 "Vault Folder Was Moved or Deleted" = "Vault Folder Was Moved or Deleted";
 "VaultSync can no longer verify that this folder still holds this vault's data%@ — the folder was likely moved, renamed, replaced, or deleted outside VaultSync. Syncing has stopped to protect your notes." = "VaultSync can no longer verify that this folder still holds this vault's data%@ — the folder was likely moved, renamed, replaced, or deleted outside VaultSync. Syncing has stopped to protect your notes.";
 "If you moved or renamed the folder, move it back to its original place. If it is gone, remove this vault on this iPhone and accept it again under Pending Shares. VaultSync never moves, recreates, or deletes folders on its own." = "If you moved or renamed the folder, move it back to its original place. If it is gone, remove this vault on this iPhone and accept it again under Pending Shares. VaultSync never moves, recreates, or deletes folders on its own.";

@@ -140,9 +140,11 @@ struct VaultSyncApp: App {
                     // reconcile is a no-op when paths are already correct.
                     syncthingManager.reconcileFolderPaths(obsidianRoot: vaultManager.obsidianBasePath)
                 }
-                Task {
-                    await BackgroundSyncService.requestNotificationPermission()
-                }
+                // Notification permission is deliberately NOT requested here:
+                // firing the bare system prompt over the still-empty main
+                // screen was un-primed and easy to reflex-deny (#69). The
+                // dashboard's explainer card asks after the first completed
+                // sync instead (ContentView.maybePresentNotificationPrimer).
             }
         }
     }

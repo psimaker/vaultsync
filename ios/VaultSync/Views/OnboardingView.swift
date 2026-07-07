@@ -27,6 +27,7 @@ struct OnboardingView: View {
     private var obsidianConnected: Bool { vaultManager.isAccessible }
     private var deviceAdded: Bool { !syncthingManager.devices.isEmpty }
     private var vaultSyncing: Bool { !syncthingManager.folders.isEmpty }
+    private var allStepsComplete: Bool { obsidianConnected && deviceAdded && vaultSyncing }
 
     var body: some View {
         NavigationStack {
@@ -68,7 +69,7 @@ struct OnboardingView: View {
                     showAlert = true
                 }
             }
-            .alert("Error", isPresented: $showAlert) {
+            .alert(L10n.tr("Something Went Wrong"), isPresented: $showAlert) {
                 Button("OK") { }
             } message: {
                 Text(alertMessage ?? "")
@@ -181,7 +182,11 @@ struct OnboardingView: View {
                 title: L10n.tr("Sync your first vault"),
                 description: L10n.tr("Share your Obsidian vault from Syncthing on your computer. VaultSync accepts it automatically — this turns green the moment it arrives."),
                 actionTitle: nil,
-                action: nil
+                action: nil,
+                // The only step that happens on ANOTHER machine — without a
+                // pointer to the desktop-side steps it is a dead end (#69).
+                linkTitleKey: "How to share from your computer",
+                linkURL: DocURL.desktopShareHelp
             )
 
             HStack(alignment: .top, spacing: VaultSpacing.m) {
@@ -208,7 +213,9 @@ struct OnboardingView: View {
         title: String,
         description: String,
         actionTitle: String?,
-        action: (() -> Void)?
+        action: (() -> Void)?,
+        linkTitleKey: LocalizedStringKey? = nil,
+        linkURL: URL? = nil
     ) -> some View {
         HStack(alignment: .top, spacing: VaultSpacing.m) {
             ZStack {
@@ -230,6 +237,9 @@ struct OnboardingView: View {
                     Text(title)
                         .font(.body.weight(.semibold))
                         .foregroundStyle(primaryHeadingColor)
+                        // Without this the title truncates ("Deinen Obsidian-O…")
+                        // instead of wrapping at accessibility Dynamic Type (#67).
+                        .fixedSize(horizontal: false, vertical: true)
                     Text(description)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -237,6 +247,11 @@ struct OnboardingView: View {
                 }
                 .accessibilityElement(children: .combine)
                 .accessibilityValue(isComplete ? L10n.tr("Done") : "")
+
+                if !isComplete, let linkTitleKey, let linkURL {
+                    ExternalLinkButton(titleKey: linkTitleKey, url: linkURL)
+                        .font(.subheadline)
+                }
 
                 if !isComplete, let actionTitle, let action {
                     Button(actionTitle, action: action)
@@ -270,7 +285,14 @@ struct OnboardingView: View {
             Button {
                 handlePrimaryAction()
             } label: {
-                Text(page == 0 ? L10n.tr("onboarding.cta.continue") : L10n.tr("onboarding.cta.openVaultSync"))
+                // The exit stays honest (#69): "Open VaultSync" only once every
+                // step is actually done — otherwise the button says what really
+                // happens (setup continues later from the home screen).
+                Text(page == 0
+                    ? L10n.tr("onboarding.cta.continue")
+                    : allStepsComplete
+                        ? L10n.tr("onboarding.cta.openVaultSync")
+                        : L10n.tr("onboarding.cta.finishLater"))
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
@@ -288,6 +310,11 @@ struct OnboardingView: View {
                     .frame(width: 8, height: 8)
             }
         }
+        // Padding BEFORE the a11y element so the announced frame is bigger
+        // than the bare 8pt dots (#71) — the dots are not interactive, this
+        // only widens the VoiceOver target.
+        .padding(.vertical, VaultSpacing.s)
+        .padding(.horizontal, VaultSpacing.m)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(L10n.fmt("onboarding.accessibility.page", page + 1))
     }

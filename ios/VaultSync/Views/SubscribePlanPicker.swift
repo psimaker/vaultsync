@@ -8,6 +8,11 @@ import SwiftUI
 /// Prominent, compliant price / term / auto-renew disclosure with Terms & Privacy
 /// links follows (App Store guideline 3.1.2(a)).
 ///
+/// A plan row only SELECTS; the purchase starts exclusively from the explicit
+/// Subscribe button below the rows (#70) — the rows used to start the StoreKit
+/// purchase directly while also showing a navigation chevron and a
+/// "recommended" outline, three mismatched signals on the payment surface.
+///
 /// Relay can only be provisioned for a paired homeserver, so with no devices the
 /// picker shows a guide instead of letting the user pay for nothing to wake.
 struct SubscribePlanPicker: View {
@@ -17,6 +22,20 @@ struct SubscribePlanPicker: View {
     @State private var alertMessage: String?
     @State private var showAlert = false
     @State private var isRestoring = false
+    /// The user's explicit row choice; nil until first tap. `selectedProduct`
+    /// falls back to the recommended yearly plan so the Subscribe button is
+    /// never armed against an undefined plan.
+    @State private var selectedPlanID: Product.ID?
+
+    private var selectedProduct: Product? {
+        let available = [subscriptionManager.monthlyProduct, subscriptionManager.yearlyProduct]
+            .compactMap { $0 }
+        if let selectedPlanID,
+           let chosen = available.first(where: { $0.id == selectedPlanID }) {
+            return chosen
+        }
+        return subscriptionManager.yearlyProduct ?? subscriptionManager.monthlyProduct
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: VaultSpacing.m) {
@@ -38,6 +57,7 @@ struct SubscribePlanPicker: View {
                 if let yearly = subscriptionManager.yearlyProduct {
                     planCard(product: yearly, title: L10n.tr("Yearly"), recommended: true)
                 }
+                subscribeButton
             }
 
             Button {
@@ -65,7 +85,7 @@ struct SubscribePlanPicker: View {
             complianceFooter
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .alert("Error", isPresented: $showAlert) {
+        .alert(L10n.tr("Purchase Failed"), isPresented: $showAlert) {
             Button("OK") { }
         } message: {
             Text(alertMessage ?? "")
@@ -90,9 +110,13 @@ struct SubscribePlanPicker: View {
         .accessibilityElement(children: .combine)
     }
 
+    /// A selection row: tapping picks the plan, the outline + check mark show
+    /// the CURRENT choice (never "recommended" — that is the savings badge's
+    /// job), and nothing here starts a purchase (#70).
     private func planCard(product: Product, title: String, recommended: Bool) -> some View {
-        Button {
-            purchase(product)
+        let isSelected = selectedProduct?.id == product.id
+        return Button {
+            selectedPlanID = product.id
         } label: {
             HStack(spacing: VaultSpacing.m) {
                 VStack(alignment: .leading, spacing: VaultSpacing.xs) {
@@ -108,15 +132,10 @@ struct SubscribePlanPicker: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: VaultSpacing.s)
-                if subscriptionManager.purchaseInProgress {
-                    ProgressView()
-                        .accessibilityHidden(true)
-                } else {
-                    Image(systemName: "chevron.right")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .accessibilityHidden(true)
-                }
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.title3)
+                    .foregroundStyle(isSelected ? Color.vaultAccent : Color.statusInactive)
+                    .accessibilityHidden(true)
             }
             .padding(VaultSpacing.l)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -126,13 +145,41 @@ struct SubscribePlanPicker: View {
             )
             .overlay {
                 RoundedRectangle(cornerRadius: VaultRadius.card, style: .continuous)
-                    .stroke(recommended ? Color.vaultAccent : Color.clear, lineWidth: 2)
+                    .stroke(isSelected ? Color.vaultAccent : Color.clear, lineWidth: 2)
             }
         }
         .buttonStyle(.plain)
         .disabled(subscriptionManager.purchaseInProgress)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(planAccessibilityLabel(title: title, product: product, recommended: recommended))
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+        .accessibilityHint(L10n.tr("Selects this plan."))
+    }
+
+    /// The single, explicit purchase entry point (#70). StoreKit's own
+    /// confirmation sheet still follows, so this is the first of two
+    /// deliberate steps — never a surprise charge.
+    private var subscribeButton: some View {
+        Button {
+            guard let product = selectedProduct else { return }
+            purchase(product)
+        } label: {
+            HStack(spacing: VaultSpacing.s) {
+                Spacer()
+                if subscriptionManager.purchaseInProgress {
+                    ProgressView()
+                        .tint(.white)
+                        .accessibilityHidden(true)
+                } else {
+                    Text(L10n.tr("Subscribe"))
+                        .font(.headline)
+                }
+                Spacer()
+            }
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
+        .disabled(subscriptionManager.purchaseInProgress || selectedProduct == nil)
         .accessibilityHint(L10n.tr("Starts a subscription purchase."))
     }
 

@@ -1,4 +1,5 @@
 import SwiftUI
+import UserNotifications
 
 struct ContentView: View {
     var syncthingManager: SyncthingManager
@@ -21,6 +22,7 @@ struct ContentView: View {
     @State private var vaultPendingRemoval: VaultRemovalTarget?
     @State private var pendingMergeConfirmation: MergeConfirmationRequest?
     @State private var showRelayUpsellCard = false
+    @State private var showNotificationPrimerCard = false
     #if DEBUG
     @State private var uiAuditDetailFixture: UIAuditDetailFixture?
     #endif
@@ -44,6 +46,7 @@ struct ContentView: View {
     }
 
     private static let relayUpsellShownKey = "relay-upsell-shown"
+    private static let notificationPrimerShownKey = "notification-primer-shown"
 
     private let accent = Color.vaultAccent
 
@@ -88,7 +91,7 @@ struct ContentView: View {
         // Sheets/alerts live at the shell level so cross-tab triggers (e.g. an
         // "Add Device" remediation tapped from a Sync-tab issue) present
         // regardless of which tab is active.
-        .alert("Error", isPresented: $showAlert) {
+        .alert(L10n.tr("Something Went Wrong"), isPresented: $showAlert) {
             Button("OK") { }
         } message: {
             Text(alertMessage ?? "")
@@ -212,6 +215,7 @@ struct ContentView: View {
         }
         .onChange(of: syncthingManager.lastSyncTime, initial: true) { _, _ in
             maybePresentRelayUpsell()
+            maybePresentNotificationPrimer()
         }
         .onChange(of: subscriptionManager.isRelaySubscribed) { _, _ in
             maybePresentRelayUpsell()
@@ -254,9 +258,10 @@ struct ContentView: View {
                 await syncthingManager.performForegroundSync()
             }
             .safeAreaInset(edge: .top, spacing: 0) {
+                let header = headerState
                 SyncStatusHeader(
-                    status: overallStatus,
-                    title: syncStatusText,
+                    status: header.status,
+                    title: L10n.tr(header.titleKey),
                     subtitle: headerSubtitle,
                     busy: shouldShowReconnectingUI
                 )
@@ -334,6 +339,43 @@ struct ContentView: View {
         UserDefaults.standard.set(true, forKey: Self.relayUpsellShownKey)
         withAnimation(.snappy) { showRelayUpsellCard = false }
         if openRelay { selectedTab = .relay }
+        // One ask at a time: the notification primer waits while the upsell
+        // is visible — re-check now that it is gone (#69).
+        maybePresentNotificationPrimer()
+    }
+
+    // MARK: - Notification Primer (#69)
+
+    /// Present the primed notification ask: after the first completed sync
+    /// (the first moment a conflict alert can matter), while permission is
+    /// still undecided at the system level, and never on top of another
+    /// dashboard ask. Acting on the card (either way) retires it for good;
+    /// notifications remain reachable via iOS Settings.
+    private func maybePresentNotificationPrimer() {
+        guard NotificationPrimerGate.shouldCheck(
+            alreadyHandled: UserDefaults.standard.bool(forKey: Self.notificationPrimerShownKey),
+            hasSyncFolders: !syncthingManager.folders.isEmpty,
+            hasCompletedFirstSync: syncthingManager.lastSyncTime != nil,
+            otherCardVisible: showRelayUpsellCard
+        ) else { return }
+        Task {
+            let settings = await UNUserNotificationCenter.current().notificationSettings()
+            if NotificationPrimerGate.shouldPresent(authorizationStatus: settings.authorizationStatus) {
+                showNotificationPrimerCard = true
+            } else {
+                // Already decided at the system level (e.g. the pre-1.8.0
+                // onboarding prompt) — never primer again.
+                UserDefaults.standard.set(true, forKey: Self.notificationPrimerShownKey)
+            }
+        }
+    }
+
+    private func dismissNotificationPrimer(enable: Bool) {
+        UserDefaults.standard.set(true, forKey: Self.notificationPrimerShownKey)
+        withAnimation(.snappy) { showNotificationPrimerCard = false }
+        if enable {
+            Task { await BackgroundSyncService.requestNotificationPermission() }
+        }
     }
 
     // MARK: - Checklist Actions
@@ -557,7 +599,7 @@ struct ContentView: View {
                     "The folder \"%@\" already contains files. Accepting this share would combine its contents with the shared vault and sync the result to the other devices.",
                     targetName
                 ),
-                remediation: L10n.tr("Tap \"Retry Accept\" to review and confirm, or \"Choose Vault…\" to pick a different location."),
+                remediation: L10n.tr("Tap \"Review and Accept\" to decide, or \"Choose Vault…\" to pick a different location."),
                 technicalDetails: nil
             )
             if source == .manual {
@@ -599,6 +641,9 @@ struct ContentView: View {
         Section {
             if showRelayUpsellCard {
                 relayUpsellCard
+            }
+            if showNotificationPrimerCard {
+                notificationPrimerCard
             }
             if let staleWarning = syncthingManager.staleSyncWarning {
                 Label(staleWarning, systemImage: "clock.badge.exclamationmark")
@@ -800,6 +845,41 @@ struct ContentView: View {
         .accessibilityElement(children: .contain)
     }
 
+    /// The primed notification ask (#69): explains WHY notifications help
+    /// (conflict alerts) before any system prompt appears — replacing the
+    /// bare permission dialog that used to fire over the empty main screen
+    /// the moment onboarding completed. Only the explicit button triggers
+    /// the system prompt.
+    private var notificationPrimerCard: some View {
+        VStack(alignment: .leading, spacing: VaultSpacing.s) {
+            HStack(spacing: VaultSpacing.s) {
+                Image(systemName: "bell.badge")
+                    .foregroundStyle(accent)
+                    .accessibilityHidden(true)
+                Text(L10n.tr("Get notified about conflicts"))
+                    .font(.headline)
+            }
+            Text(L10n.tr("If a note changes on two devices at the same time, VaultSync can alert you so you can choose which version to keep."))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: VaultSpacing.m) {
+                Button(L10n.tr("Enable Notifications")) {
+                    dismissNotificationPrimer(enable: true)
+                }
+                .buttonStyle(.borderedProminent)
+                Button(L10n.tr("Not now")) {
+                    dismissNotificationPrimer(enable: false)
+                }
+                .buttonStyle(.bordered)
+            }
+            .padding(.top, VaultSpacing.xxs)
+        }
+        .padding(.vertical, VaultSpacing.xs)
+        // `.contain`, not `.combine`: two independently focusable buttons.
+        .accessibilityElement(children: .contain)
+    }
+
     private var isSyncing: Bool {
         syncthingManager.folderStatuses.values.contains { $0.state == "syncing" || $0.state == "scanning" }
     }
@@ -820,20 +900,28 @@ struct ContentView: View {
             && isReconnecting
     }
 
-    /// Canonical overall status for the header, mirroring the precedence cascade
-    /// of `syncStatusText`. Drives the header glyph + color through the SyncStatus
-    /// registry; the contextual wording stays in `syncStatusText`.
+    /// Canonical header state (#66, decision 012): glyph, color, and title
+    /// derive from ONE source of truth — the same issue list the "Sync Issues"
+    /// section renders — so the header can never claim "All Synced" while an
+    /// issue row is visible below it. The cascade itself lives in the pure,
+    /// unit-tested `SyncHeaderModel`.
     ///
     /// A reconnect inside its grace window deliberately does NOT change the
     /// status: being briefly disconnected after a cold start is Syncthing's
     /// normal warm-up, so the header keeps its positive state and only the
     /// busy spinner + subtitle communicate "connecting".
-    private var overallStatus: SyncStatus {
-        if currentSyncError != nil { return .error }
-        if !syncthingManager.isRunning { return .starting }
-        if !foldersWithErrors.isEmpty { return .attention }
-        if isSyncing { return .syncing }
-        return .synced
+    private var headerState: SyncHeaderModel.State {
+        SyncHeaderModel.derive(.init(
+            hasEngineError: currentSyncError != nil,
+            engineRunning: syncthingManager.isRunning,
+            issueSeverities: syncthingManager.unresolvedIssues.map(\.severity),
+            hasUnreachableFolders: !syncthingManager.unreachableFolders.isEmpty,
+            isSyncing: isSyncing,
+            hasSyncFolders: !syncthingManager.folders.isEmpty,
+            vaultAccessible: vaultManager.isAccessible,
+            vaultNeedsReconnect: vaultManager.needsReconnect,
+            hasDetectedVaults: !vaultManager.detectedVaults.isEmpty
+        ))
     }
 
     /// Secondary line for the status header — the reconnecting progress or the
@@ -854,15 +942,6 @@ struct ContentView: View {
             return L10n.fmt("Last sync: %@", Self.lastSyncFormatter.localizedString(for: lastSync, relativeTo: Date()))
         }
         return nil
-    }
-
-    private var syncStatusText: String {
-        if currentSyncError != nil { return L10n.tr("Error") }
-        if !syncthingManager.isRunning { return L10n.tr("Starting…") }
-        if !foldersWithErrors.isEmpty { return L10n.tr("Sync Issue") }
-        if isSyncing { return L10n.tr("Syncing…") }
-        if syncthingManager.folders.isEmpty { return L10n.tr("Ready") }
-        return L10n.tr("All Synced")
     }
 
     private var foldersWithErrors: [String] {
@@ -929,6 +1008,10 @@ struct ContentView: View {
             }
             .font(.caption)
             .foregroundStyle(.secondary)
+            // The sole path to first-install help — a caption-sized label is
+            // ~18pt tall, far under the 44pt minimum tap target (#69).
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
         }
         .padding(.top, VaultSpacing.xs)
     }
@@ -1036,15 +1119,21 @@ struct ContentView: View {
             Section {
                 ForEach(unreachable) { folder in
                     VStack(alignment: .leading, spacing: 8) {
-                        Label {
-                            Text(folder.label).font(.body)
-                        } icon: {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(Color.statusAttention)
+                        // Texts read as ONE VoiceOver element (name + what is
+                        // wrong together); the buttons stay independently
+                        // focusable below (#71).
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label {
+                                Text(folder.label).font(.body)
+                            } icon: {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(Color.statusAttention)
+                            }
+                            Text("This vault points to storage that no longer exists on this iPhone, so it can no longer sync.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
-                        Text("This vault points to storage that no longer exists on this iPhone, so it can no longer sync.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        .accessibilityElement(children: .combine)
                         HStack(spacing: 12) {
                             if folder.hasObsidianMapping {
                                 Button(L10n.tr("Reconnect to Obsidian")) {
@@ -1519,7 +1608,9 @@ struct ContentView: View {
     private func localizedState(_ state: String) -> String {
         switch state.lowercased() {
         case "idle":
-            return L10n.tr("Idle")
+            // "Up to Date", not the engine's "Idle": next to the header's
+            // "All Synced" a literal "Idle" read as its contradiction (#71).
+            return L10n.tr("Up to Date")
         case "scanning":
             return L10n.tr("Scanning")
         case "syncing":

@@ -130,7 +130,10 @@ struct PendingSharesView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(!obsidianAccessible)
                 } else {
-                    Button("Retry Accept") {
+                    // Not "Retry": most parks come from the AUTOMATIC pass
+                    // (e.g. a merge waiting for consent) — "Retry" falsely
+                    // implied a prior attempt by the user (#71).
+                    Button("Review and Accept") {
                         onRetry(folder)
                     }
                     .buttonStyle(.borderedProminent)

@@ -355,8 +355,9 @@ enum BackgroundSyncService {
                 return .unknown
             }
         case .notDetermined, .provisional, .ephemeral:
-            // Not requested by VaultSync (full alert auth is requested at
-            // onboarding); provisional/ephemeral deliver quietly, not as banners.
+            // Not requested by VaultSync (full alert auth is asked via the
+            // post-first-sync explainer card, #69); provisional/ephemeral
+            // deliver quietly, not as banners.
             return .unknown
         @unknown default:
             return .unknown
