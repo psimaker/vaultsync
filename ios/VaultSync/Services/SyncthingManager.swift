@@ -90,6 +90,10 @@ final class SyncthingManager {
     /// explicit user decision (doctrine 002 / #52). Deliberately never pruned:
     /// the set stays tiny and an entry is only lifted by an explicit accept.
     private(set) var userRemovedFolderIDs: Set<String> = []
+    /// Settledness of the folder paths that accept decisions judge against
+    /// (#56, decision 008). Observable so the UI can hold accept passes while
+    /// a path reconcile is in flight and re-fire them once it completes.
+    private(set) var pathSettlement = PathSettlement()
     private(set) var hasSeenPendingFolderOffer = false
     private(set) var lastSyncTime: Date?
     private(set) var lastSyncTimeByFolder: [String: Date] = [:]
@@ -680,12 +684,22 @@ final class SyncthingManager {
     @discardableResult
     func reconcileFolderPaths(obsidianRoot: String?) -> Task<Void, Never> {
         guard isRunning else { return Task {} }
+        // Mark paths unsettled BEFORE the detached work exists: the poll loop
+        // can deliver pendingFolders at any suspension point, and an accept
+        // pass must find the hold already in place (#56).
+        let token = pathSettlement.reconcileBegan()
         // Run the blocking bridge work off the main actor; only the final
         // folder-list refresh hops back to the main actor.
         return Task.detached(priority: .utility) { [weak self] in
             // Wait briefly for the engine to load its folder list after start.
             for _ in 0..<12 {
-                guard SyncBridgeService.isRunning() else { return }
+                guard SyncBridgeService.isRunning() else {
+                    // Engine died mid-wait: nothing was reconciled. Abandon —
+                    // never settle — so accept decisions stay held until a
+                    // fresh start's reconcile completes (#56).
+                    await self?.markReconcile(token: token, completed: false)
+                    return
+                }
                 let json = SyncBridgeService.getFoldersJSON()
                 if json != "[]", !json.isEmpty { break }
                 try? await Task.sleep(for: .milliseconds(250))
@@ -697,6 +711,18 @@ final class SyncthingManager {
             // critical banner surface on this same launch.
             PathCollisionGuard.pauseCollisionsLive()
             await self?.refreshFolders()
+            await self?.markReconcile(token: token, completed: true)
+        }
+    }
+
+    /// Record a reconcile outcome on the main actor. Completion settles paths
+    /// and releases held accept passes; abandonment only releases the
+    /// in-flight count and keeps accepts held (see `PathSettlement`).
+    private func markReconcile(token: PathSettlement.Token, completed: Bool) {
+        if completed {
+            pathSettlement.reconcileFinished(token: token)
+        } else {
+            pathSettlement.reconcileAbandoned(token: token)
         }
     }
 
@@ -714,6 +740,10 @@ final class SyncthingManager {
         folderStatuses = [:]
         conflictFiles = [:]
         pendingFolders = []
+        // New generation: accepts hold until the next start's reconcile
+        // completes, and a still-running reconcile's late outcome is ignored
+        // (#56).
+        pathSettlement.reset()
         lastBridgeEventID = 0
         activityDeduplicationCache = [:]
         nextSyntheticEventID = -1
@@ -915,6 +945,9 @@ final class SyncthingManager {
         folderStatuses = [:]
         conflictFiles = [:]
         pendingFolders = []
+        // New generation, same as stop(): the restarted engine's paths count
+        // as unsettled until its own reconcile completes (#56).
+        pathSettlement.reset()
         lastBridgeEventID = 0
         activityDeduplicationCache = [:]
         nextSyntheticEventID = -1

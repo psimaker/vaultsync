@@ -326,6 +326,7 @@
 "Unnamed device" = "未命名设备";
 "Unreachable" = "无法访问";
 "Vault" = "Vault";
+"Vault locations are still being checked. Try again in a moment." = "Vault 的存储位置仍在检查中。请稍后再试。";
 "VaultSync" = "VaultSync";
 "VaultSync can no longer read your Obsidian directory. Reconnect the folder to restore sync access." = "VaultSync 已无法读取你的 Obsidian 目录。请重新连接该文件夹以恢复同步访问。";
 "VaultSync can no longer resolve the saved Obsidian folder permission. Reconnect the Obsidian directory to continue syncing." = "VaultSync 已无法解析已保存的 Obsidian 文件夹权限。请重新连接 Obsidian 目录以继续同步。";

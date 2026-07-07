@@ -125,6 +125,13 @@ struct VaultSyncApp: App {
                         await syncthingManager.start()
                         syncthingManager.reconcileFolderPaths(obsidianRoot: vaultManager.obsidianBasePath)
                     }
+                } else {
+                    // Onboarding may have started the engine itself (its own
+                    // start can win against the scene-active start above) — in
+                    // that case no reconcile ran this launch, and accept
+                    // decisions stay held until one completes (#56). A repeat
+                    // reconcile is a no-op when paths are already correct.
+                    syncthingManager.reconcileFolderPaths(obsidianRoot: vaultManager.obsidianBasePath)
                 }
                 Task {
                     await BackgroundSyncService.requestNotificationPermission()

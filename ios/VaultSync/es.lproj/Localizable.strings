@@ -326,6 +326,7 @@
 "Unnamed device" = "Dispositivo sin nombre";
 "Unreachable" = "Inaccesible";
 "Vault" = "Vault";
+"Vault locations are still being checked. Try again in a moment." = "Las ubicaciones de los Vaults todavía se están comprobando. Inténtalo de nuevo en un momento.";
 "VaultSync" = "VaultSync";
 "VaultSync can no longer read your Obsidian directory. Reconnect the folder to restore sync access." = "VaultSync ya no puede leer tu directorio de Obsidian. Vuelve a conectar la carpeta para restaurar el acceso de sincronización.";
 "VaultSync can no longer resolve the saved Obsidian folder permission. Reconnect the Obsidian directory to continue syncing." = "VaultSync ya no puede resolver el permiso guardado de la carpeta de Obsidian. Vuelve a conectar el directorio de Obsidian para seguir sincronizando.";
