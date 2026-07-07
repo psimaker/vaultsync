@@ -64,5 +64,65 @@ extension EngineBridgeSuites {
 
             manager.stop()
         }
+
+        /// The shared attach helper all three foreground consumers call
+        /// (scene activation, onboarding completion, onboarding appear).
+        /// Against a background-started engine it must adopt — never run
+        /// `start()` into the floor guard — and report the decision.
+        @MainActor
+        @Test("EngineAttach.onForeground adopts a background-started engine without surfacing an error")
+        func attachHelperAdoptsLiveEngine() {
+            TestSupport.resetSyncthingState()
+            defer { TestSupport.resetSyncthingState() }
+            BackgroundSyncService.lifecycleLock.withLock { $0.foregroundActive = false }
+
+            let startErr = SyncBridgeService.startSyncthing(configDir: TestSupport.syncthingConfigPath())
+            #expect(startErr == nil)
+
+            let manager = SyncthingManager()
+            let action = EngineAttach.onForeground(
+                syncthingManager: manager,
+                vaultManager: VaultManager()
+            )
+
+            #expect(action == .adoptRunningEngine)
+            #expect(manager.isRunning)
+            #expect(manager.userError == nil)
+            // Decision 008: the helper fires the reconcile, but until it
+            // completes the adopted engine's paths stay unsettled.
+            #expect(!manager.pathSettlement.settled)
+
+            manager.stop()
+        }
+
+        /// An already-attached manager is reported as such and left alone —
+        /// the per-call-site tails (rescan debounce, #56 repeat reconcile)
+        /// stay with the callers.
+        @MainActor
+        @Test("EngineAttach.onForeground leaves an already-attached manager untouched")
+        func attachHelperReportsAlreadyAttached() {
+            TestSupport.resetSyncthingState()
+            defer { TestSupport.resetSyncthingState() }
+            BackgroundSyncService.lifecycleLock.withLock { $0.foregroundActive = false }
+
+            let startErr = SyncBridgeService.startSyncthing(configDir: TestSupport.syncthingConfigPath())
+            #expect(startErr == nil)
+
+            let manager = SyncthingManager()
+            #expect(manager.adoptRunningEngine())
+            let deviceID = manager.deviceID
+
+            let action = EngineAttach.onForeground(
+                syncthingManager: manager,
+                vaultManager: VaultManager()
+            )
+
+            #expect(action == .alreadyAttached)
+            #expect(manager.isRunning)
+            #expect(manager.deviceID == deviceID)
+            #expect(manager.userError == nil)
+
+            manager.stop()
+        }
     }
 }
