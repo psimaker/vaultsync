@@ -84,6 +84,12 @@ final class SyncthingManager {
     private(set) var conflictFiles: [String: [ConflictInfo]] = [:]
     private(set) var pendingFolders: [PendingFolderInfo] = []
     private(set) var ignoredPendingFolderIDs: Set<String> = []
+    /// Folder IDs the user removed on this iPhone. While a peer still shares
+    /// such a folder, its offer reappears as pending within moments — and
+    /// auto-accepting it would silently undo the removal. Re-adding is an
+    /// explicit user decision (doctrine 002 / #52). Deliberately never pruned:
+    /// the set stays tiny and an entry is only lifted by an explicit accept.
+    private(set) var userRemovedFolderIDs: Set<String> = []
     private(set) var hasSeenPendingFolderOffer = false
     private(set) var lastSyncTime: Date?
     private(set) var lastSyncTimeByFolder: [String: Date] = [:]
@@ -107,6 +113,7 @@ final class SyncthingManager {
     private var backgroundSyncObserver: NSObjectProtocol?
     private let syncHistoryStore: SyncHistoryStore
     private static let ignoredPendingFoldersDefaultsKey = "syncthing.ignoredPendingFolderIDs"
+    private static let userRemovedFoldersDefaultsKey = "syncthing.userRemovedFolderIDs"
     private static let hasSeenPendingOfferDefaultsKey = "syncthing.hasSeenPendingFolderOffer"
     private static let staleSyncThreshold: TimeInterval = 12 * 60 * 60
     private static let maxSyncActivityItems = 120
@@ -153,6 +160,7 @@ final class SyncthingManager {
         self.syncHistoryStore = syncHistoryStore
 
         ignoredPendingFolderIDs = Self.loadIgnoredPendingFolderIDs()
+        userRemovedFolderIDs = Self.loadUserRemovedFolderIDs()
         hasSeenPendingFolderOffer = UserDefaults.standard.bool(forKey: Self.hasSeenPendingOfferDefaultsKey)
 
         let history = syncHistoryStore.load()
@@ -309,6 +317,23 @@ final class SyncthingManager {
         pendingFolders.filter { !ignoredPendingFolderIDs.contains($0.id) }
     }
 
+    /// Pending shares the automatic accept loop may act on: actionable (not
+    /// ignored) and not previously removed by the user. A share whose folder
+    /// the user removed stays visible as a pending row but is only ever
+    /// accepted by an explicit tap (doctrine 002 / #52) — auto-accepting it
+    /// would undo the removal moments later while a peer still shares it.
+    var autoAcceptEligiblePendingFolders: [PendingFolderInfo] {
+        Self.autoAcceptEligible(actionable: actionablePendingFolders, userRemoved: userRemovedFolderIDs)
+    }
+
+    /// Pure core of the auto-accept eligibility rule (unit-testable).
+    nonisolated static func autoAcceptEligible(
+        actionable: [PendingFolderInfo],
+        userRemoved: Set<String>
+    ) -> [PendingFolderInfo] {
+        actionable.filter { !userRemoved.contains($0.id) }
+    }
+
     var ignoredPendingFolders: [PendingFolderInfo] {
         pendingFolders.filter { ignoredPendingFolderIDs.contains($0.id) }
     }
@@ -445,7 +470,7 @@ final class SyncthingManager {
                     kind: .pathCollision,
                     title: L10n.tr("Two Vaults Are Sharing One Folder"),
                     message: L10n.tr("Two or more vaults sync into the same local folder, so their contents are being mixed together. The affected vaults have been paused to stop further damage."),
-                    remediation: L10n.tr("Remove an affected vault on this iPhone — it is added back automatically into its own folder. If the files are already mixed, restore the clean copy on your computer first."),
+                    remediation: L10n.tr("Remove an affected vault on this iPhone, then accept it again under Pending Shares — it moves into its own folder. If the files are already mixed, restore the clean copy on your computer first."),
                     severity: .critical,
                     count: affectedCount,
                     folderID: collisionGroups.flatMap { $0 }.min(),
@@ -470,7 +495,7 @@ final class SyncthingManager {
                     kind: .nestedFolders,
                     title: L10n.tr("One Vault Is Nested Inside Another"),
                     message: L10n.tr("A vault's folder is inside another vault's folder, so the outer vault syncs the inner vault's notes to its own devices. The affected vaults have been paused to stop further mixing."),
-                    remediation: L10n.tr("Select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") as VaultSync's Obsidian directory, then remove the inner vault on this iPhone — it is added back into its own folder. Only afterwards, delete the leftover copy inside the outer vault on your other devices."),
+                    remediation: L10n.tr("Select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") as VaultSync's Obsidian directory, then remove the inner vault on this iPhone and accept it again under Pending Shares — it gets its own folder. Only afterwards, delete the leftover copy inside the outer vault on your other devices."),
                     severity: .critical,
                     count: nestedIDs.count,
                     folderID: nestedIDs.min(),
@@ -737,8 +762,17 @@ final class SyncthingManager {
             FolderPathReconciler.removeRel(forFolder: id)
             // Forget any #45 auto-pause record so a future folder reusing this
             // ID can be paused again if it collides (removing a colliding vault
-            // is the sanctioned recovery, after which it is re-added unpaused).
+            // is the sanctioned recovery; accepting the returning share re-adds
+            // it unpaused into its own folder).
             PathCollisionGuard.clearAutoPaused(id)
+            // Never auto-re-accept a share the user just removed: while a peer
+            // still shares the folder, the offer reappears within moments, and
+            // silently pulling it back in would undo the removal (doctrine
+            // 002 / #52). The share stays visible under Pending Shares until
+            // the user explicitly accepts it — which then honours a manually
+            // chosen target.
+            userRemovedFolderIDs.insert(id)
+            persistUserRemovedFolderIDs()
         }
         return result
     }
@@ -825,6 +859,12 @@ final class SyncthingManager {
     func acceptPendingFolder(folderID: String, label: String, path: String) -> String? {
         let result = SyncBridgeService.acceptPendingFolder(folderID: folderID, label: label, path: path)
         if result == nil {
+            // An explicit accept supersedes an earlier removal — lift the
+            // auto-accept suppression for this folder ID (#52).
+            if userRemovedFolderIDs.contains(folderID) {
+                userRemovedFolderIDs.remove(folderID)
+                persistUserRemovedFolderIDs()
+            }
             refreshFolders()
             refreshPendingFolders()
             // Trigger a rescan after a short delay to kick-start initial sync.
@@ -1787,6 +1827,17 @@ final class SyncthingManager {
 
     private func persistIgnoredPendingFolderIDs() {
         UserDefaults.standard.set(Array(ignoredPendingFolderIDs).sorted(), forKey: Self.ignoredPendingFoldersDefaultsKey)
+    }
+
+    private func persistUserRemovedFolderIDs() {
+        UserDefaults.standard.set(Array(userRemovedFolderIDs).sorted(), forKey: Self.userRemovedFoldersDefaultsKey)
+    }
+
+    private static func loadUserRemovedFolderIDs() -> Set<String> {
+        guard let values = UserDefaults.standard.array(forKey: userRemovedFoldersDefaultsKey) as? [String] else {
+            return []
+        }
+        return Set(values)
     }
 
     private static func loadIgnoredPendingFolderIDs() -> Set<String> {

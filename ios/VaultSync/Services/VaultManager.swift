@@ -213,27 +213,42 @@ final class VaultManager {
             FolderPathReconciler.canonical($0.path).lowercased()
         })
 
-        guard let path = Self.resolveSharePath(
+        // A manually chosen target (#52) wins over the label-derived mapping.
+        // The record survives folder removal, so remove + re-accept lands the
+        // share back where the user put it, never silently at the label default.
+        let manualTarget = ManualShareTargetStore.target(forFolder: folder.id)
+
+        let decision = Self.resolveAcceptPath(
+            manualTarget: manualTarget,
             rawRoot: basePath,
             baseIsVault: baseIsVault,
             nameMatchesBase: nameMatchesBase,
             folderName: folderName,
             occupiedCanonLower: occupied,
             canonicalize: FolderPathReconciler.canonical
-        ) else {
-            // The selected root is itself (or lies inside) another folder's
-            // synced directory — accepting would nest this vault inside an
-            // existing one and mix their contents (#45 follow-up). Refuse with
-            // guidance; the share stays pending and auto-accept retries after
-            // the user re-selects the container folder.
-            logger.error("Refusing share '\(folderName, privacy: .private)' (\(folder.id)): no overlap-free location under the Obsidian root (baseIsVault=\(baseIsVault), occupied=\(occupied.count))")
-            return L10n.tr("This share needs its own folder, but the folder selected for VaultSync is itself a vault, so everything inside it belongs to that vault. Re-select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") — new vaults then sync side by side instead of inside each other.")
+        )
+
+        let path: String
+        switch decision {
+        case .refused(let message):
+            // Either the selected root is itself (or lies inside) another
+            // folder's synced directory (#45 follow-up), or the stored manual
+            // target has become unsafe. Refuse with guidance; the share stays
+            // pending until the user acts.
+            logger.error("Refusing share '\(folderName, privacy: .private)' (\(folder.id)): no safe location (manual=\(manualTarget != nil), baseIsVault=\(baseIsVault), occupied=\(occupied.count))")
+            return message
+        case .path(let resolved):
+            path = resolved
         }
-        logger.info("Accepting share '\(folderName, privacy: .private)' (\(folder.id)) → path: \(path, privacy: .private) (baseIsVault=\(baseIsVault), nameMatchesBase=\(nameMatchesBase), occupied=\(occupied.count))")
+
+        // The local vault keeps the user's chosen name when one exists; the
+        // share label on the offering devices is untouched either way (#52).
+        let label = manualTarget ?? folderName
+        logger.info("Accepting share '\(folderName, privacy: .private)' (\(folder.id)) → path: \(path, privacy: .private) (manual=\(manualTarget != nil), baseIsVault=\(baseIsVault), nameMatchesBase=\(nameMatchesBase), occupied=\(occupied.count))")
 
         if let err = syncthingManager.acceptPendingFolder(
             folderID: folder.id,
-            label: folderName,
+            label: label,
             path: path
         ) {
             return err
@@ -292,16 +307,8 @@ final class VaultManager {
         occupiedCanonLower: Set<String>,
         canonicalize: (String) -> String
     ) -> String? {
-        func canonLower(_ path: String) -> String {
-            canonicalize(path).lowercased()
-        }
-        // Whether the candidate is one of the occupied directories, lies inside
-        // one, or holds one — any of these mixes two folders' contents.
         func overlapsOccupied(_ candidate: String) -> Bool {
-            let c = canonLower(candidate)
-            return occupiedCanonLower.contains { occ in
-                occ == c || occ.hasPrefix(c + "/") || c.hasPrefix(occ + "/")
-            }
+            overlaps(candidate, occupiedCanonLower: occupiedCanonLower, canonicalize: canonicalize)
         }
 
         // Collapse into the root only while nothing overlaps it.
@@ -312,10 +319,7 @@ final class VaultManager {
         // Once the root is — or lies inside — an occupied directory, every
         // subdirectory would nest this share inside an existing folder's synced
         // tree. There is no safe location under this root at all.
-        let rootCanon = canonLower(rawRoot)
-        if occupiedCanonLower.contains(where: { occ in
-            occ == rootCanon || rootCanon.hasPrefix(occ + "/")
-        }) {
+        if rootIsCompromised(rawRoot, occupiedCanonLower: occupiedCanonLower, canonicalize: canonicalize) {
             return nil
         }
 
@@ -338,8 +342,237 @@ final class VaultManager {
         }
     }
 
+    /// Whether the candidate is one of the occupied directories, lies inside
+    /// one, or holds one — any of these mixes two folders' contents (#45).
+    /// Shared by the label-derived mapping (`resolveSharePath`) and the manual
+    /// target validation (#52) so the two accept paths can never disagree on
+    /// what counts as an overlap. Case-insensitive: case-folding APFS.
+    nonisolated private static func overlaps(
+        _ candidate: String,
+        occupiedCanonLower: Set<String>,
+        canonicalize: (String) -> String
+    ) -> Bool {
+        let c = canonicalize(candidate).lowercased()
+        return occupiedCanonLower.contains { occ in
+            occ == c || occ.hasPrefix(c + "/") || c.hasPrefix(occ + "/")
+        }
+    }
+
+    /// Whether the root itself is — or lies inside — an occupied directory.
+    /// Then every subdirectory would nest inside an existing folder's synced
+    /// tree, so no safe location exists under this root at all (#45 follow-up).
+    nonisolated private static func rootIsCompromised(
+        _ rawRoot: String,
+        occupiedCanonLower: Set<String>,
+        canonicalize: (String) -> String
+    ) -> Bool {
+        let rootCanon = canonicalize(rawRoot).lowercased()
+        return occupiedCanonLower.contains { occ in
+            occ == rootCanon || rootCanon.hasPrefix(occ + "/")
+        }
+    }
+
+    // MARK: - Manual Share Target (#52)
+
+    /// Decide where a pending share syncs: a manually chosen target recorded
+    /// earlier (#52) wins over the label-derived mapping. An override that has
+    /// become unsafe is refused with guidance — never silently replaced by the
+    /// share-label default, because the user chose that location deliberately
+    /// and accepting somewhere else would split the vault across two
+    /// directories. The override path is NOT required to be empty: after
+    /// remove + re-accept it legitimately holds this same share's earlier
+    /// content (exactly like the label-default path on a plain re-accept).
+    nonisolated static func resolveAcceptPath(
+        manualTarget: String?,
+        rawRoot: String,
+        baseIsVault: Bool,
+        nameMatchesBase: Bool,
+        folderName: String,
+        occupiedCanonLower: Set<String>,
+        canonicalize: (String) -> String
+    ) -> ShareTargetDecision {
+        if let target = manualTarget {
+            let candidate = (rawRoot as NSString).appendingPathComponent(target)
+            if rootIsCompromised(rawRoot, occupiedCanonLower: occupiedCanonLower, canonicalize: canonicalize)
+                || overlaps(candidate, occupiedCanonLower: occupiedCanonLower, canonicalize: canonicalize) {
+                return .refused(message: L10n.fmt(
+                    "This share is set to sync into \"%@\", but that location now overlaps a folder another vault already syncs. Tap \"Choose Vault…\" on the share to pick a new location, or remove the vault that syncs there, then accept the share again.",
+                    target
+                ))
+            }
+            return .path(candidate)
+        }
+
+        guard let path = resolveSharePath(
+            rawRoot: rawRoot,
+            baseIsVault: baseIsVault,
+            nameMatchesBase: nameMatchesBase,
+            folderName: folderName,
+            occupiedCanonLower: occupiedCanonLower,
+            canonicalize: canonicalize
+        ) else {
+            return .refused(message: L10n.tr("This share needs its own folder, but the folder selected for VaultSync is itself a vault, so everything inside it belongs to that vault. Re-select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") — new vaults then sync side by side instead of inside each other."))
+        }
+        return .path(path)
+    }
+
+    /// Validate a manually chosen share target (issue #52): `name` — a picked
+    /// existing vault or a new-folder name — becomes `root/<sanitized name>`.
+    /// Refusal messages name the folder, the reason, and the user's next step.
+    /// Pure: the caller supplies the target's directory listing
+    /// (`targetEntries`; nil when the directory does not exist yet, hidden
+    /// entries included otherwise) so every rule is unit-testable without the
+    /// filesystem.
+    ///
+    /// Only *empty* vaults are eligible as existing targets: linking a share
+    /// to a folder that already holds content would merge two content sets,
+    /// which needs its own safety design (out of scope for #52).
+    nonisolated static func validateManualTarget(
+        rawRoot: String,
+        name: String,
+        occupiedCanonLower: Set<String>,
+        targetEntries: [String]?,
+        canonicalize: (String) -> String
+    ) -> ShareTargetDecision {
+        let folderName = sanitizeDirectoryName(name)
+        guard !folderName.isEmpty else {
+            return .refused(message: L10n.tr("Enter a folder name."))
+        }
+        if rootIsCompromised(rawRoot, occupiedCanonLower: occupiedCanonLower, canonicalize: canonicalize) {
+            return .refused(message: L10n.tr("This share needs its own folder, but the folder selected for VaultSync is itself a vault, so everything inside it belongs to that vault. Re-select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") — new vaults then sync side by side instead of inside each other."))
+        }
+        let candidate = (rawRoot as NSString).appendingPathComponent(folderName)
+        if overlaps(candidate, occupiedCanonLower: occupiedCanonLower, canonicalize: canonicalize) {
+            return .refused(message: L10n.fmt(
+                "The target folder \"%@\" is already synced by another vault — the same folder, or one above or inside it. Choose a different folder, or remove the vault that syncs there first.",
+                folderName
+            ))
+        }
+        if let entries = targetEntries, !isEmptyVaultListing(entries) {
+            return .refused(message: L10n.fmt(
+                "The folder \"%@\" already contains files. A share can only be linked to an empty vault — choose an empty vault, or enter a new folder name.",
+                folderName
+            ))
+        }
+        return .path(candidate)
+    }
+
+    /// True when a directory listing qualifies as an *empty vault*: nothing
+    /// inside except (at most) Obsidian's `.obsidian` configuration folder.
+    /// Anything else — notes, a `.stfolder` sync marker, hidden leftovers —
+    /// disqualifies the directory, because linking a share there would merge
+    /// two content sets. Case-insensitive: case-folding APFS.
+    nonisolated static func isEmptyVaultListing(_ entries: [String]) -> Bool {
+        entries.allSatisfy { $0.compare(".obsidian", options: .caseInsensitive) == .orderedSame }
+    }
+
+    /// Accept a pending share into a target the user picked (issue #52): an
+    /// existing empty vault under the Obsidian directory, or a new folder with
+    /// a custom name. Records the choice so any later re-accept (after the
+    /// user removes the vault) returns to this location instead of the
+    /// share-label default. Returns nil on success, error message on failure.
+    func acceptPendingShare(
+        folder: SyncthingManager.PendingFolderInfo,
+        intoTargetNamed targetName: String,
+        syncthingManager: SyncthingManager
+    ) -> String? {
+        guard let basePath = obsidianBasePath,
+              let baseURL = obsidianDirectoryURL else {
+            return L10n.tr("Obsidian directory not accessible.")
+        }
+
+        let occupied = Set(syncthingManager.folders.map {
+            FolderPathReconciler.canonical($0.path).lowercased()
+        })
+
+        // Full listing, hidden entries included: a `.stfolder` marker or a
+        // hidden leftover must disqualify a target, so an enumeration that
+        // skips hidden files would hide exactly what matters.
+        let sanitized = Self.sanitizeDirectoryName(targetName)
+        let targetURL = baseURL.appendingPathComponent(sanitized, isDirectory: true)
+        let entries = try? FileManager.default.contentsOfDirectory(atPath: targetURL.path)
+
+        let decision = Self.validateManualTarget(
+            rawRoot: basePath,
+            name: targetName,
+            occupiedCanonLower: occupied,
+            targetEntries: entries,
+            canonicalize: FolderPathReconciler.canonical
+        )
+
+        switch decision {
+        case .refused(let message):
+            logger.error("Refusing manual target for share (\(folder.id)): \(message, privacy: .private)")
+            return message
+        case .path(let path):
+            if let err = syncthingManager.acceptPendingFolder(
+                folderID: folder.id,
+                label: sanitized,
+                path: path
+            ) {
+                return err
+            }
+            // Only a successful accept records the choice — a failed one must
+            // not pin future auto-accepts to a target that never materialized.
+            ManualShareTargetStore.setTarget(sanitized, forFolder: folder.id)
+            if let rel = FolderPathReconciler.relativeIfUnder(
+                FolderPathReconciler.canonical(path),
+                root: FolderPathReconciler.canonical(basePath)
+            ) {
+                FolderPathReconciler.setRel(rel, forFolder: folder.id)
+            }
+            scanForVaults()
+            logger.info("Accepted pending share into manual target (\(folder.id)) → \(path, privacy: .private)")
+            return nil
+        }
+    }
+
+    /// Names of existing subdirectories under the Obsidian root that qualify
+    /// as manual share targets (#52): empty vaults (nothing inside except at
+    /// most `.obsidian`) whose path does not overlap any configured folder's.
+    /// The picker lists these; everything else is reachable only as a newly
+    /// created folder.
+    func eligibleShareTargets(syncthingManager: SyncthingManager) -> [String] {
+        guard let baseURL = obsidianDirectoryURL,
+              let basePath = obsidianBasePath else {
+            return []
+        }
+        let occupied = Set(syncthingManager.folders.map {
+            FolderPathReconciler.canonical($0.path).lowercased()
+        })
+        let fm = FileManager.default
+        guard let contents = try? fm.contentsOfDirectory(
+            at: baseURL,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return []
+        }
+        return contents.compactMap { itemURL -> String? in
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: itemURL.path, isDirectory: &isDir), isDir.boolValue else {
+                return nil
+            }
+            let name = itemURL.lastPathComponent
+            // A name that changes under sanitization would be validated (and
+            // created) as a different directory than the one listed — skip it.
+            guard Self.sanitizeDirectoryName(name) == name else { return nil }
+            guard let entries = try? fm.contentsOfDirectory(atPath: itemURL.path) else { return nil }
+            guard case .path = Self.validateManualTarget(
+                rawRoot: basePath,
+                name: name,
+                occupiedCanonLower: occupied,
+                targetEntries: entries,
+                canonicalize: FolderPathReconciler.canonical
+            ) else {
+                return nil
+            }
+            return name
+        }.sorted()
+    }
+
     /// Replace characters that are invalid in iOS directory names.
-    private static func sanitizeDirectoryName(_ name: String) -> String {
+    nonisolated static func sanitizeDirectoryName(_ name: String) -> String {
         let invalid = CharacterSet(charactersIn: "/:\0")
         return name.components(separatedBy: invalid)
             .joined(separator: "-")
@@ -404,5 +637,46 @@ final class VaultManager {
             remediation: L10n.tr("Open the folder picker again and select your Obsidian directory."),
             technicalDetails: reason
         )
+    }
+}
+
+/// Outcome of deciding where a share may sync: a safe absolute path, or a
+/// refusal whose message names the folder, the reason, and the user's next
+/// step. Top-level value type (not nested in the `@MainActor` class) so the
+/// pure decision cores stay callable and comparable from any isolation.
+enum ShareTargetDecision: Equatable, Sendable {
+    case path(String)
+    case refused(message: String)
+}
+
+/// Sidecar: the local folder name the user manually picked for a share
+/// (issue #52), keyed by Syncthing folder ID. Deliberately SURVIVES folder
+/// removal — removing a vault and accepting the returning share must land it
+/// back in the chosen location, never silently in the share-label default —
+/// so `SyncthingManager.removeFolder` must not clear it (unlike the
+/// reconciler's rel sidecar, which tracks where a *configured* folder lives).
+/// Entries are never pruned: the map stays tiny (one name per manually placed
+/// share, ever) and a stale entry is harmless — every accept re-validates it
+/// against the overlap guards. Same serialized-queue UserDefaults pattern as
+/// `FolderPathReconciler`.
+enum ManualShareTargetStore {
+    private static let storeKey = "vaultsync.manualShareTargets"
+    private static let queue = DispatchQueue(label: "eu.vaultsync.manualsharetargets.sidecar")
+
+    static func target(forFolder folderID: String) -> String? {
+        queue.sync {
+            (UserDefaults.standard.dictionary(forKey: storeKey) as? [String: String])?[folderID]
+        }
+    }
+
+    /// Record the chosen folder name after a successful manual accept.
+    /// Atomic read-modify-write.
+    static func setTarget(_ name: String, forFolder folderID: String) {
+        queue.sync {
+            var map = UserDefaults.standard.dictionary(forKey: storeKey) as? [String: String] ?? [:]
+            guard map[folderID] != name else { return }
+            map[folderID] = name
+            UserDefaults.standard.set(map, forKey: storeKey)
+        }
     }
 }
