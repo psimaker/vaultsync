@@ -274,9 +274,12 @@ struct SyncBridgeService {
     }
 
     /// Accept a pending folder offer by creating it locally and sharing with offering devices.
+    /// `allowNonEmpty` carries the user's explicit merge confirmation through to
+    /// the Go hard floor, which otherwise refuses a target directory that
+    /// already holds content (#54) — pass false unless the user confirmed.
     /// - Returns: nil on success, error message on failure.
-    static func acceptPendingFolder(folderID: String, label: String, path: String) -> String? {
-        let result = BridgeAcceptPendingFolder(folderID, label, path)
+    static func acceptPendingFolder(folderID: String, label: String, path: String, allowNonEmpty: Bool) -> String? {
+        let result = BridgeAcceptPendingFolder(folderID, label, path, allowNonEmpty)
         return result.isEmpty ? nil : result
     }
 

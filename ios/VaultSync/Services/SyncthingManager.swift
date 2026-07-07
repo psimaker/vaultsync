@@ -862,8 +862,10 @@ final class SyncthingManager {
     // MARK: - Pending folder shares
 
     /// Accept a pending folder offer. Creates the folder locally and shares with offering devices.
-    func acceptPendingFolder(folderID: String, label: String, path: String) -> String? {
-        let result = SyncBridgeService.acceptPendingFolder(folderID: folderID, label: label, path: path)
+    /// `allowNonEmpty` carries the user's explicit merge confirmation (or a
+    /// recorded manual target, #52) through to the Go hard floor (#54).
+    func acceptPendingFolder(folderID: String, label: String, path: String, allowNonEmpty: Bool) -> String? {
+        let result = SyncBridgeService.acceptPendingFolder(folderID: folderID, label: label, path: path, allowNonEmpty: allowNonEmpty)
         if result == nil {
             // An explicit accept supersedes an earlier removal — lift the
             // auto-accept suppression for this folder ID (#52).

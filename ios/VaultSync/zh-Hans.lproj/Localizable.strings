@@ -644,3 +644,9 @@
 "This share needs its own folder, but the folder selected for VaultSync is itself a vault, so everything inside it belongs to that vault. Re-select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") — new vaults then sync side by side instead of inside each other." = "此共享需要自己的文件夹，但为 VaultSync 选择的文件夹本身就是一个 Vault，其中的所有内容都属于该 Vault。请重新选择包含所有 Vault 的文件夹（“在我的 iPhone 上” → “Obsidian”）——这样新的 Vault 会并排同步，而不会嵌套在一起。";
 "The folder you selected is itself a vault. Syncing this one vault works, but additional vaults cannot get their own folder next to it. If you plan to sync more than one vault, select the folder that contains your vaults instead (\"On My iPhone\" → \"Obsidian\")." = "所选文件夹本身就是一个 Vault。这样同步这一个 Vault 没有问题，但其他 Vault 将无法在它旁边获得自己的文件夹。如果你打算同步多个 Vault，请改为选择包含所有 Vault 的文件夹（“在我的 iPhone 上” → “Obsidian”）。";
 "Note" = "提示";
+"Sync into a folder that already contains files?" = "同步到已包含文件的文件夹？";
+"Merge and Sync" = "合并并同步";
+"The folder \"%@\" already contains files. If you accept, those files and the contents of the shared vault \"%@\" will be combined and synced to the other devices sharing this vault. Accept only if this folder holds this vault's own earlier notes — for example after removing the vault and accepting its share again. If it is a different vault or unrelated files, cancel and use \"Choose Vault…\" to pick a different location." = "文件夹“%@”已包含文件。如果接受，这些文件将与共享 Vault“%@”的内容合并，并同步到共享此 Vault 的其他设备。仅当此文件夹存放的正是该 Vault 之前的笔记时才接受——例如移除 Vault 后再次接受其共享。如果是其他 Vault 或无关文件，请取消，并使用“选择 Vault…”另选位置。";
+"Folder Already Contains Files" = "文件夹已包含文件";
+"The folder \"%@\" already contains files. Accepting this share would combine its contents with the shared vault and sync the result to the other devices." = "文件夹“%@”已包含文件。接受此共享会将其内容与共享的 Vault 合并，并将结果同步到其他设备。";
+"Tap \"Retry Accept\" to review and confirm, or \"Choose Vault…\" to pick a different location." = "点按“重试接受”以查看并确认，或使用“选择 Vault…”另选位置。";

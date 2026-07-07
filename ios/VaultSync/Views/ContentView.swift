@@ -19,6 +19,7 @@ struct ContentView: View {
     @State private var shareTargetPickerFolder: SyncthingManager.PendingFolderInfo?
     @State private var pendingFilterSheetFolder: SyncthingManager.FolderInfo?
     @State private var vaultPendingRemoval: VaultRemovalTarget?
+    @State private var pendingMergeConfirmation: MergeConfirmationRequest?
     @State private var showRelayUpsellCard = false
 
     /// A vault the user has asked to remove, pending confirmation. Drives the
@@ -27,6 +28,16 @@ struct ContentView: View {
     private struct VaultRemovalTarget: Identifiable {
         let id: String
         let label: String
+    }
+
+    /// A share whose label-default target already contains files, waiting for
+    /// the user's explicit merge decision (#54). Drives the merge confirmation
+    /// dialog; confirming re-runs the accept with `mergeConfirmed`, which
+    /// re-validates everything at confirm time.
+    private struct MergeConfirmationRequest: Identifiable {
+        let folder: SyncthingManager.PendingFolderInfo
+        let targetName: String
+        var id: String { folder.id }
     }
 
     private static let relayUpsellShownKey = "relay-upsell-shown"
@@ -153,6 +164,23 @@ struct ContentView: View {
             Button(L10n.tr("Cancel"), role: .cancel) { vaultPendingRemoval = nil }
         } message: { target in
             Text(L10n.fmt("“%@” will stop syncing on this iPhone. Files already on your other devices are not deleted.", target.label))
+        }
+        .confirmationDialog(
+            L10n.tr("Sync into a folder that already contains files?"),
+            isPresented: mergeConfirmationBinding,
+            titleVisibility: .visible,
+            presenting: pendingMergeConfirmation
+        ) { request in
+            Button(L10n.tr("Merge and Sync"), role: .destructive) {
+                confirmMergeAccept(request)
+            }
+            Button(L10n.tr("Cancel"), role: .cancel) { pendingMergeConfirmation = nil }
+        } message: { request in
+            Text(L10n.fmt(
+                "The folder \"%@\" already contains files. If you accept, those files and the contents of the shared vault \"%@\" will be combined and synced to the other devices sharing this vault. Accept only if this folder holds this vault's own earlier notes — for example after removing the vault and accepting its share again. If it is a different vault or unrelated files, cancel and use \"Choose Vault…\" to pick a different location.",
+                request.targetName,
+                request.folder.label.isEmpty ? request.folder.id : request.folder.label
+            ))
         }
         .sheet(item: $shareTargetPickerFolder) { folder in
             ShareTargetPickerView(
@@ -345,14 +373,20 @@ struct ContentView: View {
 
     private func performPendingShareAccept(
         folder: SyncthingManager.PendingFolderInfo,
-        source: PendingShareAcceptSource
+        source: PendingShareAcceptSource,
+        mergeConfirmed: Bool = false
     ) {
         pendingShareInFlight.insert(folder.id)
 
-        let err = vaultManager.acceptPendingShare(folder: folder, syncthingManager: syncthingManager)
+        let outcome = vaultManager.acceptPendingShare(
+            folder: folder,
+            syncthingManager: syncthingManager,
+            mergeConfirmed: mergeConfirmed
+        )
         pendingShareInFlight.remove(folder.id)
 
-        if let err {
+        switch outcome {
+        case .refused(let err):
             let userError = mappedError(err, fallbackTitle: L10n.tr("Could Not Accept Share"))
             pendingShareFailures[folder.id] = userError
             if source == .automatic {
@@ -363,11 +397,45 @@ struct ContentView: View {
                 )
                 showAlert = true
             }
-            return
-        }
 
-        pendingShareFailures.removeValue(forKey: folder.id)
-        syncthingManager.unignorePendingFolder(id: folder.id)
+        case .needsMergeConfirmation(let targetName):
+            // The target already holds content — never merge without the
+            // user's explicit decision (#54, doctrine 002/006). The share row
+            // keeps the explanation either way (also stops auto retries); an
+            // explicit tap additionally gets the confirmation dialog. No
+            // modal alert on the automatic pass: this is a decision waiting
+            // for the user, not an error.
+            pendingShareFailures[folder.id] = SyncUserError(
+                category: .fileAccess,
+                title: L10n.tr("Folder Already Contains Files"),
+                message: L10n.fmt(
+                    "The folder \"%@\" already contains files. Accepting this share would combine its contents with the shared vault and sync the result to the other devices.",
+                    targetName
+                ),
+                remediation: L10n.tr("Tap \"Retry Accept\" to review and confirm, or \"Choose Vault…\" to pick a different location."),
+                technicalDetails: nil
+            )
+            if source == .manual {
+                pendingMergeConfirmation = MergeConfirmationRequest(
+                    folder: folder,
+                    targetName: targetName
+                )
+            }
+
+        case .accepted:
+            pendingShareFailures.removeValue(forKey: folder.id)
+            syncthingManager.unignorePendingFolder(id: folder.id)
+        }
+    }
+
+    /// The user confirmed merging the share into the existing folder — re-run
+    /// the accept with consent attached. Everything (overlaps, emptiness, the
+    /// resolved path) is re-validated at confirm time, so a state change while
+    /// the dialog was open cannot smuggle the accept somewhere unsafe.
+    private func confirmMergeAccept(_ request: MergeConfirmationRequest) {
+        pendingMergeConfirmation = nil
+        pendingShareFailures.removeValue(forKey: request.folder.id)
+        performPendingShareAccept(folder: request.folder, source: .manual, mergeConfirmed: true)
     }
 
     private func retryPendingShare(_ folder: SyncthingManager.PendingFolderInfo) {
@@ -859,6 +927,10 @@ struct ContentView: View {
 
     private var removalBinding: Binding<Bool> {
         Binding(get: { vaultPendingRemoval != nil }, set: { if !$0 { vaultPendingRemoval = nil } })
+    }
+
+    private var mergeConfirmationBinding: Binding<Bool> {
+        Binding(get: { pendingMergeConfirmation != nil }, set: { if !$0 { pendingMergeConfirmation = nil } })
     }
 
     private func removeVault(id: String) {

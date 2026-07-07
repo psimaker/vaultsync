@@ -44,7 +44,12 @@ struct ManualShareTargetTests {
             nameMatchesBase: nameMatchesBase,
             folderName: name,
             occupiedCanonLower: occupied,
-            canonicalize: identity
+            mergeConfirmed: false,
+            canonicalize: identity,
+            // These suites cover target *placement*; every candidate resolves
+            // as not-yet-existing. The non-empty rule (#54) has its own suite
+            // (ImplicitMergeGuardTests).
+            listingFor: { _ in nil }
         )
     }
 
