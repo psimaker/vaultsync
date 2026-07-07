@@ -81,11 +81,17 @@ struct SyncIssuesView: View {
             EmptyView()
 
         case .folderErrors:
-            Button("Rescan Failed Vaults") {
-                onRescanFailedFolders()
+            // A rescan cannot recreate a missing folder marker — when marker
+            // loss is the only error, hide the button and let the prose
+            // remediation guide the manual recovery (#65, same stance as
+            // .pathCollision).
+            if syncthingManager.hasRescanableFolderErrors {
+                Button("Rescan Failed Vaults") {
+                    onRescanFailedFolders()
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.regular)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.regular)
 
         case .disconnectedPeers:
             Button("Add or Reconnect Device") {

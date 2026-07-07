@@ -10,6 +10,7 @@ Find your symptom, jump to the fix. After each fix, retry from the app to confir
 | Stuck on "Confirm your first share" | [No Pending Shares Appear](#no-pending-shares-appear) |
 | Subscribed, but no wake-ups arrive | [APNs Not Registered](#apns-not-registered) |
 | Vault list empty, "folder not connected" | [Obsidian Folder Not Found](#obsidian-folder-not-found) |
+| "Vault Folder Was Moved or Deleted" on a vault | [Vault Folder Was Moved or Deleted](#vault-folder-was-moved-or-deleted) |
 | "Cannot access this folder" / reconnect needed | [Bookmark Access Expired](#bookmark-access-expired) |
 | Syncs in foreground but not when closed | [Background Sync Not Working](#background-sync-not-working) |
 | "Required device disconnected" | [Required Device Disconnected](#required-device-disconnected) |
@@ -110,6 +111,19 @@ Silent push wake-ups use a background push that **does not need notification per
 3. In the picker choose **On My iPhone → Obsidian** (or the vault root that contains `.obsidian`).
 4. Tap **Open** and return to VaultSync.
 5. Confirm VaultSync now lists detected vaults or pending shares.
+
+---
+
+## Vault Folder Was Moved or Deleted
+
+**Looks like:** a vault shows "Vault Folder Was Moved or Deleted" and its syncing has stopped. The vault's folder was moved, renamed, replaced, or deleted outside VaultSync (in the Files app, by Obsidian, or by another app), so VaultSync can no longer verify that the folder still holds this vault's data.
+
+**Fix:**
+1. If you moved or renamed the folder: move it back to its original place and name — syncing resumes on its own.
+2. If the folder is gone or was replaced: remove the vault in VaultSync on this iPhone, then accept its share again under **Pending Shares** — it syncs into a fresh folder.
+3. If notes are missing on this iPhone, they are still on your other synced devices — re-accepting the share in step 2 brings them back.
+
+VaultSync never moves, recreates, or deletes folders on its own, and a rescan cannot fix this — recovery here is always your manual decision.
 
 ---
 

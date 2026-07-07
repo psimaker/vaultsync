@@ -10,6 +10,7 @@ enum SyncUserErrorCategory: String, Sendable {
     case relayUnreachable = "relay_unreachable"
     case relayProvision = "relay_provision"
     case fileAccess = "file_access"
+    case folderMarkerMissing = "folder_marker_missing"
     case unknown
 }
 
@@ -43,6 +44,13 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
                 remediation: L10n.tr("Keep the app open for a moment and retry. If this persists, restart VaultSync."),
                 technicalDetails: rawMessage
             )
+        }
+
+        // Syncthing's marker-missing text mentions potential data loss and
+        // must never surface raw; matched here too so a failed rescan of an
+        // affected folder maps the same way as its folder status (#65).
+        if normalized.contains("marker missing") {
+            return folderMarkerMissing(detail: rawMessage, path: nil)
         }
 
         if isRelayConnectivityError(normalized) {
@@ -127,6 +135,13 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
         let detail = message ?? L10n.tr("Folder is currently in an error state.")
         let pathHint = path.map { L10n.fmt(" (%@)", $0) } ?? ""
 
+        // The bridge classifies marker loss as "unknown_error", so it has to
+        // be matched on the message — before the reason switch, or the raw
+        // English engine text becomes the user-facing message (#65).
+        if detail.lowercased().contains("marker missing") {
+            return folderMarkerMissing(detail: detail, path: path)
+        }
+
         switch normalizedReason {
         case "permission_denied":
             return SyncUserError(
@@ -161,6 +176,26 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
                 technicalDetails: detail
             )
         }
+    }
+
+    /// Syncthing's marker-missing error means the folder was moved, renamed,
+    /// replaced, or deleted outside the app while still configured to sync.
+    /// Doctrine-002 mapping: explain, stay stopped, let the user act — a
+    /// rescan cannot recreate the marker (Syncthing refuses to scan without
+    /// it, by design), and recreating or re-pointing anything automatically
+    /// risks propagating the loss to every peer (safety rule 3).
+    private static func folderMarkerMissing(detail: String, path: String?) -> SyncUserError {
+        let pathHint = path.map { L10n.fmt(" (%@)", $0) } ?? ""
+        return SyncUserError(
+            category: .folderMarkerMissing,
+            title: L10n.tr("Vault Folder Was Moved or Deleted"),
+            message: L10n.fmt(
+                "VaultSync can no longer verify that this folder still holds this vault's data%@ — the folder was likely moved, renamed, replaced, or deleted outside VaultSync. Syncing has stopped to protect your notes.",
+                pathHint
+            ),
+            remediation: L10n.tr("If you moved or renamed the folder, move it back to its original place. If it is gone, remove this vault on this iPhone and accept it again under Pending Shares. VaultSync never moves, recreates, or deletes folders on its own."),
+            technicalDetails: detail
+        )
     }
 
     static func relayProvisionFailed(reason: String) -> SyncUserError {
@@ -223,6 +258,8 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
             } else {
                 anchor = "bookmark-access-expired"
             }
+        case .folderMarkerMissing:
+            anchor = "vault-folder-was-moved-or-deleted"
         case .config, .validation:
             if details.contains("pending") || details.contains("share") {
                 anchor = "no-pending-shares-appear"

@@ -654,3 +654,7 @@
 "Folder Already Contains Files" = "文件夹已包含文件";
 "The folder \"%@\" already contains files. Accepting this share would combine its contents with the shared vault and sync the result to the other devices." = "文件夹“%@”已包含文件。接受此共享会将其内容与共享的 Vault 合并，并将结果同步到其他设备。";
 "Tap \"Retry Accept\" to review and confirm, or \"Choose Vault…\" to pick a different location." = "点按“重试接受”以查看并确认，或使用“选择 Vault…”另选位置。";
+"Vault Folder Was Moved or Deleted" = "Vault 文件夹已被移动或删除";
+"VaultSync can no longer verify that this folder still holds this vault's data%@ — the folder was likely moved, renamed, replaced, or deleted outside VaultSync. Syncing has stopped to protect your notes." = "VaultSync 已无法确认此文件夹仍包含该 Vault 的数据%@——该文件夹可能在 VaultSync 之外被移动、重命名、替换或删除。同步已停止，以保护你的笔记。";
+"If you moved or renamed the folder, move it back to its original place. If it is gone, remove this vault on this iPhone and accept it again under Pending Shares. VaultSync never moves, recreates, or deletes folders on its own." = "如果你移动或重命名了该文件夹，请将它移回原来的位置。如果它已不存在，请在此 iPhone 上移除该 Vault，然后在“待处理共享”中重新接受它。VaultSync 绝不会自行移动、重新创建或删除文件夹。";
+"Follow the recovery steps shown with the affected vault — rescanning cannot fix a vault folder that was moved or deleted." = "请按照受影响 Vault 旁显示的恢复步骤操作——重新扫描无法修复已被移动或删除的 Vault 文件夹。";

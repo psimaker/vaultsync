@@ -61,3 +61,119 @@ struct SyncUserErrorTests {
         #expect(error.remediation == L10n.tr("Retry the action. If it keeps failing, restart the app and check Settings diagnostics."))
     }
 }
+
+@Suite("Marker-missing folder error mapping (#65)")
+struct FolderMarkerMissingMappingTests {
+    /// Syncthing's literal engine text (lib/config/folderconfiguration.go) —
+    /// the exact string users saw raw and untranslated.
+    static let rawEngineText =
+        "folder marker missing (this indicates potential data loss, search docs/forum to get information about how to proceed)"
+
+    @Test("Folder status maps the raw engine text to localized guidance")
+    func mapsFolderStatusMarkerMissing() {
+        let error = SyncUserError.fromFolderStatus(
+            reason: "unknown_error",
+            message: Self.rawEngineText,
+            path: "/vaults/Life"
+        )
+
+        #expect(error.category == .folderMarkerMissing)
+        #expect(error.title == L10n.tr("Vault Folder Was Moved or Deleted"))
+        #expect(!error.message.contains("search docs/forum"))
+        #expect(error.message.contains("/vaults/Life"))
+        #expect(error.technicalDetails == Self.rawEngineText)
+    }
+
+    @Test("Remediation follows the manual-recovery doctrine — no rescan, no retry")
+    func remediationAvoidsRescanMisdirection() {
+        let error = SyncUserError.fromFolderStatus(
+            reason: "unknown_error",
+            message: Self.rawEngineText,
+            path: nil
+        )
+
+        let guidance = error.remediation.lowercased()
+        #expect(!guidance.isEmpty)
+        #expect(!guidance.contains("rescan"))
+        #expect(!guidance.contains("retry"))
+    }
+
+    @Test("Raw-message path (e.g. a failed rescan) maps the same way")
+    func mapsRawMessageMarkerMissing() {
+        let error = SyncUserError.from(rawMessage: Self.rawEngineText)
+
+        #expect(error.category == .folderMarkerMissing)
+        #expect(error.title == L10n.tr("Vault Folder Was Moved or Deleted"))
+        #expect(error.technicalDetails == Self.rawEngineText)
+        #expect(!error.remediation.lowercased().contains("retry"))
+    }
+
+    @Test("Marker-missing errors route to their own troubleshooting anchor")
+    func routesToDedicatedTroubleshootingAnchor() {
+        let error = SyncUserError.fromFolderStatus(
+            reason: "unknown_error",
+            message: Self.rawEngineText,
+            path: nil
+        )
+
+        let url = SyncUserError.troubleshootingURL(for: error)
+        #expect(url?.absoluteString.hasSuffix("#vault-folder-was-moved-or-deleted") == true)
+    }
+
+    @Test("Other unknown folder errors keep the generic mapping")
+    func keepsGenericMappingForOtherErrors() {
+        let error = SyncUserError.fromFolderStatus(
+            reason: "unknown_error",
+            message: "database is locked",
+            path: nil
+        )
+
+        #expect(error.title == L10n.tr("Folder Sync Error"))
+        #expect(error.message == "database is locked")
+    }
+}
+
+@Suite("Rescan CTA availability under marker loss (#65)")
+struct RescanCTAAvailabilityTests {
+    private func errorStatus(message: String) -> SyncthingManager.FolderStatusInfo {
+        SyncthingManager.FolderStatusInfo(payload: .init(
+            state: "error",
+            stateChanged: "2026-07-07T10:00:00Z",
+            completionPct: 0,
+            globalBytes: 0,
+            globalFiles: 0,
+            localBytes: 0,
+            localFiles: 0,
+            needBytes: 0,
+            needFiles: 0,
+            inProgressBytes: 0,
+            errorReason: "unknown_error",
+            errorMessage: message,
+            errorPath: nil,
+            errorChanged: nil
+        ))
+    }
+
+    @Test("Marker loss as the only error hides the rescan path")
+    @MainActor
+    func markerOnlyErrorsAreNotRescanable() {
+        let manager = SyncthingManager()
+        manager._testSetFolderStatuses([
+            "vault-a": errorStatus(message: FolderMarkerMissingMappingTests.rawEngineText),
+        ])
+
+        #expect(manager.hasRescanableFolderErrors == false)
+    }
+
+    @Test("A non-marker folder error keeps the rescan path available")
+    @MainActor
+    func otherErrorsStayRescanable() {
+        let manager = SyncthingManager()
+        manager._testSetFolderStatuses([
+            "vault-a": errorStatus(message: FolderMarkerMissingMappingTests.rawEngineText),
+            "vault-b": errorStatus(message: "database is locked"),
+        ])
+
+        #expect(manager.hasRescanableFolderErrors)
+    }
+}
