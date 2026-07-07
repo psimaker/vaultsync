@@ -91,6 +91,13 @@ struct DeviceDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             editedName = device.name
+            #if DEBUG
+            // LAB: present the removal consent immediately for the UI-audit
+            // fixture run (#64); reachable only via launch argument.
+            if UIAuditFixture.active == UIAuditFixture.deviceRemovalConsent {
+                showRemoveConfirm = true
+            }
+            #endif
         }
         .onDisappear {
             saveName()

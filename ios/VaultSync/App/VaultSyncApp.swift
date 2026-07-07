@@ -65,6 +65,11 @@ struct VaultSyncApp: App {
             // The unit-test host must never manage the process-global engine
             // lifecycle — see TestHost.
             guard !TestHost.isActive else { return }
+            #if DEBUG
+            // A UI-audit fixture run seeds manager state directly; starting
+            // the engine would overwrite it — see UIAuditFixture.
+            guard !UIAuditFixture.isActive else { return }
+            #endif
             switch newPhase {
             case .active:
                 BackgroundSyncService.setSceneActive(true)
@@ -116,6 +121,9 @@ struct VaultSyncApp: App {
         }
         .onChange(of: hasCompletedOnboarding) { _, completed in
             guard !TestHost.isActive else { return }
+            #if DEBUG
+            guard !UIAuditFixture.isActive else { return }
+            #endif
             if completed {
                 // Second consumer of the #60 state: guarding on the manager
                 // alone made this call start() against an engine a background

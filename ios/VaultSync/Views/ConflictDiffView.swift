@@ -75,6 +75,16 @@ struct ConflictDiffView: View {
         }
         .navigationTitle("Resolve Conflict")
         .navigationBarTitleDisplayMode(.inline)
+        #if DEBUG
+        .onAppear {
+            // LAB: present the resolve consent immediately for the UI-audit
+            // fixture run (#64); reachable only via launch argument.
+            if UIAuditFixture.active == UIAuditFixture.conflictResolveConsent {
+                actionToConfirm = .keepThis
+                showConfirmAlert = true
+            }
+        }
+        #endif
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
