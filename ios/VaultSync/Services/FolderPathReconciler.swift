@@ -108,9 +108,18 @@ enum FolderPathReconciler {
     }
 
     /// For each folder:
-    ///  - **known mapping**: rebase to `root(+rel)` when it differs and the
-    ///    target directory actually exists (never point a folder at a missing
-    ///    or empty directory — that risks marker loss / deletions).
+    ///  - **known mapping, configured path still alive on disk**: never re-point
+    ///    the folder — its data is right where config says, and re-pointing a
+    ///    live folder is how a share gets attached to *different* content (e.g.
+    ///    a `rel=""` vault-as-root folder would be yanked onto the whole
+    ///    container after the user re-selects the parent folder; #45 follow-up).
+    ///    Instead, reality wins: refresh the sidecar from the live path when it
+    ///    lies under the current root, so a future container change rebases to
+    ///    the right place.
+    ///  - **known mapping, configured path gone**: the container moved (#25) —
+    ///    rebase to `root(+rel)` when the target directory actually exists
+    ///    (never point a folder at a missing or empty directory — that risks
+    ///    marker loss / deletions).
     ///  - **no mapping but currently under the root**: backfill the sidecar
     ///    (no path change) — this adopts already-healthy folders on first launch
     ///    after the update.
@@ -132,10 +141,25 @@ enum FolderPathReconciler {
             let storedCanon = canonical(folder.path)
 
             if let r = rel[folder.id] {
-                // Rebase to the bookmark's natural path form; compare canonically
-                // so a pure /var↔/private/var difference is not a "change".
+                // Compare canonically so a pure /var↔/private/var difference is
+                // not a "change".
                 let desired = desiredPath(root: rawRoot, rel: r)
                 guard canonical(desired) != storedCanon else { continue }
+
+                // The mapping disagrees with the configured path. If that path
+                // is still alive on disk, the folder's data is right there —
+                // keep the path and refresh the mapping from reality instead.
+                if env.dirExists(folder.path) {
+                    if let actual = relativeIfUnder(storedCanon, root: canonRoot),
+                       actual != r {
+                        env.recordRel(folder.id, actual)
+                        logger.info("Refreshed mapping for live folder \(folder.id, privacy: .private) from its on-disk location")
+                    }
+                    continue
+                }
+
+                // Configured path is gone — the container moved (#25). Rebase
+                // to the bookmark's natural path form.
                 guard env.dirExists(desired) else {
                     logger.warning("Skip rebase for folder \(folder.id, privacy: .private): target missing")
                     continue

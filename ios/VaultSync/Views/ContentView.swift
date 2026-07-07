@@ -10,6 +10,10 @@ struct ContentView: View {
     @State private var pendingChecklistAction: SetupChecklistViewModel.ChecklistAction?
     @State private var alertMessage: String?
     @State private var showAlert = false
+    /// Non-error notice (e.g. "you selected a single vault") — its own alert so
+    /// it is not presented under the "Error" title.
+    @State private var infoMessage: String?
+    @State private var showInfoAlert = false
     @State private var pendingShareFailures: [String: SyncUserError] = [:]
     @State private var pendingShareInFlight: Set<String> = []
     @State private var pendingFilterSheetFolder: SyncthingManager.FolderInfo?
@@ -74,6 +78,11 @@ struct ContentView: View {
         } message: {
             Text(alertMessage ?? "")
         }
+        .alert(L10n.tr("Note"), isPresented: $showInfoAlert) {
+            Button("OK") { }
+        } message: {
+            Text(infoMessage ?? "")
+        }
         .sheet(isPresented: $showAddDevice) {
             AddDeviceSheet(syncthingManager: syncthingManager) { message in
                 alertMessage = message
@@ -101,6 +110,15 @@ struct ContentView: View {
                     // container path — rebase any mapped folders onto it so a
                     // previously-unreachable vault reconnects.
                     syncthingManager.reconcileFolderPaths(obsidianRoot: vaultManager.obsidianBasePath)
+                    // A share that had no safe location under the old root
+                    // (e.g. the root was itself a vault, #45 follow-up) may
+                    // succeed under the new one — let auto-accept try again.
+                    pendingShareFailures.removeAll()
+                    if let advisory = vaultManager.selectionAdvisory {
+                        infoMessage = advisory
+                        showInfoAlert = true
+                        vaultManager.clearSelectionAdvisory()
+                    }
                 }
             }
         }

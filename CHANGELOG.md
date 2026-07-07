@@ -4,6 +4,15 @@ All notable changes to VaultSync are documented here.
 
 ---
 
+## [1.7.2] — 2026-07-07
+
+### Fixed
+
+- **A new vault can no longer end up *inside* an existing vault** ([#45](https://github.com/psimaker/vaultsync/issues/45) follow-up) — when the folder selected for VaultSync was itself a vault (instead of the Obsidian folder that contains your vaults), 1.7.1 gave a second share a subfolder *inside* that vault. Obsidian then treated the new vault as part of the old one, and the outer vault synced the inner vault's notes to its own devices — deleting that stray copy anywhere would have deleted the inner vault everywhere. Folder locations that overlap an existing vault's folder are now refused at every layer (share auto-accept, the sync engine itself), and the app explains the fix: select the folder that *contains* your vaults ("On My iPhone" → "Obsidian") — every new share then syncs into its own folder next to the others.
+- **Vaults already nested by 1.7.1 are now caught and paused** — the launch-time shield that catches same-folder merges now also detects one vault's folder lying inside another's, pauses both once to stop the mixing, and shows a critical "One Vault Is Nested Inside Another" prompt with the recovery steps (re-select the container folder, remove the inner vault so it is re-added into its own folder, and only then clean up the leftover copy). Localized in English, German, Spanish, and Simplified Chinese.
+- **Re-selecting a different Obsidian folder no longer tries to re-point healthy vaults** — after changing VaultSync's Obsidian folder, the launch-time path repair could try to move a vault that was still syncing fine onto the newly selected location (the engine's safety marker check blocked it, but it retried with a warning on every launch). A vault whose folder is alive on disk now always keeps its location, and its stored position is refreshed from reality instead.
+- **Picking a single vault as the Obsidian folder now says so up front** — selecting a folder that is itself a vault still works for that one vault, but the app now explains immediately that additional vaults will need the containing folder, instead of failing later when the second share arrives.
+
 ## [1.7.1] — 2026-06-15
 
 ### Fixed

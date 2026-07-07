@@ -83,6 +83,48 @@ struct FolderPathReconcilerTests {
         #expect(spy.setPathCalls.isEmpty)
     }
 
+    @Test("A live folder is never re-pointed; its mapping is refreshed from reality (#45 follow-up)")
+    func livePathRefreshesMappingInsteadOfRebase() {
+        // The user re-selected the container as the Obsidian root while the
+        // folder still syncs its old vault-as-root directory. The folder's
+        // directory is alive, so its path must stay untouched — re-pointing it
+        // at root+rel ("" → the container itself) would make this share sync
+        // every other vault too. The sidecar adopts the real relative location
+        // under the new root instead.
+        let root = "/Documents"
+        let spy = Spy(
+            rel: ["f1": ""],
+            existingDirs: [
+                FolderPathReconciler.canonical("/Documents/Workshops"),
+                FolderPathReconciler.canonical(root),
+            ]
+        )
+        FolderPathReconciler.reconcile(
+            folders: [(id: "f1", path: "/Documents/Workshops")],
+            env: makeEnv(spy: spy, root: root)
+        )
+        #expect(spy.setPathCalls.isEmpty)
+        #expect(spy.rel["f1"] == "Workshops")
+    }
+
+    @Test("A live folder outside the root keeps both its path and its mapping")
+    func livePathOutsideRootUntouched() {
+        let root = "/Documents"
+        let spy = Spy(
+            rel: ["f1": ""],
+            existingDirs: [
+                FolderPathReconciler.canonical("/Elsewhere/Vault"),
+                FolderPathReconciler.canonical(root),
+            ]
+        )
+        FolderPathReconciler.reconcile(
+            folders: [(id: "f1", path: "/Elsewhere/Vault")],
+            env: makeEnv(spy: spy, root: root)
+        )
+        #expect(spy.setPathCalls.isEmpty)
+        #expect(spy.rel["f1"] == "")
+    }
+
     @Test("Known mapping is left untouched when no Obsidian root is available this launch")
     func noRootNoChange() {
         let spy = Spy(rel: ["f1": ""])

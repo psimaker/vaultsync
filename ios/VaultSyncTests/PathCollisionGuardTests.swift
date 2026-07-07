@@ -78,10 +78,63 @@ struct PathCollisionGuardTests {
         #expect(groups.first == Set(["a", "b"]))
     }
 
-    @Test("collidingFolderIDs flattens every collision group")
-    func collidingIDsFlattensGroups() {
-        let ids = PathCollisionGuard.collidingFolderIDs(
-            folders(("a", "/X"), ("b", "/X"), ("c", "/Y"), ("d", "/Y"), ("e", "/Z")),
+    // MARK: - Nested folders (#45 follow-up)
+
+    @Test("A folder inside another folder's directory flags both")
+    func nestedFolderFlagsBoth() {
+        // The vault-as-root setup 1.7.1 could create: the first share owns the
+        // root, the second was mapped into a subdirectory inside it.
+        let ids = PathCollisionGuard.nestedFolderIDs(
+            folders(("outer", "/Documents/Workshops"), ("inner", "/Documents/Workshops/Obsidian-Vault-Life")),
+            canonicalize: identity
+        )
+        #expect(ids == Set(["outer", "inner"]))
+    }
+
+    @Test("Nesting detection is case-insensitive (case-folding APFS)")
+    func nestedDetectionIsCaseInsensitive() {
+        let ids = PathCollisionGuard.nestedFolderIDs(
+            folders(("outer", "/Obsidian/Vault"), ("inner", "/obsidian/vault/Sub")),
+            canonicalize: identity
+        )
+        #expect(ids == Set(["outer", "inner"]))
+    }
+
+    @Test("A name-prefix sibling is not nested (boundary-aware comparison)")
+    func namePrefixSiblingIsNotNested() {
+        let ids = PathCollisionGuard.nestedFolderIDs(
+            folders(("a", "/Obsidian/Work"), ("b", "/Obsidian/Workshops")),
+            canonicalize: identity
+        )
+        #expect(ids.isEmpty)
+    }
+
+    @Test("A whole nesting chain is flagged, distinct folders are left out")
+    func nestingChainIsFlagged() {
+        let ids = PathCollisionGuard.nestedFolderIDs(
+            folders(("a", "/R"), ("b", "/R/X"), ("c", "/R/X/Y"), ("d", "/Other")),
+            canonicalize: identity
+        )
+        #expect(ids == Set(["a", "b", "c"]))
+    }
+
+    @Test("Equal paths are a collision, not a nesting")
+    func equalPathsAreNotNested() {
+        let ids = PathCollisionGuard.nestedFolderIDs(
+            folders(("a", "/Obsidian"), ("b", "/Obsidian")),
+            canonicalize: identity
+        )
+        #expect(ids.isEmpty)
+    }
+
+    @Test("overlappingFolderIDs unions same-path groups and nested folders")
+    func overlappingIDsUnionCollisionsAndNesting() {
+        let ids = PathCollisionGuard.overlappingFolderIDs(
+            folders(
+                ("a", "/X"), ("b", "/X"),                 // same-path collision
+                ("c", "/Y"), ("d", "/Y/Inner"),           // nested pair
+                ("e", "/Z")                               // distinct — untouched
+            ),
             canonicalize: identity
         )
         #expect(ids == Set(["a", "b", "c", "d"]))
@@ -201,5 +254,20 @@ struct PathCollisionGuardTests {
         #expect(newly == ["a", "b", "c", "d"])
         #expect(!spy.setPausedCalls.contains("e"))
         #expect(!spy.markCalls.contains("e"))
+    }
+
+    @Test("Nested folders are paused by the same launch-time pass (#45 follow-up)")
+    func pausesNestedFolders() {
+        let spy = Spy()
+        let newly = PathCollisionGuard.pauseCollisions(
+            folders: folders(
+                ("outer", "/Documents/Workshops", false),
+                ("inner", "/Documents/Workshops/Obsidian-Vault-Life", false),
+                ("clean", "/Documents/Other", false)
+            ),
+            env: makeEnv(spy: spy)
+        )
+        #expect(newly == ["inner", "outer"])
+        #expect(!spy.setPausedCalls.contains("clean"))
     }
 }

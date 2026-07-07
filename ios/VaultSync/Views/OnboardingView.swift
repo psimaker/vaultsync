@@ -16,6 +16,10 @@ struct OnboardingView: View {
     @State private var showAddDevice = false
     @State private var alertMessage: String?
     @State private var showAlert = false
+    /// Non-error notice (e.g. "you selected a single vault") — its own alert so
+    /// it is not presented under the "Error" title.
+    @State private var infoMessage: String?
+    @State private var showInfoAlert = false
 
     private let slate = Color.vaultSlate
     private let teal = Color.vaultTeal
@@ -51,6 +55,10 @@ struct OnboardingView: View {
                     showObsidianPicker = false
                     if let err = vaultManager.grantAccess(url: url) {
                         present(error: err, fallbackTitle: L10n.tr("Obsidian Folder Connection Failed"))
+                    } else if let advisory = vaultManager.selectionAdvisory {
+                        infoMessage = advisory
+                        showInfoAlert = true
+                        vaultManager.clearSelectionAdvisory()
                     }
                 }
             }
@@ -64,6 +72,11 @@ struct OnboardingView: View {
                 Button("OK") { }
             } message: {
                 Text(alertMessage ?? "")
+            }
+            .alert(L10n.tr("Note"), isPresented: $showInfoAlert) {
+                Button("OK") { }
+            } message: {
+                Text(infoMessage ?? "")
             }
         }
         .onAppear {

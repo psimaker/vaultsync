@@ -42,6 +42,7 @@ PHASES.md
 
 # App Store metadata (internal)
 appstore/
+appstoremetadata/
 
 # Internal process docs
 docs/release-checklist.md

@@ -105,15 +105,18 @@ func AcceptPendingFolder(folderID, label, path string) string {
 		return "folder already exists"
 	}
 
-	// Reject if another configured folder already occupies this local path.
-	// Two distinct folder IDs pointing at one directory makes Syncthing merge
-	// their contents into each other and push the mix back to every peer —
-	// silent, destructive data loss (issue #45). The local path is the safety
-	// boundary, so enforce it here as the hard floor even if the client computed
-	// a colliding path.
+	// Reject if this local path overlaps another configured folder's path —
+	// the same directory, one inside it, or one containing it. Two folder IDs
+	// on one directory makes Syncthing merge their contents and push the mix
+	// back to every peer (issue #45); nesting is the same corruption one level
+	// down: the outer folder scans the inner folder's files as its own content
+	// and syncs them to its peers, and a peer deleting that stray copy then
+	// propagates the deletion into the inner folder everywhere (#45 follow-up).
+	// The local path is the safety boundary, so enforce it here as the hard
+	// floor even if the client computed an overlapping path.
 	for _, f := range stCfg.Folders() {
-		if sameFolderPath(f.Path, path) {
-			return "another folder already syncs to this path"
+		if msg := folderPathOverlapError(f.Path, path); msg != "" {
+			return msg
 		}
 	}
 
@@ -174,10 +177,23 @@ func AcceptPendingFolder(folderID, label, path string) string {
 	return ""
 }
 
-// sameFolderPath reports whether two folder paths resolve to the same local
-// directory. Paths are cleaned (so `./` and trailing-slash differences do not
-// matter) and compared case-insensitively: the iOS data volume is case-folding
-// APFS, where "Vault" and "vault" are one and the same directory.
-func sameFolderPath(a, b string) bool {
-	return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
+// folderPathOverlapError returns a non-empty error message when candidate
+// overlaps existing: the same directory, a directory inside it, or a directory
+// containing it. Paths are cleaned (so `./` and trailing-slash differences do
+// not matter) and compared case-insensitively: the iOS data volume is
+// case-folding APFS, where "Vault" and "vault" are one and the same directory.
+// The prefix checks are boundary-aware, so "/VaultA" never matches "/VaultAx".
+func folderPathOverlapError(existing, candidate string) string {
+	e := strings.ToLower(filepath.Clean(existing))
+	c := strings.ToLower(filepath.Clean(candidate))
+	sep := string(filepath.Separator)
+	switch {
+	case e == c:
+		return "another folder already syncs to this path"
+	case strings.HasPrefix(c, e+sep):
+		return "this path is inside a directory another folder already syncs"
+	case strings.HasPrefix(e, c+sep):
+		return "another folder already syncs a directory inside this path"
+	}
+	return ""
 }

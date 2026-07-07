@@ -3,17 +3,23 @@ import os
 
 private let logger = Logger(subsystem: "eu.vaultsync.app", category: "pathcollision")
 
-/// Detects and contains the "two vaults, one local folder" collision (issue #45)
-/// on devices that an earlier version already merged.
+/// Detects and contains overlapping folder paths (issue #45) on devices that an
+/// earlier version already merged or nested:
 ///
-/// The #45 fix (`VaultManager.resolveSharePath` + the Go `AcceptPendingFolder`
-/// guard) prevents *new* collisions, but a device that collided under 1.6.0 /
-/// 1.7.0 still has ≥2 folders configured on one local path — Syncthing keeps
-/// merging their contents and pushing the mix back to every peer. This guard is
-/// the migration shield: on launch it groups configured folders by their
-/// canonical local path and, for any path shared by ≥2 folders, pauses each
-/// colliding folder exactly ONCE to stop the corruption immediately, then leaves
-/// a critical banner up until the user separates them. Recovery stays manual and
+/// - **Same path**: ≥2 folders configured on one local directory — Syncthing
+///   merges their contents and pushes the mix back to every peer (the original
+///   #45 collision, created by 1.6.0/1.7.0).
+/// - **Nested path**: one folder's directory lies inside another folder's
+///   directory — the outer folder scans the inner vault's files as its own
+///   content and syncs them to its peers, and a peer deleting that stray copy
+///   propagates the deletion into the inner vault everywhere (the #45
+///   follow-up, created by 1.7.1's vault-as-root subfolder mapping).
+///
+/// The accept-time fix (`VaultManager.resolveSharePath` + the Go overlap
+/// guards) prevents *new* overlaps. This guard is the migration shield for
+/// devices that already have one: on launch it pauses each overlapping folder
+/// exactly ONCE to stop the corruption immediately, then leaves a critical
+/// banner up until the user separates them. Recovery stays manual and
 /// non-destructive — nothing is deleted, renamed, moved, or re-accepted
 /// automatically.
 ///
@@ -52,13 +58,42 @@ enum PathCollisionGuard {
         return idsByPath.values.filter { $0.count >= 2 }
     }
 
-    /// Flat set of every folder ID that belongs to some collision group.
-    static func collidingFolderIDs(
+    /// True when `child` lies strictly inside `parent` (both canonical and
+    /// lowercased). Boundary-aware: "/vaulta" is not inside "/vault".
+    private static func isNested(_ child: String, in parent: String) -> Bool {
+        child.hasPrefix(parent + "/")
+    }
+
+    /// Folder IDs whose local path lies inside another configured folder's path
+    /// (or holds one). Nesting is the #45 merge one level down: the outer folder
+    /// scans the inner vault's files as its own content and syncs them to its
+    /// peers — and a peer deleting that stray copy would propagate the deletion
+    /// into the inner vault everywhere (#45 follow-up). Detected with the same
+    /// canonical + lowercased rule as same-path collisions.
+    static func nestedFolderIDs(
+        _ folders: [(id: String, path: String)],
+        canonicalize: (String) -> String
+    ) -> Set<String> {
+        let entries = folders.map { (id: $0.id, key: canonicalize($0.path).lowercased()) }
+        var ids = Set<String>()
+        for inner in entries {
+            for outer in entries where isNested(inner.key, in: outer.key) {
+                ids.insert(inner.id)
+                ids.insert(outer.id)
+            }
+        }
+        return ids
+    }
+
+    /// Flat set of every folder ID involved in any path overlap — same-path
+    /// collision groups plus nested folders. This is the pause set: both
+    /// situations actively mix two vaults' contents.
+    static func overlappingFolderIDs(
         _ folders: [(id: String, path: String)],
         canonicalize: (String) -> String
     ) -> Set<String> {
         collidingFolderGroups(folders, canonicalize: canonicalize)
-            .reduce(into: Set<String>()) { $0.formUnion($1) }
+            .reduce(into: nestedFolderIDs(folders, canonicalize: canonicalize)) { $0.formUnion($1) }
     }
 
     // MARK: - Auto-paused sidecar (folder IDs we have auto-paused exactly once)
@@ -113,8 +148,9 @@ enum PathCollisionGuard {
         var setPaused: (_ folderID: String) -> String?
     }
 
-    /// Pause every colliding folder that has not yet been auto-paused — exactly
-    /// once each. A folder already paused (by the user, or a previous pass) is
+    /// Pause every overlapping folder (same-path collision or nested, see
+    /// `overlappingFolderIDs`) that has not yet been auto-paused — exactly once
+    /// each. A folder already paused (by the user, or a previous pass) is
     /// recorded without a redundant bridge call. A folder we have auto-paused
     /// before is skipped entirely and never re-paused, so a deliberate resume for
     /// recovery is respected (the explicit #45 guardrail). An ID is recorded only
@@ -126,7 +162,7 @@ enum PathCollisionGuard {
         folders: [(id: String, path: String, paused: Bool)],
         env: Environment
     ) -> [String] {
-        let colliding = collidingFolderIDs(
+        let colliding = overlappingFolderIDs(
             folders.map { (id: $0.id, path: $0.path) },
             canonicalize: env.canonicalize
         )
@@ -165,15 +201,15 @@ enum PathCollisionGuard {
     }
 
     /// Read the live folder list from the bridge and pause any active path
-    /// collision once. Blocks briefly on bridge calls, so run it off the main
-    /// actor (alongside `FolderPathReconciler.reconcileLive`).
+    /// overlap (same-path or nested) once. Blocks briefly on bridge calls, so
+    /// run it off the main actor (alongside `FolderPathReconciler.reconcileLive`).
     static func pauseCollisionsLive() {
         let json = SyncBridgeService.getFoldersJSON()
         guard let data = json.data(using: .utf8),
               let decoded = try? JSONDecoder().decode([BridgeFolder].self, from: data) else {
             return
         }
-        // A collision needs ≥2 folders by definition — cheap early-out.
+        // An overlap needs ≥2 folders by definition — cheap early-out.
         guard decoded.count >= 2 else { return }
 
         let folders = decoded.map { (id: $0.id, path: $0.path, paused: $0.paused) }
@@ -185,7 +221,7 @@ enum PathCollisionGuard {
         )
         let paused = pauseCollisions(folders: folders, env: env)
         if !paused.isEmpty {
-            logger.warning("Auto-paused \(paused.count) folder(s) sharing one local path to stop a vault merge (#45)")
+            logger.warning("Auto-paused \(paused.count) folder(s) with overlapping local paths to stop a vault merge (#45)")
         }
     }
 }

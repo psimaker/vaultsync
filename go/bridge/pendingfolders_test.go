@@ -115,6 +115,57 @@ func TestAcceptPendingFolderPathCollision(t *testing.T) {
 	}
 }
 
+func TestAcceptPendingFolderNestedPathCollision(t *testing.T) {
+	configDir := testConfigDir(t)
+
+	if errMsg := StartSyncthing(configDir); errMsg != "" {
+		t.Fatalf("StartSyncthing() failed: %s", errMsg)
+	}
+	defer StopSyncthing()
+
+	// Configure a first folder — a vault that owns its directory.
+	vaultPath := filepath.Join(configDir, "Workshops")
+	if errMsg := AddFolder("vault-workshops", "Workshops", vaultPath); errMsg != "" {
+		t.Fatalf("AddFolder failed: %s", errMsg)
+	}
+
+	const wantInside = "this path is inside a directory another folder already syncs"
+	const wantContains = "another folder already syncs a directory inside this path"
+
+	// A share nested INSIDE an existing folder must be rejected: the outer
+	// folder scans the inner vault's files as its own content and pushes them
+	// to its peers — the #45 merge one level down (the vault-as-root setup
+	// from the #45 follow-up report).
+	nested := filepath.Join(vaultPath, "Obsidian-Vault-Life")
+	if errMsg := AcceptPendingFolder("vault-life", "Life", nested); errMsg != wantInside {
+		t.Fatalf("AcceptPendingFolder nested path = %q, want %q", errMsg, wantInside)
+	}
+
+	// Deeper nesting and case variants resolve into the same subtree and must
+	// be rejected too (case-folding APFS).
+	deep := filepath.Join(vaultPath, "notes", "sub")
+	if errMsg := AcceptPendingFolder("vault-deep", "Deep", deep); errMsg != wantInside {
+		t.Fatalf("AcceptPendingFolder deeply nested path = %q, want %q", errMsg, wantInside)
+	}
+	caseVariant := filepath.Join(configDir, "workshops", "Nested")
+	if errMsg := AcceptPendingFolder("vault-case", "Case", caseVariant); errMsg != wantInside {
+		t.Fatalf("AcceptPendingFolder case-variant nested path = %q, want %q", errMsg, wantInside)
+	}
+
+	// A share that would CONTAIN an existing folder is the same overlap from
+	// the other side and must be rejected as well.
+	if errMsg := AcceptPendingFolder("vault-parent", "Parent", configDir); errMsg != wantContains {
+		t.Fatalf("AcceptPendingFolder containing path = %q, want %q", errMsg, wantContains)
+	}
+
+	// A sibling whose name merely starts with the existing folder's name is
+	// NOT nested (boundary-aware comparison) and is accepted.
+	sibling := filepath.Join(configDir, "WorkshopsArchive")
+	if errMsg := AcceptPendingFolder("vault-sibling", "Sibling", sibling); errMsg != "" {
+		t.Fatalf("AcceptPendingFolder name-prefix sibling = %q, want success", errMsg)
+	}
+}
+
 func TestAcceptPendingFolderCreatesPath(t *testing.T) {
 	configDir := testConfigDir(t)
 

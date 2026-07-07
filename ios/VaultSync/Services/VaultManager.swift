@@ -23,6 +23,17 @@ final class VaultManager {
     private(set) var accessIssue: SyncUserError?
     private(set) var needsReconnect = false
 
+    /// One-time, non-blocking notice set when the user picks a folder that is
+    /// itself a vault. A single-vault setup is legitimate, but additional
+    /// shares can never get a sibling folder inside that scope (the #45
+    /// follow-up nesting trap) — point at the container up front instead of
+    /// failing at accept time. The UI presents and then clears it.
+    private(set) var selectionAdvisory: String?
+
+    func clearSelectionAdvisory() {
+        selectionAdvisory = nil
+    }
+
     private static let obsidianBookmarkID = "obsidian-root"
 
     // MARK: - Access Grant (one-time, from onboarding)
@@ -53,7 +64,17 @@ final class VaultManager {
         scanForVaults()
         cleanupLegacyBookmarks()
 
-        logger.info("Obsidian directory access granted: \(url.path, privacy: .private)")
+        selectionAdvisory = nil
+        var pickedConfigIsDirectory: ObjCBool = false
+        let pickedFolderIsVault = FileManager.default.fileExists(
+            atPath: url.appendingPathComponent(".obsidian", isDirectory: true).path,
+            isDirectory: &pickedConfigIsDirectory
+        ) && pickedConfigIsDirectory.boolValue
+        if pickedFolderIsVault {
+            selectionAdvisory = L10n.tr("The folder you selected is itself a vault. Syncing this one vault works, but additional vaults cannot get their own folder next to it. If you plan to sync more than one vault, select the folder that contains your vaults instead (\"On My iPhone\" → \"Obsidian\").")
+        }
+
+        logger.info("Obsidian directory access granted: \(url.path, privacy: .private) (isVault=\(pickedFolderIsVault))")
         return nil
     }
 
@@ -192,14 +213,22 @@ final class VaultManager {
             FolderPathReconciler.canonical($0.path).lowercased()
         })
 
-        let path = Self.resolveSharePath(
+        guard let path = Self.resolveSharePath(
             rawRoot: basePath,
             baseIsVault: baseIsVault,
             nameMatchesBase: nameMatchesBase,
             folderName: folderName,
             occupiedCanonLower: occupied,
             canonicalize: FolderPathReconciler.canonical
-        )
+        ) else {
+            // The selected root is itself (or lies inside) another folder's
+            // synced directory — accepting would nest this vault inside an
+            // existing one and mix their contents (#45 follow-up). Refuse with
+            // guidance; the share stays pending and auto-accept retries after
+            // the user re-selects the container folder.
+            logger.error("Refusing share '\(folderName, privacy: .private)' (\(folder.id)): no overlap-free location under the Obsidian root (baseIsVault=\(baseIsVault), occupied=\(occupied.count))")
+            return L10n.tr("This share needs its own folder, but the folder selected for VaultSync is itself a vault, so everything inside it belongs to that vault. Re-select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") — new vaults then sync side by side instead of inside each other.")
+        }
         logger.info("Accepting share '\(folderName, privacy: .private)' (\(folder.id)) → path: \(path, privacy: .private) (baseIsVault=\(baseIsVault), nameMatchesBase=\(nameMatchesBase), occupied=\(occupied.count))")
 
         if let err = syncthingManager.acceptPendingFolder(
@@ -230,17 +259,26 @@ final class VaultManager {
     }
 
     /// Decide the local directory an incoming share syncs into, guaranteeing it
-    /// never reuses a path already held by a *different* folder.
+    /// never *overlaps* a path already held by a different folder — neither the
+    /// same directory (the #45 merge) nor one nested inside it. A nested share
+    /// is the same corruption one level down: the outer folder scans the inner
+    /// vault's files as its own content and syncs them to its peers, and a peer
+    /// deleting that stray copy propagates the deletion into the inner vault
+    /// everywhere (#45 follow-up).
     ///
     /// The Obsidian root stays a pure container: each vault gets its own
     /// subdirectory `root/<name>`. The two legacy shortcuts that sync a share
     /// straight into the root — `baseIsVault` (the root itself is a single vault)
     /// and `nameMatchesBase` (avoid `Obsidian/obsidian` double-nesting) — are
-    /// honoured ONLY while the root is still free. The instant it is occupied a
-    /// distinct vault is given its own subdirectory instead of being merged on
-    /// top of the existing one (issue #45). A genuine name clash between two
-    /// vaults is disambiguated deterministically (`<name> (2)`, `(3)`, …) rather
-    /// than silently merged.
+    /// honoured ONLY while nothing overlaps the root. A genuine name clash
+    /// between two vaults is disambiguated deterministically (`<name> (2)`,
+    /// `(3)`, …) rather than silently merged.
+    ///
+    /// Returns nil when NO safe location exists: once the root itself is (or
+    /// lies inside) another folder's directory, every possible subdirectory
+    /// would sit inside that folder's synced tree — exactly the vault-as-root
+    /// setup from the #45 follow-up report. The caller refuses the share with
+    /// guidance to re-select the container folder instead of silently nesting.
     ///
     /// Pure (no filesystem, no bridge) so the collision logic is exhaustively
     /// unit-testable; `canonicalize` is injected (production:
@@ -253,28 +291,47 @@ final class VaultManager {
         folderName: String,
         occupiedCanonLower: Set<String>,
         canonicalize: (String) -> String
-    ) -> String {
-        func isFree(_ candidate: String) -> Bool {
-            !occupiedCanonLower.contains(canonicalize(candidate).lowercased())
+    ) -> String? {
+        func canonLower(_ path: String) -> String {
+            canonicalize(path).lowercased()
+        }
+        // Whether the candidate is one of the occupied directories, lies inside
+        // one, or holds one — any of these mixes two folders' contents.
+        func overlapsOccupied(_ candidate: String) -> Bool {
+            let c = canonLower(candidate)
+            return occupiedCanonLower.contains { occ in
+                occ == c || occ.hasPrefix(c + "/") || c.hasPrefix(occ + "/")
+            }
         }
 
-        // Collapse into the root only when it is genuinely unoccupied.
-        if (baseIsVault || nameMatchesBase) && isFree(rawRoot) {
+        // Collapse into the root only while nothing overlaps it.
+        if (baseIsVault || nameMatchesBase) && !overlapsOccupied(rawRoot) {
             return rawRoot
+        }
+
+        // Once the root is — or lies inside — an occupied directory, every
+        // subdirectory would nest this share inside an existing folder's synced
+        // tree. There is no safe location under this root at all.
+        let rootCanon = canonLower(rawRoot)
+        if occupiedCanonLower.contains(where: { occ in
+            occ == rootCanon || rootCanon.hasPrefix(occ + "/")
+        }) {
+            return nil
         }
 
         // Default: the vault's own subdirectory under the root.
         let subfolder = (rawRoot as NSString).appendingPathComponent(folderName)
-        if isFree(subfolder) {
+        if !overlapsOccupied(subfolder) {
             return subfolder
         }
 
         // Name clash with another vault — append the first free numeric suffix.
-        // Bounded by the finite occupied set, so this always terminates.
+        // Terminates: the root is outside every occupied directory here, so
+        // each occupied path can block at most finitely many candidates.
         var suffix = 2
         while true {
             let candidate = (rawRoot as NSString).appendingPathComponent("\(folderName) (\(suffix))")
-            if isFree(candidate) {
+            if !overlapsOccupied(candidate) {
                 return candidate
             }
             suffix += 1

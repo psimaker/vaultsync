@@ -49,6 +49,15 @@ func AddFolder(id, label, path string) string {
 		return "folder already exists"
 	}
 
+	// Same hard floor as AcceptPendingFolder: never let two folders overlap on
+	// disk — equal paths merge two vaults into one directory (issue #45), and
+	// nested paths make the outer folder sync the inner one's files as its own.
+	for _, f := range folders {
+		if msg := folderPathOverlapError(f.Path, path); msg != "" {
+			return msg
+		}
+	}
+
 	// Ensure folder path exists.
 	if err := os.MkdirAll(path, 0o700); err != nil {
 		return fmt.Sprintf("create folder path: %v", err)

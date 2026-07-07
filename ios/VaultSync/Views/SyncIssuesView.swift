@@ -46,7 +46,7 @@ struct SyncIssuesView: View {
 
     private func symbol(for issue: SyncthingManager.SyncIssueItem) -> String {
         switch issue.kind {
-        case .pathCollision, .folderErrors, .conflicts, .staleSync:
+        case .pathCollision, .nestedFolders, .folderErrors, .conflicts, .staleSync:
             return "exclamationmark.triangle.fill"
         case .backgroundSync:
             return "clock.badge.exclamationmark"
@@ -72,11 +72,12 @@ struct SyncIssuesView: View {
     @ViewBuilder
     private func actionView(for issue: SyncthingManager.SyncIssueItem) -> some View {
         switch issue.kind {
-        case .pathCollision:
-            // No safe automated fix: removing, renaming, or re-accepting a
-            // colliding folder risks more data loss, so recovery is deliberately
-            // manual. The remediation prose above is the guidance (remove the
-            // affected vault → it is re-added into its own folder).
+        case .pathCollision, .nestedFolders:
+            // No safe automated fix: removing, renaming, or re-accepting an
+            // overlapping folder risks more data loss, so recovery is
+            // deliberately manual. The remediation prose above is the guidance
+            // (re-select the container / remove the affected vault → it is
+            // re-added into its own folder).
             EmptyView()
 
         case .folderErrors:
@@ -154,7 +155,7 @@ struct SyncIssuesView: View {
     private func troubleshootingURL(for kind: SyncthingManager.SyncIssueItem.Kind) -> URL? {
         let anchor: String
         switch kind {
-        case .pathCollision:
+        case .pathCollision, .nestedFolders:
             // No troubleshooting-doc section for this yet, and the inline
             // remediation is the complete fix path — don't surface a
             // misdirecting link (same stance as `.conflicts`).

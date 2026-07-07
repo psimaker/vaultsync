@@ -77,6 +77,38 @@ func TestAddRemoveFolder(t *testing.T) {
 	}
 }
 
+func TestAddFolderPathOverlapRejected(t *testing.T) {
+	configDir := testConfigDir(t)
+
+	if errMsg := StartSyncthing(configDir); errMsg != "" {
+		t.Fatalf("StartSyncthing() failed: %s", errMsg)
+	}
+	defer StopSyncthing()
+
+	vaultPath := filepath.Join(configDir, "VaultA")
+	if errMsg := AddFolder("vault-a", "Vault A", vaultPath); errMsg != "" {
+		t.Fatalf("AddFolder failed: %s", errMsg)
+	}
+
+	// AddFolder enforces the same overlap floor as AcceptPendingFolder: equal,
+	// nested, and containing paths are all rejected (issue #45).
+	if errMsg := AddFolder("vault-b", "Same", vaultPath); errMsg != "another folder already syncs to this path" {
+		t.Fatalf("AddFolder same path = %q, want collision error", errMsg)
+	}
+	nested := filepath.Join(vaultPath, "Inner")
+	if errMsg := AddFolder("vault-c", "Inner", nested); errMsg != "this path is inside a directory another folder already syncs" {
+		t.Fatalf("AddFolder nested path = %q, want nested error", errMsg)
+	}
+	if errMsg := AddFolder("vault-d", "Parent", configDir); errMsg != "another folder already syncs a directory inside this path" {
+		t.Fatalf("AddFolder containing path = %q, want containing error", errMsg)
+	}
+
+	// A distinct sibling is still accepted.
+	if errMsg := AddFolder("vault-e", "Sibling", filepath.Join(configDir, "VaultB")); errMsg != "" {
+		t.Fatalf("AddFolder sibling = %q, want success", errMsg)
+	}
+}
+
 func TestShareFolderWithDevice(t *testing.T) {
 	configDir := testConfigDir(t)
 

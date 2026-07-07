@@ -274,6 +274,7 @@ final class SyncthingManager {
     struct SyncIssueItem: Identifiable, Hashable, Sendable {
         enum Kind: String, Sendable {
             case pathCollision
+            case nestedFolders
             case folderErrors
             case disconnectedPeers
             case pendingShares
@@ -448,6 +449,31 @@ final class SyncthingManager {
                     severity: .critical,
                     count: affectedCount,
                     folderID: collisionGroups.flatMap { $0 }.min(),
+                    deviceID: nil
+                )
+            )
+        }
+
+        // A folder nested inside another folder's directory is the same
+        // corruption one level down: the outer vault syncs the inner vault's
+        // files as its own content, and a peer deleting that stray copy would
+        // wipe the inner vault everywhere (#45 follow-up). Paused by the same
+        // launch-time guard; surfaced as its own issue because the recovery
+        // differs — re-select the container folder, then remove the inner vault.
+        let nestedIDs = PathCollisionGuard.nestedFolderIDs(
+            folders.map { (id: $0.id, path: $0.path) },
+            canonicalize: FolderPathReconciler.canonical
+        )
+        if !nestedIDs.isEmpty {
+            issues.append(
+                SyncIssueItem(
+                    kind: .nestedFolders,
+                    title: L10n.tr("One Vault Is Nested Inside Another"),
+                    message: L10n.tr("A vault's folder is inside another vault's folder, so the outer vault syncs the inner vault's notes to its own devices. The affected vaults have been paused to stop further mixing."),
+                    remediation: L10n.tr("Select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") as VaultSync's Obsidian directory, then remove the inner vault on this iPhone — it is added back into its own folder. Only afterwards, delete the leftover copy inside the outer vault on your other devices."),
+                    severity: .critical,
+                    count: nestedIDs.count,
+                    folderID: nestedIDs.min(),
                     deviceID: nil
                 )
             )
