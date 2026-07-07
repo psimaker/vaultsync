@@ -179,20 +179,27 @@ final class VaultManager {
     /// the Obsidian directory. Each vault is mapped to a distinct local path so
     /// two shares can never be merged into one directory and pushed back to both
     /// peers (issue #45). See `resolveSharePath` for the exact mapping rule.
+    ///
+    /// `mergeConfirmed` must be false unless the user explicitly confirmed
+    /// syncing into an existing directory that already holds content: without
+    /// it, a target holding anything beyond `.obsidian` yields
+    /// `.needsMergeConfirmation` instead of an accept (#54) — the engine would
+    /// otherwise merge two content sets and push the mix to every peer.
     func acceptPendingShare(
         folder: SyncthingManager.PendingFolderInfo,
-        syncthingManager: SyncthingManager
-    ) -> String? {
+        syncthingManager: SyncthingManager,
+        mergeConfirmed: Bool
+    ) -> PendingShareAcceptOutcome {
         let rawName = folder.label.isEmpty ? folder.id : folder.label
         let folderName = Self.sanitizeDirectoryName(rawName)
 
         guard !folderName.isEmpty else {
-            return L10n.fmt("Invalid folder name: '%@'", rawName)
+            return .refused(message: L10n.fmt("Invalid folder name: '%@'", rawName))
         }
 
         guard let basePath = obsidianBasePath,
               let baseURL = obsidianDirectoryURL else {
-            return L10n.tr("Obsidian directory not accessible.")
+            return .refused(message: L10n.tr("Obsidian directory not accessible."))
         }
 
         let fm = FileManager.default
@@ -225,7 +232,13 @@ final class VaultManager {
             nameMatchesBase: nameMatchesBase,
             folderName: folderName,
             occupiedCanonLower: occupied,
-            canonicalize: FolderPathReconciler.canonical
+            mergeConfirmed: mergeConfirmed,
+            canonicalize: FolderPathReconciler.canonical,
+            // Full listing, hidden entries included — a `.stfolder` marker or
+            // hidden leftover is exactly what must disqualify a target (#54).
+            // nil covers both "does not exist" and "unreadable": the Go hard
+            // floor re-checks on its own and refuses what it cannot verify.
+            listingFor: { try? FileManager.default.contentsOfDirectory(atPath: $0) }
         )
 
         let path: String
@@ -236,7 +249,13 @@ final class VaultManager {
             // target has become unsafe. Refuse with guidance; the share stays
             // pending until the user acts.
             logger.error("Refusing share '\(folderName, privacy: .private)' (\(folder.id)): no safe location (manual=\(manualTarget != nil), baseIsVault=\(baseIsVault), occupied=\(occupied.count))")
-            return message
+            return .refused(message: message)
+        case .requiresMergeConfirmation(_, let targetName):
+            // The label-derived target already holds content the engine would
+            // merge with the share and push to every peer (#54). Only an
+            // explicit, informed accept may do that — hand the decision back.
+            logger.info("Share (\(folder.id)) needs merge confirmation for target \(targetName, privacy: .private)")
+            return .needsMergeConfirmation(targetName: targetName)
         case .path(let resolved):
             path = resolved
         }
@@ -244,14 +263,17 @@ final class VaultManager {
         // The local vault keeps the user's chosen name when one exists; the
         // share label on the offering devices is untouched either way (#52).
         let label = manualTarget ?? folderName
-        logger.info("Accepting share '\(folderName, privacy: .private)' (\(folder.id)) → path: \(path, privacy: .private) (manual=\(manualTarget != nil), baseIsVault=\(baseIsVault), nameMatchesBase=\(nameMatchesBase), occupied=\(occupied.count))")
+        logger.info("Accepting share '\(folderName, privacy: .private)' (\(folder.id)) → path: \(path, privacy: .private) (manual=\(manualTarget != nil), baseIsVault=\(baseIsVault), nameMatchesBase=\(nameMatchesBase), occupied=\(occupied.count), mergeConfirmed=\(mergeConfirmed))")
 
+        // A recorded manual target is recorded consent (#52/006); otherwise
+        // only the user's fresh confirmation may open the Go hard floor.
         if let err = syncthingManager.acceptPendingFolder(
             folderID: folder.id,
             label: label,
-            path: path
+            path: path,
+            allowNonEmpty: manualTarget != nil || mergeConfirmed
         ) {
-            return err
+            return .refused(message: err)
         }
 
         // Record where this folder lives relative to the Obsidian root so its
@@ -270,7 +292,7 @@ final class VaultManager {
 
         scanForVaults()
         logger.info("Auto-accepted pending share: \(folderName, privacy: .private) (\(folder.id))")
-        return nil
+        return .accepted
     }
 
     /// Decide the local directory an incoming share syncs into, guaranteeing it
@@ -382,6 +404,17 @@ final class VaultManager {
     /// directories. The override path is NOT required to be empty: after
     /// remove + re-accept it legitimately holds this same share's earlier
     /// content (exactly like the label-default path on a plain re-accept).
+    ///
+    /// The label-derived target, by contrast, carries no recorded consent: if
+    /// the resolved directory (label default, root collapse, or numeric-suffix
+    /// disambiguation alike) already holds anything beyond `.obsidian`,
+    /// accepting would merge two content sets and push the mix to every peer
+    /// (#54). Unless `mergeConfirmed` says the user explicitly approved that,
+    /// the decision is handed back as `.requiresMergeConfirmation` — never
+    /// silently diverted to a different location (006's rejected fallback) and
+    /// never silently merged. `listingFor` returns a directory's full listing
+    /// (hidden entries included) or nil when it does not exist — injected so
+    /// the rule is unit-testable without the filesystem.
     nonisolated static func resolveAcceptPath(
         manualTarget: String?,
         rawRoot: String,
@@ -389,7 +422,9 @@ final class VaultManager {
         nameMatchesBase: Bool,
         folderName: String,
         occupiedCanonLower: Set<String>,
-        canonicalize: (String) -> String
+        mergeConfirmed: Bool,
+        canonicalize: (String) -> String,
+        listingFor: (String) -> [String]?
     ) -> ShareTargetDecision {
         if let target = manualTarget {
             let candidate = (rawRoot as NSString).appendingPathComponent(target)
@@ -412,6 +447,15 @@ final class VaultManager {
             canonicalize: canonicalize
         ) else {
             return .refused(message: L10n.tr("This share needs its own folder, but the folder selected for VaultSync is itself a vault, so everything inside it belongs to that vault. Re-select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") — new vaults then sync side by side instead of inside each other."))
+        }
+
+        if !mergeConfirmed,
+           let entries = listingFor(path),
+           !isEmptyVaultListing(entries) {
+            return .requiresMergeConfirmation(
+                path: path,
+                targetName: (path as NSString).lastPathComponent
+            )
         }
         return .path(path)
     }
@@ -504,11 +548,20 @@ final class VaultManager {
         case .refused(let message):
             logger.error("Refusing manual target for share (\(folder.id)): \(message, privacy: .private)")
             return message
+        case .requiresMergeConfirmation:
+            // Unreachable from validateManualTarget — #52 targets must be
+            // empty. Refuse defensively rather than trust the impossible.
+            return L10n.fmt(
+                "The folder \"%@\" already contains files. A share can only be linked to an empty vault — choose an empty vault, or enter a new folder name.",
+                sanitized
+            )
         case .path(let path):
+            // Validated empty above — the Go hard floor re-checks (#54).
             if let err = syncthingManager.acceptPendingFolder(
                 folderID: folder.id,
                 label: sanitized,
-                path: path
+                path: path,
+                allowNonEmpty: false
             ) {
                 return err
             }
@@ -640,13 +693,26 @@ final class VaultManager {
     }
 }
 
-/// Outcome of deciding where a share may sync: a safe absolute path, or a
+/// Outcome of deciding where a share may sync: a safe absolute path, a
 /// refusal whose message names the folder, the reason, and the user's next
-/// step. Top-level value type (not nested in the `@MainActor` class) so the
-/// pure decision cores stay callable and comparable from any isolation.
+/// step — or a target that exists with content, where only the user may
+/// decide whether merging is intended (#54). Top-level value type (not nested
+/// in the `@MainActor` class) so the pure decision cores stay callable and
+/// comparable from any isolation.
 enum ShareTargetDecision: Equatable, Sendable {
     case path(String)
     case refused(message: String)
+    case requiresMergeConfirmation(path: String, targetName: String)
+}
+
+/// Outcome of an accept attempt: accepted, refused with a user-facing
+/// message, or blocked on the user's explicit merge decision (#54) — the
+/// caller presents the confirmation and re-runs the accept with
+/// `mergeConfirmed: true`, which re-validates everything at confirm time.
+enum PendingShareAcceptOutcome: Equatable, Sendable {
+    case accepted
+    case refused(message: String)
+    case needsMergeConfirmation(targetName: String)
 }
 
 /// Sidecar: the local folder name the user manually picked for a share

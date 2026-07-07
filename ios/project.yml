@@ -43,6 +43,11 @@ schemes:
       storeKitConfiguration: VaultSync.storekit
     test:
       config: Debug
+      # Tests assert the English refusal texts (#52). Without this pin the
+      # runner inherits the host/simulator language, so on a German Mac
+      # L10n.tr resolves to de.lproj and the assertions fail. Scheme-level so
+      # local runs and the CI macOS job (both use -scheme VaultSync) get it.
+      language: en
       targets:
         - VaultSyncTests
     archive:

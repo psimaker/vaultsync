@@ -87,8 +87,16 @@ func GetPendingFoldersJSON() string {
 // path, and shares it with all devices that offered it. This is the counterpart
 // to a remote device sharing a folder — the user picks a local directory and
 // the folder is configured to sync with the offering peers.
+//
+// allowNonEmpty must be false unless the user explicitly confirmed syncing
+// into an existing directory that already holds content: accepting into a
+// non-empty target merges two content sets and pushes the mix to every
+// offering peer (#54). The floor treats a directory holding at most
+// Obsidian's `.obsidian` configuration folder as empty — mirror of the Swift
+// `VaultManager.isEmptyVaultListing` rule; the two layers must decide
+// emptiness identically or a share refused above would slip through below.
 // Returns empty string on success, error message on failure.
-func AcceptPendingFolder(folderID, label, path string) string {
+func AcceptPendingFolder(folderID, label, path string, allowNonEmpty bool) string {
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -116,6 +124,17 @@ func AcceptPendingFolder(folderID, label, path string) string {
 	// floor even if the client computed an overlapping path.
 	for _, f := range stCfg.Folders() {
 		if msg := folderPathOverlapError(f.Path, path); msg != "" {
+			return msg
+		}
+	}
+
+	// Reject a target directory that already holds content unless the caller
+	// carries the user's explicit confirmation: syncing into it merges two
+	// content sets and pushes the mix to every offering peer (#54). Same
+	// hard-floor posture as the overlap check above — the client decides the
+	// UX, this floor guarantees no caller can merge silently.
+	if !allowNonEmpty {
+		if msg := nonEmptyTargetError(path); msg != "" {
 			return msg
 		}
 	}
@@ -174,6 +193,30 @@ func AcceptPendingFolder(folderID, label, path string) string {
 	}
 	waiter.Wait()
 
+	return ""
+}
+
+// nonEmptyTargetError returns a non-empty error message when path exists and
+// holds anything beyond Obsidian's `.obsidian` configuration folder — notes,
+// a `.stfolder` sync marker, hidden leftovers all count as content, because
+// syncing a share into them merges two content sets (#54). A missing path is
+// fine (the accept creates it); an unreadable one is refused — emptiness that
+// cannot be verified must not be assumed. Name comparison is
+// case-insensitive: the iOS data volume is case-folding APFS. Mirror of the
+// Swift `VaultManager.isEmptyVaultListing` rule — keep the two in lockstep.
+func nonEmptyTargetError(path string) string {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ""
+		}
+		return fmt.Sprintf("read folder path: %v", err)
+	}
+	for _, entry := range entries {
+		if !strings.EqualFold(entry.Name(), ".obsidian") {
+			return "the target folder already contains files"
+		}
+	}
 	return ""
 }
 
