@@ -532,7 +532,12 @@ final class SyncthingManager {
                     kind: .folderErrors,
                     title: count == 1 ? L10n.tr("1 Vault Has Sync Errors") : L10n.fmt("%d Vaults Have Sync Errors", count),
                     message: L10n.tr("At least one folder is currently in an error state."),
-                    remediation: L10n.tr("Rescan failed vaults, then verify folder access and permissions."),
+                    // A rescan cannot recreate a missing folder marker — when
+                    // marker loss is the only error, pointing at it would
+                    // misdirect the recovery (#65).
+                    remediation: hasRescanableFolderErrors
+                        ? L10n.tr("Rescan failed vaults, then verify folder access and permissions.")
+                        : L10n.tr("Follow the recovery steps shown with the affected vault — rescanning cannot fix a vault folder that was moved or deleted."),
                     severity: .critical,
                     count: count,
                     folderID: erroredFolderIDs.first,
@@ -1911,6 +1916,17 @@ final class SyncthingManager {
         )
     }
 
+    /// True when at least one errored folder could plausibly be helped by a
+    /// rescan. A folder whose sync marker is gone cannot — Syncthing refuses
+    /// to scan without the marker, by design — so when marker loss is the
+    /// only error, the rescan CTA is hidden and the doctrine-002 prose is the
+    /// guidance (#65).
+    var hasRescanableFolderErrors: Bool {
+        folderIDsWithErrors.contains { id in
+            folderUserError(folderID: id)?.category != .folderMarkerMissing
+        }
+    }
+
     /// A folder stuck in a path-related error that the launch-time path
     /// reconcile could not auto-heal — typically a legacy folder pointing at a
     /// since-removed app-container location (issue #25). Surfaced to the user as
@@ -2262,6 +2278,10 @@ final class SyncthingManager {
 
     func _testSetConflictFiles(_ newConflicts: [String: [ConflictInfo]]) {
         conflictFiles = newConflicts
+    }
+
+    func _testSetFolderStatuses(_ newStatuses: [String: FolderStatusInfo]) {
+        folderStatuses = newStatuses
     }
     #endif
 }

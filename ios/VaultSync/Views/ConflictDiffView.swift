@@ -75,6 +75,16 @@ struct ConflictDiffView: View {
         }
         .navigationTitle("Resolve Conflict")
         .navigationBarTitleDisplayMode(.inline)
+        #if DEBUG
+        .onAppear {
+            // LAB: present the resolve consent immediately for the UI-audit
+            // fixture run (#64); reachable only via launch argument.
+            if UIAuditFixture.active == UIAuditFixture.conflictResolveConsent {
+                actionToConfirm = .keepThis
+                showConfirmAlert = true
+            }
+        }
+        #endif
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
@@ -100,10 +110,13 @@ struct ConflictDiffView: View {
         } message: {
             Text(alertMessage ?? "")
         }
-        .confirmationDialog(
+        // Same iOS-26 rendering defect as the consent dialogs: a
+        // .confirmationDialog hides its cancel-role button there, and one of
+        // these actions discards a version of a note — .alert keeps Cancel
+        // visible on every OS version (#64, decision 011).
+        .alert(
             "Resolve Conflict",
             isPresented: $showConfirmAlert,
-            titleVisibility: .visible,
             presenting: actionToConfirm
         ) { action in
             Button(confirmButtonTitle(for: action), role: action == .keepBoth ? nil : .destructive) {

@@ -91,18 +91,29 @@ struct DeviceDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             editedName = device.name
+            #if DEBUG
+            // LAB: present the removal consent immediately for the UI-audit
+            // fixture run (#64); reachable only via launch argument.
+            if UIAuditFixture.active == UIAuditFixture.deviceRemovalConsent {
+                showRemoveConfirm = true
+            }
+            #endif
         }
         .onDisappear {
             saveName()
         }
-        .confirmationDialog(
+        // Consent decisions are presented as .alert, never .confirmationDialog:
+        // on iOS 26 the latter renders without a visible Cancel — and this
+        // dialog declared none at all, offering "Remove" as the only choice
+        // (#64, decision 011).
+        .alert(
             "Remove this device?",
-            isPresented: $showRemoveConfirm,
-            titleVisibility: .visible
+            isPresented: $showRemoveConfirm
         ) {
             Button("Remove", role: .destructive) {
                 removeDevice()
             }
+            Button("Cancel", role: .cancel) { }
         } message: {
             Text("The device will be disconnected and removed from all shared folders.")
         }

@@ -21,6 +21,9 @@ struct ContentView: View {
     @State private var vaultPendingRemoval: VaultRemovalTarget?
     @State private var pendingMergeConfirmation: MergeConfirmationRequest?
     @State private var showRelayUpsellCard = false
+    #if DEBUG
+    @State private var uiAuditDetailFixture: UIAuditDetailFixture?
+    #endif
 
     /// A vault the user has asked to remove, pending confirmation. Drives the
     /// shared removal confirmation dialog used by both the "needs attention"
@@ -152,10 +155,14 @@ struct ContentView: View {
                 }
             }
         }
-        .confirmationDialog(
+        // Consent decisions are presented as .alert, never .confirmationDialog:
+        // on iOS 26 a confirmation dialog renders as a centered popover WITHOUT
+        // a visible Cancel button, so the destructive action was the only
+        // visible choice on the very dialogs that exist to slow it down
+        // (#64, decision 011).
+        .alert(
             L10n.tr("Remove this vault from this iPhone?"),
             isPresented: removalBinding,
-            titleVisibility: .visible,
             presenting: vaultPendingRemoval
         ) { target in
             Button(L10n.tr("Remove Vault"), role: .destructive) {
@@ -165,10 +172,9 @@ struct ContentView: View {
         } message: { target in
             Text(L10n.fmt("“%@” will stop syncing on this iPhone. Files already on your other devices are not deleted.", target.label))
         }
-        .confirmationDialog(
+        .alert(
             L10n.tr("Sync into a folder that already contains files?"),
             isPresented: mergeConfirmationBinding,
-            titleVisibility: .visible,
             presenting: pendingMergeConfirmation
         ) { request in
             Button(L10n.tr("Merge and Sync"), role: .destructive) {
@@ -210,6 +216,26 @@ struct ContentView: View {
         .onChange(of: subscriptionManager.isRelaySubscribed) { _, _ in
             maybePresentRelayUpsell()
         }
+        #if DEBUG
+        .onAppear(perform: applyUIAuditFixture)
+        .sheet(item: $uiAuditDetailFixture) { fixture in
+            NavigationStack {
+                switch fixture {
+                case .deviceRemoval:
+                    DeviceDetailView(
+                        device: Self.uiAuditFixtureDevice,
+                        syncthingManager: syncthingManager
+                    )
+                case .conflictResolve:
+                    ConflictDiffView(
+                        folderID: "uiaudit-vault",
+                        conflict: Self.uiAuditFixtureConflict,
+                        syncthingManager: syncthingManager
+                    )
+                }
+            }
+        }
+        #endif
     }
 
     /// The Sync tab — the vault's live-status story: the pinned status header,
@@ -333,6 +359,88 @@ struct ContentView: View {
             selectedTab = .relay
         }
     }
+
+    // MARK: - UI-Audit Fixtures (#64/#65)
+
+    #if DEBUG
+    private enum UIAuditDetailFixture: String, Identifiable {
+        case deviceRemoval
+        case conflictResolve
+        var id: String { rawValue }
+    }
+
+    /// LAB: seed the state behind a consent dialog or error row from the
+    /// `-uiaudit-fixture` launch argument so it renders on a simulator
+    /// without a paired peer or damaged on-disk state (#64/#65 audit
+    /// evidence). Engine management is skipped for the whole fixture run —
+    /// see UIAuditFixture. Compiled out of release builds.
+    private func applyUIAuditFixture() {
+        switch UIAuditFixture.active {
+        case UIAuditFixture.mergeConsent:
+            pendingMergeConfirmation = MergeConfirmationRequest(
+                folder: SyncthingManager.PendingFolderInfo(
+                    id: "uiaudit-vault",
+                    label: "Life Notes",
+                    offeredBy: []
+                ),
+                targetName: "Life Notes"
+            )
+        case UIAuditFixture.removalConsent:
+            vaultPendingRemoval = VaultRemovalTarget(id: "uiaudit-vault", label: "Life Notes")
+        case UIAuditFixture.markerError:
+            syncthingManager._testSetFolders([
+                SyncthingManager.FolderInfo(
+                    id: "uiaudit-vault",
+                    label: "Life Notes",
+                    path: "/var/mobile/Obsidian/Life Notes",
+                    type: "sendreceive",
+                    paused: false,
+                    deviceIDs: []
+                ),
+            ])
+            syncthingManager._testSetFolderStatuses([
+                "uiaudit-vault": SyncthingManager.FolderStatusInfo(payload: .init(
+                    state: "error",
+                    stateChanged: "2026-07-07T10:00:00Z",
+                    completionPct: 0,
+                    globalBytes: 0,
+                    globalFiles: 0,
+                    localBytes: 0,
+                    localFiles: 0,
+                    needBytes: 0,
+                    needFiles: 0,
+                    inProgressBytes: 0,
+                    errorReason: "unknown_error",
+                    errorMessage: "folder marker missing (this indicates potential data loss, search docs/forum to get information about how to proceed)",
+                    errorPath: "/var/mobile/Obsidian/Life Notes",
+                    errorChanged: nil
+                )),
+            ])
+        case UIAuditFixture.deviceRemovalConsent:
+            uiAuditDetailFixture = .deviceRemoval
+        case UIAuditFixture.conflictResolveConsent:
+            uiAuditDetailFixture = .conflictResolve
+        default:
+            break
+        }
+    }
+
+    private static let uiAuditFixtureDevice: SyncthingManager.DeviceInfo = {
+        // DeviceInfo has a custom Decodable init and no memberwise init —
+        // decoding a literal is the fixture's only construction path.
+        try! JSONDecoder().decode(
+            SyncthingManager.DeviceInfo.self,
+            from: Data(#"{"deviceID":"UIAUDIT-DEVICE","name":"Desktop","connected":true}"#.utf8)
+        )
+    }()
+
+    private static let uiAuditFixtureConflict = SyncthingManager.ConflictInfo(
+        originalPath: "Notes/daily.md",
+        conflictPath: "Notes/daily.sync-conflict-20260707-101010-UIAUDIT.md",
+        conflictDate: "2026-07-07T10:10:10Z",
+        deviceShortID: "UIAUDIT"
+    )
+    #endif
 
     // MARK: - Auto-Accept Pending Shares
 
