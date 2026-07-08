@@ -4,6 +4,16 @@ All notable changes to VaultSync are documented here.
 
 ---
 
+## [1.8.1] — 2026-07-08
+
+### Added
+
+- **Vaults that aren't syncing yet now show up in the vault list** ([#79](https://github.com/psimaker/vaultsync/issues/79)) — a detected vault without a sync folder used to be invisible: the list stayed empty and only said "No folders syncing yet", which read as if detection were broken. Detected vaults now appear as inactive rows that explain the missing step — share the vault from your computer. Localized in English, German, Spanish, and Simplified Chinese.
+
+### Fixed
+
+- **A leftover `.obsidian` folder no longer makes VaultSync mistake your Obsidian folder for a single vault** ([#79](https://github.com/psimaker/vaultsync/issues/79)) — an earlier whole-folder sync setup could leave a stray `.obsidian` folder at the top level of the Obsidian directory. VaultSync then warned "the folder you selected is itself a vault" when connecting, and the next incoming share would have been proposed to sync into the Obsidian folder itself instead of its own subfolder — putting your existing vaults inside that share's synced tree behind a single confirmation. A folder that contains vaults now always counts as the container, regardless of stray files next to them.
+
 ## [1.8.0] — 2026-07-07
 
 ### Changed

@@ -1179,7 +1179,7 @@ struct ContentView: View {
 
     private var vaultsSection: some View {
         Section("Obsidian Vaults") {
-            if syncthingManager.folders.isEmpty {
+            if syncthingManager.folders.isEmpty && unsyncedVaultNames.isEmpty {
                 vaultsEmptyState
             } else {
                 ForEach(vaultRows) { item in
@@ -1189,8 +1189,38 @@ struct ContentView: View {
                         vaultRow(item)
                     }
                 }
+                ForEach(unsyncedVaultNames, id: \.self) { name in
+                    unsyncedVaultRow(name)
+                }
             }
         }
+    }
+
+    /// Detected vaults no Syncthing folder syncs yet (#79). Shown as passive
+    /// rows so a connected-but-not-yet-shared setup doesn't read as "no
+    /// vaults found" — the exact misdiagnosis from the #79 report.
+    private var unsyncedVaultNames: [String] {
+        UnsyncedVaultsModel.derive(
+            detectedVaults: vaultManager.detectedVaults,
+            folderPathsCanonLower: Set(syncthingManager.folders.map {
+                Self.canonicalPath($0.path).lowercased()
+            }),
+            rootCanonLower: vaultManager.obsidianBasePath.map {
+                Self.canonicalPath($0).lowercased()
+            }
+        )
+    }
+
+    /// Not navigable on purpose: the missing step (sharing) happens on the
+    /// desktop, so the row can only explain that — there is no detail screen
+    /// that would not be empty.
+    private func unsyncedVaultRow(_ name: String) -> some View {
+        StatusRow(
+            name,
+            subtitle: L10n.tr("Not syncing yet — share this vault from your computer to start."),
+            systemImage: "folder",
+            glyphTint: .statusInactive
+        )
     }
 
     /// A designed first-run state instead of a degenerate caption row — this is

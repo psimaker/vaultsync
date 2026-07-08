@@ -158,6 +158,7 @@
 "No successful sync has been recorded for your vaults yet." = "Aún no se ha registrado ninguna sincronización correcta para tus Vaults.";
 "No vaults found" = "No se encontraron Vaults";
 "Not Configured" = "No configurado";
+"Not syncing yet — share this vault from your computer to start." = "Aún no se sincroniza: comparte este Vault desde tu ordenador para empezar.";
 "Not now" = "Ahora no";
 "Not Shared" = "No compartido";
 "Not attempted" = "No intentado";

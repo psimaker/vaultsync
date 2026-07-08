@@ -66,10 +66,15 @@ final class VaultManager {
 
         selectionAdvisory = nil
         var pickedConfigIsDirectory: ObjCBool = false
-        let pickedFolderIsVault = FileManager.default.fileExists(
+        let pickedFolderHasOwnConfig = FileManager.default.fileExists(
             atPath: url.appendingPathComponent(".obsidian", isDirectory: true).path,
             isDirectory: &pickedConfigIsDirectory
         ) && pickedConfigIsDirectory.boolValue
+        // scanForVaults() ran above, so detectedVaults reflects this URL.
+        let pickedFolderIsVault = Self.rootIsItselfVault(
+            hasOwnConfig: pickedFolderHasOwnConfig,
+            hasVaultSubfolders: !detectedVaults.isEmpty
+        )
         if pickedFolderIsVault {
             selectionAdvisory = L10n.tr("The folder you selected is itself a vault. Syncing this one vault works, but additional vaults cannot get their own folder next to it. If you plan to sync more than one vault, select the folder that contains your vaults instead (\"On My iPhone\" → \"Obsidian\").")
         }
@@ -140,12 +145,7 @@ final class VaultManager {
             return
         }
 
-        let fm = FileManager.default
-        guard let contents = try? fm.contentsOfDirectory(
-            at: url,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        ) else {
+        guard let names = Self.vaultSubfolderNames(in: url) else {
             BookmarkService.stopAccessing(url: url)
             detectedVaults = []
             markReconnectRequired(
@@ -154,7 +154,25 @@ final class VaultManager {
             return
         }
 
-        detectedVaults = contents.compactMap { itemURL in
+        detectedVaults = names
+
+        logger.info("Detected \(self.detectedVaults.count) vault(s) in Obsidian directory")
+    }
+
+    /// Names of the direct subdirectories of `url` that hold a `.obsidian/`
+    /// config — the vaults living inside it. Returns nil when the directory
+    /// cannot be read at all (revoked access), as opposed to
+    /// readable-but-empty (`[]`) — callers treat the two differently.
+    nonisolated static func vaultSubfolderNames(in url: URL) -> [String]? {
+        let fm = FileManager.default
+        guard let contents = try? fm.contentsOfDirectory(
+            at: url,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return nil
+        }
+        return contents.compactMap { itemURL in
             var isDir: ObjCBool = false
             let obsidianDir = itemURL.appendingPathComponent(".obsidian", isDirectory: true)
             if fm.fileExists(atPath: obsidianDir.path, isDirectory: &isDir), isDir.boolValue {
@@ -162,8 +180,22 @@ final class VaultManager {
             }
             return nil
         }.sorted()
+    }
 
-        logger.info("Detected \(self.detectedVaults.count) vault(s) in Obsidian directory")
+    /// Whether the connected root is itself a single vault — as opposed to a
+    /// container holding vaults one level down. A bare `.obsidian/` at the
+    /// top level is NOT sufficient: the legacy whole-root sync can leave a
+    /// stray vault config in the container (the offering peer's `.obsidian`
+    /// synced straight into the root), and Obsidian never nests vaults in
+    /// normal use — so the presence of any vault subfolder wins and the root
+    /// stays a pure container (decision 014). Misclassifying here is what
+    /// collapses a share into the container root, nesting every existing
+    /// vault inside that share's synced tree (the #45 family).
+    nonisolated static func rootIsItselfVault(
+        hasOwnConfig: Bool,
+        hasVaultSubfolders: Bool
+    ) -> Bool {
+        hasOwnConfig && !hasVaultSubfolders
     }
 
     // MARK: - Path Helpers
@@ -204,10 +236,17 @@ final class VaultManager {
 
         let fm = FileManager.default
         var isDir: ObjCBool = false
-        let baseIsVault = fm.fileExists(
+        let baseHasOwnConfig = fm.fileExists(
             atPath: baseURL.appendingPathComponent(".obsidian", isDirectory: true).path,
             isDirectory: &isDir
         ) && isDir.boolValue
+
+        // Fresh filesystem read (not the cached detectedVaults): this decides
+        // a sync target, so it must classify against the disk as it is now.
+        let baseIsVault = Self.rootIsItselfVault(
+            hasOwnConfig: baseHasOwnConfig,
+            hasVaultSubfolders: !(Self.vaultSubfolderNames(in: baseURL) ?? []).isEmpty
+        )
 
         let nameMatchesBase = baseURL.lastPathComponent
             .compare(folderName, options: .caseInsensitive) == .orderedSame
