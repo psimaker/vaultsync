@@ -597,7 +597,7 @@ struct ContentView: View {
                     // helper just went quiet. Don't tell them to "set up" again.
                     relayNavRow(
                         title: L10n.tr("Cloud Relay went quiet"),
-                        subtitle: L10n.tr("No wake-up in a while — is your server still on?"),
+                        subtitle: L10n.tr("No wake-up in a while. If nothing changed in your vault, that can be normal — otherwise check that your server is on."),
                         status: .attention,
                         systemImage: "antenna.radiowaves.left.and.right"
                     )

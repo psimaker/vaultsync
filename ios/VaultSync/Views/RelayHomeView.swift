@@ -140,7 +140,7 @@ struct RelayHomeView: View {
                     // [6] Delivered before, now quiet — recovery, NOT "set up again".
                     StatusBadge(.attention, text: L10n.tr("Cloud Relay went quiet"))
                         .font(.headline)
-                    Text(L10n.tr("No wake-up has arrived in a while. Make sure the helper is still running on the computer or server you keep on."))
+                    Text(L10n.tr("No wake-up has arrived in a while. If there were simply no changes to sync, this can be normal. Otherwise make sure the helper is still running on the computer or server you keep on."))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)

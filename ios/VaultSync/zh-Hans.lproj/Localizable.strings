@@ -79,7 +79,6 @@
 "Done" = "完成";
 "Empty line" = "空行";
 "Enable Notifications" = "启用通知";
-"Enable notifications for VaultSync in iOS Settings → Notifications → VaultSync, then restart the app." = "请在 iOS 设置 → 通知 → VaultSync 中启用通知，然后重新启动应用。";
 "Enter a folder name." = "请输入文件夹名称。";
 "Error" = "错误";
 "Existing Empty Vaults" = "现有的空 Vault";
@@ -295,7 +294,6 @@
 "State" = "状态";
 "Status" = "状态";
 "Subscribe" = "订阅";
-"Subscription unavailable" = "订阅不可用";
 "Sync Activity" = "同步活动";
 "Sync Activity Looks Stale" = "同步活动似乎过旧";
 "Sync Engine Not Running" = "同步引擎未运行";
@@ -627,10 +625,8 @@
 "You’re subscribed, but your server has never woken this iPhone. One step finishes setup." = "你已订阅，但你的服务器从未唤醒过此 iPhone。一步即可完成设置。";
 "Opens Cloud Relay setup." = "打开 Cloud Relay 设置。";
 "Cloud Relay went quiet" = "Cloud Relay 暂无动静";
-"No wake-up in a while — is your server still on?" = "已有一段时间没有唤醒信号了——你的服务器还开着吗？";
 "Your server just reached this iPhone. Incoming changes now sync the moment they happen." = "你的服务器刚刚联系上了此 iPhone。现在，传入的改动会在发生的那一刻同步。";
 "Great" = "太好了";
-"No wake-up has arrived in a while. Make sure the helper is still running on the computer or server you keep on." = "已有一段时间没有收到唤醒信号。请确认助手仍在你常开的电脑或服务器上运行。";
 "Not active yet" = "尚未激活";
 "You’re subscribed. Wake-ups start once the helper is running on the computer or server you keep on — finish setup below." = "你已订阅。当助手在你常开的电脑或服务器上运行后，唤醒信号即会开始送达——请在下方完成设置。";
 "Relay reachable — but no wake-up has arrived recently. Check the helper is still running on your server." = "Relay 可达——但最近没有收到唤醒信号。请检查助手是否仍在你的服务器上运行。";
@@ -643,7 +639,6 @@
 "Wake-ups (Last 7 Days)" = "唤醒信号（最近 7 天）";
 "Low Power Mode is on — iOS defers silent wake-ups until it is off or the iPhone is charging." = "低电量模式已开启——iOS 会推迟静默唤醒信号，直到关闭该模式或 iPhone 充电。";
 "Keep VaultSync in the background: if you force-quit it from the app switcher, iOS stops delivering wake-ups until you open the app again." = "请让 VaultSync 保留在后台：如果在应用切换器中强制退出，iOS 将停止递送唤醒信号，直到你再次打开应用。";
-"Wake-ups went quiet. The most common cause is force-quitting VaultSync from the app switcher — iOS then blocks wake-ups until the next manual launch. Also check that the helper on your server is still running." = "唤醒信号已中断。最常见的原因是在应用切换器中强制退出了 VaultSync——iOS 会在下次手动启动前阻止唤醒信号。同时请检查服务器上的助手是否仍在运行。";
 
 /* Conflict auto-resolution — .obsidian state files, last-writer-wins (Settings) */
 "Auto-Resolve Settings Conflicts" = "自动解决设置冲突";
@@ -703,3 +698,20 @@
 "On your server, run the helper’s built-in self-check. It tests every link in the chain — config, Syncthing access, relay connection, wake-up trigger — and prints exactly which step fails:" = "在你的服务器上运行助手内置的自检。它会测试链路中的每个环节——配置、Syncthing 访问、中继连接、唤醒触发——并准确指出哪一步失败：";
 "Installed without Docker, or not sure which flavor you have? Just run the installer again — it is safe to repeat and finishes with the same self-check. The troubleshooting guide has the exact --doctor command for every install flavor." = "没有用 Docker 安装，或不确定安装方式？直接再运行一次安装脚本——重复运行是安全的，并且会以同样的自检结束。故障排查指南中列有每种安装方式对应的 --doctor 命令。";
 "Self-check command" = "自检命令";
+
+/* Purchase-path UX (#96) */
+"The subscription plans could not be loaded. This is usually a brief network or App Store hiccup." = "无法加载订阅方案。这通常是短暂的网络或 App Store 故障。";
+"Try Again" = "重试";
+"Waiting for approval" = "等待批准";
+"This purchase needs approval (Ask to Buy). Cloud Relay activates automatically once it is approved. If it was declined, you can simply subscribe again." = "此购买需要批准（购买前询问）。批准后 Cloud Relay 会自动激活。如果被拒绝，你可以直接重新订阅。";
+"Dismiss" = "关闭提示";
+"No Purchases Found" = "未找到购买记录";
+"No Cloud Relay subscription was found for this Apple Account. If you subscribed with a different account, sign in with it in the App Store and try again." = "未找到此 Apple Account 的 Cloud Relay 订阅。如果你用其他账户订阅过，请在 App Store 中登录该账户后重试。";
+"Purchase Could Not Be Verified" = "无法验证购买";
+"Restore Failed" = "恢复失败";
+"The App Store could not be reached to restore purchases. Check your internet connection and try again. (%@)" = "无法连接 App Store 恢复购买。请检查网络连接后重试。(%@)";
+"A Cloud Relay purchase was found but could not be verified on this device. Make sure date & time are set automatically and you are signed in to the App Store, then use Restore Purchases." = "找到一笔 Cloud Relay 购买，但无法在此设备上验证。请确认日期与时间设为自动，并已登录 App Store，然后使用“恢复购买”。";
+"No wake-up in a while. If nothing changed in your vault, that can be normal — otherwise check that your server is on." = "已有一段时间没有收到唤醒信号。如果你的 Vault 没有任何更改，这可能是正常的——否则请检查服务器是否在运行。";
+"No wake-up has arrived in a while. If there were simply no changes to sync, this can be normal. Otherwise make sure the helper is still running on the computer or server you keep on." = "已有一段时间没有收到唤醒信号。如果只是没有需要同步的更改，这可能是正常的。否则请确认助手仍在你常开的电脑或服务器上运行。";
+"Wake-ups went quiet. If there were no vault changes recently, this is normal — the helper only sends when something changes. Otherwise the most common cause is force-quitting VaultSync from the app switcher — iOS then blocks wake-ups until the next manual launch. Also check that the helper on your server is still running." = "唤醒信号沉寂了。如果最近没有 Vault 更改，这是正常的——助手只在有更改时发送。否则最常见的原因是在应用切换器中强制退出了 VaultSync——iOS 会在下次手动启动前阻止唤醒。也请检查服务器上的助手是否仍在运行。";
+"Notification permission is not required for this. Check that the iPhone is online and signed in to an Apple Account, then reopen the app so push registration can retry." = "此功能不需要通知权限。请检查 iPhone 是否联网并已登录 Apple Account，然后重新打开应用，推送注册会自动重试。";

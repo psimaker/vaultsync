@@ -22,6 +22,19 @@ final class SubscriptionManager {
     private(set) var yearlyProduct: Product?
     private(set) var purchaseInProgress = false
     private(set) var isLoadingProduct = true
+    /// True when the last product load settled without yielding any relay
+    /// product (App Store/network error or empty response). Drives the retry
+    /// UI in SubscribePlanPicker (#96); reset by every new load attempt.
+    private(set) var productLoadFailed = false
+    /// Ask to Buy: a purchase returned `.pending` and awaits family approval.
+    /// Persisted (approval can arrive days later via `Transaction.updates`).
+    /// Cleared by a verified relay transaction / active entitlement or by an
+    /// explicit user dismiss — a DECLINED request emits no StoreKit event, so
+    /// this flag must never disable the purchase surface (#96).
+    private(set) var purchasePendingApproval = false
+    /// Set when StoreKit reports a relay transaction that fails local
+    /// verification — explains an otherwise silent "not subscribed" (#96).
+    private(set) var unverifiedRelayTransactionMessage: String?
     private(set) var errorMessage: String?
     private(set) var relayProvisionStatuses: [String: RelayProvisionStatus] = [:]
     private(set) var apnsRegistrationStatus: APNsRegistrationStatus = APNsRegistrationStore.current()
@@ -141,6 +154,7 @@ final class SubscriptionManager {
         // within the 48h freshness window, so a stale-but-true flag never fakes
         // "active"; the periodic idempotent re-provision corrects it server-side.
         rehydrateProvisionedStatuses()
+        purchasePendingApproval = PurchasePendingApprovalStore.isPending()
 
         apnsObserver = NotificationCenter.default.addObserver(
             forName: APNsRegistrationStore.statusDidChangeNotification,
@@ -222,8 +236,15 @@ final class SubscriptionManager {
     func checkSubscriptionStatus() async {
         var foundActive = false
         var foundStart: Date?
+        var foundUnverifiedRelay = false
         for await verificationResult in Transaction.currentEntitlements {
-            guard case .verified(let transaction) = verificationResult else { continue }
+            guard case .verified(let transaction) = verificationResult else {
+                if case .unverified(let unverified, _) = verificationResult,
+                   Self.relayProductIDs.contains(unverified.productID) {
+                    foundUnverifiedRelay = true
+                }
+                continue
+            }
             if Self.relayProductIDs.contains(transaction.productID) {
                 if let expiry = transaction.expirationDate, expiry > Date() {
                     foundActive = true
@@ -238,6 +259,16 @@ final class SubscriptionManager {
         let wasSubscribed = isRelaySubscribed
         isRelaySubscribed = foundActive
         subscriptionStartDate = foundActive ? foundStart : nil
+        if foundActive {
+            // A verified active entitlement settles any pending Ask-to-Buy and
+            // disproves a verification problem.
+            setPendingApproval(false)
+            unverifiedRelayTransactionMessage = nil
+        } else {
+            // Authoritative snapshot: set the hint only while an unverified
+            // relay entitlement actually exists, clear it once it is gone.
+            unverifiedRelayTransactionMessage = foundUnverifiedRelay ? Self.unverifiedRelayMessage() : nil
+        }
         if !foundActive {
             subscriptionExpiryDate = nil
             // Reset the one-time "Connected" celebration so a re-subscribe can
@@ -277,6 +308,7 @@ final class SubscriptionManager {
             logger.info("User cancelled purchase")
         case .pending:
             logger.info("Purchase pending (e.g. Ask to Buy)")
+            setPendingApproval(true)
             // Store device IDs for later provisioning when transaction completes
             storeDeviceIDs(homeserverDeviceIDs)
             for deviceID in homeserverDeviceIDs {
@@ -287,9 +319,85 @@ final class SubscriptionManager {
         }
     }
 
-    func restorePurchases() async {
-        try? await AppStore.sync()
-        await checkSubscriptionStatus()
+    enum RestoreOutcome: Equatable {
+        case restored
+        case nothingToRestore
+        case foundButUnverified
+        case cancelled
+        case failed(message: String)
+    }
+
+    @discardableResult
+    func restorePurchases() async -> RestoreOutcome {
+        await Self.performRestore(
+            sync: { try await AppStore.sync() },
+            refreshIsSubscribed: { [weak self] in
+                await self?.checkSubscriptionStatus()
+                return self?.isRelaySubscribed ?? false
+            },
+            hasUnverifiedRelayEntitlement: { [weak self] in
+                self?.unverifiedRelayTransactionMessage != nil
+            },
+            isUserCancellation: Self.isUserCancellation
+        )
+    }
+
+    /// Pure restore state machine (injected effects — PathCollisionGuard
+    /// pattern): sync errors surface instead of being swallowed by `try?`,
+    /// and "nothing found" / "found but unverified" are distinguished from
+    /// "restored" so the picker can say so (#96).
+    static func performRestore(
+        sync: () async throws -> Void,
+        refreshIsSubscribed: () async -> Bool,
+        hasUnverifiedRelayEntitlement: () -> Bool,
+        isUserCancellation: (Error) -> Bool
+    ) async -> RestoreOutcome {
+        do {
+            try await sync()
+        } catch {
+            // User dismissed the App Store sign-in sheet — not an error state.
+            if isUserCancellation(error) { return .cancelled }
+            return .failed(message: error.localizedDescription)
+        }
+        if await refreshIsSubscribed() { return .restored }
+        return hasUnverifiedRelayEntitlement() ? .foundButUnverified : .nothingToRestore
+    }
+
+    nonisolated static func isUserCancellation(_ error: Error) -> Bool {
+        if case StoreKitError.userCancelled = error { return true }
+        return false
+    }
+
+    /// Re-runs the App Store product query. No-op while a load is in flight or
+    /// once any product is present — safe to call from every diagnostics
+    /// refresh and from the picker's retry button (#96).
+    func reloadProductsIfNeeded() async {
+        guard Self.shouldReloadProducts(
+            isLoading: isLoadingProduct,
+            hasAnyProduct: monthlyProduct != nil || yearlyProduct != nil
+        ) else { return }
+        await loadProduct()
+    }
+
+    /// Pure retry gate, extracted for unit tests (StoreKit `Product` cannot be
+    /// constructed in tests).
+    nonisolated static func shouldReloadProducts(isLoading: Bool, hasAnyProduct: Bool) -> Bool {
+        !isLoading && !hasAnyProduct
+    }
+
+    /// User-invoked dismiss of the Ask-to-Buy banner (e.g. after a decline,
+    /// which StoreKit never reports). Never called automatically.
+    func clearPendingApproval() {
+        setPendingApproval(false)
+    }
+
+    nonisolated static func unverifiedRelayMessage() -> String {
+        L10n.tr("A Cloud Relay purchase was found but could not be verified on this device. Make sure date & time are set automatically and you are signed in to the App Store, then use Restore Purchases.")
+    }
+
+    private func setPendingApproval(_ pending: Bool) {
+        purchasePendingApproval = pending
+        PurchasePendingApprovalStore.setPending(pending)
     }
 
     func refreshRelayDiagnostics(homeserverDeviceIDs: [String]) async {
@@ -300,6 +408,10 @@ final class SubscriptionManager {
         }
         refreshAPNsRegistrationStatus()
         refreshStoredRelayDiagnostics()
+        // One failed launch-time product load must not kill the buy button for
+        // the whole session (#96): every diagnostics refresh (Relay-tab .task)
+        // retries while no product is loaded. Idempotent via the reload gate.
+        await reloadProductsIfNeeded()
         alertBannerStatus = await BackgroundSyncService.alertBannerStatus()
         await checkSubscriptionStatus()
         await runRelayHealthCheck()
@@ -343,10 +455,12 @@ final class SubscriptionManager {
             let products = try await Product.products(for: Array(Self.relayProductIDs))
             monthlyProduct = products.first { $0.id == Self.monthlyProductID }
             yearlyProduct = products.first { $0.id == Self.yearlyProductID }
-            if monthlyProduct == nil && yearlyProduct == nil {
+            productLoadFailed = monthlyProduct == nil && yearlyProduct == nil
+            if productLoadFailed {
                 logger.warning("Relay subscription products not found in App Store")
             }
         } catch {
+            productLoadFailed = true
             logger.error("Failed to load products: \(error)")
         }
     }
@@ -356,11 +470,25 @@ final class SubscriptionManager {
         provisionDeviceIDs: [String]? = nil
     ) async {
         guard case .verified(let transaction) = verificationResult else {
-            logger.warning("Unverified transaction, skipping")
+            // Still never finished, still never grants entitlement — but a
+            // relay purchase that fails verification must not read as a silent
+            // "not subscribed" (#96). VerificationResult.Error carries no user
+            // data, so it is safe to log.
+            if case .unverified(let unverified, let verificationError) = verificationResult,
+               Self.relayProductIDs.contains(unverified.productID) {
+                logger.warning("Unverified relay transaction, skipping: \(String(describing: verificationError))")
+                unverifiedRelayTransactionMessage = Self.unverifiedRelayMessage()
+            } else {
+                logger.warning("Unverified transaction, skipping")
+            }
             return
         }
 
         if Self.relayProductIDs.contains(transaction.productID) {
+            // Any verified relay transaction settles a pending Ask-to-Buy and
+            // disproves a verification problem.
+            setPendingApproval(false)
+            unverifiedRelayTransactionMessage = nil
             if let revocationDate = transaction.revocationDate {
                 logger.info("Subscription revoked on \(revocationDate)")
                 isRelaySubscribed = false
@@ -604,5 +732,19 @@ final class SubscriptionManager {
             return verificationResult.jwsRepresentation
         }
         return nil
+    }
+}
+
+/// Persists the Ask-to-Buy "waiting for approval" flag across launches (#96).
+/// Injectable defaults for tests (TestSupport.makeIsolatedDefaults).
+enum PurchasePendingApprovalStore {
+    static let key = "relay-purchase-pending-approval"
+
+    static func isPending(defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: key)
+    }
+
+    static func setPending(_ pending: Bool, defaults: UserDefaults = .standard) {
+        defaults.set(pending, forKey: key)
     }
 }

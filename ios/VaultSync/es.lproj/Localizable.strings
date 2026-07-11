@@ -79,7 +79,6 @@
 "Done" = "Listo";
 "Empty line" = "Línea vacía";
 "Enable Notifications" = "Activar notificaciones";
-"Enable notifications for VaultSync in iOS Settings → Notifications → VaultSync, then restart the app." = "Activa las notificaciones de VaultSync en Ajustes de iOS → Notificaciones → VaultSync y luego reinicia la app.";
 "Enter a folder name." = "Introduce un nombre de carpeta.";
 "Error" = "Error";
 "Existing Empty Vaults" = "Vaults vacíos existentes";
@@ -295,7 +294,6 @@
 "State" = "Estado";
 "Status" = "Estado";
 "Subscribe" = "Suscribirse";
-"Subscription unavailable" = "Suscripción no disponible";
 "Sync Activity" = "Actividad de sincronización";
 "Sync Activity Looks Stale" = "La actividad de sincronización parece desactualizada";
 "Sync Engine Not Running" = "El motor de sincronización no está en ejecución";
@@ -627,10 +625,8 @@
 "You’re subscribed, but your server has never woken this iPhone. One step finishes setup." = "Estás suscrito, pero tu servidor nunca ha despertado este iPhone. Un paso completa la configuración.";
 "Opens Cloud Relay setup." = "Abre la configuración de Cloud Relay.";
 "Cloud Relay went quiet" = "Cloud Relay está en silencio";
-"No wake-up in a while — is your server still on?" = "Hace tiempo que no hay señal de activación: ¿tu servidor sigue encendido?";
 "Your server just reached this iPhone. Incoming changes now sync the moment they happen." = "Tu servidor acaba de conectarse con este iPhone. Los cambios entrantes ahora se sincronizan en el momento en que ocurren.";
 "Great" = "Genial";
-"No wake-up has arrived in a while. Make sure the helper is still running on the computer or server you keep on." = "Hace tiempo que no llega ninguna señal de activación. Asegúrate de que el asistente siga ejecutándose en el ordenador o servidor que mantienes encendido.";
 "Not active yet" = "Aún no activo";
 "You’re subscribed. Wake-ups start once the helper is running on the computer or server you keep on — finish setup below." = "Estás suscrito. Las señales de activación comienzan cuando el asistente esté en marcha en el ordenador o servidor que mantienes encendido: completa la configuración abajo.";
 "Relay reachable — but no wake-up has arrived recently. Check the helper is still running on your server." = "Relay accesible, pero últimamente no ha llegado ninguna señal de activación. Comprueba que el asistente siga ejecutándose en tu servidor.";
@@ -643,7 +639,6 @@
 "Wake-ups (Last 7 Days)" = "Señales de activación (últimos 7 días)";
 "Low Power Mode is on — iOS defers silent wake-ups until it is off or the iPhone is charging." = "El modo de bajo consumo está activado: iOS aplaza las señales de activación silenciosas hasta que se desactive o el iPhone se cargue.";
 "Keep VaultSync in the background: if you force-quit it from the app switcher, iOS stops delivering wake-ups until you open the app again." = "Mantén VaultSync en segundo plano: si la cierras desde el selector de aplicaciones, iOS dejará de entregar señales de activación hasta que vuelvas a abrir la app.";
-"Wake-ups went quiet. The most common cause is force-quitting VaultSync from the app switcher — iOS then blocks wake-ups until the next manual launch. Also check that the helper on your server is still running." = "Las señales de activación han dejado de llegar. La causa más común es cerrar VaultSync desde el selector de aplicaciones: iOS bloquea entonces las señales de activación hasta el siguiente inicio manual. Comprueba también que el asistente sigue ejecutándose en tu servidor.";
 
 /* Conflict auto-resolution — .obsidian state files, last-writer-wins (Settings) */
 "Auto-Resolve Settings Conflicts" = "Resolver conflictos de ajustes automáticamente";
@@ -703,3 +698,20 @@
 "On your server, run the helper’s built-in self-check. It tests every link in the chain — config, Syncthing access, relay connection, wake-up trigger — and prints exactly which step fails:" = "En tu servidor, ejecuta la autocomprobación integrada del asistente. Prueba cada eslabón de la cadena — configuración, acceso a Syncthing, conexión con el relay, señal de activación — e indica exactamente qué paso falla:";
 "Installed without Docker, or not sure which flavor you have? Just run the installer again — it is safe to repeat and finishes with the same self-check. The troubleshooting guide has the exact --doctor command for every install flavor." = "¿Lo instalaste sin Docker o no sabes qué variante tienes? Vuelve a ejecutar el instalador — es seguro repetirlo y termina con la misma autocomprobación. La guía de solución de problemas incluye el comando --doctor exacto para cada variante de instalación.";
 "Self-check command" = "Comando de autocomprobación";
+
+/* Purchase-path UX (#96) */
+"The subscription plans could not be loaded. This is usually a brief network or App Store hiccup." = "No se pudieron cargar los planes de suscripción. Suele ser un fallo breve de red o del App Store.";
+"Try Again" = "Reintentar";
+"Waiting for approval" = "Esperando aprobación";
+"This purchase needs approval (Ask to Buy). Cloud Relay activates automatically once it is approved. If it was declined, you can simply subscribe again." = "Esta compra necesita aprobación (Pedir para comprar). Cloud Relay se activa automáticamente en cuanto se apruebe. Si fue rechazada, puedes simplemente suscribirte de nuevo.";
+"Dismiss" = "Descartar";
+"No Purchases Found" = "No se encontraron compras";
+"No Cloud Relay subscription was found for this Apple Account. If you subscribed with a different account, sign in with it in the App Store and try again." = "No se encontró ninguna suscripción a Cloud Relay para este Apple Account. Si te suscribiste con otra cuenta, inicia sesión con ella en el App Store e inténtalo de nuevo.";
+"Purchase Could Not Be Verified" = "No se pudo verificar la compra";
+"Restore Failed" = "Error al restaurar";
+"The App Store could not be reached to restore purchases. Check your internet connection and try again. (%@)" = "No se pudo contactar con el App Store para restaurar las compras. Comprueba tu conexión a internet e inténtalo de nuevo. (%@)";
+"A Cloud Relay purchase was found but could not be verified on this device. Make sure date & time are set automatically and you are signed in to the App Store, then use Restore Purchases." = "Se encontró una compra de Cloud Relay que no se pudo verificar en este dispositivo. Asegúrate de que la fecha y la hora se ajusten automáticamente y de haber iniciado sesión en el App Store; después usa \"Restaurar compras\".";
+"No wake-up in a while. If nothing changed in your vault, that can be normal — otherwise check that your server is on." = "Hace tiempo que no llega una señal de activación. Si nada cambió en tu Vault, puede ser normal — de lo contrario, comprueba que tu servidor esté encendido.";
+"No wake-up has arrived in a while. If there were simply no changes to sync, this can be normal. Otherwise make sure the helper is still running on the computer or server you keep on." = "Hace tiempo que no llega ninguna señal de activación. Si simplemente no hubo cambios que sincronizar, puede ser normal. De lo contrario, asegúrate de que el asistente siga ejecutándose en el ordenador o servidor que mantienes encendido.";
+"Wake-ups went quiet. If there were no vault changes recently, this is normal — the helper only sends when something changes. Otherwise the most common cause is force-quitting VaultSync from the app switcher — iOS then blocks wake-ups until the next manual launch. Also check that the helper on your server is still running." = "Las señales de activación se detuvieron. Si no hubo cambios recientes en el Vault, es normal — el asistente solo envía cuando algo cambia. De lo contrario, la causa más común es cerrar VaultSync a la fuerza desde el selector de apps — iOS bloquea entonces las señales hasta el siguiente inicio manual. Comprueba también que el asistente de tu servidor siga en marcha.";
+"Notification permission is not required for this. Check that the iPhone is online and signed in to an Apple Account, then reopen the app so push registration can retry." = "El permiso de notificaciones no es necesario para esto. Comprueba que el iPhone esté en línea y con sesión iniciada en un Apple Account, y vuelve a abrir la app para que el registro push lo reintente.";

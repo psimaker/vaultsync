@@ -19,6 +19,7 @@ struct SubscribePlanPicker: View {
     var subscriptionManager: SubscriptionManager
     let homeserverDeviceIDs: [String]
 
+    @State private var alertTitle: String?
     @State private var alertMessage: String?
     @State private var showAlert = false
     @State private var isRestoring = false
@@ -48,7 +49,19 @@ struct SubscribePlanPicker: View {
                         Text(L10n.tr("Loading plans…")).foregroundStyle(.secondary)
                     }
                 } else {
-                    Text(L10n.tr("Subscription unavailable")).foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: VaultSpacing.s) {
+                        Text(L10n.tr("The subscription plans could not be loaded. This is usually a brief network or App Store hiccup."))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button {
+                            Task { await subscriptionManager.reloadProductsIfNeeded() }
+                        } label: {
+                            Label(L10n.tr("Try Again"), systemImage: "arrow.clockwise")
+                                .font(.subheadline.weight(.semibold))
+                        }
+                        .buttonStyle(.bordered)
+                    }
                 }
             } else {
                 if let monthly = subscriptionManager.monthlyProduct {
@@ -60,12 +73,47 @@ struct SubscribePlanPicker: View {
                 subscribeButton
             }
 
+            if subscriptionManager.purchasePendingApproval {
+                pendingApprovalNotice
+            }
+
+            if let verificationHint = subscriptionManager.unverifiedRelayTransactionMessage {
+                Label {
+                    Text(verificationHint)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "exclamationmark.shield")
+                        .foregroundStyle(Color.statusAttention)
+                }
+                .accessibilityElement(children: .combine)
+            }
+
             Button {
                 guard !subscriptionManager.purchaseInProgress, !isRestoring else { return }
                 Task {
                     isRestoring = true
-                    await subscriptionManager.restorePurchases()
+                    let outcome = await subscriptionManager.restorePurchases()
                     isRestoring = false
+                    switch outcome {
+                    case .restored, .cancelled:
+                        // Restored flips RelayHomeView to subscribedContent by
+                        // itself; a cancelled App Store sign-in needs no alert.
+                        break
+                    case .nothingToRestore:
+                        alertTitle = L10n.tr("No Purchases Found")
+                        alertMessage = L10n.tr("No Cloud Relay subscription was found for this Apple Account. If you subscribed with a different account, sign in with it in the App Store and try again.")
+                        showAlert = true
+                    case .foundButUnverified:
+                        alertTitle = L10n.tr("Purchase Could Not Be Verified")
+                        alertMessage = subscriptionManager.unverifiedRelayTransactionMessage
+                        showAlert = true
+                    case .failed(let message):
+                        alertTitle = L10n.tr("Restore Failed")
+                        alertMessage = L10n.fmt("The App Store could not be reached to restore purchases. Check your internet connection and try again. (%@)", message)
+                        showAlert = true
+                    }
                 }
             } label: {
                 HStack {
@@ -85,7 +133,7 @@ struct SubscribePlanPicker: View {
             complianceFooter
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .alert(L10n.tr("Purchase Failed"), isPresented: $showAlert) {
+        .alert(alertTitle ?? L10n.tr("Purchase Failed"), isPresented: $showAlert) {
             Button("OK") { }
         } message: {
             Text(alertMessage ?? "")
@@ -108,6 +156,40 @@ struct SubscribePlanPicker: View {
             }
         }
         .accessibilityElement(children: .combine)
+    }
+
+    /// Ask to Buy: the purchase sits with the family organizer. Informational
+    /// only — Subscribe stays enabled (a declined request emits no StoreKit
+    /// event, so this must never dead-end the purchase surface) and Dismiss is
+    /// explicit, never automatic (#96).
+    private var pendingApprovalNotice: some View {
+        HStack(alignment: .top, spacing: VaultSpacing.m) {
+            Image(systemName: "hourglass")
+                .font(.title3)
+                .foregroundStyle(Color.statusInfo)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: VaultSpacing.xxs) {
+                Text(L10n.tr("Waiting for approval"))
+                    .font(.headline)
+                Text(L10n.tr("This purchase needs approval (Ask to Buy). Cloud Relay activates automatically once it is approved. If it was declined, you can simply subscribe again."))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button(L10n.tr("Dismiss")) {
+                    subscriptionManager.clearPendingApproval()
+                }
+                .font(.subheadline)
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.vaultAccent)
+                .padding(.top, VaultSpacing.xxs)
+            }
+        }
+        .padding(VaultSpacing.l)
+        .background(
+            Color(.secondarySystemBackground),
+            in: RoundedRectangle(cornerRadius: VaultRadius.card, style: .continuous)
+        )
+        .accessibilityElement(children: .contain)
     }
 
     /// A selection row: tapping picks the plan, the outline + check mark show
@@ -223,6 +305,7 @@ struct SubscribePlanPicker: View {
             do {
                 try await subscriptionManager.purchase(product, homeserverDeviceIDs: homeserverDeviceIDs)
             } catch {
+                alertTitle = L10n.tr("Purchase Failed")
                 alertMessage = SyncUserError.from(
                     error: error,
                     fallbackTitle: L10n.tr("Purchase Failed")

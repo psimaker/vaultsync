@@ -407,7 +407,7 @@ struct RelayDiagnosticsView: View {
         if subscriptionManager.isRelaySubscribed,
            subscriptionManager.lastRelayTriggerReceivedAt != nil,
            !subscriptionManager.relayDeliveryConfirmed {
-            hints.append(L10n.tr("Wake-ups went quiet. The most common cause is force-quitting VaultSync from the app switcher — iOS then blocks wake-ups until the next manual launch. Also check that the helper on your server is still running."))
+            hints.append(L10n.tr("Wake-ups went quiet. If there were no vault changes recently, this is normal — the helper only sends when something changes. Otherwise the most common cause is force-quitting VaultSync from the app switcher — iOS then blocks wake-ups until the next manual launch. Also check that the helper on your server is still running."))
         }
 
         return hints
