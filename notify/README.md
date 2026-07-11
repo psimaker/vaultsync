@@ -133,9 +133,9 @@ RELAY_URL=https://relay.vaultsync.eu ./vaultsync-notify
 docker compose run --rm vaultsync-notify --doctor
 ```
 
-Validates: Syncthing API reachable · API key valid · Device ID readable · relay health reachable · trigger endpoint sane. Each check retries with per-attempt timeouts to ride out transient jitter.
+Validates: Syncthing API reachable · API key valid · Device ID readable · relay health reachable · trigger endpoint sane. Each check retries with per-attempt timeouts to ride out transient jitter. It also diagnoses **peer state** — no remote device connected, or devices connected but no folder shared with them — as `WARN` lines (`WARN <check name>`, then an indented reason with the Syncthing-side fix) that never fail the doctor: an offline peer is everyday life, not a setup error.
 
-**Runtime healthcheck** — the image's `HEALTHCHECK` runs `vaultsync-notify --healthcheck`, validating real readiness (Syncthing API, credentials, Device ID, relay health), not just process liveness.
+**Runtime healthcheck** — the image's `HEALTHCHECK` runs `vaultsync-notify --healthcheck`, validating real readiness (Syncthing API, credentials, Device ID, relay health), not just process liveness. Peer state is deliberately excluded here: a legitimately offline peer must never flip the container to unhealthy.
 
 **Version** — `vaultsync-notify --version` prints the installed helper version (needs no configuration). The installer shows old → new on upgrades; re-running the one-line installer is the supported update path — it pulls the latest image (Docker) or replaces the binary and restarts the service (systemd/launchd).
 

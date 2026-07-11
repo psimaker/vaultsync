@@ -182,6 +182,43 @@ type remoteDeviceConfig struct {
 	Paused   bool   `json:"paused"`
 }
 
+// deviceConnection is the subset of a /rest/system/connections entry the
+// doctor's peer-state checks need.
+type deviceConnection struct {
+	Connected bool `json:"connected"`
+}
+
+// folderConfig is the subset of /rest/config/folders needed to decide whether
+// a folder is shared with a given device. Devices always includes the local
+// device itself.
+type folderConfig struct {
+	Devices []struct {
+		DeviceID string `json:"deviceID"`
+	} `json:"devices"`
+}
+
+// Connections returns the connection state of every configured device, keyed
+// by device ID. The map includes the local device itself (always as not
+// connected) — callers must exclude it.
+func (c *SyncthingClient) Connections(ctx context.Context) (map[string]deviceConnection, error) {
+	var out struct {
+		Connections map[string]deviceConnection `json:"connections"`
+	}
+	if err := c.getJSON(ctx, c.apiURL+"/rest/system/connections", &out); err != nil {
+		return nil, err
+	}
+	return out.Connections, nil
+}
+
+// ListFolders returns all configured folders with their shared-device lists.
+func (c *SyncthingClient) ListFolders(ctx context.Context) ([]folderConfig, error) {
+	var folders []folderConfig
+	if err := c.getJSON(ctx, c.apiURL+"/rest/config/folders", &folders); err != nil {
+		return nil, err
+	}
+	return folders, nil
+}
+
 // DeviceCompletion is the subset of /rest/db/completion used to decide whether
 // a peer still needs data from this instance.
 type DeviceCompletion struct {

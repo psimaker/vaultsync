@@ -1287,3 +1287,322 @@ func TestDoctorWarnsOnInactiveSubscription_Issue88(t *testing.T) {
 		t.Fatalf("trigger probe calls = %d, want 1 (no retries on a stable subscription verdict)", got)
 	}
 }
+
+// --- doctor: peer-state diagnostics are WARN-only and doctor-only (#88) ------
+
+// peerStateStub serves the Syncthing endpoints the preflight touches with
+// canned peer state, counting calls per endpoint. An empty body makes that
+// endpoint answer HTTP 500.
+type peerStateStub struct {
+	server           *httptest.Server
+	connectionsCalls atomic.Int32
+	foldersCalls     atomic.Int32
+}
+
+func newPeerStateStub(t *testing.T, myID, connectionsBody, foldersBody string) *peerStateStub {
+	t.Helper()
+	stub := &peerStateStub{}
+	stub.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/rest/system/status":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"myID":"` + myID + `"}`))
+		case "/rest/system/connections":
+			stub.connectionsCalls.Add(1)
+			if connectionsBody == "" {
+				http.Error(w, "boom", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(connectionsBody))
+		case "/rest/config/folders":
+			stub.foldersCalls.Add(1)
+			if foldersBody == "" {
+				http.Error(w, "boom", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(foldersBody))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(stub.server.Close)
+	return stub
+}
+
+func newAcceptingRelayStub(t *testing.T) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/health":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		case "/api/v1/trigger":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"status":"accepted","devices_notified":1}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func doctorPeerStateMode() preflightMode {
+	return preflightMode{
+		Name:             "doctor",
+		IncludeTrigger:   true,
+		IncludePeerState: true,
+		PrintSuccess:     true,
+		Retry: retryPolicy{
+			Attempts:       4,
+			AttemptTimeout: 500 * time.Millisecond,
+			InitialBackoff: time.Millisecond,
+			MaxBackoff:     2 * time.Millisecond,
+		},
+	}
+}
+
+// capturePreflightOut swaps the preflight output seam; callers must not run
+// in parallel.
+func capturePreflightOut(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	out := &bytes.Buffer{}
+	orig := preflightOut
+	preflightOut = out
+	t.Cleanup(func() { preflightOut = orig })
+	return out
+}
+
+func TestDoctorWarnsWhenNoRemoteDeviceConnected_Issue88(t *testing.T) {
+	// Not t.Parallel(): swaps the preflight output seam.
+	syncthing := newPeerStateStub(t, "DEVICE-88",
+		`{"connections":{"DEVICE-88":{"connected":false},"PEER-1":{"connected":false},"PEER-2":{"connected":false}}}`,
+		`[{"id":"vault","label":"Vault","devices":[{"deviceID":"DEVICE-88"},{"deviceID":"PEER-1"}]}]`)
+	relay := newAcceptingRelayStub(t)
+	out := capturePreflightOut(t)
+
+	cfg := Config{SyncthingAPIURL: syncthing.server.URL, SyncthingAPIKey: "test-key", RelayURL: relay.URL, DebounceSeconds: 5}
+	warnings, err := runPreflight(context.Background(), cfg, doctorPeerStateMode())
+	if err != nil {
+		t.Fatalf("a disconnected peer is everyday state and must not fail the doctor; got: %v", err)
+	}
+	if warnings != 1 {
+		t.Fatalf("warnings = %d, want 1; output:\n%s", warnings, out.String())
+	}
+	if !strings.Contains(out.String(), "WARN Syncthing remote device connected") ||
+		!strings.Contains(out.String(), "none of the 2 configured remote device(s)") {
+		t.Fatalf("doctor output must carry the peer-connection WARN with the device count; got:\n%s", out.String())
+	}
+	// With nobody connected the share check passes vacuously (the connection
+	// WARN owns that state) instead of stacking a second WARN.
+	if !strings.Contains(out.String(), "OK   Syncthing folders shared with connected devices") {
+		t.Fatalf("share check must pass vacuously when nobody is connected; got:\n%s", out.String())
+	}
+	// The verdict is stable: one connections call per peer check, no retries,
+	// and no folder listing when nobody is connected.
+	if got := syncthing.connectionsCalls.Load(); got != 2 {
+		t.Fatalf("connections calls = %d, want 2 (no retries on a stable peer-state verdict)", got)
+	}
+	if got := syncthing.foldersCalls.Load(); got != 0 {
+		t.Fatalf("folders calls = %d, want 0 (share check is vacuous with nobody connected)", got)
+	}
+}
+
+func TestDoctorWarnsWhenNoRemoteDevicesConfigured_Issue88(t *testing.T) {
+	// Not t.Parallel(): swaps the preflight output seam.
+	syncthing := newPeerStateStub(t, "DEVICE-88",
+		`{"connections":{"DEVICE-88":{"connected":false}}}`,
+		`[]`)
+	relay := newAcceptingRelayStub(t)
+	out := capturePreflightOut(t)
+
+	cfg := Config{SyncthingAPIURL: syncthing.server.URL, SyncthingAPIKey: "test-key", RelayURL: relay.URL, DebounceSeconds: 5}
+	warnings, err := runPreflight(context.Background(), cfg, doctorPeerStateMode())
+	if err != nil {
+		t.Fatalf("an unpaired Syncthing must not fail the doctor; got: %v", err)
+	}
+	// "Add Remote Device" is unique to the tailored message — the sentinel's
+	// own text also appears in the could-not-evaluate fallback, so matching it
+	// would not prove the remediation survived.
+	if warnings != 1 || !strings.Contains(out.String(), "Add Remote Device") {
+		t.Fatalf("warnings = %d, want 1 with the tailored pairing remediation; output:\n%s", warnings, out.String())
+	}
+	// The verdict is stable: one connections call per peer check, no retries.
+	if got := syncthing.connectionsCalls.Load(); got != 2 {
+		t.Fatalf("connections calls = %d, want 2 (no retries on a stable peer-state verdict)", got)
+	}
+}
+
+func TestDoctorWarnsWhenNoFolderSharedWithConnectedDevice_Issue88(t *testing.T) {
+	// Not t.Parallel(): swaps the preflight output seam.
+	syncthing := newPeerStateStub(t, "DEVICE-88",
+		`{"connections":{"DEVICE-88":{"connected":false},"PEER-1":{"connected":true}}}`,
+		`[{"id":"vault","label":"Vault","devices":[{"deviceID":"DEVICE-88"}]}]`)
+	relay := newAcceptingRelayStub(t)
+	out := capturePreflightOut(t)
+
+	cfg := Config{SyncthingAPIURL: syncthing.server.URL, SyncthingAPIKey: "test-key", RelayURL: relay.URL, DebounceSeconds: 5}
+	warnings, err := runPreflight(context.Background(), cfg, doctorPeerStateMode())
+	if err != nil {
+		t.Fatalf("an unshared folder is a WARN, never a doctor failure; got: %v", err)
+	}
+	if warnings != 1 {
+		t.Fatalf("warnings = %d, want 1; output:\n%s", warnings, out.String())
+	}
+	if !strings.Contains(out.String(), "OK   Syncthing remote device connected") ||
+		!strings.Contains(out.String(), "WARN Syncthing folders shared with connected devices") ||
+		!strings.Contains(out.String(), "1 remote device(s) connected, but no folder is shared") {
+		t.Fatalf("doctor output must carry the share WARN with the connected count; got:\n%s", out.String())
+	}
+	// The share verdict is stable too: one connections call per peer check and
+	// a single folder listing, no retries.
+	if got := syncthing.connectionsCalls.Load(); got != 2 {
+		t.Fatalf("connections calls = %d, want 2 (no retries on a stable share verdict)", got)
+	}
+	if got := syncthing.foldersCalls.Load(); got != 1 {
+		t.Fatalf("folders calls = %d, want 1 (no retries on a stable share verdict)", got)
+	}
+}
+
+func TestDoctorPeerStateChecksPassWithSharedConnectedPeer_Issue88(t *testing.T) {
+	// Not t.Parallel(): swaps the preflight output seam.
+	syncthing := newPeerStateStub(t, "DEVICE-88",
+		`{"connections":{"DEVICE-88":{"connected":false},"PEER-1":{"connected":true}}}`,
+		`[{"id":"vault","label":"Vault","devices":[{"deviceID":"DEVICE-88"},{"deviceID":"PEER-1"}]}]`)
+	relay := newAcceptingRelayStub(t)
+	out := capturePreflightOut(t)
+
+	cfg := Config{SyncthingAPIURL: syncthing.server.URL, SyncthingAPIKey: "test-key", RelayURL: relay.URL, DebounceSeconds: 5}
+	warnings, err := runPreflight(context.Background(), cfg, doctorPeerStateMode())
+	if err != nil {
+		t.Fatalf("expected a fully healthy doctor run, got: %v", err)
+	}
+	if warnings != 0 {
+		t.Fatalf("warnings = %d, want 0; output:\n%s", warnings, out.String())
+	}
+	if !strings.Contains(out.String(), "OK   Syncthing remote device connected") ||
+		!strings.Contains(out.String(), "OK   Syncthing folders shared with connected devices") {
+		t.Fatalf("both peer-state checks must report OK; got:\n%s", out.String())
+	}
+}
+
+func TestDoctorPeerStateAPIErrorWarnsButNeverFails_Issue88(t *testing.T) {
+	// Not t.Parallel(): swaps the preflight output seam.
+	// Empty connections body -> HTTP 500 on /rest/system/connections: e.g. an
+	// old Syncthing without the endpoint or a mid-run hiccup. Peer state is a
+	// diagnostic — it must never turn a previously passing doctor red.
+	syncthing := newPeerStateStub(t, "DEVICE-88", "", `[]`)
+	relay := newAcceptingRelayStub(t)
+	out := capturePreflightOut(t)
+
+	cfg := Config{SyncthingAPIURL: syncthing.server.URL, SyncthingAPIKey: "test-key", RelayURL: relay.URL, DebounceSeconds: 5}
+	warnings, err := runPreflight(context.Background(), cfg, doctorPeerStateMode())
+	if err != nil {
+		t.Fatalf("a peer-state read error must downgrade to WARN, not fail the doctor; got: %v", err)
+	}
+	if warnings != 2 || !strings.Contains(out.String(), "could not evaluate") {
+		t.Fatalf("warnings = %d, want 2 'could not evaluate' WARNs; output:\n%s", warnings, out.String())
+	}
+}
+
+func TestDoctorFoldersEndpointErrorWarnsButNeverFails_Issue88(t *testing.T) {
+	// Not t.Parallel(): swaps the preflight output seam.
+	// Empty folders body -> HTTP 500 on /rest/config/folders only: the share
+	// check must degrade to the could-not-evaluate WARN while the connection
+	// check stays OK — and the doctor must still pass.
+	syncthing := newPeerStateStub(t, "DEVICE-88",
+		`{"connections":{"DEVICE-88":{"connected":false},"PEER-1":{"connected":true}}}`,
+		"")
+	relay := newAcceptingRelayStub(t)
+	out := capturePreflightOut(t)
+
+	cfg := Config{SyncthingAPIURL: syncthing.server.URL, SyncthingAPIKey: "test-key", RelayURL: relay.URL, DebounceSeconds: 5}
+	warnings, err := runPreflight(context.Background(), cfg, doctorPeerStateMode())
+	if err != nil {
+		t.Fatalf("a folder-list read error must downgrade to WARN, not fail the doctor; got: %v", err)
+	}
+	if warnings != 1 {
+		t.Fatalf("warnings = %d, want 1; output:\n%s", warnings, out.String())
+	}
+	if !strings.Contains(out.String(), "OK   Syncthing remote device connected") ||
+		!strings.Contains(out.String(), "WARN Syncthing folders shared with connected devices") ||
+		!strings.Contains(out.String(), "could not evaluate") {
+		t.Fatalf("share check must WARN 'could not evaluate' on a folders read error; got:\n%s", out.String())
+	}
+}
+
+func TestDoctorPeerStatePrereqFailureWarnsWithoutQueries_Issue88(t *testing.T) {
+	// Not t.Parallel(): swaps the preflight output seam.
+	// An empty myID fails the Device ID check (the doctor exits non-zero for
+	// that); the peer-state checks must then degrade to could-not-evaluate
+	// WARNs without querying the peer endpoints — the prereq verdict is stable,
+	// so no retry budget is burned on it either.
+	syncthing := newPeerStateStub(t, "",
+		`{"connections":{}}`,
+		`[]`)
+	relay := newAcceptingRelayStub(t)
+	out := capturePreflightOut(t)
+
+	cfg := Config{SyncthingAPIURL: syncthing.server.URL, SyncthingAPIKey: "test-key", RelayURL: relay.URL, DebounceSeconds: 5}
+	warnings, err := runPreflight(context.Background(), cfg, doctorPeerStateMode())
+	if err == nil {
+		t.Fatal("the Device ID check must still fail the doctor")
+	}
+	if warnings != 2 || !strings.Contains(out.String(), "could not evaluate") {
+		t.Fatalf("warnings = %d, want 2 could-not-evaluate WARNs from the peer checks; output:\n%s", warnings, out.String())
+	}
+	if got := syncthing.connectionsCalls.Load(); got != 0 {
+		t.Fatalf("connections calls = %d, want 0 (peer checks must not query with failed prereqs)", got)
+	}
+	if got := syncthing.foldersCalls.Load(); got != 0 {
+		t.Fatalf("folders calls = %d, want 0 (peer checks must not query with failed prereqs)", got)
+	}
+}
+
+func TestRunDoctorIncludesPeerStateChecks_Issue88(t *testing.T) {
+	// Not t.Parallel(): swaps the preflight output seam.
+	// Drives the REAL runDoctor so the peer-state checks cannot be silently
+	// unwired from --doctor (the other tests build their own mode). The happy
+	// path never retries, so the production retry policy costs no test time.
+	syncthing := newPeerStateStub(t, "DEVICE-88",
+		`{"connections":{"DEVICE-88":{"connected":false},"PEER-1":{"connected":true}}}`,
+		`[{"id":"vault","label":"Vault","devices":[{"deviceID":"DEVICE-88"},{"deviceID":"PEER-1"}]}]`)
+	relay := newAcceptingRelayStub(t)
+	out := capturePreflightOut(t)
+
+	cfg := Config{SyncthingAPIURL: syncthing.server.URL, SyncthingAPIKey: "test-key", RelayURL: relay.URL, DebounceSeconds: 5}
+	if err := runDoctor(context.Background(), cfg); err != nil {
+		t.Fatalf("expected a green doctor run, got: %v", err)
+	}
+	if !strings.Contains(out.String(), "OK   Syncthing remote device connected") ||
+		!strings.Contains(out.String(), "OK   Syncthing folders shared with connected devices") ||
+		!strings.Contains(out.String(), "all checks passed") {
+		t.Fatalf("--doctor must run the peer-state checks; got:\n%s", out.String())
+	}
+}
+
+func TestHealthcheckNeverTouchesPeerState_Issue88(t *testing.T) {
+	// Not t.Parallel(): consistent with the other preflight seam tests.
+	// The healthcheck feeds Docker's HEALTHCHECK: a legitimately offline peer
+	// must never flip the container to unhealthy, so the peer-state endpoints
+	// must not even be queried.
+	syncthing := newPeerStateStub(t, "DEVICE-88",
+		`{"connections":{"DEVICE-88":{"connected":false}}}`,
+		`[]`)
+	relay := newAcceptingRelayStub(t)
+	capturePreflightOut(t)
+
+	cfg := Config{SyncthingAPIURL: syncthing.server.URL, SyncthingAPIKey: "test-key", RelayURL: relay.URL, DebounceSeconds: 5}
+	if err := runHealthcheck(context.Background(), cfg); err != nil {
+		t.Fatalf("healthcheck must pass regardless of peer state; got: %v", err)
+	}
+	if got := syncthing.connectionsCalls.Load(); got != 0 {
+		t.Fatalf("connections calls = %d, want 0 — peer state is doctor-only", got)
+	}
+	if got := syncthing.foldersCalls.Load(); got != 0 {
+		t.Fatalf("folders calls = %d, want 0 — peer state is doctor-only", got)
+	}
+}

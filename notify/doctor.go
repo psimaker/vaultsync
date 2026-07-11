@@ -36,15 +36,39 @@ var preflightOut io.Writer = os.Stdout
 type preflightMode struct {
 	Name           string
 	IncludeTrigger bool
-	PrintSuccess   bool
-	Retry          retryPolicy
+	// IncludePeerState adds the peer-state diagnostics (#88): doctor only. The
+	// healthcheck feeds Docker's HEALTHCHECK and must stay cheap and steady — a
+	// legitimately offline peer must never flip the container to unhealthy.
+	IncludePeerState bool
+	PrintSuccess     bool
+	Retry            retryPolicy
+}
+
+// Peer-state verdicts (#88): everyday sync states, not setup failures. The
+// doctor surfaces them as WARN and never fails on them; retrying within
+// seconds cannot change them, so the retry loop short-circuits.
+var (
+	errNoRemoteDevices         = errors.New("no remote devices configured")
+	errNoRemoteDeviceConnected = errors.New("no remote device connected")
+	errNoFolderSharedConnected = errors.New("no folder shared with a connected device")
+	// errPeerStatePrereq: an earlier check already failed and cannot recover
+	// within this run (checks run sequentially), so retrying is pointless too.
+	errPeerStatePrereq = errors.New("device ID unavailable because prior checks failed")
+)
+
+func isPeerStateVerdict(err error) bool {
+	return errors.Is(err, errNoRemoteDevices) ||
+		errors.Is(err, errNoRemoteDeviceConnected) ||
+		errors.Is(err, errNoFolderSharedConnected) ||
+		errors.Is(err, errPeerStatePrereq)
 }
 
 func runDoctor(ctx context.Context, cfg Config) error {
 	mode := preflightMode{
-		Name:           "doctor",
-		IncludeTrigger: true,
-		PrintSuccess:   true,
+		Name:             "doctor",
+		IncludeTrigger:   true,
+		IncludePeerState: true,
+		PrintSuccess:     true,
 		Retry: retryPolicy{
 			Attempts:       4,
 			AttemptTimeout: 6 * time.Second,
@@ -146,6 +170,101 @@ func runPreflight(ctx context.Context, cfg Config, mode preflightMode) (int, err
 		})
 	}
 
+	if mode.IncludePeerState {
+		// Peer-state diagnostics (#88): a connectivity-green doctor can still
+		// mean "nothing will ever sync" — no peer connected, or peers connected
+		// but no folder shared with them. Both are everyday states (a phone
+		// that is off or away is normal), so they WARN and never fail; any
+		// error inside these checks (old Syncthing without the endpoint, a
+		// mid-run API hiccup) downgrades to WARN too — peer state must never
+		// turn a previously passing doctor red.
+		var remoteCount, connectedCount int
+		checks = append(checks, preflightCheck{
+			Name:        "Syncthing remote device connected",
+			Remediation: "Open the Syncthing Web UI: the device must be added, resumed, and online on both sides.",
+			Run: func(ctx context.Context) error {
+				if deviceID == "" {
+					return errPeerStatePrereq
+				}
+				conns, err := st.Connections(ctx)
+				if err != nil {
+					return err
+				}
+				remoteCount, connectedCount = 0, 0
+				for id, conn := range conns {
+					if id == deviceID {
+						continue
+					}
+					remoteCount++
+					if conn.Connected {
+						connectedCount++
+					}
+				}
+				if remoteCount == 0 {
+					return errNoRemoteDevices
+				}
+				if connectedCount == 0 {
+					return errNoRemoteDeviceConnected
+				}
+				return nil
+			},
+			WarnOn: func(err error) (string, bool) {
+				switch {
+				case errors.Is(err, errNoRemoteDevices):
+					return "this Syncthing has no remote devices configured, so nothing can sync and there is nothing to wake up. Fix: open the Syncthing Web UI on this server, Add Remote Device (your iPhone / other devices), and accept the pairing on the other device.", true
+				case errors.Is(err, errNoRemoteDeviceConnected):
+					return fmt.Sprintf("none of the %d configured remote device(s) is currently connected — sync and wake-up delivery are idle until one connects. A device that is off or away is normal. Fix (if unexpected): open the Syncthing Web UI and check the device is resumed and online on both sides.", remoteCount), true
+				default:
+					return "could not evaluate (peer state never fails the doctor): " + err.Error(), true
+				}
+			},
+		}, preflightCheck{
+			Name:        "Syncthing folders shared with connected devices",
+			Remediation: "Open the Syncthing Web UI: folder -> Edit -> Sharing, tick the device, then accept the share on the other device.",
+			Run: func(ctx context.Context) error {
+				if deviceID == "" {
+					return errPeerStatePrereq
+				}
+				conns, err := st.Connections(ctx)
+				if err != nil {
+					return err
+				}
+				connectedRemotes := make(map[string]bool)
+				for id, conn := range conns {
+					if id != deviceID && conn.Connected {
+						connectedRemotes[id] = true
+					}
+				}
+				// Fresh snapshot for the WARN text — never reuse the previous
+				// check's count, which is stale if that check errored.
+				connectedCount = len(connectedRemotes)
+				// Nobody connected: the check above owns that state; a second
+				// WARN here would be noise about a vacuous condition.
+				if len(connectedRemotes) == 0 {
+					return nil
+				}
+				folders, err := st.ListFolders(ctx)
+				if err != nil {
+					return err
+				}
+				for _, folder := range folders {
+					for _, dev := range folder.Devices {
+						if connectedRemotes[dev.DeviceID] {
+							return nil
+						}
+					}
+				}
+				return errNoFolderSharedConnected
+			},
+			WarnOn: func(err error) (string, bool) {
+				if errors.Is(err, errNoFolderSharedConnected) {
+					return fmt.Sprintf("%d remote device(s) connected, but no folder is shared with any of them — changes on this server cannot reach them, so no wake-up will ever fire. Fix: open the Syncthing Web UI, folder -> Edit -> Sharing, tick the device, then accept the share on the other device.", connectedCount), true
+				}
+				return "could not evaluate (peer state never fails the doctor): " + err.Error(), true
+			},
+		})
+	}
+
 	failures := make([]string, 0)
 	warnings := 0
 	for _, check := range checks {
@@ -209,9 +328,10 @@ func runCheckWithRetry(ctx context.Context, policy retryPolicy, checkName string
 		if attempt == policy.Attempts {
 			break
 		}
-		// The subscription verdict is stable (#88): retrying the same request
-		// within seconds cannot change it, so don't burn the retry budget.
-		if isSubscriptionInactive(err) {
+		// Stable verdicts (#88): the subscription state and the peer-state
+		// conditions cannot change within the retry window, so don't burn the
+		// retry budget on them. Transport errors still retry.
+		if isSubscriptionInactive(err) || isPeerStateVerdict(err) {
 			break
 		}
 
