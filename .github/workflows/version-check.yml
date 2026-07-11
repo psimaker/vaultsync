@@ -22,8 +22,16 @@ jobs:
         run: |
           V="${GITHUB_REF_NAME#v}"
           echo "Releasing version: $V"
-          grep -q "CFBundleShortVersionString: \"$V\"" ios/project.yml \
-            || { echo "::error::ios/project.yml CFBundleShortVersionString does not match tag $V"; exit 1; }
+          # App and widget are versioned separately in project.yml — require BOTH
+          # to match the tag, or a forgotten widget bump ships a skewed extension
+          # (a bare grep -q passes as soon as either target matches, #84).
+          matches="$(grep -c "CFBundleShortVersionString: \"$V\"" ios/project.yml)" || true
+          [ "$matches" -eq 2 ] \
+            || { echo "::error::ios/project.yml must carry CFBundleShortVersionString \"$V\" in BOTH targets (app + widget); found $matches"; exit 1; }
+          # The tag cannot encode the build number, but app and widget must agree on it.
+          builds="$(grep "CFBundleVersion:" ios/project.yml | sort -u | wc -l)"
+          [ "$builds" -eq 1 ] \
+            || { echo "::error::ios/project.yml CFBundleVersion differs between app and widget targets"; exit 1; }
           grep -q "^## \[$V\]" CHANGELOG.md \
             || { echo "::error::CHANGELOG.md has no '## [$V]' section for tag $V"; exit 1; }
-          echo "OK — tag, ios/project.yml and CHANGELOG.md all agree on $V"
+          echo "OK — tag, ios/project.yml (both targets) and CHANGELOG.md all agree on $V"
