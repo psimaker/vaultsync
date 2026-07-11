@@ -33,10 +33,10 @@ systemctl status vaultsync-notify
 # it ends with --doctor (and upgrades the helper as a side effect)
 ```
 
-*launchd (macOS):*
+*launchd (macOS — agent installs log to `/tmp/vaultsync-notify.log`, LaunchDaemon installs via `sudo` to `/Library/Logs/vaultsync-notify.log`):*
 
 ```bash
-tail -200 /tmp/vaultsync-notify.log
+tail -200 /tmp/vaultsync-notify.log /Library/Logs/vaultsync-notify.log 2>/dev/null
 SYNCTHING_CONFIG="$HOME/Library/Application Support/Syncthing/config.xml" \
   RELAY_URL=https://relay.vaultsync.eu ~/.local/bin/vaultsync-notify --doctor
 ```

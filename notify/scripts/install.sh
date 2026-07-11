@@ -416,7 +416,78 @@ WantedBy=multi-user.target"
 	fi
 }
 
+# Root path (#89): a LaunchAgent lives in the gui/$uid domain — it cannot even
+# bootstrap in a headless SSH session ("Bootstrap failed: 5"), and it stops at
+# logout/reboot without auto-login. The headless Mac mini is exactly the server
+# scenario the one-liner targets, so with root we install a LaunchDaemon that
+# runs as the config.xml owner (UserName key) and survives logout and reboot.
+install_launchdaemon() {
+	bin="/usr/local/bin/vaultsync-notify"
+	plist="/Library/LaunchDaemons/eu.vaultsync.notify.plist"
+	label="eu.vaultsync.notify"
+	log="/Library/Logs/vaultsync-notify.log"
+
+	owner_uid=${OWNER%%:*}
+	run_user=$(id -un "$owner_uid" 2>/dev/null) || run_user=""
+	[ -n "$run_user" ] || fail "Cannot resolve a username for uid $owner_uid (the owner of $CONFIG_PATH)."
+
+	run mkdir -p /usr/local/bin
+	download_binary "$ASSET" "$TAG" "$bin"
+	run_doctor_binary "$bin"
+
+	plist_content="<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">
+<plist version=\"1.0\">
+<dict>
+	<key>Label</key>
+	<string>$label</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>$bin</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>RELAY_URL</key>
+		<string>$RELAY_URL</string>
+		<key>SYNCTHING_CONFIG</key>
+		<string>$CONFIG_PATH</string>
+	</dict>
+	<key>UserName</key>
+	<string>$run_user</string>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>$log</string>
+</dict>
+</plist>"
+
+	if [ "$DRY_RUN" = 1 ]; then
+		info "[dry-run] would write $plist (LaunchDaemon, runs as $run_user) and (re)load it via launchctl bootstrap system"
+		return 0
+	fi
+
+	printf '%s\n' "$plist_content" >"$plist"
+	launchctl bootout "system/$label" 2>/dev/null || true
+	launchctl bootstrap system "$plist" \
+		|| fail "launchctl could not load the LaunchDaemon — check $log and 'launchctl print system/$label', fix it, and re-run this installer."
+
+	sleep 2
+	if ! launchctl print "system/$label" >/dev/null 2>&1; then
+		fail "The LaunchDaemon did not start — check $log, fix it, and re-run this installer."
+	fi
+	info "Installed as a LaunchDaemon (runs as $run_user; survives logout and reboot)."
+}
+
 install_launchd() {
+	# With root, install the reboot-safe LaunchDaemon instead of a per-user
+	# agent (#89) — also the only path that works over headless SSH.
+	if [ "$(id -u)" = 0 ]; then
+		install_launchdaemon
+		return 0
+	fi
+
 	bin_dir="$HOME/.local/bin"
 	bin="$bin_dir/vaultsync-notify"
 	agent_dir="$HOME/Library/LaunchAgents"
@@ -461,12 +532,22 @@ install_launchd() {
 	printf '%s\n' "$plist_content" >"$plist"
 	uid=$(id -u)
 	launchctl bootout "gui/$uid/$label" 2>/dev/null || true
-	launchctl bootstrap "gui/$uid" "$plist"
+	# Guarded (#89): under set -eu a failed bootstrap used to kill the script
+	# with launchctl's raw "Bootstrap failed: 5" — typical for an SSH session
+	# with no GUI login, where the gui/$uid domain does not exist.
+	launchctl bootstrap "gui/$uid" "$plist" \
+		|| fail "Could not start the launchd agent — usually there is no GUI session for $(id -un) (headless Mac / SSH). Two ways out:
+  - log in once on this Mac's screen, then re-run this installer, or
+  - install as a LaunchDaemon instead (survives logout and reboot — right for a server):
+      curl -fsSL https://vaultsync.eu/notify.sh | sudo sh"
 
 	sleep 2
 	if ! launchctl print "gui/$uid/$label" >/dev/null 2>&1; then
 		fail "The launchd agent did not start — check /tmp/vaultsync-notify.log, fix it, and re-run this installer."
 	fi
+	info "Note: as a LaunchAgent, the helper runs only while $(id -un) is logged in."
+	info "For an always-on server Mac, install a LaunchDaemon instead:"
+	info "  curl -fsSL https://vaultsync.eu/notify.sh | sudo sh"
 }
 
 install_binary() {
