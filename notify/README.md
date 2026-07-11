@@ -28,6 +28,14 @@ The moment the helper starts it sends one wake-up, and VaultSync flips to **Clou
 - Config in a non-standard place? `curl -fsSL https://vaultsync.eu/notify.sh | SYNCTHING_CONFIG=/path/to/config.xml sh` — the variable must prefix `sh` (the installer), not `curl`. Synology/QNAP/Unraid host layouts are probed automatically.
 - The script contains nothing user-specific — identity comes from your own Syncthing's Device ID at runtime.
 
+**Windows** — one step too, in PowerShell ([`scripts/install.ps1`](scripts/install.ps1)):
+
+```powershell
+irm https://vaultsync.eu/notify.ps1 | iex
+```
+
+It finds `config.xml` under `%LOCALAPPDATA%\Syncthing`, downloads the prebuilt helper with SHA-256 verification, registers a per-user Scheduled Task (runs hidden at logon, restarts on failure — no admin rights, no service wrapper), starts it, and ends with `--doctor`. Skeptical of `irm | iex`? Set `$env:VAULTSYNC_NOTIFY_DRYRUN = '1'` first to preview every action, or read the script. Config elsewhere? Set `$env:SYNCTHING_CONFIG` before running. Re-running upgrades the helper. Logs land in `%LOCALAPPDATA%\VaultSync\vaultsync-notify.log`.
+
 ---
 
 ## 🔧 Manual & advanced setup

@@ -51,6 +51,15 @@ docker compose logs --tail=200 vaultsync-notify
 docker compose run --rm vaultsync-notify --doctor
 ```
 
+*Windows (one-step `install.ps1`):*
+
+```powershell
+Get-Content "$env:LOCALAPPDATA\VaultSync\vaultsync-notify.log" -Tail 200
+$env:SYNCTHING_CONFIG = "$env:LOCALAPPDATA\Syncthing\config.xml"
+$env:RELAY_URL = 'https://relay.vaultsync.eu'
+& "$env:LOCALAPPDATA\VaultSync\vaultsync-notify.exe" --doctor
+```
+
 How to read `--doctor`: a relay rate-limit (HTTP 429) counts as **success** — it proves the trigger endpoint is reachable (the relay allows ~10 triggers/min/device). An inactive subscription prints `WARN: relay reports no active subscription for this device` **without failing** — that state is fixed in the app (subscribe / re-provision), not on the server. Every install also ships `vaultsync-notify --healthcheck`: the same checks minus the trigger probe, silent, exit-code only — this is what the Docker `HEALTHCHECK` runs, and it works for scripts and monitoring on every flavor.
 
 In the app: **Cloud Relay** tab → **Relay health & diagnostics** → **Check Relay Status**. A green health check means the relay is *reachable*; only an updated **Last Trigger Received** proves wake-ups are actually delivered.

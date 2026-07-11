@@ -120,6 +120,21 @@ jobs:
         # docker.yml still agree on the release asset naming.
         run: notify/scripts/tests/install-dry-run-test.sh
 
+      - name: install.ps1 parse check
+        # A syntax error in the Windows installer (#90) would otherwise only
+        # surface on a user's machine. pwsh ships on ubuntu-latest runners.
+        shell: pwsh
+        run: |
+          $errors = $null
+          $tokens = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            "$env:GITHUB_WORKSPACE/notify/scripts/install.ps1", [ref]$tokens, [ref]$errors)
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Host "PARSE ERROR: $($_.Message) at line $($_.Extent.StartLineNumber)" }
+            exit 1
+          }
+          Write-Host 'install.ps1: parse clean'
+
   design-lint:
     name: Design Token Lint
     runs-on: ubuntu-latest # pure bash/grep guardrail; no Xcode needed
