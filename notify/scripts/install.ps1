@@ -47,7 +47,13 @@ $LogPath = Join-Path $InstallDir 'vaultsync-notify.log'
 
 function Write-Info([string]$Message) { Write-Host $Message }
 function Write-Note([string]$Message) { Write-Host "WARN: $Message" -ForegroundColor Yellow }
-function Fail([string]$Message) { Write-Host "ERROR: $Message" -ForegroundColor Red; exit 1 }
+# throw, not exit: under the documented `irm ... | iex` invocation the script
+# runs in the CALLER's session — `exit` would close the user's PowerShell
+# window and take the error message with it.
+function Fail([string]$Message) {
+    Write-Host "ERROR: $Message" -ForegroundColor Red
+    throw 'vaultsync-notify install aborted — see the ERROR above.'
+}
 
 Write-Info 'VaultSync Cloud Relay — Windows helper installer'
 if ($DryRun) { Write-Info '(dry run — nothing will be changed)' }
@@ -155,10 +161,17 @@ if ($DryRun) {
 
 # Scheduled tasks cannot set environment variables, and running a console exe
 # directly flashes a window at logon — a tiny hidden runner does both.
+# Values land inside single-quoted PowerShell literals — double any embedded
+# apostrophe (legal in Windows profile paths, e.g. C:\Users\O'Brien) or the
+# generated runner fails to parse at every logon.
+$escConfig = $ConfigPath -replace "'", "''"
+$escRelay = $RelayUrl -replace "'", "''"
+$escExe = $ExePath -replace "'", "''"
+$escLog = $LogPath -replace "'", "''"
 $runnerContent = @"
-`$env:SYNCTHING_CONFIG = '$ConfigPath'
-`$env:RELAY_URL = '$RelayUrl'
-& '$ExePath' 2>&1 | Out-File -FilePath '$LogPath' -Encoding utf8
+`$env:SYNCTHING_CONFIG = '$escConfig'
+`$env:RELAY_URL = '$escRelay'
+& '$escExe' 2>&1 | Out-File -FilePath '$escLog' -Encoding utf8
 "@
 
 if ($DryRun) {
@@ -188,7 +201,7 @@ if ($DryRun) {
 if ($DryRun) {
     Write-Info "[dry-run] would run: $ExePath --doctor"
     Write-Info 'Dry run complete — nothing was changed. Re-run without the dry-run flag to install.'
-    exit 0
+    return
 }
 
 Write-Info 'Running preflight checks (doctor)...'
