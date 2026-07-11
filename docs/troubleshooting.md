@@ -40,8 +40,12 @@ systemctl status vaultsync-notify
 
 ```bash
 tail -200 /tmp/vaultsync-notify.log /Library/Logs/vaultsync-notify.log 2>/dev/null
+# agent install (no sudo):
 SYNCTHING_CONFIG="$HOME/Library/Application Support/Syncthing/config.xml" \
   RELAY_URL=https://relay.vaultsync.eu ~/.local/bin/vaultsync-notify --doctor
+# LaunchDaemon install (sudo, binary in /usr/local/bin, runs as the config owner):
+sudo SYNCTHING_CONFIG="/Users/<config-owner>/Library/Application Support/Syncthing/config.xml" \
+  RELAY_URL=https://relay.vaultsync.eu /usr/local/bin/vaultsync-notify --doctor
 ```
 
 *Docker Compose stack:*
@@ -60,7 +64,7 @@ $env:RELAY_URL = 'https://relay.vaultsync.eu'
 & "$env:LOCALAPPDATA\VaultSync\vaultsync-notify.exe" --doctor
 ```
 
-How to read `--doctor`: a relay rate-limit (HTTP 429) counts as **success** — it proves the trigger endpoint is reachable (the relay allows ~10 triggers/min/device). An inactive subscription prints `WARN: relay reports no active subscription for this device` **without failing** — that state is fixed in the app (subscribe / re-provision), not on the server. Every install also ships `vaultsync-notify --healthcheck`: the same checks minus the trigger probe, silent, exit-code only — this is what the Docker `HEALTHCHECK` runs, and it works for scripts and monitoring on every flavor.
+How to read `--doctor`: a relay rate-limit (HTTP 429) counts as **success** — it proves the trigger endpoint is reachable (the relay allows ~10 triggers/min/device). An inactive subscription prints a `WARN` for the trigger check (`WARN Relay trigger endpoint response sanity`, followed by `relay reports no active subscription for this device — …`) **without failing** — that state is fixed in the app (subscribe / re-provision), not on the server. Every install also ships `vaultsync-notify --healthcheck`: the same checks minus the trigger probe, silent, exit-code only — this is what the Docker `HEALTHCHECK` runs, and it works for scripts and monitoring on every flavor.
 
 In the app: **Cloud Relay** tab → **Relay health & diagnostics** → **Check Relay Status**. A green health check means the relay is *reachable*; only an updated **Last Trigger Received** proves wake-ups are actually delivered.
 
@@ -134,7 +138,7 @@ Silent push wake-ups use a background push that **does not need notification per
 **Looks like:** diagnostics show the APNs token missing or registration failed; you're subscribed but wake-ups never arrive.
 
 **Fix:**
-0. On the server, run `--doctor` (see the quick-triage block above). A `WARN: relay reports no active subscription for this device` line means the server side is healthy and the problem is app-side: subscription or provisioning — continue below.
+0. On the server, run `--doctor` (see the quick-triage block above). A `WARN` on the trigger check saying `relay reports no active subscription for this device` means the server side is healthy and the problem is app-side: subscription or provisioning — continue below.
 1. Open **Cloud Relay** tab → **Relay health & diagnostics**.
 2. Tap **Retry APNs Registration** and confirm an **APNs Token** appears.
 3. Tap **Retry Provisioning** to rebind the token to your device IDs (shown while subscribed).

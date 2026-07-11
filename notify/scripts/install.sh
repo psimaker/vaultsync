@@ -464,8 +464,22 @@ install_launchdaemon() {
 </plist>"
 
 	if [ "$DRY_RUN" = 1 ]; then
-		info "[dry-run] would write $plist (LaunchDaemon, runs as $run_user) and (re)load it via launchctl bootstrap system"
+		info "[dry-run] would write $plist (LaunchDaemon, runs as $run_user), replace any existing per-user LaunchAgent, and (re)load it via launchctl bootstrap system"
 		return 0
+	fi
+
+	# Cross-flavor guard (#89/#87): the agent path itself recommends this sudo
+	# upgrade — without removing the old per-user agent, agent AND daemon would
+	# run in parallel after the next login. Replacing our OWN helper artifact
+	# mirrors the Docker path's container replacement; user data is never touched.
+	if [ -n "${SUDO_USER:-}" ]; then
+		agent_home=$(sudo -u "$SUDO_USER" sh -c 'echo "$HOME"') || agent_home=""
+		agent_plist="$agent_home/Library/LaunchAgents/$label.plist"
+		if [ -n "$agent_home" ] && [ -e "$agent_plist" ]; then
+			info "Replacing the existing per-user LaunchAgent with the LaunchDaemon."
+			launchctl bootout "gui/$(id -u "$SUDO_USER")/$label" 2>/dev/null || true
+			rm -f "$agent_plist"
+		fi
 	fi
 
 	printf '%s\n' "$plist_content" >"$plist"
@@ -486,6 +500,18 @@ install_launchd() {
 	if [ "$(id -u)" = 0 ]; then
 		install_launchdaemon
 		return 0
+	fi
+
+	# Cross-flavor guard (#89/#87): a LaunchDaemon install already covers this
+	# Mac for every user — adding a per-user agent next to it would run two
+	# helpers in parallel. Explain and stop; never removed automatically.
+	if [ -e "/Library/LaunchDaemons/eu.vaultsync.notify.plist" ]; then
+		fail "A LaunchDaemon install of the helper already exists and covers this Mac.
+  To upgrade it, re-run this installer with sudo:
+      curl -fsSL https://vaultsync.eu/notify.sh | sudo sh
+  To remove it first:
+      sudo launchctl bootout system/eu.vaultsync.notify
+      sudo rm /Library/LaunchDaemons/eu.vaultsync.notify.plist"
 	fi
 
 	bin_dir="$HOME/.local/bin"
