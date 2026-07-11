@@ -26,7 +26,8 @@
 #
 # Environment overrides (all optional):
 #   SYNCTHING_CONFIG        path to config.xml when auto-detection misses it
-#                           (Synology/QNAP usually need this)
+#                           (Synology/QNAP/Unraid host layouts are probed
+#                           automatically since #86)
 #   RELAY_URL               relay endpoint (default: production relay)
 #   VAULTSYNC_NOTIFY_MODE   auto|docker|binary (default: auto)
 #   VAULTSYNC_NOTIFY_IMAGE  container image override (development)
@@ -88,6 +89,35 @@ need_root() {
 
 # --- 1. Locate config.xml ----------------------------------------------------
 
+# Probe order mirrors the helper binary (notify/syncthing_config.go):
+# current XDG state dir, legacy config dir, macOS, container/system service
+# layouts, then NAS host layouts (#86 — the installer runs on the NAS *host*,
+# where the package/appdata paths hold config.xml). ${HOME:-} keeps set -u
+# happy in HOME-less contexts (containers, cron) — the unusable candidates
+# simply never match. The unquoted entries are globs (volume/package names
+# vary per NAS); a non-matching glob stays literal and never exists. One
+# candidate per line, so paths with spaces survive the while-read consumers.
+config_candidates() {
+	for candidate in \
+		"${XDG_STATE_HOME:-${HOME:-}/.local/state}/syncthing/config.xml" \
+		"${XDG_CONFIG_HOME:-${HOME:-}/.config}/syncthing/config.xml" \
+		"${HOME:-}/Library/Application Support/Syncthing/config.xml" \
+		"/var/syncthing/config/config.xml" \
+		"/config/config.xml" \
+		"/var/syncthing/config.xml" \
+		"/var/lib/syncthing/config.xml" \
+		"/etc/syncthing/config.xml" \
+		"/var/packages/syncthing/var/config.xml" \
+		"/var/packages/syncthing/target/var/config.xml" \
+		"/mnt/user/appdata/syncthing/config.xml" \
+		/volume*/@appdata/syncthing/config.xml \
+		/volume*/@appstore/syncthing/var/config.xml \
+		/share/*/.qpkg/*yncthing*/var/config.xml \
+		/share/*/.qpkg/*yncthing*/.config/syncthing/config.xml; do
+		printf '%s\n' "$candidate"
+	done
+}
+
 # NOTE: runs in a command substitution, so fail() here would exit only the
 # subshell and the caller would print its generic error on top — explicit
 # SYNCTHING_CONFIG is therefore validated in the main flow below.
@@ -97,26 +127,30 @@ find_syncthing_config() {
 		return 0
 	fi
 
-	# Probe order mirrors the helper binary (notify/syncthing_config.go):
-	# current XDG state dir, legacy config dir, macOS, then container/system
-	# service layouts. ${HOME:-} keeps set -u happy in HOME-less contexts
-	# (containers, cron) — the unusable candidates simply never match.
-	for candidate in \
-		"${XDG_STATE_HOME:-${HOME:-}/.local/state}/syncthing/config.xml" \
-		"${XDG_CONFIG_HOME:-${HOME:-}/.config}/syncthing/config.xml" \
-		"${HOME:-}/Library/Application Support/Syncthing/config.xml" \
-		"/var/syncthing/config/config.xml" \
-		"/config/config.xml" \
-		"/var/syncthing/config.xml" \
-		"/var/lib/syncthing/config.xml" \
-		"/etc/syncthing/config.xml"; do
+	found=$(config_candidates | while IFS= read -r candidate; do
 		if [ -e "$candidate" ]; then
 			printf '%s\n' "$candidate"
-			return 0
+			break
 		fi
-	done
+	done)
+	[ -n "$found" ] || return 1
+	printf '%s\n' "$found"
+}
 
-	return 1
+# A config can exist but sit behind a 0700 system dir our uid cannot see
+# (e.g. /var/lib/syncthing owned by a dedicated syncthing user). Re-probe as
+# root — sudo -n only: never prompt for a password just for a diagnostic.
+find_config_as_root() {
+	[ "$(id -u)" != 0 ] || return 1
+	command -v sudo >/dev/null 2>&1 || return 1
+	found=$(config_candidates | while IFS= read -r candidate; do
+		if sudo -n test -e "$candidate" 2>/dev/null; then
+			printf '%s\n' "$candidate"
+			break
+		fi
+	done)
+	[ -n "$found" ] || return 1
+	printf '%s\n' "$found"
 }
 
 # --- 2. File owner -----------------------------------------------------------
@@ -409,10 +443,20 @@ fi
 if CONFIG_PATH=$(find_syncthing_config); then
 	info "Found Syncthing config: $CONFIG_PATH"
 else
+	# Distinguish "not there" from "there, but invisible to this uid" — the
+	# 0700-system-dir case would otherwise end in the same generic message.
+	if ROOT_CONFIG=$(find_config_as_root); then
+		fail "Syncthing's config exists at $ROOT_CONFIG but is not visible to $(id -un) —
+  it likely belongs to a dedicated syncthing user. Re-run this installer with sudo:
+      curl -fsSL https://vaultsync.eu/notify.sh | sudo sh"
+	fi
 	fail "Could not find Syncthing's config.xml. Is Syncthing installed on THIS machine?
   - If it lives elsewhere, re-run with its path (the variable must prefix sh, not curl):
       curl -fsSL https://vaultsync.eu/notify.sh | SYNCTHING_CONFIG=/path/to/config.xml sh
-  - Synology/QNAP and custom setups: https://github.com/$REPO/blob/main/notify/README.md"
+  - If you ran this installer with sudo but Syncthing runs under YOUR user, sudo's
+    HOME hides its config — re-run without sudo, or pass SYNCTHING_CONFIG as above.
+  - Search for it:  sudo find / -name config.xml -path '*syncthing*' 2>/dev/null
+  - Synology/QNAP/Unraid and custom setups: https://github.com/$REPO/blob/main/notify/README.md"
 fi
 
 OWNER=$(owner_of "$CONFIG_PATH") || fail "Could not read the owner of $CONFIG_PATH."

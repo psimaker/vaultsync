@@ -110,6 +110,41 @@ func platformSyncthingConfigCandidates() []string {
 		"/etc/syncthing/config.xml",        // some distro packages
 	)
 
+	// NAS host layouts (#86): the one-step installer runs on the NAS host,
+	// where the package/appdata paths — not the container-internal ones —
+	// hold config.xml. Appended after every pre-existing candidate on
+	// purpose: no already-working setup may change which config it resolves.
+	// Probe order stays mirrored with notify/scripts/install.sh.
+	paths = append(paths, nasHostConfigCandidates()...)
+
+	return paths
+}
+
+// nasGlobFn is filepath.Glob, replaceable in tests (#86) so the NAS host
+// layouts can be exercised without root-owned fixture paths.
+var nasGlobFn = filepath.Glob
+
+// nasHostConfigCandidates lists Synology/QNAP/Unraid host paths. Volume and
+// package names vary per box, hence the globs; a pattern with no match simply
+// contributes nothing.
+func nasHostConfigCandidates() []string {
+	paths := []string{
+		"/var/packages/syncthing/var/config.xml",        // Synology DSM 7 package var
+		"/var/packages/syncthing/target/var/config.xml", // Synology target -> @appstore
+		"/mnt/user/appdata/syncthing/config.xml",        // Unraid linuxserver template
+	}
+	for _, pattern := range []string{
+		"/volume*/@appdata/syncthing/config.xml",      // Synology @appdata (volume varies)
+		"/volume*/@appstore/syncthing/var/config.xml", // Synology @appstore (volume varies)
+		"/share/*/.qpkg/*yncthing*/var/config.xml",    // QNAP qpkg (share + package name vary)
+		"/share/*/.qpkg/*yncthing*/.config/syncthing/config.xml",
+	} {
+		matches, err := nasGlobFn(pattern)
+		if err != nil {
+			continue // ErrBadPattern cannot happen with these literals
+		}
+		paths = append(paths, matches...)
+	}
 	return paths
 }
 

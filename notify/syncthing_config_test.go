@@ -264,3 +264,64 @@ func TestDetectSyncthingFromCandidatesEmptyListIsAClearError(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+// --- NAS host layouts (#86) --------------------------------------------------
+
+func TestPlatformCandidatesIncludeNASHostLayouts_Issue86(t *testing.T) {
+	got := platformSyncthingConfigCandidates()
+	idx := func(want string) int {
+		for i, p := range got {
+			if p == want {
+				return i
+			}
+		}
+		return -1
+	}
+	// The one-step installer runs on the NAS *host*: the package/appdata
+	// layouts — not the container-internal paths — hold config.xml there.
+	statics := []string{
+		"/var/packages/syncthing/var/config.xml",        // Synology DSM 7 package
+		"/var/packages/syncthing/target/var/config.xml", // Synology target -> @appstore
+		"/mnt/user/appdata/syncthing/config.xml",        // Unraid linuxserver template
+	}
+	for _, want := range statics {
+		if idx(want) < 0 {
+			t.Fatalf("candidates must include the NAS host path %s (#86); got %v", want, got)
+		}
+	}
+	// Appended AFTER every pre-#86 candidate on purpose: no existing setup may
+	// change which config it resolves.
+	if last := idx("/etc/syncthing/config.xml"); last < 0 || idx(statics[0]) < last {
+		t.Fatalf("NAS host paths must come after the pre-existing probe list; got %v", got)
+	}
+}
+
+func TestNASGlobCandidatesExpand_Issue86(t *testing.T) {
+	orig := nasGlobFn
+	defer func() { nasGlobFn = orig }()
+	nasGlobFn = func(pattern string) ([]string, error) {
+		switch pattern {
+		case "/volume*/@appdata/syncthing/config.xml":
+			return []string{"/volume1/@appdata/syncthing/config.xml"}, nil
+		case "/share/*/.qpkg/*yncthing*/var/config.xml":
+			return []string{"/share/CACHEDEV1_DATA/.qpkg/QSyncthing/var/config.xml"}, nil
+		}
+		return nil, nil
+	}
+	got := platformSyncthingConfigCandidates()
+	for _, want := range []string{
+		"/volume1/@appdata/syncthing/config.xml",
+		"/share/CACHEDEV1_DATA/.qpkg/QSyncthing/var/config.xml",
+	} {
+		found := false
+		for _, p := range got {
+			if p == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("glob-derived NAS candidate %s missing (#86); got %v", want, got)
+		}
+	}
+}

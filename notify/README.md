@@ -25,7 +25,7 @@ The installer ([`scripts/install.sh`](scripts/install.sh)) finds your `config.xm
 The moment the helper starts it sends one wake-up, and VaultSync flips to **Cloud Relay active** on its own.
 
 - Skeptical of `curl | sh`? Append `-s -- --dry-run` to preview every action without changing anything, or read the script first.
-- Config in a non-standard place (typical on Synology/QNAP)? `curl -fsSL https://vaultsync.eu/notify.sh | SYNCTHING_CONFIG=/path/to/config.xml sh` — the variable must prefix `sh` (the installer), not `curl`.
+- Config in a non-standard place? `curl -fsSL https://vaultsync.eu/notify.sh | SYNCTHING_CONFIG=/path/to/config.xml sh` — the variable must prefix `sh` (the installer), not `curl`. Synology/QNAP/Unraid host layouts are probed automatically.
 - The script contains nothing user-specific — identity comes from your own Syncthing's Device ID at runtime.
 
 ---
@@ -102,14 +102,14 @@ RELAY_URL=https://relay.vaultsync.eu ./vaultsync-notify
 | `RELAY_URL` | **Yes** | — (binary) | Relay endpoint. No built-in default on purpose, so the helper never wakes a relay you didn't choose. `docker-compose.yml` and the in-app command set it to `https://relay.vaultsync.eu`. |
 | `SYNCTHING_API_KEY` | No | auto-detected | Read from `config.xml` (`<gui><apikey>`) when unset — no need to copy it from the Web UI. Set to override. |
 | `SYNCTHING_API_URL` | No | auto / `http://localhost:8384` | Read from `config.xml` (`<gui><address>`) when unset. Set when Syncthing is a sibling container (e.g. `http://syncthing:8384`). |
-| `SYNCTHING_CONFIG` | No | standard locations | Explicit path to `config.xml`. When unset, standard per-platform and container paths are probed (incl. `/var/syncthing/config/config.xml`, `/config/config.xml`). Needed for Synology/QNAP. |
+| `SYNCTHING_CONFIG` | No | standard locations | Explicit path to `config.xml`. When unset, standard per-platform, container and NAS host paths are probed (incl. `/var/syncthing/config/config.xml`, `/config/config.xml`, `/var/packages/syncthing/…` on Synology, `/share/*/.qpkg/…` on QNAP, `/mnt/user/appdata/syncthing/…` on Unraid). |
 | `STARTUP_ANNOUNCE` | No | `true` | Send one wake-up on startup so the app self-activates. Set `false` to suppress it — change-driven delivery still works. |
 | `SYNCTHING_CONFIG_WAIT_SECONDS` | No | `60` | First boot: wait up to this many seconds for Syncthing to write `config.xml` before exiting. `0` disables the wait (fail fast). |
 | `DEBOUNCE_SECONDS` | No | `5` | Wait after the last event before triggering. Batches rapid changes into one push. |
 | `WATCHED_FOLDERS` | No | all | Comma-separated Syncthing folder IDs to watch. Empty = all. |
 | `STALE_RETRIGGER_SECONDS` | No | `21600` (6 h) | While a peer still needs data, re-send a wake-up on this cadence. Recovers phones that missed a push (APNs silent pushes expire after ~1 h) without waiting for the next vault change. `0` disables. |
 
-> **NAS users (the common footgun).** `config.xml` is mode `0600`, so the helper must run as the uid that owns it or it can't read the key (you'll get a clear permission error). The `1000` default fits the official `syncthing/syncthing` image; set `PUID`/`PGID` for others — linuxserver = `911`, Unraid = `99:100`, Synology runs as the `syncthing` user. Synology/QNAP also need `SYNCTHING_CONFIG` pointed at the real `config.xml`.
+> **NAS users (the common footgun).** `config.xml` is mode `0600`, so the helper must run as the uid that owns it or it can't read the key (you'll get a clear permission error). The `1000` default fits the official `syncthing/syncthing` image; set `PUID`/`PGID` for others — linuxserver = `911`, Unraid = `99:100`, Synology runs as the `syncthing` user. Synology/QNAP/Unraid host paths are probed automatically; set `SYNCTHING_CONFIG` only when your `config.xml` lives somewhere unusual.
 
 **First boot is briefly noisy — that's expected.** On a fresh `docker compose up`, the helper can start before Syncthing has written `config.xml`. It waits up to `SYNCTHING_CONFIG_WAIT_SECONDS`, then (if still missing) exits and `restart: unless-stopped` retries until the file exists — a few noisy seconds, then it settles. The helper also needs Syncthing running: `docker compose up vaultsync-notify` alone (empty volume, no Syncthing) finds no config.
 
