@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -327,7 +328,7 @@ func TestRunPreflightDoctorModeIncludesTriggerProbe(t *testing.T) {
 		},
 	}
 
-	if err := runPreflight(context.Background(), cfg, mode); err != nil {
+	if _, err := runPreflight(context.Background(), cfg, mode); err != nil {
 		t.Fatalf("runPreflight doctor mode returned unexpected error: %v", err)
 	}
 	if got := relayTriggerCalls.Load(); got != 1 {
@@ -1214,5 +1215,75 @@ func TestVersionStringCarriesBuildStamp_Issue87(t *testing.T) {
 	version = "9.9.9-test"
 	if got := versionString(); got != "vaultsync-notify 9.9.9-test" {
 		t.Fatalf("versionString() = %q, want the ldflags-stamped version in installer-readable form", got)
+	}
+}
+
+// --- doctor: inactive subscription is a visible WARN, not silence (#88) ------
+
+func TestDoctorWarnsOnInactiveSubscription_Issue88(t *testing.T) {
+	// Not t.Parallel(): swaps the preflight output seam.
+	var relayTriggerCalls atomic.Int32
+
+	syncthing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/rest/system/status" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"myID":"DEVICE-88"}`))
+	}))
+	defer syncthing.Close()
+
+	relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/health":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		case "/api/v1/trigger":
+			relayTriggerCalls.Add(1)
+			http.Error(w, `{"error":"subscription_inactive"}`, http.StatusPaymentRequired)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer relay.Close()
+
+	var out bytes.Buffer
+	origOut := preflightOut
+	preflightOut = &out
+	defer func() { preflightOut = origOut }()
+
+	cfg := Config{
+		SyncthingAPIURL: syncthing.URL,
+		SyncthingAPIKey: "test-key",
+		RelayURL:        relay.URL,
+		DebounceSeconds: 5,
+	}
+	mode := preflightMode{
+		Name:           "doctor",
+		IncludeTrigger: true,
+		PrintSuccess:   false,
+		Retry: retryPolicy{
+			Attempts:       4,
+			AttemptTimeout: 500 * time.Millisecond,
+			InitialBackoff: time.Millisecond,
+			MaxBackoff:     2 * time.Millisecond,
+		},
+	}
+
+	warnings, err := runPreflight(context.Background(), cfg, mode)
+	if err != nil {
+		t.Fatalf("an inactive subscription must not fail the doctor (setup may precede subscribing); got: %v", err)
+	}
+	if warnings != 1 {
+		t.Fatalf("warnings = %d, want 1 — the paying customer's 'subscribed but no wake-ups' case must be visible", warnings)
+	}
+	if !strings.Contains(out.String(), "WARN") || !strings.Contains(out.String(), "no active subscription") {
+		t.Fatalf("doctor output must carry the WARN with the subscription state; got:\n%s", out.String())
+	}
+	// The verdict is stable — burning the full retry budget on it would just
+	// slow the doctor down.
+	if got := relayTriggerCalls.Load(); got != 1 {
+		t.Fatalf("trigger probe calls = %d, want 1 (no retries on a stable subscription verdict)", got)
 	}
 }

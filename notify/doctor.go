@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -22,7 +23,15 @@ type preflightCheck struct {
 	Name        string
 	Remediation string
 	Run         func(context.Context) error
+	// WarnOn downgrades a matching error to a visible warning instead of a
+	// failure (#88): the check counts as passed, but the condition is printed
+	// and logged rather than swallowed.
+	WarnOn func(error) (string, bool)
 }
+
+// preflightOut is where the human-readable doctor output goes. A package var
+// so tests can capture it (the same pattern as inactiveRecheckInterval).
+var preflightOut io.Writer = os.Stdout
 
 type preflightMode struct {
 	Name           string
@@ -44,12 +53,16 @@ func runDoctor(ctx context.Context, cfg Config) error {
 		},
 	}
 
-	fmt.Fprintln(os.Stdout, "vaultsync-notify doctor: running preflight checks")
-	err := runPreflight(ctx, cfg, mode)
+	fmt.Fprintln(preflightOut, "vaultsync-notify doctor: running preflight checks")
+	warnings, err := runPreflight(ctx, cfg, mode)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stdout, "vaultsync-notify doctor: all checks passed")
+	if warnings > 0 {
+		fmt.Fprintf(preflightOut, "vaultsync-notify doctor: all checks passed, %d warning(s) — see above\n", warnings)
+	} else {
+		fmt.Fprintln(preflightOut, "vaultsync-notify doctor: all checks passed")
+	}
 	return nil
 }
 
@@ -65,10 +78,11 @@ func runHealthcheck(ctx context.Context, cfg Config) error {
 			MaxBackoff:     3 * time.Second,
 		},
 	}
-	return runPreflight(ctx, cfg, mode)
+	_, err := runPreflight(ctx, cfg, mode)
+	return err
 }
 
-func runPreflight(ctx context.Context, cfg Config, mode preflightMode) error {
+func runPreflight(ctx context.Context, cfg Config, mode preflightMode) (int, error) {
 	st := NewSyncthingClient(cfg.SyncthingAPIURL, cfg.SyncthingAPIKey)
 	relay := NewRelayClient(cfg.RelayURL, "")
 
@@ -120,26 +134,50 @@ func runPreflight(ctx context.Context, cfg Config, mode preflightMode) error {
 				triggerRelay := NewRelayClient(cfg.RelayURL, deviceID)
 				return triggerRelay.ProbeTrigger(ctx)
 			},
+			// The endpoint answered, so connectivity — all this check gates —
+			// is proven. But "subscribed and no wake-ups arrive" used to read
+			// an all-passed doctor and be stuck; make the state visible (#88).
+			WarnOn: func(err error) (string, bool) {
+				if isSubscriptionInactive(err) {
+					return "relay reports no active subscription for this device — wake-up delivery is off until it is active. Right after setup this is normal (subscribe in the VaultSync app, Relay tab). If you ARE subscribed, open VaultSync on the iPhone once so it re-provisions this device, and verify this server's Syncthing is paired with that iPhone.", true
+				}
+				return "", false
+			},
 		})
 	}
 
 	failures := make([]string, 0)
+	warnings := 0
 	for _, check := range checks {
 		err := runCheckWithRetry(ctx, mode.Retry, check.Name, check.Run)
 		if err != nil {
+			if check.WarnOn != nil {
+				if msg, ok := check.WarnOn(err); ok {
+					warnings++
+					fmt.Fprintf(preflightOut, "WARN %s\n  %s\n", check.Name, msg)
+					slog.Warn("preflight check passed with warning",
+						"classification", "recoverable",
+						"component", "preflight",
+						"mode", mode.Name,
+						"check", check.Name,
+						"warning", msg,
+					)
+					continue
+				}
+			}
 			failures = append(failures, check.Name)
 			logPreflightFailure(mode.Name, check, err)
 			continue
 		}
 		if mode.PrintSuccess {
-			fmt.Fprintf(os.Stdout, "OK   %s\n", check.Name)
+			fmt.Fprintf(preflightOut, "OK   %s\n", check.Name)
 		}
 	}
 
 	if len(failures) > 0 {
-		return fmt.Errorf("%s failed checks: %s", mode.Name, strings.Join(failures, ", "))
+		return warnings, fmt.Errorf("%s failed checks: %s", mode.Name, strings.Join(failures, ", "))
 	}
-	return nil
+	return warnings, nil
 }
 
 func runCheckWithRetry(ctx context.Context, policy retryPolicy, checkName string, run func(context.Context) error) error {
@@ -169,6 +207,11 @@ func runCheckWithRetry(ctx context.Context, policy retryPolicy, checkName string
 
 		lastErr = err
 		if attempt == policy.Attempts {
+			break
+		}
+		// The subscription verdict is stable (#88): retrying the same request
+		// within seconds cannot change it, so don't burn the retry budget.
+		if isSubscriptionInactive(err) {
 			break
 		}
 

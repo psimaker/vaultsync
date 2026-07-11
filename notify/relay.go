@@ -143,6 +143,14 @@ func (c *RelayClient) Trigger(ctx context.Context) error {
 }
 
 // ProbeTrigger sends a single trigger request without retries.
+//
+// A rate-limit verdict proves the trigger endpoint is reachable and behaving —
+// which is all the probe checks — so it maps to success. The subscription
+// verdict also proves reachability, but is returned unchanged (#88): the
+// doctor downgrades it to a WARN instead of silence, because "subscribed but
+// no wake-ups arrive" is exactly the case an all-passed doctor used to mask.
+// It still never fails the check — subscription state is managed in the iOS
+// app, not by the operator, and setup legitimately precedes subscribing.
 func (c *RelayClient) ProbeTrigger(ctx context.Context) error {
 	body, err := json.Marshal(triggerRequest{DeviceID: c.deviceID})
 	if err != nil {
@@ -154,13 +162,6 @@ func (c *RelayClient) ProbeTrigger(ctx context.Context) error {
 	if err != nil {
 		var rateLimited *rateLimitError
 		if errors.As(err, &rateLimited) {
-			return nil
-		}
-		// A rate-limit or subscription verdict both prove the trigger endpoint
-		// is reachable and behaving — which is all the doctor probe checks.
-		// Subscription state is managed in the iOS app, not by the operator, so
-		// it must not fail the connectivity diagnostic.
-		if isSubscriptionInactive(err) {
 			return nil
 		}
 	}

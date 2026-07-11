@@ -15,12 +15,40 @@ Find your symptom, jump to the fix. After each fix, retry from the app to confir
 | Syncs in foreground but not when closed | [Background Sync Not Working](#background-sync-not-working) |
 | "Required device disconnected" | [Required Device Disconnected](#required-device-disconnected) |
 
-**Relay quick triage** — on your homeserver:
+**Relay quick triage** — on your homeserver. The one-line installer sets the helper up as a `docker run` container (Linux with Docker), a systemd service (Linux without Docker), or a launchd agent (macOS); the Compose stack is a separate topology. Use the block that matches your install:
+
+*Docker (one-line installer):*
+
+```bash
+docker logs --tail=200 vaultsync-notify
+docker exec vaultsync-notify vaultsync-notify --doctor
+```
+
+*systemd (one-line installer without Docker):*
+
+```bash
+journalctl -u vaultsync-notify -n 200 --no-pager
+systemctl status vaultsync-notify
+# the unit carries the right env; simplest full doctor: re-run the installer,
+# it ends with --doctor (and upgrades the helper as a side effect)
+```
+
+*launchd (macOS):*
+
+```bash
+tail -200 /tmp/vaultsync-notify.log
+SYNCTHING_CONFIG="$HOME/Library/Application Support/Syncthing/config.xml" \
+  RELAY_URL=https://relay.vaultsync.eu ~/.local/bin/vaultsync-notify --doctor
+```
+
+*Docker Compose stack:*
 
 ```bash
 docker compose logs --tail=200 vaultsync-notify
 docker compose run --rm vaultsync-notify --doctor
 ```
+
+How to read `--doctor`: a relay rate-limit (HTTP 429) counts as **success** — it proves the trigger endpoint is reachable (the relay allows ~10 triggers/min/device). An inactive subscription prints `WARN: relay reports no active subscription for this device` **without failing** — that state is fixed in the app (subscribe / re-provision), not on the server. Every install also ships `vaultsync-notify --healthcheck`: the same checks minus the trigger probe, silent, exit-code only — this is what the Docker `HEALTHCHECK` runs, and it works for scripts and monitoring on every flavor.
 
 In the app: **Cloud Relay** tab → **Relay health & diagnostics** → **Check Relay Status**. A green health check means the relay is *reachable*; only an updated **Last Trigger Received** proves wake-ups are actually delivered.
 
@@ -47,9 +75,9 @@ In the app: **Cloud Relay** tab → **Relay health & diagnostics** → **Check R
 
 **Fix:**
 1. **Run as the right user.** `config.xml` is mode `0600`, so the helper must run as the uid that owns it — the permission error names the file's actual owner and the exact `-u <uid>:<gid>` to use (helper 1.6.1+). The [one-line installer](../notify/README.md#-one-step-setup) gets this right automatically; manually: in Compose set `PUID`/`PGID` (official image `1000`, linuxserver `911`, Unraid `99:100`), with `docker run` add `-u <uid>:<gid>`.
-2. **Point at the real config.** Set `SYNCTHING_CONFIG=/path/to/config.xml` if it isn't auto-detected (needed for Synology/QNAP).
+2. **Point at the real config.** Set `SYNCTHING_CONFIG=/path/to/config.xml` if it isn't auto-detected (rare — standard, container, and Synology/QNAP/Unraid host layouts are all probed automatically).
 3. **Clear a bad override.** If you set `SYNCTHING_API_KEY` yourself, it wins over auto-detect — remove it to fall back to `config.xml`, or update it to match Syncthing's current key.
-4. **Recreate and re-check:**
+4. **Recreate and re-check.** One-line install (Docker or systemd): simply re-run the installer — it pulls the latest image / replaces the binary, restarts the service, and ends with `--doctor`. Compose stack:
    ```bash
    docker compose up -d --force-recreate vaultsync-notify
    docker compose run --rm vaultsync-notify --doctor
@@ -63,7 +91,7 @@ In the app: **Cloud Relay** tab → **Relay health & diagnostics** → **Check R
 
 **Fix:**
 1. Confirm internet access on both the iOS device and the homeserver.
-2. Check `RELAY_URL` in `notify/.env` (cloud value: `https://relay.vaultsync.eu`).
+2. Check `RELAY_URL` (cloud value: `https://relay.vaultsync.eu`) where your install keeps it — one-line Docker install: `docker inspect vaultsync-notify | grep RELAY_URL`; systemd: `systemctl cat vaultsync-notify`; launchd: `~/Library/LaunchAgents/eu.vaultsync.notify.plist`; Compose stack: `notify/.env`.
 3. Review homeserver egress rules (firewall, VPN, proxy).
 4. Test relay health from the homeserver:
    ```bash
@@ -94,6 +122,7 @@ Silent push wake-ups use a background push that **does not need notification per
 **Looks like:** diagnostics show the APNs token missing or registration failed; you're subscribed but wake-ups never arrive.
 
 **Fix:**
+0. On the server, run `--doctor` (see the quick-triage block above). A `WARN: relay reports no active subscription for this device` line means the server side is healthy and the problem is app-side: subscription or provisioning — continue below.
 1. Open **Cloud Relay** tab → **Relay health & diagnostics**.
 2. Tap **Retry APNs Registration** and confirm an **APNs Token** appears.
 3. Tap **Retry Provisioning** to rebind the token to your device IDs (shown while subscribed).
@@ -175,5 +204,5 @@ Capture these before filing an issue:
 
 1. VaultSync version + iOS version.
 2. Screenshots of **Sync Issues** and **Relay health & diagnostics**.
-3. `vaultsync-notify --doctor` output (if using the relay).
-4. Relevant `vaultsync-notify` log lines around the failure.
+3. `vaultsync-notify --doctor` output (if using the relay — per-flavor commands in the quick-triage block above).
+4. Relevant `vaultsync-notify` log lines around the failure (`docker logs vaultsync-notify`, `journalctl -u vaultsync-notify`, or `/tmp/vaultsync-notify.log` depending on flavor).

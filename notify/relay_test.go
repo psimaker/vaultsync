@@ -150,14 +150,17 @@ func TestTrigger404ReturnsFatalImmediately(t *testing.T) {
 }
 
 // ProbeTrigger backs the doctor's connectivity diagnostic. A subscription-state
-// response proves the endpoint is reachable, so the probe must pass — otherwise
-// the doctor would falsely report a config failure for an unprovisioned device.
-func TestProbeTriggerTreatsSubscriptionInactiveAsReachable(t *testing.T) {
+// response proves the endpoint is reachable, but since #88 the verdict must
+// reach the doctor as a classifiable error (the doctor downgrades it to a
+// visible WARN and still passes the check) instead of being swallowed here —
+// silence was exactly how "subscribed but no wake-ups" read all-passed.
+func TestProbeTriggerReturnsSubscriptionVerdictForDoctorWarn_Issue88(t *testing.T) {
 	t.Parallel()
 
 	stub := newTriggerStub(t, http.StatusBadRequest, "", "")
-	if err := stub.client().ProbeTrigger(context.Background()); err != nil {
-		t.Fatalf("ProbeTrigger should treat an inactive subscription as reachable, got %v", err)
+	err := stub.client().ProbeTrigger(context.Background())
+	if !isSubscriptionInactive(err) {
+		t.Fatalf("ProbeTrigger must surface the subscription verdict for the doctor's WARN path, got %T: %v", err, err)
 	}
 }
 
