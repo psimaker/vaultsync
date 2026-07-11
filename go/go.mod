@@ -1,6 +1,6 @@
 module github.com/psimaker/vaultsync/go
 
-go 1.26.4
+go 1.26.5
 
 // Local patched copies: fix nil-pointer crashes in dependencies
 replace github.com/syncthing/syncthing => ./_syncthing_patched

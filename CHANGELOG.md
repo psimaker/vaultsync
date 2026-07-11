@@ -4,6 +4,12 @@ All notable changes to VaultSync are documented here.
 
 ---
 
+## [Unreleased]
+
+### Security
+
+- **Updated the sync engine's cryptography library and the Go runtime** — `golang.org/x/crypto` 0.51.0 → 0.52.0 ([#80](https://github.com/psimaker/vaultsync/pull/80), resolves all open dependency alerts; the affected SSH code paths are not used by VaultSync) and Go 1.26.4 → 1.26.5, which fixes a publicly disclosed TLS issue ([GO-2026-5856](https://pkg.go.dev/vuln/GO-2026-5856)) in the standard library that the device-to-device sync connections do reach. The self-hosted notify helper picks up the same Go fix with its next release.
+
 ## [1.8.1] — 2026-07-08
 
 ### Added
