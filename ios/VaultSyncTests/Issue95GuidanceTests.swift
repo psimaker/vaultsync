@@ -94,6 +94,33 @@ struct CoordinatorRefusalModalGateTests {
         #expect(marked.first?.1 == "no safe location")
     }
 
+    @Test("Two refusals in one pass: only the displayed alert is marked as presented — the second alerts on a later pass")
+    func twoRefusalsInOnePassMarkOnlyTheDisplayedOne() {
+        var marked: [String] = []
+        let f1 = SyncthingManager.PendingFolderInfo(id: "f1", label: "F1", offeredBy: [])
+        let f2 = SyncthingManager.PendingFolderInfo(id: "f2", label: "F2", offeredBy: [])
+        let env = ShareAcceptCoordinator.Environment(
+            settled: { true },
+            vaultAccessible: { true },
+            pendingFolders: { [f1, f2] },
+            autoAcceptEligible: { [f1, f2] },
+            accept: { _, _ in .refused(message: "no safe location") },
+            acceptIntoTarget: { _, _ in nil },
+            unignorePendingFolder: { _ in },
+            ignorePendingFolder: { _ in },
+            shouldPresentRefusalAlert: { _, _ in true },
+            markRefusalAlertPresented: { id, _ in marked.append(id) }
+        )
+        let c = ShareAcceptCoordinator(environment: env)
+        c.runAutomaticPass()
+        // Only f1 claimed the one-shot slot; f2 must NOT be marked presented,
+        // because its alert never rendered — it alerts on a later pass.
+        #expect(c.alertMessage?.contains("F1") == true)
+        #expect(marked == ["f1"])
+        // Both failures stay visible inline regardless (doctrine 002).
+        #expect(c.pendingShareFailures.count == 2)
+    }
+
     @Test("A successful accept clears the refusal record")
     func acceptClearsRecord() {
         var cleared: [String] = []

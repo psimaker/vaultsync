@@ -166,7 +166,13 @@ final class ShareAcceptCoordinator {
             // persistently refused share re-fired the same modal forever (#95).
             // The modal is once per (folder, reason), persisted; the inline
             // share row keeps the failure visible every session regardless.
+            // alertMessage == nil: with two refusals in one synchronous pass
+            // the second would overwrite the first's one-shot message while
+            // both got marked as presented — the first alert would be
+            // suppressed forever without ever rendering. First refusal wins
+            // the slot; later ones stay unmarked and alert on a later pass.
             if source == .automatic,
+               alertMessage == nil,
                environment.shouldPresentRefusalAlert(folder.id, err) {
                 environment.markRefusalAlertPresented(folder.id, err)
                 alertMessage = L10n.fmt(

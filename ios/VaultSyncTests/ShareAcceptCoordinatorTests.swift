@@ -68,7 +68,7 @@ struct ShareAcceptCoordinatorTests {
         let c = ShareAcceptCoordinator(environment: Self.env(
             pending: [Self.offer("f1"), Self.offer("f2")], recorder: recorder))
         c.runAutomaticPass()
-        #expect(recorder.accepts.map(\.id) == ["f1", "f2"])
+        #expect(recorder.accepts.map { $0.id } == ["f1", "f2"])
         #expect(recorder.accepts.allSatisfy { $0.mergeConfirmed == false })
         #expect(recorder.unignored == ["f1", "f2"])
         #expect(c.pendingShareFailures.isEmpty)
@@ -82,7 +82,7 @@ struct ShareAcceptCoordinatorTests {
             eligible: [Self.offer("f1")],
             recorder: recorder))
         c.runAutomaticPass()
-        #expect(recorder.accepts.map(\.id) == ["f1"])
+        #expect(recorder.accepts.map { $0.id } == ["f1"])
     }
 
     @Test("Automatic needs-merge outcome parks: failure recorded, NO dialog, NO alert, and no re-attempt on the next pass (#54, decision 007)")
@@ -152,7 +152,7 @@ struct ShareAcceptCoordinatorTests {
             settled: { settled }, pending: [Self.offer("f1")], recorder: recorder))
         let request = ShareAcceptCoordinator.MergeConfirmationRequest(folder: Self.offer("f1"), targetName: "T")
         c.confirmMergeAccept(request)
-        #expect(recorder.accepts.map(\.mergeConfirmed) == [true])
+        #expect(recorder.accepts.map { $0.mergeConfirmed } == [true])
         settled = false
         c.confirmMergeAccept(request)
         #expect(recorder.accepts.count == 1) // held; transient message instead
