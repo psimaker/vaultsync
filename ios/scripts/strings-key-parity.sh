@@ -22,8 +22,11 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LOCALES=(en de es zh-Hans)
 
 # Full key including escape sequences: "…" up to the first unescaped quote.
+# ERE via -E, not BRE \| alternation: \| is a GNU extension that BSD/macOS sed
+# treats as a literal, which silently extracted ZERO keys there — parity would
+# false-green on exactly the machine the Swift work happens on.
 extract_keys() {
-  sed -n 's/^"\(\(\\.\|[^"\\]\)*\)" = .*/\1/p' "$1"
+  sed -nE 's/^"((\\.|[^"\\])*)" = .*/\1/p' "$1"
 }
 
 status=0
