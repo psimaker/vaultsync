@@ -28,7 +28,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         let previousToken = KeychainService.getAPNsDeviceToken()
         _ = KeychainService.setAPNsDeviceToken(token)
         APNsRegistrationStore.markRegistered()
-        logger.info("APNs device token received and stored (\(token.prefix(8))...)")
+        logger.info("APNs device token received and stored")
 
         if previousToken != token {
             logger.info("APNs device token changed (first=\(previousToken == nil)), notifying for re-provisioning")

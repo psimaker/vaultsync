@@ -7,12 +7,14 @@ struct SubscriptionManagerTests {
     @Test("RelayProvisionStatus exposes stable summary contract")
     func relayProvisionStatusContract() {
         #expect(RelayProvisionStatus.notAttempted.stateKey == "not_attempted")
+        #expect(RelayProvisionStatus.migrationRequired.stateKey == "migration_required")
         #expect(RelayProvisionStatus.inProgress.stateKey == "in_progress")
-        #expect(RelayProvisionStatus.provisioned.stateKey == "provisioned")
+        #expect(RelayProvisionStatus.provisionedVerified.stateKey == "provisioned_verified")
+        #expect(RelayProvisionStatus.storeKitVerificationRequired.stateKey == "storekit_verification_required")
 
-        let failed = RelayProvisionStatus.failed(reason: "network issue")
-        #expect(failed.stateKey == "failed")
-        #expect(failed.summary == L10n.tr("Failed"))
+        let failed = RelayProvisionStatus.temporarilyFailed(reason: "network issue")
+        #expect(failed.stateKey == "temporarily_failed")
+        #expect(failed.summary == L10n.tr("Temporarily failed"))
         #expect(failed.failureReason == "network issue")
     }
 

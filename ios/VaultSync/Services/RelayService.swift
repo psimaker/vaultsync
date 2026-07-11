@@ -43,6 +43,7 @@ enum RelayService {
         case serverError(statusCode: Int)
         case networkError(underlying: any Error)
         case provisionFailed(reason: String)
+        case verifiedEntitlementRequired
 
         var errorDescription: String? {
             switch self {
@@ -54,6 +55,8 @@ enum RelayService {
                 return L10n.fmt("Relay network error: %@", underlying.localizedDescription)
             case .provisionFailed(let reason):
                 return reason.isEmpty ? L10n.tr("Relay provisioning failed.") : reason
+            case .verifiedEntitlementRequired:
+                return L10n.tr("StoreKit verification is required before Relay can be updated.")
             }
         }
     }
@@ -104,20 +107,14 @@ enum RelayService {
     static func provision(
         deviceID: String,
         apnsToken: String,
-        transactionID: String
+        signedTransaction: String
     ) async throws {
-        let url = URL(string: "\(relayURL)/api/v1/provision")!
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        let body: [String: String] = [
-            "device_id": deviceID,
-            "apns_token": apnsToken,
-            "transaction_id": transactionID,
-        ]
-        request.httpBody = try JSONEncoder().encode(body)
+        let request = try makeProvisionRequest(
+            baseURL: relayURL,
+            deviceID: deviceID,
+            apnsToken: apnsToken,
+            signedTransaction: signedTransaction
+        )
 
         let (data, response) = try await perform(request, action: "provision")
 
@@ -127,12 +124,9 @@ enum RelayService {
         }
 
         switch http.statusCode {
-        case 200:
+        case let status where isSuccessfulProvisionStatusCode(status):
             clearLastError()
-            logger.info("Provisioned relay for device \(deviceID.prefix(8))...")
-        case 409:
-            clearLastError()
-            logger.info("Device already provisioned, token updated")
+            logger.info("Provisioned relay registration")
         case 429:
             logger.warning("Relay provision: rate limited")
             recordLastError(context: "provision", message: L10n.tr("Relay provision is rate limited (HTTP 429)."))
@@ -155,6 +149,37 @@ enum RelayService {
         }
     }
 
+    static func isSuccessfulProvisionStatusCode(_ statusCode: Int) -> Bool {
+        statusCode == 200
+    }
+
+    /// Builds the unchanged v1 wire request only for a compact signed
+    /// transaction. Kept internal so regression tests can prove invalid local
+    /// placeholders fail before URLSession is reached.
+    static func makeProvisionRequest(
+        baseURL: String,
+        deviceID: String,
+        apnsToken: String,
+        signedTransaction: String
+    ) throws -> URLRequest {
+        guard RelayVerifiedEntitlement(signedTransaction: signedTransaction) != nil else {
+            throw RelayError.verifiedEntitlementRequired
+        }
+        guard let url = URL(string: "\(baseURL)/api/v1/provision") else {
+            throw RelayError.serverError(statusCode: 0)
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode([
+            "device_id": deviceID,
+            "apns_token": apnsToken,
+            "transaction_id": signedTransaction,
+        ])
+        return request
+    }
+
     /// Deregister a device from push notifications.
     static func deprovision(
         deviceID: String,
@@ -173,7 +198,7 @@ enum RelayService {
         request.httpBody = try JSONEncoder().encode(body)
 
         try await performVoid(request, action: "deprovision")
-        logger.info("Deprovisioned relay for device \(deviceID.prefix(8))...")
+        logger.info("Deprovisioned relay registration")
     }
 
     // MARK: - Health
@@ -353,6 +378,10 @@ enum RelayService {
             return SyncUserError.relayProvisionFailed(reason: L10n.fmt("Relay server error (HTTP %d).", statusCode))
         case .provisionFailed(let reason):
             return SyncUserError.relayProvisionFailed(reason: reason)
+        case .verifiedEntitlementRequired:
+            return SyncUserError.relayProvisionFailed(
+                reason: L10n.tr("StoreKit verification is required before Relay can be updated.")
+            )
         }
     }
 }

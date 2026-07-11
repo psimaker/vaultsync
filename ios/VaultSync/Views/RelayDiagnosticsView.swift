@@ -386,7 +386,7 @@ struct RelayDiagnosticsView: View {
         }
 
         let failedDevices = subscriptionManager.relayProvisionStatuses.values.filter {
-            if case .failed = $0 { return true }
+            if case .temporarilyFailed = $0 { return true }
             return false
         }.count
         if failedDevices > 0 {
@@ -444,12 +444,14 @@ struct RelayDiagnosticsView: View {
 
     private func relayProvisionColor(_ status: RelayProvisionStatus) -> Color {
         switch status {
-        case .provisioned:
+        case .provisionedVerified:
             return .statusSuccess
-        case .failed:
+        case .temporarilyFailed:
             return .statusError
         case .inProgress:
             return .statusInfo
+        case .migrationRequired, .storeKitVerificationRequired:
+            return .statusAttention
         case .notAttempted:
             return .secondary
         }

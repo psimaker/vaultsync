@@ -4,6 +4,16 @@ All notable changes to VaultSync are documented here.
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- **Cloud Relay subscriptions update safely after installing this version** — existing subscribers are re-registered with a currently confirmed App Store entitlement for every known homeserver, without repeating onboarding or changing devices, vaults, folders, or paths. Purchase, Restore Purchases, renewals, and push-token changes use the same per-server update. A temporary network problem keeps the existing setup intact and retries later; if the App Store confirmation is unavailable, VaultSync sends no registration request and offers Restore Purchases instead. Multi-server progress is saved independently, so one unavailable server does not undo another server's success. Localized in English, German, Spanish, and Simplified Chinese.
+
+### Privacy
+
+- **Relay data handling is documented at the field level** — the Privacy Policy now lists the limited StoreKit verification and operational timestamps retained by Relay 1.2.0, and clarifies that the signed transaction is verified but not stored as a complete token.
+
 ## [1.8.2] — 2026-07-11
 
 ### Added

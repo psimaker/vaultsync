@@ -30,6 +30,9 @@ enum TestSupport {
             "relay-last-trigger-received-at",
             "relay-trigger-received-history-v1",
             "relay-diagnostics-last-error",
+            "relay-last-provision-date",
+            "relay-provisioned-device-ids",
+            "relay-provision-statuses-v2",
         ] {
             defaults.removeObject(forKey: key)
         }

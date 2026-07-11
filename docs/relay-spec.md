@@ -1,6 +1,6 @@
 # VaultSync Cloud Relay — Specification
 
-> **Status:** Shipped in v1.4.0; signed-transaction (JWS) verification and server-side expiry enforcement added in v1.5.0; key-free auto-detection and self-activation (startup-announce) added in v1.5.1. This document is the protocol and architecture reference for the relay, the `vaultsync-notify` sidecar, and the iOS client.
+> **Status:** Cloud Relay 1.2.0 is live in production. Provisioning requires a verified StoreKit signed transaction; existing legacy registrations have a bounded compatibility window through October 31, 2026. This document is the protocol and architecture reference for the relay, the `vaultsync-notify` sidecar, and the iOS client.
 
 ## Overview
 
@@ -75,7 +75,7 @@ Identity is based on **Syncthing Device IDs** — no user accounts, no API keys.
 
 - The homeserver container auto-reads its own Device ID from the local Syncthing API
 - The iOS app provisions the relay by sending the homeserver's Device ID (from its peer list), the APNs token, and the StoreKit **signed transaction (JWS)**
-- The central relay verifies the signed transaction against Apple's certificate chain to confirm an active subscription and read its expiry (offline — no per-request Apple API call). Older app builds that send a bare numeric transaction ID are accepted for backward compatibility
+- The central relay verifies the signed transaction against Apple's certificate chain to confirm an active subscription and read its expiry (offline — no per-request Apple API call). During the compatibility window, an older app can refresh only a pre-existing matching legacy registration; it cannot create a new one
 - Trigger requests from the homeserver container are matched by Device ID — no Bearer auth needed
 
 This eliminates the need for a user account system. The Syncthing Device ID serves as a stable, unique identifier that both the iOS app and the homeserver container already know.
@@ -103,16 +103,13 @@ Provision an iOS device for push notifications. Called by the iOS app after a su
   "status": "provisioned"
 }
 
-// Response 409 (already provisioned — token updated)
-{
-  "status": "updated"
-}
 ```
 
-- Verifies the StoreKit signed transaction (JWS) against Apple's certificate chain (offline) and stores the verified expiry; legacy numeric transaction IDs are accepted for backward compatibility
+- Verifies the StoreKit signed transaction (JWS) against Apple's certificate chain (offline) and stores the limited verification record described in the Privacy Policy
 - Creates or updates the device registration for the given Device ID
 - One Device ID can have multiple APNs tokens (iPad + iPhone)
 - On token rotation: call again with the new APNs token
+- HTTP 409 is a rejected stale/conflicting registration and must never be treated as success
 
 ### DELETE /provision
 
@@ -218,7 +215,7 @@ The container reads its own Syncthing Device ID automatically from `/rest/system
 ### Authentication
 
 - No API keys or user accounts — identity is the Syncthing Device ID
-- Provisioning sends the StoreKit signed transaction (JWS), verified offline against Apple's certificate chain; the verified expiry gates the subscription server-side (an expired or revoked subscription stops receiving pushes). Legacy numeric transaction IDs are still accepted for backward compatibility
+- Provisioning sends the StoreKit signed transaction (JWS), verified offline against Apple's certificate chain; the verified expiry gates the subscription server-side (an expired or revoked subscription stops receiving pushes). Compatibility requests from older apps can only refresh an exact pre-existing legacy mapping until the published cutoff
 - Trigger requests are matched by Device ID — only Device IDs with an active, non-expired subscription receive push notifications
 - Rate limiting per Device ID: 60 requests/minute for provisioning, 10 triggers/minute
 - TLS required on all endpoints (HSTS, minimum TLS 1.2)
@@ -245,12 +242,13 @@ The container reads its own Syncthing Device ID automatically from `/rest/system
 
 ---
 
-## iOS Integration (shipped in v1.4.0; signed-transaction (JWS) provisioning in v1.5.0)
+## iOS Integration
 
 The iOS client implements the full relay flow; see `AppDelegate.swift`, `RelayService.swift`, and `SubscriptionManager.swift` for detail.
 
 - **APNs registration** — registers for remote notifications at launch and converts the device token to a hex string (`AppDelegate`).
-- **Provisioning** — on a successful StoreKit purchase, the app POSTs each homeserver peer's Device ID, the APNs token, and the signed transaction (JWS) to `/api/v1/provision`. Provisioned IDs are stored in the Keychain and re-provisioned on token rotation; on subscription expiry the tokens are deprovisioned.
+- **Provisioning** — the app POSTs each known homeserver Device ID, the APNs token, and a currently locally verified signed transaction (JWS) to `/api/v1/provision`. It does this after purchase, Restore Purchases, renewal, APNs-token rotation, and once after updating an existing installation. Without verified signed evidence it sends no request and preserves the existing registration.
+- **Migration state** — progress is stored independently per homeserver. A partial or transient failure remains retryable and never changes onboarding, Syncthing identity, vault selection, folder mapping, or vault paths.
 - **Push reception** — a silent push restores the vault bookmarks, starts Syncthing via the Go bridge, polls for completion within the ~30s background budget, then stops Syncthing and releases the bookmarks. This shares the `BGAppRefreshTask` code path.
 - **Background modes** — `UIBackgroundModes` includes `remote-notification` alongside `fetch` and `processing`.
 - **Subscription management** — StoreKit 2 auto-renewable subscription; status, price, and a Manage Subscription link live in the Cloud Relay tab. The price is read from StoreKit at runtime and never hard-coded.

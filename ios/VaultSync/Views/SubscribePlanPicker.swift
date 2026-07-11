@@ -94,7 +94,9 @@ struct SubscribePlanPicker: View {
                 guard !subscriptionManager.purchaseInProgress, !isRestoring else { return }
                 Task {
                     isRestoring = true
-                    let outcome = await subscriptionManager.restorePurchases()
+                    let outcome = await subscriptionManager.restorePurchases(
+                        homeserverDeviceIDs: homeserverDeviceIDs
+                    )
                     isRestoring = false
                     switch outcome {
                     case .restored, .cancelled:
@@ -109,9 +111,9 @@ struct SubscribePlanPicker: View {
                         alertTitle = L10n.tr("Purchase Could Not Be Verified")
                         alertMessage = subscriptionManager.unverifiedRelayTransactionMessage
                         showAlert = true
-                    case .failed(let message):
+                    case .failed:
                         alertTitle = L10n.tr("Restore Failed")
-                        alertMessage = L10n.fmt("The App Store could not be reached to restore purchases. Check your internet connection and try again. (%@)", message)
+                        alertMessage = L10n.tr("The App Store could not be reached to restore purchases. Check your internet connection and try again.")
                         showAlert = true
                     }
                 }

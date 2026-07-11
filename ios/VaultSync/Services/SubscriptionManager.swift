@@ -53,6 +53,23 @@ final class SubscriptionManager {
     /// "failure" state.
     private(set) var alertBannerStatus: BackgroundSyncService.AlertBannerStatus = .unknown
 
+    var relayProvisioningNeedsStoreKitVerification: Bool {
+        relayProvisionStatuses.values.contains(.storeKitVerificationRequired) ||
+            unverifiedRelayTransactionMessage != nil
+    }
+
+    var relayProvisioningUpdateInProgress: Bool {
+        relayProvisionStatuses.values.contains(.migrationRequired) ||
+            relayProvisionStatuses.values.contains(.inProgress)
+    }
+
+    var relayProvisioningTemporarilyFailed: Bool {
+        relayProvisionStatuses.values.contains { status in
+            if case .temporarilyFailed = status { return true }
+            return false
+        }
+    }
+
     /// Strong signal: a recent silent-push trigger proves Cloud Relay is
     /// actually delivering wake-ups to THIS device (the only leg that proves
     /// end-to-end delivery to this device's token). Deliberately independent of
@@ -60,7 +77,6 @@ final class SubscriptionManager {
     /// "relay broken".
     var relayDeliveryConfirmed: Bool {
         guard isRelaySubscribed, hasAPNsToken,
-              relayProvisionStatuses.values.contains(.provisioned),
               let last = lastRelayTriggerReceivedAt else {
             return false
         }
@@ -73,7 +89,7 @@ final class SubscriptionManager {
     var relayDeliveryLikelyWorking: Bool {
         if relayDeliveryConfirmed { return true }
         guard isRelaySubscribed, hasAPNsToken,
-              relayProvisionStatuses.values.contains(.provisioned) else {
+              relayProvisionStatuses.values.contains(where: \.isProvisionedWithVerifiedEntitlement) else {
             return false
         }
         return relayHealthResult?.isHealthy ?? false
@@ -140,20 +156,18 @@ final class SubscriptionManager {
     @ObservationIgnored nonisolated(unsafe) private var triggerObserver: NSObjectProtocol?
     @ObservationIgnored nonisolated(unsafe) private var relayDiagnosticsObserver: NSObjectProtocol?
     @ObservationIgnored nonisolated(unsafe) private var tokenChangeObserver: NSObjectProtocol?
+    @ObservationIgnored private var relayEntitlementAvailability: RelayEntitlementAvailability = .inactive
+    @ObservationIgnored private var reprovisioningInFlight = false
+    @ObservationIgnored private var pendingReprovisionRequests: [(RelayReprovisionTrigger, [String])] = []
 
     init() {
         apnsRegistrationStatus = APNsRegistrationStore.current()
         apnsRegistrationSnapshot = APNsRegistrationStore.snapshot()
         refreshStoredRelayDiagnostics()
-        // Rehydrate the last-known-good provisioned device IDs synchronously so
-        // `relayDeliveryConfirmed` reflects reality on cold launch. Without this,
-        // `relayProvisionStatuses` is empty until an async (re)provision runs —
-        // and since re-provision is skipped within `provisionRefreshInterval`, a
-        // genuinely delivering sub would falsely read "Cloud Relay went quiet" on
-        // every relaunch. `relayDeliveryConfirmed` still requires a real trigger
-        // within the 48h freshness window, so a stale-but-true flag never fakes
-        // "active"; the periodic idempotent re-provision corrects it server-side.
-        rehydrateProvisionedStatuses()
+        // Pre-v2 local success flags are historical evidence only. They become
+        // migration-required until this app receives a successful relay response
+        // backed by a currently verified StoreKit signed transaction.
+        relayProvisionStatuses = RelayProvisionStatusStore.load()
         purchasePendingApproval = PurchasePendingApprovalStore.isPending()
 
         apnsObserver = NotificationCenter.default.addObserver(
@@ -201,14 +215,14 @@ final class SubscriptionManager {
         }
         unfinishedTask = Task(priority: .background) {
             for await verificationResult in Transaction.unfinished {
-                await handle(verificationResult)
+                await handle(verificationResult, trigger: .purchase)
             }
             await checkSubscriptionStatus()
             await ensureProvisioningIfNeeded()
         }
         updatesTask = Task(priority: .background) {
             for await verificationResult in Transaction.updates {
-                await handle(verificationResult)
+                await handle(verificationResult, trigger: .renewal)
             }
         }
     }
@@ -234,8 +248,11 @@ final class SubscriptionManager {
     // MARK: - Public
 
     func checkSubscriptionStatus() async {
-        var foundActive = false
-        var foundStart: Date?
+        var activeEntitlement: (
+            transaction: Transaction,
+            proof: RelayVerifiedEntitlement,
+            expiry: Date
+        )?
         var foundUnverifiedRelay = false
         for await verificationResult in Transaction.currentEntitlements {
             guard case .verified(let transaction) = verificationResult else {
@@ -245,49 +262,38 @@ final class SubscriptionManager {
                 }
                 continue
             }
-            if Self.relayProductIDs.contains(transaction.productID) {
-                if let expiry = transaction.expirationDate, expiry > Date() {
-                    foundActive = true
-                    subscriptionExpiryDate = expiry
-                    foundStart = transaction.originalPurchaseDate
-                } else if transaction.expirationDate == nil {
-                    foundActive = true
-                    foundStart = transaction.originalPurchaseDate
-                }
-            }
+            guard Self.relayProductIDs.contains(transaction.productID),
+                  transaction.revocationDate == nil,
+                  let expiry = transaction.expirationDate,
+                  expiry > Date(),
+                  let proof = RelayVerifiedEntitlement(
+                    signedTransaction: verificationResult.jwsRepresentation
+                  ) else { continue }
+
+            if let current = activeEntitlement, expiry <= current.expiry { continue }
+            activeEntitlement = (transaction, proof, expiry)
         }
-        let wasSubscribed = isRelaySubscribed
-        isRelaySubscribed = foundActive
-        subscriptionStartDate = foundActive ? foundStart : nil
-        if foundActive {
+        isRelaySubscribed = activeEntitlement != nil
+        if let activeEntitlement {
+            subscriptionExpiryDate = activeEntitlement.expiry
+            subscriptionStartDate = activeEntitlement.transaction.originalPurchaseDate
+            relayEntitlementAvailability = .verified(activeEntitlement.proof)
             // A verified active entitlement settles any pending Ask-to-Buy and
             // disproves a verification problem.
             setPendingApproval(false)
             unverifiedRelayTransactionMessage = nil
         } else {
-            // Authoritative snapshot: set the hint only while an unverified
-            // relay entitlement actually exists, clear it once it is gone.
-            unverifiedRelayTransactionMessage = foundUnverifiedRelay ? Self.unverifiedRelayMessage() : nil
-        }
-        if !foundActive {
             subscriptionExpiryDate = nil
-            // Reset the one-time "Connected" celebration so a re-subscribe can
-            // celebrate its first real wake-up again (it's per activation, not
-            // per install).
-            UserDefaults.standard.removeObject(forKey: "relay-connected-celebrated")
-            if wasSubscribed {
-                await deprovisionRelay()
+            subscriptionStartDate = nil
+            unverifiedRelayTransactionMessage = foundUnverifiedRelay ? Self.unverifiedRelayMessage() : nil
+            relayEntitlementAvailability = foundUnverifiedRelay ? .verificationRequired : .inactive
+            if foundUnverifiedRelay {
+                markStoreKitVerificationRequired(for: allKnownDeviceIDs())
             }
-            for deviceID in relayProvisionStatuses.keys {
-                relayProvisionStatuses[deviceID] = .notAttempted
-            }
-            // Drop the persisted provisioned set so a lapsed sub doesn't rehydrate
-            // a stale ".provisioned" on the next cold launch.
-            persistProvisionedDeviceIDs()
         }
         refreshAPNsRegistrationStatus()
         refreshStoredRelayDiagnostics()
-        logger.info("Subscription status: \(foundActive ? "active" : "inactive")")
+        logger.info("Subscription status: \(self.isRelaySubscribed ? "active" : "inactive")")
     }
 
     /// Purchase a relay subscription product (monthly or yearly). Pass all peer
@@ -303,7 +309,11 @@ final class SubscriptionManager {
 
         switch result {
         case .success(let verificationResult):
-            await handle(verificationResult, provisionDeviceIDs: homeserverDeviceIDs)
+            await handle(
+                verificationResult,
+                provisionDeviceIDs: homeserverDeviceIDs,
+                trigger: .purchase
+            )
         case .userCancelled:
             logger.info("User cancelled purchase")
         case .pending:
@@ -328,8 +338,12 @@ final class SubscriptionManager {
     }
 
     @discardableResult
-    func restorePurchases() async -> RestoreOutcome {
-        await Self.performRestore(
+    func restorePurchases(homeserverDeviceIDs: [String] = []) async -> RestoreOutcome {
+        if !homeserverDeviceIDs.isEmpty {
+            storeDeviceIDs(homeserverDeviceIDs)
+            ensureProvisionStateEntries(for: homeserverDeviceIDs)
+        }
+        let outcome = await Self.performRestore(
             sync: { try await AppStore.sync() },
             refreshIsSubscribed: { [weak self] in
                 await self?.checkSubscriptionStatus()
@@ -340,6 +354,13 @@ final class SubscriptionManager {
             },
             isUserCancellation: Self.isUserCancellation
         )
+        if outcome == .restored {
+            await requestReprovisioning(
+                trigger: .restore,
+                deviceIDs: allKnownDeviceIDs(including: homeserverDeviceIDs)
+            )
+        }
+        return outcome
     }
 
     /// Pure restore state machine (injected effects — PathCollisionGuard
@@ -392,7 +413,7 @@ final class SubscriptionManager {
     }
 
     nonisolated static func unverifiedRelayMessage() -> String {
-        L10n.tr("A Cloud Relay purchase was found but could not be verified on this device. Make sure date & time are set automatically and you are signed in to the App Store, then use Restore Purchases.")
+        L10n.tr("Your purchase must be confirmed again.")
     }
 
     private func setPendingApproval(_ pending: Bool) {
@@ -438,12 +459,16 @@ final class SubscriptionManager {
 
         await checkSubscriptionStatus()
         guard isRelaySubscribed else {
-            errorMessage = L10n.tr("Cloud Relay is not subscribed. Start a subscription first.")
+            if relayEntitlementAvailability == .verificationRequired {
+                markStoreKitVerificationRequired(for: allDeviceIDs)
+                errorMessage = L10n.tr("Your purchase must be confirmed again.")
+            } else {
+                errorMessage = L10n.tr("Cloud Relay is not subscribed. Start a subscription first.")
+            }
             return
         }
 
-        let transactionID = await currentRelayTransactionID() ?? "manual-retry"
-        await provisionRelay(deviceIDs: allDeviceIDs, transactionID: transactionID)
+        await requestReprovisioning(trigger: .manualRetry, deviceIDs: allDeviceIDs)
     }
 
     // MARK: - Private
@@ -468,17 +493,22 @@ final class SubscriptionManager {
 
     private func handle(
         _ verificationResult: VerificationResult<Transaction>,
-        provisionDeviceIDs: [String]? = nil
+        provisionDeviceIDs: [String]? = nil,
+        trigger: RelayReprovisionTrigger
     ) async {
         guard case .verified(let transaction) = verificationResult else {
             // Still never finished, still never grants entitlement — but a
             // relay purchase that fails verification must not read as a silent
             // "not subscribed" (#96). VerificationResult.Error carries no user
             // data, so it is safe to log.
-            if case .unverified(let unverified, let verificationError) = verificationResult,
+            if case .unverified(let unverified, _) = verificationResult,
                Self.relayProductIDs.contains(unverified.productID) {
-                logger.warning("Unverified relay transaction, skipping: \(String(describing: verificationError))")
+                logger.warning("Unverified relay transaction, skipping")
                 unverifiedRelayTransactionMessage = Self.unverifiedRelayMessage()
+                relayEntitlementAvailability = .verificationRequired
+                markStoreKitVerificationRequired(
+                    for: allKnownDeviceIDs(including: provisionDeviceIDs ?? [])
+                )
             } else {
                 logger.warning("Unverified transaction, skipping")
             }
@@ -494,16 +524,23 @@ final class SubscriptionManager {
                 logger.info("Subscription revoked on \(revocationDate)")
                 isRelaySubscribed = false
                 subscriptionExpiryDate = nil
+                relayEntitlementAvailability = .inactive
                 await deprovisionRelay()
             } else if let expirationDate = transaction.expirationDate, expirationDate < Date() {
                 logger.info("Subscription expired")
                 isRelaySubscribed = false
                 subscriptionExpiryDate = nil
+                relayEntitlementAvailability = .inactive
                 await deprovisionRelay()
-            } else {
+            } else if let expirationDate = transaction.expirationDate,
+                      expirationDate > Date(),
+                      let proof = RelayVerifiedEntitlement(
+                        signedTransaction: verificationResult.jwsRepresentation
+                      ) {
                 isRelaySubscribed = true
                 subscriptionExpiryDate = transaction.expirationDate
                 subscriptionStartDate = transaction.originalPurchaseDate
+                relayEntitlementAvailability = .verified(proof)
 
                 // Use explicitly passed device IDs (from purchase flow) or stored ones (from renewal)
                 let deviceIDs = provisionDeviceIDs ?? loadStoredDeviceIDs()
@@ -511,83 +548,100 @@ final class SubscriptionManager {
                     storeDeviceIDs(ids)
                 }
                 ensureProvisionStateEntries(for: deviceIDs)
-                // Send the signed JWS representation so the relay can verify the
-                // subscription with Apple (signature + expiry) instead of trusting
-                // a bare transaction ID. The relay stays backward compatible with
-                // the legacy numeric ID sent by older app versions.
-                await provisionRelay(deviceIDs: deviceIDs, transactionID: verificationResult.jwsRepresentation)
+                await requestReprovisioning(trigger: trigger, deviceIDs: deviceIDs)
+            } else {
+                relayEntitlementAvailability = .verificationRequired
+                markStoreKitVerificationRequired(
+                    for: allKnownDeviceIDs(including: provisionDeviceIDs ?? [])
+                )
             }
         }
 
         await transaction.finish()
     }
 
-    private func provisionRelay(deviceIDs: [String], transactionID: String) async {
-        ensureProvisionStateEntries(for: deviceIDs)
-        refreshAPNsRegistrationStatus()
-
-        guard let token = KeychainService.getAPNsDeviceToken() else {
-            logger.info("APNs token not available yet, skipping relay provision")
-            if case .failed(let reason) = apnsRegistrationStatus {
-                let apnsError = SyncUserError.apnsRegistrationFailed(reason: reason)
-                for deviceID in deviceIDs {
-                    relayProvisionStatuses[deviceID] = .failed(reason: apnsError.message)
-                }
-                errorMessage = apnsError.userVisibleDescription
-            }
-            return
-        }
-
-        guard !deviceIDs.isEmpty else {
+    private func requestReprovisioning(
+        trigger: RelayReprovisionTrigger,
+        deviceIDs: [String]
+    ) async {
+        let allDeviceIDs = allKnownDeviceIDs(including: deviceIDs)
+        guard !allDeviceIDs.isEmpty else {
             logger.info("No homeserver device IDs available, skipping relay provision")
-            errorMessage = L10n.tr("No home server devices available for relay provisioning.")
             return
         }
+        ensureProvisionStateEntries(for: allDeviceIDs)
+        pendingReprovisionRequests.append((trigger, allDeviceIDs))
+        guard !reprovisioningInFlight else { return }
 
-        var hadFailure = false
-        for deviceID in deviceIDs {
-            relayProvisionStatuses[deviceID] = .inProgress
-            do {
+        reprovisioningInFlight = true
+        defer { reprovisioningInFlight = false }
+        while !pendingReprovisionRequests.isEmpty {
+            let request = pendingReprovisionRequests.removeFirst()
+            await performReprovisioning(trigger: request.0, deviceIDs: request.1)
+        }
+    }
+
+    private func performReprovisioning(
+        trigger: RelayReprovisionTrigger,
+        deviceIDs: [String]
+    ) async {
+        refreshAPNsRegistrationStatus()
+        let outcome = await RelayReprovisioning.run(
+            trigger: trigger,
+            deviceIDs: deviceIDs,
+            statuses: relayProvisionStatuses,
+            entitlement: relayEntitlementAvailability,
+            apnsToken: KeychainService.getAPNsDeviceToken(),
+            isSubscriptionActive: isRelaySubscribed,
+            provision: { deviceID, token, signedTransaction in
                 try await RelayService.provision(
                     deviceID: deviceID,
                     apnsToken: token,
-                    transactionID: transactionID
+                    signedTransaction: signedTransaction
                 )
-                relayProvisionStatuses[deviceID] = .provisioned
-            } catch {
-                logger.error("Failed to provision relay for device \(deviceID.prefix(8))...: \(error)")
-                let userError = RelayService.userError(from: error)
-                relayProvisionStatuses[deviceID] = .failed(reason: userError.message)
-                errorMessage = userError.userVisibleDescription
-                hadFailure = true
+            },
+            stateDidChange: { [weak self] statuses in
+                guard let self else { return }
+                self.relayProvisionStatuses = statuses
+                RelayProvisionStatusStore.save(statuses)
             }
-        }
+        )
+        relayProvisionStatuses = outcome.statuses
+        RelayProvisionStatusStore.save(relayProvisionStatuses)
 
-        if !hadFailure {
+        let failed = outcome.statuses.values.compactMap(\.failureReason)
+        if let reason = failed.first {
+            logger.error("Relay provisioning update failed")
+            errorMessage = RelayService.userError(
+                from: RelayService.RelayError.provisionFailed(reason: reason)
+            ).userVisibleDescription
+        } else if !outcome.provisionedDeviceIDs.isEmpty {
             errorMessage = nil
         }
-        persistProvisionedDeviceIDs()
+
+        if allKnownDeviceIDs().allSatisfy({
+            relayProvisionStatuses[$0]?.isProvisionedWithVerifiedEntitlement == true
+        }) {
+            UserDefaults.standard.set(Date(), forKey: Self.lastProvisionDateKey)
+        }
         refreshStoredRelayDiagnostics()
     }
 
     private func deprovisionRelay() async {
-        // Clear and persist the provision state up front. Transaction.updates routes
-        // revoke/expire here directly, sometimes with no APNs token — so doing this
-        // before the token guard ensures a later cold launch can't rehydrate stale
-        // `.provisioned` entries (relay-provisioned-device-ids) and briefly fake a
-        // "likely working" state until the next refresh.
+        // A verified revoke/expiry is authoritative. Clear local provision state
+        // before the token guard so a later cold launch cannot claim a verified
+        // registration when the matching entitlement is no longer active.
         let deviceIDs = loadStoredDeviceIDs()
         ensureProvisionStateEntries(for: deviceIDs)
-        // Sweep EVERY known provision status (not just the keychain-stored IDs) to
-        // .notAttempted before persisting. A status rehydrated from UserDefaults that
-        // has diverged from the keychain (e.g. a transient keychain read miss) would
-        // otherwise stay `.provisioned` and get re-persisted here, briefly faking a
-        // "likely working" state on the next cold launch. Mirrors the cleanup in
-        // checkSubscriptionStatus()'s !foundActive branch.
+        // Sweep every known status, not just the Keychain-stored IDs. Pairing,
+        // folders, paths, and the APNs token itself are deliberately untouched.
         for deviceID in relayProvisionStatuses.keys {
             relayProvisionStatuses[deviceID] = .notAttempted
         }
-        persistProvisionedDeviceIDs()
+        RelayProvisionStatusStore.save(
+            relayProvisionStatuses,
+            preserveLegacyProvisionedIDs: false
+        )
 
         // Clear the per-activation "Connected" celebration on every transition to
         // inactive, so a later resubscribe celebrates again. Done before the token
@@ -603,12 +657,16 @@ final class SubscriptionManager {
                 try await RelayService.deprovision(deviceID: deviceID, apnsToken: token)
                 relayProvisionStatuses[deviceID] = .notAttempted
             } catch {
-                logger.error("Failed to deprovision relay for device \(deviceID.prefix(8))...: \(error)")
+                logger.error("Failed to deprovision relay registration: \(error)")
                 let userError = RelayService.userError(from: error)
-                relayProvisionStatuses[deviceID] = .failed(reason: userError.message)
+                relayProvisionStatuses[deviceID] = .temporarilyFailed(reason: userError.message)
                 errorMessage = userError.userVisibleDescription
             }
         }
+        RelayProvisionStatusStore.save(
+            relayProvisionStatuses,
+            preserveLegacyProvisionedIDs: false
+        )
         refreshStoredRelayDiagnostics()
     }
 
@@ -622,12 +680,11 @@ final class SubscriptionManager {
         guard !deviceIDs.isEmpty else { return }
 
         logger.info("APNs token changed, re-provisioning relay for \(deviceIDs.count) device(s)")
-        let transactionID = await currentRelayTransactionID() ?? "token-refresh"
-        await provisionRelay(deviceIDs: deviceIDs, transactionID: transactionID)
+        await requestReprovisioning(trigger: .tokenRotation, deviceIDs: deviceIDs)
     }
 
-    /// Re-provision relay on app launch if the last successful provision was >24h ago.
-    /// Runs silently in the background — no UI, no user interaction needed.
+    /// Run pending per-device migration on launch, then refresh fully verified
+    /// registrations on the existing six-hour recovery cadence.
     private func ensureProvisioningIfNeeded() async {
         guard isRelaySubscribed else { return }
         guard KeychainService.hasAPNsDeviceToken() else { return }
@@ -635,19 +692,22 @@ final class SubscriptionManager {
         let deviceIDs = loadStoredDeviceIDs()
         guard !deviceIDs.isEmpty else { return }
 
+        // The one-time app-update migration is per homeserver and independent of
+        // the periodic refresh timestamp. Failed devices remain eligible on the
+        // next launch/diagnostics pass; verified successes are skipped.
+        markMigrationRequiredForActiveSubscription(deviceIDs: deviceIDs)
+        await requestReprovisioning(trigger: .appUpdate, deviceIDs: deviceIDs)
+        guard deviceIDs.allSatisfy({
+            relayProvisionStatuses[$0]?.isProvisionedWithVerifiedEntitlement == true
+        }) else { return }
+
         let lastProvision = UserDefaults.standard.object(forKey: Self.lastProvisionDateKey) as? Date
         if let lastProvision, Date().timeIntervalSince(lastProvision) < Self.provisionRefreshInterval {
             return
         }
 
         logger.info("Periodic relay re-provision (last: \(lastProvision?.description ?? "never"))")
-        let transactionID = await currentRelayTransactionID() ?? "startup-refresh"
-        await provisionRelay(deviceIDs: deviceIDs, transactionID: transactionID)
-
-        // Mark successful provision time (only if at least one device succeeded).
-        if relayProvisionStatuses.values.contains(.provisioned) {
-            UserDefaults.standard.set(Date(), forKey: Self.lastProvisionDateKey)
-        }
+        await requestReprovisioning(trigger: .periodicRefresh, deviceIDs: deviceIDs)
     }
 
     private static let lastProvisionDateKey = "relay-last-provision-date"
@@ -661,7 +721,8 @@ final class SubscriptionManager {
 
     private func storeDeviceIDs(_ ids: [String]) {
         guard !ids.isEmpty else { return }
-        if let data = try? JSONEncoder().encode(ids) {
+        let merged = Array(Set(loadStoredDeviceIDs() + ids)).sorted()
+        if let data = try? JSONEncoder().encode(merged) {
             KeychainService.set(key: "relay-device-ids", value: String(data: data, encoding: .utf8) ?? "[]")
         }
     }
@@ -679,32 +740,30 @@ final class SubscriptionManager {
         for deviceID in deviceIDs where relayProvisionStatuses[deviceID] == nil {
             relayProvisionStatuses[deviceID] = .notAttempted
         }
+        RelayProvisionStatusStore.save(relayProvisionStatuses)
     }
 
-    // MARK: - Provisioned-status persistence (cold-launch rehydration)
-
-    private static let provisionedDeviceIDsKey = "relay-provisioned-device-ids"
-
-    /// Persist which device IDs are currently `.provisioned` so the in-memory
-    /// `relayProvisionStatuses` (which is otherwise empty on every cold launch)
-    /// can be rehydrated, keeping `relayDeliveryConfirmed` accurate at startup.
-    private func persistProvisionedDeviceIDs() {
-        let provisioned = relayProvisionStatuses
-            .filter { $0.value == .provisioned }
-            .map(\.key)
-            .sorted()
-        UserDefaults.standard.set(provisioned, forKey: Self.provisionedDeviceIDsKey)
+    private func allKnownDeviceIDs(including deviceIDs: [String] = []) -> [String] {
+        Array(Set(deviceIDs + loadStoredDeviceIDs() + Array(relayProvisionStatuses.keys))).sorted()
     }
 
-    /// Restore the last-known-good `.provisioned` entries on launch. Safe because
-    /// `relayDeliveryConfirmed` additionally requires a real trigger within 48h,
-    /// so a stale flag can never by itself fake "active"; the periodic idempotent
-    /// re-provision and `deprovisionRelay`/unsubscribe paths correct the set.
-    private func rehydrateProvisionedStatuses() {
-        let ids = UserDefaults.standard.stringArray(forKey: Self.provisionedDeviceIDsKey) ?? []
-        for id in ids {
-            relayProvisionStatuses[id] = .provisioned
+    private func markMigrationRequiredForActiveSubscription(deviceIDs: [String]) {
+        guard isRelaySubscribed else { return }
+        for deviceID in deviceIDs {
+            let status = relayProvisionStatuses[deviceID] ?? .notAttempted
+            if status.needsVerifiedProvisioning {
+                relayProvisionStatuses[deviceID] = .migrationRequired
+            }
         }
+        RelayProvisionStatusStore.save(relayProvisionStatuses)
+    }
+
+    private func markStoreKitVerificationRequired(for deviceIDs: [String]) {
+        guard !deviceIDs.isEmpty else { return }
+        for deviceID in deviceIDs {
+            relayProvisionStatuses[deviceID] = .storeKitVerificationRequired
+        }
+        RelayProvisionStatusStore.save(relayProvisionStatuses)
     }
 
     private func refreshAPNsRegistrationStatus() {
@@ -720,20 +779,6 @@ final class SubscriptionManager {
         lastRelayError = RelayService.lastRecordedError()
     }
 
-    /// Returns the signed JWS for the current relay entitlement, so re-provision
-    /// paths (token rotation, periodic refresh, manual retry) also let the relay
-    /// re-verify the subscription and refresh the stored expiry with Apple.
-    private func currentRelayTransactionID() async -> String? {
-        for await verificationResult in Transaction.currentEntitlements {
-            guard case .verified(let transaction) = verificationResult else { continue }
-            guard Self.relayProductIDs.contains(transaction.productID) else { continue }
-            if let expiry = transaction.expirationDate, expiry < Date() {
-                continue
-            }
-            return verificationResult.jwsRepresentation
-        }
-        return nil
-    }
 }
 
 /// Persists the Ask-to-Buy "waiting for approval" flag across launches (#96).

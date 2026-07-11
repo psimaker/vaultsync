@@ -18,6 +18,7 @@ struct RelayHomeView: View {
     var subscriptionManager: SubscriptionManager
 
     @State private var showPrivacyInfo = false
+    @State private var purchaseConfirmationInFlight = false
     /// One-time "Connected" celebration on the FIRST real wake-up (K1). Set when
     /// the user acknowledges it; survives backgrounding, so a wake-up that arrived
     /// while the app was away still celebrates on next open.
@@ -102,6 +103,12 @@ struct RelayHomeView: View {
 
     @ViewBuilder
     private var subscribedContent: some View {
+        if subscriptionManager.relayProvisioningNeedsStoreKitVerification ||
+            subscriptionManager.relayProvisioningUpdateInProgress ||
+            subscriptionManager.relayProvisioningTemporarilyFailed {
+            relayProvisioningUpdateSection
+        }
+
         // Honest status (K1): "delivering" means a REAL wake-up has reached this
         // device (relayDeliveryConfirmed) — never merely "provisioned/reachable".
         // Three states: first-delivery celebration → steady delivering → actively
@@ -216,16 +223,51 @@ struct RelayHomeView: View {
             Text(L10n.tr("Manage"))
         }
 
-        if let relayError = subscriptionManager.errorMessage, !relayError.isEmpty {
-            Section {
-                Text(relayError)
-                    .font(.caption)
-                    .foregroundStyle(Color.statusError)
-                if let url = SyncUserError.troubleshootingURL(forRawError: relayError) {
-                    ExternalLinkButton(titleKey: "Learn how to fix", url: url)
-                        .font(.footnote)
+    }
+
+    private var relayProvisioningUpdateSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: VaultSpacing.s) {
+                Label(
+                    L10n.tr("Automatic updates are being updated"),
+                    systemImage: "arrow.triangle.2.circlepath"
+                )
+                .font(.headline)
+                .foregroundStyle(Color.statusInfo)
+
+                if subscriptionManager.relayProvisioningNeedsStoreKitVerification {
+                    Text(L10n.tr("Your purchase must be confirmed again."))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Button {
+                        Task {
+                            purchaseConfirmationInFlight = true
+                            _ = await subscriptionManager.restorePurchases(
+                                homeserverDeviceIDs: deviceIDs
+                            )
+                            purchaseConfirmationInFlight = false
+                        }
+                    } label: {
+                        HStack {
+                            Text(L10n.tr("Restore Purchases"))
+                            if purchaseConfirmationInFlight {
+                                ProgressView().controlSize(.small)
+                            }
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(purchaseConfirmationInFlight)
+                } else if subscriptionManager.relayProvisioningTemporarilyFailed {
+                    Text(L10n.tr("Try Again Later"))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel(L10n.tr("Automatic updates are being updated"))
                 }
             }
+            .padding(.vertical, VaultSpacing.xxs)
         }
     }
 }

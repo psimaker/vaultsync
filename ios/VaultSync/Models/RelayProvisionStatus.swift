@@ -2,20 +2,26 @@ import Foundation
 
 enum RelayProvisionStatus: Equatable, Sendable {
     case notAttempted
+    case migrationRequired
     case inProgress
-    case provisioned
-    case failed(reason: String)
+    case provisionedVerified
+    case temporarilyFailed(reason: String)
+    case storeKitVerificationRequired
 
     var stateKey: String {
         switch self {
         case .notAttempted:
             return "not_attempted"
+        case .migrationRequired:
+            return "migration_required"
         case .inProgress:
             return "in_progress"
-        case .provisioned:
-            return "provisioned"
-        case .failed:
-            return "failed"
+        case .provisionedVerified:
+            return "provisioned_verified"
+        case .temporarilyFailed:
+            return "temporarily_failed"
+        case .storeKitVerificationRequired:
+            return "storekit_verification_required"
         }
     }
 
@@ -23,18 +29,30 @@ enum RelayProvisionStatus: Equatable, Sendable {
         switch self {
         case .notAttempted:
             return L10n.tr("Not attempted")
+        case .migrationRequired:
+            return L10n.tr("Migration required")
         case .inProgress:
             return L10n.tr("In progress")
-        case .provisioned:
-            return L10n.tr("Provisioned")
-        case .failed:
-            return L10n.tr("Failed")
+        case .provisionedVerified:
+            return L10n.tr("Verified")
+        case .temporarilyFailed:
+            return L10n.tr("Temporarily failed")
+        case .storeKitVerificationRequired:
+            return L10n.tr("StoreKit verification required")
         }
     }
 
     var failureReason: String? {
-        guard case .failed(let reason) = self else { return nil }
+        guard case .temporarilyFailed(let reason) = self else { return nil }
         return reason
+    }
+
+    var isProvisionedWithVerifiedEntitlement: Bool {
+        self == .provisionedVerified
+    }
+
+    var needsVerifiedProvisioning: Bool {
+        !isProvisionedWithVerifiedEntitlement
     }
 }
 
