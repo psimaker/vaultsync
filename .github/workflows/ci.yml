@@ -132,6 +132,18 @@ jobs:
         # tokens — keeps the redesign's single source of truth from eroding.
         run: ios/scripts/design-token-lint.sh
 
+  strings-parity:
+    name: Strings Key Parity
+    runs-on: ubuntu-latest # pure bash/sed guardrail; no Xcode needed
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check Localizable.strings key parity
+        # A key missing from one .lproj silently falls back to English at
+        # runtime — invisible in review, deterministic to catch here (#83).
+        run: ios/scripts/strings-key-parity.sh
+
   build:
     name: Build & Test
     runs-on: macos-26 # Xcode 26.2 default, iOS 26 SDK required for BGContinuedProcessingTask
