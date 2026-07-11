@@ -21,6 +21,9 @@ struct OnboardingView: View {
     /// it is not presented under the "Error" title.
     @State private var infoMessage: String?
     @State private var showInfoAlert = false
+    /// Set when AddDeviceSheet reports a successful add; presented from the
+    /// sheet's onDismiss (#95).
+    @State private var showDeviceAddedHint = false
 
     private let slate = Color.vaultSlate
     private let teal = Color.vaultTeal
@@ -41,6 +44,12 @@ struct OnboardingView: View {
                         page(setupScreen).tag(1)
                     }
                     .tabViewStyle(.page(indexDisplayMode: .never))
+
+                    if let engineError {
+                        engineErrorBanner(engineError)
+                            .padding(.horizontal, VaultSpacing.l)
+                            .padding(.top, VaultSpacing.m)
+                    }
 
                     bottomBar
                         .padding(.horizontal, VaultSpacing.l)
@@ -85,11 +94,15 @@ struct OnboardingView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showAddDevice) {
-                AddDeviceSheet(syncthingManager: syncthingManager) { message in
-                    alertMessage = message
-                    showAlert = true
-                }
+            .sheet(isPresented: $showAddDevice, onDismiss: presentDeviceAddedHintIfNeeded) {
+                AddDeviceSheet(
+                    syncthingManager: syncthingManager,
+                    onError: { message in
+                        alertMessage = message
+                        showAlert = true
+                    },
+                    onAdded: { showDeviceAddedHint = true }
+                )
             }
             .alert(L10n.tr("Something Went Wrong"), isPresented: $showAlert) {
                 Button("OK") { }
@@ -364,6 +377,46 @@ struct OnboardingView: View {
     private func present(error: String, fallbackTitle: String) {
         alertMessage = SyncUserError.from(rawMessage: error, fallbackTitle: fallbackTitle).userVisibleDescription
         showAlert = true
+    }
+
+    /// Post-add guidance (#95) — same hint as the main app's device flow.
+    private func presentDeviceAddedHintIfNeeded() {
+        guard showDeviceAddedHint else { return }
+        showDeviceAddedHint = false
+        infoMessage = L10n.tr("Device added. Now confirm this iPhone in Syncthing on your computer — a confirmation prompt appears there. Then share your vault to start syncing.")
+        showInfoAlert = true
+    }
+
+    /// Engine start failure was invisible during onboarding (#95): userError
+    /// renders only on the ContentView dashboard, so a failed start left the
+    /// "Sync your first vault" step waiting forever with no explanation.
+    private var engineError: SyncUserError? {
+        if let userError = syncthingManager.userError { return userError }
+        return syncthingManager.error.map {
+            SyncUserError.from(rawMessage: $0, fallbackTitle: L10n.tr("Could Not Start Sync"))
+        }
+    }
+
+    private func engineErrorBanner(_ error: SyncUserError) -> some View {
+        HStack(alignment: .top, spacing: VaultSpacing.s) {
+            Image(systemName: "exclamationmark.octagon.fill")
+                .foregroundStyle(Color.statusError)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: VaultSpacing.xxs) {
+                Text(error.title)
+                    .font(.subheadline.weight(.semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(error.message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(VaultSpacing.m)
+        .background(cardBackground, in: RoundedRectangle(cornerRadius: VaultRadius.card, style: .continuous))
+        .overlay(cardStroke(in: RoundedRectangle(cornerRadius: VaultRadius.card, style: .continuous)))
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: - Bottom bar

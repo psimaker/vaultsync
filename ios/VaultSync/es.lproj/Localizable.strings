@@ -687,3 +687,13 @@
 "Not a Device QR Code" = "No es un código QR de dispositivo";
 "This is not a Syncthing device QR code. On the other device, open Syncthing → Actions → Show ID and scan the QR code shown there." = "Esto no es un código QR de dispositivo de Syncthing. En el otro dispositivo, abre Syncthing → Acciones → Mostrar ID y escanea el código QR que aparece ahí.";
 "Waiting for first sync" = "Esperando la primera sincronización";
+
+/* Onboarding guidance polish (#95) */
+"Device added. Now confirm this iPhone in Syncthing on your computer — a confirmation prompt appears there. Then share your vault to start syncing." = "Dispositivo añadido. Ahora confirma este iPhone en Syncthing en tu ordenador — allí aparece una solicitud de confirmación. Después comparte tu Vault para empezar a sincronizar.";
+"The folder you selected is stored in iCloud Drive. iCloud can keep files as placeholders that are not fully downloaded on this iPhone, which can stall syncing and create conflicts. For reliable syncing, use your vaults under \"On My iPhone\" → \"Obsidian\" and select that folder instead." = "La carpeta que seleccionaste está en iCloud Drive. iCloud puede mantener archivos como marcadores de posición no descargados por completo en este iPhone, lo que puede detener la sincronización y crear conflictos. Para una sincronización fiable, guarda tus Vaults en \"En mi iPhone\" → \"Obsidian\" y selecciona esa carpeta en su lugar.";
+"Opens the setup checklist." = "Abre la lista de comprobación de configuración.";
+"A vault offer was ignored on this iPhone, so it is not accepted automatically." = "Una oferta de Vault fue ignorada en este iPhone, así que no se acepta automáticamente.";
+"Open \"Ignored shares\" under Pending Shares on the home screen and tap \"Restore Share\". Sharing again from your computer will not create a new offer." = "Abre \"Comparticiones ignoradas\" en las comparticiones pendientes de la pantalla de inicio y toca \"Restaurar compartición\". Compartir de nuevo desde tu ordenador no creará una nueva oferta.";
+"Camera Unavailable" = "Cámara no disponible";
+"The camera could not be started on this device. Enter the Device ID manually instead — in Syncthing on your computer, choose Actions → Show ID." = "No se pudo iniciar la cámara en este dispositivo. Introduce el ID del dispositivo manualmente — en Syncthing en tu ordenador, elige Acciones → Mostrar ID.";
+"Enter Device ID Manually" = "Introducir ID del dispositivo manualmente";

@@ -87,6 +87,13 @@ enum SyncHeaderModel {
     /// miss the widget again. Before this, the widget only knew
     /// idle/syncing/error and kept a green check while a share sat parked or
     /// a required peer was offline.
+    /// Whether the header names an actionable setup/attention state whose
+    /// natural destination is the setup checklist — the header then acts as a
+    /// button (#95). Keys are the stable English L10n keys (decision 005).
+    static func opensChecklist(titleKey: String) -> Bool {
+        titleKey == "Finish Setup" || titleKey == "Action Needed"
+    }
+
     static func deriveWidgetStatus(
         hasEngineError: Bool,
         engineRunning: Bool,

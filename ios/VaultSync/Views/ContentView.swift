@@ -8,7 +8,12 @@ struct ContentView: View {
     var shareAccept: ShareAcceptCoordinator
     @State private var showAddDevice = false
     @State private var showSettings = false
+    @State private var showSetupChecklist = false
     @State private var showObsidianPicker = false
+    /// Set when AddDeviceSheet reports a successful add; the hint alert is
+    /// presented from the sheet's onDismiss so it survives the dismissal
+    /// transition (#95) — same pattern as runPendingChecklistAction.
+    @State private var showDeviceAddedHint = false
     @State private var pendingChecklistAction: SetupChecklistViewModel.ChecklistAction?
     @State private var alertMessage: String?
     @State private var showAlert = false
@@ -89,11 +94,15 @@ struct ContentView: View {
         } message: {
             Text(infoMessage ?? "")
         }
-        .sheet(isPresented: $showAddDevice) {
-            AddDeviceSheet(syncthingManager: syncthingManager) { message in
-                alertMessage = message
-                showAlert = true
-            }
+        .sheet(isPresented: $showAddDevice, onDismiss: presentDeviceAddedHintIfNeeded) {
+            AddDeviceSheet(
+                syncthingManager: syncthingManager,
+                onError: { message in
+                    alertMessage = message
+                    showAlert = true
+                },
+                onAdded: { showDeviceAddedHint = true }
+            )
         }
         .sheet(isPresented: $showSettings, onDismiss: runPendingChecklistAction) {
             SettingsView(
@@ -101,6 +110,20 @@ struct ContentView: View {
                 vaultManager: vaultManager,
                 subscriptionManager: subscriptionManager,
                 onChecklistAction: handleChecklistAction
+            )
+        }
+        // Direct checklist entry from the tappable status header (#95) —
+        // the same runPendingChecklistAction onDismiss plumbing as Settings,
+        // so checklist remediations present after the transition finishes.
+        .sheet(isPresented: $showSetupChecklist, onDismiss: runPendingChecklistAction) {
+            SetupChecklistSheet(
+                syncthingManager: syncthingManager,
+                vaultManager: vaultManager,
+                subscriptionManager: subscriptionManager,
+                onAction: { action in
+                    showSetupChecklist = false
+                    handleChecklistAction(action)
+                }
             )
         }
         .sheet(isPresented: $showObsidianPicker) {
@@ -257,16 +280,34 @@ struct ContentView: View {
                 vaultsSection
             }
             .refreshable {
+                // Re-detect vaults created in Obsidian since the last scan
+                // (#95). Read-only: republishes detectedVaults only — the
+                // accept pass keys on pendingFolders/settlement, never on this.
+                vaultManager.scanForVaults()
                 await syncthingManager.performForegroundSync()
             }
             .safeAreaInset(edge: .top, spacing: 0) {
                 let header = headerState
-                SyncStatusHeader(
+                let headerView = SyncStatusHeader(
                     status: header.status,
                     title: L10n.tr(header.titleKey),
                     subtitle: headerSubtitle,
                     busy: shouldShowReconnectingUI
                 )
+                // "Finish Setup" / "Action Needed" name a task whose checklist
+                // was three non-obvious hops away (#95) — the header itself is
+                // the affordance in those states.
+                if SyncHeaderModel.opensChecklist(titleKey: header.titleKey) {
+                    Button {
+                        showSetupChecklist = true
+                    } label: {
+                        headerView
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint(L10n.tr("Opens the setup checklist."))
+                } else {
+                    headerView
+                }
             }
             .navigationTitle(L10n.tr("VaultSync"))
             .navigationBarTitleDisplayMode(.inline)
@@ -414,6 +455,16 @@ struct ContentView: View {
         case .openRelayTab:
             selectedTab = .relay
         }
+    }
+
+    /// Post-add guidance (#95): the sheet used to close silently, and the
+    /// most common pairing stall — the desktop never confirming the new
+    /// device — was explained nowhere in the app.
+    private func presentDeviceAddedHintIfNeeded() {
+        guard showDeviceAddedHint else { return }
+        showDeviceAddedHint = false
+        infoMessage = L10n.tr("Device added. Now confirm this iPhone in Syncthing on your computer — a confirmation prompt appears there. Then share your vault to start syncing.")
+        showInfoAlert = true
     }
 
     // MARK: - UI-Audit Fixtures (#64/#65)

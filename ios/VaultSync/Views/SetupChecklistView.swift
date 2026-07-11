@@ -166,3 +166,36 @@ struct SetupChecklistView: View {
         return L10n.tr("Needs Attention")
     }
 }
+
+/// The Setup Status checklist as a self-contained sheet — shared by Settings
+/// and the tappable status header (#95) so the two entry points cannot drift.
+struct SetupChecklistSheet: View {
+    let syncthingManager: SyncthingManager
+    var vaultManager: VaultManager
+    var subscriptionManager: SubscriptionManager
+    var onAction: ((SetupChecklistViewModel.ChecklistAction) -> Void)? = nil
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                SetupChecklistView(
+                    viewModel: SetupChecklistViewModel(
+                        syncthingManager: syncthingManager,
+                        vaultManager: vaultManager,
+                        subscriptionManager: subscriptionManager
+                    ),
+                    onAction: onAction
+                )
+                .padding(VaultSpacing.l)
+            }
+            .navigationTitle(L10n.tr("Setup Status"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+}

@@ -50,6 +50,12 @@ final class ShareAcceptCoordinator {
         var acceptIntoTarget: @MainActor (_ folder: SyncthingManager.PendingFolderInfo, _ targetName: String) -> String?
         var unignorePendingFolder: @MainActor (_ id: String) -> Void
         var ignorePendingFolder: @MainActor (_ id: String) -> Void
+        // Once-per-reason gating of the automatic-refusal modal (#95); the
+        // inline share row keeps every failure visible regardless. Defaults
+        // keep the modal ungated so focused tests need not wire the store.
+        var shouldPresentRefusalAlert: @MainActor (_ folderID: String, _ reason: String) -> Bool = { _, _ in true }
+        var markRefusalAlertPresented: @MainActor (_ folderID: String, _ reason: String) -> Void = { _, _ in }
+        var clearRefusalAlertRecord: @MainActor (_ folderID: String) -> Void = { _ in }
 
         static func live(
             syncthingManager: SyncthingManager,
@@ -75,7 +81,10 @@ final class ShareAcceptCoordinator {
                     )
                 },
                 unignorePendingFolder: { syncthingManager.unignorePendingFolder(id: $0) },
-                ignorePendingFolder: { syncthingManager.ignorePendingFolder(id: $0) }
+                ignorePendingFolder: { syncthingManager.ignorePendingFolder(id: $0) },
+                shouldPresentRefusalAlert: { ShareRefusalAlertStore.shouldPresentAlert(folderID: $0, reason: $1) },
+                markRefusalAlertPresented: { ShareRefusalAlertStore.markPresented(folderID: $0, reason: $1) },
+                clearRefusalAlertRecord: { ShareRefusalAlertStore.clear(folderID: $0) }
             )
         }
     }
@@ -153,7 +162,13 @@ final class ShareAcceptCoordinator {
         case .refused(let err):
             let userError = SyncUserError.from(rawMessage: err, fallbackTitle: L10n.tr("Could Not Accept Share"))
             pendingShareFailures[folder.id] = userError
-            if source == .automatic {
+            // The automatic pass re-runs on every launch (initial: true), so a
+            // persistently refused share re-fired the same modal forever (#95).
+            // The modal is once per (folder, reason), persisted; the inline
+            // share row keeps the failure visible every session regardless.
+            if source == .automatic,
+               environment.shouldPresentRefusalAlert(folder.id, err) {
+                environment.markRefusalAlertPresented(folder.id, err)
                 alertMessage = L10n.fmt(
                     "Could not accept share '%@'.\n\n%@",
                     folder.label.isEmpty ? folder.id : folder.label,
@@ -187,6 +202,9 @@ final class ShareAcceptCoordinator {
 
         case .accepted:
             pendingShareFailures.removeValue(forKey: folder.id)
+            // A future refusal after a successful accept is a new situation —
+            // it may alert again (#95).
+            environment.clearRefusalAlertRecord(folder.id)
             environment.unignorePendingFolder(folder.id)
         }
     }
@@ -213,6 +231,7 @@ final class ShareAcceptCoordinator {
             return SyncUserError.from(rawMessage: err, fallbackTitle: L10n.tr("Could Not Accept Share")).userVisibleDescription
         }
         pendingShareFailures.removeValue(forKey: folder.id)
+        environment.clearRefusalAlertRecord(folder.id)
         environment.unignorePendingFolder(folder.id)
         return nil
     }

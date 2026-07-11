@@ -7,17 +7,30 @@ struct QRScannerView: View {
     let onScan: (String) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var cameraPermission: AVAuthorizationStatus = .notDetermined
+    /// Camera permission granted but the capture session could not be built
+    /// (no device/input/output — Simulator, hardware fault, MDM policy).
+    /// Without this the sheet stayed a silent black screen (#95).
+    @State private var cameraSetupFailed = false
 
     var body: some View {
         NavigationStack {
             Group {
                 switch cameraPermission {
                 case .authorized:
-                    CameraPreview(onScan: { code in
-                        onScan(code)
-                        dismiss()
-                    })
-                    .ignoresSafeArea()
+                    if cameraSetupFailed {
+                        cameraUnavailableView
+                    } else {
+                        CameraPreview(
+                            onScan: { code in
+                                onScan(code)
+                                dismiss()
+                            },
+                            onSetupFailure: {
+                                cameraSetupFailed = true
+                            }
+                        )
+                        .ignoresSafeArea()
+                    }
                 case .denied, .restricted:
                     permissionDeniedView
                 default:
@@ -66,6 +79,31 @@ struct QRScannerView: View {
         .accessibilityElement(children: .contain)
     }
 
+    private var cameraUnavailableView: some View {
+        VStack(spacing: VaultSpacing.l) {
+            Image(systemName: "video.slash.fill")
+                .font(.largeTitle)
+                .imageScale(.large)
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+
+            Text(L10n.tr("Camera Unavailable"))
+                .font(.title3.bold())
+
+            Text(L10n.tr("The camera could not be started on this device. Enter the Device ID manually instead — in Syncthing on your computer, choose Actions → Show ID."))
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, VaultSpacing.xl)
+
+            Button(L10n.tr("Enter Device ID Manually")) {
+                dismiss()
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .accessibilityElement(children: .contain)
+    }
+
     private func checkPermission() {
         let status = AVCaptureDevice.authorizationStatus(for: .video)
         if status == .notDetermined {
@@ -84,9 +122,10 @@ struct QRScannerView: View {
 
 private struct CameraPreview: UIViewRepresentable {
     let onScan: (String) -> Void
+    let onSetupFailure: () -> Void
 
     func makeUIView(context: Context) -> CameraPreviewUIView {
-        let view = CameraPreviewUIView(onScan: onScan)
+        let view = CameraPreviewUIView(onScan: onScan, onSetupFailure: onSetupFailure)
         return view
     }
 
@@ -134,7 +173,10 @@ private final class CameraPreviewUIView: UIView {
     private var previewLayer: AVCaptureVideoPreviewLayer?
     private var coordinator: ScannerCoordinator?
 
-    init(onScan: @escaping (String) -> Void) {
+    private let onSetupFailure: () -> Void
+
+    init(onScan: @escaping (String) -> Void, onSetupFailure: @escaping () -> Void) {
+        self.onSetupFailure = onSetupFailure
         super.init(frame: .zero)
         coordinator = ScannerCoordinator(onScan: onScan, captureSession: captureSession)
         setupCamera()
@@ -146,19 +188,29 @@ private final class CameraPreviewUIView: UIView {
     }
 
     private func setupCamera() {
-        guard let device = AVCaptureDevice.default(for: .video),
-              let input = try? AVCaptureDeviceInput(device: device) else { return }
-
-        if captureSession.canAddInput(input) {
-            captureSession.addInput(input)
+        // Report asynchronously: setupCamera runs inside makeUIView, and the
+        // callback mutates SwiftUI @State — mutating state mid-view-update is
+        // undefined, so the failure surfaces on the next runloop turn.
+        func reportFailure() {
+            DispatchQueue.main.async { [onSetupFailure] in onSetupFailure() }
         }
+
+        guard let device = AVCaptureDevice.default(for: .video),
+              let input = try? AVCaptureDeviceInput(device: device),
+              captureSession.canAddInput(input) else {
+            reportFailure()
+            return
+        }
+        captureSession.addInput(input)
 
         let metadataOutput = AVCaptureMetadataOutput()
-        if captureSession.canAddOutput(metadataOutput) {
-            captureSession.addOutput(metadataOutput)
-            metadataOutput.setMetadataObjectsDelegate(coordinator, queue: sessionQueue)
-            metadataOutput.metadataObjectTypes = [.qr]
+        guard captureSession.canAddOutput(metadataOutput) else {
+            reportFailure()
+            return
         }
+        captureSession.addOutput(metadataOutput)
+        metadataOutput.setMetadataObjectsDelegate(coordinator, queue: sessionQueue)
+        metadataOutput.metadataObjectTypes = [.qr]
 
         let preview = AVCaptureVideoPreviewLayer(session: captureSession)
         preview.videoGravity = .resizeAspectFill

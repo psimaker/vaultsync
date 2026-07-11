@@ -105,6 +105,14 @@ struct VaultSyncApp: App {
                     // a fresh scan to pick them up immediately.
                     syncthingManager.triggerForegroundSync()
                 }
+                // Vault detection was otherwise frozen for the whole session
+                // (#95): the canonical first run is connect the empty
+                // container -> create the vault in Obsidian -> switch back.
+                // Read-only — republishes detectedVaults only, never triggers
+                // an accept (those key on pendingFolders/settlement). On the
+                // cold-start path restoreAccess() already scanned; a repeat
+                // scan is idempotent.
+                vaultManager.scanForVaults()
                 lastBackgroundedAt = nil
             case .background:
                 lastBackgroundedAt = Date()

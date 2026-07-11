@@ -75,8 +75,16 @@ final class VaultManager {
             hasOwnConfig: pickedFolderHasOwnConfig,
             hasVaultSubfolders: !detectedVaults.isEmpty
         )
-        if pickedFolderIsVault {
+        switch Self.selectionAdvisoryKind(
+            isUbiquitous: Self.urlLooksUbiquitous(url),
+            pickedFolderIsVault: pickedFolderIsVault
+        ) {
+        case .iCloudRoot:
+            selectionAdvisory = L10n.tr("The folder you selected is stored in iCloud Drive. iCloud can keep files as placeholders that are not fully downloaded on this iPhone, which can stall syncing and create conflicts. For reliable syncing, use your vaults under \"On My iPhone\" → \"Obsidian\" and select that folder instead.")
+        case .rootIsVault:
             selectionAdvisory = L10n.tr("The folder you selected is itself a vault. Syncing this one vault works, but additional vaults cannot get their own folder next to it. If you plan to sync more than one vault, select the folder that contains your vaults instead (\"On My iPhone\" → \"Obsidian\").")
+        case nil:
+            break
         }
 
         logger.info("Obsidian directory access granted: \(url.path, privacy: .private) (isVault=\(pickedFolderIsVault))")
@@ -196,6 +204,45 @@ final class VaultManager {
         hasVaultSubfolders: Bool
     ) -> Bool {
         hasOwnConfig && !hasVaultSubfolders
+    }
+
+    /// Why a just-picked root deserves a one-time advisory (#95).
+    enum SelectionAdvisoryKind: Equatable, Sendable {
+        /// The root lives in iCloud Drive: iCloud keeps files as dataless
+        /// placeholders the engine cannot read reliably — sync stalls and
+        /// conflict churn, the #79 class one level up.
+        case iCloudRoot
+        /// The root is itself a single vault (the #45 follow-up nesting trap).
+        case rootIsVault
+    }
+
+    /// Pure classification (unit-testable): the iCloud advisory wins over the
+    /// vault-as-root advisory — re-selecting "On My iPhone → Obsidian" fixes
+    /// both, and only one advisory alert is ever presented per grant.
+    nonisolated static func selectionAdvisoryKind(
+        isUbiquitous: Bool,
+        pickedFolderIsVault: Bool
+    ) -> SelectionAdvisoryKind? {
+        if isUbiquitous { return .iCloudRoot }
+        if pickedFolderIsVault { return .rootIsVault }
+        return nil
+    }
+
+    /// Pure path heuristic for iCloud Drive containers: every iCloud Drive
+    /// path (com~apple~CloudDocs and app containers like iCloud~md~obsidian)
+    /// runs through "…/Mobile Documents/…".
+    nonisolated static func pathLooksUbiquitous(_ path: String) -> Bool {
+        path.contains("/Mobile Documents/")
+    }
+
+    /// Live iCloud check: the resource key where iOS reports it, plus the
+    /// path fallback for roots the key misses. Warn-only — never blocks the
+    /// grant and never moves anything (safety rule 2).
+    nonisolated static func urlLooksUbiquitous(_ url: URL) -> Bool {
+        if (try? url.resourceValues(forKeys: [.isUbiquitousItemKey]))?.isUbiquitousItem == true {
+            return true
+        }
+        return pathLooksUbiquitous(url.path)
     }
 
     // MARK: - Path Helpers

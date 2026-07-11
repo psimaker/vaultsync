@@ -687,3 +687,13 @@
 "Not a Device QR Code" = "不是设备二维码";
 "This is not a Syncthing device QR code. On the other device, open Syncthing → Actions → Show ID and scan the QR code shown there." = "这不是 Syncthing 设备二维码。请在另一台设备上打开 Syncthing → 操作 → 显示 ID，然后扫描那里显示的二维码。";
 "Waiting for first sync" = "等待首次同步";
+
+/* Onboarding guidance polish (#95) */
+"Device added. Now confirm this iPhone in Syncthing on your computer — a confirmation prompt appears there. Then share your vault to start syncing." = "设备已添加。现在请在电脑上的 Syncthing 中确认这台 iPhone——那里会出现一个确认请求。然后共享你的 Vault 即可开始同步。";
+"The folder you selected is stored in iCloud Drive. iCloud can keep files as placeholders that are not fully downloaded on this iPhone, which can stall syncing and create conflicts. For reliable syncing, use your vaults under \"On My iPhone\" → \"Obsidian\" and select that folder instead." = "你选择的文件夹存储在 iCloud 云盘中。iCloud 可能将文件保留为未完全下载到这台 iPhone 的占位文件，这会使同步停滞并产生冲突。为了可靠同步，请将你的 Vault 放在“在我的 iPhone 上” → “Obsidian”中，并改为选择该文件夹。";
+"Opens the setup checklist." = "打开设置检查清单。";
+"A vault offer was ignored on this iPhone, so it is not accepted automatically." = "此 iPhone 上忽略了一个 Vault 共享邀请，因此不会自动接受。";
+"Open \"Ignored shares\" under Pending Shares on the home screen and tap \"Restore Share\". Sharing again from your computer will not create a new offer." = "在主屏幕的待处理共享中打开“已忽略的共享”，然后点按“恢复共享”。在电脑上重新共享不会产生新的邀请。";
+"Camera Unavailable" = "相机不可用";
+"The camera could not be started on this device. Enter the Device ID manually instead — in Syncthing on your computer, choose Actions → Show ID." = "无法在此设备上启动相机。请改为手动输入设备 ID——在电脑上的 Syncthing 中选择“操作” → “显示 ID”。";
+"Enter Device ID Manually" = "手动输入设备 ID";

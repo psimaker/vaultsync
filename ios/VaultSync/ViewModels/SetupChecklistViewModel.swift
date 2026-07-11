@@ -176,6 +176,21 @@ final class SetupChecklistViewModel {
             )
         }
 
+        // An ignored offer cannot be revived from the desktop: sharing again
+        // produces no new offer while the old one sits ignored, so the
+        // "share again from your computer" advice below would be a dead end
+        // (#95). Point at the in-app restore instead.
+        if !syncthingManager.ignoredPendingFolders.isEmpty {
+            return ChecklistItem(
+                requirement: .firstShareDetectedOrAccepted,
+                title: L10n.tr("Vault syncing"),
+                description: L10n.tr("A vault offer was ignored on this iPhone, so it is not accepted automatically."),
+                remediation: L10n.tr("Open \"Ignored shares\" under Pending Shares on the home screen and tap \"Restore Share\". Sharing again from your computer will not create a new offer."),
+                isOptional: false,
+                isComplete: false
+            )
+        }
+
         if syncthingManager.hasSeenPendingFolderOffer {
             return ChecklistItem(
                 requirement: .firstShareDetectedOrAccepted,

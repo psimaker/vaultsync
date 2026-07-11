@@ -79,37 +79,21 @@ struct SettingsView: View {
                 }
             }
             .sheet(isPresented: $showSetupStatus) {
-                NavigationStack {
-                    ScrollView {
-                        SetupChecklistView(
-                            viewModel: SetupChecklistViewModel(
-                                syncthingManager: syncthingManager,
-                                vaultManager: vaultManager,
-                                subscriptionManager: subscriptionManager
-                            ),
-                            onAction: onChecklistAction.map { handler in
-                                { action in
-                                    // Collapse both sheets first; the host delays
-                                    // its own presentation until the dismissal
-                                    // transition has finished.
-                                    showSetupStatus = false
-                                    dismiss()
-                                    handler(action)
-                                }
-                            }
-                        )
-                        .padding(VaultSpacing.l)
-                    }
-                    .navigationTitle(L10n.tr("Setup Status"))
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("Done") {
-                                showSetupStatus = false
-                            }
+                SetupChecklistSheet(
+                    syncthingManager: syncthingManager,
+                    vaultManager: vaultManager,
+                    subscriptionManager: subscriptionManager,
+                    onAction: onChecklistAction.map { handler in
+                        { action in
+                            // Collapse both sheets first; the host delays
+                            // its own presentation until the dismissal
+                            // transition has finished.
+                            showSetupStatus = false
+                            dismiss()
+                            handler(action)
                         }
                     }
-                }
+                )
             }
             .onChange(of: tipJar.didContribute) { _, contributed in
                 if contributed {

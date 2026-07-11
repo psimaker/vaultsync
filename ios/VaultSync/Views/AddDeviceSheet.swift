@@ -8,6 +8,11 @@ struct AddDeviceSheet: View {
     let syncthingManager: SyncthingManager
     /// Called with a user-visible message when adding the device fails.
     var onError: (String) -> Void
+    /// Called after the device was added successfully, just before the sheet
+    /// dismisses itself — the host presents the "confirm this iPhone on your
+    /// computer" hint from its onDismiss (#95), because the most common
+    /// pairing stall is the desktop never confirming the new device.
+    var onAdded: (() -> Void)? = nil
 
     @State private var deviceID = ""
     @State private var name = ""
@@ -72,6 +77,7 @@ struct AddDeviceSheet: View {
         if let err = syncthingManager.addDevice(id: id, name: trimmedName) {
             onError(SyncUserError.from(rawMessage: err, fallbackTitle: L10n.tr("Could Not Add Device")).userVisibleDescription)
         } else {
+            onAdded?()
             dismiss()
         }
     }

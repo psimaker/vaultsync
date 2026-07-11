@@ -2411,6 +2411,10 @@ final class SyncthingManager {
         folders = newFolders
     }
 
+    func _testSetPendingFolders(_ newPending: [PendingFolderInfo]) {
+        pendingFolders = newPending
+    }
+
     func _testSetEngineStartedAt(_ date: Date?) {
         engineStartedAt = date
     }

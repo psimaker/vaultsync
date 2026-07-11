@@ -6,6 +6,10 @@ All notable changes to VaultSync are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- **Clearer onboarding guidance end-to-end** ([#95](https://github.com/psimaker/vaultsync/issues/95)) — after adding a device, VaultSync now explains the missing confirmation step on your computer; the status header opens the setup checklist directly when setup is unfinished; the checklist points at "Restore Share" when the only vault offer was ignored (re-sharing from the desktop cannot help there); vaults created in Obsidian are detected when you return to the app (no restart needed); picking an iCloud Drive folder warns about placeholder files before syncing stalls; an engine start failure is now visible during onboarding; the QR scanner explains itself instead of showing a black screen when the camera cannot start; and a share that stays refused no longer re-alerts on every app start (once per reason — the share row keeps the explanation). Localized in English, German, Spanish, and Simplified Chinese.
+
 ### Fixed
 
 - **"Last sync" and the first-sync moment are now honest** ([#94](https://github.com/psimaker/vaultsync/issues/94)) — a folder only counts as synced while a device sharing it is actually connected. A fresh, still-empty vault whose peer is offline no longer shows "Up to Date" or "Last sync: a minute ago" and no longer triggers the Cloud Relay offer before a single note has arrived; it shows "Waiting for first sync" and the existing "no successful sync recorded" notice instead. Long-offline devices now correctly show the stale-sync warning where they previously saw a perpetually fresh "Last sync". Localized in English, German, Spanish, and Simplified Chinese.
