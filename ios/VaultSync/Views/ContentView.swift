@@ -213,6 +213,12 @@ struct ContentView: View {
             maybePresentRelayUpsell()
             maybePresentNotificationPrimer()
         }
+        .onChange(of: hasAnySyncedContent) { _, _ in
+            // The #94 content floor can become true in a poll that does not
+            // move lastSyncTime — re-check so the card still lands at the
+            // moment the first files actually arrive.
+            maybePresentRelayUpsell()
+        }
         .onChange(of: subscriptionManager.isRelaySubscribed) { _, _ in
             maybePresentRelayUpsell()
         }
@@ -320,14 +326,26 @@ struct ContentView: View {
     /// subscribed. Shown as a dismissable dashboard card — never by silently
     /// switching tabs out from under the user. Acting on it (either way) retires
     /// it for good; the permanent dashboard affordance stays available.
+    /// Any folder whose global index holds at least one file — proof that a
+    /// remote index (or real local content known to the cluster) exists, and
+    /// the #94 floor under the upsell for installs whose persisted last-sync
+    /// date predates the honest detector.
+    private var hasAnySyncedContent: Bool {
+        syncthingManager.folderStatuses.values.contains { $0.globalFiles > 0 }
+    }
+
     private func maybePresentRelayUpsell() {
         guard !subscriptionManager.isRelaySubscribed else {
             showRelayUpsellCard = false
             return
         }
-        guard !syncthingManager.folders.isEmpty else { return }
-        guard syncthingManager.lastSyncTime != nil else { return }
-        guard !UserDefaults.standard.bool(forKey: Self.relayUpsellShownKey) else { return }
+        guard RelayUpsellGate.shouldPresent(
+            isSubscribed: subscriptionManager.isRelaySubscribed,
+            hasSyncFolders: !syncthingManager.folders.isEmpty,
+            hasCompletedFirstSync: syncthingManager.lastSyncTime != nil,
+            hasAnySyncedContent: hasAnySyncedContent,
+            alreadyShown: UserDefaults.standard.bool(forKey: Self.relayUpsellShownKey)
+        ) else { return }
         showRelayUpsellCard = true
     }
 
@@ -1169,7 +1187,7 @@ struct ContentView: View {
 
         var subtitle: String?
         if let status {
-            subtitle = localizedState(status.state)
+            subtitle = localizedState(status.state, folderID: item.folder.id)
             if status.completionPct < 100, status.completionPct > 0 {
                 subtitle! += " " + L10n.fmt("(%d%%)", Int(status.completionPct))
             }
@@ -1235,7 +1253,7 @@ struct ContentView: View {
                             .foregroundStyle(stateColor(status?.state ?? "unknown"))
                             .font(.caption2)
                             .accessibilityHidden(true)
-                        Text(localizedState(status?.state ?? "unknown"))
+                        Text(localizedState(status?.state ?? "unknown", folderID: folder.id))
                     }
                     .accessibilityElement(children: .combine)
                 }
@@ -1478,6 +1496,17 @@ struct ContentView: View {
 
     private func troubleshootingURL(for error: SyncUserError) -> URL? {
         SyncUserError.troubleshootingURL(for: error)
+    }
+
+    /// Folder-aware variant (#94): an idle folder that has never recorded a
+    /// successful sync must not read "Up to Date" — before the first exchange
+    /// the honest label is that it is still waiting for one.
+    private func localizedState(_ state: String, folderID: String) -> String {
+        if state.lowercased() == "idle",
+           syncthingManager.lastSyncTimeByFolder[folderID] == nil {
+            return L10n.tr("Waiting for first sync")
+        }
+        return localizedState(state)
     }
 
     private func localizedState(_ state: String) -> String {

@@ -1262,7 +1262,11 @@ final class SyncthingManager {
         updateWidgetSyncMetrics(previousStatuses: previousStatuses, newStatuses: newStatuses)
         updateSyncHistory(
             newStatuses: newStatuses,
-            activeFolderIDs: Set(currentFolders.map(\.id))
+            activeFolderIDs: Set(currentFolders.map(\.id)),
+            foldersWithConnectedPeer: Self.foldersWithConnectedPeer(
+                folders: currentFolders,
+                connectedDeviceIDs: Set(devices.filter(\.connected).map(\.deviceID))
+            )
         )
         folderStatuses = newStatuses
 
@@ -1724,20 +1728,31 @@ final class SyncthingManager {
 
     private func updateSyncHistory(
         newStatuses: [String: FolderStatusInfo],
-        activeFolderIDs: Set<String>
+        activeFolderIDs: Set<String>,
+        foldersWithConnectedPeer: Set<String>
     ) {
         var didChange = false
 
         for (folderID, status) in newStatuses {
             let previousState = previousFolderStates[folderID]
+            let hasConnectedPeer = foldersWithConnectedPeer.contains(folderID)
 
-            if didTransitionToSuccessfulIdle(previousState: previousState, status: status) {
+            if Self.didTransitionToSuccessfulIdle(
+                previousState: previousState,
+                status: status,
+                hasConnectedPeer: hasConnectedPeer
+            ) {
                 if upsertLastSyncDate(folderID: folderID, date: Date()) {
                     didChange = true
                 }
             }
 
-            if shouldTreatIdleStateAsSuccess(status: status, existingDate: lastSyncTimeByFolder[folderID]),
+            if Self.shouldTreatIdleStateAsSuccess(
+                status: status,
+                stateChangedAt: parseBridgeDate(status.stateChanged),
+                existingDate: lastSyncTimeByFolder[folderID],
+                hasConnectedPeer: hasConnectedPeer
+            ),
                let changedAt = parseBridgeDate(status.stateChanged),
                upsertLastSyncDate(folderID: folderID, date: changedAt) {
                 didChange = true
@@ -1763,28 +1778,59 @@ final class SyncthingManager {
         }
     }
 
-    private func didTransitionToSuccessfulIdle(
+    /// Pure core of the "a sync just completed" rule (#94): an active-to-idle
+    /// transition with nothing left to fetch only counts as a sync while a
+    /// remote peer sharing the folder is connected. Without that evidence a
+    /// freshly accepted, still-empty folder satisfies needFiles == 0 after its
+    /// first local scan even though no remote index ever arrived — and the app
+    /// would claim success in exactly the moment a stall needs surfacing.
+    nonisolated static func didTransitionToSuccessfulIdle(
         previousState: String?,
-        status: FolderStatusInfo
+        status: FolderStatusInfo,
+        hasConnectedPeer: Bool
     ) -> Bool {
         guard let previousState else { return false }
         let wasActive = previousState == "syncing" || previousState == "scanning"
         guard wasActive, status.state == "idle" else { return false }
+        guard hasConnectedPeer else { return false }
         return status.needFiles == 0 && status.errorMessage == nil
     }
 
-    private func shouldTreatIdleStateAsSuccess(
+    /// Pure core of the idle-backfill rule (#94): same peer-evidence bar as the
+    /// transition detector. Skipping the backfill while no peer is connected
+    /// only under-records — persisted history keeps the last real sync date,
+    /// so the header degrades to the honest stale warning instead of lying.
+    nonisolated static func shouldTreatIdleStateAsSuccess(
         status: FolderStatusInfo,
-        existingDate: Date?
+        stateChangedAt: Date?,
+        existingDate: Date?,
+        hasConnectedPeer: Bool
     ) -> Bool {
         guard status.state == "idle" else { return false }
         guard status.needFiles == 0 else { return false }
         guard status.errorMessage == nil else { return false }
-        guard let changedAt = parseBridgeDate(status.stateChanged) else { return false }
+        guard hasConnectedPeer else { return false }
+        guard let changedAt = stateChangedAt else { return false }
         if let existingDate, changedAt <= existingDate {
             return false
         }
         return true
+    }
+
+    /// Folders with at least one connected remote peer — the exchange evidence
+    /// the sync-history detectors require (#94). Takes device IDs, not
+    /// DeviceInfo (whose custom Decodable init suppresses the memberwise init
+    /// tests would need). `FolderInfo.deviceIDs` already excludes this device
+    /// (bridge folders.go strips stMyID).
+    nonisolated static func foldersWithConnectedPeer(
+        folders: [FolderInfo],
+        connectedDeviceIDs: Set<String>
+    ) -> Set<String> {
+        Set(
+            folders
+                .filter { folder in folder.deviceIDs.contains { connectedDeviceIDs.contains($0) } }
+                .map(\.id)
+        )
     }
 
     @discardableResult

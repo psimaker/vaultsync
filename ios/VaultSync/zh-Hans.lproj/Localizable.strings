@@ -686,3 +686,4 @@
 "On the other device, open Syncthing → Actions → Show ID and enter or scan that ID here." = "请在另一台设备上打开 Syncthing → 操作 → 显示 ID，然后在此输入或扫描该 ID。";
 "Not a Device QR Code" = "不是设备二维码";
 "This is not a Syncthing device QR code. On the other device, open Syncthing → Actions → Show ID and scan the QR code shown there." = "这不是 Syncthing 设备二维码。请在另一台设备上打开 Syncthing → 操作 → 显示 ID，然后扫描那里显示的二维码。";
+"Waiting for first sync" = "等待首次同步";

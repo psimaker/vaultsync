@@ -686,3 +686,4 @@
 "On the other device, open Syncthing → Actions → Show ID and enter or scan that ID here." = "On the other device, open Syncthing → Actions → Show ID and enter or scan that ID here.";
 "Not a Device QR Code" = "Not a Device QR Code";
 "This is not a Syncthing device QR code. On the other device, open Syncthing → Actions → Show ID and scan the QR code shown there." = "This is not a Syncthing device QR code. On the other device, open Syncthing → Actions → Show ID and scan the QR code shown there.";
+"Waiting for first sync" = "Waiting for first sync";

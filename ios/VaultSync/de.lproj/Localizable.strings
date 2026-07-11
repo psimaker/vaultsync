@@ -686,3 +686,4 @@
 "On the other device, open Syncthing → Actions → Show ID and enter or scan that ID here." = "Öffne auf dem anderen Gerät Syncthing → Aktionen → ID anzeigen und gib diese ID hier ein oder scanne sie.";
 "Not a Device QR Code" = "Kein Geräte-QR-Code";
 "This is not a Syncthing device QR code. On the other device, open Syncthing → Actions → Show ID and scan the QR code shown there." = "Das ist kein Syncthing-Geräte-QR-Code. Öffne auf dem anderen Gerät Syncthing → Aktionen → ID anzeigen und scanne den dort gezeigten QR-Code.";
+"Waiting for first sync" = "Wartet auf die erste Synchronisierung";
