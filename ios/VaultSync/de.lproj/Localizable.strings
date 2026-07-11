@@ -673,3 +673,16 @@
 "Offer “%@” received — accepting…" = "Angebot „%@“ erhalten — wird angenommen …";
 "Offer “%@” received — connect your Obsidian folder first." = "Angebot „%@“ erhalten — verbinde zuerst deinen Obsidian-Ordner.";
 "Offer “%@” needs your attention. Tap “Finish Setup Later” below to review it on the home screen." = "Das Angebot „%@“ braucht deine Entscheidung. Tippe unten auf „Einrichtung später abschließen“, um es auf dem Startbildschirm zu prüfen.";
+
+/* Device pairing errors (#93) */
+"Invalid Device ID" = "Ungültige Geräte-ID";
+"The value you entered or scanned is not a valid Syncthing device ID." = "Der eingegebene oder gescannte Wert ist keine gültige Syncthing-Geräte-ID.";
+"Check the ID for typos, or scan the QR code shown on the other device under Syncthing → Actions → Show ID." = "Prüfe die ID auf Tippfehler oder scanne den QR-Code, den das andere Gerät unter Syncthing → Aktionen → ID anzeigen zeigt.";
+"Device Already Added" = "Gerät bereits hinzugefügt";
+"This device is already in your device list." = "Dieses Gerät ist bereits in deiner Geräteliste.";
+"No action needed — the device is already set up. If it does not connect, check that both devices are online." = "Nichts weiter nötig — das Gerät ist bereits eingerichtet. Wenn es sich nicht verbindet, prüfe, ob beide Geräte online sind.";
+"This Is Your Own Device ID" = "Das ist die ID dieses Geräts";
+"You entered or scanned this device's own ID — a device cannot add itself." = "Du hast die eigene ID dieses Geräts eingegeben oder gescannt — ein Gerät kann sich nicht selbst hinzufügen.";
+"On the other device, open Syncthing → Actions → Show ID and enter or scan that ID here." = "Öffne auf dem anderen Gerät Syncthing → Aktionen → ID anzeigen und gib diese ID hier ein oder scanne sie.";
+"Not a Device QR Code" = "Kein Geräte-QR-Code";
+"This is not a Syncthing device QR code. On the other device, open Syncthing → Actions → Show ID and scan the QR code shown there." = "Das ist kein Syncthing-Geräte-QR-Code. Öffne auf dem anderen Gerät Syncthing → Aktionen → ID anzeigen und scanne den dort gezeigten QR-Code.";

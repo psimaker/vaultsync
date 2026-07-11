@@ -673,3 +673,16 @@
 "Offer “%@” received — accepting…" = "Offer “%@” received — accepting…";
 "Offer “%@” received — connect your Obsidian folder first." = "Offer “%@” received — connect your Obsidian folder first.";
 "Offer “%@” needs your attention. Tap “Finish Setup Later” below to review it on the home screen." = "Offer “%@” needs your attention. Tap “Finish Setup Later” below to review it on the home screen.";
+
+/* Device pairing errors (#93) */
+"Invalid Device ID" = "Invalid Device ID";
+"The value you entered or scanned is not a valid Syncthing device ID." = "The value you entered or scanned is not a valid Syncthing device ID.";
+"Check the ID for typos, or scan the QR code shown on the other device under Syncthing → Actions → Show ID." = "Check the ID for typos, or scan the QR code shown on the other device under Syncthing → Actions → Show ID.";
+"Device Already Added" = "Device Already Added";
+"This device is already in your device list." = "This device is already in your device list.";
+"No action needed — the device is already set up. If it does not connect, check that both devices are online." = "No action needed — the device is already set up. If it does not connect, check that both devices are online.";
+"This Is Your Own Device ID" = "This Is Your Own Device ID";
+"You entered or scanned this device's own ID — a device cannot add itself." = "You entered or scanned this device's own ID — a device cannot add itself.";
+"On the other device, open Syncthing → Actions → Show ID and enter or scan that ID here." = "On the other device, open Syncthing → Actions → Show ID and enter or scan that ID here.";
+"Not a Device QR Code" = "Not a Device QR Code";
+"This is not a Syncthing device QR code. On the other device, open Syncthing → Actions → Show ID and scan the QR code shown there." = "This is not a Syncthing device QR code. On the other device, open Syncthing → Actions → Show ID and scan the QR code shown there.";

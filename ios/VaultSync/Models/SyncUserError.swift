@@ -93,6 +93,42 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
             )
         }
 
+        // Device-pairing errors from the bridge (go/bridge/devices.go) — must
+        // classify before the generic validation/config matchers so a mistyped
+        // or duplicate device ID gets pairing-specific guidance instead of
+        // "unexpected error — restart the app" (#93).
+        if normalized.contains("invalid device id") {
+            return SyncUserError(
+                category: .validation,
+                title: L10n.tr("Invalid Device ID"),
+                message: L10n.tr("The value you entered or scanned is not a valid Syncthing device ID."),
+                remediation: L10n.tr("Check the ID for typos, or scan the QR code shown on the other device under Syncthing → Actions → Show ID."),
+                technicalDetails: rawMessage
+            )
+        }
+
+        if normalized.contains("device already exists") {
+            return SyncUserError(
+                category: .config,
+                title: L10n.tr("Device Already Added"),
+                message: L10n.tr("This device is already in your device list."),
+                remediation: L10n.tr("No action needed — the device is already set up. If it does not connect, check that both devices are online."),
+                technicalDetails: rawMessage
+            )
+        }
+
+        // Matches "cannot add own device ID" only — the bridge's separate
+        // "cannot rename own device" must not get add-flow guidance.
+        if normalized.contains("cannot add own device") {
+            return SyncUserError(
+                category: .config,
+                title: L10n.tr("This Is Your Own Device ID"),
+                message: L10n.tr("You entered or scanned this device's own ID — a device cannot add itself."),
+                remediation: L10n.tr("On the other device, open Syncthing → Actions → Show ID and enter or scan that ID here."),
+                technicalDetails: rawMessage
+            )
+        }
+
         if isValidationError(normalized) {
             return SyncUserError(
                 category: .validation,

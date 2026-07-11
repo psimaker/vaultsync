@@ -12,6 +12,7 @@ struct AddDeviceSheet: View {
     @State private var deviceID = ""
     @State private var name = ""
     @State private var showQRScanner = false
+    @State private var showInvalidQRAlert = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -35,8 +36,19 @@ struct AddDeviceSheet: View {
             }
             .sheet(isPresented: $showQRScanner) {
                 QRScannerView { scannedCode in
-                    deviceID = scannedCode
+                    // Reject any non-Syncthing QR payload before it reaches the
+                    // bridge; a valid scan fills the field in canonical form (#93).
+                    if let canonical = SyncthingDeviceID.canonicalize(scannedCode) {
+                        deviceID = canonical
+                    } else {
+                        showInvalidQRAlert = true
+                    }
                 }
+            }
+            .alert(L10n.tr("Not a Device QR Code"), isPresented: $showInvalidQRAlert) {
+                Button("OK") { }
+            } message: {
+                Text(L10n.tr("This is not a Syncthing device QR code. On the other device, open Syncthing → Actions → Show ID and scan the QR code shown there."))
             }
             .navigationTitle("Add Device")
             .navigationBarTitleDisplayMode(.inline)

@@ -177,3 +177,62 @@ struct RescanCTAAvailabilityTests {
         #expect(manager.hasRescanableFolderErrors)
     }
 }
+
+@Suite("Device pairing error mapping (#93)")
+struct DevicePairingErrorMappingTests {
+    @Test("Invalid device ID from the bridge maps to actionable guidance, not the unexpected-error fallback")
+    func mapsInvalidDeviceID() {
+        // Exact shape the bridge produces: "invalid device ID: " + the Go
+        // parser error (go/bridge/devices.go:33, lib/protocol/deviceid.go).
+        let raw = "invalid device ID: \"NOTANID\": device ID invalid: incorrect length"
+        let error = SyncUserError.from(rawMessage: raw, fallbackTitle: L10n.tr("Could Not Add Device"))
+
+        #expect(error.category == .validation)
+        #expect(error.title == L10n.tr("Invalid Device ID"))
+        #expect(error.remediation.contains("Show ID"))
+        #expect(error.technicalDetails == raw)
+    }
+
+    @Test("Check-digit and base32 parser variants map the same way")
+    func mapsParserVariants() {
+        let variants = [
+            "invalid device ID: \"P56IOI7-MZJNU2Y-IQGDREY-DM2MGTI-MGL3BXN-PQ6W5BM-TBBZ4TJ-XZWICQ3\": check digit incorrect",
+            "invalid device ID: illegal base32 data at input byte 3",
+        ]
+        for raw in variants {
+            let error = SyncUserError.from(rawMessage: raw)
+            #expect(error.category == .validation)
+            #expect(error.title == L10n.tr("Invalid Device ID"))
+        }
+    }
+
+    @Test("Duplicate device maps to already-added guidance, not the generic configuration error")
+    func mapsDeviceAlreadyExists() {
+        let error = SyncUserError.from(rawMessage: "device already exists")
+
+        #expect(error.category == .config)
+        #expect(error.title == L10n.tr("Device Already Added"))
+        #expect(error.title != L10n.tr("Configuration Error"))
+    }
+
+    @Test("Own device ID maps to own-device guidance")
+    func mapsOwnDeviceID() {
+        let error = SyncUserError.from(rawMessage: "cannot add own device ID")
+
+        #expect(error.category == .config)
+        #expect(error.title == L10n.tr("This Is Your Own Device ID"))
+        #expect(error.remediation.contains("Show ID"))
+    }
+
+    @Test("No pairing error falls through to the restart-the-app fallback")
+    func pairingErrorsNeverUnknown() {
+        let bridgeErrors = [
+            "invalid device ID: \"foo\": device ID invalid: incorrect length",
+            "device already exists",
+            "cannot add own device ID",
+        ]
+        for raw in bridgeErrors {
+            #expect(SyncUserError.from(rawMessage: raw).category != .unknown)
+        }
+    }
+}

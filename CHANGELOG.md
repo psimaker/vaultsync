@@ -8,6 +8,7 @@ All notable changes to VaultSync are documented here.
 
 ### Fixed
 
+- **A mistyped or mis-scanned device ID now gets clear guidance instead of "unexpected error — restart the app"** ([#93](https://github.com/psimaker/vaultsync/issues/93)) — during pairing, an invalid device ID, an already-added device, and scanning this device's own ID each explain what happened and how to fix it (check the ID, or use Syncthing → Actions → Show ID on the other device). The QR scanner also rejects non-Syncthing QR codes immediately instead of failing later with a generic error. Localized in English, German, Spanish, and Simplified Chinese.
 - **Your first shared vault is now accepted while the setup screen is still open** ([#92](https://github.com/psimaker/vaultsync/issues/92)) — setup step 3 promised "VaultSync accepts it automatically", but the accept logic only ran on the home screen, which isn't active during setup: the incoming share sat invisible until "Finish Setup Later" was tapped. The same accept pass — with the same safety gates (settled vault locations, Obsidian access, never merging into a folder that already has content without your explicit decision) — now also runs during setup, and step 3 shows the offer's live status, including when it needs your decision on the home screen. Localized in English, German, Spanish, and Simplified Chinese.
 
 ### Security

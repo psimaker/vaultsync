@@ -673,3 +673,16 @@
 "Offer “%@” received — accepting…" = "已收到“%@”的共享邀请——正在接受…";
 "Offer “%@” received — connect your Obsidian folder first." = "已收到“%@”的共享邀请——请先连接你的 Obsidian 文件夹。";
 "Offer “%@” needs your attention. Tap “Finish Setup Later” below to review it on the home screen." = "共享邀请“%@”需要你处理。点按下方“稍后完成设置”，在主屏幕上查看。";
+
+/* Device pairing errors (#93) */
+"Invalid Device ID" = "设备 ID 无效";
+"The value you entered or scanned is not a valid Syncthing device ID." = "输入或扫描的内容不是有效的 Syncthing 设备 ID。";
+"Check the ID for typos, or scan the QR code shown on the other device under Syncthing → Actions → Show ID." = "请检查 ID 是否有输入错误，或扫描另一台设备在 Syncthing → 操作 → 显示 ID 中显示的二维码。";
+"Device Already Added" = "设备已添加";
+"This device is already in your device list." = "此设备已在你的设备列表中。";
+"No action needed — the device is already set up. If it does not connect, check that both devices are online." = "无需任何操作——设备已设置完成。如果无法连接，请检查两台设备是否都在线。";
+"This Is Your Own Device ID" = "这是本机自己的设备 ID";
+"You entered or scanned this device's own ID — a device cannot add itself." = "你输入或扫描的是本机自己的 ID——设备无法添加自己。";
+"On the other device, open Syncthing → Actions → Show ID and enter or scan that ID here." = "请在另一台设备上打开 Syncthing → 操作 → 显示 ID，然后在此输入或扫描该 ID。";
+"Not a Device QR Code" = "不是设备二维码";
+"This is not a Syncthing device QR code. On the other device, open Syncthing → Actions → Show ID and scan the QR code shown there." = "这不是 Syncthing 设备二维码。请在另一台设备上打开 Syncthing → 操作 → 显示 ID，然后扫描那里显示的二维码。";
