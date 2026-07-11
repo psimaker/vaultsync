@@ -6,11 +6,13 @@ on:
     paths-ignore:
       - "**/*.md"
       - "docs/**"
+  # No paths-ignore here: the govulncheck jobs are merge-blocking required
+  # checks, and a required check whose workflow never starts on a docs-only PR
+  # stays "Expected" forever, blocking the PR (the ci.yml:17-22 trap, #81).
+  # The full Security run costs well under two minutes; the push trigger above
+  # keeps its filter because required checks only gate the PR path.
   pull_request:
     branches: [main]
-    paths-ignore:
-      - "**/*.md"
-      - "docs/**"
   schedule:
     # Monday 06:00 UTC — surface CVEs disclosed against the vendored Syncthing
     # fork or the alpine base even when the repo is quiet between releases.
