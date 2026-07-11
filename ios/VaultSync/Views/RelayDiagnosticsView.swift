@@ -394,7 +394,7 @@ struct RelayDiagnosticsView: View {
         }
 
         if subscriptionManager.isRelaySubscribed, subscriptionManager.lastRelayTriggerReceivedAt == nil {
-            hints.append(L10n.tr("No wake-up has been received yet. Check that the vaultsync-notify helper is running on your server and can reach relay.vaultsync.eu."))
+            hints.append(L10n.tr("No wake-up has been received yet. Check that the vaultsync-notify helper is running on your server and can reach relay.vaultsync.eu — running vaultsync-notify --doctor on the server shows exactly which step fails."))
         }
 
         if lowPowerModeEnabled {

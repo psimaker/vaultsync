@@ -9,13 +9,16 @@ Find your symptom, jump to the fix. After each fix, retry from the app to confir
 | "Relay Unreachable", health check fails | [Relay Unreachable](#relay-unreachable) |
 | Stuck on "Confirm your first share" | [No Pending Shares Appear](#no-pending-shares-appear) |
 | Subscribed, but no wake-ups arrive | [APNs Not Registered](#apns-not-registered) |
+| Ran the server installer, app still says "Not active yet" | [Relay quick triage](#relay-quick-triage) |
 | Vault list empty, "folder not connected" | [Obsidian Folder Not Found](#obsidian-folder-not-found) |
 | "Vault Folder Was Moved or Deleted" on a vault | [Vault Folder Was Moved or Deleted](#vault-folder-was-moved-or-deleted) |
 | "Cannot access this folder" / reconnect needed | [Bookmark Access Expired](#bookmark-access-expired) |
 | Syncs in foreground but not when closed | [Background Sync Not Working](#background-sync-not-working) |
 | "Required device disconnected" | [Required Device Disconnected](#required-device-disconnected) |
 
-**Relay quick triage** — on your homeserver. The one-line installer sets the helper up as a `docker run` container (Linux with Docker), a systemd service (Linux without Docker), or a launchd agent (macOS); the Compose stack is a separate topology. Use the block that matches your install:
+## Relay quick triage
+
+On your homeserver. The one-line installer sets the helper up as a `docker run` container (Linux with Docker), a systemd service (Linux without Docker), or a launchd agent (macOS); the Compose stack is a separate topology. Use the block that matches your install:
 
 *Docker (one-line installer):*
 

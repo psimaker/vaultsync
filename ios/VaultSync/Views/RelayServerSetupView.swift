@@ -12,6 +12,7 @@ struct RelayServerSetupView: View {
 
     @State private var installerCopied = false
     @State private var commandCopied = false
+    @State private var doctorCopied = false
 
     /// The primary setup path: a one-line installer that finds config.xml on the
     /// server, runs the helper as the uid:gid owning it (the #1 setup failure),
@@ -20,6 +21,14 @@ struct RelayServerSetupView: View {
     /// runtime — so it is a stable constant, short enough to type by hand when
     /// copy-paste can't reach the server shell.
     private static let installerCommand = "curl -fsSL https://vaultsync.eu/notify.sh | sh"
+
+    /// Escalation path (#91) for "installer ran, but no wake-up ever arrived":
+    /// the helper's built-in self-check. Shown as the Docker-flavor command (the
+    /// installer's primary choice, container name must match `dockerCommand`);
+    /// systemd/launchd installs are covered by the section footer (re-run the
+    /// installer — it ends with the same check) and the troubleshooting link.
+    /// Internal, not private, so the regression test can pin it.
+    static let doctorCommand = "docker exec vaultsync-notify vaultsync-notify --doctor"
 
     /// Self-contained command for users who prefer to run the container
     /// themselves. The relay URL is pre-filled and there is no API key to copy —
@@ -86,6 +95,28 @@ struct RelayServerSetupView: View {
                 }
             } footer: {
                 Text(L10n.tr("Prefer Docker Compose, a NAS package, or a plain binary? The full guide covers them all."))
+            }
+
+            // Escalation path (#91): the installer footer above only tells the
+            // success story. Users who ran it and saw nothing flip in the app
+            // previously had no next step anywhere in the app. Hidden once
+            // delivery is confirmed — the self-check is noise then.
+            if !isDelivering {
+                Section {
+                    Text(L10n.tr("On your server, run the helper’s built-in self-check. It tests every link in the chain — config, Syncthing access, relay connection, wake-up trigger — and prints exactly which step fails:"))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    commandBox(Self.doctorCommand, accessibilityLabelKey: "Self-check command")
+                    copyButton(for: Self.doctorCommand, copied: $doctorCopied)
+                    if let url = SyncUserError.troubleshootingURL(anchor: "relay-quick-triage") {
+                        ExternalLinkButton(titleKey: "Open full relay troubleshooting", url: url)
+                            .font(.subheadline)
+                    }
+                } header: {
+                    Text(L10n.tr("Already ran it and nothing happened?"))
+                } footer: {
+                    Text(L10n.tr("Installed without Docker, or not sure which flavor you have? Just run the installer again — it is safe to repeat and finishes with the same self-check. The troubleshooting guide has the exact --doctor command for every install flavor."))
+                }
             }
         }
         .navigationTitle(L10n.tr("Set Up Your Server"))

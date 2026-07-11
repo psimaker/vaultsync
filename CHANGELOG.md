@@ -6,6 +6,10 @@ All notable changes to VaultSync are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- **The server-setup screen now has a "nothing happened" path** ([#91](https://github.com/psimaker/vaultsync/issues/91)) — if you ran the one-line installer but Cloud Relay never flipped to active, the setup screen used to end at the success story. A new "Already ran it and nothing happened?" section surfaces the helper's built-in `--doctor` self-check with a copyable command and links straight to the relay quick-triage guide; the relay diagnostics hint mentions the self-check too. Localized in English, German, Spanish, and Simplified Chinese.
+
 ### Changed
 
 - **Clearer onboarding guidance end-to-end** ([#95](https://github.com/psimaker/vaultsync/issues/95)) — after adding a device, VaultSync now explains the missing confirmation step on your computer; the status header opens the setup checklist directly when setup is unfinished; the checklist points at "Restore Share" when the only vault offer was ignored (re-sharing from the desktop cannot help there); vaults created in Obsidian are detected when you return to the app (no restart needed); picking an iCloud Drive folder warns about placeholder files before syncing stalls; an engine start failure is now visible during onboarding; the QR scanner explains itself instead of showing a black screen when the camera cannot start; and a share that stays refused no longer re-alerts on every app start (once per reason — the share row keeps the explanation). Localized in English, German, Spanish, and Simplified Chinese.

@@ -154,7 +154,7 @@
 "No immediate relay problems detected." = "目前未检测到 Relay 问题。";
 "No relay errors recorded." = "未记录到 Relay 错误。";
 "No Vaults Yet" = "还没有 Vault";
-"No wake-up has been received yet. Check that the vaultsync-notify helper is running on your server and can reach relay.vaultsync.eu." = "尚未收到唤醒信号。请确认 vaultsync-notify 助手正在你的服务器上运行，并且能够访问 relay.vaultsync.eu。";
+"No wake-up has been received yet. Check that the vaultsync-notify helper is running on your server and can reach relay.vaultsync.eu — running vaultsync-notify --doctor on the server shows exactly which step fails." = "尚未收到唤醒信号。请确认 vaultsync-notify 助手正在你的服务器上运行，并且能够访问 relay.vaultsync.eu——在服务器上运行 vaultsync-notify --doctor 可准确显示哪一步失败。";
 "No successful sync has been recorded for your vaults yet." = "你的 Vault 尚未记录到成功同步。";
 "No vaults found" = "未找到 Vault";
 "Not Configured" = "未配置";
@@ -697,3 +697,9 @@
 "Camera Unavailable" = "相机不可用";
 "The camera could not be started on this device. Enter the Device ID manually instead — in Syncthing on your computer, choose Actions → Show ID." = "无法在此设备上启动相机。请改为手动输入设备 ID——在电脑上的 Syncthing 中选择“操作” → “显示 ID”。";
 "Enter Device ID Manually" = "手动输入设备 ID";
+
+/* Relay setup --doctor escalation (#91) */
+"Already ran it and nothing happened?" = "已经运行过但没有任何反应？";
+"On your server, run the helper’s built-in self-check. It tests every link in the chain — config, Syncthing access, relay connection, wake-up trigger — and prints exactly which step fails:" = "在你的服务器上运行助手内置的自检。它会测试链路中的每个环节——配置、Syncthing 访问、中继连接、唤醒触发——并准确指出哪一步失败：";
+"Installed without Docker, or not sure which flavor you have? Just run the installer again — it is safe to repeat and finishes with the same self-check. The troubleshooting guide has the exact --doctor command for every install flavor." = "没有用 Docker 安装，或不确定安装方式？直接再运行一次安装脚本——重复运行是安全的，并且会以同样的自检结束。故障排查指南中列有每种安装方式对应的 --doctor 命令。";
+"Self-check command" = "自检命令";

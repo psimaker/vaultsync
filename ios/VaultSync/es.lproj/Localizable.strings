@@ -154,7 +154,7 @@
 "No immediate relay problems detected." = "No se detectaron problemas inmediatos del relay.";
 "No relay errors recorded." = "No se registraron errores del relay.";
 "No Vaults Yet" = "Aún no hay Vaults";
-"No wake-up has been received yet. Check that the vaultsync-notify helper is running on your server and can reach relay.vaultsync.eu." = "Aún no ha llegado ninguna señal de activación. Comprueba que el asistente vaultsync-notify se esté ejecutando en tu servidor y pueda acceder a relay.vaultsync.eu.";
+"No wake-up has been received yet. Check that the vaultsync-notify helper is running on your server and can reach relay.vaultsync.eu — running vaultsync-notify --doctor on the server shows exactly which step fails." = "Aún no ha llegado ninguna señal de activación. Comprueba que el asistente vaultsync-notify se esté ejecutando en tu servidor y pueda acceder a relay.vaultsync.eu — ejecutar vaultsync-notify --doctor en el servidor muestra exactamente qué paso falla.";
 "No successful sync has been recorded for your vaults yet." = "Aún no se ha registrado ninguna sincronización correcta para tus Vaults.";
 "No vaults found" = "No se encontraron Vaults";
 "Not Configured" = "No configurado";
@@ -697,3 +697,9 @@
 "Camera Unavailable" = "Cámara no disponible";
 "The camera could not be started on this device. Enter the Device ID manually instead — in Syncthing on your computer, choose Actions → Show ID." = "No se pudo iniciar la cámara en este dispositivo. Introduce el ID del dispositivo manualmente — en Syncthing en tu ordenador, elige Acciones → Mostrar ID.";
 "Enter Device ID Manually" = "Introducir ID del dispositivo manualmente";
+
+/* Relay setup --doctor escalation (#91) */
+"Already ran it and nothing happened?" = "¿Ya lo ejecutaste y no pasó nada?";
+"On your server, run the helper’s built-in self-check. It tests every link in the chain — config, Syncthing access, relay connection, wake-up trigger — and prints exactly which step fails:" = "En tu servidor, ejecuta la autocomprobación integrada del asistente. Prueba cada eslabón de la cadena — configuración, acceso a Syncthing, conexión con el relay, señal de activación — e indica exactamente qué paso falla:";
+"Installed without Docker, or not sure which flavor you have? Just run the installer again — it is safe to repeat and finishes with the same self-check. The troubleshooting guide has the exact --doctor command for every install flavor." = "¿Lo instalaste sin Docker o no sabes qué variante tienes? Vuelve a ejecutar el instalador — es seguro repetirlo y termina con la misma autocomprobación. La guía de solución de problemas incluye el comando --doctor exacto para cada variante de instalación.";
+"Self-check command" = "Comando de autocomprobación";

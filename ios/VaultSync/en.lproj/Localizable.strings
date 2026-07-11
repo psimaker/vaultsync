@@ -154,7 +154,7 @@
 "No immediate relay problems detected." = "No immediate relay problems detected.";
 "No relay errors recorded." = "No relay errors recorded.";
 "No Vaults Yet" = "No Vaults Yet";
-"No wake-up has been received yet. Check that the vaultsync-notify helper is running on your server and can reach relay.vaultsync.eu." = "No wake-up has been received yet. Check that the vaultsync-notify helper is running on your server and can reach relay.vaultsync.eu.";
+"No wake-up has been received yet. Check that the vaultsync-notify helper is running on your server and can reach relay.vaultsync.eu — running vaultsync-notify --doctor on the server shows exactly which step fails." = "No wake-up has been received yet. Check that the vaultsync-notify helper is running on your server and can reach relay.vaultsync.eu — running vaultsync-notify --doctor on the server shows exactly which step fails.";
 "No successful sync has been recorded for your vaults yet." = "No successful sync has been recorded for your vaults yet.";
 "No vaults found" = "No vaults found";
 "Not Configured" = "Not Configured";
@@ -697,3 +697,9 @@
 "Camera Unavailable" = "Camera Unavailable";
 "The camera could not be started on this device. Enter the Device ID manually instead — in Syncthing on your computer, choose Actions → Show ID." = "The camera could not be started on this device. Enter the Device ID manually instead — in Syncthing on your computer, choose Actions → Show ID.";
 "Enter Device ID Manually" = "Enter Device ID Manually";
+
+/* Relay setup --doctor escalation (#91) */
+"Already ran it and nothing happened?" = "Already ran it and nothing happened?";
+"On your server, run the helper’s built-in self-check. It tests every link in the chain — config, Syncthing access, relay connection, wake-up trigger — and prints exactly which step fails:" = "On your server, run the helper’s built-in self-check. It tests every link in the chain — config, Syncthing access, relay connection, wake-up trigger — and prints exactly which step fails:";
+"Installed without Docker, or not sure which flavor you have? Just run the installer again — it is safe to repeat and finishes with the same self-check. The troubleshooting guide has the exact --doctor command for every install flavor." = "Installed without Docker, or not sure which flavor you have? Just run the installer again — it is safe to repeat and finishes with the same self-check. The troubleshooting guide has the exact --doctor command for every install flavor.";
+"Self-check command" = "Self-check command";
