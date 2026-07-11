@@ -1,7 +1,10 @@
 FROM golang:1.26-alpine AS builder
+# Stamped by docker.yml (release tag or dev-<sha>); --version prints it and the
+# installer shows old -> new on upgrades (#87).
+ARG VERSION=dev
 WORKDIR /app
 COPY go.mod *.go ./
-RUN CGO_ENABLED=0 go build -o /vaultsync-notify
+RUN CGO_ENABLED=0 go build -ldflags="-X main.version=${VERSION}" -o /vaultsync-notify
 
 FROM alpine:3.24
 # Upgrade base packages: security fixes often land in the apk repos before

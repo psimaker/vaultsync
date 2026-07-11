@@ -63,14 +63,23 @@ echo "curl \$*" >>"$VIOLATIONS"
 exit 1
 EOF
 
-# Pure tripwires: --dry-run must never escalate or touch service state.
-for tool in sudo systemctl; do
-	cat >"$SANDBOX/bin/$tool" <<EOF
+# Tripwire with two read-only exceptions: the #87 cross-flavor guard probes
+# is-enabled/is-active (answered "no such unit"); anything else under
+# --dry-run must only be printed, never executed.
+cat >"$SANDBOX/bin/systemctl" <<EOF
 #!/bin/sh
-echo "$tool \$*" >>"$VIOLATIONS"
+case "\$1" in
+	is-enabled | is-active) exit 4 ;;
+	*) echo "systemctl \$*" >>"$VIOLATIONS"; exit 1 ;;
+esac
+EOF
+
+# Pure tripwire: --dry-run must never escalate.
+cat >"$SANDBOX/bin/sudo" <<EOF
+#!/bin/sh
+echo "sudo \$*" >>"$VIOLATIONS"
 exit 1
 EOF
-done
 chmod 755 "$SANDBOX/bin/docker" "$SANDBOX/bin/curl" "$SANDBOX/bin/sudo" "$SANDBOX/bin/systemctl"
 
 snapshot() {
@@ -104,7 +113,11 @@ grep -q 'would run: docker run -d --name vaultsync-notify' "$OUT_DOCKER" \
 	|| fail "docker mode: start command not printed"
 grep "would run: docker run -d" "$OUT_DOCKER" | grep -q -- "-u $EXPECTED_OWNER " \
 	|| fail "docker mode: config owner $EXPECTED_OWNER missing from the printed docker run command"
-pass "docker mode: dry run clean, owner $EXPECTED_OWNER in the start command"
+# Re-run = upgrade (#87): without an explicit pull, docker run reuses the
+# local :latest forever and a re-run silently keeps the old helper.
+grep -q 'would run: docker pull ' "$OUT_DOCKER" \
+	|| fail "docker mode: no docker pull before start — a re-run would keep the old image (#87)"
+pass "docker mode: dry run clean, owner $EXPECTED_OWNER in the start command, pull before start"
 
 # --- Run B: binary flavor ------------------------------------------------------
 
@@ -134,7 +147,11 @@ pass "binary mode: runtime asset name is $EXPECTED_ASSET"
 if [ "$GOOS" = linux ] && [ -d /run/systemd/system ]; then
 	grep -q "User=$(id -u)\$" "$OUT_BINARY" || fail "systemd unit: User= line missing config owner uid"
 	grep -q "Group=$(id -g)\$" "$OUT_BINARY" || fail "systemd unit: Group= line missing config owner gid"
-	pass "systemd unit: runs as config owner $EXPECTED_OWNER"
+	# Re-run = upgrade (#87): enable --now does NOT restart an already-active
+	# unit, so the old process would keep running after a binary swap.
+	grep -q 'systemctl restart vaultsync-notify' "$OUT_BINARY" \
+		|| fail "systemd: no restart after enable — a re-run would keep the old process (#87)"
+	pass "systemd unit: runs as config owner $EXPECTED_OWNER, restart on re-run"
 else
 	pass "systemd unit render skipped (no systemd on this host)"
 fi

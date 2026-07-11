@@ -166,6 +166,37 @@ owner_of() {
 	stat -f '%u:%g' "$path" 2>/dev/null
 }
 
+# --- Cross-flavor guard (#87) --------------------------------------------------
+
+# A helper installed under the OTHER flavor keeps running in parallel with the
+# one being (re)installed — duplicate helpers and "fixed but still happening"
+# reports. Never removed automatically: explain and stop, the operator acts.
+
+guard_against_systemd_flavor() {
+	command -v systemctl >/dev/null 2>&1 || return 0
+	[ -d /run/systemd/system ] || return 0
+	if systemctl is-enabled vaultsync-notify >/dev/null 2>&1 \
+		|| systemctl is-active --quiet vaultsync-notify 2>/dev/null; then
+		fail "A systemd install of the helper already exists and would keep running in
+  parallel with the Docker container. Remove it first, then re-run this installer:
+      sudo systemctl disable --now vaultsync-notify
+      sudo rm /etc/systemd/system/vaultsync-notify.service
+      sudo systemctl daemon-reload"
+	fi
+}
+
+guard_against_docker_flavor() {
+	if resolve_docker; then
+		if $DOCKER ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$CONTAINER_NAME"; then
+			fail "A Docker install of the helper already exists and would keep running in
+  parallel with the systemd service. Remove it first, then re-run this installer:
+      $DOCKER rm -f $CONTAINER_NAME"
+		fi
+	elif command -v docker >/dev/null 2>&1; then
+		warn "Docker is installed but its daemon is unreachable, so an existing $CONTAINER_NAME container cannot be ruled out. If the helper ever ran via Docker on this machine, remove it once Docker is back: docker rm -f $CONTAINER_NAME"
+	fi
+}
+
 # --- 3a. Docker path ---------------------------------------------------------
 
 resolve_docker() {
@@ -184,6 +215,26 @@ resolve_docker() {
 install_docker() {
 	config_dir=$(dirname -- "$CONFIG_PATH")
 	config_name=$(basename -- "$CONFIG_PATH")
+
+	guard_against_systemd_flavor
+
+	# A re-run must actually upgrade: `docker run` reuses the local :latest
+	# forever — only an explicit pull re-resolves it (#87).
+	if [ "$DRY_RUN" = 1 ]; then
+		info "[dry-run] would run: $DOCKER pull $IMAGE"
+	else
+		old_image_id=$($DOCKER image inspect -f '{{.Id}}' "$IMAGE" 2>/dev/null) || old_image_id=""
+		if $DOCKER pull "$IMAGE"; then
+			new_image_id=$($DOCKER image inspect -f '{{.Id}}' "$IMAGE" 2>/dev/null) || new_image_id=""
+			if [ -n "$old_image_id" ] && [ "$old_image_id" != "$new_image_id" ]; then
+				info "Helper image updated ($(printf '%.19s' "$old_image_id")… -> $(printf '%.19s' "$new_image_id")…)."
+			fi
+		elif [ -n "$old_image_id" ]; then
+			warn "Could not pull $IMAGE — continuing with the LOCAL image, which may be outdated."
+		else
+			fail "Could not pull $IMAGE and no local copy exists. Check network/registry access and re-run this installer."
+		fi
+	fi
 
 	if $DOCKER ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$CONTAINER_NAME"; then
 		info "Replacing existing $CONTAINER_NAME container (it keeps no state)."
@@ -257,6 +308,15 @@ download_binary() {
 	dest="$3"
 	base="https://github.com/$REPO/releases/download/$tag"
 
+	# Make the upgrade visible (#87). Best effort: binaries older than the
+	# --version flag print nothing and the line is simply skipped.
+	if [ -x "$dest" ]; then
+		old_version=$("$dest" --version 2>/dev/null) || old_version=""
+		if [ -n "$old_version" ]; then
+			info "Currently installed: $old_version — installing ${tag#notify-v}."
+		fi
+	fi
+
 	if [ "$DRY_RUN" = 1 ]; then
 		info "[dry-run] would download: $base/$asset -> $dest (and verify against $base/SHA256SUMS)"
 		return 0
@@ -308,6 +368,7 @@ run_doctor_binary() {
 install_systemd() {
 	bin="/usr/local/bin/vaultsync-notify"
 	unit="/etc/systemd/system/vaultsync-notify.service"
+	guard_against_docker_flavor
 	need_root || fail "Installing the systemd service needs root. Re-run with sudo, or use Docker."
 
 	download_binary "$ASSET" "$TAG" "$bin"
@@ -336,13 +397,17 @@ WantedBy=multi-user.target"
 	if [ "$DRY_RUN" = 1 ]; then
 		info "[dry-run] would write $unit:"
 		printf '%s\n' "$unit_content" | sed 's/^/[dry-run]   /'
-		info "[dry-run] would run: $SUDO systemctl daemon-reload && $SUDO systemctl enable --now vaultsync-notify"
+		info "[dry-run] would run: $SUDO systemctl daemon-reload && $SUDO systemctl enable vaultsync-notify && $SUDO systemctl restart vaultsync-notify"
 		return 0
 	fi
 
 	printf '%s\n' "$unit_content" | $SUDO tee "$unit" >/dev/null
 	$SUDO systemctl daemon-reload
-	$SUDO systemctl enable --now vaultsync-notify
+	$SUDO systemctl enable vaultsync-notify
+	# restart, not `enable --now`: --now leaves an already-running old process
+	# in place after the binary swap — the silent-no-upgrade case of #87.
+	# restart also starts a currently-stopped unit.
+	$SUDO systemctl restart vaultsync-notify
 
 	sleep 2
 	if ! $SUDO systemctl is-active --quiet vaultsync-notify; then

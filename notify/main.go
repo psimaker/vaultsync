@@ -48,13 +48,30 @@ const (
 	modeRun appMode = iota
 	modeDoctor
 	modeHealthcheck
+	modeVersion
 )
+
+// version is stamped at build time via -ldflags "-X main.version=x.y.z" (the
+// docker.yml release loop and the Dockerfile); local builds print "dev". The
+// installer reads it to show old -> new on upgrades (#87).
+var version = "dev"
+
+func versionString() string {
+	return "vaultsync-notify " + version
+}
 
 func main() {
 	mode, err := parseMode()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
+	}
+
+	// Before loadConfig on purpose: --version must work on a box with no
+	// RELAY_URL/Syncthing config at all (#87).
+	if mode == modeVersion {
+		fmt.Println(versionString())
+		return
 	}
 
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
@@ -107,12 +124,16 @@ func main() {
 func parseMode() (appMode, error) {
 	doctor := flag.Bool("doctor", false, "run connectivity checks and exit")
 	healthcheck := flag.Bool("healthcheck", false, "run readiness checks and exit")
+	showVersion := flag.Bool("version", false, "print the helper version and exit")
 	flag.Parse()
 
 	if *doctor && *healthcheck {
 		return modeRun, fmt.Errorf("--doctor and --healthcheck cannot be used together")
 	}
 
+	if *showVersion {
+		return modeVersion, nil
+	}
 	if *doctor {
 		return modeDoctor, nil
 	}

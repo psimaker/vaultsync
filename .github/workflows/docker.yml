@@ -60,6 +60,17 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=match,pattern=notify-v(.*),group=1
 
+      # Version stamp for --version (#87): the release tag's version, or
+      # dev-<sha> for :latest builds from main.
+      - name: Compute helper version
+        id: ver
+        run: |
+          ref="${GITHUB_REF_NAME}"
+          case "$ref" in
+            notify-v*) echo "version=${ref#notify-v}" >> "$GITHUB_OUTPUT" ;;
+            *) echo "version=dev-$(printf '%.12s' "$GITHUB_SHA")" >> "$GITHUB_OUTPUT" ;;
+          esac
+
       - uses: docker/build-push-action@v7
         id: build
         with:
@@ -68,6 +79,8 @@ jobs:
           platforms: linux/amd64,linux/arm64 # pure CGO_ENABLED=0 Go, arm64 self-host is a real target
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.ver.outputs.version }}
           provenance: mode=max
           sbom: true
 
@@ -113,11 +126,13 @@ jobs:
         run: |
           set -eu
           mkdir -p dist
+          version="${GITHUB_REF_NAME#notify-v}"
           for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
             export GOOS="${target%/*}" GOARCH="${target#*/}"
             out="dist/vaultsync-notify_${GOOS}_${GOARCH}"
             [ "$GOOS" = windows ] && out="$out.exe"
-            CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o "$out" .
+            # -X main.version: --version output, shown by install.sh on upgrades (#87)
+            CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${version}" -o "$out" .
           done
           (cd dist && sha256sum -- * > SHA256SUMS)
 

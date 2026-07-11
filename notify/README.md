@@ -129,6 +129,8 @@ Validates: Syncthing API reachable · API key valid · Device ID readable · rel
 
 **Runtime healthcheck** — the image's `HEALTHCHECK` runs `vaultsync-notify --healthcheck`, validating real readiness (Syncthing API, credentials, Device ID, relay health), not just process liveness.
 
+**Version** — `vaultsync-notify --version` prints the installed helper version (needs no configuration). The installer shows old → new on upgrades; re-running the one-line installer is the supported update path — it pulls the latest image (Docker) or replaces the binary and restarts the service (systemd/launchd).
+
 ---
 
 ## 🔧 Troubleshooting

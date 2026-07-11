@@ -1205,3 +1205,14 @@ func TestMarkTriggeredCopiesPendingMarkers(t *testing.T) {
 		t.Fatalf("vault-b marker = %q, want updated marker", got)
 	}
 }
+
+// --- --version (#87) ---------------------------------------------------------
+
+func TestVersionStringCarriesBuildStamp_Issue87(t *testing.T) {
+	orig := version
+	defer func() { version = orig }()
+	version = "9.9.9-test"
+	if got := versionString(); got != "vaultsync-notify 9.9.9-test" {
+		t.Fatalf("versionString() = %q, want the ldflags-stamped version in installer-readable form", got)
+	}
+}
