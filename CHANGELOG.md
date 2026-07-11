@@ -6,6 +6,10 @@ All notable changes to VaultSync are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Your first shared vault is now accepted while the setup screen is still open** ([#92](https://github.com/psimaker/vaultsync/issues/92)) — setup step 3 promised "VaultSync accepts it automatically", but the accept logic only ran on the home screen, which isn't active during setup: the incoming share sat invisible until "Finish Setup Later" was tapped. The same accept pass — with the same safety gates (settled vault locations, Obsidian access, never merging into a folder that already has content without your explicit decision) — now also runs during setup, and step 3 shows the offer's live status, including when it needs your decision on the home screen. Localized in English, German, Spanish, and Simplified Chinese.
+
 ### Security
 
 - **Updated the sync engine's cryptography library and the Go runtime** — `golang.org/x/crypto` 0.51.0 → 0.52.0 ([#80](https://github.com/psimaker/vaultsync/pull/80), resolves all open dependency alerts; the affected SSH code paths are not used by VaultSync) and Go 1.26.4 → 1.26.5, which fixes a publicly disclosed TLS issue ([GO-2026-5856](https://pkg.go.dev/vuln/GO-2026-5856)) in the standard library that the device-to-device sync connections do reach. The self-hosted notify helper picks up the same Go fix with its next release.

@@ -5,6 +5,7 @@ struct ContentView: View {
     var syncthingManager: SyncthingManager
     var vaultManager: VaultManager
     var subscriptionManager: SubscriptionManager
+    var shareAccept: ShareAcceptCoordinator
     @State private var showAddDevice = false
     @State private var showSettings = false
     @State private var showObsidianPicker = false
@@ -15,12 +16,9 @@ struct ContentView: View {
     /// it is not presented under the "Error" title.
     @State private var infoMessage: String?
     @State private var showInfoAlert = false
-    @State private var pendingShareFailures: [String: SyncUserError] = [:]
-    @State private var pendingShareInFlight: Set<String> = []
     @State private var shareTargetPickerFolder: SyncthingManager.PendingFolderInfo?
     @State private var pendingFilterSheetFolder: SyncthingManager.FolderInfo?
     @State private var vaultPendingRemoval: VaultRemovalTarget?
-    @State private var pendingMergeConfirmation: MergeConfirmationRequest?
     @State private var showRelayUpsellCard = false
     @State private var showNotificationPrimerCard = false
     #if DEBUG
@@ -33,16 +31,6 @@ struct ContentView: View {
     private struct VaultRemovalTarget: Identifiable {
         let id: String
         let label: String
-    }
-
-    /// A share whose label-default target already contains files, waiting for
-    /// the user's explicit merge decision (#54). Drives the merge confirmation
-    /// dialog; confirming re-runs the accept with `mergeConfirmed`, which
-    /// re-validates everything at confirm time.
-    private struct MergeConfirmationRequest: Identifiable {
-        let folder: SyncthingManager.PendingFolderInfo
-        let targetName: String
-        var id: String { folder.id }
     }
 
     private static let relayUpsellShownKey = "relay-upsell-shown"
@@ -128,7 +116,7 @@ struct ContentView: View {
                             // root (e.g. the root was itself a vault, #45
                             // follow-up) may succeed under the new one — clear
                             // the failures so the retry pass attempts it.
-                            pendingShareFailures.removeAll()
+                            shareAccept.clearRecordedFailures()
                             if let advisory = vaultManager.selectionAdvisory {
                                 infoMessage = advisory
                                 showInfoAlert = true
@@ -149,7 +137,7 @@ struct ContentView: View {
                             // event, so the standing onChange trigger stays
                             // silent — run the accept pass explicitly, on
                             // settled paths (#53).
-                            autoAcceptPendingShares(syncthingManager.pendingFolders)
+                            shareAccept.runAutomaticPass()
                         }
                     ) {
                         alertMessage = mappedError(err, fallbackTitle: L10n.tr("Obsidian Folder Connection Failed")).userVisibleDescription
@@ -178,12 +166,12 @@ struct ContentView: View {
         .alert(
             L10n.tr("Sync into a folder that already contains files?"),
             isPresented: mergeConfirmationBinding,
-            presenting: pendingMergeConfirmation
+            presenting: shareAccept.pendingMergeConfirmation
         ) { request in
             Button(L10n.tr("Merge and Sync"), role: .destructive) {
-                confirmMergeAccept(request)
+                shareAccept.confirmMergeAccept(request)
             }
-            Button(L10n.tr("Cancel"), role: .cancel) { pendingMergeConfirmation = nil }
+            Button(L10n.tr("Cancel"), role: .cancel) { shareAccept.pendingMergeConfirmation = nil }
         } message: { request in
             Text(L10n.fmt(
                 "The folder \"%@\" already contains files. If you accept, those files and the contents of the shared vault \"%@\" will be combined and synced to the other devices sharing this vault. Accept only if this folder holds this vault's own earlier notes — for example after removing the vault and accepting its share again. If it is a different vault or unrelated files, cancel and use \"Choose Vault…\" to pick a different location.",
@@ -197,12 +185,12 @@ struct ContentView: View {
                 defaultName: VaultManager.sanitizeDirectoryName(folder.label.isEmpty ? folder.id : folder.label),
                 eligibleVaults: vaultManager.eligibleShareTargets(syncthingManager: syncthingManager),
                 onConfirm: { targetName in
-                    manualAcceptPendingShare(folder: folder, targetName: targetName)
+                    shareAccept.acceptManually(folder: folder, intoTargetNamed: targetName)
                 }
             )
         }
-        .onChange(of: syncthingManager.pendingFolders, initial: true) { _, pending in
-            autoAcceptPendingShares(pending)
+        .onChange(of: syncthingManager.pendingFolders, initial: true) { _, _ in
+            shareAccept.runAutomaticPass()
         }
         .onChange(of: syncthingManager.pathSettlement.settled) { _, settled in
             // Paths just settled: run the pass that was held during the
@@ -210,8 +198,16 @@ struct ContentView: View {
             // standing trigger above stays silent — the same gap #53 closed
             // for the reconnect flow.
             if settled {
-                autoAcceptPendingShares(syncthingManager.pendingFolders)
+                shareAccept.runAutomaticPass()
             }
+        }
+        .onChange(of: shareAccept.alertMessage) { _, message in
+            // The coordinator is host-agnostic (#92): whichever view is
+            // mounted routes its one-shot messages into its own alert.
+            guard let message else { return }
+            shareAccept.alertMessage = nil
+            alertMessage = message
+            showAlert = true
         }
         .onChange(of: syncthingManager.lastSyncTime, initial: true) { _, _ in
             maybePresentRelayUpsell()
@@ -419,7 +415,7 @@ struct ContentView: View {
     private func applyUIAuditFixture() {
         switch UIAuditFixture.active {
         case UIAuditFixture.mergeConsent:
-            pendingMergeConfirmation = MergeConfirmationRequest(
+            shareAccept.pendingMergeConfirmation = ShareAcceptCoordinator.MergeConfirmationRequest(
                 folder: SyncthingManager.PendingFolderInfo(
                     id: "uiaudit-vault",
                     label: "Life Notes",
@@ -483,157 +479,6 @@ struct ContentView: View {
         deviceShortID: "UIAUDIT"
     )
     #endif
-
-    // MARK: - Auto-Accept Pending Shares
-
-    private func autoAcceptPendingShares(_ pending: [SyncthingManager.PendingFolderInfo]) {
-        let pendingIDs = Set(pending.map(\.id))
-        pendingShareFailures = pendingShareFailures.filter { pendingIDs.contains($0.key) }
-        pendingShareInFlight = pendingShareInFlight.intersection(pendingIDs)
-
-        // Accept decisions only run on settled paths (#56, decision 008): a
-        // pass during a pending path reconcile would judge overlap against
-        // pre-reconcile folder paths — stale exactly after a container move.
-        // Held passes re-fire from the settled onChange trigger above.
-        guard syncthingManager.pathSettlement.settled else { return }
-
-        guard vaultManager.isAccessible else { return }
-
-        // Auto-accept skips shares whose folder the user removed on this
-        // iPhone (doctrine 002 / #52) — those stay visible as pending rows
-        // until the user accepts them explicitly.
-        for folder in syncthingManager.autoAcceptEligiblePendingFolders where pendingShareFailures[folder.id] == nil {
-            guard !pendingShareInFlight.contains(folder.id) else { continue }
-            performPendingShareAccept(folder: folder, source: .automatic)
-        }
-    }
-
-    /// Accept a share into a user-picked target (#52). Returns the error to
-    /// show inline in the picker sheet, or nil on success (the sheet then
-    /// dismisses itself).
-    private func manualAcceptPendingShare(
-        folder: SyncthingManager.PendingFolderInfo,
-        targetName: String
-    ) -> String? {
-        // Accept decisions only run on settled paths (#56, decision 008) —
-        // the picker's empty-target and overlap validation (#52) reads the
-        // same occupied-path set the reconcile is still rewriting.
-        guard syncthingManager.pathSettlement.settled else {
-            return L10n.tr("Vault locations are still being checked. Try again in a moment.")
-        }
-
-        pendingShareInFlight.insert(folder.id)
-        let err = vaultManager.acceptPendingShare(
-            folder: folder,
-            intoTargetNamed: targetName,
-            syncthingManager: syncthingManager
-        )
-        pendingShareInFlight.remove(folder.id)
-
-        if let err {
-            return mappedError(err, fallbackTitle: L10n.tr("Could Not Accept Share")).userVisibleDescription
-        }
-        pendingShareFailures.removeValue(forKey: folder.id)
-        syncthingManager.unignorePendingFolder(id: folder.id)
-        return nil
-    }
-
-    private enum PendingShareAcceptSource {
-        case automatic
-        case manual
-    }
-
-    private func performPendingShareAccept(
-        folder: SyncthingManager.PendingFolderInfo,
-        source: PendingShareAcceptSource,
-        mergeConfirmed: Bool = false
-    ) {
-        // Accept decisions only run on settled paths (#56, decision 008). The
-        // automatic pass is already held in autoAcceptPendingShares and
-        // re-fires on settle; this guard also covers the manual paths (retry,
-        // merge confirmation — #54's re-validation would otherwise judge the
-        // same stale occupied set). A manual tap gets the transient
-        // explanation, never a silent no-op (002). No failure is recorded, so
-        // nothing blocks the automatic re-fire.
-        guard syncthingManager.pathSettlement.settled else {
-            if source == .manual {
-                alertMessage = L10n.tr("Vault locations are still being checked. Try again in a moment.")
-                showAlert = true
-            }
-            return
-        }
-
-        pendingShareInFlight.insert(folder.id)
-
-        let outcome = vaultManager.acceptPendingShare(
-            folder: folder,
-            syncthingManager: syncthingManager,
-            mergeConfirmed: mergeConfirmed
-        )
-        pendingShareInFlight.remove(folder.id)
-
-        switch outcome {
-        case .refused(let err):
-            let userError = mappedError(err, fallbackTitle: L10n.tr("Could Not Accept Share"))
-            pendingShareFailures[folder.id] = userError
-            if source == .automatic {
-                alertMessage = L10n.fmt(
-                    "Could not accept share '%@'.\n\n%@",
-                    folder.label.isEmpty ? folder.id : folder.label,
-                    userError.userVisibleDescription
-                )
-                showAlert = true
-            }
-
-        case .needsMergeConfirmation(let targetName):
-            // The target already holds content — never merge without the
-            // user's explicit decision (#54, doctrine 002/006). The share row
-            // keeps the explanation either way (also stops auto retries); an
-            // explicit tap additionally gets the confirmation dialog. No
-            // modal alert on the automatic pass: this is a decision waiting
-            // for the user, not an error.
-            pendingShareFailures[folder.id] = SyncUserError(
-                category: .fileAccess,
-                title: L10n.tr("Folder Already Contains Files"),
-                message: L10n.fmt(
-                    "The folder \"%@\" already contains files. Accepting this share would combine its contents with the shared vault and sync the result to the other devices.",
-                    targetName
-                ),
-                remediation: L10n.tr("Tap \"Review and Accept\" to decide, or \"Choose Vault…\" to pick a different location."),
-                technicalDetails: nil
-            )
-            if source == .manual {
-                pendingMergeConfirmation = MergeConfirmationRequest(
-                    folder: folder,
-                    targetName: targetName
-                )
-            }
-
-        case .accepted:
-            pendingShareFailures.removeValue(forKey: folder.id)
-            syncthingManager.unignorePendingFolder(id: folder.id)
-        }
-    }
-
-    /// The user confirmed merging the share into the existing folder — re-run
-    /// the accept with consent attached. Everything (overlaps, emptiness, the
-    /// resolved path) is re-validated at confirm time, so a state change while
-    /// the dialog was open cannot smuggle the accept somewhere unsafe.
-    private func confirmMergeAccept(_ request: MergeConfirmationRequest) {
-        pendingMergeConfirmation = nil
-        pendingShareFailures.removeValue(forKey: request.folder.id)
-        performPendingShareAccept(folder: request.folder, source: .manual, mergeConfirmed: true)
-    }
-
-    private func retryPendingShare(_ folder: SyncthingManager.PendingFolderInfo) {
-        pendingShareFailures.removeValue(forKey: folder.id)
-        performPendingShareAccept(folder: folder, source: .manual)
-    }
-
-    private func ignorePendingShare(_ folder: SyncthingManager.PendingFolderInfo) {
-        syncthingManager.ignorePendingFolder(id: folder.id)
-        pendingShareFailures.removeValue(forKey: folder.id)
-    }
 
     // MARK: - Dashboard Section
 
@@ -1027,17 +872,17 @@ struct ContentView: View {
                 PendingSharesView(
                     pendingFolders: pendingFolders,
                     ignoredFolders: ignoredFolders,
-                    failureByFolderID: pendingShareFailures,
-                    inFlightFolderIDs: pendingShareInFlight,
+                    failureByFolderID: shareAccept.pendingShareFailures,
+                    inFlightFolderIDs: shareAccept.pendingShareInFlight,
                     obsidianAccessible: vaultManager.isAccessible,
                     onAccept: { folder in
-                        performPendingShareAccept(folder: folder, source: .manual)
+                        shareAccept.accept(folder, source: .manual)
                     },
                     onRetry: { folder in
-                        retryPendingShare(folder)
+                        shareAccept.retry(folder)
                     },
                     onIgnore: { folder in
-                        ignorePendingShare(folder)
+                        shareAccept.ignore(folder)
                     },
                     onRestoreIgnored: { folder in
                         syncthingManager.unignorePendingFolder(id: folder.id)
@@ -1074,7 +919,7 @@ struct ContentView: View {
 
     private func acceptFirstPendingShareFromIssues() {
         guard let first = syncthingManager.actionablePendingFolders.first else { return }
-        performPendingShareAccept(folder: first, source: .manual)
+        shareAccept.accept(first, source: .manual)
     }
 
     private func rescanFailedVaults() {
@@ -1164,7 +1009,7 @@ struct ContentView: View {
     }
 
     private var mergeConfirmationBinding: Binding<Bool> {
-        Binding(get: { pendingMergeConfirmation != nil }, set: { if !$0 { pendingMergeConfirmation = nil } })
+        Binding(get: { shareAccept.pendingMergeConfirmation != nil }, set: { if !$0 { shareAccept.pendingMergeConfirmation = nil } })
     }
 
     private func removeVault(id: String) {
@@ -1654,9 +1499,14 @@ struct ContentView: View {
 }
 
 #Preview {
+    let syncthing = SyncthingManager()
+    let vault = VaultManager()
     ContentView(
-        syncthingManager: SyncthingManager(),
-        vaultManager: VaultManager(),
-        subscriptionManager: SubscriptionManager()
+        syncthingManager: syncthing,
+        vaultManager: vault,
+        subscriptionManager: SubscriptionManager(),
+        shareAccept: ShareAcceptCoordinator(
+            environment: .live(syncthingManager: syncthing, vaultManager: vault)
+        )
     )
 }

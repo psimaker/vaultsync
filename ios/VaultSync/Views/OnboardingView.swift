@@ -5,6 +5,7 @@ struct OnboardingView: View {
     var syncthingManager: SyncthingManager
     var vaultManager: VaultManager
     var subscriptionManager: SubscriptionManager
+    var shareAccept: ShareAcceptCoordinator
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -54,12 +55,33 @@ struct OnboardingView: View {
                     showObsidianPicker = false
                 }) { url in
                     showObsidianPicker = false
-                    if let err = vaultManager.grantAccess(url: url) {
-                        present(error: err, fallbackTitle: L10n.tr("Obsidian Folder Connection Failed"))
-                    } else if let advisory = vaultManager.selectionAdvisory {
-                        infoMessage = advisory
-                        showInfoAlert = true
-                        vaultManager.clearSelectionAdvisory()
+                    Task {
+                        // Same sequence as the home screen's reconnect flow
+                        // (#53/#92): granting access produces no pendingFolders
+                        // change event, so an offer that arrived before the
+                        // grant would sit untouched. The accept pass runs only
+                        // after the reconcile settled paths (#56, decision 008).
+                        if let err = await ObsidianReconnectFlow.run(
+                            grantAccess: { vaultManager.grantAccess(url: url) },
+                            onGrantSucceeded: {
+                                shareAccept.clearRecordedFailures()
+                                if let advisory = vaultManager.selectionAdvisory {
+                                    infoMessage = advisory
+                                    showInfoAlert = true
+                                    vaultManager.clearSelectionAdvisory()
+                                }
+                            },
+                            reconcile: {
+                                await syncthingManager.reconcileFolderPaths(
+                                    obsidianRoot: vaultManager.obsidianBasePath
+                                ).value
+                            },
+                            retryPendingShares: {
+                                shareAccept.runAutomaticPass()
+                            }
+                        ) {
+                            present(error: err, fallbackTitle: L10n.tr("Obsidian Folder Connection Failed"))
+                        }
                     }
                 }
             }
@@ -92,6 +114,23 @@ struct OnboardingView: View {
                 syncthingManager: syncthingManager,
                 vaultManager: vaultManager
             )
+        }
+        .onChange(of: syncthingManager.pendingFolders, initial: true) { _, _ in
+            // The accept pass must not depend on ContentView being mounted
+            // (#92): the same standing triggers ContentView carries, driving
+            // the same coordinator with the identical gates (decision 015).
+            shareAccept.runAutomaticPass()
+        }
+        .onChange(of: syncthingManager.pathSettlement.settled) { _, settled in
+            if settled {
+                shareAccept.runAutomaticPass()
+            }
+        }
+        .onChange(of: shareAccept.alertMessage) { _, message in
+            guard let message else { return }
+            shareAccept.alertMessage = nil
+            alertMessage = message
+            showAlert = true
         }
     }
 
@@ -189,6 +228,12 @@ struct OnboardingView: View {
                 linkURL: DocURL.desktopShareHelp
             )
 
+            if !vaultSyncing {
+                ForEach(syncthingManager.actionablePendingFolders) { folder in
+                    offerStatusRow(folder)
+                }
+            }
+
             HStack(alignment: .top, spacing: VaultSpacing.m) {
                 Image(systemName: "antenna.radiowaves.left.and.right")
                     .font(.body.weight(.semibold))
@@ -267,6 +312,51 @@ struct OnboardingView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(cardBackground, in: RoundedRectangle(cornerRadius: VaultRadius.card, style: .continuous))
         .overlay(cardStroke(in: RoundedRectangle(cornerRadius: VaultRadius.card, style: .continuous)))
+    }
+
+    /// Live status for a share offer that arrives during onboarding (#92):
+    /// the accept pass runs right here with the home screen's gates, and this
+    /// row keeps step 3 honest while it does — including the cases the pass
+    /// deliberately parks (no Obsidian access yet; a decision only the full
+    /// pending-shares UI can take, e.g. a non-empty target — #54).
+    private func offerStatusRow(_ folder: SyncthingManager.PendingFolderInfo) -> some View {
+        let name = folder.label.isEmpty ? folder.id : folder.label
+        let needsAttention = shareAccept.pendingShareFailures[folder.id] != nil
+            || !syncthingManager.autoAcceptEligiblePendingFolders.contains(where: { $0.id == folder.id })
+        return HStack(alignment: .top, spacing: VaultSpacing.m) {
+            if needsAttention {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(Color.statusAttention)
+                    .accessibilityHidden(true)
+                Text(L10n.fmt("Offer “%@” needs your attention. Tap “Finish Setup Later” below to review it on the home screen.", name))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if !obsidianConnected {
+                Image(systemName: "folder.badge.questionmark")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(Color.statusAttention)
+                    .accessibilityHidden(true)
+                Text(L10n.fmt("Offer “%@” received — connect your Obsidian folder first.", name))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityHidden(true)
+                Text(L10n.fmt("Offer “%@” received — accepting…", name))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(VaultSpacing.l)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(cardBackground, in: RoundedRectangle(cornerRadius: VaultRadius.card, style: .continuous))
+        .overlay(cardStroke(in: RoundedRectangle(cornerRadius: VaultRadius.card, style: .continuous)))
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: - Error presentation
