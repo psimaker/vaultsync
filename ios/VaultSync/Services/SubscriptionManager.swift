@@ -450,6 +450,7 @@ final class SubscriptionManager {
 
     private func loadProduct() async {
         isLoadingProduct = true
+        productLoadFailed = false
         defer { isLoadingProduct = false }
         do {
             let products = try await Product.products(for: Array(Self.relayProductIDs))

@@ -43,7 +43,7 @@ struct SubscribePlanPicker: View {
             if homeserverDeviceIDs.isEmpty {
                 noDeviceNotice
             } else if subscriptionManager.yearlyProduct == nil && subscriptionManager.monthlyProduct == nil {
-                if subscriptionManager.isLoadingProduct {
+                if subscriptionManager.isLoadingProduct || !subscriptionManager.productLoadFailed {
                     HStack(spacing: VaultSpacing.s) {
                         ProgressView()
                         Text(L10n.tr("Loading plans…")).foregroundStyle(.secondary)
