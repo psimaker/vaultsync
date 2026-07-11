@@ -205,4 +205,17 @@ jobs:
             -project VaultSync.xcodeproj \
             -scheme VaultSync \
             -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' \
+            -resultBundlePath TestResults.xcresult \
             -quiet
+
+      # A red macOS run used to force a blind re-run — the failure details
+      # live in the xcresult bundle. Short retention: the bundle is large and
+      # only needed to diagnose the failing run (#85).
+      - name: Upload xcresult bundle
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: xcresult-${{ github.run_id }}
+          path: ios/TestResults.xcresult
+          retention-days: 7
+          if-no-files-found: ignore # failures before xcodebuild leave no bundle
