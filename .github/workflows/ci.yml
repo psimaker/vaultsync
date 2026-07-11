@@ -88,6 +88,38 @@ jobs:
         working-directory: notify
         run: go test ./... -count=1
 
+  install-script:
+    name: Install Script
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      # Pinned (not the runner's preinstalled build): a shellcheck upgrade must
+      # never turn this job red without a repo change. Bump deliberately.
+      - name: Install shellcheck v0.10.0
+        run: |
+          curl -fsSL -o /tmp/shellcheck.tar.xz \
+            https://github.com/koalaman/shellcheck/releases/download/v0.10.0/shellcheck-v0.10.0.linux.x86_64.tar.xz
+          echo "6c881ab0698e4e6ea235245f22832860544f17ba386442fe7e9d629f8cbedf87  /tmp/shellcheck.tar.xz" | sha256sum -c -
+          tar -xJf /tmp/shellcheck.tar.xz -C /tmp
+          sudo mv /tmp/shellcheck-v0.10.0/shellcheck /usr/local/bin/shellcheck
+
+      - name: shellcheck
+        # install.sh is the conversion-critical curl|sh entry point — freeze its
+        # current zero-findings state (#82). bootstrap.sh only trips SC1007
+        # false positives on the POSIX `CDPATH= cd` idiom, hence the exclude.
+        run: |
+          shellcheck --version
+          shellcheck -s sh notify/scripts/install.sh notify/scripts/tests/install-dry-run-test.sh
+          shellcheck -s sh --exclude=SC1007 notify/scripts/bootstrap.sh
+
+      - name: install.sh --dry-run smoke test
+        # Hermetic: fixture config.xml + PATH shims; asserts dry-run changes
+        # nothing, prints the config owner's uid:gid, and that install.sh and
+        # docker.yml still agree on the release asset naming.
+        run: notify/scripts/tests/install-dry-run-test.sh
+
   design-lint:
     name: Design Token Lint
     runs-on: ubuntu-latest # pure bash/grep guardrail; no Xcode needed
