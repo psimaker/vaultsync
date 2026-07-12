@@ -18,6 +18,7 @@ All notable changes to VaultSync are documented here.
 
 ### Privacy
 
+- **Server-helper logs now retain only operational categories** — `vaultsync-notify` no longer writes Syncthing Device IDs, folder IDs, local or Relay endpoint URLs, event markers, config paths, raw dependency errors, or HTTP response bodies to service logs. Fixed error categories, status codes, bounded counts, and durations preserve troubleshooting without exposing routing or filesystem context.
 - **Synchronization diagnostics no longer retain raw identifiers, paths, or server bodies** — check results and random check identifiers stay in memory and never reach Cloud Relay. Free-form Relay response bodies and legacy background error details are discarded or migrated to structured categories; app diagnostics log only generic states/counts, and unfiltered embedded Syncthing logging is disabled because upstream attributes can include file, folder, or peer values.
 - **Relay data handling is documented at the field level** — the Privacy Policy now lists the limited StoreKit verification and operational timestamps retained by Relay 1.2.0, and clarifies that the signed transaction is verified but not stored as a complete token.
 - **The Relay’s last-signal timestamp is documented honestly** — it is stored only to explain which wake-up step is pending, carries no file or vault metadata, does not authenticate the server helper, and is not proof of Apple delivery or completed synchronization. Deletion requests remove it with the other Relay data.

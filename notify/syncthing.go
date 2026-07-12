@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -66,12 +65,12 @@ func (c *SyncthingClient) Subscribe(ctx context.Context) <-chan Event {
 					slog.Error("syncthing event poll failed with fatal configuration error",
 						"classification", "fatal",
 						"component", "syncthing",
-						"error", err,
+						"error_kind", operationalErrorKind(err),
 						"action", "exit",
 					)
 					return
 				}
-				slog.Warn("syncthing event poll failed", "error", err, "retry_in", backoff)
+				slog.Warn("syncthing event poll failed", "error_kind", operationalErrorKind(err), "retry_in", backoff)
 				select {
 				case <-time.After(backoff):
 				case <-ctx.Done():
@@ -158,12 +157,9 @@ func (c *SyncthingClient) getSystemStatus(ctx context.Context, withAPIKey bool) 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return systemStatus{}, resp.StatusCode, &HTTPStatusError{
 			Component:  "syncthing",
-			URL:        url,
 			StatusCode: resp.StatusCode,
-			Body:       string(body),
 		}
 	}
 
@@ -265,12 +261,9 @@ func (c *SyncthingClient) getJSON(ctx context.Context, url string, out any) erro
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return &HTTPStatusError{
 			Component:  "syncthing",
-			URL:        url,
 			StatusCode: resp.StatusCode,
-			Body:       string(body),
 		}
 	}
 
@@ -296,12 +289,9 @@ func (c *SyncthingClient) poll(ctx context.Context, since int) ([]Event, error) 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return nil, &HTTPStatusError{
 			Component:  "syncthing",
-			URL:        url,
 			StatusCode: resp.StatusCode,
-			Body:       string(body),
 		}
 	}
 

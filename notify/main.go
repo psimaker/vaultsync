@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -83,7 +82,7 @@ func main() {
 		slog.Error("invalid runtime configuration",
 			"classification", "fatal",
 			"component", "config",
-			"error", err,
+			"error_kind", operationalErrorKind(err),
 			"action", "exit",
 		)
 		os.Exit(1)
@@ -97,7 +96,7 @@ func main() {
 			slog.Error("doctor checks failed",
 				"classification", "fatal",
 				"component", "doctor",
-				"error", err,
+				"error_kind", operationalErrorKind(err),
 				"action", "fix_configuration",
 			)
 			os.Exit(1)
@@ -108,7 +107,7 @@ func main() {
 			slog.Error("healthcheck failed",
 				"classification", "fatal",
 				"component", "healthcheck",
-				"error", err,
+				"error_kind", operationalErrorKind(err),
 			)
 			os.Exit(1)
 		}
@@ -221,12 +220,11 @@ func loadConfig() (Config, error) {
 				filled = append(filled, "SYNCTHING_API_KEY")
 			}
 			if len(filled) > 0 {
-				// The API key itself is deliberately never logged.
+				// Values and the discovered config path are deliberately never
+				// logged; field names are sufficient for operational diagnosis.
 				slog.Info("auto-detected Syncthing configuration from config.xml",
 					"component", "config",
-					"source", detected.Source,
 					"filled", strings.Join(filled, ", "),
-					"syncthing_url", apiURL,
 				)
 			}
 		}
@@ -372,7 +370,7 @@ func runService(ctx context.Context, cfg Config) int {
 		slog.Error("failed to initialize Syncthing Device ID",
 			"classification", "fatal",
 			"component", "syncthing",
-			"error", err,
+			"error_kind", operationalErrorKind(err),
 			"action", "exit",
 		)
 		return 1
@@ -383,18 +381,16 @@ func runService(ctx context.Context, cfg Config) int {
 		slog.Error("relay startup check failed with fatal configuration error",
 			"classification", "fatal",
 			"component", "relay",
-			"error", err,
+			"error_kind", operationalErrorKind(err),
 			"action", "exit",
 		)
 		return 1
 	}
 
 	slog.Info("vaultsync-notify starting",
-		"device_id", deviceID,
-		"syncthing_url", cfg.SyncthingAPIURL,
-		"relay_url", cfg.RelayURL,
 		"debounce_seconds", cfg.DebounceSeconds,
-		"watched_folders", formatWatched(cfg.WatchedFolders),
+		"watched_folder_scope", watchedFolderScope(cfg.WatchedFolders),
+		"watched_folder_count", len(cfg.WatchedFolders),
 		"startup_announce", cfg.StartupAnnounce,
 		"stale_retrigger_seconds", cfg.StaleRetriggerSeconds,
 	)
@@ -475,19 +471,13 @@ func runService(ctx context.Context, cfg Config) int {
 
 			if lastTriggered[candidate.Folder] == candidate.Marker {
 				slog.Debug("skipping duplicate trigger candidate",
-					"type", ev.Type,
-					"folder", candidate.Folder,
-					"marker", candidate.Marker,
-					"id", ev.ID,
+					"event_type", ev.Type,
 				)
 				continue
 			}
 
 			slog.Debug("queued trigger candidate",
-				"type", ev.Type,
-				"folder", candidate.Folder,
-				"marker", candidate.Marker,
-				"id", ev.ID,
+				"event_type", ev.Type,
 			)
 			pending[candidate.Folder] = candidate.Marker
 
@@ -544,7 +534,7 @@ func runService(ctx context.Context, cfg Config) int {
 				slog.Warn("stale-peer sweep failed; retrying next interval",
 					"classification", "recoverable",
 					"component", "syncthing",
-					"error", err,
+					"error_kind", operationalErrorKind(err),
 					"action", "continue",
 				)
 				continue
@@ -621,9 +611,7 @@ func anyPeerNeedsData(ctx context.Context, st *SyncthingClient, selfID string, w
 				var statusErr *HTTPStatusError
 				if errors.As(err, &statusErr) {
 					slog.Debug("skipping completion check",
-						"device", dev.DeviceID,
-						"folder", folder,
-						"error", err,
+						"error_kind", operationalErrorKind(err),
 					)
 					continue
 				}
@@ -663,7 +651,7 @@ func waitForDeviceID(ctx context.Context, st *SyncthingClient) (string, error) {
 			"classification", "recoverable",
 			"component", "syncthing",
 			"attempt", attempt,
-			"error", err,
+			"error_kind", operationalErrorKind(err),
 			"retry_in", backoff,
 		)
 
@@ -696,7 +684,7 @@ func warmupRelay(ctx context.Context, relay *RelayClient) error {
 			slog.Warn("relay health check failed at startup; continuing with runtime retries",
 				"classification", "recoverable",
 				"component", "relay",
-				"error", err,
+				"error_kind", operationalErrorKind(err),
 				"action", "continue",
 			)
 			return nil
@@ -706,7 +694,7 @@ func warmupRelay(ctx context.Context, relay *RelayClient) error {
 			"classification", "recoverable",
 			"component", "relay",
 			"attempt", attempt,
-			"error", err,
+			"error_kind", operationalErrorKind(err),
 			"retry_in", backoff,
 		)
 
@@ -831,7 +819,7 @@ func fireTrigger(ctx context.Context, relay *RelayClient, reason string) trigger
 			"classification", "fatal",
 			"component", "relay",
 			"reason", reason,
-			"error", err,
+			"error_kind", operationalErrorKind(err),
 			"action", "exit",
 		)
 		return outcomeFatal
@@ -840,7 +828,7 @@ func fireTrigger(ctx context.Context, relay *RelayClient, reason string) trigger
 			"classification", "recoverable",
 			"component", "relay",
 			"reason", reason,
-			"error", err,
+			"error_kind", operationalErrorKind(err),
 			"action", "await_active_subscription",
 		)
 		return outcomeSubscriptionInactive
@@ -849,23 +837,18 @@ func fireTrigger(ctx context.Context, relay *RelayClient, reason string) trigger
 			"classification", "recoverable",
 			"component", "relay",
 			"reason", reason,
-			"error", err,
+			"error_kind", operationalErrorKind(err),
 			"action", "continue",
 		)
 		return outcomeRetry
 	}
 }
 
-func formatWatched(folders map[string]bool) string {
+func watchedFolderScope(folders map[string]bool) string {
 	if folders == nil {
 		return "all"
 	}
-	ids := make([]string, 0, len(folders))
-	for id := range folders {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	return strings.Join(ids, ", ")
+	return "selected"
 }
 
 func isFatalRelayConfigError(err error) bool {

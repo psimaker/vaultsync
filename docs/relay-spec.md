@@ -255,6 +255,7 @@ The container reads its own Syncthing Device ID automatically from `/rest/system
 - The central relay receives and forwards an anonymous wake-up signal — it has no knowledge of what changed or where.
 - The central relay stores the last accepted v1 signal time per Device ID so the app can explain which wake-up leg is pending.
 - APNs payload is a silent push with no visible content (`content-available: 1`, no alert/body).
+- Helper operational logs contain only fixed categories, status codes, bounded counts, and durations; they omit Device/folder identifiers, paths and endpoint URLs, event markers, API keys, and raw request/response bodies.
 
 ### Token Storage
 

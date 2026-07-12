@@ -175,4 +175,8 @@ docker build -t vaultsync-notify .  # Docker image
 
 ## Privacy & license
 
-Only the Syncthing Device ID is sent to the relay, as a routing identifier. No file names, folder names, file sizes, or other metadata leave your server. Licensed [MPL-2.0](../LICENSE).
+Only the Syncthing Device ID is sent to the relay, as a routing identifier. No file names, folder names, file sizes, or other metadata leave your server.
+
+Operational logs contain fixed states, error categories, status codes, bounded counts, and durations. They do not contain Device IDs, folder IDs, event markers, local or Relay endpoint URLs, config paths, Syncthing API keys, or raw request/response bodies. The helper keeps the API key and watched-folder selection in process memory and does not create a separate credential store.
+
+Licensed [MPL-2.0](../LICENSE).

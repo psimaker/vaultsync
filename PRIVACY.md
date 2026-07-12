@@ -64,12 +64,14 @@ their free-form detail is discarded and the legacy record is removed. This
 migration does not touch subscription state, provisioning, APNs registration,
 folder mappings, sync identities, or wake-up history.
 
-Application diagnostic logs contain only generic states, counts, durations, and
-error categories. Unfiltered embedded Syncthing logging is disabled because its
-upstream attributes can include file paths, folder IDs, or peer IDs. None of the
-local diagnostic values above is sent to Cloud Relay. Cloud Relay never receives
-a file name, folder or vault name, file or vault path, file content, or
-diagnostic check identifier.
+Application and `vaultsync-notify` operational logs contain only generic states,
+bounded counts, durations, status codes, and fixed error categories. The helper
+does not log Device IDs, folder IDs, event markers, endpoint URLs, configuration
+paths, Syncthing API keys, or raw request/response bodies. Unfiltered embedded
+Syncthing logging is disabled because its upstream attributes can include file
+paths, folder IDs, or peer IDs. None of the local diagnostic values above is sent
+to Cloud Relay. Cloud Relay never receives a file name, folder or vault name,
+file or vault path, file content, or diagnostic check identifier.
 
 ### Data Security
 

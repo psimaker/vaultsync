@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -824,6 +825,11 @@ func TestRunServiceStartupAnnounceDisabled(t *testing.T) {
 // best-effort: an inactive-subscription verdict (HTTP 400) at startup is logged
 // and ignored — the service keeps running and shuts down cleanly, never exit 1.
 func TestRunServiceStartupAnnounceInactiveKeepsRunning(t *testing.T) {
+	var logOutput bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logOutput, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
 	syncthing := newQuietSyncthingStub(t)
 
 	declined := make(chan struct{}, 1)
@@ -881,6 +887,26 @@ func TestRunServiceStartupAnnounceInactiveKeepsRunning(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("runService did not shut down after context cancel")
+	}
+
+	logs := logOutput.String()
+	for _, forbidden := range []string{
+		"DEVICE-QUIET",
+		syncthing.URL,
+		relay.URL,
+		"subscription expired",
+	} {
+		if strings.Contains(logs, forbidden) {
+			t.Fatalf("operational logs contain sensitive sentinel %q:\n%s", forbidden, logs)
+		}
+	}
+	for _, required := range []string{
+		"error_kind=subscription_inactive",
+		"watched_folder_scope=all",
+	} {
+		if !strings.Contains(logs, required) {
+			t.Fatalf("operational logs are missing safe field %q:\n%s", required, logs)
+		}
 	}
 }
 
