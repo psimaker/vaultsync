@@ -6,6 +6,8 @@
 
 This decision supplies the credential and pairing milestone required by [Decision 021](021-capability-negotiated-helper-contract-for-correlated-roundtrip-proof.md). It applies only to a future diagnostics capability. Existing Syncthing pairing, Trigger v1, Cloud Relay provisioning/status, APNs, StoreKit, folder mappings, and the published helper remain unchanged.
 
+The invariants, bootstrap prohibitions, and human-approval choices in this document bind only the diagnostics capability. They neither authorize nor constrain any future, separately decided capability (for example, one that introduces devices or provisions folders on the homeserver); such a capability requires its own decision with its own threat model, and this document is not precedent for or against its design choices.
+
 - A Syncthing Device ID is a local binding input, not a helper credential.
 - StoreKit JWS, APNs tokens, Relay registrations, API keys, and possession of a synchronized folder cannot bootstrap helper trust.
 - Pairing is explicit, mutually authenticated, scoped to one app installation, one homeserver, and selected folders, and is never inferred or repeated automatically.
