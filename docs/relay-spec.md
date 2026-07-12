@@ -1,12 +1,12 @@
 # VaultSync Cloud Relay — Specification
 
-> **Status:** Cloud Relay 1.2.0 is live in production. Provisioning requires a verified StoreKit signed transaction; existing legacy registrations have a bounded compatibility window through October 31, 2026. The additive observation/status contract in this document is implemented for the next app generation but remains unreleased until a separately approved Relay deployment. This document is the protocol and architecture reference for the relay, the `vaultsync-notify` sidecar, and the iOS client.
+> **Status:** Cloud Relay 1.3.0 is live in production. Provisioning requires a verified StoreKit signed transaction; existing legacy registrations have a bounded compatibility window through October 31, 2026. The additive observation/status contract is available in the Relay, and the matching app support is merged to `main`, but that app support has not shipped as VaultSync 2.0. A Relay-observed signal proves only accepted Relay processing: not helper identity, APNs delivery, background start, local data progress, upload, download, or a roundtrip. Existing Relay v1 provisioning, trigger, and push contracts remain unchanged. This document is the protocol and architecture reference for the relay, the `vaultsync-notify` sidecar, and the iOS client.
 
 ## Overview
 
 Push-notification service that forwards Syncthing file-change events to iOS devices via APNs. It solves the core iOS limitation — no real-time background sync — by waking the app on demand instead of polling.
 
-In the app, the **Cloud Relay** tab → **Relay health & diagnostics** is the live view of this: health endpoint, APNs registration, last trigger received, and whether the relay is actually *delivering wake-ups* versus merely *reachable*.
+In the app code on `main`, the **Cloud Relay** tab → **Relay health & diagnostics** keeps backend reachability, per-homeserver Relay observation, and wake-ups received locally on this iPhone as separate evidence. That app support has not shipped as VaultSync 2.0, and none of those fields alone proves APNs delivery, background execution, or synchronization.
 
 ---
 
@@ -215,7 +215,8 @@ No authentication required.
 ```json
 // Response 200
 {
-  "status": "ok"
+  "status": "ok",
+  "version": "1.3.0"
 }
 ```
 
@@ -293,7 +294,7 @@ The container reads its own Syncthing Device ID automatically from `/rest/system
 
 ## iOS Integration
 
-The iOS client implements the full relay flow; see `AppDelegate.swift`, `RelayService.swift`, and `SubscriptionManager.swift` for detail.
+The iOS client code on `main` implements the relay flow described below; see `AppDelegate.swift`, `RelayService.swift`, and `SubscriptionManager.swift` for detail. Its observation/status support has not yet shipped as VaultSync 2.0.
 
 - **APNs registration** — registers for remote notifications at launch and converts the device token to a hex string (`AppDelegate`).
 - **Provisioning** — the app POSTs each known homeserver Device ID, the APNs token, and a currently locally verified signed transaction (JWS) to `/api/v1/provision`. It does this after purchase, Restore Purchases, renewal, APNs-token rotation, and once after updating an existing installation. Without verified signed evidence it sends no request and preserves the existing registration.
@@ -308,8 +309,9 @@ Cloud Relay is configured from its own **Cloud Relay** tab, not onboarding.
 The app models StoreKit verification, verified provisioning, backend
 reachability, per-homeserver Relay observation, local silent-push receipt,
 background-sync start, and observed local sync progress as separate evidence.
-No weaker proof sets a stronger success state. A confirmed upload/download
-roundtrip follows in a separate 2.0 milestone.
+No weaker proof sets a stronger success state. Upload, controlled download, and
+a confirmed roundtrip are not implemented; they require a separately approved,
+correlated helper contract and runtime milestone.
 
 ---
 
