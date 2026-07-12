@@ -170,6 +170,65 @@ struct RelayStatusTests {
         #expect(provisioning[Self.firstDevice] == .provisionedVerified)
     }
 
+    @Test("Concurrent status checks are single-flight")
+    func concurrentChecksAreSingleFlight() {
+        let gate = RelayStatusCheckGate()
+
+        #expect(gate.begin())
+        #expect(!gate.begin())
+        gate.end()
+        #expect(gate.begin())
+        gate.end()
+    }
+
+    @Test("Deprovision resets server observation evidence and invalidates in-flight outcomes")
+    func deprovisionInvalidatesObservationEvidence() {
+        let reset = RelayStatusCacheLifecycle.reset(currentGeneration: 4)
+
+        #expect(reset.observations.isEmpty)
+        #expect(reset.failures.isEmpty)
+        #expect(reset.generation == 5)
+        #expect(!RelayStatusCacheLifecycle.shouldApplyOutcome(
+            startedAtGeneration: 4,
+            currentGeneration: reset.generation,
+            isSubscriptionActive: true,
+            hasVerifiedEntitlement: true,
+            isCancelled: false
+        ))
+    }
+
+    @Test("Only a current active verified non-cancelled status outcome may update evidence")
+    func statusOutcomeApplicationGate() {
+        #expect(RelayStatusCacheLifecycle.shouldApplyOutcome(
+            startedAtGeneration: 2,
+            currentGeneration: 2,
+            isSubscriptionActive: true,
+            hasVerifiedEntitlement: true,
+            isCancelled: false
+        ))
+        #expect(!RelayStatusCacheLifecycle.shouldApplyOutcome(
+            startedAtGeneration: 2,
+            currentGeneration: 2,
+            isSubscriptionActive: false,
+            hasVerifiedEntitlement: true,
+            isCancelled: false
+        ))
+        #expect(!RelayStatusCacheLifecycle.shouldApplyOutcome(
+            startedAtGeneration: 2,
+            currentGeneration: 2,
+            isSubscriptionActive: true,
+            hasVerifiedEntitlement: false,
+            isCancelled: false
+        ))
+        #expect(!RelayStatusCacheLifecycle.shouldApplyOutcome(
+            startedAtGeneration: 2,
+            currentGeneration: 2,
+            isSubscriptionActive: true,
+            hasVerifiedEntitlement: true,
+            isCancelled: true
+        ))
+    }
+
     @Test("Polling is allowed only in waiting and diagnostics screens")
     func pollingContextGate() {
         #expect(RelayStatusPollingContext.waitingView.allowsStatusPolling)

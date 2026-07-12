@@ -17,14 +17,62 @@ struct RelayStatusCheckOutcome: Equatable, Sendable {
     let failures: [String: RelayStatusCheckFailure]
     let requestedDeviceIDs: [String]
 
+    /// Only reflects failures for devices actually queried in this pass.
+    /// Global subscription/entitlement lapses remain the polling caller's gate.
     var wasRateLimited: Bool {
         requestedDeviceIDs.contains { failures[$0] == .rateLimited }
     }
 
+    /// Only queried-device failures stop this pass. Callers must independently
+    /// stop when the global subscription or verified entitlement becomes invalid.
     var requiresPollingStop: Bool {
         requestedDeviceIDs.contains {
             failures[$0] == .rateLimited || failures[$0] == .verificationRequired
         }
+    }
+}
+
+/// Main-actor single-flight lease. Home and Diagnostics may coexist in the
+/// navigation stack, but only one status snapshot may cross an await at a time.
+@MainActor
+final class RelayStatusCheckGate {
+    private var isActive = false
+
+    func begin() -> Bool {
+        guard !isActive else { return false }
+        isActive = true
+        return true
+    }
+
+    func end() {
+        isActive = false
+    }
+}
+
+/// Pure cache lifecycle policy. A deprovision generation invalidates any
+/// request that was already in flight without touching local wake-up history.
+enum RelayStatusCacheLifecycle {
+    struct Reset: Equatable, Sendable {
+        let observations: [String: RelayServerObservation]
+        let failures: [String: RelayStatusCheckFailure]
+        let generation: Int
+    }
+
+    static func reset(currentGeneration: Int) -> Reset {
+        Reset(observations: [:], failures: [:], generation: currentGeneration + 1)
+    }
+
+    static func shouldApplyOutcome(
+        startedAtGeneration: Int,
+        currentGeneration: Int,
+        isSubscriptionActive: Bool,
+        hasVerifiedEntitlement: Bool,
+        isCancelled: Bool
+    ) -> Bool {
+        startedAtGeneration == currentGeneration &&
+            isSubscriptionActive &&
+            hasVerifiedEntitlement &&
+            !isCancelled
     }
 }
 
