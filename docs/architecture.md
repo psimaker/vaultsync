@@ -91,6 +91,34 @@ separately designed, additive, capability-negotiated helper contract and a
 demonstrably safe app-owned diagnostics namespace. Relay v1 is unchanged by this
 milestone.
 
+#### Proposed correlated roundtrip contract — not implemented
+
+[Decision 021](decisions/021-capability-negotiated-helper-contract-for-correlated-roundtrip-proof.md)
+defines the proposed proof and rollout boundaries. It does not authorize a
+runtime change. The current app/helper still creates no probe or namespace, has
+no diagnostic pairing credential, and cannot confirm upload, controlled
+download, or a full roundtrip.
+
+The proposed data plane uses a visible, exclusively app-owned namespace inside
+one selected Syncthing folder. A fresh app-signed random request would need an
+authenticated helper attestation that the paired helper read the exact request;
+a fresh helper-signed response would then need to be applied and verified on
+this iPhone inside the active cursor, nanosecond, and engine-generation bounds.
+Only matching upload-then-download evidence for one operation, helper, folder,
+and homeserver could derive a scoped roundtrip. Signatures can establish logical
+app/helper authorship and causality, but not exact byte counts, a direct
+transport peer, or per-block provenance.
+
+This remains blocked until a visible collision-safe namespace, ignore/conflict/
+tombstone/backup semantics, least-privilege helper filesystem access, and a
+separate mutual credential/pairing and replay-recovery design are approved. The
+current helper's read-only configuration/access model and Syncthing peer
+identity do not provide those properties. Rollout must be helper-first; an old
+or unreachable helper yields capability unavailable rather than an error or a
+weaker success. Trigger v1, provisioning, Relay status, APNs, StoreKit, and the
+Cloud Relay privacy boundary remain unchanged, and the Relay never receives
+probe names, paths, values, contents, correlations, or results.
+
 ### Connection paths & iOS network privacy
 
 How peers are reached, fastest first:
