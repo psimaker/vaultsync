@@ -47,7 +47,7 @@ Your notes sync peer-to-peer over Syncthing, straight into Obsidian's iOS sandbo
 
 </div>
 
-Syncthing runs on a machine you keep on; VaultSync joins as a peer and syncs into Obsidian. The optional sidecar + Cloud Relay wake your iPhone when the server changes.
+Syncthing runs on a machine you keep on; VaultSync joins as a peer and syncs into Obsidian. After a server change, the optional sidecar + Cloud Relay can request an iOS background wake-up; iOS decides whether and when VaultSync runs.
 
 ---
 
@@ -78,7 +78,7 @@ curl -fsSL https://vaultsync.eu/notify.sh | sh
 
 </div>
 
-The installer finds your Syncthing config, sets the right permissions, and starts the helper. The helper wakes your iPhone once on startup and VaultSync flips to **Cloud Relay active** by itself; sending edits *from* your iPhone stays most reliable with the app open. The relay only ever sees the Device ID and push token needed to route a wake-up — never your notes, file or folder names, or vault structure ([PRIVACY.md](PRIVACY.md)).
+The installer finds your Syncthing config, sets the right permissions, and starts the helper. The helper sends one startup wake-up request. Relay Diagnostics reports Relay-side request observation and wake-ups received on this iPhone as separate evidence; one does not prove the other. iOS controls delivery, and sending edits *from* your iPhone stays most reliable with the app open. The relay receives the routing data and StoreKit proof needed to verify access and route a wake-up — never your notes, file or folder names, or vault structure ([PRIVACY.md](PRIVACY.md)).
 
 <details>
 <summary><b>🔧 Manual &amp; advanced setup</b> — Docker Compose, <code>docker run</code>, prebuilt binaries, NAS notes, <code>--dry-run</code></summary>

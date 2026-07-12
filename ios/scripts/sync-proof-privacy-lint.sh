@@ -12,15 +12,18 @@ if rg -n \
   exit 1
 fi
 
-if rg -n \
-  'String\(data:.*encoding:.*utf8|responseBody|httpBody.*(logger|recordLastError)' \
-  "$RELAY_SERVICE"; then
+if rg -n -U \
+  '(?s)String(?:\.init)?\s*\(\s*(data|bytes|decoding)\s*:' \
+  "$RELAY_SERVICE" ||
+  rg -n \
+    '(responseBody|requestBody|httpBody).*(logger|recordLastError|UserDefaults)|(logger|recordLastError|UserDefaults).*(responseBody|requestBody|httpBody)' \
+    "$RELAY_SERVICE"; then
   echo "❌ Relay diagnostics can consume or persist a raw response/request body."
   exit 1
 fi
 
 if rg -n \
-  'logger\..*(\.path|absoluteString|lastPathComponent|privacy: \.private|deviceID[^s]|folderID|folderName|filePath|signedTransaction|transactionID|apnsToken|jwsRepresentation|\\\(error\)|\\\(err\)|\\\(message\)|\\\(detail\))' \
+  'logger\..*(\.path|absoluteString|lastPathComponent|privacy: \.private|deviceID\b|deviceIDs([^.]|$)|folderID\b|folderIDs([^.]|$)|folderName|filePath|signedTransaction|transactionID|apnsToken|jwsRepresentation|\\\([[:space:]]*([[:alnum:]_]+\.)?(error|err)\b|\\\((message|detail)\)|\.localizedDescription)' \
   "$ROOT/ios/VaultSync" --glob '*.swift'; then
   echo "❌ Application logs contain a forbidden identifier, path, payload, or raw error."
   exit 1
