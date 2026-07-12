@@ -237,6 +237,7 @@ func TestDiagnosticsStateMachinePropertiesOverArbitraryOrders(t *testing.T) {
 
 func TestDiagnosticsPrivacyAndPersistenceSnapshots(t *testing.T) {
 	vector := loadDiagnosticsContractFixture(t).Vectors.Privacy
+	redactedFields := diagnosticsTestRedactedPrivacyFields(vector.Sentinels)
 	logSnapshot := diagnosticsTestLogSnapshot(vector.Sentinels)
 	persistenceSnapshot := diagnosticsTestPersistenceSnapshot(vector.Sentinels)
 	if logSnapshot != vector.ExpectedLogSnapshot {
@@ -245,7 +246,7 @@ func TestDiagnosticsPrivacyAndPersistenceSnapshots(t *testing.T) {
 	if persistenceSnapshot != vector.ExpectedPersistenceSnapshot {
 		t.Fatalf("persistence snapshot = %q, want %q", persistenceSnapshot, vector.ExpectedPersistenceSnapshot)
 	}
-	combined := logSnapshot + persistenceSnapshot
+	combined := fmt.Sprint(redactedFields) + logSnapshot + persistenceSnapshot
 	for _, sentinel := range vector.Sentinels {
 		if strings.Contains(combined, sentinel) {
 			t.Fatalf("privacy sentinel %q leaked into snapshot", sentinel)
@@ -321,16 +322,63 @@ func TestDiagnosticsFoundationHasNoRuntimeCarrier(t *testing.T) {
 	}
 }
 
-func diagnosticsTestLogSnapshot(_ []string) string {
-	return "event=operation_terminal protocol=1 count=1 duration_ms=25 state=interrupted"
+func diagnosticsTestRedactedPrivacyFields(sentinels []string) map[string]any {
+	sensitiveKeys := []string{
+		"device_id",
+		"folder_name",
+		"vault_path",
+		"pairing_secret",
+		"operation_id",
+		"nonce",
+		"payload",
+		"signature",
+	}
+	if len(sentinels) != len(sensitiveKeys) {
+		panic("diagnostics privacy fixture must cover every sensitive field")
+	}
+
+	fields := map[string]any{
+		"event":        "operation_terminal",
+		"protocol":     1,
+		"count":        1,
+		"duration_ms":  25,
+		"state":        "interrupted",
+		"app_epoch":    1,
+		"helper_epoch": 1,
+		"paired_state": "paired",
+	}
+	for index, key := range sensitiveKeys {
+		fields[key] = sentinels[index]
+	}
+	for _, key := range sensitiveKeys {
+		delete(fields, key)
+	}
+	return fields
 }
 
-func diagnosticsTestPersistenceSnapshot(_ []string) string {
+func diagnosticsTestLogSnapshot(sentinels []string) string {
+	fields := diagnosticsTestRedactedPrivacyFields(sentinels)
+	return fmt.Sprintf(
+		"event=%s protocol=%d count=%d duration_ms=%d state=%s",
+		fields["event"],
+		fields["protocol"],
+		fields["count"],
+		fields["duration_ms"],
+		fields["state"],
+	)
+}
+
+func diagnosticsTestPersistenceSnapshot(sentinels []string) string {
+	fields := diagnosticsTestRedactedPrivacyFields(sentinels)
 	value := struct {
 		AppEpoch    int    `json:"app_epoch"`
 		HelperEpoch int    `json:"helper_epoch"`
 		State       string `json:"state"`
-	}{AppEpoch: 1, HelperEpoch: 1, State: "paired"}
+	}{
+		AppEpoch:    fields["app_epoch"].(int),
+		HelperEpoch: fields["helper_epoch"].(int),
+		State:       fields["paired_state"].(string),
+	}
 	encoded, _ := json.Marshal(value)
 	return string(encoded)
 }

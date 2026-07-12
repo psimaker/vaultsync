@@ -28,7 +28,7 @@ struct DiagnosticsContractTests {
         #expect(fixture.domains.values.allSatisfy { $0.last == "\0" && $0.dropLast().allSatisfy { $0 != "\0" } })
     }
 
-    @Test("CryptoKit verifies the byte-exact RFC 8032 vector and signs validly")
+    @Test("CryptoKit verifies the byte-exact RFC 8032 vectors and signs validly")
     func rfc8032() throws {
         let fixture = try M1ContractFixtureLoader.load()
         let vectors = [fixture.vectors.rfc8032] + fixture.vectors.rfc8032Additional
@@ -39,6 +39,9 @@ struct DiagnosticsContractTests {
             let generatedSignature = try privateKey.signature(for: message)
             let vectorSignature = try Data(m1Hex: vector.signatureHex)
             #expect(privateKey.publicKey.rawRepresentation.m1Hex == vector.publicKeyHex)
+            // CryptoKit may emit a distinct valid signature for the same key and
+            // message, so the normative bytes are enforced through exact fixture
+            // decoding plus verification rather than provider-output equality.
             #expect(privateKey.publicKey.isValidSignature(vectorSignature, for: message))
             #expect(privateKey.publicKey.isValidSignature(generatedSignature, for: message))
         }
