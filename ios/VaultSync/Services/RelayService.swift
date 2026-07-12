@@ -133,7 +133,7 @@ enum RelayService {
             throw RelayError.rateLimited
         case 500...599:
             let body = String(data: data, encoding: .utf8) ?? ""
-            logger.error("Relay provision server error: \(http.statusCode) \(body)")
+            logger.error("Relay provision server error: HTTP \(http.statusCode)")
             recordLastError(
                 context: "provision",
                 message: body.isEmpty ? L10n.fmt("Relay provision failed with HTTP %d.", http.statusCode) : body
@@ -178,6 +178,104 @@ enum RelayService {
             "transaction_id": signedTransaction,
         ])
         return request
+    }
+
+    // MARK: - Observation Status
+
+    static func fetchStatus(
+        deviceID: String,
+        signedTransaction: String
+    ) async throws -> RelayServerObservation {
+        let request = try makeStatusRequest(
+            baseURL: relayURL,
+            deviceID: deviceID,
+            signedTransaction: signedTransaction
+        )
+        let (data, response) = try await perform(request, action: "status")
+        guard let http = response as? HTTPURLResponse else {
+            throw RelayError.serverError(statusCode: 0)
+        }
+        switch http.statusCode {
+        case 200:
+            do {
+                let observation = try decodeStatusResponse(data)
+                clearLastError()
+                return observation
+            } catch {
+                recordLastError(context: "status", message: L10n.tr("Relay status response could not be read."))
+                throw RelayError.serverError(statusCode: 200)
+            }
+        case 401, 403:
+            recordLastError(context: "status", message: L10n.tr("Relay status requires purchase confirmation."))
+            throw RelayError.verifiedEntitlementRequired
+        case 429:
+            recordLastError(context: "status", message: L10n.tr("Relay status is temporarily rate limited."))
+            throw RelayError.rateLimited
+        default:
+            recordLastError(
+                context: "status",
+                message: L10n.fmt("Relay status failed with HTTP %d.", http.statusCode)
+            )
+            throw RelayError.serverError(statusCode: http.statusCode)
+        }
+    }
+
+    static func makeStatusRequest(
+        baseURL: String,
+        deviceID: String,
+        signedTransaction: String
+    ) throws -> URLRequest {
+        guard RelayVerifiedEntitlement(signedTransaction: signedTransaction) != nil else {
+            throw RelayError.verifiedEntitlementRequired
+        }
+        guard let url = URL(string: "\(baseURL)/api/v1/status") else {
+            throw RelayError.serverError(statusCode: 0)
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode([
+            "device_id": deviceID,
+            "signed_transaction": signedTransaction,
+        ])
+        return request
+    }
+
+    static func decodeStatusResponse(_ data: Data) throws -> RelayServerObservation {
+        struct Response: Decodable {
+            let triggerObserved: Bool
+            let lastTriggerObservedAt: String?
+            let checkedAt: String
+
+            enum CodingKeys: String, CodingKey {
+                case triggerObserved = "v1_trigger_observed"
+                case lastTriggerObservedAt = "last_trigger_observed_at"
+                case checkedAt = "checked_at"
+            }
+        }
+
+        let response = try JSONDecoder().decode(Response.self, from: data)
+        let formatter = ISO8601DateFormatter()
+        guard let checkedAt = formatter.date(from: response.checkedAt) else {
+            throw RelayError.serverError(statusCode: 200)
+        }
+        let lastObservedAt: Date?
+        if let raw = response.lastTriggerObservedAt {
+            guard let parsed = formatter.date(from: raw) else {
+                throw RelayError.serverError(statusCode: 200)
+            }
+            lastObservedAt = parsed
+        } else {
+            lastObservedAt = nil
+        }
+        guard response.triggerObserved == (lastObservedAt != nil) else {
+            throw RelayError.serverError(statusCode: 200)
+        }
+        return RelayServerObservation(
+            triggerObserved: response.triggerObserved,
+            lastTriggerObservedAt: lastObservedAt,
+            checkedAt: checkedAt
+        )
     }
 
     /// Deregister a device from push notifications.
@@ -325,7 +423,7 @@ enum RelayService {
             throw RelayError.rateLimited
         case 401, 403:
             let body = String(data: data, encoding: .utf8) ?? ""
-            logger.error("Relay \(action) unauthorized: \(http.statusCode) \(body)")
+            logger.error("Relay \(action) unauthorized: HTTP \(http.statusCode)")
             recordLastError(
                 context: action,
                 message: body.isEmpty ? L10n.fmt("Relay %@ unauthorized (HTTP %d).", action, http.statusCode) : body
@@ -333,7 +431,7 @@ enum RelayService {
             throw RelayError.provisionFailed(reason: body.isEmpty ? L10n.tr("Unauthorized request.") : body)
         default:
             let body = String(data: data, encoding: .utf8) ?? ""
-            logger.error("Relay \(action) failed: \(http.statusCode) \(body)")
+            logger.error("Relay \(action) failed: HTTP \(http.statusCode)")
             recordLastError(
                 context: action,
                 message: body.isEmpty ? L10n.fmt("Relay %@ failed with HTTP %d.", action, http.statusCode) : body

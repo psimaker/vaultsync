@@ -60,6 +60,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         RelayTriggerStore.markReceived()
 
         Task {
+            RelaySyncProofStore.markBackgroundSyncStarted()
             let result = await BackgroundSyncService.performBackgroundSync(
                 reason: "silent-push"
             )
@@ -67,6 +68,9 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 
             switch result {
             case .synced:
+                // This records observed local sync progress only. It is not a
+                // confirmed upload/download roundtrip and is never presented as one.
+                RelaySyncProofStore.markSyncProgressObserved()
                 completionHandler(.newData)
             case .alreadyIdle, .noFoldersConfigured, .settledWithFolderError:
                 completionHandler(.noData)

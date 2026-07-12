@@ -1,6 +1,6 @@
 # VaultSync Cloud Relay — Specification
 
-> **Status:** Cloud Relay 1.2.0 is live in production. Provisioning requires a verified StoreKit signed transaction; existing legacy registrations have a bounded compatibility window through October 31, 2026. This document is the protocol and architecture reference for the relay, the `vaultsync-notify` sidecar, and the iOS client.
+> **Status:** Cloud Relay 1.2.0 is live in production. Provisioning requires a verified StoreKit signed transaction; existing legacy registrations have a bounded compatibility window through October 31, 2026. The additive observation/status contract in this document is implemented for the next app generation but remains unreleased until a separately approved Relay deployment. This document is the protocol and architecture reference for the relay, the `vaultsync-notify` sidecar, and the iOS client.
 
 ## Overview
 
@@ -69,16 +69,19 @@ In the app, the **Cloud Relay** tab → **Relay health & diagnostics** is the li
 
 ---
 
-## Authentication Model
+## Routing and Provisioning Model
 
 Identity is based on **Syncthing Device IDs** — no user accounts, no API keys.
 
 - The homeserver container auto-reads its own Device ID from the local Syncthing API
 - The iOS app provisions the relay by sending the homeserver's Device ID (from its peer list), the APNs token, and the StoreKit **signed transaction (JWS)**
 - The central relay verifies the signed transaction against Apple's certificate chain to confirm an active subscription and read its expiry (offline — no per-request Apple API call). During the compatibility window, an older app can refresh only a pre-existing matching legacy registration; it cannot create a new one
-- Trigger requests from the homeserver container are matched by Device ID — no Bearer auth needed
+- Trigger v1 requests are matched by Device ID. They do not carry cryptographic sender authentication; knowledge of a Device ID is not proof of helper identity
 
-This eliminates the need for a user account system. The Syncthing Device ID serves as a stable, unique identifier that both the iOS app and the homeserver container already know.
+This avoids a user account system while keeping provisioning fail-closed. The
+Device ID is a routing identifier both sides already know, not a secret or an
+authenticated helper credential. Authenticated trigger v2 remains a separate
+wire milestone.
 
 ---
 
@@ -148,7 +151,12 @@ Wake-up signal from homeserver container. Sends silent push to all devices regis
 - Returns 202 Accepted immediately — push delivery is async
 - No file content, no folder names, no metadata — just a wake-up signal
 - Rate limited server-side (separate from the client `DEBOUNCE_SECONDS`): roughly 1 push per Device ID per ~30s window
-- The sidecar's **startup-announce** posts here too — every silent push is a genuine relay delivery (the iOS app sends no triggers), so "Cloud Relay active" can't be faked
+- The sidecar's **startup-announce** posts here too. Relay observation can therefore show that a v1 signal for the Device ID was accepted, but v1 does not authenticate who sent it
+
+After syntax, active-subscription, and database checks succeed, the Relay stores
+the time at which it observed the signal. This happens before the 30-second push
+debounce: a valid debounced signal counts as observed but never as another push
+or APNs success. Rejected or database-failed requests do not update the time.
 
 #### Error responses and how `vaultsync-notify` reacts
 
@@ -163,6 +171,43 @@ The trigger endpoint distinguishes a *subscription state* from a *misconfigurati
 
 The sidecar never exits on a subscription-state response; only a genuine misconfiguration (`404`) is fatal.
 
+### POST /status
+
+Read the last Relay-observed signal for one homeserver. This is a `POST` so the
+Device ID and signed transaction stay out of URLs and query strings.
+
+```json
+// Request
+{
+  "device_id": "XXXXXXX-XXXXXXX-...",
+  "signed_transaction": "eyJ...JWS..."
+}
+
+// Response 200, when a signal was observed
+{
+  "v1_trigger_observed": true,
+  "last_trigger_observed_at": "2026-07-12T10:00:00Z",
+  "checked_at": "2026-07-12T10:01:00Z"
+}
+
+// Response 200, when none was observed
+{
+  "v1_trigger_observed": false,
+  "checked_at": "2026-07-12T10:01:00Z"
+}
+```
+
+The Relay verifies the JWS with the same certificate, bundle, app, product,
+environment, type, signed-date, expiry, revocation, and transaction-reason rules
+as provisioning. The original transaction, product, and environment must match
+the requested Device ID's active `verified` row. Missing, unverified, expired,
+revoked, foreign, or legacy-only evidence fails closed. The route is
+rate-limited and never returns tokens, transaction identifiers, JWS, device
+counts, or information about another homeserver.
+
+This status means only “Relay observed a v1 signal for this Device ID.” It does
+not authenticate the helper, prove APNs delivery, or prove synchronization.
+
 ### GET /health
 
 No authentication required.
@@ -174,7 +219,10 @@ No authentication required.
 }
 ```
 
-The `notify` client validates only `status == "ok"`. A 200 means the relay is *reachable*, not that pushes are delivered end-to-end — end-to-end delivery is confirmed only by an actual received trigger.
+The `notify` client validates only `status == "ok"`. A 200 means the relay is
+*reachable*, not that a server signal was observed or a push delivered. A silent
+push recorded locally on the iPhone is stronger delivery evidence, but still not
+proof that synchronization completed.
 
 ---
 
@@ -204,6 +252,7 @@ The container reads its own Syncthing Device ID automatically from `/rest/system
 
 - **No file content is ever transmitted.** The homeserver container sends only its Syncthing Device ID. No folder names, file names, file sizes, or metadata leave the homeserver.
 - The central relay receives and forwards an anonymous wake-up signal — it has no knowledge of what changed or where.
+- The central relay stores the last accepted v1 signal time per Device ID so the app can explain which wake-up leg is pending.
 - APNs payload is a silent push with no visible content (`content-available: 1`, no alert/body).
 
 ### Token Storage
@@ -214,7 +263,7 @@ The container reads its own Syncthing Device ID automatically from `/rest/system
 
 ### Authentication
 
-- No API keys or user accounts — identity is the Syncthing Device ID
+- No API keys or user accounts. The Syncthing Device ID is a routing identifier; trigger v1 does not cryptographically authenticate the sender
 - Provisioning sends the StoreKit signed transaction (JWS), verified offline against Apple's certificate chain; the verified expiry gates the subscription server-side (an expired or revoked subscription stops receiving pushes). Compatibility requests from older apps can only refresh an exact pre-existing legacy mapping until the published cutoff
 - Trigger requests are matched by Device ID — only Device IDs with an active, non-expired subscription receive push notifications
 - Rate limiting per Device ID: 60 requests/minute for provisioning, 10 triggers/minute
@@ -249,11 +298,18 @@ The iOS client implements the full relay flow; see `AppDelegate.swift`, `RelaySe
 - **APNs registration** — registers for remote notifications at launch and converts the device token to a hex string (`AppDelegate`).
 - **Provisioning** — the app POSTs each known homeserver Device ID, the APNs token, and a currently locally verified signed transaction (JWS) to `/api/v1/provision`. It does this after purchase, Restore Purchases, renewal, APNs-token rotation, and once after updating an existing installation. Without verified signed evidence it sends no request and preserves the existing registration.
 - **Migration state** — progress is stored independently per homeserver. A partial or transient failure remains retryable and never changes onboarding, Syncthing identity, vault selection, folder mapping, or vault paths.
+- **Observation status** — only while Relay waiting/diagnostics is visible, the app presents its current locally verified active JWS to `POST /status` for each verified homeserver mapping. The first check is immediate, retries use 15/30/60/120-second delays, and the finite poll stops after five attempts, view exit, local wake-up, inactive/unverified entitlement, or rate limiting. Multi-homeserver results remain independent and are not persisted as subscription state.
 - **Push reception** — a silent push restores the vault bookmarks, starts Syncthing via the Go bridge, polls for completion within the ~30s background budget, then stops Syncthing and releases the bookmarks. This shares the `BGAppRefreshTask` code path.
 - **Background modes** — `UIBackgroundModes` includes `remote-notification` alongside `fetch` and `processing`.
 - **Subscription management** — StoreKit 2 auto-renewable subscription; status, price, and a Manage Subscription link live in the Cloud Relay tab. The price is read from StoreKit at runtime and never hard-coded.
 
 Cloud Relay is configured from its own **Cloud Relay** tab, not onboarding.
+
+The app models StoreKit verification, verified provisioning, backend
+reachability, per-homeserver Relay observation, local silent-push receipt,
+background-sync start, and observed local sync progress as separate evidence.
+No weaker proof sets a stronger success state. A confirmed upload/download
+roundtrip follows in a separate 2.0 milestone.
 
 ---
 
