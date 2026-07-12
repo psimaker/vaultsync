@@ -345,16 +345,44 @@ struct RelayStatusTests {
             storeKitEntitlementVerified: true,
             relayProvisioningConfirmed: true,
             relayBackendReachable: true,
-            relayTriggerObservedAt: observation,
+            relayTriggerObservedAt: observation
+        )
+        let localProof = DeviceLocalSyncProofSnapshot(
             silentPushReceivedAt: nil,
             backgroundSyncStartedAt: nil,
-            syncProgressObservedAt: nil
+            localDataProgressObservedAt: nil,
+            uploadConfirmedAt: nil,
+            downloadConfirmedAt: nil,
+            roundTripConfirmedAt: nil
         )
         #expect(proof.relayBackendReachable)
         #expect(proof.relayTriggerObservedAt == observation)
-        #expect(proof.silentPushReceivedAt == nil)
-        #expect(proof.backgroundSyncStartedAt == nil)
-        #expect(proof.syncProgressObservedAt == nil)
+        #expect(localProof.silentPushReceivedAt == nil)
+        #expect(localProof.backgroundSyncStartedAt == nil)
+        #expect(localProof.localDataProgressObservedAt == nil)
+        #expect(localProof.uploadConfirmedAt == nil)
+        #expect(localProof.downloadConfirmedAt == nil)
+        #expect(localProof.roundTripConfirmedAt == nil)
+    }
+
+    @Test("Relay diagnostics persistence is structured and drops legacy free-form data")
+    func relayDiagnosticsPersistenceIsStructured() throws {
+        let defaults = TestSupport.makeIsolatedDefaults(label: "relay-diagnostics-v2")
+        let forbidden = "device apns-token transaction-jws /private/vault/path"
+        defaults.set(Data(forbidden.utf8), forKey: "relay-diagnostics-last-error")
+        let entry = RelayService.RecordedRelayError(
+            context: "provision",
+            failure: .serverResponse,
+            statusCode: 422,
+            date: Date(timeIntervalSince1970: 1_800_000_000)
+        )
+        let encoded = try JSONEncoder().encode(entry)
+        defaults.set(encoded, forKey: "relay-diagnostics-last-error-v2")
+
+        #expect(RelayService.lastRecordedError(defaults: defaults) == entry)
+        #expect(defaults.data(forKey: "relay-diagnostics-last-error") == nil)
+        #expect(!String(decoding: encoded, as: UTF8.self).contains(forbidden))
+        #expect(entry.message == L10n.fmt("Relay request failed with HTTP %d.", 422))
     }
 
     @Test("Normal status copy contains no protocol or entitlement jargon")

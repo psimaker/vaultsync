@@ -34,14 +34,62 @@ Cloud Relay is a `server → iPhone` *acceleration* path, not a guarantee of sym
 
 ### Relay and sync proof hierarchy
 
-VaultSync keeps the following evidence separate: a locally verified StoreKit
-entitlement, verified Relay provisioning, Relay backend reachability, the Relay
-having observed a v1 signal for one homeserver Device ID, a silent push received
-on this iPhone, background sync starting, and actual local sync progress. None
-automatically implies the next. In particular, Relay observation does not
-authenticate the v1 helper and does not prove APNs delivery; local silent-push
-receipt is stronger delivery evidence, but still not a confirmed upload/download
-roundtrip. That roundtrip remains a separate 2.0 milestone.
+VaultSync models proof as independent fields, never as one derived “sync
+succeeded” flag:
+
+| Proof | Scope | What can set it |
+|---|---|---|
+| StoreKit entitlement verified locally | App subscription | A current `.verified` StoreKit transaction |
+| Relay provisioning confirmed | Homeserver Device ID | A successful, entitlement-backed v1 provision response |
+| Relay backend reachable | Relay endpoint | A successful health request |
+| Relay observed a v1 trigger | Homeserver Device ID | A consistent v1 status response |
+| Silent push received locally | This iPhone, unattributed | The iOS remote-notification delegate |
+| Background sync started | This iPhone, unattributed | Entry into the silent-push sync path |
+| Local data progress observed | Background run, or one eligible server/folder check | A fresh, successful incoming file application (`ItemFinished`) |
+| Upload confirmed | Server/folder/check correlation | Not available with the current helper |
+| Download confirmed | Server/folder/check correlation | Not available as a controlled directional proof with the current helper |
+| Full roundtrip confirmed | One matching upload-then-download correlation | Not available with the current helper |
+
+None automatically implies the next. Relay reachability is not a trigger;
+trigger observation is not APNs delivery; push receipt is not background start;
+engine reachability, scans, index updates, `idle`, and 100% completion are not
+local data progress. A successful incoming file application proves that this
+iPhone applied a file change, but not that network bytes moved, which peer
+supplied every block, or that the check caused the change. Upload and controlled
+download therefore remain independent and unset, so a full roundtrip cannot be
+derived.
+
+Server snapshots contain only entitlement, provisioning, backend, and
+per-homeserver Relay observation. The v1 push contains no homeserver/folder
+identifier, so push receipt, background start, and organic background progress
+remain explicitly iPhone-wide and must not mark server A or B. Only the manual
+check can scope fresh local evidence to one folder and its sole configured peer.
+
+#### Manual synchronization-path check
+
+Relay Diagnostics exposes the only entry point. An explicit tap takes a current
+subscription-local event cursor, nanosecond production-time boundary, and engine
+generation, then observes at most five times with 2/4/8/12-second delays. Results
+are kept in memory per unique server/folder pair. Only an unpaused `sendreceive`
+or `receiveonly` folder with one known, connected, unpaused peer is eligible;
+offline peers, send-only or encrypted folders, and ambiguous multi-peer folders
+remain unavailable or unsupported. One successful folder never upgrades another.
+
+Evidence must be newer than both the check start and its baseline cursor, and an
+engine-generation change interrupts the check rather than reusing events. The
+result becomes stale after 15 minutes. Cancellation, leaving Diagnostics, or an
+inactive app lifecycle ends polling and releases the single-flight lease before a
+retry. The check is passive: it creates no probe artifact, performs no rescan or
+write, changes no folder or device mapping, persists no check identifier/result,
+and never runs during onboarding, app launch, a silent push, or ordinary
+background sync.
+
+Ignore rules, missing paths, an event-buffer overflow, or a runtime folder error
+can prevent an observation and therefore end conservatively as incomplete; they
+never create a false success. A controlled upload/download roundtrip needs a
+separately designed, additive, capability-negotiated helper contract and a
+demonstrably safe app-owned diagnostics namespace. Relay v1 is unchanged by this
+milestone.
 
 ### Connection paths & iOS network privacy
 
@@ -78,7 +126,7 @@ Minimal API exported via gomobile. Only primitives + `string` + `[]byte` cross t
 - **Pending shares:** `GetPendingFoldersJSON`, `AcceptPendingFolder`
 - **Conflicts:** `GetConflictFilesJSON`, `ResolveConflict`, `KeepBothConflict`, `ReadFileContent`, `RemoveConflictFilesForOriginal`
 - **Filters:** `GetFolderIgnores`, `SetFolderIgnores`, `ScanFolderForKnownPatterns`
-- **Events:** `GetEventsSince`
+- **Events:** `GetEventsSince`, `EventStreamGeneration`
 </details>
 
 ## 📱 iOS app structure (`ios/VaultSync/`)

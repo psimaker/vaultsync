@@ -41,7 +41,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         didFailToRegisterForRemoteNotificationsWithError error: any Error
     ) {
         let reason = apnsRegistrationFailureReason(error)
-        logger.error("APNs registration failed: \(reason)")
+        logger.error("APNs registration failed")
         _ = KeychainService.clearAPNsDeviceToken()
         APNsRegistrationStore.markFailed(reason: reason)
     }
@@ -68,9 +68,6 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 
             switch result {
             case .synced:
-                // This records observed local sync progress only. It is not a
-                // confirmed upload/download roundtrip and is never presented as one.
-                RelaySyncProofStore.markSyncProgressObserved()
                 completionHandler(.newData)
             case .alreadyIdle, .noFoldersConfigured, .settledWithFolderError:
                 completionHandler(.noData)
@@ -84,13 +81,11 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 
     private func apnsRegistrationFailureReason(_ error: any Error) -> String {
         let nsError = error as NSError
-        let base = "\(nsError.localizedDescription) (\(nsError.domain):\(nsError.code))"
-
         // Common in Simulator; APNs token retrieval is unavailable there.
         if nsError.domain == NSCocoaErrorDomain, nsError.code == 3010 {
             return L10n.tr("Push registration is unavailable in Simulator. Test APNs on a physical iPhone in Settings > Notifications for VaultSync.")
         }
 
-        return base
+        return L10n.tr("Push registration is not ready yet.")
     }
 }

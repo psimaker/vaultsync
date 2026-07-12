@@ -30,7 +30,7 @@ Your notes sync peer-to-peer over Syncthing, straight into Obsidian's iOS sandbo
 - **Peer-to-peer & private** — syncs directly between your own devices over [Syncthing](https://syncthing.net/). No note cloud, no account, no tracking.
 - **Lands in Obsidian** — files sync into Obsidian's iOS sandbox, where the app already looks for them.
 - **Pair by QR, resolve conflicts** — connect your server in seconds; settle Markdown conflicts with side-by-side diffs.
-- **Server changes wake your iPhone** — optional Cloud Relay nudges the app the moment your server updates, so incoming notes land even while it's closed. An activity timeline and diagnostics show exactly what synced.
+- **Server changes can wake your iPhone** — optional Cloud Relay asks iOS to wake the app after the helper observes a server change. The activity timeline shows local sync activity, while Diagnostics keeps Relay, delivery, and local-data evidence separate.
 
 *VoiceOver and Dynamic Type throughout. Localized in English, German, Spanish, and Simplified Chinese. Independent project — not affiliated with Obsidian or Syncthing.*
 
@@ -62,7 +62,7 @@ Syncthing runs on a machine you keep on; VaultSync joins as a peer and syncs int
 
 ## ☁️ Cloud Relay (optional)
 
-Without it, VaultSync syncs server changes when you open the app. **With it, your iPhone wakes on its own the moment your server changes** — even while VaultSync is closed.
+Without it, VaultSync syncs server changes when you open the app. **With it, Cloud Relay can request a background wake-up after your server changes** — iOS still decides whether and when to run the app.
 
 ### ⚡ One-step setup
 

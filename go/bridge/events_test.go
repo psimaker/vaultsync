@@ -97,3 +97,31 @@ func TestBridgeEventDataItemFinishedSkipsEmptyError(t *testing.T) {
 		t.Fatalf("error should be omitted when empty: %+v", data)
 	}
 }
+
+func TestMakeEventInfoExportsSubscriptionCursor(t *testing.T) {
+	eventTime := time.Date(2027, time.January, 15, 8, 0, 0, 123456789, time.UTC)
+	ev := events.Event{
+		SubscriptionID: 7,
+		GlobalID:       42,
+		Type:           events.ItemFinished,
+		Time:           eventTime,
+		Data: map[string]interface{}{
+			"folder": "vault-c",
+			"item":   "daily.md",
+			"type":   "file",
+			"action": "update",
+			"error":  "",
+		},
+	}
+
+	info := makeEventInfo(ev)
+	if info.ID != ev.SubscriptionID {
+		t.Fatalf("event cursor = %d, want subscription ID %d", info.ID, ev.SubscriptionID)
+	}
+	if info.ID == ev.GlobalID {
+		t.Fatalf("event cursor unexpectedly used global ID %d", ev.GlobalID)
+	}
+	if info.Time != eventTime.Format(time.RFC3339Nano) {
+		t.Fatalf("event time = %q, want nanosecond RFC3339 %q", info.Time, eventTime.Format(time.RFC3339Nano))
+	}
+}

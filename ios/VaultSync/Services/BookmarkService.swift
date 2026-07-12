@@ -16,18 +16,18 @@ struct BookmarkService {
             relativeTo: nil
         )
         UserDefaults.standard.set(data, forKey: bookmarkPrefix + identifier)
-        logger.info("Bookmark saved for \(identifier)")
+        logger.info("Security-scoped bookmark saved")
     }
 
     static func deleteBookmark(identifier: String) {
         UserDefaults.standard.removeObject(forKey: bookmarkPrefix + identifier)
-        logger.info("Bookmark deleted for \(identifier)")
+        logger.info("Security-scoped bookmark deleted")
     }
 
     /// Returns the resolved URL and whether the bookmark is stale (file moved/renamed).
     static func resolveBookmark(identifier: String) -> (url: URL, isStale: Bool)? {
         guard let data = UserDefaults.standard.data(forKey: bookmarkPrefix + identifier) else {
-            logger.warning("No bookmark data for \(identifier)")
+            logger.warning("No security-scoped bookmark data available")
             return nil
         }
 
@@ -38,11 +38,11 @@ struct BookmarkService {
                 bookmarkDataIsStale: &isStale
             )
             if isStale {
-                logger.warning("Bookmark is stale for \(identifier)")
+                logger.warning("Security-scoped bookmark is stale")
             }
             return (url, isStale)
         } catch {
-            logger.error("Failed to resolve bookmark for \(identifier): \(error)")
+            logger.error("Failed to resolve security-scoped bookmark")
             return nil
         }
     }
@@ -52,9 +52,9 @@ struct BookmarkService {
     static func startAccessing(url: URL) -> Bool {
         let success = url.startAccessingSecurityScopedResource()
         if success {
-            logger.info("Started accessing: \(url.lastPathComponent)")
+            logger.info("Started security-scoped access")
         } else {
-            logger.error("Failed to start accessing: \(url.lastPathComponent)")
+            logger.error("Failed to start security-scoped access")
         }
         return success
     }
@@ -62,7 +62,7 @@ struct BookmarkService {
     /// Only call after Syncthing has stopped using the directory.
     static func stopAccessing(url: URL) {
         url.stopAccessingSecurityScopedResource()
-        logger.info("Stopped accessing: \(url.lastPathComponent)")
+        logger.info("Stopped security-scoped access")
     }
 
     static func allBookmarkIdentifiers() -> [String] {

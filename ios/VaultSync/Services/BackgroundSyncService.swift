@@ -63,7 +63,8 @@ enum BackgroundSyncService {
     nonisolated(unsafe) private(set) static var appRefreshRegistered = false
     nonisolated(unsafe) private(set) static var continuedProcessingRegistered = false
     nonisolated(unsafe) private(set) static var processingRegistered = false
-    private static let lastSyncOutcomeStorageKey = "background-sync-last-outcome-v1"
+    private static let lastSyncOutcomeStorageKey = "background-sync-last-outcome-v2"
+    private static let legacyLastSyncOutcomeStorageKey = "background-sync-last-outcome-v1"
     static let lastSyncOutcomeDidChangeNotification = Notification.Name("BackgroundSyncLastOutcomeDidChange")
 
     /// Stable identifier for the conflict banner. Re-posting with the same id
@@ -86,6 +87,10 @@ enum BackgroundSyncService {
         let triggerReason: String
         let result: SyncResult
         let detail: String?
+        /// Optional for backward-compatible decoding of outcomes persisted by
+        /// older app versions. Only a fresh successful local file application
+        /// sets this to true; idle/scan/index activity never does.
+        let localDataProgressObserved: Bool?
     }
 
     // MARK: - Registration
@@ -251,7 +256,7 @@ enum BackgroundSyncService {
             try BGTaskScheduler.shared.submit(request)
             logger.info("App refresh scheduled")
         } catch {
-            logger.error("Could not schedule app refresh: \(error)")
+            logger.error("Could not schedule app refresh")
         }
     }
 
@@ -279,7 +284,7 @@ enum BackgroundSyncService {
             try BGTaskScheduler.shared.submit(request)
             logger.info("Processing task scheduled")
         } catch {
-            logger.error("Could not schedule processing task: \(error)")
+            logger.error("Could not schedule processing task")
         }
     }
 
@@ -299,7 +304,7 @@ enum BackgroundSyncService {
                 try BGTaskScheduler.shared.submit(request)
                 logger.info("Continued processing submitted")
             } catch {
-                logger.error("Could not submit continued processing: \(error)")
+                logger.error("Could not submit continued processing")
             }
         } else {
             return
@@ -322,7 +327,7 @@ enum BackgroundSyncService {
             return try await UNUserNotificationCenter.current()
                 .requestAuthorization(options: [.alert, .sound, .badge])
         } catch {
-            logger.error("Notification permission failed: \(error)")
+            logger.error("Notification permission request failed")
             return false
         }
     }
@@ -508,12 +513,41 @@ enum BackgroundSyncService {
         }
     }
 
-    static func lastSyncOutcome() -> SyncOutcome? {
-        guard let data = UserDefaults.standard.data(forKey: lastSyncOutcomeStorageKey),
-              let decoded = try? JSONDecoder().decode(SyncOutcome.self, from: data) else {
+    static func lastSyncOutcome(defaults: UserDefaults = .standard) -> SyncOutcome? {
+        if let data = defaults.data(forKey: lastSyncOutcomeStorageKey),
+           let decoded = try? JSONDecoder().decode(SyncOutcome.self, from: data) {
+            defaults.removeObject(forKey: legacyLastSyncOutcomeStorageKey)
+            return decoded
+        }
+        guard let data = defaults.data(forKey: legacyLastSyncOutcomeStorageKey) else {
             return nil
         }
-        return decoded
+        guard let legacy = try? JSONDecoder().decode(SyncOutcome.self, from: data) else {
+            defaults.removeObject(forKey: legacyLastSyncOutcomeStorageKey)
+            return nil
+        }
+        // v1 could contain a raw bridge error with local paths. Preserve only
+        // the safe operational shape for existing users; never surface or copy
+        // its free-form detail into the v2 record.
+        let safeReason: String
+        switch legacy.triggerReason {
+        case "silent-push", "app-refresh", "processing":
+            safeReason = legacy.triggerReason
+        default:
+            safeReason = "background"
+        }
+        let sanitized = SyncOutcome(
+            timestamp: legacy.timestamp,
+            triggerReason: safeReason,
+            result: legacy.result,
+            detail: nil,
+            localDataProgressObserved: nil
+        )
+        if let encoded = try? JSONEncoder().encode(sanitized) {
+            defaults.set(encoded, forKey: lastSyncOutcomeStorageKey)
+        }
+        defaults.removeObject(forKey: legacyLastSyncOutcomeStorageKey)
+        return sanitized
     }
 
     /// Perform a background sync cycle. Manages Syncthing lifecycle if not already running.
@@ -584,20 +618,18 @@ enum BackgroundSyncService {
                     initialEventCursor: syncStartEventCursor
                 )
             }
-            trace("Restored bookmark access for \(managedURLs.count) URL(s).")
-            traceManagedRoots(managedURLs, label: "restored-bookmarks")
-            traceVaultSnapshot(label: "restored-bookmarks")
+            trace("Managed access restored (count=\(managedURLs.count)).")
 
             let configDir = syncthingConfigDir()
             let err = SyncBridgeService.startSyncthing(configDir: configDir)
             if let err, !err.isEmpty, !SyncBridgeService.isRunning() {
-                logger.error("Background start failed: \(err)")
-                trace("Bridge start failed: \(err)")
+                logger.error("Background bridge start failed")
+                trace("Bridge start failed.")
                 releaseAccess(managedURLs)
                 return completeSync(
                     reason: reason,
                     result: .bridgeStartFailed,
-                    detail: err,
+                    detail: L10n.tr("The embedded sync engine could not start."),
                     startedAt: syncStartedAt,
                     initialEventCursor: syncStartEventCursor
                 )
@@ -629,10 +661,10 @@ enum BackgroundSyncService {
         }
 
         var progressTracker = reason == "silent-push"
-            ? SilentPushProgressTracker(lastEventID: latestBridgeEventID())
+            ? SilentPushProgressTracker(lastEventID: syncStartEventCursor, startedAt: syncStartedAt)
             : nil
-        if let progressTracker {
-            trace("Silent push progress tracking started at event id \(progressTracker.lastEventID).")
+        if progressTracker != nil {
+            trace("Silent push local-progress tracking started.")
         }
         var forcedRestartPerformed = false
 
@@ -650,7 +682,7 @@ enum BackgroundSyncService {
                 trace("No wake evidence after rescan. Forcing Syncthing restart.")
                 let restart = await forceRestartForSilentPush(managedURLs: managedURLs)
                 guard restart.success else {
-                    trace("Forced restart failed: \(restart.errorDetail ?? "unknown error").")
+                    trace("Forced restart failed.")
                     let completion = completeSync(
                         reason: reason,
                         result: .bridgeStartFailed,
@@ -667,17 +699,14 @@ enum BackgroundSyncService {
                 managedURLs = restart.managedURLs
                 ownsLifecycle = restart.ownsLifecycle
                 forcedRestartPerformed = true
-                progressTracker?.requiresMeaningfulProgress = true
+                progressTracker?.requiresLocalDataProgress = true
                 progressTracker?.lastEventID = latestBridgeEventID()
                 trace("Forced restart succeeded. Background now owns lifecycle=\(ownsLifecycle).")
-                if let progressTracker {
-                    trace("Silent push progress tracking reset after forced restart at event id \(progressTracker.lastEventID).")
-                }
+                trace("Silent push local-progress tracking reset after forced restart.")
 
                 let recoveredFolders = await waitForAnyFolders(maxWait: 3)
                 trace("Post-restart folder availability: \(recoveredFolders).")
-                traceManagedRoots(managedURLs, label: "post-forced-restart")
-                traceVaultSnapshot(label: "post-forced-restart")
+                trace("Managed access restored after restart (count=\(managedURLs.count)).")
                 traceFolderStatuses(label: "post-forced-restart")
                 guard recoveredFolders else {
                     let completion = completeSync(
@@ -706,9 +735,9 @@ enum BackgroundSyncService {
             }
         }
 
-        _ = progressTracker?.poll()
+        let setupProgressSnapshot = progressTracker?.poll()
 
-        if allFoldersIdle() && !(progressTracker?.requiresMeaningfulProgress == true) {
+        if allFoldersIdle() && !(progressTracker?.requiresLocalDataProgress == true) {
             trace("Folders already idle after setup checks.")
             // Surface conflicts on the fast idle path too — a small change that
             // conflicts and settles before the deadline loop would otherwise
@@ -721,7 +750,8 @@ enum BackgroundSyncService {
                 result: .alreadyIdle,
                 detail: nil,
                 startedAt: syncStartedAt,
-                initialEventCursor: syncStartEventCursor
+                initialEventCursor: syncStartEventCursor,
+                localDataProgressObserved: setupProgressSnapshot?.sawLocalDataProgress == true
             )
             if ownsLifecycle {
                 cleanupBackgroundManaged(managedURLs)
@@ -746,7 +776,7 @@ enum BackgroundSyncService {
             if var tracker = progressTracker {
                 let snapshot = tracker.poll()
                 progressTrackerTraceIfNeeded(snapshot)
-                if settled && !snapshot.requiresMeaningfulProgress {
+                if settled && !snapshot.requiresLocalDataProgress {
                     progressTracker = tracker
                     break
                 }
@@ -765,14 +795,13 @@ enum BackgroundSyncService {
         trace("Deadline reached or idle observed. idle=\(idle).")
         traceRelevantBridgeEvents(since: &telemetryEventCursor, label: "pre-completion")
         traceFolderStatuses(label: "pre-completion")
-        traceVaultSnapshot(label: "pre-completion")
         if idle {
             await notifyConflictsIfAny()
         }
 
         let result: SyncResult
         let detail: String?
-        if let progressSnapshot, forcedRestartPerformed, progressSnapshot.requiresMeaningfulProgress {
+        if let progressSnapshot, forcedRestartPerformed, progressSnapshot.requiresLocalDataProgress {
             result = .failed
             detail = L10n.tr("Silent push restarted Syncthing, but no real sync progress was observed before the app returned to idle.")
         } else if idle {
@@ -795,7 +824,8 @@ enum BackgroundSyncService {
             result: result,
             detail: detail,
             startedAt: syncStartedAt,
-            initialEventCursor: syncStartEventCursor
+            initialEventCursor: syncStartEventCursor,
+            localDataProgressObserved: progressSnapshot?.sawLocalDataProgress == true
         )
         // Only stop if we started it and foreground hasn't taken over.
         if ownsLifecycle {
@@ -1022,15 +1052,20 @@ enum BackgroundSyncService {
         result: SyncResult,
         detail: String?,
         startedAt: Date,
-        initialEventCursor: Int
+        initialEventCursor: Int,
+        localDataProgressObserved: Bool = false
     ) -> SyncResult {
         let outcome = SyncOutcome(
             timestamp: Date(),
             triggerReason: reason,
             result: result,
-            detail: detail
+            detail: detail,
+            localDataProgressObserved: localDataProgressObserved
         )
         persistSyncOutcome(outcome)
+        if reason == "silent-push", localDataProgressObserved {
+            RelaySyncProofStore.markLocalDataProgressObserved(at: outcome.timestamp)
+        }
         WidgetSnapshotStore.write(
             snapshot: backgroundCompletionSnapshot(
                 result: result,
@@ -1043,11 +1078,7 @@ enum BackgroundSyncService {
                 previous: WidgetSnapshotStore.read()
             )
         )
-        if let detail, !detail.isEmpty {
-            trace("Completed with result=\(result.rawValue): \(detail)")
-        } else {
-            trace("Completed with result=\(result.rawValue).")
-        }
+        trace("Completed with result=\(result.rawValue).")
         logger.info("Background sync completed (reason=\(reason), result=\(result.rawValue))")
         return result
     }
@@ -1055,6 +1086,7 @@ enum BackgroundSyncService {
     private static func persistSyncOutcome(_ outcome: SyncOutcome) {
         guard let data = try? JSONEncoder().encode(outcome) else { return }
         UserDefaults.standard.set(data, forKey: lastSyncOutcomeStorageKey)
+        UserDefaults.standard.removeObject(forKey: legacyLastSyncOutcomeStorageKey)
         NotificationCenter.default.post(name: lastSyncOutcomeDidChangeNotification, object: nil)
     }
 
@@ -1234,7 +1266,7 @@ enum BackgroundSyncService {
                 UserDefaults.standard.set(count, forKey: lastNotifiedConflictCountKey)
                 logger.info("Conflict notification \(action == .alert ? "posted" : "updated quietly") (\(count) conflicts)")
             } catch {
-                logger.error("Failed to send notification: \(error)")
+                logger.error("Failed to send notification")
             }
         }
     }
@@ -1295,7 +1327,7 @@ enum BackgroundSyncService {
             return []
         }
         guard BookmarkService.startAccessing(url: url) else {
-            trace("Bookmark access start failed for \(url.lastPathComponent).")
+            trace("Bookmark access start failed.")
             return []
         }
         if isStale {
@@ -1383,84 +1415,12 @@ enum BackgroundSyncService {
         let configDir = syncthingConfigDir()
         let err = SyncBridgeService.startSyncthing(configDir: configDir)
         if let err, !err.isEmpty, !SyncBridgeService.isRunning() {
-            trace("Forced restart start failed: \(err)")
-            return (false, true, managedURLs, err)
+            trace("Forced restart start failed.")
+            return (false, true, managedURLs, L10n.tr("The embedded sync engine could not restart."))
         }
 
         trace("Forced restart started bridge successfully.")
         return (true, true, managedURLs, nil)
-    }
-
-    private static func traceManagedRoots(_ urls: [URL], label: String) {
-        let roots = urls.map(\.path)
-        trace("Managed roots [\(label)]: \(roots.isEmpty ? "none" : roots.joined(separator: ", ")).")
-    }
-
-    private static func traceVaultSnapshot(label: String) {
-        let identifier = "obsidian-root"
-        guard let (url, isStale) = BookmarkService.resolveBookmark(identifier: identifier) else {
-            trace("Vault snapshot [\(label)]: no bookmark available.")
-            return
-        }
-
-        let startedAccess = BookmarkService.startAccessing(url: url)
-        defer {
-            if startedAccess {
-                BookmarkService.stopAccessing(url: url)
-            }
-        }
-
-        guard startedAccess else {
-            trace("Vault snapshot [\(label)]: bookmark access failed for \(url.path).")
-            return
-        }
-
-        let fileManager = FileManager.default
-        let resourceKeys: [URLResourceKey] = [.isRegularFileKey, .contentModificationDateKey, .fileSizeKey]
-        guard let enumerator = fileManager.enumerator(
-            at: url,
-            includingPropertiesForKeys: resourceKeys,
-            options: [.skipsHiddenFiles, .skipsPackageDescendants]
-        ) else {
-            trace("Vault snapshot [\(label)]: could not enumerate \(url.path).")
-            return
-        }
-
-        var regularFileCount = 0
-        var markdownFileCount = 0
-        var recentFiles: [(path: String, modified: Date, size: Int?)] = []
-
-        for case let fileURL as URL in enumerator {
-            guard let values = try? fileURL.resourceValues(forKeys: Set(resourceKeys)),
-                  values.isRegularFile == true else {
-                continue
-            }
-
-            regularFileCount += 1
-            if fileURL.pathExtension.lowercased() == "md" {
-                markdownFileCount += 1
-            }
-
-            let modified = values.contentModificationDate ?? .distantPast
-            recentFiles.append((
-                path: fileURL.path.replacingOccurrences(of: url.path + "/", with: ""),
-                modified: modified,
-                size: values.fileSize
-            ))
-        }
-
-        let recentSummary = recentFiles
-            .sorted { $0.modified > $1.modified }
-            .prefix(5)
-            .map {
-                let sizePart = $0.size.map { "\($0)b" } ?? "?"
-                return "\($0.path) [\(sizePart), mtime=\(iso8601String(from: $0.modified))]"
-            }
-            .joined(separator: " | ")
-
-        trace(
-            "Vault snapshot [\(label)]: root=\(url.path), stale=\(isStale), files=\(regularFileCount), markdown=\(markdownFileCount), recent=\(recentSummary.isEmpty ? "none" : recentSummary)."
-        )
     }
 
     private static func traceFolderStatuses(label: String) {
@@ -1472,14 +1432,33 @@ enum BackgroundSyncService {
             return
         }
 
-        let summaries = folders.compactMap { folder -> String? in
+        var idleCount = 0
+        var activeCount = 0
+        var errorCount = 0
+        var decodeFailureCount = 0
+        var foldersWithPendingWork = 0
+        for folder in folders {
             guard let status = SyncBridgeService.getFolderStatus(folderID: folder.id) else {
-                return "\(folder.id)=decode-failed"
+                decodeFailureCount += 1
+                continue
             }
-            return "\(folder.id):state=\(status.state), needFiles=\(status.needFiles), needBytes=\(status.needBytes), inProgressBytes=\(status.inProgressBytes), localFiles=\(status.localFiles), globalFiles=\(status.globalFiles), completion=\(Int(status.completionPct))%"
+            switch folderSettlement(
+                state: status.state,
+                needFiles: status.needFiles,
+                needBytes: status.needBytes,
+                inProgressBytes: status.inProgressBytes
+            ) {
+            case .idle: idleCount += 1
+            case .active: activeCount += 1
+            case .errored: errorCount += 1
+            }
+            if status.needFiles > 0 || status.needBytes > 0 || status.inProgressBytes > 0 {
+                foldersWithPendingWork += 1
+            }
         }
-
-        trace("Folder status [\(label)]: \(summaries.joined(separator: " | ")).")
+        trace(
+            "Folder status [\(label)]: count=\(folders.count), idle=\(idleCount), active=\(activeCount), errors=\(errorCount), pending=\(foldersWithPendingWork), unreadable=\(decodeFailureCount)."
+        )
     }
 
     private static func traceRelevantBridgeEvents(since lastEventID: inout Int, label: String) {
@@ -1494,11 +1473,21 @@ enum BackgroundSyncService {
             return
         }
 
-        let summary = relevant
-            .suffix(8)
-            .map(\.diagnosticSummary)
-            .joined(separator: " | ")
-        trace("Bridge events [\(label)]: \(summary).")
+        let typeCounts = relevant.reduce(into: [String: Int]()) { counts, event in
+            let category: String
+            switch event.type {
+            case "DeviceConnected", "DeviceDisconnected": category = "connection"
+            case "LocalIndexUpdated", "RemoteIndexUpdated": category = "index"
+            case "ItemStarted", "ItemFinished": category = "item"
+            case "StateChanged": category = "state"
+            case "FolderCompletion": category = "completion"
+            case "FolderErrors": category = "error"
+            default: category = "other"
+            }
+            counts[category, default: 0] += 1
+        }
+        let summary = typeCounts.keys.sorted().map { "\($0)=\(typeCounts[$0, default: 0])" }.joined(separator: ", ")
+        trace("Bridge events [\(label)]: count=\(relevant.count), \(summary).")
     }
 
     private static func trace(_ message: String) {
@@ -1521,12 +1510,6 @@ enum BackgroundSyncService {
     private static func progressTrackerTraceIfNeeded(_ snapshot: SilentPushProgressTracker.ProgressSnapshot) {
         guard let summary = snapshot.summaryForTrace else { return }
         trace(summary)
-    }
-
-    private static func iso8601String(from date: Date) -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter.string(from: date)
     }
 
     // MARK: - Stub types for JSON decoding
@@ -1567,14 +1550,15 @@ enum BackgroundSyncService {
     struct SilentPushProgressTracker: Sendable {
         struct ProgressSnapshot: Sendable {
             let lastEventID: Int
-            let requiresMeaningfulProgress: Bool
-            let sawMeaningfulProgress: Bool
+            let requiresLocalDataProgress: Bool
+            let sawLocalDataProgress: Bool
             let summaryForTrace: String?
         }
 
         var lastEventID: Int
-        var requiresMeaningfulProgress = false
-        private(set) var sawMeaningfulProgress = false
+        let startedAt: Date
+        var requiresLocalDataProgress = false
+        private(set) var sawLocalDataProgress = false
 
         mutating func poll() -> ProgressSnapshot {
             let events = BackgroundSyncService.decodeBridgeEvents(
@@ -1586,20 +1570,19 @@ enum BackgroundSyncService {
         mutating func observe(_ events: [BridgeEventStub]) -> ProgressSnapshot {
             var summary: String?
             for event in events {
-                if event.id > lastEventID {
-                    lastEventID = event.id
-                }
-                if !sawMeaningfulProgress && event.indicatesMeaningfulProgress {
-                    sawMeaningfulProgress = true
-                    requiresMeaningfulProgress = false
-                    summary = "Observed sync progress via \(event.type) (event id \(event.id))."
+                guard event.id > lastEventID else { continue }
+                lastEventID = event.id
+                if !sawLocalDataProgress && event.indicatesLocalDataProgress(since: startedAt) {
+                    sawLocalDataProgress = true
+                    requiresLocalDataProgress = false
+                    summary = "Observed local data progress."
                 }
             }
 
             return ProgressSnapshot(
                 lastEventID: lastEventID,
-                requiresMeaningfulProgress: requiresMeaningfulProgress,
-                sawMeaningfulProgress: sawMeaningfulProgress,
+                requiresLocalDataProgress: requiresLocalDataProgress,
+                sawLocalDataProgress: sawLocalDataProgress,
                 summaryForTrace: summary
             )
         }
@@ -1608,6 +1591,7 @@ enum BackgroundSyncService {
     struct BridgeEventStub: Decodable, Sendable {
         let id: Int
         let type: String
+        let time: String
         let data: [String: String]?
 
         var isDiagnosticRelevant: Bool {
@@ -1620,43 +1604,17 @@ enum BackgroundSyncService {
             }
         }
 
-        var diagnosticSummary: String {
-            var details: [String] = ["#\(id)", type]
-            if let item = data?["item"] {
-                details.append("item=\(item)")
-            }
-            if let folder = data?["folder"] {
-                details.append("folder=\(folder)")
-            }
-            if let device = data?["device"] {
-                details.append("device=\(device)")
-            }
-            if let from = data?["from"] {
-                details.append("from=\(from)")
-            }
-            if let to = data?["to"] {
-                details.append("to=\(to)")
-            }
-            if let error = data?["error"], !error.isEmpty {
-                details.append("error=\(error)")
-            }
-            return details.joined(separator: " ")
-        }
-
-        var indicatesMeaningfulProgress: Bool {
-            switch type {
-            case "RemoteIndexUpdated", "LocalIndexUpdated", "ItemFinished":
-                return true
-            case "StateChanged":
-                let toState = data?["to"]?.lowercased()
-                let fromState = data?["from"]?.lowercased()
-                return toState == "syncing"
-                    || fromState == "syncing"
-                    || toState == "scanning"
-                    || fromState == "scanning"
-            default:
+        func indicatesLocalDataProgress(since startedAt: Date) -> Bool {
+            guard type == "ItemFinished",
+                  data?["type"] == "file",
+                  data?["action"] == "update" || data?["action"] == "delete",
+                  (data?["error"] ?? "").isEmpty,
+                  data?["folder"]?.isEmpty == false,
+                  let eventDate = SyncBridgeService.parseBridgeTimestamp(time),
+                  eventDate >= startedAt else {
                 return false
             }
+            return true
         }
     }
 }

@@ -54,7 +54,7 @@ final class TipJarManager {
                 logger.warning("No contribution products returned by StoreKit")
             }
         } catch {
-            logger.error("Failed to load contribution products: \(error)")
+            logger.error("Failed to load contribution products")
         }
     }
 
@@ -88,7 +88,7 @@ final class TipJarManager {
                 break
             }
         } catch {
-            logger.error("Contribution purchase failed: \(error)")
+            logger.error("Contribution purchase failed")
             errorMessage = SyncUserError.from(
                 error: error,
                 fallbackTitle: L10n.tr("Contribution Failed")

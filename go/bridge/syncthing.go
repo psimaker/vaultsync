@@ -6,6 +6,9 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"io"
+	"log"
+	"log/slog"
 	"path/filepath"
 	"sync"
 	"time"
@@ -29,6 +32,9 @@ var (
 	stCert     tls.Certificate
 	stMyID     protocol.DeviceID
 	stRunning  bool
+	// Monotonic within this app process. A diagnostics check captures it so an
+	// event cursor can never be reused across an engine restart.
+	stEventGeneration int64
 
 	// Early service supervisor for evLogger and config wrapper.
 	stEarlyCancel context.CancelFunc
@@ -40,6 +46,7 @@ var (
 func StartSyncthing(configDir string) string {
 	mu.Lock()
 	defer mu.Unlock()
+	configurePrivacySafeLogging()
 
 	if stRunning {
 		return "already running"
@@ -166,6 +173,7 @@ func StartSyncthing(configDir string) string {
 	// Create a buffered event subscription for the bridge.
 	sub := stEvLogger.Subscribe(events.AllEvents)
 	stEventSub = events.NewBufferedSubscription(sub, 200)
+	stEventGeneration++
 
 	// Remember successful outbound connection addresses so the next cold
 	// start can dial peers immediately, without a discovery round trip.
@@ -174,6 +182,15 @@ func StartSyncthing(configDir string) string {
 
 	stRunning = true
 	return ""
+}
+
+// Syncthing's upstream log attributes can contain file paths, folder IDs, and
+// peer IDs even at info/warning level. The embedded app surfaces sanitized
+// state through the bridge instead, so upstream stdout logging is disabled at
+// the process boundary rather than attempting incomplete value redaction.
+func configurePrivacySafeLogging() {
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	log.SetOutput(io.Discard)
 }
 
 // StopSyncthing gracefully stops the running Syncthing instance.
@@ -209,6 +226,18 @@ func IsRunning() bool {
 	mu.Lock()
 	defer mu.Unlock()
 	return stRunning
+}
+
+// EventStreamGeneration identifies the currently running event stream.
+// It contains no device or folder information and is never persisted.
+// Zero means that no event stream is currently running.
+func EventStreamGeneration() int64 {
+	mu.Lock()
+	defer mu.Unlock()
+	if !stRunning || stEventSub == nil {
+		return 0
+	}
+	return stEventGeneration
 }
 
 // DeviceID returns this device's ID in canonical format (e.g. XXXXXXX-XXXXXXX-...).

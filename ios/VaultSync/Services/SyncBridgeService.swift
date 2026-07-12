@@ -96,6 +96,27 @@ struct SyncBridgeService {
         BridgeGetEventsSince(lastID)
     }
 
+    /// Monotonic identifier for the currently running in-process event stream.
+    /// A value of zero means the bridge is stopped. Diagnostic checks use this
+    /// only to reject cursors from an engine that restarted mid-check.
+    static func eventStreamGeneration() -> Int64 {
+        BridgeEventStreamGeneration()
+    }
+
+    /// Bridge events use RFC 3339 with nanoseconds when available. Accept the
+    /// older second-precision shape as well so an app/bridge rollback remains
+    /// readable during development and staged upgrades.
+    static func parseBridgeTimestamp(_ value: String) -> Date? {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractional.date(from: value) {
+            return date
+        }
+        let seconds = ISO8601DateFormatter()
+        seconds.formatOptions = [.withInternetDateTime]
+        return seconds.date(from: value)
+    }
+
     // MARK: - Phase 4: Folder management
 
     /// Add a new folder with SendReceive type.

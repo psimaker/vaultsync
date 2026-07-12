@@ -8,12 +8,15 @@ struct RelayDiagnosticsView: View {
     @State private var diagnosticsInFlight = false
     @State private var retryProvisioningInFlight = false
     @State private var lowPowerModeEnabled = ProcessInfo.processInfo.isLowPowerModeEnabled
+    @State private var syncPathCheck = SyncPathCheckController()
+    @Environment(\.scenePhase) private var scenePhase
     var body: some View {
         List {
             relayHealthSection
             apnsSection
             provisioningSection
             observationSection
+            syncPathCheckSection
             triggerSection
             actionSection
             troubleshootingSection
@@ -33,6 +36,14 @@ struct RelayDiagnosticsView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)) { _ in
             lowPowerModeEnabled = ProcessInfo.processInfo.isLowPowerModeEnabled
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active {
+                syncPathCheck.cancel(reason: .appLifecycle)
+            }
+        }
+        .onDisappear {
+            syncPathCheck.cancel(reason: .viewLeft)
         }
     }
 
@@ -219,6 +230,11 @@ struct RelayDiagnosticsView: View {
 
     private var provisioningSection: some View {
         Section("Per-Device Provisioning") {
+            LabeledContent(L10n.tr("Purchase locally verified")) {
+                Text(subscriptionManager.relayEntitlementLocallyVerified ? L10n.tr("Confirmed") : L10n.tr("Not confirmed"))
+                    .foregroundStyle(subscriptionManager.relayEntitlementLocallyVerified ? Color.statusSuccess : .secondary)
+            }
+
             if syncthingManager.devices.isEmpty {
                 Text("No Syncthing peers available yet.")
                     .foregroundStyle(.secondary)
@@ -295,8 +311,8 @@ struct RelayDiagnosticsView: View {
                 }
             }
 
-            LabeledContent(L10n.tr("Last observed sync progress")) {
-                if let progressAt = subscriptionManager.relaySyncProgressObservedAt {
+            LabeledContent(L10n.tr("Last observed local data progress")) {
+                if let progressAt = subscriptionManager.relayLocalDataProgressObservedAt {
                     Text(progressAt, style: .relative)
                 } else {
                     Text(L10n.tr("Never"))
@@ -373,9 +389,135 @@ struct RelayDiagnosticsView: View {
             Text(L10n.tr("Relay observation means an unauthenticated server signal was accepted for this server identity. It does not confirm who sent it, delivery to this iPhone, or a completed sync."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text(L10n.tr("A wake-up recorded on this iPhone is stronger delivery evidence. Observed sync progress is separate; a confirmed upload and download roundtrip is not available yet."))
+            Text(L10n.tr("A wake-up recorded on this iPhone is stronger delivery evidence. Local data progress is separate; upload, controlled download, and a full roundtrip are not confirmed."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    private var syncPathCheckSection: some View {
+        Section(L10n.tr("Synchronization Path Check")) {
+            Text(L10n.tr("This optional check starts only when you tap the button. It creates no test file and does not change your folders."))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if let session = syncPathCheck.session {
+                if session.results.isEmpty {
+                    Text(L10n.tr("No configured server folders are available for this check."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(sortedSyncPathResults(session), id: \.targetID) { result in
+                        TimelineView(.periodic(from: .now, by: 60)) { context in
+                            syncPathTargetRow(result, now: context.date)
+                        }
+                    }
+                }
+
+                if syncPathCheck.isRunning {
+                    LabeledContent(L10n.tr("Check progress")) {
+                        Text(L10n.fmt("Attempt %d of %d", session.attempt, session.maximumAttempts))
+                    }
+                    .font(.caption)
+                }
+            }
+
+            if syncPathCheck.isRunning {
+                Button(role: .cancel) {
+                    syncPathCheck.cancel(reason: .user)
+                } label: {
+                    Label(L10n.tr("Cancel synchronization check"), systemImage: "xmark.circle")
+                }
+                .disabled(syncPathCheck.isCancellationPending)
+            } else {
+                Button {
+                    syncPathCheck.start(
+                        devices: syncthingManager.devices,
+                        folders: syncthingManager.folders
+                    )
+                } label: {
+                    Label(L10n.tr("Check synchronization path"), systemImage: "arrow.triangle.2.circlepath")
+                }
+            }
+
+            Text(L10n.tr("An incoming file change applied on this iPhone can confirm local data progress during this check. Upload, controlled download, and a full roundtrip cannot be confirmed with the current server helper yet."))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private func syncPathTargetRow(_ result: SyncPathTargetResult, now: Date) -> some View {
+        let presented = SyncPathCheckPresentation.state(for: result, now: now)
+        VStack(alignment: .leading, spacing: VaultSpacing.xs) {
+            Text(syncPathTargetTitle(result.targetID))
+                .font(.subheadline.weight(.semibold))
+            Label(presented.userFacingTitle, systemImage: syncPathStatusSymbol(presented))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(syncPathStatusColor(presented))
+            Text(presented.userFacingDetail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            ForEach(SyncPathDiagnosticStage.allCases, id: \.self) { stage in
+                LabeledContent(stage.title) {
+                    proofValue(stage.timestamp(in: result.proof))
+                }
+            }
+        }
+        .font(.caption)
+        .padding(.vertical, VaultSpacing.xxs)
+        .accessibilityElement(children: .contain)
+    }
+
+    @ViewBuilder
+    private func proofValue(_ date: Date?) -> some View {
+        if let date {
+            Text(date, style: .relative)
+                .foregroundStyle(Color.statusSuccess)
+        } else {
+            Text(L10n.tr("Not confirmed"))
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func sortedSyncPathResults(_ session: SyncPathCheckSession) -> [SyncPathTargetResult] {
+        session.results.values.sorted {
+            if $0.targetID.folderID == $1.targetID.folderID {
+                return ($0.targetID.deviceID ?? "") < ($1.targetID.deviceID ?? "")
+            }
+            return $0.targetID.folderID < $1.targetID.folderID
+        }
+    }
+
+    private func syncPathTargetTitle(_ targetID: SyncPathTargetID) -> String {
+        let folderName = syncthingManager.folders.first(where: { $0.id == targetID.folderID }).map {
+            $0.label.isEmpty ? $0.id : $0.label
+        } ?? L10n.tr("Unknown Folder")
+        guard let deviceID = targetID.deviceID else { return folderName }
+        let deviceName = syncthingManager.devices.first(where: { $0.deviceID == deviceID }).map {
+            $0.name.isEmpty ? L10n.tr("Unknown Device") : $0.name
+        } ?? L10n.tr("Unknown Device")
+        return L10n.fmt("%@ — %@", folderName, deviceName)
+    }
+
+    private func syncPathStatusColor(_ state: SyncPathPresentedState) -> Color {
+        switch state {
+        case .localDataProgressObserved: return .statusInfo
+        case .checking: return .statusInfo
+        case .stale, .incomplete, .interrupted, .unavailable, .conflicting: return .statusAttention
+        case .cancelled, .unsupported: return .secondary
+        }
+    }
+
+    private func syncPathStatusSymbol(_ state: SyncPathPresentedState) -> String {
+        switch state {
+        case .localDataProgressObserved: return "waveform.path.ecg"
+        case .checking: return "clock.arrow.circlepath"
+        case .stale: return "clock.badge.exclamationmark"
+        case .cancelled: return "xmark.circle"
+        case .unsupported: return "nosign"
+        case .incomplete, .interrupted, .unavailable, .conflicting: return "exclamationmark.triangle"
         }
     }
 
