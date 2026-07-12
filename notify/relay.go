@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -58,12 +57,9 @@ func (c *RelayClient) CheckHealth(ctx context.Context) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return &HTTPStatusError{
 			Component:  "relay",
-			URL:        url,
 			StatusCode: resp.StatusCode,
-			Body:       string(body),
 		}
 	}
 
@@ -127,7 +123,7 @@ func (c *RelayClient) Trigger(ctx context.Context) error {
 			"classification", "recoverable",
 			"component", "relay",
 			"attempt", attempt+1,
-			"error", err,
+			"error_kind", operationalErrorKind(err),
 			"retry_in", wait,
 		)
 
@@ -185,7 +181,7 @@ func (c *RelayClient) doTrigger(ctx context.Context, url string, body []byte) er
 	case http.StatusAccepted:
 		var tr triggerResponse
 		if err := json.NewDecoder(resp.Body).Decode(&tr); err != nil {
-			slog.Warn("decode trigger response failed", "error", err)
+			slog.Warn("decode trigger response failed", "error_kind", "decode")
 			return nil // push was accepted, decode failure is non-critical
 		}
 		slog.Info("relay trigger accepted", "devices_notified", tr.DevicesNotified)
@@ -208,22 +204,15 @@ func (c *RelayClient) doTrigger(ctx context.Context, url string, body []byte) er
 		// cancelled, or not yet provisioned — the relay gates pushes on the
 		// verified StoreKit expiry. That is a self-resolving runtime state, not
 		// a misconfiguration — never fatal.
-		body := strings.TrimSpace(string(readBodySnippet(resp.Body)))
-		return &subscriptionInactiveError{statusCode: resp.StatusCode, body: body}
+		return &subscriptionInactiveError{statusCode: resp.StatusCode}
 
 	default:
 		// Any other status (5xx, or an undocumented 4xx such as a proxy-level
 		// 405/422) is treated as transient: keep retrying and stay alive rather
-		// than crash, and log the raw code honestly instead of guessing it is a
-		// subscription issue.
-		body := strings.TrimSpace(string(readBodySnippet(resp.Body)))
-		return &transientError{err: fmt.Errorf("unexpected status %d: %s", resp.StatusCode, body)}
+		// than crash. Preserve only the status code; dependency response bodies
+		// are untrusted and must not reach errors or logs.
+		return &transientError{err: fmt.Errorf("unexpected HTTP status %d", resp.StatusCode)}
 	}
-}
-
-func readBodySnippet(r io.Reader) []byte {
-	snippet, _ := io.ReadAll(io.LimitReader(r, 512))
-	return snippet
 }
 
 type fatalError struct{ msg string }
@@ -232,7 +221,8 @@ func (e *fatalError) Error() string { return e.msg }
 
 type transientError struct{ err error }
 
-func (e *transientError) Error() string { return e.err.Error() }
+func (e *transientError) Error() string { return "transient dependency failure" }
+func (e *transientError) Unwrap() error { return e.err }
 
 type rateLimitError struct{ retryAfter time.Duration }
 
@@ -247,14 +237,10 @@ func (e *rateLimitError) Error() string {
 // subscription is active again.
 type subscriptionInactiveError struct {
 	statusCode int
-	body       string
 }
 
 func (e *subscriptionInactiveError) Error() string {
-	if e.body == "" {
-		return fmt.Sprintf("relay declined trigger (HTTP %d): no active subscription for this device (expired, cancelled, or not yet provisioned)", e.statusCode)
-	}
-	return fmt.Sprintf("relay declined trigger (HTTP %d): no active subscription for this device (expired, cancelled, or not yet provisioned): %s", e.statusCode, e.body)
+	return fmt.Sprintf("relay declined trigger (HTTP %d): no active subscription for this device (expired, cancelled, or not yet provisioned)", e.statusCode)
 }
 
 func isFatal(err error) bool {
