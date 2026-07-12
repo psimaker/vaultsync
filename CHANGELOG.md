@@ -6,6 +6,10 @@ All notable changes to VaultSync are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- **Cloud Relay now shows which step is still waiting** ([#91](https://github.com/psimaker/vaultsync/issues/91)) — while the Relay screen is open, VaultSync can securely check each known server for the last wake-up signal seen by the Relay. It distinguishes “waiting for the server,” “server reached the Relay but this iPhone is still waiting,” a wake-up actually received on this iPhone, temporary status errors, and normal quiet periods without claiming that a signal proves completed sync. Checks require a locally confirmed active purchase, use a slow five-attempt maximum, stop when leaving the screen or receiving a wake-up, and keep multi-server results independent. Localized in English, German, Spanish, and Simplified Chinese.
+
 ### Changed
 
 - **Cloud Relay subscriptions update safely after installing this version** — existing subscribers are re-registered with a currently confirmed App Store entitlement for every known homeserver, without repeating onboarding or changing devices, vaults, folders, or paths. Purchase, Restore Purchases, renewals, and push-token changes use the same per-server update. A temporary network problem keeps the existing setup intact and retries later; if the App Store confirmation is unavailable, VaultSync sends no registration request and offers Restore Purchases instead. Multi-server progress is saved independently, so one unavailable server does not undo another server's success. Localized in English, German, Spanish, and Simplified Chinese.
@@ -13,6 +17,7 @@ All notable changes to VaultSync are documented here.
 ### Privacy
 
 - **Relay data handling is documented at the field level** — the Privacy Policy now lists the limited StoreKit verification and operational timestamps retained by Relay 1.2.0, and clarifies that the signed transaction is verified but not stored as a complete token.
+- **The Relay’s last-signal timestamp is documented honestly** — it is stored only to explain which wake-up step is pending, carries no file or vault metadata, does not authenticate the server helper, and is not proof of Apple delivery or completed synchronization. Deletion requests remove it with the other Relay data.
 
 ## [1.8.2] — 2026-07-11
 

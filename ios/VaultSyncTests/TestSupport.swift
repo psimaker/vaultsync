@@ -29,6 +29,8 @@ enum TestSupport {
             "apns-registration-last-failure-at",
             "relay-last-trigger-received-at",
             "relay-trigger-received-history-v1",
+            "relay-background-sync-started-at",
+            "relay-sync-progress-observed-at",
             "relay-diagnostics-last-error",
             "relay-last-provision-date",
             "relay-provisioned-device-ids",

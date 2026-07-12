@@ -13,15 +13,22 @@ struct RelayDiagnosticsView: View {
             relayHealthSection
             apnsSection
             provisioningSection
+            observationSection
             triggerSection
             actionSection
             troubleshootingSection
         }
         .navigationTitle("Relay Diagnostics")
         .navigationBarTitleDisplayMode(.inline)
-        .task {
+        .task(id: subscriptionManager.relayStatusPollViewState) {
             if subscriptionManager.relayHealthResult == nil {
-                await runDiagnostics()
+                await runDiagnostics(checkObservationStatus: false)
+            }
+            if subscriptionManager.isRelaySubscribed && !subscriptionManager.relayDeliveryConfirmed {
+                await subscriptionManager.pollRelayObservationStatus(
+                    homeserverDeviceIDs: syncthingManager.devices.map(\.deviceID),
+                    context: .diagnostics
+                )
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)) { _ in
@@ -279,6 +286,24 @@ struct RelayDiagnosticsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
+            LabeledContent(L10n.tr("Last background sync start")) {
+                if let startedAt = subscriptionManager.relayBackgroundSyncStartedAt {
+                    Text(startedAt, style: .relative)
+                } else {
+                    Text(L10n.tr("Never"))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            LabeledContent(L10n.tr("Last observed sync progress")) {
+                if let progressAt = subscriptionManager.relaySyncProgressObservedAt {
+                    Text(progressAt, style: .relative)
+                } else {
+                    Text(L10n.tr("Never"))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             if lowPowerModeEnabled {
                 Label(L10n.tr("Low Power Mode is on — iOS defers silent wake-ups until it is off or the iPhone is charging."), systemImage: "battery.25percent")
                     .font(.caption)
@@ -303,6 +328,54 @@ struct RelayDiagnosticsView: View {
             .font(.footnote)
             .foregroundStyle(Color.statusAttention)
             #endif
+        }
+    }
+
+    private var observationSection: some View {
+        Section(L10n.tr("Server Signal Observation")) {
+            if syncthingManager.devices.isEmpty {
+                Text(L10n.tr("No server devices available yet."))
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(syncthingManager.devices) { device in
+                    VStack(alignment: .leading, spacing: VaultSpacing.xs) {
+                        Text(device.name.isEmpty ? device.deviceID : device.name)
+                            .font(.subheadline.weight(.semibold))
+                        if let failure = subscriptionManager.relayStatusFailures[device.deviceID] {
+                            Text(statusFailureText(failure))
+                                .font(.caption)
+                                .foregroundStyle(Color.statusAttention)
+                        } else if let observation = subscriptionManager.relayServerObservations[device.deviceID] {
+                            if let observedAt = observation.lastTriggerObservedAt {
+                                LabeledContent(L10n.tr("Last signal observed by Relay")) {
+                                    Text(observedAt, style: .relative)
+                                }
+                                .font(.caption)
+                            } else {
+                                Text(L10n.tr("Relay has not observed a signal for this server."))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            LabeledContent(L10n.tr("Status checked")) {
+                                Text(observation.checkedAt, style: .relative)
+                            }
+                            .font(.caption)
+                        } else {
+                            Text(L10n.tr("Status not checked yet."))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.vertical, VaultSpacing.xxs)
+                }
+            }
+
+            Text(L10n.tr("Relay observation means an unauthenticated server signal was accepted for this server identity. It does not confirm who sent it, delivery to this iPhone, or a completed sync."))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(L10n.tr("A wake-up recorded on this iPhone is stronger delivery evidence. Observed sync progress is separate; a confirmed upload and download roundtrip is not available yet."))
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -466,11 +539,27 @@ struct RelayDiagnosticsView: View {
         SyncUserError.troubleshootingURL(forRawError: rawError)
     }
 
-    private func runDiagnostics() async {
+    private func statusFailureText(_ failure: RelayStatusCheckFailure) -> String {
+        switch failure {
+        case .verificationRequired:
+            return L10n.tr("Purchase confirmation is required before status can be checked.")
+        case .rateLimited:
+            return L10n.tr("Status checks are temporarily limited. Try again later.")
+        case .temporarilyUnavailable:
+            return L10n.tr("Status could not be checked right now. Try again later.")
+        }
+    }
+
+    private func runDiagnostics(checkObservationStatus: Bool = true) async {
         diagnosticsInFlight = true
         await subscriptionManager.refreshRelayDiagnostics(
             homeserverDeviceIDs: syncthingManager.devices.map(\.deviceID)
         )
+        if checkObservationStatus {
+            await subscriptionManager.checkRelayObservationStatus(
+                homeserverDeviceIDs: syncthingManager.devices.map(\.deviceID)
+            )
+        }
         diagnosticsInFlight = false
     }
 }

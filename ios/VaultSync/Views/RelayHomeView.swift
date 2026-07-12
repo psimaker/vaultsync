@@ -26,6 +26,9 @@ struct RelayHomeView: View {
 
     private var deviceIDs: [String] { syncthingManager.devices.map(\.deviceID) }
     private var isDelivering: Bool { subscriptionManager.relayDeliveryConfirmed }
+    private var relayUserStatus: RelayUserStatus {
+        subscriptionManager.relayUserStatus(homeserverDeviceIDs: deviceIDs)
+    }
 
     var body: some View {
         List {
@@ -37,8 +40,14 @@ struct RelayHomeView: View {
         }
         .navigationTitle(L10n.tr("Cloud Relay"))
         .navigationBarTitleDisplayMode(.inline)
-        .task {
+        .task(id: subscriptionManager.relayStatusPollViewState) {
             await subscriptionManager.refreshRelayDiagnostics(homeserverDeviceIDs: deviceIDs)
+            if subscriptionManager.isRelaySubscribed && !subscriptionManager.relayDeliveryConfirmed {
+                await subscriptionManager.pollRelayObservationStatus(
+                    homeserverDeviceIDs: deviceIDs,
+                    context: .waitingView
+                )
+            }
         }
     }
 
@@ -115,12 +124,12 @@ struct RelayHomeView: View {
         // waiting for the helper's first check-in.
         Section {
             VStack(alignment: .leading, spacing: VaultSpacing.s) {
-                if isDelivering && !connectedCelebrated {
+                if relayUserStatus == .wakeUpReceived && !connectedCelebrated {
                     // [5] First real wake-up. Celebrate — but no fantasy latency
                     // ("in 2s"): the app can't honestly time a server-driven push.
                     StatusBadge(.synced, text: L10n.tr("Connected"))
                         .font(.headline)
-                    Text(L10n.tr("Your server just reached this iPhone. Incoming changes now sync the moment they happen."))
+                    Text(L10n.tr("A wake-up signal reached this iPhone. This confirms delivery to this device, not that every change has finished syncing."))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -130,10 +139,10 @@ struct RelayHomeView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(Color.vaultAccent)
                     .padding(.top, VaultSpacing.xs)
-                } else if isDelivering {
+                } else if relayUserStatus == .wakeUpReceived {
                     StatusBadge(.synced, text: L10n.tr("Cloud Relay active"))
                         .font(.headline)
-                    Text(L10n.tr("Wake-ups are being delivered — changes from your other devices arrive instantly."))
+                    Text(L10n.tr("A wake-up signal was received on this iPhone. VaultSync then started its normal sync check."))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -143,24 +152,8 @@ struct RelayHomeView: View {
                         }
                         .font(.subheadline)
                     }
-                } else if subscriptionManager.lastRelayTriggerReceivedAt != nil {
-                    // [6] Delivered before, now quiet — recovery, NOT "set up again".
-                    StatusBadge(.attention, text: L10n.tr("Cloud Relay went quiet"))
-                        .font(.headline)
-                    Text(L10n.tr("No wake-up has arrived in a while. If there were simply no changes to sync, this can be normal. Otherwise make sure the helper is still running on the computer or server you keep on."))
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
                 } else {
-                    // Never delivered: blocked on finishing setup (below), not on a
-                    // live handshake — so no spinner (the app waits for a push, it
-                    // doesn't poll). Updates by itself once the first wake-up lands.
-                    StatusBadge(.attention, text: L10n.tr("Not active yet"))
-                        .font(.headline)
-                    Text(L10n.tr("You’re subscribed. Wake-ups start once the helper is running on the computer or server you keep on — finish setup below."))
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    relayWaitingStatus
                 }
             }
             .padding(.vertical, VaultSpacing.xs)
@@ -173,8 +166,7 @@ struct RelayHomeView: View {
             .accessibilityElement(children: .contain)
         }
 
-        // Activation lever — prominent while wake-ups aren't arriving yet.
-        if !isDelivering {
+        if relayUserStatus == .waitingForFirstSignal {
             Section {
                 NavigationLink {
                     RelayServerSetupView(isDelivering: isDelivering)
@@ -184,6 +176,20 @@ struct RelayHomeView: View {
                 }
             } footer: {
                 Text(L10n.tr("One step left: run a single line on your server and instant updates start. The helper only sends a wake-up — it never sees your notes."))
+            }
+        } else if relayUserStatus == .relayObservedWaitingForWakeUp {
+            Section {
+                NavigationLink {
+                    RelayDiagnosticsView(
+                        syncthingManager: syncthingManager,
+                        subscriptionManager: subscriptionManager
+                    )
+                } label: {
+                    Label(L10n.tr("Open Relay Diagnostics"), systemImage: "stethoscope")
+                        .font(.headline)
+                }
+            } footer: {
+                Text(L10n.tr("Your server reached the Relay, but this iPhone has not received a wake-up yet. You can check again in Diagnostics."))
             }
         }
 
@@ -223,6 +229,50 @@ struct RelayHomeView: View {
             Text(L10n.tr("Manage"))
         }
 
+    }
+
+    @ViewBuilder
+    private var relayWaitingStatus: some View {
+        switch relayUserStatus {
+        case .checking:
+            StatusBadge(.starting, text: relayUserStatus.userFacingTitle)
+                .font(.headline)
+            Text(relayUserStatus.userFacingDetail)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        case .waitingForFirstSignal:
+            StatusBadge(.attention, text: relayUserStatus.userFacingTitle)
+                .font(.headline)
+            Text(relayUserStatus.userFacingDetail)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        case .relayObservedWithinGrace:
+            StatusBadge(.starting, text: relayUserStatus.userFacingTitle)
+                .font(.headline)
+            Text(relayUserStatus.userFacingDetail)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        case .relayObservedWaitingForWakeUp:
+            StatusBadge(.attention, text: relayUserStatus.userFacingTitle)
+                .font(.headline)
+            Text(relayUserStatus.userFacingDetail)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        case .quietCanBeNormal:
+            StatusBadge(.paused, text: relayUserStatus.userFacingTitle)
+                .font(.headline)
+            Text(relayUserStatus.userFacingDetail)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        case .statusUnavailable:
+            StatusBadge(.attention, text: relayUserStatus.userFacingTitle)
+                .font(.headline)
+            Text(relayUserStatus.userFacingDetail)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        case .wakeUpReceived:
+            EmptyView()
+        }
     }
 
     private var relayProvisioningUpdateSection: some View {

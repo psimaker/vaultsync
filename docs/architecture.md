@@ -32,6 +32,17 @@ VaultSync is intentionally **asymmetric**:
 
 Cloud Relay is a `server → iPhone` *acceleration* path, not a guarantee of symmetric real-time background sync.
 
+### Relay and sync proof hierarchy
+
+VaultSync keeps the following evidence separate: a locally verified StoreKit
+entitlement, verified Relay provisioning, Relay backend reachability, the Relay
+having observed a v1 signal for one homeserver Device ID, a silent push received
+on this iPhone, background sync starting, and actual local sync progress. None
+automatically implies the next. In particular, Relay observation does not
+authenticate the v1 helper and does not prove APNs delivery; local silent-push
+receipt is stronger delivery evidence, but still not a confirmed upload/download
+roundtrip. That roundtrip remains a separate 2.0 milestone.
+
 ### Connection paths & iOS network privacy
 
 How peers are reached, fastest first:

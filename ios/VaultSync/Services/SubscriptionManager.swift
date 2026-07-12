@@ -42,6 +42,9 @@ final class SubscriptionManager {
     private(set) var hasAPNsToken = KeychainService.hasAPNsDeviceToken()
     private(set) var relayHealthResult: RelayService.HealthCheckResult?
     private(set) var relayHealthCheckInFlight = false
+    private(set) var relayServerObservations: [String: RelayServerObservation] = [:]
+    private(set) var relayStatusFailures: [String: RelayStatusCheckFailure] = [:]
+    private(set) var relayStatusCheckInFlight = false
     private(set) var lastRelayTriggerReceivedAt: Date?
     /// Wake-ups that actually arrived in the trailing 7 days (local count, see
     /// `RelayTriggerStore.receivedCount`). Surfaces how much iOS lets through.
@@ -55,6 +58,7 @@ final class SubscriptionManager {
 
     var relayProvisioningNeedsStoreKitVerification: Bool {
         relayProvisionStatuses.values.contains(.storeKitVerificationRequired) ||
+            relayStatusFailures.values.contains(.verificationRequired) ||
             unverifiedRelayTransactionMessage != nil
     }
 
@@ -68,6 +72,21 @@ final class SubscriptionManager {
             if case .temporarilyFailed = status { return true }
             return false
         }
+    }
+
+    var relayStatusPollViewState: RelayStatusPollViewState {
+        RelayStatusPollViewState(
+            isSubscriptionActive: isRelaySubscribed,
+            lastWakeUpReceivedAt: lastRelayTriggerReceivedAt
+        )
+    }
+
+    var relayBackgroundSyncStartedAt: Date? {
+        RelaySyncProofStore.backgroundSyncStartedAt()
+    }
+
+    var relaySyncProgressObservedAt: Date? {
+        RelaySyncProofStore.syncProgressObservedAt()
     }
 
     /// Strong signal: a recent silent-push trigger proves Cloud Relay is
@@ -159,6 +178,8 @@ final class SubscriptionManager {
     @ObservationIgnored private var relayEntitlementAvailability: RelayEntitlementAvailability = .inactive
     @ObservationIgnored private var reprovisioningInFlight = false
     @ObservationIgnored private var pendingReprovisionRequests: [(RelayReprovisionTrigger, [String])] = []
+    @ObservationIgnored private let relayStatusCheckGate = RelayStatusCheckGate()
+    @ObservationIgnored private var relayStatusCacheGeneration = 0
 
     init() {
         apnsRegistrationStatus = APNsRegistrationStore.current()
@@ -287,6 +308,7 @@ final class SubscriptionManager {
             subscriptionStartDate = nil
             unverifiedRelayTransactionMessage = foundUnverifiedRelay ? Self.unverifiedRelayMessage() : nil
             relayEntitlementAvailability = foundUnverifiedRelay ? .verificationRequired : .inactive
+            resetRelayStatusEvidence()
             if foundUnverifiedRelay {
                 markStoreKitVerificationRequired(for: allKnownDeviceIDs())
             }
@@ -448,6 +470,127 @@ final class SubscriptionManager {
         defer { relayHealthCheckInFlight = false }
         relayHealthResult = await RelayService.checkHealthResult(timeout: timeout)
         refreshStoredRelayDiagnostics()
+    }
+
+    @discardableResult
+    func checkRelayObservationStatus(
+        homeserverDeviceIDs: [String]
+    ) async -> RelayStatusCheckOutcome {
+        guard relayStatusCheckGate.begin() else {
+            return currentRelayStatusOutcome()
+        }
+        relayStatusCheckInFlight = true
+        let startedAtGeneration = relayStatusCacheGeneration
+        defer {
+            relayStatusCheckInFlight = false
+            relayStatusCheckGate.end()
+        }
+        let outcome = await RelayStatusChecking.run(
+            deviceIDs: homeserverDeviceIDs,
+            provisionStatuses: relayProvisionStatuses,
+            initialObservations: relayServerObservations,
+            initialFailures: relayStatusFailures,
+            isSubscriptionActive: isRelaySubscribed,
+            entitlement: relayEntitlementAvailability,
+            fetch: { deviceID, signedTransaction in
+                try await RelayService.fetchStatus(
+                    deviceID: deviceID,
+                    signedTransaction: signedTransaction
+                )
+            }
+        )
+        let hasVerifiedEntitlement: Bool
+        if case .verified = relayEntitlementAvailability {
+            hasVerifiedEntitlement = true
+        } else {
+            hasVerifiedEntitlement = false
+        }
+        guard RelayStatusCacheLifecycle.shouldApplyOutcome(
+            startedAtGeneration: startedAtGeneration,
+            currentGeneration: relayStatusCacheGeneration,
+            isSubscriptionActive: isRelaySubscribed,
+            hasVerifiedEntitlement: hasVerifiedEntitlement,
+            isCancelled: Task.isCancelled
+        ) else {
+            return currentRelayStatusOutcome()
+        }
+        relayServerObservations = outcome.observations
+        relayStatusFailures = outcome.failures
+        return outcome
+    }
+
+    /// Called only by RelayHomeView and RelayDiagnosticsView. The first check is
+    /// immediate, retries are finite, and view-task cancellation stops the loop.
+    func pollRelayObservationStatus(
+        homeserverDeviceIDs: [String],
+        context: RelayStatusPollingContext,
+        policy: RelayStatusPollingPolicy = .waitingView
+    ) async {
+        guard context.allowsStatusPolling else { return }
+        let deviceIDs = Array(Set(homeserverDeviceIDs)).sorted().filter {
+            relayProvisionStatuses[$0]?.isProvisionedWithVerifiedEntitlement == true
+        }
+        guard !deviceIDs.isEmpty else { return }
+        let wakeUpAtStart = RelayTriggerStore.lastReceivedAt()
+        await RelayStatusPolling.run(
+            policy: policy,
+            check: { [weak self] in
+                guard let self else {
+                    return RelayStatusCheckOutcome(
+                        observations: [:], failures: [:], requestedDeviceIDs: []
+                    )
+                }
+                return await self.checkRelayObservationStatus(homeserverDeviceIDs: deviceIDs)
+            },
+            shouldContinue: { [weak self] in
+                guard let self, self.isRelaySubscribed,
+                      case .verified = self.relayEntitlementAvailability,
+                      !self.relayDeliveryConfirmed else {
+                    return false
+                }
+                return RelayTriggerStore.lastReceivedAt() == wakeUpAtStart
+            }
+        )
+    }
+
+    func relayUserStatus(homeserverDeviceIDs: [String], now: Date = Date()) -> RelayUserStatus {
+        let statuses = Array(Set(homeserverDeviceIDs)).map { deviceID in
+            RelayStatusPresentation.status(
+                observation: relayServerObservations[deviceID],
+                failure: relayStatusFailures[deviceID],
+                localWakeUpReceivedAt: lastRelayTriggerReceivedAt,
+                now: now
+            )
+        }
+        let priority: [RelayUserStatus] = [
+            .wakeUpReceived,
+            .relayObservedWaitingForWakeUp,
+            .relayObservedWithinGrace,
+            .quietCanBeNormal,
+            .waitingForFirstSignal,
+            .statusUnavailable,
+            .checking,
+        ]
+        return priority.first(where: { statuses.contains($0) }) ?? .checking
+    }
+
+    func relayProofSnapshot(for deviceID: String) -> RelayProofSnapshot {
+        let entitlementVerified: Bool
+        if case .verified = relayEntitlementAvailability {
+            entitlementVerified = true
+        } else {
+            entitlementVerified = false
+        }
+        return RelayProofSnapshot(
+            storeKitEntitlementVerified: entitlementVerified,
+            relayProvisioningConfirmed:
+                relayProvisionStatuses[deviceID]?.isProvisionedWithVerifiedEntitlement == true,
+            relayBackendReachable: relayHealthResult?.isHealthy == true,
+            relayTriggerObservedAt: relayServerObservations[deviceID]?.lastTriggerObservedAt,
+            silentPushReceivedAt: lastRelayTriggerReceivedAt,
+            backgroundSyncStartedAt: RelaySyncProofStore.backgroundSyncStartedAt(),
+            syncProgressObservedAt: RelaySyncProofStore.syncProgressObservedAt()
+        )
     }
 
     func retryRelayProvisioning(homeserverDeviceIDs: [String]) async {
@@ -642,6 +785,7 @@ final class SubscriptionManager {
             relayProvisionStatuses,
             preserveLegacyProvisionedIDs: false
         )
+        resetRelayStatusEvidence()
 
         // Clear the per-activation "Connected" celebration on every transition to
         // inactive, so a later resubscribe celebrates again. Done before the token
@@ -764,6 +908,21 @@ final class SubscriptionManager {
             relayProvisionStatuses[deviceID] = .storeKitVerificationRequired
         }
         RelayProvisionStatusStore.save(relayProvisionStatuses)
+    }
+
+    private func currentRelayStatusOutcome() -> RelayStatusCheckOutcome {
+        RelayStatusCheckOutcome(
+            observations: relayServerObservations,
+            failures: relayStatusFailures,
+            requestedDeviceIDs: []
+        )
+    }
+
+    private func resetRelayStatusEvidence() {
+        let reset = RelayStatusCacheLifecycle.reset(currentGeneration: relayStatusCacheGeneration)
+        relayServerObservations = reset.observations
+        relayStatusFailures = reset.failures
+        relayStatusCacheGeneration = reset.generation
     }
 
     private func refreshAPNsRegistrationStatus() {
