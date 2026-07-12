@@ -29,7 +29,7 @@ Ed25519 is available in Go's standard library and as `Curve25519.Signing` in Cry
 
 ## Canonical pairing encoding and signature domains
 
-Pairing and credential-lifecycle messages use the RFC 8949 core deterministic CBOR encoding. The accepted subset is definite-length maps with unsigned-integer labels, unsigned integers, byte strings, and restricted ASCII text constants. Floats, tags, indefinite lengths, duplicate keys, non-shortest integers, unknown fields, invalid UTF-8, and non-deterministic map order are rejected before signature verification. A decoder re-encodes and byte-compares the accepted body.
+Pairing and credential-lifecycle messages use the RFC 8949 core deterministic CBOR encoding. The accepted subset is definite-length maps with unsigned-integer labels, unsigned integers, byte strings, and restricted ASCII text constants. Floats, tags, indefinite lengths, duplicate keys, non-shortest integers, unknown fields, invalid UTF-8, and non-deterministic map order are rejected before signature verification. A decoder re-encodes and byte-compares the accepted body. Maps have at most 32 entries, arrays at most eight entries, nesting depth at most four, and encoded/decoded bodies at most 16 KiB.
 
 Every signature input is the exact ASCII domain including its trailing NUL byte, followed by the deterministic CBOR body without the signature field:
 
@@ -37,18 +37,98 @@ Every signature input is the exact ASCII domain including its trailing NUL byte,
 |---|---|
 | App pairing request | `eu.vaultsync.helper-pairing/v1/app-request\0` |
 | Helper pairing acceptance | `eu.vaultsync.helper-pairing/v1/helper-accept\0` |
-| App-key rotation | `eu.vaultsync.helper-pairing/v1/app-key-rotation\0` |
-| Helper-key or TLS-pin rotation | `eu.vaultsync.helper-pairing/v1/helper-key-rotation\0` |
-| Revocation | `eu.vaultsync.helper-pairing/v1/revocation\0` |
+| App-key rotation request, signed by old app key | `eu.vaultsync.helper-pairing/v1/app-key-rotation-request\0` |
+| App-key rotation proof, signed by new app key | `eu.vaultsync.helper-pairing/v1/app-key-rotation-new-proof\0` |
+| App-key rotation acceptance, signed by helper | `eu.vaultsync.helper-pairing/v1/app-key-rotation-accept\0` |
+| Helper-key rotation proposal, signed by old helper key | `eu.vaultsync.helper-pairing/v1/helper-key-rotation-propose\0` |
+| Helper-key rotation proof, signed by new helper key | `eu.vaultsync.helper-pairing/v1/helper-key-rotation-new-proof\0` |
+| Helper-key rotation confirmation, signed by app | `eu.vaultsync.helper-pairing/v1/helper-key-rotation-confirm\0` |
+| TLS-pin rotation proposal, signed by current helper | `eu.vaultsync.helper-pairing/v1/tls-pin-rotation-propose\0` |
+| TLS-pin rotation confirmation, signed by app | `eu.vaultsync.helper-pairing/v1/tls-pin-rotation-confirm\0` |
+| Revocation request, signed by app when available | `eu.vaultsync.helper-pairing/v1/revocation-request\0` |
+| Revocation record, signed by helper | `eu.vaultsync.helper-pairing/v1/revocation-record\0` |
 
-HMAC uses the separate domain `eu.vaultsync.helper-pairing/v1/bootstrap-hmac\0` followed by the same app-request body. A valid signature from one domain is invalid in every other domain.
+The bootstrap HMAC is non-circular: its input is the exact domain `eu.vaultsync.helper-pairing/v1/bootstrap-hmac\0` followed by the deterministic app-request map with both the HMAC and signature fields omitted. The app then inserts the 32-byte HMAC and signs the app-request domain plus that deterministic map with only the signature omitted. A valid signature or HMAC from one domain is invalid in every other domain.
+
+### Byte-exact identifiers and bootstrap transcript
+
+The exact pairing capability string is `eu.vaultsync.diagnostics.helper-pairing/1`; protocol and suite are unsigned integer `1`. The following derivations are fixed:
+
+- `app_key_id` and `helper_key_id` are `SHA-256("eu.vaultsync.key-id/ed25519/v1\0" || raw_public_key)`, where the public key is the exact 32-byte RFC 8032 compressed key.
+- `tls_spki_pin` is SHA-256 over the exact DER SubjectPublicKeyInfo of the P-256 TLS key, with no certificate bytes or textual encoding.
+- `device_id_digest` is `SHA-256("eu.vaultsync.binding/syncthing-device/v1\0" || raw_device_id)`. `raw_device_id` is the exact 32 bytes obtained only after the standard Syncthing Device ID parser validates the check digits; no display-string form is hashed.
+- `folder_id_digest` is `SHA-256("eu.vaultsync.binding/syncthing-folder/v1\0" || uint32_be(length) || folder_id_utf8)`. The UTF-8 bytes must exactly equal the non-empty ID returned by both local Syncthing APIs; there is no trim, case folding, or Unicode normalization. More than 255 bytes is unsupported.
+- A signed-message digest is SHA-256 over that message's exact signature domain plus its deterministic map with the signature omitted.
+
+The QR is deterministic CBOR wrapped in unpadded base64url and contains only the capability, protocol/suite, helper-generated invitation nonce, fixed HTTPS host and port, TLS SPKI pin, helper public key and key ID, homeserver/folder bindings, both identifier digests, issue/expiry seconds, and the 32-byte one-time secret. Host is either a lowercase ASCII DNS name or a canonical IP literal; userinfo, path, query, fragment, zone identifier, redirects, and an out-of-range port are forbidden. The app always calls the fixed path `POST /api/v1/diagnostics/pairing`.
+
+The bootstrap field registry is exact; label `255` is always a 64-byte Ed25519 signature when present:
+
+| Label | Field | Type and length |
+|---:|---|---|
+| `1` | capability | exact ASCII text `eu.vaultsync.diagnostics.helper-pairing/1` |
+| `2`, `3` | protocol, suite | uint, exactly `1` |
+| `4` | message_type | uint: `0=QR invitation`, `1=app request`, `2=helper acceptance` |
+| `5` | invitation_nonce | bstr, 32 bytes |
+| `6` | endpoint_host | restricted ASCII text, 1–253 bytes |
+| `7` | endpoint_port | uint, 1–65535 |
+| `8` | tls_spki_pin | bstr, 32 bytes |
+| `9`, `10` | helper_public_key, helper_key_id | bstr, 32 bytes each |
+| `11`, `12` | homeserver_binding, folder_binding | bstr, 32 bytes each |
+| `13`, `14` | device_id_digest, folder_id_digest | bstr, 32 bytes each |
+| `15`, `16` | issued_at, expires_at | uint Unix seconds |
+| `17` | bootstrap_secret | bstr, 32 bytes; QR only |
+| `18`, `19` | app_public_key, app_key_id | bstr, 32 bytes each |
+| `20` | app_nonce | bstr, 32 bytes |
+| `21` | bootstrap_hmac | bstr, 32 bytes |
+| `22` | app_request_digest | bstr, 32 bytes |
+| `23`, `24` | app_epoch, helper_epoch | uint; initial app epoch is `1` |
+| `25` | helper_nonce | bstr, 32 bytes |
+| `255` | signature | bstr, 64 bytes |
+
+The QR contains labels `1`–`17` plus `24` and no signature. The app request contains `1`–`16`, `18`–`21`, `23`, `24`, and `255`; its values through label `16` byte-equal the invitation, while label `17` is forbidden. The helper acceptance contains `1`–`5`, `9`–`16`, `18`–`20`, `22`–`25`, and `255`; it uses fresh issue/expiry bounds no later than the invitation expiry. Every other field is forbidden for that message type.
+
+For bootstrap and lifecycle messages, `expires_at` is greater than `issued_at` by at most 300 seconds. Each side also enforces a 300-second monotonic deadline and permits at most ±120 seconds of wall-clock skew; wall-clock skew never extends the local deadline.
+
+The app pairing request echoes every non-secret QR field, adds the app public key/key ID and a fresh 32-byte app nonce, and contains the HMAC and app signature constructed above. It never echoes the one-time secret. The helper acceptance binds the complete app-request digest, both public keys/key IDs, bindings, protocol/suite, app/helper epochs, invitation/app nonces, issue/expiry bounds, and a fresh 32-byte helper nonce under the helper-accept domain.
+
+The transcript fingerprint is the first six bytes of `SHA-256("eu.vaultsync.helper-pairing/v1/transcript-fingerprint\0" || app_request_digest || helper_accept_digest)`, displayed as exactly 12 uppercase hexadecimal characters. It is comparison UI, not a credential, and never substitutes for QR possession, TLS pinning, HMAC, or both signatures.
+
+Every lifecycle transition above is a separate signed deterministic map, not a multi-signature field with ambiguous ordering. The registry is:
+
+| Label | Field | Type and length |
+|---:|---|---|
+| `1` | capability | exact pairing capability text |
+| `2`, `3` | protocol, suite | uint, exactly `1` |
+| `4` | message_type | uint: `3` through `12` in domain-table order after helper acceptance |
+| `5`, `6` | homeserver_binding, folder_binding | bstr, 32 bytes each |
+| `7`, `8` | current_app_public_key, current_app_key_id | bstr, 32 bytes each |
+| `9`, `10` | proposed_app_public_key, proposed_app_key_id | bstr, 32 bytes each |
+| `11`, `12` | current_helper_public_key, current_helper_key_id | bstr, 32 bytes each |
+| `13`, `14` | proposed_helper_public_key, proposed_helper_key_id | bstr, 32 bytes each |
+| `15`, `16` | current_tls_spki_pin, proposed_tls_spki_pin | bstr, 32 bytes each |
+| `17`, `18` | current_app_epoch, proposed_app_epoch | uint |
+| `19`, `20` | current_helper_epoch, proposed_helper_epoch | uint |
+| `21`, `22` | issued_at, expires_at | uint Unix seconds |
+| `23` | message_nonce | bstr, 32 bytes |
+| `24` | prior_message_digest | bstr, 32 bytes |
+| `25` | revocation_reason | uint: `1=user_request`, `2=lost_app`, `3=folder_removed`, `4=suspected_compromise` |
+| `26` | current_credential_state_digest | bstr, 32 bytes |
+| `27` | revocation_origin | uint: `1=signed_app`, `2=local_helper_admin` |
+| `255` | signature | bstr, 64 bytes |
+
+Every lifecycle message contains `1`–`8`, `11`, `12`, `15`, `17`, `19`, `21`–`23`, `26`, and `255`. App-key rotation types `3`–`5` additionally contain `9`, `10`, and `18`; types `4` and `5` also contain `24`. Helper-key rotation types `6`–`8` additionally contain `13`, `14`, and `20`; types `7` and `8` also contain `24`. TLS-pin types `9` and `10` additionally contain `16`, and type `10` contains `24`. Revocation request type `11` additionally contains `18`, `25`, and `27=1`; revocation record type `12` contains the same fields, plus `24` only for origin `1`, while origin `2` has no preceding request. Every proposed epoch is exactly current epoch plus one. All other fields are forbidden.
+
+Type `3` is signed by the current app key, type `4` by the proposed app key, and type `5` by the current helper key. Type `6` is signed by the current helper key, type `7` by the proposed helper key, and type `8` by the current app key. Type `9` is signed by the current helper key and type `10` by the current app key. Type `11` is signed by the current app key; type `12` is always signed by the current helper key, including after a local-admin action. Each `prior_message_digest` is the signed-message digest of the immediately preceding type. `current_credential_state_digest` is the digest of the last terminal helper acceptance, rotation acceptance/confirmation, TLS-pin confirmation, or revocation record stored by both sides; for a fresh pairing it is the helper-accept digest.
+
+Missing steps, a signer in the wrong role, reused nonces, non-increasing epochs, mismatched state digests, and unknown fields fail closed. Lifecycle applies to one exact app/helper/homeserver/folder authorization; a key spanning several folder authorizations is staged separately and remains capability-unavailable wherever confirmation is incomplete. Cross-language golden bytes for every lifecycle type are required before runtime implementation.
 
 ## Credential storage
 
 ### iOS app
 
 - Store the Ed25519 seed and pairing records under a diagnostics-specific Keychain service, not the existing APNs helper API.
-- Use `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`, `kSecAttrSynchronizable = false`, and no shared access group. A protected-data lock makes diagnostics unavailable/interrupted rather than weakening accessibility.
+- Use [`kSecAttrAccessibleWhenUnlockedThisDeviceOnly`](https://developer.apple.com/documentation/security/ksecattraccessiblewhenunlockedthisdeviceonly), `kSecAttrSynchronizable = false`, and no shared access group. A protected-data lock makes diagnostics unavailable/interrupted rather than weakening accessibility.
 - Store only key material, public-key IDs, opaque homeserver/folder bindings, pairing and rotation epochs, the locally selected Device/folder mapping, endpoint and TLS pin, and revocation state. Store no folder/vault names, paths, operation values, or proof history.
 - Keep a random installation marker in app-owned protected storage. If the app container is lost but a Keychain item survives reinstall, do not silently reuse it; show an explicit recover/revoke/re-pair choice.
 - `ThisDeviceOnly` means device replacement and restore to another device require a new pairing. There is no iCloud Keychain sync or Cloud Relay escrow.
@@ -65,7 +145,7 @@ HMAC uses the separate domain `eu.vaultsync.helper-pairing/v1/bootstrap-hmac\0` 
 
 At helper initialization, the helper creates a random 32-byte homeserver binding and pins it locally to the full Device ID read from its trusted Syncthing API. Every authorized folder receives an independent random 32-byte folder binding pinned to the local Syncthing folder ID and an operator-approved diagnostics mount alias.
 
-The pairing QR carries domain-separated SHA-256 digests of the normalized Device ID and folder ID, not their raw values. The app computes the same digests from its already-local mapping and refuses a mismatch. After pairing, both sides store the full local mapping privately but protocol artifacts carry only the random bindings and key IDs.
+The pairing QR carries the byte-exact domain-separated Device and folder digests above, not their raw values. The app computes the same digests from its already-local mapping and refuses a mismatch. After pairing, both sides store the full local mapping privately but protocol artifacts carry only the random bindings and key IDs.
 
 Before capability acceptance and before every evidence transition:
 
@@ -80,15 +160,15 @@ A path, folder ID, Device ID, or binding supplied by a network request never sel
 
 Pairing is disabled by default. The helper exposes no diagnostics listener until the operator configures an explicit local/LAN or VPN endpoint and starts a local privileged pairing command for one existing Syncthing folder ID.
 
-1. The local command verifies the helper state, current Device ID, selected folder ID, and future access preconditions without creating a namespace. It creates one in-memory pending record, a 32-byte one-time secret, helper/app transcript nonce, random homeserver/folder bindings, and a five-minute monotonic deadline.
-2. It displays a QR containing the exact capability/version, fixed HTTPS endpoint, P-256 TLS SPKI pin, helper Ed25519 public key, binding values, Device/folder ID digests, nonce, expiry, and one-time secret. The QR is sensitive bootstrap material; it is never logged, persisted, copied to Cloud Relay, or placed in the synchronized folder.
+1. The local command verifies the helper state, current Device ID, selected folder ID, and future access preconditions without creating a namespace. It creates one in-memory pending record, a 32-byte one-time secret, a helper-generated invitation nonce, random homeserver/folder bindings, and a five-minute monotonic deadline.
+2. It displays the exact deterministic QR envelope defined above. The QR is sensitive bootstrap material; it is never logged, persisted, copied to Cloud Relay, or placed in the synchronized folder.
 3. The app user selects the already-known homeserver/folder, scans the QR, verifies both identifier digests, creates its per-installation Ed25519 key, and connects with TLS 1.3 while pinning the exact SPKI. DNS or public-CA trust alone is insufficient.
-4. The app sends a deterministic CBOR request containing both public identities, bindings, transcript nonce, app nonce, requested folder scope, issued/expiry times, HMAC, and app signature. The endpoint path is fixed and contains no identifier.
+4. The app sends the exact deterministic CBOR request above to the fixed pairing endpoint. No identifier appears in its path, query, headers, certificate, or access log.
 5. The helper verifies the TLS session, HMAC, signature, exact pending record, scope, nonce, expiry, and unused secret; consumes the secret before committing; then writes the authorization record atomically.
 6. The helper returns a signed acceptance binding the complete request digest, helper/app keys, bindings, epochs, and a fresh helper nonce. The app verifies it and stores its record atomically.
-7. Both sides display the same 12-hex-character transcript fingerprint. The user confirms the match before the app enables authenticated capability discovery. A mismatch revokes the incomplete record locally; no namespace exists to clean.
+7. Both sides display the exact 12-character transcript fingerprint above. The user confirms the match before the app enables authenticated capability discovery. A mismatch revokes the incomplete record locally; no namespace exists to clean.
 
-At most one pending pairing per folder and four per helper may exist. Restart, timeout, cancellation, a second use, or any validation failure destroys only the in-memory pending secret and produces no pairing.
+At most one pending pairing per folder and four per helper may exist. The endpoint accepts bodies only up to 16 KiB, at most ten requests per invitation, and at most 30 requests per minute helper-wide; it returns fixed error categories and never trusts a source IP as identity. Exceeding an invitation limit invalidates only that pending secret. Restart, timeout, cancellation, a second use, or any validation failure destroys only the in-memory pending secret and produces no pairing.
 
 No mDNS, UPnP, Cloud Relay tunnel, unauthenticated synchronized file, StoreKit transaction, or Syncthing TLS key participates in bootstrap. Remote access requires an operator-controlled VPN or separately reviewed reverse-proxy configuration; the standard installer opens no public port.
 
@@ -149,7 +229,7 @@ Pairing data travels only over the pinned local HTTPS channel and local visual b
 
 ## Required tests before implementation approval
 
-- RFC 8032 vectors and cross-language Go/CryptoKit sign/verify fixtures for every signature domain.
+- RFC 8032 vectors and cross-language Go/CryptoKit sign/verify fixtures for every signature domain, key ID, SPKI pin, binding digest, request/acceptance digest, HMAC input, and transcript fingerprint.
 - Deterministic-CBOR golden vectors plus rejection of duplicates, non-shortest forms, reordered maps, unknown fields, malformed lengths, truncation, and arbitrary bytes.
 - Wrong/rotated/revoked keys, wrong helper/app/binding/epoch, replay, duplicate, expiry/skew, out-of-order, QR reuse, and first-request races.
 - TLS pin mismatch, certificate renewal, TLS-key rotation, endpoint substitution, proxy/body logging, unavailable endpoint, and LAN/VPN loss.
@@ -162,12 +242,13 @@ Pairing data travels only over the pinned local HTTPS channel and local visual b
 
 Review must explicitly approve or reject each of these choices before implementation:
 
-1. Ed25519 application signatures, separate P-256 TLS identity, HMAC-SHA-256 bootstrap, and deterministic CBOR domains.
+1. Ed25519 application signatures, separate P-256 TLS identity, HMAC-SHA-256 bootstrap, the byte-exact identifier/transcript derivations, and deterministic CBOR domains.
 2. `WhenUnlockedThisDeviceOnly` app storage and a non-synchronizing, non-migrating per-installation key.
 3. A dedicated helper state store with optional operator-controlled encrypted whole-state backup and no escrow.
 4. Explicit QR + pinned-TLS LAN/VPN bootstrap, with no automatic discovery, public listener, Relay tunnel, or TOFU.
 5. Per-installation/per-folder authorization, explicit rotation/revocation, and re-pair-only recovery after key loss or suspected compromise.
 6. The downgrade rule that preserves credentials and only makes the capability unavailable/dormant.
+7. The exact lifecycle field registry, signer roles, digest chain, per-folder staging, and cross-language golden-byte requirement.
 
 Approval of this document still does not approve a namespace, access widening, probe, canonical operation contract, helper rollout, or app implementation.
 
