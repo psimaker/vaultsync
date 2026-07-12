@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -41,6 +42,73 @@ func TestLoadConfigRequiresBootstrapEnvironment(t *testing.T) {
 	for _, required := range []string{"SYNCTHING_API_URL", "SYNCTHING_API_KEY", "RELAY_URL"} {
 		if !strings.Contains(msg, required) {
 			t.Fatalf("error %q should mention missing %s", msg, required)
+		}
+	}
+}
+
+func TestPR100ConfigFailureLoggingStaysActionableAndPrivate(t *testing.T) {
+	t.Setenv("SYNCTHING_API_URL", "")
+	t.Setenv("SYNCTHING_API_KEY", "")
+	t.Setenv("RELAY_URL", "")
+	t.Setenv("DEBOUNCE_SECONDS", "")
+	t.Setenv("WATCHED_FOLDERS", "")
+
+	missingConfig := filepath.Join(t.TempDir(), "PRIVATE-CONFIG-PATH-SENTINEL.xml")
+	restore := syncthingConfigCandidatesFn
+	syncthingConfigCandidatesFn = func() []string { return []string{missingConfig} }
+	t.Cleanup(func() { syncthingConfigCandidatesFn = restore })
+
+	_, err := loadConfig()
+	if err == nil {
+		t.Fatal("expected configuration error when required values are unavailable")
+	}
+	if got := operationalErrorKind(err); got != "configuration_missing" {
+		t.Fatalf("operationalErrorKind() = %q, want actionable privacy-safe category", got)
+	}
+
+	var logOutput bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logOutput, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+	logInvalidRuntimeConfiguration(err)
+
+	logs := logOutput.String()
+	if strings.Contains(logs, missingConfig) {
+		t.Fatalf("configuration log contains the probed config path: %s", logs)
+	}
+	for _, required := range []string{
+		"error_kind=configuration_missing",
+		"fields=SYNCTHING_API_URL,SYNCTHING_API_KEY,RELAY_URL",
+		"action=set_required_configuration",
+	} {
+		if !strings.Contains(logs, required) {
+			t.Fatalf("configuration log is missing safe operator detail %q: %s", required, logs)
+		}
+	}
+
+	const secretValue = "PRIVATE-CONFIG-VALUE-SENTINEL"
+	invalidErr := newConfigurationError(
+		"invalid_value",
+		"correct_configuration_value",
+		fmt.Errorf("invalid value %s at /private/config/path", secretValue),
+		"DEBOUNCE_SECONDS",
+		secretValue,
+	)
+	logOutput.Reset()
+	logInvalidRuntimeConfiguration(invalidErr)
+	logs = logOutput.String()
+	for _, forbidden := range []string{secretValue, "/private/config/path"} {
+		if strings.Contains(logs, forbidden) {
+			t.Fatalf("configuration log contains sensitive sentinel %q: %s", forbidden, logs)
+		}
+	}
+	for _, required := range []string{
+		"error_kind=configuration_invalid_value",
+		"fields=DEBOUNCE_SECONDS",
+		"action=correct_configuration_value",
+	} {
+		if !strings.Contains(logs, required) {
+			t.Fatalf("configuration log is missing safe invalid-value detail %q: %s", required, logs)
 		}
 	}
 }

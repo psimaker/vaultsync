@@ -79,12 +79,7 @@ func main() {
 
 	cfg, err := loadConfigAwaitingSyncthing(context.Background())
 	if err != nil {
-		slog.Error("invalid runtime configuration",
-			"classification", "fatal",
-			"component", "config",
-			"error_kind", operationalErrorKind(err),
-			"action", "exit",
-		)
+		logInvalidRuntimeConfiguration(err)
 		os.Exit(1)
 	}
 
@@ -118,6 +113,19 @@ func main() {
 		stop()
 		os.Exit(code)
 	}
+}
+
+func logInvalidRuntimeConfiguration(err error) {
+	attributes := []any{
+		"classification", "fatal",
+		"component", "config",
+		"error_kind", operationalErrorKind(err),
+	}
+	if fields := configurationErrorFields(err); fields != "" {
+		attributes = append(attributes, "fields", fields)
+	}
+	attributes = append(attributes, "action", configurationErrorAction(err))
+	slog.Error("invalid runtime configuration", attributes...)
 }
 
 func parseMode() (appMode, error) {
@@ -155,7 +163,12 @@ func loadConfig() (Config, error) {
 	if v := os.Getenv("DEBOUNCE_SECONDS"); v != "" {
 		d, err := strconv.Atoi(v)
 		if err != nil || d < 1 {
-			return Config{}, fmt.Errorf("DEBOUNCE_SECONDS must be a positive integer (got %q)", v)
+			return Config{}, newConfigurationError(
+				"invalid_value",
+				"correct_configuration_value",
+				fmt.Errorf("DEBOUNCE_SECONDS must be a positive integer (got %q)", v),
+				"DEBOUNCE_SECONDS",
+			)
 		}
 		debounce = d
 	}
@@ -165,7 +178,12 @@ func loadConfig() (Config, error) {
 	if v := os.Getenv("STALE_RETRIGGER_SECONDS"); v != "" {
 		s, err := strconv.Atoi(v)
 		if err != nil || s < 0 {
-			return Config{}, fmt.Errorf("STALE_RETRIGGER_SECONDS must be a non-negative integer (got %q)", v)
+			return Config{}, newConfigurationError(
+				"invalid_value",
+				"correct_configuration_value",
+				fmt.Errorf("STALE_RETRIGGER_SECONDS must be a non-negative integer (got %q)", v),
+				"STALE_RETRIGGER_SECONDS",
+			)
 		}
 		staleRetrigger = s
 	}
@@ -179,7 +197,12 @@ func loadConfig() (Config, error) {
 		case "1", "true", "yes", "on":
 			startupAnnounce = true
 		default:
-			return Config{}, fmt.Errorf("STARTUP_ANNOUNCE must be a boolean (got %q)", v)
+			return Config{}, newConfigurationError(
+				"invalid_value",
+				"correct_configuration_value",
+				fmt.Errorf("STARTUP_ANNOUNCE must be a boolean (got %q)", v),
+				"STARTUP_ANNOUNCE",
+			)
 		}
 	}
 
@@ -261,12 +284,36 @@ func loadConfig() (Config, error) {
 		// config.xml) than "set the env vars / SYNCTHING_CONFIG", so surface it
 		// directly instead of burying it in the generic message.
 		if detectErr != nil && errors.Is(detectErr, os.ErrPermission) {
-			return Config{}, detectErr
+			return Config{}, newConfigurationError(
+				"permission_denied",
+				"check_syncthing_config_permissions",
+				detectErr,
+				"SYNCTHING_CONFIG",
+			)
 		}
 		if detectErr != nil {
-			return Config{}, fmt.Errorf("missing %s; Syncthing auto-detection also found nothing: %w", strings.Join(missing, ", "), detectErr)
+			cause := fmt.Errorf("missing %s; Syncthing auto-detection also found nothing: %w", strings.Join(missing, ", "), detectErr)
+			if errors.Is(detectErr, errNoSyncthingConfig) {
+				return Config{}, newConfigurationError(
+					"missing",
+					"set_required_configuration",
+					cause,
+					missing...,
+				)
+			}
+			return Config{}, newConfigurationError(
+				"invalid_syncthing_config",
+				"check_syncthing_config",
+				cause,
+				"SYNCTHING_CONFIG",
+			)
 		}
-		return Config{}, fmt.Errorf("required configuration not set: %s. Set them explicitly; the Syncthing key/URL can also be auto-detected by pointing SYNCTHING_CONFIG at your config.xml", strings.Join(missing, ", "))
+		return Config{}, newConfigurationError(
+			"missing",
+			"set_required_configuration",
+			fmt.Errorf("required configuration not set: %s. Set them explicitly; the Syncthing key/URL can also be auto-detected by pointing SYNCTHING_CONFIG at your config.xml", strings.Join(missing, ", ")),
+			missing...,
+		)
 	}
 	return cfg, nil
 }
