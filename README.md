@@ -30,7 +30,7 @@ Your notes sync peer-to-peer over Syncthing, straight into Obsidian's iOS sandbo
 - **Peer-to-peer & private** — syncs directly between your own devices over [Syncthing](https://syncthing.net/). No note cloud, no account, no tracking.
 - **Lands in Obsidian** — files sync into Obsidian's iOS sandbox, where the app already looks for them.
 - **Pair by QR, resolve conflicts** — connect your server in seconds; settle Markdown conflicts with side-by-side diffs.
-- **Server changes wake your iPhone** — optional Cloud Relay nudges the app the moment your server updates, so incoming notes land even while it's closed. An activity timeline and diagnostics show exactly what synced.
+- **Server changes can wake your iPhone** — optional Cloud Relay asks iOS to wake the app after the helper observes a server change. The activity timeline shows local sync activity, while Diagnostics keeps Relay, delivery, and local-data evidence separate.
 
 *VoiceOver and Dynamic Type throughout. Localized in English, German, Spanish, and Simplified Chinese. Independent project — not affiliated with Obsidian or Syncthing.*
 
@@ -47,7 +47,7 @@ Your notes sync peer-to-peer over Syncthing, straight into Obsidian's iOS sandbo
 
 </div>
 
-Syncthing runs on a machine you keep on; VaultSync joins as a peer and syncs into Obsidian. The optional sidecar + Cloud Relay wake your iPhone when the server changes.
+Syncthing runs on a machine you keep on; VaultSync joins as a peer and syncs into Obsidian. After a server change, the optional sidecar + Cloud Relay can request an iOS background wake-up; iOS decides whether and when VaultSync runs.
 
 ---
 
@@ -62,7 +62,7 @@ Syncthing runs on a machine you keep on; VaultSync joins as a peer and syncs int
 
 ## ☁️ Cloud Relay (optional)
 
-Without it, VaultSync syncs server changes when you open the app. **With it, your iPhone wakes on its own the moment your server changes** — even while VaultSync is closed.
+Without it, VaultSync syncs server changes when you open the app. **With it, Cloud Relay can request a background wake-up after your server changes** — iOS still decides whether and when to run the app.
 
 ### ⚡ One-step setup
 
@@ -78,7 +78,7 @@ curl -fsSL https://vaultsync.eu/notify.sh | sh
 
 </div>
 
-The installer finds your Syncthing config, sets the right permissions, and starts the helper. The helper wakes your iPhone once on startup and VaultSync flips to **Cloud Relay active** by itself; sending edits *from* your iPhone stays most reliable with the app open. The relay only ever sees the Device ID and push token needed to route a wake-up — never your notes, file or folder names, or vault structure ([PRIVACY.md](PRIVACY.md)).
+The installer finds your Syncthing config, sets the right permissions, and starts the helper. The helper sends one startup wake-up request. Relay Diagnostics reports Relay-side request observation and wake-ups received on this iPhone as separate evidence; one does not prove the other. iOS controls delivery, and sending edits *from* your iPhone stays most reliable with the app open. The relay receives the routing data and StoreKit proof needed to verify access and route a wake-up — never your notes, file or folder names, or vault structure ([PRIVACY.md](PRIVACY.md)).
 
 <details>
 <summary><b>🔧 Manual &amp; advanced setup</b> — Docker Compose, <code>docker run</code>, prebuilt binaries, NAS notes, <code>--dry-run</code></summary>

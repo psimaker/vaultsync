@@ -182,8 +182,8 @@ enum PathCollisionGuard {
                 env.markAutoPaused(id)
                 continue
             }
-            if let err = env.setPaused(id) {
-                logger.warning("Could not pause colliding folder \(id, privacy: .private): \(err, privacy: .private)")
+            if env.setPaused(id) != nil {
+                logger.warning("Could not pause a colliding folder")
                 continue // leave unrecorded → retried on the next launch
             }
             env.markAutoPaused(id)

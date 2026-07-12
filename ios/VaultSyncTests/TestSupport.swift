@@ -17,6 +17,7 @@ enum TestSupport {
         defaults.removeObject(forKey: "syncthing.ignoredPendingFolderIDs")
         defaults.removeObject(forKey: "syncthing.hasSeenPendingFolderOffer")
         defaults.removeObject(forKey: "background-sync-last-outcome-v1")
+        defaults.removeObject(forKey: "background-sync-last-outcome-v2")
     }
 
     static func resetRelayState() {
@@ -31,7 +32,9 @@ enum TestSupport {
             "relay-trigger-received-history-v1",
             "relay-background-sync-started-at",
             "relay-sync-progress-observed-at",
+            "relay-local-data-progress-observed-at-v2",
             "relay-diagnostics-last-error",
+            "relay-diagnostics-last-error-v2",
             "relay-last-provision-date",
             "relay-provisioned-device-ids",
             "relay-provision-statuses-v2",

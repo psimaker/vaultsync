@@ -85,8 +85,14 @@ final class SubscriptionManager {
         RelaySyncProofStore.backgroundSyncStartedAt()
     }
 
-    var relaySyncProgressObservedAt: Date? {
-        RelaySyncProofStore.syncProgressObservedAt()
+    var relayLocalDataProgressObservedAt: Date? {
+        RelaySyncProofStore.localDataProgressObservedAt()
+    }
+
+    var relayEntitlementLocallyVerified: Bool {
+        // `isRelaySubscribed` is set only from a current, locally verified
+        // StoreKit entitlement and is observable by Diagnostics.
+        isRelaySubscribed
     }
 
     /// Strong signal: a recent silent-push trigger proves Cloud Relay is
@@ -586,10 +592,18 @@ final class SubscriptionManager {
             relayProvisioningConfirmed:
                 relayProvisionStatuses[deviceID]?.isProvisionedWithVerifiedEntitlement == true,
             relayBackendReachable: relayHealthResult?.isHealthy == true,
-            relayTriggerObservedAt: relayServerObservations[deviceID]?.lastTriggerObservedAt,
+            relayTriggerObservedAt: relayServerObservations[deviceID]?.lastTriggerObservedAt
+        )
+    }
+
+    func deviceLocalSyncProofSnapshot() -> DeviceLocalSyncProofSnapshot {
+        DeviceLocalSyncProofSnapshot(
             silentPushReceivedAt: lastRelayTriggerReceivedAt,
             backgroundSyncStartedAt: RelaySyncProofStore.backgroundSyncStartedAt(),
-            syncProgressObservedAt: RelaySyncProofStore.syncProgressObservedAt()
+            localDataProgressObservedAt: RelaySyncProofStore.localDataProgressObservedAt(),
+            uploadConfirmedAt: nil,
+            downloadConfirmedAt: nil,
+            roundTripConfirmedAt: nil
         )
     }
 
@@ -630,7 +644,7 @@ final class SubscriptionManager {
             }
         } catch {
             productLoadFailed = true
-            logger.error("Failed to load products: \(error)")
+            logger.error("Failed to load subscription products")
         }
     }
 
@@ -663,8 +677,8 @@ final class SubscriptionManager {
             // disproves a verification problem.
             setPendingApproval(false)
             unverifiedRelayTransactionMessage = nil
-            if let revocationDate = transaction.revocationDate {
-                logger.info("Subscription revoked on \(revocationDate)")
+            if transaction.revocationDate != nil {
+                logger.info("Subscription revoked")
                 isRelaySubscribed = false
                 subscriptionExpiryDate = nil
                 relayEntitlementAvailability = .inactive
@@ -801,7 +815,7 @@ final class SubscriptionManager {
                 try await RelayService.deprovision(deviceID: deviceID, apnsToken: token)
                 relayProvisionStatuses[deviceID] = .notAttempted
             } catch {
-                logger.error("Failed to deprovision relay registration: \(error)")
+                logger.error("Failed to deprovision relay registration")
                 let userError = RelayService.userError(from: error)
                 relayProvisionStatuses[deviceID] = .temporarilyFailed(reason: userError.message)
                 errorMessage = userError.userVisibleDescription
@@ -850,7 +864,7 @@ final class SubscriptionManager {
             return
         }
 
-        logger.info("Periodic relay re-provision (last: \(lastProvision?.description ?? "never"))")
+        logger.info("Periodic relay re-provision requested (hadPrevious=\(lastProvision != nil))")
         await requestReprovisioning(trigger: .periodicRefresh, deviceIDs: deviceIDs)
     }
 

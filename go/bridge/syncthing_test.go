@@ -48,6 +48,10 @@ func TestStartStopSyncthing(t *testing.T) {
 	if !IsRunning() {
 		t.Fatal("IsRunning() = false after start")
 	}
+	firstGeneration := EventStreamGeneration()
+	if firstGeneration <= 0 {
+		t.Fatalf("EventStreamGeneration() = %d after start, want positive", firstGeneration)
+	}
 
 	// Starting again should return error.
 	if errMsg := StartSyncthing(configDir); errMsg != "already running" {
@@ -60,6 +64,18 @@ func TestStartStopSyncthing(t *testing.T) {
 	if IsRunning() {
 		t.Fatal("IsRunning() = true after stop")
 	}
+	if generation := EventStreamGeneration(); generation != 0 {
+		t.Fatalf("EventStreamGeneration() = %d after stop, want 0", generation)
+	}
+
+	if errMsg := StartSyncthing(configDir); errMsg != "" {
+		t.Fatalf("restart StartSyncthing() failed: %s", errMsg)
+	}
+	secondGeneration := EventStreamGeneration()
+	if secondGeneration <= firstGeneration {
+		t.Fatalf("event generation did not advance across restart: first=%d second=%d", firstGeneration, secondGeneration)
+	}
+	StopSyncthing()
 }
 
 func TestDeviceIDFormat(t *testing.T) {

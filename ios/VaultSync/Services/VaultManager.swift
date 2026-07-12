@@ -87,7 +87,7 @@ final class VaultManager {
             break
         }
 
-        logger.info("Obsidian directory access granted: \(url.path, privacy: .private) (isVault=\(pickedFolderIsVault))")
+        logger.info("Obsidian directory access granted (selectedFolderIsVault=\(pickedFolderIsVault))")
         return nil
     }
 
@@ -141,7 +141,7 @@ final class VaultManager {
         accessIssue = nil
         scanForVaults()
 
-        logger.info("Obsidian directory restored: \(url.path, privacy: .private)")
+        logger.info("Obsidian directory access restored")
     }
 
     // MARK: - Vault Discovery
@@ -334,13 +334,13 @@ final class VaultManager {
             // folder's synced directory (#45 follow-up), or the stored manual
             // target has become unsafe. Refuse with guidance; the share stays
             // pending until the user acts.
-            logger.error("Refusing share '\(folderName, privacy: .private)' (\(folder.id)): no safe location (manual=\(manualTarget != nil), baseIsVault=\(baseIsVault), occupied=\(occupied.count))")
+            logger.error("Refusing share because no safe location exists (manual=\(manualTarget != nil), baseIsVault=\(baseIsVault), occupiedCount=\(occupied.count))")
             return .refused(message: message)
         case .requiresMergeConfirmation(_, let targetName):
             // The label-derived target already holds content the engine would
             // merge with the share and push to every peer (#54). Only an
             // explicit, informed accept may do that — hand the decision back.
-            logger.info("Share (\(folder.id)) needs merge confirmation for target \(targetName, privacy: .private)")
+            logger.info("Share needs merge confirmation")
             return .needsMergeConfirmation(targetName: targetName)
         case .path(let resolved):
             path = resolved
@@ -349,7 +349,7 @@ final class VaultManager {
         // The local vault keeps the user's chosen name when one exists; the
         // share label on the offering devices is untouched either way (#52).
         let label = manualTarget ?? folderName
-        logger.info("Accepting share '\(folderName, privacy: .private)' (\(folder.id)) → path: \(path, privacy: .private) (manual=\(manualTarget != nil), baseIsVault=\(baseIsVault), nameMatchesBase=\(nameMatchesBase), occupied=\(occupied.count), mergeConfirmed=\(mergeConfirmed))")
+        logger.info("Accepting share (manual=\(manualTarget != nil), baseIsVault=\(baseIsVault), nameMatchesBase=\(nameMatchesBase), occupiedCount=\(occupied.count), mergeConfirmed=\(mergeConfirmed))")
 
         // A recorded manual target is recorded consent (#52/006); otherwise
         // only the user's fresh confirmation may open the Go hard floor.
@@ -377,7 +377,7 @@ final class VaultManager {
         }
 
         scanForVaults()
-        logger.info("Auto-accepted pending share: \(folderName, privacy: .private) (\(folder.id))")
+        logger.info("Auto-accepted pending share")
         return .accepted
     }
 
@@ -632,7 +632,7 @@ final class VaultManager {
 
         switch decision {
         case .refused(let message):
-            logger.error("Refusing manual target for share (\(folder.id)): \(message, privacy: .private)")
+            logger.error("Refusing unsafe manual share target")
             return message
         case .requiresMergeConfirmation:
             // Unreachable from validateManualTarget — #52 targets must be
@@ -661,7 +661,7 @@ final class VaultManager {
                 FolderPathReconciler.setRel(rel, forFolder: folder.id)
             }
             scanForVaults()
-            logger.info("Accepted pending share into manual target (\(folder.id)) → \(path, privacy: .private)")
+            logger.info("Accepted pending share into manual target")
             return nil
         }
     }
@@ -725,7 +725,7 @@ final class VaultManager {
         let legacyIDs = BookmarkService.allBookmarkIdentifiers().filter { $0.hasPrefix("vault-") }
         for id in legacyIDs {
             BookmarkService.deleteBookmark(identifier: id)
-            logger.info("Cleaned up legacy bookmark: \(id)")
+            logger.info("Cleaned up legacy bookmark")
         }
     }
 

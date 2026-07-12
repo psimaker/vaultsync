@@ -153,7 +153,7 @@ enum FolderPathReconciler {
                     if let actual = relativeIfUnder(storedCanon, root: canonRoot),
                        actual != r {
                         env.recordRel(folder.id, actual)
-                        logger.info("Refreshed mapping for live folder \(folder.id, privacy: .private) from its on-disk location")
+                        logger.info("Refreshed a live folder mapping")
                     }
                     continue
                 }
@@ -161,13 +161,13 @@ enum FolderPathReconciler {
                 // Configured path is gone — the container moved (#25). Rebase
                 // to the bookmark's natural path form.
                 guard env.dirExists(desired) else {
-                    logger.warning("Skip rebase for folder \(folder.id, privacy: .private): target missing")
+                    logger.warning("Skipped folder rebase because the target is missing")
                     continue
                 }
-                if let err = env.setPath(folder.id, desired) {
-                    logger.warning("Rebase failed for folder \(folder.id, privacy: .private): \(err, privacy: .private)")
+                if env.setPath(folder.id, desired) != nil {
+                    logger.warning("Folder rebase failed")
                 } else {
-                    logger.info("Rebased folder \(folder.id, privacy: .private) to current Obsidian path")
+                    logger.info("Rebased a folder to the current Obsidian location")
                 }
                 continue
             }

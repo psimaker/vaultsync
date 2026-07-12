@@ -4,7 +4,6 @@ package bridge
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -32,9 +31,9 @@ type folderErrorDetail struct {
 var stEventSub events.BufferedSubscription
 
 var (
-	stFolderErrSub        events.BufferedSubscription
-	stFolderErrLastGlobal int
-	stFolderErrByFolder   = map[string]folderErrorDetail{}
+	stFolderErrSub      events.BufferedSubscription
+	stFolderErrLastID   int
+	stFolderErrByFolder = map[string]folderErrorDetail{}
 )
 
 const maxBridgeEventsPerPoll = 120
@@ -96,13 +95,7 @@ func GetEventsSince(lastID int) string {
 
 	infos := make([]EventInfo, 0, len(evts))
 	for _, ev := range evts {
-		infos = append(infos, EventInfo{
-			ID:       ev.GlobalID,
-			Type:     ev.Type.String(),
-			Time:     ev.Time.Format("2006-01-02T15:04:05Z07:00"),
-			Relevant: isUserVisibleEventType(ev.Type),
-			Data:     bridgeEventData(ev),
-		})
+		infos = append(infos, makeEventInfo(ev))
 	}
 
 	data, err := json.Marshal(infos)
@@ -110,6 +103,22 @@ func GetEventsSince(lastID int) string {
 		return "[]"
 	}
 	return string(data)
+}
+
+func makeEventInfo(ev events.Event) EventInfo {
+	return EventInfo{
+		// BufferedSubscription.Since consumes the per-subscription cursor.
+		// Exporting GlobalID here made Swift feed a different ID domain back
+		// into Since, which could skip fresh events after engine startup.
+		ID:   ev.SubscriptionID,
+		Type: ev.Type.String(),
+		// Preserve sub-second ordering. A diagnostics baseline can be taken in
+		// the same wall-clock second as a later ItemFinished event; truncating
+		// here would make the stronger freshness gate ambiguous.
+		Time:     ev.Time.Format(time.RFC3339Nano),
+		Relevant: isUserVisibleEventType(ev.Type),
+		Data:     bridgeEventData(ev),
+	}
 }
 
 // GetConfigJSON returns the current Syncthing configuration as JSON.
@@ -161,7 +170,6 @@ func asMap(v interface{}) map[string]interface{} {
 	}
 	var m map[string]interface{}
 	if err := json.Unmarshal(data, &m); err != nil {
-		log.Printf("bridge: asMap unmarshal failed: %v", err)
 		return nil
 	}
 	return m
@@ -296,25 +304,25 @@ func clearFolderErrorDetail(folderID string) {
 func refreshFolderErrorCacheLocked() {
 	if stEventSub == nil {
 		stFolderErrSub = nil
-		stFolderErrLastGlobal = 0
+		stFolderErrLastID = 0
 		stFolderErrByFolder = map[string]folderErrorDetail{}
 		return
 	}
 
 	if stFolderErrSub == nil || stFolderErrSub != stEventSub {
 		stFolderErrSub = stEventSub
-		stFolderErrLastGlobal = 0
+		stFolderErrLastID = 0
 		stFolderErrByFolder = map[string]folderErrorDetail{}
 	}
 
-	evts := stEventSub.Since(stFolderErrLastGlobal, nil, 0)
+	evts := stEventSub.Since(stFolderErrLastID, nil, 0)
 	if len(evts) == 0 {
 		return
 	}
 
 	for _, ev := range evts {
-		if ev.GlobalID > stFolderErrLastGlobal {
-			stFolderErrLastGlobal = ev.GlobalID
+		if ev.SubscriptionID > stFolderErrLastID {
+			stFolderErrLastID = ev.SubscriptionID
 		}
 		if ev.Type != events.FolderErrors {
 			continue

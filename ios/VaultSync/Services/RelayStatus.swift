@@ -219,9 +219,18 @@ struct RelayProofSnapshot: Equatable, Sendable {
     let relayProvisioningConfirmed: Bool
     let relayBackendReachable: Bool
     let relayTriggerObservedAt: Date?
+}
+
+/// Local wake-up evidence has no homeserver identifier in the APNs v1 payload,
+/// so it must not be attached to every per-server snapshot. Directional proof
+/// remains independent and unset until a future correlated helper contract.
+struct DeviceLocalSyncProofSnapshot: Equatable, Sendable {
     let silentPushReceivedAt: Date?
     let backgroundSyncStartedAt: Date?
-    let syncProgressObservedAt: Date?
+    let localDataProgressObservedAt: Date?
+    let uploadConfirmedAt: Date?
+    let downloadConfirmedAt: Date?
+    let roundTripConfirmedAt: Date?
 }
 
 enum RelayUserStatus: Equatable, Sendable {
@@ -304,21 +313,30 @@ enum RelayStatusPresentation {
 
 enum RelaySyncProofStore {
     private static let backgroundStartedAtKey = "relay-background-sync-started-at"
-    private static let syncProgressObservedAtKey = "relay-sync-progress-observed-at"
+    // v1 was set from the generic `.synced` outcome, which could mean only that
+    // folders returned to idle. Never reuse that weaker historical timestamp as
+    // evidence of actual local data progress.
+    private static let localDataProgressObservedAtKey = "relay-local-data-progress-observed-at-v2"
 
-    static func markBackgroundSyncStarted(at date: Date = Date()) {
-        UserDefaults.standard.set(date, forKey: backgroundStartedAtKey)
+    static func markBackgroundSyncStarted(
+        at date: Date = Date(),
+        defaults: UserDefaults = .standard
+    ) {
+        defaults.set(date, forKey: backgroundStartedAtKey)
     }
 
-    static func markSyncProgressObserved(at date: Date = Date()) {
-        UserDefaults.standard.set(date, forKey: syncProgressObservedAtKey)
+    static func markLocalDataProgressObserved(
+        at date: Date = Date(),
+        defaults: UserDefaults = .standard
+    ) {
+        defaults.set(date, forKey: localDataProgressObservedAtKey)
     }
 
-    static func backgroundSyncStartedAt() -> Date? {
-        UserDefaults.standard.object(forKey: backgroundStartedAtKey) as? Date
+    static func backgroundSyncStartedAt(defaults: UserDefaults = .standard) -> Date? {
+        defaults.object(forKey: backgroundStartedAtKey) as? Date
     }
 
-    static func syncProgressObservedAt() -> Date? {
-        UserDefaults.standard.object(forKey: syncProgressObservedAtKey) as? Date
+    static func localDataProgressObservedAt(defaults: UserDefaults = .standard) -> Date? {
+        defaults.object(forKey: localDataProgressObservedAtKey) as? Date
     }
 }

@@ -191,7 +191,7 @@ struct VaultSyncApp: App {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               components.scheme?.caseInsensitiveCompare("vaultsync") == .orderedSame,
               components.host?.caseInsensitiveCompare("sync") == .orderedSame else {
-            logger.debug("Ignoring unsupported incoming URL: \(url.absoluteString, privacy: .public)")
+            logger.debug("Ignoring unsupported incoming URL")
             return
         }
 
@@ -201,7 +201,7 @@ struct VaultSyncApp: App {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedFolderID = folderID.flatMap { $0.isEmpty ? nil : $0 }
 
-        logger.info("Handling sync URL request (folder=\(normalizedFolderID ?? "all", privacy: .public))")
+        logger.info("Handling sync URL request")
         syncthingManager.triggerForegroundSync(folderID: normalizedFolderID)
     }
 }

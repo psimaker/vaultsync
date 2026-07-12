@@ -215,12 +215,6 @@ final class SyncthingManager {
     private var lastWrittenWidgetSnapshot: WidgetSnapshotStore.Snapshot?
     private var lastWrittenIssueFloor: WidgetSnapshotStore.IssueFloor?
 
-    private static let bridgeDateParser: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter
-    }()
-
     init(syncHistoryStore: SyncHistoryStore = SyncHistoryStore()) {
         self.syncHistoryStore = syncHistoryStore
 
@@ -712,7 +706,7 @@ final class SyncthingManager {
         defer { isStarting = false }
 
         let configDir = Self.configDirectory()
-        logger.info("Starting Syncthing with configDir: \(configDir)")
+        logger.info("Starting Syncthing")
 
         BackgroundSyncService.lifecycleLock.withLock { $0.foregroundActive = true }
 
@@ -722,7 +716,7 @@ final class SyncthingManager {
 
         if let err = startError {
             BackgroundSyncService.lifecycleLock.withLock { $0.foregroundActive = false }
-            logger.error("Failed to start Syncthing: \(err)")
+            logger.error("Failed to start Syncthing")
             error = err
             userError = SyncUserError.from(rawMessage: err, fallbackTitle: L10n.tr("Could Not Start Sync"))
             return
@@ -733,7 +727,7 @@ final class SyncthingManager {
         deviceID = SyncBridgeService.deviceID()
         error = nil
         userError = nil
-        logger.info("Syncthing started. Device ID: \(self.deviceID)")
+        logger.info("Syncthing started")
 
         startPolling()
     }
@@ -779,7 +773,7 @@ final class SyncthingManager {
         // Adoption is an external lifecycle transition: the adopted
         // generation gets a fresh death-auto-restart budget (#61).
         engineDeathAutoRestartConsumed = false
-        logger.info("Adopted running Syncthing engine started by a background handler. Device ID: \(self.deviceID)")
+        logger.info("Adopted running Syncthing engine started by a background handler")
 
         startPolling()
         return true
@@ -1127,8 +1121,8 @@ final class SyncthingManager {
         guard let data = try? JSONEncoder().encode(defaultIgnorePatterns),
               let json = String(data: data, encoding: .utf8) else { return }
 
-        if let error = SyncBridgeService.ensureDefaultIgnores(folderID: folderID, defaultsJSON: json) {
-            logger.warning("Failed to ensure default ignores for \(folderID, privacy: .private): \(error, privacy: .private)")
+        if SyncBridgeService.ensureDefaultIgnores(folderID: folderID, defaultsJSON: json) != nil {
+            logger.warning("Failed to ensure default ignore rules")
         }
     }
 
@@ -1688,7 +1682,7 @@ final class SyncthingManager {
     }
 
     private func parseBridgeDate(_ value: String) -> Date? {
-        Self.bridgeDateParser.date(from: value)
+        SyncBridgeService.parseBridgeTimestamp(value)
     }
 
     private func displayFolderName(
@@ -1867,7 +1861,7 @@ final class SyncthingManager {
         let targetFolderIDs: [String]
         if let normalizedFolderID, !normalizedFolderID.isEmpty {
             guard availableFolders.contains(where: { $0.id == normalizedFolderID }) else {
-                logger.warning("Ignoring sync request for unknown folder ID: \(normalizedFolderID, privacy: .public)")
+                logger.warning("Ignoring sync request for an unknown folder")
                 return
             }
             targetFolderIDs = [normalizedFolderID]
@@ -1892,7 +1886,7 @@ final class SyncthingManager {
         for id in Array(Set(targetFolderIDs)).sorted() {
             if let err = rescanFolder(id: id) {
                 lastTriggerError = err
-                logger.error("Foreground sync trigger failed for \(id, privacy: .public): \(err, privacy: .public)")
+                logger.error("Foreground sync trigger failed")
             } else {
                 didTriggerSync = true
             }
