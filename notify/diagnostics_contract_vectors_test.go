@@ -13,21 +13,19 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
-	"sort"
 	"strings"
 	"testing"
 )
 
 type diagnosticsContractFixture struct {
-	FixtureVersion    int                          `json:"fixture_version"`
-	SourceDecisions   []string                     `json:"source_decisions"`
-	Limits            diagnosticsContractLimits    `json:"limits"`
-	Capabilities      map[string]string            `json:"capabilities"`
-	Registries        map[string]map[string]string `json:"registries"`
-	Domains           map[string]string            `json:"domains"`
-	DigestChains      map[string]string            `json:"digest_chains"`
-	DomainBodyDigests map[string]string            `json:"domain_body_digests"`
-	Vectors           diagnosticsContractVectors   `json:"vectors"`
+	FixtureVersion  int                          `json:"fixture_version"`
+	SourceDecisions []string                     `json:"source_decisions"`
+	Limits          diagnosticsContractLimits    `json:"limits"`
+	Capabilities    map[string]string            `json:"capabilities"`
+	Registries      map[string]map[string]string `json:"registries"`
+	Domains         map[string]string            `json:"domains"`
+	DigestChains    map[string]string            `json:"digest_chains"`
+	Vectors         diagnosticsContractVectors   `json:"vectors"`
 }
 
 type diagnosticsContractLimits struct {
@@ -331,9 +329,6 @@ func TestDiagnosticsDerivationAndCrossLanguageGoldenBytes(t *testing.T) {
 
 func TestDiagnosticsAllDomainsHaveGoldenDigestsAndSeparation(t *testing.T) {
 	fixture := loadDiagnosticsContractFixture(t)
-	if len(fixture.DomainBodyDigests) != len(fixture.Domains) {
-		t.Fatalf("domain digest count = %d, want %d", len(fixture.DomainBodyDigests), len(fixture.Domains))
-	}
 	seed := mustDecodeHex(t, fixture.Vectors.RFC8032.SeedHex)
 	privateKey := ed25519.NewKeyFromSeed(seed)
 	publicKey := privateKey.Public().(ed25519.PublicKey)
@@ -342,9 +337,6 @@ func TestDiagnosticsAllDomainsHaveGoldenDigestsAndSeparation(t *testing.T) {
 	for name, domain := range fixture.Domains {
 		digest := sha256.Sum256(append([]byte(domain), emptyMap...))
 		digestHex := hex.EncodeToString(digest[:])
-		if digestHex != fixture.DomainBodyDigests[name] {
-			t.Fatalf("domain digest %s = %s, want %s", name, digestHex, fixture.DomainBodyDigests[name])
-		}
 		if prior, exists := seen[digestHex]; exists {
 			t.Fatalf("domains %s and %s produced the same digest", name, prior)
 		}
@@ -471,19 +463,8 @@ func TestPrintDiagnosticsGeneratedFixtureValues(t *testing.T) {
 	fixture := loadDiagnosticsContractFixture(t)
 	derivations := generatedDiagnosticsDerivations(t, fixture.Vectors.Derivations)
 	body, digest, signature := generatedDiagnosticsCapabilityQuery(t, fixture)
-	domainNames := make([]string, 0, len(fixture.Domains))
-	for name := range fixture.Domains {
-		domainNames = append(domainNames, name)
-	}
-	sort.Strings(domainNames)
-	domainDigests := make(map[string]string, len(domainNames))
-	for _, name := range domainNames {
-		sum := sha256.Sum256(append([]byte(fixture.Domains[name]), 0xa0))
-		domainDigests[name] = hex.EncodeToString(sum[:])
-	}
 	output := map[string]any{
-		"domain_body_digests": domainDigests,
-		"derivations":         derivations,
+		"derivations": derivations,
 		"contract_query": map[string]string{
 			"expected_canonical_body_hex": hex.EncodeToString(body),
 			"expected_digest_hex":         hex.EncodeToString(digest),

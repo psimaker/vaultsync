@@ -13,7 +13,6 @@ struct M1ContractFixture: Decodable {
     let registries: [String: [String: String]]
     let domains: [String: String]
     let digestChains: [String: String]
-    let domainBodyDigests: [String: String]
     let vectors: Vectors
 
     struct Limits: Decodable, Equatable {
