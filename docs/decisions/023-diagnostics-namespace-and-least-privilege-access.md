@@ -6,6 +6,8 @@
 
 This decision supplies the namespace/access milestone required by [Decision 021](021-capability-negotiated-helper-contract-for-correlated-roundtrip-proof.md). It applies only after separate mutual pairing and canonical-contract decisions are approved. Trigger v1, Cloud Relay, APNs, StoreKit, Syncthing folder configuration, existing paths, mappings, ignores, versioning, backups, and user data remain unchanged.
 
+These invariants — including the prohibition on automatic Syncthing configuration changes and the rejection of vault-wide access — confine the diagnostics capability only. They neither authorize nor constrain a future, separately decided capability that legitimately manages Syncthing configuration under its own reviewed threat model; such a capability must neither inherit nor weaken the boundaries defined here.
+
 - The exact visible namespace name is **`VaultSync Diagnostics`** at the root of one explicitly selected Syncthing folder.
 - Namespace enablement is a separate, explicit app-and-operator action. App/helper upgrade, pairing, launch, onboarding, silent push, background execution, or Relay activity never creates it.
 - A pre-existing unauthenticated path with that exact name is a collision. It is never adopted, renamed, merged, overwritten, deleted, or bypassed with a suffix.
