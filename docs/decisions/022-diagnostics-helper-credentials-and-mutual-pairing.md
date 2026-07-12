@@ -36,7 +36,15 @@ Every signature input is the exact ASCII domain including its trailing NUL byte,
 | Message | Signature domain |
 |---|---|
 | App pairing request | `eu.vaultsync.helper-pairing/v1/app-request\0` |
-| Helper pairing acceptance | `eu.vaultsync.helper-pairing/v1/helper-accept\0` |
+| Helper pending pairing acceptance | `eu.vaultsync.helper-pairing/v1/helper-accept\0` |
+| App pairing finalize | `eu.vaultsync.helper-pairing/v1/pairing-finalize\0` |
+| Helper finalize acknowledgement | `eu.vaultsync.helper-pairing/v1/pairing-finalize-ack\0` |
+| App pairing receipt | `eu.vaultsync.helper-pairing/v1/pairing-receipt\0` |
+| Helper ready acknowledgement | `eu.vaultsync.helper-pairing/v1/pairing-ready-ack\0` |
+| App activation confirmation | `eu.vaultsync.helper-pairing/v1/pairing-activate\0` |
+| Helper active acknowledgement | `eu.vaultsync.helper-pairing/v1/pairing-active-ack\0` |
+| App pairing abort | `eu.vaultsync.helper-pairing/v1/pairing-abort\0` |
+| Helper abort acknowledgement | `eu.vaultsync.helper-pairing/v1/pairing-abort-ack\0` |
 | App-key rotation request, signed by old app key | `eu.vaultsync.helper-pairing/v1/app-key-rotation-request\0` |
 | App-key rotation proof, signed by new app key | `eu.vaultsync.helper-pairing/v1/app-key-rotation-new-proof\0` |
 | App-key rotation acceptance, signed by helper | `eu.vaultsync.helper-pairing/v1/app-key-rotation-accept\0` |
@@ -47,8 +55,12 @@ Every signature input is the exact ASCII domain including its trailing NUL byte,
 | TLS-pin rotation confirmation, signed by app | `eu.vaultsync.helper-pairing/v1/tls-pin-rotation-confirm\0` |
 | Revocation request, signed by app when available | `eu.vaultsync.helper-pairing/v1/revocation-request\0` |
 | Revocation record, signed by helper | `eu.vaultsync.helper-pairing/v1/revocation-record\0` |
+| Lifecycle finalize, signed by app | `eu.vaultsync.helper-pairing/v1/lifecycle-finalize\0` |
+| Lifecycle active acknowledgement, signed by helper | `eu.vaultsync.helper-pairing/v1/lifecycle-active-ack\0` |
+| Lifecycle abort, signed by app | `eu.vaultsync.helper-pairing/v1/lifecycle-abort\0` |
+| Lifecycle abort acknowledgement, signed by helper | `eu.vaultsync.helper-pairing/v1/lifecycle-abort-ack\0` |
 
-The bootstrap HMAC is non-circular: its input is the exact domain `eu.vaultsync.helper-pairing/v1/bootstrap-hmac\0` followed by the deterministic app-request map with both the HMAC and signature fields omitted. The app then inserts the 32-byte HMAC and signs the app-request domain plus that deterministic map with only the signature omitted. A valid signature or HMAC from one domain is invalid in every other domain.
+The bootstrap HMAC is non-circular: it is `HMAC-SHA-256(key=bootstrap_secret, message="eu.vaultsync.helper-pairing/v1/bootstrap-hmac\0" || deterministic_app_request_without_labels_21_and_255)`. The app then inserts the 32-byte HMAC as label `21` and signs the app-request domain plus that deterministic map with only label `255` omitted. A valid signature or HMAC from one domain is invalid in every other domain.
 
 ### Byte-exact identifiers and bootstrap transcript
 
@@ -68,7 +80,7 @@ The bootstrap field registry is exact; label `255` is always a 64-byte Ed25519 s
 |---:|---|---|
 | `1` | capability | exact ASCII text `eu.vaultsync.diagnostics.helper-pairing/1` |
 | `2`, `3` | protocol, suite | uint, exactly `1` |
-| `4` | message_type | uint: `0=QR invitation`, `1=app request`, `2=helper acceptance` |
+| `4` | message_type | uint: `0=QR`, `1=app_request`, `2=helper_accept`, `3=finalize`, `4=finalize_ack`, `5=receipt`, `6=ready_ack`, `7=activate`, `8=active_ack`, `9=abort`, `10=abort_ack` |
 | `5` | invitation_nonce | bstr, 32 bytes |
 | `6` | endpoint_host | restricted ASCII text, 1–253 bytes |
 | `7` | endpoint_port | uint, 1–65535 |
@@ -84,13 +96,23 @@ The bootstrap field registry is exact; label `255` is always a 64-byte Ed25519 s
 | `22` | app_request_digest | bstr, 32 bytes |
 | `23`, `24` | app_epoch, helper_epoch | uint; initial app epoch is `1` |
 | `25` | helper_nonce | bstr, 32 bytes |
+| `26` | prior_message_digest | bstr, 32 bytes |
 | `255` | signature | bstr, 64 bytes |
 
-The QR contains labels `1`–`17` plus `24` and no signature. The app request contains `1`–`16`, `18`–`21`, `23`, `24`, and `255`; its values through label `16` byte-equal the invitation, while label `17` is forbidden. The helper acceptance contains `1`–`5`, `9`–`16`, `18`–`20`, `22`–`25`, and `255`; it uses fresh issue/expiry bounds no later than the invitation expiry. Every other field is forbidden for that message type.
+The QR contains labels `1`–`17` plus `24` and no signature. The app request contains `1`–`16`, `18`–`21`, `23`, `24`, and `255`; its values through label `16` byte-equal the invitation, while label `17` is forbidden. The pending helper acceptance contains `1`–`5`, `9`–`16`, `18`–`20`, `22`–`25`, and `255`; it uses fresh issue/expiry bounds no later than the invitation expiry. Types `3`–`10` contain `1`–`5`, `9`–`16`, `18`–`20`, `22`–`26`, and `255`. For types `3` through `8`, label `26` is respectively the digest of type `2`, `3`, `4`, `5`, `6`, or `7`; type `9` binds the latest pending/active message and type `10` binds type `9`. Odd types `3`, `5`, `7`, and `9` are app-signed; even types `4`, `6`, `8`, and `10` are helper-signed. Every other field is forbidden for that message type.
 
 For bootstrap and lifecycle messages, `expires_at` is greater than `issued_at` by at most 300 seconds. Each side also enforces a 300-second monotonic deadline and permits at most ±120 seconds of wall-clock skew; wall-clock skew never extends the local deadline.
 
-The app pairing request echoes every non-secret QR field, adds the app public key/key ID and a fresh 32-byte app nonce, and contains the HMAC and app signature constructed above. It never echoes the one-time secret. The helper acceptance binds the complete app-request digest, both public keys/key IDs, bindings, protocol/suite, app/helper epochs, invitation/app nonces, issue/expiry bounds, and a fresh 32-byte helper nonce under the helper-accept domain.
+The app pairing request echoes every non-secret QR field, adds the app public key/key ID and a fresh 32-byte app nonce, and contains the HMAC and app signature constructed above. It never echoes the one-time secret. The pending helper acceptance binds the complete app-request digest, both public keys/key IDs, bindings, protocol/suite, app/helper epochs, invitation/app nonces, issue/expiry bounds, and a fresh 32-byte helper nonce under the helper-accept domain.
+
+The first normative bootstrap-HMAC golden vector uses `bootstrap_secret = 0xa5` repeated 32 times, helper public key `0x09` repeated 32 times, app public key `0x12` repeated 32 times, invitation nonce `0x05` repeated 32 times, `helper.test:443`, issue/expiry `1700000000`/`1700000300`, app/helper epoch `1`, and the other fixed 32-byte fields visible in the canonical body. Labels `21` and `255` are absent:
+
+```text
+canonical_body_hex=b501782965752e7661756c7473796e632e646961676e6f73746963732e68656c7065722d70616972696e672f310201030104010558200505050505050505050505050505050505050505050505050505050505050505066b68656c7065722e74657374071901bb085820080808080808080808080808080808080808080808080808080808080808080809582009090909090909090909090909090909090909090909090909090909090909090a5820b8933818a6a0f5d9a030a0b2d8ed226ff197f5f9fd6e5fcf16db6fd39e14c5620b58200b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0c58200c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0d58200d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0e58200e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0f1a6553f100101a6553f22c1258201212121212121212121212121212121212121212121212121212121212121212135820dcc27b99cfce3366f5975bfe29062bc3a0d6b0aa6ed24288273fad64a7fcfa3114582014141414141414141414141414141414141414141414141414141414141414141701181801
+expected_hmac_hex=c65ea12ee5902b58a833688aff7db0caa74b782a3fd9a794e99c67e6c08d9497
+```
+
+Go and Swift fixtures must reproduce both exact byte strings before any pairing code can pass review.
 
 The transcript fingerprint is the first six bytes of `SHA-256("eu.vaultsync.helper-pairing/v1/transcript-fingerprint\0" || app_request_digest || helper_accept_digest)`, displayed as exactly 12 uppercase hexadecimal characters. It is comparison UI, not a credential, and never substitutes for QR possession, TLS pinning, HMAC, or both signatures.
 
@@ -100,7 +122,7 @@ Every lifecycle transition above is a separate signed deterministic map, not a m
 |---:|---|---|
 | `1` | capability | exact pairing capability text |
 | `2`, `3` | protocol, suite | uint, exactly `1` |
-| `4` | message_type | uint: `3` through `12` in domain-table order after helper acceptance |
+| `4` | message_type | uint: `11`–`13` app-key rotation, `14`–`16` helper-key rotation, `17`–`18` TLS-pin rotation, `19`–`20` revocation, `21`–`24` finalize/ack/abort/abort-ack |
 | `5`, `6` | homeserver_binding, folder_binding | bstr, 32 bytes each |
 | `7`, `8` | current_app_public_key, current_app_key_id | bstr, 32 bytes each |
 | `9`, `10` | proposed_app_public_key, proposed_app_key_id | bstr, 32 bytes each |
@@ -115,13 +137,21 @@ Every lifecycle transition above is a separate signed deterministic map, not a m
 | `25` | revocation_reason | uint: `1=user_request`, `2=lost_app`, `3=folder_removed`, `4=suspected_compromise` |
 | `26` | current_credential_state_digest | bstr, 32 bytes |
 | `27` | revocation_origin | uint: `1=signed_app`, `2=local_helper_admin` |
+| `28` | transition_digest | first request/proposal digest, bstr, 32 bytes |
+| `29` | transition_kind | uint: `1=app_key`, `2=helper_key`, `3=tls_pin` |
 | `255` | signature | bstr, 64 bytes |
 
-Every lifecycle message contains `1`–`8`, `11`, `12`, `15`, `17`, `19`, `21`–`23`, `26`, and `255`. App-key rotation types `3`–`5` additionally contain `9`, `10`, and `18`; types `4` and `5` also contain `24`. Helper-key rotation types `6`–`8` additionally contain `13`, `14`, and `20`; types `7` and `8` also contain `24`. TLS-pin types `9` and `10` additionally contain `16`, and type `10` contains `24`. Revocation request type `11` additionally contains `18`, `25`, and `27=1`; revocation record type `12` contains the same fields, plus `24` only for origin `1`, while origin `2` has no preceding request. Every proposed epoch is exactly current epoch plus one. All other fields are forbidden.
+Every lifecycle message contains `1`–`8`, `11`, `12`, `15`, `17`, `19`, `21`–`23`, `26`, and `255`. App-key rotation types `11`–`13` additionally contain `9`, `10`, and `18`; types `12` and `13` also contain `24`. Helper-key rotation types `14`–`16` additionally contain `13`, `14`, and `20`; types `15` and `16` also contain `24`. TLS-pin types `17` and `18` additionally contain `16`, and type `18` contains `24`. Revocation request type `19` additionally contains `18`, `25`, and `27=1`; revocation record type `20` contains the same fields, plus `24` only for origin `1`, while origin `2` has no preceding request.
 
-Type `3` is signed by the current app key, type `4` by the proposed app key, and type `5` by the current helper key. Type `6` is signed by the current helper key, type `7` by the proposed helper key, and type `8` by the current app key. Type `9` is signed by the current helper key and type `10` by the current app key. Type `11` is signed by the current app key; type `12` is always signed by the current helper key, including after a local-admin action. Each `prior_message_digest` is the signed-message digest of the immediately preceding type. `current_credential_state_digest` is the digest of the last terminal helper acceptance, rotation acceptance/confirmation, TLS-pin confirmation, or revocation record stored by both sides; for a fresh pairing it is the helper-accept digest.
+Type `11` is signed by the current app key, type `12` by the proposed app key, and type `13` by the current helper key. Type `14` is signed by the current helper key, type `15` by the proposed helper key, and type `16` by the current app key. Type `17` is signed by the current helper key and type `18` by the current app key. Type `19` is signed by the current app key; type `20` is always signed by the current helper key, including after a local-admin action. Each `prior_message_digest` is the signed-message digest of the immediately preceding type.
 
-Missing steps, a signer in the wrong role, reused nonces, non-increasing epochs, mismatched state digests, and unknown fields fail closed. Lifecycle applies to one exact app/helper/homeserver/folder authorization; a key spanning several folder authorizations is staged separately and remains capability-unavailable wherever confirmation is incomplete. Cross-language golden bytes for every lifecycle type are required before runtime implementation.
+Types `21`–`24` contain the common lifecycle fields, `24`, `28`, `29`, and the proposed fields required by their transition kind: `9`, `10`, `18` for app-key; `13`, `14`, `20` for helper-key; or `16` for TLS-pin. Type `21` finalizes the pending type `13`, `16`, or `18`; type `22` binds type `21`; type `23` aborts the latest pending message; and type `24` binds type `23`. Type `21` is signed by the proposed app key for app-key rotation and the current app key otherwise. Type `22` is signed by the proposed helper key for helper-key rotation and the current helper key otherwise. Types `23` and `24` are signed by the still-current app and helper keys. Every proposed epoch is exactly current epoch plus one. All other fields are forbidden.
+
+Types `13`, `16`, and `18` create only expiring pending transitions; they never switch an active key, epoch, or pin. After durably storing that pending message, the app sends type `21`. The helper commits locally, retains the old credential solely for bounded reconciliation/rollback, and returns deterministic type `22`; the app switches only after validating and durably storing type `22`. A lost acknowledgement is recovered by replaying the identical type `21`. Until a capability query signed/transported under the proposed state succeeds, the helper permits only finalize/abort/reconciliation and no operation or artifact; TLS rotation serves the old and proposed pins only inside this bounded state. The successful query makes the transition terminal and retires the old credential according to the explicit confirmation/rollback policy.
+
+Before helper commit, type `23` followed by type `24` deletes only pending transition state. Expiry, cancellation, crash, or network loss has the same effect after bounded replay. An abort after helper commit is not a silent rollback: it requires a new reverse rotation or revocation. Revocation type `20` is immediately fail-closed and may safely be one-sided because it can only remove authority. No flow claims cross-device atomicity.
+
+`current_credential_state_digest` is the signed-message digest of type `8` for a fresh pairing, type `22` after its proposed-state capability confirmation succeeds, or type `20` after revocation. Missing steps, a signer in the wrong role, reused nonces, non-increasing epochs, mismatched state/transition digests, and unknown fields fail closed. Lifecycle applies to one exact app/helper/homeserver/folder authorization; a key spanning several folder authorizations is staged separately and remains capability-unavailable wherever confirmation is incomplete. Cross-language golden bytes for every lifecycle and pending/finalize/abort type are required before runtime implementation.
 
 ## Credential storage
 
@@ -143,7 +173,7 @@ Missing steps, a signer in the wrong role, reused nonces, non-increasing epochs,
 
 ## Homeserver and folder bindings
 
-At helper initialization, the helper creates a random 32-byte homeserver binding and pins it locally to the full Device ID read from its trusted Syncthing API. Every authorized folder receives an independent random 32-byte folder binding pinned to the local Syncthing folder ID and an operator-approved diagnostics mount alias.
+At helper-identity initialization, the helper creates one random 32-byte homeserver binding and pins it locally to the full Device ID read from its trusted Syncthing API. It remains stable for that helper identity across app installations, key/TLS rotation, restarts, upgrades, downgrades, and folder authorization changes. A folder receives one independent random 32-byte binding the first time the operator selects it; that binding is durably reserved to the local Syncthing folder ID and approved mount alias before an invitation is shown and is reused by every later installation. Timeout, abort, revocation, or removal never regenerates or reassigns an already-reserved binding. Only an explicit new helper identity may create a new homeserver/folder binding set; old values remain rejected tombstones and are never reused.
 
 The pairing QR carries the byte-exact domain-separated Device and folder digests above, not their raw values. The app computes the same digests from its already-local mapping and refuses a mismatch. After pairing, both sides store the full local mapping privately but protocol artifacts carry only the random bindings and key IDs.
 
@@ -160,15 +190,18 @@ A path, folder ID, Device ID, or binding supplied by a network request never sel
 
 Pairing is disabled by default. The helper exposes no diagnostics listener until the operator configures an explicit local/LAN or VPN endpoint and starts a local privileged pairing command for one existing Syncthing folder ID.
 
-1. The local command verifies the helper state, current Device ID, selected folder ID, and future access preconditions without creating a namespace. It creates one in-memory pending record, a 32-byte one-time secret, a helper-generated invitation nonce, random homeserver/folder bindings, and a five-minute monotonic deadline.
+1. The local command verifies the helper state, current Device ID, selected folder ID, and future access preconditions without creating a namespace. It loads the stable homeserver/folder bindings above, durably reserving the folder binding only if this is its first invitation, then creates one in-memory pending record, a 32-byte one-time secret, a helper-generated invitation nonce, and a five-minute monotonic deadline.
 2. It displays the exact deterministic QR envelope defined above. The QR is sensitive bootstrap material; it is never logged, persisted, copied to Cloud Relay, or placed in the synchronized folder.
 3. The app user selects the already-known homeserver/folder, scans the QR, verifies both identifier digests, creates its per-installation Ed25519 key, and connects with TLS 1.3 while pinning the exact SPKI. DNS or public-CA trust alone is insufficient.
 4. The app sends the exact deterministic CBOR request above to the fixed pairing endpoint. No identifier appears in its path, query, headers, certificate, or access log.
-5. The helper verifies the TLS session, HMAC, signature, exact pending record, scope, nonce, expiry, and unused secret; consumes the secret before committing; then writes the authorization record atomically.
-6. The helper returns a signed acceptance binding the complete request digest, helper/app keys, bindings, epochs, and a fresh helper nonce. The app verifies it and stores its record atomically.
-7. Both sides display the exact 12-character transcript fingerprint above. The user confirms the match before the app enables authenticated capability discovery. A mismatch revokes the incomplete record locally; no namespace exists to clean.
+5. The helper verifies the TLS session, HMAC, signature, exact pending record, scope, nonce, expiry, and unused secret; consumes the secret; persists an expiring **pending** authorization; and returns the deterministic type-`2` signed acceptance. It does not activate the app. Byte-identical type-`1` retries return the same acceptance; a different request fails closed.
+6. The app verifies and durably stores the pending acceptance. Both sides display the exact 12-character transcript fingerprint. A mismatch or cancellation sends type `9`; the helper removes only pending state and returns type `10`. If abort is lost, expiry has the same no-authorization result.
+7. After explicit fingerprint confirmation, the app durably records its intent and sends type `3`. The helper persists that digest as `finalize pending` and returns type `4`; neither side exposes capability discovery yet. Exact retries at either step return the same signed bytes.
+8. After durably storing type `4`, the app sends type `5`. The helper records `awaiting activation` and returns type `6`; the app stores type `6` as `ready to activate`, not as proof or permission to create a namespace/artifact.
+9. The app sends type `7`. The helper atomically promotes that exact scoped record to active and returns type `8`; only after validating and durably storing type `8` does the app mark pairing active or issue a capability query. A lost type `8` is recovered by replaying identical type `7`; the helper retains the deterministic terminal reply for 24 hours without accepting altered/expired authority.
+10. A crash or network loss resumes only from the exact durably stored pending message and idempotently replays the next step. Pre-activation states expire after the same five-minute monotonic deadline and become inactive tombstones. Type `9` before promotion removes pending state; if it races after promotion, the helper records an immediate revocation and returns type `10` rather than deleting history. There is no claim of cross-device atomic commit: the helper is already active before type `8` can activate the app, and a helper-only record cannot create evidence because every operation is app-initiated and signed.
 
-At most one pending pairing per folder and four per helper may exist. The endpoint accepts bodies only up to 16 KiB, at most ten requests per invitation, and at most 30 requests per minute helper-wide; it returns fixed error categories and never trusts a source IP as identity. Exceeding an invitation limit invalidates only that pending secret. Restart, timeout, cancellation, a second use, or any validation failure destroys only the in-memory pending secret and produces no pairing.
+At most one pending pairing per folder and four per helper may exist. The endpoint accepts bodies only up to 16 KiB, at most ten requests per invitation, and at most 30 requests per minute helper-wide; it returns fixed error categories and never trusts a source IP as identity. Exceeding an invitation limit invalidates only that pending secret. Restart before durable pending state, timeout, cancellation, a second secret use, or validation failure destroys only the pending secret/state and produces no active pairing.
 
 No mDNS, UPnP, Cloud Relay tunnel, unauthenticated synchronized file, StoreKit transaction, or Syncthing TLS key participates in bootstrap. Remote access requires an operator-controlled VPN or separately reviewed reverse-proxy configuration; the standard installer opens no public port.
 
@@ -190,11 +223,11 @@ The helper UI/CLI identifies installations only by a user-confirmed local label 
 
 | Event | Required behavior |
 |---|---|
-| App key rotation with old key available | App creates a new Ed25519 key; an old-key-signed rotation binds the new public key and incremented epoch; helper acceptance is signed. Commit both records atomically, then require explicit user confirmation before retiring the old key. |
+| App key rotation with old key available | App creates a new Ed25519 key; old- and new-key messages bind the incremented epoch; helper acceptance remains pending. Use types `21`/`22` and the proposed-key capability confirmation before either side enables operations or retires the old key. |
 | App key lost or app moved to another device | No automatic recovery. Pair again as a new installation, then explicitly revoke the lost key from the helper. |
-| Helper signing key rotation while old key is trusted | Helper cross-signs the new key and incremented epoch with both old and new keys; every app explicitly confirms. Until confirmed, capability is unavailable for that app. |
+| Helper signing key rotation while old key is trusted | Helper cross-signs the new key and incremented epoch with both old and new keys; every app stages, finalizes, and confirms it independently through types `21`/`22` and a proposed-key capability query. Until terminal for one app/folder authorization, capability is unavailable there and the old key remains only for reconciliation/rollback. |
 | Suspected helper-key compromise or helper state loss | Cross-signing is insufficient. Generate a new helper identity and explicitly re-pair every installation/folder. Old credentials and namespace content are never adopted. |
-| TLS certificate renewal | Allowed with the same pinned P-256 key. A new TLS key requires a helper-key-signed pin rotation plus explicit app confirmation, or a new pairing if compromise is suspected. |
+| TLS certificate renewal | Allowed with the same pinned P-256 key. A new TLS key requires a helper-key-signed pending pin rotation, explicit types `21`/`22`, and a successful query over the proposed pin before the old pin retires; suspected compromise requires new pairing. |
 | App revocation | A signed app request or local helper-admin command marks the app key revoked and increments the authorization epoch. No new operations/evidence are accepted. |
 | Folder unauthorization | Remove the binding from the app scope after bounded authenticated cleanup. Do not remove the Syncthing share, folder mapping, credentials for other folders, or namespace root. |
 | App/helper downgrade | Preserve credentials. The capability becomes unavailable/dormant; no automatic re-pair, deletion, or trust conversion occurs. |
@@ -229,11 +262,12 @@ Pairing data travels only over the pinned local HTTPS channel and local visual b
 
 ## Required tests before implementation approval
 
-- RFC 8032 vectors and cross-language Go/CryptoKit sign/verify fixtures for every signature domain, key ID, SPKI pin, binding digest, request/acceptance digest, HMAC input, and transcript fingerprint.
+- RFC 8032 vectors and cross-language Go/CryptoKit sign/verify fixtures for every signature domain, key ID, SPKI pin, binding digest, request/acceptance digest, the normative bootstrap HMAC body/key/result above, and transcript fingerprint.
 - Deterministic-CBOR golden vectors plus rejection of duplicates, non-shortest forms, reordered maps, unknown fields, malformed lengths, truncation, and arbitrary bytes.
 - Wrong/rotated/revoked keys, wrong helper/app/binding/epoch, replay, duplicate, expiry/skew, out-of-order, QR reuse, and first-request races.
 - TLS pin mismatch, certificate renewal, TLS-key rotation, endpoint substitution, proxy/body logging, unavailable endpoint, and LAN/VPN loss.
-- Multiple installations/folders/homeservers, independent revocation/rotation, app reinstall with orphaned Keychain state, helper restore, helper loss, and both downgrades.
+- Two and eight app installations paired independently to the same folder must receive the same stable homeserver/folder bindings but separate keys/epochs/authorizations/quotas; also test multiple folders/homeservers, independent revocation/rotation, app reinstall with orphaned Keychain state, helper restore, helper loss, and both downgrades.
+- Crash/network loss before and after every pairing/rotation message, exact replay, pending expiry, abort/commit races, lost active acknowledgements, one-sided stored state, and proof that no capability operation is accepted until terminal confirmation.
 - Keychain accessibility/backup migration tests and helper state permission/atomicity/crash tests on Docker, Linux host/NAS, macOS, and Windows.
 - Privacy snapshots proving every forbidden value is absent from logs, persistence outside approved credential stores, Cloud Relay, Trigger v1, and crash annotations.
 - Property/fuzz tests for transcripts, epoch transitions, authorization lookup, and arbitrary message ordering.
@@ -249,6 +283,7 @@ Review must explicitly approve or reject each of these choices before implementa
 5. Per-installation/per-folder authorization, explicit rotation/revocation, and re-pair-only recovery after key loss or suspected compromise.
 6. The downgrade rule that preserves credentials and only makes the capability unavailable/dormant.
 7. The exact lifecycle field registry, signer roles, digest chain, per-folder staging, and cross-language golden-byte requirement.
+8. Stable helper/folder binding reuse across installations and the explicit pending/finalize/abort/replay protocol instead of any cross-device atomicity claim.
 
 Approval of this document still does not approve a namespace, access widening, probe, canonical operation contract, helper rollout, or app implementation.
 
