@@ -39,6 +39,11 @@ type Config struct {
 	// sweep. NOTE: like StartupAnnounce, the zero value keeps the feature off
 	// for focused Config-literal tests; only loadConfig applies the default.
 	StaleRetriggerSeconds int
+	// This internal field is a side-effect-free catalog. The
+	// real configuration loader installs only its dormant form; Config's zero
+	// value models a legacy helper. There is no environment switch or runtime
+	// path that can enable, advertise, persist, or call these capabilities.
+	diagnosticsCapabilities diagnosticsCapabilityFoundation
 }
 
 type appMode int
@@ -260,13 +265,14 @@ func loadConfig() (Config, error) {
 	// the app's setup command both supply it explicitly, so this costs the
 	// operator nothing in practice; only the Syncthing key/URL are auto-detected.
 	cfg := Config{
-		SyncthingAPIURL:       apiURL,
-		SyncthingAPIKey:       apiKey,
-		RelayURL:              required("RELAY_URL"),
-		DebounceSeconds:       debounce,
-		WatchedFolders:        watched,
-		StartupAnnounce:       startupAnnounce,
-		StaleRetriggerSeconds: staleRetrigger,
+		SyncthingAPIURL:         apiURL,
+		SyncthingAPIKey:         apiKey,
+		RelayURL:                required("RELAY_URL"),
+		DebounceSeconds:         debounce,
+		WatchedFolders:          watched,
+		StartupAnnounce:         startupAnnounce,
+		StaleRetriggerSeconds:   staleRetrigger,
+		diagnosticsCapabilities: newDormantDiagnosticsCapabilityFoundation(),
 	}
 
 	missing := make([]string, 0, 3)

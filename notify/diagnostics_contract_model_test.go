@@ -281,9 +281,10 @@ func TestDiagnosticsTriggerV1WireRemainsExact(t *testing.T) {
 	}
 }
 
-func TestDiagnosticsFoundationHasNoRuntimeCarrier(t *testing.T) {
+func TestDiagnosticsFoundationHasNoOperationalRuntimeCarrier(t *testing.T) {
 	fixture := loadDiagnosticsContractFixture(t)
 	repoRoot := diagnosticsTestRepoRoot(t)
+	dormantCapabilityCarrier := filepath.Join(repoRoot, "notify", "diagnostics_capabilities.go")
 	runtimeRoots := []string{
 		filepath.Join(repoRoot, "notify"),
 		filepath.Join(repoRoot, "ios", "VaultSync"),
@@ -305,7 +306,7 @@ func TestDiagnosticsFoundationHasNoRuntimeCarrier(t *testing.T) {
 				return err
 			}
 			for name, capability := range fixture.Capabilities {
-				if bytes.Contains(body, []byte(capability)) {
+				if bytes.Contains(body, []byte(capability)) && path != dormantCapabilityCarrier {
 					return fmt.Errorf("runtime file %s contains dormant M1 capability %s", path, name)
 				}
 			}
