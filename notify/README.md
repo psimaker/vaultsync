@@ -165,11 +165,29 @@ not read or change any installed Syncthing configuration.
 
 This code is not called by `main`, has no endpoint or listener, advertises no
 capability, changes no Syncthing configuration, and creates no runtime
-namespace or operation. Swift support is test-only. Response authorization,
-response artifacts, authenticated cleanup messages, controlled download, and
-roundtrip derivation are intentionally absent. Installing or upgrading the
-current helper therefore changes no behavior; Trigger v1 and Cloud Relay v1
-remain byte- and behavior-compatible.
+namespace or operation. Swift support is test-only. Response and cleanup are not
+part of M5; they live in the separate dormant M6 foundation below. Installing or
+upgrading the current helper therefore changes no behavior; Trigger v1 and
+Cloud Relay v1 remain byte- and behavior-compatible.
+
+### Dormant response and cleanup development foundation
+
+M6 adds an internal test-only implementation of Decision 024 message types
+6–9. Given the exact confined M5 request and helper attestation, it validates an
+app-signed response authorization, generates and atomically persists one
+immutable helper-signed response with exactly 256 random payload bytes, and
+accepts only app-signed cleanup requests containing one to three sorted message
+digests. Cleanup maps those digests to the three fixed operation filenames,
+reopens and verifies candidates through the M4 handle, retains live app-owned or
+changed content, and returns a helper-signed per-target acknowledgement.
+
+This foundation is not called by `main` and has no endpoint, listener,
+capability response, advertised flag, automatic namespace action, retry
+scheduler, startup scan, packaging, publication, or deployment. Swift support
+remains in the test target. No response has been applied on an iPhone through a
+fresh post-authorization `ItemFinished`; download and roundtrip evidence remain
+unset. See [`../docs/m6-response-cleanup-readiness.md`](../docs/m6-response-cleanup-readiness.md)
+for the exact proof and rollback boundary.
 
 **Doctor mode** — preflight checks with actionable failures (Compose reads `.env` for you):
 

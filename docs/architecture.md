@@ -143,16 +143,31 @@ and 120/minute helper-wide including invalid input. Restarts can recover only
 the exact already-persisted attestation from authenticated artifacts; app-side
 test state never resumes evidence after restart.
 
-This is still not a product or helper runtime path. The Go attestor has no call
+M5 is still not a product or helper runtime path. The Go attestor has no call
 from `main`, listener, endpoint, transport, log, operation database, Relay or
 Syncthing client. Swift parsing and acceptance exist only in the test target.
-No capability response is emitted because response authorization, response
-artifact creation, authenticated cleanup, controlled download, and roundtrip
-are absent. A dedicated E2E test runs two temporary local Syncthing instances
+No capability response is emitted, and M5 itself contains no response or
+cleanup phase. A dedicated E2E test runs two temporary local Syncthing instances
 with discovery, Relay, NAT, upgrades, usage reporting, and crash reporting
 disabled; it proves request propagation, confined helper reading, durable
 attestation-before-reply, exact pinned-mock acceptance, and that a synchronized
 attestation copy is not upload evidence. It publishes nothing.
+
+The separate dormant M6 foundation implements only Decision 024 message types
+6–9. It verifies an exact app-signed response authorization against the confined
+request and helper attestation, atomically persists one immutable helper-signed
+256-byte response, and performs app-authenticated, digest-targeted cleanup of
+verified helper-owned artifacts. Exact response bytes survive duplicate calls,
+crashes, races, and helper restart; cleanup is idempotent and cannot target a
+path supplied by the request. Go/Swift golden, parser, fuzz, model, privacy,
+Linux confinement, crash, restart, and race tests cover this boundary.
+
+M6 also remains unreachable from the installed helper and app. It adds no
+listener, endpoint, advertised flag, capability response, namespace creation,
+retry scheduler, startup scan, packaging, or publication. The response has not
+been synchronized back to an iPhone and has no post-authorization cursor,
+nanosecond, generation, or exact `ItemFinished` acceptance. Controlled download
+and causal roundtrip therefore remain unimplemented and unset.
 
 The proposed data plane uses a visible, exclusively app-owned namespace inside
 one selected Syncthing folder. A fresh app-signed random request would need an

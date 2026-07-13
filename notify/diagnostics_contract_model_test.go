@@ -288,6 +288,7 @@ func TestDiagnosticsFoundationsHaveNoOperationalRuntimeCarrier(t *testing.T) {
 	pairingProtocolCarrier := filepath.Join(repoRoot, "notify", "diagnostics_pairing_protocol.go")
 	namespaceProtocolCarrier := filepath.Join(repoRoot, "notify", "diagnostics_namespace_protocol.go")
 	uploadProtocolCarrier := filepath.Join(repoRoot, "notify", "diagnostics_upload_protocol.go")
+	responseProtocolCarrier := filepath.Join(repoRoot, "notify", "diagnostics_response_protocol.go")
 	runtimeRoots := []string{
 		filepath.Join(repoRoot, "notify"),
 		filepath.Join(repoRoot, "ios", "VaultSync"),
@@ -319,7 +320,7 @@ func TestDiagnosticsFoundationsHaveNoOperationalRuntimeCarrier(t *testing.T) {
 			for name, domain := range fixture.Domains {
 				allowed := (strings.HasPrefix(name, "pairing.") && path == pairingProtocolCarrier) ||
 					(strings.HasPrefix(name, "namespace.") && path == namespaceProtocolCarrier) ||
-					(strings.HasPrefix(name, "roundtrip.") && path == uploadProtocolCarrier)
+					(strings.HasPrefix(name, "roundtrip.") && (path == uploadProtocolCarrier || path == responseProtocolCarrier))
 				if bytes.Contains(body, []byte(strings.TrimSuffix(domain, "\x00"))) && !allowed {
 					return fmt.Errorf("runtime file %s contains an unapproved signature domain", path)
 				}
@@ -348,6 +349,8 @@ func TestDiagnosticsFoundationsHaveNoOperationalRuntimeCarrier(t *testing.T) {
 			"diagnosticsPairing",
 			"diagnosticsCredential",
 			"diagnosticsNamespace",
+			"diagnosticsResponse",
+			"diagnosticsCleanup",
 			diagnosticsPairingPath,
 			diagnosticsCredentialStateFile,
 			diagnosticsNamespaceRootName,
@@ -364,6 +367,8 @@ func TestDiagnosticsFoundationsHaveNoOperationalRuntimeCarrier(t *testing.T) {
 		filepath.Join(repoRoot, "notify", "diagnostics_namespace_protocol.go"),
 		filepath.Join(repoRoot, "notify", "diagnostics_upload_protocol.go"),
 		filepath.Join(repoRoot, "notify", "diagnostics_upload_attestor.go"),
+		filepath.Join(repoRoot, "notify", "diagnostics_response_protocol.go"),
+		filepath.Join(repoRoot, "notify", "diagnostics_response_foundation.go"),
 	} {
 		body, err := os.ReadFile(path)
 		if err != nil {
@@ -452,6 +457,58 @@ func TestDiagnosticsUploadFoundationHasNoRuntimePrivacyOrLaterPhaseCarrier(t *te
 	for _, sentinel := range strings.Fields(string(privateInput)) {
 		if strings.Contains(combined, sentinel) {
 			t.Fatalf("fixed upload error/result reflected private input %q", sentinel)
+		}
+	}
+}
+
+func TestDiagnosticsResponseFoundationHasNoRuntimePrivacyOrEvidenceCarrier(t *testing.T) {
+	repoRoot := diagnosticsTestRepoRoot(t)
+	paths := []string{
+		filepath.Join(repoRoot, "notify", "diagnostics_response_protocol.go"),
+		filepath.Join(repoRoot, "notify", "diagnostics_response_foundation.go"),
+	}
+	for _, path := range paths {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, forbidden := range []string{
+			`"net"`, `"net/http"`, `"log"`, `"log/slog"`, `"database/sql"`,
+			"ListenAndServe", "http.Server", "net.Listen", "RelayClient", "SyncthingClient",
+			"UserDefaults", "Keychain", "StoreKit", "APNs", "support bundle", "crash report",
+			"diagnosticsNamespaceStateStore", "config.xml", ".stignore", "RELAY_URL",
+			"/api/v1/diagnostics/", "http://", "https://", "uploadObserved", "downloadObserved",
+			"roundtripConfirmed", "ItemFinished", "eventStreamGeneration",
+		} {
+			if bytes.Contains(body, []byte(forbidden)) {
+				t.Fatalf("dormant response/cleanup core %s contains forbidden carrier %q", path, forbidden)
+			}
+		}
+	}
+
+	protocolBody, err := os.ReadFile(paths[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, outOfScopeDomain := range []string{
+		"capability-query", "capability-response", "operation-request", "attestation-query", "upload-attestation",
+	} {
+		if bytes.Contains(protocolBody, []byte(outOfScopeDomain)) {
+			t.Fatalf("M6 response/cleanup protocol contains out-of-scope domain %q", outOfScopeDomain)
+		}
+	}
+
+	privateInput := []byte("response-nonce-sentinel payload-sentinel cleanup-target-sentinel authorization-digest-sentinel")
+	_, decodeErr := decodeDiagnosticsResponseMessage(privateInput, diagnosticsUploadVerificationContext{})
+	if decodeErr == nil {
+		t.Fatal("private invalid response input was accepted")
+	}
+	combined := decodeErr.Error() + fmt.Sprintf("%+v", diagnosticsResponseFixedResult(
+		diagnosticsResponseRejected, diagnosticsResponseReasonInvalidMessage,
+	))
+	for _, sentinel := range strings.Fields(string(privateInput)) {
+		if strings.Contains(combined, sentinel) {
+			t.Fatalf("fixed response error/result reflected private input %q", sentinel)
 		}
 	}
 }
