@@ -1,32 +1,65 @@
 name: Docker
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "notify/**"
+      - ".github/workflows/docker.yml"
+      - ".github/workflows/ci.yml"
+      - ".github/scripts/notify-publish-safety.rb"
   push:
     branches: [main]
     paths:
       - "notify/**"
-    tags:
-      - "notify-v*"
+      - ".github/workflows/docker.yml"
+      - ".github/workflows/ci.yml"
+      - ".github/scripts/notify-publish-safety.rb"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing notify-vX.Y.Z tag selected as the workflow ref"
+        required: true
+        type: string
+      confirmation:
+        description: "Type PUBLISH_NOTIFY_RELEASE to publish images and binaries"
+        required: true
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A second owner dispatch must queue behind an active publication instead of
+  # cancelling it after only some outputs have reached GitHub.
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
+# Validation receives no write token. Each publication job declares only the
+# write scopes it needs after the separate read-only owner gate has succeeded.
 permissions:
   contents: read
-  packages: write
-  id-token: write # keyless build provenance attestation
-  attestations: write
 
 jobs:
+  publish-safety-policy:
+    name: Publish Safety Policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - name: Verify publication remains owner-gated
+        run: ruby .github/scripts/notify-publish-safety.rb
+
   notify-guard:
     name: Notify Guard Tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: notify/go.mod
 
@@ -34,119 +67,211 @@ jobs:
         working-directory: notify
         run: go test ./... -count=1
 
-  build-and-push:
-    name: Build & Push
+  build-without-push:
+    name: Build Image (no push)
+    if: github.event_name != 'workflow_dispatch'
+    needs:
+      - publish-safety-policy
+      - notify-guard
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: notify-guard
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
 
-      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
-      - uses: docker/setup-buildx-action@v4
+      - name: Build local validation image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: notify
+          load: true
+          push: false
+          platforms: linux/amd64
+          tags: vaultsync-notify:ci-${{ github.sha }}
+          build-args: |
+            VERSION=dev-${{ github.sha }}
+          provenance: false
+          sbom: false
 
-      - uses: docker/login-action@v4
+      - name: Scan local validation image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: vaultsync-notify:ci-${{ github.sha }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+  # This job has no write permission. It proves that the existing tag selected
+  # as the dispatch ref, the explicit input, the actor, and origin/main all name
+  # the same immutable release commit before either privileged job can start.
+  publish-gate:
+    name: Owner Publish Gate
+    if: github.event_name == 'workflow_dispatch'
+    needs:
+      - publish-safety-policy
+      - notify-guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.validate.outputs.version }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate owner, tag, confirmation, and main ancestry
+        id: validate
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$EVENT_NAME" = workflow_dispatch
+          test "$REF_TYPE" = tag
+          test "$ACTOR" = "$REPOSITORY_OWNER"
+          test "$TRIGGERING_ACTOR" = "$REPOSITORY_OWNER"
+          test "$RELEASE_TAG" = "$REF_NAME"
+          test "$CONFIRMATION" = PUBLISH_NOTIFY_RELEASE
+          if [[ ! "$RELEASE_TAG" =~ ^notify-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "release tag must be notify-vX.Y.Z" >&2
+            exit 1
+          fi
+          resolved="$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")"
+          test "$resolved" = "$RELEASE_SHA"
+          git show-ref --verify --quiet refs/remotes/origin/main
+          git merge-base --is-ancestor "$RELEASE_SHA" refs/remotes/origin/main
+          echo "version=${RELEASE_TAG#notify-v}" >> "$GITHUB_OUTPUT"
+
+  publish-image:
+    name: Publish Image
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref_type == 'tag' &&
+      inputs.release_tag == github.ref_name &&
+      inputs.confirmation == 'PUBLISH_NOTIFY_RELEASE' &&
+      github.actor == github.repository_owner &&
+      github.triggering_actor == github.repository_owner
+    needs:
+      - publish-safety-policy
+      - notify-guard
+      - publish-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write # push the two explicitly owner-approved GHCR tags
+      id-token: write # keyless provenance identity for the published image
+      attestations: write # attach BuildKit provenance and SBOM attestations
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
+
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      - uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
+          username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: docker/metadata-action@v6
+      - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         id: meta
         with:
           images: ghcr.io/psimaker/vaultsync-notify
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=match,pattern=notify-v(.*),group=1
+            type=raw,value=${{ needs.publish-gate.outputs.version }}
+            type=raw,value=latest
 
-      # Version stamp for --version (#87): the release tag's version, or
-      # dev-<sha> for :latest builds from main.
-      - name: Compute helper version
-        id: ver
-        run: |
-          ref="${GITHUB_REF_NAME}"
-          case "$ref" in
-            notify-v*) echo "version=${ref#notify-v}" >> "$GITHUB_OUTPUT" ;;
-            *) echo "version=dev-$(printf '%.12s' "$GITHUB_SHA")" >> "$GITHUB_OUTPUT" ;;
-          esac
-
-      - uses: docker/build-push-action@v7
+      - name: Build and publish release image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         id: build
         with:
           context: notify
           push: true
-          platforms: linux/amd64,linux/arm64 # pure CGO_ENABLED=0 Go, arm64 self-host is a real target
+          platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            VERSION=${{ steps.ver.outputs.version }}
+            VERSION=${{ needs.publish-gate.outputs.version }}
           provenance: mode=max
           sbom: true
 
-      # Push-then-scan: a HIGH/CRITICAL fixable CVE in the alpine base turns the
-      # run red so you know to bump the base. govulncheck (security.yml) covers
-      # the Go layer; only Trivy sees the OS packages.
       - name: Scan published image
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ghcr.io/psimaker/vaultsync-notify@${{ steps.build.outputs.digest }}
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
 
-  # Prebuilt helper binaries for the no-Docker path: install.sh downloads these
-  # (with checksum verification) and installs a systemd service or launchd
-  # agent. Pure CGO_ENABLED=0 Go, so a plain cross-compile loop covers every
-  # target — no QEMU, no goreleaser.
+  # The owner dispatch is the publication action. This job never creates a tag;
+  # --verify-tag requires the exact pre-existing tag already checked above.
   release-binaries:
-    name: Release Binaries
+    name: Publish Binaries
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref_type == 'tag' &&
+      inputs.release_tag == github.ref_name &&
+      inputs.confirmation == 'PUBLISH_NOTIFY_RELEASE' &&
+      github.actor == github.repository_owner &&
+      github.triggering_actor == github.repository_owner
+    needs:
+      - publish-safety-policy
+      - notify-guard
+      - publish-gate
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: notify-guard
-    if: startsWith(github.ref, 'refs/tags/notify-v')
     permissions:
-      contents: write
+      contents: write # create the verified-tag release and upload its binaries
     steps:
-      # This job holds a contents:write token for the release upload, so keep
-      # the checkout credential out of the workspace and skip the shared Go
-      # module cache — release binaries must not be assembled from cacheable
-      # state another workflow run could have written.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           persist-credentials: false
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: notify/go.mod
           cache: false
 
       - name: Cross-compile helper binaries
         working-directory: notify
+        env:
+          RELEASE_VERSION: ${{ needs.publish-gate.outputs.version }}
         run: |
           set -eu
           mkdir -p dist
-          version="${GITHUB_REF_NAME#notify-v}"
           for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
             export GOOS="${target%/*}" GOARCH="${target#*/}"
             out="dist/vaultsync-notify_${GOOS}_${GOARCH}"
             [ "$GOOS" = windows ] && out="$out.exe"
-            # -X main.version: --version output, shown by install.sh on upgrades (#87)
-            CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${version}" -o "$out" .
+            CGO_ENABLED=0 go build -trimpath \
+              -ldflags="-s -w -X main.version=${RELEASE_VERSION}" -o "$out" .
           done
           (cd dist && sha256sum -- * > SHA256SUMS)
 
-      # --latest=false keeps the app release (v*) as the repo's "latest";
-      # install.sh resolves notify releases by tag prefix, not by latest.
       - name: Publish release with binaries
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -eu
-          tag="${GITHUB_REF_NAME}"
-          if ! gh release view "$tag" >/dev/null 2>&1; then
-            gh release create "$tag" --verify-tag --latest=false \
-              --title "vaultsync-notify ${tag#notify-v}" \
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --verify-tag --latest=false \
+              --title "vaultsync-notify ${RELEASE_TAG#notify-v}" \
               --notes "Prebuilt \`vaultsync-notify\` helper binaries for the [Cloud Relay server setup](https://github.com/${GITHUB_REPOSITORY}/blob/main/notify/README.md). The one-line installer picks these up automatically; verify manual downloads against \`SHA256SUMS\`."
           fi
-          gh release upload "$tag" --clobber notify/dist/*
+          gh release upload "$RELEASE_TAG" --clobber notify/dist/*
