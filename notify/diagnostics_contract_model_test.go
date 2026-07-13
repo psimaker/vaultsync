@@ -286,6 +286,7 @@ func TestDiagnosticsFoundationsHaveNoOperationalRuntimeCarrier(t *testing.T) {
 	repoRoot := diagnosticsTestRepoRoot(t)
 	dormantCapabilityCarrier := filepath.Join(repoRoot, "notify", "diagnostics_capabilities.go")
 	pairingProtocolCarrier := filepath.Join(repoRoot, "notify", "diagnostics_pairing_protocol.go")
+	namespaceProtocolCarrier := filepath.Join(repoRoot, "notify", "diagnostics_namespace_protocol.go")
 	runtimeRoots := []string{
 		filepath.Join(repoRoot, "notify"),
 		filepath.Join(repoRoot, "ios", "VaultSync"),
@@ -307,13 +308,16 @@ func TestDiagnosticsFoundationsHaveNoOperationalRuntimeCarrier(t *testing.T) {
 				return err
 			}
 			for name, capability := range fixture.Capabilities {
-				allowed := path == dormantCapabilityCarrier || (name == "pairing" && path == pairingProtocolCarrier)
+				allowed := path == dormantCapabilityCarrier ||
+					(name == "pairing" && path == pairingProtocolCarrier) ||
+					(name == "namespace" && path == namespaceProtocolCarrier)
 				if bytes.Contains(body, []byte(capability)) && !allowed {
 					return fmt.Errorf("runtime file %s contains an unapproved diagnostics capability %s", path, name)
 				}
 			}
 			for name, domain := range fixture.Domains {
-				allowed := strings.HasPrefix(name, "pairing.") && path == pairingProtocolCarrier
+				allowed := (strings.HasPrefix(name, "pairing.") && path == pairingProtocolCarrier) ||
+					(strings.HasPrefix(name, "namespace.") && path == namespaceProtocolCarrier)
 				if bytes.Contains(body, []byte(strings.TrimSuffix(domain, "\x00"))) && !allowed {
 					return fmt.Errorf("runtime file %s contains an unapproved signature domain", path)
 				}
@@ -341,11 +345,13 @@ func TestDiagnosticsFoundationsHaveNoOperationalRuntimeCarrier(t *testing.T) {
 		for _, forbidden := range []string{
 			"diagnosticsPairing",
 			"diagnosticsCredential",
+			"diagnosticsNamespace",
 			diagnosticsPairingPath,
 			diagnosticsCredentialStateFile,
+			diagnosticsNamespaceRootName,
 		} {
 			if bytes.Contains(body, []byte(forbidden)) {
-				t.Fatalf("product/helper entrypoint %s activates M3 carrier %q", path, forbidden)
+				t.Fatalf("product/helper entrypoint %s activates dormant diagnostics carrier %q", path, forbidden)
 			}
 		}
 	}
@@ -353,6 +359,7 @@ func TestDiagnosticsFoundationsHaveNoOperationalRuntimeCarrier(t *testing.T) {
 		filepath.Join(repoRoot, "notify", "diagnostics_pairing_manager.go"),
 		filepath.Join(repoRoot, "notify", "diagnostics_pairing_crypto.go"),
 		filepath.Join(repoRoot, "notify", "diagnostics_pairing_store.go"),
+		filepath.Join(repoRoot, "notify", "diagnostics_namespace_protocol.go"),
 	} {
 		body, err := os.ReadFile(path)
 		if err != nil {
@@ -360,7 +367,33 @@ func TestDiagnosticsFoundationsHaveNoOperationalRuntimeCarrier(t *testing.T) {
 		}
 		for _, forbidden := range []string{"ListenAndServe", "http.Server", "net.Listen", "RelayClient", "SyncthingClient"} {
 			if bytes.Contains(body, []byte(forbidden)) {
-				t.Fatalf("dormant M3 core %s contains operational carrier %q", path, forbidden)
+				t.Fatalf("dormant diagnostics core %s contains operational carrier %q", path, forbidden)
+			}
+		}
+	}
+}
+
+func TestDiagnosticsNamespaceFoundationCannotMutateSyncthingOrReachNetwork(t *testing.T) {
+	repoRoot := diagnosticsTestRepoRoot(t)
+	namespaceFiles, err := filepath.Glob(filepath.Join(repoRoot, "notify", "diagnostics_namespace_*.go"))
+	if err != nil || len(namespaceFiles) == 0 {
+		t.Fatalf("namespace files = %v, %v", namespaceFiles, err)
+	}
+	for _, path := range namespaceFiles {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, forbidden := range []string{
+			`"net"`, `"net/http"`, "RelayClient", "SyncthingClient", "ListenAndServe", "net.Listen",
+			".stignore", "config.xml", "SYNCTHING_", "RELAY_URL", "STARTUP_ANNOUNCE",
+			"/api/v1/diagnostics/namespace", "http://", "https://",
+		} {
+			if bytes.Contains(body, []byte(forbidden)) {
+				t.Fatalf("dormant namespace file %s contains operational or config carrier %q", path, forbidden)
 			}
 		}
 	}
