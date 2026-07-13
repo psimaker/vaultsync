@@ -103,6 +103,47 @@ jobs:
       - name: Prove exact host-bind namespace confinement
         run: notify/tests/m4-docker/run.sh
 
+  m5-syncthing-upload-e2e:
+    name: M5 Syncthing Upload E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+
+      - name: Patch vendored dependencies
+        working-directory: go
+        run: make patch
+
+      - name: Build local-only Syncthing test binary
+        working-directory: go/_syncthing_patched
+        env:
+          CGO_ENABLED: "0"
+        run: go build -tags noassets -o /tmp/vaultsync-m5-syncthing ./cmd/syncthing
+
+      - name: Prove upload through two isolated ephemeral instances
+        run: |
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --tmpfs /tmp:rw,exec,nosuid,nodev,mode=1777 \
+            -v "$GITHUB_WORKSPACE:/src:ro" \
+            -v /tmp/vaultsync-m5-syncthing:/opt/vaultsync-m5-syncthing:ro \
+            -w /src/notify \
+            -e GOCACHE=/tmp/go-cache \
+            -e VAULTSYNC_M5_SYNCTHING_BIN=/opt/vaultsync-m5-syncthing \
+            golang@sha256:079e59808d2d252516e27e3f3a9c003740dee7f75e55aa71528766d52bcfc16a \
+            go test -tags diagnostics_m5_syncthing_e2e \
+              -run '^TestDiagnosticsUploadThroughTwoEphemeralSyncthingInstances$' \
+              -count=1 -v
+
   install-script:
     name: Install Script
     runs-on: ubuntu-latest
@@ -184,6 +225,7 @@ jobs:
       - go-tests
       - notify-tests
       - m4-docker-confinement
+      - m5-syncthing-upload-e2e
       - design-lint
     # Skip the expensive macOS build on docs-only changes. It is not a required
     # status check, so skipping never blocks a PR. The plain expression (no
