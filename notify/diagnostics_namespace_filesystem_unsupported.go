@@ -18,6 +18,10 @@ func (handle *diagnosticsNamespaceRootHandle) CreateImmutable(_ diagnosticsNames
 	return diagnosticsNamespaceOwnedArtifact{}, errDiagnosticsNamespaceUnsupported
 }
 
+func (handle *diagnosticsNamespaceRootHandle) CreateImmutableAtomic(_ diagnosticsNamespacePath, _ []byte) (diagnosticsNamespaceOwnedArtifact, error) {
+	return diagnosticsNamespaceOwnedArtifact{}, errDiagnosticsNamespaceUnsupported
+}
+
 func (handle *diagnosticsNamespaceRootHandle) ReadImmutable(_ diagnosticsNamespacePath) ([]byte, diagnosticsNamespaceFileIdentity, error) {
 	return nil, diagnosticsNamespaceFileIdentity{}, errDiagnosticsNamespaceUnsupported
 }

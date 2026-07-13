@@ -287,6 +287,7 @@ func TestDiagnosticsFoundationsHaveNoOperationalRuntimeCarrier(t *testing.T) {
 	dormantCapabilityCarrier := filepath.Join(repoRoot, "notify", "diagnostics_capabilities.go")
 	pairingProtocolCarrier := filepath.Join(repoRoot, "notify", "diagnostics_pairing_protocol.go")
 	namespaceProtocolCarrier := filepath.Join(repoRoot, "notify", "diagnostics_namespace_protocol.go")
+	uploadProtocolCarrier := filepath.Join(repoRoot, "notify", "diagnostics_upload_protocol.go")
 	runtimeRoots := []string{
 		filepath.Join(repoRoot, "notify"),
 		filepath.Join(repoRoot, "ios", "VaultSync"),
@@ -317,7 +318,8 @@ func TestDiagnosticsFoundationsHaveNoOperationalRuntimeCarrier(t *testing.T) {
 			}
 			for name, domain := range fixture.Domains {
 				allowed := (strings.HasPrefix(name, "pairing.") && path == pairingProtocolCarrier) ||
-					(strings.HasPrefix(name, "namespace.") && path == namespaceProtocolCarrier)
+					(strings.HasPrefix(name, "namespace.") && path == namespaceProtocolCarrier) ||
+					(strings.HasPrefix(name, "roundtrip.") && path == uploadProtocolCarrier)
 				if bytes.Contains(body, []byte(strings.TrimSuffix(domain, "\x00"))) && !allowed {
 					return fmt.Errorf("runtime file %s contains an unapproved signature domain", path)
 				}
@@ -360,6 +362,8 @@ func TestDiagnosticsFoundationsHaveNoOperationalRuntimeCarrier(t *testing.T) {
 		filepath.Join(repoRoot, "notify", "diagnostics_pairing_crypto.go"),
 		filepath.Join(repoRoot, "notify", "diagnostics_pairing_store.go"),
 		filepath.Join(repoRoot, "notify", "diagnostics_namespace_protocol.go"),
+		filepath.Join(repoRoot, "notify", "diagnostics_upload_protocol.go"),
+		filepath.Join(repoRoot, "notify", "diagnostics_upload_attestor.go"),
 	} {
 		body, err := os.ReadFile(path)
 		if err != nil {
@@ -395,6 +399,59 @@ func TestDiagnosticsNamespaceFoundationCannotMutateSyncthingOrReachNetwork(t *te
 			if bytes.Contains(body, []byte(forbidden)) {
 				t.Fatalf("dormant namespace file %s contains operational or config carrier %q", path, forbidden)
 			}
+		}
+	}
+}
+
+func TestDiagnosticsUploadFoundationHasNoRuntimePrivacyOrLaterPhaseCarrier(t *testing.T) {
+	repoRoot := diagnosticsTestRepoRoot(t)
+	paths := []string{
+		filepath.Join(repoRoot, "notify", "diagnostics_upload_protocol.go"),
+		filepath.Join(repoRoot, "notify", "diagnostics_upload_attestor.go"),
+	}
+	for _, path := range paths {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, forbidden := range []string{
+			`"net"`, `"net/http"`, `"log"`, `"log/slog"`, `"database/sql"`,
+			"ListenAndServe", "http.Server", "net.Listen", "RelayClient", "SyncthingClient",
+			"UserDefaults", "Keychain", "StoreKit", "APNs", "support bundle", "crash report",
+			"diagnosticsNamespaceStateStore", "config.xml", ".stignore", "RELAY_URL",
+			"/api/v1/diagnostics/", "http://", "https://", "uploadObserved", "downloadObserved",
+			"roundtripConfirmed",
+		} {
+			if bytes.Contains(body, []byte(forbidden)) {
+				t.Fatalf("dormant upload core %s contains forbidden carrier %q", path, forbidden)
+			}
+		}
+	}
+
+	protocolBody, err := os.ReadFile(paths[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, laterPhaseDomain := range []string{
+		"capability-query", "capability-response", "response-authorization", "response-artifact",
+		"cleanup-request", "cleanup-ack",
+	} {
+		if bytes.Contains(protocolBody, []byte(laterPhaseDomain)) {
+			t.Fatalf("M5 upload-only protocol contains later-phase domain %q", laterPhaseDomain)
+		}
+	}
+
+	privateInput := []byte("operation-id-sentinel nonce-sentinel payload-sentinel digest-sentinel signature-sentinel")
+	_, decodeErr := decodeDiagnosticsUploadMessage(privateInput, diagnosticsUploadVerificationContext{})
+	if decodeErr == nil {
+		t.Fatal("private invalid input was accepted")
+	}
+	combined := decodeErr.Error() + fmt.Sprintf("%+v", diagnosticsUploadFixedResult(
+		diagnosticsUploadRejected, diagnosticsUploadReasonInvalidMessage,
+	))
+	for _, sentinel := range strings.Fields(string(privateInput)) {
+		if strings.Contains(combined, sentinel) {
+			t.Fatalf("fixed upload error/result reflected private input %q", sentinel)
 		}
 	}
 }

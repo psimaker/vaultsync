@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"unsafe"
 )
 
 type diagnosticsNamespaceLinuxRoot struct {
@@ -24,6 +25,7 @@ type diagnosticsNamespaceLinuxRoot struct {
 	identity                diagnosticsNamespaceFileIdentity
 	mutex                   sync.Mutex
 	beforeFinalCleanupCheck func()
+	beforeAtomicPublish     func() error
 }
 
 func openDiagnosticsNamespaceRoot(alias string, expected *diagnosticsNamespaceFileIdentity) (*diagnosticsNamespaceRootHandle, error) {
@@ -175,6 +177,128 @@ func (handle *diagnosticsNamespaceRootHandle) CreateImmutable(path diagnosticsNa
 		return diagnosticsNamespaceOwnedArtifact{}, err
 	}
 	return diagnosticsNamespaceOwnedArtifact{path: cloneDiagnosticsNamespacePath(path), identity: identity, digest: sha256BytesArray(body)}, nil
+}
+
+// CreateImmutableAtomic writes and fsyncs an anonymous inode before linking it
+// to the final protocol filename. The final name therefore never exposes a
+// partial attestation, and a crash before publication leaves no staging path in
+// the synchronized namespace. This is deliberately separate from the M4
+// installer primitive so the stricter D024 evidence rule is explicit at its
+// only current caller.
+func (handle *diagnosticsNamespaceRootHandle) CreateImmutableAtomic(path diagnosticsNamespacePath, body []byte) (diagnosticsNamespaceOwnedArtifact, error) {
+	platform, err := handle.linux()
+	if err != nil || !diagnosticsNamespaceOperationArtifactPath(path) || len(body) == 0 || len(body) > diagnosticsNamespaceMaximumArtifactBytes {
+		return diagnosticsNamespaceOwnedArtifact{}, errDiagnosticsNamespaceUnsupported
+	}
+	platform.mutex.Lock()
+	defer platform.mutex.Unlock()
+	if err := platform.verifyRoot(); err != nil {
+		return diagnosticsNamespaceOwnedArtifact{}, err
+	}
+	parent, closeParent, err := platform.walkDirectories(path.components[:len(path.components)-1])
+	if err != nil {
+		return diagnosticsNamespaceOwnedArtifact{}, err
+	}
+	if closeParent {
+		defer parent.Close()
+	}
+	name := path.components[len(path.components)-1]
+	if _, err := parent.Lstat(name); err == nil {
+		return diagnosticsNamespaceOwnedArtifact{}, errDiagnosticsNamespaceCollision
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return diagnosticsNamespaceOwnedArtifact{}, errDiagnosticsNamespaceConflict
+	}
+
+	directory, err := parent.Open(".")
+	if err != nil {
+		return diagnosticsNamespaceOwnedArtifact{}, errDiagnosticsNamespaceConflict
+	}
+	defer directory.Close()
+	const linuxAnonymousTmpfile = 0x400000
+	linuxOTmpfile := linuxAnonymousTmpfile | syscall.O_DIRECTORY
+	fileDescriptor, err := syscall.Openat(int(directory.Fd()), ".", syscall.O_RDWR|syscall.O_CLOEXEC|linuxOTmpfile, 0o600)
+	if err != nil {
+		return diagnosticsNamespaceOwnedArtifact{}, fmt.Errorf("%w: anonymous inode unavailable: %v", errDiagnosticsNamespaceUnsupported, err)
+	}
+	file := os.NewFile(uintptr(fileDescriptor), "diagnostics-attestation")
+	if file == nil {
+		_ = syscall.Close(fileDescriptor)
+		return diagnosticsNamespaceOwnedArtifact{}, errDiagnosticsNamespaceConflict
+	}
+	defer file.Close()
+	if err := writeDiagnosticsNamespaceAnonymousFile(file, body, platform.identity); err != nil {
+		return diagnosticsNamespaceOwnedArtifact{}, err
+	}
+	if platform.beforeAtomicPublish != nil {
+		if err := platform.beforeAtomicPublish(); err != nil {
+			return diagnosticsNamespaceOwnedArtifact{}, err
+		}
+	}
+	if err := linkDiagnosticsNamespaceAnonymousFile(file, directory, name); err != nil {
+		if errors.Is(err, fs.ErrExist) || errors.Is(err, syscall.EEXIST) {
+			return diagnosticsNamespaceOwnedArtifact{}, errDiagnosticsNamespaceCollision
+		}
+		return diagnosticsNamespaceOwnedArtifact{}, errDiagnosticsNamespaceConflict
+	}
+	if err := diagnosticsNamespaceSyncRoot(parent); err != nil {
+		return diagnosticsNamespaceOwnedArtifact{}, err
+	}
+	publishedBody, identity, err := platform.readImmutableFromParent(parent, name)
+	if err != nil || !bytes.Equal(publishedBody, body) {
+		return diagnosticsNamespaceOwnedArtifact{}, errDiagnosticsNamespaceConflict
+	}
+	if err := platform.verifyRoot(); err != nil {
+		return diagnosticsNamespaceOwnedArtifact{}, err
+	}
+	return diagnosticsNamespaceOwnedArtifact{path: cloneDiagnosticsNamespacePath(path), identity: identity, digest: sha256BytesArray(body)}, nil
+}
+
+func writeDiagnosticsNamespaceAnonymousFile(file *os.File, body []byte, rootIdentity diagnosticsNamespaceFileIdentity) error {
+	written := 0
+	for written < len(body) {
+		count, err := file.Write(body[written:])
+		if err != nil || count <= 0 {
+			return errDiagnosticsNamespaceConflict
+		}
+		written += count
+	}
+	if err := file.Sync(); err != nil {
+		return errDiagnosticsNamespaceConflict
+	}
+	info, err := file.Stat()
+	if err != nil || info == nil {
+		return errDiagnosticsNamespaceConflict
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || stat.Uid != uint32(os.Geteuid()) ||
+		stat.Nlink != 0 || info.Size() != int64(len(body)) || !diagnosticsNamespaceLinuxFileAllocated(file, stat, info.Size()) {
+		return errDiagnosticsNamespaceConflict
+	}
+	mountID, err := diagnosticsNamespaceLinuxMountID(file)
+	if err != nil || uint64(stat.Dev) != rootIdentity.Device || mountID != rootIdentity.MountID {
+		return fmt.Errorf("%w: anonymous inode identity", errDiagnosticsNamespaceConflict)
+	}
+	return nil
+}
+
+func linkDiagnosticsNamespaceAnonymousFile(file, directory *os.File, name string) error {
+	empty, err := syscall.BytePtrFromString("")
+	if err != nil {
+		return err
+	}
+	target, err := syscall.BytePtrFromString(name)
+	if err != nil {
+		return err
+	}
+	const atEmptyPath = 0x1000
+	_, _, errno := syscall.Syscall6(
+		syscall.SYS_LINKAT,
+		file.Fd(), uintptr(unsafe.Pointer(empty)), directory.Fd(), uintptr(unsafe.Pointer(target)), atEmptyPath, 0,
+	)
+	if errno != 0 {
+		return errno
+	}
+	return nil
 }
 
 func (handle *diagnosticsNamespaceRootHandle) ReadImmutable(path diagnosticsNamespacePath) ([]byte, diagnosticsNamespaceFileIdentity, error) {

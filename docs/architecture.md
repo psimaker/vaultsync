@@ -91,7 +91,7 @@ separately designed, additive, capability-negotiated helper contract and a
 demonstrably safe app-owned diagnostics namespace. Relay v1 is unchanged by this
 milestone.
 
-#### Proposed correlated roundtrip contract — not implemented
+#### Dormant correlated-roundtrip foundations — no runtime support
 
 [Decision 021](decisions/021-capability-negotiated-helper-contract-for-correlated-roundtrip-proof.md)
 defines the proposed proof and rollout boundaries. It does not authorize a
@@ -131,6 +131,29 @@ existing namespace host bind, a separate state bind, and read-only config; it
 also rejects a separately mounted child. Docker named volumes, rootless Docker,
 NAS, Linux host/systemd, macOS, and Windows packaging remain unsupported.
 
+The dormant M5 foundation implements only Decision 024 message types 3–5 for
+the upload leg. Given an already authenticated M4 namespace handle and fixed
+test binding, the helper-side attestor verifies the byte-exact active query,
+re-opens and completely validates the exact app-authored 256-byte request,
+atomically publishes one immutable helper-signed attestation, and returns those
+same bytes idempotently. Its limits are fixed: one active operation per tuple,
+eight polls, three starts/hour and twelve/day per app/folder, sixty starts/day
+and eight active operations helper-wide, plus 30 requests/minute per paired app
+and 120/minute helper-wide including invalid input. Restarts can recover only
+the exact already-persisted attestation from authenticated artifacts; app-side
+test state never resumes evidence after restart.
+
+This is still not a product or helper runtime path. The Go attestor has no call
+from `main`, listener, endpoint, transport, log, operation database, Relay or
+Syncthing client. Swift parsing and acceptance exist only in the test target.
+No capability response is emitted because response authorization, response
+artifact creation, authenticated cleanup, controlled download, and roundtrip
+are absent. A dedicated E2E test runs two temporary local Syncthing instances
+with discovery, Relay, NAT, upgrades, usage reporting, and crash reporting
+disabled; it proves request propagation, confined helper reading, durable
+attestation-before-reply, exact pinned-mock acceptance, and that a synchronized
+attestation copy is not upload evidence. It publishes nothing.
+
 The proposed data plane uses a visible, exclusively app-owned namespace inside
 one selected Syncthing folder. A fresh app-signed random request would need an
 authenticated helper attestation that the paired helper read the exact request;
@@ -141,10 +164,11 @@ and homeserver could derive a scoped roundtrip. Signatures can establish logical
 app/helper authorship and causality, but not exact byte counts, a direct
 transport peer, or per-block provenance.
 
-Runtime remains blocked despite the dormant pairing and namespace foundations.
+Runtime remains blocked despite the dormant pairing, namespace, and upload
+attestation foundations.
 There is no production packaging or rollout, no Syncthing-matcher integration,
 no app consent/enablement flow, and no authenticated operational correlation.
-Upload attestation, controlled download, and roundtrip evidence are not
+Product upload acceptance, controlled download, and roundtrip evidence are not
 implemented. Rollout must be helper-first; an old or unreachable helper yields
 capability unavailable rather than an error or a weaker success. Trigger v1,
 provisioning, Relay status, APNs, StoreKit, and the Cloud Relay privacy boundary
