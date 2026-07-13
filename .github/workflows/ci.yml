@@ -94,6 +94,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Prove exact host-bind namespace confinement
         run: notify/tests/m4-docker/run.sh
