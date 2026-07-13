@@ -152,6 +152,25 @@ unsupported for the diagnostics namespace until their exact isolation,
 installer, upgrade, and rollback paths are separately demonstrated. The
 current product paths remain Trigger-v1-only.
 
+### Dormant upload-attestation development foundation
+
+M5 adds an internal upload-only implementation of Decision 024 message types
+3–5. It can validate one exact app-signed 256-byte request through an already
+open M4 confinement handle, atomically persist one helper-signed attestation,
+and return those same bytes idempotently to a test/mock caller. Fixed limits,
+replay and binding checks, restart recovery, crash/race behavior, Go/Swift
+golden bytes, and privacy boundaries are tested. A build-tagged E2E runs two
+temporary local Syncthing instances in a network-isolated container and does
+not read or change any installed Syncthing configuration.
+
+This code is not called by `main`, has no endpoint or listener, advertises no
+capability, changes no Syncthing configuration, and creates no runtime
+namespace or operation. Swift support is test-only. Response authorization,
+response artifacts, authenticated cleanup messages, controlled download, and
+roundtrip derivation are intentionally absent. Installing or upgrading the
+current helper therefore changes no behavior; Trigger v1 and Cloud Relay v1
+remain byte- and behavior-compatible.
+
 **Doctor mode** — preflight checks with actionable failures (Compose reads `.env` for you):
 
 ```bash
