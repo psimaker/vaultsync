@@ -111,6 +111,26 @@ key, endpoint, authorization, or pairing record is created in an installed
 helper or app. Runtime pairing, app Keychain storage, transport, capability
 discovery, namespace access, and every evidence transition remain unavailable.
 
+The repository also contains a dormant Decision 023 namespace and
+least-privilege foundation. It implements the five deterministic ownership
+record types and dual-signature/digest chains, the exact visible constant
+`VaultSync Diagnostics`, stable installation components, a separate atomic
+namespace state store, explicit collision-safe preparation primitives, and
+bounded create-once/read/cleanup operations. Linux access is rooted at an open
+directory handle and rechecks inode, device, ownership, mode, link count, file
+allocation, and mount identity; path-like network input is not accepted. All
+other operating systems fail closed as unsupported.
+
+This code is still unreachable from the installed helper and app. No product
+installer, CLI command, endpoint, listener, automatic folder creation,
+Syncthing configuration mutation, ignore-rule change, capability advertisement,
+or app enablement flow exists. The only packaging execution is a local test
+harness. It first gives an explicit installer phase one selected test folder,
+then proves a read-only-root Linux container can operate with only the exact
+existing namespace host bind, a separate state bind, and read-only config; it
+also rejects a separately mounted child. Docker named volumes, rootless Docker,
+NAS, Linux host/systemd, macOS, and Windows packaging remain unsupported.
+
 The proposed data plane uses a visible, exclusively app-owned namespace inside
 one selected Syncthing folder. A fresh app-signed random request would need an
 authenticated helper attestation that the paired helper read the exact request;
@@ -121,15 +141,15 @@ and homeserver could derive a scoped roundtrip. Signatures can establish logical
 app/helper authorship and causality, but not exact byte counts, a direct
 transport peer, or per-block provenance.
 
-This remains blocked until a visible collision-safe namespace, ignore/conflict/
-tombstone/backup semantics, least-privilege helper filesystem access, and a
-separate mutual credential/pairing and replay-recovery design are approved. The
-current helper's read-only configuration/access model and Syncthing peer
-identity do not provide those properties. Rollout must be helper-first; an old
-or unreachable helper yields capability unavailable rather than an error or a
-weaker success. Trigger v1, provisioning, Relay status, APNs, StoreKit, and the
-Cloud Relay privacy boundary remain unchanged, and the Relay never receives
-probe names, paths, values, contents, correlations, or results.
+Runtime remains blocked despite the dormant pairing and namespace foundations.
+There is no production packaging or rollout, no Syncthing-matcher integration,
+no app consent/enablement flow, and no authenticated operational correlation.
+Upload attestation, controlled download, and roundtrip evidence are not
+implemented. Rollout must be helper-first; an old or unreachable helper yields
+capability unavailable rather than an error or a weaker success. Trigger v1,
+provisioning, Relay status, APNs, StoreKit, and the Cloud Relay privacy boundary
+remain unchanged, and the Relay never receives namespace or operation names,
+paths, values, contents, correlations, or results.
 
 ### Connection paths & iOS network privacy
 

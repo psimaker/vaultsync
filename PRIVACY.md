@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Effective date:** July 12, 2026
+**Effective date:** July 13, 2026
 
 VaultSync is designed to keep your data on your devices. This policy explains what information is — and isn't — collected.
 
@@ -72,6 +72,48 @@ Syncthing logging is disabled because its upstream attributes can include file
 paths, folder IDs, or peer IDs. None of the local diagnostic values above is sent
 to Cloud Relay. Cloud Relay never receives a file name, folder or vault name,
 file or vault path, file content, or diagnostic check identifier.
+
+### Dormant Helper Diagnostics Namespace
+
+The repository contains a dormant, test-only foundation for a future optional
+helper diagnostics namespace. It is not connected to the VaultSync app product
+flow or to the installed helper runtime. It starts no listener, makes no network
+call, changes no Syncthing configuration, and does not automatically create a
+folder or namespace. No production service currently writes these artifacts.
+
+Before a future supported installer could create the namespace, the operator
+would have to choose an exact, existing Syncthing folder subdirectory and give
+explicit consent. The visible root name is always **VaultSync Diagnostics**.
+The folder and its protocol files would be visible like other synchronized
+files in Obsidian, Apple Files or another file browser, on every configured
+Syncthing peer, and in filesystem backups. They could also appear in Syncthing
+versioning (including `.stversions`), remote file history, conflict copies,
+deletion records, or tombstones.
+
+The namespace is limited to fixed protocol filenames containing random
+installation and operation identifiers, public-key identifiers, signatures,
+hashes, counters, expiry times, and fixed status values. It must never contain
+note content, user-derived filenames, vault or folder names, local display
+labels, Syncthing credentials, helper credentials, or Cloud Relay contract
+data. Local display labels remain on the device. Helper credentials and local
+authorization state remain in a separate, non-synchronized helper state store.
+Nothing in this namespace is sent to Cloud Relay.
+
+Expiry and bounded cleanup apply only to the exact authenticated live operation
+artifacts owned by the helper. Cleanup does not erase the namespace root,
+README, manifests, authorization records, credentials, backup copies, versioned
+copies, conflict copies, remote history, or tombstones. Backups, `.stversions`,
+remote history, and tombstones can retain diagnostics artifacts beyond their
+live expiry or cleanup time according to the operator's Syncthing and backup
+policies. Disabling or rolling back diagnostics stops future activity but does
+not promise deletion from the live folder, peers, backups, versions, history,
+or tombstones. Those copies require deliberate operator removal under the
+policies of each system that retains them.
+
+Only an explicit Docker host bind mount to an exact existing subdirectory is
+within the currently tested M4 scope. Docker named volumes, NAS packages,
+macOS packaging, and Windows packaging are not supported for this diagnostics
+namespace unless their isolation and rollback are separately proven.
 
 ### Data Security
 

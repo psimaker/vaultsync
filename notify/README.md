@@ -127,6 +127,31 @@ RELAY_URL=https://relay.vaultsync.eu ./vaultsync-notify
 
 ## 🩺 Diagnostics
 
+### Dormant namespace development foundation
+
+The repository contains an internal, test-only M4 foundation for the future
+visible folder `VaultSync Diagnostics`. It is not a setup option and is not
+called by `main`, the installer scripts, Docker Compose, the app, or any
+listener. Installing or upgrading `vaultsync-notify` creates no namespace,
+mount, state directory, credential, authorization, operation file, or network
+request and changes no Syncthing configuration or ignore rule.
+
+The local confinement harness at
+[`tests/m4-docker/run.sh`](tests/m4-docker/run.sh) proves one narrow deployment
+shape: an explicit operator phase creates the exact child under an existing
+test Syncthing folder, then a network-isolated Linux test process receives only
+that exact host-bind subdirectory, a separate state directory, and a read-only
+config fixture. Its container root is read-only, all capabilities are dropped,
+and a child mount swap is rejected by descriptor, inode, device, and Linux mount
+identity checks. The harness starts no production helper or synchronization
+service and publishes no image or port.
+
+This proof does not make the feature available. Docker named volumes, rootless
+Docker, NAS packages, Linux host/systemd packaging, macOS, and Windows remain
+unsupported for the diagnostics namespace until their exact isolation,
+installer, upgrade, and rollback paths are separately demonstrated. The
+current product paths remain Trigger-v1-only.
+
 **Doctor mode** — preflight checks with actionable failures (Compose reads `.env` for you):
 
 ```bash

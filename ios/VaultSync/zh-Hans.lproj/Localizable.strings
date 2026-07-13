@@ -807,3 +807,6 @@
 "Relay request could not reach the server." = "中继请求无法连接服务器。";
 "Relay request timed out." = "中继请求超时。";
 "Relay response could not be read." = "无法读取中继响应。";
+
+/* 未启用的 M4 同意文案；产品流程未引用此键。 */
+"Enable VaultSync Diagnostics for homeserver “%@” and vault “%@”? After separate confirmation by the local operator, this creates the visible app-owned folder “VaultSync Diagnostics”. It contains only opaque random protocol data, public-key identifiers, signatures, hashes, and expiry metadata—never note content or user-derived filenames. The folder, temporary files, and deletion tombstones synchronize and can be visible in Obsidian, Files, and on every configured peer. Backups, Syncthing versioning, remote history, and tombstones may retain artifacts after live cleanup. Disabling stops new operations but does not automatically delete the root, credentials, peer copies, backups, versions, or tombstones." = "要为家庭服务器“%@”和 Vault“%@”启用 VaultSync Diagnostics 吗？经本地操作员另行确认后，系统会创建应用专属的可见文件夹“VaultSync Diagnostics”。其中只包含不透明的随机协议数据、公钥标识符、签名、哈希和过期元数据，绝不包含笔记内容或由用户数据派生的文件名。该文件夹、临时文件和删除记录会同步，并可能显示在 Obsidian、“文件”以及每个已配置的对等设备上。备份、Syncthing 版本控制、远程历史记录和删除记录可能在实时清理后继续保留这些数据。停用功能会停止新操作，但不会自动删除根文件夹、凭据、对等设备副本、备份、版本或删除记录。";
