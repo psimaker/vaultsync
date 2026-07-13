@@ -80,6 +80,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Verify notify publication safety policy
+        run: ruby .github/scripts/notify-publish-safety.rb
+
       - uses: actions/setup-go@v6
         with:
           go-version-file: notify/go.mod
