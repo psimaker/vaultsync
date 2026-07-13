@@ -313,21 +313,29 @@ func (attestor *diagnosticsUploadAttestor) validateBoundUploadMessage(message di
 }
 
 func (attestor *diagnosticsUploadAttestor) validateCurrentNamespaceAuthorization() error {
-	if err := attestor.binding.namespaceHandle.ScanFixedLayout(); err != nil {
+	return validateDiagnosticsBindingAuthorization(attestor.binding, attestor.context)
+}
+
+func validateDiagnosticsBindingAuthorization(binding diagnosticsUploadBinding, context diagnosticsUploadVerificationContext) error {
+	if binding.namespaceHandle == nil || len(context.appPublicKey) != ed25519.PublicKeySize ||
+		len(context.helperPublicKey) != ed25519.PublicKeySize {
+		return errDiagnosticsUploadInvalid
+	}
+	if err := binding.namespaceHandle.ScanFixedLayout(); err != nil {
 		return err
 	}
-	paths, err := diagnosticsNamespaceAuthorizationPaths(attestor.binding.installationBinding)
+	paths, err := diagnosticsNamespaceAuthorizationPaths(binding.installationBinding)
 	if err != nil {
 		return err
 	}
 	authorizationPath := paths[0]
-	if attestor.binding.authorizationEpoch > 1 {
-		authorizationPath, err = diagnosticsNamespaceAuthorizationEpochPath(attestor.binding.installationBinding, attestor.binding.authorizationEpoch)
+	if binding.authorizationEpoch > 1 {
+		authorizationPath, err = diagnosticsNamespaceAuthorizationEpochPath(binding.installationBinding, binding.authorizationEpoch)
 		if err != nil {
 			return err
 		}
 	}
-	body, _, err := attestor.binding.namespaceHandle.ReadImmutable(authorizationPath)
+	body, _, err := binding.namespaceHandle.ReadImmutable(authorizationPath)
 	if err != nil {
 		return err
 	}
@@ -343,11 +351,11 @@ func (attestor *diagnosticsUploadAttestor) validateCurrentNamespaceAuthorization
 	appEpoch, _ := authorization.uintField(12)
 	helperEpoch, _ := authorization.uintField(15)
 	authorizationEpoch, _ := authorization.uintField(31)
-	if !bytes.Equal(installation, attestor.binding.installationBinding) ||
-		!bytes.Equal(homeserver, attestor.binding.homeserverBinding) || !bytes.Equal(folder, attestor.binding.folderBinding) ||
-		!bytes.Equal(appPublicKey, attestor.context.appPublicKey) || !bytes.Equal(helperPublicKey, attestor.context.helperPublicKey) ||
-		appEpoch != attestor.binding.appEpoch || helperEpoch != attestor.binding.helperEpoch ||
-		authorizationEpoch != attestor.binding.authorizationEpoch {
+	if !bytes.Equal(installation, binding.installationBinding) ||
+		!bytes.Equal(homeserver, binding.homeserverBinding) || !bytes.Equal(folder, binding.folderBinding) ||
+		!bytes.Equal(appPublicKey, context.appPublicKey) || !bytes.Equal(helperPublicKey, context.helperPublicKey) ||
+		appEpoch != binding.appEpoch || helperEpoch != binding.helperEpoch ||
+		authorizationEpoch != binding.authorizationEpoch {
 		return errDiagnosticsUploadInvalid
 	}
 	return nil
