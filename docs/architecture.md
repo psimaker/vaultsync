@@ -99,6 +99,18 @@ runtime change. The current app/helper still creates no probe or namespace, has
 no diagnostic pairing credential, and cannot confirm upload, controlled
 download, or a full roundtrip.
 
+The repository contains a dormant implementation foundation for the proposed
+Decision 022 helper credential and pairing protocol. It includes deterministic
+CBOR, the fixed Ed25519/HMAC/P-256 suite, a dedicated atomic helper state store,
+stable opaque bindings, explicit QR/pinned-TLS bootstrap messages, lifecycle
+rotation/revocation/recovery state, and shared Go/Swift golden vectors for all
+message types. The Go code has no call from `main`, listener, installer,
+container configuration, Syncthing client, Relay client, or product command;
+the Swift implementation is test-only. Consequently no credential directory,
+key, endpoint, authorization, or pairing record is created in an installed
+helper or app. Runtime pairing, app Keychain storage, transport, capability
+discovery, namespace access, and every evidence transition remain unavailable.
+
 The proposed data plane uses a visible, exclusively app-owned namespace inside
 one selected Syncthing folder. A fresh app-signed random request would need an
 authenticated helper attestation that the paired helper read the exact request;
