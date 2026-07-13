@@ -88,6 +88,16 @@ jobs:
         working-directory: notify
         run: go test ./... -count=1
 
+  m4-docker-confinement:
+    name: M4 Docker Confinement
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Prove exact host-bind namespace confinement
+        run: notify/tests/m4-docker/run.sh
+
   install-script:
     name: Install Script
     runs-on: ubuntu-latest
@@ -113,6 +123,7 @@ jobs:
           shellcheck --version
           shellcheck -s sh notify/scripts/install.sh notify/scripts/tests/install-dry-run-test.sh
           shellcheck -s sh --exclude=SC1007 notify/scripts/bootstrap.sh
+          shellcheck -s sh notify/tests/m4-docker/run.sh
 
       - name: install.sh --dry-run smoke test
         # Hermetic: fixture config.xml + PATH shims; asserts dry-run changes
@@ -167,6 +178,7 @@ jobs:
       - changes
       - go-tests
       - notify-tests
+      - m4-docker-confinement
       - design-lint
     # Skip the expensive macOS build on docs-only changes. It is not a required
     # status check, so skipping never blocks a PR. The plain expression (no

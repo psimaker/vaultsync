@@ -336,7 +336,18 @@ func validateDiagnosticsNamespaceRelationships(value diagnosticsCBORValue, messa
 	if messageType == diagnosticsNamespaceEnablement || messageType == diagnosticsNamespaceInitialAuthorization || messageType == diagnosticsNamespaceAuthorizationEpoch {
 		issuedAt, okIssued := diagnosticsNamespaceUintField(value, 26)
 		expiresAt, okExpires := diagnosticsNamespaceUintField(value, 27)
-		if !okIssued || !okExpires || expiresAt <= issuedAt || expiresAt-issuedAt > diagnosticsNamespaceMaximumCandidateLifetimeSecs {
+		if !okIssued || !okExpires || issuedAt == 0 || expiresAt <= issuedAt || expiresAt-issuedAt > diagnosticsNamespaceMaximumCandidateLifetimeSecs {
+			return errDiagnosticsNamespaceInvalid
+		}
+	}
+	if messageType == diagnosticsNamespaceRootManifest || messageType == diagnosticsNamespaceHelperEpoch {
+		createdAt, _ := diagnosticsNamespaceUintField(value, 28)
+		if createdAt == 0 {
+			return errDiagnosticsNamespaceInvalid
+		}
+	}
+	for _, label := range []uint64{12, 15, 18} {
+		if epoch, present := diagnosticsNamespaceUintField(value, label); present && epoch == 0 {
 			return errDiagnosticsNamespaceInvalid
 		}
 	}
@@ -378,7 +389,7 @@ func validateDiagnosticsNamespaceRelationships(value diagnosticsCBORValue, messa
 	if messageType == diagnosticsNamespaceHelperEpoch {
 		priorEpoch, _ := diagnosticsNamespaceUintField(value, 18)
 		currentEpoch, _ := diagnosticsNamespaceUintField(value, 15)
-		if priorEpoch == 0 || currentEpoch != priorEpoch+1 {
+		if priorEpoch == ^uint64(0) || currentEpoch != priorEpoch+1 {
 			return errDiagnosticsNamespaceInvalid
 		}
 	}
@@ -495,14 +506,11 @@ func parseDiagnosticsNamespaceComponent(component string) ([]byte, error) {
 }
 
 func diagnosticsNamespaceEpochFilename(epoch uint64, authorization bool) (string, error) {
-	if epoch < 2 || epoch > diagnosticsNamespaceMaximumAuthorizationEpochs+1 {
+	if epoch < 2 || (authorization && epoch > diagnosticsNamespaceMaximumAuthorizationEpochs+1) {
 		return "", errDiagnosticsNamespaceInvalid
 	}
 	if authorization {
 		return strconv.FormatUint(epoch, 10) + ".authorization.cbor", nil
-	}
-	if epoch > diagnosticsNamespaceMaximumHelperEpochs+1 {
-		return "", errDiagnosticsNamespaceInvalid
 	}
 	return strconv.FormatUint(epoch, 10) + ".helper-manifest.cbor", nil
 }
@@ -536,14 +544,22 @@ func validateDiagnosticsNamespaceChain(chain diagnosticsNamespaceChain) error {
 	if !bytes.Equal(enablementDigest[:], boundEnablement) {
 		return errDiagnosticsNamespaceInvalid
 	}
-	rootDigest, _ := diagnosticsNamespaceRecordDigest(chain.RootManifest)
+	return validateDiagnosticsNamespacePersistentChain(chain.RootManifest, chain.HelperEpochs, chain.Authorizations)
+}
+
+func validateDiagnosticsNamespacePersistentChain(rootEncoded []byte, helperEpochs [][]byte, authorizations [][][]byte) error {
+	root, err := decodeDiagnosticsNamespaceMessage(rootEncoded)
+	if err != nil || root.messageType != diagnosticsNamespaceRootManifest {
+		return errDiagnosticsNamespaceInvalid
+	}
+	rootDigest, _ := diagnosticsNamespaceRecordDigest(rootEncoded)
 	currentManifest := root
 	currentManifestDigest := rootDigest
 	manifestByDigest := map[string]diagnosticsNamespaceMessage{string(rootDigest[:]): root}
-	if len(chain.HelperEpochs) > diagnosticsNamespaceMaximumHelperEpochs {
+	if len(helperEpochs) > diagnosticsNamespaceMaximumHelperEpochs {
 		return errDiagnosticsNamespaceInvalid
 	}
-	for _, encoded := range chain.HelperEpochs {
+	for _, encoded := range helperEpochs {
 		epoch, decodeErr := decodeDiagnosticsNamespaceMessage(encoded)
 		if decodeErr != nil || epoch.messageType != diagnosticsNamespaceHelperEpoch ||
 			!diagnosticsNamespaceCommonBindingsEqual(root, epoch, 5, 6, 7) {
@@ -565,11 +581,11 @@ func validateDiagnosticsNamespaceChain(chain diagnosticsNamespaceChain) error {
 		currentManifestDigest, _ = diagnosticsNamespaceRecordDigest(encoded)
 		manifestByDigest[string(currentManifestDigest[:])] = epoch
 	}
-	if len(chain.Authorizations) > diagnosticsNamespaceMaximumInstallations {
+	if len(authorizations) > diagnosticsNamespaceMaximumInstallations {
 		return errDiagnosticsNamespaceInvalid
 	}
-	seenInstallations := make(map[string]struct{}, len(chain.Authorizations))
-	for _, records := range chain.Authorizations {
+	seenInstallations := make(map[string]struct{}, len(authorizations))
+	for _, records := range authorizations {
 		if len(records) == 0 || len(records) > diagnosticsNamespaceMaximumAuthorizationEpochs+1 {
 			return errDiagnosticsNamespaceInvalid
 		}

@@ -164,11 +164,17 @@ func TestDiagnosticsDecision023StableNamesRejectPathInput(t *testing.T) {
 	if name, _ := diagnosticsNamespaceEpochFilename(2, true); name != "2.authorization.cbor" {
 		t.Fatalf("unexpected authorization filename %q", name)
 	}
+	if name, _ := diagnosticsNamespaceEpochFilename(42, false); name != "42.helper-manifest.cbor" {
+		t.Fatalf("rotated helper epoch filename was capped by history count: %q", name)
+	}
 	if _, err := diagnosticsNamespaceEpochFilename(1, false); err == nil {
 		t.Fatal("initial helper epoch was accepted as an epoch-manifest filename")
 	}
 	if _, err := diagnosticsNamespaceEpochFilename(1, true); err == nil {
 		t.Fatal("initial authorization epoch was accepted as an epoch-record filename")
+	}
+	if _, err := diagnosticsNamespaceEpochFilename(diagnosticsNamespaceMaximumAuthorizationEpochs+2, true); err == nil {
+		t.Fatal("authorization history accepted an epoch beyond its fixed maximum")
 	}
 }
 
@@ -198,6 +204,11 @@ func TestDiagnosticsDecision023ChainRejectsCopiesForksAndOverflow(t *testing.T) 
 	if err := validateDiagnosticsNamespaceChain(fixture.chain); err != nil {
 		t.Fatalf("valid chain rejected: %v", err)
 	}
+	if err := validateDiagnosticsNamespacePersistentChain(
+		fixture.chain.RootManifest, fixture.chain.HelperEpochs, fixture.chain.Authorizations,
+	); err != nil {
+		t.Fatalf("valid persistent chain rejected: %v", err)
+	}
 
 	copied := fixture.chain
 	copied.RootManifest = append([]byte(nil), fixture.chain.RootManifest...)
@@ -210,6 +221,20 @@ func TestDiagnosticsDecision023ChainRejectsCopiesForksAndOverflow(t *testing.T) 
 	forked.HelperEpochs = [][]byte{append([]byte(nil), fixture.chain.HelperEpochs[0]...), append([]byte(nil), fixture.chain.HelperEpochs[0]...)}
 	if err := validateDiagnosticsNamespaceChain(forked); err == nil {
 		t.Fatal("forked helper epoch chain was accepted")
+	}
+	if err := validateDiagnosticsNamespacePersistentChain(
+		fixture.chain.RootManifest,
+		[][]byte{fixture.chain.HelperEpochs[0], fixture.chain.HelperEpochs[0]},
+		fixture.chain.Authorizations,
+	); err == nil {
+		t.Fatal("persisted duplicate helper epoch was accepted")
+	}
+	if err := validateDiagnosticsNamespacePersistentChain(
+		fixture.chain.RootManifest,
+		fixture.chain.HelperEpochs,
+		[][][]byte{{fixture.chain.Authorizations[0][0], fixture.chain.Authorizations[0][1], fixture.chain.Authorizations[0][1]}},
+	); err == nil {
+		t.Fatal("persisted authorization fork was accepted")
 	}
 
 	overflow := fixture.chain
