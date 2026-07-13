@@ -281,10 +281,11 @@ func TestDiagnosticsTriggerV1WireRemainsExact(t *testing.T) {
 	}
 }
 
-func TestDiagnosticsFoundationHasNoOperationalRuntimeCarrier(t *testing.T) {
+func TestDiagnosticsFoundationsHaveNoOperationalRuntimeCarrier(t *testing.T) {
 	fixture := loadDiagnosticsContractFixture(t)
 	repoRoot := diagnosticsTestRepoRoot(t)
 	dormantCapabilityCarrier := filepath.Join(repoRoot, "notify", "diagnostics_capabilities.go")
+	pairingProtocolCarrier := filepath.Join(repoRoot, "notify", "diagnostics_pairing_protocol.go")
 	runtimeRoots := []string{
 		filepath.Join(repoRoot, "notify"),
 		filepath.Join(repoRoot, "ios", "VaultSync"),
@@ -306,19 +307,61 @@ func TestDiagnosticsFoundationHasNoOperationalRuntimeCarrier(t *testing.T) {
 				return err
 			}
 			for name, capability := range fixture.Capabilities {
-				if bytes.Contains(body, []byte(capability)) && path != dormantCapabilityCarrier {
-					return fmt.Errorf("runtime file %s contains dormant M1 capability %s", path, name)
+				allowed := path == dormantCapabilityCarrier || (name == "pairing" && path == pairingProtocolCarrier)
+				if bytes.Contains(body, []byte(capability)) && !allowed {
+					return fmt.Errorf("runtime file %s contains an unapproved diagnostics capability %s", path, name)
 				}
 			}
-			for _, domain := range fixture.Domains {
-				if bytes.Contains(body, []byte(strings.TrimSuffix(domain, "\x00"))) {
-					return fmt.Errorf("runtime file %s contains an M1 signature domain", path)
+			for name, domain := range fixture.Domains {
+				allowed := strings.HasPrefix(name, "pairing.") && path == pairingProtocolCarrier
+				if bytes.Contains(body, []byte(strings.TrimSuffix(domain, "\x00"))) && !allowed {
+					return fmt.Errorf("runtime file %s contains an unapproved signature domain", path)
 				}
 			}
 			return nil
 		})
 		if err != nil {
 			t.Fatal(err)
+		}
+	}
+
+	entrypoints := []string{
+		filepath.Join(repoRoot, "notify", "main.go"),
+		filepath.Join(repoRoot, "notify", "Dockerfile"),
+		filepath.Join(repoRoot, "notify", "docker-compose.yml"),
+		filepath.Join(repoRoot, "notify", "scripts", "install.sh"),
+		filepath.Join(repoRoot, "notify", "scripts", "install.ps1"),
+		filepath.Join(repoRoot, "notify", "scripts", "bootstrap.sh"),
+	}
+	for _, path := range entrypoints {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, forbidden := range []string{
+			"diagnosticsPairing",
+			"diagnosticsCredential",
+			diagnosticsPairingPath,
+			diagnosticsCredentialStateFile,
+		} {
+			if bytes.Contains(body, []byte(forbidden)) {
+				t.Fatalf("product/helper entrypoint %s activates M3 carrier %q", path, forbidden)
+			}
+		}
+	}
+	for _, path := range []string{
+		filepath.Join(repoRoot, "notify", "diagnostics_pairing_manager.go"),
+		filepath.Join(repoRoot, "notify", "diagnostics_pairing_crypto.go"),
+		filepath.Join(repoRoot, "notify", "diagnostics_pairing_store.go"),
+	} {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, forbidden := range []string{"ListenAndServe", "http.Server", "net.Listen", "RelayClient", "SyncthingClient"} {
+			if bytes.Contains(body, []byte(forbidden)) {
+				t.Fatalf("dormant M3 core %s contains operational carrier %q", path, forbidden)
+			}
 		}
 	}
 }
