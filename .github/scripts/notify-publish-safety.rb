@@ -22,9 +22,15 @@ GATE_FRAGMENTS = [
   "github.event_name == 'workflow_dispatch'",
   "github.ref_type == 'tag'",
   "inputs.release_tag == github.ref_name",
+  "inputs.recovery_run_id == ''",
+  "github.ref == 'refs/heads/main'",
+  "inputs.recovery_run_id != ''",
   "inputs.confirmation == 'PUBLISH_NOTIFY_RELEASE'",
   "github.actor == github.repository_owner",
   "github.triggering_actor == github.repository_owner"
+].freeze
+SOURCE_CHECKOUT_JOBS = %w[
+  publish-image release-binaries rollout-verify finalize-release verify-published
 ].freeze
 EXPECTED_BINARIES = %w[
   vaultsync-notify_linux_amd64
@@ -93,10 +99,12 @@ def flattened_step_text(job)
   end.flatten.compact.join("\n")
 end
 
-def publication_allowed?(event:, ref_type:, ref_name:, release_tag:, confirmation:, actor:, triggering_actor:, owner:)
+def publication_allowed?(event:, ref_type:, ref_name:, release_tag:, recovery_run_id:, confirmation:, actor:,
+                         triggering_actor:, owner:)
+  ref_allowed = (ref_type == "tag" && ref_name == release_tag && recovery_run_id.empty?) ||
+                (ref_type == "branch" && ref_name == "main" && recovery_run_id.match?(/\A[1-9][0-9]*\z/))
   event == "workflow_dispatch" &&
-    ref_type == "tag" &&
-    release_tag == ref_name &&
+    ref_allowed &&
     confirmation == "PUBLISH_NOTIFY_RELEASE" &&
     actor == owner &&
     triggering_actor == owner &&
@@ -145,6 +153,11 @@ dispatch_inputs = workflow_triggers.fetch("workflow_dispatch").fetch("inputs")
   assert_policy(definition["required"] == true && definition["type"] == "string",
                 "workflow_dispatch input #{input} must be a required string")
 end
+recovery_input = dispatch_inputs.fetch("recovery_run_id")
+assert_policy(recovery_input["required"] == false && recovery_input["type"] == "string",
+              "workflow_dispatch recovery_run_id must be an optional string")
+assert_policy(workflow.fetch("concurrency").fetch("group").include?("inputs.release_tag"),
+              "normal and recovery dispatches for one release tag must share a concurrency group")
 
 required_jobs = %w[
   publish-safety-policy notify-guard build-without-push publish-gate publish-image
@@ -197,6 +210,15 @@ jobs.each do |name, job|
     assert_policy(step.fetch("with", {})["persist-credentials"] == false,
                   "#{name} checkout must set persist-credentials: false")
   end
+end
+
+SOURCE_CHECKOUT_JOBS.each do |name|
+  checkout = steps(jobs.fetch(name)).find do |step|
+    step.fetch("uses", "").start_with?("actions/checkout@")
+  end
+  assert_policy(checkout&.fetch("with", {})&.fetch("ref") ==
+                "${{ needs.publish-gate.outputs.release_sha }}",
+                "#{name} must check out the immutable source-tag commit")
 end
 
 security.fetch("jobs").each do |name, job|
@@ -270,6 +292,7 @@ assert_policy(publication_build&.fetch("with", {})&.fetch("platforms") == "linux
               "published image platform set changed")
 
 public_write_guard = "needs.publish-gate.outputs.release_is_public != 'true'"
+recovery_write_guard = "needs.publish-gate.outputs.recovery_mode != 'true'"
 action_write_steps = {
   "publish-image" => [
     "Build and publish the absent release image",
@@ -284,8 +307,9 @@ action_write_steps = {
 action_write_steps.each do |job_name, step_names|
   step_names.each do |step_name|
     step = steps(jobs.fetch(job_name)).find { |candidate| candidate["name"] == step_name }
-    assert_policy(step && step.fetch("if", "").include?(public_write_guard),
-                  "#{job_name}/#{step_name} remains reachable for a public release")
+    condition = step&.fetch("if", "") || ""
+    assert_policy(step && condition.include?(public_write_guard) && condition.include?(recovery_write_guard),
+                  "#{job_name}/#{step_name} remains reachable for a public release or main-ref recovery")
   end
 end
 
@@ -306,9 +330,12 @@ public_integrity_checks.each do |job_name, step_names|
     assert_policy(step &&
                   step.fetch("env", {})["RELEASE_IS_PUBLIC"] ==
                     "${{ needs.publish-gate.outputs.release_is_public }}" &&
+                  step.fetch("env", {})["RECOVERY_MODE"] ==
+                    "${{ needs.publish-gate.outputs.recovery_mode }}" &&
                   step.fetch("run", "").include?('$RELEASE_IS_PUBLIC') &&
+                  step.fetch("run", "").include?('$RECOVERY_MODE') &&
                   step.fetch("run", "").include?("exit 1"),
-                  "#{job_name}/#{step_name} must fail closed on missing public material")
+                  "#{job_name}/#{step_name} must fail closed on missing immutable material")
   end
 end
 
@@ -319,7 +346,12 @@ assert_policy(stage_release &&
               stage_release.fetch("env", {})["RELEASE_IS_PUBLIC"] ==
                 "${{ needs.publish-gate.outputs.release_is_public }}" &&
               stage_release.fetch("run", "").include?('test "$RELEASE_IS_PUBLIC" != true') &&
-              stage_release.fetch("run", "").include?('test "$release_is_draft" = true'),
+              stage_release.fetch("run", "").include?('test "$release_is_draft" = true') &&
+              stage_release.fetch("run", "").include?("gh api graphql") &&
+              stage_release.fetch("run", "").include?("databaseId") &&
+              stage_release.fetch("run", "").include?('releases/${release_id}') &&
+              stage_release.fetch("run", "").include?("|| return 1") &&
+              !stage_release.fetch("run", "").include?("releases/tags"),
               "release creation and asset upload must be unreachable for a public release")
 
 finalize_step = steps(jobs.fetch("finalize-release")).find do |step|
@@ -331,6 +363,10 @@ public_exit = public_branch && finalize_text.index("exit 0", public_branch)
 release_edit = finalize_text.index('gh release edit "$RELEASE_TAG"')
 assert_policy(finalize_text.include?('test "$release_is_draft" = true') &&
               finalize_text.include?('test "$body" = "$(cat /tmp/release-notes.md)"') &&
+              finalize_text.include?("gh api graphql") &&
+              finalize_text.include?("databaseId") &&
+              finalize_text.include?('releases/${release_id}') &&
+              finalize_text.include?("|| return 1") &&
               public_branch && public_exit && release_edit && public_exit < release_edit,
               "rollout evidence and release finalization must be read-only once public")
 
@@ -368,11 +404,17 @@ assert_policy(gate_text.include?("git merge-base --is-ancestor") &&
               "publish gate must bind manifest, tag, verified SHA, and origin/main")
 assert_policy(jobs.fetch("publish-gate").fetch("outputs").fetch("release_is_public") ==
                 "${{ steps.validate.outputs.release_is_public }}" &&
+              jobs.fetch("publish-gate").fetch("outputs").fetch("recovery_mode") ==
+                "${{ steps.validate.outputs.recovery_mode }}" &&
               gate_text.include?("gh api graphql") &&
               gate_text.include?(".data.repository.release") &&
               gate_text.include?('case $release_type in') &&
               gate_text.include?('release_is_public=true') &&
-              gate_text.include?('release_is_public=$release_is_public'),
+              gate_text.include?('release_is_public=$release_is_public') &&
+              gate_text.include?('actions/runs/${RECOVERY_RUN_ID}') &&
+              gate_text.include?('Create or verify the exact draft release and assets') &&
+              gate_text.include?('git checkout --detach "$resolved"') &&
+              gate_text.include?('recovery_mode=$recovery_mode'),
               "publish gate must fail closed and export the finalized public-release state")
 
 assert_policy(spec.fetch("format_version") == 1, "release manifest format changed")
@@ -440,6 +482,7 @@ base = {
   ref_name: spec.fetch("tag"),
   release_tag: spec.fetch("tag"),
   confirmation: "PUBLISH_NOTIFY_RELEASE",
+  recovery_run_id: "",
   actor: owner,
   triggering_actor: owner,
   owner: owner
@@ -447,7 +490,10 @@ base = {
 negative_cases = [
   base.merge(event: "push", ref_type: "branch", ref_name: "main"),
   base.merge(event: "pull_request", ref_type: "branch", ref_name: "pull/1/merge"),
-  base.merge(ref_type: "branch", ref_name: "main", release_tag: "main"),
+  base.merge(ref_type: "branch", ref_name: "main"),
+  base.merge(recovery_run_id: "29324314809"),
+  base.merge(ref_type: "branch", ref_name: "main", recovery_run_id: "0"),
+  base.merge(ref_type: "branch", ref_name: "main", recovery_run_id: "failed-run"),
   base.merge(release_tag: "notify-v2.0.1"),
   base.merge(confirmation: "publish"),
   base.merge(actor: "maintainer"),
@@ -458,6 +504,8 @@ negative_cases.each_with_index do |input, index|
   assert_policy(!publication_allowed?(**input), "negative gate case #{index + 1} unexpectedly publishes")
 end
 assert_policy(publication_allowed?(**base), "exact owner/tag/confirmation gate must remain reachable")
+recovery_base = base.merge(ref_type: "branch", ref_name: "main", recovery_run_id: "29324314809")
+assert_policy(publication_allowed?(**recovery_base), "exact owner/main/failed-run recovery gate must remain reachable")
 assert_policy(resume_action(nil, "sha256:a", mutable: true) == :upload,
               "missing draft assets must be uploadable")
 PUBLICATION_WRITE_KINDS.each do |kind|
