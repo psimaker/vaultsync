@@ -1104,8 +1104,48 @@ jobs:
           IMAGE_DIGEST: ${{ needs.image-ready.outputs.digest }}
         run: |
           set -euo pipefail
+          resolve_release() {
+            repository_owner=${GITHUB_REPOSITORY%%/*}
+            repository_name=${GITHUB_REPOSITORY#*/}
+            # GraphQL includes drafts, unlike the REST release-by-tag endpoint.
+            # Keep the query literal so shell expansion cannot alter its variables.
+            # shellcheck disable=SC2016
+            lookup=$(gh api graphql \
+              -F owner="$repository_owner" -F name="$repository_name" -F tag="$RELEASE_TAG" \
+              -f query='query($owner: String!, $name: String!, $tag: String!) {
+                repository(owner: $owner, name: $name) {
+                  release(tagName: $tag) { databaseId }
+                }
+              }') || return 1
+            jq -e '.data.repository != null and ((.errors // []) | length == 0)' <<<"$lookup" >/dev/null || return 1
+            release_id=$(jq -r '.data.repository.release.databaseId // empty' <<<"$lookup") || return 1
+            printf '%s\n' "$release_id" | grep -Eq '^[1-9][0-9]*$' || return 1
+            gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}" || return 1
+          }
+
+          release_json=$(resolve_release)
+          test "$(jq -r .tag_name <<<"$release_json")" = "$RELEASE_TAG"
+          test "$(jq -r .prerelease <<<"$release_json")" = false
+          while IFS= read -r existing_name; do
+            jq -e --arg name "$existing_name" '.release_assets | index($name) != null' "$RELEASE_SPEC" >/dev/null
+          done < <(jq -r '.assets[].name' <<<"$release_json")
+
           mkdir -p /tmp/vaultsync-notify-release
-          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir /tmp/vaultsync-notify-release
+          mapfile -t required_names < <(
+            jq -r '.release_assets[] | select(. != "ROLLOUT-EVIDENCE.txt")' "$RELEASE_SPEC"
+          )
+          for name in "${required_names[@]}"; do
+            matches=$(jq -r --arg name "$name" '[.assets[] | select(.name == $name)] | length' <<<"$release_json")
+            test "$matches" = 1
+            asset_id=$(jq -r --arg name "$name" '.assets[] | select(.name == $name) | .id' <<<"$release_json")
+            asset_digest=$(jq -r --arg name "$name" '.assets[] | select(.name == $name) | .digest' <<<"$release_json")
+            printf '%s\n' "$asset_id" | grep -Eq '^[1-9][0-9]*$'
+            printf '%s\n' "$asset_digest" | grep -Eq '^sha256:[0-9a-f]{64}$'
+            target="/tmp/vaultsync-notify-release/$name"
+            gh api --method GET -H 'Accept: application/octet-stream' \
+              "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" > "$target"
+            test "sha256:$(sha256sum "$target" | awk '{print $1}')" = "$asset_digest"
+          done
           (cd /tmp/vaultsync-notify-release && sha256sum -c SHA256SUMS)
           jq -e --arg sha "$RELEASE_SHA" --arg digest "$IMAGE_DIGEST" \
             '.source_commit == $sha and .image_index_digest == $digest' \
@@ -1213,7 +1253,10 @@ jobs:
           if [ -n "$evidence_digest" ]; then
             rm -rf /tmp/existing-rollout
             mkdir -p /tmp/existing-rollout
-            gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern "$evidence_name" --dir /tmp/existing-rollout
+            evidence_id=$(jq -r --arg name "$evidence_name" '.assets[] | select(.name == $name) | .id' <<<"$release_json")
+            printf '%s\n' "$evidence_id" | grep -Eq '^[1-9][0-9]*$'
+            gh api --method GET -H 'Accept: application/octet-stream' \
+              "repos/${GITHUB_REPOSITORY}/releases/assets/${evidence_id}" > "/tmp/existing-rollout/$evidence_name"
             test "sha256:$(sha256sum "/tmp/existing-rollout/$evidence_name" | awk '{print $1}')" = "$evidence_digest"
             grep -qx "source_commit=${RELEASE_SHA}" /tmp/existing-rollout/$evidence_name
             grep -qx "release_tag=${RELEASE_TAG}" /tmp/existing-rollout/$evidence_name
