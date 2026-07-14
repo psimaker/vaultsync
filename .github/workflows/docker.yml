@@ -615,13 +615,18 @@ jobs:
   attest-binaries:
     name: Attest Release Binaries
     if: >-
+      always() &&
       github.event_name == 'workflow_dispatch' &&
       github.ref_type == 'tag' &&
       inputs.release_tag == github.ref_name &&
       inputs.recovery_run_id == '' &&
       inputs.confirmation == 'PUBLISH_NOTIFY_RELEASE' &&
       github.actor == github.repository_owner &&
-      github.triggering_actor == github.repository_owner
+      github.triggering_actor == github.repository_owner &&
+      needs.publish-safety-policy.result == 'success' &&
+      needs.notify-guard.result == 'success' &&
+      needs.publish-gate.result == 'success' &&
+      needs.image-ready.result == 'success'
     needs:
       - publish-safety-policy
       - notify-guard

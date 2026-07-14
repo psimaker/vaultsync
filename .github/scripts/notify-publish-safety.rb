@@ -544,6 +544,12 @@ assert_policy((%w[publish-image recover-image] - jobs.fetch("image-ready").fetch
               "image selector must require both mutually exclusive image paths")
 assert_policy(jobs.fetch("attest-binaries").fetch("needs").include?("image-ready"),
               "normal binary attestation must follow immutable image selection")
+attest_binaries_condition = jobs.fetch("attest-binaries").fetch("if")
+assert_policy(attest_binaries_condition.include?("always()") &&
+              %w[publish-safety-policy notify-guard publish-gate image-ready].all? { |name|
+                attest_binaries_condition.include?("needs.#{name}.result == 'success'")
+              },
+              "normal binary attestation must survive the intentionally skipped recovery path")
 assert_policy((%w[image-ready attest-binaries] -
                jobs.fetch("binary-attestation-ready").fetch("needs")).empty?,
               "binary attestation selector must require image selection and the tag-only attestation job")
@@ -616,10 +622,10 @@ assert_policy(jobs.fetch("publish-gate").fetch("outputs").fetch("release_is_publ
               "publish gate must fail closed and export the finalized public-release state")
 
 assert_policy(spec.fetch("format_version") == 1, "release manifest format changed")
-assert_policy(spec.fetch("version") == "2.0.1", "release version must remain 2.0.1")
-assert_policy(spec.fetch("tag") == "notify-v2.0.1", "release tag must remain notify-v2.0.1")
+assert_policy(spec.fetch("version") == "2.0.2", "release version must remain 2.0.2")
+assert_policy(spec.fetch("tag") == "notify-v2.0.2", "release tag must remain notify-v2.0.2")
 assert_policy(spec.fetch("image") == "ghcr.io/psimaker/vaultsync-notify", "image repository changed")
-assert_policy(spec.fetch("version_image") == "ghcr.io/psimaker/vaultsync-notify:2.0.1",
+assert_policy(spec.fetch("version_image") == "ghcr.io/psimaker/vaultsync-notify:2.0.2",
               "version image changed")
 assert_policy(spec.fetch("binaries") == EXPECTED_BINARIES, "expected binary set or order changed")
 assert_policy(spec.fetch("release_assets").sort == EXPECTED_ASSETS.sort, "release asset set changed")
@@ -639,9 +645,9 @@ assert_policy(dockerfile.include?("/etc/ssl/certs/ca-certificates.crt"), "pinned
 
 install_text = File.read(INSTALL_PATH)
 compose_text = File.read(COMPOSE_PATH)
-assert_policy(install_text.include?("ghcr.io/psimaker/vaultsync-notify:2.0.1"),
+assert_policy(install_text.include?("ghcr.io/psimaker/vaultsync-notify:2.0.2"),
               "installer default is not the reviewed version tag")
-assert_policy(compose_text.include?("ghcr.io/psimaker/vaultsync-notify:2.0.1"),
+assert_policy(compose_text.include?("ghcr.io/psimaker/vaultsync-notify:2.0.2"),
               "Compose default is not the reviewed version tag")
 assert_policy(!install_text.include?("ghcr.io/psimaker/vaultsync-notify:latest") &&
               !compose_text.include?("ghcr.io/psimaker/vaultsync-notify:latest"),
@@ -663,7 +669,7 @@ security_resolve_step = steps(security_image_scan).find do |step|
 end
 assert_policy(!security_resolve_step.nil?, "scheduled scan release resolver is missing")
 security_release_env = security_resolve_step.fetch("env", {})
-assert_policy(security_release_env.fetch("TARGET_RELEASE_TAG", nil) == "notify-v2.0.1" &&
+assert_policy(security_release_env.fetch("TARGET_RELEASE_TAG", nil) == "notify-v2.0.2" &&
               security_release_env.fetch("FALLBACK_RELEASE_TAG", nil) == "notify-v2.0.0",
               "scheduled scan must use the reviewed target and last public fallback releases")
 assert_policy(security_text.include?("IMAGE-DIGESTS"), "scheduled scan must resolve the release digest")
@@ -708,7 +714,7 @@ negative_cases = [
   base.merge(recovery_run_id: "29324314809"),
   base.merge(ref_type: "branch", ref_name: "main", recovery_run_id: "0"),
   base.merge(ref_type: "branch", ref_name: "main", recovery_run_id: "failed-run"),
-  base.merge(release_tag: "notify-v2.0.0"),
+  base.merge(release_tag: "notify-v2.0.1"),
   base.merge(confirmation: "publish"),
   base.merge(actor: "maintainer"),
   base.merge(triggering_actor: "maintainer"),

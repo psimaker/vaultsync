@@ -16,7 +16,7 @@ services:
     restart: unless-stopped
 
   vaultsync-notify:
-    image: ghcr.io/psimaker/vaultsync-notify:2.0.1
+    image: ghcr.io/psimaker/vaultsync-notify:2.0.2
     # Run as the same uid/gid that owns Syncthing's config.xml. config.xml is mode
     # 0600, so a mismatched uid cannot read the API key off the shared volume — even
     # read-only. The 1000:1000 default fits the OFFICIAL syncthing/syncthing image;

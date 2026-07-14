@@ -126,7 +126,7 @@ jobs:
         id: release-image
         env:
           GH_TOKEN: ${{ github.token }}
-          TARGET_RELEASE_TAG: notify-v2.0.1
+          TARGET_RELEASE_TAG: notify-v2.0.2
           FALLBACK_RELEASE_TAG: notify-v2.0.0
         run: |
           set -euo pipefail
