@@ -27,6 +27,25 @@ func TestDiagnosticsRuntimeMountBindingMatchesInstallerVector(t *testing.T) {
 	}
 }
 
+func TestDiagnosticsRuntimeTestMountOverrideCannotBypassBinding(t *testing.T) {
+	identity := diagnosticsNamespaceFileIdentity{Device: 41, Inode: 42}
+	config := &diagnosticsRuntimeConfig{
+		Folders:            []diagnosticsRuntimeFolderConfig{{FolderID: "vault-a", MountAlias: "namespace-1"}},
+		mountBindings:      make(map[string][32]byte),
+		mountPathOverrides: map[string]string{"namespace-1": t.TempDir()},
+	}
+	if config.runtimeMountBindingsValid() || config.mountBindingMatches("vault-a", "/srv/vault", "namespace-1", identity) {
+		t.Fatal("test mount override bypassed a missing mount binding")
+	}
+	config.mountBindings["namespace-1"] = diagnosticsRuntimeMountBinding("vault-a", "/srv/vault", "namespace-1", identity)
+	if !config.runtimeMountBindingsValid() || !config.mountBindingMatches("vault-a", "/srv/vault", "namespace-1", identity) {
+		t.Fatal("exact test mount binding was rejected")
+	}
+	if config.mountBindingMatches("vault-a", "/srv/other", "namespace-1", identity) {
+		t.Fatal("test mount override accepted a different Syncthing path")
+	}
+}
+
 func TestDiagnosticsRuntimeMutationLockSerializesIndependentProcesses(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "credentials")
 	deviceDigest := strings.Repeat("d", 32)

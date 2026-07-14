@@ -57,11 +57,6 @@ func (config *diagnosticsRuntimeConfig) mountBindingMatches(
 	if config == nil || identity.Device == 0 || identity.Inode == 0 {
 		return false
 	}
-	if override := config.mountPathOverrides[alias]; override != "" {
-		// In-process tests cannot model the host path hidden behind Docker's
-		// exact bind. Overrides are unexported and cannot be loaded from config.
-		return true
-	}
 	actual, ok := config.mountBindings[alias]
 	if !ok {
 		return false

@@ -177,4 +177,13 @@ func TestDiagnosticsCapabilityRejectsStaleAndWrongTuple(t *testing.T) {
 	if err := validateDiagnosticsCapabilityClock(message, time.Unix(int64(issued+300), 0)); err == nil {
 		t.Fatal("stale capability query was accepted")
 	}
+	wrongTuple := diagnosticsUploadBinding{
+		homeserverBinding: bytes.Repeat([]byte{0x83}, 32),
+		folderBinding:     bytes.Repeat([]byte{0xaa}, 32),
+		appEpoch:          1,
+		helperEpoch:       1,
+	}
+	if diagnosticsCapabilityMatchesBinding(message, wrongTuple) {
+		t.Fatal("capability query for a different folder tuple was accepted")
+	}
 }

@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"time"
 )
@@ -475,6 +476,8 @@ func (sessions *diagnosticsRuntimeSessions) markNamespaceAuthorization(
 	recordID string,
 	initialAppKeyID []byte,
 	authorizationEpoch uint64,
+	expectedAuthorization diagnosticsPairingAuthorization,
+	expectedIdentity diagnosticsHelperCredentialIdentity,
 ) error {
 	if len(initialAppKeyID) != 32 || authorizationEpoch == 0 {
 		return errDiagnosticsNamespaceInvalid
@@ -485,11 +488,16 @@ func (sessions *diagnosticsRuntimeSessions) markNamespaceAuthorization(
 			return errDiagnosticsPairingUnavailable
 		}
 		authorization := &state.Authorizations[index]
-		if len(authorization.NamespaceInitialAppKeyID) != 0 &&
-			!bytes.Equal(authorization.NamespaceInitialAppKeyID, initialAppKeyID) {
-			return errDiagnosticsNamespaceConflict
+		if authorization.State != "active" || authorization.Transition != nil ||
+			!reflect.DeepEqual(*authorization, expectedAuthorization) || !reflect.DeepEqual(state.Identity, expectedIdentity) {
+			return errDiagnosticsPairingUnavailable
 		}
-		if authorization.NamespaceAuthorizationEpoch > authorizationEpoch {
+		if len(authorization.NamespaceInitialAppKeyID) == 0 {
+			if authorizationEpoch != 1 || !bytes.Equal(initialAppKeyID, authorization.AppKeyID) {
+				return errDiagnosticsNamespaceInvalid
+			}
+		} else if !bytes.Equal(authorization.NamespaceInitialAppKeyID, initialAppKeyID) ||
+			authorizationEpoch != authorization.NamespaceAuthorizationEpoch+1 {
 			return errDiagnosticsNamespaceConflict
 		}
 		authorization.NamespaceInitialAppKeyID = append([]byte(nil), initialAppKeyID...)

@@ -375,6 +375,7 @@ func TestDiagnosticsRuntimeCarrierIsExplicitAndCoreRemainsIsolated(t *testing.T)
 		filepath.Join(repoRoot, "notify", "diagnostics_upload_attestor.go"),
 		filepath.Join(repoRoot, "notify", "diagnostics_response_protocol.go"),
 		filepath.Join(repoRoot, "notify", "diagnostics_response_foundation.go"),
+		filepath.Join(repoRoot, "notify", "diagnostics_capability_protocol.go"),
 	} {
 		body, err := os.ReadFile(path)
 		if err != nil {

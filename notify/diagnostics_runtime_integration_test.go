@@ -369,6 +369,7 @@ func TestDiagnosticsNamespaceRuntimeRequiresSignedAppThenLocalOperatorThenAuthor
 	config := &diagnosticsRuntimeConfig{
 		FormatVersion: 1, ListenAddress: "127.0.0.1:8443", AdvertisedHost: "127.0.0.1", AdvertisedPort: 8443,
 		Folders: []diagnosticsRuntimeFolderConfig{{FolderID: folderID}}, stateDirectory: stateDirectory,
+		mountBindings:      make(map[string][32]byte),
 		mountPathOverrides: make(map[string]string),
 	}
 	sessions := newDiagnosticsRuntimeSessions(config, credentialStore, namespaceStore)
@@ -497,8 +498,74 @@ func TestDiagnosticsNamespaceRuntimeRequiresSignedAppThenLocalOperatorThenAuthor
 	rootPath := filepath.Join(parent, diagnosticsNamespaceRootName)
 	config.Folders[0].MountAlias = record.MountAlias
 	config.mountPathOverrides[record.MountAlias] = rootPath
+	config.mountBindings[record.MountAlias] = diagnosticsRuntimeMountBinding(
+		folderID,
+		parent,
+		record.MountAlias,
+		diagnosticsNamespaceFileIdentity{Device: record.Device, Inode: record.Inode},
+	)
 
 	candidate := diagnosticsRuntimeTestInitialAuthorization(t, authorization, credentialState.Identity, appPrivate, record, rootPath, clock.current())
+	appKeyID := diagnosticsKeyID(appPrivate.Public().(ed25519.PublicKey))
+	installation, _ := diagnosticsNamespaceInstallationBinding(appKeyID[:], authorization.HomeserverBinding, authorization.FolderBinding)
+	paths, _ := diagnosticsNamespaceAuthorizationPaths(installation[:])
+	preflightStarted := make(chan struct{})
+	releasePreflight := make(chan struct{})
+	namespaceRuntime.preflight = func(context.Context, []byte, *diagnosticsNamespaceRootHandle) error {
+		close(preflightStarted)
+		<-releasePreflight
+		return nil
+	}
+	authorizeResult := make(chan error, 1)
+	go func() { authorizeResult <- namespaceRuntime.authorize(context.Background(), candidate) }()
+	select {
+	case <-preflightStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("namespace authorization preflight did not start")
+	}
+	pendingResult := make(chan error, 1)
+	go func() {
+		_, _, pendingErr := namespaceRuntime.pendingForFolder(folderID)
+		pendingResult <- pendingErr
+	}()
+	select {
+	case pendingErr := <-pendingResult:
+		if pendingErr != nil {
+			t.Fatalf("pending request during namespace preflight: %v", pendingErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("slow namespace preflight retained the global runtime mutex")
+	}
+	originalStateDigest := append([]byte(nil), authorization.CurrentStateDigest...)
+	if err := credentialStore.update(func(state *diagnosticsCredentialState) error {
+		index := diagnosticsAuthorizationIndex(state.Authorizations, recordID)
+		state.Authorizations[index].CurrentStateDigest[0] ^= 1
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	close(releasePreflight)
+	if err := <-authorizeResult; !errors.Is(err, errDiagnosticsPairingUnavailable) {
+		t.Fatalf("authorization committed after credential state changed during preflight: %v", err)
+	}
+	staleHandle, err := openDiagnosticsNamespaceRoot(rootPath, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, readErr := staleHandle.ReadImmutable(paths[0]); !errors.Is(readErr, os.ErrNotExist) {
+		_ = staleHandle.Close()
+		t.Fatalf("stale authorization created an immutable artifact: %v", readErr)
+	}
+	if err := staleHandle.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := credentialStore.update(func(state *diagnosticsCredentialState) error {
+		index := diagnosticsAuthorizationIndex(state.Authorizations, recordID)
+		state.Authorizations[index].CurrentStateDigest = append([]byte(nil), originalStateDigest...)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	namespaceRuntime.preflight = func(context.Context, []byte, *diagnosticsNamespaceRootHandle) error { return nil }
 	authorizationCrash := errors.New("simulated crash after authorization state registration")
 	credentialStore.hooks.afterRename = func() error { return authorizationCrash }
@@ -511,12 +578,9 @@ func TestDiagnosticsNamespaceRuntimeRequiresSignedAppThenLocalOperatorThenAuthor
 	}
 	credentialState, _ = credentialStore.snapshot()
 	authorization = credentialState.Authorizations[diagnosticsAuthorizationIndex(credentialState.Authorizations, recordID)]
-	appKeyID := diagnosticsKeyID(appPrivate.Public().(ed25519.PublicKey))
 	if !bytes.Equal(authorization.NamespaceInitialAppKeyID, appKeyID[:]) || authorization.NamespaceAuthorizationEpoch != 1 {
 		t.Fatalf("namespace authorization state = %+v", authorization)
 	}
-	installation, _ := diagnosticsNamespaceInstallationBinding(appKeyID[:], authorization.HomeserverBinding, authorization.FolderBinding)
-	paths, _ := diagnosticsNamespaceAuthorizationPaths(installation[:])
 	handle, err := openDiagnosticsNamespaceRoot(rootPath, nil)
 	if err != nil {
 		t.Fatal(err)

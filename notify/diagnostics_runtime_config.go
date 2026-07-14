@@ -37,8 +37,8 @@ type diagnosticsRuntimeConfig struct {
 	configPath     string
 	mountBindings  map[string][32]byte
 	// mountPathOverrides is test-only in-process state. It is not serialized,
-	// cannot be supplied by an operator or network request, and lets unit tests
-	// model Docker's exact bind without writing under /diagnostics.
+	// cannot be supplied by an operator or network request, and only redirects
+	// filesystem access without bypassing the exact mount-binding digest.
 	mountPathOverrides map[string]string
 }
 
@@ -213,7 +213,7 @@ func (config diagnosticsRuntimeConfig) folder(folderID string) (diagnosticsRunti
 
 func (config diagnosticsRuntimeConfig) runtimeMountBindingsValid() bool {
 	for _, folder := range config.Folders {
-		if folder.MountAlias == "" || config.mountPathOverrides[folder.MountAlias] != "" {
+		if folder.MountAlias == "" {
 			continue
 		}
 		binding, ok := config.mountBindings[folder.MountAlias]

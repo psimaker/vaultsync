@@ -37,6 +37,35 @@ func openDiagnosticsNamespaceRoot(alias string, expected *diagnosticsNamespaceFi
 	if err != nil {
 		return nil, errDiagnosticsNamespaceUnsupported
 	}
+	return openDiagnosticsNamespaceRootHandle(root, pathInfo, alias, expected)
+}
+
+func openDiagnosticsNamespaceRootAt(
+	parent *os.Root,
+	name string,
+	alias string,
+	expected *diagnosticsNamespaceFileIdentity,
+) (*diagnosticsNamespaceRootHandle, error) {
+	if parent == nil || name == "" {
+		return nil, errDiagnosticsNamespaceUnsupported
+	}
+	pathInfo, err := parent.Lstat(name)
+	if err != nil || !pathInfo.IsDir() || pathInfo.Mode()&os.ModeSymlink != 0 {
+		return nil, errDiagnosticsNamespaceUnsupported
+	}
+	root, err := parent.OpenRoot(name)
+	if err != nil {
+		return nil, errDiagnosticsNamespaceUnsupported
+	}
+	return openDiagnosticsNamespaceRootHandle(root, pathInfo, alias, expected)
+}
+
+func openDiagnosticsNamespaceRootHandle(
+	root *os.Root,
+	pathInfo fs.FileInfo,
+	alias string,
+	expected *diagnosticsNamespaceFileIdentity,
+) (*diagnosticsNamespaceRootHandle, error) {
 	anchor, err := root.Open(".")
 	if err != nil {
 		_ = root.Close()

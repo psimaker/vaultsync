@@ -112,7 +112,7 @@ func prepareDiagnosticsNamespaceExplicit(request diagnosticsNamespacePreparation
 		return diagnosticsNamespaceRootRecord{}, errDiagnosticsNamespaceUnsupported
 	}
 	rootPath := filepath.Join(request.parentPath, diagnosticsNamespaceRootName)
-	handle, err := openDiagnosticsNamespaceRoot(rootPath, nil)
+	handle, err := openDiagnosticsNamespaceRootAt(parent, diagnosticsNamespaceRootName, rootPath, nil)
 	if err != nil {
 		return diagnosticsNamespaceRootRecord{}, fmt.Errorf("root open: %w", err)
 	}
@@ -164,7 +164,7 @@ func recoverDiagnosticsNamespaceExplicit(
 		return diagnosticsNamespaceRootRecord{}, errDiagnosticsNamespaceCollision
 	}
 	rootPath := filepath.Join(request.parentPath, diagnosticsNamespaceRootName)
-	handle, err := openDiagnosticsNamespaceRoot(rootPath, nil)
+	handle, err := openDiagnosticsNamespaceRootAt(parent, diagnosticsNamespaceRootName, rootPath, nil)
 	if err != nil {
 		return diagnosticsNamespaceRootRecord{}, errDiagnosticsNamespaceCollision
 	}

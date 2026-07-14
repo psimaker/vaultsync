@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/subtle"
 	"errors"
+	"reflect"
 	"time"
 )
 
@@ -574,12 +575,11 @@ func (manager *diagnosticsPairingManager) observeLifecycleCapability(
 	transitionDigest []byte,
 	prepare func(diagnosticsLifecycleCommitPlan) error,
 ) (bool, error) {
-	manager.mutex.Lock()
-	defer manager.mutex.Unlock()
 	if len(transitionDigest) != 32 {
 		return false, errDiagnosticsPairingInvalid
 	}
 	nowUnix := manager.now().Unix()
+	manager.mutex.Lock()
 	if err := manager.store.updateIfChanged(func(state *diagnosticsCredentialState) (bool, error) {
 		index := diagnosticsAuthorizationIndex(state.Authorizations, recordID)
 		if index < 0 {
@@ -599,35 +599,22 @@ func (manager *diagnosticsPairingManager) observeLifecycleCapability(
 		transition.ProposedStateConfirmed = true
 		return true, nil
 	}); err != nil {
+		manager.mutex.Unlock()
 		return false, err
 	}
 
 	state, err := manager.store.snapshot()
 	if err != nil {
+		manager.mutex.Unlock()
 		return false, err
 	}
-	index := diagnosticsAuthorizationIndex(state.Authorizations, recordID)
-	if index < 0 || state.Authorizations[index].Transition == nil {
-		return false, errDiagnosticsPairingUnavailable
-	}
-	transition := state.Authorizations[index].Transition
-	ready := transition.Kind == diagnosticsPairingTransitionAppKey
-	if transition.Kind == diagnosticsPairingTransitionHelperKey {
-		ready = allDiagnosticsAuthorizationsConfirmedForHelper(state.Authorizations, transition, nowUnix)
-	} else if transition.Kind == diagnosticsPairingTransitionTLSPin {
-		ready = allDiagnosticsAuthorizationsConfirmedForTLS(state.Authorizations, transition, nowUnix)
+	plan, ready, err := diagnosticsLifecyclePlanForState(state, recordID, transitionDigest, nowUnix)
+	manager.mutex.Unlock()
+	if err != nil {
+		return false, err
 	}
 	if !ready {
 		return false, nil
-	}
-	plan := diagnosticsLifecycleCommitPlan{
-		Kind: transition.Kind, Identity: state.Identity,
-		Authorizations:      cloneDiagnosticsCredentialState(state).Authorizations,
-		ProposedHelperSeed:  append([]byte(nil), transition.ProposedHelperSeed...),
-		ProposedHelperKeyID: append([]byte(nil), transition.ProposedHelperKeyID...),
-		ProposedHelperEpoch: transition.ProposedHelperEpoch,
-		ProposedTLSPrivate:  append([]byte(nil), transition.ProposedTLSPrivate...),
-		ProposedTLSPin:      append([]byte(nil), transition.ProposedTLSPin...),
 	}
 	if prepare != nil {
 		if err := prepare(plan); err != nil {
@@ -635,17 +622,18 @@ func (manager *diagnosticsPairingManager) observeLifecycleCapability(
 		}
 	}
 
+	manager.mutex.Lock()
+	defer manager.mutex.Unlock()
 	err = manager.store.update(func(current *diagnosticsCredentialState) error {
-		currentIndex := diagnosticsAuthorizationIndex(current.Authorizations, recordID)
-		if currentIndex < 0 || current.Authorizations[currentIndex].Transition == nil {
+		currentPlan, currentReady, planErr := diagnosticsLifecyclePlanForState(*current, recordID, transitionDigest, nowUnix)
+		if planErr != nil {
+			return planErr
+		}
+		if !currentReady || !reflect.DeepEqual(currentPlan, plan) {
 			return errDiagnosticsPairingUnavailable
 		}
+		currentIndex := diagnosticsAuthorizationIndex(current.Authorizations, recordID)
 		currentTransition := current.Authorizations[currentIndex].Transition
-		if currentTransition.Kind != transition.Kind || currentTransition.Stage != "committed" ||
-			!currentTransition.ProposedStateConfirmed ||
-			subtle.ConstantTimeCompare(currentTransition.TransitionDigest, transitionDigest) != 1 {
-			return errDiagnosticsPairingInvalid
-		}
 		switch currentTransition.Kind {
 		case diagnosticsPairingTransitionAppKey:
 			authorization := &current.Authorizations[currentIndex]
@@ -691,6 +679,41 @@ func (manager *diagnosticsPairingManager) observeLifecycleCapability(
 		return nil
 	})
 	return err == nil, err
+}
+
+func diagnosticsLifecyclePlanForState(
+	state diagnosticsCredentialState,
+	recordID string,
+	transitionDigest []byte,
+	nowUnix int64,
+) (diagnosticsLifecycleCommitPlan, bool, error) {
+	index := diagnosticsAuthorizationIndex(state.Authorizations, recordID)
+	if index < 0 || state.Authorizations[index].Transition == nil {
+		return diagnosticsLifecycleCommitPlan{}, false, errDiagnosticsPairingUnavailable
+	}
+	transition := state.Authorizations[index].Transition
+	if transition.Stage != "committed" || !transition.ProposedStateConfirmed ||
+		subtle.ConstantTimeCompare(transition.TransitionDigest, transitionDigest) != 1 {
+		return diagnosticsLifecycleCommitPlan{}, false, errDiagnosticsPairingInvalid
+	}
+	ready := transition.Kind == diagnosticsPairingTransitionAppKey
+	if transition.Kind == diagnosticsPairingTransitionHelperKey {
+		ready = allDiagnosticsAuthorizationsConfirmedForHelper(state.Authorizations, transition, nowUnix)
+	} else if transition.Kind == diagnosticsPairingTransitionTLSPin {
+		ready = allDiagnosticsAuthorizationsConfirmedForTLS(state.Authorizations, transition, nowUnix)
+	}
+	if !ready {
+		return diagnosticsLifecycleCommitPlan{}, false, nil
+	}
+	return diagnosticsLifecycleCommitPlan{
+		Kind: transition.Kind, Identity: state.Identity,
+		Authorizations:      cloneDiagnosticsCredentialState(state).Authorizations,
+		ProposedHelperSeed:  append([]byte(nil), transition.ProposedHelperSeed...),
+		ProposedHelperKeyID: append([]byte(nil), transition.ProposedHelperKeyID...),
+		ProposedHelperEpoch: transition.ProposedHelperEpoch,
+		ProposedTLSPrivate:  append([]byte(nil), transition.ProposedTLSPrivate...),
+		ProposedTLSPin:      append([]byte(nil), transition.ProposedTLSPin...),
+	}, true, nil
 }
 
 func (manager *diagnosticsPairingManager) reconcileConfirmedLifecycle(

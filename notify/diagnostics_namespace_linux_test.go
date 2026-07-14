@@ -385,6 +385,50 @@ func TestDiagnosticsNamespaceRootAndComponentSwapsInterrupt(t *testing.T) {
 	}
 }
 
+func TestDiagnosticsNamespaceParentAnchoredOpenRejectsPathSwap(t *testing.T) {
+	prepared := prepareDiagnosticsNamespaceLinuxFixture(t)
+	if err := prepared.handle.Close(); err != nil {
+		t.Fatal(err)
+	}
+	parent, err := diagnosticsNamespaceOpenTrustedParent(prepared.parentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer parent.Close()
+	originalParent := prepared.parentPath + ".original"
+	if err := os.Rename(prepared.parentPath, originalParent); err != nil {
+		t.Fatal(err)
+	}
+	replacementRoot := filepath.Join(prepared.parentPath, diagnosticsNamespaceRootName)
+	if err := os.MkdirAll(replacementRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(replacementRoot, "replacement-sentinel")
+	if err := os.WriteFile(sentinel, []byte("untouched"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	anchored, err := openDiagnosticsNamespaceRootAt(
+		parent,
+		diagnosticsNamespaceRootName,
+		filepath.Join(prepared.parentPath, diagnosticsNamespaceRootName),
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer anchored.Close()
+	if _, _, err := anchored.ReadImmutable(diagnosticsNamespaceRootManifestPath()); !errors.Is(err, errDiagnosticsNamespaceUnsupported) {
+		t.Fatalf("parent-anchored path swap result = %v", err)
+	}
+	if body, err := os.ReadFile(sentinel); err != nil || string(body) != "untouched" {
+		t.Fatalf("replacement root was accessed: %q, %v", body, err)
+	}
+	if _, err := os.Stat(filepath.Join(originalParent, diagnosticsNamespaceRootName, diagnosticsNamespaceRootManifestName)); err != nil {
+		t.Fatal("original anchored namespace was changed")
+	}
+}
+
 func TestDiagnosticsNamespaceFixedLayoutRejectsEpochGapsAndDetachedChains(t *testing.T) {
 	t.Run("helper-epoch-filename-mismatch", func(t *testing.T) {
 		prepared := prepareDiagnosticsNamespaceLinuxFixture(t)

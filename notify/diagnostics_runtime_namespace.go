@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"time"
 )
@@ -30,17 +31,18 @@ type diagnosticsNamespacePendingEnablement struct {
 }
 
 type diagnosticsNamespaceRuntime struct {
-	config          *diagnosticsRuntimeConfig
-	credentialStore *diagnosticsCredentialStore
-	namespaceStore  *diagnosticsNamespaceStateStore
-	sessions        *diagnosticsRuntimeSessions
-	now             func() time.Time
-	random          io.Reader
-	mutex           sync.Mutex
-	pending         map[string]*diagnosticsNamespacePendingEnablement
-	requests        []time.Time
-	startsByFolder  map[[32]byte][]time.Time
-	preflight       func(context.Context, []byte, *diagnosticsNamespaceRootHandle) error
+	config             *diagnosticsRuntimeConfig
+	credentialStore    *diagnosticsCredentialStore
+	namespaceStore     *diagnosticsNamespaceStateStore
+	sessions           *diagnosticsRuntimeSessions
+	now                func() time.Time
+	random             io.Reader
+	mutex              sync.Mutex
+	pending            map[string]*diagnosticsNamespacePendingEnablement
+	requests           []time.Time
+	startsByFolder     map[[32]byte][]time.Time
+	preflight          func(context.Context, []byte, *diagnosticsNamespaceRootHandle) error
+	authorizationLocks sync.Map
 }
 
 func newDiagnosticsNamespaceRuntime(
@@ -205,8 +207,9 @@ func (runtime *diagnosticsNamespaceRuntime) expirePending(now time.Time) {
 func (runtime *diagnosticsNamespaceRuntime) authorize(ctx context.Context, body []byte) error {
 	now := runtime.now()
 	runtime.mutex.Lock()
-	defer runtime.mutex.Unlock()
-	if !allowDiagnosticsUploadWindow(&runtime.requests, now, time.Minute, diagnosticsNamespaceControlRequestsMinute) {
+	allowed := allowDiagnosticsUploadWindow(&runtime.requests, now, time.Minute, diagnosticsNamespaceControlRequestsMinute)
+	runtime.mutex.Unlock()
+	if !allowed {
 		return errDiagnosticsPairingRateLimited
 	}
 	value, err := decodeDiagnosticsCBOR(body)
@@ -224,6 +227,12 @@ func (runtime *diagnosticsNamespaceRuntime) authorize(ctx context.Context, body 
 	nowSeconds := uint64(now.Unix())
 	appKeyID, _ := diagnosticsNamespaceBytesField(value, 11, 32)
 	folderBinding, _ := diagnosticsNamespaceBytesField(value, 6, 32)
+	authorizationLock, ok := runtime.authorizationLock(folderBinding)
+	if !ok {
+		return errDiagnosticsNamespaceInvalid
+	}
+	authorizationLock.Lock()
+	defer authorizationLock.Unlock()
 	authorization, identity, err := runtime.sessions.activeAuthorization(appKeyID, folderBinding)
 	if err != nil {
 		return err
@@ -232,7 +241,10 @@ func (runtime *diagnosticsNamespaceRuntime) authorize(ctx context.Context, body 
 	if err != nil || folderConfig.MountAlias == "" {
 		return errDiagnosticsNamespaceUnsupported
 	}
-	mountPath, _ := runtime.config.mountPath(folderConfig.MountAlias)
+	mountPath, err := runtime.config.mountPath(folderConfig.MountAlias)
+	if err != nil {
+		return errDiagnosticsNamespaceUnsupported
+	}
 	handle, err := openDiagnosticsNamespaceRoot(mountPath, nil)
 	if err != nil {
 		return errDiagnosticsNamespaceUnsupported
@@ -289,12 +301,42 @@ func (runtime *diagnosticsNamespaceRuntime) authorize(ctx context.Context, body 
 	if !runtime.authorizationMatchesCurrent(value, authorization, identity, rootMessage, rootDigest, currentManifestDigest) {
 		return errDiagnosticsNamespaceInvalid
 	}
+	currentAuthorization, currentIdentity, err := runtime.sessions.activeAuthorization(appKeyID, folderBinding)
+	if err != nil {
+		return err
+	}
+	currentRootRecord, currentFolderConfig, err := runtime.sessions.rootAndFolder(folderBinding)
+	if err != nil || currentFolderConfig != folderConfig ||
+		!diagnosticsNamespaceRootRecordsEqual(currentRootRecord, rootRecord) ||
+		handle.ValidateRootRecord(currentRootRecord) != nil ||
+		!reflect.DeepEqual(currentAuthorization, authorization) || !reflect.DeepEqual(currentIdentity, identity) ||
+		!runtime.authorizationMatchesCurrent(value, currentAuthorization, currentIdentity, rootMessage, rootDigest, currentManifestDigest) {
+		return errDiagnosticsPairingUnavailable
+	}
+	authorization = currentAuthorization
+	identity = currentIdentity
 	initialAppKeyID, _ := diagnosticsNamespaceBytesField(value, 9, 32)
 	authorizationEpoch, _ := diagnosticsNamespaceUintField(value, 31)
 	if err := installDiagnosticsRuntimeAuthorization(handle, complete, authorization, messageType); err != nil {
 		return err
 	}
-	return runtime.sessions.markNamespaceAuthorization(authorization.RecordID, initialAppKeyID, authorizationEpoch)
+	return runtime.sessions.markNamespaceAuthorization(
+		authorization.RecordID,
+		initialAppKeyID,
+		authorizationEpoch,
+		authorization,
+		identity,
+	)
+}
+
+func (runtime *diagnosticsNamespaceRuntime) authorizationLock(folderBinding []byte) (*sync.Mutex, bool) {
+	if len(folderBinding) != sha256.Size {
+		return nil, false
+	}
+	var key [sha256.Size]byte
+	copy(key[:], folderBinding)
+	lock, _ := runtime.authorizationLocks.LoadOrStore(key, &sync.Mutex{})
+	return lock.(*sync.Mutex), true
 }
 
 func (runtime *diagnosticsNamespaceRuntime) authorizationMatchesCurrent(
