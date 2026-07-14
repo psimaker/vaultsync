@@ -1,10 +1,17 @@
-# Helper 2.0.1 publication and helper-first rollout
+# Helper 2.0.2 publication and helper-first rollout
 
 This document defines the owner-gated publication, compatibility, rollback,
-monitoring, and recovery contract for `vaultsync-notify` 2.0.1. This patch
-supersedes 2.0.0 because that release did not expose D022's pending transcript
-fingerprint to the local operator; no 2.0.0 artifact or tag is changed. It does not by
-itself claim that publication ran. The GitHub release, its
+monitoring, and recovery contract for `vaultsync-notify` 2.0.2. This patch
+supersedes 2.0.1 after tag-bound workflow run `29358780832` published only the
+scanned and attested image index
+`sha256:2c0f620fa1ce934ae75b358a60935460d244b19d4e98718728dd0338e0b24229`.
+GitHub Actions then propagated the intentionally skipped recovery path past the
+normal binary-attestation job, so no binaries, GitHub release, helper-first
+rollout, or public verification were produced. The 2.0.1 tag and image remain
+unchanged and are not completion evidence. Version 2.0.1 had superseded 2.0.0
+because 2.0.0 did not expose D022's pending transcript fingerprint to the local
+operator; no 2.0.0 artifact or tag is changed. This document does not by itself
+claim that 2.0.2 publication ran. The GitHub release, its
 `RELEASE-MANIFEST.json`, the exact workflow run, and the registry digest are the
 canonical post-publication evidence.
 
@@ -17,9 +24,9 @@ upload, download, or roundtrip product evidence follows from publication.
 The reviewed source manifest is [`../notify/release.json`](../notify/release.json).
 It fixes:
 
-- version `2.0.1` and tag `notify-v2.0.1`;
+- version `2.0.2` and tag `notify-v2.0.2`;
 - image repository `ghcr.io/psimaker/vaultsync-notify`, with the only new tag
-  `2.0.1`;
+  `2.0.2`;
 - five expected binaries for Linux amd64/arm64, macOS amd64/arm64, and Windows
   amd64;
 - the previous public rollback tag, commit, and multi-platform image digest;
@@ -53,13 +60,13 @@ repository security setting requires separate authorization.
 
 | Artifact | Required proof |
 |---|---|
-| OCI index for Linux amd64 and arm64 | Exact index and platform SHA-256 digests; source/version labels; embedded `vaultsync-notify 2.0.1`; BuildKit provenance/SBOM plus GitHub repository-bound provenance and SPDX SBOM attestations. |
+| OCI index for Linux amd64 and arm64 | Exact index and platform SHA-256 digests; source/version labels; embedded `vaultsync-notify 2.0.2`; BuildKit provenance/SBOM plus GitHub repository-bound provenance and SPDX SBOM attestations. |
 | Five static binaries | Rebuilt twice byte-identically from the tag commit, listed in `SHA256SUMS`, scanned, and covered by GitHub provenance and SPDX SBOM attestations. |
 | `SHA256SUMS` | Exact checksum for each binary; installers fail closed if this asset or a local SHA-256 implementation is unavailable. |
 | `SBOM.spdx.json` | SPDX 2.3 inventory for the release binary set. |
 | `IMAGE-DIGESTS` | Image repository, version tag, OCI index digest, and Linux amd64/arm64 manifest digests. |
 | `RELEASE-MANIFEST.json` | Release version/tag, exact source commit, image digest, rollback baseline, binary sizes/digests, SBOM digest, and expected asset set. The exact workflow run is recorded separately in rollout evidence. |
-| `ROLLOUT-EVIDENCE.txt` | Exact old/new references and the supported-host upgrade, rollback, and forward-recovery results, including the observed legacy 1.8.0 endpoint-log boundary and the 2.0.1 sensitive-log assertion. |
+| `ROLLOUT-EVIDENCE.txt` | Exact old/new references and the supported-host upgrade, rollback, and forward-recovery results, including the observed legacy 1.8.0 endpoint-log boundary and the 2.0.2 sensitive-log assertion. |
 
 The image runtime is a static scratch image built from a digest-pinned Go
 builder. Its CA bundle is copied from that same pinned builder. There is no
@@ -81,8 +88,8 @@ Publication is staged in this order:
    release without replacing any asset.
 4. On a fresh GitHub-hosted standard Linux runner using rootful Docker, execute
    the real explicit diagnostics installer against only digest references:
-   published 1.8.0 → candidate 2.0.1 → published 1.8.0 → the same candidate
-   2.0.1.
+   published 1.8.0 → candidate 2.0.2 → published 1.8.0 → the same candidate
+   2.0.2.
 5. Require the old helper to keep diagnostics unavailable, the new helper to
    expose the TLS listener, the rollback to preserve credential-state bytes,
    and forward recovery to preserve both those bytes and the TLS SPKI pin. The
@@ -107,14 +114,15 @@ Diagnostics is additive and opt-in; Trigger v1 and Relay v1 remain unchanged.
 | App | Helper | Relay | Result |
 |---|---|---|---|
 | Released old app | Published old helper 1.8.0 | Existing old Relay | Existing Trigger-v1 behavior only. |
-| Released old app | Published helper 2.0.1, diagnostics unset | Existing old Relay | Byte-compatible Trigger-v1 behavior. No listener, credential, namespace, trust, mapping, or diagnostics artifact is created. |
-| Released old app | Helper 2.0.1 explicitly configured | Existing old Relay | Helper capability exists locally, but the old app never calls it. Upload, download, and roundtrip remain unset. |
+| Any app | Partial image-only helper 2.0.1 | Any Relay v1 | Aborted publication state: no GitHub release, binaries, helper-first rollout, or public verification. The immutable image is retained for audit but is not a supported helper release. |
+| Released old app | Published helper 2.0.2, diagnostics unset | Existing old Relay | Byte-compatible Trigger-v1 behavior. No listener, credential, namespace, trust, mapping, or diagnostics artifact is created. |
+| Released old app | Helper 2.0.2 explicitly configured | Existing old Relay | Helper capability exists locally, but the old app never calls it. Upload, download, and roundtrip remain unset. |
 | Future capable app | Published old helper 1.8.0 | Any supported Relay v1 | Honest capability unavailable. The app must not pair, create, trust, or transfer. |
-| Future capable app | Helper 2.0.1, unconfigured/unpaired/unauthorized | Any supported Relay v1 | Honest unavailable/unsupported response; no fallback evidence and no automatic action. |
-| Future capable app | Helper 2.0.1, exact explicit pairing and namespace authorization | Existing old Relay | The local D022–D024 helper contract may be used only after the explicit local transcript comparison. Relay remains outside upload/download/roundtrip correlation. |
-| Future capable app | Helper 2.0.1 | Future new Relay | Same local diagnostics contract; Relay version does not strengthen sync evidence. |
-| Any app | Helper 2.0.1 → 1.8.0 | Any Relay v1 | Diagnostics becomes unavailable. Credentials, namespace content, mappings, backups, versions, conflicts, and tombstones are not deleted or rewritten. The rollback also restores 1.8.0's legacy configured-endpoint startup log fields; operators must apply their existing log-access controls. |
-| Any app | Helper 2.0.1 → 1.8.0 → exact 2.0.1 digest | Any Relay v1 | Forward recovery revalidates preserved state and requires current exact credentials/authorization. No operation resumes automatically. |
+| Future capable app | Helper 2.0.2, unconfigured/unpaired/unauthorized | Any supported Relay v1 | Honest unavailable/unsupported response; no fallback evidence and no automatic action. |
+| Future capable app | Helper 2.0.2, exact explicit pairing and namespace authorization | Existing old Relay | The local D022–D024 helper contract may be used only after the explicit local transcript comparison. Relay remains outside upload/download/roundtrip correlation. |
+| Future capable app | Helper 2.0.2 | Future new Relay | Same local diagnostics contract; Relay version does not strengthen sync evidence. |
+| Any app | Helper 2.0.2 → 1.8.0 | Any Relay v1 | Diagnostics becomes unavailable. Credentials, namespace content, mappings, backups, versions, conflicts, and tombstones are not deleted or rewritten. The rollback also restores 1.8.0's legacy configured-endpoint startup log fields; operators must apply their existing log-access controls. |
+| Any app | Helper 2.0.2 → 1.8.0 → exact 2.0.2 digest | Any Relay v1 | Forward recovery revalidates preserved state and requires current exact credentials/authorization. No operation resumes automatically. |
 
 The five downloadable binaries do not expand diagnostics packaging support.
 Docker Host-Bind on a standard Linux host with rootful Docker remains the only
@@ -133,7 +141,7 @@ Publication aborts before the GitHub release becomes public on any of:
 - missing/extra release asset, binary non-reproducibility, checksum mismatch,
   or image architecture/version/label mismatch;
 - failure of upgrade, rollback, forward recovery, state-byte preservation,
-  TLS-pin preservation, mount constraints, 2.0.1 sensitive-log exclusion, or
+  TLS-pin preservation, mount constraints, 2.0.2 sensitive-log exclusion, or
   exact installer use. The separately asserted legacy endpoint fields from the
   immutable 1.8.0 rollback image are a documented rollback boundary, not
   candidate evidence.
@@ -155,12 +163,12 @@ or user-vault progress.
 
 Existing installs are not migrated, paired, restarted, or reconfigured by
 publication. The historical `latest` image tag is not moved. A user or operator
-must explicitly rerun the installer, select the reviewed `2.0.1` version tag,
+must explicitly rerun the installer, select the reviewed `2.0.2` version tag,
 or pull the documented digest. The installer re-resolves the version tag and
 runs the resulting local content ID; a network failure does not silently reuse
 a stale tag.
 
-Without both diagnostics configuration paths, 2.0.1 behaves as the prior
+Without both diagnostics configuration paths, 2.0.2 behaves as the prior
 Trigger-v1 helper and creates no diagnostics state. With explicit configuration,
 pairing, namespace enablement, and later app operations remain separate signed
 actions. No helper publication discovers Syncthing, changes its configuration,
@@ -176,8 +184,8 @@ delivery, or global health.
 Emergency rollback also returns to 1.8.0's existing startup logging of
 configured endpoint values. It does not log the API key in this proof, but
 endpoint values can still be private deployment metadata. Restrict old-helper
-log access and forward-recover to the exact 2.0.1 digest when the abort cause is
-cleared; 2.0.1's rollout gate rejects those configured values in candidate
+log access and forward-recover to the exact 2.0.2 digest when the abort cause is
+cleared; 2.0.2's rollout gate rejects those configured values in candidate
 logs.
 
 ## Evidence boundary after helper rollout
