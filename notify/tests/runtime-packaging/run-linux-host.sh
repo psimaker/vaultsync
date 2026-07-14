@@ -4,7 +4,11 @@
 # host: it deliberately exercises the root-only operator installer.
 set -eu
 
-old_commit=85e527db180a17d9d23f9ba233cf5abd0e9671f6
+old_commit=e4f9e3088d7b7bc47943ff59db73de369c16c543
+published_old_reference=${VAULTSYNC_RUNTIME_PACKAGING_OLD_IMAGE:-}
+published_new_reference=${VAULTSYNC_RUNTIME_PACKAGING_NEW_IMAGE:-}
+published_new_commit=${VAULTSYNC_RUNTIME_PACKAGING_NEW_COMMIT:-}
+published_new_version=${VAULTSYNC_RUNTIME_PACKAGING_NEW_VERSION:-}
 script_directory=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 notify_directory=$(CDPATH='' cd -- "$script_directory/../.." && pwd)
 repository_directory=$(CDPATH='' cd -- "$notify_directory/.." && pwd)
@@ -20,6 +24,7 @@ api_key=runtime-linux-api-key-sentinel
 folder_id=runtime-linux-proof
 mock_port=$((20000 + run_id % 10000))
 helper_port=$((mock_port + 1))
+old_endpoint_log_observations=0
 
 cleanup() {
 	docker rm -f "$container_name" "$mock_name" >/dev/null 2>&1 || true
@@ -36,26 +41,71 @@ fail() {
 [ "$(uname -s)" = Linux ] || fail 'this proof requires a standard Linux host'
 [ "$(id -u)" -eq 0 ] || fail 'this proof must exercise the root-only installer'
 command -v docker >/dev/null 2>&1 || fail 'Docker Engine is required'
+command -v git >/dev/null 2>&1 || fail 'Git is required'
 docker info >/dev/null 2>&1 || fail 'rootful Docker Engine is unavailable'
 case $(docker info --format '{{json .SecurityOptions}}') in
 	*rootless*) fail 'rootless Docker is not a supported proof host' ;;
 esac
 
-mkdir -p "$temporary_directory/old" "$temporary_directory/config-source"
-git -c "safe.directory=$repository_directory" -C "$repository_directory" \
-	cat-file -e "$old_commit^{commit}" || fail 'old helper commit is unavailable'
-git -c "safe.directory=$repository_directory" -C "$repository_directory" \
-	archive "$old_commit" notify | tar -x -C "$temporary_directory/old"
-
-docker build --build-arg "VERSION=packaging-old-$old_commit" -t "$old_tag" "$temporary_directory/old/notify"
 new_commit=$(git -c "safe.directory=$repository_directory" -C "$repository_directory" rev-parse HEAD)
-[ -z "$(git -c "safe.directory=$repository_directory" -C "$repository_directory" status --porcelain -- notify .github/workflows/ci.yml)" ] || \
+[ -z "$(git -c "safe.directory=$repository_directory" -C "$repository_directory" status --porcelain -- notify .github/workflows/ci.yml .github/workflows/docker.yml .github/workflows/security.yml .github/scripts/notify-publish-safety.rb)" ] || \
 	fail 'Linux-host packaging proof requires a clean committed source tree'
-docker build --build-arg "VERSION=packaging-new-$new_commit" -t "$new_tag" "$notify_directory"
+mkdir -p "$temporary_directory/config-source"
+
+publication_mode=source-build
+old_reference=source-commit:$old_commit
+new_reference=source-commit:$new_commit
+new_version=packaging-new-$new_commit
+if [ -n "$published_old_reference$published_new_reference$published_new_commit$published_new_version" ]; then
+	[ -n "$published_old_reference" ] || fail 'published rollout requires the old immutable image reference'
+	[ -n "$published_new_reference" ] || fail 'published rollout requires the new immutable image reference'
+	[ -n "$published_new_commit" ] || fail 'published rollout requires the exact new source commit'
+	[ -n "$published_new_version" ] || fail 'published rollout requires the exact new version'
+	printf '%s\n' "$published_old_reference" | grep -Eq '^ghcr\.io/psimaker/vaultsync-notify@sha256:[0-9a-f]{64}$' ||
+		fail 'old published image must be the exact VaultSync GHCR digest reference'
+	printf '%s\n' "$published_new_reference" | grep -Eq '^ghcr\.io/psimaker/vaultsync-notify@sha256:[0-9a-f]{64}$' ||
+		fail 'new published image must be the exact VaultSync GHCR digest reference'
+	[ "$published_new_commit" = "$new_commit" ] || fail 'published image source commit does not match the checked-out release commit'
+	printf '%s\n' "$published_new_version" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' ||
+		fail 'published helper version is not canonical semantic version text'
+	docker pull "$published_old_reference" >/dev/null
+	docker pull "$published_new_reference" >/dev/null
+	old_image=$(docker image inspect --format '{{.Id}}' "$published_old_reference")
+	new_image=$(docker image inspect --format '{{.Id}}' "$published_new_reference")
+	[ "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$published_old_reference")" = "$old_commit" ] ||
+		fail 'published old helper source label does not match the rollback commit'
+	[ "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$published_old_reference")" = 1.8.0 ] ||
+		fail 'published old helper version label is not 1.8.0'
+	[ "$(docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges "$published_old_reference" --version)" = 'vaultsync-notify 1.8.0' ] ||
+		fail 'published old helper binary version is not 1.8.0'
+	[ "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$published_new_reference")" = "$published_new_commit" ] ||
+		fail 'published new helper source label does not match the release commit'
+	[ "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$published_new_reference")" = "$published_new_version" ] ||
+		fail 'published new helper version label does not match the release version'
+	[ "$(docker image inspect --format '{{.Config.User}}' "$published_new_reference")" = 65534:65534 ] ||
+		fail 'published new helper default user is not the reviewed non-root identity'
+	[ "$(docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges "$published_new_reference" --version)" = "vaultsync-notify $published_new_version" ] ||
+		fail 'published helper binary version does not match the release version'
+	if docker run --rm --network none --entrypoint /bin/sh "$published_new_reference" -c true >/dev/null 2>&1; then
+		fail 'published new helper image unexpectedly contains a shell'
+	fi
+	publication_mode=published-digests
+	old_reference=$published_old_reference
+	new_reference=$published_new_reference
+	new_version=$published_new_version
+else
+	mkdir -p "$temporary_directory/old"
+	git -c "safe.directory=$repository_directory" -C "$repository_directory" \
+		cat-file -e "$old_commit^{commit}" || fail 'old helper commit is unavailable'
+	git -c "safe.directory=$repository_directory" -C "$repository_directory" \
+		archive "$old_commit" notify | tar -x -C "$temporary_directory/old"
+	docker build --build-arg "VERSION=packaging-old-$old_commit" -t "$old_tag" "$temporary_directory/old/notify"
+	docker build --build-arg "VERSION=packaging-new-$new_commit" -t "$new_tag" "$notify_directory"
+	old_image=$(docker image inspect --format '{{.Id}}' "$old_tag")
+	new_image=$(docker image inspect --format '{{.Id}}' "$new_tag")
+fi
 docker build -t "$mock_tag" "$script_directory/mock"
 
-old_image=$(docker image inspect --format '{{.Id}}' "$old_tag")
-new_image=$(docker image inspect --format '{{.Id}}' "$new_tag")
 mock_image=$(docker image inspect --format '{{.Id}}' "$mock_tag")
 case $old_image:$new_image:$mock_image in
 	sha256:*:sha256:*:sha256:*) ;;
@@ -117,11 +167,27 @@ assert_listener() {
 }
 
 assert_no_sensitive_logs() {
-	for forbidden in "$api_key" "$folder_id" "$config_directory" "$state_directory" "http://127.0.0.1:$mock_port"; do
-		if docker logs "$container_name" 2>&1 | grep -F "$forbidden" >/dev/null; then
-			fail 'helper log exposed a configured identifier, path, URL, or test credential'
-		fi
-	done
+	log_phase=$1
+	assert_log_omits 'test credential' "$api_key"
+	assert_log_omits 'folder identifier' "$folder_id"
+	assert_log_omits 'config path' "$config_directory"
+	assert_log_omits 'state path' "$state_directory"
+	case $log_phase in
+		old-*)
+			if docker logs "$container_name" 2>&1 | grep -F "http://127.0.0.1:$mock_port" >/dev/null; then
+				old_endpoint_log_observations=$((old_endpoint_log_observations + 1))
+			fi
+			;;
+		*) assert_log_omits 'URL' "http://127.0.0.1:$mock_port" ;;
+	esac
+}
+
+assert_log_omits() {
+	label=$1
+	forbidden=$2
+	if docker logs "$container_name" 2>&1 | grep -F "$forbidden" >/dev/null; then
+		fail "helper $log_phase log exposed a configured $label"
+	fi
 }
 
 assert_runtime_constraints() {
@@ -154,7 +220,7 @@ run_installer "$old_image" init
 assert_listener absent
 assert_runtime_constraints "$old_image"
 [ ! -e "$credential_state" ] || fail 'old helper created diagnostics credentials'
-assert_no_sensitive_logs
+assert_no_sensitive_logs old-initial
 
 # Upgrade through the real deploy command.
 run_installer "$new_image" deploy
@@ -174,7 +240,7 @@ first_spki=$(docker exec "$mock_name" /runtime-packaging-mock spki "127.0.0.1:$h
 case $first_spki in
 	*[!0-9a-f]*|'') fail 'TLS SPKI digest was not canonical SHA-256 hex' ;;
 esac
-assert_no_sensitive_logs
+assert_no_sensitive_logs new-upgrade
 
 # Downgrade through the same real deploy command. State remains preserved and
 # the old helper remains unable to expose the new listener.
@@ -182,7 +248,7 @@ run_installer "$old_image" deploy
 assert_listener absent
 assert_runtime_constraints "$old_image"
 [ "$(state_digest)" = "$first_state_digest" ] || fail 'downgrade changed credential state'
-assert_no_sensitive_logs
+assert_no_sensitive_logs old-rollback
 
 # Forward recovery through the real deploy command reopens exactly the same
 # identity and pin.
@@ -192,22 +258,30 @@ assert_runtime_constraints "$new_image"
 [ "$(state_digest)" = "$first_state_digest" ] || fail 'forward recovery changed credential state'
 second_spki=$(docker exec "$mock_name" /runtime-packaging-mock spki "127.0.0.1:$helper_port")
 [ "$second_spki" = "$first_spki" ] || fail 'forward recovery changed the TLS SPKI pin'
-assert_no_sensitive_logs
+assert_no_sensitive_logs new-forward-recovery
+[ "$old_endpoint_log_observations" -eq 2 ] ||
+	fail 'published rollback baseline endpoint-log behavior was not observed in both old-helper phases'
 
 run_installer "$new_image" status
 run_installer "$new_image" stop
 
 printf '%s\n' \
 	'host=standard-linux-rootful-docker' \
+	"publication_mode=$publication_mode" \
 	"old_commit=$old_commit" \
+	"old_reference=$old_reference" \
 	"old_image=$old_image" \
 	"new_commit=$new_commit" \
+	"new_reference=$new_reference" \
+	"new_version=$new_version" \
 	"new_image=$new_image" \
 	'installer_init_old=pass' \
 	'installer_upgrade_new=pass' \
 	'installer_downgrade_old=pass' \
 	'installer_forward_recovery_new=pass' \
 	'credential_state=byte-identical' \
+	'rollback_baseline_endpoint_logging=observed-known-1.8.0' \
+	'candidate_sensitive_logging=not-observed' \
 	'upload_evidence=unset' \
 	'download_evidence=unset' \
 	'roundtrip_evidence=unset'

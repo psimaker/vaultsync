@@ -7,6 +7,7 @@ on:
       - "notify/**"
       - ".github/workflows/docker.yml"
       - ".github/workflows/ci.yml"
+      - ".github/workflows/security.yml"
       - ".github/scripts/notify-publish-safety.rb"
   push:
     branches: [main]
@@ -14,6 +15,7 @@ on:
       - "notify/**"
       - ".github/workflows/docker.yml"
       - ".github/workflows/ci.yml"
+      - ".github/workflows/security.yml"
       - ".github/scripts/notify-publish-safety.rb"
   workflow_dispatch:
     inputs:
@@ -28,14 +30,16 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  # A second owner dispatch must queue behind an active publication instead of
-  # cancelling it after only some outputs have reached GitHub.
+  # A second owner dispatch queues behind an active publication. It may verify
+  # and resume identical draft material but must never replace an artifact.
   cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
-# Validation receives no write token. Each publication job declares only the
-# write scopes it needs after the separate read-only owner gate has succeeded.
 permissions:
   contents: read
+
+env:
+  RELEASE_SPEC: notify/release.json
+  IMAGE_NAME: ghcr.io/psimaker/vaultsync-notify
 
 jobs:
   publish-safety-policy:
@@ -47,7 +51,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Verify publication remains owner-gated
+      - name: Verify publication remains owner-gated and immutable
         run: ruby .github/scripts/notify-publish-safety.rb
 
   notify-guard:
@@ -95,17 +99,27 @@ jobs:
           provenance: false
           sbom: false
 
+      - name: Verify the minimal runtime image
+        run: |
+          set -euo pipefail
+          image="vaultsync-notify:ci-${GITHUB_SHA}"
+          test "$(docker image inspect --format '{{.Config.User}}' "$image")" = "65534:65534"
+          test "$(docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges "$image" --version)" = "vaultsync-notify dev-${GITHUB_SHA}"
+          if docker run --rm --network none --entrypoint /bin/sh "$image" -c true >/dev/null 2>&1; then
+            echo "runtime image unexpectedly contains a shell" >&2
+            exit 1
+          fi
+
       - name: Scan local validation image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: vaultsync-notify:ci-${{ github.sha }}
+          scanners: vuln,secret
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
 
-  # This job has no write permission. It proves that the existing tag selected
-  # as the dispatch ref, the explicit input, the actor, and origin/main all name
-  # the same immutable release commit before either privileged job can start.
   publish-gate:
     name: Owner Publish Gate
     if: github.event_name == 'workflow_dispatch'
@@ -113,23 +127,30 @@ jobs:
       - publish-safety-policy
       - notify-guard
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     outputs:
       version: ${{ steps.validate.outputs.version }}
+      release_tag: ${{ steps.validate.outputs.release_tag }}
+      release_sha: ${{ steps.validate.outputs.release_sha }}
+      image: ${{ steps.validate.outputs.image }}
+      rollback_image: ${{ steps.validate.outputs.rollback_image }}
+      rollback_commit: ${{ steps.validate.outputs.rollback_commit }}
+      release_is_public: ${{ steps.validate.outputs.release_is_public }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Validate owner, tag, confirmation, and main ancestry
+      - name: Validate owner, manifest, tag, commit, and draft state
         id: validate
         shell: bash
         env:
+          GH_TOKEN: ${{ github.token }}
           EVENT_NAME: ${{ github.event_name }}
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_TAG_INPUT: ${{ inputs.release_tag }}
           CONFIRMATION: ${{ inputs.confirmation }}
           ACTOR: ${{ github.actor }}
           TRIGGERING_ACTOR: ${{ github.triggering_actor }}
@@ -141,17 +162,83 @@ jobs:
           test "$REF_TYPE" = tag
           test "$ACTOR" = "$REPOSITORY_OWNER"
           test "$TRIGGERING_ACTOR" = "$REPOSITORY_OWNER"
-          test "$RELEASE_TAG" = "$REF_NAME"
           test "$CONFIRMATION" = PUBLISH_NOTIFY_RELEASE
-          if [[ ! "$RELEASE_TAG" =~ ^notify-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo "release tag must be notify-vX.Y.Z" >&2
-            exit 1
-          fi
-          resolved="$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")"
+
+          version=$(jq -er '.version | select(test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))' "$RELEASE_SPEC")
+          release_tag=$(jq -er '.tag' "$RELEASE_SPEC")
+          image=$(jq -er '.image' "$RELEASE_SPEC")
+          version_image=$(jq -er '.version_image' "$RELEASE_SPEC")
+          rollback_tag=$(jq -er '.rollback.tag' "$RELEASE_SPEC")
+          rollback_commit=$(jq -er '.rollback.commit | select(test("^[0-9a-f]{40}$"))' "$RELEASE_SPEC")
+          rollback_image=$(jq -er '.rollback.image | select(test("^ghcr\\.io/psimaker/vaultsync-notify@sha256:[0-9a-f]{64}$"))' "$RELEASE_SPEC")
+          test "$release_tag" = "notify-v${version}"
+          test "$image" = "$IMAGE_NAME"
+          test "$version_image" = "${IMAGE_NAME}:${version}"
+          test "$RELEASE_TAG_INPUT" = "$release_tag"
+          test "$REF_NAME" = "$release_tag"
+
+          git fetch origin main --tags
+          test "$(git cat-file -t "refs/tags/${release_tag}")" = commit
+          resolved=$(git rev-parse --verify "refs/tags/${release_tag}^{commit}")
           test "$resolved" = "$RELEASE_SHA"
           git show-ref --verify --quiet refs/remotes/origin/main
           git merge-base --is-ancestor "$RELEASE_SHA" refs/remotes/origin/main
-          echo "version=${RELEASE_TAG#notify-v}" >> "$GITHUB_OUTPUT"
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_SHA}" --jq .commit.verification.verified)" = true
+
+          test "$(git rev-parse --verify "refs/tags/${rollback_tag}^{commit}")" = "$rollback_commit"
+          gh release view "$rollback_tag" --repo "$GITHUB_REPOSITORY" >/dev/null
+
+          release_is_public=false
+          repository_name=${GITHUB_REPOSITORY#*/}
+          test "$GITHUB_REPOSITORY" = "${REPOSITORY_OWNER}/${repository_name}"
+          # GraphQL variables must remain literal for gh.
+          # shellcheck disable=SC2016
+          release_lookup=$(gh api graphql \
+            -F owner="$REPOSITORY_OWNER" -F name="$repository_name" -F tag="$release_tag" \
+            -f query='query($owner: String!, $name: String!, $tag: String!) {
+              repository(owner: $owner, name: $name) {
+                release(tagName: $tag) { tagName isDraft isPrerelease publishedAt }
+              }
+            }')
+          jq -e '.data.repository != null and ((.errors // []) | length == 0)' <<<"$release_lookup" >/dev/null
+          release_json=$(jq -c '.data.repository.release' <<<"$release_lookup")
+          release_type=$(jq -r 'type' <<<"$release_json")
+          case $release_type in
+            null) ;;
+            object)
+              test "$(jq -r .tagName <<<"$release_json")" = "$release_tag"
+              test "$(jq -r .isPrerelease <<<"$release_json")" = false
+              case $(jq -r .isDraft <<<"$release_json") in
+              true) ;;
+              false)
+                jq -er '.publishedAt | select(type == "string" and length > 0)' <<<"$release_json" >/dev/null
+                release_is_public=true
+                ;;
+              *) exit 1 ;;
+              esac
+              ;;
+            *) exit 1 ;;
+          esac
+
+          {
+            echo "version=$version"
+            echo "release_tag=$release_tag"
+            echo "release_sha=$RELEASE_SHA"
+            echo "image=$image"
+            echo "rollback_image=$rollback_image"
+            echo "rollback_commit=$rollback_commit"
+            echo "release_is_public=$release_is_public"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Scan the exact helper source before any publication mutation
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: notify
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
 
   publish-image:
     name: Publish Image
@@ -167,12 +254,14 @@ jobs:
       - notify-guard
       - publish-gate
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: read
-      packages: write # push the two explicitly owner-approved GHCR tags
-      id-token: write # keyless provenance identity for the published image
-      attestations: write # attach BuildKit provenance and SBOM attestations
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      digest: ${{ steps.select-image.outputs.digest }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
@@ -188,15 +277,52 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
+      - name: Detect an existing exact release image
+        id: existing-image
+        env:
+          IMAGE: ${{ needs.publish-gate.outputs.image }}
+          VERSION: ${{ needs.publish-gate.outputs.version }}
+          RELEASE_SHA: ${{ needs.publish-gate.outputs.release_sha }}
+          RELEASE_IS_PUBLIC: ${{ needs.publish-gate.outputs.release_is_public }}
+        run: |
+          set -euo pipefail
+          token=$(curl -fsSL "https://ghcr.io/token?scope=repository:psimaker/vaultsync-notify:pull" | jq -er .token)
+          http_status=$(curl -sS -o /tmp/vaultsync-notify-version-manifest.json -w '%{http_code}' \
+            -H "Authorization: Bearer $token" \
+            -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+            "https://ghcr.io/v2/psimaker/vaultsync-notify/manifests/${VERSION}")
+          if [ "$http_status" = 200 ]; then
+            manifest=$(docker buildx imagetools inspect "${IMAGE}:${VERSION}" --format '{{json .Manifest}}')
+            digest=$(jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))' <<<"$manifest")
+            docker pull "${IMAGE}@${digest}" >/dev/null
+            test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${IMAGE}@${digest}")" = "$RELEASE_SHA"
+            test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "${IMAGE}@${digest}")" = "$VERSION"
+            test "$(docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges "${IMAGE}@${digest}" --version)" = "vaultsync-notify $VERSION"
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          elif [ "$http_status" = 404 ]; then
+            if [ "$RELEASE_IS_PUBLIC" = true ]; then
+              echo "public release image is missing; refusing to publish on a finalized release" >&2
+              exit 1
+            fi
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "GHCR lookup failed with HTTP ${http_status}; refusing to treat the version tag as absent" >&2
+            exit 1
+          fi
+
+      - name: Derive version-only image metadata
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         id: meta
         with:
-          images: ghcr.io/psimaker/vaultsync-notify
+          images: ${{ needs.publish-gate.outputs.image }}
           tags: |
             type=raw,value=${{ needs.publish-gate.outputs.version }}
-            type=raw,value=latest
 
-      - name: Build and publish release image
+      - name: Build and publish the absent release image
+        if: >-
+          needs.publish-gate.outputs.release_is_public != 'true' &&
+          steps.existing-image.outputs.present != 'true'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         id: build
         with:
@@ -210,18 +336,113 @@ jobs:
           provenance: mode=max
           sbom: true
 
+      - name: Select and revalidate the immutable image digest
+        id: select-image
+        env:
+          IMAGE: ${{ needs.publish-gate.outputs.image }}
+          VERSION: ${{ needs.publish-gate.outputs.version }}
+          RELEASE_SHA: ${{ needs.publish-gate.outputs.release_sha }}
+          EXISTING_DIGEST: ${{ steps.existing-image.outputs.digest }}
+          BUILT_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          digest=${BUILT_DIGEST:-$EXISTING_DIGEST}
+          printf '%s\n' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$'
+          current=$(docker buildx imagetools inspect "${IMAGE}:${VERSION}" --format '{{json .Manifest}}' | jq -er .digest)
+          test "$current" = "$digest"
+          docker pull "${IMAGE}@${digest}" >/dev/null
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${IMAGE}@${digest}")" = "$RELEASE_SHA"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "${IMAGE}@${digest}")" = "$VERSION"
+          test "$(docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges "${IMAGE}@${digest}" --version)" = "vaultsync-notify $VERSION"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
       - name: Scan published image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: ghcr.io/psimaker/vaultsync-notify@${{ steps.build.outputs.digest }}
+          image-ref: ${{ needs.publish-gate.outputs.image }}@${{ steps.select-image.outputs.digest }}
+          scanners: vuln,secret
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
 
-  # The owner dispatch is the publication action. This job never creates a tag;
-  # --verify-tag requires the exact pre-existing tag already checked above.
+      - name: Create the image SPDX SBOM
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ needs.publish-gate.outputs.image }}@${{ steps.select-image.outputs.digest }}
+          format: spdx-json
+          output: /tmp/vaultsync-notify-image.spdx.json
+
+      - name: Check for existing repository provenance
+        id: image-provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ needs.publish-gate.outputs.image }}
+          DIGEST: ${{ steps.select-image.outputs.digest }}
+          RELEASE_SHA: ${{ needs.publish-gate.outputs.release_sha }}
+          RELEASE_TAG: ${{ needs.publish-gate.outputs.release_tag }}
+          RELEASE_IS_PUBLIC: ${{ needs.publish-gate.outputs.release_is_public }}
+        run: |
+          set -euo pipefail
+          if gh attestation verify "oci://${IMAGE}@${DIGEST}" --repo "$GITHUB_REPOSITORY" \
+            --source-digest "$RELEASE_SHA" --source-ref "refs/tags/${RELEASE_TAG}" \
+            --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/docker.yml" >/dev/null 2>&1; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            if [ "$RELEASE_IS_PUBLIC" = true ]; then
+              echo "public image provenance is missing or mismatched; refusing to create it" >&2
+              exit 1
+            fi
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Attest image provenance
+        if: >-
+          needs.publish-gate.outputs.release_is_public != 'true' &&
+          steps.image-provenance.outputs.present != 'true'
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-name: ${{ needs.publish-gate.outputs.image }}
+          subject-digest: ${{ steps.select-image.outputs.digest }}
+          push-to-registry: true
+
+      - name: Check for existing repository SBOM attestation
+        id: image-sbom
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ needs.publish-gate.outputs.image }}
+          DIGEST: ${{ steps.select-image.outputs.digest }}
+          RELEASE_SHA: ${{ needs.publish-gate.outputs.release_sha }}
+          RELEASE_TAG: ${{ needs.publish-gate.outputs.release_tag }}
+          RELEASE_IS_PUBLIC: ${{ needs.publish-gate.outputs.release_is_public }}
+        run: |
+          set -euo pipefail
+          if gh attestation verify "oci://${IMAGE}@${DIGEST}" --repo "$GITHUB_REPOSITORY" \
+            --predicate-type https://spdx.dev/Document/v2.3 \
+            --source-digest "$RELEASE_SHA" --source-ref "refs/tags/${RELEASE_TAG}" \
+            --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/docker.yml" >/dev/null 2>&1; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            if [ "$RELEASE_IS_PUBLIC" = true ]; then
+              echo "public image SBOM attestation is missing or mismatched; refusing to create it" >&2
+              exit 1
+            fi
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Attest image SBOM
+        if: >-
+          needs.publish-gate.outputs.release_is_public != 'true' &&
+          steps.image-sbom.outputs.present != 'true'
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-name: ${{ needs.publish-gate.outputs.image }}
+          subject-digest: ${{ steps.select-image.outputs.digest }}
+          sbom-path: /tmp/vaultsync-notify-image.spdx.json
+          push-to-registry: true
+
   release-binaries:
-    name: Publish Binaries
+    name: Stage Release Binaries
     if: >-
       github.event_name == 'workflow_dispatch' &&
       github.ref_type == 'tag' &&
@@ -233,13 +454,17 @@ jobs:
       - publish-safety-policy
       - notify-guard
       - publish-gate
+      - publish-image
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     permissions:
-      contents: write # create the verified-tag release and upload its binaries
+      contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
@@ -247,31 +472,553 @@ jobs:
           go-version-file: notify/go.mod
           cache: false
 
-      - name: Cross-compile helper binaries
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      - name: Cross-compile every binary twice
         working-directory: notify
         env:
           RELEASE_VERSION: ${{ needs.publish-gate.outputs.version }}
         run: |
-          set -eu
-          mkdir -p dist
-          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
-            export GOOS="${target%/*}" GOARCH="${target#*/}"
-            out="dist/vaultsync-notify_${GOOS}_${GOARCH}"
-            [ "$GOOS" = windows ] && out="$out.exe"
-            CGO_ENABLED=0 go build -trimpath \
-              -ldflags="-s -w -X main.version=${RELEASE_VERSION}" -o "$out" .
+          set -euo pipefail
+          rm -rf dist verify-dist
+          mkdir -p dist verify-dist
+          mapfile -t binaries < <(jq -r '.binaries[]' release.json)
+          for output_directory in dist verify-dist; do
+            for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+              goos=${target%/*}
+              goarch=${target#*/}
+              out="${output_directory}/vaultsync-notify_${goos}_${goarch}"
+              [ "$goos" = windows ] && out="$out.exe"
+              GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 go build -trimpath -buildvcs=false \
+                -ldflags="-s -w -X main.version=${RELEASE_VERSION}" -o "$out" .
+            done
           done
-          (cd dist && sha256sum -- * > SHA256SUMS)
+          for name in "${binaries[@]}"; do
+            cmp "dist/$name" "verify-dist/$name"
+          done
+          (cd dist && sha256sum -- "${binaries[@]}" > SHA256SUMS)
 
-      - name: Publish release with binaries
+      - name: Scan release binaries for vulnerabilities and secrets
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: rootfs
+          scan-ref: notify/dist
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Create deterministic binary-set SPDX SBOM
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: rootfs
+          scan-ref: notify/dist
+          format: spdx-json
+          output: notify/dist/SBOM.spdx.json
+
+      - name: Normalize deterministic SBOM metadata
+        env:
+          RELEASE_TAG: ${{ needs.publish-gate.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          jq --arg namespace "https://github.com/${GITHUB_REPOSITORY}/sbom/${RELEASE_TAG}/${GITHUB_SHA}" \
+            '.creationInfo.created = "1970-01-01T00:00:00Z" | .documentNamespace = $namespace' \
+            notify/dist/SBOM.spdx.json > /tmp/SBOM.spdx.json
+          mv /tmp/SBOM.spdx.json notify/dist/SBOM.spdx.json
+
+      - name: Check for existing exact binary provenance
+        id: binary-provenance
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_SHA: ${{ needs.publish-gate.outputs.release_sha }}
+          RELEASE_TAG: ${{ needs.publish-gate.outputs.release_tag }}
+          RELEASE_IS_PUBLIC: ${{ needs.publish-gate.outputs.release_is_public }}
         run: |
-          set -eu
-          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" --verify-tag --latest=false \
-              --title "vaultsync-notify ${RELEASE_TAG#notify-v}" \
-              --notes "Prebuilt \`vaultsync-notify\` helper binaries for the [Cloud Relay server setup](https://github.com/${GITHUB_REPOSITORY}/blob/main/notify/README.md). The one-line installer picks these up automatically; verify manual downloads against \`SHA256SUMS\`."
+          set -euo pipefail
+          present=true
+          while IFS= read -r name; do
+            if ! gh attestation verify "notify/dist/$name" --repo "$GITHUB_REPOSITORY" \
+              --source-digest "$RELEASE_SHA" --source-ref "refs/tags/${RELEASE_TAG}" \
+              --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/docker.yml" >/dev/null 2>&1; then
+              present=false
+            fi
+          done < <(jq -r '.binaries[]' "$RELEASE_SPEC")
+          if [ "$RELEASE_IS_PUBLIC" = true ] && [ "$present" != true ]; then
+            echo "public binary provenance is missing or mismatched; refusing to create it" >&2
+            exit 1
           fi
-          gh release upload "$RELEASE_TAG" --clobber notify/dist/*
+          echo "present=$present" >> "$GITHUB_OUTPUT"
+
+      - name: Attest binary provenance
+        if: >-
+          needs.publish-gate.outputs.release_is_public != 'true' &&
+          steps.binary-provenance.outputs.present != 'true'
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-path: notify/dist/vaultsync-notify_*
+
+      - name: Check for existing exact binary SBOM attestation
+        id: binary-sbom
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.publish-gate.outputs.release_sha }}
+          RELEASE_TAG: ${{ needs.publish-gate.outputs.release_tag }}
+          RELEASE_IS_PUBLIC: ${{ needs.publish-gate.outputs.release_is_public }}
+        run: |
+          set -euo pipefail
+          present=true
+          while IFS= read -r name; do
+            if ! gh attestation verify "notify/dist/$name" --repo "$GITHUB_REPOSITORY" \
+              --predicate-type https://spdx.dev/Document/v2.3 \
+              --source-digest "$RELEASE_SHA" --source-ref "refs/tags/${RELEASE_TAG}" \
+              --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/docker.yml" >/dev/null 2>&1; then
+              present=false
+            fi
+          done < <(jq -r '.binaries[]' "$RELEASE_SPEC")
+          if [ "$RELEASE_IS_PUBLIC" = true ] && [ "$present" != true ]; then
+            echo "public binary SBOM attestation is missing or mismatched; refusing to create it" >&2
+            exit 1
+          fi
+          echo "present=$present" >> "$GITHUB_OUTPUT"
+
+      - name: Attest binary SBOM
+        if: >-
+          needs.publish-gate.outputs.release_is_public != 'true' &&
+          steps.binary-sbom.outputs.present != 'true'
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-path: notify/dist/vaultsync-notify_*
+          sbom-path: notify/dist/SBOM.spdx.json
+
+      - name: Record exact image index and platform digests
+        env:
+          IMAGE: ${{ needs.publish-gate.outputs.image }}
+          VERSION: ${{ needs.publish-gate.outputs.version }}
+          DIGEST: ${{ needs.publish-image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          manifest=$(docker buildx imagetools inspect "${IMAGE}@${DIGEST}" --format '{{json .Manifest}}')
+          test "$(jq -r .digest <<<"$manifest")" = "$DIGEST"
+          test "$(jq '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64")] | length' <<<"$manifest")" = 1
+          test "$(jq '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64")] | length' <<<"$manifest")" = 1
+          test "$(jq '[.manifests[] | select(
+            (.platform.os == "linux" and (.platform.architecture == "amd64" or .platform.architecture == "arm64")) or
+            (.platform.os == "unknown" and .platform.architecture == "unknown" and
+              .annotations["vnd.docker.reference.type"] == "attestation-manifest")
+          )] | length' <<<"$manifest")" = "$(jq '.manifests | length' <<<"$manifest")"
+          amd64=$(jq -er '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest' <<<"$manifest")
+          arm64=$(jq -er '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64") | .digest' <<<"$manifest")
+          cat > notify/dist/IMAGE-DIGESTS <<EOF
+          image=${IMAGE}
+          version_tag=${IMAGE}:${VERSION}
+          index_digest=${DIGEST}
+          linux_amd64_digest=${amd64}
+          linux_arm64_digest=${arm64}
+          EOF
+
+      - name: Create deterministic release manifest
+        env:
+          RELEASE_SHA: ${{ needs.publish-gate.outputs.release_sha }}
+          IMAGE_DIGEST: ${{ needs.publish-image.outputs.digest }}
+        run: |
+          ruby <<'RUBY'
+          require "digest"
+          require "json"
+
+          root = ENV.fetch("GITHUB_WORKSPACE")
+          spec = JSON.parse(File.read(File.join(root, "notify/release.json")))
+          dist = File.join(root, "notify/dist")
+          binaries = spec.fetch("binaries").map do |name|
+            path = File.join(dist, name)
+            { "name" => name, "size" => File.size(path), "sha256" => Digest::SHA256.file(path).hexdigest }
+          end
+          manifest = {
+            "format_version" => 1,
+            "version" => spec.fetch("version"),
+            "tag" => spec.fetch("tag"),
+            "source_commit" => ENV.fetch("RELEASE_SHA"),
+            "image" => spec.fetch("image"),
+            "image_index_digest" => ENV.fetch("IMAGE_DIGEST"),
+            "rollback" => spec.fetch("rollback"),
+            "binaries" => binaries,
+            "binary_sbom" => {
+              "name" => "SBOM.spdx.json",
+              "sha256" => Digest::SHA256.file(File.join(dist, "SBOM.spdx.json")).hexdigest
+            },
+            "image_digests_sha256" => Digest::SHA256.file(File.join(dist, "IMAGE-DIGESTS")).hexdigest,
+            "release_assets" => spec.fetch("release_assets")
+          }
+          File.write(File.join(dist, "RELEASE-MANIFEST.json"), JSON.pretty_generate(manifest) + "\n")
+          RUBY
+
+      - name: Create or verify the exact draft release and assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.publish-gate.outputs.release_tag }}
+          RELEASE_VERSION: ${{ needs.publish-gate.outputs.version }}
+          RELEASE_IS_PUBLIC: ${{ needs.publish-gate.outputs.release_is_public }}
+        run: |
+          set -euo pipefail
+          if release_json=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" 2>/dev/null); then
+            test "$(jq -r .tag_name <<<"$release_json")" = "$RELEASE_TAG"
+            test "$(jq -r .prerelease <<<"$release_json")" = false
+            test "$(jq -r .name <<<"$release_json")" = "vaultsync-notify ${RELEASE_VERSION}"
+          else
+            test "$RELEASE_IS_PUBLIC" != true
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
+              --draft --latest=false --title "vaultsync-notify ${RELEASE_VERSION}" \
+              --notes "Staged helper release. Publication remains blocked until the digest-bound supported-host rollback and post-publication gates succeed."
+          fi
+
+          mapfile -t binaries < <(jq -r '.binaries[]' "$RELEASE_SPEC")
+          files=()
+          for name in "${binaries[@]}" SHA256SUMS SBOM.spdx.json IMAGE-DIGESTS RELEASE-MANIFEST.json; do
+            files+=("notify/dist/$name")
+          done
+
+          release_json=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}")
+          release_is_draft=$(jq -r .draft <<<"$release_json")
+          case $release_is_draft in true|false) ;; *) exit 1 ;; esac
+          while IFS= read -r existing_name; do
+            jq -e --arg name "$existing_name" '.release_assets | index($name) != null' "$RELEASE_SPEC" >/dev/null
+          done < <(jq -r '.assets[].name' <<<"$release_json")
+
+          for file in "${files[@]}"; do
+            name=$(basename "$file")
+            expected="sha256:$(sha256sum "$file" | awk '{print $1}')"
+            existing=$(jq -r --arg name "$name" '[.assets[] | select(.name == $name) | .digest][0] // empty' <<<"$release_json")
+            if [ -n "$existing" ]; then
+              test "$existing" = "$expected"
+            else
+              test "$release_is_draft" = true
+              gh release upload "$RELEASE_TAG" "$file" --repo "$GITHUB_REPOSITORY"
+              release_json=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}")
+              test "$(jq -r --arg name "$name" '.assets[] | select(.name == $name) | .digest' <<<"$release_json")" = "$expected"
+            fi
+          done
+
+  rollout-verify:
+    name: Published Helper Rollout
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref_type == 'tag' &&
+      inputs.release_tag == github.ref_name &&
+      inputs.confirmation == 'PUBLISH_NOTIFY_RELEASE' &&
+      github.actor == github.repository_owner &&
+      github.triggering_actor == github.repository_owner
+    needs:
+      - publish-safety-policy
+      - notify-guard
+      - publish-gate
+      - publish-image
+      - release-binaries
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify staged binaries and manifest read-only
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.publish-gate.outputs.release_tag }}
+          RELEASE_SHA: ${{ needs.publish-gate.outputs.release_sha }}
+          IMAGE_DIGEST: ${{ needs.publish-image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/vaultsync-notify-release
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir /tmp/vaultsync-notify-release
+          (cd /tmp/vaultsync-notify-release && sha256sum -c SHA256SUMS)
+          jq -e --arg sha "$RELEASE_SHA" --arg digest "$IMAGE_DIGEST" \
+            '.source_commit == $sha and .image_index_digest == $digest' \
+            /tmp/vaultsync-notify-release/RELEASE-MANIFEST.json >/dev/null
+
+      - name: Prove published upgrade, rollback, and forward recovery
+        env:
+          OLD_IMAGE: ${{ needs.publish-gate.outputs.rollback_image }}
+          NEW_IMAGE: ${{ needs.publish-gate.outputs.image }}@${{ needs.publish-image.outputs.digest }}
+          NEW_COMMIT: ${{ needs.publish-gate.outputs.release_sha }}
+          NEW_VERSION: ${{ needs.publish-gate.outputs.version }}
+        run: |
+          set -euo pipefail
+          sudo env \
+            VAULTSYNC_RUNTIME_PACKAGING_OLD_IMAGE="$OLD_IMAGE" \
+            VAULTSYNC_RUNTIME_PACKAGING_NEW_IMAGE="$NEW_IMAGE" \
+            VAULTSYNC_RUNTIME_PACKAGING_NEW_COMMIT="$NEW_COMMIT" \
+            VAULTSYNC_RUNTIME_PACKAGING_NEW_VERSION="$NEW_VERSION" \
+            notify/tests/runtime-packaging/run-linux-host.sh | tee /tmp/vaultsync-rollout-proof.txt
+          grep -qx 'publication_mode=published-digests' /tmp/vaultsync-rollout-proof.txt
+          grep -qx 'installer_upgrade_new=pass' /tmp/vaultsync-rollout-proof.txt
+          grep -qx 'installer_downgrade_old=pass' /tmp/vaultsync-rollout-proof.txt
+          grep -qx 'installer_forward_recovery_new=pass' /tmp/vaultsync-rollout-proof.txt
+          grep -qx 'credential_state=byte-identical' /tmp/vaultsync-rollout-proof.txt
+          grep -qx 'rollback_baseline_endpoint_logging=observed-known-1.8.0' /tmp/vaultsync-rollout-proof.txt
+          grep -qx 'candidate_sensitive_logging=not-observed' /tmp/vaultsync-rollout-proof.txt
+          grep -qx 'upload_evidence=unset' /tmp/vaultsync-rollout-proof.txt
+          grep -qx 'download_evidence=unset' /tmp/vaultsync-rollout-proof.txt
+          grep -qx 'roundtrip_evidence=unset' /tmp/vaultsync-rollout-proof.txt
+
+  finalize-release:
+    name: Finalize Helper Release
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref_type == 'tag' &&
+      inputs.release_tag == github.ref_name &&
+      inputs.confirmation == 'PUBLISH_NOTIFY_RELEASE' &&
+      github.actor == github.repository_owner &&
+      github.triggering_actor == github.repository_owner
+    needs:
+      - publish-safety-policy
+      - notify-guard
+      - publish-gate
+      - publish-image
+      - release-binaries
+      - rollout-verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Revalidate the tag and publish the complete release once
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.publish-gate.outputs.release_tag }}
+          RELEASE_VERSION: ${{ needs.publish-gate.outputs.version }}
+          RELEASE_SHA: ${{ needs.publish-gate.outputs.release_sha }}
+          IMAGE: ${{ needs.publish-gate.outputs.image }}
+          IMAGE_DIGEST: ${{ needs.publish-image.outputs.digest }}
+          ROLLBACK_IMAGE: ${{ needs.publish-gate.outputs.rollback_image }}
+        run: |
+          set -euo pipefail
+          git fetch origin main --tags
+          test "$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")" = "$RELEASE_SHA"
+          git merge-base --is-ancestor "$RELEASE_SHA" refs/remotes/origin/main
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_SHA}" --jq .commit.verification.verified)" = true
+
+          release_json=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}")
+          release_is_draft=$(jq -r .draft <<<"$release_json")
+          case $release_is_draft in true|false) ;; *) exit 1 ;; esac
+          evidence_name=ROLLOUT-EVIDENCE.txt
+          evidence_digest=$(jq -r --arg name "$evidence_name" '[.assets[] | select(.name == $name) | .digest][0] // empty' <<<"$release_json")
+          if [ -n "$evidence_digest" ]; then
+            rm -rf /tmp/existing-rollout
+            mkdir -p /tmp/existing-rollout
+            gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern "$evidence_name" --dir /tmp/existing-rollout
+            test "sha256:$(sha256sum "/tmp/existing-rollout/$evidence_name" | awk '{print $1}')" = "$evidence_digest"
+            grep -qx "source_commit=${RELEASE_SHA}" /tmp/existing-rollout/$evidence_name
+            grep -qx "release_tag=${RELEASE_TAG}" /tmp/existing-rollout/$evidence_name
+            grep -Eq "^publication_run=https://github.com/${GITHUB_REPOSITORY}/actions/runs/[0-9]+$" /tmp/existing-rollout/$evidence_name
+            grep -qx 'host=github-hosted-standard-linux-rootful-docker' /tmp/existing-rollout/$evidence_name
+            grep -qx "old_image=${ROLLBACK_IMAGE}" /tmp/existing-rollout/$evidence_name
+            grep -qx "new_image=${IMAGE}@${IMAGE_DIGEST}" /tmp/existing-rollout/$evidence_name
+            grep -qx 'installer_upgrade_new=pass' /tmp/existing-rollout/$evidence_name
+            grep -qx 'installer_downgrade_old=pass' /tmp/existing-rollout/$evidence_name
+            grep -qx 'installer_forward_recovery_new=pass' /tmp/existing-rollout/$evidence_name
+            grep -qx 'credential_state=byte-identical' /tmp/existing-rollout/$evidence_name
+            grep -qx 'tls_spki=stable-across-forward-recovery' /tmp/existing-rollout/$evidence_name
+            grep -qx 'rollback_baseline_endpoint_logging=observed-known-1.8.0' /tmp/existing-rollout/$evidence_name
+            grep -qx 'candidate_sensitive_logging=not-observed' /tmp/existing-rollout/$evidence_name
+            grep -qx 'upload_evidence=unset' /tmp/existing-rollout/$evidence_name
+            grep -qx 'download_evidence=unset' /tmp/existing-rollout/$evidence_name
+            grep -qx 'roundtrip_evidence=unset' /tmp/existing-rollout/$evidence_name
+            test "$(wc -l < "/tmp/existing-rollout/$evidence_name" | tr -d ' ')" = 16
+          else
+            test "$release_is_draft" = true
+            cat > /tmp/$evidence_name <<EOF
+          source_commit=${RELEASE_SHA}
+          release_tag=${RELEASE_TAG}
+          publication_run=https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+          host=github-hosted-standard-linux-rootful-docker
+          old_image=${ROLLBACK_IMAGE}
+          new_image=${IMAGE}@${IMAGE_DIGEST}
+          installer_upgrade_new=pass
+          installer_downgrade_old=pass
+          installer_forward_recovery_new=pass
+          credential_state=byte-identical
+          tls_spki=stable-across-forward-recovery
+          rollback_baseline_endpoint_logging=observed-known-1.8.0
+          candidate_sensitive_logging=not-observed
+          upload_evidence=unset
+          download_evidence=unset
+          roundtrip_evidence=unset
+          EOF
+            gh release upload "$RELEASE_TAG" /tmp/$evidence_name --repo "$GITHUB_REPOSITORY"
+          fi
+
+          release_json=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}")
+          mapfile -t expected_names < <(jq -r '.release_assets[]' "$RELEASE_SPEC" | sort)
+          mapfile -t actual_names < <(jq -r '.assets[].name' <<<"$release_json" | sort)
+          test "${expected_names[*]}" = "${actual_names[*]}"
+          test "$(jq '[.assets[] | select(.digest | test("^sha256:[0-9a-f]{64}$"))] | length' <<<"$release_json")" = "${#expected_names[@]}"
+
+          cat > /tmp/release-notes.md <<EOF
+          Helper-first VaultSync diagnostics release from commit ${RELEASE_SHA}.
+
+          Image
+
+          - ${IMAGE}@${IMAGE_DIGEST}
+          - version tag ${IMAGE}:${RELEASE_VERSION} is published once; no latest tag is moved
+          - Linux amd64 and arm64 digests are recorded in IMAGE-DIGESTS
+          - repository-bound provenance and SPDX SBOM attestations are required
+
+          Binaries and integrity
+
+          - Linux amd64/arm64, macOS amd64/arm64, and Windows amd64
+          - verify against SHA256SUMS and RELEASE-MANIFEST.json
+          - SBOM.spdx.json and GitHub provenance/SBOM attestations cover the binary set
+
+          Helper-first rollout
+
+          The real explicit installer passed published 1.8.0 -> 2.0.0 -> 1.8.0 -> the same 2.0.0 digest on a standard Linux rootful-Docker runner. Credential-state bytes and the TLS SPKI pin survived rollback and forward recovery. The proof also records the known 1.8.0 endpoint-log behavior and requires 2.0.0 to emit none of the configured test credential, identifier, path, or URL values. See ROLLOUT-EVIDENCE.txt.
+
+          Compatibility and limits
+
+          Existing installs remain dormant unless diagnostics is explicitly configured. Trigger v1 and Relay v1 remain compatible. Docker Host-Bind on standard Linux/rootful Docker is the only supported diagnostics packaging row. Named volumes, rootless Docker, NAS/FUSE/remote storage, Docker Desktop, WSL, macOS, Windows, and systemd packaging remain diagnostics-unsupported. Upload, download, and roundtrip product evidence remain unset; cleanup remains evidence-orthogonal.
+          EOF
+
+          if [ "$release_is_draft" = false ]; then
+            test "$(jq -r .name <<<"$release_json")" = "vaultsync-notify ${RELEASE_VERSION}"
+            body=$(jq -er .body <<<"$release_json")
+            test "$body" = "$(cat /tmp/release-notes.md)"
+            exit 0
+          fi
+
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "vaultsync-notify ${RELEASE_VERSION}" --notes-file /tmp/release-notes.md \
+            --draft=false --latest=false
+
+          release_json=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}")
+          test "$(jq -r .draft <<<"$release_json")" = false
+          test "$(jq -r .name <<<"$release_json")" = "vaultsync-notify ${RELEASE_VERSION}"
+          body=$(jq -er .body <<<"$release_json")
+          test "$body" = "$(cat /tmp/release-notes.md)"
+
+  verify-published:
+    name: Verify Published Helper
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref_type == 'tag' &&
+      inputs.release_tag == github.ref_name &&
+      inputs.confirmation == 'PUBLISH_NOTIFY_RELEASE' &&
+      github.actor == github.repository_owner &&
+      github.triggering_actor == github.repository_owner
+    needs:
+      - publish-safety-policy
+      - notify-guard
+      - publish-gate
+      - publish-image
+      - release-binaries
+      - rollout-verify
+      - finalize-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      - uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify public release, assets, digests, and attestations read-only
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.publish-gate.outputs.release_tag }}
+          RELEASE_VERSION: ${{ needs.publish-gate.outputs.version }}
+          RELEASE_SHA: ${{ needs.publish-gate.outputs.release_sha }}
+          IMAGE: ${{ needs.publish-gate.outputs.image }}
+          IMAGE_DIGEST: ${{ needs.publish-image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          release_json=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}")
+          test "$(jq -r .draft <<<"$release_json")" = false
+          test "$(jq -r .prerelease <<<"$release_json")" = false
+          test "$(jq -r .tag_name <<<"$release_json")" = "$RELEASE_TAG"
+          test "$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")" = "$RELEASE_SHA"
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_SHA}" --jq .commit.verification.verified)" = true
+
+          mkdir -p /tmp/published-release
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir /tmp/published-release
+          mapfile -t expected_names < <(jq -r '.release_assets[]' "$RELEASE_SPEC" | sort)
+          mapfile -t actual_names < <(find /tmp/published-release -maxdepth 1 -type f -exec basename {} \; | sort)
+          test "${expected_names[*]}" = "${actual_names[*]}"
+
+          for file in /tmp/published-release/*; do
+            name=$(basename "$file")
+            actual="sha256:$(sha256sum "$file" | awk '{print $1}')"
+            expected=$(jq -er --arg name "$name" '.assets[] | select(.name == $name) | .digest' <<<"$release_json")
+            test "$actual" = "$expected"
+            url=$(jq -er --arg name "$name" '.assets[] | select(.name == $name) | .browser_download_url' <<<"$release_json")
+            curl -fsIL "$url" >/dev/null
+          done
+          (cd /tmp/published-release && sha256sum -c SHA256SUMS)
+          jq -e --arg sha "$RELEASE_SHA" --arg digest "$IMAGE_DIGEST" \
+            '.source_commit == $sha and .image_index_digest == $digest' \
+            /tmp/published-release/RELEASE-MANIFEST.json >/dev/null
+          grep -qx "index_digest=${IMAGE_DIGEST}" /tmp/published-release/IMAGE-DIGESTS
+          grep -qx "source_commit=${RELEASE_SHA}" /tmp/published-release/ROLLOUT-EVIDENCE.txt
+          grep -qx 'installer_upgrade_new=pass' /tmp/published-release/ROLLOUT-EVIDENCE.txt
+          grep -qx 'installer_downgrade_old=pass' /tmp/published-release/ROLLOUT-EVIDENCE.txt
+          grep -qx 'installer_forward_recovery_new=pass' /tmp/published-release/ROLLOUT-EVIDENCE.txt
+          grep -qx 'rollback_baseline_endpoint_logging=observed-known-1.8.0' /tmp/published-release/ROLLOUT-EVIDENCE.txt
+          grep -qx 'candidate_sensitive_logging=not-observed' /tmp/published-release/ROLLOUT-EVIDENCE.txt
+
+          manifest=$(docker buildx imagetools inspect "${IMAGE}:${RELEASE_VERSION}" --format '{{json .Manifest}}')
+          test "$(jq -r .digest <<<"$manifest")" = "$IMAGE_DIGEST"
+          test "$(jq '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64")] | length' <<<"$manifest")" = 1
+          test "$(jq '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64")] | length' <<<"$manifest")" = 1
+          test "$(jq '[.manifests[] | select(
+            (.platform.os == "linux" and (.platform.architecture == "amd64" or .platform.architecture == "arm64")) or
+            (.platform.os == "unknown" and .platform.architecture == "unknown" and
+              .annotations["vnd.docker.reference.type"] == "attestation-manifest")
+          )] | length' <<<"$manifest")" = "$(jq '.manifests | length' <<<"$manifest")"
+          docker pull "${IMAGE}@${IMAGE_DIGEST}" >/dev/null
+          test "$(docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges "${IMAGE}@${IMAGE_DIGEST}" --version)" = "vaultsync-notify $RELEASE_VERSION"
+          gh attestation verify "oci://${IMAGE}@${IMAGE_DIGEST}" --repo "$GITHUB_REPOSITORY" \
+            --source-digest "$RELEASE_SHA" --source-ref "refs/tags/${RELEASE_TAG}" \
+            --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/docker.yml" >/dev/null
+          gh attestation verify "oci://${IMAGE}@${IMAGE_DIGEST}" --repo "$GITHUB_REPOSITORY" \
+            --predicate-type https://spdx.dev/Document/v2.3 \
+            --source-digest "$RELEASE_SHA" --source-ref "refs/tags/${RELEASE_TAG}" \
+            --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/docker.yml" >/dev/null
+
+          while IFS= read -r name; do
+            file="/tmp/published-release/$name"
+            gh attestation verify "$file" --repo "$GITHUB_REPOSITORY" \
+              --source-digest "$RELEASE_SHA" --source-ref "refs/tags/${RELEASE_TAG}" \
+              --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/docker.yml" >/dev/null
+            gh attestation verify "$file" --repo "$GITHUB_REPOSITORY" \
+              --predicate-type https://spdx.dev/Document/v2.3 \
+              --source-digest "$RELEASE_SHA" --source-ref "refs/tags/${RELEASE_TAG}" \
+              --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/docker.yml" >/dev/null
+          done < <(jq -r '.binaries[]' "$RELEASE_SPEC")
+
+          {
+            echo "### Verified helper publication"
+            echo
+            echo "- source: ${RELEASE_SHA}"
+            echo "- image: ${IMAGE}@${IMAGE_DIGEST}"
+            echo "- public assets: ${#actual_names[@]}"
+            echo "- repository immutable-release setting: $(jq -r '.immutable // false' <<<"$release_json")"
+            echo "- published upgrade/rollback/forward recovery: pass"
+            echo "- upload/download/roundtrip evidence: unset"
+          } >> "$GITHUB_STEP_SUMMARY"

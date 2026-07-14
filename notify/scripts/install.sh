@@ -35,7 +35,7 @@ set -eu
 
 RELAY_URL="${RELAY_URL:-https://relay.vaultsync.eu}"
 MODE="${VAULTSYNC_NOTIFY_MODE:-auto}"
-IMAGE="${VAULTSYNC_NOTIFY_IMAGE:-ghcr.io/psimaker/vaultsync-notify:latest}"
+IMAGE="${VAULTSYNC_NOTIFY_IMAGE:-ghcr.io/psimaker/vaultsync-notify:2.0.0}"
 REPO="psimaker/vaultsync"
 CONTAINER_NAME="vaultsync-notify"
 DRY_RUN=0
@@ -218,21 +218,24 @@ install_docker() {
 
 	guard_against_systemd_flavor
 
-	# A re-run must actually upgrade: `docker run` reuses the local :latest
-	# forever — only an explicit pull re-resolves it (#87).
+	# A re-run must re-resolve the reviewed version tag, then every operation in
+	# this invocation uses the resulting immutable local content ID. A failed
+	# pull never falls back to an unverified or stale local tag.
+	runtime_image=$IMAGE
 	if [ "$DRY_RUN" = 1 ]; then
 		info "[dry-run] would run: $DOCKER pull $IMAGE"
 	else
 		old_image_id=$($DOCKER image inspect -f '{{.Id}}' "$IMAGE" 2>/dev/null) || old_image_id=""
-		if $DOCKER pull "$IMAGE"; then
-			new_image_id=$($DOCKER image inspect -f '{{.Id}}' "$IMAGE" 2>/dev/null) || new_image_id=""
-			if [ -n "$old_image_id" ] && [ "$old_image_id" != "$new_image_id" ]; then
-				info "Helper image updated ($(printf '%.19s' "$old_image_id")… -> $(printf '%.19s' "$new_image_id")…)."
-			fi
-		elif [ -n "$old_image_id" ]; then
-			warn "Could not pull $IMAGE — continuing with the LOCAL image, which may be outdated."
-		else
-			fail "Could not pull $IMAGE and no local copy exists. Check network/registry access and re-run this installer."
+		$DOCKER pull "$IMAGE" || fail "Could not pull the reviewed helper image $IMAGE. No local fallback was used."
+		new_image_id=$($DOCKER image inspect -f '{{.Id}}' "$IMAGE" 2>/dev/null) ||
+			fail "Docker did not resolve $IMAGE after the successful pull."
+		case $new_image_id in
+			sha256:*) ;;
+			*) fail "Docker returned a non-immutable image identity for $IMAGE." ;;
+		esac
+		runtime_image=$new_image_id
+		if [ -n "$old_image_id" ] && [ "$old_image_id" != "$new_image_id" ]; then
+			info "Helper image updated ($(printf '%.19s' "$old_image_id")… -> $(printf '%.19s' "$new_image_id")…)."
 		fi
 	fi
 
@@ -250,7 +253,7 @@ install_docker() {
 			-v "$config_dir":/config:ro \
 			-e SYNCTHING_CONFIG="/config/$config_name" \
 			-e RELAY_URL="$RELAY_URL" \
-			"$IMAGE" --doctor \
+			"$runtime_image" --doctor \
 			|| fail "Preflight failed — see the messages above for the fix, then re-run this installer."
 	fi
 
@@ -265,7 +268,7 @@ install_docker() {
 		-v "$config_dir":/config:ro \
 		-e SYNCTHING_CONFIG="/config/$config_name" \
 		-e RELAY_URL="$RELAY_URL" \
-		"$IMAGE" >/dev/null
+		"$runtime_image" >/dev/null
 
 	# Doctor passing makes a crash here unlikely, but verify the container
 	# actually stayed up rather than reporting success on a restart loop.
@@ -327,19 +330,32 @@ download_binary() {
 	curl -fsSL -o "$tmpdir/$asset" "$base/$asset" \
 		|| fail "Download failed: $base/$asset"
 
-	# Verify against the release checksums when a SHA-256 tool exists.
-	if curl -fsSL -o "$tmpdir/SHA256SUMS" "$base/SHA256SUMS" 2>/dev/null; then
-		if command -v sha256sum >/dev/null 2>&1; then
-			(cd "$tmpdir" && grep " $asset\$" SHA256SUMS | sha256sum -c - >/dev/null) \
-				|| fail "Checksum mismatch for $asset — aborting."
-		elif command -v shasum >/dev/null 2>&1; then
-			(cd "$tmpdir" && grep " $asset\$" SHA256SUMS | shasum -a 256 -c - >/dev/null) \
-				|| fail "Checksum mismatch for $asset — aborting."
-		else
-			warn "No sha256sum/shasum found; skipping checksum verification."
-		fi
+	# Release binaries are never installed without the reviewed checksum asset
+	# and a local SHA-256 implementation.
+	curl -fsSL -o "$tmpdir/SHA256SUMS" "$base/SHA256SUMS" \
+		|| fail "Could not fetch SHA256SUMS for $tag — no binary was installed."
+	checksum=$(awk -v asset="$asset" '
+		$2 == asset { matches++; value = $1 }
+		END {
+			if (matches != 1) exit 1
+			print value
+		}
+	' "$tmpdir/SHA256SUMS") ||
+		fail "SHA256SUMS must contain exactly one checksum for $asset — no binary was installed."
+	if [ "${#checksum}" -ne 64 ]; then
+		fail "SHA256SUMS contains a non-canonical checksum for $asset — no binary was installed."
+	fi
+	case $checksum in
+		*[!0-9a-f]*) fail "SHA256SUMS contains a non-canonical checksum for $asset — no binary was installed." ;;
+	esac
+	if command -v sha256sum >/dev/null 2>&1; then
+		(cd "$tmpdir" && printf '%s  %s\n' "$checksum" "$asset" | sha256sum -c - >/dev/null) \
+			|| fail "Checksum mismatch for $asset — aborting."
+	elif command -v shasum >/dev/null 2>&1; then
+		(cd "$tmpdir" && printf '%s  %s\n' "$checksum" "$asset" | shasum -a 256 -c - >/dev/null) \
+			|| fail "Checksum mismatch for $asset — aborting."
 	else
-		warn "Could not fetch SHA256SUMS; skipping checksum verification."
+		fail "sha256sum or shasum is required to verify $asset — no binary was installed."
 	fi
 
 	chmod 755 "$tmpdir/$asset"

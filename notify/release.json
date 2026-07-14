@@ -1,0 +1,31 @@
+{
+  "format_version": 1,
+  "version": "2.0.0",
+  "tag": "notify-v2.0.0",
+  "image": "ghcr.io/psimaker/vaultsync-notify",
+  "version_image": "ghcr.io/psimaker/vaultsync-notify:2.0.0",
+  "rollback": {
+    "tag": "notify-v1.8.0",
+    "commit": "e4f9e3088d7b7bc47943ff59db73de369c16c543",
+    "image": "ghcr.io/psimaker/vaultsync-notify@sha256:6e2b333dd16633d93c5104a72a2b133f4e0d95166757ee081930626e08858154"
+  },
+  "binaries": [
+    "vaultsync-notify_linux_amd64",
+    "vaultsync-notify_linux_arm64",
+    "vaultsync-notify_darwin_amd64",
+    "vaultsync-notify_darwin_arm64",
+    "vaultsync-notify_windows_amd64.exe"
+  ],
+  "release_assets": [
+    "vaultsync-notify_linux_amd64",
+    "vaultsync-notify_linux_arm64",
+    "vaultsync-notify_darwin_amd64",
+    "vaultsync-notify_darwin_arm64",
+    "vaultsync-notify_windows_amd64.exe",
+    "SHA256SUMS",
+    "SBOM.spdx.json",
+    "IMAGE-DIGESTS",
+    "RELEASE-MANIFEST.json",
+    "ROLLOUT-EVIDENCE.txt"
+  ]
+}

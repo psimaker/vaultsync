@@ -1,8 +1,12 @@
 # Helper runtime and packaging readiness
 
-**Status:** Implemented in source and locally verified; not yet published or
-deployed. VaultSync 2.0 remains NO-GO. No app runtime calls these endpoints, so
-upload, download, and roundtrip evidence remain unset.
+**Status:** Runtime and packaging source readiness is merged and verified. The
+public helper release, registry digest, and rollout state are established only
+by the owner-gated workflow and evidence defined in
+[`helper-publication-rollout.md`](helper-publication-rollout.md); source text
+alone never claims publication. VaultSync 2.0 remains NO-GO. No released app
+runtime calls these endpoints, so upload, download, and roundtrip evidence
+remain unset.
 
 ## Exact scope
 
@@ -237,6 +241,7 @@ The readiness gate includes:
 - full diff, security, privacy, secret, wire, existing-user, migration,
   backup/version/conflict/tombstone, and rollback review before merge.
 
-Publication, registry digests, SBOM/vulnerability results, production
-helper-first rollout, and production rollback evidence belong to the next
-milestone and must not be inferred from this source-readiness document.
+Publication, registry digests, SBOM/vulnerability results, public artifact
+availability, and helper-first rollback evidence must be read from the exact
+release and workflow named by the publication manifest. They must not be
+inferred from this source-readiness document.

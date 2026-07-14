@@ -3,7 +3,7 @@
 # Desktop, rootless Docker, NAS packaging, or a production host installation.
 set -eu
 
-old_commit=85e527db180a17d9d23f9ba233cf5abd0e9671f6
+old_commit=e4f9e3088d7b7bc47943ff59db73de369c16c543
 script_directory=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 notify_directory=$(CDPATH='' cd -- "$script_directory/../.." && pwd)
 repository_directory=$(CDPATH='' cd -- "$notify_directory/.." && pwd)
@@ -46,6 +46,7 @@ done
 [ "$subnet_octet" -le 209 ] || fail 'no isolated proof subnet was available'
 mock_address=172.28.$subnet_octet.2
 helper_address=172.28.$subnet_octet.3
+old_endpoint_log_observations=0
 
 mkdir -p "$temporary_directory/old" "$temporary_directory/config" "$temporary_directory/state"
 git -C "$repository_directory" archive "$old_commit" notify | tar -x -C "$temporary_directory/old"
@@ -136,15 +137,31 @@ assert_listener() {
 }
 
 assert_no_sensitive_logs() {
-	for forbidden in "$api_key" "$folder_id" "$runtime_config" "$temporary_directory/state" "http://$mock_address:8080"; do
-		if docker logs "$helper_name" 2>&1 | grep -F "$forbidden" >/dev/null; then
-			fail 'helper log exposed a configured identifier, path, URL, or test credential'
-		fi
-	done
+	log_phase=$1
+	assert_log_omits 'test credential' "$api_key"
+	assert_log_omits 'folder identifier' "$folder_id"
+	assert_log_omits 'config path' "$runtime_config"
+	assert_log_omits 'state path' "$temporary_directory/state"
+	case $log_phase in
+		old-*)
+			if docker logs "$helper_name" 2>&1 | grep -F "http://$mock_address:8080" >/dev/null; then
+				old_endpoint_log_observations=$((old_endpoint_log_observations + 1))
+			fi
+			;;
+		*) assert_log_omits 'URL' "http://$mock_address:8080" ;;
+	esac
+}
+
+assert_log_omits() {
+	label=$1
+	forbidden=$2
+	if docker logs "$helper_name" 2>&1 | grep -F "$forbidden" >/dev/null; then
+		fail "helper $log_phase log exposed a configured $label"
+	fi
 }
 
 stop_helper() {
-	assert_no_sensitive_logs
+	assert_no_sensitive_logs "$1"
 	docker rm -f "$helper_name" >/dev/null
 }
 
@@ -160,7 +177,7 @@ state_digest() {
 start_helper "$old_image"
 assert_listener absent
 [ ! -e "$credential_state" ] || fail 'old helper created diagnostics credentials'
-stop_helper
+stop_helper old-initial
 
 # Upgrade: the new immutable image starts the TLS 1.3 listener and persists its
 # private identity only in the separate state mount.
@@ -175,14 +192,14 @@ case $first_spki in
 	*[!0-9a-f]*|'') fail 'TLS SPKI digest was not canonical SHA-256 hex' ;;
 	*) ;;
 esac
-stop_helper
+stop_helper new-upgrade
 
 # Rollback: the old image neither reads nor rewrites the persisted opt-in
 # credential state, and it exposes no diagnostics listener.
 start_helper "$old_image"
 assert_listener absent
 [ "$(state_digest)" = "$first_state_digest" ] || fail 'rollback changed diagnostics credential state'
-stop_helper
+stop_helper old-rollback
 
 # Forward recovery: the exact same state reopens, preserving the public pin.
 start_helper "$new_image"
@@ -190,7 +207,9 @@ assert_listener present
 [ "$(state_digest)" = "$first_state_digest" ] || fail 'forward recovery changed diagnostics credential state'
 second_spki=$(docker exec "$mock_name" /runtime-packaging-mock spki "$helper_address:$port")
 [ "$second_spki" = "$first_spki" ] || fail 'forward recovery changed the TLS SPKI pin'
-stop_helper
+stop_helper new-forward-recovery
+[ "$old_endpoint_log_observations" -eq 2 ] ||
+	fail 'published rollback baseline endpoint-log behavior was not observed in both old-helper phases'
 
 printf '%s\n' \
 	"old_commit=$old_commit" \
@@ -202,6 +221,8 @@ printf '%s\n' \
 	'new_to_old=pass' \
 	'old_to_new_forward_recovery=pass' \
 	'credential_state=byte-identical' \
+	'rollback_baseline_endpoint_logging=observed-known-1.8.0' \
+	'candidate_sensitive_logging=not-observed' \
 	'upload_evidence=unset' \
 	'download_evidence=unset' \
 	'roundtrip_evidence=unset'
