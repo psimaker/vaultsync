@@ -132,6 +132,9 @@ jobs:
       - notify-guard
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
     outputs:
       version: ${{ steps.validate.outputs.version }}
       release_tag: ${{ steps.validate.outputs.release_tag }}
@@ -257,9 +260,12 @@ jobs:
             *) exit 1 ;;
           esac
 
-          if [ "$recovery_mode" = true ]; then
-            test "$release_type" = object
-            test "$(jq -r .isDraft <<<"$release_json")" = true
+          if [ "$recovery_mode" = true ] && [ "$release_type" = null ]; then
+            # GitHub exposes draft releases only to tokens with push access. Keep
+            # this gate read-only; release-binaries resolves the exact draft with
+            # its isolated contents:write token and refuses to recreate a missing
+            # draft during recovery before performing any release mutation.
+            echo "Draft visibility deferred to the exact recovery staging gate."
           fi
 
           manifest_digest=$(sha256sum "$RELEASE_SPEC" | awk '{print $1}')
