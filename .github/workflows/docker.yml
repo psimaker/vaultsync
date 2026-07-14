@@ -1200,7 +1200,7 @@ jobs:
               echo "::error::Draft release GraphQL response was invalid." >&2
               return 1
             }
-            release_id=$(jq -r '.data.repository.release.databaseId // empty' <<<"$lookup") || {
+            release_id=$(jq -er '.data.repository.release.databaseId // empty' <<<"$lookup") || {
               echo "::error::Draft release database ID could not be parsed." >&2
               return 1
             }

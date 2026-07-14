@@ -566,6 +566,7 @@ assert_policy((%w[release-binaries image-ready] - jobs.fetch("rollout-verify").f
 rollout_text = flattened_step_text(jobs.fetch("rollout-verify"))
 assert_policy(rollout_text.include?("gh api graphql") &&
               rollout_text.include?("databaseId") &&
+              rollout_text.include?(%q{release_id=$(jq -er '.data.repository.release.databaseId // empty' <<<"$lookup")}) &&
               rollout_text.include?('releases/${release_id}') &&
               rollout_text.include?('releases/assets/${asset_id}') &&
               rollout_text.include?('Accept: application/octet-stream') &&
