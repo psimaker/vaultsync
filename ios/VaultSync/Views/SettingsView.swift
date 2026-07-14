@@ -68,6 +68,16 @@ struct SettingsView: View {
                     Text(L10n.tr("Check setup progress and troubleshooting tips."))
                 }
 
+                Section {
+                    NavigationLink {
+                        ControlledDiagnosticsView(syncthingManager: syncthingManager)
+                    } label: {
+                        Label(L10n.tr("Controlled Diagnostics"), systemImage: "stethoscope")
+                    }
+                } footer: {
+                    Text(L10n.tr("Optional, explicit helper pairing and namespace authorization. Nothing is created on upgrade or without your action."))
+                }
+
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
