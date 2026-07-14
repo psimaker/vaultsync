@@ -140,7 +140,7 @@ assert_runtime_constraints() {
 		fail 'container no-new-privileges boundary is absent'
 	[ "$(docker inspect --format '{{index .HostConfig.Tmpfs "/tmp"}}' "$container_name")" = 'rw,noexec,nosuid,size=64m' ] ||
 		fail 'container temporary filesystem boundary changed'
-	mounts=$(docker inspect --format '{{range .Mounts}}{{println .Destination .RW}}{{end}}' "$container_name" | sort)
+	mounts=$(docker inspect --format '{{range .Mounts}}{{if eq .Type "bind"}}{{println .Destination .RW}}{{end}}{{end}}' "$container_name" | sed '/^$/d' | sort)
 	expected_mounts=$(printf '%s\n' '/config/runtime.json false' '/state true' '/syncthing/config.xml false' | sort)
 	[ "$mounts" = "$expected_mounts" ] || fail 'container has missing or unexpected persistent mounts'
 }
