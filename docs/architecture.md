@@ -94,10 +94,12 @@ milestone.
 #### Opt-in correlated-roundtrip helper runtime — no app evidence yet
 
 [Decisions 021–024](decisions/021-capability-negotiated-helper-contract-for-correlated-roundtrip-proof.md)
-define the proof and rollout boundaries. The source tree now contains the first
-helper runtime carrier for those foundations, but it is not yet published or
-deployed and no app runtime calls it. VaultSync 2.0 remains NO-GO; product
-upload, controlled download, and causal roundtrip evidence are all unset.
+define the proof and rollout boundaries. Helper 2.0.2 is published and its
+immutable digest plus upgrade, downgrade, and forward-recovery path are
+verified. The source tree now also contains the unreleased app-side explicit
+capability, pairing, credential-lifecycle, and namespace-authorization control
+plane. VaultSync 2.0 remains NO-GO; product upload, controlled download, and
+causal roundtrip evidence are all unset.
 
 The runtime is gated by an operator-authored read-only configuration plus a
 separate writable state directory. If either is absent, existing helpers retain
@@ -197,6 +199,9 @@ fresh post-authorization iPhone cursor/nanosecond/generation/`ItemFinished`
 baseline. Cleanup remains evidence-orthogonal. Helper-first publication,
 production rollout, rollback, and then separate app milestones remain mandatory.
 See [helper runtime and packaging readiness](helper-runtime-packaging-readiness.md).
+The app-side scope, compatibility, persistence, consent, and rollback boundaries
+are documented in
+[app capability, pairing, and namespace readiness](app-capability-pairing-namespace-readiness.md).
 
 ### Connection paths & iOS network privacy
 

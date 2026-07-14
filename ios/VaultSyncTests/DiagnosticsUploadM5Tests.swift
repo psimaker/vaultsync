@@ -230,7 +230,7 @@ struct DiagnosticsUploadM5Tests {
         }
     }
 
-    @Test("M5 remains test-only in Swift and records no forbidden operation values")
+    @Test("M5 transfer remains absent from Swift product code and records no forbidden operation values")
     func privacyAndProductBoundary() throws {
         let fixture = try M5UploadFixtureLoader.load()
         let testDirectory = URL(fileURLWithPath: "\(#filePath)").deletingLastPathComponent()
@@ -243,8 +243,20 @@ struct DiagnosticsUploadM5Tests {
         while let url = enumerator?.nextObject() as? URL {
             guard url.pathExtension == "swift" else { continue }
             let body = try String(contentsOf: url, encoding: .utf8)
-            #expect(!body.contains(M5UploadMessage.capability))
-            #expect(!body.contains("eu.vaultsync.roundtrip/v1/upload-attestation"))
+            if body.contains(M5UploadMessage.capability) {
+                #expect(url.lastPathComponent == "DiagnosticsCapabilityNamespaceProtocol.swift")
+            }
+            for transferDomain in [
+                "eu.vaultsync.roundtrip/v1/operation-request",
+                "eu.vaultsync.roundtrip/v1/attestation-query",
+                "eu.vaultsync.roundtrip/v1/upload-attestation",
+                "eu.vaultsync.roundtrip/v1/response-authorization",
+                "eu.vaultsync.roundtrip/v1/response-artifact",
+                "eu.vaultsync.roundtrip/v1/cleanup-request",
+                "eu.vaultsync.roundtrip/v1/cleanup-ack",
+            ] {
+                #expect(!body.contains(transferDomain))
+            }
         }
 
         let allowedSnapshot = "phase=completed upload=true download=false roundtrip=false cleanup=0"
