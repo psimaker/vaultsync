@@ -5,12 +5,30 @@ import UIKit
 
 struct QRScannerView: View {
     let onScan: (String) -> Void
+    let title: String
+    let deniedMessage: String
+    let unavailableMessage: String
+    let manualButtonTitle: String
     @Environment(\.dismiss) private var dismiss
     @State private var cameraPermission: AVAuthorizationStatus = .notDetermined
     /// Camera permission granted but the capture session could not be built
     /// (no device/input/output — Simulator, hardware fault, MDM policy).
     /// Without this the sheet stayed a silent black screen (#95).
     @State private var cameraSetupFailed = false
+
+    init(
+        title: String = L10n.tr("Scan QR Code"),
+        deniedMessage: String = L10n.tr("VaultSync needs camera access to scan Syncthing Device ID QR codes. Please enable it in Settings."),
+        unavailableMessage: String = L10n.tr("The camera could not be started on this device. Enter the Device ID manually instead — in Syncthing on your computer, choose Actions → Show ID."),
+        manualButtonTitle: String = L10n.tr("Enter Device ID Manually"),
+        onScan: @escaping (String) -> Void
+    ) {
+        self.title = title
+        self.deniedMessage = deniedMessage
+        self.unavailableMessage = unavailableMessage
+        self.manualButtonTitle = manualButtonTitle
+        self.onScan = onScan
+    }
 
     var body: some View {
         NavigationStack {
@@ -37,7 +55,7 @@ struct QRScannerView: View {
                     ProgressView("Requesting camera access…")
                 }
             }
-            .navigationTitle("Scan QR Code")
+            .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -63,7 +81,7 @@ struct QRScannerView: View {
             Text("Camera Access Required")
                 .font(.title3.bold())
 
-            Text("VaultSync needs camera access to scan Syncthing Device ID QR codes. Please enable it in Settings.")
+            Text(deniedMessage)
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -90,13 +108,13 @@ struct QRScannerView: View {
             Text(L10n.tr("Camera Unavailable"))
                 .font(.title3.bold())
 
-            Text(L10n.tr("The camera could not be started on this device. Enter the Device ID manually instead — in Syncthing on your computer, choose Actions → Show ID."))
+            Text(unavailableMessage)
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, VaultSpacing.xl)
 
-            Button(L10n.tr("Enter Device ID Manually")) {
+            Button(manualButtonTitle) {
                 dismiss()
             }
             .buttonStyle(.borderedProminent)
@@ -149,16 +167,16 @@ private final class ScannerCoordinator: NSObject, AVCaptureMetadataOutputObjects
         didOutput metadataObjects: [AVMetadataObject],
         from connection: AVCaptureConnection
     ) {
-        let alreadyScanned = didScan.withLock { scanned -> Bool in
-            if scanned { return true }
-            scanned = true
-            return false
-        }
-        guard !alreadyScanned,
-              let object = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
+        guard let object = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
               object.type == .qr,
               let value = object.stringValue,
               !value.isEmpty else { return }
+        let shouldHandle = didScan.withLock { scanned -> Bool in
+            if scanned { return false }
+            scanned = true
+            return true
+        }
+        guard shouldHandle else { return }
 
         captureSession.stopRunning()
         DispatchQueue.main.async { [onScan] in

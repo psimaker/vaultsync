@@ -78,7 +78,7 @@ targets:
           - eu.vaultsync.app.sync-refresh
           - eu.vaultsync.app.sync-continued
           - eu.vaultsync.app.sync-processing
-        NSCameraUsageDescription: "VaultSync uses the camera to scan Syncthing device QR codes for easy setup."
+        NSCameraUsageDescription: "VaultSync uses the camera to scan setup and pairing QR codes you explicitly choose."
         # Without this, iOS 14+ Local Network privacy silently blocks direct
         # TCP/QUIC dials to peers on the same Wi-Fi, forcing every connection
         # through public relays — the slowest reconnect path after a cold start.

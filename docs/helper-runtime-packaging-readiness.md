@@ -197,9 +197,10 @@ their existing wire formats.
 | Future capable | New, enabled and exactly authorized | Existing v1 | Helper-side D022–D024 contract is available; Relay v1 is unchanged and is not evidence for upload, download, or roundtrip. |
 | Any | New → old rollback → same new image | Existing v1 | Diagnostics becomes unavailable on rollback; preserved state is revalidated on forward recovery and no operation resumes automatically. |
 
-This milestone does not claim compatibility with an unreleased app
-implementation. App-side old/new matrices and real-device evidence remain
-gates for the later app milestones.
+This helper milestone does not claim compatibility with a released capable app.
+The now-implemented, still-unreleased app control-plane matrix is tracked in
+[app capability, pairing, and namespace readiness](app-capability-pairing-namespace-readiness.md);
+transfer and real-device evidence remain later gates.
 
 ## Evidence boundary
 
