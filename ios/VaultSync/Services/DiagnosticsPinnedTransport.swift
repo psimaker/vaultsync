@@ -204,6 +204,10 @@ private final class PinnedSessionDelegate: NSObject, URLSessionDelegate, URLSess
             completionHandler(.cancelAuthenticationChallenge, nil)
             return
         }
+        guard DiagnosticsPinnedTrustEvaluator.evaluate(trust: trust, leaf: certificate) else {
+            completionHandler(.cancelAuthenticationChallenge, nil)
+            return
+        }
         lock.lock()
         authenticated = true
         lock.unlock()
@@ -227,5 +231,19 @@ private final class PinnedSessionDelegate: NSObject, URLSessionDelegate, URLSess
             difference |= left ^ right
         }
         return difference == 0
+    }
+}
+
+private enum DiagnosticsPinnedTrustEvaluator {
+    static func evaluate(trust: SecTrust, leaf: SecCertificate) -> Bool {
+        // The exact out-of-band pinned leaf is the sole challenge-scoped anchor.
+        // URLSession's SSL policy continues to enforce the requested host and validity.
+        guard SecTrustSetAnchorCertificates(trust, [leaf] as CFArray) == errSecSuccess,
+              SecTrustSetAnchorCertificatesOnly(trust, true) == errSecSuccess,
+              SecTrustSetNetworkFetchAllowed(trust, false) == errSecSuccess else {
+            return false
+        }
+        var error: CFError?
+        return SecTrustEvaluateWithError(trust, &error)
     }
 }

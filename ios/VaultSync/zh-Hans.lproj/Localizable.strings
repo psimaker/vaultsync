@@ -896,6 +896,7 @@
 "The current app key authorizes the next key. The old key is not retired until the helper acknowledgement and a capability query under the new key both succeed." = "当前 App 密钥授权下一个密钥。只有 Helper 确认以及使用新密钥的能力查询都成功后，旧密钥才会退役。";
 "The helper must first be configured by its operator for a private local, LAN, or VPN endpoint and an exact existing folder. Public defaults and automatic discovery are not supported." = "操作员必须先为 Helper 配置私有本地、局域网或 VPN 端点以及确切的现有文件夹。不支持公共默认值和自动发现。";
 "The helper operator must explicitly create the exact “VaultSync Diagnostics” namespace for this folder. VaultSync never creates or adopts it automatically." = "Helper 操作员必须为此文件夹明确创建名称完全为“VaultSync Diagnostics”的命名空间。VaultSync 绝不会自动创建或采用它。";
+"The selected folder was renamed or removed. Restore it in Syncthing before retrying." = "所选文件夹已被重命名或移除。请先在 Syncthing 中恢复它，然后重试。";
 "The helper rate limit was reached. Wait before retrying the exact step." = "已达到 Helper 速率限制。请稍后再重试完全相同的步骤。";
 "The signed step expired. Start again with a fresh operator action." = "已签名步骤已过期。请通过新的操作员操作重新开始。";
 "This is scoped to the selected app, homeserver, and folder. Any authorized namespace will require a new immutable authorization epoch." = "此操作仅限于所选 App、家庭服务器和文件夹。任何已授权命名空间都需要新的不可变授权时期。";

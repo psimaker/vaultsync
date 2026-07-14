@@ -1080,6 +1080,43 @@ struct DiagnosticsAppRuntimeM3Tests {
         }
     }
 
+    @Test("Pinned trust and missing-folder actions fail closed")
+    func pinnedTrustAndMissingFolderSourceBoundaries() throws {
+        let iosDirectory = URL(fileURLWithPath: "\(#filePath)")
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let transport = try String(
+            contentsOf: iosDirectory
+                .appendingPathComponent("VaultSync", isDirectory: true)
+                .appendingPathComponent("Services", isDirectory: true)
+                .appendingPathComponent("DiagnosticsPinnedTransport.swift"),
+            encoding: .utf8
+        )
+        let pinMatch = try #require(transport.range(of: "guard Self.constantTimeEqual"))
+        let trustEvaluation = try #require(
+            transport.range(of: "DiagnosticsPinnedTrustEvaluator.evaluate", range: pinMatch.upperBound..<transport.endIndex)
+        )
+        let authentication = try #require(
+            transport.range(of: "authenticated = true", range: trustEvaluation.upperBound..<transport.endIndex)
+        )
+        #expect(pinMatch.lowerBound < trustEvaluation.lowerBound)
+        #expect(trustEvaluation.lowerBound < authentication.lowerBound)
+        #expect(transport.contains("SecTrustSetAnchorCertificates(trust, [leaf] as CFArray)"))
+        #expect(transport.contains("SecTrustSetAnchorCertificatesOnly(trust, true)"))
+        #expect(transport.contains("SecTrustSetNetworkFetchAllowed(trust, false)"))
+        #expect(transport.contains("SecTrustEvaluateWithError(trust, &error)"))
+
+        let view = try String(
+            contentsOf: iosDirectory
+                .appendingPathComponent("VaultSync", isDirectory: true)
+                .appendingPathComponent("Views", isDirectory: true)
+                .appendingPathComponent("ControlledDiagnosticsView.swift"),
+            encoding: .utf8
+        )
+        #expect(view.contains("The selected folder was renamed or removed. Restore it in Syncthing before retrying."))
+        #expect(view.components(separatedBy: "missingFolderRecordID = record.id").count - 1 == 2)
+    }
+
     @Test("Namespace reads are descriptor-confined through the authorization-epoch depth")
     func namespaceFileConfinement() throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)

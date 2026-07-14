@@ -11,6 +11,7 @@ struct ControlledDiagnosticsView: View {
     @State private var showConsent = false
     @State private var consentAction: ConsentAction = .scan
     @State private var showRecoveryConfirmation = false
+    @State private var missingFolderRecordID: String?
 
     private enum ConsentAction {
         case scan
@@ -150,6 +151,15 @@ struct ControlledDiagnosticsView: View {
             pendingCancellationActions(record)
             activeActions(record)
 
+            if missingFolderRecordID == record.id, folderPath(record.folderID) == nil {
+                Label(
+                    L10n.tr("The selected folder was renamed or removed. Restore it in Syncthing before retrying."),
+                    systemImage: "exclamationmark.folder"
+                )
+                .font(.caption)
+                .foregroundStyle(Color.statusAttention)
+            }
+
             if let error = controller.lastError {
                 Label(errorLabel(error), systemImage: "exclamationmark.circle")
                     .font(.caption)
@@ -261,7 +271,11 @@ struct ControlledDiagnosticsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Button(L10n.tr("Check Explicit Operator Step")) {
-                guard let path = folderPath(record.folderID) else { return }
+                guard let path = folderPath(record.folderID) else {
+                    missingFolderRecordID = record.id
+                    return
+                }
+                missingFolderRecordID = nil
                 Task { await controller.continueNamespace(recordID: record.id, currentFolderPath: path) }
             }
         case .namespaceAuthorizationRefreshRequired, .namespaceAuthorizationRefreshPrepared:
@@ -269,7 +283,11 @@ struct ControlledDiagnosticsView: View {
                 .font(.caption)
                 .foregroundStyle(Color.statusAttention)
             Button(L10n.tr("Authorize Next Namespace Epoch")) {
-                guard let path = folderPath(record.folderID) else { return }
+                guard let path = folderPath(record.folderID) else {
+                    missingFolderRecordID = record.id
+                    return
+                }
+                missingFolderRecordID = nil
                 Task {
                     await controller.continueNamespaceAuthorizationRefresh(
                         recordID: record.id,
