@@ -103,6 +103,19 @@ jobs:
       - name: Prove exact host-bind namespace confinement
         run: notify/tests/m4-docker/run.sh
 
+  helper-runtime-packaging:
+    name: Helper Runtime Packaging
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prove real rootful-Linux install, upgrade, downgrade, and recovery
+        run: sudo notify/tests/runtime-packaging/run-linux-host.sh
+
   m5-syncthing-upload-e2e:
     name: M5 Syncthing Upload E2E
     runs-on: ubuntu-latest
@@ -129,6 +142,12 @@ jobs:
           CGO_ENABLED: "0"
         run: go build -tags noassets -o /tmp/vaultsync-m5-syncthing ./cmd/syncthing
 
+      - name: Materialize checksum-verified notify test modules
+        working-directory: notify
+        env:
+          GOMODCACHE: /tmp/vaultsync-m5-notify-mod
+        run: go mod download
+
       - name: Prove upload through two isolated ephemeral instances
         run: |
           docker run --rm --network none --read-only --cap-drop ALL \
@@ -136,8 +155,10 @@ jobs:
             --tmpfs /tmp:rw,exec,nosuid,nodev,mode=1777 \
             -v "$GITHUB_WORKSPACE:/src:ro" \
             -v /tmp/vaultsync-m5-syncthing:/opt/vaultsync-m5-syncthing:ro \
+            -v /tmp/vaultsync-m5-notify-mod:/opt/vaultsync-m5-notify-mod:ro \
             -w /src/notify \
             -e GOCACHE=/tmp/go-cache \
+            -e GOMODCACHE=/opt/vaultsync-m5-notify-mod \
             -e VAULTSYNC_M5_SYNCTHING_BIN=/opt/vaultsync-m5-syncthing \
             golang@sha256:079e59808d2d252516e27e3f3a9c003740dee7f75e55aa71528766d52bcfc16a \
             go test -tags diagnostics_m5_syncthing_e2e \
@@ -170,6 +191,9 @@ jobs:
           shellcheck -s sh notify/scripts/install.sh notify/scripts/tests/install-dry-run-test.sh
           shellcheck -s sh --exclude=SC1007 notify/scripts/bootstrap.sh
           shellcheck -s sh notify/tests/m4-docker/run.sh
+          shellcheck -s sh notify/scripts/diagnostics-docker.sh
+          shellcheck -s sh notify/tests/runtime-packaging/run.sh
+          shellcheck -s sh notify/tests/runtime-packaging/run-linux-host.sh
 
       - name: install.sh --dry-run smoke test
         # Hermetic: fixture config.xml + PATH shims; asserts dry-run changes
@@ -225,6 +249,7 @@ jobs:
       - go-tests
       - notify-tests
       - m4-docker-confinement
+      - helper-runtime-packaging
       - m5-syncthing-upload-e2e
       - design-lint
     # Skip the expensive macOS build on docs-only changes. It is not a required
