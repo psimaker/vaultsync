@@ -118,8 +118,14 @@ set either diagnostics environment variable and do not activate the runtime.
    and separate private state directory, then starts the capable helper with no
    namespace mount.
 3. Run `diagnostics-docker.sh pair`. The one-time QR value is emitted only to
-   that terminal. Pairing remains pending until every D022 signed step and the
-   explicit app fingerprint comparison complete.
+   that terminal. After the app has authenticated the type-`2` acceptance, run
+   `diagnostics-docker.sh list` in the same operator-controlled environment.
+   The exact pending row includes `transcript=<12 uppercase hex characters>`;
+   compare it with the app before approving type `3`. The transcript value is
+   emitted only by this explicit local command and must not be redirected into
+   service logs or support bundles. Pairing remains pending until every D022
+   signed step and this exact comparison complete. Active rows deliberately no
+   longer expose a transcript value.
 4. After the app sends a signed D023 enablement request, run
    `diagnostics-docker.sh enable` with the exact canonical folder host path and
    explicit supported-host confirmation. The command displays the exact

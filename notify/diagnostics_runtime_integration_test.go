@@ -314,6 +314,9 @@ func TestDiagnosticsAdminActionsRequireExactLocalFingerprint(t *testing.T) {
 	if err != nil || !strings.Contains(listing, fingerprint+" state=active namespace=no") {
 		t.Fatalf("admin list did not return the exact local fingerprint: %v", err)
 	}
+	if strings.Contains(listing, " transcript=") {
+		t.Fatal("active admin list retained a pending transcript fingerprint")
+	}
 	if _, err := runDiagnosticsAdminOperator(context.Background(), appConfig, diagnosticsAdminCommand{
 		action: "rotate-helper", folderID: folderID, appFingerprint: "000000000000",
 	}); err == nil {

@@ -314,6 +314,19 @@ func TestDiagnosticsPairingPendingFinalizeReceiptActivateAbortAndReplay(t *testi
 	if err != nil || len(fingerprint) != 12 || fingerprint != strings.ToUpper(fingerprint) {
 		t.Fatalf("fingerprint = %q, err=%v", fingerprint, err)
 	}
+	state, err := manager.store.snapshot()
+	if err != nil || len(state.Authorizations) != 1 {
+		t.Fatalf("pending authorization snapshot = %d, %v", len(state.Authorizations), err)
+	}
+	pendingLine, err := diagnosticsAdminListLine(state.Authorizations[0])
+	if err != nil || !strings.Contains(pendingLine, " state=pending namespace=no transcript="+fingerprint+"\n") {
+		t.Fatalf("pending transcript fingerprint unavailable to operator: %q, %v", pendingLine, err)
+	}
+	invalidPending := state.Authorizations[0]
+	invalidPending.CurrentStateDigest = nil
+	if _, err := diagnosticsAdminListLine(invalidPending); err == nil {
+		t.Fatal("operator list accepted a pending authorization without an exact helper-accept digest")
+	}
 
 	transition := func(prior diagnosticsPairingMessage, messageType uint64) diagnosticsPairingMessage {
 		now := uint64(clock.current().Unix())
@@ -340,7 +353,7 @@ func TestDiagnosticsPairingPendingFinalizeReceiptActivateAbortAndReplay(t *testi
 	readyAck := transition(finalizeAck, diagnosticsPairingReceipt)
 	activeAck := transition(readyAck, diagnosticsPairingActivate)
 	_ = transition(activeAck, diagnosticsPairingAbort)
-	state, err := manager.store.snapshot()
+	state, err = manager.store.snapshot()
 	if err != nil {
 		t.Fatal(err)
 	}
