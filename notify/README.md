@@ -72,7 +72,7 @@ docker run -d --name vaultsync-notify --restart unless-stopped \
   -v /PATH/TO/syncthing:/config:ro \
   -e SYNCTHING_CONFIG=/config/config.xml \
   -e RELAY_URL=https://relay.vaultsync.eu \
-  ghcr.io/psimaker/vaultsync-notify:2.0.0
+  ghcr.io/psimaker/vaultsync-notify:2.0.1
 ```
 
 Replace `/PATH/TO/syncthing` with your Syncthing config folder (often `~/.local/state/syncthing` or `~/.config/syncthing`). Permission error? Add `-u <uid>:<gid>` for the user that owns `config.xml`.
@@ -224,7 +224,14 @@ Validates: Syncthing API reachable · API key valid · Device ID readable · rel
 
 **Runtime healthcheck** — the image's `HEALTHCHECK` runs `vaultsync-notify --healthcheck`, validating real readiness (Syncthing API, credentials, Device ID, relay health), not just process liveness. Peer state is deliberately excluded here: a legitimately offline peer must never flip the container to unhealthy.
 
-**Version** — `vaultsync-notify --version` prints the installed helper version (needs no configuration). The installer shows old → new on upgrades. Docker installs pull the reviewed `2.0.0` tag and run only its resolved local content ID; failed pulls do not fall back to a stale tag. Binary installs select the newest published `notify-v*` release, require its `SHA256SUMS`, replace the binary, and restart the service. Future Docker upgrades require another reviewed version tag or an explicit `VAULTSYNC_NOTIFY_IMAGE` override.
+**Version** — `vaultsync-notify --version` prints the installed helper version (needs no configuration). The installer shows old → new on upgrades. Docker installs pull the reviewed `2.0.1` tag and run only its resolved local content ID; failed pulls do not fall back to a stale tag. Binary installs select the newest published `notify-v*` release, require its `SHA256SUMS`, replace the binary, and restart the service. Future Docker upgrades require another reviewed version tag or an explicit `VAULTSYNC_NOTIFY_IMAGE` override.
+
+**Diagnostics pairing comparison** — after the app has authenticated the
+pending helper acceptance, run `diagnostics-docker.sh list` locally. The
+pending row includes the exact D022 `transcript=` fingerprint that must match
+the value in the app before activation. It is local comparison output, not a
+credential; do not redirect it into service logs or support bundles. Active
+rows omit it.
 
 ---
 

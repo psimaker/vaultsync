@@ -1428,7 +1428,7 @@ jobs:
 
           Helper-first rollout
 
-          The real explicit installer passed published 1.8.0 -> 2.0.0 -> 1.8.0 -> the same 2.0.0 digest on a standard Linux rootful-Docker runner. Credential-state bytes and the TLS SPKI pin survived rollback and forward recovery. The proof also records the known 1.8.0 endpoint-log behavior and requires 2.0.0 to emit none of the configured test credential, identifier, path, or URL values. See ROLLOUT-EVIDENCE.txt.
+          The real explicit installer passed published 1.8.0 -> ${RELEASE_VERSION} -> 1.8.0 -> the same ${RELEASE_VERSION} digest on a standard Linux rootful-Docker runner. Credential-state bytes and the TLS SPKI pin survived rollback and forward recovery. The proof also records the known 1.8.0 endpoint-log behavior and requires ${RELEASE_VERSION} to emit none of the configured test credential, identifier, path, or URL values. See ROLLOUT-EVIDENCE.txt.
 
           Compatibility and limits
 

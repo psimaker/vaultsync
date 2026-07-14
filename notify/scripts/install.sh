@@ -35,7 +35,7 @@ set -eu
 
 RELAY_URL="${RELAY_URL:-https://relay.vaultsync.eu}"
 MODE="${VAULTSYNC_NOTIFY_MODE:-auto}"
-IMAGE="${VAULTSYNC_NOTIFY_IMAGE:-ghcr.io/psimaker/vaultsync-notify:2.0.0}"
+IMAGE="${VAULTSYNC_NOTIFY_IMAGE:-ghcr.io/psimaker/vaultsync-notify:2.0.1}"
 REPO="psimaker/vaultsync"
 CONTAINER_NAME="vaultsync-notify"
 DRY_RUN=0

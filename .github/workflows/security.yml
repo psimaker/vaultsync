@@ -126,7 +126,7 @@ jobs:
         id: release-image
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: notify-v2.0.0
+          RELEASE_TAG: notify-v2.0.1
         run: |
           set -euo pipefail
           mkdir -p /tmp/vaultsync-notify-release

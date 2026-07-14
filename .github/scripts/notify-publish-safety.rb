@@ -616,10 +616,10 @@ assert_policy(jobs.fetch("publish-gate").fetch("outputs").fetch("release_is_publ
               "publish gate must fail closed and export the finalized public-release state")
 
 assert_policy(spec.fetch("format_version") == 1, "release manifest format changed")
-assert_policy(spec.fetch("version") == "2.0.0", "release version must remain 2.0.0")
-assert_policy(spec.fetch("tag") == "notify-v2.0.0", "release tag must remain notify-v2.0.0")
+assert_policy(spec.fetch("version") == "2.0.1", "release version must remain 2.0.1")
+assert_policy(spec.fetch("tag") == "notify-v2.0.1", "release tag must remain notify-v2.0.1")
 assert_policy(spec.fetch("image") == "ghcr.io/psimaker/vaultsync-notify", "image repository changed")
-assert_policy(spec.fetch("version_image") == "ghcr.io/psimaker/vaultsync-notify:2.0.0",
+assert_policy(spec.fetch("version_image") == "ghcr.io/psimaker/vaultsync-notify:2.0.1",
               "version image changed")
 assert_policy(spec.fetch("binaries") == EXPECTED_BINARIES, "expected binary set or order changed")
 assert_policy(spec.fetch("release_assets").sort == EXPECTED_ASSETS.sort, "release asset set changed")
@@ -639,9 +639,9 @@ assert_policy(dockerfile.include?("/etc/ssl/certs/ca-certificates.crt"), "pinned
 
 install_text = File.read(INSTALL_PATH)
 compose_text = File.read(COMPOSE_PATH)
-assert_policy(install_text.include?("ghcr.io/psimaker/vaultsync-notify:2.0.0"),
+assert_policy(install_text.include?("ghcr.io/psimaker/vaultsync-notify:2.0.1"),
               "installer default is not the reviewed version tag")
-assert_policy(compose_text.include?("ghcr.io/psimaker/vaultsync-notify:2.0.0"),
+assert_policy(compose_text.include?("ghcr.io/psimaker/vaultsync-notify:2.0.1"),
               "Compose default is not the reviewed version tag")
 assert_policy(!install_text.include?("ghcr.io/psimaker/vaultsync-notify:latest") &&
               !compose_text.include?("ghcr.io/psimaker/vaultsync-notify:latest"),
@@ -692,7 +692,7 @@ negative_cases = [
   base.merge(recovery_run_id: "29324314809"),
   base.merge(ref_type: "branch", ref_name: "main", recovery_run_id: "0"),
   base.merge(ref_type: "branch", ref_name: "main", recovery_run_id: "failed-run"),
-  base.merge(release_tag: "notify-v2.0.1"),
+  base.merge(release_tag: "notify-v2.0.0"),
   base.merge(confirmation: "publish"),
   base.merge(actor: "maintainer"),
   base.merge(triggering_actor: "maintainer"),
