@@ -803,12 +803,18 @@ jobs:
   release-binaries:
     name: Stage Release Binaries
     if: >-
+      always() &&
       github.event_name == 'workflow_dispatch' &&
       ((github.ref_type == 'tag' && inputs.release_tag == github.ref_name && inputs.recovery_run_id == '') ||
        (github.ref == 'refs/heads/main' && inputs.recovery_run_id != '')) &&
       inputs.confirmation == 'PUBLISH_NOTIFY_RELEASE' &&
       github.actor == github.repository_owner &&
-      github.triggering_actor == github.repository_owner
+      github.triggering_actor == github.repository_owner &&
+      needs.publish-safety-policy.result == 'success' &&
+      needs.notify-guard.result == 'success' &&
+      needs.publish-gate.result == 'success' &&
+      needs.image-ready.result == 'success' &&
+      needs.binary-attestation-ready.result == 'success'
     needs:
       - publish-safety-policy
       - notify-guard
@@ -1060,12 +1066,18 @@ jobs:
   rollout-verify:
     name: Published Helper Rollout
     if: >-
+      always() &&
       github.event_name == 'workflow_dispatch' &&
       ((github.ref_type == 'tag' && inputs.release_tag == github.ref_name && inputs.recovery_run_id == '') ||
        (github.ref == 'refs/heads/main' && inputs.recovery_run_id != '')) &&
       inputs.confirmation == 'PUBLISH_NOTIFY_RELEASE' &&
       github.actor == github.repository_owner &&
-      github.triggering_actor == github.repository_owner
+      github.triggering_actor == github.repository_owner &&
+      needs.publish-safety-policy.result == 'success' &&
+      needs.notify-guard.result == 'success' &&
+      needs.publish-gate.result == 'success' &&
+      needs.image-ready.result == 'success' &&
+      needs.release-binaries.result == 'success'
     needs:
       - publish-safety-policy
       - notify-guard
@@ -1127,12 +1139,19 @@ jobs:
   finalize-release:
     name: Finalize Helper Release
     if: >-
+      always() &&
       github.event_name == 'workflow_dispatch' &&
       ((github.ref_type == 'tag' && inputs.release_tag == github.ref_name && inputs.recovery_run_id == '') ||
        (github.ref == 'refs/heads/main' && inputs.recovery_run_id != '')) &&
       inputs.confirmation == 'PUBLISH_NOTIFY_RELEASE' &&
       github.actor == github.repository_owner &&
-      github.triggering_actor == github.repository_owner
+      github.triggering_actor == github.repository_owner &&
+      needs.publish-safety-policy.result == 'success' &&
+      needs.notify-guard.result == 'success' &&
+      needs.publish-gate.result == 'success' &&
+      needs.image-ready.result == 'success' &&
+      needs.release-binaries.result == 'success' &&
+      needs.rollout-verify.result == 'success'
     needs:
       - publish-safety-policy
       - notify-guard
@@ -1287,6 +1306,7 @@ jobs:
   verify-published:
     name: Verify Published Helper
     if: >-
+      always() &&
       github.event_name == 'workflow_dispatch' &&
       ((github.ref_type == 'tag' && inputs.release_tag == github.ref_name && inputs.recovery_run_id == '') ||
        (github.ref == 'refs/heads/main' && inputs.recovery_run_id != '')) &&
@@ -1307,6 +1327,29 @@ jobs:
       contents: read
       packages: read
     steps:
+      - name: Require every publication predecessor to succeed
+        env:
+          PUBLISH_SAFETY_RESULT: ${{ needs.publish-safety-policy.result }}
+          NOTIFY_GUARD_RESULT: ${{ needs.notify-guard.result }}
+          PUBLISH_GATE_RESULT: ${{ needs.publish-gate.result }}
+          IMAGE_READY_RESULT: ${{ needs.image-ready.result }}
+          RELEASE_BINARIES_RESULT: ${{ needs.release-binaries.result }}
+          ROLLOUT_RESULT: ${{ needs.rollout-verify.result }}
+          FINALIZE_RESULT: ${{ needs.finalize-release.result }}
+        run: |
+          set -euo pipefail
+          for result in \
+            "$PUBLISH_SAFETY_RESULT" \
+            "$NOTIFY_GUARD_RESULT" \
+            "$PUBLISH_GATE_RESULT" \
+            "$IMAGE_READY_RESULT" \
+            "$RELEASE_BINARIES_RESULT" \
+            "$ROLLOUT_RESULT" \
+            "$FINALIZE_RESULT"
+          do
+            test "$result" = success
+          done
+
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           ref: ${{ needs.publish-gate.outputs.release_sha }}

@@ -18,6 +18,7 @@ NORMAL_ONLY_JOBS = %w[publish-image attest-binaries].freeze
 RECOVERY_ONLY_JOBS = %w[recover-image].freeze
 DUAL_PATH_JOBS = %w[release-binaries rollout-verify finalize-release verify-published].freeze
 AGGREGATE_JOBS = %w[image-ready binary-attestation-ready].freeze
+SEQUENCED_PUBLICATION_JOBS = %w[release-binaries rollout-verify finalize-release].freeze
 DISPATCH_JOBS = (NORMAL_ONLY_JOBS + RECOVERY_ONLY_JOBS + DUAL_PATH_JOBS + AGGREGATE_JOBS).freeze
 MANUAL_JOBS = (DISPATCH_JOBS + ["publish-gate"]).freeze
 COMMON_GATE_FRAGMENTS = [
@@ -448,10 +449,37 @@ end
 
 DUAL_PATH_JOBS.each do |name|
   condition = jobs.fetch(name).fetch("if")
+  assert_policy(condition.include?("always()"),
+                "#{name} must evaluate explicit predecessor state after a skipped alternate path")
   (NORMAL_GATE_FRAGMENTS + RECOVERY_GATE_FRAGMENTS).each do |fragment|
     assert_policy(condition.include?(fragment), "#{name} is missing dual-path gate #{fragment}")
   end
 end
+
+SEQUENCED_PUBLICATION_JOBS.each do |name|
+  condition = jobs.fetch(name).fetch("if")
+  jobs.fetch(name).fetch("needs").each do |predecessor|
+    result_gate = "needs.#{predecessor}.result == 'success'"
+    assert_policy(condition.include?(result_gate),
+                  "#{name} must fail closed unless #{predecessor} succeeded")
+  end
+end
+
+verify_predecessors = {
+  "PUBLISH_SAFETY_RESULT" => "${{ needs.publish-safety-policy.result }}",
+  "NOTIFY_GUARD_RESULT" => "${{ needs.notify-guard.result }}",
+  "PUBLISH_GATE_RESULT" => "${{ needs.publish-gate.result }}",
+  "IMAGE_READY_RESULT" => "${{ needs.image-ready.result }}",
+  "RELEASE_BINARIES_RESULT" => "${{ needs.release-binaries.result }}",
+  "ROLLOUT_RESULT" => "${{ needs.rollout-verify.result }}",
+  "FINALIZE_RESULT" => "${{ needs.finalize-release.result }}"
+}.freeze
+verify_guard = steps(jobs.fetch("verify-published")).find do |step|
+  step["name"] == "Require every publication predecessor to succeed"
+end
+assert_policy(!verify_guard.nil? && verify_guard.fetch("env") == verify_predecessors &&
+              verify_guard.fetch("run").include?('test "$result" = success'),
+              "public verification must turn every failed or skipped predecessor into a workflow failure")
 
 AGGREGATE_JOBS.each do |name|
   condition = jobs.fetch(name).fetch("if")
