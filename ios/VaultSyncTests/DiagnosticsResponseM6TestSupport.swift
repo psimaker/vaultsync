@@ -57,6 +57,8 @@ enum M6ResponseMessageType: UInt64 {
 
 struct M6ResponseMessage {
     static let capability = "eu.vaultsync.diagnostics.correlated-roundtrip/1"
+    private static let maximumLifetimeSeconds: UInt64 = 600
+    private static let maximumClockSkewSeconds: UInt64 = 120
     static let domains: [M6ResponseMessageType: String] = [
         .responseAuthorization: "eu.vaultsync.roundtrip/v1/response-authorization\0",
         .responseArtifact: "eu.vaultsync.roundtrip/v1/response-artifact\0",
@@ -163,10 +165,10 @@ struct M6ResponseMessage {
     func validateClock(now: UInt64) throws {
         let issued = try uint(12)
         let expires = try uint(13)
-        if issued > now, issued - now > 120 {
+        if issued > now, issued - now > Self.maximumClockSkewSeconds {
             throw M1ContractTestError.invalid("issued too far in the future")
         }
-        if now > expires, now - expires > 120 {
+        if now > expires, now - expires > Self.maximumClockSkewSeconds {
             throw M1ContractTestError.invalid("expired response message")
         }
     }
@@ -237,7 +239,8 @@ struct M6ResponseMessage {
               case .unsigned(let appEpoch) = fields[9], appEpoch > 0,
               case .unsigned(let helperEpoch) = fields[10], helperEpoch > 0,
               case .unsigned(let issued) = fields[12], issued > 0,
-              case .unsigned(let expires) = fields[13], expires > issued, expires - issued <= 600 else {
+              case .unsigned(let expires) = fields[13],
+              expires > issued, expires - issued <= maximumLifetimeSeconds else {
             throw M1ContractTestError.invalid("wrong response key or lifetime")
         }
         switch type {

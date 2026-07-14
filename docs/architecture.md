@@ -156,8 +156,9 @@ attestation copy is not upload evidence. It publishes nothing.
 The separate dormant M6 foundation implements only Decision 024 message types
 6–9. It verifies an exact app-signed response authorization against the confined
 request and helper attestation, atomically persists one immutable helper-signed
-256-byte response, and performs app-authenticated, digest-targeted cleanup of
-verified helper-owned artifacts. Exact response bytes survive duplicate calls,
+response containing exactly 256 random payload bytes, and performs
+app-authenticated, digest-targeted cleanup of verified helper-owned artifacts.
+Exact response bytes survive duplicate calls,
 crashes, races, and helper restart; cleanup is idempotent and cannot target a
 path supplied by the request. Go/Swift golden, parser, fuzz, model, privacy,
 Linux confinement, crash, restart, and race tests cover this boundary.
