@@ -693,7 +693,11 @@ jobs:
         run: |
           set -euo pipefail
           jq --arg namespace "https://github.com/${GITHUB_REPOSITORY}/sbom/${RELEASE_TAG}/${RELEASE_SHA}" \
-            '.creationInfo.created = "1970-01-01T00:00:00Z" | .documentNamespace = $namespace' \
+            '.creationInfo.created = "1970-01-01T00:00:00Z"
+             | .documentNamespace = $namespace
+             | walk(if type == "object" and has("annotationDate")
+                    then .annotationDate = "1970-01-01T00:00:00Z"
+                    else . end)' \
             notify/dist/SBOM.spdx.json > /tmp/SBOM.spdx.json
           mv /tmp/SBOM.spdx.json notify/dist/SBOM.spdx.json
 
@@ -888,9 +892,75 @@ jobs:
         run: |
           set -euo pipefail
           jq --arg namespace "https://github.com/${GITHUB_REPOSITORY}/sbom/${RELEASE_TAG}/${RELEASE_SHA}" \
-            '.creationInfo.created = "1970-01-01T00:00:00Z" | .documentNamespace = $namespace' \
+            '.creationInfo.created = "1970-01-01T00:00:00Z"
+             | .documentNamespace = $namespace
+             | walk(if type == "object" and has("annotationDate")
+                    then .annotationDate = "1970-01-01T00:00:00Z"
+                    else . end)' \
             notify/dist/SBOM.spdx.json > /tmp/SBOM.spdx.json
           mv /tmp/SBOM.spdx.json notify/dist/SBOM.spdx.json
+
+      - name: Verify and adopt the immutable staged SBOM in recovery
+        if: needs.publish-gate.outputs.recovery_mode == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.publish-gate.outputs.release_tag }}
+          RELEASE_VERSION: ${{ needs.publish-gate.outputs.version }}
+          RELEASE_SHA: ${{ needs.publish-gate.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          repository_owner=${GITHUB_REPOSITORY%%/*}
+          repository_name=${GITHUB_REPOSITORY#*/}
+          # GraphQL includes drafts; REST by-tag does not.
+          # shellcheck disable=SC2016
+          lookup=$(gh api graphql \
+            -F owner="$repository_owner" -F name="$repository_name" -F tag="$RELEASE_TAG" \
+            -f query='query($owner: String!, $name: String!, $tag: String!) {
+              repository(owner: $owner, name: $name) {
+                release(tagName: $tag) { databaseId }
+              }
+            }')
+          jq -e '.data.repository != null and ((.errors // []) | length == 0)' <<<"$lookup" >/dev/null
+          release_id=$(jq -r '.data.repository.release.databaseId // empty' <<<"$lookup")
+          printf '%s\n' "$release_id" | grep -Eq '^[1-9][0-9]*$'
+          release_json=$(gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}")
+          test "$(jq -r .tag_name <<<"$release_json")" = "$RELEASE_TAG"
+          test "$(jq -r .name <<<"$release_json")" = "vaultsync-notify ${RELEASE_VERSION}"
+          test "$(jq -r .prerelease <<<"$release_json")" = false
+          case $(jq -r .draft <<<"$release_json") in true|false) ;; *) exit 1 ;; esac
+
+          asset_name=SBOM.spdx.json
+          matches=$(jq -r --arg name "$asset_name" '[.assets[] | select(.name == $name)] | length' <<<"$release_json")
+          test "$matches" = 1
+          asset_id=$(jq -r --arg name "$asset_name" '.assets[] | select(.name == $name) | .id' <<<"$release_json")
+          asset_digest=$(jq -r --arg name "$asset_name" '.assets[] | select(.name == $name) | .digest' <<<"$release_json")
+          printf '%s\n' "$asset_id" | grep -Eq '^[1-9][0-9]*$'
+          printf '%s\n' "$asset_digest" | grep -Eq '^sha256:[0-9a-f]{64}$'
+          staged=/tmp/vaultsync-notify-staged-SBOM.spdx.json
+          gh api --method GET -H 'Accept: application/octet-stream' \
+            "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" > "$staged"
+          test "sha256:$(sha256sum "$staged" | awk '{print $1}')" = "$asset_digest"
+
+          generated=notify/dist/SBOM.spdx.json
+          namespace="https://github.com/${GITHUB_REPOSITORY}/sbom/${RELEASE_TAG}/${RELEASE_SHA}"
+          for candidate in "$generated" "$staged"; do
+            jq -e --arg namespace "$namespace" '
+              .spdxVersion == "SPDX-2.3" and
+              .dataLicense == "CC0-1.0" and
+              .name == "notify/dist" and
+              .documentNamespace == $namespace and
+              .creationInfo.created == "1970-01-01T00:00:00Z" and
+              (.creationInfo.creators | index("Tool: trivy-0.70.0") != null)
+            ' "$candidate" >/dev/null
+          done
+          canonical_filter='walk(if type == "object" and has("annotationDate")
+            then .annotationDate = "1970-01-01T00:00:00Z"
+            else . end)'
+          jq -S "$canonical_filter" "$generated" > /tmp/vaultsync-notify-generated-SBOM.canonical.json
+          jq -S "$canonical_filter" "$staged" > /tmp/vaultsync-notify-staged-SBOM.canonical.json
+          cmp /tmp/vaultsync-notify-generated-SBOM.canonical.json \
+            /tmp/vaultsync-notify-staged-SBOM.canonical.json
+          mv "$staged" "$generated"
 
       - name: Verify exact binary provenance
         env:
@@ -1054,7 +1124,10 @@ jobs:
             expected="sha256:$(sha256sum "$file" | awk '{print $1}')"
             existing=$(jq -r --arg name "$name" '[.assets[] | select(.name == $name) | .digest][0] // empty' <<<"$release_json")
             if [ -n "$existing" ]; then
-              test "$existing" = "$expected"
+              if [ "$existing" != "$expected" ]; then
+                echo "immutable release asset digest mismatch for $name: expected $expected, found $existing" >&2
+                exit 1
+              fi
             else
               test "$release_is_draft" = true
               gh release upload "$RELEASE_TAG" "$file" --repo "$GITHUB_REPOSITORY"
@@ -1147,8 +1220,15 @@ jobs:
             test "sha256:$(sha256sum "$target" | awk '{print $1}')" = "$asset_digest"
           done
           (cd /tmp/vaultsync-notify-release && sha256sum -c SHA256SUMS)
+          sbom_sha=$(sha256sum /tmp/vaultsync-notify-release/SBOM.spdx.json | awk '{print $1}')
+          image_digests_sha=$(sha256sum /tmp/vaultsync-notify-release/IMAGE-DIGESTS | awk '{print $1}')
           jq -e --arg sha "$RELEASE_SHA" --arg digest "$IMAGE_DIGEST" \
-            '.source_commit == $sha and .image_index_digest == $digest' \
+            --arg sbom_sha "$sbom_sha" --arg image_digests_sha "$image_digests_sha" '
+              .source_commit == $sha and
+              .image_index_digest == $digest and
+              .binary_sbom == {"name": "SBOM.spdx.json", "sha256": $sbom_sha} and
+              .image_digests_sha256 == $image_digests_sha
+            ' \
             /tmp/vaultsync-notify-release/RELEASE-MANIFEST.json >/dev/null
 
       - name: Prove published upgrade, rollback, and forward recovery
