@@ -383,6 +383,40 @@ assert_policy(recovery_text.include?("gh attestation verify") &&
               !recovery_text.include?("docker/build-push-action@"),
               "image recovery must only verify the already-published image and attestations")
 
+[
+  "Normalize deterministic attestation SBOM metadata",
+  "Normalize deterministic SBOM metadata"
+].each do |step_name|
+  job_name = step_name.include?("attestation") ? "attest-binaries" : "release-binaries"
+  step_text = steps(jobs.fetch(job_name)).find { |step| step["name"] == step_name }&.fetch("run", "") || ""
+  assert_policy(step_text.include?("creationInfo.created") &&
+                step_text.include?("documentNamespace") &&
+                step_text.include?("walk(") &&
+                step_text.include?("annotationDate") &&
+                step_text.include?("1970-01-01T00:00:00Z"),
+                "#{job_name}/#{step_name} must normalize every runtime timestamp")
+end
+
+adopt_sbom = steps(jobs.fetch("release-binaries")).find do |step|
+  step["name"] == "Verify and adopt the immutable staged SBOM in recovery"
+end
+adopt_text = adopt_sbom&.fetch("run", "") || ""
+assert_policy(adopt_sbom &&
+              adopt_sbom.fetch("if", "").include?("needs.publish-gate.outputs.recovery_mode == 'true'") &&
+              adopt_text.include?("gh api graphql") &&
+              adopt_text.include?("databaseId") &&
+              adopt_text.include?('releases/${release_id}') &&
+              adopt_text.include?('test "$matches" = 1') &&
+              adopt_text.include?('releases/assets/${asset_id}') &&
+              adopt_text.include?("Accept: application/octet-stream") &&
+              adopt_text.include?('^sha256:[0-9a-f]{64}$') &&
+              adopt_text.include?("canonical_filter") &&
+              adopt_text.include?("annotationDate") &&
+              adopt_text.include?("cmp ") &&
+              adopt_text.include?('mv "$staged" "$generated"') &&
+              !adopt_text.match?(/gh release (?:upload|edit|delete)/),
+              "recovery must adopt an existing SBOM only after exact API-digest and canonical-content verification")
+
 stage_release = steps(jobs.fetch("release-binaries")).find do |step|
   step["name"] == "Create or verify the exact draft release and assets"
 end
@@ -533,6 +567,8 @@ assert_policy(rollout_text.include?("gh api graphql") &&
               rollout_text.include?('Accept: application/octet-stream') &&
               rollout_text.include?('test "$matches" = 1') &&
               rollout_text.include?('^sha256:[0-9a-f]{64}$') &&
+              rollout_text.include?("binary_sbom") &&
+              rollout_text.include?("image_digests_sha256") &&
               !rollout_text.include?('gh release download "$RELEASE_TAG"'),
               "published rollout must resolve draft assets by validated release and asset IDs")
 assert_policy((%w[rollout-verify image-ready] - jobs.fetch("finalize-release").fetch("needs")).empty?,
