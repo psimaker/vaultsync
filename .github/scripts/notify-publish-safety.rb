@@ -656,7 +656,16 @@ assert_policy(install_text.include?("Could not fetch SHA256SUMS") &&
               install_text.include?("non-canonical checksum"),
               "binary installer no longer fails closed on checksum prerequisites")
 
-security_text = flattened_step_text(security.fetch("jobs").fetch("image-scan"))
+security_image_scan = security.fetch("jobs").fetch("image-scan")
+security_text = flattened_step_text(security_image_scan)
+security_resolve_step = steps(security_image_scan).find do |step|
+  step["name"] == "Resolve the published helper digest"
+end
+assert_policy(!security_resolve_step.nil?, "scheduled scan release resolver is missing")
+security_release_env = security_resolve_step.fetch("env", {})
+assert_policy(security_release_env.fetch("TARGET_RELEASE_TAG", nil) == "notify-v2.0.1" &&
+              security_release_env.fetch("FALLBACK_RELEASE_TAG", nil) == "notify-v2.0.0",
+              "scheduled scan must use the reviewed target and last public fallback releases")
 assert_policy(security_text.include?("IMAGE-DIGESTS"), "scheduled scan must resolve the release digest")
 assert_policy(security_text.include?("vaultsync-notify@${{ steps.release-image.outputs.digest }}"),
               "scheduled scan must use the exact digest")
@@ -668,6 +677,13 @@ assert_policy(security_text.include?("mapfile -t digests") &&
               security_text.include?("^sha256:[0-9a-f]{64}$") &&
               security_text.include?("printf 'digest=%s\\n'"),
               "scheduled scan must export exactly one canonical image index digest")
+assert_policy(security_text.include?("releases/tags/${TARGET_RELEASE_TAG}") &&
+              security_text.include?("HTTP 404") &&
+              security_text.include?("release_tag=$FALLBACK_RELEASE_TAG") &&
+              security_text.include?(".draft == false") &&
+              security_text.include?(".prerelease == false") &&
+              security_text.include?("releases/tags/${release_tag}"),
+              "scheduled scan must fall back only while the reviewed release is not public")
 
 ci_notify_steps = steps(ci.fetch("jobs").fetch("notify-tests"))
 assert_policy(ci_notify_steps.any? { |step| step["run"] == "ruby .github/scripts/notify-publish-safety.rb" },
