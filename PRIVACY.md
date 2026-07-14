@@ -81,10 +81,14 @@ flow or to the installed helper runtime. It starts no listener, makes no network
 call, changes no Syncthing configuration, and does not automatically create a
 folder or namespace. No production service currently writes these artifacts.
 
-The repository also contains a dormant upload-only attestation implementation
-for tests. Its request payload is exactly 256 random bytes and its operation
-IDs, nonces, digests, signatures, bindings, epochs, and message bytes exist only
-in test memory and the already disclosed authenticated namespace artifacts.
+The repository also contains dormant upload-attestation and response/cleanup
+implementations for tests. Request and response payloads are each exactly 256
+random bytes; operation IDs, nonces, digests, signatures, bindings, epochs, and
+message bytes exist only in test memory and the already disclosed authenticated
+namespace artifacts. Authenticated cleanup targets only exact message digests
+and cannot erase backups, versions, remote history, conflict copies, or
+tombstones.
+
 The helper foundation has no listener, logging, telemetry, crash annotation,
 support-bundle export, operation database, Cloud Relay/APNs/StoreKit call, or
 product entry point. Swift acceptance is test-only. A local E2E uses only
@@ -93,6 +97,9 @@ usage reporting, and crash reporting; no production service receives its data.
 The synchronized copy of a helper attestation is control data and cannot become
 upload evidence without the exact pinned local-channel response for the active
 query.
+
+The response foundation creates no app download or roundtrip evidence; no
+response has been accepted after a fresh local apply on an iPhone.
 
 Before a future supported installer could create the namespace, the operator
 would have to choose an exact, existing Syncthing folder subdirectory and give
