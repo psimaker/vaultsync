@@ -13,24 +13,31 @@ DOCKERFILE_PATH = File.join(ROOT, "notify/Dockerfile")
 INSTALL_PATH = File.join(ROOT, "notify/scripts/install.sh")
 COMPOSE_PATH = File.join(ROOT, "notify/docker-compose.yml")
 PINNED_ACTION = /\A[^@]+@[0-9a-f]{40}\z/
-WRITE_JOBS = %w[publish-image release-binaries finalize-release].freeze
-DISPATCH_JOBS = %w[
-  publish-image release-binaries rollout-verify finalize-release verify-published
-].freeze
+WRITE_JOBS = %w[publish-image attest-binaries release-binaries finalize-release].freeze
+NORMAL_ONLY_JOBS = %w[publish-image attest-binaries].freeze
+RECOVERY_ONLY_JOBS = %w[recover-image].freeze
+DUAL_PATH_JOBS = %w[release-binaries rollout-verify finalize-release verify-published].freeze
+AGGREGATE_JOBS = %w[image-ready binary-attestation-ready].freeze
+DISPATCH_JOBS = (NORMAL_ONLY_JOBS + RECOVERY_ONLY_JOBS + DUAL_PATH_JOBS + AGGREGATE_JOBS).freeze
 MANUAL_JOBS = (DISPATCH_JOBS + ["publish-gate"]).freeze
-GATE_FRAGMENTS = [
+COMMON_GATE_FRAGMENTS = [
   "github.event_name == 'workflow_dispatch'",
-  "github.ref_type == 'tag'",
-  "inputs.release_tag == github.ref_name",
-  "inputs.recovery_run_id == ''",
-  "github.ref == 'refs/heads/main'",
-  "inputs.recovery_run_id != ''",
   "inputs.confirmation == 'PUBLISH_NOTIFY_RELEASE'",
   "github.actor == github.repository_owner",
   "github.triggering_actor == github.repository_owner"
 ].freeze
+NORMAL_GATE_FRAGMENTS = [
+  "github.ref_type == 'tag'",
+  "inputs.release_tag == github.ref_name",
+  "inputs.recovery_run_id == ''"
+].freeze
+RECOVERY_GATE_FRAGMENTS = [
+  "github.ref == 'refs/heads/main'",
+  "inputs.recovery_run_id != ''"
+].freeze
 SOURCE_CHECKOUT_JOBS = %w[
-  publish-image release-binaries rollout-verify finalize-release verify-published
+  publish-image recover-image attest-binaries release-binaries rollout-verify
+  finalize-release verify-published
 ].freeze
 EXPECTED_BINARIES = %w[
   vaultsync-notify_linux_amd64
@@ -156,12 +163,19 @@ end
 recovery_input = dispatch_inputs.fetch("recovery_run_id")
 assert_policy(recovery_input["required"] == false && recovery_input["type"] == "string",
               "workflow_dispatch recovery_run_id must be an optional string")
-assert_policy(workflow.fetch("concurrency").fetch("group").include?("inputs.release_tag"),
-              "normal and recovery dispatches for one release tag must share a concurrency group")
+concurrency_group = workflow.fetch("concurrency").fetch("group")
+%w[inputs.release_tag github.actor github.triggering_actor inputs.confirmation github.run_id].each do |fragment|
+  assert_policy(concurrency_group.include?(fragment),
+                "publication concurrency group is missing #{fragment}")
+end
+assert_policy(workflow.fetch("concurrency").fetch("cancel-in-progress") ==
+                "${{ github.event_name != 'workflow_dispatch' }}",
+              "manual publications must queue without canceling an active run")
 
 required_jobs = %w[
   publish-safety-policy notify-guard build-without-push publish-gate publish-image
-  release-binaries rollout-verify finalize-release verify-published
+  recover-image image-ready attest-binaries binary-attestation-ready release-binaries
+  rollout-verify finalize-release verify-published
 ]
 assert_policy((required_jobs - jobs.keys).empty?, "required publication-safety jobs are missing")
 assert_policy(jobs.fetch("build-without-push").fetch("if") == "github.event_name != 'workflow_dispatch'",
@@ -181,20 +195,30 @@ write_jobs = jobs.select do |_name, job|
   job.fetch("permissions", {}).value?("write")
 end.keys.sort
 assert_policy(write_jobs == WRITE_JOBS.sort,
-              "only the image, binary staging, and finalization jobs may receive write permissions")
+              "only normal publication, draft staging, and finalization jobs may receive write permissions")
 assert_policy(jobs.fetch("publish-image").fetch("permissions") == {
                 "contents" => "read",
                 "packages" => "write",
                 "id-token" => "write",
                 "attestations" => "write"
               }, "publish-image permissions changed")
-assert_policy(jobs.fetch("release-binaries").fetch("permissions") == {
-                "contents" => "write",
+assert_policy(jobs.fetch("recover-image").fetch("permissions") == {
+                "contents" => "read",
+                "packages" => "read"
+              }, "recover-image must remain registry-read-only")
+assert_policy(jobs.fetch("attest-binaries").fetch("permissions") == {
+                "contents" => "read",
                 "id-token" => "write",
                 "attestations" => "write"
-              }, "release-binaries permissions changed")
+              }, "attest-binaries permissions changed")
+assert_policy(jobs.fetch("release-binaries").fetch("permissions") == { "contents" => "write" },
+              "release-binaries must receive only draft-asset write permission")
 assert_policy(jobs.fetch("finalize-release").fetch("permissions") == { "contents" => "write" },
               "finalize-release permissions changed")
+%w[image-ready binary-attestation-ready].each do |name|
+  assert_policy(jobs.fetch(name).fetch("permissions") == { "contents" => "read" },
+                "#{name} must remain read-only")
+end
 
 jobs.each do |name, job|
   steps(job).each do |step|
@@ -216,7 +240,7 @@ SOURCE_CHECKOUT_JOBS.each do |name|
   checkout = steps(jobs.fetch(name)).find do |step|
     step.fetch("uses", "").start_with?("actions/checkout@")
   end
-  assert_policy(checkout&.fetch("with", {})&.fetch("ref") ==
+  assert_policy(checkout&.dig("with", "ref") ==
                 "${{ needs.publish-gate.outputs.release_sha }}",
                 "#{name} must check out the immutable source-tag commit")
 end
@@ -235,8 +259,10 @@ security.fetch("jobs").each do |name, job|
 end
 
 login_jobs = jobs.select { |_name, job| flattened_step_text(job).include?("docker/login-action@") }.keys
-assert_policy(login_jobs == %w[publish-image verify-published],
-              "registry login must exist only in image publication and read-only public verification")
+assert_policy(login_jobs == %w[publish-image recover-image verify-published],
+              "registry login must exist only in image publication and read-only verification")
+assert_policy(jobs.fetch("recover-image").fetch("permissions").fetch("packages") == "read",
+              "recovery image verifier registry permission must remain read-only")
 assert_policy(jobs.fetch("verify-published").fetch("permissions").fetch("packages") == "read",
               "public verifier registry permission must remain read-only")
 release_mutation_jobs = jobs.select do |_name, job|
@@ -292,14 +318,13 @@ assert_policy(publication_build&.fetch("with", {})&.fetch("platforms") == "linux
               "published image platform set changed")
 
 public_write_guard = "needs.publish-gate.outputs.release_is_public != 'true'"
-recovery_write_guard = "needs.publish-gate.outputs.recovery_mode != 'true'"
 action_write_steps = {
   "publish-image" => [
     "Build and publish the absent release image",
     "Attest image provenance",
     "Attest image SBOM"
   ],
-  "release-binaries" => [
+  "attest-binaries" => [
     "Attest binary provenance",
     "Attest binary SBOM"
   ]
@@ -308,8 +333,8 @@ action_write_steps.each do |job_name, step_names|
   step_names.each do |step_name|
     step = steps(jobs.fetch(job_name)).find { |candidate| candidate["name"] == step_name }
     condition = step&.fetch("if", "") || ""
-    assert_policy(step && condition.include?(public_write_guard) && condition.include?(recovery_write_guard),
-                  "#{job_name}/#{step_name} remains reachable for a public release or main-ref recovery")
+    assert_policy(step && condition.include?(public_write_guard),
+                  "#{job_name}/#{step_name} remains reachable for a public release")
   end
 end
 
@@ -319,7 +344,7 @@ public_integrity_checks = {
     "Check for existing repository provenance",
     "Check for existing repository SBOM attestation"
   ],
-  "release-binaries" => [
+  "attest-binaries" => [
     "Check for existing exact binary provenance",
     "Check for existing exact binary SBOM attestation"
   ]
@@ -330,14 +355,28 @@ public_integrity_checks.each do |job_name, step_names|
     assert_policy(step &&
                   step.fetch("env", {})["RELEASE_IS_PUBLIC"] ==
                     "${{ needs.publish-gate.outputs.release_is_public }}" &&
-                  step.fetch("env", {})["RECOVERY_MODE"] ==
-                    "${{ needs.publish-gate.outputs.recovery_mode }}" &&
                   step.fetch("run", "").include?('$RELEASE_IS_PUBLIC') &&
-                  step.fetch("run", "").include?('$RECOVERY_MODE') &&
                   step.fetch("run", "").include?("exit 1"),
                   "#{job_name}/#{step_name} must fail closed on missing immutable material")
   end
 end
+
+{
+  "Verify exact binary provenance" => "--source-digest",
+  "Verify exact binary SBOM attestation" => "--predicate-type"
+}.each do |step_name, required_fragment|
+  step = steps(jobs.fetch("release-binaries")).find { |candidate| candidate["name"] == step_name }
+  assert_policy(step && step.fetch("run", "").include?(required_fragment) &&
+                step.fetch("run", "").include?("exit 1") &&
+                !step.fetch("run", "").include?("actions/attest"),
+                "release-binaries/#{step_name} must verify existing tag-bound attestations read-only")
+end
+
+recovery_text = flattened_step_text(jobs.fetch("recover-image"))
+assert_policy(recovery_text.include?("gh attestation verify") &&
+              !recovery_text.include?("actions/attest@") &&
+              !recovery_text.include?("docker/build-push-action@"),
+              "image recovery must only verify the already-published image and attestations")
 
 stage_release = steps(jobs.fetch("release-binaries")).find do |step|
   step["name"] == "Create or verify the exact draft release and assets"
@@ -345,7 +384,10 @@ end
 assert_policy(stage_release &&
               stage_release.fetch("env", {})["RELEASE_IS_PUBLIC"] ==
                 "${{ needs.publish-gate.outputs.release_is_public }}" &&
+              stage_release.fetch("env", {})["RECOVERY_MODE"] ==
+                "${{ needs.publish-gate.outputs.recovery_mode }}" &&
               stage_release.fetch("run", "").include?('test "$RELEASE_IS_PUBLIC" != true') &&
+              stage_release.fetch("run", "").include?('test "$RECOVERY_MODE" != true') &&
               stage_release.fetch("run", "").include?('test "$release_is_draft" = true') &&
               stage_release.fetch("run", "").include?("gh api graphql") &&
               stage_release.fetch("run", "").include?("databaseId") &&
@@ -373,26 +415,84 @@ assert_policy(finalize_text.include?('test "$release_is_draft" = true') &&
 DISPATCH_JOBS.each do |name|
   job = jobs.fetch(name)
   condition = job.fetch("if")
-  GATE_FRAGMENTS.each do |fragment|
+  COMMON_GATE_FRAGMENTS.each do |fragment|
     assert_policy(condition.include?(fragment), "#{name} is missing gate condition #{fragment}")
   end
   assert_policy((%w[publish-safety-policy notify-guard publish-gate] - job.fetch("needs")).empty?,
                 "#{name} must depend on policy, tests, and the owner gate")
 end
-assert_policy(jobs.fetch("release-binaries").fetch("needs").include?("publish-image"),
-              "binary staging must follow image publication")
-binary_scan_steps = steps(jobs.fetch("release-binaries")).select do |step|
-  step.fetch("uses", "").start_with?("aquasecurity/trivy-action@") &&
-    step.fetch("with", {}).fetch("scan-ref", "") == "notify/dist"
+
+NORMAL_ONLY_JOBS.each do |name|
+  condition = jobs.fetch(name).fetch("if")
+  NORMAL_GATE_FRAGMENTS.each do |fragment|
+    assert_policy(condition.include?(fragment), "#{name} is missing normal tag gate #{fragment}")
+  end
+  RECOVERY_GATE_FRAGMENTS.each do |fragment|
+    assert_policy(!condition.include?(fragment), "#{name} must be unreachable from main-ref recovery")
+  end
 end
-assert_policy(binary_scan_steps.length == 2 &&
-              binary_scan_steps.all? { |step| step.fetch("with").fetch("scan-type") == "rootfs" },
-              "binary vulnerability and SBOM scans must inspect compiled Go binaries as root filesystems")
-assert_policy(jobs.fetch("rollout-verify").fetch("needs").include?("release-binaries"),
-              "published rollout must follow complete draft staging")
-assert_policy(jobs.fetch("finalize-release").fetch("needs").include?("rollout-verify"),
+
+RECOVERY_ONLY_JOBS.each do |name|
+  condition = jobs.fetch(name).fetch("if")
+  RECOVERY_GATE_FRAGMENTS.each do |fragment|
+    assert_policy(condition.include?(fragment), "#{name} is missing recovery gate #{fragment}")
+  end
+  NORMAL_GATE_FRAGMENTS.each do |fragment|
+    assert_policy(!condition.include?(fragment), "#{name} must be unreachable from normal tag publication")
+  end
+end
+
+DUAL_PATH_JOBS.each do |name|
+  condition = jobs.fetch(name).fetch("if")
+  (NORMAL_GATE_FRAGMENTS + RECOVERY_GATE_FRAGMENTS).each do |fragment|
+    assert_policy(condition.include?(fragment), "#{name} is missing dual-path gate #{fragment}")
+  end
+end
+
+AGGREGATE_JOBS.each do |name|
+  condition = jobs.fetch(name).fetch("if")
+  assert_policy(condition.include?("always()") &&
+                condition.include?("needs.publish-gate.outputs.recovery_mode"),
+                "#{name} must explicitly select one successful publication path")
+end
+
+recovery_reachable_jobs = %w[
+  recover-image image-ready binary-attestation-ready release-binaries
+  rollout-verify finalize-release verify-published
+]
+recovery_reachable_jobs.each do |name|
+  permissions = jobs.fetch(name).fetch("permissions", {})
+  assert_policy(!permissions.key?("id-token") && !permissions.key?("attestations") &&
+                !flattened_step_text(jobs.fetch(name)).include?("actions/attest@"),
+                "#{name} must not receive OIDC or attestation mutation capability during recovery")
+end
+
+assert_policy((%w[publish-image recover-image] - jobs.fetch("image-ready").fetch("needs")).empty?,
+              "image selector must require both mutually exclusive image paths")
+assert_policy(jobs.fetch("attest-binaries").fetch("needs").include?("image-ready"),
+              "normal binary attestation must follow immutable image selection")
+assert_policy((%w[image-ready attest-binaries] -
+               jobs.fetch("binary-attestation-ready").fetch("needs")).empty?,
+              "binary attestation selector must require image selection and the tag-only attestation job")
+assert_policy((%w[image-ready binary-attestation-ready] -
+               jobs.fetch("release-binaries").fetch("needs")).empty?,
+              "binary staging must follow immutable image and attestation selection")
+
+%w[attest-binaries release-binaries].each do |name|
+  binary_scan_steps = steps(jobs.fetch(name)).select do |step|
+    step.fetch("uses", "").start_with?("aquasecurity/trivy-action@") &&
+      step.fetch("with", {}).fetch("scan-ref", "") == "notify/dist"
+  end
+  assert_policy(binary_scan_steps.length == 2 &&
+                binary_scan_steps.all? { |step| step.fetch("with").fetch("scan-type") == "rootfs" },
+                "#{name} vulnerability and SBOM scans must inspect compiled Go binaries as root filesystems")
+end
+
+assert_policy((%w[release-binaries image-ready] - jobs.fetch("rollout-verify").fetch("needs")).empty?,
+              "published rollout must follow complete draft staging and immutable image selection")
+assert_policy((%w[rollout-verify image-ready] - jobs.fetch("finalize-release").fetch("needs")).empty?,
               "release finalization must follow the published rollback proof")
-assert_policy(jobs.fetch("verify-published").fetch("needs").include?("finalize-release"),
+assert_policy((%w[finalize-release image-ready] - jobs.fetch("verify-published").fetch("needs")).empty?,
               "read-only public verification must follow finalization")
 
 gate_text = flattened_step_text(jobs.fetch("publish-gate"))

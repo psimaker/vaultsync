@@ -33,7 +33,7 @@ on:
         type: string
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.actor == github.repository_owner && github.triggering_actor == github.repository_owner && inputs.confirmation == 'PUBLISH_NOTIFY_RELEASE' && inputs.release_tag || github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
   # A second owner dispatch queues behind an active publication. It may verify
   # and resume identical draft material but must never replace an artifact.
   cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
@@ -291,8 +291,9 @@ jobs:
     name: Publish Image
     if: >-
       github.event_name == 'workflow_dispatch' &&
-      ((github.ref_type == 'tag' && inputs.release_tag == github.ref_name && inputs.recovery_run_id == '') ||
-       (github.ref == 'refs/heads/main' && inputs.recovery_run_id != '')) &&
+      github.ref_type == 'tag' &&
+      inputs.release_tag == github.ref_name &&
+      inputs.recovery_run_id == '' &&
       inputs.confirmation == 'PUBLISH_NOTIFY_RELEASE' &&
       github.actor == github.repository_owner &&
       github.triggering_actor == github.repository_owner
@@ -332,7 +333,6 @@ jobs:
           VERSION: ${{ needs.publish-gate.outputs.version }}
           RELEASE_SHA: ${{ needs.publish-gate.outputs.release_sha }}
           RELEASE_IS_PUBLIC: ${{ needs.publish-gate.outputs.release_is_public }}
-          RECOVERY_MODE: ${{ needs.publish-gate.outputs.recovery_mode }}
         run: |
           set -euo pipefail
           token=$(curl -fsSL "https://ghcr.io/token?scope=repository:psimaker/vaultsync-notify:pull" | jq -er .token)
@@ -354,10 +354,6 @@ jobs:
               echo "public release image is missing; refusing to publish on a finalized release" >&2
               exit 1
             fi
-            if [ "$RECOVERY_MODE" = true ]; then
-              echo "recovery requires the exact image from the failed tag-bound run; refusing to publish it from main" >&2
-              exit 1
-            fi
             echo "present=false" >> "$GITHUB_OUTPUT"
           else
             echo "GHCR lookup failed with HTTP ${http_status}; refusing to treat the version tag as absent" >&2
@@ -375,7 +371,6 @@ jobs:
       - name: Build and publish the absent release image
         if: >-
           needs.publish-gate.outputs.release_is_public != 'true' &&
-          needs.publish-gate.outputs.recovery_mode != 'true' &&
           steps.existing-image.outputs.present != 'true'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         id: build
@@ -436,7 +431,6 @@ jobs:
           RELEASE_SHA: ${{ needs.publish-gate.outputs.release_sha }}
           RELEASE_TAG: ${{ needs.publish-gate.outputs.release_tag }}
           RELEASE_IS_PUBLIC: ${{ needs.publish-gate.outputs.release_is_public }}
-          RECOVERY_MODE: ${{ needs.publish-gate.outputs.recovery_mode }}
         run: |
           set -euo pipefail
           if gh attestation verify "oci://${IMAGE}@${DIGEST}" --repo "$GITHUB_REPOSITORY" \
@@ -444,8 +438,8 @@ jobs:
             --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/docker.yml" >/dev/null 2>&1; then
             echo "present=true" >> "$GITHUB_OUTPUT"
           else
-            if [ "$RELEASE_IS_PUBLIC" = true ] || [ "$RECOVERY_MODE" = true ]; then
-              echo "immutable image provenance is missing or mismatched; refusing to create it" >&2
+            if [ "$RELEASE_IS_PUBLIC" = true ]; then
+              echo "public image provenance is missing or mismatched; refusing to create it" >&2
               exit 1
             fi
             echo "present=false" >> "$GITHUB_OUTPUT"
@@ -454,7 +448,6 @@ jobs:
       - name: Attest image provenance
         if: >-
           needs.publish-gate.outputs.release_is_public != 'true' &&
-          needs.publish-gate.outputs.recovery_mode != 'true' &&
           steps.image-provenance.outputs.present != 'true'
         uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
         with:
@@ -471,7 +464,6 @@ jobs:
           RELEASE_SHA: ${{ needs.publish-gate.outputs.release_sha }}
           RELEASE_TAG: ${{ needs.publish-gate.outputs.release_tag }}
           RELEASE_IS_PUBLIC: ${{ needs.publish-gate.outputs.release_is_public }}
-          RECOVERY_MODE: ${{ needs.publish-gate.outputs.recovery_mode }}
         run: |
           set -euo pipefail
           if gh attestation verify "oci://${IMAGE}@${DIGEST}" --repo "$GITHUB_REPOSITORY" \
@@ -480,8 +472,8 @@ jobs:
             --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/docker.yml" >/dev/null 2>&1; then
             echo "present=true" >> "$GITHUB_OUTPUT"
           else
-            if [ "$RELEASE_IS_PUBLIC" = true ] || [ "$RECOVERY_MODE" = true ]; then
-              echo "immutable image SBOM attestation is missing or mismatched; refusing to create it" >&2
+            if [ "$RELEASE_IS_PUBLIC" = true ]; then
+              echo "public image SBOM attestation is missing or mismatched; refusing to create it" >&2
               exit 1
             fi
             echo "present=false" >> "$GITHUB_OUTPUT"
@@ -490,7 +482,6 @@ jobs:
       - name: Attest image SBOM
         if: >-
           needs.publish-gate.outputs.release_is_public != 'true' &&
-          needs.publish-gate.outputs.recovery_mode != 'true' &&
           steps.image-sbom.outputs.present != 'true'
         uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
         with:
@@ -498,6 +489,310 @@ jobs:
           subject-digest: ${{ steps.select-image.outputs.digest }}
           sbom-path: /tmp/vaultsync-notify-image.spdx.json
           push-to-registry: true
+
+  recover-image:
+    name: Recover Published Image (read-only)
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.recovery_run_id != '' &&
+      inputs.confirmation == 'PUBLISH_NOTIFY_RELEASE' &&
+      github.actor == github.repository_owner &&
+      github.triggering_actor == github.repository_owner
+    needs:
+      - publish-safety-policy
+      - notify-guard
+      - publish-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      digest: ${{ steps.verify-image.outputs.digest }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ needs.publish-gate.outputs.release_sha }}
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      - uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify the immutable recovery image and attestations
+        id: verify-image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ needs.publish-gate.outputs.image }}
+          VERSION: ${{ needs.publish-gate.outputs.version }}
+          RELEASE_SHA: ${{ needs.publish-gate.outputs.release_sha }}
+          RELEASE_TAG: ${{ needs.publish-gate.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          manifest=$(docker buildx imagetools inspect "${IMAGE}:${VERSION}" --format '{{json .Manifest}}')
+          digest=$(jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))' <<<"$manifest")
+          test "$(jq '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64")] | length' <<<"$manifest")" = 1
+          test "$(jq '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64")] | length' <<<"$manifest")" = 1
+          docker pull "${IMAGE}@${digest}" >/dev/null
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "${IMAGE}@${digest}")" = "$RELEASE_SHA"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "${IMAGE}@${digest}")" = "$VERSION"
+          test "$(docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges "${IMAGE}@${digest}" --version)" = "vaultsync-notify $VERSION"
+          gh attestation verify "oci://${IMAGE}@${digest}" --repo "$GITHUB_REPOSITORY" \
+            --source-digest "$RELEASE_SHA" --source-ref "refs/tags/${RELEASE_TAG}" \
+            --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/docker.yml" >/dev/null
+          gh attestation verify "oci://${IMAGE}@${digest}" --repo "$GITHUB_REPOSITORY" \
+            --predicate-type https://spdx.dev/Document/v2.3 \
+            --source-digest "$RELEASE_SHA" --source-ref "refs/tags/${RELEASE_TAG}" \
+            --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/docker.yml" >/dev/null
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Scan the immutable recovery image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ needs.publish-gate.outputs.image }}@${{ steps.verify-image.outputs.digest }}
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+  image-ready:
+    name: Select Immutable Helper Image
+    if: >-
+      always() &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.confirmation == 'PUBLISH_NOTIFY_RELEASE' &&
+      github.actor == github.repository_owner &&
+      github.triggering_actor == github.repository_owner &&
+      needs.publish-safety-policy.result == 'success' &&
+      needs.notify-guard.result == 'success' &&
+      needs.publish-gate.result == 'success' &&
+      ((needs.publish-gate.outputs.recovery_mode == 'true' &&
+        needs.recover-image.result == 'success' && needs.publish-image.result == 'skipped') ||
+       (needs.publish-gate.outputs.recovery_mode != 'true' &&
+        needs.publish-image.result == 'success' && needs.recover-image.result == 'skipped'))
+    needs:
+      - publish-safety-policy
+      - notify-guard
+      - publish-gate
+      - publish-image
+      - recover-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      digest: ${{ steps.select.outputs.digest }}
+    steps:
+      - name: Select the only eligible immutable digest
+        id: select
+        env:
+          RECOVERY_MODE: ${{ needs.publish-gate.outputs.recovery_mode }}
+          PUBLISHED_DIGEST: ${{ needs.publish-image.outputs.digest }}
+          RECOVERED_DIGEST: ${{ needs.recover-image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if [ "$RECOVERY_MODE" = true ]; then
+            test -z "$PUBLISHED_DIGEST"
+            digest=$RECOVERED_DIGEST
+          else
+            test -z "$RECOVERED_DIGEST"
+            digest=$PUBLISHED_DIGEST
+          fi
+          printf '%s\n' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$'
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+  attest-binaries:
+    name: Attest Release Binaries
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref_type == 'tag' &&
+      inputs.release_tag == github.ref_name &&
+      inputs.recovery_run_id == '' &&
+      inputs.confirmation == 'PUBLISH_NOTIFY_RELEASE' &&
+      github.actor == github.repository_owner &&
+      github.triggering_actor == github.repository_owner
+    needs:
+      - publish-safety-policy
+      - notify-guard
+      - publish-gate
+      - image-ready
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ needs.publish-gate.outputs.release_sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: notify/go.mod
+          cache: false
+
+      - name: Cross-compile every binary twice for attestation
+        working-directory: notify
+        env:
+          RELEASE_VERSION: ${{ needs.publish-gate.outputs.version }}
+        run: |
+          set -euo pipefail
+          rm -rf dist verify-dist
+          mkdir -p dist verify-dist
+          mapfile -t binaries < <(jq -r '.binaries[]' release.json)
+          for output_directory in dist verify-dist; do
+            for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+              goos=${target%/*}
+              goarch=${target#*/}
+              out="${output_directory}/vaultsync-notify_${goos}_${goarch}"
+              [ "$goos" = windows ] && out="$out.exe"
+              GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 go build -trimpath -buildvcs=false \
+                -ldflags="-s -w -X main.version=${RELEASE_VERSION}" -o "$out" .
+            done
+          done
+          for name in "${binaries[@]}"; do
+            cmp "dist/$name" "verify-dist/$name"
+          done
+          (cd dist && sha256sum -- "${binaries[@]}" > SHA256SUMS)
+
+      - name: Scan attested binaries for vulnerabilities and secrets
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: rootfs
+          scan-ref: notify/dist
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Create deterministic attestation SPDX SBOM
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: rootfs
+          scan-ref: notify/dist
+          format: spdx-json
+          output: notify/dist/SBOM.spdx.json
+
+      - name: Normalize deterministic attestation SBOM metadata
+        env:
+          RELEASE_TAG: ${{ needs.publish-gate.outputs.release_tag }}
+          RELEASE_SHA: ${{ needs.publish-gate.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          jq --arg namespace "https://github.com/${GITHUB_REPOSITORY}/sbom/${RELEASE_TAG}/${RELEASE_SHA}" \
+            '.creationInfo.created = "1970-01-01T00:00:00Z" | .documentNamespace = $namespace' \
+            notify/dist/SBOM.spdx.json > /tmp/SBOM.spdx.json
+          mv /tmp/SBOM.spdx.json notify/dist/SBOM.spdx.json
+
+      - name: Check for existing exact binary provenance
+        id: binary-provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.publish-gate.outputs.release_sha }}
+          RELEASE_TAG: ${{ needs.publish-gate.outputs.release_tag }}
+          RELEASE_IS_PUBLIC: ${{ needs.publish-gate.outputs.release_is_public }}
+        run: |
+          set -euo pipefail
+          present=true
+          while IFS= read -r name; do
+            if ! gh attestation verify "notify/dist/$name" --repo "$GITHUB_REPOSITORY" \
+              --source-digest "$RELEASE_SHA" --source-ref "refs/tags/${RELEASE_TAG}" \
+              --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/docker.yml" >/dev/null 2>&1; then
+              present=false
+            fi
+          done < <(jq -r '.binaries[]' "$RELEASE_SPEC")
+          if [ "$RELEASE_IS_PUBLIC" = true ] && [ "$present" != true ]; then
+            echo "public binary provenance is missing or mismatched; refusing to create it" >&2
+            exit 1
+          fi
+          echo "present=$present" >> "$GITHUB_OUTPUT"
+
+      - name: Attest binary provenance
+        if: >-
+          needs.publish-gate.outputs.release_is_public != 'true' &&
+          steps.binary-provenance.outputs.present != 'true'
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-path: notify/dist/vaultsync-notify_*
+
+      - name: Check for existing exact binary SBOM attestation
+        id: binary-sbom
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ needs.publish-gate.outputs.release_sha }}
+          RELEASE_TAG: ${{ needs.publish-gate.outputs.release_tag }}
+          RELEASE_IS_PUBLIC: ${{ needs.publish-gate.outputs.release_is_public }}
+        run: |
+          set -euo pipefail
+          present=true
+          while IFS= read -r name; do
+            if ! gh attestation verify "notify/dist/$name" --repo "$GITHUB_REPOSITORY" \
+              --predicate-type https://spdx.dev/Document/v2.3 \
+              --source-digest "$RELEASE_SHA" --source-ref "refs/tags/${RELEASE_TAG}" \
+              --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/docker.yml" >/dev/null 2>&1; then
+              present=false
+            fi
+          done < <(jq -r '.binaries[]' "$RELEASE_SPEC")
+          if [ "$RELEASE_IS_PUBLIC" = true ] && [ "$present" != true ]; then
+            echo "public binary SBOM attestation is missing or mismatched; refusing to create it" >&2
+            exit 1
+          fi
+          echo "present=$present" >> "$GITHUB_OUTPUT"
+
+      - name: Attest binary SBOM
+        if: >-
+          needs.publish-gate.outputs.release_is_public != 'true' &&
+          steps.binary-sbom.outputs.present != 'true'
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-path: notify/dist/vaultsync-notify_*
+          sbom-path: notify/dist/SBOM.spdx.json
+
+  binary-attestation-ready:
+    name: Require Immutable Binary Attestations
+    if: >-
+      always() &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.confirmation == 'PUBLISH_NOTIFY_RELEASE' &&
+      github.actor == github.repository_owner &&
+      github.triggering_actor == github.repository_owner &&
+      needs.publish-safety-policy.result == 'success' &&
+      needs.notify-guard.result == 'success' &&
+      needs.publish-gate.result == 'success' &&
+      needs.image-ready.result == 'success' &&
+      ((needs.publish-gate.outputs.recovery_mode == 'true' &&
+        needs.attest-binaries.result == 'skipped') ||
+       (needs.publish-gate.outputs.recovery_mode != 'true' &&
+        needs.attest-binaries.result == 'success'))
+    needs:
+      - publish-safety-policy
+      - notify-guard
+      - publish-gate
+      - image-ready
+      - attest-binaries
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Confirm the only eligible attestation path
+        env:
+          RECOVERY_MODE: ${{ needs.publish-gate.outputs.recovery_mode }}
+          ATTESTATION_RESULT: ${{ needs.attest-binaries.result }}
+        run: |
+          set -euo pipefail
+          if [ "$RECOVERY_MODE" = true ]; then
+            test "$ATTESTATION_RESULT" = skipped
+          else
+            test "$ATTESTATION_RESULT" = success
+          fi
 
   release-binaries:
     name: Stage Release Binaries
@@ -512,13 +807,12 @@ jobs:
       - publish-safety-policy
       - notify-guard
       - publish-gate
-      - publish-image
+      - image-ready
+      - binary-attestation-ready
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: write
-      id-token: write
-      attestations: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
@@ -586,79 +880,44 @@ jobs:
             notify/dist/SBOM.spdx.json > /tmp/SBOM.spdx.json
           mv /tmp/SBOM.spdx.json notify/dist/SBOM.spdx.json
 
-      - name: Check for existing exact binary provenance
-        id: binary-provenance
+      - name: Verify exact binary provenance
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_SHA: ${{ needs.publish-gate.outputs.release_sha }}
           RELEASE_TAG: ${{ needs.publish-gate.outputs.release_tag }}
-          RELEASE_IS_PUBLIC: ${{ needs.publish-gate.outputs.release_is_public }}
-          RECOVERY_MODE: ${{ needs.publish-gate.outputs.recovery_mode }}
         run: |
           set -euo pipefail
-          present=true
           while IFS= read -r name; do
             if ! gh attestation verify "notify/dist/$name" --repo "$GITHUB_REPOSITORY" \
               --source-digest "$RELEASE_SHA" --source-ref "refs/tags/${RELEASE_TAG}" \
               --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/docker.yml" >/dev/null 2>&1; then
-              present=false
+              echo "immutable binary provenance is missing or mismatched for $name" >&2
+              exit 1
             fi
           done < <(jq -r '.binaries[]' "$RELEASE_SPEC")
-          if { [ "$RELEASE_IS_PUBLIC" = true ] || [ "$RECOVERY_MODE" = true ]; } && [ "$present" != true ]; then
-            echo "immutable binary provenance is missing or mismatched; refusing to create it" >&2
-            exit 1
-          fi
-          echo "present=$present" >> "$GITHUB_OUTPUT"
 
-      - name: Attest binary provenance
-        if: >-
-          needs.publish-gate.outputs.release_is_public != 'true' &&
-          needs.publish-gate.outputs.recovery_mode != 'true' &&
-          steps.binary-provenance.outputs.present != 'true'
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
-        with:
-          subject-path: notify/dist/vaultsync-notify_*
-
-      - name: Check for existing exact binary SBOM attestation
-        id: binary-sbom
+      - name: Verify exact binary SBOM attestation
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_SHA: ${{ needs.publish-gate.outputs.release_sha }}
           RELEASE_TAG: ${{ needs.publish-gate.outputs.release_tag }}
-          RELEASE_IS_PUBLIC: ${{ needs.publish-gate.outputs.release_is_public }}
-          RECOVERY_MODE: ${{ needs.publish-gate.outputs.recovery_mode }}
         run: |
           set -euo pipefail
-          present=true
           while IFS= read -r name; do
             if ! gh attestation verify "notify/dist/$name" --repo "$GITHUB_REPOSITORY" \
               --predicate-type https://spdx.dev/Document/v2.3 \
               --source-digest "$RELEASE_SHA" --source-ref "refs/tags/${RELEASE_TAG}" \
               --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/docker.yml" >/dev/null 2>&1; then
-              present=false
+              echo "immutable binary SBOM attestation is missing or mismatched for $name" >&2
+              exit 1
             fi
           done < <(jq -r '.binaries[]' "$RELEASE_SPEC")
-          if { [ "$RELEASE_IS_PUBLIC" = true ] || [ "$RECOVERY_MODE" = true ]; } && [ "$present" != true ]; then
-            echo "immutable binary SBOM attestation is missing or mismatched; refusing to create it" >&2
-            exit 1
-          fi
-          echo "present=$present" >> "$GITHUB_OUTPUT"
-
-      - name: Attest binary SBOM
-        if: >-
-          needs.publish-gate.outputs.release_is_public != 'true' &&
-          needs.publish-gate.outputs.recovery_mode != 'true' &&
-          steps.binary-sbom.outputs.present != 'true'
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
-        with:
-          subject-path: notify/dist/vaultsync-notify_*
-          sbom-path: notify/dist/SBOM.spdx.json
 
       - name: Record exact image index and platform digests
         env:
           IMAGE: ${{ needs.publish-gate.outputs.image }}
           VERSION: ${{ needs.publish-gate.outputs.version }}
-          DIGEST: ${{ needs.publish-image.outputs.digest }}
+          DIGEST: ${{ needs.image-ready.outputs.digest }}
         run: |
           set -euo pipefail
           manifest=$(docker buildx imagetools inspect "${IMAGE}@${DIGEST}" --format '{{json .Manifest}}')
@@ -683,7 +942,7 @@ jobs:
       - name: Create deterministic release manifest
         env:
           RELEASE_SHA: ${{ needs.publish-gate.outputs.release_sha }}
-          IMAGE_DIGEST: ${{ needs.publish-image.outputs.digest }}
+          IMAGE_DIGEST: ${{ needs.image-ready.outputs.digest }}
         run: |
           ruby <<'RUBY'
           require "digest"
@@ -721,6 +980,7 @@ jobs:
           RELEASE_TAG: ${{ needs.publish-gate.outputs.release_tag }}
           RELEASE_VERSION: ${{ needs.publish-gate.outputs.version }}
           RELEASE_IS_PUBLIC: ${{ needs.publish-gate.outputs.release_is_public }}
+          RECOVERY_MODE: ${{ needs.publish-gate.outputs.recovery_mode }}
         run: |
           set -euo pipefail
           resolve_release() {
@@ -755,6 +1015,7 @@ jobs:
               ;;
             null)
               test "$RELEASE_IS_PUBLIC" != true
+              test "$RECOVERY_MODE" != true
               gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
                 --draft --latest=false --title "vaultsync-notify ${RELEASE_VERSION}" \
                 --notes "Staged helper release. Publication remains blocked until the digest-bound supported-host rollback and post-publication gates succeed."
@@ -803,7 +1064,7 @@ jobs:
       - publish-safety-policy
       - notify-guard
       - publish-gate
-      - publish-image
+      - image-ready
       - release-binaries
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -822,7 +1083,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.publish-gate.outputs.release_tag }}
           RELEASE_SHA: ${{ needs.publish-gate.outputs.release_sha }}
-          IMAGE_DIGEST: ${{ needs.publish-image.outputs.digest }}
+          IMAGE_DIGEST: ${{ needs.image-ready.outputs.digest }}
         run: |
           set -euo pipefail
           mkdir -p /tmp/vaultsync-notify-release
@@ -835,7 +1096,7 @@ jobs:
       - name: Prove published upgrade, rollback, and forward recovery
         env:
           OLD_IMAGE: ${{ needs.publish-gate.outputs.rollback_image }}
-          NEW_IMAGE: ${{ needs.publish-gate.outputs.image }}@${{ needs.publish-image.outputs.digest }}
+          NEW_IMAGE: ${{ needs.publish-gate.outputs.image }}@${{ needs.image-ready.outputs.digest }}
           NEW_COMMIT: ${{ needs.publish-gate.outputs.release_sha }}
           NEW_VERSION: ${{ needs.publish-gate.outputs.version }}
         run: |
@@ -870,7 +1131,7 @@ jobs:
       - publish-safety-policy
       - notify-guard
       - publish-gate
-      - publish-image
+      - image-ready
       - release-binaries
       - rollout-verify
     runs-on: ubuntu-latest
@@ -891,7 +1152,7 @@ jobs:
           RELEASE_VERSION: ${{ needs.publish-gate.outputs.version }}
           RELEASE_SHA: ${{ needs.publish-gate.outputs.release_sha }}
           IMAGE: ${{ needs.publish-gate.outputs.image }}
-          IMAGE_DIGEST: ${{ needs.publish-image.outputs.digest }}
+          IMAGE_DIGEST: ${{ needs.image-ready.outputs.digest }}
           ROLLBACK_IMAGE: ${{ needs.publish-gate.outputs.rollback_image }}
         run: |
           set -euo pipefail
@@ -1030,7 +1291,7 @@ jobs:
       - publish-safety-policy
       - notify-guard
       - publish-gate
-      - publish-image
+      - image-ready
       - release-binaries
       - rollout-verify
       - finalize-release
@@ -1061,7 +1322,7 @@ jobs:
           RELEASE_VERSION: ${{ needs.publish-gate.outputs.version }}
           RELEASE_SHA: ${{ needs.publish-gate.outputs.release_sha }}
           IMAGE: ${{ needs.publish-gate.outputs.image }}
-          IMAGE_DIGEST: ${{ needs.publish-image.outputs.digest }}
+          IMAGE_DIGEST: ${{ needs.image-ready.outputs.digest }}
         run: |
           set -euo pipefail
           release_json=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}")
