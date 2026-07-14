@@ -227,6 +227,9 @@ func (runtime *diagnosticsNamespaceRuntime) authorize(ctx context.Context, body 
 	nowSeconds := uint64(now.Unix())
 	appKeyID, _ := diagnosticsNamespaceBytesField(value, 11, 32)
 	folderBinding, _ := diagnosticsNamespaceBytesField(value, 6, 32)
+	if _, _, err := runtime.sessions.activeAuthorization(appKeyID, folderBinding); err != nil {
+		return err
+	}
 	authorizationLock, ok := runtime.authorizationLock(folderBinding)
 	if !ok {
 		return errDiagnosticsNamespaceInvalid

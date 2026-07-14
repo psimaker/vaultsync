@@ -505,6 +505,23 @@ func TestDiagnosticsNamespaceRuntimeRequiresSignedAppThenLocalOperatorThenAuthor
 		diagnosticsNamespaceFileIdentity{Device: record.Device, Inode: record.Inode},
 	)
 
+	unauthorized := authorization
+	unauthorized.FolderBinding = bytes.Repeat([]byte{0xee}, 32)
+	unauthorizedCandidate := diagnosticsRuntimeTestInitialAuthorization(
+		t, unauthorized, credentialState.Identity, appPrivate, record, rootPath, clock.current(),
+	)
+	if err := namespaceRuntime.authorize(context.Background(), unauthorizedCandidate); !errors.Is(err, errDiagnosticsPairingUnavailable) {
+		t.Fatalf("unpaired folder authorization result = %v", err)
+	}
+	lockCount := 0
+	namespaceRuntime.authorizationLocks.Range(func(_, _ any) bool {
+		lockCount++
+		return true
+	})
+	if lockCount != 0 {
+		t.Fatalf("unpaired folder authorization retained %d per-folder locks", lockCount)
+	}
+
 	candidate := diagnosticsRuntimeTestInitialAuthorization(t, authorization, credentialState.Identity, appPrivate, record, rootPath, clock.current())
 	appKeyID := diagnosticsKeyID(appPrivate.Public().(ed25519.PublicKey))
 	installation, _ := diagnosticsNamespaceInstallationBinding(appKeyID[:], authorization.HomeserverBinding, authorization.FolderBinding)
