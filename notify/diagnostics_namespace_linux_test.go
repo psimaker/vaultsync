@@ -10,7 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func TestDiagnosticsNamespaceExplicitPreparationAndLifecycle(t *testing.T) {
@@ -43,6 +45,19 @@ func TestDiagnosticsNamespaceExplicitPreparationAndLifecycle(t *testing.T) {
 	note, err := os.ReadFile(filepath.Join(prepared.parentPath, "user-note.txt"))
 	if err != nil || string(note) != "user note sentinel" {
 		t.Fatal("parent note changed")
+	}
+}
+
+func TestDiagnosticsNamespacePreparationRejectsInstallerSourceIdentityMismatch(t *testing.T) {
+	fixture := diagnosticsNamespaceGoldenFixture(t)
+	parent, store := diagnosticsNamespaceLinuxParentAndStore(t)
+	request := diagnosticsNamespaceLinuxRequest(fixture, parent, store)
+	request.parentInode++
+	if _, err := prepareDiagnosticsNamespaceExplicit(request); !errors.Is(err, errDiagnosticsNamespaceUnsupported) {
+		t.Fatalf("mismatched installer source identity = %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(parent, diagnosticsNamespaceRootName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("mismatched installer source identity created a namespace")
 	}
 }
 
@@ -253,6 +268,59 @@ func TestDiagnosticsNamespacePreparationCollisionsCrashAndIgnoreAreNonMutating(t
 		}
 	})
 
+	t.Run("crash-after-state-register-recovers-exact-chain-only", func(t *testing.T) {
+		parent, store := diagnosticsNamespaceLinuxParentAndStore(t)
+		request := diagnosticsNamespaceLinuxRequest(fixture, parent, store)
+		crash := errors.New("simulated post-registration crash")
+		store.hooks.afterRename = func() error { return crash }
+		if _, err := prepareDiagnosticsNamespaceExplicit(request); !errors.Is(err, crash) {
+			t.Fatalf("post-registration crash result = %v", err)
+		}
+		state, err := store.snapshot()
+		if err != nil || len(state.Roots) != 1 {
+			t.Fatalf("durable post-crash state = %+v, %v", state, err)
+		}
+		registered := state.Roots[0]
+		store.hooks = diagnosticsNamespaceStoreHooks{}
+
+		enablement, _ := decodeDiagnosticsNamespaceMessage(request.enablement)
+		identity := diagnosticsHelperCredentialIdentity{
+			SigningSeed: fixture.initialHelper.Seed(), HelperEpoch: 1,
+		}
+		request.rootManifest, err = buildDiagnosticsNamespaceRoot(
+			enablement, identity, time.Unix(int64(fixture.issuedAt+30), 0), bytes.NewReader(bytes.Repeat([]byte{0x78}, 32)),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		recovered, err := prepareDiagnosticsNamespaceExplicit(request)
+		if err != nil || !diagnosticsNamespaceRootRecordsEqual(recovered, registered) {
+			t.Fatalf("exact recovery = %+v, %v; registered = %+v", recovered, err, registered)
+		}
+
+		alternateBody := cloneDiagnosticsCBOR(fixture.enablementBody)
+		diagnosticsNamespaceReplaceField(&alternateBody, 19, diagnosticsCBORBstr(bytes.Repeat([]byte{0x79}, 32)))
+		request.enablement, err = signDiagnosticsNamespaceEnablement(alternateBody, fixture.initialApp)
+		if err != nil {
+			t.Fatal(err)
+		}
+		alternateEnablement, _ := decodeDiagnosticsNamespaceMessage(request.enablement)
+		request.rootManifest, err = buildDiagnosticsNamespaceRoot(
+			alternateEnablement, identity, time.Unix(int64(fixture.issuedAt+31), 0), bytes.NewReader(bytes.Repeat([]byte{0x7a}, 32)),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rootPath := filepath.Join(parent, diagnosticsNamespaceRootName)
+		before := diagnosticsNamespaceTestTree(t, rootPath)
+		if _, err := prepareDiagnosticsNamespaceExplicit(request); !errors.Is(err, errDiagnosticsNamespaceCollision) {
+			t.Fatalf("different signed chain recovery result = %v", err)
+		}
+		if after := diagnosticsNamespaceTestTree(t, rootPath); after != before {
+			t.Fatalf("different signed chain mutated root: before %q after %q", before, after)
+		}
+	})
+
 	t.Run("parent-swap-after-create", func(t *testing.T) {
 		parent, store := diagnosticsNamespaceLinuxParentAndStore(t)
 		request := diagnosticsNamespaceLinuxRequest(fixture, parent, store)
@@ -314,6 +382,50 @@ func TestDiagnosticsNamespaceRootAndComponentSwapsInterrupt(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(original, diagnosticsNamespaceRootManifestName)); err != nil {
 		t.Fatal("original root was changed")
+	}
+}
+
+func TestDiagnosticsNamespaceParentAnchoredOpenRejectsPathSwap(t *testing.T) {
+	prepared := prepareDiagnosticsNamespaceLinuxFixture(t)
+	if err := prepared.handle.Close(); err != nil {
+		t.Fatal(err)
+	}
+	parent, err := diagnosticsNamespaceOpenTrustedParent(prepared.parentPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer parent.Close()
+	originalParent := prepared.parentPath + ".original"
+	if err := os.Rename(prepared.parentPath, originalParent); err != nil {
+		t.Fatal(err)
+	}
+	replacementRoot := filepath.Join(prepared.parentPath, diagnosticsNamespaceRootName)
+	if err := os.MkdirAll(replacementRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(replacementRoot, "replacement-sentinel")
+	if err := os.WriteFile(sentinel, []byte("untouched"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	anchored, err := openDiagnosticsNamespaceRootAt(
+		parent,
+		diagnosticsNamespaceRootName,
+		filepath.Join(prepared.parentPath, diagnosticsNamespaceRootName),
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer anchored.Close()
+	if _, _, err := anchored.ReadImmutable(diagnosticsNamespaceRootManifestPath()); !errors.Is(err, errDiagnosticsNamespaceUnsupported) {
+		t.Fatalf("parent-anchored path swap result = %v", err)
+	}
+	if body, err := os.ReadFile(sentinel); err != nil || string(body) != "untouched" {
+		t.Fatalf("replacement root was accessed: %q, %v", body, err)
+	}
+	if _, err := os.Stat(filepath.Join(originalParent, diagnosticsNamespaceRootName, diagnosticsNamespaceRootManifestName)); err != nil {
+		t.Fatal("original anchored namespace was changed")
 	}
 }
 
@@ -610,8 +722,16 @@ func diagnosticsNamespaceLinuxParentAndStore(t testing.TB) (string, *diagnostics
 }
 
 func diagnosticsNamespaceLinuxRequest(fixture diagnosticsNamespaceGoldenData, parent string, store *diagnosticsNamespaceStateStore) diagnosticsNamespacePreparationRequest {
+	info, err := os.Lstat(parent)
+	if err != nil {
+		panic(err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		panic("Linux fixture has no stat identity")
+	}
 	return diagnosticsNamespacePreparationRequest{
-		parentPath: parent, operatorConfirmed: true,
+		parentPath: parent, parentDevice: uint64(stat.Dev), parentInode: stat.Ino, operatorConfirmed: true,
 		homeserverBinding: bytes.Repeat([]byte{0x05}, 32), folderBinding: bytes.Repeat([]byte{0x06}, 32),
 		enablement: fixture.chain.Enablement, rootManifest: fixture.chain.RootManifest,
 		ignore: diagnosticsNamespaceIgnoreVerdict{

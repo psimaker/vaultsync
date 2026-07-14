@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 )
 
@@ -34,9 +35,14 @@ type diagnosticsNamespaceInstallerHooks struct {
 
 type diagnosticsNamespacePreparationRequest struct {
 	parentPath        string
+	parentDevice      uint64
+	parentInode       uint64
 	operatorConfirmed bool
+	recoveryOnly      bool
 	homeserverBinding []byte
 	folderBinding     []byte
+	helperPublicKey   []byte
+	helperEpoch       uint64
 	enablement        []byte
 	rootManifest      []byte
 	ignore            diagnosticsNamespaceIgnoreVerdict
@@ -54,6 +60,15 @@ func diagnosticsNamespaceIgnoreFingerprint() [32]byte {
 	var digest [32]byte
 	copy(digest[:], hash.Sum(nil))
 	return digest
+}
+
+func diagnosticsNamespaceRootForFolder(state diagnosticsNamespaceState, folderBinding []byte) (diagnosticsNamespaceRootRecord, bool) {
+	for _, root := range state.Roots {
+		if bytes.Equal(root.FolderBinding, folderBinding) {
+			return cloneDiagnosticsNamespaceRootRecord(root), true
+		}
+	}
+	return diagnosticsNamespaceRootRecord{}, false
 }
 
 func (verdict diagnosticsNamespaceIgnoreVerdict) valid() bool {

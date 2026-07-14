@@ -91,105 +91,112 @@ separately designed, additive, capability-negotiated helper contract and a
 demonstrably safe app-owned diagnostics namespace. Relay v1 is unchanged by this
 milestone.
 
-#### Dormant correlated-roundtrip foundations — no runtime support
+#### Opt-in correlated-roundtrip helper runtime — no app evidence yet
 
-[Decision 021](decisions/021-capability-negotiated-helper-contract-for-correlated-roundtrip-proof.md)
-defines the proposed proof and rollout boundaries. It does not authorize a
-runtime change. The current app/helper still creates no probe or namespace, has
-no diagnostic pairing credential, and cannot confirm upload, controlled
-download, or a full roundtrip.
+[Decisions 021–024](decisions/021-capability-negotiated-helper-contract-for-correlated-roundtrip-proof.md)
+define the proof and rollout boundaries. The source tree now contains the first
+helper runtime carrier for those foundations, but it is not yet published or
+deployed and no app runtime calls it. VaultSync 2.0 remains NO-GO; product
+upload, controlled download, and causal roundtrip evidence are all unset.
 
-The repository contains a dormant implementation foundation for the proposed
-Decision 022 helper credential and pairing protocol. It includes deterministic
-CBOR, the fixed Ed25519/HMAC/P-256 suite, a dedicated atomic helper state store,
-stable opaque bindings, explicit QR/pinned-TLS bootstrap messages, lifecycle
-rotation/revocation/recovery state, and shared Go/Swift golden vectors for all
-message types. The Go code has no call from `main`, listener, installer,
-container configuration, Syncthing client, Relay client, or product command;
-the Swift implementation is test-only. Consequently no credential directory,
-key, endpoint, authorization, or pairing record is created in an installed
-helper or app. Runtime pairing, app Keychain storage, transport, capability
-discovery, namespace access, and every evidence transition remain unavailable.
+The runtime is gated by an operator-authored read-only configuration plus a
+separate writable state directory. If either is absent, existing helpers retain
+their exact Trigger-v1 behavior and create no diagnostics credential, listener,
+namespace, mapping, artifact, trust, or network request. The ordinary helper
+installers and Compose configuration do not activate it.
 
-The repository also contains a dormant Decision 023 namespace and
-least-privilege foundation. It implements the five deterministic ownership
-record types and dual-signature/digest chains, the exact visible constant
-`VaultSync Diagnostics`, stable installation components, a separate atomic
-namespace state store, explicit collision-safe preparation primitives, and
-bounded create-once/read/cleanup operations. Linux access is rooted at an open
-directory handle and rechecks inode, device, ownership, mode, link count, file
-allocation, and mount identity; path-like network input is not accepted. All
-other operating systems fail closed as unsupported.
+When explicitly enabled, one TLS-1.3-only listener exposes exact fixed POST
+paths for D022 pairing, D023 enablement/authorization, and D024 capability,
+upload attestation, response authorization, and cleanup. A QR supplies the
+one-time HMAC secret, helper public key, and P-256 SPKI pin; deterministic CBOR
+and Ed25519 application signatures remain authoritative. Paths, identifiers,
+keys, pins, bindings, nonces, bodies, and artifacts stay out of URLs and logs.
+Every request has fixed body/time/rate limits and fails closed on unknown fields,
+versions, suites, keys, epochs, signatures, replays, or tuple changes.
 
-This code is still unreachable from the installed helper and app. No product
-installer, CLI command, endpoint, listener, automatic folder creation,
-Syncthing configuration mutation, ignore-rule change, capability advertisement,
-or app enablement flow exists. The only packaging execution is a local test
-harness. It first gives an explicit installer phase one selected test folder,
-then proves a read-only-root Linux container can operate with only the exact
-existing namespace host bind, a separate state bind, and read-only config; it
-also rejects a separately mounted child. Docker named volumes, rootless Docker,
-NAS, Linux host/systemd, macOS, and Windows packaging remain unsupported.
+The helper state store keeps separate signing/TLS keys, opaque bindings,
+authorized app public keys, lifecycle state, revocations, and stable local
+folder-to-mount mappings. App-key, helper-key, and TLS-pin transitions remain
+operation-unavailable until a capability query authenticated under the exact
+committed proposed state succeeds. Helper rotation appends a dual-signed D023
+manifest; app/helper rotation then requires a new dual-signed immutable
+authorization epoch before any operation can resume. Loss or suspected
+compromise requires explicit re-pairing, never trust transfer.
+A shared helper-key or TLS-pin transition does not return signed capability
+success to an early installation while another required installation is still
+unconfirmed; it remains unavailable until the global commit is durable, then an
+exact retry recovers.
+All diagnostics protocol, operator, namespace, startup-reconciliation, and
+admin mutations share a protected cross-process lock. This prevents a separate
+`docker exec` process from rotating or revoking credentials between a runtime
+state check, an immutable namespace append, and the corresponding atomic state
+update.
 
-The dormant M5 foundation implements only Decision 024 message types 3–5 for
-the upload leg. Given an already authenticated M4 namespace handle and fixed
-test binding, the helper-side attestor verifies the byte-exact active query,
-re-opens and completely validates the exact app-authored 256-byte request,
-atomically publishes one immutable helper-signed attestation, and returns those
-same bytes idempotently. Its limits are fixed: one active operation per tuple,
-eight polls, three starts/hour and twelve/day per app/folder, sixty starts/day
-and eight active operations helper-wide, plus 30 requests/minute per paired app
-and 120/minute helper-wide including invalid input. Restarts can recover only
-the exact already-persisted attestation from authenticated artifacts; app-side
-test state never resumes evidence after restart.
+Namespace creation remains a distinct local operator mutation. A signed app
+enablement is necessary but insufficient: a one-shot Linux installer rechecks
+the exact local Syncthing folder, `.stfolder`, canonical path, expanded ignore
+rules, bindings, signatures, and collision state, then creates the one visible
+`VaultSync Diagnostics` child. The host source device/inode captured before the
+bind must match inside that one-shot container before any creation. Normal
+runtime receives only the exact child, opens it by descriptor, and rechecks
+inode, device, mount identity, ownership, mode, link count, allocation, fixed
+layout, and immutable chains. It also verifies an ephemeral SHA-256 deployment
+binding over the folder ID, Syncthing's canonical path, fixed alias, and opened
+namespace device/inode; the raw host path is not persisted or logged. Network
+input cannot select a path. Capability and every operation pin the local Device
+ID before and after re-reading the exact folder mode/pause state and
+Syncthing-expanded ignore patterns; a reported ignore-parser error fails closed.
+Folder and ignore responses are bounded by fixed byte, entry-count, and
+pattern-length ceilings before matching.
+The supported package permits only an exact
+loopback HTTP Syncthing API endpoint. Syncthing, Relay, and operator HTTP clients
+reject redirects. The helper never edits configuration, ignores, discovery,
+shares, peers, or trust.
 
-M5 is still not a product or helper runtime path. The Go attestor has no call
-from `main`, listener, endpoint, transport, log, operation database, Relay or
-Syncthing client. Swift parsing and acceptance exist only in the test target.
-No capability response is emitted, and M5 itself contains no response or
-cleanup phase. A dedicated E2E test runs two temporary local Syncthing instances
-with discovery, Relay, NAT, upgrades, usage reporting, and crash reporting
-disabled; it proves request propagation, confined helper reading, durable
-attestation-before-reply, exact pinned-mock acceptance, and that a synchronized
-attestation copy is not upload evidence. It publishes nothing.
+Crash recovery is forward-only. An exact authorization message may be retried
+after both its immutable file and credential update became durable, including
+after its original signed expiry because that branch cannot create or advance
+state. If root creation and its protected root record completed before the local
+mount config was written, a repeated explicit installer command can resume only
+that same root after rechecking the current helper key/epoch, active folder
+authorization, root digest/signature/layout, parent device/inode, Syncthing
+Device/folder, and ignores. Recovery mode creates nothing and never adopts an
+unregistered root; helper/TLS rotation is blocked while a registered root lacks
+authorization.
 
-The separate dormant M6 foundation implements only Decision 024 message types
-6–9. It verifies an exact app-signed response authorization against the confined
-request and helper attestation, atomically persists one immutable helper-signed
-response containing exactly 256 random payload bytes, and performs
-app-authenticated, digest-targeted cleanup of verified helper-owned artifacts.
-Exact response bytes survive duplicate calls,
-crashes, races, and helper restart; cleanup is idempotent and cannot target a
-path supplied by the request. Go/Swift golden, parser, fuzz, model, privacy,
-Linux confinement, crash, restart, and race tests cover this boundary.
+Each app installation pairs separately and receives an independent stable D023
+installation binding. It can join an existing authenticated namespace only with
+its own signed authorization; no trust or identity is inherited and no second
+namespace is created. Revocation preserves that installation's immutable signed
+history. A later namespace-wide helper manifest can advance for another active
+installation without rewriting revoked records, but that active installation
+must append a fresh authorization epoch before runtime operations resume. The
+manifest append itself requires every affected namespace to pass the pinned
+Device ID, folder/ignore, root, and deployment-mount preflight first.
 
-M6 also remains unreachable from the installed helper and app. It adds no
-listener, endpoint, advertised flag, capability response, namespace creation,
-retry scheduler, startup scan, packaging, or publication. The response has not
-been synchronized back to an iPhone and has no post-authorization cursor,
-nanosecond, generation, or exact `ItemFinished` acceptance. Controlled download
-and causal roundtrip therefore remain unimplemented and unset.
+Only rootful Docker Engine on an explicitly confirmed standard Linux host is a
+supported diagnostics package. The container uses an immutable image content
+ID, read-only root, dropped capabilities, `no-new-privileges`, read-only config
+with exact private mode and single-link identity, read-only exact `config.xml`,
+an exact non-root config-owner UID/GID, separate state, and one exact namespace
+host bind. The installer displays the exact namespace path and requires separate
+acknowledgement of path and retained copies before creation. Named volumes and
+their backing paths, rootless Docker, remote/NAS/FUSE storage,
+remote Docker daemons/contexts, non-Unix Docker endpoints, Docker Desktop, WSL,
+systemd binaries, macOS, and Windows remain unsupported.
+The runtime itself rejects non-Linux activation rather than exposing a partial
+listener on an unsupported binary. Upgrade and downgrade preserve credentials,
+namespace, mappings, backups, versions, conflict copies, and tombstones; an old
+helper yields capability unavailable and never a weaker success.
 
-The proposed data plane uses a visible, exclusively app-owned namespace inside
-one selected Syncthing folder. A fresh app-signed random request would need an
-authenticated helper attestation that the paired helper read the exact request;
-a fresh helper-signed response would then need to be applied and verified on
-this iPhone inside the active cursor, nanosecond, and engine-generation bounds.
-Only matching upload-then-download evidence for one operation, helper, folder,
-and homeserver could derive a scoped roundtrip. Signatures can establish logical
-app/helper authorship and causality, but not exact byte counts, a direct
-transport peer, or per-block provenance.
-
-Runtime remains blocked despite the dormant pairing, namespace, and upload
-attestation foundations.
-There is no production packaging or rollout, no Syncthing-matcher integration,
-no app consent/enablement flow, and no authenticated operational correlation.
-Product upload acceptance, controlled download, and roundtrip evidence are not
-implemented. Rollout must be helper-first; an old or unreachable helper yields
-capability unavailable rather than an error or a weaker success. Trigger v1,
-provisioning, Relay status, APNs, StoreKit, and the Cloud Relay privacy boundary
-remain unchanged, and the Relay never receives namespace or operation names,
-paths, values, contents, correlations, or results.
+The helper can reconstruct an exact authorized runtime session and process the
+existing D024 foundations, but signatures establish only authorship and causal
+bindings—not transport route, exact network bytes, direct peer, block
+provenance, future delivery, or global sync health. No response has passed a
+fresh post-authorization iPhone cursor/nanosecond/generation/`ItemFinished`
+baseline. Cleanup remains evidence-orthogonal. Helper-first publication,
+production rollout, rollback, and then separate app milestones remain mandatory.
+See [helper runtime and packaging readiness](helper-runtime-packaging-readiness.md).
 
 ### Connection paths & iOS network privacy
 

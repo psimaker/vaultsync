@@ -53,9 +53,10 @@ type diagnosticsResponseFoundationHooks struct {
 	afterCleanup         func() error
 }
 
-// diagnosticsResponseFoundation is deliberately an unconnected helper core.
-// No runtime entrypoint constructs it and it owns no listener, HTTP transport,
-// discovery, folder configuration, app evidence, or durable operation store.
+// diagnosticsResponseFoundation remains a transport-independent helper core.
+// The explicit opt-in runtime constructs it only after exact D023
+// authorization; the core itself owns no listener, HTTP transport, discovery,
+// folder configuration, app evidence, or durable operation store.
 type diagnosticsResponseFoundation struct {
 	mutex       sync.Mutex
 	binding     diagnosticsUploadBinding

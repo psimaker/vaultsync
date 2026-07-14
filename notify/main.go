@@ -39,11 +39,14 @@ type Config struct {
 	// sweep. NOTE: like StartupAnnounce, the zero value keeps the feature off
 	// for focused Config-literal tests; only loadConfig applies the default.
 	StaleRetriggerSeconds int
-	// This internal field is a side-effect-free catalog. The
-	// real configuration loader installs only its dormant form; Config's zero
-	// value models a legacy helper. There is no environment switch or runtime
-	// path that can enable, advertise, persist, or call these capabilities.
+	// This internal field remains a side-effect-free catalog; Config's zero
+	// value models a legacy helper. The separately gated diagnosticsRuntime
+	// below is the only path that can construct the fixed protocol endpoints.
 	diagnosticsCapabilities diagnosticsCapabilityFoundation
+	// diagnosticsRuntime is nil for every existing installation. A listener is
+	// possible only when the operator supplies both an explicit read-only
+	// runtime configuration and a separate writable state directory.
+	diagnosticsRuntime *diagnosticsRuntimeConfig
 }
 
 type appMode int
@@ -53,7 +56,21 @@ const (
 	modeDoctor
 	modeHealthcheck
 	modeVersion
+	modeDiagnosticsPair
+	modeDiagnosticsNamespace
+	modeDiagnosticsAdmin
 )
+
+var diagnosticsOperatorOptions struct {
+	folderID      string
+	sourcePath    string
+	mountedParent string
+	sourceDevice  uint64
+	sourceInode   uint64
+	confirmed     bool
+}
+
+var diagnosticsAdminOptions diagnosticsAdminCommand
 
 // version is stamped at build time via -ldflags "-X main.version=x.y.z" (the
 // docker.yml release loop and the Dockerfile); local builds print "dev". The
@@ -112,6 +129,47 @@ func main() {
 			os.Exit(1)
 		}
 		return
+	case modeDiagnosticsPair:
+		operatorCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		invitation, err := runDiagnosticsPairOperator(operatorCtx, cfg, diagnosticsOperatorOptions.folderID)
+		cancel()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "diagnostics pairing command unavailable")
+			os.Exit(1)
+		}
+		// The QR payload intentionally contains the one-time bootstrap secret and
+		// is emitted only to the invoking operator's stdout, never to logs.
+		fmt.Println(invitation)
+		return
+	case modeDiagnosticsNamespace:
+		operatorCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		mountAlias, err := runDiagnosticsNamespaceOperator(
+			operatorCtx,
+			cfg,
+			diagnosticsOperatorOptions.folderID,
+			diagnosticsOperatorOptions.sourcePath,
+			diagnosticsOperatorOptions.mountedParent,
+			diagnosticsOperatorOptions.sourceDevice,
+			diagnosticsOperatorOptions.sourceInode,
+			diagnosticsOperatorOptions.confirmed,
+		)
+		cancel()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "diagnostics namespace command unavailable")
+			os.Exit(1)
+		}
+		fmt.Println(mountAlias)
+		return
+	case modeDiagnosticsAdmin:
+		operatorCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		result, err := runDiagnosticsAdminOperator(operatorCtx, cfg, diagnosticsAdminOptions)
+		cancel()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "diagnostics admin command unavailable")
+			os.Exit(1)
+		}
+		fmt.Print(result)
+		return
 	default:
 		runCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 		code := runService(runCtx, cfg)
@@ -137,10 +195,33 @@ func parseMode() (appMode, error) {
 	doctor := flag.Bool("doctor", false, "run connectivity checks and exit")
 	healthcheck := flag.Bool("healthcheck", false, "run readiness checks and exit")
 	showVersion := flag.Bool("version", false, "print the helper version and exit")
+	pairFolder := flag.String("diagnostics-pair-folder", "", "create one explicit local pairing invitation for this configured folder")
+	namespaceFolder := flag.String("diagnostics-prepare-folder", "", "prepare the explicitly approved diagnostics namespace for this configured folder")
+	namespaceSource := flag.String("diagnostics-source-path", "", "exact operator-confirmed Syncthing folder path on the host")
+	namespaceParent := flag.String("diagnostics-mounted-parent", "", "exact selected folder mount inside the one-shot installer")
+	namespaceDevice := flag.Uint64("diagnostics-source-device", 0, "exact local source filesystem device captured by the installer")
+	namespaceInode := flag.Uint64("diagnostics-source-inode", 0, "exact local source directory inode captured by the installer")
+	namespaceConfirmed := flag.Bool("diagnostics-operator-confirmed", false, "confirm the exact local namespace creation shown by the installer")
+	adminAction := flag.String("diagnostics-admin-action", "", "explicit local action: list, rotate-helper, rotate-tls, or revoke")
+	adminFolder := flag.String("diagnostics-admin-folder", "", "exact configured folder for a diagnostics admin action")
+	adminApp := flag.String("diagnostics-admin-app", "", "12-character app public-key fingerprint shown by the local list action")
+	adminReason := flag.Uint64("diagnostics-revocation-reason", 0, "revocation reason 1=user, 2=lost app, 3=folder removed, 4=suspected compromise")
 	flag.Parse()
 
-	if *doctor && *healthcheck {
-		return modeRun, fmt.Errorf("--doctor and --healthcheck cannot be used together")
+	selected := 0
+	for _, enabled := range []bool{*doctor, *healthcheck, *showVersion, *pairFolder != "", *namespaceFolder != "", *adminAction != ""} {
+		if enabled {
+			selected++
+		}
+	}
+	if selected > 1 {
+		return modeRun, fmt.Errorf("helper modes cannot be combined")
+	}
+	namespaceAuxiliary := *namespaceSource != "" || *namespaceParent != "" || *namespaceDevice != 0 || *namespaceInode != 0 || *namespaceConfirmed
+	adminAuxiliary := *adminFolder != "" || *adminApp != "" || *adminReason != 0
+	if (*showVersion || *doctor || *healthcheck) &&
+		(*pairFolder != "" || *namespaceFolder != "" || namespaceAuxiliary || *adminAction != "" || adminAuxiliary) {
+		return modeRun, fmt.Errorf("diagnostics flags cannot be combined with this helper mode")
 	}
 
 	if *showVersion {
@@ -151,6 +232,68 @@ func parseMode() (appMode, error) {
 	}
 	if *healthcheck {
 		return modeHealthcheck, nil
+	}
+	if *pairFolder != "" {
+		if namespaceAuxiliary || adminAuxiliary {
+			return modeRun, fmt.Errorf("pairing accepts only the exact folder flag")
+		}
+		diagnosticsOperatorOptions = struct {
+			folderID      string
+			sourcePath    string
+			mountedParent string
+			sourceDevice  uint64
+			sourceInode   uint64
+			confirmed     bool
+		}{folderID: *pairFolder}
+		return modeDiagnosticsPair, nil
+	}
+	if *namespaceFolder != "" {
+		if adminAuxiliary {
+			return modeRun, fmt.Errorf("namespace preparation does not accept admin fields")
+		}
+		if *namespaceSource == "" || *namespaceParent == "" || *namespaceDevice == 0 || *namespaceInode == 0 || !*namespaceConfirmed {
+			return modeRun, fmt.Errorf("namespace preparation requires source path, mounted parent, and explicit operator confirmation")
+		}
+		diagnosticsOperatorOptions = struct {
+			folderID      string
+			sourcePath    string
+			mountedParent string
+			sourceDevice  uint64
+			sourceInode   uint64
+			confirmed     bool
+		}{
+			folderID: *namespaceFolder, sourcePath: *namespaceSource,
+			mountedParent: *namespaceParent, sourceDevice: *namespaceDevice, sourceInode: *namespaceInode, confirmed: true,
+		}
+		return modeDiagnosticsNamespace, nil
+	}
+	if *adminAction != "" {
+		if *adminFolder == "" || *namespaceSource != "" || *namespaceParent != "" || *namespaceDevice != 0 || *namespaceInode != 0 || *namespaceConfirmed || *pairFolder != "" || *namespaceFolder != "" {
+			return modeRun, fmt.Errorf("diagnostics admin action requires only its exact admin fields")
+		}
+		switch *adminAction {
+		case "list":
+			if *adminApp != "" || *adminReason != 0 {
+				return modeRun, fmt.Errorf("list does not accept an app fingerprint or reason")
+			}
+		case "rotate-helper", "rotate-tls":
+			if *adminApp == "" || *adminReason != 0 {
+				return modeRun, fmt.Errorf("rotation requires an app fingerprint and no revocation reason")
+			}
+		case "revoke":
+			if *adminApp == "" || *adminReason < 1 || *adminReason > 4 {
+				return modeRun, fmt.Errorf("revoke requires an app fingerprint and reason 1 through 4")
+			}
+		default:
+			return modeRun, fmt.Errorf("unknown diagnostics admin action")
+		}
+		diagnosticsAdminOptions = diagnosticsAdminCommand{
+			action: *adminAction, folderID: *adminFolder, appFingerprint: *adminApp, reason: *adminReason,
+		}
+		return modeDiagnosticsAdmin, nil
+	}
+	if namespaceAuxiliary || adminAuxiliary {
+		return modeRun, fmt.Errorf("namespace preparation flags require --diagnostics-prepare-folder")
 	}
 	return modeRun, nil
 }
@@ -264,6 +407,11 @@ func loadConfig() (Config, error) {
 	// the relay endpoint must be a conscious choice. The docker-compose file and
 	// the app's setup command both supply it explicitly, so this costs the
 	// operator nothing in practice; only the Syncthing key/URL are auto-detected.
+	diagnosticsRuntime, err := loadDiagnosticsRuntimeConfig()
+	if err != nil {
+		return Config{}, err
+	}
+
 	cfg := Config{
 		SyncthingAPIURL:         apiURL,
 		SyncthingAPIKey:         apiKey,
@@ -273,6 +421,7 @@ func loadConfig() (Config, error) {
 		StartupAnnounce:         startupAnnounce,
 		StaleRetriggerSeconds:   staleRetrigger,
 		diagnosticsCapabilities: newDormantDiagnosticsCapabilityFoundation(),
+		diagnosticsRuntime:      diagnosticsRuntime,
 	}
 
 	missing := make([]string, 0, 3)
@@ -440,6 +589,32 @@ func runService(ctx context.Context, cfg Config) int {
 		return 1
 	}
 
+	var diagnosticsErrors <-chan error
+	var diagnostics *diagnosticsRuntime
+	if cfg.diagnosticsRuntime != nil {
+		diagnostics, err = newDiagnosticsRuntime(cfg.diagnosticsRuntime, deviceID, st)
+		if err != nil || diagnostics.start() != nil {
+			slog.Error("diagnostics runtime failed to start",
+				"classification", "fatal",
+				"component", "diagnostics",
+				"action", "fix_configuration",
+			)
+			return 1
+		}
+		defer diagnostics.close()
+		diagnosticsErrors = diagnostics.errors
+		if diagnostics.lifecycleReconciliationPending {
+			slog.Warn("diagnostics lifecycle reconciliation remains pending",
+				"component", "diagnostics",
+				"action", "retry_exact_transition_or_redeploy",
+			)
+		}
+		slog.Info("diagnostics helper listener enabled",
+			"component", "diagnostics",
+			"protocol_major", diagnosticsProtocolMajor,
+		)
+	}
+
 	slog.Info("vaultsync-notify starting",
 		"debounce_seconds", cfg.DebounceSeconds,
 		"watched_folder_scope", watchedFolderScope(cfg.WatchedFolders),
@@ -492,6 +667,16 @@ func runService(ctx context.Context, cfg Config) int {
 
 	for {
 		select {
+		case diagnosticsErr, ok := <-diagnosticsErrors:
+			if ok && diagnosticsErr != nil {
+				slog.Error("diagnostics runtime stopped unexpectedly",
+					"classification", "fatal",
+					"component", "diagnostics",
+					"action", "exit",
+				)
+				return 1
+			}
+			diagnosticsErrors = nil
 		case ev, ok := <-events:
 			if !ok {
 				if len(pending) > 0 {

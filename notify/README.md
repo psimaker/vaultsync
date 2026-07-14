@@ -116,6 +116,8 @@ RELAY_URL=https://relay.vaultsync.eu ./vaultsync-notify
 | `DEBOUNCE_SECONDS` | No | `5` | Wait after the last event before triggering. Batches rapid changes into one push. |
 | `WATCHED_FOLDERS` | No | all | Comma-separated Syncthing folder IDs to watch. Empty = all. |
 | `STALE_RETRIGGER_SECONDS` | No | `21600` (6 h) | While a peer still needs data, re-send a wake-up on this cadence. Recovers phones that missed a push (APNs silent pushes expire after ~1 h) without waiting for the next vault change. `0` disables. |
+| `VAULTSYNC_DIAGNOSTICS_CONFIG` | No | — | Absolute read-only runtime JSON. Diagnostics starts only when this and `VAULTSYNC_DIAGNOSTICS_STATE` are both present; use only the supported explicit Docker script. |
+| `VAULTSYNC_DIAGNOSTICS_STATE` | No | — | Absolute separate mode-0700 writable state directory. Supplying only one diagnostics value is a fatal configuration error. |
 
 > **NAS users (the common footgun).** `config.xml` is mode `0600`, so the helper must run as the uid that owns it or it can't read the key (you'll get a clear permission error). The `1000` default fits the official `syncthing/syncthing` image; set `PUID`/`PGID` for others — linuxserver = `911`, Unraid = `99:100`, Synology runs as the `syncthing` user. Synology/QNAP/Unraid host paths are probed automatically; set `SYNCTHING_CONFIG` only when your `config.xml` lives somewhere unusual.
 
@@ -127,67 +129,90 @@ RELAY_URL=https://relay.vaultsync.eu ./vaultsync-notify
 
 ## 🩺 Diagnostics
 
-### Dormant namespace development foundation
+### Opt-in helper runtime (helper-first; app support not yet released)
 
-The repository contains an internal, test-only M4 foundation for the future
-visible folder `VaultSync Diagnostics`. It is not a setup option and is not
-called by `main`, the installer scripts, Docker Compose, the app, or any
-listener. Installing or upgrading `vaultsync-notify` creates no namespace,
-mount, state directory, credential, authorization, operation file, or network
-request and changes no Syncthing configuration or ignore rule.
+The source tree now connects the reviewed D022–D024 foundations to a local
+helper runtime, but only behind two explicit operator-supplied values:
+`VAULTSYNC_DIAGNOSTICS_CONFIG` and `VAULTSYNC_DIAGNOSTICS_STATE`. With neither
+value, the helper opens no diagnostics listener, creates no state or credential,
+and changes no folder, trust, namespace, artifact, Syncthing setting, or Relay
+request. The ordinary one-line installers, PowerShell installer, bootstrap
+script, and Docker Compose set neither value, so existing-user upgrades remain
+Trigger-v1-only.
 
-The local confinement harness at
-[`tests/m4-docker/run.sh`](tests/m4-docker/run.sh) proves one narrow deployment
-shape: an explicit operator phase creates the exact child under an existing
-test Syncthing folder, then a network-isolated Linux test process receives only
-that exact host-bind subdirectory, a separate state directory, and a read-only
-config fixture. Its container root is read-only, all capabilities are dropped,
-and a child mount swap is rejected by descriptor, inode, device, and Linux mount
-identity checks. The harness starts no production helper or synchronization
-service and publishes no image or port.
+The configured runtime uses TLS 1.3 with a QR-delivered SPKI pin and exact
+Ed25519 application signatures. Its URLs are fixed; identifiers and paths never
+enter URLs or logs. Pairing, namespace creation, lifecycle rotation/revocation,
+and trust all require explicit app and local-operator actions. Capability and
+every operation recheck the exact local folder mode, pause state, current
+expanded Syncthing ignores, pinned Device ID before and after those reads,
+authenticated namespace, immutable authorization, exact ephemeral
+host-path/mount-identity digest, keys, epochs, bindings, limits, and signatures.
+Any Syncthing ignore-parser error fails closed.
+Folder and expanded-ignore responses also have fixed byte, count, and
+pattern-length ceilings.
+For this supported host-bind row the Syncthing API must be an exact local
+`http://127.0.0.1:<port>` endpoint. Syncthing, Relay, and local operator HTTP
+clients reject redirects. It never
+edits `.stignore`, shares, peers, discovery, or Syncthing configuration.
+The explicitly selected diagnostics listener uses an unprivileged port from
+1024 through 65535; no bind capability is added.
+Every remote, operator, namespace, lifecycle, and admin mutation is serialized
+through one protected cross-process lock, including commands run with
+`docker exec`.
 
-This proof does not make the feature available. Docker named volumes, rootless
-Docker, NAS packages, Linux host/systemd packaging, macOS, and Windows remain
-unsupported for the diagnostics namespace until their exact isolation,
-installer, upgrade, and rollback paths are separately demonstrated. The
-current product paths remain Trigger-v1-only.
+Only rootful Docker Engine on an explicitly confirmed standard Linux host is a
+supported diagnostics package. The separate
+[`scripts/diagnostics-docker.sh`](scripts/diagnostics-docker.sh) flow uses a
+temporary exact parent bind solely for confirmed namespace creation, then
+restarts with only the exact existing `VaultSync Diagnostics` child read/write,
+a separate state bind, read-only runtime/config.xml files, read-only container
+root, all capabilities dropped, and `no-new-privileges`. It resolves the helper
+image to an immutable local content ID before deployment and rejects a
+root-owned Syncthing config instead of running the helper as root. The installer
+pins the source directory identity before the temporary bind and injects only a
+SHA-256 mount-binding digest at runtime; the raw host path is not stored or
+logged. Named volumes, their backing paths and subpaths, rootless Docker, remote
+Docker daemons/contexts, non-Unix Docker endpoints, remote/NAS/FUSE storage,
+Docker Desktop, WSL, systemd binaries, macOS, and Windows remain
+diagnostics-unsupported.
+The runtime rejects non-Linux activation and requires the operator config to be
+owner-only mode `0400` with a single filesystem link. Before namespace creation,
+the installer displays the exact resulting path and separately requires
+acknowledgement of that path and possible peer/backup/version/conflict/tombstone
+retention.
 
-### Dormant upload-attestation development foundation
+The installer has only forward, explicit crash completion. If namespace
+creation and its protected root record became durable before the mount config
+was written, rerunning `diagnostics-docker.sh enable` can resume only that exact
+authenticated root after all Device/folder/ignore, source-inode, state, digest,
+key/epoch, signature, and fixed-layout checks. Recovery mode creates nothing and
+never adopts an unregistered or conflicting directory. Exact D023 authorization
+messages are likewise idempotent after their file and state became durable,
+even when the original signed candidate has since expired;
+helper/TLS rotation remains unavailable while a registered root lacks its exact
+authorization.
 
-M5 adds an internal upload-only implementation of Decision 024 message types
-3–5. It can validate one exact app-signed 256-byte request through an already
-open M4 confinement handle, atomically persist one helper-signed attestation,
-and return those same bytes idempotently to a test/mock caller. Fixed limits,
-replay and binding checks, restart recovery, crash/race behavior, Go/Swift
-golden bytes, and privacy boundaries are tested. A build-tagged E2E runs two
-temporary local Syncthing instances in a network-isolated container and does
-not read or change any installed Syncthing configuration.
+Each app installation pairs and authorizes independently. Another installation
+may join an existing authenticated namespace only through its own signed D022
+and D023 flow; there is no second namespace creation or transfer of trust or
+identity. Revoked immutable authorization records remain historical. A later
+namespace-wide helper-key manifest does not rewrite them, while every active
+installation still needs a fresh exact D023 authorization epoch before it can
+resume operations. Manifest rotation also repeats the pinned Device ID,
+folder/ignore, root, and exact mount-binding preflight for every affected
+namespace before the helper key becomes current.
+A shared helper-key or TLS-pin rotation withholds signed capability success from
+an early installation until all required proposed-state confirmations permit the
+global commit; the early installation sees unavailable and then retries.
 
-This code is not called by `main`, has no endpoint or listener, advertises no
-capability, changes no Syncthing configuration, and creates no runtime
-namespace or operation. Swift support is test-only. Response and cleanup are not
-part of M5; they live in the separate dormant M6 foundation below. Installing or
-upgrading the current helper therefore changes no behavior; Trigger v1 and
-Cloud Relay v1 remain byte- and behavior-compatible.
-
-### Dormant response and cleanup development foundation
-
-M6 adds an internal test-only implementation of Decision 024 message types
-6–9. Given the exact confined M5 request and helper attestation, it validates an
-app-signed response authorization, generates and atomically persists one
-immutable helper-signed response with exactly 256 random payload bytes, and
-accepts only app-signed cleanup requests containing one to three sorted message
-digests. Cleanup maps those digests to the three fixed operation filenames,
-reopens and verifies candidates through the M4 handle, retains live app-owned or
-changed content, and returns a helper-signed per-target acknowledgement.
-
-This foundation is not called by `main` and has no endpoint, listener,
-capability response, advertised flag, automatic namespace action, retry
-scheduler, startup scan, packaging, publication, or deployment. Swift support
-remains in the test target. No response has been applied on an iPhone through a
-fresh post-authorization `ItemFinished`; download and roundtrip evidence remain
-unset. See [`../docs/m6-response-cleanup-readiness.md`](../docs/m6-response-cleanup-readiness.md)
-for the exact proof and rollback boundary.
+This is helper readiness, not app evidence. The released app does not call these
+paths. No app-authored runtime request has established product upload evidence,
+no response has passed a fresh post-authorization iPhone `ItemFinished`, and no
+same-chain roundtrip exists. Upload, download, and roundtrip therefore remain
+unset; cleanup remains separate from evidence. See
+[`../docs/helper-runtime-packaging-readiness.md`](../docs/helper-runtime-packaging-readiness.md)
+for the exact support, privacy, compatibility, and rollback boundary.
 
 **Doctor mode** — preflight checks with actionable failures (Compose reads `.env` for you):
 
@@ -221,7 +246,7 @@ Cloud Relay accelerates `server → iPhone` by waking VaultSync when the homeser
 - **`LocalIndexUpdated`** — a direct change on the homeserver itself.
 - **`FolderCompletion`** with `needItems > 0` or `needBytes > 0` — a remote peer is behind and should be woken.
 
-`iPhone → server` stays foreground-first on iOS: open VaultSync to push local edits back. Background refresh may help opportunistically, but the helper exposes no upload path. See the [Cloud Relay spec](../docs/relay-spec.md) for the protocol.
+`iPhone → server` stays foreground-first on iOS: open VaultSync to push local edits back. Background refresh may help opportunistically. The released product has no controlled helper upload path: the optional, unpublished diagnostics endpoints above have no released app caller and set no upload evidence. See the [Cloud Relay spec](../docs/relay-spec.md) for the protocol.
 
 ---
 
@@ -239,6 +264,6 @@ docker build -t vaultsync-notify .  # Docker image
 
 Only the Syncthing Device ID is sent to the relay, as a routing identifier. No file names, folder names, file sizes, or other metadata leave your server.
 
-Operational logs contain fixed states, error categories, status codes, bounded counts, and durations. They do not contain Device IDs, folder IDs, event markers, local or Relay endpoint URLs, config paths, Syncthing API keys, or raw request/response bodies. The helper keeps the API key and watched-folder selection in process memory and does not create a separate credential store.
+Operational logs contain fixed states, error categories, status codes, bounded counts, and durations. They do not contain Device IDs, folder IDs, event markers, local or Relay endpoint URLs, config paths, Syncthing API keys, pairing/namespace values, or raw request/response bodies. The default Trigger-v1 helper keeps the API key and watched-folder selection in process memory. Only the explicitly configured diagnostics runtime creates its separate protected credential and namespace-mapping state described above; that state is never synchronized or sent to Cloud Relay.
 
 Licensed [MPL-2.0](../LICENSE).

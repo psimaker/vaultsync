@@ -19,6 +19,10 @@ func checkDiagnosticsPrivateFile(_ string, _ fs.FileInfo) error {
 	return errDiagnosticsCredentialStateInvalid
 }
 
+func checkDiagnosticsReadOnlyConfigFile(_ string, _ fs.FileInfo) error {
+	return errDiagnosticsCredentialStateInvalid
+}
+
 func withDiagnosticsCredentialFileLock(path string, action func() error) error {
 	_ = filepath.Clean(path)
 	_ = action

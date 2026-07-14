@@ -281,7 +281,7 @@ func TestDiagnosticsTriggerV1WireRemainsExact(t *testing.T) {
 	}
 }
 
-func TestDiagnosticsFoundationsHaveNoOperationalRuntimeCarrier(t *testing.T) {
+func TestDiagnosticsRuntimeCarrierIsExplicitAndCoreRemainsIsolated(t *testing.T) {
 	fixture := loadDiagnosticsContractFixture(t)
 	repoRoot := diagnosticsTestRepoRoot(t)
 	dormantCapabilityCarrier := filepath.Join(repoRoot, "notify", "diagnostics_capabilities.go")
@@ -289,6 +289,7 @@ func TestDiagnosticsFoundationsHaveNoOperationalRuntimeCarrier(t *testing.T) {
 	namespaceProtocolCarrier := filepath.Join(repoRoot, "notify", "diagnostics_namespace_protocol.go")
 	uploadProtocolCarrier := filepath.Join(repoRoot, "notify", "diagnostics_upload_protocol.go")
 	responseProtocolCarrier := filepath.Join(repoRoot, "notify", "diagnostics_response_protocol.go")
+	capabilityProtocolCarrier := filepath.Join(repoRoot, "notify", "diagnostics_capability_protocol.go")
 	runtimeRoots := []string{
 		filepath.Join(repoRoot, "notify"),
 		filepath.Join(repoRoot, "ios", "VaultSync"),
@@ -310,7 +311,7 @@ func TestDiagnosticsFoundationsHaveNoOperationalRuntimeCarrier(t *testing.T) {
 				return err
 			}
 			for name, capability := range fixture.Capabilities {
-				allowed := path == dormantCapabilityCarrier ||
+				allowed := path == dormantCapabilityCarrier || path == capabilityProtocolCarrier ||
 					(name == "pairing" && path == pairingProtocolCarrier) ||
 					(name == "namespace" && path == namespaceProtocolCarrier)
 				if bytes.Contains(body, []byte(capability)) && !allowed {
@@ -320,7 +321,7 @@ func TestDiagnosticsFoundationsHaveNoOperationalRuntimeCarrier(t *testing.T) {
 			for name, domain := range fixture.Domains {
 				allowed := (strings.HasPrefix(name, "pairing.") && path == pairingProtocolCarrier) ||
 					(strings.HasPrefix(name, "namespace.") && path == namespaceProtocolCarrier) ||
-					(strings.HasPrefix(name, "roundtrip.") && (path == uploadProtocolCarrier || path == responseProtocolCarrier))
+					(strings.HasPrefix(name, "roundtrip.") && (path == uploadProtocolCarrier || path == responseProtocolCarrier || path == capabilityProtocolCarrier))
 				if bytes.Contains(body, []byte(strings.TrimSuffix(domain, "\x00"))) && !allowed {
 					return fmt.Errorf("runtime file %s contains an unapproved signature domain", path)
 				}
@@ -332,32 +333,37 @@ func TestDiagnosticsFoundationsHaveNoOperationalRuntimeCarrier(t *testing.T) {
 		}
 	}
 
-	entrypoints := []string{
-		filepath.Join(repoRoot, "notify", "main.go"),
+	defaultEntrypoints := []string{
 		filepath.Join(repoRoot, "notify", "Dockerfile"),
 		filepath.Join(repoRoot, "notify", "docker-compose.yml"),
 		filepath.Join(repoRoot, "notify", "scripts", "install.sh"),
 		filepath.Join(repoRoot, "notify", "scripts", "install.ps1"),
 		filepath.Join(repoRoot, "notify", "scripts", "bootstrap.sh"),
 	}
-	for _, path := range entrypoints {
+	for _, path := range defaultEntrypoints {
 		body, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, forbidden := range []string{
-			"diagnosticsPairing",
-			"diagnosticsCredential",
-			"diagnosticsNamespace",
-			"diagnosticsResponse",
-			"diagnosticsCleanup",
+			diagnosticsRuntimeConfigEnvironment,
+			diagnosticsRuntimeStateEnvironment,
 			diagnosticsPairingPath,
 			diagnosticsCredentialStateFile,
 			diagnosticsNamespaceRootName,
 		} {
 			if bytes.Contains(body, []byte(forbidden)) {
-				t.Fatalf("product/helper entrypoint %s activates dormant diagnostics carrier %q", path, forbidden)
+				t.Fatalf("default install entrypoint %s implicitly activates diagnostics carrier %q", path, forbidden)
 			}
+		}
+	}
+	mainBody, err := os.ReadFile(filepath.Join(repoRoot, "notify", "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"loadDiagnosticsRuntimeConfig()", "cfg.diagnosticsRuntime != nil", "diagnostics.start()"} {
+		if bytes.Count(mainBody, []byte(required)) != 1 {
+			t.Fatalf("main explicit runtime gate %q count = %d", required, bytes.Count(mainBody, []byte(required)))
 		}
 	}
 	for _, path := range []string{
@@ -369,6 +375,7 @@ func TestDiagnosticsFoundationsHaveNoOperationalRuntimeCarrier(t *testing.T) {
 		filepath.Join(repoRoot, "notify", "diagnostics_upload_attestor.go"),
 		filepath.Join(repoRoot, "notify", "diagnostics_response_protocol.go"),
 		filepath.Join(repoRoot, "notify", "diagnostics_response_foundation.go"),
+		filepath.Join(repoRoot, "notify", "diagnostics_capability_protocol.go"),
 	} {
 		body, err := os.ReadFile(path)
 		if err != nil {

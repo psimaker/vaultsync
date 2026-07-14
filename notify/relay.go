@@ -24,7 +24,7 @@ func NewRelayClient(relayURL, deviceID string) *RelayClient {
 	return &RelayClient{
 		relayURL: relayURL,
 		deviceID: deviceID,
-		http:     &http.Client{Timeout: 15 * time.Second},
+		http:     &http.Client{Timeout: 15 * time.Second, CheckRedirect: rejectHelperHTTPRedirect},
 	}
 }
 

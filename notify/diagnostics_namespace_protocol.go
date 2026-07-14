@@ -632,6 +632,72 @@ func validateDiagnosticsNamespacePersistentChain(rootEncoded []byte, helperEpoch
 	return nil
 }
 
+func validateDiagnosticsNamespacePersistentChainDuringHelperRotation(
+	rootEncoded []byte,
+	helperEpochs [][]byte,
+	authorizations [][][]byte,
+) error {
+	return validateDiagnosticsNamespacePersistentChainWithHistoricalAuthorizations(
+		rootEncoded,
+		helperEpochs,
+		authorizations,
+	)
+}
+
+// validateDiagnosticsNamespacePersistentChainWithHistoricalAuthorizations
+// validates the complete append-only helper chain while allowing an immutable
+// installation authorization to end at any helper epoch that was current when
+// that app last authorized it. This is required for revoked or lost apps: their
+// signed record cannot be silently rewritten during a later helper rotation.
+// Runtime session construction separately requires the selected active app's
+// exact current credential-state digest, app/helper keys, and epochs.
+func validateDiagnosticsNamespacePersistentChainWithHistoricalAuthorizations(
+	rootEncoded []byte,
+	helperEpochs [][]byte,
+	authorizations [][][]byte,
+) error {
+	if validateDiagnosticsNamespacePersistentChain(rootEncoded, helperEpochs, authorizations) == nil {
+		return nil
+	}
+	if len(authorizations) > diagnosticsNamespaceMaximumInstallations ||
+		validateDiagnosticsNamespacePersistentChain(rootEncoded, helperEpochs, nil) != nil {
+		return errDiagnosticsNamespaceInvalid
+	}
+	seenInstallations := make(map[string]struct{}, len(authorizations))
+	for _, records := range authorizations {
+		if len(records) == 0 {
+			return errDiagnosticsNamespaceInvalid
+		}
+		initial, err := decodeDiagnosticsNamespaceMessage(records[0])
+		if err != nil || initial.messageType != diagnosticsNamespaceInitialAuthorization {
+			return errDiagnosticsNamespaceInvalid
+		}
+		installation, ok := initial.bytesField(8, 32)
+		if !ok {
+			return errDiagnosticsNamespaceInvalid
+		}
+		if _, exists := seenInstallations[string(installation)]; exists {
+			return errDiagnosticsNamespaceInvalid
+		}
+		seenInstallations[string(installation)] = struct{}{}
+		validAtHistoricalEpoch := false
+		for epochCount := 0; epochCount <= len(helperEpochs); epochCount++ {
+			if validateDiagnosticsNamespacePersistentChain(
+				rootEncoded,
+				helperEpochs[:epochCount],
+				[][][]byte{records},
+			) == nil {
+				validAtHistoricalEpoch = true
+				break
+			}
+		}
+		if !validAtHistoricalEpoch {
+			return errDiagnosticsNamespaceInvalid
+		}
+	}
+	return nil
+}
+
 func diagnosticsNamespaceCommonBindingsEqual(left, right diagnosticsNamespaceMessage, labels ...uint64) bool {
 	for _, label := range labels {
 		leftValue, leftOK := diagnosticsCBORLookup(left.value, label)

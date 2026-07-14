@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -35,9 +36,14 @@ func NewSyncthingClient(apiURL, apiKey string) *SyncthingClient {
 		apiURL: apiURL,
 		apiKey: apiKey,
 		http: &http.Client{
-			Timeout: 90 * time.Second, // long-poll can block up to 60s server-side
+			Timeout:       90 * time.Second, // long-poll can block up to 60s server-side
+			CheckRedirect: rejectHelperHTTPRedirect,
 		},
 	}
+}
+
+func rejectHelperHTTPRedirect(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
 }
 
 // Subscribe polls /rest/events in a loop, sending events to the returned channel.
@@ -188,10 +194,26 @@ type deviceConnection struct {
 // a folder is shared with a given device. Devices always includes the local
 // device itself.
 type folderConfig struct {
+	ID      string `json:"id"`
+	Path    string `json:"path"`
+	Type    string `json:"type"`
+	Paused  bool   `json:"paused"`
 	Devices []struct {
 		DeviceID string `json:"deviceID"`
 	} `json:"devices"`
 }
+
+type syncthingIgnoreConfig struct {
+	Expanded []string `json:"expanded"`
+	Error    string   `json:"error"`
+}
+
+const (
+	diagnosticsSyncthingPreflightMaximumBytes    = int64(1024 * 1024)
+	diagnosticsSyncthingPreflightMaximumFolders  = 4096
+	diagnosticsSyncthingPreflightMaximumPatterns = 4096
+	diagnosticsSyncthingPreflightMaximumPattern  = 4096
+)
 
 // Connections returns the connection state of every configured device, keyed
 // by device ID. The map includes the local device itself (always as not
@@ -209,10 +231,51 @@ func (c *SyncthingClient) Connections(ctx context.Context) (map[string]deviceCon
 // ListFolders returns all configured folders with their shared-device lists.
 func (c *SyncthingClient) ListFolders(ctx context.Context) ([]folderConfig, error) {
 	var folders []folderConfig
-	if err := c.getJSON(ctx, c.apiURL+"/rest/config/folders", &folders); err != nil {
+	if err := c.getJSONBounded(
+		ctx, c.apiURL+"/rest/config/folders", &folders, diagnosticsSyncthingPreflightMaximumBytes,
+	); err != nil {
 		return nil, err
 	}
+	if len(folders) > diagnosticsSyncthingPreflightMaximumFolders {
+		return nil, errors.New("Syncthing folder configuration is too large")
+	}
 	return folders, nil
+}
+
+// Folder returns one exact locally configured folder without placing its ID in
+// a URL path or log. Listing is read-only and the caller performs the match.
+func (c *SyncthingClient) Folder(ctx context.Context, folderID string) (folderConfig, error) {
+	folders, err := c.ListFolders(ctx)
+	if err != nil {
+		return folderConfig{}, err
+	}
+	for _, folder := range folders {
+		if folder.ID == folderID {
+			return folder, nil
+		}
+	}
+	return folderConfig{}, errors.New("Syncthing folder unavailable")
+}
+
+// FolderIgnores reads Syncthing's own expanded matcher patterns, including
+// resolved #include files. It never writes .stignore or changes configuration.
+func (c *SyncthingClient) FolderIgnores(ctx context.Context, folderID string) (syncthingIgnoreConfig, error) {
+	query := url.Values{"folder": {folderID}}
+	var ignores syncthingIgnoreConfig
+	if err := c.getJSONBounded(
+		ctx, c.apiURL+"/rest/db/ignores?"+query.Encode(), &ignores, diagnosticsSyncthingPreflightMaximumBytes,
+	); err != nil {
+		return syncthingIgnoreConfig{}, err
+	}
+	if len(ignores.Expanded) > diagnosticsSyncthingPreflightMaximumPatterns {
+		return syncthingIgnoreConfig{}, errors.New("Syncthing ignore configuration is too large")
+	}
+	for _, pattern := range ignores.Expanded {
+		if len(pattern) > diagnosticsSyncthingPreflightMaximumPattern {
+			return syncthingIgnoreConfig{}, errors.New("Syncthing ignore configuration is too large")
+		}
+	}
+	return ignores, nil
 }
 
 // DeviceCompletion is the subset of /rest/db/completion used to decide whether
@@ -269,6 +332,45 @@ func (c *SyncthingClient) getJSON(ctx context.Context, url string, out any) erro
 
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
 		return fmt.Errorf("decode response: %w", err)
+	}
+	return nil
+}
+
+func (c *SyncthingClient) getJSONBounded(ctx context.Context, url string, out any, maximumBytes int64) error {
+	if maximumBytes <= 0 {
+		return errors.New("invalid Syncthing response limit")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("X-API-Key", c.apiKey)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return &HTTPStatusError{Component: "syncthing", StatusCode: resp.StatusCode}
+	}
+	if resp.ContentLength > maximumBytes {
+		return errors.New("Syncthing response is too large")
+	}
+	limited := &io.LimitedReader{R: resp.Body, N: maximumBytes + 1}
+	decoder := json.NewDecoder(limited)
+	if err := decoder.Decode(out); err != nil {
+		if limited.N == 0 {
+			return errors.New("Syncthing response is too large")
+		}
+		return errors.New("decode Syncthing response")
+	}
+	var trailing json.RawMessage
+	trailingErr := decoder.Decode(&trailing)
+	if limited.N == 0 {
+		return errors.New("Syncthing response is too large")
+	}
+	if !errors.Is(trailingErr, io.EOF) {
+		return errors.New("decode Syncthing response")
 	}
 	return nil
 }

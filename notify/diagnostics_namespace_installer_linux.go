@@ -4,54 +4,91 @@ package main
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 func prepareDiagnosticsNamespaceExplicit(request diagnosticsNamespacePreparationRequest) (diagnosticsNamespaceRootRecord, error) {
 	if !request.operatorConfirmed || !request.ignore.valid() || request.stateStore == nil ||
 		len(request.homeserverBinding) != 32 || len(request.folderBinding) != 32 ||
+		request.parentDevice == 0 || request.parentInode == 0 ||
 		!filepath.IsAbs(request.parentPath) || filepath.Clean(request.parentPath) != request.parentPath {
 		return diagnosticsNamespaceRootRecord{}, errDiagnosticsNamespaceUnsupported
 	}
-	chain := diagnosticsNamespaceChain{Enablement: request.enablement, RootManifest: request.rootManifest}
-	if err := validateDiagnosticsNamespaceChain(chain); err != nil {
-		return diagnosticsNamespaceRootRecord{}, err
-	}
-	enablement, _ := decodeDiagnosticsNamespaceMessage(request.enablement)
-	rootManifest, _ := decodeDiagnosticsNamespaceMessage(request.rootManifest)
-	homeserver, _ := rootManifest.bytesField(5, 32)
-	folder, _ := rootManifest.bytesField(6, 32)
-	if !bytes.Equal(homeserver, request.homeserverBinding) || !bytes.Equal(folder, request.folderBinding) ||
-		!diagnosticsNamespaceCommonBindingsEqual(enablement, rootManifest, 5, 6) {
-		return diagnosticsNamespaceRootRecord{}, errDiagnosticsNamespaceInvalid
+	var rootManifest diagnosticsNamespaceMessage
+	if request.recoveryOnly {
+		if len(request.enablement) != 0 || len(request.rootManifest) != 0 ||
+			len(request.helperPublicKey) != ed25519.PublicKeySize || request.helperEpoch == 0 {
+			return diagnosticsNamespaceRootRecord{}, errDiagnosticsNamespaceUnsupported
+		}
+	} else {
+		chain := diagnosticsNamespaceChain{Enablement: request.enablement, RootManifest: request.rootManifest}
+		if err := validateDiagnosticsNamespaceChain(chain); err != nil {
+			return diagnosticsNamespaceRootRecord{}, err
+		}
+		enablement, _ := decodeDiagnosticsNamespaceMessage(request.enablement)
+		rootManifest, _ = decodeDiagnosticsNamespaceMessage(request.rootManifest)
+		homeserver, _ := rootManifest.bytesField(5, 32)
+		folder, _ := rootManifest.bytesField(6, 32)
+		if !bytes.Equal(homeserver, request.homeserverBinding) || !bytes.Equal(folder, request.folderBinding) ||
+			!diagnosticsNamespaceCommonBindingsEqual(enablement, rootManifest, 5, 6) {
+			return diagnosticsNamespaceRootRecord{}, errDiagnosticsNamespaceInvalid
+		}
 	}
 	state, err := request.stateStore.snapshot()
 	if err != nil {
 		return diagnosticsNamespaceRootRecord{}, err
 	}
-	mountAlias, err := diagnosticsNamespaceNextMountAlias(state)
-	if err != nil {
-		return diagnosticsNamespaceRootRecord{}, err
+	existingRoot, hasExistingRoot := diagnosticsNamespaceRootForFolder(state, request.folderBinding)
+	mountAlias := ""
+	if hasExistingRoot {
+		if !bytes.Equal(existingRoot.HomeserverBinding, request.homeserverBinding) {
+			return diagnosticsNamespaceRootRecord{}, errDiagnosticsNamespaceCollision
+		}
+	} else {
+		if request.recoveryOnly {
+			return diagnosticsNamespaceRootRecord{}, errDiagnosticsNamespaceUnsupported
+		}
+		mountAlias, err = diagnosticsNamespaceNextMountAlias(state)
+		if err != nil {
+			return diagnosticsNamespaceRootRecord{}, err
+		}
 	}
 	parent, err := diagnosticsNamespaceOpenTrustedParent(request.parentPath)
 	if err != nil {
 		return diagnosticsNamespaceRootRecord{}, fmt.Errorf("trusted parent: %w", err)
 	}
 	defer parent.Close()
+	parentInfo, err := parent.Stat(".")
+	if err != nil {
+		return diagnosticsNamespaceRootRecord{}, errDiagnosticsNamespaceUnsupported
+	}
+	parentStat, parentStatOK := parentInfo.Sys().(*syscall.Stat_t)
+	if !parentStatOK || uint64(parentStat.Dev) != request.parentDevice || parentStat.Ino != request.parentInode {
+		return diagnosticsNamespaceRootRecord{}, errDiagnosticsNamespaceUnsupported
+	}
 	if err := diagnosticsNamespaceValidateFolderMarker(parent); err != nil {
 		return diagnosticsNamespaceRootRecord{}, fmt.Errorf("folder marker: %w", err)
 	}
 	if !diagnosticsNamespaceTrustedParentStillSelected(parent, request.parentPath) {
 		return diagnosticsNamespaceRootRecord{}, errDiagnosticsNamespaceUnsupported
 	}
-	if _, err := parent.Lstat(diagnosticsNamespaceRootName); err == nil {
+	rootInfo, rootErr := parent.Lstat(diagnosticsNamespaceRootName)
+	if hasExistingRoot {
+		if rootErr != nil || !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 {
+			return diagnosticsNamespaceRootRecord{}, errDiagnosticsNamespaceCollision
+		}
+		return recoverDiagnosticsNamespaceExplicit(request, parent, existingRoot)
+	}
+	if rootErr == nil {
 		return diagnosticsNamespaceRootRecord{}, errDiagnosticsNamespaceCollision
-	} else if !errors.Is(err, fs.ErrNotExist) {
+	} else if !errors.Is(rootErr, fs.ErrNotExist) {
 		return diagnosticsNamespaceRootRecord{}, errDiagnosticsNamespaceConflict
 	}
 	if err := parent.Mkdir(diagnosticsNamespaceRootName, 0o700); err != nil {
@@ -75,7 +112,7 @@ func prepareDiagnosticsNamespaceExplicit(request diagnosticsNamespacePreparation
 		return diagnosticsNamespaceRootRecord{}, errDiagnosticsNamespaceUnsupported
 	}
 	rootPath := filepath.Join(request.parentPath, diagnosticsNamespaceRootName)
-	handle, err := openDiagnosticsNamespaceRoot(rootPath, nil)
+	handle, err := openDiagnosticsNamespaceRootAt(parent, diagnosticsNamespaceRootName, rootPath, nil)
 	if err != nil {
 		return diagnosticsNamespaceRootRecord{}, fmt.Errorf("root open: %w", err)
 	}
@@ -100,6 +137,8 @@ func prepareDiagnosticsNamespaceExplicit(request diagnosticsNamespacePreparation
 	if !diagnosticsNamespaceTrustedParentStillSelected(parent, request.parentPath) {
 		return diagnosticsNamespaceRootRecord{}, errDiagnosticsNamespaceUnsupported
 	}
+	homeserver, _ := rootManifest.bytesField(5, 32)
+	folder, _ := rootManifest.bytesField(6, 32)
 	namespaceID, _ := rootManifest.bytesField(7, 32)
 	rootDigest, _ := diagnosticsNamespaceRecordDigest(request.rootManifest)
 	identity := handle.Identity()
@@ -112,6 +151,78 @@ func prepareDiagnosticsNamespaceExplicit(request diagnosticsNamespacePreparation
 		return diagnosticsNamespaceRootRecord{}, fmt.Errorf("state register: %w", err)
 	}
 	return record, nil
+}
+
+func recoverDiagnosticsNamespaceExplicit(
+	request diagnosticsNamespacePreparationRequest,
+	parent *os.Root,
+	record diagnosticsNamespaceRootRecord,
+) (diagnosticsNamespaceRootRecord, error) {
+	if !bytes.Equal(record.HomeserverBinding, request.homeserverBinding) ||
+		!bytes.Equal(record.FolderBinding, request.folderBinding) ||
+		!diagnosticsNamespaceTrustedParentStillSelected(parent, request.parentPath) {
+		return diagnosticsNamespaceRootRecord{}, errDiagnosticsNamespaceCollision
+	}
+	rootPath := filepath.Join(request.parentPath, diagnosticsNamespaceRootName)
+	handle, err := openDiagnosticsNamespaceRootAt(parent, diagnosticsNamespaceRootName, rootPath, nil)
+	if err != nil {
+		return diagnosticsNamespaceRootRecord{}, errDiagnosticsNamespaceCollision
+	}
+	defer handle.Close()
+	if handle.ValidateRootRecord(record) != nil || handle.ScanFixedLayout() != nil {
+		return diagnosticsNamespaceRootRecord{}, errDiagnosticsNamespaceCollision
+	}
+	rootManifest, _, err := handle.ReadImmutable(diagnosticsNamespaceRootManifestPath())
+	if err != nil {
+		return diagnosticsNamespaceRootRecord{}, errDiagnosticsNamespaceCollision
+	}
+	if request.recoveryOnly {
+		if !diagnosticsNamespaceRegisteredRootMatchesCurrentHelper(
+			handle, rootManifest, request.helperPublicKey, request.helperEpoch,
+		) {
+			return diagnosticsNamespaceRootRecord{}, errDiagnosticsNamespaceCollision
+		}
+	} else if validateDiagnosticsNamespaceChain(diagnosticsNamespaceChain{
+		Enablement: request.enablement, RootManifest: rootManifest,
+	}) != nil {
+		return diagnosticsNamespaceRootRecord{}, errDiagnosticsNamespaceCollision
+	}
+	if !diagnosticsNamespaceTrustedParentStillSelected(parent, request.parentPath) {
+		return diagnosticsNamespaceRootRecord{}, errDiagnosticsNamespaceUnsupported
+	}
+	return cloneDiagnosticsNamespaceRootRecord(record), nil
+}
+
+func diagnosticsNamespaceRegisteredRootMatchesCurrentHelper(
+	handle *diagnosticsNamespaceRootHandle,
+	rootManifest []byte,
+	helperPublicKey []byte,
+	helperEpoch uint64,
+) bool {
+	if handle == nil || len(helperPublicKey) != ed25519.PublicKeySize || helperEpoch == 0 ||
+		validateDiagnosticsNamespacePersistentChain(rootManifest, nil, nil) != nil {
+		return false
+	}
+	currentManifest := rootManifest
+	if helperEpoch > 1 {
+		path, err := diagnosticsNamespaceHelperEpochPath(helperEpoch)
+		if err != nil {
+			return false
+		}
+		currentManifest, _, err = handle.ReadImmutable(path)
+		if err != nil {
+			return false
+		}
+	}
+	message, err := decodeDiagnosticsNamespaceMessage(currentManifest)
+	if err != nil {
+		return false
+	}
+	publicKey, _ := message.bytesField(13, ed25519.PublicKeySize)
+	keyID, _ := message.bytesField(14, 32)
+	epoch, _ := message.uintField(15)
+	expectedKeyID := diagnosticsKeyID(ed25519.PublicKey(helperPublicKey))
+	return bytes.Equal(publicKey, helperPublicKey) && bytes.Equal(keyID, expectedKeyID[:]) && epoch == helperEpoch
 }
 
 func appendDiagnosticsNamespaceHelperEpoch(handle *diagnosticsNamespaceRootHandle, chain diagnosticsNamespaceChain) error {

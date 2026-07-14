@@ -718,6 +718,171 @@ func TestDiagnosticsAppKeyRotationAbortFinalizeRevocationAndReplay(t *testing.T)
 	}
 }
 
+func TestDiagnosticsConfirmedLifecycleReconcilesForwardAfterSignedExpiry(t *testing.T) {
+	manager, clock := newDiagnosticsTestPairingManager(t)
+	recordID, currentAppPrivate := activateDiagnosticsTestInstallation(
+		t, manager, clock, bytes.Repeat([]byte{0xa1}, 32), 0xa1,
+	)
+	state, _ := manager.store.snapshot()
+	authorization := state.Authorizations[diagnosticsAuthorizationIndex(state.Authorizations, recordID)]
+	_, proposedPrivate, _ := ed25519.GenerateKey(rand.Reader)
+	now := uint64(clock.current().Unix())
+	requestBytes, err := buildDiagnosticsAppKeyRotationRequest(
+		authorization, state.Identity, proposedPrivate.Public().(ed25519.PublicKey), currentAppPrivate,
+		now, now+300, bytes.Repeat([]byte{0xa2}, 32),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.handleLifecycleMessage(requestBytes); err != nil {
+		t.Fatal(err)
+	}
+	request, _ := decodeDiagnosticsPairingMessage(requestBytes)
+	proof, err := buildDiagnosticsLifecycleContinuation(
+		request, diagnosticsPairingAppKeyRotationNewProof, 0, nil, proposedPrivate,
+		now, now+300, bytes.Repeat([]byte{0xa3}, 32),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	acceptBytes, err := manager.handleLifecycleMessage(proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accept, _ := decodeDiagnosticsPairingMessage(acceptBytes)
+	transitionDigest, _ := request.digest()
+	finalize, err := buildDiagnosticsLifecycleContinuation(
+		accept, diagnosticsPairingLifecycleFinalize, diagnosticsPairingTransitionAppKey, transitionDigest[:], proposedPrivate,
+		now, now+300, bytes.Repeat([]byte{0xa4}, 32),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.handleLifecycleMessage(finalize); err != nil {
+		t.Fatal(err)
+	}
+	injected := errors.New("simulated post-confirmation preparation outage")
+	if committed, err := manager.observeLifecycleCapability(
+		recordID, transitionDigest[:], func(diagnosticsLifecycleCommitPlan) error { return injected },
+	); committed || !errors.Is(err, injected) {
+		t.Fatalf("injected post-confirmation result = %v, %v", committed, err)
+	}
+	confirmed, _ := manager.store.snapshot()
+	transition := confirmed.Authorizations[diagnosticsAuthorizationIndex(confirmed.Authorizations, recordID)].Transition
+	if transition == nil || !transition.ProposedStateConfirmed {
+		t.Fatal("valid proposed-state capability confirmation was not persisted")
+	}
+	clock.advance(10 * time.Minute)
+	if err := manager.reconcileConfirmedLifecycle(nil); err != nil {
+		t.Fatalf("forward reconciliation after signed expiry: %v", err)
+	}
+	committed, _ := manager.store.snapshot()
+	proposedKeyID := diagnosticsKeyID(proposedPrivate.Public().(ed25519.PublicKey))
+	newRecordID := diagnosticsAuthorizationRecordID(proposedKeyID[:], authorization.FolderBinding)
+	index := diagnosticsAuthorizationIndex(committed.Authorizations, newRecordID)
+	if index < 0 || committed.Authorizations[index].Transition != nil || committed.Authorizations[index].AppEpoch != authorization.AppEpoch+1 {
+		t.Fatal("confirmed transition did not reconcile forward exactly once")
+	}
+}
+
+func TestDiagnosticsLifecyclePreparationDoesNotLockOrCommitStaleState(t *testing.T) {
+	manager, clock := newDiagnosticsTestPairingManager(t)
+	recordID, currentAppPrivate := activateDiagnosticsTestInstallation(
+		t, manager, clock, bytes.Repeat([]byte{0xb1}, 32), 0xb1,
+	)
+	state, _ := manager.store.snapshot()
+	authorization := state.Authorizations[diagnosticsAuthorizationIndex(state.Authorizations, recordID)]
+	_, proposedPrivate, _ := ed25519.GenerateKey(rand.Reader)
+	now := uint64(clock.current().Unix())
+	requestBytes, err := buildDiagnosticsAppKeyRotationRequest(
+		authorization, state.Identity, proposedPrivate.Public().(ed25519.PublicKey), currentAppPrivate,
+		now, now+300, bytes.Repeat([]byte{0xb2}, 32),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.handleLifecycleMessage(requestBytes); err != nil {
+		t.Fatal(err)
+	}
+	request, _ := decodeDiagnosticsPairingMessage(requestBytes)
+	proof, err := buildDiagnosticsLifecycleContinuation(
+		request, diagnosticsPairingAppKeyRotationNewProof, 0, nil, proposedPrivate,
+		now, now+300, bytes.Repeat([]byte{0xb3}, 32),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	acceptBytes, err := manager.handleLifecycleMessage(proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accept, _ := decodeDiagnosticsPairingMessage(acceptBytes)
+	transitionDigest, _ := request.digest()
+	finalize, err := buildDiagnosticsLifecycleContinuation(
+		accept, diagnosticsPairingLifecycleFinalize, diagnosticsPairingTransitionAppKey, transitionDigest[:], proposedPrivate,
+		now, now+300, bytes.Repeat([]byte{0xb4}, 32),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.handleLifecycleMessage(finalize); err != nil {
+		t.Fatal(err)
+	}
+
+	prepareStarted := make(chan struct{})
+	releasePrepare := make(chan struct{})
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(releasePrepare) })
+	type observationResult struct {
+		committed bool
+		err       error
+	}
+	observed := make(chan observationResult, 1)
+	go func() {
+		committed, observeErr := manager.observeLifecycleCapability(
+			recordID,
+			transitionDigest[:],
+			func(diagnosticsLifecycleCommitPlan) error {
+				close(prepareStarted)
+				<-releasePrepare
+				return nil
+			},
+		)
+		observed <- observationResult{committed: committed, err: observeErr}
+	}()
+	select {
+	case <-prepareStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("lifecycle preparation did not start")
+	}
+
+	revoked := make(chan error, 1)
+	go func() {
+		_, revokeErr := manager.revokeLocally(recordID, diagnosticsPairingRevocationLostApp)
+		revoked <- revokeErr
+	}()
+	select {
+	case revokeErr := <-revoked:
+		if revokeErr != nil {
+			t.Fatalf("concurrent local revocation: %v", revokeErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("slow lifecycle preparation retained the pairing manager lock")
+	}
+	releaseOnce.Do(func() { close(releasePrepare) })
+	result := <-observed
+	if result.committed || !errors.Is(result.err, errDiagnosticsPairingUnavailable) {
+		t.Fatalf("stale lifecycle plan result = %v, %v", result.committed, result.err)
+	}
+	finalState, _ := manager.store.snapshot()
+	finalAuthorization := finalState.Authorizations[diagnosticsAuthorizationIndex(finalState.Authorizations, recordID)]
+	proposedKeyID := diagnosticsKeyID(proposedPrivate.Public().(ed25519.PublicKey))
+	if finalAuthorization.State != "revoked" || finalAuthorization.Transition != nil ||
+		bytes.Equal(finalAuthorization.AppKeyID, proposedKeyID[:]) {
+		t.Fatal("stale prepared app key replaced the concurrent terminal state")
+	}
+}
+
 func TestDiagnosticsLocalRevocationProducesSignedOriginTwoRecord(t *testing.T) {
 	manager, clock := newDiagnosticsTestPairingManager(t)
 	recordID, appPrivate := activateDiagnosticsTestInstallation(t, manager, clock, bytes.Repeat([]byte{0x99}, 32), 0x99)
@@ -904,7 +1069,10 @@ func TestDiagnosticsHelperRotationStagesEveryInstallationBeforeGlobalCommit(t *t
 		t.Fatalf("global helper key committed before installation B: %v", err)
 	}
 	digestB := stage(recordB, appB, 0xae)
-	if err := manager.confirmLifecycleTransition(recordA, digestA); err != nil {
+	if err := manager.confirmLifecycleTransition(recordA, digestA); !errors.Is(err, errDiagnosticsPairingUnavailable) {
+		t.Fatalf("global helper key committed before installation B capability confirmation: %v", err)
+	}
+	if err := manager.confirmLifecycleTransition(recordB, digestB); err != nil {
 		t.Fatal(err)
 	}
 	state, err := manager.store.snapshot()
