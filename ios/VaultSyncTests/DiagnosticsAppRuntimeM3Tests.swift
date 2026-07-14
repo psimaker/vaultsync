@@ -363,7 +363,10 @@ struct DiagnosticsAppRuntimeM3Tests {
         let controller = DiagnosticsPairingController(
             credentialStore: store,
             transportFactory: { _, _, _ in transport },
-            now: { Date(timeIntervalSince1970: 1_700_000_000) }
+            now: { Date(timeIntervalSince1970: 1_700_000_000) },
+            // At this representable value, `(value + 300) - value` rounds
+            // above 300. Deadline validation must compare absolute bounds.
+            continuousNow: { 7_892.486_404_694_878 }
         )
         controller.refresh()
         await controller.startAppKeyRotation(recordID: currentRecord.id)
@@ -540,7 +543,8 @@ struct DiagnosticsAppRuntimeM3Tests {
         let controller = DiagnosticsPairingController(
             credentialStore: store,
             transportFactory: { _, _, _ in transport },
-            now: { now }
+            now: { now },
+            continuousNow: { 7_892.486_404_694_878 }
         )
         controller.refresh()
         await controller.checkCapability(recordID: record.id)
@@ -644,7 +648,8 @@ struct DiagnosticsAppRuntimeM3Tests {
         let controller = DiagnosticsPairingController(
             credentialStore: context.store,
             transportFactory: { _, _, _ in transport },
-            now: { Date(timeIntervalSince1970: 1_700_000_000) }
+            now: { Date(timeIntervalSince1970: 1_700_000_000) },
+            continuousNow: { 7_892.486_404_694_878 }
         )
         controller.refresh()
         await controller.startAppKeyRotation(recordID: context.record.id)

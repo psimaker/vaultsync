@@ -323,13 +323,15 @@ final class DiagnosticsCredentialStore: @unchecked Sendable {
             throw DiagnosticsProtocolError.invalidMessage
         }
         if let deadline = record.localDeadline {
+            let maximumExpiry = deadline.createdContinuousSeconds +
+                TimeInterval(DiagnosticsPairingProtocol.maximumLifetime)
             guard deadline.createdWallSeconds > 0,
                   deadline.createdContinuousSeconds.isFinite,
                   deadline.createdContinuousSeconds >= 0,
                   deadline.expiresContinuousSeconds.isFinite,
                   deadline.expiresContinuousSeconds > deadline.createdContinuousSeconds,
-                  deadline.expiresContinuousSeconds - deadline.createdContinuousSeconds <=
-                    TimeInterval(DiagnosticsPairingProtocol.maximumLifetime) else {
+                  maximumExpiry.isFinite,
+                  deadline.expiresContinuousSeconds <= maximumExpiry else {
                 throw DiagnosticsProtocolError.invalidMessage
             }
         }
