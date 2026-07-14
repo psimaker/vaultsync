@@ -13,7 +13,7 @@ DOCKERFILE_PATH = File.join(ROOT, "notify/Dockerfile")
 INSTALL_PATH = File.join(ROOT, "notify/scripts/install.sh")
 COMPOSE_PATH = File.join(ROOT, "notify/docker-compose.yml")
 PINNED_ACTION = /\A[^@]+@[0-9a-f]{40}\z/
-WRITE_JOBS = %w[publish-image attest-binaries release-binaries finalize-release].freeze
+WRITE_JOBS = %w[publish-image attest-binaries release-binaries rollout-verify finalize-release].freeze
 NORMAL_ONLY_JOBS = %w[publish-image attest-binaries].freeze
 RECOVERY_ONLY_JOBS = %w[recover-image].freeze
 DUAL_PATH_JOBS = %w[release-binaries rollout-verify finalize-release verify-published].freeze
@@ -200,7 +200,7 @@ write_jobs = jobs.select do |_name, job|
   job.fetch("permissions", {}).value?("write")
 end.keys.sort
 assert_policy(write_jobs == WRITE_JOBS.sort,
-              "only normal publication, draft staging, and finalization jobs may receive write permissions")
+              "only normal publication, draft staging, draft rollout, and finalization jobs may receive write permissions")
 assert_policy(jobs.fetch("publish-image").fetch("permissions") == {
                 "contents" => "read",
                 "packages" => "write",
@@ -218,6 +218,10 @@ assert_policy(jobs.fetch("attest-binaries").fetch("permissions") == {
               }, "attest-binaries permissions changed")
 assert_policy(jobs.fetch("release-binaries").fetch("permissions") == { "contents" => "write" },
               "release-binaries must receive only draft-asset write permission")
+assert_policy(jobs.fetch("rollout-verify").fetch("permissions") == {
+                "contents" => "write",
+                "packages" => "read"
+              }, "rollout-verify must receive only draft visibility and registry read permissions")
 assert_policy(jobs.fetch("finalize-release").fetch("permissions") == { "contents" => "write" },
               "finalize-release permissions changed")
 %w[image-ready binary-attestation-ready].each do |name|
@@ -566,11 +570,19 @@ assert_policy(rollout_text.include?("gh api graphql") &&
               rollout_text.include?('releases/assets/${asset_id}') &&
               rollout_text.include?('Accept: application/octet-stream') &&
               rollout_text.include?('test "$matches" = 1') &&
+              rollout_text.include?('test "$(jq -r .draft <<<"$release_json")" = true') &&
               rollout_text.include?('^sha256:[0-9a-f]{64}$') &&
               rollout_text.include?("binary_sbom") &&
               rollout_text.include?("image_digests_sha256") &&
               !rollout_text.include?('gh release download "$RELEASE_TAG"'),
               "published rollout must resolve draft assets by validated release and asset IDs")
+rollout_mutations = [
+  "gh release ", "mutation(", "mutation ",
+  "--method POST", "--method PATCH", "--method PUT", "--method DELETE",
+  "-X POST", "-X PATCH", "-X PUT", "-X DELETE"
+]
+assert_policy(rollout_mutations.none? { |fragment| rollout_text.include?(fragment) },
+              "published rollout may use draft visibility but must remain release-read-only")
 assert_policy((%w[rollout-verify image-ready] - jobs.fetch("finalize-release").fetch("needs")).empty?,
               "release finalization must follow the published rollback proof")
 assert_policy((%w[finalize-release image-ready] - jobs.fetch("verify-published").fetch("needs")).empty?,

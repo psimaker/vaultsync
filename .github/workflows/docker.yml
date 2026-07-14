@@ -1160,7 +1160,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      contents: read
+      # GitHub exposes draft releases only to tokens with push access. The
+      # publish-safety policy confines this token to the read-only API calls
+      # below and rejects release mutation commands in this job.
+      contents: write
       packages: read
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -1189,15 +1192,31 @@ jobs:
                 repository(owner: $owner, name: $name) {
                   release(tagName: $tag) { databaseId }
                 }
-              }') || return 1
-            jq -e '.data.repository != null and ((.errors // []) | length == 0)' <<<"$lookup" >/dev/null || return 1
-            release_id=$(jq -r '.data.repository.release.databaseId // empty' <<<"$lookup") || return 1
-            printf '%s\n' "$release_id" | grep -Eq '^[1-9][0-9]*$' || return 1
-            gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}" || return 1
+              }') || {
+                echo "::error::Draft release GraphQL lookup failed." >&2
+                return 1
+              }
+            jq -e '.data.repository != null and ((.errors // []) | length == 0)' <<<"$lookup" >/dev/null || {
+              echo "::error::Draft release GraphQL response was invalid." >&2
+              return 1
+            }
+            release_id=$(jq -r '.data.repository.release.databaseId // empty' <<<"$lookup") || {
+              echo "::error::Draft release database ID could not be parsed." >&2
+              return 1
+            }
+            if ! printf '%s\n' "$release_id" | grep -Eq '^[1-9][0-9]*$'; then
+              echo "::error::Draft release is not visible to the rollout token." >&2
+              return 1
+            fi
+            gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}" || {
+              echo "::error::Draft release metadata could not be read." >&2
+              return 1
+            }
           }
 
           release_json=$(resolve_release)
           test "$(jq -r .tag_name <<<"$release_json")" = "$RELEASE_TAG"
+          test "$(jq -r .draft <<<"$release_json")" = true
           test "$(jq -r .prerelease <<<"$release_json")" = false
           while IFS= read -r existing_name; do
             jq -e --arg name "$existing_name" '.release_assets | index($name) != null' "$RELEASE_SPEC" >/dev/null
