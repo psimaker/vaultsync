@@ -56,5 +56,17 @@ updates:
     cooldown:
       default-days: 7
 
-  # NOTE: /notify Go modules are intentionally not tracked — the relay is pure
-  # stdlib (no third-party require block), so there is nothing for gomod to bump.
+  # Notify dependencies. The glob module and calmh replacement must stay byte-
+  # aligned with the bundled Syncthing ignore matcher, so that pair is reviewed
+  # only when the Syncthing pin changes. Future independent modules remain
+  # visible to Dependabot.
+  - package-ecosystem: gomod
+    directory: /notify
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 7
+    ignore:
+      - dependency-name: github.com/gobwas/glob
+      - dependency-name: github.com/calmh/glob

@@ -26,6 +26,14 @@ func checkDiagnosticsPrivateFile(_ string, info fs.FileInfo) error {
 	return nil
 }
 
+func checkDiagnosticsReadOnlyConfigFile(_ string, info fs.FileInfo) error {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if info.Mode().Perm() != 0o400 || !diagnosticsOwnedByCurrentUser(info) || !ok || stat.Nlink != 1 {
+		return errDiagnosticsCredentialStateInvalid
+	}
+	return nil
+}
+
 func diagnosticsOwnedByCurrentUser(info fs.FileInfo) bool {
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	return ok && stat.Uid == uint32(os.Geteuid())

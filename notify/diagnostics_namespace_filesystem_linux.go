@@ -371,6 +371,18 @@ func (handle *diagnosticsNamespaceRootHandle) CleanupOwned(artifacts []diagnosti
 }
 
 func (handle *diagnosticsNamespaceRootHandle) ScanFixedLayout() error {
+	return handle.scanFixedLayout(false)
+}
+
+// ScanFixedLayoutDuringHelperRotation remains the explicit lifecycle callsite.
+// Both scanners accept immutable authorization history ending at a valid prior
+// helper epoch; the selected active runtime session is checked separately
+// against exact current protected credential state before any operation.
+func (handle *diagnosticsNamespaceRootHandle) ScanFixedLayoutDuringHelperRotation() error {
+	return handle.scanFixedLayout(true)
+}
+
+func (handle *diagnosticsNamespaceRootHandle) scanFixedLayout(allowHelperRotation bool) error {
 	platform, err := handle.linux()
 	if err != nil {
 		return err
@@ -525,7 +537,11 @@ func (handle *diagnosticsNamespaceRootHandle) ScanFixedLayout() error {
 		}
 		authorizationChains = append(authorizationChains, authorizationBodies)
 	}
-	if err := validateDiagnosticsNamespacePersistentChain(rootManifest, helperBodies, authorizationChains); err != nil {
+	validate := validateDiagnosticsNamespacePersistentChainWithHistoricalAuthorizations
+	if allowHelperRotation {
+		validate = validateDiagnosticsNamespacePersistentChainDuringHelperRotation
+	}
+	if err := validate(rootManifest, helperBodies, authorizationChains); err != nil {
 		return errDiagnosticsNamespaceConflict
 	}
 	return platform.verifyRoot()

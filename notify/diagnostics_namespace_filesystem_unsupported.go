@@ -34,6 +34,10 @@ func (handle *diagnosticsNamespaceRootHandle) ScanFixedLayout() error {
 	return errDiagnosticsNamespaceUnsupported
 }
 
+func (handle *diagnosticsNamespaceRootHandle) ScanFixedLayoutDuringHelperRotation() error {
+	return errDiagnosticsNamespaceUnsupported
+}
+
 func (handle *diagnosticsNamespaceRootHandle) ValidateRootRecord(_ diagnosticsNamespaceRootRecord) error {
 	return errDiagnosticsNamespaceUnsupported
 }

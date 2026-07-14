@@ -718,6 +718,73 @@ func TestDiagnosticsAppKeyRotationAbortFinalizeRevocationAndReplay(t *testing.T)
 	}
 }
 
+func TestDiagnosticsConfirmedLifecycleReconcilesForwardAfterSignedExpiry(t *testing.T) {
+	manager, clock := newDiagnosticsTestPairingManager(t)
+	recordID, currentAppPrivate := activateDiagnosticsTestInstallation(
+		t, manager, clock, bytes.Repeat([]byte{0xa1}, 32), 0xa1,
+	)
+	state, _ := manager.store.snapshot()
+	authorization := state.Authorizations[diagnosticsAuthorizationIndex(state.Authorizations, recordID)]
+	_, proposedPrivate, _ := ed25519.GenerateKey(rand.Reader)
+	now := uint64(clock.current().Unix())
+	requestBytes, err := buildDiagnosticsAppKeyRotationRequest(
+		authorization, state.Identity, proposedPrivate.Public().(ed25519.PublicKey), currentAppPrivate,
+		now, now+300, bytes.Repeat([]byte{0xa2}, 32),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.handleLifecycleMessage(requestBytes); err != nil {
+		t.Fatal(err)
+	}
+	request, _ := decodeDiagnosticsPairingMessage(requestBytes)
+	proof, err := buildDiagnosticsLifecycleContinuation(
+		request, diagnosticsPairingAppKeyRotationNewProof, 0, nil, proposedPrivate,
+		now, now+300, bytes.Repeat([]byte{0xa3}, 32),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	acceptBytes, err := manager.handleLifecycleMessage(proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accept, _ := decodeDiagnosticsPairingMessage(acceptBytes)
+	transitionDigest, _ := request.digest()
+	finalize, err := buildDiagnosticsLifecycleContinuation(
+		accept, diagnosticsPairingLifecycleFinalize, diagnosticsPairingTransitionAppKey, transitionDigest[:], proposedPrivate,
+		now, now+300, bytes.Repeat([]byte{0xa4}, 32),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.handleLifecycleMessage(finalize); err != nil {
+		t.Fatal(err)
+	}
+	injected := errors.New("simulated post-confirmation preparation outage")
+	if committed, err := manager.observeLifecycleCapability(
+		recordID, transitionDigest[:], func(diagnosticsLifecycleCommitPlan) error { return injected },
+	); committed || !errors.Is(err, injected) {
+		t.Fatalf("injected post-confirmation result = %v, %v", committed, err)
+	}
+	confirmed, _ := manager.store.snapshot()
+	transition := confirmed.Authorizations[diagnosticsAuthorizationIndex(confirmed.Authorizations, recordID)].Transition
+	if transition == nil || !transition.ProposedStateConfirmed {
+		t.Fatal("valid proposed-state capability confirmation was not persisted")
+	}
+	clock.advance(10 * time.Minute)
+	if err := manager.reconcileConfirmedLifecycle(nil); err != nil {
+		t.Fatalf("forward reconciliation after signed expiry: %v", err)
+	}
+	committed, _ := manager.store.snapshot()
+	proposedKeyID := diagnosticsKeyID(proposedPrivate.Public().(ed25519.PublicKey))
+	newRecordID := diagnosticsAuthorizationRecordID(proposedKeyID[:], authorization.FolderBinding)
+	index := diagnosticsAuthorizationIndex(committed.Authorizations, newRecordID)
+	if index < 0 || committed.Authorizations[index].Transition != nil || committed.Authorizations[index].AppEpoch != authorization.AppEpoch+1 {
+		t.Fatal("confirmed transition did not reconcile forward exactly once")
+	}
+}
+
 func TestDiagnosticsLocalRevocationProducesSignedOriginTwoRecord(t *testing.T) {
 	manager, clock := newDiagnosticsTestPairingManager(t)
 	recordID, appPrivate := activateDiagnosticsTestInstallation(t, manager, clock, bytes.Repeat([]byte{0x99}, 32), 0x99)
@@ -904,7 +971,10 @@ func TestDiagnosticsHelperRotationStagesEveryInstallationBeforeGlobalCommit(t *t
 		t.Fatalf("global helper key committed before installation B: %v", err)
 	}
 	digestB := stage(recordB, appB, 0xae)
-	if err := manager.confirmLifecycleTransition(recordA, digestA); err != nil {
+	if err := manager.confirmLifecycleTransition(recordA, digestA); !errors.Is(err, errDiagnosticsPairingUnavailable) {
+		t.Fatalf("global helper key committed before installation B capability confirmation: %v", err)
+	}
+	if err := manager.confirmLifecycleTransition(recordB, digestB); err != nil {
 		t.Fatal(err)
 	}
 	state, err := manager.store.snapshot()

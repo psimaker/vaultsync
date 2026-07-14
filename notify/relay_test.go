@@ -31,6 +31,28 @@ func TestDependencyErrorsDiscardURLsAndResponseBodies(t *testing.T) {
 	}
 }
 
+func TestHelperClientsRejectRedirectsBeforeCredentialsOrIdentifiersCanMove(t *testing.T) {
+	var targetCalls atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		targetCalls.Add(1)
+	}))
+	defer target.Close()
+	redirect := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		http.Redirect(writer, request, target.URL, http.StatusTemporaryRedirect)
+	}))
+	defer redirect.Close()
+
+	if _, err := NewSyncthingClient(redirect.URL, "api-key-sentinel").GetDeviceID(context.Background()); err == nil {
+		t.Fatal("Syncthing API redirect was followed")
+	}
+	if err := NewRelayClient(redirect.URL, "device-id-sentinel").CheckHealth(context.Background()); err == nil {
+		t.Fatal("Relay redirect was followed")
+	}
+	if targetCalls.Load() != 0 {
+		t.Fatalf("redirect target received %d requests", targetCalls.Load())
+	}
+}
+
 // triggerStub is a relay test double that returns a fixed status for
 // POST /api/v1/trigger and counts how many times it was hit.
 type triggerStub struct {

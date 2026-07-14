@@ -67,25 +67,31 @@ type diagnosticsFolderCredential struct {
 }
 
 type diagnosticsPairingAuthorization struct {
-	RecordID             string                        `json:"record_id"`
-	State                string                        `json:"state"`
-	HomeserverBinding    []byte                        `json:"homeserver_binding"`
-	FolderBinding        []byte                        `json:"folder_binding"`
-	AppPublicKey         []byte                        `json:"app_public_key"`
-	AppKeyID             []byte                        `json:"app_key_id"`
-	AppEpoch             uint64                        `json:"app_epoch"`
-	HelperEpoch          uint64                        `json:"helper_epoch"`
-	TLSSPKIPin           []byte                        `json:"tls_spki_pin"`
-	InvitationNonce      []byte                        `json:"invitation_nonce,omitempty"`
-	AppNonce             []byte                        `json:"app_nonce,omitempty"`
-	HelperNonce          []byte                        `json:"helper_nonce,omitempty"`
-	AppRequestDigest     []byte                        `json:"app_request_digest,omitempty"`
-	CurrentStateDigest   []byte                        `json:"current_state_digest,omitempty"`
-	ExpiresAt            int64                         `json:"expires_at,omitempty"`
-	TerminalReplyExpires int64                         `json:"terminal_reply_expires,omitempty"`
-	Replays              []diagnosticsPairingReplay    `json:"replays,omitempty"`
-	LifecycleNonces      [][]byte                      `json:"lifecycle_nonces,omitempty"`
-	Transition           *diagnosticsPairingTransition `json:"transition,omitempty"`
+	RecordID           string `json:"record_id"`
+	State              string `json:"state"`
+	HomeserverBinding  []byte `json:"homeserver_binding"`
+	FolderBinding      []byte `json:"folder_binding"`
+	AppPublicKey       []byte `json:"app_public_key"`
+	AppKeyID           []byte `json:"app_key_id"`
+	AppEpoch           uint64 `json:"app_epoch"`
+	HelperEpoch        uint64 `json:"helper_epoch"`
+	TLSSPKIPin         []byte `json:"tls_spki_pin"`
+	InvitationNonce    []byte `json:"invitation_nonce,omitempty"`
+	AppNonce           []byte `json:"app_nonce,omitempty"`
+	HelperNonce        []byte `json:"helper_nonce,omitempty"`
+	AppRequestDigest   []byte `json:"app_request_digest,omitempty"`
+	CurrentStateDigest []byte `json:"current_state_digest,omitempty"`
+	// NamespaceInitialAppKeyID remains stable across app-key rotation and is
+	// set only after the exact initial dual-signed namespace authorization is
+	// durably present. NamespaceAuthorizationEpoch identifies the exact current
+	// immutable authorization record to revalidate after every restart.
+	NamespaceInitialAppKeyID    []byte                        `json:"namespace_initial_app_key_id,omitempty"`
+	NamespaceAuthorizationEpoch uint64                        `json:"namespace_authorization_epoch,omitempty"`
+	ExpiresAt                   int64                         `json:"expires_at,omitempty"`
+	TerminalReplyExpires        int64                         `json:"terminal_reply_expires,omitempty"`
+	Replays                     []diagnosticsPairingReplay    `json:"replays,omitempty"`
+	LifecycleNonces             [][]byte                      `json:"lifecycle_nonces,omitempty"`
+	Transition                  *diagnosticsPairingTransition `json:"transition,omitempty"`
 }
 
 type diagnosticsPairingReplay struct {
@@ -107,7 +113,12 @@ type diagnosticsPairingTransition struct {
 	ProposedHelperEpoch  uint64 `json:"proposed_helper_epoch,omitempty"`
 	ProposedTLSPrivate   []byte `json:"proposed_tls_private_pkcs8,omitempty"`
 	ProposedTLSPin       []byte `json:"proposed_tls_pin,omitempty"`
-	ExpiresAt            int64  `json:"expires_at"`
+	// ProposedStateConfirmed is set only after an exact capability query has
+	// been authenticated under the committed proposed key/epoch (or, for TLS,
+	// received while the globally committed proposed certificate is active).
+	// It is persisted so a crash cannot silently switch an unconfirmed peer.
+	ProposedStateConfirmed bool  `json:"proposed_state_confirmed,omitempty"`
+	ExpiresAt              int64 `json:"expires_at"`
 }
 
 type diagnosticsPairingRevocation struct {
@@ -459,6 +470,16 @@ func validateDiagnosticsAuthorization(authorization diagnosticsPairingAuthorizat
 	if authorization.RecordID != diagnosticsAuthorizationRecordID(authorization.AppKeyID, authorization.FolderBinding) {
 		return errDiagnosticsCredentialStateInvalid
 	}
+	if (len(authorization.NamespaceInitialAppKeyID) == 0) != (authorization.NamespaceAuthorizationEpoch == 0) {
+		return errDiagnosticsCredentialStateInvalid
+	}
+	if len(authorization.NamespaceInitialAppKeyID) != 0 &&
+		(len(authorization.NamespaceInitialAppKeyID) != 32 ||
+			authorization.NamespaceAuthorizationEpoch < 1 ||
+			authorization.NamespaceAuthorizationEpoch > diagnosticsNamespaceMaximumAuthorizationEpochs+1 ||
+			!nonzeroDiagnosticsBytes(authorization.NamespaceInitialAppKeyID)) {
+		return errDiagnosticsCredentialStateInvalid
+	}
 	for _, field := range [][]byte{
 		authorization.InvitationNonce, authorization.AppNonce, authorization.HelperNonce, authorization.AppRequestDigest,
 	} {
@@ -517,6 +538,9 @@ func validateDiagnosticsTransition(authorization diagnosticsPairingAuthorization
 	switch transition.Stage {
 	case "request", "proof", "accepted", "committed":
 	default:
+		return errDiagnosticsCredentialStateInvalid
+	}
+	if transition.ProposedStateConfirmed && transition.Stage != "committed" {
 		return errDiagnosticsCredentialStateInvalid
 	}
 	switch transition.Kind {
