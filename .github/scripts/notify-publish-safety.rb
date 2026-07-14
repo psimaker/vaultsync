@@ -413,6 +413,9 @@ assert_policy(finalize_text.include?('test "$release_is_draft" = true') &&
               finalize_text.include?("gh api graphql") &&
               finalize_text.include?("databaseId") &&
               finalize_text.include?('releases/${release_id}') &&
+              finalize_text.include?('releases/assets/${evidence_id}') &&
+              finalize_text.include?('Accept: application/octet-stream') &&
+              !finalize_text.include?('gh release download "$RELEASE_TAG"') &&
               finalize_text.include?("|| return 1") &&
               public_branch && public_exit && release_edit && public_exit < release_edit,
               "rollout evidence and release finalization must be read-only once public")
@@ -522,6 +525,16 @@ end
 
 assert_policy((%w[release-binaries image-ready] - jobs.fetch("rollout-verify").fetch("needs")).empty?,
               "published rollout must follow complete draft staging and immutable image selection")
+rollout_text = flattened_step_text(jobs.fetch("rollout-verify"))
+assert_policy(rollout_text.include?("gh api graphql") &&
+              rollout_text.include?("databaseId") &&
+              rollout_text.include?('releases/${release_id}') &&
+              rollout_text.include?('releases/assets/${asset_id}') &&
+              rollout_text.include?('Accept: application/octet-stream') &&
+              rollout_text.include?('test "$matches" = 1') &&
+              rollout_text.include?('^sha256:[0-9a-f]{64}$') &&
+              !rollout_text.include?('gh release download "$RELEASE_TAG"'),
+              "published rollout must resolve draft assets by validated release and asset IDs")
 assert_policy((%w[rollout-verify image-ready] - jobs.fetch("finalize-release").fetch("needs")).empty?,
               "release finalization must follow the published rollback proof")
 assert_policy((%w[finalize-release image-ready] - jobs.fetch("verify-published").fetch("needs")).empty?,
