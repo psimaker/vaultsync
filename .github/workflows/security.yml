@@ -107,9 +107,8 @@ jobs:
     name: Image Scan (published)
     # Schedule only: catches base-image / Go-binary CVEs disclosed against the
     # published image after the last build, without a commit. Build-time scanning
-    # (the moment the image changes) is owned by docker.yml. Running this on push
-    # would only race the docker.yml rebuild on the same commit and scan a stale
-    # :latest.
+    # is owned by docker.yml. The scheduled scan resolves the public release's
+    # recorded OCI digest and never follows a mutable convenience tag.
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -117,16 +116,31 @@ jobs:
       contents: read
       packages: read
     steps:
-      - uses: docker/login-action@v4
+      - name: Resolve the published helper digest
+        id: release-image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: notify-v2.0.0
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/vaultsync-notify-release
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern IMAGE-DIGESTS --dir /tmp/vaultsync-notify-release
+          digest=$(sed -n 's/^index_digest=//p' /tmp/vaultsync-notify-release/IMAGE-DIGESTS)
+          printf '%s\n' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$'
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Trivy scan of ghcr image
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: ghcr.io/psimaker/vaultsync-notify:latest
+          image-ref: ghcr.io/psimaker/vaultsync-notify@${{ steps.release-image.outputs.digest }}
+          scanners: vuln,secret
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
