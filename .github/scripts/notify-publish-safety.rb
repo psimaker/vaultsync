@@ -616,10 +616,10 @@ assert_policy(jobs.fetch("publish-gate").fetch("outputs").fetch("release_is_publ
               "publish gate must fail closed and export the finalized public-release state")
 
 assert_policy(spec.fetch("format_version") == 1, "release manifest format changed")
-assert_policy(spec.fetch("version") == "2.0.0", "release version must remain 2.0.0")
-assert_policy(spec.fetch("tag") == "notify-v2.0.0", "release tag must remain notify-v2.0.0")
+assert_policy(spec.fetch("version") == "2.0.1", "release version must remain 2.0.1")
+assert_policy(spec.fetch("tag") == "notify-v2.0.1", "release tag must remain notify-v2.0.1")
 assert_policy(spec.fetch("image") == "ghcr.io/psimaker/vaultsync-notify", "image repository changed")
-assert_policy(spec.fetch("version_image") == "ghcr.io/psimaker/vaultsync-notify:2.0.0",
+assert_policy(spec.fetch("version_image") == "ghcr.io/psimaker/vaultsync-notify:2.0.1",
               "version image changed")
 assert_policy(spec.fetch("binaries") == EXPECTED_BINARIES, "expected binary set or order changed")
 assert_policy(spec.fetch("release_assets").sort == EXPECTED_ASSETS.sort, "release asset set changed")
@@ -639,9 +639,9 @@ assert_policy(dockerfile.include?("/etc/ssl/certs/ca-certificates.crt"), "pinned
 
 install_text = File.read(INSTALL_PATH)
 compose_text = File.read(COMPOSE_PATH)
-assert_policy(install_text.include?("ghcr.io/psimaker/vaultsync-notify:2.0.0"),
+assert_policy(install_text.include?("ghcr.io/psimaker/vaultsync-notify:2.0.1"),
               "installer default is not the reviewed version tag")
-assert_policy(compose_text.include?("ghcr.io/psimaker/vaultsync-notify:2.0.0"),
+assert_policy(compose_text.include?("ghcr.io/psimaker/vaultsync-notify:2.0.1"),
               "Compose default is not the reviewed version tag")
 assert_policy(!install_text.include?("ghcr.io/psimaker/vaultsync-notify:latest") &&
               !compose_text.include?("ghcr.io/psimaker/vaultsync-notify:latest"),
@@ -656,7 +656,16 @@ assert_policy(install_text.include?("Could not fetch SHA256SUMS") &&
               install_text.include?("non-canonical checksum"),
               "binary installer no longer fails closed on checksum prerequisites")
 
-security_text = flattened_step_text(security.fetch("jobs").fetch("image-scan"))
+security_image_scan = security.fetch("jobs").fetch("image-scan")
+security_text = flattened_step_text(security_image_scan)
+security_resolve_step = steps(security_image_scan).find do |step|
+  step["name"] == "Resolve the published helper digest"
+end
+assert_policy(!security_resolve_step.nil?, "scheduled scan release resolver is missing")
+security_release_env = security_resolve_step.fetch("env", {})
+assert_policy(security_release_env.fetch("TARGET_RELEASE_TAG", nil) == "notify-v2.0.1" &&
+              security_release_env.fetch("FALLBACK_RELEASE_TAG", nil) == "notify-v2.0.0",
+              "scheduled scan must use the reviewed target and last public fallback releases")
 assert_policy(security_text.include?("IMAGE-DIGESTS"), "scheduled scan must resolve the release digest")
 assert_policy(security_text.include?("vaultsync-notify@${{ steps.release-image.outputs.digest }}"),
               "scheduled scan must use the exact digest")
@@ -668,6 +677,13 @@ assert_policy(security_text.include?("mapfile -t digests") &&
               security_text.include?("^sha256:[0-9a-f]{64}$") &&
               security_text.include?("printf 'digest=%s\\n'"),
               "scheduled scan must export exactly one canonical image index digest")
+assert_policy(security_text.include?("releases/tags/${TARGET_RELEASE_TAG}") &&
+              security_text.include?("HTTP 404") &&
+              security_text.include?("release_tag=$FALLBACK_RELEASE_TAG") &&
+              security_text.include?(".draft == false") &&
+              security_text.include?(".prerelease == false") &&
+              security_text.include?("releases/tags/${release_tag}"),
+              "scheduled scan must fall back only while the reviewed release is not public")
 
 ci_notify_steps = steps(ci.fetch("jobs").fetch("notify-tests"))
 assert_policy(ci_notify_steps.any? { |step| step["run"] == "ruby .github/scripts/notify-publish-safety.rb" },
@@ -692,7 +708,7 @@ negative_cases = [
   base.merge(recovery_run_id: "29324314809"),
   base.merge(ref_type: "branch", ref_name: "main", recovery_run_id: "0"),
   base.merge(ref_type: "branch", ref_name: "main", recovery_run_id: "failed-run"),
-  base.merge(release_tag: "notify-v2.0.1"),
+  base.merge(release_tag: "notify-v2.0.0"),
   base.merge(confirmation: "publish"),
   base.merge(actor: "maintainer"),
   base.merge(triggering_actor: "maintainer"),

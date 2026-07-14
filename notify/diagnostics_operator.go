@@ -332,14 +332,11 @@ func runDiagnosticsAdminOperatorLocked(runtime *diagnosticsRuntime, command diag
 	if command.action == "list" {
 		lines := make([]string, 0, len(authorizations))
 		for _, authorization := range authorizations {
-			namespaceState := "no"
-			if len(authorization.NamespaceInitialAppKeyID) == 32 {
-				namespaceState = "yes"
+			line, err := diagnosticsAdminListLine(authorization)
+			if err != nil {
+				return "", err
 			}
-			lines = append(lines, fmt.Sprintf(
-				"%s state=%s namespace=%s\n",
-				diagnosticsAdminAppFingerprint(authorization.AppKeyID), authorization.State, namespaceState,
-			))
+			lines = append(lines, line)
 		}
 		sort.Strings(lines)
 		return strings.Join(lines, ""), nil
@@ -377,6 +374,28 @@ func runDiagnosticsAdminOperatorLocked(runtime *diagnosticsRuntime, command diag
 	default:
 		return "", errDiagnosticsPairingUnavailable
 	}
+}
+
+func diagnosticsAdminListLine(authorization diagnosticsPairingAuthorization) (string, error) {
+	namespaceState := "no"
+	if len(authorization.NamespaceInitialAppKeyID) == 32 {
+		namespaceState = "yes"
+	}
+	line := fmt.Sprintf(
+		"%s state=%s namespace=%s",
+		diagnosticsAdminAppFingerprint(authorization.AppKeyID), authorization.State, namespaceState,
+	)
+	if authorization.State == "pending" {
+		fingerprint, err := diagnosticsPairingFingerprint(
+			authorization.AppRequestDigest,
+			authorization.CurrentStateDigest,
+		)
+		if err != nil {
+			return "", errDiagnosticsPairingUnavailable
+		}
+		line += " transcript=" + fingerprint
+	}
+	return line + "\n", nil
 }
 
 func diagnosticsAdminRotationReady(

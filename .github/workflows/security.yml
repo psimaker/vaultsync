@@ -126,11 +126,44 @@ jobs:
         id: release-image
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: notify-v2.0.0
+          TARGET_RELEASE_TAG: notify-v2.0.1
+          FALLBACK_RELEASE_TAG: notify-v2.0.0
         run: |
           set -euo pipefail
           mkdir -p /tmp/vaultsync-notify-release
-          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+
+          target_json=/tmp/vaultsync-notify-release/target-release.json
+          target_error=/tmp/vaultsync-notify-release/target-release.error
+          if gh api \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${TARGET_RELEASE_TAG}" \
+            > "$target_json" 2> "$target_error"; then
+            if jq -e --arg tag "$TARGET_RELEASE_TAG" \
+              '.tag_name == $tag and .draft == false and .prerelease == false' \
+              "$target_json" > /dev/null; then
+              release_tag=$TARGET_RELEASE_TAG
+            elif jq -e '.draft == true or .prerelease == true' \
+              "$target_json" > /dev/null; then
+              release_tag=$FALLBACK_RELEASE_TAG
+            else
+              echo "Target helper release metadata is not canonical" >&2
+              exit 1
+            fi
+          elif grep -Fq 'HTTP 404' "$target_error"; then
+            release_tag=$FALLBACK_RELEASE_TAG
+          else
+            echo "Target helper release lookup failed" >&2
+            exit 1
+          fi
+
+          selected_json=/tmp/vaultsync-notify-release/selected-release.json
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${release_tag}" \
+            > "$selected_json"
+          jq -e --arg tag "$release_tag" \
+            '.tag_name == $tag and .draft == false and .prerelease == false' \
+            "$selected_json" > /dev/null
+          echo "Scanning immutable helper release ${release_tag}"
+
+          gh release download "$release_tag" --repo "$GITHUB_REPOSITORY" \
             --pattern IMAGE-DIGESTS --dir /tmp/vaultsync-notify-release
           mapfile -t digests < <(
             sed -n 's/^index_digest=//p' /tmp/vaultsync-notify-release/IMAGE-DIGESTS

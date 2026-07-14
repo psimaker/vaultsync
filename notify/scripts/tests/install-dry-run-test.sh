@@ -117,8 +117,8 @@ grep "would run: docker run -d" "$OUT_DOCKER" | grep -q -- "-u $EXPECTED_OWNER "
 # silently keeps the old local version-tag target.
 grep -q 'would run: docker pull ' "$OUT_DOCKER" \
 	|| fail "docker mode: no docker pull before start — a re-run would keep the old image (#87)"
-grep -q 'would run: docker pull ghcr.io/psimaker/vaultsync-notify:2.0.0' "$OUT_DOCKER" \
-	|| fail "docker mode: default image is not the reviewed 2.0.0 tag"
+grep -q 'would run: docker pull ghcr.io/psimaker/vaultsync-notify:2.0.1' "$OUT_DOCKER" \
+	|| fail "docker mode: default image is not the reviewed 2.0.1 tag"
 grep -q 'runtime_image=[$]new_image_id' "$INSTALL_SH" \
 	|| fail "docker mode: the successful pull is not converted to an immutable local image ID"
 if grep -q 'continuing with the LOCAL image' "$INSTALL_SH"; then
