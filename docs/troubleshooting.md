@@ -95,7 +95,7 @@ In the app: **Cloud Relay** tab → **Relay health & diagnostics** → **Check R
 1. **Run as the right user.** `config.xml` is mode `0600`, so the helper must run as the uid that owns it — the permission error names the file's actual owner and the exact `-u <uid>:<gid>` to use (helper 1.6.1+). The [one-line installer](../notify/README.md#-one-step-setup) gets this right automatically; manually: in Compose set `PUID`/`PGID` (official image `1000`, linuxserver `911`, Unraid `99:100`), with `docker run` add `-u <uid>:<gid>`.
 2. **Point at the real config.** Set `SYNCTHING_CONFIG=/path/to/config.xml` if it isn't auto-detected (rare — standard, container, and Synology/QNAP/Unraid host layouts are all probed automatically).
 3. **Clear a bad override.** If you set `SYNCTHING_API_KEY` yourself, it wins over auto-detect — remove it to fall back to `config.xml`, or update it to match Syncthing's current key.
-4. **Recreate and re-check.** One-line install (Docker or systemd): simply re-run the installer — it pulls the latest image / replaces the binary, restarts the service, and ends with `--doctor`. Compose stack:
+4. **Recreate and re-check.** One-line install (Docker or systemd): simply re-run the installer — it re-resolves the reviewed version tag or replaces the checksum-verified binary, restarts the service, and ends with `--doctor`. Compose stack:
    ```bash
    docker compose up -d --force-recreate vaultsync-notify
    docker compose run --rm vaultsync-notify --doctor

@@ -72,7 +72,7 @@ docker run -d --name vaultsync-notify --restart unless-stopped \
   -v /PATH/TO/syncthing:/config:ro \
   -e SYNCTHING_CONFIG=/config/config.xml \
   -e RELAY_URL=https://relay.vaultsync.eu \
-  ghcr.io/psimaker/vaultsync-notify:latest
+  ghcr.io/psimaker/vaultsync-notify:2.0.0
 ```
 
 Replace `/PATH/TO/syncthing` with your Syncthing config folder (often `~/.local/state/syncthing` or `~/.config/syncthing`). Permission error? Add `-u <uid>:<gid>` for the user that owns `config.xml`.
@@ -91,7 +91,7 @@ If detection fails, set `SYNCTHING_CONFIG=/path/to/config.xml` and rerun.
 <summary><b>📦 Prebuilt binaries</b> — Linux, macOS, Windows; no Docker, no Go toolchain</summary>
 <br>
 
-Every `notify-v*` release ships static binaries for **linux/amd64**, **linux/arm64**, **darwin/amd64**, **darwin/arm64**, and **windows/amd64** — no Docker, no Go toolchain. The [one-step installer](#-one-step-setup) downloads and verifies these automatically on Linux (systemd service) and macOS (launchd agent); grab them manually from the [releases page](https://github.com/psimaker/vaultsync/releases) for anything else, and check the download against the release's `SHA256SUMS`.
+Every `notify-v*` release ships static binaries for **linux/amd64**, **linux/arm64**, **darwin/amd64**, **darwin/arm64**, and **windows/amd64** — no Docker, no Go toolchain. The [one-step installer](#-one-step-setup) downloads and verifies these automatically on Linux (systemd service) and macOS (launchd agent); grab them manually from the [releases page](https://github.com/psimaker/vaultsync/releases) for anything else, and check the download against the release's `SHA256SUMS`. A missing checksum asset or local SHA-256 implementation aborts installation rather than accepting an unverified binary.
 
 Run manually — the only required value is `RELAY_URL`; the Syncthing key and URL are auto-detected from `config.xml`:
 
@@ -224,7 +224,7 @@ Validates: Syncthing API reachable · API key valid · Device ID readable · rel
 
 **Runtime healthcheck** — the image's `HEALTHCHECK` runs `vaultsync-notify --healthcheck`, validating real readiness (Syncthing API, credentials, Device ID, relay health), not just process liveness. Peer state is deliberately excluded here: a legitimately offline peer must never flip the container to unhealthy.
 
-**Version** — `vaultsync-notify --version` prints the installed helper version (needs no configuration). The installer shows old → new on upgrades; re-running the one-line installer is the supported update path — it pulls the latest image (Docker) or replaces the binary and restarts the service (systemd/launchd).
+**Version** — `vaultsync-notify --version` prints the installed helper version (needs no configuration). The installer shows old → new on upgrades. Docker installs pull the reviewed `2.0.0` tag and run only its resolved local content ID; failed pulls do not fall back to a stale tag. Binary installs select the newest published `notify-v*` release, require its `SHA256SUMS`, replace the binary, and restart the service. Future Docker upgrades require another reviewed version tag or an explicit `VAULTSYNC_NOTIFY_IMAGE` override.
 
 ---
 
