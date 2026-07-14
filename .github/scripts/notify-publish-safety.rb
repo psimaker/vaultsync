@@ -40,6 +40,10 @@ EXPECTED_ASSETS = (EXPECTED_BINARIES + %w[
   RELEASE-MANIFEST.json
   ROLLOUT-EVIDENCE.txt
 ]).freeze
+PUBLICATION_WRITE_KINDS = %w[
+  image image-provenance image-sbom binary-provenance binary-sbom
+  release-create release-asset rollout-evidence release-finalization
+].freeze
 
 def fail_policy(message)
   warn "notify publish safety policy: #{message}"
@@ -181,6 +185,9 @@ assert_policy(jobs.fetch("finalize-release").fetch("permissions") == { "contents
 
 jobs.each do |name, job|
   steps(job).each do |step|
+    assert_policy(!step.fetch("run", "").include?('${{'),
+                  "#{name} interpolates a GitHub expression directly into a shell script")
+
     action = step["uses"]
     next unless action
 
@@ -189,6 +196,19 @@ jobs.each do |name, job|
 
     assert_policy(step.fetch("with", {})["persist-credentials"] == false,
                   "#{name} checkout must set persist-credentials: false")
+  end
+end
+
+security.fetch("jobs").each do |name, job|
+  steps(job).each do |step|
+    action = step["uses"]
+    next unless action
+
+    assert_policy(action.match?(PINNED_ACTION), "security/#{name} uses a non-immutable action ref: #{action}")
+    next unless action.start_with?("actions/checkout@")
+
+    assert_policy(step.fetch("with", {})["persist-credentials"] == false,
+                  "security/#{name} checkout must set persist-credentials: false")
   end
 end
 
@@ -249,6 +269,71 @@ assert_policy(publication_build&.fetch("with", {})&.fetch("push") == true,
 assert_policy(publication_build&.fetch("with", {})&.fetch("platforms") == "linux/amd64,linux/arm64",
               "published image platform set changed")
 
+public_write_guard = "needs.publish-gate.outputs.release_is_public != 'true'"
+action_write_steps = {
+  "publish-image" => [
+    "Build and publish the absent release image",
+    "Attest image provenance",
+    "Attest image SBOM"
+  ],
+  "release-binaries" => [
+    "Attest binary provenance",
+    "Attest binary SBOM"
+  ]
+}
+action_write_steps.each do |job_name, step_names|
+  step_names.each do |step_name|
+    step = steps(jobs.fetch(job_name)).find { |candidate| candidate["name"] == step_name }
+    assert_policy(step && step.fetch("if", "").include?(public_write_guard),
+                  "#{job_name}/#{step_name} remains reachable for a public release")
+  end
+end
+
+public_integrity_checks = {
+  "publish-image" => [
+    "Detect an existing exact release image",
+    "Check for existing repository provenance",
+    "Check for existing repository SBOM attestation"
+  ],
+  "release-binaries" => [
+    "Check for existing exact binary provenance",
+    "Check for existing exact binary SBOM attestation"
+  ]
+}
+public_integrity_checks.each do |job_name, step_names|
+  step_names.each do |step_name|
+    step = steps(jobs.fetch(job_name)).find { |candidate| candidate["name"] == step_name }
+    assert_policy(step &&
+                  step.fetch("env", {})["RELEASE_IS_PUBLIC"] ==
+                    "${{ needs.publish-gate.outputs.release_is_public }}" &&
+                  step.fetch("run", "").include?('$RELEASE_IS_PUBLIC') &&
+                  step.fetch("run", "").include?("exit 1"),
+                  "#{job_name}/#{step_name} must fail closed on missing public material")
+  end
+end
+
+stage_release = steps(jobs.fetch("release-binaries")).find do |step|
+  step["name"] == "Create or verify the exact draft release and assets"
+end
+assert_policy(stage_release &&
+              stage_release.fetch("env", {})["RELEASE_IS_PUBLIC"] ==
+                "${{ needs.publish-gate.outputs.release_is_public }}" &&
+              stage_release.fetch("run", "").include?('test "$RELEASE_IS_PUBLIC" != true') &&
+              stage_release.fetch("run", "").include?('test "$release_is_draft" = true'),
+              "release creation and asset upload must be unreachable for a public release")
+
+finalize_step = steps(jobs.fetch("finalize-release")).find do |step|
+  step["name"] == "Revalidate the tag and publish the complete release once"
+end
+finalize_text = finalize_step&.fetch("run", "") || ""
+public_branch = finalize_text.index('if [ "$release_is_draft" = false ]; then')
+public_exit = public_branch && finalize_text.index("exit 0", public_branch)
+release_edit = finalize_text.index('gh release edit "$RELEASE_TAG"')
+assert_policy(finalize_text.include?('test "$release_is_draft" = true') &&
+              finalize_text.include?('test "$body" = "$(cat /tmp/release-notes.md)"') &&
+              public_branch && public_exit && release_edit && public_exit < release_edit,
+              "rollout evidence and release finalization must be read-only once public")
+
 DISPATCH_JOBS.each do |name|
   job = jobs.fetch(name)
   condition = job.fetch("if")
@@ -281,6 +366,14 @@ assert_policy(gate_text.include?("git merge-base --is-ancestor") &&
               gate_text.include?(".commit.verification.verified") &&
               gate_text.include?("$RELEASE_SPEC"),
               "publish gate must bind manifest, tag, verified SHA, and origin/main")
+assert_policy(jobs.fetch("publish-gate").fetch("outputs").fetch("release_is_public") ==
+                "${{ steps.validate.outputs.release_is_public }}" &&
+              gate_text.include?("gh api graphql") &&
+              gate_text.include?(".data.repository.release") &&
+              gate_text.include?('case $release_type in') &&
+              gate_text.include?('release_is_public=true') &&
+              gate_text.include?('release_is_public=$release_is_public'),
+              "publish gate must fail closed and export the finalized public-release state")
 
 assert_policy(spec.fetch("format_version") == 1, "release manifest format changed")
 assert_policy(spec.fetch("version") == "2.0.0", "release version must remain 2.0.0")
@@ -329,6 +422,12 @@ assert_policy(security_text.include?("vaultsync-notify@${{ steps.release-image.o
               "scheduled scan must use the exact digest")
 assert_policy(!security_text.include?("vaultsync-notify:latest"),
               "scheduled scan still follows latest")
+assert_policy(security_text.include?("mapfile -t digests") &&
+              security_text.include?('${#digests[@]}') &&
+              security_text.include?("must contain exactly one index_digest") &&
+              security_text.include?("^sha256:[0-9a-f]{64}$") &&
+              security_text.include?("printf 'digest=%s\\n'"),
+              "scheduled scan must export exactly one canonical image index digest")
 
 ci_notify_steps = steps(ci.fetch("jobs").fetch("notify-tests"))
 assert_policy(ci_notify_steps.any? { |step| step["run"] == "ruby .github/scripts/notify-publish-safety.rb" },
@@ -361,8 +460,10 @@ end
 assert_policy(publication_allowed?(**base), "exact owner/tag/confirmation gate must remain reachable")
 assert_policy(resume_action(nil, "sha256:a", mutable: true) == :upload,
               "missing draft assets must be uploadable")
-assert_policy(resume_action(nil, "sha256:a", mutable: false) == :abort,
-              "missing public assets must abort without mutation")
+PUBLICATION_WRITE_KINDS.each do |kind|
+  assert_policy(resume_action(nil, "sha256:a", mutable: false) == :abort,
+                "missing public #{kind} must abort without mutation")
+end
 assert_policy(resume_action("sha256:a", "sha256:a", mutable: false) == :reuse,
               "identical public assets must be reusable read-only")
 assert_policy(resume_action("sha256:b", "sha256:a", mutable: true) == :abort,
