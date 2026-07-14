@@ -182,6 +182,10 @@ assert_policy(jobs.fetch("build-without-push").fetch("if") == "github.event_name
               "the no-push build must be the only image build on normal events")
 assert_policy(jobs.fetch("publish-gate").fetch("if") == "github.event_name == 'workflow_dispatch'",
               "the read-only publish gate must run only for manual dispatch")
+assert_policy(jobs.fetch("publish-gate").fetch("permissions") == {
+                "actions" => "read",
+                "contents" => "read"
+              }, "publish-gate must receive only run-history and repository read permissions")
 source_security_steps = steps(jobs.fetch("publish-gate")).select do |step|
   step.fetch("uses", "").start_with?("aquasecurity/trivy-action@") &&
     step.fetch("with", {}).fetch("scan-ref", "") == "notify"
@@ -511,6 +515,8 @@ assert_policy(jobs.fetch("publish-gate").fetch("outputs").fetch("release_is_publ
               gate_text.include?('case $release_type in') &&
               gate_text.include?('release_is_public=true') &&
               gate_text.include?('release_is_public=$release_is_public') &&
+              gate_text.include?('[ "$recovery_mode" = true ] && [ "$release_type" = null ]') &&
+              gate_text.include?("Draft visibility deferred to the exact recovery staging gate.") &&
               gate_text.include?('actions/runs/${RECOVERY_RUN_ID}') &&
               gate_text.include?('Create or verify the exact draft release and assets') &&
               gate_text.include?('git checkout --detach "$resolved"') &&
