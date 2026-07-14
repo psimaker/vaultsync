@@ -570,7 +570,9 @@ assert_policy(rollout_text.include?("gh api graphql") &&
               rollout_text.include?('releases/assets/${asset_id}') &&
               rollout_text.include?('Accept: application/octet-stream') &&
               rollout_text.include?('test "$matches" = 1') &&
-              rollout_text.include?('test "$(jq -r .draft <<<"$release_json")" = true') &&
+              rollout_text.include?('release_is_draft=$(jq -r .draft <<<"$release_json")') &&
+              rollout_text.include?('case $release_is_draft in') &&
+              rollout_text.include?('true|false)') &&
               rollout_text.include?('^sha256:[0-9a-f]{64}$') &&
               rollout_text.include?("binary_sbom") &&
               rollout_text.include?("image_digests_sha256") &&

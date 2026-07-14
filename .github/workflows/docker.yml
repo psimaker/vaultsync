@@ -1216,7 +1216,14 @@ jobs:
 
           release_json=$(resolve_release)
           test "$(jq -r .tag_name <<<"$release_json")" = "$RELEASE_TAG"
-          test "$(jq -r .draft <<<"$release_json")" = true
+          release_is_draft=$(jq -r .draft <<<"$release_json")
+          case $release_is_draft in
+            true|false) ;;
+            *)
+              echo "::error::Release draft state was invalid." >&2
+              exit 1
+              ;;
+          esac
           test "$(jq -r .prerelease <<<"$release_json")" = false
           while IFS= read -r existing_name; do
             jq -e --arg name "$existing_name" '.release_assets | index($name) != null' "$RELEASE_SPEC" >/dev/null
