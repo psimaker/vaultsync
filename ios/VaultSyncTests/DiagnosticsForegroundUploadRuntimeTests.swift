@@ -123,18 +123,51 @@ struct DiagnosticsForegroundUploadRuntimeTests {
 
         let clock = LockedDiagnosticsClock(wall, continuous: 1_000)
         let requestBox = LockedUploadRequestBox()
+        let responseComponents = try DiagnosticsNamespaceProtocol.operationResponseComponents(
+            installationBinding: candidate.installationBinding,
+            operationID: try Data(m1Hex: uploadFixture.operationIdHex)
+        )
+        let responseRelativePath = responseComponents.joined(separator: "/")
+        let eventBox = LockedDownloadEventBox()
+        let happyRecord = record
+        let happyFolder = folder
         let transport = ForegroundUploadTransport(
             record: record,
             helperKey: helperKey,
             clock: clock,
             request: { requestBox.value() },
-            acceptAfter: 2
+            acceptAfter: 2,
+            respond: { authorization in
+                let response = try makeHelperResponseArtifact(
+                    authorization: authorization,
+                    record: happyRecord,
+                    helperKey: helperKey,
+                    now: clock.value()
+                )
+                let url = responseComponents.reduce(happyFolder) {
+                    $0.appendingPathComponent($1)
+                }
+                try response.write(to: url, options: .atomic)
+                eventBox.append(DiagnosticsResponseProtocol.DownloadEvent(
+                    id: eventBox.nextID(),
+                    type: "ItemFinished",
+                    time: iso8601WithNanoseconds(clock.value().addingTimeInterval(0.5)),
+                    data: [
+                        "folder": happyRecord.folderID,
+                        "item": responseRelativePath,
+                        "type": "file",
+                        "action": "update",
+                        "error": "",
+                    ]
+                ))
+            }
         )
         let random = LockedUploadRandom(values: [
             try Data(m1Hex: uploadFixture.operationIdHex),
             try Data(m1Hex: uploadFixture.requestNonceHex),
             try Data(m1Hex: uploadFixture.queryNonceHex),
             try Data(m1Hex: uploadFixture.requestPayloadHex),
+            Data(repeating: 0x45, count: 32),
         ])
         let controller = DiagnosticsPairingController(
             credentialStore: store,
@@ -180,20 +213,29 @@ struct DiagnosticsForegroundUploadRuntimeTests {
                     operationSlotEmpty: requireEmptySlot
                 )
             },
-            rescan: { true }
+            rescan: { true },
+            events: { sinceID in
+                DiagnosticsResponseProtocol.DownloadEventSnapshot(
+                    generation: 7,
+                    events: eventBox.events(after: sinceID)
+                )
+            }
         )
         await waitForTerminalUpload(controller: controller, recordID: record.id)
 
         let status = try #require(controller.uploadStatuses[record.id])
-        #expect(status.phase == .uploadObserved)
+        #expect(status.phase == .downloadObserved)
         #expect(status.evidence.uploadObserved)
-        #expect(!status.evidence.downloadObserved)
+        #expect(status.evidence.downloadObserved)
         #expect(!status.evidence.roundtripConfirmed)
         #expect(status.completedPolls == 2)
+        #expect(status.completedResponsePolls == 1)
         let queries = await transport.uploadQueries()
         #expect(queries.count == 2)
         #expect(queries[0] == queries[1])
         #expect(requestBox.value() != nil)
+        let authorizations = await transport.responseAuthorizations()
+        #expect(authorizations.count == 1)
 
         let lateRequestBox = LockedUploadRequestBox()
         let lateTransport = ForegroundUploadTransport(
@@ -228,7 +270,8 @@ struct DiagnosticsForegroundUploadRuntimeTests {
                     requireEmptySlot: requireEmptySlot
                 )
             },
-            rescan: { true }
+            rescan: { true },
+            events: self.emptyDownloadEvents
         )
         await waitForHeldResponse(lateTransport)
         #expect(await lateTransport.isHoldingAcceptedResponse())
@@ -273,7 +316,8 @@ struct DiagnosticsForegroundUploadRuntimeTests {
                     requireEmptySlot: requireEmptySlot
                 )
             },
-            rescan: { true }
+            rescan: { true },
+            events: self.emptyDownloadEvents
         )
         await waitForHeldResponse(restartTransport)
         restartController.refresh()
@@ -317,7 +361,8 @@ struct DiagnosticsForegroundUploadRuntimeTests {
                     requireEmptySlot: requireEmptySlot
                 )
             },
-            rescan: { true }
+            rescan: { true },
+            events: self.emptyDownloadEvents
         )
         await waitForHeldResponse(racedTransport)
         let racedComponents = try DiagnosticsNamespaceProtocol.operationRequestComponents(
@@ -344,7 +389,7 @@ struct DiagnosticsForegroundUploadRuntimeTests {
         )
         var rateValues: [Data] = []
         for operation in 0..<4 {
-            let first = UInt8(0x61 + operation * 4)
+            let first = UInt8(0x61 + operation * 5)
             rateValues.append(Data(repeating: first, count: 32))
             rateValues.append(Data(repeating: first + 1, count: 32))
             rateValues.append(Data(repeating: first + 2, count: 32))
@@ -352,6 +397,7 @@ struct DiagnosticsForegroundUploadRuntimeTests {
                 repeating: first + 3,
                 count: DiagnosticsUploadProtocol.payloadByteCount
             ))
+            rateValues.append(Data(repeating: first + 4, count: 32))
         }
         let rateController = makeUploadController(
             store: store,
@@ -361,8 +407,8 @@ struct DiagnosticsForegroundUploadRuntimeTests {
             requestBox: rateRequestBox
         )
         rateController.refresh()
-        await rateController.checkCapability(recordID: record.id)
         for _ in 0..<3 {
+            await rateController.checkCapability(recordID: record.id)
             rateController.beginForegroundUpload(
                 recordID: record.id,
                 preflight: { _, _, requireEmptySlot in
@@ -372,12 +418,17 @@ struct DiagnosticsForegroundUploadRuntimeTests {
                         requireEmptySlot: requireEmptySlot
                     )
                 },
-                rescan: { true }
+                rescan: { true },
+                events: self.emptyDownloadEvents
             )
             await waitForTerminalUpload(controller: rateController, recordID: record.id)
-            #expect(rateController.uploadStatuses[record.id]?.phase == .uploadObserved)
+            let rateStatus = rateController.uploadStatuses[record.id]
+            #expect(rateStatus?.phase == .timedOut)
+            #expect(rateStatus?.evidence.uploadObserved == true)
+            #expect(rateStatus?.evidence.downloadObserved == false)
         }
         #expect(rateRequestBox.count() == 3)
+        await rateController.checkCapability(recordID: record.id)
         rateController.beginForegroundUpload(
             recordID: record.id,
             preflight: { _, _, requireEmptySlot in
@@ -387,7 +438,8 @@ struct DiagnosticsForegroundUploadRuntimeTests {
                     requireEmptySlot: requireEmptySlot
                 )
             },
-            rescan: { true }
+            rescan: { true },
+            events: self.emptyDownloadEvents
         )
         await waitForTerminalUpload(controller: rateController, recordID: record.id)
         #expect(rateController.uploadStatuses[record.id]?.phase == .rateLimited)
@@ -426,7 +478,8 @@ struct DiagnosticsForegroundUploadRuntimeTests {
                     requireEmptySlot: requireEmptySlot
                 )
             },
-            rescan: { true }
+            rescan: { true },
+            events: self.emptyDownloadEvents
         )
         await waitForTerminalUpload(controller: timeoutController, recordID: record.id)
         let timeout = try #require(timeoutController.uploadStatuses[record.id])
@@ -485,7 +538,8 @@ struct DiagnosticsForegroundUploadRuntimeTests {
                     operationSlotEmpty: valid.operationSlotEmpty
                 )
             },
-            rescan: { true }
+            rescan: { true },
+            events: self.emptyDownloadEvents
         )
         await waitForTerminalUpload(controller: rejectedController, recordID: record.id)
         #expect(rejectedController.uploadStatuses[record.id]?.phase == .unsupported)
@@ -575,9 +629,9 @@ struct DiagnosticsForegroundUploadRuntimeTests {
         controller: DiagnosticsPairingController,
         recordID: String
     ) async {
-        for _ in 0..<1_000 {
+        for _ in 0..<10_000 {
             if let phase = controller.uploadStatuses[recordID]?.phase,
-               ![.preflighting, .checking].contains(phase) {
+               ![.preflighting, .checking, .uploadObserved].contains(phase) {
                 return
             }
             await Task.yield()
@@ -637,6 +691,12 @@ struct DiagnosticsForegroundUploadRuntimeTests {
         )
     }
 
+    private func emptyDownloadEvents(
+        _ sinceID: Int64
+    ) -> DiagnosticsResponseProtocol.DownloadEventSnapshot? {
+        DiagnosticsResponseProtocol.DownloadEventSnapshot(generation: 7, events: [])
+    }
+
     private func waitForHeldResponse(_ transport: ForegroundUploadTransport) async {
         for _ in 0..<1_000 {
             if await transport.isHoldingAcceptedResponse() { return }
@@ -654,7 +714,92 @@ struct DiagnosticsForegroundUploadRuntimeTests {
     }
 }
 
-private final class LockedUploadRequestBox: @unchecked Sendable {
+final class LockedDownloadEventBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var events: [DiagnosticsResponseProtocol.DownloadEvent] = []
+    private var lastID: Int64 = 0
+
+    func nextID() -> Int64 {
+        lock.lock()
+        defer { lock.unlock() }
+        lastID += 1
+        return lastID
+    }
+
+    func append(_ event: DiagnosticsResponseProtocol.DownloadEvent) {
+        lock.lock()
+        events.append(event)
+        lock.unlock()
+    }
+
+    func events(after id: Int64) -> [DiagnosticsResponseProtocol.DownloadEvent] {
+        lock.lock()
+        defer { lock.unlock() }
+        return events.filter { $0.id > id }
+    }
+}
+
+func iso8601WithNanoseconds(_ date: Date) -> String {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter.string(from: date)
+}
+
+func makeHelperResponseArtifact(
+    authorization authorizationBytes: Data,
+    record: DiagnosticsPairingRecord,
+    helperKey: Curve25519.Signing.PrivateKey,
+    now: Date,
+    payload: Data? = nil,
+    nonce: Data = Data(repeating: 0x66, count: 32),
+    tamperSignature: Bool = false
+) throws -> Data {
+    let authorization = try DiagnosticsResponseProtocol.decode(authorizationBytes, record: record)
+    guard let operationID = authorization.value.bytes(for: 11, count: 32),
+          let requestDigest = authorization.value.bytes(for: 17, count: 32),
+          let attestationDigest = authorization.value.bytes(for: 20, count: 32),
+          let expiry = authorization.value.unsigned(for: 13) else {
+        throw DiagnosticsProtocolError.invalidMessage
+    }
+    let issued = UInt64(now.timeIntervalSince1970.rounded(.down))
+    let responsePayload = payload
+        ?? Data(repeating: 0x77, count: DiagnosticsUploadProtocol.payloadByteCount)
+    let value = DiagnosticsCBORValue.map([
+        DiagnosticsCBORField(label: 1, value: .text(DiagnosticsUploadProtocol.capability)),
+        DiagnosticsCBORField(label: 2, value: .unsigned(1)),
+        DiagnosticsCBORField(label: 3, value: .unsigned(1)),
+        DiagnosticsCBORField(label: 4, value: .unsigned(7)),
+        DiagnosticsCBORField(label: 5, value: .bytes(record.homeserverBinding)),
+        DiagnosticsCBORField(label: 6, value: .bytes(record.folderBinding)),
+        DiagnosticsCBORField(label: 7, value: .bytes(record.appKeyID)),
+        DiagnosticsCBORField(label: 8, value: .bytes(record.helperKeyID)),
+        DiagnosticsCBORField(label: 9, value: .unsigned(record.appEpoch)),
+        DiagnosticsCBORField(label: 10, value: .unsigned(record.helperEpoch)),
+        DiagnosticsCBORField(label: 11, value: .bytes(operationID)),
+        DiagnosticsCBORField(label: 12, value: .unsigned(issued)),
+        DiagnosticsCBORField(label: 13, value: .unsigned(expiry)),
+        DiagnosticsCBORField(label: 17, value: .bytes(requestDigest)),
+        DiagnosticsCBORField(label: 20, value: .bytes(attestationDigest)),
+        DiagnosticsCBORField(label: 22, value: .bytes(authorization.digest)),
+        DiagnosticsCBORField(label: 23, value: .bytes(nonce)),
+        DiagnosticsCBORField(label: 24, value: .bytes(responsePayload)),
+        DiagnosticsCBORField(label: 25, value: .bytes(DiagnosticsCrypto.sha256(responsePayload))),
+    ])
+    let body = try DiagnosticsDeterministicCBOR.encode(value)
+    var input = Data("eu.vaultsync.roundtrip/v1/response-artifact\0".utf8)
+    input.append(body)
+    var signature = try helperKey.signature(for: input)
+    if tamperSignature {
+        signature[0] ^= 0x01
+    }
+    guard case .map(var fields) = value else {
+        throw DiagnosticsProtocolError.invalidMessage
+    }
+    fields.append(DiagnosticsCBORField(label: 255, value: .bytes(signature)))
+    return try DiagnosticsDeterministicCBOR.encode(.map(fields))
+}
+
+final class LockedUploadRequestBox: @unchecked Sendable {
     private let lock = NSLock()
     private var request: Data?
     private var writes = 0
@@ -679,7 +824,7 @@ private final class LockedUploadRequestBox: @unchecked Sendable {
     }
 }
 
-private final class LockedUploadRandom: @unchecked Sendable {
+final class LockedUploadRandom: @unchecked Sendable {
     private let lock = NSLock()
     private var values: [Data]
 
@@ -697,14 +842,16 @@ private final class LockedUploadRandom: @unchecked Sendable {
     }
 }
 
-private actor ForegroundUploadTransport: DiagnosticsTransporting {
+actor ForegroundUploadTransport: DiagnosticsTransporting {
     private let record: DiagnosticsPairingRecord
     private let helperKey: Curve25519.Signing.PrivateKey
     private let clock: LockedDiagnosticsClock
     private let request: @Sendable () -> Data?
     private let acceptAfter: Int
     private let holdAcceptedResponse: Bool
+    private let respond: (@Sendable (Data) async throws -> Void)?
     private var queries: [Data] = []
+    private var authorizations: [Data] = []
     private var acceptedResponseContinuation: CheckedContinuation<Void, Never>?
     private var acceptedResponseReleased = false
     private var holdingAcceptedResponse = false
@@ -716,7 +863,8 @@ private actor ForegroundUploadTransport: DiagnosticsTransporting {
         clock: LockedDiagnosticsClock,
         request: @escaping @Sendable () -> Data?,
         acceptAfter: Int,
-        holdAcceptedResponse: Bool = false
+        holdAcceptedResponse: Bool = false,
+        respond: (@Sendable (Data) async throws -> Void)? = nil
     ) {
         self.record = record
         self.helperKey = helperKey
@@ -724,6 +872,7 @@ private actor ForegroundUploadTransport: DiagnosticsTransporting {
         self.request = request
         self.acceptAfter = acceptAfter
         self.holdAcceptedResponse = holdAcceptedResponse
+        self.respond = respond
     }
 
     func post(path: String, body: Data, responseBody: Bool) async throws -> Data? {
@@ -731,6 +880,11 @@ private actor ForegroundUploadTransport: DiagnosticsTransporting {
         case DiagnosticsCapabilityProtocol.path:
             guard responseBody else { throw DiagnosticsProtocolError.invalidMessage }
             return try makeCapabilityResponseForQuery(body, helperKey: helperKey)
+        case DiagnosticsResponseProtocol.path:
+            guard !responseBody else { throw DiagnosticsProtocolError.invalidMessage }
+            authorizations.append(body)
+            try await respond?(body)
+            return nil
         case DiagnosticsUploadProtocol.path:
             guard responseBody else { throw DiagnosticsProtocolError.invalidMessage }
             queries.append(body)
@@ -808,6 +962,8 @@ private actor ForegroundUploadTransport: DiagnosticsTransporting {
     }
 
     func uploadQueries() -> [Data] { queries }
+
+    func responseAuthorizations() -> [Data] { authorizations }
 
     func isHoldingAcceptedResponse() -> Bool { holdingAcceptedResponse }
 

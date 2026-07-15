@@ -293,6 +293,7 @@ func TestDiagnosticsRuntimeCarrierIsExplicitAndCoreRemainsIsolated(t *testing.T)
 	appPairingProtocolCarrier := filepath.Join(repoRoot, "ios", "VaultSync", "Services", "DiagnosticsPairingProtocol.swift")
 	appCapabilityNamespaceCarrier := filepath.Join(repoRoot, "ios", "VaultSync", "Services", "DiagnosticsCapabilityNamespaceProtocol.swift")
 	appUploadProtocolCarrier := filepath.Join(repoRoot, "ios", "VaultSync", "Services", "DiagnosticsUploadProtocol.swift")
+	appResponseProtocolCarrier := filepath.Join(repoRoot, "ios", "VaultSync", "Services", "DiagnosticsResponseProtocol.swift")
 	runtimeRoots := []string{
 		filepath.Join(repoRoot, "notify"),
 		filepath.Join(repoRoot, "ios", "VaultSync"),
@@ -332,7 +333,9 @@ func TestDiagnosticsRuntimeCarrierIsExplicitAndCoreRemainsIsolated(t *testing.T)
 					((name == "roundtrip.capability_query" || name == "roundtrip.capability_response") &&
 						path == appCapabilityNamespaceCarrier) ||
 					((name == "roundtrip.operation_request" || name == "roundtrip.attestation_query" ||
-						name == "roundtrip.upload_attestation") && path == appUploadProtocolCarrier)
+						name == "roundtrip.upload_attestation") && path == appUploadProtocolCarrier) ||
+					((name == "roundtrip.response_authorization" || name == "roundtrip.response_artifact") &&
+						path == appResponseProtocolCarrier)
 				if bytes.Contains(body, []byte(strings.TrimSuffix(domain, "\x00"))) && !allowed {
 					return fmt.Errorf("runtime file %s contains an unapproved signature domain", path)
 				}

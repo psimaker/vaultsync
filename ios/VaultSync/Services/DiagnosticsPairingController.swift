@@ -28,6 +28,7 @@ final class DiagnosticsPairingController {
         case preflighting
         case checking
         case uploadObserved
+        case downloadObserved
         case cancelled
         case timedOut
         case interrupted
@@ -39,7 +40,7 @@ final class DiagnosticsPairingController {
 
     struct UploadEvidence: Equatable, Sendable {
         var uploadObserved = false
-        let downloadObserved = false
+        var downloadObserved = false
         let roundtripConfirmed = false
     }
 
@@ -47,6 +48,7 @@ final class DiagnosticsPairingController {
         var phase: UploadPhase
         var evidence = UploadEvidence()
         var completedPolls = 0
+        var completedResponsePolls = 0
     }
 
     private struct UploadTuple: Hashable, Sendable {
@@ -71,6 +73,9 @@ final class DiagnosticsPairingController {
         _ requireEmptySlot: Bool
     ) -> DiagnosticsUploadPreflight
     typealias UploadRescan = @MainActor () -> Bool
+    typealias UploadEventsProvider = @MainActor (
+        _ sinceID: Int64
+    ) -> DiagnosticsResponseProtocol.DownloadEventSnapshot?
 
     private let credentialStore: DiagnosticsCredentialStore
     private let transportFactory: TransportFactory
@@ -387,7 +392,8 @@ final class DiagnosticsPairingController {
     func beginForegroundUpload(
         recordID: String,
         preflight: @escaping UploadPreflightProvider,
-        rescan: @escaping UploadRescan
+        rescan: @escaping UploadRescan,
+        events: @escaping UploadEventsProvider
     ) {
         guard uploadTasks[recordID] == nil else { return }
         lastError = nil
@@ -400,7 +406,8 @@ final class DiagnosticsPairingController {
                 recordID: recordID,
                 runID: runID,
                 preflight: preflight,
-                rescan: rescan
+                rescan: rescan,
+                events: events
             )
         }
         uploadTasks[recordID] = task
@@ -410,11 +417,12 @@ final class DiagnosticsPairingController {
         guard let task = uploadTasks[recordID] else { return }
         task.cancel()
         if let status = uploadStatuses[recordID],
-           [.preflighting, .checking].contains(status.phase) {
+           [.preflighting, .checking, .uploadObserved].contains(status.phase) {
             uploadStatuses[recordID] = UploadStatus(
                 phase: .cancelled,
                 evidence: status.evidence,
-                completedPolls: status.completedPolls
+                completedPolls: status.completedPolls,
+                completedResponsePolls: status.completedResponsePolls
             )
         }
     }
@@ -429,7 +437,8 @@ final class DiagnosticsPairingController {
         recordID: String,
         runID: UUID,
         preflight: @escaping UploadPreflightProvider,
-        rescan: @escaping UploadRescan
+        rescan: @escaping UploadRescan,
+        events: @escaping UploadEventsProvider
     ) async {
         var tupleKey: UploadTuple?
         var artifactCreated = false
@@ -585,7 +594,7 @@ final class DiagnosticsPairingController {
                 guard finalRequest == operation.request.canonical else {
                     throw DiagnosticsProtocolError.conflict
                 }
-                _ = try DiagnosticsUploadProtocol.validateUploadAttestation(
+                let attestation = try DiagnosticsUploadProtocol.validateUploadAttestation(
                     response,
                     operation: operation,
                     record: finalRecord,
@@ -596,17 +605,33 @@ final class DiagnosticsPairingController {
                     evidence: UploadEvidence(uploadObserved: true),
                     completedPolls: index + 1
                 )
+                try await runControlledDownload(
+                    recordID: recordID,
+                    runID: runID,
+                    record: record,
+                    operation: operation,
+                    attestation: attestation,
+                    exactPreflight: exactPreflight,
+                    installationComponent: installationComponent,
+                    operationComponent: operationComponent,
+                    preflight: preflight,
+                    events: events,
+                    start: start,
+                    deadline: deadline,
+                    completedUploadPolls: index + 1
+                )
                 return
             }
             throw DiagnosticsProtocolError.expired
         } catch is CancellationError {
             if uploadRunIDs[recordID] == runID,
                let status = uploadStatuses[recordID],
-               [.preflighting, .checking].contains(status.phase) {
+               [.preflighting, .checking, .uploadObserved].contains(status.phase) {
                 uploadStatuses[recordID] = UploadStatus(
                     phase: .cancelled,
                     evidence: status.evidence,
-                    completedPolls: status.completedPolls
+                    completedPolls: status.completedPolls,
+                    completedResponsePolls: status.completedResponsePolls
                 )
             }
         } catch let error as DiagnosticsProtocolError {
@@ -621,6 +646,170 @@ final class DiagnosticsPairingController {
             lastError = artifactCreated ? nil : .unavailable
             finishUploadFailure(recordID: recordID, error: .unavailable, artifactCreated: artifactCreated)
         }
+    }
+
+    // D024 steps 7-9: the response gate runs only after upload acceptance in
+    // the same active operation, against a fresh post-upload cursor, wall
+    // clock, and unchanged engine generation. A response applied before this
+    // baseline or after an engine restart can never set download evidence.
+    private func runControlledDownload(
+        recordID: String,
+        runID: UUID,
+        record: DiagnosticsPairingRecord,
+        operation: DiagnosticsUploadProtocol.Operation,
+        attestation: DiagnosticsUploadProtocol.Message,
+        exactPreflight: DiagnosticsUploadPreflight,
+        installationComponent: String,
+        operationComponent: String,
+        preflight: @escaping UploadPreflightProvider,
+        events: @escaping UploadEventsProvider,
+        start: TimeInterval,
+        deadline: TimeInterval,
+        completedUploadPolls: Int
+    ) async throws {
+        guard let baseline = events(0),
+              baseline.generation != 0,
+              baseline.generation == exactPreflight.engineGeneration else {
+            throw DiagnosticsProtocolError.unavailable
+        }
+        var cursor = baseline.events.map(\.id).max() ?? 0
+        let baselineDate = now()
+        guard let confirm = events(cursor),
+              confirm.generation == baseline.generation else {
+            throw DiagnosticsProtocolError.unavailable
+        }
+        let appKey = try Curve25519.Signing.PrivateKey(rawRepresentation: record.appSeed)
+        let authorization = try DiagnosticsResponseProtocol.makeAuthorization(
+            record: record,
+            appKey: appKey,
+            operation: operation,
+            attestation: attestation,
+            authorizationNonce: try uploadRandomBytes(32),
+            now: now()
+        )
+        let responseComponents = try DiagnosticsNamespaceProtocol.operationResponseComponents(
+            installationBinding: operation.installationBinding,
+            operationID: operation.operationID
+        )
+        let responseRelativePath = responseComponents.joined(separator: "/")
+        var authorizationAccepted = false
+
+        for (index, delay) in DiagnosticsUploadProtocol.pollDelays.enumerated() {
+            try requireCurrentUploadRun(recordID: recordID, runID: runID)
+            try await uploadSleep(delay)
+            try requireCurrentUploadRun(recordID: recordID, runID: runID)
+            let currentContinuous = continuousNow()
+            guard currentContinuous.isFinite, currentContinuous >= start else {
+                throw DiagnosticsProtocolError.unavailable
+            }
+            guard currentContinuous < deadline else {
+                throw DiagnosticsProtocolError.expired
+            }
+            let currentRecord = try requiredRecord(recordID)
+            guard uploadBindingUnchanged(record, currentRecord) else {
+                throw DiagnosticsProtocolError.unavailable
+            }
+            let currentPreflight = preflight(installationComponent, operationComponent, false)
+            try currentPreflight.validate(record: currentRecord, requireEmptySlot: false)
+            guard currentPreflight.sameRuntimeBoundary(as: exactPreflight) else {
+                throw DiagnosticsProtocolError.unavailable
+            }
+            let installation = try DiagnosticsUploadProtocol.verifyActiveNamespace(
+                record: currentRecord,
+                folderPath: currentPreflight.folderPath
+            )
+            guard installation == operation.installationBinding else {
+                throw DiagnosticsProtocolError.conflict
+            }
+            let persistedRequest = try DiagnosticsNamespaceFileReader.read(
+                folderPath: currentPreflight.folderPath,
+                components: operation.requestComponents
+            )
+            guard persistedRequest == operation.request.canonical else {
+                throw DiagnosticsProtocolError.conflict
+            }
+
+            if !authorizationAccepted {
+                // Retransmit the byte-identical signed authorization until the
+                // idempotent helper accepts it; a 202 carries no body and is
+                // transport diagnostics only, never download evidence.
+                try consumeUploadRequest(recordID: recordID)
+                let transport = try makeTransport(currentRecord)
+                let accepted = try await transport.post(
+                    path: DiagnosticsResponseProtocol.path,
+                    body: authorization.canonical,
+                    responseBody: false
+                )
+                try requireCurrentUploadRun(recordID: recordID, runID: runID)
+                guard accepted == nil else {
+                    throw DiagnosticsProtocolError.invalidMessage
+                }
+                authorizationAccepted = true
+            }
+
+            guard let snapshot = events(cursor),
+                  snapshot.generation == baseline.generation else {
+                throw DiagnosticsProtocolError.unavailable
+            }
+            var status = uploadStatuses[recordID] ?? UploadStatus(phase: .uploadObserved)
+            status.completedResponsePolls = index + 1
+            uploadStatuses[recordID] = status
+            let fresh = snapshot.events.first {
+                DiagnosticsResponseProtocol.freshResponseApply(
+                    $0,
+                    folderID: record.folderID,
+                    relativePath: responseRelativePath,
+                    baseline: baselineDate,
+                    cursor: cursor
+                )
+            }
+            cursor = max(cursor, snapshot.events.map(\.id).max() ?? cursor)
+            guard fresh != nil else { continue }
+
+            let finalRecord = try requiredRecord(recordID)
+            guard uploadBindingUnchanged(record, finalRecord) else {
+                throw DiagnosticsProtocolError.unavailable
+            }
+            let finalPreflight = preflight(installationComponent, operationComponent, false)
+            try finalPreflight.validate(record: finalRecord, requireEmptySlot: false)
+            guard finalPreflight.sameRuntimeBoundary(as: exactPreflight) else {
+                throw DiagnosticsProtocolError.unavailable
+            }
+            let finalInstallation = try DiagnosticsUploadProtocol.verifyActiveNamespace(
+                record: finalRecord,
+                folderPath: finalPreflight.folderPath
+            )
+            guard finalInstallation == operation.installationBinding else {
+                throw DiagnosticsProtocolError.conflict
+            }
+            let responseData = try DiagnosticsNamespaceFileReader.read(
+                folderPath: finalPreflight.folderPath,
+                components: responseComponents
+            )
+            do {
+                _ = try DiagnosticsResponseProtocol.validateResponseArtifact(
+                    responseData,
+                    operation: operation,
+                    attestation: attestation,
+                    authorization: authorization,
+                    record: finalRecord,
+                    now: now()
+                )
+            } catch DiagnosticsProtocolError.invalidMessage {
+                // Invalid bytes at the exact expected namespace path are
+                // unexpected authenticated namespace content (D024: conflict),
+                // not a pinned-channel protocol mismatch.
+                throw DiagnosticsProtocolError.conflict
+            }
+            uploadStatuses[recordID] = UploadStatus(
+                phase: .downloadObserved,
+                evidence: UploadEvidence(uploadObserved: true, downloadObserved: true),
+                completedPolls: completedUploadPolls,
+                completedResponsePolls: index + 1
+            )
+            return
+        }
+        throw DiagnosticsProtocolError.expired
     }
 
     private func requireCurrentUploadRun(recordID: String, runID: UUID) throws {
@@ -741,7 +930,8 @@ final class DiagnosticsPairingController {
         uploadStatuses[recordID] = UploadStatus(
             phase: phase,
             evidence: existing.evidence,
-            completedPolls: existing.completedPolls
+            completedPolls: existing.completedPolls,
+            completedResponsePolls: existing.completedResponsePolls
         )
     }
 
