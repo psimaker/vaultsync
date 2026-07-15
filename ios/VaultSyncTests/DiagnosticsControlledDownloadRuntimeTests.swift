@@ -323,6 +323,7 @@ struct DiagnosticsControlledDownloadRuntimeTests {
         #expect(stale.phase == .timedOut)
         #expect(stale.evidence.uploadObserved)
         #expect(!stale.evidence.downloadObserved)
+        #expect(!stale.evidence.roundtripConfirmed)
         #expect(stale.completedResponsePolls == DiagnosticsUploadProtocol.pollDelays.count)
         let staleAuthorizations = await staleTransport.responseAuthorizations()
         #expect(staleAuthorizations.count == 1)
@@ -373,6 +374,7 @@ struct DiagnosticsControlledDownloadRuntimeTests {
         await waitTerminal(tamperController)
         let tampered = try #require(tamperController.uploadStatuses[sharedRecord.id])
         #expect(tampered.phase == .conflict)
+        #expect(!tampered.evidence.roundtripConfirmed)
         #expect(tampered.evidence.uploadObserved)
         #expect(!tampered.evidence.downloadObserved)
 
@@ -388,6 +390,7 @@ struct DiagnosticsControlledDownloadRuntimeTests {
         await waitTerminal(generationController)
         let generation = try #require(generationController.uploadStatuses[sharedRecord.id])
         #expect(generation.phase == .interrupted)
+        #expect(!generation.evidence.roundtripConfirmed)
         #expect(generation.evidence.uploadObserved)
         #expect(!generation.evidence.downloadObserved)
 
@@ -418,6 +421,7 @@ struct DiagnosticsControlledDownloadRuntimeTests {
         #expect(cancelled.phase == .cancelled)
         #expect(cancelled.evidence.uploadObserved)
         #expect(!cancelled.evidence.downloadObserved)
+        #expect(!cancelled.evidence.roundtripConfirmed)
 
         // Scenario 5: a controller restart destroys the active correlation;
         // nothing resumes and no late event can set evidence.

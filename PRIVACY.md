@@ -136,10 +136,11 @@ call, discovery request, trust adoption, share, rescan, or Syncthing
 configuration/ignore change. The unreleased app source can set upload evidence
 after an exact pinned helper attestation and, only after an accepted upload,
 download evidence from a fresh local apply of the exact authorized helper
-response in the same active operation; roundtrip evidence remains unset. A
-complete download acceptance has run only against injected test event streams
-plus byte-exact artifacts from isolated local Syncthing instances; no download
-has been observed on a physical device.
+response in the same active operation, and derives the causal roundtrip only
+from that one upload-then-download chain. A complete download acceptance has
+run only against injected test event streams plus byte-exact artifacts from
+isolated local Syncthing instances; no download or roundtrip has been observed
+on a physical device.
 
 Before the supported installer creates the namespace, the app must send a valid
 signed enablement and the local operator must choose an exact existing Syncthing
@@ -268,8 +269,10 @@ signature, binding, digest, nonce, payload, and TTL validation of that file. A
 response existing before the baseline, arriving after an engine restart, or
 failing any validation can never set it; an invalid file at the exact path ends
 the operation as a conflict, and every terminal outcome after upload keeps the
-upload field visible as a partial result. The roundtrip field remains false and
-cannot be inferred from upload or download.
+upload field visible as a partial result. The separate roundtrip field derives
+only when this same operation's upload and download acceptances complete for
+the exact validated chain; it is a scoped causal propagation claim, never
+global sync health, future delivery, byte accounting, or a direct-peer claim.
 
 The active operation, request/query bytes, random values, digests, poll state,
 and evidence are not persisted in preferences, Keychain, logs, telemetry,

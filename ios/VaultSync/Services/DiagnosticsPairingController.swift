@@ -29,6 +29,7 @@ final class DiagnosticsPairingController {
         case checking
         case uploadObserved
         case downloadObserved
+        case roundtripConfirmed
         case cancelled
         case timedOut
         case interrupted
@@ -41,7 +42,7 @@ final class DiagnosticsPairingController {
     struct UploadEvidence: Equatable, Sendable {
         var uploadObserved = false
         var downloadObserved = false
-        let roundtripConfirmed = false
+        var roundtripConfirmed = false
     }
 
     struct UploadStatus: Equatable, Sendable {
@@ -801,9 +802,19 @@ final class DiagnosticsPairingController {
                 // not a pinned-channel protocol mismatch.
                 throw DiagnosticsProtocolError.conflict
             }
+            // D024 step 10: this exact acceptance already validated the
+            // request, attestation, authorization, keys, epochs, bindings,
+            // and TTL for the one active operation, so the causal roundtrip
+            // derives from exactly this upload-then-download chain and from
+            // nothing else. It is a scoped propagation claim, never global
+            // sync health or future-delivery evidence.
             uploadStatuses[recordID] = UploadStatus(
-                phase: .downloadObserved,
-                evidence: UploadEvidence(uploadObserved: true, downloadObserved: true),
+                phase: .roundtripConfirmed,
+                evidence: UploadEvidence(
+                    uploadObserved: true,
+                    downloadObserved: true,
+                    roundtripConfirmed: true
+                ),
                 completedPolls: completedUploadPolls,
                 completedResponsePolls: index + 1
             )
