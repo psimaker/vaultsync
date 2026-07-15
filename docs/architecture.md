@@ -48,7 +48,7 @@ succeeded” flag:
 | Local data progress observed | Background run, or one eligible server/folder check | A fresh, successful incoming file application (`ItemFinished`) |
 | Upload observed | Exact app/helper/homeserver/folder/operation correlation | Only an explicit foreground check in unreleased M5 app source can accept the exact paired-helper attestation for its active request/query. |
 | Download observed | Exact controlled response correlation | Only the same active operation in unreleased M6 app source can set it: after an accepted upload, the authorized helper response must pass a fresh post-authorization cursor/wall-clock/generation `ItemFinished` gate plus complete validation. A helper response or synchronized file alone cannot set it. |
-| Full roundtrip confirmed | One matching upload-then-download correlation | Not implemented; it requires the later causal derivation from the same active chain's upload and download. |
+| Full roundtrip confirmed | One matching upload-then-download correlation | Only the same active operation in unreleased M7 app source can derive it, from exactly its accepted upload then accepted download. It is a scoped propagation claim, never global sync health or future delivery. |
 
 None automatically implies the next. Relay reachability is not a trigger;
 trigger observation is not APNs delivery; push receipt is not background start;
@@ -57,8 +57,9 @@ local data progress. A successful incoming file application proves that this
 iPhone applied a file change, but not that network bytes moved, which peer
 supplied every block, or that the check caused the change. Upload and controlled
 download are separate, explicitly initiated Decision 024 fields in unreleased
-source; download can derive only after an accepted upload inside the same active
-operation. Roundtrip is not implemented, so it cannot be derived.
+source; download can derive only after an accepted upload inside the same
+active operation, and the causal roundtrip derives only inside that same
+operation from exactly those two acceptances.
 
 Server snapshots contain only entitlement, provisioning, backend, and
 per-homeserver Relay observation. The v1 push contains no homeserver/folder
@@ -88,8 +89,8 @@ background sync.
 Ignore rules, missing paths, an event-buffer overflow, or a runtime folder error
 can prevent an observation and therefore end conservatively as incomplete; they
 never create a false success. It remains separate from the explicit controlled
-operation below and cannot populate that operation's evidence. Causal roundtrip
-requires its later Decision 024 milestone. Relay v1 is unchanged.
+operation below and cannot populate that operation's evidence. Relay v1 is
+unchanged.
 
 #### Opt-in correlated-roundtrip helper runtime — upload and controlled download
 
@@ -99,10 +100,11 @@ immutable digest plus upgrade, downgrade, and forward-recovery path are
 verified. The source tree now also contains the unreleased app-side explicit
 capability, pairing, credential-lifecycle, and namespace-authorization control
 plane plus the explicit M5 foreground upload operation and the M6 controlled
-download leg. Product upload is implemented to the exact signed-attestation
-boundary and controlled download to the exact fresh-apply response boundary;
-both remain unreleased, and causal roundtrip is unset. VaultSync 2.0
-remains NO-GO.
+download leg and the M7 causal-roundtrip derivation. Product upload is
+implemented to the exact signed-attestation boundary, controlled download to
+the exact fresh-apply response boundary, and the causal roundtrip derives
+solely from those two acceptances of one operation; all remain unreleased.
+VaultSync 2.0 remains NO-GO.
 
 One upload operation begins only after a user tap and a second localized
 confirmation. The app rechecks the exact current capability, pairing and
@@ -131,8 +133,11 @@ binding, digest, nonce, payload, and TTL validation sets `download observed`.
 A response predating the baseline or authorization, an engine restart, a
 changed binding, or any validation failure cannot set it; an invalid file at
 the exact path ends the operation as a conflict. Every terminal outcome after
-upload keeps the upload field visible as a partial result. Roundtrip remains
-immutable false in this milestone.
+upload keeps the upload field visible as a partial result. When the same
+operation's upload and download acceptances both complete, the causal
+roundtrip derives in that acceptance from exactly this chain; it claims
+scoped propagation for one operation, never global health, future delivery,
+byte counts, or a direct peer.
 
 The runtime is gated by an operator-authored read-only configuration plus a
 separate writable state directory. If either is absent, existing helpers retain
