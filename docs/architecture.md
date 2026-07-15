@@ -47,17 +47,18 @@ succeeded” flag:
 | Background sync started | This iPhone, unattributed | Entry into the silent-push sync path |
 | Local data progress observed | Background run, or one eligible server/folder check | A fresh, successful incoming file application (`ItemFinished`) |
 | Upload observed | Exact app/helper/homeserver/folder/operation correlation | Only an explicit foreground check in unreleased M5 app source can accept the exact paired-helper attestation for its active request/query. |
-| Download observed | Exact controlled response correlation | Not implemented in the app; a helper response or synchronized file alone cannot set it. |
-| Full roundtrip confirmed | One matching upload-then-download correlation | Not implemented; it requires the later controlled download from the same active chain. |
+| Download observed | Exact controlled response correlation | Only the same active operation in unreleased M6 app source can set it: after an accepted upload, the authorized helper response must pass a fresh post-authorization cursor/wall-clock/generation `ItemFinished` gate plus complete validation. A helper response or synchronized file alone cannot set it. |
+| Full roundtrip confirmed | One matching upload-then-download correlation | Not implemented; it requires the later causal derivation from the same active chain's upload and download. |
 
 None automatically implies the next. Relay reachability is not a trigger;
 trigger observation is not APNs delivery; push receipt is not background start;
 engine reachability, scans, index updates, `idle`, and 100% completion are not
 local data progress. A successful incoming file application proves that this
 iPhone applied a file change, but not that network bytes moved, which peer
-supplied every block, or that the check caused the change. Upload is a separate,
-explicitly initiated Decision 024 field in unreleased source. Controlled download
-remains independent and unset, so a full roundtrip cannot be derived.
+supplied every block, or that the check caused the change. Upload and controlled
+download are separate, explicitly initiated Decision 024 fields in unreleased
+source; download can derive only after an accepted upload inside the same active
+operation. Roundtrip is not implemented, so it cannot be derived.
 
 Server snapshots contain only entitlement, provisioning, backend, and
 per-homeserver Relay observation. The v1 push contains no homeserver/folder
@@ -86,21 +87,21 @@ background sync.
 
 Ignore rules, missing paths, an event-buffer overflow, or a runtime folder error
 can prevent an observation and therefore end conservatively as incomplete; they
-never create a false success. It remains separate from the explicit upload-only
-operation below and cannot populate that operation's evidence. Controlled
-download and roundtrip require their later Decision 024 milestones. Relay v1 is
-unchanged.
+never create a false success. It remains separate from the explicit controlled
+operation below and cannot populate that operation's evidence. Causal roundtrip
+requires its later Decision 024 milestone. Relay v1 is unchanged.
 
-#### Opt-in correlated-roundtrip helper runtime — foreground upload only
+#### Opt-in correlated-roundtrip helper runtime — upload and controlled download
 
 [Decisions 021–024](decisions/021-capability-negotiated-helper-contract-for-correlated-roundtrip-proof.md)
 define the proof and rollout boundaries. Helper 2.0.2 is published and its
 immutable digest plus upgrade, downgrade, and forward-recovery path are
 verified. The source tree now also contains the unreleased app-side explicit
 capability, pairing, credential-lifecycle, and namespace-authorization control
-plane plus the explicit M5 foreground upload operation. Product upload is
-implemented only to the exact signed-attestation boundary and remains
-unreleased; controlled download and causal roundtrip are unset. VaultSync 2.0
+plane plus the explicit M5 foreground upload operation and the M6 controlled
+download leg. Product upload is implemented to the exact signed-attestation
+boundary and controlled download to the exact fresh-apply response boundary;
+both remain unreleased, and causal roundtrip is unset. VaultSync 2.0
 remains NO-GO.
 
 One upload operation begins only after a user tap and a second localized
@@ -120,7 +121,17 @@ gate valid for the still-active tuple, sets `upload observed`. HTTP status,
 request creation, rescan, index/idle/completion state, timestamps, and a
 synchronized attestation copy cannot do so. Cancellation, view exit, refresh,
 app/engine restart, target or credential change, timeout, and conflict are
-terminal; late responses never upgrade them. Download and roundtrip remain
+terminal; late responses never upgrade them.
+
+After upload acceptance the same operation captures a fresh event-cursor,
+wall-clock, and engine-generation baseline, sends one signed type-6 response
+authorization over the pinned endpoint, and watches only the exact expected
+response path. A fresh successful local apply plus complete type-7 signature,
+binding, digest, nonce, payload, and TTL validation sets `download observed`.
+A response predating the baseline or authorization, an engine restart, a
+changed binding, or any validation failure cannot set it; an invalid file at
+the exact path ends the operation as a conflict. Every terminal outcome after
+upload keeps the upload field visible as a partial result. Roundtrip remains
 immutable false in this milestone.
 
 The runtime is gated by an operator-authored read-only configuration plus a
@@ -214,12 +225,15 @@ namespace, mappings, backups, versions, conflict copies, and tombstones; an old
 helper yields capability unavailable and never a weaker success.
 
 The helper can reconstruct an exact authorized runtime session and process the
-existing D024 foundations. The unreleased M5 app can use only its capability and
-upload-attestation paths, but signatures establish only authorship and causal
-bindings—not transport route, exact network bytes, direct peer, block
-provenance, future delivery, or global sync health. No response has passed a
-fresh post-authorization iPhone cursor/nanosecond/generation/`ItemFinished`
-baseline. Cleanup remains evidence-orthogonal. Helper-first publication,
+existing D024 foundations. The unreleased app can use only its capability,
+upload-attestation, and response-authorization paths, but signatures establish
+only authorship and causal bindings—not transport route, exact network bytes,
+direct peer, block provenance, future delivery, or global sync health. The
+fresh post-authorization cursor/wall-clock/generation/`ItemFinished` download
+gate exists in unreleased source and has been exercised only with injected
+event streams plus byte-exact artifacts from isolated local Syncthing
+instances; no response has passed it on a physical iPhone. Cleanup remains
+evidence-orthogonal. Helper-first publication,
 production rollout, rollback, the M5 real-device/PR gate, and the later download
 and roundtrip app milestones remain mandatory.
 See [helper runtime and packaging readiness](helper-runtime-packaging-readiness.md).

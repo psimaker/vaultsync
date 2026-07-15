@@ -133,10 +133,13 @@ digest, opaque binding, nonce, transcript fingerprint, signed body, namespace
 path, mount alias, operation value, or artifact name. It creates no diagnostics
 telemetry, crash annotation, support-bundle export, Cloud Relay/APNs/StoreKit
 call, discovery request, trust adoption, share, rescan, or Syncthing
-configuration/ignore change. No response has been accepted after a fresh local
-apply on an iPhone. The unreleased app source can set only upload evidence after
-an exact pinned helper attestation; controlled download and roundtrip evidence
-remain unset.
+configuration/ignore change. The unreleased app source can set upload evidence
+after an exact pinned helper attestation and, only after an accepted upload,
+download evidence from a fresh local apply of the exact authorized helper
+response in the same active operation; roundtrip evidence remains unset. A
+complete download acceptance has run only against injected test event streams
+plus byte-exact artifacts from isolated local Syncthing instances; no download
+has been observed on a physical device.
 
 Before the supported installer creates the namespace, the app must send a valid
 signed enablement and the local operator must choose an exact existing Syncthing
@@ -256,17 +259,26 @@ on at most eight bounded polls to the fixed TLS-1.3/SPKI-pinned helper endpoint.
 Only the exact paired-helper signature and complete Decision 024 binding for
 that active request/query can set the separate in-memory `upload observed`
 field. HTTP status, reachability, request creation, rescan, timestamps, index or
-idle state, and a synchronized attestation copy cannot set it. Download and
-roundtrip fields remain false and cannot be inferred from upload.
+idle state, and a synchronized attestation copy cannot set it. After an accepted
+upload the same operation captures a fresh event-cursor, wall-clock, and
+engine-generation baseline, sends one signed response authorization over the
+pinned endpoint, and sets the separate `download observed` field only after a
+fresh successful local apply of the exact expected response path plus complete
+signature, binding, digest, nonce, payload, and TTL validation of that file. A
+response existing before the baseline, arriving after an engine restart, or
+failing any validation can never set it; an invalid file at the exact path ends
+the operation as a conflict, and every terminal outcome after upload keeps the
+upload field visible as a partial result. The roundtrip field remains false and
+cannot be inferred from upload or download.
 
 The active operation, request/query bytes, random values, digests, poll state,
 and evidence are not persisted in preferences, Keychain, logs, telemetry,
 crash reports, support bundles, Relay, APNs, StoreKit, or pairing records.
 Leaving the view, cancellation, refresh, app/engine restart, target or
 credential change, timeout, or conflict ends the operation, and a late response
-cannot upgrade it. The request and helper attestation are synchronized opaque
-files and may remain in live folders, peers, backups, versions, conflict copies,
-remote history, deletion records, or tombstones. Expiry, app rollback, or live
+cannot upgrade it. The request, helper attestation, and helper response are
+synchronized opaque files and may remain in live folders, peers, backups,
+versions, conflict copies, remote history, deletion records, or tombstones. Expiry, app rollback, or live
 cleanup does not promise removal of those retained copies; they never regain
 validity or become evidence.
 
