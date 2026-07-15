@@ -121,7 +121,7 @@ The diagnostics contract is additive. Trigger v1 and Relay v1 are unchanged.
 | M3-capable app | Helper 2.0.2, diagnostics unset | Any Relay v1 | `Capability unavailable`; Trigger v1 remains unchanged. |
 | M3-capable app | Helper 2.0.2, enabled but unpaired | Any Relay v1 | Explicit QR pairing is offered; no trust or namespace is inherited. |
 | M3-capable app | Helper 2.0.2, paired but namespace absent | Any Relay v1 | Authenticated capability can succeed; upload, download, and roundtrip remain unset. |
-| M3-capable app | Helper 2.0.2, explicitly namespace-authorized | Existing or new Relay v1 | D022/D023 control plane active; no transfer artifact exists in this milestone. |
+| M3-capable app | Helper 2.0.2, explicitly namespace-authorized | Existing or new Relay v1 | D022/D023 control plane active; the M3 control plane itself creates no transfer artifact (the unreleased M5 source adds only the explicit foreground upload leg). |
 | App downgrade | Helper 2.0.2 | Any Relay v1 | Old app ignores the additive records; helper stays dormant for it; credentials and namespace copies are retained. |
 | App re-upgrade | Helper 2.0.2 | Any Relay v1 | Read-only reconstruction, fresh capability, and current namespace authorization are required; no operation resumes. |
 
@@ -138,7 +138,7 @@ explicit pairing state machine. This is control-plane evidence only.
 | Authenticated capability | Implemented in production app source; cross-language vectors and a deterministic pinned-transport harness pass. Real-device/helper deployment evidence remains unset. |
 | Pairing | Explicit, fingerprint-confirmed, scoped, restart-safe D022 state machine. |
 | Namespace | Explicit app request plus separate operator creation and helper-countersigned D023 authorization. |
-| Upload | Unset; no request artifact is created by this milestone. |
+| Upload | Unset at this M3 boundary; the M3 control plane creates no request artifact. The unreleased M5 source adds only the explicit foreground upload leg (see the M5 readiness document). |
 | Download | Unset; no response artifact or fresh `ItemFinished` baseline exists. |
 | Roundtrip | Unset; no same-chain directional evidence exists. |
 | Cleanup | No app cleanup runtime in this milestone; helper foundation remains evidence-orthogonal. |

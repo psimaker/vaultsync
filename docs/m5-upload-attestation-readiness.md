@@ -141,8 +141,8 @@ from an old operation.
 All Xcode results and derived data are outside the repository under `/tmp`.
 The current local gate includes:
 
-- `go test -tags noassets ./bridge -count=1`: passed, including the real
-  Syncthing ignore/access/collision preflight;
+- `cd go && go test -tags noassets ./bridge -count=1`: passed, including the
+  real Syncthing ignore/access/collision preflight;
 - `go test ./... -count=1` in `notify/` on macOS: passed;
 - the same complete Notify suite in a digest-pinned, read-only Linux container
   with no network and all capabilities dropped: passed;

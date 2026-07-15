@@ -611,11 +611,14 @@ final class DiagnosticsPairingController {
             }
         } catch let error as DiagnosticsProtocolError {
             guard uploadRunIDs[recordID] == runID else { return }
-            lastError = error
+            // After the request artifact exists, the generic error banners
+            // ("nothing was created or transferred") would be false; the
+            // phase from finishUploadFailure carries the truthful state.
+            lastError = artifactCreated ? nil : error
             finishUploadFailure(recordID: recordID, error: error, artifactCreated: artifactCreated)
         } catch {
             guard uploadRunIDs[recordID] == runID else { return }
-            lastError = .unavailable
+            lastError = artifactCreated ? nil : .unavailable
             finishUploadFailure(recordID: recordID, error: .unavailable, artifactCreated: artifactCreated)
         }
     }
@@ -725,8 +728,13 @@ final class DiagnosticsPairingController {
             phase = .rateLimited
         case .unsupported:
             phase = .unsupported
-        case .conflict, .invalidMessage:
+        case .conflict:
             phase = .conflict
+        case .invalidMessage:
+            // Conflict is reserved for unexpected authenticated namespace
+            // content (D024); an invalid pinned-channel protocol message is
+            // an authenticated-protocol mismatch and terminates unsupported.
+            phase = .unsupported
         case .unavailable, .protectedDataUnavailable, .recoveryRequired:
             phase = artifactCreated ? .interrupted : .unavailable
         }

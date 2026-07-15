@@ -358,6 +358,7 @@ struct DiagnosticsUploadM5Tests {
                 "DiagnosticsUploadProtocol.swift",
                 "DiagnosticsUploadPreflight.swift",
                 "DiagnosticsUploadFileStore.swift",
+                "DiagnosticsPairingController.swift",
             ].contains(url.lastPathComponent) {
                 for forbiddenSink in [
                     "UserDefaults", "Keychain", "StoreKit", "APNs", "Cloud Relay",
@@ -376,7 +377,9 @@ struct DiagnosticsUploadM5Tests {
         )
         #expect(controlledView.contains("@Environment(\\.scenePhase)"))
         #expect(controlledView.contains("if phase != .active"))
-        #expect(controlledView.components(separatedBy: "cancelAllForegroundUploads()").count >= 3)
+        let cancellationHooks =
+            controlledView.components(separatedBy: "cancelAllForegroundUploads()").count - 1
+        #expect(cancellationHooks >= 2)
 
         let allowedSnapshot = "phase=completed upload=true download=false roundtrip=false cleanup=0"
         for forbidden in [

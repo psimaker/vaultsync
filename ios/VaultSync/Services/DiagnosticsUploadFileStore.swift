@@ -47,14 +47,29 @@ enum DiagnosticsUploadFileStore {
             )
         }
         guard file >= 0 else { throw mappedError(errno) }
+        // Capture the created entry's identity: between creation and a
+        // failure unlink, Syncthing or another process can rename this file
+        // and reuse the pathname — unlinking by name alone could then delete
+        // an entry this invocation never created.
+        var createdIdentity = stat()
+        let identityCaptured = fstat(file, &createdIdentity) == 0
         var committed = false
         defer {
             close(file)
-            if !committed {
-                _ = filename.withCString { unlinkat(parent, $0, 0) }
-                _ = fsync(parent)
+            if !committed, identityCaptured {
+                var current = stat()
+                let unchanged = filename.withCString { name in
+                    fstatat(parent, name, &current, AT_SYMLINK_NOFOLLOW) == 0
+                        && current.st_dev == createdIdentity.st_dev
+                        && current.st_ino == createdIdentity.st_ino
+                }
+                if unchanged {
+                    _ = filename.withCString { unlinkat(parent, $0, 0) }
+                    _ = fsync(parent)
+                }
             }
         }
+        guard identityCaptured else { throw DiagnosticsProtocolError.unsupported }
 
         try data.withUnsafeBytes { buffer in
             guard let base = buffer.baseAddress else {
