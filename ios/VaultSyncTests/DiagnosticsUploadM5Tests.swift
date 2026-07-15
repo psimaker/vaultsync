@@ -346,9 +346,13 @@ struct DiagnosticsUploadM5Tests {
             ] where body.contains(uploadDomain) {
                 #expect(url.lastPathComponent == "DiagnosticsUploadProtocol.swift")
             }
-            for laterDomain in [
+            for responseDomain in [
                 "eu.vaultsync.roundtrip/v1/response-authorization",
                 "eu.vaultsync.roundtrip/v1/response-artifact",
+            ] where body.contains(responseDomain) {
+                #expect(url.lastPathComponent == "DiagnosticsResponseProtocol.swift")
+            }
+            for laterDomain in [
                 "eu.vaultsync.roundtrip/v1/cleanup-request",
                 "eu.vaultsync.roundtrip/v1/cleanup-ack",
             ] {
@@ -359,6 +363,7 @@ struct DiagnosticsUploadM5Tests {
                 "DiagnosticsUploadPreflight.swift",
                 "DiagnosticsUploadFileStore.swift",
                 "DiagnosticsPairingController.swift",
+                "DiagnosticsResponseProtocol.swift",
             ].contains(url.lastPathComponent) {
                 for forbiddenSink in [
                     "UserDefaults", "Keychain", "StoreKit", "APNs", "Cloud Relay",

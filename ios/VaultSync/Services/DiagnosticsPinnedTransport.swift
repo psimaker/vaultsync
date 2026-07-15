@@ -44,6 +44,7 @@ final class DiagnosticsPinnedTransport: DiagnosticsTransporting, @unchecked Send
             DiagnosticsNamespaceProtocol.enablementPath,
             DiagnosticsNamespaceProtocol.authorizationPath,
             DiagnosticsUploadProtocol.path,
+            DiagnosticsResponseProtocol.path,
         ]
         guard allowedPaths.contains(path),
               !body.isEmpty, body.count <= DiagnosticsDeterministicCBOR.maximumMessageBytes else {

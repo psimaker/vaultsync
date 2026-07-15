@@ -117,7 +117,7 @@ jobs:
         run: sudo notify/tests/runtime-packaging/run-linux-host.sh
 
   m5-syncthing-upload-e2e:
-    name: M5 Syncthing Upload E2E
+    name: M5/M6 Syncthing Transfer E2E
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -148,7 +148,7 @@ jobs:
           GOMODCACHE: /tmp/vaultsync-m5-notify-mod
         run: go mod download
 
-      - name: Prove upload through two isolated ephemeral instances
+      - name: Prove upload and response transfer through two isolated ephemeral instances
         run: |
           docker run --rm --network none --read-only --cap-drop ALL \
             --security-opt no-new-privileges \
@@ -162,7 +162,7 @@ jobs:
             -e VAULTSYNC_M5_SYNCTHING_BIN=/opt/vaultsync-m5-syncthing \
             golang@sha256:079e59808d2d252516e27e3f3a9c003740dee7f75e55aa71528766d52bcfc16a \
             go test -tags diagnostics_m5_syncthing_e2e \
-              -run '^TestDiagnosticsUploadThroughTwoEphemeralSyncthingInstances$' \
+              -run '^TestDiagnostics(Upload|Download)ThroughTwoEphemeralSyncthingInstances$' \
               -count=1 -v
 
   install-script:

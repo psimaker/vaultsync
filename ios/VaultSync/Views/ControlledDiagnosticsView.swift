@@ -83,15 +83,15 @@ struct ControlledDiagnosticsView: View {
         } message: {
             Text(L10n.tr("This removes only this app's local diagnostics credentials. It does not revoke the old helper authorization. Re-pair with a new QR, then ask the helper operator to revoke the lost app fingerprint."))
         }
-        .alert(L10n.tr("Start controlled upload check?"), isPresented: $showUploadConsent) {
+        .alert(L10n.tr("Start controlled upload and download check?"), isPresented: $showUploadConsent) {
             Button(L10n.tr("Cancel"), role: .cancel) {
                 pendingUploadRecordID = nil
             }
-            Button(L10n.tr("Start Upload Check")) {
+            Button(L10n.tr("Start Upload and Download Check")) {
                 startPendingUpload()
             }
         } message: {
-            Text(L10n.tr("VaultSync will create one signed request with 256 random bytes in the already authorized diagnostics namespace and rescan only the selected folder. Only an exact signed reply from the pinned helper can mark upload observed. Download and roundtrip remain unobserved. Opaque copies may remain in peers, backups, versions, conflicts, or tombstones."))
+            Text(L10n.tr("VaultSync will create one signed request with 256 random bytes in the already authorized diagnostics namespace and rescan only the selected folder. Only an exact signed reply from the pinned helper can mark upload observed. After an accepted upload, VaultSync authorizes exactly one signed helper response file with 256 random bytes in the same namespace; only its fresh synchronized arrival with full validation can mark download observed. Roundtrip remains unobserved. Opaque copies may remain in peers, backups, versions, conflicts, or tombstones."))
         }
     }
 
@@ -100,7 +100,7 @@ struct ControlledDiagnosticsView: View {
             Label(L10n.tr("Explicit local or VPN pairing only"), systemImage: "lock.shield")
             Label(L10n.tr("TLS 1.3 with an exact QR-pinned key"), systemImage: "checkmark.seal")
             Label(L10n.tr("No discovery, trust adoption, Relay tunnel, or automatic namespace"), systemImage: "hand.raised")
-            Text(L10n.tr("Pairing and capability checks create no upload, download, or roundtrip evidence. Only a separate explicit upload check may mark upload observed; download and roundtrip remain independent. The diagnostics namespace is visible to synchronized peers and may remain in backups, versions, conflict copies, and tombstones."))
+            Text(L10n.tr("Pairing and capability checks create no upload, download, or roundtrip evidence. Only a separate explicit check may mark upload observed and, after it, download observed; roundtrip remains independent. The diagnostics namespace is visible to synchronized peers and may remain in backups, versions, conflict copies, and tombstones."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         } header: {
@@ -336,12 +336,12 @@ struct ControlledDiagnosticsView: View {
                     .foregroundStyle(.secondary)
             }
             if let status = controller.uploadStatuses[record.id],
-               [.preflighting, .checking].contains(status.phase) {
-                Button(L10n.tr("Cancel Upload Check"), role: .cancel) {
+               [.preflighting, .checking, .uploadObserved].contains(status.phase) {
+                Button(L10n.tr("Cancel Controlled Check"), role: .cancel) {
                     controller.cancelForegroundUpload(recordID: record.id)
                 }
             } else if capability == .available {
-                Button(L10n.tr("Start Foreground Upload Check")) {
+                Button(L10n.tr("Start Foreground Upload and Download Check")) {
                     pendingUploadRecordID = record.id
                     showUploadConsent = true
                 }
@@ -535,18 +535,43 @@ struct ControlledDiagnosticsView: View {
             },
             rescan: {
                 syncthingManager.rescanFolder(id: record.folderID) == nil
+            },
+            events: { sinceID in
+                // Read events before the generation: if the engine restarts
+                // in between, the newer generation fails the caller's
+                // continuity check instead of tagging new-engine events with
+                // the pre-restart generation.
+                let json = SyncBridgeService.getEventsSince(lastID: Int(sinceID))
+                let generation = SyncBridgeService.eventStreamGeneration()
+                return DiagnosticsResponseProtocol.eventSnapshot(
+                    generation: generation,
+                    json: json
+                )
             }
         )
     }
 
     private func uploadStatusLabel(_ status: DiagnosticsPairingController.UploadStatus) -> String {
+        if status.evidence.uploadObserved {
+            switch status.phase {
+            case .uploadObserved:
+                return L10n.fmt(
+                    "Upload observed — download response pending after %d of 8 polls",
+                    status.completedResponsePolls
+                )
+            case .downloadObserved:
+                return L10n.tr("Upload and download observed — roundtrip remains unobserved")
+            default:
+                return L10n.tr("Partial: upload observed, download unobserved — no late result can upgrade it")
+            }
+        }
         switch status.phase {
         case .preflighting:
             return L10n.tr("Checking exact upload preconditions — no artifact created")
         case .checking:
             return L10n.fmt("Upload pending after %d of 8 exact polls", status.completedPolls)
-        case .uploadObserved:
-            return L10n.tr("Upload observed — download and roundtrip unobserved")
+        case .uploadObserved, .downloadObserved:
+            return L10n.tr("Upload and download observed — roundtrip remains unobserved")
         case .cancelled:
             return L10n.tr("Upload check cancelled — no late result can upgrade it")
         case .timedOut:
@@ -567,6 +592,7 @@ struct ControlledDiagnosticsView: View {
     private func uploadStatusSymbol(_ phase: DiagnosticsPairingController.UploadPhase) -> String {
         switch phase {
         case .uploadObserved: return "arrow.up.circle.fill"
+        case .downloadObserved: return "arrow.down.circle.fill"
         case .preflighting, .checking: return "hourglass"
         case .cancelled, .timedOut, .interrupted, .unavailable: return "exclamationmark.circle"
         case .conflict, .rateLimited, .unsupported: return "xmark.shield"
@@ -575,7 +601,7 @@ struct ControlledDiagnosticsView: View {
 
     private func uploadStatusColor(_ phase: DiagnosticsPairingController.UploadPhase) -> Color {
         switch phase {
-        case .uploadObserved: return Color.statusSuccess
+        case .uploadObserved, .downloadObserved: return Color.statusSuccess
         case .preflighting, .checking: return Color.statusAttention
         case .cancelled, .timedOut, .interrupted, .unavailable: return Color.statusAttention
         case .conflict, .rateLimited, .unsupported: return Color.statusError

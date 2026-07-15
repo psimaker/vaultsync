@@ -673,6 +673,18 @@ enum DiagnosticsNamespaceProtocol {
         ]
     }
 
+    static func operationResponseComponents(
+        installationBinding: Data,
+        operationID: Data
+    ) throws -> [String] {
+        var components = try operationRequestComponents(
+            installationBinding: installationBinding,
+            operationID: operationID
+        )
+        components[components.count - 1] = base32LowerNoPadding(operationID) + ".response.cbor"
+        return components
+    }
+
     private static func unixSeconds(_ date: Date) throws -> UInt64 {
         let value = date.timeIntervalSince1970.rounded(.down)
         guard value >= 0, value < Double(UInt64.max) else {
