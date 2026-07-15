@@ -77,8 +77,10 @@ file or vault path, file content, or diagnostic check identifier.
 
 The published helper 2.0.2 contains an optional local runtime for the
 authenticated diagnostics protocol. Publication or installation alone does not
-activate it, and the currently released app does not call it. The runtime starts
-only when an operator separately
+activate it, and the currently released app does not call it. Unreleased app
+source contains the separately user-initiated upload-only flow described below;
+it still cannot activate an unconfigured helper. The runtime starts only when
+an operator separately
 supplies both a read-only diagnostics configuration and a writable private state
 directory; otherwise it creates no listener, credential, mapping, namespace, or
 artifact.
@@ -132,8 +134,9 @@ path, mount alias, operation value, or artifact name. It creates no diagnostics
 telemetry, crash annotation, support-bundle export, Cloud Relay/APNs/StoreKit
 call, discovery request, trust adoption, share, rescan, or Syncthing
 configuration/ignore change. No response has been accepted after a fresh local
-apply on an iPhone; product upload, download, and roundtrip evidence remain
-unset.
+apply on an iPhone. The unreleased app source can set only upload evidence after
+an exact pinned helper attestation; controlled download and roundtrip evidence
+remain unset.
 
 Before the supported installer creates the namespace, the app must send a valid
 signed enablement and the local operator must choose an exact existing Syncthing
@@ -228,6 +231,46 @@ not delete the helper authorization, namespace, peer copies, backups, versions,
 conflicts, history, or tombstones. Lost-key recovery deliberately requires new
 pairing and a separate operator revocation of the surviving old authorization.
 See [app capability, pairing, and namespace readiness](docs/app-capability-pairing-namespace-readiness.md).
+
+### Explicit Foreground Upload Check (Unreleased Source)
+
+After separate pairing, capability negotiation, app consent, operator namespace
+creation, and helper-countersigned authorization, the unreleased app source
+offers a distinct foreground upload check. It starts only after a new user tap
+and confirmation. Opening Settings, upgrading or launching the app, checking
+capability, ordinary synchronization, Relay/APNs activity, or background
+execution never starts it.
+
+The app revalidates the exact existing settled `sendreceive` folder, one
+designated connected and unpaused peer, current engine generation, authenticated
+namespace, expanded Syncthing ignore behavior, and an empty operation slot. It
+does not discover, add, share, pause, reconfigure, trust, or create any
+Syncthing folder, peer, namespace, or ignore rule. If any precondition fails,
+no operation artifact is created.
+
+For one accepted start, the app generates a random operation identifier, two
+random nonces, and exactly 256 random request bytes in memory. It exclusively
+creates one app-signed request in the already authorized visible namespace,
+rescans only the selected folder, and sends one app-signed query byte-for-byte
+on at most eight bounded polls to the fixed TLS-1.3/SPKI-pinned helper endpoint.
+Only the exact paired-helper signature and complete Decision 024 binding for
+that active request/query can set the separate in-memory `upload observed`
+field. HTTP status, reachability, request creation, rescan, timestamps, index or
+idle state, and a synchronized attestation copy cannot set it. Download and
+roundtrip fields remain false and cannot be inferred from upload.
+
+The active operation, request/query bytes, random values, digests, poll state,
+and evidence are not persisted in preferences, Keychain, logs, telemetry,
+crash reports, support bundles, Relay, APNs, StoreKit, or pairing records.
+Leaving the view, cancellation, refresh, app/engine restart, target or
+credential change, timeout, or conflict ends the operation, and a late response
+cannot upgrade it. The request and helper attestation are synchronized opaque
+files and may remain in live folders, peers, backups, versions, conflict copies,
+remote history, deletion records, or tombstones. Expiry, app rollback, or live
+cleanup does not promise removal of those retained copies; they never regain
+validity or become evidence.
+
+See [M5 foreground upload-only readiness](docs/m5-upload-attestation-readiness.md).
 
 ### Data Security
 

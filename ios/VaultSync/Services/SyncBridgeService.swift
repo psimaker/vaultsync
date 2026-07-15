@@ -191,6 +191,26 @@ struct SyncBridgeService {
         BridgeGetFolderIgnores(folderID)
     }
 
+    /// Read-only D024 preflight for one exact authenticated namespace slot.
+    /// The Go bridge validates fixed lowercase-base32 components, existing
+    /// descriptor targets, Syncthing's real ignore matcher, and absence of all
+    /// three operation artifacts. It never creates or changes configuration.
+    static func diagnosticsUploadPathAvailable(
+        folderID: String,
+        installationComponent: String,
+        operationComponent: String
+    ) -> Bool {
+        BridgeDiagnosticsUploadPathAvailable(folderID, installationComponent, operationComponent)
+    }
+
+    static func diagnosticsUploadPathAllowed(
+        folderID: String,
+        installationComponent: String,
+        operationComponent: String
+    ) -> Bool {
+        BridgeDiagnosticsUploadPathAllowed(folderID, installationComponent, operationComponent)
+    }
+
     /// Set .stignore lines for a folder. ignoresJSON is a JSON array of strings.
     /// - Returns: nil on success, error message on failure.
     static func setFolderIgnores(folderID: String, ignoresJSON: String) -> String? {

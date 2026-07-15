@@ -1,8 +1,9 @@
 import CryptoKit
 import Foundation
 import Testing
+@testable import VaultSync
 
-@Suite("Dormant D024 upload attestation foundation (M5)")
+@Suite("D024 foreground upload-only contract (M5)")
 struct DiagnosticsUploadM5Tests {
     @Test("Go and Swift reproduce the exact request, query, and attestation bytes")
     func crossLanguageGoldenBytes() throws {
@@ -30,6 +31,101 @@ struct DiagnosticsUploadM5Tests {
         try M5UploadMessage.validateUploadChain(
             request: active.request, query: active.query, attestation: attestation
         )
+    }
+
+    @Test("Production parser accepts the exact Go vectors and preserves upload-only evidence")
+    func productionWireAndAcceptance() throws {
+        let fixture = try M5UploadFixtureLoader.load()
+        let golden = try M5UploadGoldenMessages.make(fixture)
+        let record = try makeProductRecord(fixture)
+        let request = try DiagnosticsUploadProtocol.decode(golden.request, record: record)
+        let query = try DiagnosticsUploadProtocol.decode(golden.query, record: record)
+        let attestation = try DiagnosticsUploadProtocol.decode(golden.attestation, record: record)
+        #expect(request.body.m1Hex == fixture.requestBodyHex)
+        #expect(request.digest.m1Hex == fixture.requestDigestHex)
+        #expect(query.body.m1Hex == fixture.queryBodyHex)
+        #expect(query.digest.m1Hex == fixture.queryDigestHex)
+        #expect(attestation.body.m1Hex == fixture.attestationBodyHex)
+        #expect(attestation.digest.m1Hex == fixture.attestationDigestHex)
+
+        let installation = try Data(m1Hex: fixture.installationBindingHex)
+        let operationID = try Data(m1Hex: fixture.operationIdHex)
+        let operation = DiagnosticsUploadProtocol.Operation(
+            request: request,
+            query: query,
+            operationID: operationID,
+            installationBinding: installation,
+            requestComponents: try DiagnosticsNamespaceProtocol.operationRequestComponents(
+                installationBinding: installation,
+                operationID: operationID
+            )
+        )
+        let accepted = try DiagnosticsUploadProtocol.validateUploadAttestation(
+            golden.attestation,
+            operation: operation,
+            record: record,
+            now: Date(timeIntervalSince1970: TimeInterval(fixture.attestationIssuedAt))
+        )
+        #expect(accepted == attestation)
+
+        var tampered = golden.attestation
+        tampered[tampered.index(before: tampered.endIndex)] ^= 0x01
+        #expect(throws: DiagnosticsProtocolError.invalidMessage) {
+            _ = try DiagnosticsUploadProtocol.validateUploadAttestation(
+                tampered,
+                operation: operation,
+                record: record,
+                now: Date(timeIntervalSince1970: TimeInterval(fixture.attestationIssuedAt))
+            )
+        }
+    }
+
+    @Test("Production request creation is exclusive, confined, and collision-safe")
+    func productionImmutableRequestStore() throws {
+        let fixture = try M5UploadFixtureLoader.load()
+        let golden = try M5UploadGoldenMessages.make(fixture)
+        let installation = try Data(m1Hex: fixture.installationBindingHex)
+        let operationID = try Data(m1Hex: fixture.operationIdHex)
+        let components = try DiagnosticsNamespaceProtocol.operationRequestComponents(
+            installationBinding: installation,
+            operationID: operationID
+        )
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vaultsync-upload-store-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let operations = components.dropLast().reduce(folder) {
+            $0.appendingPathComponent($1, isDirectory: true)
+        }
+        try FileManager.default.createDirectory(at: operations, withIntermediateDirectories: true)
+
+        try DiagnosticsUploadFileStore.createImmutable(
+            folderPath: folder.path,
+            components: components,
+            data: golden.request
+        )
+        #expect(
+            try DiagnosticsNamespaceFileReader.read(
+                folderPath: folder.path,
+                components: components
+            ) == golden.request
+        )
+        #expect(throws: DiagnosticsProtocolError.conflict) {
+            try DiagnosticsUploadFileStore.createImmutable(
+                folderPath: folder.path,
+                components: components,
+                data: golden.request
+            )
+        }
+
+        let requestURL = components.reduce(folder) { $0.appendingPathComponent($1) }
+        let linked = folder.appendingPathComponent("second-link.cbor")
+        try FileManager.default.linkItem(at: requestURL, to: linked)
+        #expect(throws: DiagnosticsProtocolError.conflict) {
+            _ = try DiagnosticsNamespaceFileReader.read(
+                folderPath: folder.path,
+                components: components
+            )
+        }
     }
 
     @Test("Only a pinned local response for the exact active query sets upload")
@@ -230,7 +326,7 @@ struct DiagnosticsUploadM5Tests {
         }
     }
 
-    @Test("M5 transfer remains absent from Swift product code and records no forbidden operation values")
+    @Test("Product upload runtime remains isolated from response, durable state, and external systems")
     func privacyAndProductBoundary() throws {
         let fixture = try M5UploadFixtureLoader.load()
         let testDirectory = URL(fileURLWithPath: "\(#filePath)").deletingLastPathComponent()
@@ -243,21 +339,47 @@ struct DiagnosticsUploadM5Tests {
         while let url = enumerator?.nextObject() as? URL {
             guard url.pathExtension == "swift" else { continue }
             let body = try String(contentsOf: url, encoding: .utf8)
-            if body.contains(M5UploadMessage.capability) {
-                #expect(url.lastPathComponent == "DiagnosticsCapabilityNamespaceProtocol.swift")
-            }
-            for transferDomain in [
+            for uploadDomain in [
                 "eu.vaultsync.roundtrip/v1/operation-request",
                 "eu.vaultsync.roundtrip/v1/attestation-query",
                 "eu.vaultsync.roundtrip/v1/upload-attestation",
+            ] where body.contains(uploadDomain) {
+                #expect(url.lastPathComponent == "DiagnosticsUploadProtocol.swift")
+            }
+            for laterDomain in [
                 "eu.vaultsync.roundtrip/v1/response-authorization",
                 "eu.vaultsync.roundtrip/v1/response-artifact",
                 "eu.vaultsync.roundtrip/v1/cleanup-request",
                 "eu.vaultsync.roundtrip/v1/cleanup-ack",
             ] {
-                #expect(!body.contains(transferDomain))
+                #expect(!body.contains(laterDomain))
+            }
+            if [
+                "DiagnosticsUploadProtocol.swift",
+                "DiagnosticsUploadPreflight.swift",
+                "DiagnosticsUploadFileStore.swift",
+                "DiagnosticsPairingController.swift",
+            ].contains(url.lastPathComponent) {
+                for forbiddenSink in [
+                    "UserDefaults", "Keychain", "StoreKit", "APNs", "Cloud Relay",
+                    "Logger(", "os_log", "crash report", "support bundle",
+                ] {
+                    #expect(!body.contains(forbiddenSink))
+                }
             }
         }
+
+        let controlledView = try String(
+            contentsOf: productDirectory
+                .appendingPathComponent("Views", isDirectory: true)
+                .appendingPathComponent("ControlledDiagnosticsView.swift"),
+            encoding: .utf8
+        )
+        #expect(controlledView.contains("@Environment(\\.scenePhase)"))
+        #expect(controlledView.contains("if phase != .active"))
+        let cancellationHooks =
+            controlledView.components(separatedBy: "cancelAllForegroundUploads()").count - 1
+        #expect(cancellationHooks >= 2)
 
         let allowedSnapshot = "phase=completed upload=true download=false roundtrip=false cleanup=0"
         for forbidden in [
@@ -302,6 +424,53 @@ struct DiagnosticsUploadM5Tests {
             query: query,
             appPublicKey: appPrivate.publicKey,
             helperPublicKey: helperPrivate.publicKey
+        )
+    }
+
+    private func makeProductRecord(_ fixture: M5UploadFixture) throws -> DiagnosticsPairingRecord {
+        let appSeed = try Data(m1Hex: fixture.appSeedHex)
+        let helperSeed = try Data(m1Hex: fixture.helperSeedHex)
+        let appKey = try Curve25519.Signing.PrivateKey(rawRepresentation: appSeed)
+        let helperKey = try Curve25519.Signing.PrivateKey(rawRepresentation: helperSeed)
+        let appPublic = appKey.publicKey.rawRepresentation
+        let helperPublic = helperKey.publicKey.rawRepresentation
+        let appKeyID = DiagnosticsCrypto.keyID(publicKey: appPublic)
+        let helperKeyID = DiagnosticsCrypto.keyID(publicKey: helperPublic)
+        return DiagnosticsPairingRecord(
+            id: DiagnosticsPairingRecord.identifier(
+                appKeyID: appKeyID,
+                folderBinding: try Data(m1Hex: fixture.folderBindingHex)
+            ),
+            homeserverDeviceID: "P56IOI7-MZJNU2Y-IQGDREY-DM2MGTI-MGL3BXN-PQ6W5BM-TBBZ4TJ-XZWICQ2",
+            folderID: "fixture-folder",
+            endpointHost: "127.0.0.1",
+            endpointPort: 443,
+            tlsSPKIPin: Data(repeating: 0x55, count: 32),
+            helperPublicKey: helperPublic,
+            helperKeyID: helperKeyID,
+            homeserverBinding: try Data(m1Hex: fixture.homeserverBindingHex),
+            folderBinding: try Data(m1Hex: fixture.folderBindingHex),
+            appSeed: appSeed,
+            appPublicKey: appPublic,
+            appKeyID: appKeyID,
+            appEpoch: fixture.appEpoch,
+            helperEpoch: fixture.helperEpoch,
+            currentCredentialStateDigest: Data(repeating: 0x25, count: 32),
+            state: .namespaceActive,
+            hardExpiry: fixture.expiresAt,
+            localDeadline: nil,
+            lastOutgoing: Data([0xa0]),
+            lastIncoming: Data([0xa0]),
+            transcriptFingerprint: nil,
+            namespaceID: Data(repeating: 0x07, count: 32),
+            namespaceInitialAppKeyID: appKeyID,
+            namespaceEnablement: Data([0xa0]),
+            namespaceRootDigest: Data(repeating: 0x21, count: 32),
+            namespaceManifestDigest: Data(repeating: 0x22, count: 32),
+            namespaceManifestEpoch: fixture.helperEpoch,
+            namespaceAuthorizationDigest: Data(repeating: 0x23, count: 32),
+            namespaceAuthorizationEpoch: fixture.authorizationEpoch,
+            pendingLifecycle: nil
         )
     }
 }

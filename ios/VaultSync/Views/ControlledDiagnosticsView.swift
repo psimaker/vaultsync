@@ -3,6 +3,7 @@ import SwiftUI
 struct ControlledDiagnosticsView: View {
     let syncthingManager: SyncthingManager
 
+    @Environment(\.scenePhase) private var scenePhase
     @State private var controller = DiagnosticsPairingController()
     @State private var selectedDeviceID = ""
     @State private var selectedFolderID = ""
@@ -12,6 +13,8 @@ struct ControlledDiagnosticsView: View {
     @State private var consentAction: ConsentAction = .scan
     @State private var showRecoveryConfirmation = false
     @State private var missingFolderRecordID: String?
+    @State private var pendingUploadRecordID: String?
+    @State private var showUploadConsent = false
 
     private enum ConsentAction {
         case scan
@@ -33,6 +36,14 @@ struct ControlledDiagnosticsView: View {
         .task {
             controller.refresh()
             chooseInitialTarget()
+        }
+        .onDisappear {
+            controller.cancelAllForegroundUploads()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active {
+                controller.cancelAllForegroundUploads()
+            }
         }
         .onChange(of: selectedDeviceID) { _, _ in
             if !eligibleFolders.contains(where: { $0.id == selectedFolderID }) {
@@ -72,6 +83,16 @@ struct ControlledDiagnosticsView: View {
         } message: {
             Text(L10n.tr("This removes only this app's local diagnostics credentials. It does not revoke the old helper authorization. Re-pair with a new QR, then ask the helper operator to revoke the lost app fingerprint."))
         }
+        .alert(L10n.tr("Start controlled upload check?"), isPresented: $showUploadConsent) {
+            Button(L10n.tr("Cancel"), role: .cancel) {
+                pendingUploadRecordID = nil
+            }
+            Button(L10n.tr("Start Upload Check")) {
+                startPendingUpload()
+            }
+        } message: {
+            Text(L10n.tr("VaultSync will create one signed request with 256 random bytes in the already authorized diagnostics namespace and rescan only the selected folder. Only an exact signed reply from the pinned helper can mark upload observed. Download and roundtrip remain unobserved. Opaque copies may remain in peers, backups, versions, conflicts, or tombstones."))
+        }
     }
 
     private var explanationSection: some View {
@@ -79,7 +100,7 @@ struct ControlledDiagnosticsView: View {
             Label(L10n.tr("Explicit local or VPN pairing only"), systemImage: "lock.shield")
             Label(L10n.tr("TLS 1.3 with an exact QR-pinned key"), systemImage: "checkmark.seal")
             Label(L10n.tr("No discovery, trust adoption, Relay tunnel, or automatic namespace"), systemImage: "hand.raised")
-            Text(L10n.tr("Pairing and capability checks create no upload, download, or roundtrip evidence. A later diagnostics namespace is visible to synchronized peers and may remain in backups, versions, conflict copies, and tombstones."))
+            Text(L10n.tr("Pairing and capability checks create no upload, download, or roundtrip evidence. Only a separate explicit upload check may mark upload observed; download and roundtrip remain independent. The diagnostics namespace is visible to synchronized peers and may remain in backups, versions, conflict copies, and tombstones."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         } header: {
@@ -296,9 +317,40 @@ struct ControlledDiagnosticsView: View {
                 }
             }
         case .namespaceActive:
-            Label(L10n.tr("Namespace authorized — no transfer artifact created"), systemImage: "checkmark.shield")
+            Label(L10n.tr("Namespace authorized"), systemImage: "checkmark.shield")
                 .font(.caption)
                 .foregroundStyle(Color.statusSuccess)
+            Text(L10n.fmt(
+                "Upload target: %@ · designated peer: %@",
+                folderName(record.folderID),
+                deviceName(record.homeserverDeviceID)
+            ))
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            if let status = controller.uploadStatuses[record.id] {
+                Label(uploadStatusLabel(status), systemImage: uploadStatusSymbol(status.phase))
+                    .font(.caption)
+                    .foregroundStyle(uploadStatusColor(status.phase))
+                Text(L10n.tr("Upload, download, and roundtrip are separate evidence fields. Cleanup never upgrades any field."))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            if let status = controller.uploadStatuses[record.id],
+               [.preflighting, .checking].contains(status.phase) {
+                Button(L10n.tr("Cancel Upload Check"), role: .cancel) {
+                    controller.cancelForegroundUpload(recordID: record.id)
+                }
+            } else if capability == .available {
+                Button(L10n.tr("Start Foreground Upload Check")) {
+                    pendingUploadRecordID = record.id
+                    showUploadConsent = true
+                }
+                .buttonStyle(.borderedProminent)
+            } else {
+                Text(L10n.tr("Check authenticated capability immediately before starting an upload check."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         default:
             EmptyView()
         }
@@ -460,6 +512,73 @@ struct ControlledDiagnosticsView: View {
         case .unsupported: return Color.statusError
         case .unavailable: return Color.statusAttention
         default: return .secondary
+        }
+    }
+
+    private func startPendingUpload() {
+        guard let recordID = pendingUploadRecordID,
+              let record = controller.records.first(where: { $0.id == recordID }) else {
+            pendingUploadRecordID = nil
+            return
+        }
+        pendingUploadRecordID = nil
+        controller.beginForegroundUpload(
+            recordID: record.id,
+            preflight: { installationComponent, operationComponent, requireEmptySlot in
+                syncthingManager.diagnosticsUploadPreflight(
+                    folderID: record.folderID,
+                    peerID: record.homeserverDeviceID,
+                    installationComponent: installationComponent,
+                    operationComponent: operationComponent,
+                    requireEmptySlot: requireEmptySlot
+                )
+            },
+            rescan: {
+                syncthingManager.rescanFolder(id: record.folderID) == nil
+            }
+        )
+    }
+
+    private func uploadStatusLabel(_ status: DiagnosticsPairingController.UploadStatus) -> String {
+        switch status.phase {
+        case .preflighting:
+            return L10n.tr("Checking exact upload preconditions — no artifact created")
+        case .checking:
+            return L10n.fmt("Upload pending after %d of 8 exact polls", status.completedPolls)
+        case .uploadObserved:
+            return L10n.tr("Upload observed — download and roundtrip unobserved")
+        case .cancelled:
+            return L10n.tr("Upload check cancelled — no late result can upgrade it")
+        case .timedOut:
+            return L10n.tr("Upload check timed out — upload unobserved")
+        case .interrupted:
+            return L10n.tr("Upload check interrupted — upload unobserved")
+        case .conflict:
+            return L10n.tr("Upload check found an immutable conflict — upload unobserved")
+        case .rateLimited:
+            return L10n.tr("Upload check rate limited — upload unobserved")
+        case .unsupported:
+            return L10n.tr("Upload check unsupported for this exact folder and peer")
+        case .unavailable:
+            return L10n.tr("Upload capability unavailable — no upload evidence")
+        }
+    }
+
+    private func uploadStatusSymbol(_ phase: DiagnosticsPairingController.UploadPhase) -> String {
+        switch phase {
+        case .uploadObserved: return "arrow.up.circle.fill"
+        case .preflighting, .checking: return "hourglass"
+        case .cancelled, .timedOut, .interrupted, .unavailable: return "exclamationmark.circle"
+        case .conflict, .rateLimited, .unsupported: return "xmark.shield"
+        }
+    }
+
+    private func uploadStatusColor(_ phase: DiagnosticsPairingController.UploadPhase) -> Color {
+        switch phase {
+        case .uploadObserved: return Color.statusSuccess
+        case .preflighting, .checking: return Color.statusAttention
+        case .cancelled, .timedOut, .interrupted, .unavailable: return Color.statusAttention
+        case .conflict, .rateLimited, .unsupported: return Color.statusError
         }
     }
 

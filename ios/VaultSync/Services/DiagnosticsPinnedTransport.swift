@@ -43,6 +43,7 @@ final class DiagnosticsPinnedTransport: DiagnosticsTransporting, @unchecked Send
             DiagnosticsCapabilityProtocol.path,
             DiagnosticsNamespaceProtocol.enablementPath,
             DiagnosticsNamespaceProtocol.authorizationPath,
+            DiagnosticsUploadProtocol.path,
         ]
         guard allowedPaths.contains(path),
               !body.isEmpty, body.count <= DiagnosticsDeterministicCBOR.maximumMessageBytes else {
@@ -107,7 +108,7 @@ final class DiagnosticsPinnedTransport: DiagnosticsTransporting, @unchecked Send
             }
             return data
         case 202:
-            guard !responseBody, data.isEmpty, Self.contentLength(http) == 0,
+            guard data.isEmpty, Self.contentLength(http) == 0,
                   http.value(forHTTPHeaderField: "Content-Type") == nil else {
                 throw DiagnosticsProtocolError.invalidMessage
             }
