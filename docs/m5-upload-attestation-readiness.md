@@ -155,8 +155,9 @@ The current local gate includes:
   zero failed/skipped;
 - the complete iOS test plan on that simulator: 429 tests / 436 parameterized
   test runs passed, zero failed/skipped; and
-- generic iOS Simulator product build, design-token lint, localized string-key
-  parity, and localized plist validation: passed.
+- generic iOS Simulator product build, a Release-configuration simulator
+  build, design-token lint, localized string-key parity, and localized plist
+  validation: passed.
 
 The Swift product runner tests cover exact Go golden bytes, canonical and
 signature tampering, exclusive/symlink/hard-link/collision handling, explicit
@@ -165,12 +166,17 @@ cancellation, refresh non-resumption, three/hour rate rejection before a fourth
 write, finite eight-poll timeout, and no artifact/request after an ambiguous
 peer preflight.
 
-The signed owner-device test remains a merge gate. It is not claimed complete
-until Xcode can mount its Developer Disk Image and the structured `/tmp`
-result reports the focused suites passing. A simulator, build success, or
-device discovery alone is not real-device evidence.
+The signed owner-device test was not executed — owner-approved
+physical-device waiver (2026-07-15). For the remaining 2.0 completion run the
+owner explicitly replaced the real-device merge gate with fresh exact-head
+substitute evidence: the complete iOS plan and the focused upload suites
+re-run on the iPhone 17 Pro simulator, a Release-configuration simulator
+build, and the isolated two-instance Syncthing E2E above. No hardware
+keychain behavior, real APNs delivery, real background waking, or TestFlight
+installation on hardware is claimed; simulator evidence is never described as
+real-device evidence.
 
 Decision 024 remains the unchanged canonical contract. The next milestone may
 add controlled download only after this upload-only PR, its review/CI gates,
-and its real-device evidence are complete. Roundtrip remains a still later,
-separate derivation.
+and its owner-waived substitute evidence gates are complete. Roundtrip
+remains a still later, separate derivation.
