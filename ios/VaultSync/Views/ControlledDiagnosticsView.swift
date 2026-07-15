@@ -537,9 +537,15 @@ struct ControlledDiagnosticsView: View {
                 syncthingManager.rescanFolder(id: record.folderID) == nil
             },
             events: { sinceID in
-                DiagnosticsResponseProtocol.eventSnapshot(
-                    generation: SyncBridgeService.eventStreamGeneration(),
-                    json: SyncBridgeService.getEventsSince(lastID: Int(sinceID))
+                // Read events before the generation: if the engine restarts
+                // in between, the newer generation fails the caller's
+                // continuity check instead of tagging new-engine events with
+                // the pre-restart generation.
+                let json = SyncBridgeService.getEventsSince(lastID: Int(sinceID))
+                let generation = SyncBridgeService.eventStreamGeneration()
+                return DiagnosticsResponseProtocol.eventSnapshot(
+                    generation: generation,
+                    json: json
                 )
             }
         )
