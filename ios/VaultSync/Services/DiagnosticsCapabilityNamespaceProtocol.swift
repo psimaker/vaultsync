@@ -623,7 +623,7 @@ enum DiagnosticsNamespaceProtocol {
         }
     }
 
-    private static func installationBinding(
+    static func installationBinding(
         initialAppKeyID: Data,
         homeserverBinding: Data,
         folderBinding: Data
@@ -634,7 +634,7 @@ enum DiagnosticsNamespaceProtocol {
         return DiagnosticsCrypto.sha256(domain: installationBindingDomain, body: body)
     }
 
-    private static func base32LowerNoPadding(_ data: Data) -> String {
+    static func base32LowerNoPadding(_ data: Data) -> String {
         let alphabet = Array("abcdefghijklmnopqrstuvwxyz234567".utf8)
         var result: [UInt8] = []
         var buffer: UInt64 = 0
@@ -652,6 +652,25 @@ enum DiagnosticsNamespaceProtocol {
             result.append(alphabet[Int((buffer << UInt64(5 - bits)) & 0x1f)])
         }
         return String(decoding: result, as: UTF8.self)
+    }
+
+    static func operationRequestComponents(
+        installationBinding: Data,
+        operationID: Data
+    ) throws -> [String] {
+        guard installationBinding.count == 32,
+              operationID.count == 32,
+              installationBinding.contains(where: { $0 != 0 }),
+              operationID.contains(where: { $0 != 0 }) else {
+            throw DiagnosticsProtocolError.invalidMessage
+        }
+        return [
+            rootName,
+            "installations",
+            base32LowerNoPadding(installationBinding),
+            "operations",
+            base32LowerNoPadding(operationID) + ".request.cbor",
+        ]
     }
 
     private static func unixSeconds(_ date: Date) throws -> UInt64 {

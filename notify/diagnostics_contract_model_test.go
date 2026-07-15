@@ -292,6 +292,7 @@ func TestDiagnosticsRuntimeCarrierIsExplicitAndCoreRemainsIsolated(t *testing.T)
 	capabilityProtocolCarrier := filepath.Join(repoRoot, "notify", "diagnostics_capability_protocol.go")
 	appPairingProtocolCarrier := filepath.Join(repoRoot, "ios", "VaultSync", "Services", "DiagnosticsPairingProtocol.swift")
 	appCapabilityNamespaceCarrier := filepath.Join(repoRoot, "ios", "VaultSync", "Services", "DiagnosticsCapabilityNamespaceProtocol.swift")
+	appUploadProtocolCarrier := filepath.Join(repoRoot, "ios", "VaultSync", "Services", "DiagnosticsUploadProtocol.swift")
 	runtimeRoots := []string{
 		filepath.Join(repoRoot, "notify"),
 		filepath.Join(repoRoot, "ios", "VaultSync"),
@@ -316,7 +317,7 @@ func TestDiagnosticsRuntimeCarrierIsExplicitAndCoreRemainsIsolated(t *testing.T)
 				allowed := path == dormantCapabilityCarrier || path == capabilityProtocolCarrier ||
 					(name == "pairing" && (path == pairingProtocolCarrier || path == appPairingProtocolCarrier)) ||
 					(name == "namespace" && (path == namespaceProtocolCarrier || path == appCapabilityNamespaceCarrier)) ||
-					(name == "roundtrip" && path == appCapabilityNamespaceCarrier)
+					(name == "roundtrip" && (path == appCapabilityNamespaceCarrier || path == appUploadProtocolCarrier))
 				if bytes.Contains(body, []byte(capability)) && !allowed {
 					return fmt.Errorf("runtime file %s contains an unapproved diagnostics capability %s", path, name)
 				}
@@ -329,7 +330,9 @@ func TestDiagnosticsRuntimeCarrierIsExplicitAndCoreRemainsIsolated(t *testing.T)
 					(strings.HasPrefix(name, "roundtrip.") &&
 						(path == uploadProtocolCarrier || path == responseProtocolCarrier || path == capabilityProtocolCarrier)) ||
 					((name == "roundtrip.capability_query" || name == "roundtrip.capability_response") &&
-						path == appCapabilityNamespaceCarrier)
+						path == appCapabilityNamespaceCarrier) ||
+					((name == "roundtrip.operation_request" || name == "roundtrip.attestation_query" ||
+						name == "roundtrip.upload_attestation") && path == appUploadProtocolCarrier)
 				if bytes.Contains(body, []byte(strings.TrimSuffix(domain, "\x00"))) && !allowed {
 					return fmt.Errorf("runtime file %s contains an unapproved signature domain", path)
 				}

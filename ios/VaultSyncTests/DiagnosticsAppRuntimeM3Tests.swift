@@ -1189,7 +1189,7 @@ struct DiagnosticsAppRuntimeM3Tests {
 
 private final class DiagnosticsAppRuntimeFixtureToken {}
 
-private final class LockedDiagnosticsClock: @unchecked Sendable {
+final class LockedDiagnosticsClock: @unchecked Sendable {
     private let lock = NSLock()
     private var date: Date
     private var continuous: TimeInterval
@@ -1231,7 +1231,7 @@ private final class LockedDiagnosticsClock: @unchecked Sendable {
     }
 }
 
-private func loadDiagnosticsHexFixture(
+func loadDiagnosticsHexFixture(
     named name: String,
     filePath: StaticString = #filePath
 ) throws -> [String: String] {
@@ -1244,7 +1244,7 @@ private func loadDiagnosticsHexFixture(
     return try JSONDecoder().decode([String: String].self, from: Data(contentsOf: bundled ?? fallback))
 }
 
-private func makeRuntimeRecord(
+func makeRuntimeRecord(
     appSeed: Data,
     helperPublic: Data,
     homeserver: Data,
@@ -1325,7 +1325,7 @@ private func makeCapabilityResponse(
     return try DiagnosticsDeterministicCBOR.encode(.map(fields))
 }
 
-private func makeCapabilityResponseForQuery(
+func makeCapabilityResponseForQuery(
     _ queryData: Data,
     helperKey: Curve25519.Signing.PrivateKey
 ) throws -> Data {
@@ -1777,7 +1777,7 @@ private func pairingDomainForTest(_ type: DiagnosticsPairingProtocol.MessageType
     return "eu.vaultsync.helper-pairing/v1/\(suffix)\0"
 }
 
-private func makeNamespaceRoot(
+func makeNamespaceRoot(
     enablement: Data,
     record: DiagnosticsPairingRecord,
     helperKey: Curve25519.Signing.PrivateKey,
@@ -1812,7 +1812,7 @@ private func makeNamespaceRoot(
     )
 }
 
-private func countersignInitialAuthorization(
+func countersignInitialAuthorization(
     _ candidate: Data,
     helperKey: Curve25519.Signing.PrivateKey
 ) throws -> Data {
@@ -1845,7 +1845,7 @@ private func removingSignatures(_ encoded: Data, labels: Set<UInt64>) throws -> 
     return try DiagnosticsDeterministicCBOR.encode(value.removing(labels: labels))
 }
 
-private final class InMemoryDiagnosticsKeychain: DiagnosticsKeychainAccess, @unchecked Sendable {
+final class InMemoryDiagnosticsKeychain: DiagnosticsKeychainAccess, @unchecked Sendable {
     private var items: [String: [String: Any]] = [:]
 
     func attributes(account: String) -> [String: Any]? {
