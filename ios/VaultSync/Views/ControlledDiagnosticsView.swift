@@ -91,7 +91,7 @@ struct ControlledDiagnosticsView: View {
                 startPendingUpload()
             }
         } message: {
-            Text(L10n.tr("VaultSync will create one signed request with 256 random bytes in the already authorized diagnostics namespace and rescan only the selected folder. Only an exact signed reply from the pinned helper can mark upload observed. After an accepted upload, VaultSync authorizes exactly one signed helper response file with 256 random bytes in the same namespace; only its fresh synchronized arrival with full validation can mark download observed. Roundtrip remains unobserved. Opaque copies may remain in peers, backups, versions, conflicts, or tombstones."))
+            Text(L10n.tr("VaultSync will create one signed request with 256 random bytes in the already authorized diagnostics namespace and rescan only the selected folder. Only an exact signed reply from the pinned helper can mark upload observed. After an accepted upload, VaultSync authorizes exactly one signed helper response file with 256 random bytes in the same namespace; only its fresh synchronized arrival with full validation can mark download observed. A causal roundtrip is confirmed only from the same operation's upload then download and is never global sync health. Opaque copies may remain in peers, backups, versions, conflicts, or tombstones."))
         }
     }
 
@@ -100,7 +100,7 @@ struct ControlledDiagnosticsView: View {
             Label(L10n.tr("Explicit local or VPN pairing only"), systemImage: "lock.shield")
             Label(L10n.tr("TLS 1.3 with an exact QR-pinned key"), systemImage: "checkmark.seal")
             Label(L10n.tr("No discovery, trust adoption, Relay tunnel, or automatic namespace"), systemImage: "hand.raised")
-            Text(L10n.tr("Pairing and capability checks create no upload, download, or roundtrip evidence. Only a separate explicit check may mark upload observed and, after it, download observed; roundtrip remains independent. The diagnostics namespace is visible to synchronized peers and may remain in backups, versions, conflict copies, and tombstones."))
+            Text(L10n.tr("Pairing and capability checks create no upload, download, or roundtrip evidence. Only a separate explicit check may mark upload observed, then download observed, and derive the causal roundtrip from that one operation alone. The diagnostics namespace is visible to synchronized peers and may remain in backups, versions, conflict copies, and tombstones."))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         } header: {
@@ -561,6 +561,8 @@ struct ControlledDiagnosticsView: View {
                 )
             case .downloadObserved:
                 return L10n.tr("Upload and download observed — roundtrip remains unobserved")
+            case .roundtripConfirmed:
+                return L10n.tr("Causal roundtrip confirmed for this one operation — not global sync health")
             default:
                 return L10n.tr("Partial: upload observed, download unobserved — no late result can upgrade it")
             }
@@ -572,6 +574,8 @@ struct ControlledDiagnosticsView: View {
             return L10n.fmt("Upload pending after %d of 8 exact polls", status.completedPolls)
         case .uploadObserved, .downloadObserved:
             return L10n.tr("Upload and download observed — roundtrip remains unobserved")
+        case .roundtripConfirmed:
+            return L10n.tr("Causal roundtrip confirmed for this one operation — not global sync health")
         case .cancelled:
             return L10n.tr("Upload check cancelled — no late result can upgrade it")
         case .timedOut:
@@ -593,6 +597,7 @@ struct ControlledDiagnosticsView: View {
         switch phase {
         case .uploadObserved: return "arrow.up.circle.fill"
         case .downloadObserved: return "arrow.down.circle.fill"
+        case .roundtripConfirmed: return "arrow.triangle.2.circlepath.circle.fill"
         case .preflighting, .checking: return "hourglass"
         case .cancelled, .timedOut, .interrupted, .unavailable: return "exclamationmark.circle"
         case .conflict, .rateLimited, .unsupported: return "xmark.shield"
@@ -601,7 +606,7 @@ struct ControlledDiagnosticsView: View {
 
     private func uploadStatusColor(_ phase: DiagnosticsPairingController.UploadPhase) -> Color {
         switch phase {
-        case .uploadObserved, .downloadObserved: return Color.statusSuccess
+        case .uploadObserved, .downloadObserved, .roundtripConfirmed: return Color.statusSuccess
         case .preflighting, .checking: return Color.statusAttention
         case .cancelled, .timedOut, .interrupted, .unavailable: return Color.statusAttention
         case .conflict, .rateLimited, .unsupported: return Color.statusError

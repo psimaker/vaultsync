@@ -129,6 +129,7 @@ struct DiagnosticsForegroundUploadRuntimeTests {
         )
         let responseRelativePath = responseComponents.joined(separator: "/")
         let eventBox = LockedDownloadEventBox()
+        let happyResponseBox = LockedUploadRequestBox()
         let happyRecord = record
         let happyFolder = folder
         let transport = ForegroundUploadTransport(
@@ -144,6 +145,7 @@ struct DiagnosticsForegroundUploadRuntimeTests {
                     helperKey: helperKey,
                     now: clock.value()
                 )
+                happyResponseBox.set(response)
                 let url = responseComponents.reduce(happyFolder) {
                     $0.appendingPathComponent($1)
                 }
@@ -224,10 +226,10 @@ struct DiagnosticsForegroundUploadRuntimeTests {
         await waitForTerminalUpload(controller: controller, recordID: record.id)
 
         let status = try #require(controller.uploadStatuses[record.id])
-        #expect(status.phase == .downloadObserved)
+        #expect(status.phase == .roundtripConfirmed)
         #expect(status.evidence.uploadObserved)
         #expect(status.evidence.downloadObserved)
-        #expect(!status.evidence.roundtripConfirmed)
+        #expect(status.evidence.roundtripConfirmed)
         #expect(status.completedPolls == 2)
         #expect(status.completedResponsePolls == 1)
         let queries = await transport.uploadQueries()
@@ -236,6 +238,84 @@ struct DiagnosticsForegroundUploadRuntimeTests {
         #expect(requestBox.value() != nil)
         let authorizations = await transport.responseAuthorizations()
         #expect(authorizations.count == 1)
+
+        // A response artifact copied from another operation can never satisfy
+        // a second operation: the exact-path copy fails the second chain's
+        // validation and terminates as conflict without download or roundtrip
+        // evidence.
+        let replayComponents = try DiagnosticsNamespaceProtocol.operationResponseComponents(
+            installationBinding: candidate.installationBinding,
+            operationID: Data(repeating: 0x21, count: 32)
+        )
+        let replayRelative = replayComponents.joined(separator: "/")
+        let replayEventBox = LockedDownloadEventBox()
+        let replayRequestBox = LockedUploadRequestBox()
+        let replayTransport = ForegroundUploadTransport(
+            record: record,
+            helperKey: helperKey,
+            clock: clock,
+            request: { replayRequestBox.value() },
+            acceptAfter: 1,
+            respond: { _ in
+                guard let stolen = happyResponseBox.value() else {
+                    throw DiagnosticsProtocolError.unavailable
+                }
+                let url = replayComponents.reduce(happyFolder) {
+                    $0.appendingPathComponent($1)
+                }
+                try stolen.write(to: url, options: .atomic)
+                replayEventBox.append(DiagnosticsResponseProtocol.DownloadEvent(
+                    id: replayEventBox.nextID(),
+                    type: "ItemFinished",
+                    time: iso8601WithNanoseconds(clock.value().addingTimeInterval(0.5)),
+                    data: [
+                        "folder": happyRecord.folderID,
+                        "item": replayRelative,
+                        "type": "file",
+                        "action": "update",
+                        "error": "",
+                    ]
+                ))
+            }
+        )
+        let replayController = makeUploadController(
+            store: store,
+            transport: replayTransport,
+            clock: clock,
+            random: LockedUploadRandom(values: [
+                Data(repeating: 0x21, count: 32),
+                Data(repeating: 0x22, count: 32),
+                Data(repeating: 0x23, count: 32),
+                Data(repeating: 0x24, count: DiagnosticsUploadProtocol.payloadByteCount),
+                Data(repeating: 0x25, count: 32),
+            ]),
+            requestBox: replayRequestBox
+        )
+        replayController.refresh()
+        await replayController.checkCapability(recordID: record.id)
+        replayController.beginForegroundUpload(
+            recordID: record.id,
+            preflight: { _, _, requireEmptySlot in
+                self.validPreflight(
+                    record: record,
+                    folderPath: folder.path,
+                    requireEmptySlot: requireEmptySlot
+                )
+            },
+            rescan: { true },
+            events: { sinceID in
+                DiagnosticsResponseProtocol.DownloadEventSnapshot(
+                    generation: 7,
+                    events: replayEventBox.events(after: sinceID)
+                )
+            }
+        )
+        await waitForTerminalUpload(controller: replayController, recordID: record.id)
+        let replayStatus = try #require(replayController.uploadStatuses[record.id])
+        #expect(replayStatus.phase == .conflict)
+        #expect(replayStatus.evidence.uploadObserved)
+        #expect(!replayStatus.evidence.downloadObserved)
+        #expect(!replayStatus.evidence.roundtripConfirmed)
 
         let lateRequestBox = LockedUploadRequestBox()
         let lateTransport = ForegroundUploadTransport(
