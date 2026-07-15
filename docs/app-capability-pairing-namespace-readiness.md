@@ -4,7 +4,10 @@
 plane is implemented and locally verified. It is not an App Store release or a
 transfer milestone. The published helper baseline is `notify-v2.0.2`; the app
 change remains unreleased until its own PR and later release gates complete.
-Upload, download, and roundtrip evidence are all unset.
+This document records the M3 control-plane boundary. The later unreleased M5
+source adds only the explicit foreground upload leg documented in
+[M5 foreground upload-only readiness](m5-upload-attestation-readiness.md);
+download and roundtrip remain unset.
 
 ## User-controlled scope
 
@@ -53,10 +56,12 @@ cookies, cache, compression, query, or fragment, fixed CBOR media types and
 body limits, and mutually authenticated application signatures. Network
 errors become `capability unavailable`; authenticated protocol, tuple, or
 mandatory-flag mismatches become `unsupported`. Neither state falls back to a
-weaker success. Only the four fixed M3 pairing, capability, namespace-
-enablement, and namespace-authorization paths are accepted. A successful
-capability response can authorize the next explicit control step only through
-its exact signed expiry; it is invalidated on restart, error, or credential
+weaker success. M3 accepts only its four fixed pairing, capability,
+namespace-enablement, and namespace-authorization paths. The separate M5
+source additionally permits only the fixed Decision 024 attestation path; it
+does not permit response-authorization or cleanup calls. A successful
+capability response can authorize the next explicit action only through its
+exact signed expiry; it is invalidated on restart, error, or credential
 transition.
 
 Every persisted pending D022/D023 operation also carries an app-local
