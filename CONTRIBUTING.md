@@ -29,10 +29,10 @@ An honest picture of what you can build where:
 
 ```bash
 # Server helper (its own Go module)
-cd notify && go test ./... && go vet ./...
+(cd notify && go test ./... && go vet ./...)
 
 # Sync bridge (applies the Syncthing patches first; ~1 min, starts real Syncthing instances)
-cd go && make patch && go test -tags noassets ./bridge
+(cd go && make patch && go test -tags noassets ./bridge)
 ```
 
 `gofmt` is enforced by CI for both modules.
@@ -40,10 +40,10 @@ cd go && make patch && go test -tags noassets ./bridge
 **iOS app — macOS only**, with Xcode 26+, XcodeGen, gomobile, and Make:
 
 ```bash
-cd go && make patch && make xcframework   # builds the embedded sync engine (~160 MB)
-cd ios && xcodegen generate
-xcodebuild test -project VaultSync.xcodeproj -scheme VaultSync \
-  -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' CODE_SIGNING_ALLOWED=NO
+(cd go && make patch && make xcframework)   # builds the embedded sync engine (~160 MB)
+(cd ios && xcodegen generate)
+(cd ios && xcodebuild test -project VaultSync.xcodeproj -scheme VaultSync \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=latest' CODE_SIGNING_ALLOWED=NO)
 ```
 
 The full build, signing, and test guide is [`docs/setup.md`](docs/setup.md). If you only touch the Go side, you don't need a Mac at all.
