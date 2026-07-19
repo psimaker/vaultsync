@@ -9,6 +9,7 @@ Find your symptom, jump to the fix. After each fix, retry from the app to confir
 | "Relay Unreachable", health check fails | [Relay Unreachable](#relay-unreachable) |
 | Stuck on "Confirm your first share" | [No Pending Shares Appear](#no-pending-shares-appear) |
 | Subscribed, but no wake-ups arrive | [APNs Not Registered](#apns-not-registered) |
+| Subscribed, but per-device provisioning says "Failed" | [APNs Not Registered](#apns-not-registered) |
 | Ran the server installer, app still says "Not active yet" | [Relay quick triage](#relay-quick-triage) |
 | Vault list empty, "folder not connected" | [Obsidian Folder Not Found](#obsidian-folder-not-found) |
 | "Vault Folder Was Moved or Deleted" on a vault | [Vault Folder Was Moved or Deleted](#vault-folder-was-moved-or-deleted) |
@@ -137,14 +138,29 @@ In the app: **Cloud Relay** tab → **Relay health & diagnostics** → **Check R
 
 Silent push wake-ups use a background push that **does not need notification permission** — but they do need a valid APNs token and a provisioned device.
 
-**Looks like:** diagnostics show the APNs token missing or registration failed; you're subscribed but wake-ups never arrive.
+**Looks like:** diagnostics show the APNs token missing or registration failed;
+you're subscribed but wake-ups never arrive; or per-device provisioning says
+**Failed** while the helper reports an inactive subscription.
 
 **Fix:**
-0. On the server, run `--doctor` (see the quick-triage block above). A `WARN` on the trigger check saying `relay reports no active subscription for this device` means the server side is healthy and the problem is app-side: subscription or provisioning — continue below.
-1. Open **Cloud Relay** tab → **Relay health & diagnostics**.
-2. Tap **Retry APNs Registration** and confirm an **APNs Token** appears.
-3. Tap **Retry Provisioning** to rebind the token to your device IDs (shown while subscribed).
-4. Trigger a file change on your server and verify **Last Trigger Received** updates.
+1. On the server, run `--doctor` (see the quick-triage block above). A `WARN`
+   on the trigger check saying `relay reports no active subscription for this
+   device` means the server side is healthy and the problem is app-side:
+   subscription or provisioning. Reinstalling or changing the helper cannot
+   repair this state.
+2. Record **Settings → About → VaultSync version & build**, then record the
+   hosted relay version without sending any private data:
+   ```bash
+   curl -fsSL https://relay.vaultsync.eu/api/v1/health
+   ```
+   Install any available VaultSync App Store update before retrying. If the app
+   is already current but provisioning still fails, include both versions in a
+   bug report: a relay/app provisioning-contract mismatch needs an app or hosted
+   relay fix, not a homeserver change.
+3. Open **Cloud Relay** tab → **Relay health & diagnostics**.
+4. Tap **Retry APNs Registration** and confirm an **APNs Token** appears.
+5. Tap **Retry Provisioning** to rebind the token to your device IDs (shown while subscribed).
+6. Trigger a file change on your server and verify **Last Trigger Received** updates.
 
 ---
 
