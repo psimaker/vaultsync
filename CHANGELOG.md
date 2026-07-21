@@ -4,6 +4,12 @@ All notable changes to VaultSync are documented here.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **Your device identity can no longer silently change after a crash or a failed engine start** ([#135](https://github.com/psimaker/vaultsync/issues/135)) — the sync engine previously generated a brand-new device identity whenever its stored certificate failed to load (for example after a hard crash, or while the files were briefly unreadable), which invalidated every existing pairing and appeared on your server as an endless stream of new unknown devices. The engine now creates an identity only on a confirmed first launch; on any ambiguous state it refuses to start and reports the error instead of quietly replacing your identity.
+
 ## [2.0.0] — 2026-07-15
 
 ### Added
