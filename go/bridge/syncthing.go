@@ -69,9 +69,12 @@ func StartSyncthing(configDir string) string {
 		return fmt.Sprintf("ensure data dir: %v", err)
 	}
 
-	// Load or generate TLS certificate (persisted in configDir).
+	// Load the TLS certificate (persisted in configDir), generating it only
+	// on a confirmed first launch. Never falls back to regeneration: a new
+	// certificate is a new device identity, which silently invalidates every
+	// peer pairing (#135).
 	var err error
-	stCert, err = syncthing.LoadOrGenerateCertificate(
+	stCert, err = loadOrCreateIdentity(
 		locations.Get(locations.CertFile),
 		locations.Get(locations.KeyFile),
 	)
