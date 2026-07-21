@@ -1,3 +1,3 @@
 "CFBundleDisplayName" = "VaultSync";
-"NSCameraUsageDescription" = "VaultSync 需要使用相机扫描 Syncthing 设备二维码，以便轻松完成设置。";
+"NSCameraUsageDescription" = "VaultSync 仅使用相机扫描你主动选择的 Syncthing 设备 ID 二维码和受控诊断配对二维码。";
 "NSLocalNetworkUsageDescription" = "VaultSync 直接连接同一网络中的其他设备，让你的仓库即时同步，无需绕道互联网。";

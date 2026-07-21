@@ -46,9 +46,9 @@ succeeded” flag:
 | Silent push received locally | This iPhone, unattributed | The iOS remote-notification delegate |
 | Background sync started | This iPhone, unattributed | Entry into the silent-push sync path |
 | Local data progress observed | Background run, or one eligible server/folder check | A fresh, successful incoming file application (`ItemFinished`) |
-| Upload confirmed | Server/folder/check correlation | Not available with the current helper |
-| Download confirmed | Server/folder/check correlation | Not available as a controlled directional proof with the current helper |
-| Full roundtrip confirmed | One matching upload-then-download correlation | Not available with the current helper |
+| Upload observed | Exact app/helper/homeserver/folder/operation correlation | Only an explicit foreground check in unreleased M5 app source can accept the exact paired-helper attestation for its active request/query. |
+| Download observed | Exact controlled response correlation | Only the same active operation in unreleased M6 app source can set it: after an accepted upload, the authorized helper response must pass a fresh post-authorization cursor/wall-clock/generation `ItemFinished` gate plus complete validation. A helper response or synchronized file alone cannot set it. |
+| Full roundtrip confirmed | One matching upload-then-download correlation | Only the same active operation in unreleased M7 app source can derive it, from exactly its accepted upload then accepted download. It is a scoped propagation claim, never global sync health or future delivery. |
 
 None automatically implies the next. Relay reachability is not a trigger;
 trigger observation is not APNs delivery; push receipt is not background start;
@@ -56,8 +56,10 @@ engine reachability, scans, index updates, `idle`, and 100% completion are not
 local data progress. A successful incoming file application proves that this
 iPhone applied a file change, but not that network bytes moved, which peer
 supplied every block, or that the check caused the change. Upload and controlled
-download therefore remain independent and unset, so a full roundtrip cannot be
-derived.
+download are separate, explicitly initiated Decision 024 fields in unreleased
+source; download can derive only after an accepted upload inside the same
+active operation, and the causal roundtrip derives only inside that same
+operation from exactly those two acceptances.
 
 Server snapshots contain only entitlement, provisioning, backend, and
 per-homeserver Relay observation. The v1 push contains no homeserver/folder
@@ -67,7 +69,7 @@ check can scope fresh local evidence to one folder and its sole configured peer.
 
 #### Manual synchronization-path check
 
-Relay Diagnostics exposes the only entry point. An explicit tap takes a current
+Relay Diagnostics exposes the passive-check entry point. An explicit tap takes a current
 subscription-local event cursor, nanosecond production-time boundary, and engine
 generation, then observes at most five times with 2/4/8/12-second delays. Results
 are kept in memory per unique server/folder pair. Only an unpaused `sendreceive`
@@ -86,38 +88,164 @@ background sync.
 
 Ignore rules, missing paths, an event-buffer overflow, or a runtime folder error
 can prevent an observation and therefore end conservatively as incomplete; they
-never create a false success. A controlled upload/download roundtrip needs a
-separately designed, additive, capability-negotiated helper contract and a
-demonstrably safe app-owned diagnostics namespace. Relay v1 is unchanged by this
-milestone.
+never create a false success. It remains separate from the explicit controlled
+operation below and cannot populate that operation's evidence. Relay v1 is
+unchanged.
 
-#### Proposed correlated roundtrip contract — not implemented
+#### Opt-in correlated-roundtrip helper runtime — upload and controlled download
 
-[Decision 021](decisions/021-capability-negotiated-helper-contract-for-correlated-roundtrip-proof.md)
-defines the proposed proof and rollout boundaries. It does not authorize a
-runtime change. The current app/helper still creates no probe or namespace, has
-no diagnostic pairing credential, and cannot confirm upload, controlled
-download, or a full roundtrip.
+[Decisions 021–024](decisions/021-capability-negotiated-helper-contract-for-correlated-roundtrip-proof.md)
+define the proof and rollout boundaries. Helper 2.0.2 is published and its
+immutable digest plus upgrade, downgrade, and forward-recovery path are
+verified. The source tree now also contains the unreleased app-side explicit
+capability, pairing, credential-lifecycle, and namespace-authorization control
+plane plus the explicit M5 foreground upload operation and the M6 controlled
+download leg and the M7 causal-roundtrip derivation. Product upload is
+implemented to the exact signed-attestation boundary, controlled download to
+the exact fresh-apply response boundary, and the causal roundtrip derives
+solely from those two acceptances of one operation; all remain unreleased.
+VaultSync 2.0 remains NO-GO.
 
-The proposed data plane uses a visible, exclusively app-owned namespace inside
-one selected Syncthing folder. A fresh app-signed random request would need an
-authenticated helper attestation that the paired helper read the exact request;
-a fresh helper-signed response would then need to be applied and verified on
-this iPhone inside the active cursor, nanosecond, and engine-generation bounds.
-Only matching upload-then-download evidence for one operation, helper, folder,
-and homeserver could derive a scoped roundtrip. Signatures can establish logical
-app/helper authorship and causality, but not exact byte counts, a direct
-transport peer, or per-block provenance.
+One upload operation begins only after a user tap and a second localized
+confirmation. The app rechecks the exact current capability, pairing and
+namespace authorization, settled `sendreceive` folder, one designated connected
+unpaused peer, engine generation, path overlap, Syncthing ignore behavior, and
+empty operation slot. It never discovers or configures a peer, share, folder,
+namespace, trust decision, or ignore. A failed preflight creates nothing.
 
-This remains blocked until a visible collision-safe namespace, ignore/conflict/
-tombstone/backup semantics, least-privilege helper filesystem access, and a
-separate mutual credential/pairing and replay-recovery design are approved. The
-current helper's read-only configuration/access model and Syncthing peer
-identity do not provide those properties. Rollout must be helper-first; an old
-or unreachable helper yields capability unavailable rather than an error or a
-weaker success. Trigger v1, provisioning, Relay status, APNs, StoreKit, and the
-Cloud Relay privacy boundary remain unchanged, and the Relay never receives
-probe names, paths, values, contents, correlations, or results.
+The app generates a fresh operation ID, two nonces, and exactly 256 random
+request bytes in memory; signs Decision 024 types 3 and 4; exclusively creates
+the exact request beneath the already authorized installation; and rescans only
+the selected folder. It sends one byte-identical signed query on the fixed eight
+poll schedule. Only an exact type-5 response from the TLS-pinned paired helper,
+with every key, epoch, binding, operation, digest, nonce, signature, and clock
+gate valid for the still-active tuple, sets `upload observed`. HTTP status,
+request creation, rescan, index/idle/completion state, timestamps, and a
+synchronized attestation copy cannot do so. Cancellation, view exit, refresh,
+app/engine restart, target or credential change, timeout, and conflict are
+terminal; late responses never upgrade them.
+
+After upload acceptance the same operation captures a fresh event-cursor,
+wall-clock, and engine-generation baseline, sends one signed type-6 response
+authorization over the pinned endpoint, and watches only the exact expected
+response path. A fresh successful local apply plus complete type-7 signature,
+binding, digest, nonce, payload, and TTL validation sets `download observed`.
+A response predating the baseline or authorization, an engine restart, a
+changed binding, or any validation failure cannot set it; an invalid file at
+the exact path ends the operation as a conflict. Every terminal outcome after
+upload keeps the upload field visible as a partial result. When the same
+operation's upload and download acceptances both complete, the causal
+roundtrip derives in that acceptance from exactly this chain; it claims
+scoped propagation for one operation, never global health, future delivery,
+byte counts, or a direct peer.
+
+The runtime is gated by an operator-authored read-only configuration plus a
+separate writable state directory. If either is absent, existing helpers retain
+their exact Trigger-v1 behavior and create no diagnostics credential, listener,
+namespace, mapping, artifact, trust, or network request. The ordinary helper
+installers and Compose configuration do not activate it.
+
+When explicitly enabled, one TLS-1.3-only listener exposes exact fixed POST
+paths for D022 pairing, D023 enablement/authorization, and D024 capability,
+upload attestation, response authorization, and cleanup. A QR supplies the
+one-time HMAC secret, helper public key, and P-256 SPKI pin; deterministic CBOR
+and Ed25519 application signatures remain authoritative. Paths, identifiers,
+keys, pins, bindings, nonces, bodies, and artifacts stay out of URLs and logs.
+Every request has fixed body/time/rate limits and fails closed on unknown fields,
+versions, suites, keys, epochs, signatures, replays, or tuple changes.
+
+The helper state store keeps separate signing/TLS keys, opaque bindings,
+authorized app public keys, lifecycle state, revocations, and stable local
+folder-to-mount mappings. App-key, helper-key, and TLS-pin transitions remain
+operation-unavailable until a capability query authenticated under the exact
+committed proposed state succeeds. Helper rotation appends a dual-signed D023
+manifest; app/helper rotation then requires a new dual-signed immutable
+authorization epoch before any operation can resume. Loss or suspected
+compromise requires explicit re-pairing, never trust transfer.
+A shared helper-key or TLS-pin transition does not return signed capability
+success to an early installation while another required installation is still
+unconfirmed; it remains unavailable until the global commit is durable, then an
+exact retry recovers.
+All diagnostics protocol, operator, namespace, startup-reconciliation, and
+admin mutations share a protected cross-process lock. This prevents a separate
+`docker exec` process from rotating or revoking credentials between a runtime
+state check, an immutable namespace append, and the corresponding atomic state
+update.
+
+Namespace creation remains a distinct local operator mutation. A signed app
+enablement is necessary but insufficient: a one-shot Linux installer rechecks
+the exact local Syncthing folder, `.stfolder`, canonical path, expanded ignore
+rules, bindings, signatures, and collision state, then creates the one visible
+`VaultSync Diagnostics` child. The host source device/inode captured before the
+bind must match inside that one-shot container before any creation. Normal
+runtime receives only the exact child, opens it by descriptor, and rechecks
+inode, device, mount identity, ownership, mode, link count, allocation, fixed
+layout, and immutable chains. It also verifies an ephemeral SHA-256 deployment
+binding over the folder ID, Syncthing's canonical path, fixed alias, and opened
+namespace device/inode; the raw host path is not persisted or logged. Network
+input cannot select a path. Capability and every operation pin the local Device
+ID before and after re-reading the exact folder mode/pause state and
+Syncthing-expanded ignore patterns; a reported ignore-parser error fails closed.
+Folder and ignore responses are bounded by fixed byte, entry-count, and
+pattern-length ceilings before matching.
+The supported package permits only an exact
+loopback HTTP Syncthing API endpoint. Syncthing, Relay, and operator HTTP clients
+reject redirects. The helper never edits configuration, ignores, discovery,
+shares, peers, or trust.
+
+Crash recovery is forward-only. An exact authorization message may be retried
+after both its immutable file and credential update became durable, including
+after its original signed expiry because that branch cannot create or advance
+state. If root creation and its protected root record completed before the local
+mount config was written, a repeated explicit installer command can resume only
+that same root after rechecking the current helper key/epoch, active folder
+authorization, root digest/signature/layout, parent device/inode, Syncthing
+Device/folder, and ignores. Recovery mode creates nothing and never adopts an
+unregistered root; helper/TLS rotation is blocked while a registered root lacks
+authorization.
+
+Each app installation pairs separately and receives an independent stable D023
+installation binding. It can join an existing authenticated namespace only with
+its own signed authorization; no trust or identity is inherited and no second
+namespace is created. Revocation preserves that installation's immutable signed
+history. A later namespace-wide helper manifest can advance for another active
+installation without rewriting revoked records, but that active installation
+must append a fresh authorization epoch before runtime operations resume. The
+manifest append itself requires every affected namespace to pass the pinned
+Device ID, folder/ignore, root, and deployment-mount preflight first.
+
+Only rootful Docker Engine on an explicitly confirmed standard Linux host is a
+supported diagnostics package. The container uses an immutable image content
+ID, read-only root, dropped capabilities, `no-new-privileges`, read-only config
+with exact private mode and single-link identity, read-only exact `config.xml`,
+an exact non-root config-owner UID/GID, separate state, and one exact namespace
+host bind. The installer displays the exact namespace path and requires separate
+acknowledgement of path and retained copies before creation. Named volumes and
+their backing paths, rootless Docker, remote/NAS/FUSE storage,
+remote Docker daemons/contexts, non-Unix Docker endpoints, Docker Desktop, WSL,
+systemd binaries, macOS, and Windows remain unsupported.
+The runtime itself rejects non-Linux activation rather than exposing a partial
+listener on an unsupported binary. Upgrade and downgrade preserve credentials,
+namespace, mappings, backups, versions, conflict copies, and tombstones; an old
+helper yields capability unavailable and never a weaker success.
+
+The helper can reconstruct an exact authorized runtime session and process the
+existing D024 foundations. The unreleased app can use only its capability,
+upload-attestation, and response-authorization paths, but signatures establish
+only authorship and causal bindings—not transport route, exact network bytes,
+direct peer, block provenance, future delivery, or global sync health. The
+fresh post-authorization cursor/wall-clock/generation/`ItemFinished` download
+gate exists in unreleased source and has been exercised only with injected
+event streams plus byte-exact artifacts from isolated local Syncthing
+instances; no response has passed it on a physical iPhone. Cleanup remains
+evidence-orthogonal. Helper-first publication,
+production rollout, rollback, the M5 real-device/PR gate, and the later download
+and roundtrip app milestones remain mandatory.
+See [helper runtime and packaging readiness](helper-runtime-packaging-readiness.md).
+The app-side scope, compatibility, persistence, consent, and rollback boundaries
+are documented in
+[app capability, pairing, and namespace readiness](app-capability-pairing-namespace-readiness.md)
+and [M5 foreground upload-only readiness](m5-upload-attestation-readiness.md).
 
 ### Connection paths & iOS network privacy
 

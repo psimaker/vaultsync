@@ -1,0 +1,32 @@
+name: Feature request
+description: Suggest an improvement or new capability for VaultSync
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion! Describing the problem before the solution helps us find the best fit — sometimes a fix already exists.
+
+        Filing this issue already covers the "please open an issue first" step in [CONTRIBUTING.md](https://github.com/psimaker/vaultsync/blob/main/CONTRIBUTING.md). If you'd like to implement it yourself, say so below and we'll work out the design together.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / use case
+      description: What are you trying to do, and what gets in the way today?
+      placeholder: "When I ..., I can't ... because ..."
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How would you like it to work? Rough ideas are fine.
+    validations:
+      required: false
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives & workarounds
+      description: What have you tried or considered instead?
+    validations:
+      required: false

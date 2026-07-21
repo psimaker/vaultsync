@@ -113,10 +113,17 @@ grep -q 'would run: docker run -d --name vaultsync-notify' "$OUT_DOCKER" \
 	|| fail "docker mode: start command not printed"
 grep "would run: docker run -d" "$OUT_DOCKER" | grep -q -- "-u $EXPECTED_OWNER " \
 	|| fail "docker mode: config owner $EXPECTED_OWNER missing from the printed docker run command"
-# Re-run = upgrade (#87): without an explicit pull, docker run reuses the
-# local :latest forever and a re-run silently keeps the old helper.
+# Re-run = deliberate re-resolution (#87): without an explicit pull, Docker
+# silently keeps the old local version-tag target.
 grep -q 'would run: docker pull ' "$OUT_DOCKER" \
 	|| fail "docker mode: no docker pull before start — a re-run would keep the old image (#87)"
+grep -q 'would run: docker pull ghcr.io/psimaker/vaultsync-notify:2.0.2' "$OUT_DOCKER" \
+	|| fail "docker mode: default image is not the reviewed 2.0.2 tag"
+grep -q 'runtime_image=[$]new_image_id' "$INSTALL_SH" \
+	|| fail "docker mode: the successful pull is not converted to an immutable local image ID"
+if grep -q 'continuing with the LOCAL image' "$INSTALL_SH"; then
+	fail "docker mode: failed pulls still permit a stale local-image fallback"
+fi
 pass "docker mode: dry run clean, owner $EXPECTED_OWNER in the start command, pull before start"
 
 # --- Run B: binary flavor ------------------------------------------------------
@@ -175,10 +182,21 @@ pass "no files created or removed"
 
 grep -qF 'vaultsync-notify_%s_%s' "$INSTALL_SH" \
 	|| fail "install.sh no longer builds asset names as vaultsync-notify_<goos>_<goarch>"
-# The ${GOOS}/${GOARCH} literals belong to docker.yml, not this shell.
+# The ${output_directory}/${goos}/${goarch} literals belong to docker.yml, not
+# this shell. Both dist and verify-dist use the same exact name before cmp.
 # shellcheck disable=SC2016
-grep -qF 'out="dist/vaultsync-notify_${GOOS}_${GOARCH}"' "$REPO_ROOT/.github/workflows/docker.yml" \
+grep -qF 'out="${output_directory}/vaultsync-notify_${goos}_${goarch}"' "$REPO_ROOT/.github/workflows/docker.yml" \
 	|| fail "docker.yml release loop no longer produces vaultsync-notify_<goos>_<goarch> assets"
 pass "asset-name contract holds on both sides"
+
+grep -q 'Could not fetch SHA256SUMS.*no binary was installed' "$INSTALL_SH" \
+	|| fail "binary mode: missing checksum assets do not fail closed"
+grep -q 'sha256sum or shasum is required.*no binary was installed' "$INSTALL_SH" \
+	|| fail "binary mode: a missing SHA-256 implementation does not fail closed"
+grep -q 'matches != 1' "$INSTALL_SH" \
+	|| fail "binary mode: a missing or duplicate asset checksum does not fail closed"
+grep -q 'non-canonical checksum' "$INSTALL_SH" \
+	|| fail "binary mode: malformed checksum text does not fail closed"
+pass "binary install requires one canonical checksum and cannot bypass verification"
 
 printf 'All install.sh --dry-run smoke tests passed.\n'

@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -40,6 +39,14 @@ type Config struct {
 	// sweep. NOTE: like StartupAnnounce, the zero value keeps the feature off
 	// for focused Config-literal tests; only loadConfig applies the default.
 	StaleRetriggerSeconds int
+	// This internal field remains a side-effect-free catalog; Config's zero
+	// value models a legacy helper. The separately gated diagnosticsRuntime
+	// below is the only path that can construct the fixed protocol endpoints.
+	diagnosticsCapabilities diagnosticsCapabilityFoundation
+	// diagnosticsRuntime is nil for every existing installation. A listener is
+	// possible only when the operator supplies both an explicit read-only
+	// runtime configuration and a separate writable state directory.
+	diagnosticsRuntime *diagnosticsRuntimeConfig
 }
 
 type appMode int
@@ -49,7 +56,21 @@ const (
 	modeDoctor
 	modeHealthcheck
 	modeVersion
+	modeDiagnosticsPair
+	modeDiagnosticsNamespace
+	modeDiagnosticsAdmin
 )
+
+var diagnosticsOperatorOptions struct {
+	folderID      string
+	sourcePath    string
+	mountedParent string
+	sourceDevice  uint64
+	sourceInode   uint64
+	confirmed     bool
+}
+
+var diagnosticsAdminOptions diagnosticsAdminCommand
 
 // version is stamped at build time via -ldflags "-X main.version=x.y.z" (the
 // docker.yml release loop and the Dockerfile); local builds print "dev". The
@@ -80,12 +101,7 @@ func main() {
 
 	cfg, err := loadConfigAwaitingSyncthing(context.Background())
 	if err != nil {
-		slog.Error("invalid runtime configuration",
-			"classification", "fatal",
-			"component", "config",
-			"error", err,
-			"action", "exit",
-		)
+		logInvalidRuntimeConfiguration(err)
 		os.Exit(1)
 	}
 
@@ -97,7 +113,7 @@ func main() {
 			slog.Error("doctor checks failed",
 				"classification", "fatal",
 				"component", "doctor",
-				"error", err,
+				"error_kind", operationalErrorKind(err),
 				"action", "fix_configuration",
 			)
 			os.Exit(1)
@@ -108,10 +124,51 @@ func main() {
 			slog.Error("healthcheck failed",
 				"classification", "fatal",
 				"component", "healthcheck",
-				"error", err,
+				"error_kind", operationalErrorKind(err),
 			)
 			os.Exit(1)
 		}
+		return
+	case modeDiagnosticsPair:
+		operatorCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		invitation, err := runDiagnosticsPairOperator(operatorCtx, cfg, diagnosticsOperatorOptions.folderID)
+		cancel()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "diagnostics pairing command unavailable")
+			os.Exit(1)
+		}
+		// The QR payload intentionally contains the one-time bootstrap secret and
+		// is emitted only to the invoking operator's stdout, never to logs.
+		fmt.Println(invitation)
+		return
+	case modeDiagnosticsNamespace:
+		operatorCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		mountAlias, err := runDiagnosticsNamespaceOperator(
+			operatorCtx,
+			cfg,
+			diagnosticsOperatorOptions.folderID,
+			diagnosticsOperatorOptions.sourcePath,
+			diagnosticsOperatorOptions.mountedParent,
+			diagnosticsOperatorOptions.sourceDevice,
+			diagnosticsOperatorOptions.sourceInode,
+			diagnosticsOperatorOptions.confirmed,
+		)
+		cancel()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "diagnostics namespace command unavailable")
+			os.Exit(1)
+		}
+		fmt.Println(mountAlias)
+		return
+	case modeDiagnosticsAdmin:
+		operatorCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		result, err := runDiagnosticsAdminOperator(operatorCtx, cfg, diagnosticsAdminOptions)
+		cancel()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "diagnostics admin command unavailable")
+			os.Exit(1)
+		}
+		fmt.Print(result)
 		return
 	default:
 		runCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
@@ -121,14 +178,50 @@ func main() {
 	}
 }
 
+func logInvalidRuntimeConfiguration(err error) {
+	attributes := []any{
+		"classification", "fatal",
+		"component", "config",
+		"error_kind", operationalErrorKind(err),
+	}
+	if fields := configurationErrorFields(err); fields != "" {
+		attributes = append(attributes, "fields", fields)
+	}
+	attributes = append(attributes, "action", configurationErrorAction(err))
+	slog.Error("invalid runtime configuration", attributes...)
+}
+
 func parseMode() (appMode, error) {
 	doctor := flag.Bool("doctor", false, "run connectivity checks and exit")
 	healthcheck := flag.Bool("healthcheck", false, "run readiness checks and exit")
 	showVersion := flag.Bool("version", false, "print the helper version and exit")
+	pairFolder := flag.String("diagnostics-pair-folder", "", "create one explicit local pairing invitation for this configured folder")
+	namespaceFolder := flag.String("diagnostics-prepare-folder", "", "prepare the explicitly approved diagnostics namespace for this configured folder")
+	namespaceSource := flag.String("diagnostics-source-path", "", "exact operator-confirmed Syncthing folder path on the host")
+	namespaceParent := flag.String("diagnostics-mounted-parent", "", "exact selected folder mount inside the one-shot installer")
+	namespaceDevice := flag.Uint64("diagnostics-source-device", 0, "exact local source filesystem device captured by the installer")
+	namespaceInode := flag.Uint64("diagnostics-source-inode", 0, "exact local source directory inode captured by the installer")
+	namespaceConfirmed := flag.Bool("diagnostics-operator-confirmed", false, "confirm the exact local namespace creation shown by the installer")
+	adminAction := flag.String("diagnostics-admin-action", "", "explicit local action: list, rotate-helper, rotate-tls, or revoke")
+	adminFolder := flag.String("diagnostics-admin-folder", "", "exact configured folder for a diagnostics admin action")
+	adminApp := flag.String("diagnostics-admin-app", "", "12-character app public-key fingerprint shown by the local list action")
+	adminReason := flag.Uint64("diagnostics-revocation-reason", 0, "revocation reason 1=user, 2=lost app, 3=folder removed, 4=suspected compromise")
 	flag.Parse()
 
-	if *doctor && *healthcheck {
-		return modeRun, fmt.Errorf("--doctor and --healthcheck cannot be used together")
+	selected := 0
+	for _, enabled := range []bool{*doctor, *healthcheck, *showVersion, *pairFolder != "", *namespaceFolder != "", *adminAction != ""} {
+		if enabled {
+			selected++
+		}
+	}
+	if selected > 1 {
+		return modeRun, fmt.Errorf("helper modes cannot be combined")
+	}
+	namespaceAuxiliary := *namespaceSource != "" || *namespaceParent != "" || *namespaceDevice != 0 || *namespaceInode != 0 || *namespaceConfirmed
+	adminAuxiliary := *adminFolder != "" || *adminApp != "" || *adminReason != 0
+	if (*showVersion || *doctor || *healthcheck) &&
+		(*pairFolder != "" || *namespaceFolder != "" || namespaceAuxiliary || *adminAction != "" || adminAuxiliary) {
+		return modeRun, fmt.Errorf("diagnostics flags cannot be combined with this helper mode")
 	}
 
 	if *showVersion {
@@ -139,6 +232,68 @@ func parseMode() (appMode, error) {
 	}
 	if *healthcheck {
 		return modeHealthcheck, nil
+	}
+	if *pairFolder != "" {
+		if namespaceAuxiliary || adminAuxiliary {
+			return modeRun, fmt.Errorf("pairing accepts only the exact folder flag")
+		}
+		diagnosticsOperatorOptions = struct {
+			folderID      string
+			sourcePath    string
+			mountedParent string
+			sourceDevice  uint64
+			sourceInode   uint64
+			confirmed     bool
+		}{folderID: *pairFolder}
+		return modeDiagnosticsPair, nil
+	}
+	if *namespaceFolder != "" {
+		if adminAuxiliary {
+			return modeRun, fmt.Errorf("namespace preparation does not accept admin fields")
+		}
+		if *namespaceSource == "" || *namespaceParent == "" || *namespaceDevice == 0 || *namespaceInode == 0 || !*namespaceConfirmed {
+			return modeRun, fmt.Errorf("namespace preparation requires source path, mounted parent, and explicit operator confirmation")
+		}
+		diagnosticsOperatorOptions = struct {
+			folderID      string
+			sourcePath    string
+			mountedParent string
+			sourceDevice  uint64
+			sourceInode   uint64
+			confirmed     bool
+		}{
+			folderID: *namespaceFolder, sourcePath: *namespaceSource,
+			mountedParent: *namespaceParent, sourceDevice: *namespaceDevice, sourceInode: *namespaceInode, confirmed: true,
+		}
+		return modeDiagnosticsNamespace, nil
+	}
+	if *adminAction != "" {
+		if *adminFolder == "" || *namespaceSource != "" || *namespaceParent != "" || *namespaceDevice != 0 || *namespaceInode != 0 || *namespaceConfirmed || *pairFolder != "" || *namespaceFolder != "" {
+			return modeRun, fmt.Errorf("diagnostics admin action requires only its exact admin fields")
+		}
+		switch *adminAction {
+		case "list":
+			if *adminApp != "" || *adminReason != 0 {
+				return modeRun, fmt.Errorf("list does not accept an app fingerprint or reason")
+			}
+		case "rotate-helper", "rotate-tls":
+			if *adminApp == "" || *adminReason != 0 {
+				return modeRun, fmt.Errorf("rotation requires an app fingerprint and no revocation reason")
+			}
+		case "revoke":
+			if *adminApp == "" || *adminReason < 1 || *adminReason > 4 {
+				return modeRun, fmt.Errorf("revoke requires an app fingerprint and reason 1 through 4")
+			}
+		default:
+			return modeRun, fmt.Errorf("unknown diagnostics admin action")
+		}
+		diagnosticsAdminOptions = diagnosticsAdminCommand{
+			action: *adminAction, folderID: *adminFolder, appFingerprint: *adminApp, reason: *adminReason,
+		}
+		return modeDiagnosticsAdmin, nil
+	}
+	if namespaceAuxiliary || adminAuxiliary {
+		return modeRun, fmt.Errorf("namespace preparation flags require --diagnostics-prepare-folder")
 	}
 	return modeRun, nil
 }
@@ -156,7 +311,12 @@ func loadConfig() (Config, error) {
 	if v := os.Getenv("DEBOUNCE_SECONDS"); v != "" {
 		d, err := strconv.Atoi(v)
 		if err != nil || d < 1 {
-			return Config{}, fmt.Errorf("DEBOUNCE_SECONDS must be a positive integer (got %q)", v)
+			return Config{}, newConfigurationError(
+				"invalid_value",
+				"correct_configuration_value",
+				fmt.Errorf("DEBOUNCE_SECONDS must be a positive integer (got %q)", v),
+				"DEBOUNCE_SECONDS",
+			)
 		}
 		debounce = d
 	}
@@ -166,7 +326,12 @@ func loadConfig() (Config, error) {
 	if v := os.Getenv("STALE_RETRIGGER_SECONDS"); v != "" {
 		s, err := strconv.Atoi(v)
 		if err != nil || s < 0 {
-			return Config{}, fmt.Errorf("STALE_RETRIGGER_SECONDS must be a non-negative integer (got %q)", v)
+			return Config{}, newConfigurationError(
+				"invalid_value",
+				"correct_configuration_value",
+				fmt.Errorf("STALE_RETRIGGER_SECONDS must be a non-negative integer (got %q)", v),
+				"STALE_RETRIGGER_SECONDS",
+			)
 		}
 		staleRetrigger = s
 	}
@@ -180,7 +345,12 @@ func loadConfig() (Config, error) {
 		case "1", "true", "yes", "on":
 			startupAnnounce = true
 		default:
-			return Config{}, fmt.Errorf("STARTUP_ANNOUNCE must be a boolean (got %q)", v)
+			return Config{}, newConfigurationError(
+				"invalid_value",
+				"correct_configuration_value",
+				fmt.Errorf("STARTUP_ANNOUNCE must be a boolean (got %q)", v),
+				"STARTUP_ANNOUNCE",
+			)
 		}
 	}
 
@@ -221,12 +391,11 @@ func loadConfig() (Config, error) {
 				filled = append(filled, "SYNCTHING_API_KEY")
 			}
 			if len(filled) > 0 {
-				// The API key itself is deliberately never logged.
+				// Values and the discovered config path are deliberately never
+				// logged; field names are sufficient for operational diagnosis.
 				slog.Info("auto-detected Syncthing configuration from config.xml",
 					"component", "config",
-					"source", detected.Source,
 					"filled", strings.Join(filled, ", "),
-					"syncthing_url", apiURL,
 				)
 			}
 		}
@@ -238,14 +407,21 @@ func loadConfig() (Config, error) {
 	// the relay endpoint must be a conscious choice. The docker-compose file and
 	// the app's setup command both supply it explicitly, so this costs the
 	// operator nothing in practice; only the Syncthing key/URL are auto-detected.
+	diagnosticsRuntime, err := loadDiagnosticsRuntimeConfig()
+	if err != nil {
+		return Config{}, err
+	}
+
 	cfg := Config{
-		SyncthingAPIURL:       apiURL,
-		SyncthingAPIKey:       apiKey,
-		RelayURL:              required("RELAY_URL"),
-		DebounceSeconds:       debounce,
-		WatchedFolders:        watched,
-		StartupAnnounce:       startupAnnounce,
-		StaleRetriggerSeconds: staleRetrigger,
+		SyncthingAPIURL:         apiURL,
+		SyncthingAPIKey:         apiKey,
+		RelayURL:                required("RELAY_URL"),
+		DebounceSeconds:         debounce,
+		WatchedFolders:          watched,
+		StartupAnnounce:         startupAnnounce,
+		StaleRetriggerSeconds:   staleRetrigger,
+		diagnosticsCapabilities: newDormantDiagnosticsCapabilityFoundation(),
+		diagnosticsRuntime:      diagnosticsRuntime,
 	}
 
 	missing := make([]string, 0, 3)
@@ -263,12 +439,36 @@ func loadConfig() (Config, error) {
 		// config.xml) than "set the env vars / SYNCTHING_CONFIG", so surface it
 		// directly instead of burying it in the generic message.
 		if detectErr != nil && errors.Is(detectErr, os.ErrPermission) {
-			return Config{}, detectErr
+			return Config{}, newConfigurationError(
+				"permission_denied",
+				"check_syncthing_config_permissions",
+				detectErr,
+				"SYNCTHING_CONFIG",
+			)
 		}
 		if detectErr != nil {
-			return Config{}, fmt.Errorf("missing %s; Syncthing auto-detection also found nothing: %w", strings.Join(missing, ", "), detectErr)
+			cause := fmt.Errorf("missing %s; Syncthing auto-detection also found nothing: %w", strings.Join(missing, ", "), detectErr)
+			if errors.Is(detectErr, errNoSyncthingConfig) {
+				return Config{}, newConfigurationError(
+					"missing",
+					"set_required_configuration",
+					cause,
+					missing...,
+				)
+			}
+			return Config{}, newConfigurationError(
+				"invalid_syncthing_config",
+				"check_syncthing_config",
+				cause,
+				"SYNCTHING_CONFIG",
+			)
 		}
-		return Config{}, fmt.Errorf("required configuration not set: %s. Set them explicitly; the Syncthing key/URL can also be auto-detected by pointing SYNCTHING_CONFIG at your config.xml", strings.Join(missing, ", "))
+		return Config{}, newConfigurationError(
+			"missing",
+			"set_required_configuration",
+			fmt.Errorf("required configuration not set: %s. Set them explicitly; the Syncthing key/URL can also be auto-detected by pointing SYNCTHING_CONFIG at your config.xml", strings.Join(missing, ", ")),
+			missing...,
+		)
 	}
 	return cfg, nil
 }
@@ -372,7 +572,7 @@ func runService(ctx context.Context, cfg Config) int {
 		slog.Error("failed to initialize Syncthing Device ID",
 			"classification", "fatal",
 			"component", "syncthing",
-			"error", err,
+			"error_kind", operationalErrorKind(err),
 			"action", "exit",
 		)
 		return 1
@@ -383,18 +583,42 @@ func runService(ctx context.Context, cfg Config) int {
 		slog.Error("relay startup check failed with fatal configuration error",
 			"classification", "fatal",
 			"component", "relay",
-			"error", err,
+			"error_kind", operationalErrorKind(err),
 			"action", "exit",
 		)
 		return 1
 	}
 
+	var diagnosticsErrors <-chan error
+	var diagnostics *diagnosticsRuntime
+	if cfg.diagnosticsRuntime != nil {
+		diagnostics, err = newDiagnosticsRuntime(cfg.diagnosticsRuntime, deviceID, st)
+		if err != nil || diagnostics.start() != nil {
+			slog.Error("diagnostics runtime failed to start",
+				"classification", "fatal",
+				"component", "diagnostics",
+				"action", "fix_configuration",
+			)
+			return 1
+		}
+		defer diagnostics.close()
+		diagnosticsErrors = diagnostics.errors
+		if diagnostics.lifecycleReconciliationPending {
+			slog.Warn("diagnostics lifecycle reconciliation remains pending",
+				"component", "diagnostics",
+				"action", "retry_exact_transition_or_redeploy",
+			)
+		}
+		slog.Info("diagnostics helper listener enabled",
+			"component", "diagnostics",
+			"protocol_major", diagnosticsProtocolMajor,
+		)
+	}
+
 	slog.Info("vaultsync-notify starting",
-		"device_id", deviceID,
-		"syncthing_url", cfg.SyncthingAPIURL,
-		"relay_url", cfg.RelayURL,
 		"debounce_seconds", cfg.DebounceSeconds,
-		"watched_folders", formatWatched(cfg.WatchedFolders),
+		"watched_folder_scope", watchedFolderScope(cfg.WatchedFolders),
+		"watched_folder_count", len(cfg.WatchedFolders),
 		"startup_announce", cfg.StartupAnnounce,
 		"stale_retrigger_seconds", cfg.StaleRetriggerSeconds,
 	)
@@ -443,6 +667,16 @@ func runService(ctx context.Context, cfg Config) int {
 
 	for {
 		select {
+		case diagnosticsErr, ok := <-diagnosticsErrors:
+			if ok && diagnosticsErr != nil {
+				slog.Error("diagnostics runtime stopped unexpectedly",
+					"classification", "fatal",
+					"component", "diagnostics",
+					"action", "exit",
+				)
+				return 1
+			}
+			diagnosticsErrors = nil
 		case ev, ok := <-events:
 			if !ok {
 				if len(pending) > 0 {
@@ -475,19 +709,13 @@ func runService(ctx context.Context, cfg Config) int {
 
 			if lastTriggered[candidate.Folder] == candidate.Marker {
 				slog.Debug("skipping duplicate trigger candidate",
-					"type", ev.Type,
-					"folder", candidate.Folder,
-					"marker", candidate.Marker,
-					"id", ev.ID,
+					"event_type", ev.Type,
 				)
 				continue
 			}
 
 			slog.Debug("queued trigger candidate",
-				"type", ev.Type,
-				"folder", candidate.Folder,
-				"marker", candidate.Marker,
-				"id", ev.ID,
+				"event_type", ev.Type,
 			)
 			pending[candidate.Folder] = candidate.Marker
 
@@ -544,7 +772,7 @@ func runService(ctx context.Context, cfg Config) int {
 				slog.Warn("stale-peer sweep failed; retrying next interval",
 					"classification", "recoverable",
 					"component", "syncthing",
-					"error", err,
+					"error_kind", operationalErrorKind(err),
 					"action", "continue",
 				)
 				continue
@@ -621,9 +849,7 @@ func anyPeerNeedsData(ctx context.Context, st *SyncthingClient, selfID string, w
 				var statusErr *HTTPStatusError
 				if errors.As(err, &statusErr) {
 					slog.Debug("skipping completion check",
-						"device", dev.DeviceID,
-						"folder", folder,
-						"error", err,
+						"error_kind", operationalErrorKind(err),
 					)
 					continue
 				}
@@ -663,7 +889,7 @@ func waitForDeviceID(ctx context.Context, st *SyncthingClient) (string, error) {
 			"classification", "recoverable",
 			"component", "syncthing",
 			"attempt", attempt,
-			"error", err,
+			"error_kind", operationalErrorKind(err),
 			"retry_in", backoff,
 		)
 
@@ -696,7 +922,7 @@ func warmupRelay(ctx context.Context, relay *RelayClient) error {
 			slog.Warn("relay health check failed at startup; continuing with runtime retries",
 				"classification", "recoverable",
 				"component", "relay",
-				"error", err,
+				"error_kind", operationalErrorKind(err),
 				"action", "continue",
 			)
 			return nil
@@ -706,7 +932,7 @@ func warmupRelay(ctx context.Context, relay *RelayClient) error {
 			"classification", "recoverable",
 			"component", "relay",
 			"attempt", attempt,
-			"error", err,
+			"error_kind", operationalErrorKind(err),
 			"retry_in", backoff,
 		)
 
@@ -831,7 +1057,7 @@ func fireTrigger(ctx context.Context, relay *RelayClient, reason string) trigger
 			"classification", "fatal",
 			"component", "relay",
 			"reason", reason,
-			"error", err,
+			"error_kind", operationalErrorKind(err),
 			"action", "exit",
 		)
 		return outcomeFatal
@@ -840,7 +1066,7 @@ func fireTrigger(ctx context.Context, relay *RelayClient, reason string) trigger
 			"classification", "recoverable",
 			"component", "relay",
 			"reason", reason,
-			"error", err,
+			"error_kind", operationalErrorKind(err),
 			"action", "await_active_subscription",
 		)
 		return outcomeSubscriptionInactive
@@ -849,23 +1075,18 @@ func fireTrigger(ctx context.Context, relay *RelayClient, reason string) trigger
 			"classification", "recoverable",
 			"component", "relay",
 			"reason", reason,
-			"error", err,
+			"error_kind", operationalErrorKind(err),
 			"action", "continue",
 		)
 		return outcomeRetry
 	}
 }
 
-func formatWatched(folders map[string]bool) string {
+func watchedFolderScope(folders map[string]bool) string {
 	if folders == nil {
 		return "all"
 	}
-	ids := make([]string, 0, len(folders))
-	for id := range folders {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	return strings.Join(ids, ", ")
+	return "selected"
 }
 
 func isFatalRelayConfigError(err error) bool {

@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/psimaker/vaultsync/security/advisories/new
+    about: Private disclosure — never open a public issue for security problems. See SECURITY.md for details.
+  - name: Troubleshooting guide
+    url: https://github.com/psimaker/vaultsync/blob/main/docs/troubleshooting.md
+    about: Common sync, pairing, and wake-up problems — worth a look before filing a bug.

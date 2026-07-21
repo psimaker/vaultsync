@@ -1,6 +1,6 @@
 # VaultSync Cloud Relay — Specification
 
-> **Status:** Cloud Relay 1.3.0 is live in production. Provisioning requires a verified StoreKit signed transaction; existing legacy registrations have a bounded compatibility window through October 31, 2026. The additive observation/status contract is available in the Relay, and the matching app support is merged to `main`, but that app support has not shipped as VaultSync 2.0. A Relay-observed signal proves only accepted Relay processing: not helper identity, APNs delivery, background start, local data progress, upload, download, or a roundtrip. Existing Relay v1 provisioning, trigger, and push contracts remain unchanged. This document is the protocol and architecture reference for the relay, the `vaultsync-notify` sidecar, and the iOS client.
+> **Status:** Cloud Relay 1.3.0 and the matching app support are implemented and locally verified, but the Relay production rollout and VaultSync 2.0 app release are still pending. Once deployed, Relay 1.3 provisioning requires a verified StoreKit signed transaction and gives exact pre-existing legacy registrations a bounded compatibility window through October 31, 2026. Helper publication state is determined only by the newest public `notify-v*` release and its exact manifest; `notify-v1.8.0` remains the fixed rollback baseline for helper 2.0.2. Even a published capable helper provides no app upload, download, or correlated-roundtrip evidence until the separate app milestones succeed. A Relay-observed signal proves only accepted Relay processing: not helper identity, APNs delivery, background start, local data progress, upload, download, or a roundtrip. Existing Relay v1 provisioning, trigger, and push contracts remain unchanged. This document is the protocol and architecture reference for the relay, the `vaultsync-notify` sidecar, and the iOS client.
 
 ## Overview
 
@@ -255,6 +255,7 @@ The container reads its own Syncthing Device ID automatically from `/rest/system
 - The central relay receives and forwards an anonymous wake-up signal — it has no knowledge of what changed or where.
 - The central relay stores the last accepted v1 signal time per Device ID so the app can explain which wake-up leg is pending.
 - APNs payload is a silent push with no visible content (`content-available: 1`, no alert/body).
+- Helper operational logs contain only fixed categories, status codes, bounded counts, and durations; they omit Device/folder identifiers, paths and endpoint URLs, event markers, API keys, and raw request/response bodies.
 
 ### Token Storage
 

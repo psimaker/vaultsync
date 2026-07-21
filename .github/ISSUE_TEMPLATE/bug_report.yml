@@ -1,7 +1,13 @@
 name: Bug report
-description: Report a problem with VaultSync (iOS app, bridge, or relay)
+description: Report a problem with VaultSync (iOS app, bridge, server helper, or Cloud Relay)
 labels: [bug]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug!
+
+        **Do not report security vulnerabilities here.** This is a public tracker — use the private channel described in [SECURITY.md](https://github.com/psimaker/vaultsync/blob/main/SECURITY.md) instead.
   - type: dropdown
     id: component
     attributes:
@@ -10,7 +16,8 @@ body:
         - iOS app
         - Widget
         - go bridge / Syncthing
-        - notify relay
+        - vaultsync-notify server helper
+        - Cloud Relay (hosted service)
         - Not sure
     validations:
       required: true
@@ -29,6 +36,37 @@ body:
       placeholder: "iOS 26.2, iPhone 15 Pro"
     validations:
       required: false
+  - type: input
+    id: server_syncthing_version
+    attributes:
+      label: Syncthing version on your server
+      description: "`syncthing --version` on the machine you sync with. Leave empty if no server is involved."
+      placeholder: "v2.0.1"
+    validations:
+      required: false
+  - type: dropdown
+    id: cloud_relay
+    attributes:
+      label: Is Cloud Relay active?
+      description: Settings → Cloud Relay in the app.
+      options:
+        - "Yes"
+        - "No"
+        - Not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: notify_helper
+    attributes:
+      label: Is vaultsync-notify running on your server?
+      description: If yes, please run the helper's self-check (`vaultsync-notify --doctor`) on the server and attach its output in the logs field below.
+      options:
+        - "Yes"
+        - "No"
+        - Not sure
+        - Not applicable — I don't use the server helper
+    validations:
+      required: true
   - type: textarea
     id: repro
     attributes:
@@ -40,6 +78,6 @@ body:
     id: logs
     attributes:
       label: Logs / screenshots
-      description: Optional — anything that helps narrow it down.
+      description: "Optional — anything that helps narrow it down (including `--doctor` output). **This is a public repository:** redact vault names, real file or folder paths, and device IDs before posting."
     validations:
       required: false

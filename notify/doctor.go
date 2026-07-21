@@ -215,7 +215,7 @@ func runPreflight(ctx context.Context, cfg Config, mode preflightMode) (int, err
 				case errors.Is(err, errNoRemoteDeviceConnected):
 					return fmt.Sprintf("none of the %d configured remote device(s) is currently connected — sync and wake-up delivery are idle until one connects. A device that is off or away is normal. Fix (if unexpected): open the Syncthing Web UI and check the device is resumed and online on both sides.", remoteCount), true
 				default:
-					return "could not evaluate (peer state never fails the doctor): " + err.Error(), true
+					return "could not evaluate peer state; the doctor keeps this as a warning. Check Syncthing API availability and retry.", true
 				}
 			},
 		}, preflightCheck{
@@ -260,7 +260,7 @@ func runPreflight(ctx context.Context, cfg Config, mode preflightMode) (int, err
 				if errors.Is(err, errNoFolderSharedConnected) {
 					return fmt.Sprintf("%d remote device(s) connected, but no folder is shared with any of them — changes on this server cannot reach them, so no wake-up will ever fire. Fix: open the Syncthing Web UI, folder -> Edit -> Sharing, tick the device, then accept the share on the other device.", connectedCount), true
 				}
-				return "could not evaluate (peer state never fails the doctor): " + err.Error(), true
+				return "could not evaluate folder sharing; the doctor keeps this as a warning. Check Syncthing API availability and retry.", true
 			},
 		})
 	}
@@ -279,7 +279,8 @@ func runPreflight(ctx context.Context, cfg Config, mode preflightMode) (int, err
 						"component", "preflight",
 						"mode", mode.Name,
 						"check", check.Name,
-						"warning", msg,
+						"result", "warn",
+						"error_kind", operationalErrorKind(err),
 					)
 					continue
 				}
@@ -344,7 +345,7 @@ func runCheckWithRetry(ctx context.Context, policy retryPolicy, checkName string
 			"component", "preflight",
 			"check", checkName,
 			"attempt", attempt,
-			"error", err,
+			"error_kind", operationalErrorKind(err),
 			"retry_in", backoff,
 		)
 
@@ -373,8 +374,8 @@ func logPreflightFailure(mode string, check preflightCheck, err error) {
 		"component", "preflight",
 		"mode", mode,
 		"check", check.Name,
-		"error", err,
-		"hint", check.Remediation,
+		"error_kind", operationalErrorKind(err),
+		"action", "follow_remediation",
 	)
 }
 
@@ -408,5 +409,5 @@ func hintForCheckFailure(err error) string {
 		return "Request was canceled."
 	}
 
-	return err.Error()
+	return "The dependency request failed. Follow the remediation below and retry."
 }

@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Effective date:** July 12, 2026
+**Effective date:** July 14, 2026
 
 VaultSync is designed to keep your data on your devices. This policy explains what information is — and isn't — collected.
 
@@ -64,12 +64,228 @@ their free-form detail is discarded and the legacy record is removed. This
 migration does not touch subscription state, provisioning, APNs registration,
 folder mappings, sync identities, or wake-up history.
 
-Application diagnostic logs contain only generic states, counts, durations, and
-error categories. Unfiltered embedded Syncthing logging is disabled because its
-upstream attributes can include file paths, folder IDs, or peer IDs. None of the
-local diagnostic values above is sent to Cloud Relay. Cloud Relay never receives
-a file name, folder or vault name, file or vault path, file content, or
-diagnostic check identifier.
+Application and `vaultsync-notify` operational logs contain only generic states,
+bounded counts, durations, status codes, and fixed error categories. The helper
+does not log Device IDs, folder IDs, event markers, endpoint URLs, configuration
+paths, Syncthing API keys, or raw request/response bodies. Unfiltered embedded
+Syncthing logging is disabled because its upstream attributes can include file
+paths, folder IDs, or peer IDs. None of the local diagnostic values above is sent
+to Cloud Relay. Cloud Relay never receives a file name, folder or vault name,
+file or vault path, file content, or diagnostic check identifier.
+
+### Optional Helper Diagnostics Runtime
+
+The published helper 2.0.2 contains an optional local runtime for the
+authenticated diagnostics protocol. Publication or installation alone does not
+activate it, and the currently released app does not call it. Unreleased app
+source contains the separately user-initiated upload-only flow described below;
+it still cannot activate an unconfigured helper. The runtime starts only when
+an operator separately
+supplies both a read-only diagnostics configuration and a writable private state
+directory; otherwise it creates no listener, credential, mapping, namespace, or
+artifact.
+The supported runtime accepts only a private owner-only, single-link config file
+and rejects activation on non-Linux binaries.
+
+When explicitly configured, the runtime listens only on the exact
+operator-selected local/LAN/VPN address, requires TLS 1.3 with an out-of-band
+SPKI pin, and requires exact application signatures. Pairing uses a one-time QR
+secret shown only to the local operator. The read-only operator configuration
+contains the selected local folder ID and a fixed mount alias. The helper stores
+its signing and TLS private keys, a digest of that folder ID, opaque
+homeserver/folder bindings, authorized app public keys, epochs, revocations, and
+the alias mapping in the separate non-synchronized state directory. It stores no
+raw host folder path, app private key, note content, folder/vault name, user
+filename, operation payload, or operation-proof history there.
+
+The runtime's fixed endpoints can process upload-attestation and
+response/cleanup messages only after explicit pairing and namespace
+authorization. Request and response payloads are each exactly 256 random bytes.
+Operation IDs, nonces, digests, signatures, bindings, epochs, and message bytes
+remain in memory and the authenticated namespace artifacts; there is no
+operation database. Authenticated cleanup targets only exact message digests
+and cannot erase backups, versions, remote history, conflict copies, or
+tombstones. A synchronized helper attestation is control data and cannot become
+upload evidence without the exact pinned local-channel response for the active
+query.
+
+The supported host installer reads the canonical folder path only for its
+explicit one-shot mutation and runtime bind. It verifies the pre-bind source
+device/inode inside the one-shot container, then derives an ephemeral SHA-256
+binding over folder ID, canonical path, fixed alias, and namespace device/inode.
+Only that digest enters the long-running container environment; neither it nor
+the raw path enters protocol messages or logs. The runtime also pins the local
+Syncthing Device ID across each preflight. The supported package accepts only an
+exact loopback HTTP Syncthing API endpoint and rejects HTTP redirects from
+Syncthing, Relay, and the local operator channel.
+The folder and expanded-ignore responses used for that preflight are bounded by
+fixed byte, entry-count, and pattern-length limits.
+
+All remote and local diagnostics mutations are serialized by one protected
+cross-process lock. Crash completion is forward-only and stores no pending
+signed enablement body: an explicit rerun may resume only a root already bound
+by the protected root record, current helper key/epoch, exact digest/signature,
+fixed layout, source identity, and fresh local Syncthing checks. It creates
+nothing in recovery mode and cannot adopt an unregistered or conflicting root.
+
+The helper logs no pairing QR, secret, key or pin bytes, Device/folder ID or
+digest, opaque binding, nonce, transcript fingerprint, signed body, namespace
+path, mount alias, operation value, or artifact name. It creates no diagnostics
+telemetry, crash annotation, support-bundle export, Cloud Relay/APNs/StoreKit
+call, discovery request, trust adoption, share, rescan, or Syncthing
+configuration/ignore change. The unreleased app source can set upload evidence
+after an exact pinned helper attestation and, only after an accepted upload,
+download evidence from a fresh local apply of the exact authorized helper
+response in the same active operation, and derives the causal roundtrip only
+from that one upload-then-download chain. A complete download acceptance has
+run only against injected test event streams plus byte-exact artifacts from
+isolated local Syncthing instances; no download or roundtrip has been observed
+on a physical device.
+
+Before the supported installer creates the namespace, the app must send a valid
+signed enablement and the local operator must choose an exact existing Syncthing
+folder and give explicit consent. The visible root name is always
+**VaultSync Diagnostics**. Before mutation, the installer displays the exact
+resulting path and requires a separate acknowledgement that the operator accepts
+possible copies in peers, backups, versions, conflicts, and tombstones.
+The folder and its protocol files would be visible like other synchronized
+files in Obsidian, Apple Files or another file browser, on every configured
+Syncthing peer, and in filesystem backups. They could also appear in Syncthing
+versioning (including `.stversions`), remote file history, conflict copies,
+deletion records, or tombstones.
+
+The namespace is limited to fixed protocol filenames containing random
+installation and operation identifiers, public-key identifiers, signatures,
+hashes, counters, expiry times, and fixed status values. It must never contain
+note content, user-derived filenames, vault or folder names, local display
+labels, Syncthing credentials, helper credentials, or Cloud Relay contract
+data. Local display labels remain on the device. Helper credentials and local
+authorization state remain in a separate, non-synchronized helper state store.
+Nothing in this namespace is sent to Cloud Relay.
+
+Every app installation has an independently paired stable identifier and its
+own immutable authorization chain. A separately paired installation can join an
+already authenticated namespace only after its own signed authorization; no
+trust or identity is inherited. Revoking an app leaves its immutable signed
+history in the synchronized namespace. Later helper-key manifests can advance
+the namespace for another active installation without rewriting those historical
+records, and the active installation must still add a fresh signed authorization
+epoch before operations resume. Before a namespace-wide helper manifest is
+written, the helper repeats the pinned Device ID, folder/ignore, root, and exact
+mount-binding preflight for every affected namespace.
+
+Expiry and bounded cleanup apply only to the exact authenticated live operation
+artifacts owned by the helper. Cleanup does not erase the namespace root,
+README, manifests, authorization records, credentials, backup copies, versioned
+copies, conflict copies, remote history, or tombstones. Backups, `.stversions`,
+remote history, and tombstones can retain diagnostics artifacts beyond their
+live expiry or cleanup time according to the operator's Syncthing and backup
+policies. Disabling or rolling back diagnostics stops future activity but does
+not promise deletion from the live folder, peers, backups, versions, history,
+or tombstones. Those copies require deliberate operator removal under the
+policies of each system that retains them.
+
+Only rootful Docker Engine on an explicitly confirmed standard Linux host, with
+an exact host bind of the existing namespace subdirectory, is supported for this
+diagnostics runtime. Its container root is read-only; all capabilities are
+dropped; it runs as the exact non-root config owner; config is read-only; state
+is separate; and the parent vault is absent at runtime. Docker named volumes,
+rootless Docker, remote Docker daemons/contexts, non-Unix Docker endpoints, NAS
+packages, Docker Desktop, WSL, remote/NAS/FUSE filesystems, Linux binary/systemd
+installs, macOS packaging, and Windows packaging remain unsupported unless their
+isolation and rollback are separately proven.
+
+### Optional App Pairing and Namespace Control
+
+The app source contains a separate Controlled Diagnostics Settings surface for
+the authenticated helper control plane. This source is not yet the publicly
+released app. Opening the surface performs only a read-only inspection. An app
+upgrade, launch, settings visit, Relay wake-up, or ordinary sync creates no
+diagnostics key, marker, pairing, network request, namespace, artifact, share,
+peer, or trust decision.
+
+The first mutation requires the user to select one already configured
+homeserver and shared folder, accept localized consent, and scan or paste a
+five-minute invitation generated by the local helper operator. VaultSync then
+stores an installation signing seed and scoped pairing records only in the
+dedicated non-synchronizable, device-only diagnostics Keychain service, bound
+to a complete-protection app-container marker. The records contain opaque
+bindings, public keys and identifiers, epochs, the TLS pin, fixed endpoint, and
+exact latest control messages needed for idempotent retry. They contain no QR
+secret, note content, user filename, folder path/name, operation payload, or
+upload/download history, and they are not sent to Cloud Relay.
+
+Pairing uses TLS 1.3, an exact QR-pinned leaf SPKI, mutually signed canonical
+messages, and an app/operator comparison of a 12-hex transcript fingerprint.
+There is no automatic discovery, trust transfer, public default port, Relay
+tunnel, redirect, or weaker fallback. Capability negotiation is authenticated
+but creates no synchronized artifact and provides no upload, download, or
+roundtrip evidence.
+
+Namespace enablement is a later, separate user action and remains only a signed
+request until the helper operator separately confirms the exact folder/path and
+retention warning. The app never creates or adopts the visible `VaultSync
+Diagnostics` folder. It accepts ownership only after fixed, symlink-resistant
+local reads validate the helper-signed root and the exact helper-countersigned
+app authorization received through Syncthing. Credential rotation requires a
+fresh immutable authorization epoch before operations can resume.
+
+Revocation, app downgrade, or lost-key recovery stops new app activity but does
+not delete the helper authorization, namespace, peer copies, backups, versions,
+conflicts, history, or tombstones. Lost-key recovery deliberately requires new
+pairing and a separate operator revocation of the surviving old authorization.
+See [app capability, pairing, and namespace readiness](docs/app-capability-pairing-namespace-readiness.md).
+
+### Explicit Foreground Upload Check (Unreleased Source)
+
+After separate pairing, capability negotiation, app consent, operator namespace
+creation, and helper-countersigned authorization, the unreleased app source
+offers a distinct foreground upload check. It starts only after a new user tap
+and confirmation. Opening Settings, upgrading or launching the app, checking
+capability, ordinary synchronization, Relay/APNs activity, or background
+execution never starts it.
+
+The app revalidates the exact existing settled `sendreceive` folder, one
+designated connected and unpaused peer, current engine generation, authenticated
+namespace, expanded Syncthing ignore behavior, and an empty operation slot. It
+does not discover, add, share, pause, reconfigure, trust, or create any
+Syncthing folder, peer, namespace, or ignore rule. If any precondition fails,
+no operation artifact is created.
+
+For one accepted start, the app generates a random operation identifier, two
+random nonces, and exactly 256 random request bytes in memory. It exclusively
+creates one app-signed request in the already authorized visible namespace,
+rescans only the selected folder, and sends one app-signed query byte-for-byte
+on at most eight bounded polls to the fixed TLS-1.3/SPKI-pinned helper endpoint.
+Only the exact paired-helper signature and complete Decision 024 binding for
+that active request/query can set the separate in-memory `upload observed`
+field. HTTP status, reachability, request creation, rescan, timestamps, index or
+idle state, and a synchronized attestation copy cannot set it. After an accepted
+upload the same operation captures a fresh event-cursor, wall-clock, and
+engine-generation baseline, sends one signed response authorization over the
+pinned endpoint, and sets the separate `download observed` field only after a
+fresh successful local apply of the exact expected response path plus complete
+signature, binding, digest, nonce, payload, and TTL validation of that file. A
+response existing before the baseline, arriving after an engine restart, or
+failing any validation can never set it; an invalid file at the exact path ends
+the operation as a conflict, and every terminal outcome after upload keeps the
+upload field visible as a partial result. The separate roundtrip field derives
+only when this same operation's upload and download acceptances complete for
+the exact validated chain; it is a scoped causal propagation claim, never
+global sync health, future delivery, byte accounting, or a direct-peer claim.
+
+The active operation, request/query bytes, random values, digests, poll state,
+and evidence are not persisted in preferences, Keychain, logs, telemetry,
+crash reports, support bundles, Relay, APNs, StoreKit, or pairing records.
+Leaving the view, cancellation, refresh, app/engine restart, target or
+credential change, timeout, or conflict ends the operation, and a late response
+cannot upgrade it. The request, helper attestation, and helper response are
+synchronized opaque files and may remain in live folders, peers, backups,
+versions, conflict copies, remote history, deletion records, or tombstones. Expiry, app rollback, or live
+cleanup does not promise removal of those retained copies; they never regain
+validity or become evidence.
+
+See [M5 foreground upload-only readiness](docs/m5-upload-attestation-readiness.md).
 
 ### Data Security
 

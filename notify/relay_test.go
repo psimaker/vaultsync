@@ -4,10 +4,54 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestDependencyErrorsDiscardURLsAndResponseBodies(t *testing.T) {
+	t.Parallel()
+
+	const responseSentinel = "SECRET-RESPONSE-BODY"
+	stub := newTriggerStub(t, http.StatusInternalServerError, "", responseSentinel)
+	err := stub.client().doTrigger(context.Background(), stub.triggerURL(), nil)
+	if err == nil {
+		t.Fatal("expected a transient error")
+	}
+	for _, forbidden := range []string{responseSentinel, stub.server.URL} {
+		if strings.Contains(err.Error(), forbidden) {
+			t.Fatalf("error contains sensitive sentinel %q: %v", forbidden, err)
+		}
+	}
+
+	statusErr := &HTTPStatusError{Component: "relay", StatusCode: http.StatusBadGateway}
+	if got := statusErr.Error(); got != "relay returned HTTP 502" {
+		t.Fatalf("HTTPStatusError.Error() = %q, want status-only message", got)
+	}
+}
+
+func TestHelperClientsRejectRedirectsBeforeCredentialsOrIdentifiersCanMove(t *testing.T) {
+	var targetCalls atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		targetCalls.Add(1)
+	}))
+	defer target.Close()
+	redirect := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		http.Redirect(writer, request, target.URL, http.StatusTemporaryRedirect)
+	}))
+	defer redirect.Close()
+
+	if _, err := NewSyncthingClient(redirect.URL, "api-key-sentinel").GetDeviceID(context.Background()); err == nil {
+		t.Fatal("Syncthing API redirect was followed")
+	}
+	if err := NewRelayClient(redirect.URL, "device-id-sentinel").CheckHealth(context.Background()); err == nil {
+		t.Fatal("Relay redirect was followed")
+	}
+	if targetCalls.Load() != 0 {
+		t.Fatalf("redirect target received %d requests", targetCalls.Load())
+	}
+}
 
 // triggerStub is a relay test double that returns a fixed status for
 // POST /api/v1/trigger and counts how many times it was hit.
