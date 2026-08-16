@@ -1653,28 +1653,7 @@ func TestRemoveConflictFilesForOriginalErrors(t *testing.T) {
 	}
 }
 
-func TestIsStateFilePath(t *testing.T) {
-	cases := []struct {
-		relPath string
-		want    bool
-	}{
-		{".obsidian/workspace.json", true},
-		{".obsidian/plugins/dataview/data.json", true},
-		{"MyVault/.obsidian/app.json", true},
-		{"MyVault/.obsidian/plugins/calendar/data.json", true},
-		{"notes.md", false},
-		{"Personal/diary.md", false},
-		{".obsidian.md", false},
-		{"docs/.obsidian-guide/readme.md", false},
-	}
-	for _, c := range cases {
-		if got := isStateFilePath(c.relPath); got != c.want {
-			t.Errorf("isStateFilePath(%q) = %v, want %v", c.relPath, got, c.want)
-		}
-	}
-}
-
-func TestAutoResolveStateConflicts(t *testing.T) {
+func TestIssue145AutoResolveStateConflictsPreservesLegacyScenarios(t *testing.T) {
 	configDir := testConfigDir(t)
 
 	if errMsg := StartSyncthing(configDir); errMsg != "" {
@@ -1682,116 +1661,380 @@ func TestAutoResolveStateConflicts(t *testing.T) {
 	}
 	defer StopSyncthing()
 
-	folderPath := filepath.Join(configDir, "autoresolve")
-	if errMsg := AddFolder("autoresolve", "Auto Resolve", folderPath); errMsg != "" {
+	const folderID = "issue145-legacy"
+	folderPath := filepath.Join(configDir, folderID)
+	if errMsg := AddFolder(folderID, "Issue 145 Legacy Scenarios", folderPath); errMsg != "" {
 		t.Fatalf("AddFolder failed: %s", errMsg)
 	}
 
-	mustWrite := func(rel, content string) string {
-		full := filepath.Join(folderPath, filepath.FromSlash(rel))
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			t.Fatalf("mkdir for %s: %v", rel, err)
-		}
-		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
-			t.Fatalf("write %s: %v", rel, err)
-		}
-		return full
-	}
-	setMtime := func(path string, offsetSeconds int) {
-		ts := time.Now().Add(time.Duration(offsetSeconds) * time.Second)
-		if err := os.Chtimes(path, ts, ts); err != nil {
-			t.Fatalf("chtimes %s: %v", path, err)
-		}
+	type scenario struct {
+		name            string
+		originalRelPath string
+		conflictRelPath string
+		conflictDate    string
+		deviceShortID   string
+		createOriginal  bool
+		originalBytes   []byte
+		conflictBytes   []byte
+		originalMtime   time.Time
+		conflictMtime   time.Time
 	}
 
-	// Case 1: original newer than copy -> copy discarded, original content kept.
-	origNewer := mustWrite(".obsidian/workspace.json", "original-newer")
-	copyOlder := mustWrite(".obsidian/workspace.sync-conflict-20260601-100000-AAA1111.json", "copy-older")
-	setMtime(origNewer, 0)
-	setMtime(copyOlder, -3600)
+	baseMtime := time.Date(2026, time.August, 16, 10, 0, 0, 0, time.UTC)
+	scenarios := []scenario{
+		{
+			name:            "older conflict",
+			originalRelPath: ".obsidian/older.json",
+			conflictRelPath: ".obsidian/older.sync-conflict-20260816-100000-OLD0001.json",
+			conflictDate:    "20260816-100000",
+			deviceShortID:   "OLD0001",
+			createOriginal:  true,
+			originalBytes:   []byte("issue-145-older-original\x00"),
+			conflictBytes:   []byte("issue-145-older-conflict\x00"),
+			originalMtime:   baseMtime.Add(2 * time.Hour),
+			conflictMtime:   baseMtime,
+		},
+		{
+			name:            "newer conflict",
+			originalRelPath: "MyVault/.obsidian/newer.json",
+			conflictRelPath: "MyVault/.obsidian/newer.sync-conflict-20260816-110000-NEW0001.json",
+			conflictDate:    "20260816-110000",
+			deviceShortID:   "NEW0001",
+			createOriginal:  true,
+			originalBytes:   []byte("issue-145-newer-original\x00"),
+			conflictBytes:   []byte("issue-145-newer-conflict\x00"),
+			originalMtime:   baseMtime,
+			conflictMtime:   baseMtime.Add(2 * time.Hour),
+		},
+		{
+			name:            "equal mtimes",
+			originalRelPath: ".obsidian/equal.json",
+			conflictRelPath: ".obsidian/equal.sync-conflict-20260816-120000-EQL0001.json",
+			conflictDate:    "20260816-120000",
+			deviceShortID:   "EQL0001",
+			createOriginal:  true,
+			originalBytes:   []byte("issue-145-equal-original\x00"),
+			conflictBytes:   []byte("issue-145-equal-conflict\x00"),
+			originalMtime:   baseMtime.Add(4 * time.Hour),
+			conflictMtime:   baseMtime.Add(4 * time.Hour),
+		},
+		{
+			name:            "future clock skew",
+			originalRelPath: "MyVault/.obsidian/clock-skew.json",
+			conflictRelPath: "MyVault/.obsidian/clock-skew.sync-conflict-20260816-130000-CLK0001.json",
+			conflictDate:    "20260816-130000",
+			deviceShortID:   "CLK0001",
+			createOriginal:  true,
+			originalBytes:   []byte("issue-145-clock-skew-original\x00"),
+			conflictBytes:   []byte("issue-145-clock-skew-conflict\x00"),
+			originalMtime:   baseMtime,
+			conflictMtime:   time.Date(2046, time.August, 16, 10, 0, 0, 0, time.UTC),
+		},
+		{
+			name:            "missing original",
+			originalRelPath: ".obsidian/missing.json",
+			conflictRelPath: ".obsidian/missing.sync-conflict-20260816-140000-MIS0001.json",
+			conflictDate:    "20260816-140000",
+			deviceShortID:   "MIS0001",
+			createOriginal:  false,
+			conflictBytes:   []byte("issue-145-missing-conflict\x00"),
+			conflictMtime:   baseMtime.Add(6 * time.Hour),
+		},
+	}
 
-	// Case 2: copy newer than original -> copy promoted over original.
-	origOlder := mustWrite("MyVault/.obsidian/app.json", "original-older")
-	copyNewer := mustWrite("MyVault/.obsidian/app.sync-conflict-20260601-110000-BBB2222.json", "copy-newer")
-	setMtime(origOlder, -3600)
-	setMtime(copyNewer, 0)
+	originalsBefore := make(map[string][]byte)
+	conflictsBefore := make(map[string][]byte, len(scenarios))
+	expectedConflicts := make(map[string]ConflictFile, len(scenarios))
 
-	// Case 3: original missing -> copy promoted, no data loss.
-	orphanCopy := mustWrite("MyVault/.obsidian/plugins/calendar/data.sync-conflict-20260601-120000-CCC3333.json", "orphan")
-	_ = orphanCopy
+	writeAndReadFixture := func(label, path string, data []byte, mtime time.Time) []byte {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("create directory for %s: %v", label, err)
+		}
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatalf("write %s: %v", label, err)
+		}
+		if err := os.Chtimes(path, mtime, mtime); err != nil {
+			t.Fatalf("set %s mtime: %v", label, err)
+		}
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read back %s: %v", label, err)
+		}
+		if !bytes.Equal(got, data) {
+			t.Fatalf("%s bytes = %q, want %q", label, got, data)
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("stat %s: %v", label, err)
+		}
+		if !info.ModTime().Equal(mtime) {
+			t.Fatalf("%s mtime = %s, want %s", label, info.ModTime(), mtime)
+		}
+		return append([]byte(nil), got...)
+	}
 
-	// Case 4: note conflict outside .obsidian -> untouched.
-	noteOrig := mustWrite("MyVault/diary.md", "note-original")
-	noteCopy := mustWrite("MyVault/diary.sync-conflict-20260601-130000-DDD4444.md", "note-copy")
-	setMtime(noteOrig, -3600)
-	setMtime(noteCopy, 0)
+	for _, scenario := range scenarios {
+		originalRelPath := filepath.FromSlash(scenario.originalRelPath)
+		conflictRelPath := filepath.FromSlash(scenario.conflictRelPath)
+		originalPath := filepath.Join(folderPath, originalRelPath)
+		conflictPath := filepath.Join(folderPath, conflictRelPath)
+		if scenario.createOriginal {
+			if bytes.Equal(scenario.originalBytes, scenario.conflictBytes) {
+				t.Fatalf("%s fixture bytes must be distinct", scenario.name)
+			}
+			originalsBefore[originalPath] = writeAndReadFixture(
+				scenario.name+" original",
+				originalPath,
+				scenario.originalBytes,
+				scenario.originalMtime,
+			)
+		} else if _, err := os.Lstat(originalPath); !os.IsNotExist(err) {
+			t.Fatalf("%s original must be absent before resolver: %v", scenario.name, err)
+		}
+		conflictsBefore[conflictPath] = writeAndReadFixture(
+			scenario.name+" conflict",
+			conflictPath,
+			scenario.conflictBytes,
+			scenario.conflictMtime,
+		)
+		expectedConflicts[conflictRelPath] = ConflictFile{
+			OriginalPath:  originalRelPath,
+			ConflictPath:  conflictRelPath,
+			ConflictDate:  scenario.conflictDate,
+			DeviceShortID: scenario.deviceShortID,
+		}
+	}
 
-	got := AutoResolveStateConflicts("autoresolve")
-	var res struct {
+	decodeConflicts := func(stage string) ([]ConflictFile, string) {
+		t.Helper()
+		raw := GetConflictFilesJSON(folderID)
+		var conflicts []ConflictFile
+		if err := json.Unmarshal([]byte(raw), &conflicts); err != nil {
+			t.Fatalf("decode conflicts %s resolver: %v (raw: %s)", stage, err, raw)
+		}
+		return conflicts, raw
+	}
+	conflictSetMatches := func(conflicts []ConflictFile) bool {
+		if len(conflicts) != len(expectedConflicts) {
+			return false
+		}
+		seen := make(map[string]struct{}, len(conflicts))
+		for _, conflict := range conflicts {
+			expected, exists := expectedConflicts[conflict.ConflictPath]
+			if !exists || conflict != expected {
+				return false
+			}
+			seen[conflict.ConflictPath] = struct{}{}
+		}
+		return len(seen) == len(expectedConflicts)
+	}
+
+	visibleBefore, visibleBeforeJSON := decodeConflicts("before")
+	if !conflictSetMatches(visibleBefore) {
+		t.Fatalf("conflicts before resolver = %s, want exact fixture set %+v", visibleBeforeJSON, expectedConflicts)
+	}
+
+	type autoResolveResult struct {
 		Resolved int    `json:"resolved"`
 		Error    string `json:"error"`
 	}
-	if err := json.Unmarshal([]byte(got), &res); err != nil {
-		t.Fatalf("unmarshal %q: %v", got, err)
-	}
-	if res.Error != "" {
-		t.Fatalf("error = %q, want empty", res.Error)
-	}
-	if res.Resolved != 3 {
-		t.Errorf("resolved = %d, want 3", res.Resolved)
+	decodeResult := func(label, raw string) autoResolveResult {
+		t.Helper()
+		var result autoResolveResult
+		if err := json.Unmarshal([]byte(raw), &result); err != nil {
+			t.Fatalf("decode %s result: %v (raw: %s)", label, err, raw)
+		}
+		return result
 	}
 
-	readFile := func(rel string) string {
-		data, err := os.ReadFile(filepath.Join(folderPath, filepath.FromSlash(rel)))
+	resolverJSON := AutoResolveStateConflicts(folderID)
+	resolverResult := decodeResult("valid folder", resolverJSON)
+	if resolverResult != (autoResolveResult{}) {
+		t.Errorf("valid-folder result = %+v, want resolved 0 and no error (raw: %s)", resolverResult, resolverJSON)
+	}
+
+	assertFilePreserved := func(label, path string, want []byte) {
+		t.Helper()
+		got, err := os.ReadFile(path)
 		if err != nil {
-			t.Fatalf("read %s: %v", rel, err)
+			t.Errorf("read %s after resolver: %v", label, err)
+			return
 		}
-		return string(data)
-	}
-	mustBeGone := func(rel string) {
-		if _, err := os.Stat(filepath.Join(folderPath, filepath.FromSlash(rel))); !os.IsNotExist(err) {
-			t.Errorf("%s still exists, want removed", rel)
+		if !bytes.Equal(got, want) {
+			t.Errorf("%s bytes after resolver = %q, want unchanged %q", label, got, want)
 		}
 	}
-
-	// Case 1: original kept, copy gone.
-	if c := readFile(".obsidian/workspace.json"); c != "original-newer" {
-		t.Errorf("workspace.json = %q, want 'original-newer'", c)
-	}
-	mustBeGone(".obsidian/workspace.sync-conflict-20260601-100000-AAA1111.json")
-
-	// Case 2: copy promoted, copy file gone.
-	if c := readFile("MyVault/.obsidian/app.json"); c != "copy-newer" {
-		t.Errorf("app.json = %q, want 'copy-newer'", c)
-	}
-	mustBeGone("MyVault/.obsidian/app.sync-conflict-20260601-110000-BBB2222.json")
-
-	// Case 3: orphan promoted to original.
-	if c := readFile("MyVault/.obsidian/plugins/calendar/data.json"); c != "orphan" {
-		t.Errorf("data.json = %q, want 'orphan'", c)
-	}
-	mustBeGone("MyVault/.obsidian/plugins/calendar/data.sync-conflict-20260601-120000-CCC3333.json")
-
-	// Case 4: note conflict untouched.
-	if c := readFile("MyVault/diary.md"); c != "note-original" {
-		t.Errorf("diary.md = %q, want 'note-original'", c)
-	}
-	if c := readFile("MyVault/diary.sync-conflict-20260601-130000-DDD4444.md"); c != "note-copy" {
-		t.Errorf("diary conflict copy = %q, want 'note-copy'", c)
+	for _, scenario := range scenarios {
+		originalPath := filepath.Join(folderPath, filepath.FromSlash(scenario.originalRelPath))
+		conflictPath := filepath.Join(folderPath, filepath.FromSlash(scenario.conflictRelPath))
+		if scenario.createOriginal {
+			assertFilePreserved(scenario.name+" original", originalPath, originalsBefore[originalPath])
+		} else if _, err := os.Lstat(originalPath); !os.IsNotExist(err) {
+			t.Errorf("%s original was created or cannot be inspected after resolver: %v", scenario.name, err)
+		}
+		assertFilePreserved(scenario.name+" conflict", conflictPath, conflictsBefore[conflictPath])
 	}
 
-	// Idempotent: a second run finds nothing to resolve.
-	got = AutoResolveStateConflicts("autoresolve")
-	if err := json.Unmarshal([]byte(got), &res); err != nil {
-		t.Fatalf("unmarshal second run %q: %v", got, err)
-	}
-	if res.Resolved != 0 || res.Error != "" {
-		t.Errorf("second run = %+v, want resolved 0 and no error", res)
+	visibleAfter, visibleAfterJSON := decodeConflicts("after")
+	if !conflictSetMatches(visibleAfter) {
+		t.Errorf("conflicts after resolver = %s, want unchanged fixture set %+v", visibleAfterJSON, expectedConflicts)
 	}
 
-	// Unknown folder -> error envelope.
-	got = AutoResolveStateConflicts("nonexistent")
-	if !strings.Contains(got, `"error":"folder not found"`) {
-		t.Errorf("unknown folder result = %q, want 'folder not found'", got)
+	unknownJSON := AutoResolveStateConflicts("nonexistent")
+	unknownResult := decodeResult("unknown folder", unknownJSON)
+	if unknownResult != (autoResolveResult{Error: "folder not found"}) {
+		t.Errorf("unknown-folder result = %+v, want folder-not-found envelope (raw: %s)", unknownResult, unknownJSON)
+	}
+
+	StopSyncthing()
+	stoppedJSON := AutoResolveStateConflicts(folderID)
+	stoppedResult := decodeResult("stopped engine", stoppedJSON)
+	if stoppedResult != (autoResolveResult{Error: "syncthing not running"}) {
+		t.Errorf("stopped-engine result = %+v, want not-running envelope (raw: %s)", stoppedResult, stoppedJSON)
+	}
+}
+
+func TestIssue145AutoResolveStateConflictsPreservesAllFiles(t *testing.T) {
+	const (
+		folderID           = "issue145-preserve"
+		stateDirectoryName = ".obsidian"
+		originalName       = "workspace.json"
+		conflictName       = "workspace.sync-conflict-20260816-120000-ABC1234.json"
+	)
+
+	configDir := testConfigDir(t)
+	if errMsg := StartSyncthing(configDir); errMsg != "" {
+		t.Fatalf("StartSyncthing() failed: %s", errMsg)
+	}
+	defer StopSyncthing()
+
+	folderPath := filepath.Join(configDir, folderID)
+	if errMsg := AddFolder(folderID, "Issue 145 Preserve", folderPath); errMsg != "" {
+		t.Fatalf("AddFolder failed: %s", errMsg)
+	}
+
+	if matches := conflictPattern.FindStringSubmatch(conflictName); matches == nil {
+		t.Fatalf("conflict fixture %q does not match Syncthing conflict pattern", conflictName)
+	}
+
+	stateDir := filepath.Join(folderPath, stateDirectoryName)
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatalf("create .obsidian fixture directory: %v", err)
+	}
+	originalPath := filepath.Join(stateDir, originalName)
+	conflictPath := filepath.Join(stateDir, conflictName)
+	originalBytes := []byte("{\"source\":\"original-newer\",\"payload\":\"original-bytes\\u0000\"}\n")
+	conflictBytes := []byte("{\"source\":\"conflict-older\",\"payload\":\"conflict-bytes\\u0000\"}\n")
+	if bytes.Equal(originalBytes, conflictBytes) {
+		t.Fatal("fixture contents must be distinct")
+	}
+	if err := os.WriteFile(originalPath, originalBytes, 0o644); err != nil {
+		t.Fatalf("write original fixture: %v", err)
+	}
+	if err := os.WriteFile(conflictPath, conflictBytes, 0o644); err != nil {
+		t.Fatalf("write conflict fixture: %v", err)
+	}
+
+	conflictMtime := time.Date(2026, time.August, 16, 10, 0, 0, 0, time.UTC)
+	originalMtime := conflictMtime.Add(2 * time.Hour)
+	if err := os.Chtimes(originalPath, originalMtime, originalMtime); err != nil {
+		t.Fatalf("set original mtime: %v", err)
+	}
+	if err := os.Chtimes(conflictPath, conflictMtime, conflictMtime); err != nil {
+		t.Fatalf("set conflict mtime: %v", err)
+	}
+
+	readFixture := func(label, path string, want []byte) []byte {
+		t.Helper()
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s fixture before resolver: %v", label, err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Fatalf("%s fixture before resolver = %q, want exact bytes %q", label, got, want)
+		}
+		return got
+	}
+	originalBefore := readFixture("original", originalPath, originalBytes)
+	conflictBefore := readFixture("conflict", conflictPath, conflictBytes)
+
+	originalInfo, err := os.Stat(originalPath)
+	if err != nil {
+		t.Fatalf("stat original fixture before resolver: %v", err)
+	}
+	conflictInfo, err := os.Stat(conflictPath)
+	if err != nil {
+		t.Fatalf("stat conflict fixture before resolver: %v", err)
+	}
+	if !originalInfo.ModTime().Equal(originalMtime) {
+		t.Fatalf("original mtime = %s, want exact fixture time %s", originalInfo.ModTime(), originalMtime)
+	}
+	if !conflictInfo.ModTime().Equal(conflictMtime) {
+		t.Fatalf("conflict mtime = %s, want exact fixture time %s", conflictInfo.ModTime(), conflictMtime)
+	}
+	if !originalInfo.ModTime().After(conflictInfo.ModTime()) {
+		t.Fatalf("original mtime %s must be newer than conflict mtime %s", originalInfo.ModTime(), conflictInfo.ModTime())
+	}
+
+	expectedConflict := ConflictFile{
+		OriginalPath:  filepath.Join(stateDirectoryName, originalName),
+		ConflictPath:  filepath.Join(stateDirectoryName, conflictName),
+		ConflictDate:  "20260816-120000",
+		DeviceShortID: "ABC1234",
+	}
+	decodeConflicts := func(stage string) ([]ConflictFile, string) {
+		t.Helper()
+		raw := GetConflictFilesJSON(folderID)
+		var conflicts []ConflictFile
+		if err := json.Unmarshal([]byte(raw), &conflicts); err != nil {
+			t.Fatalf("decode conflicts %s resolver: %v (raw: %s)", stage, err, raw)
+		}
+		return conflicts, raw
+	}
+	conflictsBefore, rawConflictsBefore := decodeConflicts("before")
+	if len(conflictsBefore) != 1 || conflictsBefore[0] != expectedConflict {
+		t.Fatalf("conflict scan before resolver = %s, want exactly %+v", rawConflictsBefore, expectedConflict)
+	}
+
+	resolverJSON := AutoResolveStateConflicts(folderID)
+	var resolverResult struct {
+		Resolved int    `json:"resolved"`
+		Error    string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(resolverJSON), &resolverResult); err != nil {
+		t.Fatalf("decode AutoResolveStateConflicts result: %v (raw: %s)", err, resolverJSON)
+	}
+	if resolverResult.Error != "" {
+		t.Fatalf("AutoResolveStateConflicts returned error %q (raw: %s)", resolverResult.Error, resolverJSON)
+	}
+
+	assertPreserved := func(label, path string, want []byte) {
+		t.Helper()
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("%s path must still exist after AutoResolveStateConflicts: %v (resolver: %s)", label, err, resolverJSON)
+		}
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Errorf("read %s after AutoResolveStateConflicts: %v (resolver: %s)", label, err, resolverJSON)
+			return
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("%s bytes after AutoResolveStateConflicts = %q, want unchanged %q (resolver: %s)", label, got, want, resolverJSON)
+		}
+	}
+	assertPreserved("original", originalPath, originalBefore)
+	assertPreserved("conflict", conflictPath, conflictBefore)
+
+	conflictsAfter, rawConflictsAfter := decodeConflicts("after")
+	foundConflict := false
+	for _, conflict := range conflictsAfter {
+		if conflict == expectedConflict {
+			foundConflict = true
+			break
+		}
+	}
+	if !foundConflict {
+		t.Errorf("conflict scan after resolver = %s, want preserved manual conflict %+v (resolver: %s)", rawConflictsAfter, expectedConflict, resolverJSON)
 	}
 }

@@ -195,15 +195,19 @@ final class SyncthingManager {
         ".obsidian/workspace-mobile.json",
     ]
 
-    /// Opt-out switch for automatic last-writer-wins resolution of conflicts
-    /// on `.obsidian` state files. A missing key reads as ON so existing
-    /// installs get the calmer behaviour without migration. Shared with
-    /// `BackgroundSyncService` (background sync resolves before notifying)
-    /// and `SettingsView` (the toggle).
+    /// Retired preference key from the former automatic last-writer-wins
+    /// resolver. Keep the key stable and leave existing values untouched so an
+    /// upgrade never rewrites user preferences as part of this safety change.
     nonisolated static let autoResolveStateConflictsKey = "auto-resolve-state-conflicts-v1"
 
-    nonisolated static var isAutoResolveStateConflictsEnabled: Bool {
-        (UserDefaults.standard.object(forKey: autoResolveStateConflictsKey) as? Bool) ?? true
+    /// Safety tombstone for the retired automatic resolver (#145). The injected
+    /// defaults are deliberately ignored: a missing value, `false`, and a
+    /// persisted legacy `true` all leave automatic mutation disabled without
+    /// deleting or resetting the stored value.
+    nonisolated static func isAutoResolveStateConflictsEnabled(
+        defaults _: UserDefaults = .standard
+    ) -> Bool {
+        false
     }
 
     private var hasAppliedStartupIgnores = false
@@ -311,14 +315,6 @@ final class SyncthingManager {
         let deviceShortID: String
 
         var id: String { conflictPath }
-
-        /// True when the conflicted file is Obsidian app state (lives inside a
-        /// `.obsidian` directory at any depth) rather than a user note. State
-        /// conflicts are eligible for automatic last-writer-wins resolution.
-        /// Mirrors the Go bridge's `isStateFilePath`.
-        var isStateConflict: Bool {
-            originalPath.split(separator: "/").dropLast().contains(".obsidian")
-        }
     }
 
     struct PendingFolderInfo: Codable, Identifiable, Hashable, Sendable {
@@ -496,17 +492,6 @@ final class SyncthingManager {
     /// decision.
     var unresolvedConflictCount: Int {
         conflictFiles.values.reduce(0) { $0 + Set($1.map(\.originalPath)).count }
-    }
-
-    /// Decode a conflict-scan payload and report whether any entry is an
-    /// auto-resolvable state conflict. Gates the auto-resolve walk in the
-    /// poll loop on folders that actually need it.
-    nonisolated static func containsStateConflict(conflictsJSON: String) -> Bool {
-        guard let data = conflictsJSON.data(using: .utf8),
-              let decoded = try? JSONDecoder().decode([ConflictInfo].self, from: data) else {
-            return false
-        }
-        return decoded.contains { $0.isStateConflict }
     }
 
     var unresolvedIssues: [SyncIssueItem] {
@@ -1225,25 +1210,11 @@ final class SyncthingManager {
         let statusSnapshot = await Task.detached {
             var statuses: [String: FolderStatusInfo] = [:]
             var conflicts: [String: Data] = [:]
-            let autoResolve = Self.isAutoResolveStateConflictsEnabled
             for folder in currentFolders {
                 if let status = SyncBridgeService.getFolderStatus(folderID: folder.id) {
                     statuses[folder.id] = FolderStatusInfo(payload: status)
                 }
-                var cJSON = SyncBridgeService.getConflictFilesJSON(folderID: folder.id)
-                // Gate the (extra) auto-resolve walk on the scan we already
-                // have, so the 2s poll only pays for it when a state conflict
-                // actually exists.
-                if autoResolve, Self.containsStateConflict(conflictsJSON: cJSON) {
-                    let result = SyncBridgeService.autoResolveStateConflicts(folderID: folder.id)
-                    if result.resolved > 0 {
-                        // Keep Syncthing's index in line with the on-disk
-                        // changes, then re-read so this poll already reports
-                        // the calmer state.
-                        _ = SyncBridgeService.rescanFolder(folderID: folder.id)
-                        cJSON = SyncBridgeService.getConflictFilesJSON(folderID: folder.id)
-                    }
-                }
+                let cJSON = SyncBridgeService.getConflictFilesJSON(folderID: folder.id)
                 if let d = cJSON.data(using: .utf8) {
                     conflicts[folder.id] = d
                 }

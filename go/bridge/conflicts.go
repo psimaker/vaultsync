@@ -465,37 +465,13 @@ func RemoveConflictFilesForOriginal(folderID, originalPath string) string {
 	return emit(result{Removed: removed})
 }
 
-// stateDirName marks the directory whose contents count as app state (not
-// user notes) for conflict auto-resolution.
-const stateDirName = ".obsidian"
-
-// isStateFilePath reports whether the folder-relative path points inside a
-// `.obsidian` directory at any depth — covers both the single-vault layout
-// (`.obsidian/...`) and the Obsidian-root layout (`MyVault/.obsidian/...`).
-func isStateFilePath(relPath string) bool {
-	dir := filepath.ToSlash(filepath.Dir(relPath))
-	for _, part := range strings.Split(dir, "/") {
-		if part == stateDirName {
-			return true
-		}
-	}
-	return false
-}
-
-// AutoResolveStateConflicts resolves conflict copies of app-state files
-// (anything inside a `.obsidian` directory) without user interaction, using
-// last-writer-wins: a conflict copy newer than its original replaces the
-// original, an older (or equally old) copy is discarded. A copy whose
-// original no longer exists is promoted to be the original so no data is
-// lost. Files outside `.obsidian` directories are never touched.
-//
-// Stops after scanning maxConflictScan files, like GetConflictFilesJSON.
+// AutoResolveStateConflicts is retained for gomobile ABI compatibility but no
+// longer mutates conflict files. Conflict copies that are still present remain
+// visible through the manual conflict APIs.
 //
 // Returns a JSON string of the form:
 //
 //	{"resolved": <int>, "error": "<msg or empty>"}
-//
-// On a mid-loop failure the envelope carries the partial count plus the error.
 func AutoResolveStateConflicts(folderID string) string {
 	type result struct {
 		Resolved int    `json:"resolved"`
@@ -513,77 +489,10 @@ func AutoResolveStateConflicts(folderID string) string {
 	if folders == nil {
 		return emit(result{Error: "syncthing not running"})
 	}
-	folder, exists := folders[folderID]
+	_, exists := folders[folderID]
 	if !exists {
 		return emit(result{Error: "folder not found"})
 	}
 
-	// Collect first, mutate after the walk: renaming/removing entries while
-	// WalkDir iterates the same directories has platform-dependent results.
-	type candidate struct {
-		conflictPath string // absolute
-		originalPath string // absolute
-	}
-	var candidates []candidate
-	scanned := 0
-	filepath.WalkDir(folder.Path, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
-		}
-		scanned++
-		if scanned > maxConflictScan {
-			return filepath.SkipAll
-		}
-		name := d.Name()
-		if !strings.Contains(name, ".sync-conflict-") {
-			return nil
-		}
-		matches := conflictPattern.FindStringSubmatch(name)
-		if matches == nil {
-			return nil
-		}
-		relPath, relErr := filepath.Rel(folder.Path, path)
-		if relErr != nil || !isStateFilePath(relPath) {
-			return nil
-		}
-		originalName := matches[1] + matches[4]
-		candidates = append(candidates, candidate{
-			conflictPath: path,
-			originalPath: filepath.Join(filepath.Dir(path), originalName),
-		})
-		return nil
-	})
-
-	resolved := 0
-	for _, c := range candidates {
-		conflictInfo, err := os.Stat(c.conflictPath)
-		if err != nil {
-			// Copy vanished since the walk (resolved elsewhere) — nothing to do.
-			continue
-		}
-		var keepCopy bool
-		originalInfo, err := os.Stat(c.originalPath)
-		switch {
-		case os.IsNotExist(err):
-			// The conflict copy is the only surviving version — promote it.
-			keepCopy = true
-		case err != nil:
-			return emit(result{Resolved: resolved, Error: fmt.Sprintf("stat %s: %v", filepath.Base(c.originalPath), err)})
-		default:
-			keepCopy = conflictInfo.ModTime().After(originalInfo.ModTime())
-		}
-		if keepCopy {
-			// Atomic on POSIX: replaces the original in one step.
-			if err := os.Rename(c.conflictPath, c.originalPath); err != nil {
-				return emit(result{Resolved: resolved, Error: fmt.Sprintf("promote %s: %v", filepath.Base(c.conflictPath), err)})
-			}
-		} else {
-			if err := os.Remove(c.conflictPath); err != nil {
-				return emit(result{Resolved: resolved, Error: fmt.Sprintf("remove %s: %v", filepath.Base(c.conflictPath), err)})
-			}
-		}
-		resolved++
-	}
-
-	return emit(result{Resolved: resolved})
+	return emit(result{})
 }

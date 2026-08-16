@@ -1213,11 +1213,6 @@ enum BackgroundSyncService {
         let bannersEnabled = (UserDefaults.standard.object(forKey: conflictNotificationsEnabledKey) as? Bool) ?? true
         guard bannersEnabled else { return }
 
-        // Resolve `.obsidian` state-file conflicts (last-writer-wins) before
-        // counting, so a background sync never wakes the user for conflicts
-        // the app can settle on its own. Same opt-out as the foreground poll.
-        autoResolveStateConflictsIfEnabled()
-
         guard let count = currentConflictCount() else {
             // Unreadable conflict snapshot (transient bridge/decode failure) —
             // leave the banner and persisted baseline untouched rather than
@@ -1267,25 +1262,6 @@ enum BackgroundSyncService {
                 logger.info("Conflict notification \(action == .alert ? "posted" : "updated quietly") (\(count) conflicts)")
             } catch {
                 logger.error("Failed to send notification")
-            }
-        }
-    }
-
-    /// Best-effort last-writer-wins cleanup of `.obsidian` state-file
-    /// conflicts across all folders. Runs in the background path before the
-    /// conflict count, mirroring what the foreground 2s poll does, so the
-    /// notification only ever reflects conflicts that need the user.
-    private static func autoResolveStateConflictsIfEnabled() {
-        guard SyncthingManager.isAutoResolveStateConflictsEnabled else { return }
-        let json = SyncBridgeService.getFoldersJSON()
-        guard let data = json.data(using: .utf8),
-              let folders = try? JSONDecoder().decode([FolderStub].self, from: data) else {
-            return
-        }
-        for folder in folders {
-            let result = SyncBridgeService.autoResolveStateConflicts(folderID: folder.id)
-            if result.resolved > 0 {
-                _ = SyncBridgeService.rescanFolder(folderID: folder.id)
             }
         }
     }

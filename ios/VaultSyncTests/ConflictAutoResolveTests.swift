@@ -2,12 +2,9 @@ import Foundation
 import Testing
 @testable import VaultSync
 
-/// Pins the Swift-side classification and counting that powers conflict
-/// auto-resolution: which conflicts count as auto-resolvable `.obsidian`
-/// state, and how the home-screen banner counts distinct files instead of
-/// conflict copies. The on-disk resolution itself lives in the Go bridge
-/// (AutoResolveStateConflicts) and is tested there.
-@Suite("Conflict auto-resolve classification")
+/// Pins the retired automatic resolver's safety policy and keeps the conflict
+/// count semantics independent of the number of copies for one file (#145).
+@Suite("Automatic conflict mutation disabled (#145)")
 struct ConflictAutoResolveTests {
 
     private func conflict(
@@ -22,42 +19,74 @@ struct ConflictAutoResolveTests {
         )
     }
 
-    // MARK: - isStateConflict
+    // MARK: - Retired preference policy
 
-    @Test("Files inside .obsidian are state conflicts at any depth")
-    func obsidianFilesAreState() {
-        #expect(conflict(".obsidian/workspace.json").isStateConflict)
-        #expect(conflict(".obsidian/plugins/dataview/data.json").isStateConflict)
-        #expect(conflict("MyVault/.obsidian/app.json").isStateConflict)
-        #expect(conflict("MyVault/.obsidian/plugins/calendar/data.json").isStateConflict)
+    @Test("Missing legacy preference cannot enable automatic mutation (#145)")
+    func issue145MissingLegacyPreferenceStaysDisabledAndAbsent() {
+        let defaults = TestSupport.makeIsolatedDefaults(label: "issue-145-missing")
+        let key = SyncthingManager.autoResolveStateConflictsKey
+
+        #expect(defaults.object(forKey: key) == nil)
+        #expect(!SyncthingManager.isAutoResolveStateConflictsEnabled(defaults: defaults))
+        #expect(defaults.object(forKey: key) == nil)
     }
 
-    @Test("Notes and lookalike paths are not state conflicts")
-    func notesAreNotState() {
-        #expect(!conflict("notes.md").isStateConflict)
-        #expect(!conflict("Personal/diary.md").isStateConflict)
-        // A file literally named ".obsidian.md" is a note, not state.
-        #expect(!conflict(".obsidian.md").isStateConflict)
-        // Only the exact directory name counts, not a prefix of it.
-        #expect(!conflict("docs/.obsidian-guide/readme.md").isStateConflict)
+    @Test("Legacy false preference stays disabled and intact (#145)")
+    func issue145LegacyFalseStaysDisabledAndIntact() {
+        let defaults = TestSupport.makeIsolatedDefaults(label: "issue-145-false")
+        let key = SyncthingManager.autoResolveStateConflictsKey
+        defaults.set(false, forKey: key)
+
+        #expect(!SyncthingManager.isAutoResolveStateConflictsEnabled(defaults: defaults))
+        #expect((defaults.object(forKey: key) as? Bool) == false)
     }
 
-    // MARK: - containsStateConflict (poll-loop gate)
+    @Test("Legacy true preference cannot re-enable mutation and stays intact (#145)")
+    func issue145LegacyTrueStaysDisabledAndIntact() {
+        let defaults = TestSupport.makeIsolatedDefaults(label: "issue-145-true")
+        let key = SyncthingManager.autoResolveStateConflictsKey
+        defaults.set(true, forKey: key)
 
-    @Test("JSON gate detects a state conflict among notes")
-    func gateDetectsStateConflict() throws {
-        let mixed = [conflict("a.md"), conflict("V/.obsidian/app.json")]
-        let json = String(data: try JSONEncoder().encode(mixed), encoding: .utf8)!
-        #expect(SyncthingManager.containsStateConflict(conflictsJSON: json))
+        #expect(!SyncthingManager.isAutoResolveStateConflictsEnabled(defaults: defaults))
+        #expect((defaults.object(forKey: key) as? Bool) == true)
     }
 
-    @Test("JSON gate stays quiet for notes-only and invalid payloads")
-    func gateQuietOtherwise() throws {
-        let notes = [conflict("a.md"), conflict("V/b.md")]
-        let json = String(data: try JSONEncoder().encode(notes), encoding: .utf8)!
-        #expect(!SyncthingManager.containsStateConflict(conflictsJSON: json))
-        #expect(!SyncthingManager.containsStateConflict(conflictsJSON: "[]"))
-        #expect(!SyncthingManager.containsStateConflict(conflictsJSON: "not json"))
+    // MARK: - Automatic caller removal
+
+    @Test("Foreground poll has no automatic resolver call (#145)")
+    func issue145ForegroundSourceHasNoAutomaticResolverCall() throws {
+        let source = try productSource("VaultSync/Services/SyncthingManager.swift")
+        expectNoAutomaticResolverCall(in: source)
+    }
+
+    @Test("Background paths have no automatic resolver call (#145)")
+    func issue145BackgroundSourceHasNoAutomaticResolverCall() throws {
+        let source = try productSource("VaultSync/Services/BackgroundSyncService.swift")
+        expectNoAutomaticResolverCall(in: source)
+    }
+
+    @Test("No product source can route around the retired callers (#145)")
+    func issue145ProductSourcesHaveNoAutomaticResolverReference() throws {
+        let productDirectory = productURL("VaultSync")
+        guard let enumerator = FileManager.default.enumerator(
+            at: productDirectory,
+            includingPropertiesForKeys: [.isRegularFileKey]
+        ) else {
+            Issue.record("Could not enumerate VaultSync product sources")
+            return
+        }
+
+        var auditedSourceCount = 0
+        for case let sourceURL as URL in enumerator {
+            guard sourceURL.pathExtension == "swift",
+                  sourceURL.lastPathComponent != "SyncBridgeService.swift" else {
+                continue
+            }
+            auditedSourceCount += 1
+            let source = try String(contentsOf: sourceURL, encoding: .utf8)
+            expectNoAutomaticResolverCall(in: source)
+        }
+        #expect(auditedSourceCount > 0)
     }
 
     // MARK: - Distinct-file conflict count
@@ -87,5 +116,22 @@ struct ConflictAutoResolveTests {
         let manager = SyncthingManager()
         manager._testSetConflictFiles([:])
         #expect(manager.unresolvedConflictCount == 0)
+    }
+
+    private func productSource(_ relativePath: String, filePath: StaticString = #filePath) throws -> String {
+        try String(contentsOf: productURL(relativePath, filePath: filePath), encoding: .utf8)
+    }
+
+    private func productURL(_ relativePath: String, filePath: StaticString = #filePath) -> URL {
+        let iosDirectory = URL(fileURLWithPath: "\(filePath)")
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        return iosDirectory.appendingPathComponent(relativePath)
+    }
+
+    private func expectNoAutomaticResolverCall(in source: String) {
+        let compact = source.filter { !$0.isWhitespace }
+        #expect(!compact.contains("SyncBridgeService.autoResolveStateConflicts"))
+        #expect(!compact.contains("BridgeAutoResolveStateConflicts"))
     }
 }

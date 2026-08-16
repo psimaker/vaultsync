@@ -290,10 +290,10 @@ struct SyncBridgeService {
         return (decoded.removed, nil)
     }
 
-    /// Auto-resolve conflict copies of Obsidian state files (anything inside a
-    /// `.obsidian` directory) using last-writer-wins. Returns the number of
-    /// resolved copies; `error` is non-nil when the loop failed partway, with
-    /// `resolved` carrying the partial count.
+    /// Legacy gomobile compatibility entry point. Automatic state-conflict
+    /// mutation was retired in #145; the Go bridge now leaves every file
+    /// untouched and returns zero resolved copies. Keep this signature stable
+    /// until the generated bridge contract can be removed independently.
     static func autoResolveStateConflicts(folderID: String) -> (resolved: Int, error: String?) {
         let raw = BridgeAutoResolveStateConflicts(folderID)
         struct Payload: Decodable {

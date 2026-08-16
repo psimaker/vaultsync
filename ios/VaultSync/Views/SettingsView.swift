@@ -16,7 +16,6 @@ struct SettingsView: View {
     @State private var showThankYou = false
     @State private var deviceIDCopied = false
     @AppStorage(BackgroundSyncService.conflictNotificationsEnabledKey) private var conflictNotificationsEnabled = true
-    @AppStorage(SyncthingManager.autoResolveStateConflictsKey) private var autoResolveStateConflicts = true
     @Environment(\.dismiss) private var dismiss
 
     // Cloud Relay now lives entirely in its own tab (RelayHomeView) — subscribe,
@@ -123,13 +122,11 @@ struct SettingsView: View {
 
     private var conflictsSection: some View {
         Section {
-            Toggle(isOn: $autoResolveStateConflicts) {
-                Label(L10n.tr("Auto-Resolve Settings Conflicts"), systemImage: "wand.and.stars")
-            }
+            Label(L10n.tr("Review Conflicts Manually"), systemImage: "exclamationmark.triangle")
         } header: {
             Text(L10n.tr("Conflicts"))
         } footer: {
-            Text(L10n.tr("Conflicts in Obsidian's app settings and plugin state (.obsidian) are resolved automatically — the newest version wins. Conflicts in your notes always wait for your decision."))
+            Text(L10n.tr("VaultSync does not automatically choose between conflicting copies in your notes, Obsidian settings, or plugin state. Review each conflict and decide what to keep."))
         }
     }
 

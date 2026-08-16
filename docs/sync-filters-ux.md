@@ -1,8 +1,8 @@
 # Sync Filters — UX Spec
 
 > **Internal design reference — not user documentation.** This captures the rationale, layout, and trade-offs behind the Sync Filters feature for maintainers extending it.
-> Status: **implemented** (issue [#1](https://github.com/psimaker/vaultsync/issues/1), shipped in v1.2.0; Conflict→Skip extended to Skip Family in v1.3.2, issue [#8](https://github.com/psimaker/vaultsync/issues/8); conflict auto-resolution for `.obsidian` state files added in v1.7.0, §6.6; multi-line paste + order-preserving filter writes in v1.7.1, issue [#43](https://github.com/psimaker/vaultsync/issues/43), §6.7). Current app: v1.7.1.
-> Last updated: 2026-06-13
+> Status: **implemented** (issue [#1](https://github.com/psimaker/vaultsync/issues/1), shipped in v1.2.0; Conflict→Skip extended to Skip Family in v1.3.2, issue [#8](https://github.com/psimaker/vaultsync/issues/8); automatic `.obsidian` conflict resolution added in v1.7.0 and retired under issue [#145](https://github.com/psimaker/vaultsync/issues/145), §6.6; multi-line paste + order-preserving filter writes in v1.7.1, issue [#43](https://github.com/psimaker/vaultsync/issues/43), §6.7). Current shipped app: v2.0.1.
+> Last updated: 2026-08-16
 
 This document is the design reference for the Sync Filters feature — the UI for excluding files and folders from sync requested in issue #1 by @vitaly74. It captures the rationale behind the layout, preset catalog, migration path, and multi-vault behavior; refer to it when extending or modifying the feature.
 
@@ -148,33 +148,34 @@ In typical Obsidian use, the sync folder is the **Obsidian root** and individual
 
 The vault scanner specifically descends one level into non-hidden subdirectories so that heavy folders inside vaults (e.g. `Obsidian/Personal/.git`, `Obsidian/Work/.git`) are detected and their sizes aggregated into a single "Found in this vault" entry per pattern.
 
-## 6.6 Conflict auto-resolution (v1.7.0)
+## 6.6 Manual conflict review
 
-Presets prevent the *predictable* conflict sources, but `.obsidian` holds many
-more files that churn on every device (`app.json`, `graph.json`, per-plugin
-`data.json`, …) — and ignoring all of them by default would also stop plugin
-*settings* from syncing, which users do want. So v1.7.0 attacks the noise from
-the other side:
+Presets prevent predictable conflict sources, but `.obsidian` also contains
+settings and plugin state that users expect to sync. VaultSync therefore keeps
+these files in the same explicit conflict workflow as notes instead of choosing
+a winner automatically:
 
-- **Auto-resolve, not ignore.** Conflict copies of any file inside a
-  `.obsidian` directory (any depth — covers vault-subdir layouts) are resolved
-  automatically with last-writer-wins: the newer mtime becomes the original,
-  the loser is deleted. A copy whose original vanished is promoted instead of
-  deleted, so nothing is ever lost. Implemented in the Go bridge
-  (`AutoResolveStateConflicts`, `go/bridge/conflicts.go`); triggered from the
-  foreground 2s poll (gated on the conflict scan actually containing a state
-  conflict) and from the background-sync path *before* the conflict
-  notification fires.
-- **Notes are exempt by design.** Anything outside `.obsidian` keeps the full
-  manual flow (diff view, Keep This/Other/Both, Skip Family) — last-writer-wins
-  on user content would mean silent data loss.
-- **Opt-out, not opt-in.** Settings → Conflicts → "Auto-Resolve Settings
-  Conflicts" (`SyncthingManager.autoResolveStateConflictsKey`, missing key =
-  ON). Users who turn it off see state conflicts in the normal manual flow
-  again.
+- **No app-owned automatic mutation.** Foreground and background sync leave
+  originals and conflict copies unchanged, regardless of their modification
+  times or whether the original is missing. Detected conflicts inside and
+  outside `.obsidian` remain available in the manual conflict UI.
+- **Legacy state cannot opt back in.** The historical
+  `auto-resolve-state-conflicts-v1` preference remains stored so an update does
+  not delete or reset user preferences, but its value is ignored. A persisted
+  `true` cannot restore automatic last-writer-wins behavior.
+- **Bridge compatibility is non-mutating.** The exported
+  `AutoResolveStateConflicts` entry point remains as a gomobile compatibility
+  no-op and makes no filesystem changes. Foreground and background code do not
+  call it.
+- **Manual choices remain available.** Keep This, Keep Other, Keep Both, and
+  Skip Family still run only after the user's explicit decision.
 - **Counts mean files now.** The home banner, vault badges, and notifications
   count distinct conflicted files instead of conflict copies — with
   `MaxConflicts: 10` a single churn-prone file used to read as "10 conflicts".
+- **Retention is a separate Syncthing policy.** VaultSync shows conflict copies
+  that Syncthing leaves on disk, but does not guarantee that Syncthing retains
+  any copy indefinitely. This manual-review doctrine does not change
+  Syncthing's own retention or versioning behavior.
 
 ## 6.7 Multi-line paste & order-preserving writes (v1.7.1)
 

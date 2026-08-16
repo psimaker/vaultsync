@@ -644,9 +644,9 @@
 "Low Power Mode is on — iOS defers silent wake-ups until it is off or the iPhone is charging." = "低电量模式已开启——iOS 会推迟静默唤醒信号，直到关闭该模式或 iPhone 充电。";
 "Keep VaultSync in the background: if you force-quit it from the app switcher, iOS stops delivering wake-ups until you open the app again." = "请让 VaultSync 保留在后台：如果在应用切换器中强制退出，iOS 将停止递送唤醒信号，直到你再次打开应用。";
 
-/* Conflict auto-resolution — .obsidian state files, last-writer-wins (Settings) */
-"Auto-Resolve Settings Conflicts" = "自动解决设置冲突";
-"Conflicts in Obsidian's app settings and plugin state (.obsidian) are resolved automatically — the newest version wins. Conflicts in your notes always wait for your decision." = "Obsidian 应用设置和插件状态（.obsidian）中的冲突会自动解决——保留最新版本。笔记中的冲突始终等待你的决定。";
+/* Manual conflict review — notes and .obsidian state (Settings) */
+"Review Conflicts Manually" = "手动检查冲突";
+"VaultSync does not automatically choose between conflicting copies in your notes, Obsidian settings, or plugin state. Review each conflict and decide what to keep." = "VaultSync 不会自动在笔记、Obsidian 设置或插件状态的冲突副本之间做出选择。请逐一检查冲突，并决定要保留的内容。";
 
 /* Path collision migration shield (#45) — vaults an older version already merged onto one folder */
 "Two Vaults Are Sharing One Folder" = "两个 Vault 共用同一个文件夹";
