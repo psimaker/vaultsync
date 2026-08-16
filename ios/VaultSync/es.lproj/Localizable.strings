@@ -113,6 +113,8 @@
 "Invalid Input" = "Entrada no válida";
 "Invalid folder name: '%@'" = "Nombre de carpeta no válido: «%@»";
 "Keep Both" = "Conservar ambas";
+"Keep Both did not change any files because the new copy name is already in use." = "Conservar ambas no cambió ningún archivo porque el nuevo nombre de la copia ya está en uso.";
+"Keep Both did not change any files because this storage location does not support safe renaming." = "Conservar ambas no cambió ningún archivo porque esta ubicación de almacenamiento no admite el cambio de nombre seguro.";
 "Keep Other" = "Conservar la otra";
 "Keep Other Device's Version" = "Conservar la versión del otro dispositivo";
 "Keep This" = "Conservar esta";
@@ -233,6 +235,8 @@
 "Remove and re-share the folder from your desktop device." = "Elimina y vuelve a compartir la carpeta desde tu equipo de escritorio.";
 "Removed line. %@" = "Línea eliminada. %@";
 "Rename Failed" = "No se pudo renombrar";
+"Rename the existing copy in Files, then try Keep Both again." = "Cambia el nombre de la copia existente en Archivos y vuelve a intentar conservar ambas.";
+"Resolve this conflict manually in Files without replacing either file." = "Resuelve este conflicto manualmente en Archivos sin reemplazar ninguno de los archivos.";
 "Renews" = "Se renueva";
 "Requesting camera access…" = "Solicitando acceso a la cámara…";
 "Rescan Failed" = "El reescaneo falló";

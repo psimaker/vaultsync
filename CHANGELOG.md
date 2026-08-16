@@ -8,6 +8,7 @@ All notable changes to VaultSync are documented here.
 
 ### Fixed
 
+- **Keep Both no longer overwrites an existing conflict copy** ([#144](https://github.com/psimaker/vaultsync/issues/144)) — when the intended copy name is already occupied, VaultSync leaves all existing files untouched instead of replacing previously saved bytes.
 - **Manual conflict resolution preserves unrelated temporary files** ([#143](https://github.com/psimaker/vaultsync/issues/143)) — choosing the conflicting version no longer reuses or overwrites a pre-existing temporary file next to the note.
 
 ### Security

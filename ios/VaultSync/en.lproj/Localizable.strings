@@ -113,6 +113,8 @@
 "Invalid Input" = "Invalid Input";
 "Invalid folder name: '%@'" = "Invalid folder name: '%@'";
 "Keep Both" = "Keep Both";
+"Keep Both did not change any files because the new copy name is already in use." = "Keep Both did not change any files because the new copy name is already in use.";
+"Keep Both did not change any files because this storage location does not support safe renaming." = "Keep Both did not change any files because this storage location does not support safe renaming.";
 "Keep Other" = "Keep Other";
 "Keep Other Device's Version" = "Keep Other Device's Version";
 "Keep This" = "Keep This";
@@ -233,6 +235,8 @@
 "Remove and re-share the folder from your desktop device." = "Remove and re-share the folder from your desktop device.";
 "Removed line. %@" = "Removed line. %@";
 "Rename Failed" = "Rename Failed";
+"Rename the existing copy in Files, then try Keep Both again." = "Rename the existing copy in Files, then try Keep Both again.";
+"Resolve this conflict manually in Files without replacing either file." = "Resolve this conflict manually in Files without replacing either file.";
 "Renews" = "Renews";
 "Requesting camera access…" = "Requesting camera access…";
 "Rescan Failed" = "Rescan Failed";

@@ -62,6 +62,33 @@ struct SyncUserErrorTests {
     }
 }
 
+@Suite("Keep Both collision error mapping (#144)")
+struct KeepBothCollisionErrorMappingTests {
+    @Test("Explains that a name collision leaves every file unchanged")
+    func mapsKeepBothTargetCollision() {
+        let raw = "keep both target already exists"
+        let error = SyncUserError.from(rawMessage: raw)
+
+        #expect(error.category == .config)
+        #expect(error.title == L10n.tr("Conflict Resolution Failed"))
+        #expect(error.message == L10n.tr("Keep Both did not change any files because the new copy name is already in use."))
+        #expect(error.remediation == L10n.tr("Rename the existing copy in Files, then try Keep Both again."))
+        #expect(error.technicalDetails == raw)
+    }
+
+    @Test("Explains when storage cannot perform a safe Keep Both rename")
+    func mapsUnsupportedNoReplaceStorage() {
+        let raw = "atomic no-replace rename is not supported by this filesystem"
+        let error = SyncUserError.from(rawMessage: raw)
+
+        #expect(error.category == .fileAccess)
+        #expect(error.title == L10n.tr("Conflict Resolution Failed"))
+        #expect(error.message == L10n.tr("Keep Both did not change any files because this storage location does not support safe renaming."))
+        #expect(error.remediation == L10n.tr("Resolve this conflict manually in Files without replacing either file."))
+        #expect(error.technicalDetails == raw)
+    }
+}
+
 @Suite("Marker-missing folder error mapping (#65)")
 struct FolderMarkerMissingMappingTests {
     /// Syncthing's literal engine text (lib/config/folderconfiguration.go) —

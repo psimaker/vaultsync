@@ -11,6 +11,7 @@ require (
 	github.com/syncthing/syncthing v1.30.0-rc.1.0.20260211104138-dc2a77ab8e5b
 	github.com/thejerf/suture/v4 v4.0.6
 	golang.org/x/mobile v0.0.0-20260312152759-81488f6aeb60
+	golang.org/x/sys v0.46.0
 )
 
 require (
@@ -68,7 +69,6 @@ require (
 	golang.org/x/mod v0.37.0 // indirect
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sync v0.21.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.39.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 	golang.org/x/tools v0.47.0 // indirect

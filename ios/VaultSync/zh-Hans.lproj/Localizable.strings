@@ -113,6 +113,8 @@
 "Invalid Input" = "输入无效";
 "Invalid folder name: '%@'" = "无效的文件夹名称：“%@”";
 "Keep Both" = "两者都保留";
+"Keep Both did not change any files because the new copy name is already in use." = "“两者都保留”未更改任何文件，因为新副本名称已被使用。";
+"Keep Both did not change any files because this storage location does not support safe renaming." = "“两者都保留”未更改任何文件，因为此存储位置不支持安全重命名。";
 "Keep Other" = "保留对方版本";
 "Keep Other Device's Version" = "保留另一台设备的版本";
 "Keep This" = "保留此版本";
@@ -233,6 +235,8 @@
 "Remove and re-share the folder from your desktop device." = "从桌面设备中移除该文件夹并重新共享。";
 "Removed line. %@" = "已删除行。%@";
 "Rename Failed" = "重命名失败";
+"Rename the existing copy in Files, then try Keep Both again." = "请在“文件”中重命名现有副本，然后再次尝试保留两者。";
+"Resolve this conflict manually in Files without replacing either file." = "请在“文件”中手动解决此冲突，不要替换任何文件。";
 "Renews" = "续订";
 "Requesting camera access…" = "正在请求相机权限…";
 "Rescan Failed" = "重新扫描失败";

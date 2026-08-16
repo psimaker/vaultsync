@@ -113,6 +113,8 @@
 "Invalid Input" = "Ungültige Eingabe";
 "Invalid folder name: '%@'" = "Ungültiger Ordnername: „%@“";
 "Keep Both" = "Beide behalten";
+"Keep Both did not change any files because the new copy name is already in use." = "„Beide behalten“ hat keine Dateien geändert, weil der neue Kopiename bereits verwendet wird.";
+"Keep Both did not change any files because this storage location does not support safe renaming." = "„Beide behalten“ hat keine Dateien geändert, weil dieser Speicherort sicheres Umbenennen nicht unterstützt.";
 "Keep Other" = "Andere behalten";
 "Keep Other Device's Version" = "Version des anderen Geräts behalten";
 "Keep This" = "Diese behalten";
@@ -233,6 +235,8 @@
 "Remove and re-share the folder from your desktop device." = "Entferne den Ordner und teile ihn von deinem Desktop-Gerät erneut.";
 "Removed line. %@" = "Entfernte Zeile. %@";
 "Rename Failed" = "Umbenennen fehlgeschlagen";
+"Rename the existing copy in Files, then try Keep Both again." = "Benenne die vorhandene Kopie in der Dateien-App um und versuche dann erneut, beide zu behalten.";
+"Resolve this conflict manually in Files without replacing either file." = "Löse diesen Konflikt manuell in der Dateien-App, ohne eine der Dateien zu ersetzen.";
 "Renews" = "Verlängert sich";
 "Requesting camera access…" = "Kamerazugriff wird angefordert…";
 "Rescan Failed" = "Erneuter Scan fehlgeschlagen";

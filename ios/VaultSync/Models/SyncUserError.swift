@@ -53,6 +53,26 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
             return folderMarkerMissing(detail: rawMessage, path: nil)
         }
 
+        if normalized.contains("keep both target already exists") {
+            return SyncUserError(
+                category: .config,
+                title: L10n.tr("Conflict Resolution Failed"),
+                message: L10n.tr("Keep Both did not change any files because the new copy name is already in use."),
+                remediation: L10n.tr("Rename the existing copy in Files, then try Keep Both again."),
+                technicalDetails: rawMessage
+            )
+        }
+
+        if normalized.contains("atomic no-replace rename is not supported") {
+            return SyncUserError(
+                category: .fileAccess,
+                title: L10n.tr("Conflict Resolution Failed"),
+                message: L10n.tr("Keep Both did not change any files because this storage location does not support safe renaming."),
+                remediation: L10n.tr("Resolve this conflict manually in Files without replacing either file."),
+                technicalDetails: rawMessage
+            )
+        }
+
         if isRelayConnectivityError(normalized) {
             return SyncUserError(
                 category: .relayUnreachable,

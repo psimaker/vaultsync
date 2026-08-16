@@ -15,8 +15,12 @@ import (
 	"strings"
 )
 
-// errPathTraversal is returned when a relative path attempts to escape the folder root.
-var errPathTraversal = errors.New("path traversal outside folder root")
+var (
+	// errPathTraversal is returned when a relative path attempts to escape the folder root.
+	errPathTraversal = errors.New("path traversal outside folder root")
+
+	errNoReplaceUnsupported = errors.New("atomic no-replace rename is not supported by this filesystem")
+)
 
 // ConflictFile describes a single conflict copy found in a folder.
 type ConflictFile struct {
@@ -33,6 +37,8 @@ var conflictPattern = regexp.MustCompile(`^(.+)\.sync-conflict-(\d{8}-\d{6})-([A
 // maxConflictScan limits the number of files examined during conflict detection
 // to prevent excessive I/O on very large vaults.
 const maxConflictScan = 10000
+
+const keepBothTargetExistsError = "keep both target already exists"
 
 // Syncthing's fs.IsTemporary recognizes the .syncthing. prefix, so the scanner
 // ignores these short-lived files instead of publishing them as vault content.
@@ -65,6 +71,18 @@ func systemConflictFileOperations() conflictFileOperations {
 		},
 		rename: os.Rename,
 		remove: os.Remove,
+	}
+}
+
+type keepBothFileOperations struct {
+	stat            func(string) (os.FileInfo, error)
+	renameNoReplace func(string, string) error
+}
+
+func systemKeepBothFileOperations() keepBothFileOperations {
+	return keepBothFileOperations{
+		stat:            os.Stat,
+		renameNoReplace: renameNoReplace,
 	}
 }
 
@@ -168,11 +186,21 @@ func KeepBothConflict(folderID, conflictFileName string) string {
 	if err != nil {
 		return "invalid path: outside folder root"
 	}
+	return keepBothConflictFile(conflictPath, conflictFileName, systemKeepBothFileOperations())
+}
 
-	if _, err := os.Stat(conflictPath); os.IsNotExist(err) {
+func keepBothConflictFile(conflictPath, conflictFileName string, ops keepBothFileOperations) string {
+	_, err := ops.stat(conflictPath)
+	if errors.Is(err, os.ErrNotExist) {
 		return "conflict file not found"
 	}
-
+	if err != nil {
+		var pathError *os.PathError
+		if errors.As(err, &pathError) {
+			err = pathError.Err
+		}
+		return fmt.Sprintf("inspect conflict file: %v", err)
+	}
 	name := filepath.Base(conflictFileName)
 	matches := conflictPattern.FindStringSubmatch(name)
 	if matches == nil {
@@ -183,8 +211,17 @@ func KeepBothConflict(folderID, conflictFileName string) string {
 	newName := matches[1] + ".conflict-" + matches[3] + matches[4]
 	newPath := filepath.Join(filepath.Dir(conflictPath), newName)
 
-	if err := os.Rename(conflictPath, newPath); err != nil {
-		return fmt.Sprintf("rename conflict file: %v", err)
+	if err := ops.renameNoReplace(conflictPath, newPath); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return keepBothTargetExistsError
+		}
+		if errors.Is(err, errNoReplaceUnsupported) {
+			return errNoReplaceUnsupported.Error()
+		}
+		if errors.Is(err, os.ErrNotExist) {
+			return "conflict file not found"
+		}
+		return fmt.Sprintf("rename conflict file without replacing target: %v", err)
 	}
 
 	return ""
