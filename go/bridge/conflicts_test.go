@@ -1,10 +1,12 @@
 package bridge
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -203,6 +205,641 @@ func TestResolveConflictKeepConflict(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(folderPath, conflictName)); !os.IsNotExist(err) {
 		t.Error("conflict file should have been deleted")
 	}
+}
+
+func TestIssue143ResolveConflictPreservesExistingTemporaryFile(t *testing.T) {
+	configDir := testConfigDir(t)
+
+	if errMsg := StartSyncthing(configDir); errMsg != "" {
+		t.Fatalf("StartSyncthing() failed: %s", errMsg)
+	}
+	defer StopSyncthing()
+
+	const folderID = "issue143temp"
+	folderPath := filepath.Join(configDir, folderID)
+	if errMsg := AddFolder(folderID, "Issue 143 Temp Collision", folderPath); errMsg != "" {
+		t.Fatalf("AddFolder failed: %s", errMsg)
+	}
+
+	const conflictName = "doc.sync-conflict-20260406-100000-DEF5678.md"
+	originalPath := filepath.Join(folderPath, "doc.md")
+	conflictPath := filepath.Join(folderPath, conflictName)
+	tempPath := originalPath + ".vaultsync-tmp"
+	unrelatedPath := filepath.Join(folderPath, "unrelated-sentinel.md")
+
+	originalSentinel := []byte("issue-143-original-sentinel")
+	conflictSentinel := []byte("issue-143-conflict-sentinel")
+	tempSentinel := []byte("issue-143-existing-temp-sentinel")
+	unrelatedSentinel := []byte("issue-143-unrelated-sentinel")
+	fixtures := []struct {
+		name string
+		path string
+		data []byte
+	}{
+		{name: "original", path: originalPath, data: originalSentinel},
+		{name: "conflict", path: conflictPath, data: conflictSentinel},
+		{name: "pre-existing temp", path: tempPath, data: tempSentinel},
+		{name: "unrelated", path: unrelatedPath, data: unrelatedSentinel},
+	}
+	for _, fixture := range fixtures {
+		if err := os.WriteFile(fixture.path, fixture.data, 0o644); err != nil {
+			t.Fatalf("write %s fixture: %v", fixture.name, err)
+		}
+		got, err := os.ReadFile(fixture.path)
+		if err != nil {
+			t.Fatalf("read back %s fixture: %v", fixture.name, err)
+		}
+		if !bytes.Equal(got, fixture.data) {
+			t.Fatalf("%s fixture bytes = %q, want %q", fixture.name, got, fixture.data)
+		}
+	}
+
+	if errMsg := ResolveConflict(folderID, conflictName, true); errMsg != "" {
+		t.Fatalf("ResolveConflict(keepConflict=true) failed: %s", errMsg)
+	}
+
+	tempAfter, err := os.ReadFile(tempPath)
+	if err != nil {
+		t.Fatalf("pre-existing temp file was not preserved: %v", err)
+	}
+	if !bytes.Equal(tempAfter, tempSentinel) {
+		t.Errorf("pre-existing temp bytes = %q, want %q", tempAfter, tempSentinel)
+	}
+
+	originalAfter, err := os.ReadFile(originalPath)
+	if err != nil {
+		t.Fatalf("read resolved original: %v", err)
+	}
+	if !bytes.Equal(originalAfter, conflictSentinel) {
+		t.Errorf("resolved original bytes = %q, want conflict bytes %q", originalAfter, conflictSentinel)
+	}
+	if _, err := os.Stat(conflictPath); !os.IsNotExist(err) {
+		t.Errorf("resolved conflict path still exists or stat failed: %v", err)
+	}
+	unrelatedAfter, err := os.ReadFile(unrelatedPath)
+	if err != nil {
+		t.Fatalf("read unrelated file: %v", err)
+	}
+	if !bytes.Equal(unrelatedAfter, unrelatedSentinel) {
+		t.Errorf("unrelated bytes = %q, want %q", unrelatedAfter, unrelatedSentinel)
+	}
+	ownedTemps, err := filepath.Glob(filepath.Join(folderPath, ".syncthing.vaultsync-resolve-*"))
+	if err != nil {
+		t.Fatalf("glob VaultSync temporary files: %v", err)
+	}
+	if len(ownedTemps) != 0 {
+		t.Errorf("successful resolution left VaultSync temporary files: %v", ownedTemps)
+	}
+}
+
+func TestIssue143ResolveConflictRejectsPathTraversal(t *testing.T) {
+	configDir := testConfigDir(t)
+
+	if errMsg := StartSyncthing(configDir); errMsg != "" {
+		t.Fatalf("StartSyncthing() failed: %s", errMsg)
+	}
+	defer StopSyncthing()
+
+	const folderID = "issue143traversal"
+	folderPath := filepath.Join(configDir, folderID)
+	if errMsg := AddFolder(folderID, "Issue 143 Traversal", folderPath); errMsg != "" {
+		t.Fatalf("AddFolder failed: %s", errMsg)
+	}
+
+	const conflictName = "outside.sync-conflict-20260406-100000-DEF5678.md"
+	originalPath := filepath.Join(configDir, "outside.md")
+	conflictPath := filepath.Join(configDir, conflictName)
+	legacyPath := originalPath + ".vaultsync-tmp"
+	unrelatedPath := filepath.Join(configDir, "outside-unrelated-sentinel.md")
+	originalBytes := []byte("issue-143-traversal-original")
+	conflictBytes := []byte("issue-143-traversal-conflict")
+	legacyBytes := []byte("issue-143-traversal-legacy-temp")
+	unrelatedBytes := []byte("issue-143-traversal-unrelated")
+
+	fixtures := []struct {
+		name string
+		path string
+		data []byte
+	}{
+		{name: "outside original", path: originalPath, data: originalBytes},
+		{name: "outside conflict", path: conflictPath, data: conflictBytes},
+		{name: "outside legacy temp", path: legacyPath, data: legacyBytes},
+		{name: "outside unrelated", path: unrelatedPath, data: unrelatedBytes},
+	}
+	for _, fixture := range fixtures {
+		if err := os.WriteFile(fixture.path, fixture.data, 0o600); err != nil {
+			t.Fatalf("write %s: %v", fixture.name, err)
+		}
+		issue143AssertFileBytes(t, fixture.path, fixture.data)
+	}
+
+	errMsg := ResolveConflict(folderID, filepath.Join("..", conflictName), true)
+	if errMsg != "invalid path: outside folder root" {
+		t.Fatalf("ResolveConflict traversal error = %q, want invalid path error", errMsg)
+	}
+
+	for _, fixture := range fixtures {
+		issue143AssertFileBytes(t, fixture.path, fixture.data)
+	}
+	issue143AssertNoOperationTemps(t, configDir)
+}
+
+func TestIssue143ResolveConflictPreservesModeAndSupportsMissingOriginal(t *testing.T) {
+	tests := []struct {
+		name           string
+		createOriginal bool
+		wantMode       os.FileMode
+	}{
+		{name: "existing original", createOriginal: true, wantMode: 0o640},
+		{name: "missing original", createOriginal: false, wantMode: 0o644},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			originalPath := filepath.Join(dir, "doc.md")
+			conflictPath := filepath.Join(dir, "doc.sync-conflict-20260406-100000-DEF5678.md")
+			conflictBytes := []byte("issue-143-selected-conflict")
+
+			if tt.createOriginal {
+				if err := os.WriteFile(originalPath, []byte("issue-143-original"), 0o600); err != nil {
+					t.Fatalf("write original: %v", err)
+				}
+				if err := os.Chmod(originalPath, tt.wantMode); err != nil {
+					t.Fatalf("set original permissions: %v", err)
+				}
+			}
+			if err := os.WriteFile(conflictPath, conflictBytes, 0o600); err != nil {
+				t.Fatalf("write conflict: %v", err)
+			}
+
+			if err := replaceConflictAndRemoveSource(conflictPath, originalPath, systemConflictFileOperations()); err != nil {
+				t.Fatalf("replaceConflictAndRemoveSource() failed: %v", err)
+			}
+
+			issue143AssertFileBytes(t, originalPath, conflictBytes)
+			if _, err := os.Stat(conflictPath); !os.IsNotExist(err) {
+				t.Fatalf("conflict path still exists or stat failed: %v", err)
+			}
+			info, err := os.Stat(originalPath)
+			if err != nil {
+				t.Fatalf("stat resolved original: %v", err)
+			}
+			if got := info.Mode().Perm(); got != tt.wantMode {
+				t.Errorf("resolved original permissions = %04o, want %04o", got, tt.wantMode)
+			}
+			issue143AssertNoOperationTemps(t, dir)
+		})
+	}
+}
+
+func TestIssue143ResolveConflictDoesNotTouchLegacyTempNodes(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(*testing.T, string) func(*testing.T)
+	}{
+		{
+			name: "regular file",
+			setup: func(t *testing.T, legacyPath string) func(*testing.T) {
+				t.Helper()
+				want := []byte("issue-143-legacy-file-sentinel")
+				if err := os.WriteFile(legacyPath, want, 0o600); err != nil {
+					t.Fatalf("write legacy regular file: %v", err)
+				}
+				return func(t *testing.T) {
+					t.Helper()
+					issue143AssertFileBytes(t, legacyPath, want)
+				}
+			},
+		},
+		{
+			name: "symlink",
+			setup: func(t *testing.T, legacyPath string) func(*testing.T) {
+				t.Helper()
+				targetPath := filepath.Join(filepath.Dir(legacyPath), "legacy-symlink-target")
+				want := []byte("issue-143-symlink-target-sentinel")
+				if err := os.WriteFile(targetPath, want, 0o600); err != nil {
+					t.Fatalf("write symlink target: %v", err)
+				}
+				if err := os.Symlink(targetPath, legacyPath); err != nil {
+					t.Fatalf("create legacy symlink: %v", err)
+				}
+				return func(t *testing.T) {
+					t.Helper()
+					info, err := os.Lstat(legacyPath)
+					if err != nil {
+						t.Fatalf("lstat legacy symlink: %v", err)
+					}
+					if info.Mode()&os.ModeSymlink == 0 {
+						t.Fatalf("legacy path mode = %v, want symlink", info.Mode())
+					}
+					gotTarget, err := os.Readlink(legacyPath)
+					if err != nil {
+						t.Fatalf("read legacy symlink: %v", err)
+					}
+					if gotTarget != targetPath {
+						t.Errorf("legacy symlink target = %q, want %q", gotTarget, targetPath)
+					}
+					issue143AssertFileBytes(t, targetPath, want)
+				}
+			},
+		},
+		{
+			name: "directory",
+			setup: func(t *testing.T, legacyPath string) func(*testing.T) {
+				t.Helper()
+				if err := os.Mkdir(legacyPath, 0o700); err != nil {
+					t.Fatalf("create legacy directory: %v", err)
+				}
+				childPath := filepath.Join(legacyPath, "sentinel")
+				want := []byte("issue-143-legacy-directory-sentinel")
+				if err := os.WriteFile(childPath, want, 0o600); err != nil {
+					t.Fatalf("write legacy directory sentinel: %v", err)
+				}
+				return func(t *testing.T) {
+					t.Helper()
+					info, err := os.Lstat(legacyPath)
+					if err != nil {
+						t.Fatalf("lstat legacy directory: %v", err)
+					}
+					if !info.IsDir() {
+						t.Fatalf("legacy path mode = %v, want directory", info.Mode())
+					}
+					issue143AssertFileBytes(t, childPath, want)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			originalPath := filepath.Join(dir, "doc.md")
+			conflictPath := filepath.Join(dir, "doc.sync-conflict-20260406-100000-DEF5678.md")
+			legacyPath := originalPath + ".vaultsync-tmp"
+			conflictBytes := []byte("issue-143-selected-conflict")
+
+			if err := os.WriteFile(originalPath, []byte("issue-143-original"), 0o600); err != nil {
+				t.Fatalf("write original: %v", err)
+			}
+			if err := os.WriteFile(conflictPath, conflictBytes, 0o600); err != nil {
+				t.Fatalf("write conflict: %v", err)
+			}
+			verifyLegacy := tt.setup(t, legacyPath)
+
+			if err := replaceConflictAndRemoveSource(conflictPath, originalPath, systemConflictFileOperations()); err != nil {
+				t.Fatalf("replaceConflictAndRemoveSource() failed: %v", err)
+			}
+
+			issue143AssertFileBytes(t, originalPath, conflictBytes)
+			if _, err := os.Stat(conflictPath); !os.IsNotExist(err) {
+				t.Fatalf("conflict path still exists or stat failed: %v", err)
+			}
+			verifyLegacy(t)
+			issue143AssertNoOperationTemps(t, dir)
+		})
+	}
+}
+
+func TestIssue143ResolveConflictPreCommitFailuresPreserveUserFiles(t *testing.T) {
+	tests := []struct {
+		name          string
+		wantErrPrefix string
+		wantTempCount int
+		inject        func(*conflictFileOperations)
+	}{
+		{
+			name:          "read",
+			wantErrPrefix: "read conflict file:",
+			wantTempCount: 0,
+			inject: func(ops *conflictFileOperations) {
+				ops.readFile = func(string) ([]byte, error) { return nil, syscall.EIO }
+			},
+		},
+		{
+			name:          "stat",
+			wantErrPrefix: "stat original file:",
+			wantTempCount: 0,
+			inject: func(ops *conflictFileOperations) {
+				ops.stat = func(string) (os.FileInfo, error) { return nil, syscall.EACCES }
+			},
+		},
+		{
+			name:          "create disk full",
+			wantErrPrefix: "create temp file:",
+			wantTempCount: 0,
+			inject: func(ops *conflictFileOperations) {
+				ops.createTemp = func(string, string) (conflictTempFile, error) {
+					return nil, syscall.ENOSPC
+				}
+			},
+		},
+		{
+			name:          "partial write disk full",
+			wantErrPrefix: "write temp file:",
+			wantTempCount: 1,
+			inject: func(ops *conflictFileOperations) {
+				issue143InjectTempFault(ops, func(file *issue143FaultingTempFile) {
+					file.write = func(data []byte) (int, error) {
+						n, err := file.conflictTempFile.Write(data[:len(data)/2])
+						if err != nil {
+							return n, err
+						}
+						return n, syscall.ENOSPC
+					}
+				})
+			},
+		},
+		{
+			name:          "short write",
+			wantErrPrefix: "write temp file:",
+			wantTempCount: 1,
+			inject: func(ops *conflictFileOperations) {
+				issue143InjectTempFault(ops, func(file *issue143FaultingTempFile) {
+					file.write = func(data []byte) (int, error) {
+						return file.conflictTempFile.Write(data[:len(data)/2])
+					}
+				})
+			},
+		},
+		{
+			name:          "chmod",
+			wantErrPrefix: "set temp permissions:",
+			wantTempCount: 1,
+			inject: func(ops *conflictFileOperations) {
+				issue143InjectTempFault(ops, func(file *issue143FaultingTempFile) {
+					file.chmod = func(os.FileMode) error { return syscall.EPERM }
+				})
+			},
+		},
+		{
+			name:          "sync",
+			wantErrPrefix: "sync temp file:",
+			wantTempCount: 1,
+			inject: func(ops *conflictFileOperations) {
+				issue143InjectTempFault(ops, func(file *issue143FaultingTempFile) {
+					file.sync = func() error { return syscall.EIO }
+				})
+			},
+		},
+		{
+			name:          "close",
+			wantErrPrefix: "close temp file:",
+			wantTempCount: 1,
+			inject: func(ops *conflictFileOperations) {
+				issue143InjectTempFault(ops, func(file *issue143FaultingTempFile) {
+					file.close = func() error {
+						if err := file.conflictTempFile.Close(); err != nil {
+							return err
+						}
+						return syscall.EIO
+					}
+				})
+			},
+		},
+		{
+			name:          "rename",
+			wantErrPrefix: "replace original file:",
+			wantTempCount: 1,
+			inject: func(ops *conflictFileOperations) {
+				ops.rename = func(string, string) error { return syscall.EIO }
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fixture := issue143NewFileFixture(t)
+			ops := systemConflictFileOperations()
+			tt.inject(&ops)
+
+			err := replaceConflictAndRemoveSource(fixture.conflictPath, fixture.originalPath, ops)
+			if err == nil {
+				t.Fatalf("replaceConflictAndRemoveSource() succeeded, want %q error", tt.wantErrPrefix)
+			}
+			if !strings.HasPrefix(err.Error(), tt.wantErrPrefix) {
+				t.Errorf("error = %q, want prefix %q", err, tt.wantErrPrefix)
+			}
+
+			issue143AssertPreCommitFixture(t, fixture)
+			temps := issue143OperationTemps(t, fixture.dir)
+			if len(temps) != tt.wantTempCount {
+				t.Errorf("temporary file count = %d, want %d: %v", len(temps), tt.wantTempCount, temps)
+			}
+			for _, tempPath := range temps {
+				info, statErr := os.Lstat(tempPath)
+				if statErr != nil {
+					t.Fatalf("lstat operation temp: %v", statErr)
+				}
+				if !info.Mode().IsRegular() {
+					t.Errorf("operation temp mode = %v, want regular file", info.Mode())
+				}
+			}
+		})
+	}
+}
+
+func TestIssue143ResolveConflictPostCommitCleanupFailurePreservesDuplicate(t *testing.T) {
+	fixture := issue143NewFileFixture(t)
+	ops := systemConflictFileOperations()
+	realRemove := ops.remove
+	ops.remove = func(path string) error {
+		if path == fixture.conflictPath {
+			return syscall.EIO
+		}
+		return realRemove(path)
+	}
+
+	err := replaceConflictAndRemoveSource(fixture.conflictPath, fixture.originalPath, ops)
+	if err == nil {
+		t.Fatal("replaceConflictAndRemoveSource() succeeded, want cleanup error")
+	}
+	if !strings.HasPrefix(err.Error(), "delete conflict file:") {
+		t.Errorf("error = %q, want delete conflict file prefix", err)
+	}
+
+	issue143AssertFileBytes(t, fixture.originalPath, fixture.conflictBytes)
+	issue143AssertFileBytes(t, fixture.conflictPath, fixture.conflictBytes)
+	issue143AssertFileBytes(t, fixture.legacyPath, fixture.legacyBytes)
+	issue143AssertFileBytes(t, fixture.unrelatedPath, fixture.unrelatedBytes)
+	issue143AssertNoOperationTemps(t, fixture.dir)
+}
+
+func TestIssue143ResolveConflictDoesNotRemoveReusedTempPathAfterCommit(t *testing.T) {
+	fixture := issue143NewFileFixture(t)
+	ops := systemConflictFileOperations()
+	createTemp := ops.createTemp
+	realRename := ops.rename
+	var tempPath string
+	ops.createTemp = func(dir, pattern string) (conflictTempFile, error) {
+		created, err := createTemp(dir, pattern)
+		if err == nil {
+			tempPath = created.Name()
+		}
+		return created, err
+	}
+	foreignBytes := []byte("issue-143-post-rename-foreign-sentinel")
+	ops.rename = func(oldPath, newPath string) error {
+		if err := realRename(oldPath, newPath); err != nil {
+			return err
+		}
+		file, err := os.OpenFile(oldPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			return err
+		}
+		if _, err := file.Write(foreignBytes); err != nil {
+			file.Close()
+			return err
+		}
+		return file.Close()
+	}
+
+	if err := replaceConflictAndRemoveSource(fixture.conflictPath, fixture.originalPath, ops); err != nil {
+		t.Fatalf("replaceConflictAndRemoveSource() failed: %v", err)
+	}
+	if tempPath == "" {
+		t.Fatal("operation did not report its temporary path")
+	}
+
+	issue143AssertFileBytes(t, fixture.originalPath, fixture.conflictBytes)
+	if _, err := os.Stat(fixture.conflictPath); !os.IsNotExist(err) {
+		t.Fatalf("conflict path still exists or stat failed: %v", err)
+	}
+	issue143AssertFileBytes(t, tempPath, foreignBytes)
+	issue143AssertFileBytes(t, fixture.legacyPath, fixture.legacyBytes)
+	issue143AssertFileBytes(t, fixture.unrelatedPath, fixture.unrelatedBytes)
+}
+
+type issue143FaultingTempFile struct {
+	conflictTempFile
+	write func([]byte) (int, error)
+	chmod func(os.FileMode) error
+	sync  func() error
+	close func() error
+}
+
+func (file *issue143FaultingTempFile) Write(data []byte) (int, error) {
+	if file.write != nil {
+		return file.write(data)
+	}
+	return file.conflictTempFile.Write(data)
+}
+
+func (file *issue143FaultingTempFile) Chmod(mode os.FileMode) error {
+	if file.chmod != nil {
+		return file.chmod(mode)
+	}
+	return file.conflictTempFile.Chmod(mode)
+}
+
+func (file *issue143FaultingTempFile) Sync() error {
+	if file.sync != nil {
+		return file.sync()
+	}
+	return file.conflictTempFile.Sync()
+}
+
+func (file *issue143FaultingTempFile) Close() error {
+	if file.close != nil {
+		return file.close()
+	}
+	return file.conflictTempFile.Close()
+}
+
+func issue143InjectTempFault(ops *conflictFileOperations, configure func(*issue143FaultingTempFile)) {
+	createTemp := ops.createTemp
+	ops.createTemp = func(dir, pattern string) (conflictTempFile, error) {
+		created, err := createTemp(dir, pattern)
+		if err != nil {
+			return nil, err
+		}
+		faulting := &issue143FaultingTempFile{conflictTempFile: created}
+		configure(faulting)
+		return faulting, nil
+	}
+}
+
+type issue143FileFixture struct {
+	dir            string
+	originalPath   string
+	conflictPath   string
+	legacyPath     string
+	unrelatedPath  string
+	originalBytes  []byte
+	conflictBytes  []byte
+	legacyBytes    []byte
+	unrelatedBytes []byte
+}
+
+func issue143NewFileFixture(t *testing.T) issue143FileFixture {
+	t.Helper()
+	dir := t.TempDir()
+	fixture := issue143FileFixture{
+		dir:            dir,
+		originalPath:   filepath.Join(dir, "doc.md"),
+		conflictPath:   filepath.Join(dir, "doc.sync-conflict-20260406-100000-DEF5678.md"),
+		legacyPath:     filepath.Join(dir, "doc.md.vaultsync-tmp"),
+		unrelatedPath:  filepath.Join(dir, "unrelated-sentinel.md"),
+		originalBytes:  []byte("issue-143-original-sentinel"),
+		conflictBytes:  []byte("issue-143-conflict-sentinel"),
+		legacyBytes:    []byte("issue-143-legacy-temp-sentinel"),
+		unrelatedBytes: []byte("issue-143-unrelated-sentinel"),
+	}
+
+	files := []struct {
+		name string
+		path string
+		data []byte
+	}{
+		{name: "original", path: fixture.originalPath, data: fixture.originalBytes},
+		{name: "conflict", path: fixture.conflictPath, data: fixture.conflictBytes},
+		{name: "legacy temp", path: fixture.legacyPath, data: fixture.legacyBytes},
+		{name: "unrelated", path: fixture.unrelatedPath, data: fixture.unrelatedBytes},
+	}
+	for _, file := range files {
+		if err := os.WriteFile(file.path, file.data, 0o600); err != nil {
+			t.Fatalf("write %s: %v", file.name, err)
+		}
+		issue143AssertFileBytes(t, file.path, file.data)
+	}
+
+	return fixture
+}
+
+func issue143AssertPreCommitFixture(t *testing.T, fixture issue143FileFixture) {
+	t.Helper()
+	issue143AssertFileBytes(t, fixture.originalPath, fixture.originalBytes)
+	issue143AssertFileBytes(t, fixture.conflictPath, fixture.conflictBytes)
+	issue143AssertFileBytes(t, fixture.legacyPath, fixture.legacyBytes)
+	issue143AssertFileBytes(t, fixture.unrelatedPath, fixture.unrelatedBytes)
+}
+
+func issue143AssertFileBytes(t *testing.T, path string, want []byte) {
+	t.Helper()
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %q: %v", filepath.Base(path), err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Errorf("%q bytes = %q, want %q", filepath.Base(path), got, want)
+	}
+}
+
+func issue143AssertNoOperationTemps(t *testing.T, dir string) {
+	t.Helper()
+	temps := issue143OperationTemps(t, dir)
+	if len(temps) != 0 {
+		t.Errorf("successful resolution left VaultSync temporary files: %v", temps)
+	}
+}
+
+func issue143OperationTemps(t *testing.T, dir string) []string {
+	t.Helper()
+	temps, err := filepath.Glob(filepath.Join(dir, conflictResolveTempPattern))
+	if err != nil {
+		t.Fatalf("glob VaultSync temporary files: %v", err)
+	}
+	return temps
 }
 
 func TestResolveConflictErrors(t *testing.T) {

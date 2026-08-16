@@ -6,6 +6,10 @@ All notable changes to VaultSync are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Manual conflict resolution preserves unrelated temporary files** ([#143](https://github.com/psimaker/vaultsync/issues/143)) — choosing the conflicting version no longer reuses or overwrites a pre-existing temporary file next to the note.
+
 ### Security
 
 - **Updated the Go runtime used by the sync engine and self-hosted helper** — Go 1.26.5 → 1.26.6 incorporates the latest standard-library security fixes. Future iOS archives and helper releases are built with the patched runtime.

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -32,6 +33,40 @@ var conflictPattern = regexp.MustCompile(`^(.+)\.sync-conflict-(\d{8}-\d{6})-([A
 // maxConflictScan limits the number of files examined during conflict detection
 // to prevent excessive I/O on very large vaults.
 const maxConflictScan = 10000
+
+// Syncthing's fs.IsTemporary recognizes the .syncthing. prefix, so the scanner
+// ignores these short-lived files instead of publishing them as vault content.
+// Keep the pattern independent of the user filename to stay below conservative
+// filesystem filename limits; os.CreateTemp appends the exclusive random suffix.
+const conflictResolveTempPattern = ".syncthing.vaultsync-resolve-*"
+
+type conflictTempFile interface {
+	Name() string
+	Write([]byte) (int, error)
+	Chmod(os.FileMode) error
+	Sync() error
+	Close() error
+}
+
+type conflictFileOperations struct {
+	readFile   func(string) ([]byte, error)
+	stat       func(string) (os.FileInfo, error)
+	createTemp func(string, string) (conflictTempFile, error)
+	rename     func(string, string) error
+	remove     func(string) error
+}
+
+func systemConflictFileOperations() conflictFileOperations {
+	return conflictFileOperations{
+		readFile: os.ReadFile,
+		stat:     os.Stat,
+		createTemp: func(dir, pattern string) (conflictTempFile, error) {
+			return os.CreateTemp(dir, pattern)
+		},
+		rename: os.Rename,
+		remove: os.Remove,
+	}
+}
 
 // GetConflictFilesJSON scans the folder's directory for .sync-conflict-* files.
 // Returns a JSON array of ConflictFile objects. Stops after scanning maxConflictScan files.
@@ -215,26 +250,10 @@ func ResolveConflict(folderID, conflictFileName string, keepConflict bool) strin
 		originalName := matches[1] + matches[4]
 		originalPath := filepath.Join(filepath.Dir(conflictPath), originalName)
 
-		data, err := os.ReadFile(conflictPath)
-		if err != nil {
-			return fmt.Sprintf("read conflict file: %v", err)
+		if err := replaceConflictAndRemoveSource(conflictPath, originalPath, systemConflictFileOperations()); err != nil {
+			return err.Error()
 		}
-
-		// Preserve original file permissions, default to 0644.
-		perm := os.FileMode(0o644)
-		if info, err := os.Stat(originalPath); err == nil {
-			perm = info.Mode()
-		}
-
-		// Atomic write: write to temp file then rename to avoid partial writes.
-		tmpPath := originalPath + ".vaultsync-tmp"
-		if err := os.WriteFile(tmpPath, data, perm); err != nil {
-			return fmt.Sprintf("write temp file: %v", err)
-		}
-		if err := os.Rename(tmpPath, originalPath); err != nil {
-			os.Remove(tmpPath)
-			return fmt.Sprintf("replace original file: %v", err)
-		}
+		return ""
 	}
 
 	if err := os.Remove(conflictPath); err != nil {
@@ -242,6 +261,73 @@ func ResolveConflict(folderID, conflictFileName string, keepConflict bool) strin
 	}
 
 	return ""
+}
+
+func replaceConflictAndRemoveSource(conflictPath, originalPath string, ops conflictFileOperations) error {
+	if err := replaceConflictOriginal(conflictPath, originalPath, ops); err != nil {
+		return err
+	}
+	if err := ops.remove(conflictPath); err != nil {
+		return fmt.Errorf("delete conflict file: %w", err)
+	}
+	return nil
+}
+
+func replaceConflictOriginal(conflictPath, originalPath string, ops conflictFileOperations) error {
+	data, err := ops.readFile(conflictPath)
+	if err != nil {
+		return fmt.Errorf("read conflict file: %w", err)
+	}
+
+	// Preserve the current original's mode. A missing original is a supported
+	// promotion case and keeps the historical 0644 default; every other stat
+	// error is ambiguous and must fail before creating or changing anything.
+	perm := os.FileMode(0o644)
+	if info, statErr := ops.stat(originalPath); statErr == nil {
+		perm = info.Mode()
+	} else if !os.IsNotExist(statErr) {
+		return fmt.Errorf("stat original file: %w", statErr)
+	}
+
+	tempFile, err := ops.createTemp(filepath.Dir(originalPath), conflictResolveTempPattern)
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	tempPath := tempFile.Name()
+
+	if n, writeErr := tempFile.Write(data); writeErr != nil || n != len(data) {
+		if writeErr == nil {
+			writeErr = io.ErrShortWrite
+		}
+		return closeConflictTempAfterError(tempFile, "write temp file", writeErr)
+	}
+	if err := tempFile.Chmod(perm); err != nil {
+		return closeConflictTempAfterError(tempFile, "set temp permissions", err)
+	}
+	if err := tempFile.Sync(); err != nil {
+		return closeConflictTempAfterError(tempFile, "sync temp file", err)
+	}
+	if err := tempFile.Close(); err != nil {
+		return fmt.Errorf("close temp file: %w", err)
+	}
+
+	// The successful same-directory rename is the commit point. Do not defer a
+	// path-based Remove: after this rename the old temp path is free and may be
+	// reused by another process, so that pathname no longer proves ownership.
+	if err := ops.rename(tempPath, originalPath); err != nil {
+		// Leave our reserved temp entry in place on failure. Syncthing ignores the
+		// prefix and its normal stale-temp policy can remove abandoned entries.
+		return fmt.Errorf("replace original file: %w", err)
+	}
+
+	return nil
+}
+
+func closeConflictTempAfterError(tempFile conflictTempFile, operation string, operationErr error) error {
+	if closeErr := tempFile.Close(); closeErr != nil {
+		return fmt.Errorf("%s: %v; close temp file: %v", operation, operationErr, closeErr)
+	}
+	return fmt.Errorf("%s: %w", operation, operationErr)
 }
 
 // RemoveConflictFilesForOriginal removes every sync-conflict copy of the file
