@@ -12,7 +12,7 @@
 #
 # Keys are extracted with an escape-aware pattern (backslash escapes like \" are
 # part of the key), so keys containing escaped quotes do not false-positive the
-# way the naive `grep -o '^"[^"]*"'` check documented in CLAUDE.md does.
+# way the naive `grep -o '^"[^"]*"'` check documented in AGENTS.md does.
 #
 # Usage: ios/scripts/strings-key-parity.sh   (exit 0 = parity, 1 = violations)
 
