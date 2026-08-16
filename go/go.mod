@@ -11,7 +11,7 @@ require (
 	github.com/syncthing/syncthing v1.30.0-rc.1.0.20260211104138-dc2a77ab8e5b
 	github.com/thejerf/suture/v4 v4.0.6
 	golang.org/x/mobile v0.0.0-20260312152759-81488f6aeb60
-	golang.org/x/sys v0.46.0
+	golang.org/x/sys v0.47.0
 )
 
 require (
