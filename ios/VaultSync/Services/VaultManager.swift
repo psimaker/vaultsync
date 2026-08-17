@@ -36,71 +36,147 @@ final class VaultManager {
 
     private static let obsidianBookmarkID = "obsidian-root"
 
+    /// Lease ownership is separate from UI accessibility. A visible Boolean
+    /// cannot prove which successful start a later stop is allowed to consume.
+    @ObservationIgnored private var foregroundLease: SecurityScopedLease?
+
+    /// External effects used by the foreground access path. Production uses
+    /// the real bookmark/filesystem APIs; tests inject deterministic counters
+    /// and failures so lease ownership can be proven without a file provider.
+    struct Environment {
+        var acquireAccess: @MainActor (URL, SecurityScopedLeaseOwner) -> SecurityScopedLease?
+        var sameResource: @MainActor (URL, URL) -> Bool
+        var validateDirectory: @MainActor (URL) -> String?
+        var makeBookmarkData: @MainActor (URL) throws -> Data
+        var persistBookmarkData: @MainActor (Data) -> Void
+        var refreshBookmarkData: @MainActor (Data, Data) -> Bool
+        var resolveBookmark: @MainActor () -> BookmarkService.ResolvedBookmark?
+        var hasBookmark: @MainActor () -> Bool
+        var scanVaults: @MainActor (URL) -> [String]?
+        var cleanupLegacyBookmarks: @MainActor () -> Void
+
+        @MainActor
+        static var live: Self {
+            Self(
+                acquireAccess: { url, owner in
+                    BookmarkService.acquireAccess(to: url, owner: owner)
+                },
+                // Conservative equality: a false negative only performs a
+                // balanced handoff, while a false positive could reuse access
+                // for a different provider resource.
+                sameResource: { $0.standardizedFileURL == $1.standardizedFileURL },
+                validateDirectory: { VaultManager.liveValidationError(for: $0) },
+                makeBookmarkData: { try BookmarkService.makeBookmarkData(for: $0) },
+                persistBookmarkData: {
+                    BookmarkService.persistBookmarkData(
+                        $0,
+                        identifier: VaultManager.obsidianBookmarkID
+                    )
+                },
+                refreshBookmarkData: { data, sourceData in
+                    BookmarkService.refreshBookmarkData(
+                        data,
+                        replacing: sourceData,
+                        identifier: VaultManager.obsidianBookmarkID
+                    )
+                },
+                resolveBookmark: {
+                    BookmarkService.resolveBookmark(identifier: VaultManager.obsidianBookmarkID)
+                },
+                hasBookmark: {
+                    BookmarkService.hasBookmark(identifier: VaultManager.obsidianBookmarkID)
+                },
+                scanVaults: { VaultManager.vaultSubfolderNames(in: $0) },
+                cleanupLegacyBookmarks: {
+                    let legacyIDs = BookmarkService.allBookmarkIdentifiers()
+                        .filter { $0.hasPrefix("vault-") }
+                    for id in legacyIDs {
+                        BookmarkService.deleteBookmark(identifier: id)
+                        logger.info("Cleaned up legacy bookmark")
+                    }
+                }
+            )
+        }
+    }
+
+    private let environment: Environment
+
+    init(environment: Environment = .live) {
+        self.environment = environment
+    }
+
     // MARK: - Access Grant (one-time, from onboarding)
 
     /// Grant access to the Obsidian root directory via a user-picked URL.
     /// Returns nil on success, error message on failure.
     func grantAccess(url: URL) -> String? {
-        guard BookmarkService.startAccessing(url: url) else {
-            return L10n.tr("Could not access the selected folder.")
-        }
+        let priorLease = foregroundLease
+        let reusesPriorLease = priorLease.map {
+            $0.isActive && environment.sameResource($0.url, url)
+        } ?? false
 
-        if let validationError = validateSelectedDirectory(url: url) {
-            BookmarkService.stopAccessing(url: url)
+        var candidateLease: SecurityScopedLease?
+        if !reusesPriorLease {
+            guard let acquired = environment.acquireAccess(url, .foreground) else {
+                return L10n.tr("Could not access the selected folder.")
+            }
+            candidateLease = acquired
+        }
+        // Only a newly acquired, not-yet-adopted candidate is released on
+        // failure. Same-URL validation reuses the existing foreground lease.
+        defer { candidateLease?.release() }
+
+        if let validationError = environment.validateDirectory(url) {
             return validationError
         }
 
+        guard let names = environment.scanVaults(url) else {
+            return L10n.tr("VaultSync can no longer read your Obsidian directory. Reconnect the folder to restore sync access.")
+        }
+
+        let advisory = preparedSelectionAdvisory(for: url, detectedVaults: names)
+
+        let bookmarkData: Data
         do {
-            try BookmarkService.saveBookmark(for: url, identifier: Self.obsidianBookmarkID)
+            bookmarkData = try environment.makeBookmarkData(url)
         } catch {
-            BookmarkService.stopAccessing(url: url)
             return L10n.fmt("Failed to save access permission: %@", error.localizedDescription)
         }
 
+        environment.persistBookmarkData(bookmarkData)
+        // No fallible step may occur between the bookmark commit and this
+        // synchronous MainActor commit. The old lease stays active until all
+        // candidate proof has succeeded and the new state is adopted.
+        if let acquired = candidateLease {
+            foregroundLease = acquired
+            candidateLease = nil
+        }
         obsidianDirectoryURL = url
         isAccessible = true
         needsReconnect = false
         accessIssue = nil
-        scanForVaults()
+        detectedVaults = names
+        selectionAdvisory = advisory.message
+
+        if !reusesPriorLease {
+            priorLease?.release()
+        }
         cleanupLegacyBookmarks()
 
-        selectionAdvisory = nil
-        var pickedConfigIsDirectory: ObjCBool = false
-        let pickedFolderHasOwnConfig = FileManager.default.fileExists(
-            atPath: url.appendingPathComponent(".obsidian", isDirectory: true).path,
-            isDirectory: &pickedConfigIsDirectory
-        ) && pickedConfigIsDirectory.boolValue
-        // scanForVaults() ran above, so detectedVaults reflects this URL.
-        let pickedFolderIsVault = Self.rootIsItselfVault(
-            hasOwnConfig: pickedFolderHasOwnConfig,
-            hasVaultSubfolders: !detectedVaults.isEmpty
-        )
-        switch Self.selectionAdvisoryKind(
-            isUbiquitous: Self.urlLooksUbiquitous(url),
-            pickedFolderIsVault: pickedFolderIsVault
-        ) {
-        case .iCloudRoot:
-            selectionAdvisory = L10n.tr("The folder you selected is stored in iCloud Drive. iCloud can keep files as placeholders that are not fully downloaded on this iPhone, which can stall syncing and create conflicts. For reliable syncing, use your vaults under \"On My iPhone\" → \"Obsidian\" and select that folder instead.")
-        case .rootIsVault:
-            selectionAdvisory = L10n.tr("The folder you selected is itself a vault. Syncing this one vault works, but additional vaults cannot get their own folder next to it. If you plan to sync more than one vault, select the folder that contains your vaults instead (\"On My iPhone\" → \"Obsidian\").")
-        case nil:
-            break
-        }
-
-        logger.info("Obsidian directory access granted (selectedFolderIsVault=\(pickedFolderIsVault))")
+        logger.info("Obsidian directory access granted (selectedFolderIsVault=\(advisory.pickedFolderIsVault))")
         return nil
     }
 
     // MARK: - Restore on Launch
 
-    /// Restore access from saved bookmark. Safe to call multiple times.
-    /// The `isAccessible` guard prevents double-calling `startAccessingSecurityScopedResource()`,
-    /// which must be balanced 1:1 with `stopAccessingSecurityScopedResource()`.
+    /// Restore access from saved bookmark. Safe to call multiple times: the
+    /// owned token, not a UI Boolean, is the no-double-start guard.
     func restoreAccess() {
-        if isAccessible { return }
+        if foregroundLease?.isActive == true { return }
+        foregroundLease = nil
 
-        guard let (url, isStale) = BookmarkService.resolveBookmark(identifier: Self.obsidianBookmarkID) else {
-            if BookmarkService.hasBookmark(identifier: Self.obsidianBookmarkID) {
+        guard let resolvedBookmark = environment.resolveBookmark() else {
+            if environment.hasBookmark() {
                 markReconnectRequired(
                     reason: L10n.tr("VaultSync can no longer resolve the saved Obsidian folder permission. Reconnect the Obsidian directory to continue syncing.")
                 )
@@ -110,36 +186,64 @@ final class VaultManager {
             }
             return
         }
+        let url = resolvedBookmark.url
 
-        guard BookmarkService.startAccessing(url: url) else {
+        guard let acquiredLease = environment.acquireAccess(url, .foreground) else {
             markReconnectRequired(
                 reason: L10n.tr("VaultSync cannot access the saved Obsidian folder anymore. Reconnect the Obsidian directory to continue syncing.")
             )
             logger.warning("Cannot access Obsidian directory")
             return
         }
+        var candidateLease: SecurityScopedLease? = acquiredLease
+        defer { candidateLease?.release() }
 
-        if let validationError = validateSelectedDirectory(url: url) {
-            BookmarkService.stopAccessing(url: url)
+        if let validationError = environment.validateDirectory(url) {
             markReconnectRequired(reason: validationError)
             logger.warning("Saved Obsidian directory failed validation")
             return
         }
 
-        if isStale {
-            do {
-                try BookmarkService.saveBookmark(for: url, identifier: Self.obsidianBookmarkID)
-                logger.info("Refreshed stale Obsidian bookmark")
-            } catch {
-                logger.warning("Could not refresh stale Obsidian bookmark")
-            }
+        guard let names = environment.scanVaults(url) else {
+            markReconnectRequired(
+                reason: L10n.tr("VaultSync can no longer read your Obsidian directory. Reconnect the folder to restore sync access.")
+            )
+            logger.warning("Saved Obsidian directory scan failed")
+            return
         }
 
+        if resolvedBookmark.isStale {
+            let bookmarkData: Data
+            do {
+                bookmarkData = try environment.makeBookmarkData(url)
+            } catch {
+                logger.warning("Could not refresh stale Obsidian bookmark")
+                markReconnectRequired(
+                    reason: L10n.fmt("Failed to save access permission: %@", error.localizedDescription)
+                )
+                return
+            }
+            guard environment.refreshBookmarkData(
+                bookmarkData,
+                resolvedBookmark.sourceData
+            ) else {
+                markReconnectRequired(
+                    reason: L10n.tr("VaultSync can no longer resolve the saved Obsidian folder permission. Reconnect the Obsidian directory to continue syncing.")
+                )
+                logger.warning("Skipped stale Obsidian bookmark refresh after a concurrent permission change")
+                return
+            }
+            logger.info("Refreshed stale Obsidian bookmark")
+        }
+
+        foregroundLease = candidateLease
+        candidateLease = nil
         obsidianDirectoryURL = url
         isAccessible = true
         needsReconnect = false
         accessIssue = nil
-        scanForVaults()
+        detectedVaults = names
+        selectionAdvisory = nil
 
         logger.info("Obsidian directory access restored")
     }
@@ -153,9 +257,10 @@ final class VaultManager {
             return
         }
 
-        guard let names = Self.vaultSubfolderNames(in: url) else {
-            BookmarkService.stopAccessing(url: url)
-            detectedVaults = []
+        guard let names = environment.scanVaults(url) else {
+            // This wrapper is the foreground owner. The scan primitive itself
+            // is read-only and never releases a lease it did not acquire.
+            releaseForegroundLease()
             markReconnectRequired(
                 reason: L10n.tr("VaultSync can no longer read your Obsidian directory. Reconnect the folder to restore sync access.")
             )
@@ -720,16 +825,47 @@ final class VaultManager {
 
     // MARK: - Legacy Migration
 
-    /// Remove old per-vault bookmarks after migration to obsidian-root.
-    private func cleanupLegacyBookmarks() {
-        let legacyIDs = BookmarkService.allBookmarkIdentifiers().filter { $0.hasPrefix("vault-") }
-        for id in legacyIDs {
-            BookmarkService.deleteBookmark(identifier: id)
-            logger.info("Cleaned up legacy bookmark")
+    private func preparedSelectionAdvisory(
+        for url: URL,
+        detectedVaults: [String]
+    ) -> (message: String?, pickedFolderIsVault: Bool) {
+        var pickedConfigIsDirectory: ObjCBool = false
+        let pickedFolderHasOwnConfig = FileManager.default.fileExists(
+            atPath: url.appendingPathComponent(".obsidian", isDirectory: true).path,
+            isDirectory: &pickedConfigIsDirectory
+        ) && pickedConfigIsDirectory.boolValue
+        let pickedFolderIsVault = Self.rootIsItselfVault(
+            hasOwnConfig: pickedFolderHasOwnConfig,
+            hasVaultSubfolders: !detectedVaults.isEmpty
+        )
+
+        let message: String?
+        switch Self.selectionAdvisoryKind(
+            isUbiquitous: Self.urlLooksUbiquitous(url),
+            pickedFolderIsVault: pickedFolderIsVault
+        ) {
+        case .iCloudRoot:
+            message = L10n.tr("The folder you selected is stored in iCloud Drive. iCloud can keep files as placeholders that are not fully downloaded on this iPhone, which can stall syncing and create conflicts. For reliable syncing, use your vaults under \"On My iPhone\" → \"Obsidian\" and select that folder instead.")
+        case .rootIsVault:
+            message = L10n.tr("The folder you selected is itself a vault. Syncing this one vault works, but additional vaults cannot get their own folder next to it. If you plan to sync more than one vault, select the folder that contains your vaults instead (\"On My iPhone\" → \"Obsidian\").")
+        case nil:
+            message = nil
         }
+        return (message, pickedFolderIsVault)
     }
 
-    private func validateSelectedDirectory(url: URL) -> String? {
+    /// Remove old per-vault bookmarks after migration to obsidian-root.
+    private func cleanupLegacyBookmarks() {
+        environment.cleanupLegacyBookmarks()
+    }
+
+    private func releaseForegroundLease() {
+        let lease = foregroundLease
+        foregroundLease = nil
+        lease?.release()
+    }
+
+    nonisolated private static func liveValidationError(for url: URL) -> String? {
         let fm = FileManager.default
         var isDirectory: ObjCBool = false
         guard fm.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue else {
