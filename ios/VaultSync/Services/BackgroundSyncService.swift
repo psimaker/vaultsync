@@ -44,6 +44,19 @@ enum BackgroundSyncService {
     /// tracks bridge ownership and is released early on `.background`.
     private static let sceneActiveLock = OSAllocatedUnfairLock(initialState: false)
 
+    /// Retains every system-delivered continued-processing handler until it
+    /// exits so foreground cancellation reaches the executing Swift task, not
+    /// only its pending scheduler request.
+    private struct ContinuedProcessingHandlerState: Sendable {
+        var nextToken: UInt64 = 0
+        var tasks: [UInt64: Task<Void, Never>] = [:]
+        var cancellationRequested = false
+    }
+
+    private static let continuedProcessingHandlerLock = OSAllocatedUnfairLock(
+        initialState: ContinuedProcessingHandlerState()
+    )
+
     static func setSceneActive(_ active: Bool) {
         sceneActiveLock.withLock { $0 = active }
     }
@@ -131,8 +144,7 @@ enum BackgroundSyncService {
         if #available(iOS 26.0, *) {
             let continuedHandler: @Sendable (BGTask) -> Void = { task in
                 guard let processingTask = task as? BGContinuedProcessingTask else { return }
-                let wrapped = UnsafeSendable(value: processingTask)
-                Task { await handleContinuedProcessing(task: wrapped.value) }
+                startContinuedProcessingHandler(task: processingTask)
             }
             continuedProcessingRegistered = BGTaskScheduler.shared.register(
                 forTaskWithIdentifier: continuedProcessingIdentifier,
@@ -301,6 +313,9 @@ enum BackgroundSyncService {
             )
 
             do {
+                continuedProcessingHandlerLock.withLock {
+                    $0.cancellationRequested = false
+                }
                 try BGTaskScheduler.shared.submit(request)
                 logger.info("Continued processing submitted")
             } catch {
@@ -314,6 +329,14 @@ enum BackgroundSyncService {
     /// Cancel pending continued processing task.
     @MainActor
     static func cancelContinuedProcessing() {
+        let executingTasks = continuedProcessingHandlerLock.withLock { state in
+            state.cancellationRequested = true
+            return Array(state.tasks.values)
+        }
+        for task in executingTasks {
+            task.cancel()
+        }
+
         guard continuedProcessingRegistered else { return }
         BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: continuedProcessingIdentifier)
     }
@@ -885,48 +908,308 @@ enum BackgroundSyncService {
 
     // MARK: - BGContinuedProcessingTask Handler
 
+    /// Pure #146 state machine. The live BGTask handler and deterministic tests
+    /// share this decision boundary; a terminal effect is emitted exactly once.
+    struct ContinuedProcessingRun: Sendable {
+        enum FolderSnapshot: Equatable, Sendable {
+            case unreadable
+            case readable(folderIDs: Set<String>, settlements: [String: FolderSettlement])
+        }
+
+        struct Observation: Equatable, Sendable {
+            let engineRunning: Bool
+            let sceneActive: Bool
+            let folders: FolderSnapshot
+        }
+
+        enum Event: Equatable, Sendable {
+            case observed(Observation)
+            case conflictInspectionFinished(token: UInt64, observation: Observation)
+            case expired(sceneActive: Bool)
+            case cancelled(sceneActive: Bool)
+        }
+
+        enum Failure: String, Equatable, Sendable {
+            case engineDied
+            case noFolders
+            case unreadableFolders
+            case folderError
+            case expectedFolderMissing
+            case folderSetChanged
+            case expired
+            case foregroundTakeover
+            case cancelled
+        }
+
+        enum Completion: Equatable, Sendable {
+            case success
+            case failure(Failure)
+
+            var isSuccessful: Bool {
+                self == .success
+            }
+
+            var logValue: String {
+                switch self {
+                case .success:
+                    return "success"
+                case let .failure(reason):
+                    return "failure-\(reason.rawValue)"
+                }
+            }
+        }
+
+        enum Effect: Equatable, Sendable {
+            case wait
+            case inspectConflicts(token: UInt64)
+            case complete(Completion)
+        }
+
+        private enum Phase: Equatable, Sendable {
+            case waiting
+            case inspectingConflicts(UInt64)
+            case terminal(Completion)
+        }
+
+        private var phase: Phase = .waiting
+        // Captured from the first readable observation and never narrowed: a
+        // folder disappearing mid-run cannot vanish from the success proof.
+        private var expectedFolderIDs: Set<String>?
+        private var nextConflictToken: UInt64 = 0
+
+        init() {}
+
+        var isTerminal: Bool {
+            if case .terminal = phase { return true }
+            return false
+        }
+
+        mutating func receive(_ event: Event) -> [Effect] {
+            if case .terminal = phase { return [] }
+            return receiveWhileActive(event)
+        }
+
+        private mutating func receiveWhileActive(_ event: Event) -> [Effect] {
+            switch event {
+            case let .observed(observation):
+                guard case .waiting = phase else { return [] }
+                return evaluate(observation, conflictInspectionCompleted: false)
+
+            case let .conflictInspectionFinished(token, observation):
+                guard case .inspectingConflicts(token) = phase else { return [] }
+                return evaluate(observation, conflictInspectionCompleted: true)
+
+            case let .expired(sceneActive):
+                return finish(.failure(sceneActive ? .foregroundTakeover : .expired))
+
+            case let .cancelled(sceneActive):
+                return finish(.failure(sceneActive ? .foregroundTakeover : .cancelled))
+            }
+        }
+
+        private mutating func evaluate(
+            _ observation: Observation,
+            conflictInspectionCompleted: Bool
+        ) -> [Effect] {
+            // Scene activation is the takeover signal. The lifecycle lock only
+            // controls who may stop the engine and can still be false while the
+            // foreground is attaching to an already-running instance.
+            if observation.sceneActive {
+                return finish(.failure(.foregroundTakeover))
+            }
+            if !observation.engineRunning {
+                return finish(.failure(.engineDied))
+            }
+
+            guard case let .readable(folderIDs, settlements) = observation.folders else {
+                return finish(.failure(.unreadableFolders))
+            }
+            if expectedFolderIDs == nil {
+                expectedFolderIDs = folderIDs
+            }
+            guard let expectedFolderIDs, !expectedFolderIDs.isEmpty else {
+                return finish(.failure(.noFolders))
+            }
+            guard expectedFolderIDs.isSubset(of: folderIDs) else {
+                return finish(.failure(.expectedFolderMissing))
+            }
+            guard folderIDs == expectedFolderIDs else {
+                return finish(.failure(.folderSetChanged))
+            }
+            guard expectedFolderIDs.isSubset(of: Set(settlements.keys)) else {
+                return finish(.failure(.unreadableFolders))
+            }
+
+            let expectedSettlements = expectedFolderIDs.compactMap { settlements[$0] }
+            if expectedSettlements.contains(.errored) {
+                return finish(.failure(.folderError))
+            }
+            guard expectedSettlements.allSatisfy({ $0 == .idle }) else {
+                phase = .waiting
+                return [.wait]
+            }
+
+            if conflictInspectionCompleted {
+                return finish(.success)
+            }
+            nextConflictToken &+= 1
+            phase = .inspectingConflicts(nextConflictToken)
+            return [.inspectConflicts(token: nextConflictToken)]
+        }
+
+        private mutating func finish(_ completion: Completion) -> [Effect] {
+            phase = .terminal(completion)
+            return [.complete(completion)]
+        }
+    }
+
+    @available(iOS 26.0, *)
+    private static func startContinuedProcessingHandler(task: BGContinuedProcessingTask) {
+        let taskBox = UnsafeSendable(value: task)
+        continuedProcessingHandlerLock.withLock { state in
+            state.nextToken &+= 1
+            let token = state.nextToken
+            let handler = Task {
+                await handleContinuedProcessing(task: taskBox.value)
+                continuedProcessingHandlerLock.withLock { state in
+                    state.tasks[token] = nil
+                }
+            }
+            state.tasks[token] = handler
+            if state.cancellationRequested {
+                handler.cancel()
+            }
+        }
+    }
+
+    @available(iOS 26.0, *)
+    private static func continuedProcessingCompletion(
+        in effects: [ContinuedProcessingRun.Effect]
+    ) -> ContinuedProcessingRun.Completion? {
+        guard let effect = effects.first,
+              case let .complete(completion) = effect else {
+            return nil
+        }
+        return completion
+    }
+
+    @available(iOS 26.0, *)
+    private static func completeContinuedProcessing(
+        _ completion: ContinuedProcessingRun.Completion,
+        task: BGContinuedProcessingTask
+    ) {
+        if completion.isSuccessful {
+            task.progress.completedUnitCount = 100
+        }
+        task.setTaskCompleted(success: completion.isSuccessful)
+        logger.info("Continued processing completed (result=\(completion.logValue, privacy: .public))")
+    }
+
+    private static func stopContinuedProcessingEngineIfBackgroundOwned() {
+        let foregroundOwnsLifecycle = lifecycleLock.withLock { $0.foregroundActive }
+        let sceneActive = isSceneActive()
+        guard !sceneActive, !foregroundOwnsLifecycle else {
+            logger.info("Continued processing termination skipped engine stop (foreground active)")
+            return
+        }
+        SyncBridgeService.stopSyncthing()
+        logger.info("Continued processing termination stopped Syncthing")
+    }
+
+    private static func continuedProcessingObservation() -> ContinuedProcessingRun.Observation {
+        let folders = continuedProcessingFolderSnapshot()
+        return ContinuedProcessingRun.Observation(
+            engineRunning: SyncBridgeService.isRunning(),
+            sceneActive: isSceneActive(),
+            folders: folders
+        )
+    }
+
     @available(iOS 26.0, *)
     private static func handleContinuedProcessing(task: BGContinuedProcessingTask) async {
         logger.info("Continued processing starting")
 
-        let expired = OSAllocatedUnfairLock(initialState: false)
+        let taskBox = UnsafeSendable(value: task)
+        let runLock = OSAllocatedUnfairLock(initialState: ContinuedProcessingRun())
 
         task.expirationHandler = {
-            expired.withLock { $0 = true }
-            let shouldStop = lifecycleLock.withLock { !$0.foregroundActive }
-            if shouldStop {
-                SyncBridgeService.stopSyncthing()
-                logger.info("Continued processing expired — Syncthing stopped")
-            } else {
-                logger.info("Continued processing expired — skipped stop (foreground active)")
+            let effects = runLock.withLock {
+                $0.receive(.expired(sceneActive: isSceneActive()))
             }
+            guard let completion = continuedProcessingCompletion(in: effects) else { return }
+            stopContinuedProcessingEngineIfBackgroundOwned()
+            completeContinuedProcessing(completion, task: taskBox.value)
         }
 
-        let progress = task.progress
-        progress.totalUnitCount = 100
+        let initialized = runLock.withLock { run in
+            guard !run.isTerminal else { return false }
+            taskBox.value.progress.totalUnitCount = 100
+            return true
+        }
+        if !initialized { return }
 
-        while !expired.withLock({ $0 }) {
-            try? await Task.sleep(for: .seconds(1))
-            guard !expired.withLock({ $0 }) else { break }
+        await withTaskCancellationHandler {
+            while true {
+                if Task.isCancelled { return }
 
-            let idle = allFoldersIdle()
-            if !SyncBridgeService.isRunning() || idle {
-                if idle {
-                    await notifyConflictsIfAny()
+                let observation = continuedProcessingObservation()
+                var transition = runLock.withLock { run -> (effects: [ContinuedProcessingRun.Effect], terminal: Bool) in
+                    let effects = run.receive(.observed(observation))
+                    return (effects, run.isTerminal)
                 }
-                progress.completedUnitCount = 100
-                task.setTaskCompleted(success: true)
-                logger.info("Continued processing completed")
-                return
+                if let completion = continuedProcessingCompletion(in: transition.effects) {
+                    completeContinuedProcessing(completion, task: task)
+                    return
+                }
+                if transition.terminal { return }
+
+                if let effect = transition.effects.first,
+                   case let .inspectConflicts(token) = effect {
+                    await notifyConflictsIfAny()
+                    let refreshedObservation = continuedProcessingObservation()
+                    transition = runLock.withLock { run in
+                        let effects = run.receive(.conflictInspectionFinished(
+                            token: token,
+                            observation: refreshedObservation
+                        ))
+                        return (effects, run.isTerminal)
+                    }
+                    if let completion = continuedProcessingCompletion(in: transition.effects) {
+                        completeContinuedProcessing(completion, task: task)
+                        return
+                    }
+                    if transition.terminal { return }
+                }
+
+                let pct = averageFolderCompletion()
+                let updatedProgress = runLock.withLock { run in
+                    guard !run.isTerminal else { return false }
+                    taskBox.value.progress.completedUnitCount = Int64(pct)
+                    taskBox.value.updateTitle(
+                        L10n.tr("Syncing Vault"),
+                        subtitle: L10n.fmt("%d%% complete", Int(pct))
+                    )
+                    return true
+                }
+                if !updatedProgress { return }
+
+                do {
+                    try await Task.sleep(for: .seconds(1))
+                } catch {
+                    // `onCancel` owns the terminal failure and completion. Once
+                    // cancellation wakes this sleep, no later observation may
+                    // claim success.
+                    return
+                }
             }
-
-            let pct = averageFolderCompletion()
-            progress.completedUnitCount = Int64(pct)
-            task.updateTitle(L10n.tr("Syncing Vault"), subtitle: L10n.fmt("%d%% complete", Int(pct)))
+        } onCancel: {
+            let effects = runLock.withLock {
+                $0.receive(.cancelled(sceneActive: isSceneActive()))
+            }
+            guard let completion = continuedProcessingCompletion(in: effects) else { return }
+            stopContinuedProcessingEngineIfBackgroundOwned()
+            completeContinuedProcessing(completion, task: taskBox.value)
         }
-
-        task.setTaskCompleted(success: false)
-        logger.info("Continued processing expired")
     }
 
     // MARK: - Helpers
@@ -1142,6 +1425,32 @@ enum BackgroundSyncService {
             ))
         }
         return settlements
+    }
+
+    private static func continuedProcessingFolderSnapshot() -> ContinuedProcessingRun.FolderSnapshot {
+        let json = SyncBridgeService.getFoldersJSON()
+        guard let data = json.data(using: .utf8),
+              let folders = try? JSONDecoder().decode([FolderStub].self, from: data) else {
+            return .unreadable
+        }
+
+        let expectedFolderIDs = Set(folders.map(\.id))
+        var settlements: [String: FolderSettlement] = [:]
+        settlements.reserveCapacity(expectedFolderIDs.count)
+        for folder in folders {
+            let statusJSON = SyncBridgeService.getFolderStatusJSON(folderID: folder.id)
+            guard let statusData = statusJSON.data(using: .utf8),
+                  let status = try? JSONDecoder().decode(StatusStub.self, from: statusData) else {
+                continue
+            }
+            settlements[folder.id] = folderSettlement(
+                state: status.state,
+                needFiles: status.needFiles,
+                needBytes: status.needBytes,
+                inProgressBytes: status.inProgressBytes
+            )
+        }
+        return .readable(folderIDs: expectedFolderIDs, settlements: settlements)
     }
 
     private static func allFoldersIdle() -> Bool {

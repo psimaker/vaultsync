@@ -8,6 +8,7 @@ All notable changes to VaultSync are documented here.
 
 ### Fixed
 
+- **Background sync no longer reports unfinished work as completed** ([#146](https://github.com/psimaker/vaultsync/issues/146)) — continued processing now reports success only after every expected vault is confirmed fully idle. If the sync engine stops, vault status cannot be read, a vault reports an error, the run expires or is cancelled, or the app returns to the foreground, the background run reports failure instead; conflict checks happen only after idle is proven.
 - **Conflicting Obsidian settings now wait for your decision** ([#145](https://github.com/psimaker/vaultsync/issues/145)) — VaultSync no longer automatically deletes, replaces, or promotes `.obsidian` conflict copies by modification time. The legacy preference stays stored but cannot re-enable the retired behavior, and detected conflicts remain visible for manual review. Syncthing's separate conflict-copy retention is not guaranteed.
 - **Keep Both no longer overwrites an existing conflict copy** ([#144](https://github.com/psimaker/vaultsync/issues/144)) — when the intended copy name is already occupied, VaultSync leaves all existing files untouched instead of replacing previously saved bytes.
 - **Manual conflict resolution preserves unrelated temporary files** ([#143](https://github.com/psimaker/vaultsync/issues/143)) — choosing the conflicting version no longer reuses or overwrites a pre-existing temporary file next to the note.
