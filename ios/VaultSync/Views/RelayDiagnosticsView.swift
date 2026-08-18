@@ -230,6 +230,21 @@ struct RelayDiagnosticsView: View {
 
     private var provisioningSection: some View {
         Section("Per-Device Provisioning") {
+            if let storageError = subscriptionManager.relayDeviceIDStorageErrorMessage {
+                VStack(alignment: .leading, spacing: VaultSpacing.xxs) {
+                    Label(
+                        L10n.tr("Relay Provisioning Failed"),
+                        systemImage: "exclamationmark.shield"
+                    )
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.statusError)
+                    Text(storageError)
+                        .font(.caption)
+                        .foregroundStyle(Color.statusError)
+                }
+                .accessibilityElement(children: .combine)
+            }
+
             LabeledContent(L10n.tr("Purchase locally verified")) {
                 Text(subscriptionManager.relayEntitlementLocallyVerified ? L10n.tr("Confirmed") : L10n.tr("Not confirmed"))
                     .foregroundStyle(subscriptionManager.relayEntitlementLocallyVerified ? Color.statusSuccess : .secondary)

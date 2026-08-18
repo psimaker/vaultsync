@@ -112,9 +112,7 @@ struct RelayHomeView: View {
 
     @ViewBuilder
     private var subscribedContent: some View {
-        if subscriptionManager.relayProvisioningNeedsStoreKitVerification ||
-            subscriptionManager.relayProvisioningUpdateInProgress ||
-            subscriptionManager.relayProvisioningTemporarilyFailed {
+        if subscriptionManager.relayProvisioningNeedsAttention {
             relayProvisioningUpdateSection
         }
 
@@ -278,12 +276,27 @@ struct RelayHomeView: View {
     private var relayProvisioningUpdateSection: some View {
         Section {
             VStack(alignment: .leading, spacing: VaultSpacing.s) {
-                Label(
-                    L10n.tr("Automatic updates are being updated"),
-                    systemImage: "arrow.triangle.2.circlepath"
-                )
-                .font(.headline)
-                .foregroundStyle(Color.statusInfo)
+                if subscriptionManager.relayDeviceIDStorageErrorMessage != nil {
+                    Label(
+                        L10n.tr("Relay Provisioning Failed"),
+                        systemImage: "exclamationmark.shield"
+                    )
+                    .font(.headline)
+                    .foregroundStyle(Color.statusError)
+                } else {
+                    Label(
+                        L10n.tr("Automatic updates are being updated"),
+                        systemImage: "arrow.triangle.2.circlepath"
+                    )
+                    .font(.headline)
+                    .foregroundStyle(Color.statusInfo)
+                }
+
+                if let storageError = subscriptionManager.relayDeviceIDStorageErrorMessage {
+                    Text(storageError)
+                        .font(.subheadline)
+                        .foregroundStyle(Color.statusError)
+                }
 
                 if subscriptionManager.relayProvisioningNeedsStoreKitVerification {
                     Text(L10n.tr("Your purchase must be confirmed again."))
@@ -307,7 +320,8 @@ struct RelayHomeView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(purchaseConfirmationInFlight)
-                } else if subscriptionManager.relayProvisioningTemporarilyFailed {
+                } else if subscriptionManager.relayProvisioningTemporarilyFailed ||
+                            subscriptionManager.relayDeviceIDStorageErrorMessage != nil {
                     Text(L10n.tr("Try Again Later"))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)

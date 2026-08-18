@@ -3,6 +3,64 @@ import os
 
 private let logger = Logger(subsystem: "eu.vaultsync.app", category: "appdelegate")
 
+/// Product-used APNs persistence decision with injectable effects. Log events
+/// carry only fixed categories and a boolean, never the device token (#148).
+@MainActor
+enum APNsDeviceTokenRegistration {
+    enum LogEvent: Equatable {
+        case persistenceFailed
+        case stored
+        case changed(first: Bool)
+    }
+
+    struct Environment {
+        var loadPreviousToken: () -> String?
+        var persistToken: (String) -> Bool
+        var markRegistered: () -> Void
+        var markFailed: (String) -> Void
+        var postTokenDidChange: () -> Void
+        var log: (LogEvent) -> Void
+
+        static var live: Self {
+            Self(
+                loadPreviousToken: KeychainService.getAPNsDeviceToken,
+                persistToken: KeychainService.setAPNsDeviceToken,
+                markRegistered: APNsRegistrationStore.markRegistered,
+                markFailed: APNsRegistrationStore.markFailed,
+                postTokenDidChange: APNsRegistrationStore.postTokenDidChange,
+                log: { event in
+                    switch event {
+                    case .persistenceFailed:
+                        logger.error("APNs device token could not be stored")
+                    case .stored:
+                        logger.info("APNs device token received and stored")
+                    case .changed(let first):
+                        logger.info("APNs device token changed (first=\(first, privacy: .public)), notifying for re-provisioning")
+                    }
+                }
+            )
+        }
+    }
+
+    @discardableResult
+    static func handle(token: String, failureReason: String, environment: Environment) -> Bool {
+        let previousToken = environment.loadPreviousToken()
+        guard environment.persistToken(token) else {
+            environment.log(.persistenceFailed)
+            environment.markFailed(failureReason)
+            return false
+        }
+
+        environment.markRegistered()
+        environment.log(.stored)
+        if previousToken != token {
+            environment.log(.changed(first: previousToken == nil))
+            environment.postTokenDidChange()
+        }
+        return true
+    }
+}
+
 class AppDelegate: NSObject, UIApplicationDelegate {
 
     func application(
@@ -25,15 +83,11 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
     ) {
         let token = deviceToken.map { String(format: "%02x", $0) }.joined()
-        let previousToken = KeychainService.getAPNsDeviceToken()
-        _ = KeychainService.setAPNsDeviceToken(token)
-        APNsRegistrationStore.markRegistered()
-        logger.info("APNs device token received and stored")
-
-        if previousToken != token {
-            logger.info("APNs device token changed (first=\(previousToken == nil)), notifying for re-provisioning")
-            APNsRegistrationStore.postTokenDidChange()
-        }
+        APNsDeviceTokenRegistration.handle(
+            token: token,
+            failureReason: L10n.tr("Push registration is not ready yet."),
+            environment: .live
+        )
     }
 
     func application(

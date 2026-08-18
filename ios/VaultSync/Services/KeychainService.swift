@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import os
 
 private let logger = Logger(subsystem: "eu.vaultsync.app", category: "keychain")
@@ -9,31 +10,114 @@ enum KeychainService {
     private static let service = "eu.vaultsync.app"
     private static let apnsDeviceTokenKey = "apns-device-token"
 
+    enum ReadResult: Equatable {
+        case value(String)
+        case notFound
+        case corrupt
+        case failed(OSStatus)
+    }
+
+    /// Synchronous Keychain effects used by the production decision logic.
+    /// A computed live value keeps the non-Sendable closures stack-local while
+    /// tests can inject exact Security statuses and observe call ordering.
+    struct Environment {
+        var encodeUTF8: (String) -> Data?
+        var copyMatching: (CFDictionary, inout AnyObject?) -> OSStatus
+        var update: (CFDictionary, CFDictionary) -> OSStatus
+        var add: (CFDictionary) -> OSStatus
+        var delete: (CFDictionary) -> OSStatus
+
+        static var live: Self {
+            Self(
+                encodeUTF8: { $0.data(using: .utf8) },
+                copyMatching: { query, result in
+                    SecItemCopyMatching(query, &result)
+                },
+                update: { query, attributes in
+                    SecItemUpdate(query, attributes)
+                },
+                add: { attributes in
+                    SecItemAdd(attributes, nil)
+                },
+                delete: { query in
+                    SecItemDelete(query)
+                }
+            )
+        }
+    }
+
     /// Store a string value in the Keychain.
     @discardableResult
     static func set(key: String, value: String) -> Bool {
-        guard let data = value.data(using: .utf8) else { return false }
+        set(key: key, value: value, environment: .live)
+    }
 
-        // Delete existing item first to avoid errSecDuplicateItem
-        delete(key: key)
+    /// Update first so a transient write failure can never erase the last valid
+    /// credential. Add is reserved for a confirmed missing item; if another
+    /// writer wins that race, retry Update once without ever deleting either
+    /// value (#148).
+    @discardableResult
+    static func set(key: String, value: String, environment: Environment) -> Bool {
+        guard let data = environment.encodeUTF8(value) else {
+            logger.error("Keychain value encoding failed")
+            return false
+        }
 
-        let query: [String: Any] = [
+        let identity: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key,
-            kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
         ]
+        let valueAttributes: [String: Any] = [kSecValueData as String: data]
 
-        let status = SecItemAdd(query as CFDictionary, nil)
-        if status != errSecSuccess {
-            logger.error("Keychain set failed for \(key): \(status)")
+        let updateStatus = environment.update(
+            identity as CFDictionary,
+            valueAttributes as CFDictionary
+        )
+        if updateStatus == errSecSuccess {
+            return true
         }
-        return status == errSecSuccess
+        guard updateStatus == errSecItemNotFound else {
+            logger.error("Keychain update failed with status category \(updateStatus, privacy: .public)")
+            return false
+        }
+
+        var insertion = identity
+        insertion[kSecValueData as String] = data
+        insertion[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+
+        let addStatus = environment.add(insertion as CFDictionary)
+        if addStatus == errSecSuccess {
+            return true
+        }
+        guard addStatus == errSecDuplicateItem else {
+            logger.error("Keychain add failed with status category \(addStatus, privacy: .public)")
+            return false
+        }
+
+        let retryStatus = environment.update(
+            identity as CFDictionary,
+            valueAttributes as CFDictionary
+        )
+        if retryStatus != errSecSuccess {
+            logger.error("Keychain duplicate retry failed with status category \(retryStatus, privacy: .public)")
+        }
+        return retryStatus == errSecSuccess
     }
 
     /// Retrieve a string value from the Keychain.
     static func get(key: String) -> String? {
+        get(key: key, environment: .live)
+    }
+
+    static func get(key: String, environment: Environment) -> String? {
+        guard case .value(let value) = read(key: key, environment: environment) else {
+            return nil
+        }
+        return value
+    }
+
+    static func read(key: String, environment: Environment = .live) -> ReadResult {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -43,24 +127,30 @@ enum KeychainService {
         ]
 
         var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        let status = environment.copyMatching(query as CFDictionary, &result)
 
-        guard status == errSecSuccess, let data = result as? Data else {
-            return nil
-        }
-        return String(data: data, encoding: .utf8)
+        if status == errSecItemNotFound { return .notFound }
+        guard status == errSecSuccess else { return .failed(status) }
+        guard let data = result as? Data,
+              let value = String(data: data, encoding: .utf8) else { return .corrupt }
+        return .value(value)
     }
 
     /// Delete an item from the Keychain.
     @discardableResult
     static func delete(key: String) -> Bool {
+        delete(key: key, environment: .live)
+    }
+
+    @discardableResult
+    static func delete(key: String, environment: Environment) -> Bool {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key,
         ]
 
-        let status = SecItemDelete(query as CFDictionary)
+        let status = environment.delete(query as CFDictionary)
         return status == errSecSuccess || status == errSecItemNotFound
     }
 

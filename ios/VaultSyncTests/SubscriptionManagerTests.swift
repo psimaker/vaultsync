@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import VaultSync
 
@@ -22,10 +23,47 @@ struct SubscriptionManagerTests {
     func retrySeedsProvisionEntries() async {
         TestSupport.resetRelayState()
 
-        let manager = SubscriptionManager()
+        let manager = SubscriptionManager(
+            relayDeviceIDStorageEnvironment: RelayDeviceIDStorage.Environment(
+                load: { .notFound },
+                encode: { ids in
+                    String(decoding: try JSONEncoder().encode(ids), as: UTF8.self)
+                },
+                write: { _ in true }
+            ),
+            startsLiveWork: false
+        )
         let deviceID = TestSupport.samplePeerDeviceID
         await manager.retryRelayProvisioning(homeserverDeviceIDs: [deviceID])
 
         #expect(manager.relayProvisionStatuses[deviceID] == .notAttempted)
+    }
+
+    @Test("Manual retry surfaces a device ID storage failure (#148)")
+    func issue148ManualRetrySurfacesStorageFailure() async {
+        TestSupport.resetRelayState()
+
+        let manager = SubscriptionManager(
+            relayDeviceIDStorageEnvironment: RelayDeviceIDStorage.Environment(
+                load: { .notFound },
+                encode: { ids in
+                    String(decoding: try JSONEncoder().encode(ids), as: UTF8.self)
+                },
+                write: { _ in false }
+            ),
+            startsLiveWork: false
+        )
+        let deviceID = TestSupport.samplePeerDeviceID
+        await manager.retryRelayProvisioning(homeserverDeviceIDs: [deviceID])
+
+        #expect(
+            manager.relayProvisionStatuses[deviceID]
+                == .notAttempted
+        )
+        #expect(
+            manager.relayDeviceIDStorageErrorMessage
+                == L10n.tr("Cloud Relay provisioning did not complete.")
+        )
+        #expect(manager.relayProvisioningNeedsAttention)
     }
 }

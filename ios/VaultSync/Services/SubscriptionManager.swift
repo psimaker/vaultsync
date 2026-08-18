@@ -5,6 +5,190 @@ import os
 
 private let logger = Logger(subsystem: "eu.vaultsync.app", category: "subscription")
 
+/// Pure persistence core for the homeserver IDs used by Cloud Relay. Every
+/// persistence caller supplies its context so a storage failure has an explicit,
+/// testable disposition instead of disappearing behind a Void helper (#148).
+enum RelayDeviceIDStorage {
+    enum Context: CaseIterable, Equatable {
+        case pendingPurchase
+        case restore
+        case diagnosticsRefresh
+        case manualRetry
+        case verifiedTransaction
+    }
+
+    enum Failure: Error, Equatable {
+        case read
+        case encoding
+        case keychain
+    }
+
+    enum LoadResult: Equatable {
+        case loaded([String])
+        case notFound
+        case failed
+
+        var ids: [String]? {
+            switch self {
+            case .loaded(let ids):
+                return ids
+            case .notFound:
+                return []
+            case .failed:
+                return nil
+            }
+        }
+    }
+
+    enum FailureDisposition: Equatable {
+        case stop
+        case returnRestoreFailure
+        case continueWithoutProvisioning
+        case finishTransactionWithoutProvisioning
+    }
+
+    enum Outcome: Equatable {
+        case stored(Set<String>)
+        case failed(Failure)
+    }
+
+    enum TargetSource {
+        case persist([String], context: Context)
+        case storedDeviceIDs
+    }
+
+    enum TargetPreparation: Equatable {
+        case ready([String])
+        case skip(FailureDisposition?)
+    }
+
+    struct Environment {
+        var load: () -> LoadResult
+        var encode: ([String]) throws -> String
+        var write: (String) -> Bool
+
+        static var live: Self {
+            Self(
+                load: {
+                    switch KeychainService.read(key: "relay-device-ids") {
+                    case .value(let stored):
+                        return decodeStoredValue(stored)
+                    case .notFound:
+                        return .notFound
+                    case .corrupt, .failed:
+                        return .failed
+                    }
+                },
+                encode: { deviceIDs in
+                    let data = try JSONEncoder().encode(deviceIDs)
+                    guard let encoded = String(data: data, encoding: .utf8) else {
+                        throw Failure.encoding
+                    }
+                    return encoded
+                },
+                write: { encoded in
+                    KeychainService.set(key: "relay-device-ids", value: encoded)
+                }
+            )
+        }
+    }
+
+    static func persist(
+        _ ids: [String],
+        environment: Environment
+    ) -> Outcome {
+        guard !ids.isEmpty else { return .stored([]) }
+        guard let existingIDs = environment.load().ids else {
+            return .failed(.read)
+        }
+        let merged = Array(Set(existingIDs + ids)).sorted()
+
+        let encoded: String
+        do {
+            encoded = try environment.encode(merged)
+        } catch {
+            return .failed(.encoding)
+        }
+
+        guard environment.write(encoded) else {
+            return .failed(.keychain)
+        }
+        return .stored(Set(merged))
+    }
+
+    static func decodeStoredValue(_ stored: String) -> LoadResult {
+        if stored.hasPrefix("[") {
+            guard let data = stored.data(using: .utf8),
+                  let ids = try? JSONDecoder().decode([String].self, from: data) else {
+                return .failed
+            }
+            return .loaded(ids)
+        }
+        return .loaded(stored.components(separatedBy: ",").filter { !$0.isEmpty })
+    }
+
+    static func remainingFailedIDs(
+        afterStoring ids: [String],
+        from failedIDs: Set<String>
+    ) -> Set<String> {
+        failedIDs.subtracting(ids)
+    }
+
+    static func relevantFailedIDs(
+        currentIDs: [String],
+        storedIDs: [String],
+        from failedIDs: Set<String>
+    ) -> Set<String> {
+        // An empty current list is ambiguous (no peers versus an unavailable
+        // Keychain read). Keep the visible failure until a non-empty live peer
+        // set can prove that an ID is no longer relevant.
+        guard !currentIDs.isEmpty else { return failedIDs }
+        return failedIDs.intersection(currentIDs + storedIDs)
+    }
+
+    /// Resolve the only two valid sources for a provisioning target. A target is
+    /// ready only after the same exact ID set was included in a successful
+    /// synchronous rewrite, or after an exact typed Keychain load (#148).
+    static func prepareTarget(
+        source: TargetSource,
+        persist: ([String]) -> Outcome,
+        load: () -> LoadResult
+    ) -> TargetPreparation {
+        switch source {
+        case .persist(let ids, let context):
+            let exactIDs = Array(Set(ids)).sorted()
+            guard !exactIDs.isEmpty else { return .ready([]) }
+            guard case .stored(let storedIDs) = persist(exactIDs),
+                  Set(exactIDs).isSubset(of: storedIDs) else {
+                return .skip(failureDisposition(for: context))
+            }
+            return .ready(exactIDs)
+        case .storedDeviceIDs:
+            switch load() {
+            case .loaded(let ids):
+                return .ready(Array(Set(ids)).sorted())
+            case .notFound:
+                return .ready([])
+            case .failed:
+                return .skip(nil)
+            }
+        }
+    }
+
+    private static func failureDisposition(for context: Context) -> FailureDisposition {
+        switch context {
+        case .pendingPurchase, .manualRetry:
+            return .stop
+        case .restore:
+            return .returnRestoreFailure
+        case .diagnosticsRefresh:
+            return .continueWithoutProvisioning
+        case .verifiedTransaction:
+            return .finishTransactionWithoutProvisioning
+        }
+    }
+}
+
 @MainActor
 @Observable
 final class SubscriptionManager {
@@ -36,6 +220,7 @@ final class SubscriptionManager {
     /// verification — explains an otherwise silent "not subscribed" (#96).
     private(set) var unverifiedRelayTransactionMessage: String?
     private(set) var errorMessage: String?
+    private(set) var relayDeviceIDStorageErrorMessage: String?
     private(set) var relayProvisionStatuses: [String: RelayProvisionStatus] = [:]
     private(set) var apnsRegistrationStatus: APNsRegistrationStatus = APNsRegistrationStore.current()
     private(set) var apnsRegistrationSnapshot: APNsRegistrationStore.Snapshot = APNsRegistrationStore.snapshot()
@@ -72,6 +257,13 @@ final class SubscriptionManager {
             if case .temporarilyFailed = status { return true }
             return false
         }
+    }
+
+    var relayProvisioningNeedsAttention: Bool {
+        relayProvisioningNeedsStoreKitVerification ||
+            relayProvisioningUpdateInProgress ||
+            relayProvisioningTemporarilyFailed ||
+            relayDeviceIDStorageErrorMessage != nil
     }
 
     var relayStatusPollViewState: RelayStatusPollViewState {
@@ -186,8 +378,14 @@ final class SubscriptionManager {
     @ObservationIgnored private var pendingReprovisionRequests: [(RelayReprovisionTrigger, [String])] = []
     @ObservationIgnored private let relayStatusCheckGate = RelayStatusCheckGate()
     @ObservationIgnored private var relayStatusCacheGeneration = 0
+    @ObservationIgnored private let relayDeviceIDStorageEnvironment: RelayDeviceIDStorage.Environment
+    @ObservationIgnored private var relayDeviceIDStorageFailedIDs: Set<String> = []
 
-    init() {
+    init(
+        relayDeviceIDStorageEnvironment: RelayDeviceIDStorage.Environment = .live,
+        startsLiveWork: Bool = true
+    ) {
+        self.relayDeviceIDStorageEnvironment = relayDeviceIDStorageEnvironment
         apnsRegistrationStatus = APNsRegistrationStore.current()
         apnsRegistrationSnapshot = APNsRegistrationStore.snapshot()
         refreshStoredRelayDiagnostics()
@@ -196,6 +394,11 @@ final class SubscriptionManager {
         // backed by a currently verified StoreKit signed transaction.
         relayProvisionStatuses = RelayProvisionStatusStore.load()
         purchasePendingApproval = PurchasePendingApprovalStore.isPending()
+
+        guard startsLiveWork else {
+            isLoadingProduct = false
+            return
+        }
 
         apnsObserver = NotificationCenter.default.addObserver(
             forName: APNsRegistrationStore.statusDidChangeNotification,
@@ -348,9 +551,15 @@ final class SubscriptionManager {
             logger.info("Purchase pending (e.g. Ask to Buy)")
             setPendingApproval(true)
             // Store device IDs for later provisioning when transaction completes
-            storeDeviceIDs(homeserverDeviceIDs)
-            for deviceID in homeserverDeviceIDs {
-                relayProvisionStatuses[deviceID] = .notAttempted
+            let preparation = RelayDeviceIDStorage.prepareTarget(
+                source: .persist(homeserverDeviceIDs, context: .pendingPurchase),
+                persist: storeDeviceIDs,
+                load: { .notFound }
+            )
+            if case .ready = preparation {
+                for deviceID in homeserverDeviceIDs {
+                    relayProvisionStatuses[deviceID] = .notAttempted
+                }
             }
         @unknown default:
             logger.warning("Unknown purchase result")
@@ -362,14 +571,15 @@ final class SubscriptionManager {
         case nothingToRestore
         case foundButUnverified
         case cancelled
+        case localPersistenceFailed
         case failed(message: String)
     }
 
     @discardableResult
     func restorePurchases(homeserverDeviceIDs: [String] = []) async -> RestoreOutcome {
         if !homeserverDeviceIDs.isEmpty {
-            storeDeviceIDs(homeserverDeviceIDs)
             ensureProvisionStateEntries(for: homeserverDeviceIDs)
+            storeDeviceIDs(homeserverDeviceIDs)
         }
         let outcome = await Self.performRestore(
             sync: { try await AppStore.sync() },
@@ -383,10 +593,14 @@ final class SubscriptionManager {
             isUserCancellation: Self.isUserCancellation
         )
         if outcome == .restored {
-            await requestReprovisioning(
+            let dependentDeviceIDs = allKnownDeviceIDs(including: homeserverDeviceIDs)
+            let storageFailure = await requestReprovisioning(
                 trigger: .restore,
-                deviceIDs: allKnownDeviceIDs(including: homeserverDeviceIDs)
+                targetSource: .persist(dependentDeviceIDs, context: .restore)
             )
+            if storageFailure != nil {
+                return .localPersistenceFailed
+            }
         }
         return outcome
     }
@@ -450,7 +664,15 @@ final class SubscriptionManager {
     }
 
     func refreshRelayDiagnostics(homeserverDeviceIDs: [String]) async {
-        let allDeviceIDs = homeserverDeviceIDs.isEmpty ? loadStoredDeviceIDs() : homeserverDeviceIDs
+        let storedResult = loadStoredDeviceIDsResult()
+        let storedDeviceIDs = storedResult.ids ?? []
+        if storedResult.ids != nil {
+            reconcileDeviceIDStorageFailures(
+                currentIDs: homeserverDeviceIDs,
+                storedIDs: storedDeviceIDs
+            )
+        }
+        let allDeviceIDs = homeserverDeviceIDs.isEmpty ? storedDeviceIDs : homeserverDeviceIDs
         ensureProvisionStateEntries(for: allDeviceIDs)
         if !allDeviceIDs.isEmpty {
             storeDeviceIDs(allDeviceIDs)
@@ -608,7 +830,15 @@ final class SubscriptionManager {
     }
 
     func retryRelayProvisioning(homeserverDeviceIDs: [String]) async {
-        let allDeviceIDs = homeserverDeviceIDs.isEmpty ? loadStoredDeviceIDs() : homeserverDeviceIDs
+        let storedResult = loadStoredDeviceIDsResult()
+        let storedDeviceIDs = storedResult.ids ?? []
+        if storedResult.ids != nil {
+            reconcileDeviceIDStorageFailures(
+                currentIDs: homeserverDeviceIDs,
+                storedIDs: storedDeviceIDs
+            )
+        }
+        let allDeviceIDs = homeserverDeviceIDs.isEmpty ? storedDeviceIDs : homeserverDeviceIDs
         ensureProvisionStateEntries(for: allDeviceIDs)
         if !allDeviceIDs.isEmpty {
             storeDeviceIDs(allDeviceIDs)
@@ -625,7 +855,11 @@ final class SubscriptionManager {
             return
         }
 
-        await requestReprovisioning(trigger: .manualRetry, deviceIDs: allDeviceIDs)
+        let dependentDeviceIDs = allKnownDeviceIDs(including: allDeviceIDs)
+        _ = await requestReprovisioning(
+            trigger: .manualRetry,
+            targetSource: .persist(dependentDeviceIDs, context: .manualRetry)
+        )
     }
 
     // MARK: - Private
@@ -700,12 +934,16 @@ final class SubscriptionManager {
                 relayEntitlementAvailability = .verified(proof)
 
                 // Use explicitly passed device IDs (from purchase flow) or stored ones (from renewal)
-                let deviceIDs = provisionDeviceIDs ?? loadStoredDeviceIDs()
-                if let ids = provisionDeviceIDs {
-                    storeDeviceIDs(ids)
-                }
-                ensureProvisionStateEntries(for: deviceIDs)
-                await requestReprovisioning(trigger: trigger, deviceIDs: deviceIDs)
+                let deviceIDs = provisionDeviceIDs ?? allKnownDeviceIDs()
+                storeDeviceIDs(deviceIDs)
+                let dependentDeviceIDs = allKnownDeviceIDs(including: deviceIDs)
+                _ = await requestReprovisioning(
+                    trigger: trigger,
+                    targetSource: .persist(
+                        dependentDeviceIDs,
+                        context: .verifiedTransaction
+                    )
+                )
             } else {
                 relayEntitlementAvailability = .verificationRequired
                 markStoreKitVerificationRequired(
@@ -717,18 +955,30 @@ final class SubscriptionManager {
         await transaction.finish()
     }
 
+    @discardableResult
     private func requestReprovisioning(
         trigger: RelayReprovisionTrigger,
-        deviceIDs: [String]
-    ) async {
-        let allDeviceIDs = allKnownDeviceIDs(including: deviceIDs)
-        guard !allDeviceIDs.isEmpty else {
-            logger.info("No homeserver device IDs available, skipping relay provision")
-            return
+        targetSource: RelayDeviceIDStorage.TargetSource
+    ) async -> RelayDeviceIDStorage.FailureDisposition? {
+        // Target preparation, status seeding, and enqueueing are synchronous on
+        // the MainActor. The first suspension happens only after the proven
+        // target is already queued.
+        let preparation = RelayDeviceIDStorage.prepareTarget(
+            source: targetSource,
+            persist: storeDeviceIDs,
+            load: loadStoredDeviceIDsResult
+        )
+        guard case .ready(let exactDeviceIDs) = preparation else {
+            if case .skip(let disposition) = preparation { return disposition }
+            return nil
         }
-        ensureProvisionStateEntries(for: allDeviceIDs)
-        pendingReprovisionRequests.append((trigger, allDeviceIDs))
-        guard !reprovisioningInFlight else { return }
+        guard !exactDeviceIDs.isEmpty else {
+            logger.info("No homeserver device IDs available, skipping relay provision")
+            return nil
+        }
+        ensureProvisionStateEntries(for: exactDeviceIDs)
+        pendingReprovisionRequests.append((trigger, exactDeviceIDs))
+        guard !reprovisioningInFlight else { return nil }
 
         reprovisioningInFlight = true
         defer { reprovisioningInFlight = false }
@@ -736,6 +986,7 @@ final class SubscriptionManager {
             let request = pendingReprovisionRequests.removeFirst()
             await performReprovisioning(trigger: request.0, deviceIDs: request.1)
         }
+        return nil
     }
 
     private func performReprovisioning(
@@ -834,11 +1085,11 @@ final class SubscriptionManager {
         guard isRelaySubscribed else { return }
         guard KeychainService.hasAPNsDeviceToken() else { return }
 
-        let deviceIDs = loadStoredDeviceIDs()
-        guard !deviceIDs.isEmpty else { return }
-
-        logger.info("APNs token changed, re-provisioning relay for \(deviceIDs.count) device(s)")
-        await requestReprovisioning(trigger: .tokenRotation, deviceIDs: deviceIDs)
+        logger.info("APNs token changed, checking stored relay targets")
+        await requestReprovisioning(
+            trigger: .tokenRotation,
+            targetSource: .storedDeviceIDs
+        )
     }
 
     /// Run pending per-device migration on launch, then refresh fully verified
@@ -847,14 +1098,20 @@ final class SubscriptionManager {
         guard isRelaySubscribed else { return }
         guard KeychainService.hasAPNsDeviceToken() else { return }
 
-        let deviceIDs = loadStoredDeviceIDs()
+        let deviceIDs = allKnownDeviceIDs()
         guard !deviceIDs.isEmpty else { return }
 
         // The one-time app-update migration is per homeserver and independent of
-        // the periodic refresh timestamp. Failed devices remain eligible on the
-        // next launch/diagnostics pass; verified successes are skipped.
+        // the periodic refresh timestamp. The exact target is durably stored by
+        // the gated request before launch recovery can provision it. Failed
+        // devices remain eligible on the next launch/diagnostics pass; verified
+        // successes are skipped.
         markMigrationRequiredForActiveSubscription(deviceIDs: deviceIDs)
-        await requestReprovisioning(trigger: .appUpdate, deviceIDs: deviceIDs)
+        let appUpdateFailure = await requestReprovisioning(
+            trigger: .appUpdate,
+            targetSource: .persist(deviceIDs, context: .diagnosticsRefresh)
+        )
+        guard appUpdateFailure == nil else { return }
         guard deviceIDs.allSatisfy({
             relayProvisionStatuses[$0]?.isProvisionedWithVerifiedEntitlement == true
         }) else { return }
@@ -865,7 +1122,11 @@ final class SubscriptionManager {
         }
 
         logger.info("Periodic relay re-provision requested (hadPrevious=\(lastProvision != nil))")
-        await requestReprovisioning(trigger: .periodicRefresh, deviceIDs: deviceIDs)
+        let periodicDeviceIDs = allKnownDeviceIDs(including: deviceIDs)
+        _ = await requestReprovisioning(
+            trigger: .periodicRefresh,
+            targetSource: .persist(periodicDeviceIDs, context: .diagnosticsRefresh)
+        )
     }
 
     private static let lastProvisionDateKey = "relay-last-provision-date"
@@ -877,21 +1138,69 @@ final class SubscriptionManager {
 
     // MARK: - Device ID Storage
 
-    private func storeDeviceIDs(_ ids: [String]) {
-        guard !ids.isEmpty else { return }
-        let merged = Array(Set(loadStoredDeviceIDs() + ids)).sorted()
-        if let data = try? JSONEncoder().encode(merged) {
-            KeychainService.set(key: "relay-device-ids", value: String(data: data, encoding: .utf8) ?? "[]")
+    @discardableResult
+    private func storeDeviceIDs(_ ids: [String]) -> RelayDeviceIDStorage.Outcome {
+        let outcome = RelayDeviceIDStorage.persist(
+            ids,
+            environment: relayDeviceIDStorageEnvironment
+        )
+        switch outcome {
+        case .stored(let persistedIDs) where !persistedIDs.isEmpty:
+            recordDeviceIDStorageSuccess(for: persistedIDs)
+        case .failed:
+            recordDeviceIDStorageFailure(for: ids)
+        case .stored:
+            break
+        }
+        return outcome
+    }
+
+    private func recordDeviceIDStorageSuccess(for ids: Set<String>) {
+        relayDeviceIDStorageFailedIDs = RelayDeviceIDStorage.remainingFailedIDs(
+            afterStoring: Array(ids),
+            from: relayDeviceIDStorageFailedIDs
+        )
+        if relayDeviceIDStorageFailedIDs.isEmpty {
+            relayDeviceIDStorageErrorMessage = nil
         }
     }
 
-    private func loadStoredDeviceIDs() -> [String] {
-        guard let stored = KeychainService.get(key: "relay-device-ids") else { return [] }
-        // Support both legacy comma-separated and new JSON array format
-        if stored.hasPrefix("[") {
-            return (try? JSONDecoder().decode([String].self, from: Data(stored.utf8))) ?? []
+    private func recordDeviceIDStorageFailure(for ids: [String]) {
+        relayDeviceIDStorageFailedIDs.formUnion(ids)
+        let message = L10n.tr("Cloud Relay provisioning did not complete.")
+        relayDeviceIDStorageErrorMessage = message
+        logger.error("Relay device identifiers could not be stored")
+    }
+
+    private func reconcileDeviceIDStorageFailures(
+        currentIDs: [String],
+        storedIDs: [String]
+    ) {
+        relayDeviceIDStorageFailedIDs = RelayDeviceIDStorage.relevantFailedIDs(
+            currentIDs: currentIDs,
+            storedIDs: storedIDs,
+            from: relayDeviceIDStorageFailedIDs
+        )
+        if relayDeviceIDStorageFailedIDs.isEmpty {
+            relayDeviceIDStorageErrorMessage = nil
         }
-        return stored.components(separatedBy: ",").filter { !$0.isEmpty }
+    }
+
+    private func loadStoredDeviceIDsResult() -> RelayDeviceIDStorage.LoadResult {
+        let result = relayDeviceIDStorageEnvironment.load()
+        if result == .failed {
+            recordDeviceIDStorageFailure(for: [])
+        } else if relayDeviceIDStorageFailedIDs.isEmpty {
+            // A prior read-only failure has recovered. Write/encoding failures
+            // always carry concrete IDs and are cleared only by a successful
+            // merged rewrite.
+            relayDeviceIDStorageErrorMessage = nil
+        }
+        return result
+    }
+
+    private func loadStoredDeviceIDs() -> [String] {
+        loadStoredDeviceIDsResult().ids ?? []
     }
 
     private func ensureProvisionStateEntries(for deviceIDs: [String]) {
@@ -902,7 +1211,12 @@ final class SubscriptionManager {
     }
 
     private func allKnownDeviceIDs(including deviceIDs: [String] = []) -> [String] {
-        Array(Set(deviceIDs + loadStoredDeviceIDs() + Array(relayProvisionStatuses.keys))).sorted()
+        Array(Set(
+            deviceIDs +
+                loadStoredDeviceIDs() +
+                Array(relayProvisionStatuses.keys) +
+                Array(relayDeviceIDStorageFailedIDs)
+        )).sorted()
     }
 
     private func markMigrationRequiredForActiveSubscription(deviceIDs: [String]) {

@@ -90,6 +90,19 @@ struct SubscribePlanPicker: View {
                 .accessibilityElement(children: .combine)
             }
 
+            if let storageError = subscriptionManager.relayDeviceIDStorageErrorMessage {
+                Label {
+                    Text(storageError)
+                        .font(.footnote)
+                        .foregroundStyle(Color.statusError)
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "exclamationmark.shield")
+                        .foregroundStyle(Color.statusError)
+                }
+                .accessibilityElement(children: .combine)
+            }
+
             Button {
                 guard !subscriptionManager.purchaseInProgress, !isRestoring else { return }
                 Task {
@@ -110,6 +123,10 @@ struct SubscribePlanPicker: View {
                     case .foundButUnverified:
                         alertTitle = L10n.tr("Purchase Could Not Be Verified")
                         alertMessage = subscriptionManager.unverifiedRelayTransactionMessage
+                        showAlert = true
+                    case .localPersistenceFailed:
+                        alertTitle = L10n.tr("Relay Provisioning Failed")
+                        alertMessage = L10n.tr("Cloud Relay provisioning did not complete.")
                         showAlert = true
                     case .failed:
                         alertTitle = L10n.tr("Restore Failed")
