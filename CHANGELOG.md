@@ -6,6 +6,10 @@ All notable changes to VaultSync are documented here.
 
 ## [Unreleased]
 
+### Privacy
+
+- **The Privacy Policy now describes optional Controlled Diagnostics as available in VaultSync 2.0.0 and later** ([#149](https://github.com/psimaker/vaultsync/issues/149)) — the correction keeps pairing and checks explicit, confirms that ordinary or background sync does not start them, and preserves the existing retention and physical-device evidence limits.
+
 ### Fixed
 
 - **Push and Cloud Relay registration details now survive failed secure-storage updates** ([#148](https://github.com/psimaker/vaultsync/issues/148)) — VaultSync keeps the last valid value when a replacement cannot be saved and reports the failure instead of continuing as if registration succeeded.

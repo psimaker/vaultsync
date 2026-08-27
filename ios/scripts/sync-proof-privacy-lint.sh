@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CHECK_CORE="$ROOT/ios/VaultSync/Services/RelaySyncPathCheck.swift"
 RELAY_SERVICE="$ROOT/ios/VaultSync/Services/RelayService.swift"
+PRIVACY_POLICY="$ROOT/PRIVACY.md"
 NOTIFY_LOG_SOURCES=(
   "$ROOT/notify/main.go"
   "$ROOT/notify/doctor.go"
@@ -49,6 +50,17 @@ if rg -n \
   'io\.ReadAll\([^\n]*resp\.Body|readBodySnippet|HTTPStatusError[^\n]*(URL|Body)' \
   "$ROOT/notify/relay.go" "$ROOT/notify/syncthing.go" "$ROOT/notify/errors.go"; then
   echo "❌ Notify dependency errors can retain a raw endpoint or response body."
+  exit 1
+fi
+
+# #149: Reject the known stale Controlled Diagnostics release-status wording.
+if rg -n -i -U \
+  -e 'currently[[:space:]]+released[[:space:]]+app[[:space:]]+does[[:space:]]+not[[:space:]]+call[[:space:]]+it' \
+  -e 'unreleased[[:space:]]+app[[:space:]]+source' \
+  -e 'not[[:space:]]+yet[[:space:]]+the[[:space:]]+publicly[[:space:]]+released[[:space:]]+app' \
+  -e 'Explicit[[:space:]]+Foreground[[:space:]]+Upload[[:space:]]+Check[[:space:]]*\([[:space:]]*Unreleased[[:space:]]+Source[[:space:]]*\)' \
+  -- "$PRIVACY_POLICY"; then
+  echo "❌ #149: PRIVACY.md still describes shipped Controlled Diagnostics behavior as unreleased."
   exit 1
 fi
 

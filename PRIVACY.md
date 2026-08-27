@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Effective date:** July 14, 2026
+**Effective date:** August 27, 2026
 
 VaultSync is designed to keep your data on your devices. This policy explains what information is — and isn't — collected.
 
@@ -77,10 +77,9 @@ file or vault path, file content, or diagnostic check identifier.
 
 The published helper 2.0.2 contains an optional local runtime for the
 authenticated diagnostics protocol. Publication or installation alone does not
-activate it, and the currently released app does not call it. Unreleased app
-source contains the separately user-initiated upload-only flow described below;
-it still cannot activate an unconfigured helper. The runtime starts only when
-an operator separately
+activate it. VaultSync 2.0.0 and later include the separately user-initiated
+Controlled Diagnostics flow described below; the app still cannot activate an
+unconfigured helper. The runtime starts only when an operator separately
 supplies both a read-only diagnostics configuration and a writable private state
 directory; otherwise it creates no listener, credential, mapping, namespace, or
 artifact.
@@ -133,11 +132,11 @@ digest, opaque binding, nonce, transcript fingerprint, signed body, namespace
 path, mount alias, operation value, or artifact name. It creates no diagnostics
 telemetry, crash annotation, support-bundle export, Cloud Relay/APNs/StoreKit
 call, discovery request, trust adoption, share, rescan, or Syncthing
-configuration/ignore change. The unreleased app source can set upload evidence
+configuration/ignore change. VaultSync 2.0.0 and later can set upload evidence
 after an exact pinned helper attestation and, only after an accepted upload,
 download evidence from a fresh local apply of the exact authorized helper
-response in the same active operation, and derives the causal roundtrip only
-from that one upload-then-download chain. A complete download acceptance has
+response in the same active operation; the app derives the causal roundtrip
+only from that one upload-then-download chain. A complete download acceptance has
 run only against injected test event streams plus byte-exact artifacts from
 isolated local Syncthing instances; no download or roundtrip has been observed
 on a physical device.
@@ -197,12 +196,11 @@ isolation and rollback are separately proven.
 
 ### Optional App Pairing and Namespace Control
 
-The app source contains a separate Controlled Diagnostics Settings surface for
-the authenticated helper control plane. This source is not yet the publicly
-released app. Opening the surface performs only a read-only inspection. An app
-upgrade, launch, settings visit, Relay wake-up, or ordinary sync creates no
-diagnostics key, marker, pairing, network request, namespace, artifact, share,
-peer, or trust decision.
+VaultSync 2.0.0 and later include a separate Controlled Diagnostics Settings
+surface for the authenticated helper control plane. Opening the surface performs
+only a read-only inspection. An app upgrade, launch, settings visit, Relay
+wake-up, or ordinary sync creates no diagnostics key, marker, pairing, network
+request, namespace, artifact, share, peer, or trust decision.
 
 The first mutation requires the user to select one already configured
 homeserver and shared folder, accept localized consent, and scan or paste a
@@ -234,16 +232,17 @@ Revocation, app downgrade, or lost-key recovery stops new app activity but does
 not delete the helper authorization, namespace, peer copies, backups, versions,
 conflicts, history, or tombstones. Lost-key recovery deliberately requires new
 pairing and a separate operator revocation of the surviving old authorization.
-See [app capability, pairing, and namespace readiness](docs/app-capability-pairing-namespace-readiness.md).
+See the [current architecture](docs/architecture.md) and the historical
+[app capability, pairing, and namespace readiness snapshot](docs/app-capability-pairing-namespace-readiness.md).
 
-### Explicit Foreground Upload Check (Unreleased Source)
+### Explicit Foreground Upload and Download Check
 
 After separate pairing, capability negotiation, app consent, operator namespace
-creation, and helper-countersigned authorization, the unreleased app source
-offers a distinct foreground upload check. It starts only after a new user tap
-and confirmation. Opening Settings, upgrading or launching the app, checking
-capability, ordinary synchronization, Relay/APNs activity, or background
-execution never starts it.
+creation, and helper-countersigned authorization, VaultSync 2.0.0 and later offer
+a distinct foreground upload and download check. It starts only after a new user
+tap and confirmation. Opening Settings, upgrading or launching the app, checking
+capability, ordinary synchronization, Relay/APNs activity, or background execution
+never starts it.
 
 The app revalidates the exact existing settled `sendreceive` folder, one
 designated connected and unpaused peer, current engine generation, authenticated
@@ -285,7 +284,8 @@ versions, conflict copies, remote history, deletion records, or tombstones. Expi
 cleanup does not promise removal of those retained copies; they never regain
 validity or become evidence.
 
-See [M5 foreground upload-only readiness](docs/m5-upload-attestation-readiness.md).
+See the historical
+[M5 foreground upload-only readiness snapshot](docs/m5-upload-attestation-readiness.md).
 
 ### Data Security
 
