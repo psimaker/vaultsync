@@ -4,7 +4,7 @@ All notable changes to VaultSync are documented here.
 
 ---
 
-## [Unreleased]
+## [2.0.2] — 2026-08-27
 
 ### Privacy
 
