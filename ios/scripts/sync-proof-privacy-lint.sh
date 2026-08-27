@@ -62,6 +62,12 @@ if rg -n -i -U \
   -- "$PRIVACY_POLICY"; then
   echo "❌ #149: PRIVACY.md still describes shipped Controlled Diagnostics behavior as unreleased."
   exit 1
+else
+  privacy_lint_status=$?
+  if [ "$privacy_lint_status" -ne 1 ]; then
+    echo "❌ #149: Unable to inspect PRIVACY.md for stale Controlled Diagnostics release-status wording." >&2
+    exit "$privacy_lint_status"
+  fi
 fi
 
 echo "✅ Sync-proof privacy lint passed — passive core, structured diagnostics, sanitized logs."
