@@ -301,6 +301,25 @@ struct APNsDeviceTokenRegistrationTests {
 @MainActor
 @Suite("Relay device ID persistence (#148)")
 struct RelayDeviceIDStorageTests {
+    private static let firstValidDeviceID = TestSupport.samplePeerDeviceID
+    private static let secondValidDeviceID =
+        "P56IOI7-MZJNU2Y-IQGDREY-DM2MGTI-MGL3BXN-PQ6W5BM-TBBZ4TJ-XZWICQ2"
+    private static let invalidDeviceID =
+        "P56IOI7-MZJNU2Y-IQGDREY-DM2MGTI-MGL3BXN-PQ6W5BM-TBBZ4TJ-XZWICQ3"
+
+    @MainActor
+    private final class ProvisionRecorder {
+        var deviceIDs: [String] = []
+
+        func provision(deviceID: String, token: String, signedTransaction: String) async throws {
+            deviceIDs.append(deviceID)
+        }
+    }
+
+    private static func json(_ deviceIDs: [String]) throws -> String {
+        String(decoding: try JSONEncoder().encode(deviceIDs), as: UTF8.self)
+    }
+
     @Test("Encoding failure never calls the Keychain writer")
     func issue148RelayEncodingFailureSkipsKeychain() {
         var writeCalls: [String] = []
@@ -371,6 +390,114 @@ struct RelayDeviceIDStorageTests {
     @Test("Corrupt JSON storage is rejected instead of treated as empty")
     func issue148CorruptRelayJSONFailsClosed() {
         #expect(RelayDeviceIDStorage.decodeStoredValue("[not-json") == .failed)
+    }
+
+    @Test("Valid JSON storage loads every device ID unchanged (#161)")
+    func issue161ValidJSONStorageLoads() throws {
+        let stored = try Self.json([Self.firstValidDeviceID, Self.secondValidDeviceID])
+
+        #expect(RelayDeviceIDStorage.decodeStoredValue(stored) == .loaded([
+            Self.firstValidDeviceID,
+            Self.secondValidDeviceID,
+        ]))
+    }
+
+    @Test("A JSON array containing only an invalid device ID fails closed (#161)")
+    func issue161InvalidJSONMemberFailsClosed() throws {
+        let stored = try Self.json([Self.invalidDeviceID])
+
+        #expect(RelayDeviceIDStorage.decodeStoredValue(stored) == .failed)
+    }
+
+    @Test("A mixed-validity JSON array fails as one indivisible read (#161)")
+    func issue161MixedJSONFailsClosed() throws {
+        let stored = try Self.json([Self.firstValidDeviceID, Self.invalidDeviceID])
+
+        #expect(RelayDeviceIDStorage.decodeStoredValue(stored) == .failed)
+    }
+
+    @Test("Valid legacy comma-separated storage loads every device ID unchanged (#161)")
+    func issue161ValidLegacyStorageLoads() {
+        let stored = [Self.firstValidDeviceID, Self.secondValidDeviceID].joined(separator: ",")
+
+        #expect(RelayDeviceIDStorage.decodeStoredValue(stored) == .loaded([
+            Self.firstValidDeviceID,
+            Self.secondValidDeviceID,
+        ]))
+    }
+
+    @Test("An invalid legacy member fails the entire read closed (#161)")
+    func issue161InvalidLegacyMemberFailsClosed() {
+        let stored = [Self.firstValidDeviceID, Self.invalidDeviceID].joined(separator: ",")
+
+        #expect(RelayDeviceIDStorage.decodeStoredValue(stored) == .failed)
+    }
+
+    @Test("Any empty legacy member fails the entire read closed (#161)")
+    func issue161EmptyLegacyMemberFailsClosed() {
+        let malformedValues = [
+            "",
+            ",\(Self.firstValidDeviceID)",
+            "\(Self.firstValidDeviceID),",
+            "\(Self.firstValidDeviceID),,\(Self.secondValidDeviceID)",
+            ",,,",
+        ]
+
+        for stored in malformedValues {
+            #expect(RelayDeviceIDStorage.decodeStoredValue(stored) == .failed)
+        }
+    }
+
+    @Test("Invalid stored IDs cannot be rewritten or provisioned (#161)")
+    func issue161InvalidStorageSkipsWriteAndProvisioning() async throws {
+        let stored = try Self.json([Self.firstValidDeviceID, Self.invalidDeviceID])
+        var encodeCount = 0
+        var writeCount = 0
+        let environment = RelayDeviceIDStorage.Environment(
+            load: { RelayDeviceIDStorage.decodeStoredValue(stored) },
+            encode: { _ in
+                encodeCount += 1
+                return "encoded"
+            },
+            write: { _ in
+                writeCount += 1
+                return true
+            }
+        )
+
+        let persistence = RelayDeviceIDStorage.persist(
+            [Self.secondValidDeviceID],
+            environment: environment
+        )
+        let preparation = RelayDeviceIDStorage.prepareTarget(
+            source: .storedDeviceIDs,
+            persist: { _ in
+                Issue.record("A stored-device-ID target must not invoke persistence")
+                return .failed(.keychain)
+            },
+            load: environment.load
+        )
+
+        let provisionRecorder = ProvisionRecorder()
+        if case .ready(let deviceIDs) = preparation {
+            let entitlement = try #require(RelayVerifiedEntitlement(
+                signedTransaction: "header.payload.signature"
+            ))
+            _ = await RelayReprovisioning.run(
+                trigger: .tokenRotation,
+                deviceIDs: deviceIDs,
+                statuses: [:],
+                entitlement: .verified(entitlement),
+                apnsToken: "token",
+                provision: provisionRecorder.provision
+            )
+        }
+
+        #expect(persistence == .failed(.read))
+        #expect(preparation == .skip(nil))
+        #expect(encodeCount == 0)
+        #expect(writeCount == 0)
+        #expect(provisionRecorder.deviceIDs.isEmpty)
     }
 
     @Test("Every caller context blocks its production target after storage failure")

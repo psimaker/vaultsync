@@ -117,14 +117,23 @@ enum RelayDeviceIDStorage {
     }
 
     static func decodeStoredValue(_ stored: String) -> LoadResult {
+        let ids: [String]
         if stored.hasPrefix("[") {
             guard let data = stored.data(using: .utf8),
-                  let ids = try? JSONDecoder().decode([String].self, from: data) else {
+                  let decoded = try? JSONDecoder().decode([String].self, from: data) else {
                 return .failed
             }
-            return .loaded(ids)
+            ids = decoded
+        } else {
+            ids = stored.components(separatedBy: ",")
         }
-        return .loaded(stored.components(separatedBy: ",").filter { !$0.isEmpty })
+
+        guard ids.allSatisfy({ SyncthingDeviceID.canonicalize($0) != nil }) else {
+            return .failed
+        }
+        // Validation must not become an implicit Keychain migration: preserve
+        // every valid stored value exactly as read.
+        return .loaded(ids)
     }
 
     static func remainingFailedIDs(
