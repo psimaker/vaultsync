@@ -402,6 +402,19 @@ struct RelayDeviceIDStorageTests {
         ]))
     }
 
+    @Test("Valid JSON with leading whitespace loads unchanged (#161)")
+    func issue161WhitespacePrefixedJSONStorageLoads() throws {
+        let stored = " \n\t" + (try Self.json([
+            Self.firstValidDeviceID,
+            Self.secondValidDeviceID,
+        ]))
+
+        #expect(RelayDeviceIDStorage.decodeStoredValue(stored) == .loaded([
+            Self.firstValidDeviceID,
+            Self.secondValidDeviceID,
+        ]))
+    }
+
     @Test("A JSON array containing only an invalid device ID fails closed (#161)")
     func issue161InvalidJSONMemberFailsClosed() throws {
         let stored = try Self.json([Self.invalidDeviceID])

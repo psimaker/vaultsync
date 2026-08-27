@@ -118,7 +118,7 @@ enum RelayDeviceIDStorage {
 
     static func decodeStoredValue(_ stored: String) -> LoadResult {
         let ids: [String]
-        if stored.hasPrefix("[") {
+        if stored.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("[") {
             guard let data = stored.data(using: .utf8),
                   let decoded = try? JSONDecoder().decode([String].self, from: data) else {
                 return .failed
