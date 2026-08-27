@@ -4,7 +4,8 @@ import Testing
 
 @Suite("Relay setup --doctor escalation (#91)")
 struct RelaySetupDoctorTests {
-    @Test("Doctor command targets the container the installer creates and invokes --doctor")
+    @Test("Doctor command targets the container the installer creates and invokes --doctor (#154)")
+    @MainActor
     func doctorCommandShape() {
         // The in-app command must keep matching the container name the one-line
         // installer (and the docker run alternative on the same screen) uses.

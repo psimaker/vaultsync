@@ -15,6 +15,7 @@ struct ShareAcceptCoordinatorTests {
         var accepts: [(id: String, mergeConfirmed: Bool)] = []
         var unignored: [String] = []
         var ignored: [String] = []
+        var settled = true
     }
 
     private static func env(
@@ -144,16 +145,15 @@ struct ShareAcceptCoordinatorTests {
         #expect(!reached)
     }
 
-    @Test("Merge confirmation re-runs the accept WITH consent and re-checks settlement at confirm time")
+    @Test("Merge confirmation re-runs the accept WITH consent and re-checks settlement at confirm time (#154)")
     func confirmMergeRerunsWithConsentAndRevalidates() {
         let recorder = Recorder()
-        var settled = true
         let c = ShareAcceptCoordinator(environment: Self.env(
-            settled: { settled }, pending: [Self.offer("f1")], recorder: recorder))
+            settled: { recorder.settled }, pending: [Self.offer("f1")], recorder: recorder))
         let request = ShareAcceptCoordinator.MergeConfirmationRequest(folder: Self.offer("f1"), targetName: "T")
         c.confirmMergeAccept(request)
         #expect(recorder.accepts.map { $0.mergeConfirmed } == [true])
-        settled = false
+        recorder.settled = false
         c.confirmMergeAccept(request)
         #expect(recorder.accepts.count == 1) // held; transient message instead
         #expect(c.alertMessage == L10n.tr("Vault locations are still being checked. Try again in a moment."))
