@@ -248,32 +248,49 @@ struct SyncBridgeService {
         BridgeGetConflictFilesJSON(folderID)
     }
 
-    /// Read a text file's content within a folder. relPath is relative to the folder root.
-    /// Returns `(content, nil)` on success, or `(nil, errorMessage)` on failure.
-    static func readFileContent(folderID: String, relPath: String) -> (content: String?, error: String?) {
-        let result = BridgeReadFileContent(folderID, relPath)
-        if result.hasPrefix("error:") {
-            return (nil, String(result.dropFirst(6)))
-        }
-        return (result, nil)
+    enum FileInspectionResult: Equatable, Sendable {
+        case content(String)
+        case unavailable
     }
 
-    /// Resolve a sync conflict. If keepConflict is true, the conflict version replaces the original.
-    /// - Returns: nil on success, error message on failure.
+    private struct FileInspectionPayload: Decodable {
+        let content: String?
+        let error: String?
+    }
+
+    /// Decodes the bridge's unambiguous inspection envelope. Unknown, legacy,
+    /// contradictory, or detailed errors fail closed to one generic state.
+    static func decodeFileInspectionResult(_ raw: String) -> FileInspectionResult {
+        guard let data = raw.data(using: .utf8),
+              let payload = try? JSONDecoder().decode(FileInspectionPayload.self, from: data),
+              payload.error == nil,
+              let content = payload.content else {
+            return .unavailable
+        }
+        return .content(content)
+    }
+
+    /// Read a text file within a folder without exposing bridge/path detail.
+    static func readFileContent(folderID: String, relPath: String) -> FileInspectionResult {
+        decodeFileInspectionResult(BridgeReadFileContent(folderID, relPath))
+    }
+
+    /// ABI-compatible inspection-only recovery stub. The current bridge always
+    /// returns the stable path-free recovery-unavailable error.
     static func resolveConflict(folderID: String, conflictFileName: String, keepConflict: Bool) -> String? {
         let result = BridgeResolveConflict(folderID, conflictFileName, keepConflict)
         return result.isEmpty ? nil : result
     }
 
-    /// Keep both versions by renaming the conflict file to a non-conflict name.
-    /// - Returns: nil on success, error message on failure.
+    /// ABI-compatible inspection-only recovery stub. No name is derived and no
+    /// filesystem operation is performed by the current bridge.
     static func keepBothConflict(folderID: String, conflictFileName: String) -> String? {
         let result = BridgeKeepBothConflict(folderID, conflictFileName)
         return result.isEmpty ? nil : result
     }
 
-    /// Remove every sync-conflict copy of the file at originalPath inside the folder.
-    /// Returns `(removed, nil)` on success or `(0, errorMessage)` on failure.
+    /// ABI-compatible inspection-only recovery stub. The current bridge returns
+    /// zero removals and the stable path-free recovery-unavailable error.
     static func removeConflictFilesForOriginal(folderID: String, originalPath: String) -> (removed: Int, error: String?) {
         let raw = BridgeRemoveConflictFilesForOriginal(folderID, originalPath)
         struct Payload: Decodable {
@@ -314,11 +331,10 @@ struct SyncBridgeService {
         BridgeGetPendingFoldersJSON()
     }
 
-    /// Accept a pending folder offer by creating it locally and sharing with offering devices.
-    /// `allowNonEmpty` carries the user's explicit merge confirmation through to
-    /// the Go hard floor, which otherwise refuses a target directory that
-    /// already holds content (#54) — pass false unless the user confirmed.
-    /// - Returns: nil on success, error message on failure.
+    /// Stable wrapper for the retained gomobile ABI. Pending-share acceptance
+    /// is unavailable in 2.0.2, and no shipping Swift flow calls this wrapper
+    /// (#150). Do not use it to bypass the inspection-only policy; future live
+    /// wiring requires a separately approved recovery doctrine.
     static func acceptPendingFolder(folderID: String, label: String, path: String, allowNonEmpty: Bool) -> String? {
         let result = BridgeAcceptPendingFolder(folderID, label, path, allowNonEmpty)
         return result.isEmpty ? nil : result

@@ -13,8 +13,6 @@ struct ControlledDiagnosticsView: View {
     @State private var consentAction: ConsentAction = .scan
     @State private var showRecoveryConfirmation = false
     @State private var missingFolderRecordID: String?
-    @State private var pendingUploadRecordID: String?
-    @State private var showUploadConsent = false
 
     private enum ConsentAction {
         case scan
@@ -82,16 +80,6 @@ struct ControlledDiagnosticsView: View {
             }
         } message: {
             Text(L10n.tr("This removes only this app's local diagnostics credentials. It does not revoke the old helper authorization. Re-pair with a new QR, then ask the helper operator to revoke the lost app fingerprint."))
-        }
-        .alert(L10n.tr("Start controlled upload and download check?"), isPresented: $showUploadConsent) {
-            Button(L10n.tr("Cancel"), role: .cancel) {
-                pendingUploadRecordID = nil
-            }
-            Button(L10n.tr("Start Upload and Download Check")) {
-                startPendingUpload()
-            }
-        } message: {
-            Text(L10n.tr("VaultSync will create one signed request with 256 random bytes in the already authorized diagnostics namespace and rescan only the selected folder. Only an exact signed reply from the pinned helper can mark upload observed. After an accepted upload, VaultSync authorizes exactly one signed helper response file with 256 random bytes in the same namespace; only its fresh synchronized arrival with full validation can mark download observed. A causal roundtrip is confirmed only from the same operation's upload then download and is never global sync health. Opaque copies may remain in peers, backups, versions, conflicts, or tombstones."))
         }
     }
 
@@ -340,14 +328,11 @@ struct ControlledDiagnosticsView: View {
                 Button(L10n.tr("Cancel Controlled Check"), role: .cancel) {
                     controller.cancelForegroundUpload(recordID: record.id)
                 }
-            } else if capability == .available {
-                Button(L10n.tr("Start Foreground Upload and Download Check")) {
-                    pendingUploadRecordID = record.id
-                    showUploadConsent = true
-                }
-                .buttonStyle(.borderedProminent)
             } else {
-                Text(L10n.tr("Check authenticated capability immediately before starting an upload check."))
+                Label(
+                    L10n.tr("Upload and download checks are unavailable while receive-side changes are disabled. Pairing details remain available for review."),
+                    systemImage: "hand.raised"
+                )
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -513,42 +498,6 @@ struct ControlledDiagnosticsView: View {
         case .unavailable: return Color.statusAttention
         default: return .secondary
         }
-    }
-
-    private func startPendingUpload() {
-        guard let recordID = pendingUploadRecordID,
-              let record = controller.records.first(where: { $0.id == recordID }) else {
-            pendingUploadRecordID = nil
-            return
-        }
-        pendingUploadRecordID = nil
-        controller.beginForegroundUpload(
-            recordID: record.id,
-            preflight: { installationComponent, operationComponent, requireEmptySlot in
-                syncthingManager.diagnosticsUploadPreflight(
-                    folderID: record.folderID,
-                    peerID: record.homeserverDeviceID,
-                    installationComponent: installationComponent,
-                    operationComponent: operationComponent,
-                    requireEmptySlot: requireEmptySlot
-                )
-            },
-            rescan: {
-                syncthingManager.rescanFolder(id: record.folderID) == nil
-            },
-            events: { sinceID in
-                // Read events before the generation: if the engine restarts
-                // in between, the newer generation fails the caller's
-                // continuity check instead of tagging new-engine events with
-                // the pre-restart generation.
-                let json = SyncBridgeService.getEventsSince(lastID: Int(sinceID))
-                let generation = SyncBridgeService.eventStreamGeneration()
-                return DiagnosticsResponseProtocol.eventSnapshot(
-                    generation: generation,
-                    json: json
-                )
-            }
-        )
     }
 
     private func uploadStatusLabel(_ status: DiagnosticsPairingController.UploadStatus) -> String {

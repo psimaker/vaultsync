@@ -120,14 +120,24 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             )
             logger.info("Silent push finished with result=\(result.rawValue, privacy: .public)")
 
-            switch result {
-            case .synced:
-                completionHandler(.newData)
-            case .alreadyIdle, .noFoldersConfigured, .settledWithFolderError:
-                completionHandler(.noData)
-            case .noBookmarkAccess, .bridgeStartFailed, .notIdleBeforeDeadline, .failed:
-                completionHandler(.failed)
-            }
+            completionHandler(Self.backgroundFetchResult(for: result))
+        }
+    }
+
+    /// A terminal folder error is never a successful silent-push outcome.
+    /// Reporting `.failed` keeps iOS and Relay evidence from treating a
+    /// fail-closed conflict-retention stop as an uneventful no-data delivery.
+    static func backgroundFetchResult(
+        for result: BackgroundSyncService.SyncResult
+    ) -> UIBackgroundFetchResult {
+        switch result {
+        case .synced:
+            return .newData
+        case .alreadyIdle, .noFoldersConfigured:
+            return .noData
+        case .noBookmarkAccess, .bridgeStartFailed, .notIdleBeforeDeadline,
+             .failed, .settledWithFolderError:
+            return .failed
         }
     }
 

@@ -781,8 +781,7 @@ struct SecurityScopedLeaseTakeoverTests {
                 return manager.grantAccess(url: candidateURL)
             },
             onGrantSucceeded: { flowEvents.append("success") },
-            reconcile: { flowEvents.append("reconcile") },
-            retryPendingShares: { flowEvents.append("retry") }
+            reconcile: { flowEvents.append("reconcile") }
         )
 
         #expect(error != nil)

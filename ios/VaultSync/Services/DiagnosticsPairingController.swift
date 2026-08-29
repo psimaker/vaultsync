@@ -85,6 +85,7 @@ final class DiagnosticsPairingController {
     private let uploadRandomBytes: @Sendable (Int) throws -> Data
     private let uploadFileWriter: @Sendable (String, [String], Data) throws -> Void
     private let uploadSleep: @Sendable (UInt64) async throws -> Void
+    private let receiveSideReadOnlyRuntimeEnabled: Bool
     private var capabilityValidUntil: [String: TimeInterval] = [:]
     private var uploadTasks: [String: Task<Void, Never>] = [:]
     private var uploadRunIDs: [String: UUID] = [:]
@@ -115,7 +116,8 @@ final class DiagnosticsPairingController {
         },
         uploadSleep: @escaping @Sendable (UInt64) async throws -> Void = {
             try await ContinuousClock().sleep(for: .seconds(Int64($0)))
-        }
+        },
+        receiveSideReadOnlyRuntimeEnabled: Bool = ConflictSafetyPolicy.receiveSideReadOnlyRuntimeEnabled
     ) {
         self.credentialStore = credentialStore
         self.transportFactory = transportFactory
@@ -124,6 +126,7 @@ final class DiagnosticsPairingController {
         self.uploadRandomBytes = uploadRandomBytes
         self.uploadFileWriter = uploadFileWriter
         self.uploadSleep = uploadSleep
+        self.receiveSideReadOnlyRuntimeEnabled = receiveSideReadOnlyRuntimeEnabled
     }
 
     func refresh() {
@@ -392,10 +395,17 @@ final class DiagnosticsPairingController {
 
     func beginForegroundUpload(
         recordID: String,
+        receiveSafetyState: @MainActor () -> ConflictSafetyPolicy.State,
         preflight: @escaping UploadPreflightProvider,
         rescan: @escaping UploadRescan,
         events: @escaping UploadEventsProvider
     ) {
+        guard !receiveSideReadOnlyRuntimeEnabled,
+              receiveSafetyState() == .clear else {
+            lastError = .unavailable
+            uploadStatuses[recordID] = UploadStatus(phase: .unavailable)
+            return
+        }
         guard uploadTasks[recordID] == nil else { return }
         lastError = nil
         uploadStatuses[recordID] = UploadStatus(phase: .preflighting)

@@ -38,6 +38,16 @@ var (
 
 const maxBridgeEventsPerPoll = 120
 
+const (
+	conflictRetentionSafetyMarker              = "vaultsync-conflict-retention-safety-stop"
+	conflictRetentionSafetyErrorReason         = "conflict_retention_safety_stop"
+	conflictRetentionSafetyErrorMessage        = "VaultSync stopped an automatic conflict change before local data or index state was modified."
+	folderErrorEvidenceUnavailableReason       = "folder_error_evidence_unavailable"
+	folderErrorEvidenceUnavailableMessage      = "Folder safety evidence is unavailable."
+	folderCompletionEvidenceUnavailableReason  = "folder_completion_evidence_unavailable"
+	folderCompletionEvidenceUnavailableMessage = "Folder completion evidence is unavailable."
+)
+
 // GetConnectionsJSON returns a JSON array of all device connections with status.
 func GetConnectionsJSON() string {
 	mu.Lock()
@@ -198,15 +208,25 @@ func bridgeEventData(ev events.Event) map[string]interface{} {
 		setStringField(out, "from", data["from"])
 		setStringField(out, "to", data["to"])
 		if errMsg, ok := stringFromAny(data["error"]); ok && strings.TrimSpace(errMsg) != "" {
-			out["error"] = errMsg
+			if isConflictRetentionSafetyError(errMsg) {
+				setConflictRetentionSafetyEvent(out)
+			} else {
+				out["error"] = errMsg
+			}
 		}
 	case events.ItemFinished:
 		setStringField(out, "folder", data["folder"])
-		setStringField(out, "item", data["item"])
 		setStringField(out, "type", data["type"])
 		setStringField(out, "action", data["action"])
 		if errMsg, ok := stringFromAny(data["error"]); ok && strings.TrimSpace(errMsg) != "" {
-			out["error"] = errMsg
+			if isConflictRetentionSafetyError(errMsg) {
+				setConflictRetentionSafetyEvent(out)
+			} else {
+				setStringField(out, "item", data["item"])
+				out["error"] = errMsg
+			}
+		} else {
+			setStringField(out, "item", data["item"])
 		}
 	case events.DeviceConnected:
 		setStringField(out, "id", data["id"])
@@ -220,7 +240,9 @@ func bridgeEventData(ev events.Event) map[string]interface{} {
 	case events.FolderErrors:
 		setStringField(out, "folder", data["folder"])
 		entries := parseFolderErrorEntries(data["errors"])
-		if len(entries) > 0 {
+		if hasConflictRetentionSafetyEntry(entries) {
+			setConflictRetentionSafetyEvent(out)
+		} else if len(entries) > 0 {
 			first := entries[0]
 			if first.Error != "" {
 				out["message"] = first.Error
@@ -233,6 +255,15 @@ func bridgeEventData(ev events.Event) map[string]interface{} {
 	}
 
 	return out
+}
+
+func setConflictRetentionSafetyEvent(out map[string]interface{}) {
+	for key := range out {
+		delete(out, key)
+	}
+	out["reason"] = conflictRetentionSafetyErrorReason
+	out["message"] = conflictRetentionSafetyErrorMessage
+	out["error"] = conflictRetentionSafetyErrorMessage
 }
 
 func setStringField(out map[string]interface{}, key string, raw interface{}) {
@@ -351,6 +382,13 @@ func folderErrorFromEvent(ev events.Event) (string, folderErrorDetail, bool) {
 	if len(entries) == 0 {
 		return "", folderErrorDetail{}, false
 	}
+	if hasConflictRetentionSafetyEntry(entries) {
+		return folderID, folderErrorDetail{
+			Reason:  conflictRetentionSafetyErrorReason,
+			Message: conflictRetentionSafetyErrorMessage,
+			Changed: ev.Time.Format("2006-01-02T15:04:05Z07:00"),
+		}, true
+	}
 
 	first := entries[0]
 	if first.Error == "" {
@@ -388,6 +426,9 @@ func parseFolderErrorEntries(raw interface{}) []folderErrorEntry {
 }
 
 func classifyFolderErrorReason(message string) string {
+	if isConflictRetentionSafetyError(message) {
+		return conflictRetentionSafetyErrorReason
+	}
 	msg := strings.ToLower(message)
 	switch {
 	case strings.Contains(msg, "permission denied"),
@@ -411,4 +452,17 @@ func classifyFolderErrorReason(message string) string {
 	default:
 		return "unknown_error"
 	}
+}
+
+func hasConflictRetentionSafetyEntry(entries []folderErrorEntry) bool {
+	for _, entry := range entries {
+		if isConflictRetentionSafetyError(entry.Error) {
+			return true
+		}
+	}
+	return false
+}
+
+func isConflictRetentionSafetyError(message string) bool {
+	return strings.TrimSpace(message) == conflictRetentionSafetyMarker
 }

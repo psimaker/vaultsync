@@ -1,6 +1,8 @@
 package bridge
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -73,6 +75,96 @@ func TestBridgeEventDataFolderErrors(t *testing.T) {
 	}
 	if got := data["path"]; got != "Notes/todo.md" {
 		t.Fatalf("path = %v, want Notes/todo.md", got)
+	}
+}
+
+func TestIssue150Issue167BridgeEventDataConflictRetentionSafetyIsPathFree(t *testing.T) {
+	secretPath := "redaction-probe/vault-note.md"
+	secretFolder := "vault-safety"
+	ev := events.Event{
+		Type: events.FolderErrors,
+		Data: map[string]interface{}{
+			"folder": secretFolder,
+			"errors": []map[string]interface{}{
+				{"path": "other.md", "error": "permission denied"},
+				{"path": secretPath, "error": conflictRetentionSafetyMarker},
+			},
+		},
+		Time: time.Now(),
+	}
+
+	data := bridgeEventData(ev)
+	if got := data["reason"]; got != conflictRetentionSafetyErrorReason {
+		t.Fatalf("reason = %v, want %s", got, conflictRetentionSafetyErrorReason)
+	}
+	if got := data["message"]; got != conflictRetentionSafetyErrorMessage {
+		t.Fatalf("message = %v, want fixed safety message", got)
+	}
+	if _, ok := data["path"]; ok {
+		t.Fatalf("safety event leaked path: %+v", data)
+	}
+	if _, ok := data["folder"]; ok {
+		t.Fatalf("safety event leaked folder: %+v", data)
+	}
+	if strings.Contains(fmt.Sprint(data), secretPath) || strings.Contains(fmt.Sprint(data), secretFolder) || strings.Contains(fmt.Sprint(data), conflictRetentionSafetyMarker) {
+		t.Fatalf("safety event leaked raw detail: %+v", data)
+	}
+}
+
+func TestIssue150Issue167BridgeItemFinishedSafetyOmitsItemPath(t *testing.T) {
+	secretPath := "redaction-probe/vault-note.md"
+	secretFolder := "vault-safety"
+	ev := events.Event{
+		Type: events.ItemFinished,
+		Data: map[string]interface{}{
+			"folder": secretFolder,
+			"item":   secretPath,
+			"type":   "file",
+			"action": "update",
+			"error":  conflictRetentionSafetyMarker,
+		},
+		Time: time.Now(),
+	}
+
+	data := bridgeEventData(ev)
+	if got := data["reason"]; got != conflictRetentionSafetyErrorReason {
+		t.Fatalf("reason = %v, want %s", got, conflictRetentionSafetyErrorReason)
+	}
+	if _, ok := data["item"]; ok {
+		t.Fatalf("safety item event leaked item path: %+v", data)
+	}
+	if _, ok := data["folder"]; ok {
+		t.Fatalf("safety item event leaked folder: %+v", data)
+	}
+	if strings.Contains(fmt.Sprint(data), secretPath) || strings.Contains(fmt.Sprint(data), secretFolder) || strings.Contains(fmt.Sprint(data), conflictRetentionSafetyMarker) {
+		t.Fatalf("safety item event leaked raw detail: %+v", data)
+	}
+}
+
+func TestIssue150BridgeStateChangedSafetyCannotReportSuccessOrIdentifiers(t *testing.T) {
+	secretFolder := "redaction-probe-folder"
+	ev := events.Event{
+		Type: events.StateChanged,
+		Data: map[string]interface{}{
+			"folder": secretFolder,
+			"from":   "syncing",
+			"to":     "idle",
+			"error":  conflictRetentionSafetyMarker,
+		},
+		Time: time.Now(),
+	}
+
+	data := bridgeEventData(ev)
+	if got := data["reason"]; got != conflictRetentionSafetyErrorReason {
+		t.Fatalf("reason = %v, want %s", got, conflictRetentionSafetyErrorReason)
+	}
+	for _, key := range []string{"folder", "from", "to", "item", "path", "id", "deviceName"} {
+		if _, ok := data[key]; ok {
+			t.Fatalf("safety state event retained %q: %+v", key, data)
+		}
+	}
+	if strings.Contains(fmt.Sprint(data), secretFolder) || strings.Contains(fmt.Sprint(data), conflictRetentionSafetyMarker) {
+		t.Fatalf("safety state event leaked raw detail: %+v", data)
 	}
 }
 

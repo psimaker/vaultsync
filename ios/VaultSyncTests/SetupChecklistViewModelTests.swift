@@ -56,13 +56,16 @@ struct SetupChecklistViewModelTests {
         let addDeviceError = syncthingManager.addDevice(id: TestSupport.samplePeerDeviceID, name: "Desktop")
         #expect(addDeviceError == nil)
 
-        let folderID = "checklist-share-\(UUID().uuidString.prefix(8))"
-        let folderPath = FileManager.default.temporaryDirectory
-            .appendingPathComponent("vaultsync-tests", isDirectory: true)
-            .appendingPathComponent(String(folderID), isDirectory: true)
-            .path
-        let addFolderError = syncthingManager.addFolder(id: String(folderID), label: "Checklist Share", path: folderPath)
-        #expect(addFolderError == nil)
+        syncthingManager._testSetFolders([
+            .init(
+                id: "checklist-send-only",
+                label: "Checklist Share",
+                path: "/synthetic/checklist",
+                type: "sendonly",
+                paused: false,
+                deviceIDs: [TestSupport.samplePeerDeviceID]
+            ),
+        ])
 
         let stateByRequirement = Dictionary(
             uniqueKeysWithValues: viewModel.items.map { ($0.requirement, $0.isComplete) }
@@ -95,14 +98,47 @@ struct SetupChecklistViewModelTests {
 
         let vaultSyncingItem = viewModel.items.first { $0.requirement == .firstShareDetectedOrAccepted }
         #expect(vaultSyncingItem != nil)
-        #expect(vaultSyncingItem?.title == L10n.tr("Vault syncing"))
+        #expect(vaultSyncingItem?.title == L10n.tr("Vault setup"))
         #expect(vaultSyncingItem?.isComplete == false)
-        #expect(vaultSyncingItem?.description == L10n.tr("A vault offer was seen earlier, but no vault is syncing right now."))
+        #expect(vaultSyncingItem?.description == L10n.tr("A vault offer was seen earlier, but no vault is configured right now."))
         #expect(
             vaultSyncingItem?.remediation
-                == L10n.tr("If syncing has not started, share your Obsidian vault again from Syncthing on your computer.")
+                == L10n.tr("New share acceptance is unavailable in this version.")
         )
         #expect(viewModel.completedRequiredCount == 0)
+    }
+
+    @Test("Pending offers stay inspection-only throughout the checklist (#150)")
+    func pendingOffersStayInspectionOnlyIssue150() {
+        TestSupport.resetSyncthingState()
+        TestSupport.resetRelayState()
+        defer { TestSupport.resetSyncthingState() }
+
+        let syncthingManager = SyncthingManager()
+        let viewModel = SetupChecklistViewModel(
+            syncthingManager: syncthingManager,
+            vaultManager: VaultManager(),
+            subscriptionManager: SubscriptionManager()
+        )
+        syncthingManager._testSetPendingFolders([
+            .init(id: "issue-150-offer", label: "Synthetic Offer", offeredBy: []),
+        ])
+
+        var item = viewModel.items.first { $0.requirement == .firstShareDetectedOrAccepted }
+        #expect(item?.isComplete == false)
+        #expect(item?.description == L10n.tr("A vault offer is available for inspection."))
+        #expect(item?.remediation == L10n.tr("Open Pending Shares to inspect the offer details. This version cannot accept it."))
+
+        syncthingManager.ignorePendingFolder(id: "issue-150-offer")
+        item = viewModel.items.first { $0.requirement == .firstShareDetectedOrAccepted }
+        #expect(item?.isComplete == false)
+        #expect(item?.description == L10n.tr("An ignored vault offer remains stored on this iPhone."))
+        #expect(item?.remediation == L10n.tr("Open Pending Shares to inspect its details. No action is available in this version."))
+
+        let rendered = "\(item?.description ?? "")|\(item?.remediation ?? "")".lowercased()
+        for forbidden in ["accept", "retry", "restore", "ready", "automatically"] {
+            #expect(!rendered.contains(forbidden))
+        }
     }
 
     @Test("Relay checklist state covers all three branches")

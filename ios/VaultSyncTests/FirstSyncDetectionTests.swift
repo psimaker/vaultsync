@@ -10,6 +10,7 @@ struct FirstSyncDetectionTests {
         globalFiles: Int = 0,
         localFiles: Int = 0,
         needFiles: Int = 0,
+        errorReason: String? = nil,
         errorMessage: String? = nil
     ) -> SyncthingManager.FolderStatusInfo {
         SyncthingManager.FolderStatusInfo(payload: .init(
@@ -23,11 +24,33 @@ struct FirstSyncDetectionTests {
             needBytes: 0,
             needFiles: needFiles,
             inProgressBytes: 0,
-            errorReason: nil,
+            errorReason: errorReason,
             errorMessage: errorMessage,
             errorPath: nil,
             errorChanged: nil
         ))
+    }
+
+    @Test("Safety stop and unavailable evidence never become a successful idle transition (#150)")
+    func conflictSafetyCannotStampSyncHistory() {
+        for reason in [
+            ConflictSafetyPolicy.stoppedReason,
+            ConflictSafetyPolicy.folderErrorEvidenceUnavailableReason,
+            ConflictSafetyPolicy.folderCompletionEvidenceUnavailableReason,
+        ] {
+            let status = makeStatus(state: "idle", errorReason: reason)
+            #expect(!SyncthingManager.didTransitionToSuccessfulIdle(
+                previousState: "syncing",
+                status: status,
+                hasConnectedPeer: true
+            ))
+            #expect(!SyncthingManager.shouldTreatIdleStateAsSuccess(
+                status: status,
+                stateChangedAt: Date(),
+                existingDate: nil,
+                hasConnectedPeer: true
+            ))
+        }
     }
 
     @Test("Reported repro: empty accepted share, peer offline — scan-to-idle is not a sync")

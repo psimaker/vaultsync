@@ -10,11 +10,9 @@ import Foundation
 /// bridge polling (same reasoning as TestHost). Compiled out of release
 /// builds, so it can never affect shipping behaviour.
 enum UIAuditFixture {
-    static let mergeConsent = "merge-consent"
     static let removalConsent = "removal-consent"
     static let markerError = "marker-error"
     static let deviceRemovalConsent = "device-removal-consent"
-    static let conflictResolveConsent = "conflict-resolve-consent"
 
     /// The fixture named by `-uiaudit-fixture <name>`, read via the argument
     /// domain UserDefaults overlay; nil in any normal run.

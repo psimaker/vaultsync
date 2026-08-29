@@ -27,7 +27,7 @@ func TestScanFolderForKnownPatternsDetectsGitDirectory(t *testing.T) {
 	}
 
 	folderID := "scan-git"
-	if errMsg := AddFolder(folderID, "Scan Git", vault); errMsg != "" {
+	if errMsg := addFolderForTesting(folderID, "Scan Git", vault); errMsg != "" {
 		t.Fatalf("AddFolder: %s", errMsg)
 	}
 
@@ -63,7 +63,7 @@ func TestScanFolderForKnownPatternsEmptyVault(t *testing.T) {
 
 	vault := t.TempDir()
 	folderID := "scan-empty"
-	if errMsg := AddFolder(folderID, "Empty", vault); errMsg != "" {
+	if errMsg := addFolderForTesting(folderID, "Empty", vault); errMsg != "" {
 		t.Fatalf("AddFolder: %s", errMsg)
 	}
 
@@ -105,7 +105,7 @@ func TestScanFolderForKnownPatternsMultipleCandidates(t *testing.T) {
 	}
 
 	folderID := "scan-multi"
-	if errMsg := AddFolder(folderID, "Multi", vault); errMsg != "" {
+	if errMsg := addFolderForTesting(folderID, "Multi", vault); errMsg != "" {
 		t.Fatalf("AddFolder: %s", errMsg)
 	}
 
@@ -161,7 +161,7 @@ func TestScanFolderForKnownPatternsAggregatesNestedVaults(t *testing.T) {
 	}
 
 	folderID := "scan-nested"
-	if errMsg := AddFolder(folderID, "Nested", root); errMsg != "" {
+	if errMsg := addFolderForTesting(folderID, "Nested", root); errMsg != "" {
 		t.Fatalf("AddFolder: %s", errMsg)
 	}
 
@@ -215,7 +215,7 @@ func TestScanFolderForKnownPatternsSkipsHiddenSubdirs(t *testing.T) {
 	}
 
 	folderID := "scan-hidden"
-	if errMsg := AddFolder(folderID, "Hidden", root); errMsg != "" {
+	if errMsg := addFolderForTesting(folderID, "Hidden", root); errMsg != "" {
 		t.Fatalf("AddFolder: %s", errMsg)
 	}
 
@@ -248,7 +248,7 @@ func TestScanFolderForKnownPatternsIgnoresEmptyDirectories(t *testing.T) {
 	}
 
 	folderID := "scan-empty-git"
-	if errMsg := AddFolder(folderID, "Empty Git", vault); errMsg != "" {
+	if errMsg := addFolderForTesting(folderID, "Empty Git", vault); errMsg != "" {
 		t.Fatalf("AddFolder: %s", errMsg)
 	}
 

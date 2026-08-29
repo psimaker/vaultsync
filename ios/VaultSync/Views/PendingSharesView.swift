@@ -3,26 +3,16 @@ import SwiftUI
 struct PendingSharesView: View {
     let pendingFolders: [SyncthingManager.PendingFolderInfo]
     let ignoredFolders: [SyncthingManager.PendingFolderInfo]
-    let failureByFolderID: [String: SyncUserError]
-    let inFlightFolderIDs: Set<String>
-    let obsidianAccessible: Bool
-    var onAccept: (SyncthingManager.PendingFolderInfo) -> Void
-    var onRetry: (SyncthingManager.PendingFolderInfo) -> Void
-    var onIgnore: (SyncthingManager.PendingFolderInfo) -> Void
-    var onRestoreIgnored: (SyncthingManager.PendingFolderInfo) -> Void
-    var onChooseTarget: (SyncthingManager.PendingFolderInfo) -> Void
-    var onReconnectObsidian: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: VaultSpacing.l) {
-            if !obsidianAccessible {
-                ActionCard(
-                    status: .attention,
-                    title: L10n.tr("Connect Obsidian to accept shares"),
-                    message: L10n.tr("Share requests are shown below, but Accept and Retry are disabled until your Obsidian folder is connected."),
-                    actionTitle: L10n.tr("Reconnect Obsidian Folder"),
-                    action: onReconnectObsidian
-                )
+            VStack(alignment: .leading, spacing: VaultSpacing.xxs) {
+                Label(L10n.tr("Pending shares are read-only in this version."), systemImage: "lock.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.statusInfo)
+                Text(L10n.tr("You can inspect who shared each offer, but no action is available."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             if pendingFolders.isEmpty {
@@ -48,22 +38,10 @@ struct PendingSharesView: View {
                                         .foregroundStyle(.secondary)
                                 }
                                 Spacer()
-                                // Restoring hands the share back to auto-accept;
-                                // "Choose Vault…" accepts it directly into a
-                                // picked target instead (#52).
-                                VStack(alignment: .trailing, spacing: VaultSpacing.xs) {
-                                    Button("Restore Share") {
-                                        onRestoreIgnored(folder)
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.regular)
-                                    Button("Choose Vault…") {
-                                        onChooseTarget(folder)
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.regular)
-                                    .disabled(!obsidianAccessible)
-                                }
+                                StatusTag(
+                                    text: L10n.tr("Read Only"),
+                                    tint: Color.statusInfo
+                                )
                             }
                         }
                     }
@@ -78,12 +56,10 @@ struct PendingSharesView: View {
 
     @ViewBuilder
     private func pendingRow(_ folder: SyncthingManager.PendingFolderInfo) -> some View {
-        let failure = failureByFolderID[folder.id]
-        let hasFailure = failure != nil
         VStack(alignment: .leading, spacing: VaultSpacing.s) {
             HStack(alignment: .top, spacing: VaultSpacing.s) {
-                Image(systemName: hasFailure ? "exclamationmark.circle.fill" : "tray.and.arrow.down.fill")
-                    .foregroundStyle(hasFailure ? Color.statusAttention : Color.statusInfo)
+                Image(systemName: "tray.full.fill")
+                    .foregroundStyle(Color.statusInfo)
                     .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: VaultSpacing.xs) {
@@ -91,71 +67,18 @@ struct PendingSharesView: View {
                         Text(displayName(for: folder))
                             .font(.body.weight(.semibold))
                         StatusTag(
-                            text: hasFailure ? L10n.tr("Needs Attention") : L10n.tr("Ready"),
-                            tint: hasFailure ? Color.statusAttention : Color.statusInfo
+                            text: L10n.tr("Read Only"),
+                            tint: Color.statusInfo
                         )
                     }
 
                     Text(offeredByDescription(for: folder))
                         .font(.caption)
                         .foregroundStyle(.secondary)
-
-                    if let failure {
-                        Text(failure.message)
-                            .font(.caption)
-                            .foregroundStyle(Color.statusAttention)
-                        if !failure.remediation.isEmpty {
-                            Text(failure.remediation)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
                 }
                 Spacer()
             }
             .accessibilityElement(children: .combine)
-
-            HStack(spacing: VaultSpacing.s) {
-                if inFlightFolderIDs.contains(folder.id) {
-                    ProgressView()
-                        .controlSize(.small)
-                        .accessibilityHidden(true)
-                    Text("Applying…")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else if failure == nil {
-                    Button("Accept Share") {
-                        onAccept(folder)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!obsidianAccessible)
-                } else {
-                    // Not "Retry": most parks come from the AUTOMATIC pass
-                    // (e.g. a merge waiting for consent) — "Retry" falsely
-                    // implied a prior attempt by the user (#71).
-                    Button("Review and Accept") {
-                        onRetry(folder)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!obsidianAccessible)
-                }
-
-                Button("Ignore for Now") {
-                    onIgnore(folder)
-                }
-                .buttonStyle(.bordered)
-                .disabled(inFlightFolderIDs.contains(folder.id))
-            }
-
-            // The per-share manual path (#52): pick an existing empty vault or
-            // create a custom-named folder instead of the share-label default.
-            if !inFlightFolderIDs.contains(folder.id) {
-                Button("Choose Vault…") {
-                    onChooseTarget(folder)
-                }
-                .buttonStyle(.bordered)
-                .disabled(!obsidianAccessible)
-            }
         }
         .padding(VaultSpacing.m)
         .vaultCard()

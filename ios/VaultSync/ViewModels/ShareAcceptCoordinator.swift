@@ -1,23 +1,11 @@
 import Foundation
 import Observation
 
-/// The pending-share accept pass, extracted from ContentView so it is no
-/// longer tied to one mount point (issue #92): ContentView owned the only
-/// accept triggers, so a share offered while onboarding was on screen sat
-/// invisible until the user left onboarding — while setup step 3 promised
-/// automatic acceptance. OnboardingView and ContentView now drive this one
-/// coordinator with the IDENTICAL gates:
-///
-/// - settled paths (#56, decision 008),
-/// - Obsidian access (`vaultAccessible`),
-/// - the auto-accept eligibility list (ignored and user-removed shares stay
-///   manual — doctrine 002 / #52),
-/// - the merge-consent handshake (#54, decision 007): the automatic pass only
-///   parks a needs-merge share; the dialog is a manual-accept affair.
-///
-/// All effects are injected (`Environment`) so every gate and outcome is
-/// unit-testable without SwiftUI, the filesystem, or the bridge —
-/// `ShareAcceptCoordinatorTests` (#92); house pattern: PathCollisionGuard.
+/// Retained injectable acceptance core for regression coverage of the former
+/// flow. In 2.0.2 it has no live environment factory and no shipping view or
+/// app construction: pending shares are inspection-only (#150). A future
+/// caller requires a separately approved recovery doctrine and explicit live
+/// wiring instead of bypassing that policy here.
 @MainActor
 @Observable
 final class ShareAcceptCoordinator {
@@ -40,10 +28,11 @@ final class ShareAcceptCoordinator {
         case manual
     }
 
-    /// Injected effects — `live` binds them to the managers.
+    /// Injected effects used only by focused regression tests in 2.0.2.
     struct Environment {
         var settled: @MainActor () -> Bool
         var vaultAccessible: @MainActor () -> Bool
+        var receiveSafetyState: @MainActor () -> ConflictSafetyPolicy.State = { .unknown }
         var pendingFolders: @MainActor () -> [SyncthingManager.PendingFolderInfo]
         var autoAcceptEligible: @MainActor () -> [SyncthingManager.PendingFolderInfo]
         var accept: @MainActor (_ folder: SyncthingManager.PendingFolderInfo, _ mergeConfirmed: Bool) -> PendingShareAcceptOutcome
@@ -57,36 +46,6 @@ final class ShareAcceptCoordinator {
         var markRefusalAlertPresented: @MainActor (_ folderID: String, _ reason: String) -> Void = { _, _ in }
         var clearRefusalAlertRecord: @MainActor (_ folderID: String) -> Void = { _ in }
 
-        static func live(
-            syncthingManager: SyncthingManager,
-            vaultManager: VaultManager
-        ) -> Environment {
-            Environment(
-                settled: { syncthingManager.pathSettlement.settled },
-                vaultAccessible: { vaultManager.isAccessible },
-                pendingFolders: { syncthingManager.pendingFolders },
-                autoAcceptEligible: { syncthingManager.autoAcceptEligiblePendingFolders },
-                accept: { folder, mergeConfirmed in
-                    vaultManager.acceptPendingShare(
-                        folder: folder,
-                        syncthingManager: syncthingManager,
-                        mergeConfirmed: mergeConfirmed
-                    )
-                },
-                acceptIntoTarget: { folder, targetName in
-                    vaultManager.acceptPendingShare(
-                        folder: folder,
-                        intoTargetNamed: targetName,
-                        syncthingManager: syncthingManager
-                    )
-                },
-                unignorePendingFolder: { syncthingManager.unignorePendingFolder(id: $0) },
-                ignorePendingFolder: { syncthingManager.ignorePendingFolder(id: $0) },
-                shouldPresentRefusalAlert: { ShareRefusalAlertStore.shouldPresentAlert(folderID: $0, reason: $1) },
-                markRefusalAlertPresented: { ShareRefusalAlertStore.markPresented(folderID: $0, reason: $1) },
-                clearRefusalAlertRecord: { ShareRefusalAlertStore.clear(folderID: $0) }
-            )
-        }
     }
 
     // MARK: - Published state
@@ -116,6 +75,13 @@ final class ShareAcceptCoordinator {
         pendingShareFailures = pendingShareFailures.filter { pendingIDs.contains($0.key) }
         pendingShareInFlight = pendingShareInFlight.intersection(pendingIDs)
 
+        if let safetyError = receiveSafetyError() {
+            for folder in environment.autoAcceptEligible() {
+                pendingShareFailures[folder.id] = safetyError
+            }
+            return
+        }
+
         // Accept decisions only run on settled paths (#56, decision 008): a
         // pass during a pending path reconcile would judge overlap against
         // pre-reconcile folder paths — stale exactly after a container move.
@@ -140,6 +106,11 @@ final class ShareAcceptCoordinator {
         source: AcceptSource,
         mergeConfirmed: Bool = false
     ) {
+        if let safetyError = receiveSafetyError() {
+            pendingShareFailures[folder.id] = safetyError
+            return
+        }
+
         // Accept decisions only run on settled paths (#56, decision 008). The
         // automatic pass is already held in runAutomaticPass and re-fires on
         // settle; this guard also covers the manual paths (retry, merge
@@ -222,6 +193,11 @@ final class ShareAcceptCoordinator {
         folder: SyncthingManager.PendingFolderInfo,
         intoTargetNamed targetName: String
     ) -> String? {
+        if let safetyError = receiveSafetyError() {
+            pendingShareFailures[folder.id] = safetyError
+            return safetyError.userVisibleDescription
+        }
+
         // Accept decisions only run on settled paths (#56, decision 008) —
         // the picker's empty-target and overlap validation (#52) reads the
         // same occupied-path set the reconcile is still rewriting.
@@ -247,12 +223,21 @@ final class ShareAcceptCoordinator {
     /// resolved path) is re-validated at confirm time, so a state change while
     /// the dialog was open cannot smuggle the accept somewhere unsafe.
     func confirmMergeAccept(_ request: MergeConfirmationRequest) {
+        if let safetyError = receiveSafetyError() {
+            pendingMergeConfirmation = nil
+            pendingShareFailures[request.folder.id] = safetyError
+            return
+        }
         pendingMergeConfirmation = nil
         pendingShareFailures.removeValue(forKey: request.folder.id)
         accept(request.folder, source: .manual, mergeConfirmed: true)
     }
 
     func retry(_ folder: SyncthingManager.PendingFolderInfo) {
+        if let safetyError = receiveSafetyError() {
+            pendingShareFailures[folder.id] = safetyError
+            return
+        }
         pendingShareFailures.removeValue(forKey: folder.id)
         accept(folder, source: .manual)
     }
@@ -267,5 +252,11 @@ final class ShareAcceptCoordinator {
     /// failures so the next pass attempts it again.
     func clearRecordedFailures() {
         pendingShareFailures.removeAll()
+    }
+
+    private func receiveSafetyError() -> SyncUserError? {
+        let state = environment.receiveSafetyState()
+        guard state != .clear else { return nil }
+        return SyncUserError.conflictSafetyError(for: state)
     }
 }

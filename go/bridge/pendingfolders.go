@@ -83,20 +83,20 @@ func GetPendingFoldersJSON() string {
 	return string(data)
 }
 
-// AcceptPendingFolder creates a new SendReceive folder with the given ID and
-// path, and shares it with all devices that offered it. This is the counterpart
-// to a remote device sharing a folder — the user picks a local directory and
-// the folder is configured to sync with the offering peers.
-//
-// allowNonEmpty must be false unless the user explicitly confirmed syncing
-// into an existing directory that already holds content: accepting into a
-// non-empty target merges two content sets and pushes the mix to every
-// offering peer (#54). The floor treats a directory holding at most
-// Obsidian's `.obsidian` configuration folder as empty — mirror of the Swift
-// `VaultManager.isEmptyVaultListing` rule; the two layers must decide
-// emptiness identically or a share refused above would slip through below.
-// Returns empty string on success, error message on failure.
+// AcceptPendingFolder retains the pre-2.0.2 ABI but does not accept an offer.
+// It returns the stable, path-free receive-side safety error without inspecting
+// its arguments or mutating filesystem or configuration state (#150).
 func AcceptPendingFolder(folderID, label, path string, allowNonEmpty bool) string {
+	// Pending offers become SendReceive folders. The 2.0.2 receive-side
+	// read-only runtime keeps the ABI but refuses before inspecting the offer,
+	// target path, filesystem, or config (#150).
+	return conflictRetentionSafetyMarker
+}
+
+// acceptPendingFolderForTesting retains the pre-2.0.2 validation core for
+// focused bridge tests. Its fixture is send-only so tests cannot bypass the
+// receive-side hard floor. Production code must use the exported stub above.
+func acceptPendingFolderForTesting(folderID, label, path string, allowNonEmpty bool) string {
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -175,7 +175,7 @@ func AcceptPendingFolder(folderID, label, path string, allowNonEmpty bool) strin
 		ID:               folderID,
 		Label:            label,
 		Path:             path,
-		Type:             config.FolderTypeSendReceive,
+		Type:             config.FolderTypeSendOnly,
 		RescanIntervalS:  defaultRescanIntervalS,
 		FSWatcherEnabled: true,
 		FSWatcherDelayS:  10,

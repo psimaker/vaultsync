@@ -11,21 +11,47 @@ struct IgnorePatternsView: View {
     @State private var hasLoadedScan = false
 
     var body: some View {
-        List {
-            recommendedSection
-            if !detected.isEmpty {
-                foundSection
+        Group {
+            if allowsChanges {
+                List {
+                    recommendedSection
+                    if !detected.isEmpty {
+                        foundSection
+                    }
+                    otherPresetsSection
+                    customSection
+                    footerSection
+                }
+            } else {
+                ContentUnavailableView {
+                    Label(safetyError.title, systemImage: "lock.fill")
+                } description: {
+                    Text(safetyError.message)
+                    Text(safetyError.remediation)
+                }
             }
-            otherPresetsSection
-            customSection
-            footerSection
         }
         .navigationTitle(L10n.tr("Sync Filters"))
         .navigationBarTitleDisplayMode(.inline)
-        .task { await initialLoad() }
+        .task(id: safetyState) {
+            guard allowsChanges else { return }
+            await initialLoad()
+        }
         .alert(L10n.tr("Sync Filter Error"), isPresented: errorBinding) {
             Button(L10n.tr("OK")) { alertMessage = nil }
         } message: { Text(alertMessage ?? "") }
+    }
+
+    private var safetyState: ConflictSafetyPolicy.State {
+        syncthingManager.conflictSafetyState(folderID: folderID)
+    }
+
+    private var allowsChanges: Bool {
+        ConflictSafetyPolicy.allowsMutation(for: safetyState)
+    }
+
+    private var safetyError: SyncUserError {
+        SyncUserError.conflictSafetyError(for: safetyState)
     }
 
     private var errorBinding: Binding<Bool> {

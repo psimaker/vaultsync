@@ -5,6 +5,7 @@ package bridge
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -96,16 +97,57 @@ func StartSyncthing(configDir string) string {
 	stEvLogger = events.NewLogger()
 	earlySvc.Add(stEvLogger)
 
-	// Load existing config or create a default one.
+	// Load existing config or create a default one. A protected database must
+	// pass its read-only preflight before an older config is archived or saved.
 	// skipPortProbing=true because iOS doesn't need port probing.
-	stCfg, err = syncthing.LoadConfigAtStartup(
+	var closeDatabase func() error
+	var newAppWithDatabase func(syncthing.Options) (*syncthing.App, error)
+	var retainDatabase func()
+	var databaseOpenErr error
+	stCfg, err = syncthing.LoadConfigAtStartupWithPreflight(
 		locations.Get(locations.ConfigFile),
 		stCert, stEvLogger, false, true,
+		func(cfg config.Wrapper) error {
+			if err := config.EnableVaultSyncReceiveSideProtection(cfg); err != nil {
+				return err
+			}
+			sdb, err := syncthing.OpenDatabase(
+				locations.Get(locations.Database),
+				24*time.Hour,
+				syncthing.WithReceiveSideReadOnlyConfig(cfg),
+			)
+			if err != nil {
+				databaseOpenErr = err
+				return err
+			}
+			closeDatabase = sdb.Close
+			newAppWithDatabase = func(opts syncthing.Options) (*syncthing.App, error) {
+				return syncthing.New(cfg, sdb, stEvLogger, stCert, opts)
+			}
+			retainDatabase = func() {
+				stDB = sdb
+			}
+			return nil
+		},
 	)
 	if err != nil {
+		if closeDatabase != nil {
+			_ = closeDatabase()
+		}
 		cancel()
+		if errors.Is(err, syncthing.ErrReceiveSideReadOnlySafetyStop) {
+			return conflictRetentionSafetyMarker
+		}
+		if databaseOpenErr != nil {
+			return fmt.Sprintf("database: %v", databaseOpenErr)
+		}
 		return fmt.Sprintf("config: %v", err)
 	}
+	if closeDatabase == nil || newAppWithDatabase == nil || retainDatabase == nil {
+		cancel()
+		return conflictRetentionSafetyMarker
+	}
+
 	earlySvc.Add(stCfg)
 
 	// Configure for embedded iOS use.
@@ -121,7 +163,11 @@ func StartSyncthing(configDir string) string {
 		cfg.Options.NATEnabled = true
 	})
 	if err != nil {
+		_ = closeDatabase()
 		cancel()
+		if errors.Is(err, config.ErrVaultSyncReceiveSideSafetyStop) {
+			return conflictRetentionSafetyMarker
+		}
 		return fmt.Sprintf("configure: %v", err)
 	}
 	waiter.Wait()
@@ -132,46 +178,47 @@ func StartSyncthing(configDir string) string {
 	// values are preserved.
 	waiter, err = stCfg.Modify(func(cfg *config.Configuration) {
 		for i := range cfg.Folders {
-			if cfg.Folders[i].RescanIntervalS == 3600 {
+			if cfg.Folders[i].Type == config.FolderTypeSendOnly && cfg.Folders[i].RescanIntervalS == 3600 {
 				cfg.Folders[i].RescanIntervalS = defaultRescanIntervalS
 			}
 		}
 	})
 	if err != nil {
+		_ = closeDatabase()
 		cancel()
+		if errors.Is(err, config.ErrVaultSyncReceiveSideSafetyStop) {
+			return conflictRetentionSafetyMarker
+		}
 		return fmt.Sprintf("migrate rescan interval: %v", err)
 	}
 	waiter.Wait()
 
-	// Open database.
-	sdb, err := syncthing.OpenDatabase(
-		locations.Get(locations.Database),
-		24*time.Hour,
-	)
-	if err != nil {
-		cancel()
-		return fmt.Sprintf("database: %v", err)
-	}
-
 	// Create and start Syncthing.
 	opts := syncthing.Options{
-		NoUpgrade: true,
+		NoUpgrade:           true,
+		ReceiveSideReadOnly: true,
 	}
-	stApp, err = syncthing.New(stCfg, sdb, stEvLogger, stCert, opts)
+	stApp, err = newAppWithDatabase(opts)
 	if err != nil {
-		sdb.Close()
+		_ = closeDatabase()
 		cancel()
+		if errors.Is(err, syncthing.ErrReceiveSideReadOnlySafetyStop) {
+			return conflictRetentionSafetyMarker
+		}
 		return fmt.Sprintf("create app: %v", err)
 	}
 
 	if err := stApp.Start(); err != nil {
-		sdb.Close()
+		_ = closeDatabase()
 		cancel()
 		stApp = nil
+		if errors.Is(err, syncthing.ErrReceiveSideReadOnlySafetyStop) {
+			return conflictRetentionSafetyMarker
+		}
 		return fmt.Sprintf("start: %v", err)
 	}
 
-	stDB = sdb
+	retainDatabase()
 
 	// Create a buffered event subscription for the bridge.
 	sub := stEvLogger.Subscribe(events.AllEvents)

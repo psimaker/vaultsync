@@ -61,14 +61,14 @@ struct WidgetSnapshotStatusTests {
         #expect(derive(engineRunning: false) == .starting)
     }
 
-    @Test("Clean state stays synced")
+    @Test("Clean configured state stays synced while folderless state stays neutral (#150)")
     func cleanStateIsSynced() {
         #expect(derive() == .synced)
-        #expect(derive(hasSyncFolders: false) == .synced)
+        #expect(derive(hasSyncFolders: false) == .starting)
     }
 
     // Structural guarantee of decision 012: the widget tier IS the header
-    // cascade with the vault tiers pinned "armed" — a new issue kind that
+    // cascade with vault access and detection pinned true — a new issue kind that
     // reaches the header can never miss the widget.
     @Test("Widget tier equals the header cascade for every input combination")
     func matchesHeaderCascade() {

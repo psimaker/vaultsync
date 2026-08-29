@@ -268,12 +268,14 @@ struct DiagnosticsControlledDownloadRuntimeTests {
                 uploadSleep: {
                     clock.advance(by: TimeInterval($0))
                     await Task.yield()
-                }
+                },
+                receiveSideReadOnlyRuntimeEnabled: false
             )
             controller.refresh()
             await controller.checkCapability(recordID: sharedRecord.id)
             controller.beginForegroundUpload(
                 recordID: sharedRecord.id,
+                receiveSafetyState: { .clear },
                 preflight: { _, _, requireEmptySlot in makePreflight(requireEmptySlot) },
                 rescan: { true },
                 events: events

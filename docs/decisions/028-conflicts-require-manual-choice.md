@@ -5,5 +5,5 @@
 - Compatibility: The legacy preference remains stored but is ignored, and the exported `AutoResolveStateConflicts` bridge entry point remains as a non-mutating compatibility no-op.
 - Why: Modification time cannot establish user intent, especially with clock skew, and a silent choice can propagate an unwanted result to every peer.
 - Rejected alternative: Keep opt-out last-writer-wins, because a missing or persisted `true` value would continue authorizing mutation without a decision at the time of conflict.
-- Boundary: Manual conflict actions remain available after explicit confirmation; Syncthing's separate conflict-copy retention is unchanged and not guaranteed indefinitely.
+- Boundary: All automatic conflict handling follows decision 032; in 2.0.2 all explicit recovery entry points follow the inspection-only boundary in decision 033.
 - Links: issue [#145](https://github.com/psimaker/vaultsync/issues/145); `go/bridge/conflicts.go`; `ios/VaultSync/Services/SyncthingManager.swift`; `ios/VaultSync/Services/BackgroundSyncService.swift`.

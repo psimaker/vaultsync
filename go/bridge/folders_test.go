@@ -7,13 +7,40 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/syncthing/syncthing/lib/config"
 )
+
+func addSendOnlyFolderForTesting(t *testing.T, id, label, path string) {
+	t.Helper()
+	if errMsg := addFolderForTesting(id, label, path); errMsg != "" {
+		t.Fatalf("add folder fixture: %s", errMsg)
+	}
+
+	found := false
+	waiter, err := stCfg.Modify(func(cfg *config.Configuration) {
+		for index := range cfg.Folders {
+			if cfg.Folders[index].ID == id {
+				cfg.Folders[index].Type = config.FolderTypeSendOnly
+				found = true
+				return
+			}
+		}
+	})
+	if err != nil {
+		t.Fatalf("configure send-only folder fixture: %v", err)
+	}
+	waiter.Wait()
+	if !found {
+		t.Fatalf("folder fixture %q disappeared before configuring send-only type", id)
+	}
+}
 
 func TestAddRemoveFolder(t *testing.T) {
 	configDir := testConfigDir(t)
 
 	// Should fail when not running.
-	if errMsg := AddFolder("test", "Test", "/tmp"); errMsg != "syncthing not running" {
+	if errMsg := addFolderForTesting("test", "Test", "/tmp"); errMsg != "syncthing not running" {
 		t.Fatalf("AddFolder when stopped = %q, want 'syncthing not running'", errMsg)
 	}
 
@@ -23,13 +50,13 @@ func TestAddRemoveFolder(t *testing.T) {
 	defer StopSyncthing()
 
 	// Empty ID should fail.
-	if errMsg := AddFolder("", "Test", "/tmp"); errMsg != "folder ID is required" {
+	if errMsg := addFolderForTesting("", "Test", "/tmp"); errMsg != "folder ID is required" {
 		t.Fatalf("AddFolder empty ID = %q, want 'folder ID is required'", errMsg)
 	}
 
 	// Add a folder.
 	folderPath := filepath.Join(configDir, "testfolder")
-	if errMsg := AddFolder("test-folder", "Test Folder", folderPath); errMsg != "" {
+	if errMsg := addFolderForTesting("test-folder", "Test Folder", folderPath); errMsg != "" {
 		t.Fatalf("AddFolder failed: %s", errMsg)
 	}
 
@@ -39,7 +66,7 @@ func TestAddRemoveFolder(t *testing.T) {
 	}
 
 	// Duplicate add should fail.
-	if errMsg := AddFolder("test-folder", "Dup", folderPath); errMsg != "folder already exists" {
+	if errMsg := addFolderForTesting("test-folder", "Dup", folderPath); errMsg != "folder already exists" {
 		t.Fatalf("duplicate AddFolder = %q, want 'folder already exists'", errMsg)
 	}
 
@@ -86,25 +113,25 @@ func TestAddFolderPathOverlapRejected(t *testing.T) {
 	defer StopSyncthing()
 
 	vaultPath := filepath.Join(configDir, "VaultA")
-	if errMsg := AddFolder("vault-a", "Vault A", vaultPath); errMsg != "" {
+	if errMsg := addFolderForTesting("vault-a", "Vault A", vaultPath); errMsg != "" {
 		t.Fatalf("AddFolder failed: %s", errMsg)
 	}
 
 	// AddFolder enforces the same overlap floor as AcceptPendingFolder: equal,
 	// nested, and containing paths are all rejected (issue #45).
-	if errMsg := AddFolder("vault-b", "Same", vaultPath); errMsg != "another folder already syncs to this path" {
+	if errMsg := addFolderForTesting("vault-b", "Same", vaultPath); errMsg != "another folder already syncs to this path" {
 		t.Fatalf("AddFolder same path = %q, want collision error", errMsg)
 	}
 	nested := filepath.Join(vaultPath, "Inner")
-	if errMsg := AddFolder("vault-c", "Inner", nested); errMsg != "this path is inside a directory another folder already syncs" {
+	if errMsg := addFolderForTesting("vault-c", "Inner", nested); errMsg != "this path is inside a directory another folder already syncs" {
 		t.Fatalf("AddFolder nested path = %q, want nested error", errMsg)
 	}
-	if errMsg := AddFolder("vault-d", "Parent", configDir); errMsg != "another folder already syncs a directory inside this path" {
+	if errMsg := addFolderForTesting("vault-d", "Parent", configDir); errMsg != "another folder already syncs a directory inside this path" {
 		t.Fatalf("AddFolder containing path = %q, want containing error", errMsg)
 	}
 
 	// A distinct sibling is still accepted.
-	if errMsg := AddFolder("vault-e", "Sibling", filepath.Join(configDir, "VaultB")); errMsg != "" {
+	if errMsg := addFolderForTesting("vault-e", "Sibling", filepath.Join(configDir, "VaultB")); errMsg != "" {
 		t.Fatalf("AddFolder sibling = %q, want success", errMsg)
 	}
 }
@@ -119,7 +146,7 @@ func TestShareFolderWithDevice(t *testing.T) {
 
 	// Add a folder and a device.
 	folderPath := filepath.Join(configDir, "shared")
-	if errMsg := AddFolder("shared", "Shared", folderPath); errMsg != "" {
+	if errMsg := addFolderForTesting("shared", "Shared", folderPath); errMsg != "" {
 		t.Fatalf("AddFolder failed: %s", errMsg)
 	}
 
@@ -190,9 +217,7 @@ func TestSetFolderPath(t *testing.T) {
 	defer StopSyncthing()
 
 	pathA := filepath.Join(configDir, "vaultA")
-	if errMsg := AddFolder("pathtest", "Path Test", pathA); errMsg != "" {
-		t.Fatalf("AddFolder failed: %s", errMsg)
-	}
+	addSendOnlyFolderForTesting(t, "pathtest", "Path Test", pathA)
 
 	// Share with a device so we can assert the share survives the path change.
 	testDeviceID := "MFZWI3D-BONSGYC-YLTMRWG-C43ENR5-QXGZDMM-FZWI3DP-BONSGYY-LTMRWAD"
@@ -204,8 +229,8 @@ func TestSetFolderPath(t *testing.T) {
 	}
 
 	// Unknown folder.
-	if errMsg := SetFolderPath("nope", pathA); errMsg != "folder not found" {
-		t.Fatalf("SetFolderPath unknown = %q, want 'folder not found'", errMsg)
+	if errMsg := SetFolderPath("nope", pathA); errMsg != conflictRetentionSafetyMarker {
+		t.Fatalf("SetFolderPath unknown = %q, want fixed safety stop", errMsg)
 	}
 
 	// No-op when the path is unchanged.
@@ -229,7 +254,7 @@ func TestSetFolderPath(t *testing.T) {
 	}
 
 	// An existing but empty directory is refused: it lacks this folder's marker,
-	// and pointing a send-receive folder there would propagate deletions.
+	// and pointing the folder there would make the configured index ambiguous.
 	emptyDir := filepath.Join(configDir, "emptyVault")
 	if err := os.MkdirAll(emptyDir, 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
@@ -283,7 +308,7 @@ func TestSetFolderPaused(t *testing.T) {
 	defer StopSyncthing()
 
 	folderPath := filepath.Join(configDir, "pausetest")
-	if errMsg := AddFolder("pausetest", "Pause Test", folderPath); errMsg != "" {
+	if errMsg := addFolderForTesting("pausetest", "Pause Test", folderPath); errMsg != "" {
 		t.Fatalf("AddFolder failed: %s", errMsg)
 	}
 
@@ -355,9 +380,7 @@ func TestEnsureDefaultIgnores(t *testing.T) {
 	defer StopSyncthing()
 
 	folderPath := filepath.Join(configDir, "ensuretest")
-	if errMsg := AddFolder("ensuretest", "Ensure Test", folderPath); errMsg != "" {
-		t.Fatalf("AddFolder failed: %s", errMsg)
-	}
+	addSendOnlyFolderForTesting(t, "ensuretest", "Ensure Test", folderPath)
 
 	defaults := []string{".Trash", ".obsidian/workspace.json"}
 	defaultsJSON, _ := json.Marshal(defaults)
@@ -399,8 +422,8 @@ func TestEnsureDefaultIgnores(t *testing.T) {
 	}
 
 	// (d) Unknown folder.
-	if errMsg := EnsureDefaultIgnores("nope", string(defaultsJSON)); errMsg != "folder not found" {
-		t.Fatalf("EnsureDefaultIgnores unknown = %q, want 'folder not found'", errMsg)
+	if errMsg := EnsureDefaultIgnores("nope", string(defaultsJSON)); errMsg != conflictRetentionSafetyMarker {
+		t.Fatalf("EnsureDefaultIgnores unknown = %q, want fixed safety stop", errMsg)
 	}
 
 	// (e) Invalid JSON.
@@ -464,7 +487,7 @@ func TestGetFolderStatusJSON(t *testing.T) {
 
 	// Add a folder so we can query its status.
 	folderPath := filepath.Join(configDir, "statustest")
-	if errMsg := AddFolder("statustest", "Status Test", folderPath); errMsg != "" {
+	if errMsg := addFolderForTesting("statustest", "Status Test", folderPath); errMsg != "" {
 		t.Fatalf("AddFolder failed: %s", errMsg)
 	}
 
@@ -497,9 +520,7 @@ func TestFolderIgnores(t *testing.T) {
 
 	// Add a folder.
 	folderPath := filepath.Join(configDir, "ignoretest")
-	if errMsg := AddFolder("ignoretest", "Ignore Test", folderPath); errMsg != "" {
-		t.Fatalf("AddFolder failed: %s", errMsg)
-	}
+	addSendOnlyFolderForTesting(t, "ignoretest", "Ignore Test", folderPath)
 
 	// Set ignores.
 	ignores := []string{"*.tmp", ".DS_Store", "*.sync-conflict-*"}
@@ -544,9 +565,7 @@ func TestRescanFolder(t *testing.T) {
 
 	// Add a folder.
 	folderPath := filepath.Join(configDir, "rescantest")
-	if errMsg := AddFolder("rescantest", "Rescan Test", folderPath); errMsg != "" {
-		t.Fatalf("AddFolder failed: %s", errMsg)
-	}
+	addSendOnlyFolderForTesting(t, "rescantest", "Rescan Test", folderPath)
 
 	// Rescan should succeed.
 	if errMsg := RescanFolder("rescantest"); errMsg != "" {

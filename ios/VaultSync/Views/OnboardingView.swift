@@ -5,7 +5,6 @@ struct OnboardingView: View {
     var syncthingManager: SyncthingManager
     var vaultManager: VaultManager
     var subscriptionManager: SubscriptionManager
-    var shareAccept: ShareAcceptCoordinator
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -30,8 +29,13 @@ struct OnboardingView: View {
 
     private var obsidianConnected: Bool { vaultManager.isAccessible }
     private var deviceAdded: Bool { !syncthingManager.devices.isEmpty }
-    private var vaultSyncing: Bool { !syncthingManager.folders.isEmpty }
-    private var allStepsComplete: Bool { obsidianConnected && deviceAdded && vaultSyncing }
+    private var hasConfiguredVault: Bool { !syncthingManager.folders.isEmpty }
+    private var hasSendOnlyVault: Bool {
+        syncthingManager.folders.contains {
+            ConflictSafetyPolicy.runtimeState(forFolderType: $0.type) == .clear
+        }
+    }
+    private var allStepsComplete: Bool { obsidianConnected && deviceAdded && hasConfiguredVault }
 
     var body: some View {
         NavigationStack {
@@ -65,15 +69,12 @@ struct OnboardingView: View {
                 }) { url in
                     showObsidianPicker = false
                     Task {
-                        // Same sequence as the home screen's reconnect flow
-                        // (#53/#92): granting access produces no pendingFolders
-                        // change event, so an offer that arrived before the
-                        // grant would sit untouched. The accept pass runs only
-                        // after the reconcile settled paths (#56, decision 008).
+                        // Match the home screen's reconnect sequence: publish
+                        // access feedback, then settle any existing folder
+                        // paths before returning to setup.
                         if let err = await ObsidianReconnectFlow.run(
                             grantAccess: { vaultManager.grantAccess(url: url) },
                             onGrantSucceeded: {
-                                shareAccept.clearRecordedFailures()
                                 if let advisory = vaultManager.selectionAdvisory {
                                     infoMessage = advisory
                                     showInfoAlert = true
@@ -84,9 +85,6 @@ struct OnboardingView: View {
                                 await syncthingManager.reconcileFolderPaths(
                                     obsidianRoot: vaultManager.obsidianBasePath
                                 ).value
-                            },
-                            retryPendingShares: {
-                                shareAccept.runAutomaticPass()
                             }
                         ) {
                             present(error: err, fallbackTitle: L10n.tr("Obsidian Folder Connection Failed"))
@@ -105,12 +103,12 @@ struct OnboardingView: View {
                 )
             }
             .alert(L10n.tr("Something Went Wrong"), isPresented: $showAlert) {
-                Button("OK") { }
+                Button(L10n.tr("OK")) { }
             } message: {
                 Text(alertMessage ?? "")
             }
             .alert(L10n.tr("Note"), isPresented: $showInfoAlert) {
-                Button("OK") { }
+                Button(L10n.tr("OK")) { }
             } message: {
                 Text(infoMessage ?? "")
             }
@@ -127,23 +125,6 @@ struct OnboardingView: View {
                 syncthingManager: syncthingManager,
                 vaultManager: vaultManager
             )
-        }
-        .onChange(of: syncthingManager.pendingFolders, initial: true) { _, _ in
-            // The accept pass must not depend on ContentView being mounted
-            // (#92): the same standing triggers ContentView carries, driving
-            // the same coordinator with the identical gates (decision 015).
-            shareAccept.runAutomaticPass()
-        }
-        .onChange(of: syncthingManager.pathSettlement.settled) { _, settled in
-            if settled {
-                shareAccept.runAutomaticPass()
-            }
-        }
-        .onChange(of: shareAccept.alertMessage) { _, message in
-            guard let message else { return }
-            shareAccept.alertMessage = nil
-            alertMessage = message
-            showAlert = true
         }
     }
 
@@ -196,11 +177,11 @@ struct OnboardingView: View {
     private var setupScreen: some View {
         VStack(alignment: .leading, spacing: VaultSpacing.l) {
             VStack(alignment: .leading, spacing: VaultSpacing.s) {
-                Text(L10n.tr("Let’s get your vault synced"))
+                Text(L10n.tr("Set up VaultSync"))
                     .font(titleFont)
                     .foregroundStyle(primaryHeadingColor)
 
-                Text(L10n.tr("Complete these steps right here. They light up green as you go — and you can always finish them later from the home screen."))
+                Text(L10n.tr("Connect Obsidian and a device here. New shared vault offers are inspection-only in this version."))
                     .font(.body)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -214,7 +195,7 @@ struct OnboardingView: View {
                 isComplete: obsidianConnected,
                 icon: "folder.badge.plus",
                 title: L10n.tr("Connect your Obsidian folder"),
-                description: L10n.tr("Give VaultSync one-time access to your local Obsidian folder so it can sync your notes."),
+                description: L10n.tr("VaultSync needs one-time access to your Obsidian folder to inspect local vaults and existing sync status."),
                 actionTitle: L10n.tr("Connect Obsidian Folder"),
                 action: { showObsidianPicker = true }
             )
@@ -229,19 +210,19 @@ struct OnboardingView: View {
             )
 
             stepCard(
-                isComplete: vaultSyncing,
+                isComplete: hasConfiguredVault,
                 icon: "arrow.triangle.2.circlepath",
-                title: L10n.tr("Sync your first vault"),
-                description: L10n.tr("Share your Obsidian vault from Syncthing on your computer. VaultSync accepts it automatically — this turns green the moment it arrives."),
+                title: L10n.tr("Vault configured"),
+                description: hasConfiguredVault
+                    ? (hasSendOnlyVault
+                        ? L10n.tr("At least one Send Only vault can continue uploading local changes.")
+                        : L10n.tr("Existing receive-capable vaults are available for review only in this version."))
+                    : L10n.tr("New shared vault offers can be inspected, but not accepted in this version."),
                 actionTitle: nil,
-                action: nil,
-                // The only step that happens on ANOTHER machine — without a
-                // pointer to the desktop-side steps it is a dead end (#69).
-                linkTitleKey: "How to share from your computer",
-                linkURL: DocURL.desktopShareHelp
+                action: nil
             )
 
-            if !vaultSyncing {
+            if !hasConfiguredVault {
                 ForEach(syncthingManager.actionablePendingFolders) { folder in
                     offerStatusRow(folder)
                 }
@@ -252,7 +233,7 @@ struct OnboardingView: View {
                     .font(.body.weight(.semibold))
                     .foregroundStyle(teal)
                     .accessibilityHidden(true)
-                Text(L10n.tr("Optional: turn on Cloud Relay later for instant updates — you’ll find it on the Relay tab."))
+                Text(L10n.tr("Optional: turn on Cloud Relay later for background wake-ups — you’ll find it on the Relay tab."))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -327,43 +308,19 @@ struct OnboardingView: View {
         .overlay(cardStroke(in: RoundedRectangle(cornerRadius: VaultRadius.card, style: .continuous)))
     }
 
-    /// Live status for a share offer that arrives during onboarding (#92):
-    /// the accept pass runs right here with the home screen's gates, and this
-    /// row keeps step 3 honest while it does — including the cases the pass
-    /// deliberately parks (no Obsidian access yet; a decision only the full
-    /// pending-shares UI can take, e.g. a non-empty target — #54).
+    /// Read-only status for an offer that arrives during onboarding (#150).
+    /// Details remain visible, but this version exposes no acceptance action.
     private func offerStatusRow(_ folder: SyncthingManager.PendingFolderInfo) -> some View {
         let name = folder.label.isEmpty ? folder.id : folder.label
-        let needsAttention = shareAccept.pendingShareFailures[folder.id] != nil
-            || !syncthingManager.autoAcceptEligiblePendingFolders.contains(where: { $0.id == folder.id })
         return HStack(alignment: .top, spacing: VaultSpacing.m) {
-            if needsAttention {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(Color.statusAttention)
-                    .accessibilityHidden(true)
-                Text(L10n.fmt("Offer “%@” needs your attention. Tap “Finish Setup Later” below to review it on the home screen.", name))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else if !obsidianConnected {
-                Image(systemName: "folder.badge.questionmark")
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(Color.statusAttention)
-                    .accessibilityHidden(true)
-                Text(L10n.fmt("Offer “%@” received — connect your Obsidian folder first.", name))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else {
-                ProgressView()
-                    .controlSize(.small)
-                    .accessibilityHidden(true)
-                Text(L10n.fmt("Offer “%@” received — accepting…", name))
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            Image(systemName: "lock.fill")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(Color.statusInfo)
+                .accessibilityHidden(true)
+            Text(L10n.fmt("Offer “%@” is available for inspection only. This version cannot accept it.", name))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(VaultSpacing.l)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -383,13 +340,13 @@ struct OnboardingView: View {
     private func presentDeviceAddedHintIfNeeded() {
         guard showDeviceAddedHint else { return }
         showDeviceAddedHint = false
-        infoMessage = L10n.tr("Device added. Now confirm this iPhone in Syncthing on your computer — a confirmation prompt appears there. Then share your vault to start syncing.")
+        infoMessage = L10n.tr("Device added. Now confirm this iPhone in Syncthing on your computer — a confirmation prompt appears there. New shared vault offers are inspection-only in this version.")
         showInfoAlert = true
     }
 
     /// Engine start failure was invisible during onboarding (#95): userError
     /// renders only on the ContentView dashboard, so a failed start left the
-    /// "Sync your first vault" step waiting forever with no explanation.
+    /// vault-configuration step waiting forever with no explanation.
     private var engineError: SyncUserError? {
         if let userError = syncthingManager.userError { return userError }
         return syncthingManager.error.map {

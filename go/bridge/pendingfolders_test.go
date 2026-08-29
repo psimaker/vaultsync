@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/syncthing/syncthing/lib/config"
 )
 
 func TestGetPendingFoldersJSONNotRunning(t *testing.T) {
@@ -36,8 +38,30 @@ func TestGetPendingFoldersJSONEmpty(t *testing.T) {
 
 func TestAcceptPendingFolderNotRunning(t *testing.T) {
 	// Should fail when not running.
-	if errMsg := AcceptPendingFolder("test", "Test", "/tmp/test", false); errMsg != "syncthing not running" {
+	targetPath := filepath.Join(t.TempDir(), "target")
+	if errMsg := acceptPendingFolderForTesting("test", "Test", targetPath, false); errMsg != "syncthing not running" {
 		t.Fatalf("AcceptPendingFolder when stopped = %q, want 'syncthing not running'", errMsg)
+	}
+}
+
+func TestIssue150PendingValidationHelperCannotCreateReceiveCapableFolder(t *testing.T) {
+	configDir := testConfigDir(t)
+	if errMsg := StartSyncthing(configDir); errMsg != "" {
+		t.Fatalf("StartSyncthing() failed: %s", errMsg)
+	}
+	t.Cleanup(StopSyncthing)
+
+	const folderID = "issue150-pending-sendonly-fixture"
+	targetPath := filepath.Join(configDir, "pending-sendonly-fixture")
+	if errMsg := acceptPendingFolderForTesting(folderID, "Issue 150 pending fixture", targetPath, false); errMsg != "" {
+		t.Fatalf("pending validation fixture failed: %s", errMsg)
+	}
+	folder, exists := stCfg.Folders()[folderID]
+	if !exists {
+		t.Fatal("pending validation fixture did not create a folder")
+	}
+	if folder.Type != config.FolderTypeSendOnly {
+		t.Fatalf("pending validation fixture type = %s, want sendonly", folder.Type)
 	}
 }
 
@@ -50,7 +74,8 @@ func TestAcceptPendingFolderEmptyID(t *testing.T) {
 	defer StopSyncthing()
 
 	// Empty folder ID should fail.
-	if errMsg := AcceptPendingFolder("", "Test", "/tmp/test", false); errMsg != "folder ID is required" {
+	targetPath := filepath.Join(t.TempDir(), "target")
+	if errMsg := acceptPendingFolderForTesting("", "Test", targetPath, false); errMsg != "folder ID is required" {
 		t.Fatalf("AcceptPendingFolder empty ID = %q, want 'folder ID is required'", errMsg)
 	}
 }
@@ -65,13 +90,13 @@ func TestAcceptPendingFolderDuplicate(t *testing.T) {
 
 	// Add a folder first.
 	folderPath := filepath.Join(configDir, "existing")
-	if errMsg := AddFolder("existing", "Existing", folderPath); errMsg != "" {
+	if errMsg := addFolderForTesting("existing", "Existing", folderPath); errMsg != "" {
 		t.Fatalf("AddFolder failed: %s", errMsg)
 	}
 
 	// Accepting a folder with the same ID should fail.
 	acceptPath := filepath.Join(configDir, "accept")
-	if errMsg := AcceptPendingFolder("existing", "Dup", acceptPath, false); errMsg != "folder already exists" {
+	if errMsg := acceptPendingFolderForTesting("existing", "Dup", acceptPath, false); errMsg != "folder already exists" {
 		t.Fatalf("AcceptPendingFolder duplicate = %q, want 'folder already exists'", errMsg)
 	}
 }
@@ -86,7 +111,7 @@ func TestAcceptPendingFolderPathCollision(t *testing.T) {
 
 	// Configure a first folder at a local path.
 	vaultPath := filepath.Join(configDir, "VaultA")
-	if errMsg := AddFolder("vault-a", "Vault A", vaultPath); errMsg != "" {
+	if errMsg := addFolderForTesting("vault-a", "Vault A", vaultPath); errMsg != "" {
 		t.Fatalf("AddFolder failed: %s", errMsg)
 	}
 
@@ -95,23 +120,23 @@ func TestAcceptPendingFolderPathCollision(t *testing.T) {
 	// A second, distinct folder ID targeting the SAME path must be rejected —
 	// otherwise the two vaults merge into one directory and propagate the mix
 	// back to both peers (issue #45).
-	if errMsg := AcceptPendingFolder("vault-b", "Vault B", vaultPath, false); errMsg != wantCollision {
+	if errMsg := acceptPendingFolderForTesting("vault-b", "Vault B", vaultPath, false); errMsg != wantCollision {
 		t.Fatalf("AcceptPendingFolder same path = %q, want %q", errMsg, wantCollision)
 	}
 
 	// Trailing-slash and case variants resolve to the same directory and must
 	// be rejected too (cleaned + case-insensitive comparison).
-	if errMsg := AcceptPendingFolder("vault-c", "Vault C", vaultPath+"/", false); errMsg != wantCollision {
+	if errMsg := acceptPendingFolderForTesting("vault-c", "Vault C", vaultPath+"/", false); errMsg != wantCollision {
 		t.Fatalf("AcceptPendingFolder trailing-slash variant = %q, want %q", errMsg, wantCollision)
 	}
 	caseVariant := filepath.Join(configDir, "vaulta")
-	if errMsg := AcceptPendingFolder("vault-d", "Vault D", caseVariant, false); errMsg != wantCollision {
+	if errMsg := acceptPendingFolderForTesting("vault-d", "Vault D", caseVariant, false); errMsg != wantCollision {
 		t.Fatalf("AcceptPendingFolder case variant = %q, want %q", errMsg, wantCollision)
 	}
 
 	// A genuinely distinct path is still accepted.
 	otherPath := filepath.Join(configDir, "VaultB")
-	if errMsg := AcceptPendingFolder("vault-e", "Vault E", otherPath, false); errMsg != "" {
+	if errMsg := acceptPendingFolderForTesting("vault-e", "Vault E", otherPath, false); errMsg != "" {
 		t.Fatalf("AcceptPendingFolder distinct path = %q, want success", errMsg)
 	}
 }
@@ -126,7 +151,7 @@ func TestAcceptPendingFolderNestedPathCollision(t *testing.T) {
 
 	// Configure a first folder — a vault that owns its directory.
 	vaultPath := filepath.Join(configDir, "Workshops")
-	if errMsg := AddFolder("vault-workshops", "Workshops", vaultPath); errMsg != "" {
+	if errMsg := addFolderForTesting("vault-workshops", "Workshops", vaultPath); errMsg != "" {
 		t.Fatalf("AddFolder failed: %s", errMsg)
 	}
 
@@ -138,31 +163,31 @@ func TestAcceptPendingFolderNestedPathCollision(t *testing.T) {
 	// to its peers — the #45 merge one level down (the vault-as-root setup
 	// from the #45 follow-up report).
 	nested := filepath.Join(vaultPath, "Obsidian-Vault-Life")
-	if errMsg := AcceptPendingFolder("vault-life", "Life", nested, false); errMsg != wantInside {
+	if errMsg := acceptPendingFolderForTesting("vault-life", "Life", nested, false); errMsg != wantInside {
 		t.Fatalf("AcceptPendingFolder nested path = %q, want %q", errMsg, wantInside)
 	}
 
 	// Deeper nesting and case variants resolve into the same subtree and must
 	// be rejected too (case-folding APFS).
 	deep := filepath.Join(vaultPath, "notes", "sub")
-	if errMsg := AcceptPendingFolder("vault-deep", "Deep", deep, false); errMsg != wantInside {
+	if errMsg := acceptPendingFolderForTesting("vault-deep", "Deep", deep, false); errMsg != wantInside {
 		t.Fatalf("AcceptPendingFolder deeply nested path = %q, want %q", errMsg, wantInside)
 	}
 	caseVariant := filepath.Join(configDir, "workshops", "Nested")
-	if errMsg := AcceptPendingFolder("vault-case", "Case", caseVariant, false); errMsg != wantInside {
+	if errMsg := acceptPendingFolderForTesting("vault-case", "Case", caseVariant, false); errMsg != wantInside {
 		t.Fatalf("AcceptPendingFolder case-variant nested path = %q, want %q", errMsg, wantInside)
 	}
 
 	// A share that would CONTAIN an existing folder is the same overlap from
 	// the other side and must be rejected as well.
-	if errMsg := AcceptPendingFolder("vault-parent", "Parent", configDir, false); errMsg != wantContains {
+	if errMsg := acceptPendingFolderForTesting("vault-parent", "Parent", configDir, false); errMsg != wantContains {
 		t.Fatalf("AcceptPendingFolder containing path = %q, want %q", errMsg, wantContains)
 	}
 
 	// A sibling whose name merely starts with the existing folder's name is
 	// NOT nested (boundary-aware comparison) and is accepted.
 	sibling := filepath.Join(configDir, "WorkshopsArchive")
-	if errMsg := AcceptPendingFolder("vault-sibling", "Sibling", sibling, false); errMsg != "" {
+	if errMsg := acceptPendingFolderForTesting("vault-sibling", "Sibling", sibling, false); errMsg != "" {
 		t.Fatalf("AcceptPendingFolder name-prefix sibling = %q, want success", errMsg)
 	}
 }
@@ -234,13 +259,13 @@ func TestAcceptPendingFolderNonEmptyTarget(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(nonEmpty, "note.md"), []byte("x"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	if errMsg := AcceptPendingFolder("vault-nonempty", "Existing Notes", nonEmpty, false); errMsg != wantRefused {
+	if errMsg := acceptPendingFolderForTesting("vault-nonempty", "Existing Notes", nonEmpty, false); errMsg != wantRefused {
 		t.Fatalf("AcceptPendingFolder non-empty unconfirmed = %q, want %q", errMsg, wantRefused)
 	}
 
 	// The user's explicit confirmation travels through allowNonEmpty and
 	// lets the same accept proceed (remove + re-accept recovery, 006).
-	if errMsg := AcceptPendingFolder("vault-nonempty", "Existing Notes", nonEmpty, true); errMsg != "" {
+	if errMsg := acceptPendingFolderForTesting("vault-nonempty", "Existing Notes", nonEmpty, true); errMsg != "" {
 		t.Fatalf("AcceptPendingFolder non-empty confirmed = %q, want success", errMsg)
 	}
 
@@ -250,7 +275,7 @@ func TestAcceptPendingFolderNonEmptyTarget(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(emptyVault, ".obsidian"), 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if errMsg := AcceptPendingFolder("vault-emptyvault", "Fresh Vault", emptyVault, false); errMsg != "" {
+	if errMsg := acceptPendingFolderForTesting("vault-emptyvault", "Fresh Vault", emptyVault, false); errMsg != "" {
 		t.Fatalf("AcceptPendingFolder empty vault unconfirmed = %q, want success", errMsg)
 	}
 
@@ -267,7 +292,7 @@ func TestAcceptPendingFolderNonEmptyTarget(t *testing.T) {
 			t.Fatalf("chmod: %v", err)
 		}
 		defer os.Chmod(unreadable, 0o700)
-		errMsg := AcceptPendingFolder("vault-unreadable", "Unreadable", unreadable, false)
+		errMsg := acceptPendingFolderForTesting("vault-unreadable", "Unreadable", unreadable, false)
 		if !strings.HasPrefix(errMsg, "read folder path:") {
 			t.Fatalf("AcceptPendingFolder unreadable = %q, want 'read folder path:' prefix", errMsg)
 		}
@@ -286,7 +311,7 @@ func TestAcceptPendingFolderCreatesPath(t *testing.T) {
 	// path creation and config mutation without requiring a real remote
 	// device offer.
 	folderPath := filepath.Join(configDir, "accepted-vault")
-	if errMsg := AcceptPendingFolder("vault-1", "My Vault", folderPath, false); errMsg != "" {
+	if errMsg := acceptPendingFolderForTesting("vault-1", "My Vault", folderPath, false); errMsg != "" {
 		t.Fatalf("AcceptPendingFolder failed: %s", errMsg)
 	}
 

@@ -1,0 +1,5440 @@
+diff --git a/internal/db/sqlite/basedb.go b/internal/db/sqlite/basedb.go
+index 2058fde..0c10bc3 100644
+--- a/internal/db/sqlite/basedb.go
++++ b/internal/db/sqlite/basedb.go
+@@ -61,6 +61,12 @@ func openBase(path string, maxConns int, pragmas, schemaScripts, migrationScript
+ 	if err != nil {
+ 		return nil, wrap(err)
+ 	}
++	closeOnError := true
++	defer func() {
++		if closeOnError {
++			_ = sqlDB.Close()
++		}
++	}()
+ 
+ 	sqlDB.SetMaxOpenConns(maxConns)
+ 
+@@ -186,6 +192,7 @@ func openBase(path string, maxConns int, pragmas, schemaScripts, migrationScript
+ 		}
+ 	}
+ 
++	closeOnError = false
+ 	return db, nil
+ }
+ 
+diff --git a/internal/db/sqlite/db_folderdb.go b/internal/db/sqlite/db_folderdb.go
+index 2431f75..e311641 100644
+--- a/internal/db/sqlite/db_folderdb.go
++++ b/internal/db/sqlite/db_folderdb.go
+@@ -41,6 +41,9 @@ func (s *DB) getFolderDB(folder string, create bool) (*folderDB, error) {
+ 		SELECT database_name FROM folders
+ 		WHERE folder_id = ?
+ 	`).Get(&dbns, folder); err != nil && !errors.Is(err, sql.ErrNoRows) {
++		if len(s.receiveSideReadOnlyFolders) > 0 {
++			return nil, config.ErrVaultSyncReceiveSideSafetyStop
++		}
+ 		return nil, wrap(err)
+ 	}
+ 
+@@ -68,24 +71,42 @@ func (s *DB) getFolderDB(folder string, create bool) (*folderDB, error) {
+ 
+ 		idx, err := s.folderIdxLocked(folder)
+ 		if err != nil {
++			if len(s.receiveSideReadOnlyFolders) > 0 {
++				return nil, config.ErrVaultSyncReceiveSideSafetyStop
++			}
+ 			return nil, wrap(err)
+ 		}
+ 
+ 		// The database name is the folder index ID and a random slug.
+ 		slug := strings.ToLower(rand.String(8))
+ 		dbName = fmt.Sprintf("folder.%04x-%s.db", idx, slug)
++		if len(s.receiveSideReadOnlyFolders) > 0 {
++			if !validFolderDatabaseName(idx, dbName) || !s.receiveSideFutureDatabaseNameAvailable(dbName) {
++				return nil, config.ErrVaultSyncReceiveSideSafetyStop
++			}
++		}
+ 		if _, err := s.stmt(`UPDATE folders SET database_name = ? WHERE idx = ?`).Exec(dbName, idx); err != nil {
++			if len(s.receiveSideReadOnlyFolders) > 0 {
++				return nil, config.ErrVaultSyncReceiveSideSafetyStop
++			}
+ 			return nil, wrap(err, "set name")
+ 		}
+ 	}
+ 
+-	slog.Debug("Folder database opened", "folder", folder, "db", dbName)
++	if len(s.receiveSideReadOnlyFolders) > 0 {
++		slog.Debug("Protected folder database opened", "folder", folder)
++	} else {
++		slog.Debug("Folder database opened", "folder", folder, "db", dbName)
++	}
+ 	path := dbName
+ 	if !filepath.IsAbs(path) {
+ 		path = filepath.Join(s.pathBase, dbName)
+ 	}
+ 	fdb, err := s.folderDBOpener(folder, path, s.deleteRetention)
+ 	if err != nil {
++		if len(s.receiveSideReadOnlyFolders) > 0 {
++			return nil, config.ErrVaultSyncReceiveSideSafetyStop
++		}
+ 		return nil, wrap(err)
+ 	}
+ 	s.folderDBs[folder] = fdb
+diff --git a/internal/db/sqlite/db_open.go b/internal/db/sqlite/db_open.go
+index dcce431..0467a86 100644
+--- a/internal/db/sqlite/db_open.go
++++ b/internal/db/sqlite/db_open.go
+@@ -17,6 +17,7 @@ import (
+ 	"github.com/syncthing/syncthing/internal/db"
+ 	"github.com/syncthing/syncthing/internal/slogutil"
+ 	"github.com/syncthing/syncthing/lib/build"
++	"github.com/syncthing/syncthing/lib/config"
+ )
+ 
+ const (
+@@ -33,6 +34,8 @@ type DB struct {
+ 	folderDBsMut   sync.RWMutex
+ 	folderDBs      map[string]*folderDB
+ 	folderDBOpener func(folder, path string, deleteRetention time.Duration) (*folderDB, error)
++
++	receiveSideReadOnlyFolders map[string]struct{}
+ }
+ 
+ var _ db.DB = (*DB)(nil)
+@@ -49,6 +52,20 @@ func WithDeleteRetention(d time.Duration) Option {
+ 	}
+ }
+ 
++// WithReceiveSideReadOnlyFolders enables the VaultSync database preflight
++// whenever the configuration contains at least one protected folder.
++func WithReceiveSideReadOnlyFolders(folderIDs []string) Option {
++	return func(s *DB) {
++		if len(folderIDs) == 0 {
++			return
++		}
++		s.receiveSideReadOnlyFolders = make(map[string]struct{}, len(folderIDs))
++		for _, folderID := range folderIDs {
++			s.receiveSideReadOnlyFolders[folderID] = struct{}{}
++		}
++	}
++}
++
+ func Open(path string, opts ...Option) (*DB, error) {
+ 	pragmas := []string{
+ 		"journal_mode = WAL",
+@@ -65,18 +82,8 @@ func Open(path string, opts ...Option) (*DB, error) {
+ 		"sql/migrations/main/*",
+ 	}
+ 
+-	_ = os.MkdirAll(path, 0o700)
+-	initTmpDir(path)
+-
+-	mainPath := filepath.Join(path, "main.db")
+-	mainBase, err := openBase(mainPath, maxDBConns, pragmas, schemas, migrations)
+-	if err != nil {
+-		return nil, err
+-	}
+-
+ 	db := &DB{
+ 		pathBase:       path,
+-		baseDB:         mainBase,
+ 		folderDBs:      make(map[string]*folderDB),
+ 		folderDBOpener: openFolderDB,
+ 	}
+@@ -85,11 +92,37 @@ func Open(path string, opts ...Option) (*DB, error) {
+ 		opt(db)
+ 	}
+ 
+-	if err := db.cleanDroppedFolders(); err != nil {
+-		slog.Warn("Failed to clean dropped folders", slogutil.Error(err))
++	protected := len(db.receiveSideReadOnlyFolders) > 0
++	if protected {
++		if err := preflightReceiveSideReadOnlyDatabase(path, db.receiveSideReadOnlyFolders); err != nil {
++			return nil, config.ErrVaultSyncReceiveSideSafetyStop
++		}
++	}
++
++	_ = os.MkdirAll(path, 0o700)
++	initTmpDir(path)
++
++	mainPath := filepath.Join(path, "main.db")
++	mainBase, err := openBase(mainPath, maxDBConns, pragmas, schemas, migrations)
++	if err != nil {
++		if protected {
++			return nil, config.ErrVaultSyncReceiveSideSafetyStop
++		}
++		return nil, err
++	}
++	db.baseDB = mainBase
++
++	if !protected {
++		if err := db.cleanDroppedFolders(); err != nil {
++			slog.Warn("Failed to clean dropped folders", slogutil.Error(err))
++		}
+ 	}
+ 
+ 	if err := db.startFolderDatabases(); err != nil {
++		_ = db.Close()
++		if protected {
++			return nil, config.ErrVaultSyncReceiveSideSafetyStop
++		}
+ 		return nil, wrap(err)
+ 	}
+ 
+diff --git a/internal/db/sqlite/issue150_database_name_test.go b/internal/db/sqlite/issue150_database_name_test.go
+new file mode 100644
+index 0000000..ceac295
+--- /dev/null
++++ b/internal/db/sqlite/issue150_database_name_test.go
+@@ -0,0 +1,70 @@
++// Copyright (C) 2026 The Syncthing Authors.
++//
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this file,
++// You can obtain one at https://mozilla.org/MPL/2.0/.
++
++package sqlite
++
++import (
++	"errors"
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/syncthing/syncthing/lib/config"
++)
++
++func TestIssue150ReceiveSideDatabaseOptionStopsBeforePathCreation(t *testing.T) {
++	databasePath := filepath.Join(t.TempDir(), "missing-database")
++	database, err := Open(databasePath, WithReceiveSideReadOnlyFolders([]string{""}))
++	if database != nil {
++		_ = database.Close()
++		t.Fatal("database opened with invalid protected-folder policy")
++	}
++	if !errors.Is(err, config.ErrVaultSyncReceiveSideSafetyStop) {
++		t.Fatalf("database error = %v, want canonical safety stop", err)
++	}
++	if _, err := os.Lstat(databasePath); !os.IsNotExist(err) {
++		t.Fatalf("database path was created before policy preflight: %v", err)
++	}
++}
++
++func TestIssue150FolderDatabaseNameValidationPreservesHistoricalCanonicalASCII(t *testing.T) {
++	testCases := []struct {
++		name     string
++		idx      int64
++		dbName   string
++		accepted bool
++	}{
++		{name: "Issue150/minimum-index-width", idx: 1, dbName: "folder.0001-abcdefgh.db", accepted: true},
++		{name: "Issue150/lowercase-hex-index", idx: 0xabcd, dbName: "folder.abcd-2345679a.db", accepted: true},
++		{name: "Issue150/index-wider-than-four-digits", idx: 0x10000, dbName: "folder.10000-zyxwvuts.db", accepted: true},
++		{name: "Issue150/absolute", idx: 1, dbName: "/outside/folder.0001-abcdefgh.db"},
++		{name: "Issue150/parent-traversal", idx: 1, dbName: "../folder.0001-abcdefgh.db"},
++		{name: "Issue150/uppercase-prefix", idx: 1, dbName: "Folder.0001-abcdefgh.db"},
++		{name: "Issue150/uppercase-index", idx: 0xabcd, dbName: "folder.ABCD-abcdefgh.db"},
++		{name: "Issue150/uppercase-slug", idx: 1, dbName: "folder.0001-ABCDEFGH.db"},
++		{name: "Issue150/non-ascii-slug", idx: 1, dbName: "folder.0001-abcdefgé.db"},
++		{name: "Issue150/wrong-row-index", idx: 2, dbName: "folder.0001-abcdefgh.db"},
++		{name: "Issue150/short-index", idx: 1, dbName: "folder.001-abcdefgh.db"},
++		{name: "Issue150/short-slug", idx: 1, dbName: "folder.0001-abcdefg.db"},
++		{name: "Issue150/long-slug", idx: 1, dbName: "folder.0001-abcdefghi.db"},
++		{name: "Issue150/non-historical-zero", idx: 1, dbName: "folder.0001-abcdefg0.db"},
++		{name: "Issue150/non-historical-one", idx: 1, dbName: "folder.0001-abcdefg1.db"},
++		{name: "Issue150/non-historical-eight", idx: 1, dbName: "folder.0001-abcdefg8.db"},
++		{name: "Issue150/path-separator", idx: 1, dbName: "folder.0001-abcd/efgh.db"},
++		{name: "Issue150/extra-extension", idx: 1, dbName: "folder.0001-abcdefgh.db.copy"},
++		{name: "Issue150/wal-sidecar", idx: 1, dbName: "folder.0001-abcdefgh.db-wal"},
++		{name: "Issue150/shm-sidecar", idx: 1, dbName: "folder.0001-abcdefgh.db-shm"},
++		{name: "Issue150/main-database", idx: 1, dbName: "main.db"},
++	}
++
++	for _, testCase := range testCases {
++		t.Run(testCase.name, func(t *testing.T) {
++			if got := validFolderDatabaseName(testCase.idx, testCase.dbName); got != testCase.accepted {
++				t.Fatalf("validFolderDatabaseName() = %t, want %t", got, testCase.accepted)
++			}
++		})
++	}
++}
+diff --git a/internal/db/sqlite/vaultsync_preflight.go b/internal/db/sqlite/vaultsync_preflight.go
+new file mode 100644
+index 0000000..7f44596
+--- /dev/null
++++ b/internal/db/sqlite/vaultsync_preflight.go
+@@ -0,0 +1,359 @@
++// Copyright (C) 2026 The Syncthing Authors.
++//
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this file,
++// You can obtain one at https://mozilla.org/MPL/2.0/.
++
++package sqlite
++
++import (
++	"context"
++	"database/sql"
++	"errors"
++	"fmt"
++	"net/url"
++	"os"
++	"path/filepath"
++	"strconv"
++	"strings"
++)
++
++var errReceiveSideReadOnlyDatabasePreflight = errors.New("receive-side database safety preflight failed")
++
++type databaseArtifact struct {
++	name string
++	info os.FileInfo
++}
++
++type registeredFolderDatabase struct {
++	idx          int64
++	folderID     string
++	databaseName sql.NullString
++}
++
++func preflightReceiveSideReadOnlyDatabase(path string, protectedFolders map[string]struct{}) error {
++	for folderID := range protectedFolders {
++		if folderID == "" {
++			return errReceiveSideReadOnlyDatabasePreflight
++		}
++	}
++
++	artifacts, rootExists, err := receiveSideDatabaseArtifacts(path)
++	if err != nil {
++		return errReceiveSideReadOnlyDatabasePreflight
++	}
++	if !rootExists {
++		return nil
++	}
++
++	mainArtifact, mainExists := artifacts["main.db"]
++	if !mainExists {
++		if len(artifacts) != 0 {
++			return errReceiveSideReadOnlyDatabasePreflight
++		}
++		return nil
++	}
++
++	var registrations []registeredFolderDatabase
++	if err := validateReceiveSideReadOnlyDatabase(
++		filepath.Join(path, mainArtifact.name),
++		applicationIDMain,
++		func(database *sql.DB) error {
++			rows, err := database.Query(`
++				SELECT idx, folder_id, database_name
++				FROM folders
++				ORDER BY idx
++			`)
++			if err != nil {
++				return errReceiveSideReadOnlyDatabasePreflight
++			}
++			defer rows.Close()
++			for rows.Next() {
++				var registration registeredFolderDatabase
++				if err := rows.Scan(&registration.idx, &registration.folderID, &registration.databaseName); err != nil {
++					return errReceiveSideReadOnlyDatabasePreflight
++				}
++				registrations = append(registrations, registration)
++			}
++			if err := rows.Err(); err != nil {
++				return errReceiveSideReadOnlyDatabasePreflight
++			}
++			return nil
++		},
++	); err != nil {
++		return errReceiveSideReadOnlyDatabasePreflight
++	}
++
++	registeredNames := make(map[string]struct{}, len(registrations))
++	for _, registration := range registrations {
++		if !registration.databaseName.Valid {
++			continue
++		}
++		name := registration.databaseName.String
++		if !validFolderDatabaseName(registration.idx, name) {
++			return errReceiveSideReadOnlyDatabasePreflight
++		}
++		folded := strings.ToLower(name)
++		if _, exists := registeredNames[folded]; exists {
++			return errReceiveSideReadOnlyDatabasePreflight
++		}
++		registeredNames[folded] = struct{}{}
++	}
++
++	// Validate every registered database before opening the first one. This
++	// keeps row and policy ordering from selecting a mutable partial prefix.
++	for _, registration := range registrations {
++		if !registration.databaseName.Valid {
++			continue
++		}
++		name := registration.databaseName.String
++		artifact, exists := artifacts[name]
++		if !exists {
++			return errReceiveSideReadOnlyDatabasePreflight
++		}
++		if err := validateReceiveSideReadOnlyDatabase(
++			filepath.Join(path, artifact.name),
++			applicationIDFolder,
++			func(database *sql.DB) error {
++				var folderID []byte
++				if err := database.QueryRow("SELECT value FROM kv WHERE key = 'folderID'").Scan(&folderID); err != nil {
++					return errReceiveSideReadOnlyDatabasePreflight
++				}
++				if string(folderID) != registration.folderID {
++					return errReceiveSideReadOnlyDatabasePreflight
++				}
++				return nil
++			},
++		); err != nil {
++			return errReceiveSideReadOnlyDatabasePreflight
++		}
++	}
++
++	return nil
++}
++
++func receiveSideDatabaseArtifacts(path string) (map[string]databaseArtifact, bool, error) {
++	rootInfo, err := os.Lstat(path)
++	if os.IsNotExist(err) {
++		return nil, false, nil
++	}
++	if err != nil || rootInfo.Mode()&os.ModeSymlink != 0 || !rootInfo.IsDir() {
++		return nil, true, errReceiveSideReadOnlyDatabasePreflight
++	}
++
++	entries, err := os.ReadDir(path)
++	if err != nil {
++		return nil, true, errReceiveSideReadOnlyDatabasePreflight
++	}
++	artifacts := make(map[string]databaseArtifact)
++	for _, entry := range entries {
++		name := entry.Name()
++		if !isReceiveSideDatabaseArtifact(name) {
++			continue
++		}
++		if !validReceiveSideDatabaseArtifactName(name) {
++			return nil, true, errReceiveSideReadOnlyDatabasePreflight
++		}
++		info, err := os.Lstat(filepath.Join(path, name))
++		if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
++			return nil, true, errReceiveSideReadOnlyDatabasePreflight
++		}
++		artifacts[name] = databaseArtifact{name: name, info: info}
++	}
++
++	artifactList := make([]databaseArtifact, 0, len(artifacts))
++	for _, artifact := range artifacts {
++		artifactList = append(artifactList, artifact)
++	}
++	for idx, first := range artifactList {
++		for _, second := range artifactList[idx+1:] {
++			if strings.EqualFold(first.name, second.name) || os.SameFile(first.info, second.info) {
++				return nil, true, errReceiveSideReadOnlyDatabasePreflight
++			}
++		}
++	}
++	// The immutable SQL view below must not validate a base file while
++	// committed logical state remains in a journal. Applying or checkpointing
++	// that state would mutate the database before validation.
++	for name := range artifacts {
++		if receiveSideDatabaseArtifactIsJournal(name) {
++			return nil, true, errReceiveSideReadOnlyDatabasePreflight
++		}
++	}
++
++	return artifacts, true, nil
++}
++
++func isReceiveSideDatabaseArtifact(name string) bool {
++	folded := strings.ToLower(name)
++	return folded == "main.db" || folded == "main.db-wal" || folded == "main.db-shm" || folded == "main.db-journal" || strings.HasPrefix(folded, "folder.")
++}
++
++func validReceiveSideDatabaseArtifactName(name string) bool {
++	switch name {
++	case "main.db", "main.db-wal", "main.db-shm", "main.db-journal":
++		return true
++	}
++
++	base := name
++	if strings.HasSuffix(base, "-wal") {
++		base = strings.TrimSuffix(base, "-wal")
++	} else if strings.HasSuffix(base, "-shm") {
++		base = strings.TrimSuffix(base, "-shm")
++	} else if strings.HasSuffix(base, "-journal") {
++		base = strings.TrimSuffix(base, "-journal")
++	}
++	if !strings.HasPrefix(base, "folder.") {
++		return false
++	}
++	indexEnd := strings.IndexByte(strings.TrimPrefix(base, "folder."), '-')
++	if indexEnd < 0 {
++		return false
++	}
++	indexText := strings.TrimPrefix(base, "folder.")[:indexEnd]
++	idx, err := strconv.ParseInt(indexText, 16, 64)
++	if err != nil {
++		return false
++	}
++	return validFolderDatabaseName(idx, base)
++}
++
++func receiveSideDatabaseArtifactIsJournal(name string) bool {
++	return strings.HasSuffix(name, "-wal") || strings.HasSuffix(name, "-shm") || strings.HasSuffix(name, "-journal")
++}
++
++func validFolderDatabaseName(idx int64, name string) bool {
++	if idx < 1 {
++		return false
++	}
++	prefix := fmt.Sprintf("folder.%04x-", idx)
++	if !strings.HasPrefix(name, prefix) {
++		return false
++	}
++	suffix := strings.TrimPrefix(name, prefix)
++	if len(suffix) != 11 || suffix[8:] != ".db" {
++		return false
++	}
++	for _, character := range suffix[:8] {
++		if character >= 'a' && character <= 'z' {
++			continue
++		}
++		switch character {
++		case '2', '3', '4', '5', '6', '7', '9':
++			continue
++		default:
++			return false
++		}
++	}
++	return true
++}
++
++func (s *DB) receiveSideFutureDatabaseNameAvailable(name string) bool {
++	var registered []sql.NullString
++	if err := s.stmt("SELECT database_name FROM folders").Select(&registered); err != nil {
++		return false
++	}
++	for _, existing := range registered {
++		if existing.Valid && strings.EqualFold(existing.String, name) {
++			return false
++		}
++	}
++
++	entries, err := os.ReadDir(s.pathBase)
++	if err != nil {
++		return false
++	}
++	for _, entry := range entries {
++		if strings.EqualFold(entry.Name(), name) {
++			return false
++		}
++	}
++	return true
++}
++
++func validateReceiveSideReadOnlyDatabase(path string, expectedApplicationID int, validate func(*sql.DB) error) (resultErr error) {
++	pathURL := url.URL{
++		Scheme:   "file",
++		Path:     fileToUriPath(path),
++		RawQuery: "immutable=1&mode=ro",
++	}
++	database, err := sql.Open(dbDriver, pathURL.String())
++	if err != nil {
++		return errReceiveSideReadOnlyDatabasePreflight
++	}
++	database.SetMaxOpenConns(1)
++	defer func() {
++		if err := database.Close(); err != nil && resultErr == nil {
++			resultErr = errReceiveSideReadOnlyDatabasePreflight
++		}
++	}()
++
++	ctx := context.Background()
++	if _, err := database.ExecContext(ctx, "PRAGMA query_only = ON"); err != nil {
++		return errReceiveSideReadOnlyDatabasePreflight
++	}
++	var queryOnly int
++	if err := database.QueryRowContext(ctx, "PRAGMA query_only").Scan(&queryOnly); err != nil || queryOnly != 1 {
++		return errReceiveSideReadOnlyDatabasePreflight
++	}
++	var applicationID int
++	if err := database.QueryRowContext(ctx, "PRAGMA application_id").Scan(&applicationID); err != nil || applicationID != expectedApplicationID {
++		return errReceiveSideReadOnlyDatabasePreflight
++	}
++	var schemaVersion int
++	if err := database.QueryRowContext(ctx, `
++		SELECT schema_version
++		FROM schemamigrations
++		ORDER BY schema_version DESC
++		LIMIT 1
++	`).Scan(&schemaVersion); err != nil || schemaVersion != currentSchemaVersion {
++		return errReceiveSideReadOnlyDatabasePreflight
++	}
++	if err := validateReceiveSideDatabaseQuickCheck(ctx, database); err != nil {
++		return errReceiveSideReadOnlyDatabasePreflight
++	}
++	if err := validateReceiveSideDatabaseForeignKeys(ctx, database); err != nil {
++		return errReceiveSideReadOnlyDatabasePreflight
++	}
++	if validate != nil {
++		if err := validate(database); err != nil {
++			return errReceiveSideReadOnlyDatabasePreflight
++		}
++	}
++	return nil
++}
++
++func validateReceiveSideDatabaseQuickCheck(ctx context.Context, database *sql.DB) error {
++	rows, err := database.QueryContext(ctx, "PRAGMA quick_check")
++	if err != nil {
++		return errReceiveSideReadOnlyDatabasePreflight
++	}
++	defer rows.Close()
++	results := 0
++	for rows.Next() {
++		var result string
++		if err := rows.Scan(&result); err != nil || result != "ok" {
++			return errReceiveSideReadOnlyDatabasePreflight
++		}
++		results++
++	}
++	if err := rows.Err(); err != nil || results != 1 {
++		return errReceiveSideReadOnlyDatabasePreflight
++	}
++	return nil
++}
++
++func validateReceiveSideDatabaseForeignKeys(ctx context.Context, database *sql.DB) error {
++	rows, err := database.QueryContext(ctx, "PRAGMA foreign_key_check")
++	if err != nil {
++		return errReceiveSideReadOnlyDatabasePreflight
++	}
++	defer rows.Close()
++	if rows.Next() {
++		return errReceiveSideReadOnlyDatabasePreflight
++	}
++	if err := rows.Err(); err != nil {
++		return errReceiveSideReadOnlyDatabasePreflight
++	}
++	return nil
++}
+diff --git a/lib/config/issue150_capability_test.go b/lib/config/issue150_capability_test.go
+new file mode 100644
+index 0000000..ac84438
+--- /dev/null
++++ b/lib/config/issue150_capability_test.go
+@@ -0,0 +1,736 @@
++// Copyright (C) 2026 The Syncthing Authors.
++//
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this file,
++// You can obtain one at https://mozilla.org/MPL/2.0/.
++
++package config
++
++import (
++	"errors"
++	"reflect"
++	"sync/atomic"
++	"testing"
++
++	"github.com/syncthing/syncthing/lib/events"
++	"github.com/syncthing/syncthing/lib/protocol"
++)
++
++const issue150ConfigSafetyStop = "vaultsync-conflict-retention-safety-stop"
++
++const (
++	issue150ProtectedA = "issue150-protected-a"
++	issue150ProtectedN = "issue150-protected-new"
++	issue150ProtectedZ = "issue150-protected-z"
++	issue150SendOnlyN  = "issue150-send-only-new"
++	issue150SendOnly   = "issue150-send-only"
++)
++
++type issue150SubscriberSpy struct {
++	verifyCalls atomic.Int32
++	commitCalls atomic.Int32
++}
++
++func (s *issue150SubscriberSpy) VerifyConfiguration(_, _ Configuration) error {
++	s.verifyCalls.Add(1)
++	return nil
++}
++
++func (s *issue150SubscriberSpy) CommitConfiguration(_, _ Configuration) bool {
++	s.commitCalls.Add(1)
++	return true
++}
++
++func (*issue150SubscriberSpy) String() string {
++	return "issue150SubscriberSpy"
++}
++
++func TestIssue150GenericProtectedConfigurationDiffsStopBeforeSubscribers(t *testing.T) {
++	tests := []struct {
++		name   string
++		modify func(*Configuration)
++		remove bool
++	}{
++		{
++			name: "path",
++			modify: func(cfg *Configuration) {
++				issue150MutateFolder(cfg, issue150ProtectedA, func(folder *FolderConfiguration) {
++					folder.Path = "/issue150/fixture/changed"
++				})
++			},
++		},
++		{
++			name: "device extension",
++			modify: func(cfg *Configuration) {
++				issue150MutateFolder(cfg, issue150ProtectedA, func(folder *FolderConfiguration) {
++					folder.Devices = append(folder.Devices, FolderDeviceConfiguration{DeviceID: device2})
++				})
++			},
++		},
++		{
++			name:   "remove through generic wrapper API",
++			remove: true,
++		},
++		{
++			name: "type",
++			modify: func(cfg *Configuration) {
++				issue150MutateFolder(cfg, issue150ProtectedA, func(folder *FolderConfiguration) {
++					folder.Type = FolderTypeSendOnly
++				})
++			},
++		},
++		{
++			name: "add protected folder",
++			modify: func(cfg *Configuration) {
++				cfg.SetFolder(issue150Folder(*cfg, issue150ProtectedN, FolderTypeSendReceive, "/issue150/fixture/new"))
++			},
++		},
++		{
++			name: "convert send-only to protected",
++			modify: func(cfg *Configuration) {
++				issue150MutateFolder(cfg, issue150SendOnly, func(folder *FolderConfiguration) {
++					folder.Type = FolderTypeReceiveOnly
++				})
++			},
++		},
++		{
++			name: "filesystem",
++			modify: func(cfg *Configuration) {
++				issue150MutateFolder(cfg, issue150ProtectedA, func(folder *FolderConfiguration) {
++					folder.FilesystemType = FilesystemTypeFake
++				})
++			},
++		},
++		{
++			name: "ignore behavior",
++			modify: func(cfg *Configuration) {
++				issue150MutateFolder(cfg, issue150ProtectedA, func(folder *FolderConfiguration) {
++					folder.IgnoreDelete = !folder.IgnoreDelete
++					folder.IgnorePerms = !folder.IgnorePerms
++				})
++			},
++		},
++		{
++			name: "rescan",
++			modify: func(cfg *Configuration) {
++				issue150MutateFolder(cfg, issue150ProtectedA, func(folder *FolderConfiguration) {
++					folder.RescanIntervalS++
++					folder.FSWatcherEnabled = !folder.FSWatcherEnabled
++				})
++			},
++		},
++	}
++
++	for _, test := range tests {
++		t.Run(test.name, func(t *testing.T) {
++			wrapper, spy := issue150ProtectedWrapper(t, nil)
++			before := wrapper.RawCopy()
++
++			var err error
++			if test.remove {
++				var waiter Waiter
++				waiter, err = wrapper.RemoveFolder(issue150ProtectedA)
++				waiter.Wait()
++			} else {
++				err = issue150Modify(wrapper, test.modify)
++			}
++
++			issue150ExpectSafetyStop(t, err)
++			if after := wrapper.RawCopy(); !reflect.DeepEqual(after, before) {
++				t.Fatalf("rejected generic diff changed config:\nbefore=%+v\nafter=%+v", before, after)
++			}
++			issue150ExpectSubscriberCalls(t, spy, 0, 0)
++		})
++	}
++}
++
++func TestIssue150ExactProtectedCapabilitiesAuthorizeOnlyTheirBoundDiffs(t *testing.T) {
++	t.Run("remove first protected folder", func(t *testing.T) {
++		wrapper, spy := issue150ProtectedWrapper(t, nil)
++		before := wrapper.RawCopy()
++		capability := NewVaultSyncRemoveFolderCapability(issue150ProtectedA)
++
++		err := issue150ModifyWithCapability(wrapper, capability, func(cfg *Configuration) {
++			issue150RemoveFolder(cfg, issue150ProtectedA)
++		})
++		if err != nil {
++			t.Fatalf("exact remove capability failed: %v", err)
++		}
++		expected := before.Copy()
++		issue150RemoveFolder(&expected, issue150ProtectedA)
++		issue150ExpectConfiguration(t, wrapper, expected)
++		issue150ExpectSubscriberCalls(t, spy, 1, 1)
++	})
++
++	t.Run("remove last protected folder", func(t *testing.T) {
++		wrapper, spy := issue150ProtectedWrapper(t, nil)
++		before := wrapper.RawCopy()
++		capability := NewVaultSyncRemoveFolderCapability(issue150ProtectedZ)
++
++		err := issue150ModifyWithCapability(wrapper, capability, func(cfg *Configuration) {
++			issue150RemoveFolder(cfg, issue150ProtectedZ)
++		})
++		if err != nil {
++			t.Fatalf("exact remove capability failed: %v", err)
++		}
++		expected := before.Copy()
++		issue150RemoveFolder(&expected, issue150ProtectedZ)
++		issue150ExpectConfiguration(t, wrapper, expected)
++		issue150ExpectSubscriberCalls(t, spy, 1, 1)
++	})
++
++	for _, paused := range []bool{true, false} {
++		name := "pause"
++		if !paused {
++			name = "resume"
++		}
++		t.Run(name, func(t *testing.T) {
++			wrapper, spy := issue150ProtectedWrapper(t, func(cfg *Configuration) {
++				issue150MutateFolder(cfg, issue150ProtectedA, func(folder *FolderConfiguration) {
++					folder.Paused = !paused
++				})
++			})
++			before := wrapper.RawCopy()
++			capability := NewVaultSyncSetFolderPausedCapability(issue150ProtectedA, paused)
++
++			err := issue150ModifyWithCapability(wrapper, capability, func(cfg *Configuration) {
++				issue150MutateFolder(cfg, issue150ProtectedA, func(folder *FolderConfiguration) {
++					folder.Paused = paused
++				})
++			})
++			if err != nil {
++				t.Fatalf("exact pause capability failed: %v", err)
++			}
++			expected := before.Copy()
++			issue150MutateFolder(&expected, issue150ProtectedA, func(folder *FolderConfiguration) {
++				folder.Paused = paused
++			})
++			issue150ExpectConfiguration(t, wrapper, expected)
++			issue150ExpectSubscriberCalls(t, spy, 1, 1)
++		})
++	}
++
++	t.Run("share exact device", func(t *testing.T) {
++		wrapper, spy := issue150ProtectedWrapper(t, nil)
++		before := wrapper.RawCopy()
++		capability := NewVaultSyncShareFolderCapability(issue150ProtectedA, device2)
++
++		err := issue150ModifyWithCapability(wrapper, capability, func(cfg *Configuration) {
++			issue150MutateFolder(cfg, issue150ProtectedA, func(folder *FolderConfiguration) {
++				folder.Devices = append(folder.Devices, FolderDeviceConfiguration{DeviceID: device2})
++			})
++		})
++		if err != nil {
++			t.Fatalf("exact share capability failed: %v", err)
++		}
++		expected := before.Copy()
++		issue150MutateFolder(&expected, issue150ProtectedA, func(folder *FolderConfiguration) {
++			folder.Devices = append(folder.Devices, FolderDeviceConfiguration{DeviceID: device2})
++		})
++		if err := expected.prepare(device1); err != nil {
++			t.Fatalf("prepare expected share config: %v", err)
++		}
++		issue150ExpectConfiguration(t, wrapper, expected)
++		issue150ExpectSubscriberCalls(t, spy, 1, 1)
++	})
++
++	t.Run("unshare exact device", func(t *testing.T) {
++		wrapper, spy := issue150ProtectedWrapper(t, func(cfg *Configuration) {
++			issue150MutateFolder(cfg, issue150ProtectedA, func(folder *FolderConfiguration) {
++				folder.Devices = append(folder.Devices, FolderDeviceConfiguration{DeviceID: device2})
++			})
++		})
++		before := wrapper.RawCopy()
++		capability := NewVaultSyncUnshareFolderCapability(issue150ProtectedA, device2)
++
++		err := issue150ModifyWithCapability(wrapper, capability, func(cfg *Configuration) {
++			issue150UnshareFolder(cfg, issue150ProtectedA, device2)
++		})
++		if err != nil {
++			t.Fatalf("exact unshare capability failed: %v", err)
++		}
++		expected := before.Copy()
++		issue150UnshareFolder(&expected, issue150ProtectedA, device2)
++		issue150ExpectConfiguration(t, wrapper, expected)
++		issue150ExpectSubscriberCalls(t, spy, 1, 1)
++	})
++}
++
++func TestIssue150ProtectedCapabilitiesAreOneShotAndNonTransferable(t *testing.T) {
++	t.Run("reuse", func(t *testing.T) {
++		wrapper, spy := issue150ProtectedWrapper(t, nil)
++		capability := NewVaultSyncSetFolderPausedCapability(issue150ProtectedA, true)
++		setPaused := func(cfg *Configuration) {
++			issue150MutateFolder(cfg, issue150ProtectedA, func(folder *FolderConfiguration) {
++				folder.Paused = true
++			})
++		}
++		if err := issue150ModifyWithCapability(wrapper, capability, setPaused); err != nil {
++			t.Fatalf("first capability use failed: %v", err)
++		}
++		beforeReuse := wrapper.RawCopy()
++		issue150ExpectSafetyStop(t, issue150ModifyWithCapability(wrapper, capability, setPaused))
++		issue150ExpectConfiguration(t, wrapper, beforeReuse)
++		issue150ExpectSubscriberCalls(t, spy, 1, 1)
++	})
++
++	t.Run("wrong folder", func(t *testing.T) {
++		wrapper, spy := issue150ProtectedWrapper(t, nil)
++		before := wrapper.RawCopy()
++		capability := NewVaultSyncSetFolderPausedCapability(issue150ProtectedA, true)
++		err := issue150ModifyWithCapability(wrapper, capability, func(cfg *Configuration) {
++			issue150MutateFolder(cfg, issue150ProtectedZ, func(folder *FolderConfiguration) {
++				folder.Paused = true
++			})
++		})
++		issue150ExpectSafetyStop(t, err)
++		issue150ExpectConfiguration(t, wrapper, before)
++		issue150ExpectSubscriberCalls(t, spy, 0, 0)
++	})
++
++	t.Run("wrong device", func(t *testing.T) {
++		wrapper, spy := issue150ProtectedWrapper(t, nil)
++		before := wrapper.RawCopy()
++		capability := NewVaultSyncShareFolderCapability(issue150ProtectedA, device2)
++		err := issue150ModifyWithCapability(wrapper, capability, func(cfg *Configuration) {
++			issue150MutateFolder(cfg, issue150ProtectedA, func(folder *FolderConfiguration) {
++				folder.Devices = append(folder.Devices, FolderDeviceConfiguration{DeviceID: device3})
++			})
++		})
++		issue150ExpectSafetyStop(t, err)
++		issue150ExpectConfiguration(t, wrapper, before)
++		issue150ExpectSubscriberCalls(t, spy, 0, 0)
++	})
++
++	t.Run("wrong operation", func(t *testing.T) {
++		wrapper, spy := issue150ProtectedWrapper(t, nil)
++		before := wrapper.RawCopy()
++		capability := NewVaultSyncRemoveFolderCapability(issue150ProtectedA)
++		err := issue150ModifyWithCapability(wrapper, capability, func(cfg *Configuration) {
++			issue150MutateFolder(cfg, issue150ProtectedA, func(folder *FolderConfiguration) {
++				folder.Paused = true
++			})
++		})
++		issue150ExpectSafetyStop(t, err)
++		issue150ExpectConfiguration(t, wrapper, before)
++		issue150ExpectSubscriberCalls(t, spy, 0, 0)
++	})
++}
++
++func TestIssue150ZeroValueCapabilityFailsClosed(t *testing.T) {
++	wrapper, spy := issue150ProtectedWrapper(t, nil)
++	before := wrapper.RawCopy()
++	var callbackCalls atomic.Int32
++
++	err := issue150ModifyWithCapability(wrapper, VaultSyncConfigCapability{}, func(*Configuration) {
++		callbackCalls.Add(1)
++	})
++	issue150ExpectSafetyStop(t, err)
++	if got := callbackCalls.Load(); got != 0 {
++		t.Fatalf("zero-value capability invoked callback %d times, want zero", got)
++	}
++	issue150ExpectConfiguration(t, wrapper, before)
++	issue150ExpectSubscriberCalls(t, spy, 0, 0)
++}
++
++func TestIssue150NoOpCapabilityUseIsConsumed(t *testing.T) {
++	wrapper, spy := issue150ProtectedWrapper(t, nil)
++	before := wrapper.RawCopy()
++	capability := NewVaultSyncSetFolderPausedCapability(issue150ProtectedA, true)
++
++	issue150ExpectSafetyStop(t, issue150ModifyWithCapability(wrapper, capability, func(*Configuration) {}))
++	issue150ExpectSafetyStop(t, issue150ModifyWithCapability(wrapper, capability, func(cfg *Configuration) {
++		issue150MutateFolder(cfg, issue150ProtectedA, func(folder *FolderConfiguration) {
++			folder.Paused = true
++		})
++	}))
++
++	issue150ExpectConfiguration(t, wrapper, before)
++	issue150ExpectSubscriberCalls(t, spy, 0, 0)
++}
++
++func TestIssue150ProtectionIsOptInAndCapabilityRequiresEnabledWrapper(t *testing.T) {
++	cfg := New(device1)
++	cfg.SetFolder(issue150Folder(cfg, issue150ProtectedA, FolderTypeReceiveOnly, "/issue150/fixture/a"))
++	if err := cfg.prepare(device1); err != nil {
++		t.Fatalf("prepare #150 opt-in fixture: %v", err)
++	}
++
++	wrapper := startWrapper(Wrap("", cfg, device1, events.NoopLogger))
++	t.Cleanup(wrapper.stop)
++	spy := new(issue150SubscriberSpy)
++	wrapper.Subscribe(spy)
++	before := wrapper.RawCopy()
++	var callbackCalls atomic.Int32
++
++	capability := NewVaultSyncSetFolderPausedCapability(issue150ProtectedA, true)
++	err := issue150ModifyWithCapability(wrapper, capability, func(cfg *Configuration) {
++		callbackCalls.Add(1)
++		issue150MutateFolder(cfg, issue150ProtectedA, func(folder *FolderConfiguration) {
++			folder.Paused = true
++		})
++	})
++	issue150ExpectSafetyStop(t, err)
++	if got := callbackCalls.Load(); got != 0 {
++		t.Fatalf("capability on disabled protection invoked callback %d times, want zero", got)
++	}
++	issue150ExpectConfiguration(t, wrapper, before)
++	issue150ExpectSubscriberCalls(t, spy, 0, 0)
++
++	err = issue150Modify(wrapper, func(cfg *Configuration) {
++		issue150MutateFolder(cfg, issue150ProtectedA, func(folder *FolderConfiguration) {
++			folder.Path = "/issue150/fixture/opt-in-disabled"
++		})
++	})
++	if err != nil {
++		t.Fatalf("unprotected wrapper changed existing generic semantics: %v", err)
++	}
++	expected := before.Copy()
++	issue150MutateFolder(&expected, issue150ProtectedA, func(folder *FolderConfiguration) {
++		folder.Path = "/issue150/fixture/opt-in-disabled"
++	})
++	issue150ExpectConfiguration(t, wrapper, expected)
++	issue150ExpectSubscriberCalls(t, spy, 1, 1)
++}
++
++func TestIssue150ConcurrentCapabilityReuseAllowsExactlyOneQueuedUse(t *testing.T) {
++	wrapper, spy := issue150ProtectedWrapper(t, nil)
++	before := wrapper.RawCopy()
++	capability := NewVaultSyncSetFolderPausedCapability(issue150ProtectedA, true)
++	setPaused := func(cfg *Configuration) {
++		issue150MutateFolder(cfg, issue150ProtectedA, func(folder *FolderConfiguration) {
++			folder.Paused = true
++		})
++	}
++
++	start := make(chan struct{})
++	results := make(chan error, 2)
++	for range 2 {
++		go func() {
++			<-start
++			results <- issue150ModifyWithCapability(wrapper, capability, setPaused)
++		}()
++	}
++	close(start)
++
++	successes := 0
++	safetyStops := 0
++	for range 2 {
++		err := <-results
++		if err == nil {
++			successes++
++			continue
++		}
++		issue150ExpectSafetyStop(t, err)
++		safetyStops++
++	}
++	if successes != 1 || safetyStops != 1 {
++		t.Fatalf("concurrent capability results: successes=%d safetyStops=%d, want exactly one each", successes, safetyStops)
++	}
++
++	expected := before.Copy()
++	issue150MutateFolder(&expected, issue150ProtectedA, func(folder *FolderConfiguration) {
++		folder.Paused = true
++	})
++	issue150ExpectConfiguration(t, wrapper, expected)
++	issue150ExpectSubscriberCalls(t, spy, 1, 1)
++}
++
++func TestIssue150ProtectedCapabilitiesRejectAdditionalOrReorderedDiffs(t *testing.T) {
++	t.Run("additional folder field", func(t *testing.T) {
++		wrapper, spy := issue150ProtectedWrapper(t, nil)
++		before := wrapper.RawCopy()
++		capability := NewVaultSyncSetFolderPausedCapability(issue150ProtectedA, true)
++		err := issue150ModifyWithCapability(wrapper, capability, func(cfg *Configuration) {
++			issue150MutateFolder(cfg, issue150ProtectedA, func(folder *FolderConfiguration) {
++				folder.Paused = true
++				folder.Path = "/issue150/fixture/additional"
++			})
++		})
++		issue150ExpectSafetyStop(t, err)
++		issue150ExpectConfiguration(t, wrapper, before)
++		issue150ExpectSubscriberCalls(t, spy, 0, 0)
++	})
++
++	t.Run("additional global field", func(t *testing.T) {
++		wrapper, spy := issue150ProtectedWrapper(t, nil)
++		before := wrapper.RawCopy()
++		capability := NewVaultSyncSetFolderPausedCapability(issue150ProtectedA, true)
++		err := issue150ModifyWithCapability(wrapper, capability, func(cfg *Configuration) {
++			issue150MutateFolder(cfg, issue150ProtectedA, func(folder *FolderConfiguration) {
++				folder.Paused = true
++			})
++			cfg.Options.LocalAnnEnabled = !cfg.Options.LocalAnnEnabled
++		})
++		issue150ExpectSafetyStop(t, err)
++		issue150ExpectConfiguration(t, wrapper, before)
++		issue150ExpectSubscriberCalls(t, spy, 0, 0)
++	})
++
++	t.Run("share plus device reorder", func(t *testing.T) {
++		wrapper, spy := issue150ProtectedWrapper(t, nil)
++		before := wrapper.RawCopy()
++		capability := NewVaultSyncShareFolderCapability(issue150ProtectedA, device2)
++		err := issue150ModifyWithCapability(wrapper, capability, func(cfg *Configuration) {
++			issue150MutateFolder(cfg, issue150ProtectedA, func(folder *FolderConfiguration) {
++				folder.Devices = append(folder.Devices, FolderDeviceConfiguration{DeviceID: device2})
++				folder.Devices[0], folder.Devices[1] = folder.Devices[1], folder.Devices[0]
++			})
++		})
++		issue150ExpectSafetyStop(t, err)
++		issue150ExpectConfiguration(t, wrapper, before)
++		issue150ExpectSubscriberCalls(t, spy, 0, 0)
++	})
++
++	t.Run("remove plus folder reorder", func(t *testing.T) {
++		wrapper, spy := issue150ProtectedWrapper(t, nil)
++		before := wrapper.RawCopy()
++		capability := NewVaultSyncRemoveFolderCapability(issue150ProtectedA)
++		err := issue150ModifyWithCapability(wrapper, capability, func(cfg *Configuration) {
++			issue150RemoveFolder(cfg, issue150ProtectedA)
++			cfg.Folders[0], cfg.Folders[1] = cfg.Folders[1], cfg.Folders[0]
++		})
++		issue150ExpectSafetyStop(t, err)
++		issue150ExpectConfiguration(t, wrapper, before)
++		issue150ExpectSubscriberCalls(t, spy, 0, 0)
++	})
++}
++
++func TestIssue150ProtectedShareCapabilityRejectsPrepareDerivedAdditionalDiff(t *testing.T) {
++	wrapper, spy := issue150ProtectedWrapper(t, func(cfg *Configuration) {
++		_, index, ok := cfg.Device(device2)
++		if !ok {
++			t.Fatal("#150 fixture peer is missing")
++		}
++		cfg.Devices[index].IgnoredFolders = []ObservedFolder{{
++			ID:    issue150ProtectedA,
++			Label: "Issue 150 ignored offer",
++		}}
++	})
++	before := wrapper.RawCopy()
++	capability := NewVaultSyncShareFolderCapability(issue150ProtectedA, device2)
++
++	err := issue150ModifyWithCapability(wrapper, capability, func(cfg *Configuration) {
++		issue150MutateFolder(cfg, issue150ProtectedA, func(folder *FolderConfiguration) {
++			folder.Devices = append(folder.Devices, FolderDeviceConfiguration{DeviceID: device2})
++		})
++	})
++
++	issue150ExpectSafetyStop(t, err)
++	issue150ExpectConfiguration(t, wrapper, before)
++	issue150ExpectSubscriberCalls(t, spy, 0, 0)
++}
++
++func TestIssue150GenericProtectedRemovalStopsInEitherFolderOrder(t *testing.T) {
++	for _, folderID := range []string{issue150ProtectedA, issue150ProtectedZ} {
++		t.Run(folderID, func(t *testing.T) {
++			wrapper, spy := issue150ProtectedWrapper(t, nil)
++			before := wrapper.RawCopy()
++			waiter, err := wrapper.RemoveFolder(folderID)
++			waiter.Wait()
++			issue150ExpectSafetyStop(t, err)
++			issue150ExpectConfiguration(t, wrapper, before)
++			issue150ExpectSubscriberCalls(t, spy, 0, 0)
++		})
++	}
++}
++
++func TestIssue150GenericDeviceRemovalCannotDeriveProtectedMembershipDiff(t *testing.T) {
++	wrapper, spy := issue150ProtectedWrapper(t, func(cfg *Configuration) {
++		issue150MutateFolder(cfg, issue150ProtectedA, func(folder *FolderConfiguration) {
++			folder.Devices = append(folder.Devices, FolderDeviceConfiguration{DeviceID: device2})
++		})
++	})
++	before := wrapper.RawCopy()
++
++	waiter, err := wrapper.RemoveDevice(device2)
++	waiter.Wait()
++	issue150ExpectSafetyStop(t, err)
++	issue150ExpectConfiguration(t, wrapper, before)
++	issue150ExpectSubscriberCalls(t, spy, 0, 0)
++}
++
++func TestIssue150SendOnlyGenericConfigurationRetainsExistingSemantics(t *testing.T) {
++	t.Run("add alongside protected folders", func(t *testing.T) {
++		wrapper, spy := issue150ProtectedWrapper(t, nil)
++		before := wrapper.RawCopy()
++		err := issue150Modify(wrapper, func(cfg *Configuration) {
++			cfg.SetFolder(issue150Folder(*cfg, issue150SendOnlyN, FolderTypeSendOnly, "/issue150/send-only-new"))
++		})
++		if err != nil {
++			t.Fatalf("new SendOnly folder was rejected: %v", err)
++		}
++		expected := before.Copy()
++		expected.SetFolder(issue150Folder(expected, issue150SendOnlyN, FolderTypeSendOnly, "/issue150/send-only-new"))
++		if err := expected.prepare(device1); err != nil {
++			t.Fatalf("prepare expected SendOnly config: %v", err)
++		}
++		issue150ExpectConfiguration(t, wrapper, expected)
++		issue150ExpectSubscriberCalls(t, spy, 1, 1)
++	})
++
++	t.Run("path filesystem ignores rescan and device", func(t *testing.T) {
++		wrapper, spy := issue150ProtectedWrapper(t, nil)
++		before := wrapper.RawCopy()
++		err := issue150Modify(wrapper, func(cfg *Configuration) {
++			issue150MutateFolder(cfg, issue150SendOnly, func(folder *FolderConfiguration) {
++				folder.Path = "/issue150/send-only/changed"
++				folder.FilesystemType = FilesystemTypeFake
++				folder.IgnoreDelete = !folder.IgnoreDelete
++				folder.IgnorePerms = !folder.IgnorePerms
++				folder.RescanIntervalS++
++				folder.FSWatcherEnabled = !folder.FSWatcherEnabled
++				folder.Devices = append(folder.Devices, FolderDeviceConfiguration{DeviceID: device2})
++			})
++		})
++		if err != nil {
++			t.Fatalf("SendOnly generic diff was rejected: %v", err)
++		}
++		expected := before.Copy()
++		issue150MutateFolder(&expected, issue150SendOnly, func(folder *FolderConfiguration) {
++			folder.Path = "/issue150/send-only/changed"
++			folder.FilesystemType = FilesystemTypeFake
++			folder.IgnoreDelete = !folder.IgnoreDelete
++			folder.IgnorePerms = !folder.IgnorePerms
++			folder.RescanIntervalS++
++			folder.FSWatcherEnabled = !folder.FSWatcherEnabled
++			folder.Devices = append(folder.Devices, FolderDeviceConfiguration{DeviceID: device2})
++		})
++		if err := expected.prepare(device1); err != nil {
++			t.Fatalf("prepare expected SendOnly config: %v", err)
++		}
++		issue150ExpectConfiguration(t, wrapper, expected)
++		issue150ExpectSubscriberCalls(t, spy, 1, 1)
++	})
++
++	t.Run("remove", func(t *testing.T) {
++		wrapper, spy := issue150ProtectedWrapper(t, nil)
++		before := wrapper.RawCopy()
++		waiter, err := wrapper.RemoveFolder(issue150SendOnly)
++		waiter.Wait()
++		if err != nil {
++			t.Fatalf("SendOnly generic remove was rejected: %v", err)
++		}
++		expected := before.Copy()
++		issue150RemoveFolder(&expected, issue150SendOnly)
++		issue150ExpectConfiguration(t, wrapper, expected)
++		issue150ExpectSubscriberCalls(t, spy, 1, 1)
++	})
++}
++
++func issue150ProtectedWrapper(t *testing.T, adjust func(*Configuration)) (*testWrapper, *issue150SubscriberSpy) {
++	t.Helper()
++	cfg := New(device1)
++	cfg.SetDevice(DeviceConfiguration{DeviceID: device2, Name: "Issue 150 peer two"})
++	cfg.SetDevice(DeviceConfiguration{DeviceID: device3, Name: "Issue 150 peer three"})
++
++	for _, folder := range []FolderConfiguration{
++		issue150Folder(cfg, issue150ProtectedZ, FolderTypeReceiveEncrypted, "/issue150/fixture/z"),
++		issue150Folder(cfg, issue150SendOnly, FolderTypeSendOnly, "/issue150/send-only"),
++		issue150Folder(cfg, issue150ProtectedA, FolderTypeReceiveOnly, "/issue150/fixture/a"),
++	} {
++		cfg.SetFolder(folder)
++	}
++	if adjust != nil {
++		adjust(&cfg)
++	}
++	if err := cfg.prepare(device1); err != nil {
++		t.Fatalf("prepare #150 config fixture: %v", err)
++	}
++
++	base := Wrap("", cfg, device1, events.NoopLogger)
++	if err := EnableVaultSyncReceiveSideProtection(base); err != nil {
++		t.Fatalf("enable #150 receive-side config protection: %v", err)
++	}
++	wrapper := startWrapper(base)
++	t.Cleanup(wrapper.stop)
++	spy := new(issue150SubscriberSpy)
++	wrapper.Subscribe(spy)
++	return wrapper, spy
++}
++
++func issue150Folder(cfg Configuration, id string, folderType FolderType, path string) FolderConfiguration {
++	folder := cfg.Defaults.Folder.Copy()
++	folder.ID = id
++	folder.Label = "Issue 150 fixture"
++	folder.Path = path
++	folder.Type = folderType
++	folder.Devices = []FolderDeviceConfiguration{{DeviceID: device1}}
++	return folder
++}
++
++func issue150Modify(wrapper Wrapper, modify ModifyFunction) error {
++	waiter, err := wrapper.Modify(modify)
++	waiter.Wait()
++	return err
++}
++
++func issue150ModifyWithCapability(wrapper Wrapper, capability VaultSyncConfigCapability, modify ModifyFunction) error {
++	if testWrapper, ok := wrapper.(*testWrapper); ok {
++		wrapper = testWrapper.Wrapper
++	}
++	waiter, err := ModifyWithVaultSyncCapability(wrapper, capability, modify)
++	waiter.Wait()
++	return err
++}
++
++func issue150MutateFolder(cfg *Configuration, folderID string, modify func(*FolderConfiguration)) {
++	for index := range cfg.Folders {
++		if cfg.Folders[index].ID == folderID {
++			modify(&cfg.Folders[index])
++			return
++		}
++	}
++}
++
++func issue150RemoveFolder(cfg *Configuration, folderID string) {
++	filtered := make([]FolderConfiguration, 0, len(cfg.Folders)-1)
++	for _, folder := range cfg.Folders {
++		if folder.ID != folderID {
++			filtered = append(filtered, folder)
++		}
++	}
++	cfg.Folders = filtered
++}
++
++func issue150UnshareFolder(cfg *Configuration, folderID string, deviceID protocol.DeviceID) {
++	issue150MutateFolder(cfg, folderID, func(folder *FolderConfiguration) {
++		filtered := make([]FolderDeviceConfiguration, 0, len(folder.Devices)-1)
++		for _, device := range folder.Devices {
++			if device.DeviceID != deviceID {
++				filtered = append(filtered, device)
++			}
++		}
++		folder.Devices = filtered
++	})
++}
++
++func issue150ExpectSafetyStop(t *testing.T, err error) {
++	t.Helper()
++	if err == nil {
++		t.Fatal("configuration mutation succeeded, want #150 safety stop")
++	}
++	if !errors.Is(err, ErrVaultSyncReceiveSideSafetyStop) {
++		t.Fatalf("configuration error %q does not preserve the #150 safety code", err)
++	}
++	if got := err.Error(); got != issue150ConfigSafetyStop {
++		t.Fatalf("configuration error = %q, want exact path-free %q", got, issue150ConfigSafetyStop)
++	}
++}
++
++func issue150ExpectConfiguration(t *testing.T, wrapper Wrapper, expected Configuration) {
++	t.Helper()
++	if got := wrapper.RawCopy(); !reflect.DeepEqual(got, expected) {
++		t.Fatalf("configuration mismatch:\n got=%+v\nwant=%+v", got, expected)
++	}
++}
++
++func issue150ExpectSubscriberCalls(t *testing.T, spy *issue150SubscriberSpy, verify, commit int32) {
++	t.Helper()
++	if got := spy.verifyCalls.Load(); got != verify {
++		t.Fatalf("subscriber VerifyConfiguration calls = %d, want %d", got, verify)
++	}
++	if got := spy.commitCalls.Load(); got != commit {
++		t.Fatalf("subscriber CommitConfiguration calls = %d, want %d", got, commit)
++	}
++}
+diff --git a/lib/config/vaultsync_capability.go b/lib/config/vaultsync_capability.go
+new file mode 100644
+index 0000000..013f729
+--- /dev/null
++++ b/lib/config/vaultsync_capability.go
+@@ -0,0 +1,263 @@
++// Copyright (C) 2026 The Syncthing Authors.
++//
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this file,
++// You can obtain one at https://mozilla.org/MPL/2.0/.
++
++package config
++
++import (
++	"errors"
++	"reflect"
++	"slices"
++	"sync/atomic"
++
++	"github.com/syncthing/syncthing/lib/protocol"
++)
++
++var ErrVaultSyncReceiveSideSafetyStop = errors.New("vaultsync-conflict-retention-safety-stop")
++
++type vaultSyncConfigOperation uint8
++
++const (
++	vaultSyncConfigOperationRemoveFolder vaultSyncConfigOperation = iota + 1
++	vaultSyncConfigOperationSetFolderPaused
++	vaultSyncConfigOperationShareFolder
++	vaultSyncConfigOperationUnshareFolder
++)
++
++// VaultSyncConfigCapability authorizes one exact protected-folder config
++// transition. Copies share the same one-shot state.
++type VaultSyncConfigCapability struct {
++	state *vaultSyncConfigCapabilityState
++}
++
++type vaultSyncConfigCapabilityState struct {
++	consumed  atomic.Bool
++	operation vaultSyncConfigOperation
++	folderID  string
++	paused    bool
++	deviceID  protocol.DeviceID
++}
++
++func NewVaultSyncRemoveFolderCapability(folderID string) VaultSyncConfigCapability {
++	return newVaultSyncConfigCapability(vaultSyncConfigOperationRemoveFolder, folderID, false, protocol.EmptyDeviceID)
++}
++
++func NewVaultSyncSetFolderPausedCapability(folderID string, paused bool) VaultSyncConfigCapability {
++	return newVaultSyncConfigCapability(vaultSyncConfigOperationSetFolderPaused, folderID, paused, protocol.EmptyDeviceID)
++}
++
++func NewVaultSyncShareFolderCapability(folderID string, deviceID protocol.DeviceID) VaultSyncConfigCapability {
++	return newVaultSyncConfigCapability(vaultSyncConfigOperationShareFolder, folderID, false, deviceID)
++}
++
++func NewVaultSyncUnshareFolderCapability(folderID string, deviceID protocol.DeviceID) VaultSyncConfigCapability {
++	return newVaultSyncConfigCapability(vaultSyncConfigOperationUnshareFolder, folderID, false, deviceID)
++}
++
++func newVaultSyncConfigCapability(operation vaultSyncConfigOperation, folderID string, paused bool, deviceID protocol.DeviceID) VaultSyncConfigCapability {
++	return VaultSyncConfigCapability{
++		state: &vaultSyncConfigCapabilityState{
++			operation: operation,
++			folderID:  folderID,
++			paused:    paused,
++			deviceID:  deviceID,
++		},
++	}
++}
++
++func (c *vaultSyncConfigCapabilityState) consume() bool {
++	return c != nil && c.consumed.CompareAndSwap(false, true)
++}
++
++// EnableVaultSyncReceiveSideProtection opts this wrapper into fail-closed
++// protected-folder configuration verification.
++func EnableVaultSyncReceiveSideProtection(cfg Wrapper) error {
++	w, ok := cfg.(*wrapper)
++	if !ok {
++		return ErrVaultSyncReceiveSideSafetyStop
++	}
++
++	w.mut.Lock()
++	w.vaultSyncReceiveSideProtection = true
++	w.mut.Unlock()
++	return nil
++}
++
++// ModifyWithVaultSyncCapability queues one config change with an exact,
++// one-shot protected-folder authorization.
++func ModifyWithVaultSyncCapability(cfg Wrapper, capability VaultSyncConfigCapability, modify ModifyFunction) (Waiter, error) {
++	w, ok := cfg.(*wrapper)
++	if !ok || capability.state == nil {
++		return noopWaiter{}, ErrVaultSyncReceiveSideSafetyStop
++	}
++	return w.modifyQueuedWithVaultSyncCapability(modify, capability.state, true)
++}
++
++// prepareVaultSyncConfigurationLocked validates both the caller-provided raw
++// config and all deterministic changes derived by Configuration.prepare.
++func (w *wrapper) prepareVaultSyncConfigurationLocked(to Configuration, capability *vaultSyncConfigCapabilityState, capabilityRequested bool) (Configuration, bool, error) {
++	from := w.cfg
++
++	if capabilityRequested {
++		expected, ok := capability.expectedConfiguration(from, w.myID)
++		if !ok || !reflect.DeepEqual(to, expected) {
++			return Configuration{}, false, ErrVaultSyncReceiveSideSafetyStop
++		}
++
++		preparedTo := to.Copy()
++		if err := preparedTo.prepare(w.myID); err != nil {
++			return Configuration{}, false, ErrVaultSyncReceiveSideSafetyStop
++		}
++		preparedExpected, ok := capability.expectedPreparedConfiguration(expected)
++		if !ok || !reflect.DeepEqual(preparedTo, preparedExpected) || reflect.DeepEqual(from, preparedTo) {
++			return Configuration{}, false, ErrVaultSyncReceiveSideSafetyStop
++		}
++		return preparedTo, true, nil
++	}
++
++	if !vaultSyncProtectedFoldersEqual(from, to) {
++		return Configuration{}, false, ErrVaultSyncReceiveSideSafetyStop
++	}
++	if reflect.DeepEqual(from, to) {
++		return to, false, nil
++	}
++
++	protected := vaultSyncHasProtectedFolder(from) || vaultSyncHasProtectedFolder(to)
++	preparedTo := to.Copy()
++	if err := preparedTo.prepare(w.myID); err != nil {
++		if protected {
++			return Configuration{}, false, ErrVaultSyncReceiveSideSafetyStop
++		}
++		return Configuration{}, false, err
++	}
++	if !vaultSyncProtectedFoldersEqual(from, preparedTo) {
++		return Configuration{}, false, ErrVaultSyncReceiveSideSafetyStop
++	}
++	return preparedTo, !reflect.DeepEqual(from, preparedTo), nil
++}
++
++func (c *vaultSyncConfigCapabilityState) expectedConfiguration(from Configuration, myID protocol.DeviceID) (Configuration, bool) {
++	if c == nil || c.folderID == "" {
++		return Configuration{}, false
++	}
++
++	expected := from.Copy()
++	folder, index, ok := expected.Folder(c.folderID)
++	if !ok || !vaultSyncFolderProtected(folder) {
++		return Configuration{}, false
++	}
++
++	switch c.operation {
++	case vaultSyncConfigOperationRemoveFolder:
++		expected.Folders = append(expected.Folders[:index], expected.Folders[index+1:]...)
++
++	case vaultSyncConfigOperationSetFolderPaused:
++		if folder.Paused == c.paused {
++			return Configuration{}, false
++		}
++		expected.Folders[index].Paused = c.paused
++
++	case vaultSyncConfigOperationShareFolder:
++		if c.deviceID == protocol.EmptyDeviceID {
++			return Configuration{}, false
++		}
++		if _, _, ok := expected.Device(c.deviceID); !ok {
++			return Configuration{}, false
++		}
++		if folder.SharedWith(c.deviceID) {
++			return Configuration{}, false
++		}
++		expected.Folders[index].Devices = append(expected.Folders[index].Devices, FolderDeviceConfiguration{DeviceID: c.deviceID})
++
++	case vaultSyncConfigOperationUnshareFolder:
++		if c.deviceID == protocol.EmptyDeviceID || c.deviceID == myID || !folder.SharedWith(c.deviceID) {
++			return Configuration{}, false
++		}
++		devices := make([]FolderDeviceConfiguration, 0, len(folder.Devices)-1)
++		for _, device := range folder.Devices {
++			if device.DeviceID != c.deviceID {
++				devices = append(devices, device)
++			}
++		}
++		expected.Folders[index].Devices = devices
++
++	default:
++		return Configuration{}, false
++	}
++
++	return expected, true
++}
++
++func (c *vaultSyncConfigCapabilityState) expectedPreparedConfiguration(expected Configuration) (Configuration, bool) {
++	if c == nil {
++		return Configuration{}, false
++	}
++
++	// The wrapped configuration is already prepared. Normalize only the exact
++	// operation-local ordering that this capability adds; running prepare on the
++	// expectation would bless unrelated derived changes as part of the grant.
++	if c.operation == vaultSyncConfigOperationShareFolder {
++		_, index, ok := expected.Folder(c.folderID)
++		if !ok {
++			return Configuration{}, false
++		}
++		slices.SortFunc(expected.Folders[index].Devices, func(a, b FolderDeviceConfiguration) int {
++			return a.DeviceID.Compare(b.DeviceID)
++		})
++	}
++	return expected, true
++}
++
++func vaultSyncProtectedFoldersEqual(from, to Configuration) bool {
++	protectedIDs := make(map[string]struct{})
++	for _, folder := range from.Folders {
++		if vaultSyncFolderProtected(folder) {
++			protectedIDs[folder.ID] = struct{}{}
++		}
++	}
++	for _, folder := range to.Folders {
++		if vaultSyncFolderProtected(folder) {
++			protectedIDs[folder.ID] = struct{}{}
++		}
++	}
++
++	for folderID := range protectedIDs {
++		fromFolder, fromOK := vaultSyncUniqueFolder(from, folderID)
++		toFolder, toOK := vaultSyncUniqueFolder(to, folderID)
++		if !fromOK || !toOK || !reflect.DeepEqual(fromFolder, toFolder) {
++			return false
++		}
++	}
++	return true
++}
++
++func vaultSyncUniqueFolder(cfg Configuration, folderID string) (FolderConfiguration, bool) {
++	var match FolderConfiguration
++	found := false
++	for _, folder := range cfg.Folders {
++		if folder.ID != folderID {
++			continue
++		}
++		if found {
++			return FolderConfiguration{}, false
++		}
++		match = folder
++		found = true
++	}
++	return match, found
++}
++
++func vaultSyncHasProtectedFolder(cfg Configuration) bool {
++	for _, folder := range cfg.Folders {
++		if vaultSyncFolderProtected(folder) {
++			return true
++		}
++	}
++	return false
++}
++
++func vaultSyncFolderProtected(folder FolderConfiguration) bool {
++	return folder.Type != FolderTypeSendOnly
++}
+diff --git a/lib/config/wrapper.go b/lib/config/wrapper.go
+index 9ecf67a..7617681 100644
+--- a/lib/config/wrapper.go
++++ b/lib/config/wrapper.go
+@@ -133,9 +133,10 @@ type wrapper struct {
+ 	myID     protocol.DeviceID
+ 	queue    chan modifyEntry
+ 
+-	waiter Waiter // Latest ongoing config change
+-	subs   []Committer
+-	mut    sync.Mutex
++	waiter                         Waiter // Latest ongoing config change
++	subs                           []Committer
++	vaultSyncReceiveSideProtection bool
++	mut                            sync.Mutex
+ 
+ 	requiresRestart atomic.Bool
+ }
+@@ -223,9 +224,15 @@ func (w *wrapper) Modify(fn ModifyFunction) (Waiter, error) {
+ }
+ 
+ func (w *wrapper) modifyQueued(modifyFunc ModifyFunction) (Waiter, error) {
++	return w.modifyQueuedWithVaultSyncCapability(modifyFunc, nil, false)
++}
++
++func (w *wrapper) modifyQueuedWithVaultSyncCapability(modifyFunc ModifyFunction, capability *vaultSyncConfigCapabilityState, capabilityRequested bool) (Waiter, error) {
+ 	e := modifyEntry{
+-		modifyFunc: modifyFunc,
+-		res:        make(chan modifyResult),
++		modifyFunc:          modifyFunc,
++		vaultSyncCapability: capability,
++		capabilityRequested: capabilityRequested,
++		res:                 make(chan modifyResult),
+ 	}
+ 	select {
+ 	case w.queue <- e:
+@@ -256,6 +263,27 @@ func (w *wrapper) Serve(ctx context.Context) error {
+ 
+ 		var waiter Waiter = noopWaiter{}
+ 		var err error
++		var changed bool
++
++		if e.capabilityRequested && !e.vaultSyncCapability.consume() {
++			e.res <- modifyResult{
++				w:   waiter,
++				err: ErrVaultSyncReceiveSideSafetyStop,
++			}
++			continue
++		}
++		if e.capabilityRequested {
++			w.mut.Lock()
++			protectionEnabled := w.vaultSyncReceiveSideProtection
++			w.mut.Unlock()
++			if !protectionEnabled {
++				e.res <- modifyResult{
++					w:   waiter,
++					err: ErrVaultSyncReceiveSideSafetyStop,
++				}
++				continue
++			}
++		}
+ 
+ 		// Let the caller modify the config.
+ 		to := w.RawCopy()
+@@ -263,12 +291,21 @@ func (w *wrapper) Serve(ctx context.Context) error {
+ 
+ 		// Check if the config was actually changed at all.
+ 		w.mut.Lock()
+-		if !reflect.DeepEqual(w.cfg, to) {
+-			waiter, err = w.replaceLocked(to)
+-			if !saveTimerRunning {
+-				saveTimer.Reset(minSaveInterval)
+-				saveTimerRunning = true
++		if w.vaultSyncReceiveSideProtection {
++			to, changed, err = w.prepareVaultSyncConfigurationLocked(to, e.vaultSyncCapability, e.capabilityRequested)
++			if err == nil && changed {
++				waiter, err = w.replacePreparedLocked(to)
++				changed = err == nil
+ 			}
++		} else if e.capabilityRequested {
++			err = ErrVaultSyncReceiveSideSafetyStop
++		} else if !reflect.DeepEqual(w.cfg, to) {
++			waiter, err = w.replaceLocked(to)
++			changed = true
++		}
++		if changed && !saveTimerRunning {
++			saveTimer.Reset(minSaveInterval)
++			saveTimerRunning = true
+ 		}
+ 		w.mut.Unlock()
+ 
+@@ -302,11 +339,14 @@ func (w *wrapper) serveSave() {
+ }
+ 
+ func (w *wrapper) replaceLocked(to Configuration) (Waiter, error) {
+-	from := w.cfg
+-
+ 	if err := to.prepare(w.myID); err != nil {
+ 		return noopWaiter{}, err
+ 	}
++	return w.replacePreparedLocked(to)
++}
++
++func (w *wrapper) replacePreparedLocked(to Configuration) (Waiter, error) {
++	from := w.cfg
+ 
+ 	for _, sub := range w.subs {
+ 		sub, ok := sub.(Verifier)
+@@ -529,8 +569,10 @@ func (w *wrapper) Save() error {
+ func (w *wrapper) RequiresRestart() bool { return w.requiresRestart.Load() }
+ 
+ type modifyEntry struct {
+-	modifyFunc ModifyFunction
+-	res        chan modifyResult
++	modifyFunc          ModifyFunction
++	vaultSyncCapability *vaultSyncConfigCapabilityState
++	capabilityRequested bool
++	res                 chan modifyResult
+ }
+ 
+ type modifyResult struct {
+diff --git a/lib/model/folder_receive_side_readonly.go b/lib/model/folder_receive_side_readonly.go
+new file mode 100644
+index 0000000..b1f270b
+--- /dev/null
++++ b/lib/model/folder_receive_side_readonly.go
+@@ -0,0 +1,140 @@
++// Copyright (C) 2026 The Syncthing Authors.
++//
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this file,
++// You can obtain one at https://mozilla.org/MPL/2.0/.
++
++package model
++
++import (
++	"context"
++	"fmt"
++	"log/slog"
++	"time"
++
++	"github.com/syncthing/syncthing/lib/config"
++	"github.com/syncthing/syncthing/lib/fs"
++	"github.com/syncthing/syncthing/lib/ignore"
++	"github.com/syncthing/syncthing/lib/protocol"
++	"github.com/syncthing/syncthing/lib/stats"
++	"github.com/syncthing/syncthing/lib/versioner"
++)
++
++// receiveSideReadOnlyFolder is an application-selected hard floor. It keeps
++// the protocol-facing folder alive for authenticated index and upload traffic,
++// while deliberately providing no scanner, puller, watcher, cleanup, or local
++// filesystem service.
++type receiveSideReadOnlyFolder struct {
++	stateTracker
++}
++
++func (m *model) receiveSideReadOnlyFolder(cfg config.FolderConfiguration) bool {
++	if !m.options.ReceiveSideReadOnly {
++		return false
++	}
++	switch cfg.Type {
++	case config.FolderTypeSendReceive, config.FolderTypeReceiveOnly, config.FolderTypeReceiveEncrypted:
++		return true
++	default:
++		return false
++	}
++}
++
++func (m *model) receiveSideReadOnlyConfiguration(cfg config.Configuration) bool {
++	for _, folder := range cfg.Folders {
++		if m.receiveSideReadOnlyFolder(folder) {
++			return true
++		}
++	}
++	return false
++}
++
++func (m *model) folderLogAttr(cfg config.FolderConfiguration) slog.Attr {
++	if m.receiveSideReadOnlyFolder(cfg) {
++		return slog.Group("folder", slog.String("id", cfg.ID), slog.String("type", cfg.Type.String()))
++	}
++	return cfg.LogAttr()
++}
++
++func (m *model) protocolFolderLogAttr(folder protocol.Folder) slog.Attr {
++	if m.options.ReceiveSideReadOnly {
++		return slog.Group("folder", slog.String("id", folder.ID))
++	}
++	return folder.LogAttr()
++}
++
++func (m *model) folderDescription(cfg config.FolderConfiguration) string {
++	if m.receiveSideReadOnlyFolder(cfg) {
++		return cfg.ID
++	}
++	return cfg.Description()
++}
++
++// Need to hold m.mut when calling this.
++func (m *model) addAndStartReceiveSideReadOnlyFolderLocked(cfg config.FolderConfiguration) {
++	if _, ok := m.folderRunners.Get(cfg.ID); ok {
++		slog.Error("Cannot start already running receive-side read-only folder", slog.String("folder", cfg.ID))
++		panic("cannot start already running folder")
++	}
++
++	var ver versioner.Versioner
++	if cfg.Versioning.Type != "" {
++		var err error
++		ver, err = versioner.NewVaultSyncInspectionOnly(cfg)
++		if err != nil {
++			panic(fmt.Errorf("creating inspection-only versioner: %w", err))
++		}
++	}
++
++	ignores := ignore.New(cfg.Filesystem())
++	if cfg.Type != config.FolderTypeReceiveEncrypted {
++		if err := ignores.Load(".stignore"); err != nil && !fs.IsNotExist(err) {
++			slog.Warn("Receive-side read-only ignore policy could not be loaded", slog.String("folder", cfg.ID))
++		}
++	}
++
++	state := newStateTracker(cfg.ID, m.evLogger)
++	state.setError(config.ErrVaultSyncReceiveSideSafetyStop)
++
++	m.folderCfgs[cfg.ID] = cfg
++	m.folderIgnores[cfg.ID] = ignores
++	m.folderVersioners[cfg.ID] = ver
++	m.folderRunners.Add(cfg.ID, &receiveSideReadOnlyFolder{
++		stateTracker: state,
++	})
++
++	slog.Info("Receive-side read-only folder ready", slog.String("folder", cfg.ID), slog.String("type", cfg.Type.String()))
++}
++
++func (f *receiveSideReadOnlyFolder) Serve(ctx context.Context) error {
++	<-ctx.Done()
++	return nil
++}
++
++func (*receiveSideReadOnlyFolder) BringToFront(string)        {}
++func (*receiveSideReadOnlyFolder) Override()                  {}
++func (*receiveSideReadOnlyFolder) Revert()                    {}
++func (*receiveSideReadOnlyFolder) DelayScan(time.Duration)    {}
++func (*receiveSideReadOnlyFolder) ScheduleScan()              {}
++func (*receiveSideReadOnlyFolder) SchedulePull()              {}
++func (*receiveSideReadOnlyFolder) ScheduleForceRescan(string) {}
++
++func (*receiveSideReadOnlyFolder) Jobs(_, _ int) ([]string, []string, int) {
++	return nil, nil, 0
++}
++
++func (*receiveSideReadOnlyFolder) Scan([]string) error {
++	return config.ErrVaultSyncReceiveSideSafetyStop
++}
++
++func (*receiveSideReadOnlyFolder) Errors() []FileError {
++	return []FileError{{Err: config.ErrVaultSyncReceiveSideSafetyStop.Error()}}
++}
++
++func (*receiveSideReadOnlyFolder) WatchError() error {
++	return config.ErrVaultSyncReceiveSideSafetyStop
++}
++
++func (*receiveSideReadOnlyFolder) GetStatistics() (stats.FolderStatistics, error) {
++	return stats.FolderStatistics{}, nil
++}
+diff --git a/lib/model/indexhandler.go b/lib/model/indexhandler.go
+index 5cf73ab..5526a63 100644
+--- a/lib/model/indexhandler.go
++++ b/lib/model/indexhandler.go
+@@ -79,22 +79,22 @@ func newIndexHandler(conn protocol.Connection, downloads *deviceDownloadState, f
+ 			// the IndexID, or something else weird has
+ 			// happened. We send a full index to reset the
+ 			// situation.
+-			slog.Warn("Peer is delta index compatible, but seems out of sync with reality", conn.DeviceID().LogAttr(), folder.LogAttr())
++			slog.Warn("Peer is delta index compatible, but seems out of sync with reality", conn.DeviceID().LogAttr(), slog.String("folder", folder.ID))
+ 			startSequence = 0
+ 		} else {
+-			l.Debugf("Device %v folder %s is delta index compatible (mlv=%d)", conn.DeviceID().Short(), folder.Description(), startInfo.local.MaxSequence)
++			l.Debugf("Device %v folder %s is delta index compatible (mlv=%d)", conn.DeviceID().Short(), folder.ID, startInfo.local.MaxSequence)
+ 			startSequence = startInfo.local.MaxSequence
+ 		}
+ 
+ 	case 0:
+-		l.Debugf("Device %v folder %s has no index ID for us", conn.DeviceID().Short(), folder.Description())
++		l.Debugf("Device %v folder %s has no index ID for us", conn.DeviceID().Short(), folder.ID)
+ 
+ 	default:
+ 		// They say they've seen an index ID from us, but it's
+ 		// not the right one. Either they are confused or we
+ 		// must have reset our database since last talking to
+ 		// them. We'll start with a full index transfer.
+-		slog.Warn("Peer has mismatching index ID for us", conn.DeviceID().LogAttr(), folder.LogAttr(), slog.Group("indexid", slog.Any("ours", myIndexID), slog.Any("theirs", startInfo.local.IndexID)))
++		slog.Warn("Peer has mismatching index ID for us", conn.DeviceID().LogAttr(), slog.String("folder", folder.ID), slog.Group("indexid", slog.Any("ours", myIndexID), slog.Any("theirs", startInfo.local.IndexID)))
+ 		startSequence = 0
+ 	}
+ 
+@@ -109,7 +109,7 @@ func newIndexHandler(conn protocol.Connection, downloads *deviceDownloadState, f
+ 		// do not support delta indexes and we should clear any
+ 		// information we have from them before accepting their
+ 		// index, which will presumably be a full index.
+-		l.Debugf("Device %v folder %s does not announce an index ID", conn.DeviceID().Short(), folder.Description())
++		l.Debugf("Device %v folder %s does not announce an index ID", conn.DeviceID().Short(), folder.ID)
+ 		if err := sdb.DropAllFiles(folder.ID, conn.DeviceID()); err != nil {
+ 			return nil, err
+ 		}
+@@ -119,7 +119,7 @@ func newIndexHandler(conn protocol.Connection, downloads *deviceDownloadState, f
+ 		// will probably send us a full index. We drop any
+ 		// information we have and remember this new index ID
+ 		// instead.
+-		slog.Info("Peer has a new index ID", conn.DeviceID().LogAttr(), folder.LogAttr(), slog.Any("indexid", startInfo.remote.IndexID))
++		slog.Info("Peer has a new index ID", conn.DeviceID().LogAttr(), slog.String("folder", folder.ID), slog.Any("indexid", startInfo.remote.IndexID))
+ 		if err := sdb.DropAllFiles(folder.ID, conn.DeviceID()); err != nil {
+ 			return nil, err
+ 		}
+diff --git a/lib/model/issue150_inert_runner_test.go b/lib/model/issue150_inert_runner_test.go
+new file mode 100644
+index 0000000..9389025
+--- /dev/null
++++ b/lib/model/issue150_inert_runner_test.go
+@@ -0,0 +1,443 @@
++// Copyright (C) 2026 The Syncthing Authors.
++//
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this file,
++// You can obtain one at https://mozilla.org/MPL/2.0/.
++
++package model
++
++import (
++	"bytes"
++	"fmt"
++	"io"
++	"os"
++	"reflect"
++	"sort"
++	"sync"
++	"testing"
++	"time"
++
++	"github.com/syncthing/syncthing/lib/config"
++	"github.com/syncthing/syncthing/lib/fs"
++	"github.com/syncthing/syncthing/lib/protocol"
++	"github.com/syncthing/syncthing/lib/rand"
++	"github.com/syncthing/syncthing/lib/scanner"
++)
++
++const issue150TrackingFilesystemType fs.FilesystemType = "issue150-tracking"
++
++var issue150TrackingFilesystems sync.Map
++
++func init() {
++	fs.RegisterFilesystemType(issue150TrackingFilesystemType, func(root string, opts ...fs.Option) (fs.Filesystem, error) {
++		if existing, ok := issue150TrackingFilesystems.Load(root); ok {
++			return existing.(*issue150TrackingFilesystem), nil
++		}
++		created := &issue150TrackingFilesystem{
++			Filesystem: fs.NewFilesystem(fs.FilesystemTypeFake, root, opts...),
++		}
++		actual, _ := issue150TrackingFilesystems.LoadOrStore(root, created)
++		return actual.(*issue150TrackingFilesystem), nil
++	})
++}
++
++func TestIssue150ProtectedSendReceiveRemoteIndexPreservesLocalStateForEveryMaxConflictsValue(t *testing.T) {
++	for _, maxConflicts := range []int{0, 10, -1} {
++		t.Run(fmt.Sprintf("MaxConflicts=%d", maxConflicts), func(t *testing.T) {
++			m, folder, tracking := issue150InertRunnerModel(t, maxConflicts)
++			defer cleanupModel(m)
++
++			localFiles := issue150SeedLocalFixtures(t, m, folder)
++			conn := addFakeConn(m, device1, folder.ID)
++			beforeFilesystem := issue150FilesystemState(t, folder.Filesystem())
++			beforeLocalIndex := issue150LocalIndexState(t, m, folder.ID)
++			tracking.enableMutationTracking()
++
++			remoteContents := []byte("remote fixture")
++			conn.addFile(localFiles[0].Name, 0o644, protocol.FileInfoTypeFile, remoteContents)
++			remoteFull := issue150FixtureFile(t, localFiles[0].Name, remoteContents, device1.Short(), 1)
++			remoteFull.ModifiedS = localFiles[0].ModifiedS + 60
++			if err := m.Index(conn, &protocol.Index{
++				Folder:       folder.ID,
++				Files:        []protocol.FileInfo{remoteFull},
++				LastSequence: 1,
++			}); err != nil {
++				t.Fatal(err)
++			}
++
++			deltaContents := []byte("delta fixture")
++			const deltaName = "incoming.md"
++			conn.addFile(deltaName, 0o644, protocol.FileInfoTypeFile, deltaContents)
++			remoteDelta := issue150FixtureFile(t, deltaName, deltaContents, device1.Short(), 2)
++			if err := m.IndexUpdate(conn, &protocol.IndexUpdate{
++				Folder:       folder.ID,
++				Files:        []protocol.FileInfo{remoteDelta},
++				PrevSequence: 1,
++				LastSequence: 2,
++			}); err != nil {
++				t.Fatal(err)
++			}
++
++			if runner, ok := m.folderRunners.Get(folder.ID); !ok {
++				t.Fatal("protected folder runner is missing")
++			} else {
++				runner.SchedulePull()
++			}
++			issue150WaitForForbiddenRunnerActivity(tracking, conn)
++
++			if got := issue150NeedCount(t, m, folder.ID); got != 2 {
++				t.Errorf("authenticated remote need = %d, want 2", got)
++			}
++			for _, remote := range []protocol.FileInfo{remoteFull, remoteDelta} {
++				if _, ok, err := m.sdb.GetDeviceFile(folder.ID, device1, remote.Name); err != nil {
++					t.Fatal(err)
++				} else if !ok {
++					t.Errorf("authenticated remote index did not persist %q", remote.Name)
++				}
++			}
++			if got := tracking.mutationOperations(); len(got) != 0 {
++				t.Errorf("protected runner reached filesystem mutation operations: %v", got)
++			}
++			if got := conn.RequestCallCount(); got != 0 {
++				t.Errorf("protected runner made %d remote block requests", got)
++			}
++			if after := issue150FilesystemState(t, folder.Filesystem()); !reflect.DeepEqual(after, beforeFilesystem) {
++				t.Error("remote index processing changed the local filesystem")
++			}
++			if after := issue150LocalIndexState(t, m, folder.ID); !reflect.DeepEqual(after, beforeLocalIndex) {
++				t.Error("remote index processing changed the local index")
++			}
++		})
++	}
++}
++
++func TestIssue150ProtectedRunnerIgnoresAtomicReplaceDuringRemoteIndex(t *testing.T) {
++	m, folder, tracking := issue150InertRunnerModel(t, -1)
++	defer cleanupModel(m)
++
++	localFiles := issue150SeedLocalFixtures(t, m, folder)
++	conn := addFakeConn(m, device1, folder.ID)
++	beforeLocalIndex := issue150LocalIndexState(t, m, folder.ID)
++	tracking.enableMutationTracking()
++
++	replacementContents := []byte("replacement fixture")
++	remoteContents := []byte("remote fixture")
++	conn.addFile(localFiles[0].Name, 0o644, protocol.FileInfoTypeFile, remoteContents)
++	remote := issue150FixtureFile(t, localFiles[0].Name, remoteContents, device1.Short(), 1)
++	remote.ModifiedS = localFiles[0].ModifiedS + 60
++
++	runner, ok := m.folderRunners.Get(folder.ID)
++	if !ok {
++		t.Fatal("protected folder runner is missing")
++	}
++	start := make(chan struct{})
++	indexResult := make(chan error, 1)
++	replaceResult := make(chan error, 1)
++	go func() {
++		<-start
++		err := m.Index(conn, &protocol.Index{
++			Folder:       folder.ID,
++			Files:        []protocol.FileInfo{remote},
++			LastSequence: 1,
++		})
++		runner.SchedulePull()
++		indexResult <- err
++	}()
++	go func() {
++		<-start
++		const pendingName = "document.pending"
++		if err := fs.WriteFile(tracking.Filesystem, pendingName, replacementContents, 0o644); err != nil {
++			replaceResult <- err
++			return
++		}
++		replaceResult <- tracking.Filesystem.Rename(pendingName, localFiles[0].Name)
++	}()
++	close(start)
++	if err := <-indexResult; err != nil {
++		t.Fatal(err)
++	}
++	if err := <-replaceResult; err != nil {
++		t.Fatal(err)
++	}
++	issue150WaitForForbiddenRunnerActivity(tracking, conn)
++
++	if got := issue150NeedCount(t, m, folder.ID); got != 1 {
++		t.Errorf("authenticated remote need = %d, want 1", got)
++	}
++	if got := tracking.mutationOperations(); len(got) != 0 {
++		t.Errorf("protected runner reached filesystem mutation operations: %v", got)
++	}
++	if got := conn.RequestCallCount(); got != 0 {
++		t.Errorf("protected runner made %d remote block requests", got)
++	}
++	if after := issue150LocalIndexState(t, m, folder.ID); !reflect.DeepEqual(after, beforeLocalIndex) {
++		t.Error("concurrent remote index processing changed the local index")
++	}
++	if got, err := issue150ReadFixture(folder.Filesystem(), localFiles[0].Name); err != nil {
++		t.Fatal(err)
++	} else if !bytes.Equal(got, replacementContents) {
++		t.Error("external atomic replacement was not preserved")
++	}
++	for _, file := range localFiles[1:] {
++		got, err := issue150ReadFixture(folder.Filesystem(), file.Name)
++		if err != nil {
++			t.Fatal(err)
++		}
++		if !bytes.Equal(got, []byte("conflict fixture")) {
++			t.Errorf("pre-existing conflict-like file %q changed", file.Name)
++		}
++	}
++}
++
++func issue150InertRunnerModel(t *testing.T, maxConflicts int) (*testModel, config.FolderConfiguration, *issue150TrackingFilesystem) {
++	t.Helper()
++	cfg := defaultCfgWrapper.RawCopy()
++	folder := newFolderConfig()
++	folder.ID = "issue150-runner-" + rand.String(8)
++	folder.Label = "Issue 150 Fixture"
++	folder.Type = config.FolderTypeSendReceive
++	folder.FilesystemType = config.FilesystemType(issue150TrackingFilesystemType)
++	folder.Path = "issue150-runner-" + rand.String(16) + "?content=true"
++	folder.MaxConflicts = maxConflicts
++	folder.RescanIntervalS = 0
++	folder.FSWatcherEnabled = false
++	folder.PullerDelayS = 0
++	cfg.Folders = []config.FolderConfiguration{folder}
++
++	wrapper, cancel := newConfigWrapper(cfg)
++	t.Cleanup(cancel)
++	m := issue150NewReadOnlyModel(t, wrapper)
++	m.ServeBackground()
++	_ = m.ScanFolder(folder.ID)
++
++	value, ok := issue150TrackingFilesystems.Load(folder.Path)
++	if !ok {
++		cleanupModel(m)
++		t.Fatal("tracking filesystem was not constructed")
++	}
++	return m, folder, value.(*issue150TrackingFilesystem)
++}
++
++func issue150SeedLocalFixtures(t *testing.T, m *testModel, folder config.FolderConfiguration) []protocol.FileInfo {
++	t.Helper()
++	folderFS := folder.Filesystem()
++	localFiles := make([]protocol.FileInfo, 0, 13)
++	canonicalContents := []byte("local fixture")
++	writeFile(t, folderFS, "document.md", canonicalContents)
++	localFiles = append(localFiles, issue150FixtureFile(t, "document.md", canonicalContents, myID.Short(), 1))
++	for i := 0; i < 12; i++ {
++		name := fmt.Sprintf("document.sync-conflict-20200101-%06d-ABCDEF.md", i)
++		contents := []byte("conflict fixture")
++		writeFile(t, folderFS, name, contents)
++		localFiles = append(localFiles, issue150FixtureFile(t, name, contents, myID.Short(), int64(i+2)))
++	}
++	if err := m.sdb.Update(folder.ID, protocol.LocalDeviceID, localFiles); err != nil {
++		t.Fatal(err)
++	}
++	return localFiles
++}
++
++func issue150FixtureFile(t *testing.T, name string, contents []byte, device protocol.ShortID, sequence int64) protocol.FileInfo {
++	t.Helper()
++	blockSize := protocol.BlockSize(int64(len(contents)))
++	blocks, err := scanner.Blocks(t.Context(), bytes.NewReader(contents), blockSize, int64(len(contents)), nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	return protocol.FileInfo{
++		Name:         name,
++		Type:         protocol.FileInfoTypeFile,
++		Size:         int64(len(contents)),
++		ModifiedS:    time.Now().Unix(),
++		Permissions:  0o644,
++		RawBlockSize: int32(blockSize),
++		Blocks:       blocks,
++		Version:      protocol.Vector{}.Update(device),
++		Sequence:     sequence,
++	}
++}
++
++func issue150NeedCount(t *testing.T, m *testModel, folder string) int {
++	t.Helper()
++	counts, err := m.NeedSize(folder, protocol.LocalDeviceID)
++	if err != nil {
++		t.Fatal(err)
++	}
++	return counts.TotalItems()
++}
++
++func issue150LocalIndexState(t *testing.T, m *testModel, folder string) []protocol.FileInfo {
++	t.Helper()
++	sequence, err := m.Sequence(folder, protocol.LocalDeviceID)
++	if err != nil {
++		t.Fatal(err)
++	}
++	files := make([]protocol.FileInfo, 0)
++	all, checkError := m.sdb.AllLocalFiles(folder, protocol.LocalDeviceID)
++	for file := range all {
++		files = append(files, file)
++	}
++	if err := checkError(); err != nil {
++		t.Fatal(err)
++	}
++	sort.Slice(files, func(i, j int) bool { return files[i].Name < files[j].Name })
++	return append([]protocol.FileInfo{{Sequence: sequence}}, files...)
++}
++
++type issue150FilesystemEntry struct {
++	Mode          fs.FileMode
++	Size          int64
++	ModifiedNanos int64
++	Contents      []byte
++}
++
++func issue150FilesystemState(t *testing.T, filesystem fs.Filesystem) map[string]issue150FilesystemEntry {
++	t.Helper()
++	state := make(map[string]issue150FilesystemEntry)
++	if err := filesystem.Walk(".", func(path string, info fs.FileInfo, err error) error {
++		if err != nil {
++			return err
++		}
++		entry := issue150FilesystemEntry{
++			Mode:          info.Mode(),
++			Size:          info.Size(),
++			ModifiedNanos: info.ModTime().UnixNano(),
++		}
++		if info.IsRegular() {
++			contents, err := issue150ReadFixture(filesystem, path)
++			if err != nil {
++				return err
++			}
++			entry.Contents = contents
++		}
++		state[path] = entry
++		return nil
++	}); err != nil {
++		t.Fatal(err)
++	}
++	return state
++}
++
++func issue150ReadFixture(filesystem fs.Filesystem, path string) ([]byte, error) {
++	file, err := filesystem.Open(path)
++	if err != nil {
++		return nil, err
++	}
++	defer file.Close()
++	return io.ReadAll(file)
++}
++
++func issue150WaitForForbiddenRunnerActivity(tracking *issue150TrackingFilesystem, conn *fakeConnection) {
++	deadline := time.Now().Add(500 * time.Millisecond)
++	for time.Now().Before(deadline) {
++		if len(tracking.mutationOperations()) > 0 || conn.RequestCallCount() > 0 {
++			return
++		}
++		time.Sleep(5 * time.Millisecond)
++	}
++}
++
++type issue150TrackingFilesystem struct {
++	fs.Filesystem
++
++	mut        sync.Mutex
++	enabled    bool
++	operations []string
++}
++
++func (f *issue150TrackingFilesystem) enableMutationTracking() {
++	f.mut.Lock()
++	f.enabled = true
++	f.operations = nil
++	f.mut.Unlock()
++}
++
++func (f *issue150TrackingFilesystem) mutationOperations() []string {
++	f.mut.Lock()
++	defer f.mut.Unlock()
++	return append([]string(nil), f.operations...)
++}
++
++func (f *issue150TrackingFilesystem) record(operation string) {
++	f.mut.Lock()
++	defer f.mut.Unlock()
++	if f.enabled {
++		f.operations = append(f.operations, operation)
++	}
++}
++
++func (f *issue150TrackingFilesystem) Type() fs.FilesystemType {
++	return issue150TrackingFilesystemType
++}
++
++func (f *issue150TrackingFilesystem) Chmod(name string, mode fs.FileMode) error {
++	f.record("chmod")
++	return f.Filesystem.Chmod(name, mode)
++}
++
++func (f *issue150TrackingFilesystem) Lchown(name, uid, gid string) error {
++	f.record("lchown")
++	return f.Filesystem.Lchown(name, uid, gid)
++}
++
++func (f *issue150TrackingFilesystem) Chtimes(name string, atime, mtime time.Time) error {
++	f.record("chtimes")
++	return f.Filesystem.Chtimes(name, atime, mtime)
++}
++
++func (f *issue150TrackingFilesystem) Create(name string) (fs.File, error) {
++	f.record("create")
++	return f.Filesystem.Create(name)
++}
++
++func (f *issue150TrackingFilesystem) CreateSymlink(target, name string) error {
++	f.record("create-symlink")
++	return f.Filesystem.CreateSymlink(target, name)
++}
++
++func (f *issue150TrackingFilesystem) Mkdir(name string, mode fs.FileMode) error {
++	f.record("mkdir")
++	return f.Filesystem.Mkdir(name, mode)
++}
++
++func (f *issue150TrackingFilesystem) MkdirAll(name string, mode fs.FileMode) error {
++	f.record("mkdir-all")
++	return f.Filesystem.MkdirAll(name, mode)
++}
++
++func (f *issue150TrackingFilesystem) OpenFile(name string, flags int, mode fs.FileMode) (fs.File, error) {
++	if flags&(os.O_WRONLY|os.O_RDWR|os.O_CREATE|os.O_TRUNC|os.O_APPEND) != 0 {
++		f.record("open-file-for-write")
++	}
++	return f.Filesystem.OpenFile(name, flags, mode)
++}
++
++func (f *issue150TrackingFilesystem) Remove(name string) error {
++	f.record("remove")
++	return f.Filesystem.Remove(name)
++}
++
++func (f *issue150TrackingFilesystem) RemoveAll(name string) error {
++	f.record("remove-all")
++	return f.Filesystem.RemoveAll(name)
++}
++
++func (f *issue150TrackingFilesystem) Rename(oldName, newName string) error {
++	f.record("rename")
++	return f.Filesystem.Rename(oldName, newName)
++}
++
++func (f *issue150TrackingFilesystem) Hide(name string) error {
++	f.record("hide")
++	return f.Filesystem.Hide(name)
++}
++
++func (f *issue150TrackingFilesystem) Unhide(name string) error {
++	f.record("unhide")
++	return f.Filesystem.Unhide(name)
++}
++
++func (f *issue150TrackingFilesystem) SetXattr(path string, xattrs []protocol.Xattr, filter fs.XattrFilter) error {
++	f.record("set-xattr")
++	return f.Filesystem.SetXattr(path, xattrs, filter)
++}
+diff --git a/lib/model/issue150_runtime_privacy_test.go b/lib/model/issue150_runtime_privacy_test.go
+new file mode 100644
+index 0000000..fc67758
+--- /dev/null
++++ b/lib/model/issue150_runtime_privacy_test.go
+@@ -0,0 +1,524 @@
++// Copyright (C) 2026 The Syncthing Authors.
++//
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this file,
++// You can obtain one at https://mozilla.org/MPL/2.0/.
++
++package model
++
++import (
++	"bytes"
++	"context"
++	"errors"
++	"log/slog"
++	"os"
++	"path/filepath"
++	"reflect"
++	"slices"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/syncthing/syncthing/internal/db/sqlite"
++	"github.com/syncthing/syncthing/internal/slogutil"
++	"github.com/syncthing/syncthing/lib/config"
++	"github.com/syncthing/syncthing/lib/events"
++	"github.com/syncthing/syncthing/lib/fs"
++	"github.com/syncthing/syncthing/lib/protocol"
++	"github.com/syncthing/syncthing/lib/rand"
++	"github.com/syncthing/syncthing/lib/scanner"
++)
++
++func TestIssue150ProtectedRunnerStartsWithoutMarkerOrLocalIndex(t *testing.T) {
++	for _, folderType := range []config.FolderType{
++		config.FolderTypeSendReceive,
++		config.FolderTypeReceiveOnly,
++		config.FolderTypeReceiveEncrypted,
++	} {
++		t.Run(folderType.String(), func(t *testing.T) {
++			m, fcfg := issue150RuntimeModel(t, folderType, "?files=1&content=true&nostfolder=true", true)
++			defer cleanupModel(m)
++
++			state, _, err := m.State(fcfg.ID)
++			issue150RequireRuntimeSafetyError(t, err)
++			if state != FolderError.String() {
++				t.Errorf("protected state = %q, want %q", state, FolderError.String())
++			}
++			folderErrors, err := m.FolderErrors(fcfg.ID)
++			if err != nil {
++				t.Fatal(err)
++			}
++			if len(folderErrors) != 1 || folderErrors[0].Path != "" || folderErrors[0].Err != config.ErrVaultSyncReceiveSideSafetyStop.Error() {
++				t.Errorf("protected folder errors = %#v, want one path-free safety stop", folderErrors)
++			}
++
++			issue150RequireRuntimeSafetyError(t, m.ScanFolder(fcfg.ID))
++			issue150RequireRuntimeSafetyError(t, m.ScanFolderSubdirs(fcfg.ID, []string{"subdir"}))
++			m.Revert(fcfg.ID)
++
++			if _, err := fcfg.Filesystem().Lstat(config.DefaultMarkerName); !fs.IsNotExist(err) {
++				t.Errorf("protected startup created or accessed a persistent marker: %v", err)
++			}
++			counts, err := m.LocalSize(fcfg.ID, protocol.LocalDeviceID)
++			if err != nil {
++				t.Fatal(err)
++			}
++			if got := counts.TotalItems(); got != 0 {
++				t.Errorf("protected startup or scan persisted %d local index items", got)
++			}
++		})
++	}
++
++	for _, control := range []struct {
++		name       string
++		folderType config.FolderType
++	}{
++		{name: "receive-only-normal-control", folderType: config.FolderTypeReceiveOnly},
++		{name: "send-only-control", folderType: config.FolderTypeSendOnly},
++	} {
++		t.Run(control.name, func(t *testing.T) {
++			m, fcfg := issue150RuntimeModel(t, control.folderType, "?files=1&content=true&nostfolder=true", false)
++			defer cleanupModel(m)
++
++			if err := m.ScanFolder(fcfg.ID); err != nil {
++				t.Fatal(err)
++			}
++			if _, err := fcfg.Filesystem().Lstat(config.DefaultMarkerName); err != nil {
++				t.Errorf("normal startup did not retain marker semantics: %v", err)
++			}
++			counts, err := m.LocalSize(fcfg.ID, protocol.LocalDeviceID)
++			if err != nil {
++				t.Fatal(err)
++			}
++			if got := counts.TotalItems(); got == 0 {
++				t.Error("normal scan no longer persists its local index")
++			}
++		})
++	}
++}
++
++func TestIssue150ProtectedFullAndDeltaPersistAuthenticatedNeed(t *testing.T) {
++	m, fcfg := issue150RuntimeModel(t, config.FolderTypeReceiveOnly, "?content=true", true)
++	defer cleanupModel(m)
++	oldLevel := slogutil.PackageLevels()["model"]
++	slogutil.SetPackageLevel("model", slog.LevelDebug)
++	t.Cleanup(func() { slogutil.SetPackageLevel("model", oldLevel) })
++	slogutil.GlobalRecorder.Clear()
++	conn := addFakeConn(m, device1, fcfg.ID)
++
++	full := issue150RuntimeFile(t, "full-note.md", []byte("full"), device1.Short(), 1)
++	if err := m.Index(conn, &protocol.Index{
++		Folder:       fcfg.ID,
++		Files:        []protocol.FileInfo{full},
++		LastSequence: 1,
++	}); err != nil {
++		t.Fatal(err)
++	}
++	issue150ExpectNeed(t, m, fcfg.ID, 1)
++
++	delta := issue150RuntimeFile(t, "delta-note.md", []byte("delta"), device1.Short(), 2)
++	if err := m.IndexUpdate(conn, &protocol.IndexUpdate{
++		Folder:       fcfg.ID,
++		Files:        []protocol.FileInfo{delta},
++		PrevSequence: 1,
++		LastSequence: 2,
++	}); err != nil {
++		t.Fatal(err)
++	}
++	issue150ExpectNeed(t, m, fcfg.ID, 2)
++
++	for _, name := range []string{full.Name, delta.Name} {
++		if _, ok, err := m.sdb.GetDeviceFile(fcfg.ID, device1, name); err != nil {
++			t.Fatal(err)
++		} else if !ok {
++			t.Errorf("authenticated remote index did not persist %q", name)
++		}
++	}
++	logs := issue150RecordedLogs()
++	for _, secret := range []string{fcfg.Label, fcfg.Description(), fcfg.Path} {
++		if strings.Contains(logs, secret) {
++			t.Errorf("protected remote index log contains user-derived value %q: %s", secret, logs)
++		}
++	}
++}
++
++func TestIssue150ProtectedRequestKeepsReadsButDoesNotRecheckOrLeak(t *testing.T) {
++	for _, tc := range []struct {
++		name               string
++		folderType         config.FolderType
++		protected          bool
++		expectHashMismatch bool
++		expectRecheck      bool
++	}{
++		{name: "send-receive", folderType: config.FolderTypeSendReceive, protected: true, expectHashMismatch: true},
++		{name: "receive-only", folderType: config.FolderTypeReceiveOnly, protected: true, expectHashMismatch: true},
++		{name: "receive-encrypted", folderType: config.FolderTypeReceiveEncrypted, protected: true},
++		{name: "receive-only-normal-control", folderType: config.FolderTypeReceiveOnly, expectHashMismatch: true, expectRecheck: true},
++		{name: "send-only-control", folderType: config.FolderTypeSendOnly, expectHashMismatch: true, expectRecheck: true},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			m, fcfg := issue150RuntimeModel(t, tc.folderType, "?content=true", tc.protected)
++			defer cleanupModel(m)
++			if !tc.protected {
++				// Wait for the ordinary runner's initial scan before measuring the
++				// positive forced-rescan control.
++				if err := m.ScanFolder(fcfg.ID); err != nil {
++					t.Fatal(err)
++				}
++			}
++			conn := addFakeConn(m, device1, fcfg.ID)
++			folderFS := fcfg.Filesystem()
++
++			const name = "issue150-redaction-probe.md"
++			original := []byte("original bytes")
++			changed := []byte("modified bytes")
++			if len(original) != len(changed) {
++				t.Fatal("test fixture sizes differ")
++			}
++			if err := fs.WriteFile(folderFS, name, original, 0o644); err != nil {
++				t.Fatal(err)
++			}
++			local := issue150RuntimeFile(t, name, original, myID.Short(), 1)
++			if err := m.sdb.Update(fcfg.ID, protocol.LocalDeviceID, []protocol.FileInfo{local}); err != nil {
++				t.Fatal(err)
++			}
++
++			if tc.protected && tc.folderType != config.FolderTypeReceiveEncrypted {
++				const ignoredName = "issue150-redaction-probe-ignored.md"
++				if err := fs.WriteFile(folderFS, ".stignore", []byte(ignoredName+"\n"), 0o644); err != nil {
++					t.Fatal(err)
++				}
++				if err := fs.WriteFile(folderFS, ignoredName, []byte("ignored bytes"), 0o644); err != nil {
++					t.Fatal(err)
++				}
++				beforeSequence, err := m.Sequence(fcfg.ID, protocol.LocalDeviceID)
++				if err != nil {
++					t.Fatal(err)
++				}
++				oldLevel := slogutil.PackageLevels()["model"]
++				slogutil.SetPackageLevel("model", slog.LevelDebug)
++				t.Cleanup(func() { slogutil.SetPackageLevel("model", oldLevel) })
++				slogutil.GlobalRecorder.Clear()
++				ignoredResponse, err := m.Request(conn, &protocol.Request{Folder: fcfg.ID, Name: ignoredName, Size: len("ignored bytes")})
++				if err == nil {
++					t.Error("ignored protected request unexpectedly succeeded")
++				}
++				if ignoredResponse != nil {
++					ignoredResponse.Close()
++				}
++				afterSequence, err := m.Sequence(fcfg.ID, protocol.LocalDeviceID)
++				if err != nil {
++					t.Fatal(err)
++				}
++				if afterSequence != beforeSequence {
++					t.Errorf("ignored protected request changed local sequence from %d to %d", beforeSequence, afterSequence)
++				}
++				lines, _, err := m.CurrentIgnores(fcfg.ID)
++				if err != nil {
++					t.Fatalf("protected ignore inspection failed: %v", err)
++				}
++				if !slices.Contains(lines, ignoredName) {
++					t.Errorf("protected ignore inspection returned %q, want %q", lines, ignoredName)
++				}
++				logs := issue150RecordedLogs()
++				for _, secret := range []string{ignoredName, fcfg.Label, fcfg.Path} {
++					if strings.Contains(logs, secret) {
++						t.Errorf("ignored protected request log contains user-derived value %q: %s", secret, logs)
++					}
++				}
++			}
++
++			// Supported uploads remain available for every folder type.
++			res, err := m.Request(conn, &protocol.Request{Folder: fcfg.ID, Name: name, Size: len(original)})
++			if err != nil {
++				t.Fatalf("valid request was disabled: %v", err)
++			}
++			if got := append([]byte(nil), res.Data()...); !bytes.Equal(got, original) {
++				t.Errorf("valid request returned %q, want %q", got, original)
++			}
++			res.Close()
++
++			if err := fs.WriteFile(folderFS, name, changed, 0o644); err != nil {
++				t.Fatal(err)
++			}
++			oldLevel := slogutil.PackageLevels()["model"]
++			slogutil.SetPackageLevel("model", slog.LevelDebug)
++			t.Cleanup(func() { slogutil.SetPackageLevel("model", oldLevel) })
++			slogutil.GlobalRecorder.Clear()
++
++			mismatchResponse, err := m.Request(conn, &protocol.Request{
++				Folder: fcfg.ID,
++				Name:   name,
++				Size:   len(original),
++				Hash:   local.Blocks[0].Hash,
++			})
++			if tc.expectHashMismatch && err == nil {
++				t.Error("hash mismatch unexpectedly succeeded")
++			}
++			if !tc.expectHashMismatch && err != nil {
++				t.Errorf("receive-encrypted request semantics changed: %v", err)
++			}
++			if mismatchResponse != nil {
++				mismatchResponse.Close()
++			}
++
++			changedInDB := issue150WaitForBlockChange(t, m, fcfg.ID, name, local.Blocks[0].Hash)
++			if changedInDB != tc.expectRecheck {
++				t.Errorf("recheck mutation = %v, want %v", changedInDB, tc.expectRecheck)
++			}
++			if tc.protected {
++				logs := issue150RecordedLogs()
++				for _, secret := range []string{name, fcfg.Label, fcfg.Path} {
++					if strings.Contains(logs, secret) {
++						t.Errorf("protected request log contains user-derived value %q: %s", secret, logs)
++					}
++				}
++			}
++		})
++	}
++}
++
++func TestIssue150ReceiveSideReadOnlyDisablesAutoAcceptBeforeConfigOrFilesystem(t *testing.T) {
++	cfg := defaultAutoAcceptCfg.Copy()
++	autoAcceptRoot := filepath.Join(t.TempDir(), "auto-accept-root")
++	cfg.Defaults.Folder.FilesystemType = config.FilesystemTypeBasic
++	cfg.Defaults.Folder.Path = autoAcceptRoot
++	folder := newFolderConfig()
++	folder.ID = "issue150-sendonly-control"
++	folder.Type = config.FolderTypeSendOnly
++	folder.Devices = append(folder.Devices, config.FolderDeviceConfiguration{DeviceID: device1})
++	cfg.Folders = []config.FolderConfiguration{folder}
++
++	w, cancel := newConfigWrapper(cfg)
++	defer cancel()
++	m := issue150NewReadOnlyModel(t, w)
++	m.ServeBackground()
++	defer cleanupModel(m)
++	conn := addFakeConn(m, device1, folder.ID)
++	before := w.RawCopy()
++
++	const offeredFolder = "issue150-offered-fixture"
++	if err := m.ClusterConfig(conn, createClusterConfig(device1, offeredFolder)); err != nil {
++		t.Fatal(err)
++	}
++	if !reflect.DeepEqual(w.RawCopy(), before) {
++		t.Error("receive-side read-only auto-accept changed configuration")
++	}
++	if _, ok := w.Folder(offeredFolder); ok {
++		t.Error("receive-side read-only auto-accept added the offered folder")
++	}
++	if _, err := os.Stat(autoAcceptRoot); !os.IsNotExist(err) {
++		t.Errorf("receive-side read-only auto-accept touched its filesystem root: %v", err)
++	}
++}
++
++func TestIssue150ProtectedIntroducerDiffDoesNotLogLabelBeforeConfigGuard(t *testing.T) {
++	for _, tc := range []struct {
++		name         string
++		localShared  bool
++		remoteShared bool
++	}{
++		{name: "introduction", remoteShared: true},
++		{name: "deintroduction", localShared: true},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			cfg := defaultCfgWrapper.RawCopy()
++			_, introducerIndex, ok := cfg.Device(device1)
++			if !ok {
++				t.Fatal("#150 introducer fixture device is missing")
++			}
++			cfg.Devices[introducerIndex].Introducer = true
++
++			peer := cfg.Defaults.Device.Copy()
++			peer.DeviceID = device2
++			peer.Name = "Issue 150 peer"
++			if tc.localShared {
++				peer.IntroducedBy = device1
++			}
++			cfg.SetDevice(peer)
++
++			folder := newFolderConfig()
++			folder.ID = "issue150-protected-introducer"
++			folder.Label = "Issue 150 Local Vault Label"
++			folder.Type = config.FolderTypeReceiveOnly
++			folder.Devices = []config.FolderDeviceConfiguration{
++				{DeviceID: myID},
++				{DeviceID: device1},
++			}
++			if tc.localShared {
++				folder.Devices = append(folder.Devices, config.FolderDeviceConfiguration{
++					DeviceID:     device2,
++					IntroducedBy: device1,
++				})
++			}
++			cfg.Folders = []config.FolderConfiguration{folder}
++
++			wrapper, cancel := newConfigWrapper(cfg)
++			defer cancel()
++			if err := config.EnableVaultSyncReceiveSideProtection(wrapper); err != nil {
++				t.Fatalf("enable #150 config protection: %v", err)
++			}
++			m := issue150NewReadOnlyModel(t, wrapper)
++			m.ServeBackground()
++			defer cleanupModel(m)
++
++			conn := newFakeConnection(device1, m)
++			conn.folder = folder.ID
++			m.AddConnection(conn, protocol.Hello{})
++			remoteFolder := protocol.Folder{
++				ID:    folder.ID,
++				Label: "Issue 150 Remote Vault Label",
++				Devices: []protocol.Device{
++					{ID: myID},
++					{ID: device1},
++				},
++			}
++			if tc.remoteShared {
++				remoteFolder.Devices = append(remoteFolder.Devices, protocol.Device{ID: device2})
++			}
++
++			before := wrapper.RawCopy()
++			slogutil.GlobalRecorder.Clear()
++			if err := m.ClusterConfig(conn, &protocol.ClusterConfig{Folders: []protocol.Folder{remoteFolder}}); err != nil {
++				t.Fatalf("handle protected introducer config: %v", err)
++			}
++			if after := wrapper.RawCopy(); !reflect.DeepEqual(after, before) {
++				t.Fatalf("protected introducer diff changed config:\nbefore=%+v\nafter=%+v", before, after)
++			}
++			logs := issue150RecordedLogs()
++			for _, secret := range []string{folder.Label, remoteFolder.Label} {
++				if strings.Contains(logs, secret) {
++					t.Errorf("protected introducer log contains user-derived label %q: %s", secret, logs)
++				}
++			}
++		})
++	}
++}
++
++func issue150RuntimeModel(t *testing.T, folderType config.FolderType, pathSuffix string, receiveSideReadOnly bool) (*testModel, config.FolderConfiguration) {
++	t.Helper()
++	cfg := defaultCfgWrapper.RawCopy()
++	fcfg := newFolderConfig()
++	fcfg.ID = "issue150-runtime-" + rand.String(8)
++	fcfg.Label = "Issue 150 Redaction Probe"
++	fcfg.Type = folderType
++	fcfg.Path = "issue150-runtime-" + rand.String(16) + pathSuffix
++	fcfg.RescanIntervalS = 0
++	fcfg.FSWatcherEnabled = false
++	// Keep positive remote-index tests deterministic. Protected runners must
++	// remain inert independently of this delay; send-only scanning is unaffected.
++	fcfg.PullerDelayS = 3600
++	cfg.Folders = []config.FolderConfiguration{fcfg}
++
++	w, cancel := newConfigWrapper(cfg)
++	t.Cleanup(cancel)
++	var m *testModel
++	if receiveSideReadOnly {
++		m = issue150NewReadOnlyModel(t, w)
++	} else {
++		m = newModel(t, w, myID, nil)
++	}
++	m.ServeBackground()
++	return m, fcfg
++}
++
++func issue150NewReadOnlyModel(t *testing.T, cfg config.Wrapper) *testModel {
++	t.Helper()
++	evLogger := events.NewLogger()
++	mdb, err := sqlite.Open(t.TempDir())
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { mdb.Close() })
++	m := NewModelWithOptions(
++		cfg,
++		myID,
++		mdb,
++		nil,
++		evLogger,
++		protocol.NewKeyGenerator(),
++		ModelOptions{ReceiveSideReadOnly: true},
++	).(*model)
++	ctx, cancel := context.WithCancel(t.Context())
++	go evLogger.Serve(ctx)
++	return &testModel{
++		model:    m,
++		evCancel: cancel,
++		stopped:  make(chan struct{}),
++		t:        t,
++	}
++}
++
++func issue150RuntimeFile(t *testing.T, name string, data []byte, id protocol.ShortID, sequence int64) protocol.FileInfo {
++	t.Helper()
++	blockSize := protocol.BlockSize(int64(len(data)))
++	blocks, err := scanner.Blocks(t.Context(), bytes.NewReader(data), blockSize, int64(len(data)), nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	return protocol.FileInfo{
++		Name:         name,
++		Type:         protocol.FileInfoTypeFile,
++		Size:         int64(len(data)),
++		ModifiedS:    time.Now().Unix(),
++		Permissions:  0o644,
++		RawBlockSize: int32(blockSize),
++		Blocks:       blocks,
++		Version:      protocol.Vector{}.Update(id),
++		Sequence:     sequence,
++	}
++}
++
++func issue150ExpectNeed(t *testing.T, m *testModel, folder string, want int) {
++	t.Helper()
++	counts, err := m.NeedSize(folder, protocol.LocalDeviceID)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got := counts.TotalItems(); got != want {
++		t.Errorf("need items = %d, want %d (%v)", got, want, counts)
++	}
++}
++
++func issue150WaitForBlockChange(t *testing.T, m *testModel, folder, name string, originalHash []byte) bool {
++	t.Helper()
++	ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
++	defer cancel()
++	for {
++		fi, ok, err := m.CurrentFolderFile(folder, name)
++		if err != nil {
++			t.Fatal(err)
++		}
++		if ok && len(fi.Blocks) > 0 && !bytes.Equal(fi.Blocks[0].Hash, originalHash) {
++			return true
++		}
++		select {
++		case <-ctx.Done():
++			return false
++		case <-time.After(5 * time.Millisecond):
++		}
++	}
++}
++
++func issue150RecordedLogs() string {
++	var messages strings.Builder
++	for _, line := range slogutil.GlobalRecorder.Since(time.Time{}) {
++		messages.WriteString(line.Message)
++		messages.WriteByte('\n')
++	}
++	return messages.String()
++}
++
++func issue150RequireRuntimeSafetyError(t *testing.T, err error) {
++	t.Helper()
++	expected := config.ErrVaultSyncReceiveSideSafetyStop
++	if err == nil {
++		t.Fatalf("protected scan returned nil, want %q", expected.Error())
++	}
++	if !errors.Is(err, expected) {
++		t.Errorf("protected scan error = %v, want canonical safety stop", err)
++	}
++	if got := err.Error(); got != expected.Error() {
++		t.Errorf("protected scan error = %q, want exact path-free %q", got, expected.Error())
++	}
++}
+diff --git a/lib/model/model.go b/lib/model/model.go
+index 4c82a81..a6c4365 100644
+--- a/lib/model/model.go
++++ b/lib/model/model.go
+@@ -141,6 +141,7 @@ type model struct {
+ 	sdb            db.DB
+ 	protectedFiles []string
+ 	evLogger       events.Logger
++	options        ModelOptions
+ 
+ 	// constant or concurrency safe fields
+ 	progressEmitter *ProgressEmitter
+@@ -181,6 +182,12 @@ type model struct {
+ 	foldersRunning atomic.Int32
+ }
+ 
++// ModelOptions enables application-specific safety boundaries without
++// changing the default Syncthing runtime semantics.
++type ModelOptions struct {
++	ReceiveSideReadOnly bool
++}
++
+ var _ config.Verifier = &model{}
+ 
+ type folderFactory func(*model, *ignore.Matcher, config.FolderConfiguration, versioner.Versioner, events.Logger, *semaphore.Semaphore) service
+@@ -213,6 +220,12 @@ var (
+ // where it sends index information to connected peers and responds to requests
+ // for file data without altering the local folder in any way.
+ func NewModel(cfg config.Wrapper, id protocol.DeviceID, sdb db.DB, protectedFiles []string, evLogger events.Logger, keyGen *protocol.KeyGenerator) Model {
++	return NewModelWithOptions(cfg, id, sdb, protectedFiles, evLogger, keyGen, ModelOptions{})
++}
++
++// NewModelWithOptions creates a model with explicitly selected application
++// safety boundaries. The zero value retains the standard Syncthing behavior.
++func NewModelWithOptions(cfg config.Wrapper, id protocol.DeviceID, sdb db.DB, protectedFiles []string, evLogger events.Logger, keyGen *protocol.KeyGenerator, options ModelOptions) Model {
+ 	spec := svcutil.SpecWithDebugLogger()
+ 	m := &model{
+ 		Supervisor: suture.New("model", spec),
+@@ -223,6 +236,7 @@ func NewModel(cfg config.Wrapper, id protocol.DeviceID, sdb db.DB, protectedFile
+ 		sdb:            sdb,
+ 		protectedFiles: protectedFiles,
+ 		evLogger:       evLogger,
++		options:        options,
+ 
+ 		// constant or concurrency safe fields
+ 		progressEmitter:      NewProgressEmitter(cfg, evLogger),
+@@ -293,11 +307,23 @@ func (m *model) serve(ctx context.Context) error {
+ 	}
+ }
+ 
++// WaitForStartup blocks until the initial configuration has been subscribed
++// and applied. VaultSync can invoke an exact one-shot configuration capability
++// as soon as App.Start returns; without this barrier, an immediate change can
++// precede Subscribe and skip the model's authorized cleanup semantics (#150).
++// This stays off the broad Model interface so ordinary Syncthing callers and
++// generated mocks retain their existing startup contract.
++func (m *model) WaitForStartup() {
++	<-m.started
++}
++
+ func (m *model) initFolders(cfg config.Configuration) error {
+ 	clusterConfigDevices := make(deviceIDSet, len(cfg.Devices))
+ 	for _, folderCfg := range cfg.Folders {
+ 		if folderCfg.Paused {
+-			folderCfg.CreateRoot()
++			if !m.receiveSideReadOnlyFolder(folderCfg) {
++				folderCfg.CreateRoot()
++			}
+ 			continue
+ 		}
+ 		err := m.newFolder(folderCfg, cfg.Options.CacheIgnoredFiles)
+@@ -307,8 +333,10 @@ func (m *model) initFolders(cfg config.Configuration) error {
+ 		clusterConfigDevices.add(folderCfg.DeviceIDs())
+ 	}
+ 
+-	ignoredDevices := observedDeviceSet(m.cfg.IgnoredDevices())
+-	m.cleanPending(cfg.DeviceMap(), cfg.FolderMap(), ignoredDevices, nil)
++	if !m.receiveSideReadOnlyConfiguration(cfg) {
++		ignoredDevices := observedDeviceSet(m.cfg.IgnoredDevices())
++		m.cleanPending(cfg.DeviceMap(), cfg.FolderMap(), ignoredDevices, nil)
++	}
+ 
+ 	m.sendClusterConfig(clusterConfigDevices.AsSlice())
+ 	return nil
+@@ -336,6 +364,11 @@ func (m *model) fatal(err error) {
+ 
+ // Need to hold lock on m.mut when calling this.
+ func (m *model) addAndStartFolderLocked(cfg config.FolderConfiguration, cacheIgnoredFiles bool) {
++	if m.receiveSideReadOnlyFolder(cfg) {
++		m.addAndStartReceiveSideReadOnlyFolderLocked(cfg)
++		return
++	}
++
+ 	ignores := ignore.New(cfg.Filesystem(), ignore.WithCache(cacheIgnoredFiles))
+ 	if cfg.Type != config.FolderTypeReceiveEncrypted {
+ 		if err := ignores.Load(".stignore"); err != nil && !fs.IsNotExist(err) {
+@@ -459,8 +492,8 @@ func (m *model) warnAboutOverwritingProtectedFiles(cfg config.FolderConfiguratio
+ }
+ 
+ func (m *model) removeFolder(cfg config.FolderConfiguration) {
+-	slog.Info("Removing folder", cfg.LogAttr())
+-	defer slog.Info("Removed folder", cfg.LogAttr())
++	slog.Info("Removing folder", m.folderLogAttr(cfg))
++	defer slog.Info("Removed folder", m.folderLogAttr(cfg))
+ 
+ 	m.mut.RLock()
+ 	wait := m.folderRunners.StopAndWaitChan(cfg.ID, 0)
+@@ -550,11 +583,11 @@ func (m *model) restartFolder(from, to config.FolderConfiguration, cacheIgnoredF
+ 
+ 	switch {
+ 	case to.Paused:
+-		slog.Info("Paused folder", to.LogAttr())
++		slog.Info("Paused folder", m.folderLogAttr(to))
+ 	case from.Paused:
+-		slog.Info("Unpaused folder", to.LogAttr())
++		slog.Info("Unpaused folder", m.folderLogAttr(to))
+ 	default:
+-		slog.Info("Restarted folder", to.LogAttr())
++		slog.Info("Restarted folder", m.folderLogAttr(to))
+ 	}
+ 
+ 	return nil
+@@ -1170,7 +1203,7 @@ func (m *model) handleIndex(conn protocol.Connection, folder string, fs []protoc
+ 	l.Debugf("%v (in): %s / %q: %d files", op, deviceID, folder, len(fs))
+ 
+ 	if cfg, ok := m.cfg.Folder(folder); !ok || !cfg.SharedWith(deviceID) {
+-		slog.Warn(`Operation for unexpected folder ID; ensure that the folder exists and that this device is selected under "Share With" in the folder configuration.`, slog.String("operation", op), cfg.LogAttr(), deviceID.LogAttr())
++		slog.Warn(`Operation for unexpected folder ID; ensure that the folder exists and that this device is selected under "Share With" in the folder configuration.`, slog.String("operation", op), m.folderLogAttr(cfg), deviceID.LogAttr())
+ 		return fmt.Errorf("%s: %w", folder, ErrFolderMissing)
+ 	} else if cfg.Paused {
+ 		l.Debugf("%v for paused folder (ID %q) sent from device %q.", op, folder, deviceID)
+@@ -1241,11 +1274,11 @@ func (m *model) ClusterConfig(conn protocol.Connection, cm *protocol.ClusterConf
+ 			}
+ 		}
+ 		if info.remote.ID == protocol.EmptyDeviceID {
+-			slog.Warn("Device sent cluster-config without the device info for the remote", folder.LogAttr(), deviceID.LogAttr())
++			slog.Warn("Device sent cluster-config without the device info for the remote", m.protocolFolderLogAttr(folder), deviceID.LogAttr())
+ 			return errMissingRemoteInClusterConfig
+ 		}
+ 		if info.local.ID == protocol.EmptyDeviceID {
+-			slog.Warn("Device sent cluster-config without the device info for us locally", folder.LogAttr(), deviceID.LogAttr())
++			slog.Warn("Device sent cluster-config without the device info for us locally", m.protocolFolderLogAttr(folder), deviceID.LogAttr())
+ 			return errMissingLocalInClusterConfig
+ 		}
+ 		ccDeviceInfos[folder.ID] = info
+@@ -1259,7 +1292,7 @@ func (m *model) ClusterConfig(conn protocol.Connection, cm *protocol.ClusterConf
+ 	}
+ 
+ 	// Needs to happen outside of the mut, as can cause CommitConfiguration
+-	if deviceCfg.AutoAcceptFolders {
++	if deviceCfg.AutoAcceptFolders && !m.options.ReceiveSideReadOnly {
+ 		w, _ := m.cfg.Modify(func(cfg *config.Configuration) {
+ 			changedFcfg := make(map[string]config.FolderConfiguration)
+ 			haveFcfg := cfg.FolderMap()
+@@ -1410,7 +1443,7 @@ func (m *model) ccHandleFolders(folders []protocol.Folder, deviceCfg config.Devi
+ 		if !ok {
+ 			indexHandlers.Remove(folder.ID)
+ 			if deviceCfg.IgnoredFolder(folder.ID) {
+-				slog.Info("Ignoring announced folder", folder.LogAttr(), deviceID.LogAttr())
++				slog.Info("Ignoring announced folder", m.protocolFolderLogAttr(folder), deviceID.LogAttr())
+ 				continue
+ 			}
+ 			delete(expiredPending, folder.ID)
+@@ -1436,7 +1469,7 @@ func (m *model) ccHandleFolders(folders []protocol.Folder, deviceCfg config.Devi
+ 				"folderLabel": folder.Label,
+ 				"device":      deviceID.String(),
+ 			})
+-			slog.Warn(`Unexpected folder ID in ClusterConfig; ensure that the folder exists and that this device is selected under "Share With" in the folder configuration.`, folder.LogAttr(), deviceID.LogAttr())
++			slog.Warn(`Unexpected folder ID in ClusterConfig; ensure that the folder exists and that this device is selected under "Share With" in the folder configuration.`, m.protocolFolderLogAttr(folder), deviceID.LogAttr())
+ 			continue
+ 		}
+ 
+@@ -1463,14 +1496,14 @@ func (m *model) ccHandleFolders(folders []protocol.Folder, deviceCfg config.Devi
+ 			m.mut.Unlock()
+ 			const msg = "Failed to verify encryption consistency"
+ 			if sameError {
+-				slog.Debug(msg, cfg.LogAttr(), deviceID.LogAttr(), slogutil.Error(err))
++				slog.Debug(msg, m.folderLogAttr(cfg), deviceID.LogAttr(), slogutil.Error(err))
+ 			} else {
+ 				var rerr *redactedError
+ 				if errors.As(err, &rerr) {
+ 					err = rerr.redacted
+ 				}
+ 				m.evLogger.Log(events.Failure, err.Error())
+-				slog.Error(msg, cfg.LogAttr(), deviceID.LogAttr(), slogutil.Error(err))
++				slog.Error(msg, m.folderLogAttr(cfg), deviceID.LogAttr(), slogutil.Error(err))
+ 			}
+ 			return tempIndexFolders, seenFolders, err
+ 		}
+@@ -1497,7 +1530,7 @@ func (m *model) ccHandleFolders(folders []protocol.Folder, deviceCfg config.Devi
+ 	// Explicitly mark folders we offer, but the remote has not accepted
+ 	for folderID, cfg := range m.cfg.Folders() {
+ 		if _, seen := seenFolders[folderID]; !seen && cfg.SharedWith(deviceID) {
+-			l.Debugf("Remote device %v has not accepted sharing folder %s", deviceID.Short(), cfg.Description())
++			l.Debugf("Remote device %v has not accepted sharing folder %s", deviceID.Short(), m.folderDescription(cfg))
+ 			seenFolders[folderID] = remoteFolderNotSharing
+ 		}
+ 	}
+@@ -1591,6 +1624,9 @@ func (m *model) ccCheckEncryption(fcfg config.FolderConfiguration, folderDevice
+ 	if !ok {
+ 		var err error
+ 		token, err = readEncryptionToken(fcfg)
++		if m.receiveSideReadOnlyFolder(fcfg) && err != nil {
++			return config.ErrVaultSyncReceiveSideSafetyStop
++		}
+ 		if err != nil && !fs.IsNotExist(err) {
+ 			if rerr, ok := redactPathError(err); ok {
+ 				return rerr
+@@ -1687,13 +1723,13 @@ func (m *model) handleIntroductions(introducerCfg config.DeviceConfiguration, cm
+ 			}
+ 
+ 			if fcfg.Type != config.FolderTypeReceiveEncrypted && device.EncryptionPasswordToken != nil {
+-				slog.Warn("Cannot share folder in untrusted mode with introduced device because it requires a password", folder.LogAttr(), slog.Any("device", device.ID), slog.Any("introducer", introducerCfg.DeviceID))
++				slog.Warn("Cannot share folder in untrusted mode with introduced device because it requires a password", m.folderLogAttr(fcfg), slog.Any("device", device.ID), slog.Any("introducer", introducerCfg.DeviceID))
+ 				continue
+ 			}
+ 
+ 			// We don't yet share this folder with this device. Add the device
+ 			// to sharing list of the folder.
+-			slog.Info("Sharing folder vouched for by introducer", folder.LogAttr(), slog.Any("device", device.ID), slog.Any("introducer", introducerCfg.DeviceID))
++			slog.Info("Sharing folder vouched for by introducer", m.folderLogAttr(fcfg), slog.Any("device", device.ID), slog.Any("introducer", introducerCfg.DeviceID))
+ 			fcfg.Devices = append(fcfg.Devices, config.FolderDeviceConfiguration{
+ 				DeviceID:     device.ID,
+ 				IntroducedBy: introducerCfg.DeviceID,
+@@ -1711,7 +1747,7 @@ func (m *model) handleIntroductions(introducerCfg config.DeviceConfiguration, cm
+ }
+ 
+ // handleDeintroductions handles removals of devices/shares that are removed by an introducer device
+-func (*model) handleDeintroductions(introducerCfg config.DeviceConfiguration, foldersDevices folderDeviceSet, folders map[string]config.FolderConfiguration, devices map[protocol.DeviceID]config.DeviceConfiguration) (map[string]config.FolderConfiguration, map[protocol.DeviceID]config.DeviceConfiguration, bool) {
++func (m *model) handleDeintroductions(introducerCfg config.DeviceConfiguration, foldersDevices folderDeviceSet, folders map[string]config.FolderConfiguration, devices map[protocol.DeviceID]config.DeviceConfiguration) (map[string]config.FolderConfiguration, map[protocol.DeviceID]config.DeviceConfiguration, bool) {
+ 	if introducerCfg.SkipIntroductionRemovals {
+ 		return folders, devices, false
+ 	}
+@@ -1730,7 +1766,7 @@ func (*model) handleDeintroductions(introducerCfg config.DeviceConfiguration, fo
+ 				// We could not find that folder shared on the
+ 				// introducer with the device that was introduced to us.
+ 				// We should follow and unshare as well.
+-				slog.Info("Unsharing folder as introducer no longer shares the folder with that device", folderCfg.LogAttr(), slog.Any("device", folderCfg.Devices[k].DeviceID), slog.Any("introducer", folderCfg.Devices[k].IntroducedBy))
++				slog.Info("Unsharing folder as introducer no longer shares the folder with that device", m.folderLogAttr(folderCfg), slog.Any("device", folderCfg.Devices[k].DeviceID), slog.Any("introducer", folderCfg.Devices[k].IntroducedBy))
+ 				folderCfg.Devices = append(folderCfg.Devices[:k], folderCfg.Devices[k+1:]...)
+ 				folders[folderID] = folderCfg
+ 				k--
+@@ -1975,38 +2011,80 @@ func (m *model) Request(conn protocol.Connection, req *protocol.Request) (out pr
+ 	if !ok {
+ 		// The folder might be already unpaused in the config, but not yet
+ 		// in the model.
+-		l.Debugf("Request from %s for file %s in unstarted folder %q", deviceID.Short(), req.Name, req.Folder)
++		if cfg, cfgOK := m.cfg.Folder(req.Folder); cfgOK && m.receiveSideReadOnlyFolder(cfg) {
++			l.Debugf("Protected request for unstarted folder from %s", deviceID.Short())
++		} else {
++			l.Debugf("Request from %s for file %s in unstarted folder %q", deviceID.Short(), req.Name, req.Folder)
++		}
+ 		return nil, protocol.ErrGeneric
+ 	}
++	protected := m.receiveSideReadOnlyFolder(folderCfg)
+ 
+ 	if !folderCfg.SharedWith(deviceID) {
+-		slog.Warn("Request for file in unshared folder", slog.String("folder", req.Folder), deviceID.LogAttr(), slogutil.FilePath(req.Name))
++		if protected {
++			slog.Warn("Protected request for unshared folder", slog.String("folder", req.Folder), deviceID.LogAttr())
++		} else {
++			slog.Warn("Request for file in unshared folder", slog.String("folder", req.Folder), deviceID.LogAttr(), slogutil.FilePath(req.Name))
++		}
+ 		return nil, protocol.ErrGeneric
+ 	}
+ 	if folderCfg.Paused {
+-		l.Debugf("Request from %s for file %s in paused folder %q", deviceID.Short(), req.Name, req.Folder)
++		if protected {
++			l.Debugf("Protected request for paused folder from %s", deviceID.Short())
++		} else {
++			l.Debugf("Request from %s for file %s in paused folder %q", deviceID.Short(), req.Name, req.Folder)
++		}
+ 		return nil, protocol.ErrGeneric
+ 	}
+ 
+ 	// Make sure the path is valid and in canonical form
+ 	if name, err := fs.Canonicalize(req.Name); err != nil {
+-		l.Debugf("Request from %s in folder %q for invalid filename %s", deviceID.Short(), req.Folder, req.Name)
++		if protected {
++			l.Debugf("Protected request from %s has an invalid filename", deviceID.Short())
++		} else {
++			l.Debugf("Request from %s in folder %q for invalid filename %s", deviceID.Short(), req.Folder, req.Name)
++		}
+ 		return nil, protocol.ErrGeneric
+ 	} else {
+ 		req.Name = name
+ 	}
+ 
+ 	if deviceID != protocol.LocalDeviceID {
+-		l.Debugf("%v REQ(in): %s: %q / %q o=%d s=%d t=%v", m, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size, req.FromTemporary)
++		if protected {
++			l.Debugf("%v protected REQ(in): %s folder=%q o=%d s=%d t=%v", m, deviceID.Short(), req.Folder, req.Offset, req.Size, req.FromTemporary)
++		} else {
++			l.Debugf("%v REQ(in): %s: %q / %q o=%d s=%d t=%v", m, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size, req.FromTemporary)
++		}
+ 	}
+ 
+ 	if fs.IsInternal(req.Name) {
+-		l.Debugf("%v REQ(in) for internal file: %s: %q / %q o=%d s=%d", m, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size)
++		if protected {
++			l.Debugf("%v protected REQ(in) for internal file: %s folder=%q o=%d s=%d", m, deviceID.Short(), req.Folder, req.Offset, req.Size)
++		} else {
++			l.Debugf("%v REQ(in) for internal file: %s: %q / %q o=%d s=%d", m, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size)
++		}
+ 		return nil, protocol.ErrInvalid
+ 	}
+ 
++	if protected && folderCfg.Type != config.FolderTypeReceiveEncrypted {
++		if folderIgnores == nil {
++			l.Debugf("%v protected REQ(in) has no ignore policy: %s folder=%q", m, deviceID.Short(), req.Folder)
++			return nil, protocol.ErrInvalid
++		}
++		if err := folderIgnores.Load(".stignore"); err != nil && !fs.IsNotExist(err) {
++			l.Debugf("%v protected REQ(in) could not load ignore policy: %s folder=%q", m, deviceID.Short(), req.Folder)
++			return nil, protocol.ErrInvalid
++		}
++	}
++	if folderIgnores == nil {
++		return nil, protocol.ErrInvalid
++	}
+ 	if folderIgnores.Match(req.Name).IsIgnored() {
+-		l.Debugf("%v REQ(in) for ignored file: %s: %q / %q o=%d s=%d", m, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size)
++		if protected {
++			l.Debugf("%v protected REQ(in) for ignored file: %s folder=%q o=%d s=%d", m, deviceID.Short(), req.Folder, req.Offset, req.Size)
++		} else {
++			l.Debugf("%v REQ(in) for ignored file: %s: %q / %q o=%d s=%d", m, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size)
++		}
+ 		return nil, protocol.ErrInvalid
+ 	}
+ 
+@@ -2033,7 +2111,11 @@ func (m *model) Request(conn protocol.Connection, req *protocol.Request) (out pr
+ 	folderFs := folderCfg.Filesystem()
+ 
+ 	if err := osutil.TraversesSymlink(folderFs, filepath.Dir(req.Name)); err != nil {
+-		l.Debugf("%v REQ(in) traversal check: %s - %s: %q / %q o=%d s=%d", m, err, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size)
++		if protected {
++			l.Debugf("%v protected REQ(in) traversal check failed: %s folder=%q o=%d s=%d", m, deviceID.Short(), req.Folder, req.Offset, req.Size)
++		} else {
++			l.Debugf("%v REQ(in) traversal check: %s - %s: %q / %q o=%d s=%d", m, err, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size)
++		}
+ 		return nil, protocol.ErrNoSuchFile
+ 	}
+ 
+@@ -2045,7 +2127,11 @@ func (m *model) Request(conn protocol.Connection, req *protocol.Request) (out pr
+ 		if info, err := folderFs.Lstat(tempFn); err != nil || !info.IsRegular() {
+ 			// Reject reads for anything that doesn't exist or is something
+ 			// other than a regular file.
+-			l.Debugf("%v REQ(in) failed stating temp file (%v): %s: %q / %q o=%d s=%d", m, err, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size)
++			if protected {
++				l.Debugf("%v protected REQ(in) failed stating temp file: %s folder=%q o=%d s=%d", m, deviceID.Short(), req.Folder, req.Offset, req.Size)
++			} else {
++				l.Debugf("%v REQ(in) failed stating temp file (%v): %s: %q / %q o=%d s=%d", m, err, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size)
++			}
+ 			return nil, protocol.ErrNoSuchFile
+ 		}
+ 		_, err := readOffsetIntoBuf(folderFs, tempFn, req.Offset, res.data)
+@@ -2059,14 +2145,22 @@ func (m *model) Request(conn protocol.Connection, req *protocol.Request) (out pr
+ 	if info, err := folderFs.Lstat(req.Name); err != nil || !info.IsRegular() {
+ 		// Reject reads for anything that doesn't exist or is something
+ 		// other than a regular file.
+-		l.Debugf("%v REQ(in) failed stating file (%v): %s: %q / %q o=%d s=%d", m, err, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size)
++		if protected {
++			l.Debugf("%v protected REQ(in) failed stating file: %s folder=%q o=%d s=%d", m, deviceID.Short(), req.Folder, req.Offset, req.Size)
++		} else {
++			l.Debugf("%v REQ(in) failed stating file (%v): %s: %q / %q o=%d s=%d", m, err, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size)
++		}
+ 		return nil, protocol.ErrNoSuchFile
+ 	}
+ 
+ 	n, err := readOffsetIntoBuf(folderFs, req.Name, req.Offset, res.data)
+ 	switch {
+ 	case fs.IsNotExist(err):
+-		l.Debugf("%v REQ(in) file doesn't exist: %s: %q / %q o=%d s=%d", m, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size)
++		if protected {
++			l.Debugf("%v protected REQ(in) file does not exist: %s folder=%q o=%d s=%d", m, deviceID.Short(), req.Folder, req.Offset, req.Size)
++		} else {
++			l.Debugf("%v REQ(in) file doesn't exist: %s: %q / %q o=%d s=%d", m, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size)
++		}
+ 		return nil, protocol.ErrNoSuchFile
+ 	case errors.Is(err, io.EOF):
+ 		// Read beyond end of file. This might indicate a problem, or it
+@@ -2075,13 +2169,21 @@ func (m *model) Request(conn protocol.Connection, req *protocol.Request) (out pr
+ 		// next step take care of it, by only hashing the part we actually
+ 		// managed to read.
+ 	case err != nil:
+-		l.Debugf("%v REQ(in) failed reading file (%v): %s: %q / %q o=%d s=%d", m, err, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size)
++		if protected {
++			l.Debugf("%v protected REQ(in) failed reading file: %s folder=%q o=%d s=%d", m, deviceID.Short(), req.Folder, req.Offset, req.Size)
++		} else {
++			l.Debugf("%v REQ(in) failed reading file (%v): %s: %q / %q o=%d s=%d", m, err, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size)
++		}
+ 		return nil, protocol.ErrGeneric
+ 	}
+ 
+ 	if folderCfg.Type != config.FolderTypeReceiveEncrypted && len(req.Hash) > 0 && !scanner.Validate(res.data[:n], req.Hash) {
+-		m.recheckFile(deviceID, req.Folder, req.Name, req.Offset, req.Hash)
+-		l.Debugf("%v REQ(in) failed validating data: %s: %q / %q o=%d s=%d", m, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size)
++		if protected {
++			l.Debugf("%v protected REQ(in) failed validating data: %s folder=%q o=%d s=%d", m, deviceID.Short(), req.Folder, req.Offset, req.Size)
++		} else {
++			m.recheckFile(deviceID, req.Folder, req.Name, req.Offset, req.Hash)
++			l.Debugf("%v REQ(in) failed validating data: %s: %q / %q o=%d s=%d", m, deviceID.Short(), req.Folder, req.Name, req.Offset, req.Size)
++		}
+ 		return nil, protocol.ErrNoSuchFile
+ 	}
+ 
+@@ -2183,6 +2285,9 @@ func (m *model) LoadIgnores(folder string) ([]string, []string, error) {
+ 			return nil, nil, fmt.Errorf("folder %s does not exist", folder)
+ 		}
+ 	}
++	if m.receiveSideReadOnlyFolder(cfg) {
++		return nil, nil, config.ErrVaultSyncReceiveSideSafetyStop
++	}
+ 
+ 	if cfg.Type == config.FolderTypeReceiveEncrypted {
+ 		return nil, nil, nil
+@@ -2215,7 +2320,6 @@ func (m *model) CurrentIgnores(folder string) ([]string, []string, error) {
+ 	if !cfgOk {
+ 		return nil, nil, fmt.Errorf("folder %s does not exist", folder)
+ 	}
+-
+ 	if !ignoresOk {
+ 		// Empty ignore patterns
+ 		return []string{}, []string{}, nil
+@@ -2229,6 +2333,9 @@ func (m *model) SetIgnores(folder string, content []string) error {
+ 	if !ok {
+ 		return fmt.Errorf("folder %s does not exist", cfg.Description())
+ 	}
++	if m.receiveSideReadOnlyFolder(cfg) {
++		return config.ErrVaultSyncReceiveSideSafetyStop
++	}
+ 	return m.setIgnores(cfg, content)
+ }
+ 
+@@ -2597,6 +2704,12 @@ func (m *model) generateClusterConfigRLocked(device protocol.DeviceID) (*protoco
+ 		}
+ 
+ 		encryptionToken, hasEncryptionToken := m.folderEncryptionPasswordTokens[folderCfg.ID]
++		if folderCfg.Type == config.FolderTypeReceiveEncrypted && !hasEncryptionToken && m.receiveSideReadOnlyFolder(folderCfg) {
++			if token, err := readEncryptionToken(folderCfg); err == nil {
++				encryptionToken = token
++				hasEncryptionToken = true
++			}
++		}
+ 		if folderCfg.Type == config.FolderTypeReceiveEncrypted && !hasEncryptionToken {
+ 			// We haven't gotten a token for us yet and without one the other
+ 			// side can't validate us - pretend we don't have the folder yet.
+@@ -2833,6 +2946,9 @@ func (m *model) RestoreFolderVersions(folder string, versions map[string]time.Ti
+ 	if err != nil {
+ 		return nil, err
+ 	}
++	if m.receiveSideReadOnlyFolder(fcfg) {
++		return nil, config.ErrVaultSyncReceiveSideSafetyStop
++	}
+ 	if ver == nil {
+ 		return nil, errNoVersioner
+ 	}
+@@ -2929,6 +3045,9 @@ func (m *model) BringToFront(folder, file string) {
+ }
+ 
+ func (m *model) ResetFolder(folder string) error {
++	if cfg, ok := m.cfg.Folder(folder); ok && m.receiveSideReadOnlyFolder(cfg) {
++		return config.ErrVaultSyncReceiveSideSafetyStop
++	}
+ 	m.mut.Lock()
+ 	defer m.mut.Unlock()
+ 	_, ok := m.folderRunners.Get(folder)
+@@ -2943,7 +3062,7 @@ func (m *model) String() string {
+ 	return fmt.Sprintf("model@%p", m)
+ }
+ 
+-func (*model) VerifyConfiguration(from, to config.Configuration) error {
++func (m *model) VerifyConfiguration(from, to config.Configuration) error {
+ 	toFolders := to.FolderMap()
+ 	for _, from := range from.Folders {
+ 		to, ok := toFolders[from.ID]
+@@ -2956,7 +3075,13 @@ func (*model) VerifyConfiguration(from, to config.Configuration) error {
+ 	// will panic later when starting the folder.
+ 	for _, to := range to.Folders {
+ 		if to.Versioning.Type != "" {
+-			if _, err := versioner.New(to); err != nil {
++			var err error
++			if m.receiveSideReadOnlyFolder(to) {
++				_, err = versioner.NewVaultSyncInspectionOnly(to)
++			} else {
++				_, err = versioner.New(to)
++			}
++			if err != nil {
+ 				return err
+ 			}
+ 		}
+@@ -2982,9 +3107,9 @@ func (m *model) CommitConfiguration(from, to config.Configuration) bool {
+ 		if _, ok := fromFolders[folderID]; !ok {
+ 			// A folder was added.
+ 			if cfg.Paused {
+-				slog.Info("Paused folder", cfg.LogAttr())
++				slog.Info("Paused folder", m.folderLogAttr(cfg))
+ 			} else {
+-				slog.Info("Adding folder", cfg.LogAttr())
++				slog.Info("Adding folder", m.folderLogAttr(cfg))
+ 				if err := m.newFolder(cfg, to.Options.CacheIgnoredFiles); err != nil {
+ 					m.fatal(err)
+ 					return true
+diff --git a/lib/syncthing/internals.go b/lib/syncthing/internals.go
+index 2700487..b6f0c4c 100644
+--- a/lib/syncthing/internals.go
++++ b/lib/syncthing/internals.go
+@@ -36,6 +36,10 @@ func (m *Internals) FolderState(folderID string) (string, time.Time, error) {
+ 	return m.model.State(folderID)
+ }
+ 
++func (m *Internals) FolderErrors(folderID string) ([]model.FileError, error) {
++	return m.model.FolderErrors(folderID)
++}
++
+ func (m *Internals) Ignores(folderID string) ([]string, []string, error) {
+ 	return m.model.CurrentIgnores(folderID)
+ }
+diff --git a/lib/syncthing/issue150_database_preflight_test.go b/lib/syncthing/issue150_database_preflight_test.go
+new file mode 100644
+index 0000000..ef79632
+--- /dev/null
++++ b/lib/syncthing/issue150_database_preflight_test.go
+@@ -0,0 +1,911 @@
++// Copyright (C) 2026 The Syncthing Authors.
++//
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this file,
++// You can obtain one at https://mozilla.org/MPL/2.0/.
++
++package syncthing
++
++import (
++	"bytes"
++	"database/sql"
++	"errors"
++	"fmt"
++	"io"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"reflect"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/syncthing/syncthing/lib/config"
++	"github.com/syncthing/syncthing/lib/events"
++	"github.com/syncthing/syncthing/lib/protocol"
++	"github.com/syncthing/syncthing/lib/tlsutil"
++	_ "modernc.org/sqlite"
++)
++
++const (
++	issue150WALChildModeEnvironment = "VAULTSYNC_ISSUE150_WAL_CHILD"
++	issue150WALPathEnvironment      = "VAULTSYNC_ISSUE150_WAL_PATH"
++)
++
++func TestIssue150ReceiveSideDatabaseSafetyStopReusesCanonicalConfigError(t *testing.T) {
++	if ErrReceiveSideReadOnlySafetyStop != config.ErrVaultSyncReceiveSideSafetyStop {
++		t.Fatal("database safety stop does not reuse the canonical configuration error")
++	}
++}
++
++func TestIssue150ConfigStartupPreflightRunsBeforeUpgradeSave(t *testing.T) {
++	home := t.TempDir()
++	configPath := filepath.Join(home, "config.xml")
++	certificate, err := tlsutil.NewCertificate(
++		filepath.Join(home, "cert.pem"),
++		filepath.Join(home, "key.pem"),
++		"syncthing",
++		1,
++		false,
++	)
++	if err != nil {
++		t.Fatalf("create identity: %v", err)
++	}
++	myID := protocol.NewDeviceID(certificate.Certificate[0])
++	wrapper := config.Wrap(configPath, config.New(myID), myID, events.NoopLogger)
++	if err := wrapper.Save(); err != nil {
++		t.Fatalf("save config: %v", err)
++	}
++
++	before, err := os.ReadFile(configPath)
++	if err != nil {
++		t.Fatalf("read config: %v", err)
++	}
++	currentVersion := []byte(fmt.Sprintf(`version="%d"`, config.CurrentVersion))
++	previousVersion := config.CurrentVersion - 1
++	if got := bytes.Count(before, currentVersion); got != 1 {
++		t.Fatalf("current config version occurrences = %d, want 1", got)
++	}
++	before = bytes.Replace(
++		before,
++		currentVersion,
++		[]byte(fmt.Sprintf(`version="%d"`, previousVersion)),
++		1,
++	)
++	if err := os.WriteFile(configPath, before, 0o600); err != nil {
++		t.Fatalf("write previous-version config: %v", err)
++	}
++
++	preflightErr := errors.New("issue150-preflight-stop")
++	preflightCalls := 0
++	loaded, err := LoadConfigAtStartupWithPreflight(
++		configPath,
++		certificate,
++		events.NoopLogger,
++		false,
++		true,
++		func(config.Wrapper) error {
++			preflightCalls++
++			return preflightErr
++		},
++	)
++	if !errors.Is(err, preflightErr) {
++		t.Fatalf("load error = %v, want preflight error", err)
++	}
++	if loaded != nil {
++		t.Fatal("failed preflight returned a configuration")
++	}
++	if preflightCalls != 1 {
++		t.Fatalf("preflight calls = %d, want 1", preflightCalls)
++	}
++
++	after, err := os.ReadFile(configPath)
++	if err != nil {
++		t.Fatalf("read config after preflight: %v", err)
++	}
++	if !bytes.Equal(after, before) {
++		t.Fatal("failed startup preflight rewrote config")
++	}
++	archivePath := configPath + fmt.Sprintf(".v%d", previousVersion)
++	if _, err := os.Stat(archivePath); !os.IsNotExist(err) {
++		t.Fatalf("failed startup preflight created archive: %v", err)
++	}
++}
++
++func TestIssue150ReceiveSideDatabasePreflightRejectsFutureCaseFoldAliasesBeforeMutation(t *testing.T) {
++	testCases := []struct {
++		name        string
++		rowOrder    []string
++		policyOrder []issue150FolderPolicy
++	}{
++		{
++			name:     "Issue150/rows-alpha-beta/policy-alpha-beta/protected-protected",
++			rowOrder: []string{"alpha", "beta"},
++			policyOrder: []issue150FolderPolicy{
++				{id: "alpha", folderType: config.FolderTypeReceiveOnly},
++				{id: "beta", folderType: config.FolderTypeReceiveEncrypted},
++			},
++		},
++		{
++			name:     "Issue150/rows-beta-alpha/policy-beta-alpha/protected-protected",
++			rowOrder: []string{"beta", "alpha"},
++			policyOrder: []issue150FolderPolicy{
++				{id: "beta", folderType: config.FolderTypeReceiveEncrypted},
++				{id: "alpha", folderType: config.FolderTypeReceiveOnly},
++			},
++		},
++		{
++			name:     "Issue150/rows-alpha-beta/policy-beta-alpha/protected-sendonly",
++			rowOrder: []string{"alpha", "beta"},
++			policyOrder: []issue150FolderPolicy{
++				{id: "beta", folderType: config.FolderTypeSendOnly},
++				{id: "alpha", folderType: config.FolderTypeReceiveOnly},
++			},
++		},
++		{
++			name:     "Issue150/rows-beta-alpha/policy-alpha-beta/sendonly-protected",
++			rowOrder: []string{"beta", "alpha"},
++			policyOrder: []issue150FolderPolicy{
++				{id: "alpha", folderType: config.FolderTypeSendOnly},
++				{id: "beta", folderType: config.FolderTypeReceiveEncrypted},
++			},
++		},
++	}
++
++	for _, testCase := range testCases {
++		t.Run(testCase.name, func(t *testing.T) {
++			fixture := issue150NewDatabaseFixture(t, testCase.rowOrder)
++			first := fixture.folders[testCase.rowOrder[0]]
++			second := fixture.folders[testCase.rowOrder[1]]
++			lowerName := fmt.Sprintf("folder.%04x-abcdefgh.db", first.idx)
++			upperName := strings.ToUpper(lowerName)
++
++			issue150SetRegisteredDatabaseName(t, fixture, first.id, lowerName)
++			issue150SetRegisteredDatabaseName(t, fixture, second.id, upperName)
++			for _, folder := range []issue150DatabaseFolder{first, second} {
++				issue150RemoveDatabaseAndSidecars(t, folder.path)
++			}
++			for _, name := range []string{lowerName, upperName} {
++				if _, err := os.Lstat(filepath.Join(fixture.databasePath, name)); !os.IsNotExist(err) {
++					t.Fatalf("future colliding database unexpectedly exists: %v", err)
++				}
++			}
++
++			before := issue150SnapshotDatabaseTree(t, fixture.databasePath)
++			database, err := OpenDatabase(
++				fixture.databasePath,
++				24*time.Hour,
++				WithReceiveSideReadOnlyConfig(issue150Config(t, testCase.policyOrder)),
++			)
++			issue150CloseUnexpectedDatabase(t, database)
++			issue150RequirePathFreeSafetyStop(t, err, fixture, lowerName, upperName)
++			issue150RequireUnchangedDatabaseTree(t, fixture.databasePath, before)
++		})
++	}
++}
++
++func TestIssue150ReceiveSideDatabasePreflightRejectsNoncanonicalRegisteredNamesBeforeMutation(t *testing.T) {
++	testCases := []struct {
++		name   string
++		dbName func(*issue150DatabaseFixture, issue150DatabaseFolder) string
++	}{
++		{
++			name: "Issue150/absolute-existing-folder-database",
++			dbName: func(_ *issue150DatabaseFixture, folder issue150DatabaseFolder) string {
++				return folder.path
++			},
++		},
++		{
++			name: "Issue150/parent-traversal-existing-folder-database",
++			dbName: func(fixture *issue150DatabaseFixture, folder issue150DatabaseFolder) string {
++				return filepath.Join("..", filepath.Base(fixture.databasePath), folder.name)
++			},
++		},
++		{
++			name: "Issue150/noncanonical-case",
++			dbName: func(_ *issue150DatabaseFixture, folder issue150DatabaseFolder) string {
++				return strings.ToUpper(folder.name)
++			},
++		},
++		{
++			name: "Issue150/non-ascii",
++			dbName: func(_ *issue150DatabaseFixture, folder issue150DatabaseFolder) string {
++				return fmt.Sprintf("folder.%04x-abcdefgé.db", folder.idx)
++			},
++		},
++		{
++			name: "Issue150/bad-structure",
++			dbName: func(_ *issue150DatabaseFixture, folder issue150DatabaseFolder) string {
++				return fmt.Sprintf("folder.%04x-abcdefg.db", folder.idx)
++			},
++		},
++	}
++
++	for _, testCase := range testCases {
++		t.Run(testCase.name, func(t *testing.T) {
++			fixture := issue150NewDatabaseFixture(t, []string{"protected"})
++			folder := fixture.folders["protected"]
++			dbName := testCase.dbName(fixture, folder)
++			issue150SetRegisteredDatabaseName(t, fixture, folder.id, dbName)
++
++			before := issue150SnapshotDatabaseTree(t, fixture.databasePath)
++			database, err := OpenDatabase(
++				fixture.databasePath,
++				24*time.Hour,
++				WithReceiveSideReadOnlyConfig(issue150Config(t, []issue150FolderPolicy{{
++					id:         folder.id,
++					folderType: config.FolderTypeReceiveOnly,
++				}})),
++			)
++			issue150CloseUnexpectedDatabase(t, database)
++			issue150RequirePathFreeSafetyStop(t, err, fixture, dbName)
++			issue150RequireUnchangedDatabaseTree(t, fixture.databasePath, before)
++		})
++	}
++}
++
++func TestIssue150ReceiveSideDatabasePreflightRejectsExistingPhysicalAliasesBeforeMutation(t *testing.T) {
++	testCases := []struct {
++		name  string
++		setup func(*testing.T, *issue150DatabaseFixture)
++	}{
++		{
++			name: "Issue150/symlink-to-registered-folder-database",
++			setup: func(t *testing.T, fixture *issue150DatabaseFixture) {
++				issue150ReplaceWithSymlink(t, fixture.folders["protected"].path, fixture.folders["other"].path)
++			},
++		},
++		{
++			name: "Issue150/hardlink-to-registered-folder-database",
++			setup: func(t *testing.T, fixture *issue150DatabaseFixture) {
++				issue150ReplaceWithHardlink(t, fixture.folders["protected"].path, fixture.folders["other"].path)
++			},
++		},
++		{
++			name: "Issue150/hardlink-to-main-database",
++			setup: func(t *testing.T, fixture *issue150DatabaseFixture) {
++				issue150ReplaceWithHardlink(t, fixture.folders["protected"].path, fixture.mainPath)
++			},
++		},
++		{
++			name: "Issue150/symlink-to-orphan-folder-database",
++			setup: func(t *testing.T, fixture *issue150DatabaseFixture) {
++				orphanPath := filepath.Join(fixture.databasePath, "folder.7fff-orphaned.db")
++				issue150CopyFile(t, fixture.folders["other"].path, orphanPath)
++				issue150ReplaceWithSymlink(t, fixture.folders["protected"].path, orphanPath)
++			},
++		},
++		{
++			name: "Issue150/hardlink-to-orphan-folder-database",
++			setup: func(t *testing.T, fixture *issue150DatabaseFixture) {
++				orphanPath := filepath.Join(fixture.databasePath, "folder.7fff-orphaned.db")
++				issue150CopyFile(t, fixture.folders["other"].path, orphanPath)
++				issue150ReplaceWithHardlink(t, fixture.folders["protected"].path, orphanPath)
++			},
++		},
++		{
++			name: "Issue150/hardlink-to-main-wal",
++			setup: func(t *testing.T, fixture *issue150DatabaseFixture) {
++				issue150ReplaceWithReservedHardlink(t, fixture.folders["protected"].path, fixture.mainPath+"-wal")
++			},
++		},
++		{
++			name: "Issue150/hardlink-to-main-shm",
++			setup: func(t *testing.T, fixture *issue150DatabaseFixture) {
++				issue150ReplaceWithReservedHardlink(t, fixture.folders["protected"].path, fixture.mainPath+"-shm")
++			},
++		},
++		{
++			name: "Issue150/hardlink-to-folder-wal",
++			setup: func(t *testing.T, fixture *issue150DatabaseFixture) {
++				folderPath := fixture.folders["protected"].path
++				issue150ReplaceWithReservedHardlink(t, folderPath, folderPath+"-wal")
++			},
++		},
++		{
++			name: "Issue150/hardlink-to-folder-shm",
++			setup: func(t *testing.T, fixture *issue150DatabaseFixture) {
++				folderPath := fixture.folders["protected"].path
++				issue150ReplaceWithReservedHardlink(t, folderPath, folderPath+"-shm")
++			},
++		},
++	}
++
++	for _, testCase := range testCases {
++		t.Run(testCase.name, func(t *testing.T) {
++			fixture := issue150NewDatabaseFixture(t, []string{"protected", "other"})
++			testCase.setup(t, fixture)
++
++			before := issue150SnapshotDatabaseTree(t, fixture.databasePath)
++			database, err := OpenDatabase(
++				fixture.databasePath,
++				24*time.Hour,
++				WithReceiveSideReadOnlyConfig(issue150Config(t, []issue150FolderPolicy{
++					{id: "protected", folderType: config.FolderTypeReceiveOnly},
++					{id: "other", folderType: config.FolderTypeSendOnly},
++				})),
++			)
++			issue150CloseUnexpectedDatabase(t, database)
++			issue150RequirePathFreeSafetyStop(t, err, fixture)
++			issue150RequireUnchangedDatabaseTree(t, fixture.databasePath, before)
++		})
++	}
++}
++
++func TestIssue150ReceiveSideDatabasePreflightRejectsUncheckpointedAppOwnedWALWithoutMutation(t *testing.T) {
++	if os.Getenv(issue150WALChildModeEnvironment) == "1" {
++		issue150LeaveCommittedWALForProcessExit(t, os.Getenv(issue150WALPathEnvironment))
++		os.Exit(0)
++	}
++
++	testCases := []struct {
++		name       string
++		targetPath func(*issue150DatabaseFixture) string
++	}{
++		{
++			name: "Issue150/main-database-wal",
++			targetPath: func(fixture *issue150DatabaseFixture) string {
++				return fixture.mainPath
++			},
++		},
++		{
++			name: "Issue150/folder-database-wal",
++			targetPath: func(fixture *issue150DatabaseFixture) string {
++				return fixture.folders["protected"].path
++			},
++		},
++	}
++
++	for _, testCase := range testCases {
++		t.Run(testCase.name, func(t *testing.T) {
++			fixture := issue150NewDatabaseFixture(t, []string{"protected"})
++			targetPath := testCase.targetPath(fixture)
++			command := exec.Command(os.Args[0], "-test.run=^TestIssue150ReceiveSideDatabasePreflightRejectsUncheckpointedAppOwnedWALWithoutMutation$")
++			command.Env = append(
++				os.Environ(),
++				issue150WALChildModeEnvironment+"=1",
++				issue150WALPathEnvironment+"="+targetPath,
++			)
++			if output, err := command.CombinedOutput(); err != nil {
++				t.Fatalf("create app-owned crash WAL: %v (%s)", err, bytes.TrimSpace(output))
++			}
++			walInfo, err := os.Stat(targetPath + "-wal")
++			if err != nil || walInfo.Size() == 0 {
++				t.Fatalf("uncheckpointed WAL fixture is unavailable: %v", err)
++			}
++
++			before := issue150SnapshotDatabaseTree(t, fixture.databasePath)
++			database, err := OpenDatabase(
++				fixture.databasePath,
++				24*time.Hour,
++				WithReceiveSideReadOnlyConfig(issue150Config(t, []issue150FolderPolicy{{
++					id:         "protected",
++					folderType: config.FolderTypeReceiveOnly,
++				}})),
++			)
++			issue150CloseUnexpectedDatabase(t, database)
++			issue150RequirePathFreeSafetyStop(t, err, fixture)
++			issue150RequireUnchangedDatabaseTree(t, fixture.databasePath, before)
++		})
++	}
++}
++
++func TestIssue150ReceiveSideDatabasePreflightRejectsRecognizableDatabaseDeviationsBeforeMutation(t *testing.T) {
++	testCases := []struct {
++		name   string
++		mutate func(*testing.T, *issue150DatabaseFixture)
++	}{
++		{
++			name: "Issue150/main-schema",
++			mutate: func(t *testing.T, fixture *issue150DatabaseFixture) {
++				issue150SetPreviousSchemaVersion(t, fixture.mainPath)
++			},
++		},
++		{
++			name: "Issue150/main-application-id",
++			mutate: func(t *testing.T, fixture *issue150DatabaseFixture) {
++				issue150ExecSQLite(t, fixture.mainPath, "PRAGMA application_id = 305419896")
++			},
++		},
++		{
++			name: "Issue150/main-recognizable-truncation",
++			mutate: func(t *testing.T, fixture *issue150DatabaseFixture) {
++				issue150TruncateDatabase(t, fixture.mainPath)
++			},
++		},
++		{
++			name: "Issue150/folder-schema",
++			mutate: func(t *testing.T, fixture *issue150DatabaseFixture) {
++				issue150SetPreviousSchemaVersion(t, fixture.folders["protected"].path)
++			},
++		},
++		{
++			name: "Issue150/folder-application-id",
++			mutate: func(t *testing.T, fixture *issue150DatabaseFixture) {
++				issue150ExecSQLite(t, fixture.folders["protected"].path, "PRAGMA application_id = 305419896")
++			},
++		},
++		{
++			name: "Issue150/folder-recognizable-truncation",
++			mutate: func(t *testing.T, fixture *issue150DatabaseFixture) {
++				issue150TruncateDatabase(t, fixture.folders["protected"].path)
++			},
++		},
++		{
++			name: "Issue150/folder-identity",
++			mutate: func(t *testing.T, fixture *issue150DatabaseFixture) {
++				issue150ExecSQLite(t, fixture.folders["protected"].path, "UPDATE kv SET value = ? WHERE key = 'folderID'", []byte("different-folder"))
++			},
++		},
++		{
++			name: "Issue150/folder-foreign-key-integrity",
++			mutate: func(t *testing.T, fixture *issue150DatabaseFixture) {
++				issue150WithSQLite(t, fixture.folders["protected"].path, func(database *sql.DB) {
++					database.SetMaxOpenConns(1)
++					if _, err := database.Exec("PRAGMA foreign_keys = OFF"); err != nil {
++						t.Fatalf("disable fixture foreign keys: %v", err)
++					}
++					if _, err := database.Exec("INSERT INTO indexids (device_idx, index_id, sequence) VALUES (987654321, 'issue150', 0)"); err != nil {
++						t.Fatalf("create fixture foreign-key deviation: %v", err)
++					}
++				})
++			},
++		},
++	}
++
++	for _, testCase := range testCases {
++		t.Run(testCase.name, func(t *testing.T) {
++			fixture := issue150NewDatabaseFixture(t, []string{"protected"})
++			testCase.mutate(t, fixture)
++
++			before := issue150SnapshotDatabaseTree(t, fixture.databasePath)
++			database, err := OpenDatabase(
++				fixture.databasePath,
++				24*time.Hour,
++				WithReceiveSideReadOnlyConfig(issue150Config(t, []issue150FolderPolicy{{
++					id:         "protected",
++					folderType: config.FolderTypeReceiveOnly,
++				}})),
++			)
++			issue150CloseUnexpectedDatabase(t, database)
++			issue150RequirePathFreeSafetyStop(t, err, fixture)
++			issue150RequireUnchangedDatabaseTree(t, fixture.databasePath, before)
++		})
++	}
++}
++
++func TestIssue150ReceiveSideDatabasePreflightNormalizesLateMutatingMainOpenFailure(t *testing.T) {
++	fixture := issue150NewDatabaseFixture(t, []string{"protected"})
++	if err := os.Chmod(fixture.mainPath, 0o400); err != nil {
++		t.Fatalf("make main database read-only: %v", err)
++	}
++	if err := os.Chmod(fixture.databasePath, 0o500); err != nil {
++		t.Fatalf("make database directory read-only: %v", err)
++	}
++	t.Cleanup(func() {
++		_ = os.Chmod(fixture.databasePath, 0o700)
++		_ = os.Chmod(fixture.mainPath, 0o600)
++	})
++
++	before := issue150SnapshotDatabaseTree(t, fixture.databasePath)
++	database, err := OpenDatabase(
++		fixture.databasePath,
++		24*time.Hour,
++		WithReceiveSideReadOnlyConfig(issue150Config(t, []issue150FolderPolicy{{
++			id:         "protected",
++			folderType: config.FolderTypeReceiveOnly,
++		}})),
++	)
++	issue150CloseUnexpectedDatabase(t, database)
++	issue150RequirePathFreeSafetyStop(t, err, fixture)
++	issue150RequireUnchangedDatabaseTree(t, fixture.databasePath, before)
++}
++
++func TestIssue150ProtectedDatabaseOpenDoesNotCleanOrphanDatabaseArtifacts(t *testing.T) {
++	fixture := issue150NewDatabaseFixture(t, []string{"protected"})
++	orphanPath := filepath.Join(fixture.databasePath, "folder.7fff-orphaned.db")
++	issue150CopyFile(t, fixture.folders["protected"].path, orphanPath)
++	before, err := os.ReadFile(orphanPath)
++	if err != nil {
++		t.Fatalf("read orphan fixture before protected open: %v", err)
++	}
++
++	database, err := OpenDatabase(
++		fixture.databasePath,
++		24*time.Hour,
++		WithReceiveSideReadOnlyConfig(issue150Config(t, []issue150FolderPolicy{{
++			id:         "protected",
++			folderType: config.FolderTypeReceiveOnly,
++		}})),
++	)
++	if err != nil {
++		t.Fatalf("protected database open failed: %v", err)
++	}
++	if err := database.Close(); err != nil {
++		t.Fatalf("close protected database: %v", err)
++	}
++	after, err := os.ReadFile(orphanPath)
++	if err != nil {
++		t.Fatalf("read orphan fixture after protected open: %v", err)
++	}
++	if !bytes.Equal(after, before) {
++		t.Fatal("protected database open changed an orphan database artifact")
++	}
++}
++
++func TestIssue150PureSendOnlyDatabaseOpenKeepsExistingWriteSemantics(t *testing.T) {
++	fixture := issue150NewDatabaseFixture(t, []string{"sendonly"})
++
++	database, err := OpenDatabase(
++		fixture.databasePath,
++		24*time.Hour,
++		WithReceiveSideReadOnlyConfig(issue150Config(t, []issue150FolderPolicy{{
++			id:         "sendonly",
++			folderType: config.FolderTypeSendOnly,
++		}})),
++	)
++	if err != nil {
++		t.Fatalf("pure SendOnly database open failed: %v", err)
++	}
++	if err := database.Update("sendonly", protocol.LocalDeviceID, []protocol.FileInfo{{
++		Name:     "sendonly-positive-control",
++		Sequence: 2,
++	}}); err != nil {
++		_ = database.Close()
++		t.Fatalf("pure SendOnly database update failed: %v", err)
++	}
++	if err := database.Close(); err != nil {
++		t.Fatalf("close pure SendOnly database: %v", err)
++	}
++}
++
++type issue150FolderPolicy struct {
++	id         string
++	folderType config.FolderType
++}
++
++type issue150DatabaseFolder struct {
++	id   string
++	idx  int64
++	name string
++	path string
++}
++
++type issue150DatabaseFixture struct {
++	root         string
++	databasePath string
++	mainPath     string
++	folders      map[string]issue150DatabaseFolder
++}
++
++func issue150NewDatabaseFixture(t *testing.T, rowOrder []string) *issue150DatabaseFixture {
++	t.Helper()
++	root := t.TempDir()
++	databasePath := filepath.Join(root, "data")
++	database, err := OpenDatabase(databasePath, 24*time.Hour)
++	if err != nil {
++		t.Fatalf("open fixture database: %v", err)
++	}
++	for idx, folderID := range rowOrder {
++		if err := database.Update(folderID, protocol.LocalDeviceID, []protocol.FileInfo{{
++			Name:     fmt.Sprintf("seed-%d", idx),
++			Sequence: int64(idx + 1),
++		}}); err != nil {
++			_ = database.Close()
++			t.Fatalf("seed fixture folder: %v", err)
++		}
++	}
++	if err := database.Close(); err != nil {
++		t.Fatalf("close fixture database: %v", err)
++	}
++
++	fixture := &issue150DatabaseFixture{
++		root:         root,
++		databasePath: databasePath,
++		mainPath:     filepath.Join(databasePath, "main.db"),
++		folders:      make(map[string]issue150DatabaseFolder, len(rowOrder)),
++	}
++	issue150WithSQLite(t, fixture.mainPath, func(database *sql.DB) {
++		rows, err := database.Query("SELECT idx, folder_id, database_name FROM folders")
++		if err != nil {
++			t.Fatalf("query fixture folder registrations: %v", err)
++		}
++		defer rows.Close()
++		for rows.Next() {
++			var folder issue150DatabaseFolder
++			if err := rows.Scan(&folder.idx, &folder.id, &folder.name); err != nil {
++				t.Fatalf("scan fixture folder registration: %v", err)
++			}
++			folder.path = filepath.Join(databasePath, folder.name)
++			fixture.folders[folder.id] = folder
++		}
++		if err := rows.Err(); err != nil {
++			t.Fatalf("iterate fixture folder registrations: %v", err)
++		}
++	})
++	if len(fixture.folders) != len(rowOrder) {
++		t.Fatalf("fixture folder registrations = %d, want %d", len(fixture.folders), len(rowOrder))
++	}
++	return fixture
++}
++
++func issue150Config(t *testing.T, policies []issue150FolderPolicy) config.Wrapper {
++	t.Helper()
++	folders := make([]config.FolderConfiguration, 0, len(policies))
++	for _, policy := range policies {
++		folders = append(folders, config.FolderConfiguration{
++			ID:   policy.id,
++			Path: filepath.Join(t.TempDir(), "vault"),
++			Type: policy.folderType,
++		})
++	}
++	return config.Wrap(
++		filepath.Join(t.TempDir(), "config.xml"),
++		config.Configuration{Folders: folders},
++		protocol.LocalDeviceID,
++		events.NoopLogger,
++	)
++}
++
++func issue150SetRegisteredDatabaseName(t *testing.T, fixture *issue150DatabaseFixture, folderID, databaseName string) {
++	t.Helper()
++	issue150ExecSQLite(t, fixture.mainPath, "UPDATE folders SET database_name = ? WHERE folder_id = ?", databaseName, folderID)
++}
++
++func issue150RemoveDatabaseAndSidecars(t *testing.T, path string) {
++	t.Helper()
++	for _, candidate := range []string{path, path + "-wal", path + "-shm"} {
++		if err := os.Remove(candidate); err != nil && !os.IsNotExist(err) {
++			t.Fatalf("remove fixture database entry: %v", err)
++		}
++	}
++}
++
++func issue150ReplaceWithSymlink(t *testing.T, path, target string) {
++	t.Helper()
++	issue150RemoveDatabaseAndSidecars(t, path)
++	if err := os.Symlink(filepath.Base(target), path); err != nil {
++		t.Fatalf("create fixture symlink: %v", err)
++	}
++}
++
++func issue150ReplaceWithHardlink(t *testing.T, path, target string) {
++	t.Helper()
++	issue150RemoveDatabaseAndSidecars(t, path)
++	if err := os.Link(target, path); err != nil {
++		t.Fatalf("create fixture hardlink: %v", err)
++	}
++}
++
++func issue150ReplaceWithReservedHardlink(t *testing.T, path, reservedPath string) {
++	t.Helper()
++	if err := os.Remove(reservedPath); err != nil && !os.IsNotExist(err) {
++		t.Fatalf("remove stale fixture sidecar: %v", err)
++	}
++	if err := os.Link(path, reservedPath); err != nil {
++		t.Fatalf("create fixture reserved hardlink: %v", err)
++	}
++	if err := os.Remove(path); err != nil {
++		t.Fatalf("remove registered fixture database: %v", err)
++	}
++	if err := os.Link(reservedPath, path); err != nil {
++		t.Fatalf("link registered fixture database to reserved entry: %v", err)
++	}
++}
++
++func issue150CopyFile(t *testing.T, source, target string) {
++	t.Helper()
++	input, err := os.Open(source)
++	if err != nil {
++		t.Fatalf("open fixture copy source: %v", err)
++	}
++	defer input.Close()
++	output, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
++	if err != nil {
++		t.Fatalf("create fixture copy target: %v", err)
++	}
++	if _, err := io.Copy(output, input); err != nil {
++		_ = output.Close()
++		t.Fatalf("copy fixture database: %v", err)
++	}
++	if err := output.Close(); err != nil {
++		t.Fatalf("close fixture copy target: %v", err)
++	}
++}
++
++func issue150TruncateDatabase(t *testing.T, path string) {
++	t.Helper()
++	if err := os.Truncate(path, 128); err != nil {
++		t.Fatalf("truncate fixture database: %v", err)
++	}
++}
++
++func issue150LeaveCommittedWALForProcessExit(t *testing.T, path string) {
++	t.Helper()
++	if path == "" {
++		t.Fatal("WAL child database path is empty")
++	}
++	database, err := sql.Open("sqlite", path)
++	if err != nil {
++		t.Fatalf("open WAL child database: %v", err)
++	}
++	database.SetMaxOpenConns(1)
++	var journalMode string
++	if err := database.QueryRow("PRAGMA journal_mode = WAL").Scan(&journalMode); err != nil || journalMode != "wal" {
++		t.Fatalf("enable WAL child journal: mode=%q error=%v", journalMode, err)
++	}
++	if _, err := database.Exec("PRAGMA wal_autocheckpoint = 0"); err != nil {
++		t.Fatalf("disable WAL child autocheckpoint: %v", err)
++	}
++	if _, err := database.Exec("INSERT OR REPLACE INTO kv (key, value) VALUES ('issue150-app-owned-crash-state', ?)", []byte{1}); err != nil {
++		t.Fatalf("commit WAL child state: %v", err)
++	}
++	if info, err := os.Stat(path + "-wal"); err != nil || info.Size() == 0 {
++		t.Fatalf("WAL child did not create a journal: %v", err)
++	}
++}
++
++func issue150SetPreviousSchemaVersion(t *testing.T, path string) {
++	t.Helper()
++	currentVersion := issue150SchemaVersion(t, path)
++	if currentVersion < 2 {
++		t.Fatalf("fixture schema version = %d, need a previous version", currentVersion)
++	}
++	issue150SetSchemaVersion(t, path, currentVersion-1)
++}
++
++func issue150SchemaVersion(t *testing.T, path string) int {
++	t.Helper()
++	var version int
++	issue150WithSQLite(t, path, func(database *sql.DB) {
++		if err := database.QueryRow("SELECT MAX(schema_version) FROM schemamigrations").Scan(&version); err != nil {
++			t.Fatalf("read fixture schema version: %v", err)
++		}
++	})
++	return version
++}
++
++func issue150SetSchemaVersion(t *testing.T, path string, version int) {
++	t.Helper()
++	issue150WithSQLite(t, path, func(database *sql.DB) {
++		transaction, err := database.Begin()
++		if err != nil {
++			t.Fatalf("begin fixture schema change: %v", err)
++		}
++		defer transaction.Rollback()
++		if _, err := transaction.Exec("DELETE FROM schemamigrations"); err != nil {
++			t.Fatalf("clear fixture schema version: %v", err)
++		}
++		if _, err := transaction.Exec(
++			"INSERT INTO schemamigrations (schema_version, applied_at, syncthing_version) VALUES (?, 1, 'issue150')",
++			version,
++		); err != nil {
++			t.Fatalf("set fixture schema version: %v", err)
++		}
++		if err := transaction.Commit(); err != nil {
++			t.Fatalf("commit fixture schema change: %v", err)
++		}
++	})
++}
++
++func issue150ExecSQLite(t *testing.T, path, query string, args ...any) {
++	t.Helper()
++	issue150WithSQLite(t, path, func(database *sql.DB) {
++		if _, err := database.Exec(query, args...); err != nil {
++			t.Fatalf("change fixture database: %v", err)
++		}
++	})
++}
++
++func issue150WithSQLite(t *testing.T, path string, fn func(*sql.DB)) {
++	t.Helper()
++	database, err := sql.Open("sqlite", path)
++	if err != nil {
++		t.Fatalf("open raw fixture database: %v", err)
++	}
++	database.SetMaxOpenConns(1)
++	if err := database.Ping(); err != nil {
++		_ = database.Close()
++		t.Fatalf("ping raw fixture database: %v", err)
++	}
++	fn(database)
++	if err := database.Close(); err != nil {
++		t.Fatalf("close raw fixture database: %v", err)
++	}
++}
++
++type issue150DatabaseTreeEntry struct {
++	mode       os.FileMode
++	contents   []byte
++	linkTarget string
++}
++
++func issue150SnapshotDatabaseTree(t *testing.T, root string) map[string]issue150DatabaseTreeEntry {
++	t.Helper()
++	snapshot := make(map[string]issue150DatabaseTreeEntry)
++	if err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
++		if err != nil {
++			return err
++		}
++		if path == root {
++			return nil
++		}
++		relative, err := filepath.Rel(root, path)
++		if err != nil {
++			return err
++		}
++		entry := issue150DatabaseTreeEntry{mode: info.Mode()}
++		switch {
++		case info.Mode().IsRegular():
++			contents, err := os.ReadFile(path)
++			if err != nil {
++				return err
++			}
++			entry.contents = bytes.Clone(contents)
++		case info.Mode()&os.ModeSymlink != 0:
++			target, err := os.Readlink(path)
++			if err != nil {
++				return err
++			}
++			entry.linkTarget = target
++		}
++		snapshot[relative] = entry
++		return nil
++	}); err != nil {
++		t.Fatalf("snapshot fixture database tree: %v", err)
++	}
++	return snapshot
++}
++
++func issue150RequireUnchangedDatabaseTree(t *testing.T, root string, before map[string]issue150DatabaseTreeEntry) {
++	t.Helper()
++	after := issue150SnapshotDatabaseTree(t, root)
++	if reflect.DeepEqual(after, before) {
++		return
++	}
++	for name, beforeEntry := range before {
++		afterEntry, ok := after[name]
++		if !ok || !reflect.DeepEqual(afterEntry, beforeEntry) {
++			t.Logf("database tree entry %q changed", name)
++		}
++	}
++	for name := range after {
++		if _, ok := before[name]; !ok {
++			t.Logf("database tree entry %q was created", name)
++		}
++	}
++	t.Fatal("blocked database open changed the database tree")
++}
++
++func issue150RequirePathFreeSafetyStop(t *testing.T, err error, fixture *issue150DatabaseFixture, extraForbidden ...string) {
++	t.Helper()
++	if err == nil {
++		t.Fatal("database open succeeded, want receive-side safety stop")
++	}
++	if !errors.Is(err, ErrReceiveSideReadOnlySafetyStop) {
++		t.Fatalf("database open error does not match stable receive-side safety stop: %v", err)
++	}
++	if got, want := err.Error(), ErrReceiveSideReadOnlySafetyStop.Error(); got != want {
++		t.Fatalf("database open error = %q, want exact stable error %q", got, want)
++	}
++	forbidden := []string{fixture.root, fixture.databasePath, fixture.mainPath}
++	for _, folder := range fixture.folders {
++		forbidden = append(forbidden, folder.id, folder.name, folder.path)
++	}
++	forbidden = append(forbidden, extraForbidden...)
++	for _, value := range forbidden {
++		if value != "" && strings.Contains(err.Error(), value) {
++			t.Fatal("database open error leaked fixture identity")
++		}
++	}
++}
++
++func issue150CloseUnexpectedDatabase(t *testing.T, database interface{ Close() error }) {
++	t.Helper()
++	if database == nil {
++		return
++	}
++	if err := database.Close(); err != nil {
++		t.Errorf("close unexpectedly opened database: %v", err)
++	}
++}
+diff --git a/lib/syncthing/issue150_runtime_privacy_test.go b/lib/syncthing/issue150_runtime_privacy_test.go
+new file mode 100644
+index 0000000..13fd1c1
+--- /dev/null
++++ b/lib/syncthing/issue150_runtime_privacy_test.go
+@@ -0,0 +1,176 @@
++// Copyright (C) 2026 The Syncthing Authors.
++//
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this file,
++// You can obtain one at https://mozilla.org/MPL/2.0/.
++
++package syncthing
++
++import (
++	"errors"
++	"path/filepath"
++	"strings"
++	"sync"
++	"testing"
++	"time"
++
++	"github.com/thejerf/suture/v4"
++
++	"github.com/syncthing/syncthing/internal/db"
++	"github.com/syncthing/syncthing/internal/db/sqlite"
++	"github.com/syncthing/syncthing/internal/slogutil"
++	"github.com/syncthing/syncthing/lib/config"
++	"github.com/syncthing/syncthing/lib/events"
++	"github.com/syncthing/syncthing/lib/protocol"
++	"github.com/syncthing/syncthing/lib/svcutil"
++	"github.com/syncthing/syncthing/lib/tlsutil"
++)
++
++func TestIssue150ProtectedAppStartupSkipsGlobalMutationServices(t *testing.T) {
++	app, cfg, spy := issue150RuntimeApp(t, config.FolderTypeReceiveOnly)
++	app.mainService = suture.New("issue150-runtime", svcutil.SpecWithDebugLogger())
++	slogutil.GlobalRecorder.Clear()
++	if err := app.startup(); err != nil {
++		t.Fatal(err)
++	}
++
++	for _, call := range []string{"Service", "ListFolders", "DropFolder", "DropAllIndexIDs", "GetKV", "PutKV", "DeleteKV"} {
++		if got := spy.count(call); got != 0 {
++			t.Errorf("protected startup called mutating or migration DB surface %s %d times", call, got)
++		}
++	}
++
++	if err := <-app.StartMaintenance(); !errors.Is(err, config.ErrVaultSyncReceiveSideSafetyStop) {
++		t.Errorf("maintenance error = %v, want canonical safety stop", err)
++	}
++	if _, err := cfg.Modify(func(to *config.Configuration) {
++		to.Folders[0].Path = filepath.Join(t.TempDir(), "replacement")
++	}); !errors.Is(err, config.ErrVaultSyncReceiveSideSafetyStop) {
++		t.Errorf("generic protected path change = %v, want canonical safety stop", err)
++	}
++	logs := issue150SyncthingLogs()
++	protectedFolder := cfg.FolderList()[0]
++	for _, secret := range []string{protectedFolder.Label, protectedFolder.Path} {
++		if strings.Contains(logs, secret) {
++			t.Errorf("protected app startup log contains user-derived value %q: %s", secret, logs)
++		}
++	}
++}
++
++func TestIssue150PureSendOnlyAppKeepsStandardStartupServices(t *testing.T) {
++	app, _, spy := issue150RuntimeApp(t, config.FolderTypeSendOnly)
++	if app.receiveSideReadOnlyActive() {
++		t.Fatal("pure send-only configuration entered receive-side protection")
++	}
++	app.mainService = suture.New("issue150-sendonly", svcutil.SpecWithDebugLogger())
++	if err := app.startup(); err != nil {
++		t.Fatal(err)
++	}
++	for _, call := range []string{"Service", "ListFolders", "GetKV", "PutKV"} {
++		if got := spy.count(call); got == 0 {
++			t.Errorf("pure send-only startup no longer called standard DB surface %s", call)
++		}
++	}
++}
++
++func issue150RuntimeApp(t *testing.T, folderType config.FolderType) (*App, config.Wrapper, *issue150RuntimeDBSpy) {
++	t.Helper()
++	cert, err := tlsutil.NewCertificateInMemory("issue150", 365)
++	if err != nil {
++		t.Fatal(err)
++	}
++	myID := protocol.NewDeviceID(cert.Certificate[0])
++	raw := config.New(myID)
++	raw.GUI.Enabled = false
++	raw.Options.RawListenAddresses = nil
++	raw.Options.GlobalAnnEnabled = false
++	raw.Options.LocalAnnEnabled = false
++	raw.Options.RelaysEnabled = false
++	folder := raw.Defaults.Folder.Copy()
++	folder.ID = "issue150-runtime"
++	folder.Label = "Issue 150 Redaction Probe"
++	folder.Path = filepath.Join(t.TempDir(), "issue150-redaction-probe")
++	folder.Type = folderType
++	folder.Paused = true
++	folder.Devices = []config.FolderDeviceConfiguration{{DeviceID: myID}}
++	raw.Folders = []config.FolderConfiguration{folder}
++	cfg := config.Wrap("", raw, myID, events.NoopLogger)
++	go func() { _ = cfg.Serve(t.Context()) }()
++
++	sdb, err := sqlite.Open(t.TempDir())
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { sdb.Close() })
++	spy := &issue150RuntimeDBSpy{DB: sdb, calls: make(map[string]int)}
++	app, err := New(cfg, spy, events.NoopLogger, cert, Options{
++		ReceiveSideReadOnly: true,
++		ResetDeltaIdxs:      true,
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++	return app, cfg, spy
++}
++
++type issue150RuntimeDBSpy struct {
++	db.DB
++	mut   sync.Mutex
++	calls map[string]int
++}
++
++func (s *issue150RuntimeDBSpy) called(name string) {
++	s.mut.Lock()
++	s.calls[name]++
++	s.mut.Unlock()
++}
++
++func (s *issue150RuntimeDBSpy) count(name string) int {
++	s.mut.Lock()
++	defer s.mut.Unlock()
++	return s.calls[name]
++}
++
++func (s *issue150RuntimeDBSpy) Service(interval time.Duration) db.DBService {
++	s.called("Service")
++	return s.DB.Service(interval)
++}
++
++func (s *issue150RuntimeDBSpy) ListFolders() ([]string, error) {
++	s.called("ListFolders")
++	return s.DB.ListFolders()
++}
++
++func (s *issue150RuntimeDBSpy) DropFolder(folder string) error {
++	s.called("DropFolder")
++	return s.DB.DropFolder(folder)
++}
++
++func (s *issue150RuntimeDBSpy) DropAllIndexIDs() error {
++	s.called("DropAllIndexIDs")
++	return s.DB.DropAllIndexIDs()
++}
++
++func (s *issue150RuntimeDBSpy) GetKV(key string) ([]byte, error) {
++	s.called("GetKV")
++	return s.DB.GetKV(key)
++}
++
++func (s *issue150RuntimeDBSpy) PutKV(key string, value []byte) error {
++	s.called("PutKV")
++	return s.DB.PutKV(key, value)
++}
++
++func (s *issue150RuntimeDBSpy) DeleteKV(key string) error {
++	s.called("DeleteKV")
++	return s.DB.DeleteKV(key)
++}
++
++func issue150SyncthingLogs() string {
++	var messages strings.Builder
++	for _, line := range slogutil.GlobalRecorder.Since(time.Time{}) {
++		messages.WriteString(line.Message)
++		messages.WriteByte('\n')
++	}
++	return messages.String()
++}
+diff --git a/lib/syncthing/syncthing.go b/lib/syncthing/syncthing.go
+index 1f36642..704fb3b 100644
+--- a/lib/syncthing/syncthing.go
++++ b/lib/syncthing/syncthing.go
+@@ -57,22 +57,24 @@ type Options struct {
+ 	ProfilerAddr          string
+ 	ResetDeltaIdxs        bool
+ 	DBMaintenanceInterval time.Duration
++	ReceiveSideReadOnly   bool
+ }
+ 
+ type App struct {
+-	myID              protocol.DeviceID
+-	mainService       *suture.Supervisor
+-	cfg               config.Wrapper
+-	sdb               db.DB
+-	evLogger          events.Logger
+-	cert              tls.Certificate
+-	opts              Options
+-	exitStatus        svcutil.ExitStatus
+-	err               error
+-	stopOnce          sync.Once
+-	mainServiceCancel context.CancelFunc
+-	stopped           chan struct{}
+-	dbService         db.DBService
++	myID                           protocol.DeviceID
++	mainService                    *suture.Supervisor
++	cfg                            config.Wrapper
++	sdb                            db.DB
++	evLogger                       events.Logger
++	cert                           tls.Certificate
++	opts                           Options
++	exitStatus                     svcutil.ExitStatus
++	err                            error
++	stopOnce                       sync.Once
++	mainServiceCancel              context.CancelFunc
++	stopped                        chan struct{}
++	dbService                      db.DBService
++	receiveSideReadOnlyStartupWait func()
+ 
+ 	// Access to internals for direct users of this package. Note that the interface in Internals is unstable!
+ 	Internals *Internals
+@@ -111,6 +113,9 @@ func (a *App) Start() error {
+ 		a.stopWithErr(svcutil.ExitError, err)
+ 		return err
+ 	}
++	if a.receiveSideReadOnlyStartupWait != nil {
++		a.receiveSideReadOnlyStartupWait()
++	}
+ 
+ 	return nil
+ }
+@@ -127,9 +132,20 @@ func (a *App) LastMaintenanceTime() time.Time {
+ }
+ 
+ func (a *App) startup() error {
++	receiveSideReadOnly := a.receiveSideReadOnlyActive()
++	if a.opts.ReceiveSideReadOnly {
++		if err := config.EnableVaultSyncReceiveSideProtection(a.cfg); err != nil {
++			return config.ErrVaultSyncReceiveSideSafetyStop
++		}
++	}
++
+ 	a.mainService.Add(ur.NewFailureHandler(a.cfg, a.evLogger))
+ 
+-	a.dbService = a.sdb.Service(a.opts.DBMaintenanceInterval)
++	if receiveSideReadOnly {
++		a.dbService = receiveSideReadOnlyDBService{}
++	} else {
++		a.dbService = a.sdb.Service(a.opts.DBMaintenanceInterval)
++	}
+ 	a.mainService.Add(a.dbService)
+ 
+ 	if a.opts.AuditWriter != nil {
+@@ -182,7 +198,7 @@ func (a *App) startup() error {
+ 		}()
+ 	}
+ 
+-	if a.opts.ResetDeltaIdxs {
++	if a.opts.ResetDeltaIdxs && !receiveSideReadOnly {
+ 		slog.Info("Reinitializing delta index IDs")
+ 		if err := a.sdb.DropAllIndexIDs(); err != nil {
+ 			slog.Error("Failed to drop index IDs", slogutil.Error(err))
+@@ -197,62 +213,78 @@ func (a *App) startup() error {
+ 		locations.Get(locations.KeyFile),
+ 	}
+ 
+-	// Remove database entries for folders that no longer exist in the config
+-	cfgFolders := a.cfg.Folders()
+-	dbFolders, err := a.sdb.ListFolders()
+-	if err != nil {
+-		slog.Warn("Failed to list folders", slogutil.Error(err))
+-		return err
+-	}
+-	for _, folder := range dbFolders {
+-		if _, ok := cfgFolders[folder]; !ok {
+-			slog.Info("Cleaning metadata for dropped folder", "folder", folder)
+-			a.sdb.DropFolder(folder)
++	if !receiveSideReadOnly {
++		// Remove database entries for folders that no longer exist in the config.
++		cfgFolders := a.cfg.Folders()
++		dbFolders, err := a.sdb.ListFolders()
++		if err != nil {
++			slog.Warn("Failed to list folders", slogutil.Error(err))
++			return err
++		}
++		for _, folder := range dbFolders {
++			if _, ok := cfgFolders[folder]; !ok {
++				slog.Info("Cleaning metadata for dropped folder", "folder", folder)
++				a.sdb.DropFolder(folder)
++			}
+ 		}
+ 	}
+ 
+ 	// Grab the previously running version string from the database.
+ 
+ 	miscDB := db.NewMiscDB(a.sdb)
+-	prevVersion, _, err := miscDB.String("prevVersion")
+-	if err != nil {
+-		slog.Error("Database error when getting previous version", slogutil.Error(err))
+-		return err
+-	}
++	if !receiveSideReadOnly {
++		prevVersion, _, err := miscDB.String("prevVersion")
++		if err != nil {
++			slog.Error("Database error when getting previous version", slogutil.Error(err))
++			return err
++		}
+ 
+-	// Strip away prerelease/beta stuff and just compare the release
+-	// numbers. 0.14.44 to 0.14.45-banana is an upgrade, 0.14.45-banana to
+-	// 0.14.45-pineapple is not.
++		// Strip away prerelease/beta stuff and just compare the release
++		// numbers. 0.14.44 to 0.14.45-banana is an upgrade, 0.14.45-banana to
++		// 0.14.45-pineapple is not.
+ 
+-	prevParts := strings.Split(prevVersion, "-")
+-	curParts := strings.Split(build.Version, "-")
+-	if rel := upgrade.CompareVersions(prevParts[0], curParts[0]); rel != upgrade.Equal {
+-		if prevVersion != "" {
+-			slog.Info("Detected upgrade", "from", prevVersion, "to", build.Version)
+-		}
++		prevParts := strings.Split(prevVersion, "-")
++		curParts := strings.Split(build.Version, "-")
++		if rel := upgrade.CompareVersions(prevParts[0], curParts[0]); rel != upgrade.Equal {
++			if prevVersion != "" {
++				slog.Info("Detected upgrade", "from", prevVersion, "to", build.Version)
++			}
+ 
+-		if a.cfg.Options().SendFullIndexOnUpgrade {
+-			// Drop delta indexes in case we've changed random stuff we
+-			// shouldn't have. We will resend our index on next connect.
+-			if err := a.sdb.DropAllIndexIDs(); err != nil {
+-				slog.Warn("Failed to drop index IDs", slogutil.Error(err))
+-				return err
++			if a.cfg.Options().SendFullIndexOnUpgrade {
++				// Drop delta indexes in case we've changed random stuff we
++				// shouldn't have. We will resend our index on next connect.
++				if err := a.sdb.DropAllIndexIDs(); err != nil {
++					slog.Warn("Failed to drop index IDs", slogutil.Error(err))
++					return err
++				}
+ 			}
+ 		}
+-	}
+ 
+-	if build.Version != prevVersion {
+-		// Remember the new version.
+-		miscDB.PutString("prevVersion", build.Version)
+-	}
++		if build.Version != prevVersion {
++			// Remember the new version.
++			miscDB.PutString("prevVersion", build.Version)
++		}
+ 
+-	if err := globalMigration(a.sdb, a.cfg); err != nil {
+-		slog.Warn("Failed to perform global migration", slogutil.Error(err))
+-		return err
++		if err := globalMigration(a.sdb, a.cfg); err != nil {
++			slog.Warn("Failed to perform global migration", slogutil.Error(err))
++			return err
++		}
+ 	}
+ 
+ 	keyGen := protocol.NewKeyGenerator()
+-	m := model.NewModel(a.cfg, a.myID, a.sdb, protectedFiles, a.evLogger, keyGen)
++	var m model.Model
++	if a.opts.ReceiveSideReadOnly {
++		m = model.NewModelWithOptions(a.cfg, a.myID, a.sdb, protectedFiles, a.evLogger, keyGen, model.ModelOptions{ReceiveSideReadOnly: true})
++	} else {
++		m = model.NewModel(a.cfg, a.myID, a.sdb, protectedFiles, a.evLogger, keyGen)
++	}
++	if receiveSideReadOnly {
++		startupWaiter, ok := m.(interface{ WaitForStartup() })
++		if !ok {
++			return config.ErrVaultSyncReceiveSideSafetyStop
++		}
++		a.receiveSideReadOnlyStartupWait = startupWaiter.WaitForStartup
++	}
+ 	a.Internals = newInternals(m)
+ 
+ 	a.mainService.Add(m)
+@@ -283,16 +315,18 @@ func (a *App) startup() error {
+ 	a.mainService.Add(discoveryManager)
+ 	a.mainService.Add(connectionsService)
+ 
+-	a.cfg.Modify(func(cfg *config.Configuration) {
+-		// Candidate builds always run with usage reporting.
+-		if build.IsCandidate {
+-			slog.Info("Anonymous usage reporting is always enabled for candidate releases")
+-			if cfg.Options.URAccepted != ur.Version {
+-				cfg.Options.URAccepted = ur.Version
+-				// Unique ID will be set and config saved below if necessary.
++	if !receiveSideReadOnly {
++		a.cfg.Modify(func(cfg *config.Configuration) {
++			// Candidate builds always run with usage reporting.
++			if build.IsCandidate {
++				slog.Info("Anonymous usage reporting is always enabled for candidate releases")
++				if cfg.Options.URAccepted != ur.Version {
++					cfg.Options.URAccepted = ur.Version
++					// Unique ID will be set and config saved below if necessary.
++				}
+ 			}
+-		}
+-	})
++		})
++	}
+ 
+ 	usageReportingSvc := ur.New(a.cfg, m, connectionsService, a.opts.NoUpgrade)
+ 	a.mainService.Add(usageReportingSvc)
+@@ -305,10 +339,18 @@ func (a *App) startup() error {
+ 	}
+ 
+ 	myDev, _ := a.cfg.Device(a.myID)
+-	slog.Info("Loaded configuration", "name", myDev.Name)
++	if receiveSideReadOnly {
++		slog.Info("Loaded configuration", a.myID.LogAttr())
++	} else {
++		slog.Info("Loaded configuration", "name", myDev.Name)
++	}
+ 	for _, device := range a.cfg.Devices() {
+ 		if device.DeviceID != a.myID {
+-			slog.Info("Loaded peer device configuration", device.DeviceID.LogAttr(), slog.String("name", device.Name), slogutil.Address(device.Addresses))
++			if receiveSideReadOnly {
++				slog.Info("Loaded peer device configuration", device.DeviceID.LogAttr())
++			} else {
++				slog.Info("Loaded peer device configuration", device.DeviceID.LogAttr(), slog.String("name", device.Name), slogutil.Address(device.Addresses))
++			}
+ 		}
+ 	}
+ 
+@@ -329,6 +371,35 @@ func (a *App) startup() error {
+ 	return nil
+ }
+ 
++func (a *App) receiveSideReadOnlyActive() bool {
++	if !a.opts.ReceiveSideReadOnly {
++		return false
++	}
++	for _, folder := range a.cfg.Folders() {
++		if folder.Type != config.FolderTypeSendOnly {
++			return true
++		}
++	}
++	return false
++}
++
++type receiveSideReadOnlyDBService struct{}
++
++func (receiveSideReadOnlyDBService) Serve(ctx context.Context) error {
++	<-ctx.Done()
++	return ctx.Err()
++}
++
++func (receiveSideReadOnlyDBService) StartMaintenance() <-chan error {
++	done := make(chan error, 1)
++	done <- config.ErrVaultSyncReceiveSideSafetyStop
++	return done
++}
++
++func (receiveSideReadOnlyDBService) LastMaintenanceTime() time.Time {
++	return time.Time{}
++}
++
+ func (a *App) wait(errChan <-chan error) {
+ 	err := <-errChan
+ 	a.handleMainServiceError(err)
+diff --git a/lib/syncthing/utils.go b/lib/syncthing/utils.go
+index ad79937..a619984 100644
+--- a/lib/syncthing/utils.go
++++ b/lib/syncthing/utils.go
+@@ -86,6 +86,21 @@ func DefaultConfig(path string, myID protocol.DeviceID, evLogger events.Logger,
+ // upgrades the config if necessary or returns an error, if the version
+ // isn't compatible.
+ func LoadConfigAtStartup(path string, cert tls.Certificate, evLogger events.Logger, allowNewerConfig, skipPortProbing bool) (config.Wrapper, error) {
++	return loadConfigAtStartup(path, cert, evLogger, allowNewerConfig, skipPortProbing, nil)
++}
++
++// ConfigStartupPreflight validates external startup state after the
++// configuration is readable but before an older configuration is archived or
++// rewritten.
++type ConfigStartupPreflight func(config.Wrapper) error
++
++// LoadConfigAtStartupWithPreflight preserves LoadConfigAtStartup semantics but
++// lets an embedding application stop before configuration-upgrade mutation.
++func LoadConfigAtStartupWithPreflight(path string, cert tls.Certificate, evLogger events.Logger, allowNewerConfig, skipPortProbing bool, preflight ConfigStartupPreflight) (config.Wrapper, error) {
++	return loadConfigAtStartup(path, cert, evLogger, allowNewerConfig, skipPortProbing, preflight)
++}
++
++func loadConfigAtStartup(path string, cert tls.Certificate, evLogger events.Logger, allowNewerConfig, skipPortProbing bool, preflight ConfigStartupPreflight) (config.Wrapper, error) {
+ 	myID := protocol.NewDeviceID(cert.Certificate[0])
+ 	cfg, originalVersion, err := config.Load(path, myID, evLogger)
+ 	if fs.IsNotExist(err) {
+@@ -104,10 +119,17 @@ func LoadConfigAtStartup(path string, cert tls.Certificate, evLogger events.Logg
+ 		return nil, fmt.Errorf("failed to load config: %w", err)
+ 	}
+ 
+-	if originalVersion != config.CurrentVersion {
+-		if originalVersion > config.CurrentVersion && !allowNewerConfig {
+-			return nil, fmt.Errorf("config file version (%d) is newer than supported version (%d); if this is expected, use --allow-newer-config to override", originalVersion, config.CurrentVersion)
++	if originalVersion > config.CurrentVersion && !allowNewerConfig {
++		return nil, fmt.Errorf("config file version (%d) is newer than supported version (%d); if this is expected, use --allow-newer-config to override", originalVersion, config.CurrentVersion)
++	}
++
++	if preflight != nil {
++		if err := preflight(cfg); err != nil {
++			return nil, fmt.Errorf("startup preflight: %w", err)
+ 		}
++	}
++
++	if originalVersion != config.CurrentVersion {
+ 		err = archiveAndSaveConfig(cfg, originalVersion)
+ 		if err != nil {
+ 			return nil, fmt.Errorf("config archive: %w", err)
+@@ -144,10 +166,57 @@ func copyFile(src, dst string) error {
+ 	return nil
+ }
+ 
++// ErrReceiveSideReadOnlySafetyStop is the canonical path-free VaultSync
++// receive-side safety stop.
++var ErrReceiveSideReadOnlySafetyStop = config.ErrVaultSyncReceiveSideSafetyStop
++
++type databaseOptions struct {
++	receiveSideReadOnlyConfig          config.Wrapper
++	receiveSideReadOnlyConfigRequested bool
++}
++
++// DatabaseOption configures database startup behavior.
++type DatabaseOption func(*databaseOptions)
++
++// WithReceiveSideReadOnlyConfig enables the VaultSync database hard floor for
++// configurations containing at least one non-SendOnly folder.
++func WithReceiveSideReadOnlyConfig(cfg config.Wrapper) DatabaseOption {
++	return func(options *databaseOptions) {
++		options.receiveSideReadOnlyConfig = cfg
++		options.receiveSideReadOnlyConfigRequested = true
++	}
++}
++
+ // Opens a database
+-func OpenDatabase(path string, deleteRetention time.Duration) (db.DB, error) {
+-	sql, err := sqlite.Open(path, sqlite.WithDeleteRetention(deleteRetention))
++func OpenDatabase(path string, deleteRetention time.Duration, options ...DatabaseOption) (db.DB, error) {
++	settings := databaseOptions{}
++	for _, option := range options {
++		option(&settings)
++	}
++
++	sqliteOptions := []sqlite.Option{sqlite.WithDeleteRetention(deleteRetention)}
++	protected := false
++	if settings.receiveSideReadOnlyConfigRequested {
++		if settings.receiveSideReadOnlyConfig == nil {
++			return nil, ErrReceiveSideReadOnlySafetyStop
++		}
++		var protectedFolderIDs []string
++		for _, folder := range settings.receiveSideReadOnlyConfig.FolderList() {
++			if folder.Type != config.FolderTypeSendOnly {
++				protectedFolderIDs = append(protectedFolderIDs, folder.ID)
++			}
++		}
++		if len(protectedFolderIDs) > 0 {
++			protected = true
++			sqliteOptions = append(sqliteOptions, sqlite.WithReceiveSideReadOnlyFolders(protectedFolderIDs))
++		}
++	}
++
++	sql, err := sqlite.Open(path, sqliteOptions...)
+ 	if err != nil {
++		if protected {
++			return nil, ErrReceiveSideReadOnlySafetyStop
++		}
+ 		return nil, err
+ 	}
+ 
+diff --git a/lib/versioner/external.go b/lib/versioner/external.go
+index 5a9ead4..cc8f60a 100644
+--- a/lib/versioner/external.go
++++ b/lib/versioner/external.go
+@@ -24,7 +24,7 @@ import (
+ 
+ func init() {
+ 	// Register the constructor for this type of versioner with the name "external"
+-	factories["external"] = newExternal
++	factories["external"] = newExternalWithLogging
+ }
+ 
+ type external struct {
+@@ -33,6 +33,10 @@ type external struct {
+ }
+ 
+ func newExternal(cfg config.FolderConfiguration) Versioner {
++	return newExternalWithLogging(cfg, true)
++}
++
++func newExternalWithLogging(cfg config.FolderConfiguration, logInstantiation bool) Versioner {
+ 	command := cfg.Versioning.Params["command"]
+ 
+ 	if build.IsWindows {
+@@ -44,7 +48,9 @@ func newExternal(cfg config.FolderConfiguration) Versioner {
+ 		filesystem: cfg.Filesystem(),
+ 	}
+ 
+-	l.Debugf("instantiated %#v", s)
++	if logInstantiation {
++		l.Debugf("instantiated %#v", s)
++	}
+ 	return s
+ }
+ 
+diff --git a/lib/versioner/issue150_runtime_privacy_test.go b/lib/versioner/issue150_runtime_privacy_test.go
+new file mode 100644
+index 0000000..67ea001
+--- /dev/null
++++ b/lib/versioner/issue150_runtime_privacy_test.go
+@@ -0,0 +1,218 @@
++// Copyright (C) 2026 The Syncthing Authors.
++//
++// This Source Code Form is subject to the terms of the Mozilla Public
++// License, v. 2.0. If a copy of the MPL was not distributed with this file,
++// You can obtain one at https://mozilla.org/MPL/2.0/.
++
++package versioner
++
++import (
++	"context"
++	"errors"
++	"log/slog"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/syncthing/syncthing/internal/slogutil"
++	"github.com/syncthing/syncthing/lib/config"
++)
++
++func TestIssue150ProtectedVersionerIsPrivateAndInspectionOnly(t *testing.T) {
++	for _, tc := range []struct {
++		name       string
++		folderType config.FolderType
++		protected  bool
++	}{
++		{name: "send-receive", folderType: config.FolderTypeSendReceive, protected: true},
++		{name: "receive-only", folderType: config.FolderTypeReceiveOnly, protected: true},
++		{name: "receive-encrypted", folderType: config.FolderTypeReceiveEncrypted, protected: true},
++		{name: "receive-only-normal-control", folderType: config.FolderTypeReceiveOnly},
++		{name: "send-only-control", folderType: config.FolderTypeSendOnly},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			base := t.TempDir()
++			folderPath := filepath.Join(base, "issue150-redaction-probe")
++			versionsPath := filepath.Join(base, ".stversions-issue150-redaction-probe")
++			if err := os.MkdirAll(folderPath, 0o755); err != nil {
++				t.Fatal(err)
++			}
++			if err := os.MkdirAll(versionsPath, 0o755); err != nil {
++				t.Fatal(err)
++			}
++
++			cfg := config.FolderConfiguration{
++				ID:             "issue150-versioner",
++				Label:          "Issue 150 Redaction Probe",
++				Type:           tc.folderType,
++				FilesystemType: config.FilesystemTypeBasic,
++				Path:           folderPath,
++				Versioning: config.VersioningConfiguration{
++					Type:   "simple",
++					FSPath: versionsPath,
++					FSType: config.FilesystemTypeBasic,
++					Params: map[string]string{"keep": "1"},
++				},
++			}
++
++			archiveName := "archive-note.md"
++			restoreName := "restore-note.md"
++			if err := os.WriteFile(filepath.Join(folderPath, archiveName), []byte("archive-live"), 0o644); err != nil {
++				t.Fatal(err)
++			}
++			if err := os.WriteFile(filepath.Join(folderPath, restoreName), []byte("restore-live"), 0o644); err != nil {
++				t.Fatal(err)
++			}
++			versionTime := time.Date(2020, 1, 2, 3, 4, 5, 0, time.Local)
++			tag := versionTime.Format(TimeFormat)
++			versionName := TagFilename(restoreName, tag)
++			if err := os.WriteFile(filepath.Join(versionsPath, versionName), []byte("restore-archived"), 0o644); err != nil {
++				t.Fatal(err)
++			}
++			olderName := TagFilename("cleanup-note.md", "20180102-030405")
++			newerName := TagFilename("cleanup-note.md", "20190102-030405")
++			for _, name := range []string{olderName, newerName} {
++				if err := os.WriteFile(filepath.Join(versionsPath, name), []byte(name), 0o644); err != nil {
++					t.Fatal(err)
++				}
++			}
++
++			oldLevel := slogutil.PackageLevels()["versioner"]
++			slogutil.SetPackageLevel("versioner", slog.LevelDebug)
++			t.Cleanup(func() { slogutil.SetPackageLevel("versioner", oldLevel) })
++			slogutil.GlobalRecorder.Clear()
++			var v Versioner
++			var err error
++			if tc.protected {
++				v, err = NewVaultSyncInspectionOnly(cfg)
++			} else {
++				v, err = New(cfg)
++			}
++			if err != nil {
++				t.Fatal(err)
++			}
++
++			versions, err := v.GetVersions()
++			if err != nil {
++				t.Fatalf("inspection failed: %v", err)
++			}
++			if got := len(versions[restoreName]); got != 1 {
++				t.Fatalf("inspection found %d restore versions, want 1", got)
++			}
++
++			archiveErr := v.Archive(archiveName)
++			restoreErr := v.Restore(restoreName, versionTime)
++			cleanErr := v.Clean(context.Background())
++			if cleanErr != nil {
++				t.Errorf("clean returned an error: %v", cleanErr)
++			}
++
++			archiveExists := issue150PathExists(filepath.Join(folderPath, archiveName))
++			restored, err := os.ReadFile(filepath.Join(folderPath, restoreName))
++			if err != nil {
++				t.Fatal(err)
++			}
++			olderExists := issue150PathExists(filepath.Join(versionsPath, olderName))
++
++			if tc.protected {
++				issue150RequireVersionerSafetyError(t, archiveErr)
++				issue150RequireVersionerSafetyError(t, restoreErr)
++				if !archiveExists {
++					t.Error("protected Archive mutated the live vault")
++				}
++				if string(restored) != "restore-live" {
++					t.Errorf("protected Restore changed live content to %q", restored)
++				}
++				if !olderExists {
++					t.Error("protected Clean removed a retained inspection version")
++				}
++				logs := issue150VersionerLogs()
++				for _, secret := range []string{cfg.Label, folderPath, versionsPath, DefaultPath} {
++					if strings.Contains(logs, secret) {
++						t.Errorf("protected versioner construction logged %q: %s", secret, logs)
++					}
++				}
++			} else {
++				if archiveErr != nil {
++					t.Errorf("send-only Archive returned an error: %v", archiveErr)
++				}
++				if restoreErr != nil {
++					t.Errorf("send-only Restore returned an error: %v", restoreErr)
++				}
++				if archiveExists {
++					t.Error("send-only Archive became inert")
++				}
++				if string(restored) != "restore-archived" {
++					t.Errorf("send-only Restore returned %q", restored)
++				}
++				if olderExists {
++					t.Error("send-only Clean no longer applies retention")
++				}
++			}
++		})
++	}
++
++	t.Run("external-command-path", func(t *testing.T) {
++		base := t.TempDir()
++		commandPath := filepath.Join(base, "issue150-redaction-probe-command")
++		cfg := config.FolderConfiguration{
++			ID:             "issue150-external-versioner",
++			Label:          "Issue 150 Redaction Probe",
++			Type:           config.FolderTypeReceiveOnly,
++			FilesystemType: config.FilesystemTypeBasic,
++			Path:           filepath.Join(base, "issue150-redaction-probe"),
++			Versioning: config.VersioningConfiguration{
++				Type:   "external",
++				Params: map[string]string{"command": commandPath + " %FILE_PATH%"},
++			},
++		}
++		oldLevel := slogutil.PackageLevels()["versioner"]
++		slogutil.SetPackageLevel("versioner", slog.LevelDebug)
++		t.Cleanup(func() { slogutil.SetPackageLevel("versioner", oldLevel) })
++		slogutil.GlobalRecorder.Clear()
++		v, err := NewVaultSyncInspectionOnly(cfg)
++		if err != nil {
++			t.Fatal(err)
++		}
++		if _, err := v.GetVersions(); !errors.Is(err, ErrRestorationNotSupported) {
++			t.Errorf("external inspection error = %v, want restoration-not-supported", err)
++		}
++		issue150RequireVersionerSafetyError(t, v.Archive("issue150-redaction-probe.md"))
++		logs := issue150VersionerLogs()
++		for _, secret := range []string{cfg.Label, cfg.Path, commandPath, "issue150-redaction-probe.md"} {
++			if strings.Contains(logs, secret) {
++				t.Errorf("protected external versioner log contains %q: %s", secret, logs)
++			}
++		}
++	})
++}
++
++func issue150RequireVersionerSafetyError(t *testing.T, err error) {
++	t.Helper()
++	expected := config.ErrVaultSyncReceiveSideSafetyStop
++	if err == nil {
++		t.Fatalf("mutation returned nil, want %q", expected.Error())
++	}
++	if !errors.Is(err, expected) {
++		t.Errorf("mutation error = %v, want canonical safety stop", err)
++	}
++	if got := err.Error(); got != expected.Error() {
++		t.Errorf("mutation error = %q, want exact path-free %q", got, expected.Error())
++	}
++}
++
++func issue150PathExists(path string) bool {
++	_, err := os.Stat(path)
++	return err == nil
++}
++
++func issue150VersionerLogs() string {
++	var messages strings.Builder
++	for _, line := range slogutil.GlobalRecorder.Since(time.Time{}) {
++		messages.WriteString(line.Message)
++		messages.WriteByte('\n')
++	}
++	return messages.String()
++}
+diff --git a/lib/versioner/simple.go b/lib/versioner/simple.go
+index 25ec04a..b75e16f 100644
+--- a/lib/versioner/simple.go
++++ b/lib/versioner/simple.go
+@@ -18,7 +18,7 @@ import (
+ 
+ func init() {
+ 	// Register the constructor for this type of versioner with the name "simple"
+-	factories["simple"] = newSimple
++	factories["simple"] = newSimpleWithLogging
+ }
+ 
+ type simple struct {
+@@ -30,6 +30,10 @@ type simple struct {
+ }
+ 
+ func newSimple(cfg config.FolderConfiguration) Versioner {
++	return newSimpleWithLogging(cfg, true)
++}
++
++func newSimpleWithLogging(cfg config.FolderConfiguration, logInstantiation bool) Versioner {
+ 	keep, err := strconv.Atoi(cfg.Versioning.Params["keep"])
+ 	cleanoutDays, _ := strconv.Atoi(cfg.Versioning.Params["cleanoutDays"])
+ 	// On error we default to 0, "do not clean out the versioned items"
+@@ -42,11 +46,13 @@ func newSimple(cfg config.FolderConfiguration) Versioner {
+ 		keep:            keep,
+ 		cleanoutDays:    cleanoutDays,
+ 		folderFs:        cfg.Filesystem(),
+-		versionsFs:      versionerFsFromFolderCfg(cfg),
++		versionsFs:      versionerFsFromFolderCfgWithLogging(cfg, logInstantiation),
+ 		copyRangeMethod: cfg.CopyRangeMethod.ToFS(),
+ 	}
+ 
+-	l.Debugf("instantiated %#v", s)
++	if logInstantiation {
++		l.Debugf("instantiated %#v", s)
++	}
+ 	return s
+ }
+ 
+diff --git a/lib/versioner/staggered.go b/lib/versioner/staggered.go
+index 310d3d1..52f9507 100644
+--- a/lib/versioner/staggered.go
++++ b/lib/versioner/staggered.go
+@@ -19,7 +19,7 @@ import (
+ 
+ func init() {
+ 	// Register the constructor for this type of versioner with the name "staggered"
+-	factories["staggered"] = newStaggered
++	factories["staggered"] = newStaggeredWithLogging
+ }
+ 
+ type interval struct {
+@@ -35,13 +35,17 @@ type staggered struct {
+ }
+ 
+ func newStaggered(cfg config.FolderConfiguration) Versioner {
++	return newStaggeredWithLogging(cfg, true)
++}
++
++func newStaggeredWithLogging(cfg config.FolderConfiguration, logInstantiation bool) Versioner {
+ 	params := cfg.Versioning.Params
+ 	maxAge, err := strconv.ParseInt(params["maxAge"], 10, 0)
+ 	if err != nil {
+ 		maxAge = 31536000 // Default: ~1 year
+ 	}
+ 
+-	versionsFs := versionerFsFromFolderCfg(cfg)
++	versionsFs := versionerFsFromFolderCfgWithLogging(cfg, logInstantiation)
+ 
+ 	s := &staggered{
+ 		folderFs:   cfg.Filesystem(),
+@@ -55,7 +59,9 @@ func newStaggered(cfg config.FolderConfiguration) Versioner {
+ 		copyRangeMethod: cfg.CopyRangeMethod.ToFS(),
+ 	}
+ 
+-	l.Debugf("instantiated %#v", s)
++	if logInstantiation {
++		l.Debugf("instantiated %#v", s)
++	}
+ 	return s
+ }
+ 
+diff --git a/lib/versioner/trashcan.go b/lib/versioner/trashcan.go
+index 2e22890..4128da2 100644
+--- a/lib/versioner/trashcan.go
++++ b/lib/versioner/trashcan.go
+@@ -18,7 +18,7 @@ import (
+ 
+ func init() {
+ 	// Register the constructor for this type of versioner
+-	factories["trashcan"] = newTrashcan
++	factories["trashcan"] = newTrashcanWithLogging
+ }
+ 
+ type trashcan struct {
+@@ -29,17 +29,23 @@ type trashcan struct {
+ }
+ 
+ func newTrashcan(cfg config.FolderConfiguration) Versioner {
++	return newTrashcanWithLogging(cfg, true)
++}
++
++func newTrashcanWithLogging(cfg config.FolderConfiguration, logInstantiation bool) Versioner {
+ 	cleanoutDays, _ := strconv.Atoi(cfg.Versioning.Params["cleanoutDays"])
+ 	// On error we default to 0, "do not clean out the trash can"
+ 
+ 	s := &trashcan{
+ 		folderFs:        cfg.Filesystem(),
+-		versionsFs:      versionerFsFromFolderCfg(cfg),
++		versionsFs:      versionerFsFromFolderCfgWithLogging(cfg, logInstantiation),
+ 		cleanoutDays:    cleanoutDays,
+ 		copyRangeMethod: cfg.CopyRangeMethod.ToFS(),
+ 	}
+ 
+-	l.Debugf("instantiated %#v", s)
++	if logInstantiation {
++		l.Debugf("instantiated %#v", s)
++	}
+ 	return s
+ }
+ 
+diff --git a/lib/versioner/util.go b/lib/versioner/util.go
+index ebb358f..2abf69b 100644
+--- a/lib/versioner/util.go
++++ b/lib/versioner/util.go
+@@ -305,6 +305,10 @@ func restoreFile(method fs.CopyRangeMethod, src, dst fs.Filesystem, filePath str
+ }
+ 
+ func versionerFsFromFolderCfg(cfg config.FolderConfiguration) (versionsFs fs.Filesystem) {
++	return versionerFsFromFolderCfgWithLogging(cfg, true)
++}
++
++func versionerFsFromFolderCfgWithLogging(cfg config.FolderConfiguration, logInstantiation bool) (versionsFs fs.Filesystem) {
+ 	folderFs := cfg.Filesystem()
+ 	if cfg.Versioning.FSPath == "" {
+ 		versionsFs = fs.NewFilesystem(folderFs.Type(), filepath.Join(folderFs.URI(), DefaultPath))
+@@ -325,7 +329,9 @@ func versionerFsFromFolderCfg(cfg config.FolderConfiguration) (versionsFs fs.Fil
+ 	} else {
+ 		versionsFs = fs.NewFilesystem(cfg.Versioning.FSType.ToFS(), cfg.Versioning.FSPath)
+ 	}
+-	l.Debugf("%s (%s) folder using %s (%s) versioner dir", folderFs.URI(), folderFs.Type(), versionsFs.URI(), versionsFs.Type())
++	if logInstantiation {
++		l.Debugf("%s (%s) folder using %s (%s) versioner dir", folderFs.URI(), folderFs.Type(), versionsFs.URI(), versionsFs.Type())
++	}
+ 	return
+ }
+ 
+diff --git a/lib/versioner/versioner.go b/lib/versioner/versioner.go
+index 0f44bbf..d3a4d5a 100644
+--- a/lib/versioner/versioner.go
++++ b/lib/versioner/versioner.go
+@@ -12,6 +12,7 @@ import (
+ 	"context"
+ 	"errors"
+ 	"fmt"
++	"sync"
+ 	"time"
+ 
+ 	"github.com/syncthing/syncthing/lib/config"
+@@ -30,7 +31,7 @@ type FileVersion struct {
+ 	Size        int64     `json:"size"`
+ }
+ 
+-type factory func(cfg config.FolderConfiguration) Versioner
++type factory func(cfg config.FolderConfiguration, logInstantiation bool) Versioner
+ 
+ var factories = make(map[string]factory)
+ 
+@@ -42,17 +43,67 @@ const (
+ )
+ 
+ func New(cfg config.FolderConfiguration) (Versioner, error) {
++	return newWithLogging(cfg, true)
++}
++
++func newWithLogging(cfg config.FolderConfiguration, logInstantiation bool) (Versioner, error) {
+ 	fac, ok := factories[cfg.Versioning.Type]
+ 	if !ok {
+ 		return nil, fmt.Errorf("requested versioning type %q does not exist", cfg.Versioning.Type)
+ 	}
+ 
+ 	return &versionerWithErrorContext{
+-		Versioner: fac(cfg),
++		Versioner: fac(cfg, logInstantiation),
+ 		vtype:     cfg.Versioning.Type,
+ 	}, nil
+ }
+ 
++// NewVaultSyncInspectionOnly returns a versioner boundary that preserves real
++// version inspection while refusing every operation that can change live or
++// archived content. Construction is lazy so protected folder startup performs
++// no filesystem work merely because versioning is configured.
++func NewVaultSyncInspectionOnly(cfg config.FolderConfiguration) (Versioner, error) {
++	if _, ok := factories[cfg.Versioning.Type]; !ok {
++		return nil, fmt.Errorf("requested versioning type %q does not exist", cfg.Versioning.Type)
++	}
++	return &vaultSyncInspectionOnlyVersioner{cfg: cfg}, nil
++}
++
++type vaultSyncInspectionOnlyVersioner struct {
++	cfg config.FolderConfiguration
++
++	once sync.Once
++	ver  Versioner
++	err  error
++}
++
++func (v *vaultSyncInspectionOnlyVersioner) inspectionVersioner() (Versioner, error) {
++	v.once.Do(func() {
++		v.ver, v.err = newWithLogging(v.cfg, false)
++	})
++	return v.ver, v.err
++}
++
++func (*vaultSyncInspectionOnlyVersioner) Archive(string) error {
++	return config.ErrVaultSyncReceiveSideSafetyStop
++}
++
++func (v *vaultSyncInspectionOnlyVersioner) GetVersions() (map[string][]FileVersion, error) {
++	ver, err := v.inspectionVersioner()
++	if err != nil {
++		return nil, err
++	}
++	return ver.GetVersions()
++}
++
++func (*vaultSyncInspectionOnlyVersioner) Restore(string, time.Time) error {
++	return config.ErrVaultSyncReceiveSideSafetyStop
++}
++
++func (*vaultSyncInspectionOnlyVersioner) Clean(context.Context) error {
++	return nil
++}
++
+ type versionerWithErrorContext struct {
+ 	Versioner
+ 
+

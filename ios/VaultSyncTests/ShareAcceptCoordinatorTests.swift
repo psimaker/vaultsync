@@ -21,6 +21,7 @@ struct ShareAcceptCoordinatorTests {
     private static func env(
         settled: @escaping @MainActor () -> Bool = { true },
         accessible: @escaping @MainActor () -> Bool = { true },
+        receiveSafetyState: @escaping @MainActor () -> ConflictSafetyPolicy.State = { .clear },
         pending: [SyncthingManager.PendingFolderInfo],
         eligible: [SyncthingManager.PendingFolderInfo]? = nil,
         recorder: Recorder,
@@ -30,6 +31,7 @@ struct ShareAcceptCoordinatorTests {
         ShareAcceptCoordinator.Environment(
             settled: settled,
             vaultAccessible: accessible,
+            receiveSafetyState: receiveSafetyState,
             pendingFolders: { pending },
             autoAcceptEligible: { eligible ?? pending },
             accept: { folder, mergeConfirmed in
@@ -40,6 +42,57 @@ struct ShareAcceptCoordinatorTests {
             unignorePendingFolder: { recorder.unignored.append($0) },
             ignorePendingFolder: { recorder.ignored.append($0) }
         )
+    }
+
+    @Test("Immutable receive safety blocks automatic, manual, retry, and target accepts (#150)")
+    func immutableReceiveSafetyBlocksEveryAcceptPath() {
+        let recorder = Recorder()
+        var manualTargetReached = false
+        let offer = Self.offer("f1")
+        let c = ShareAcceptCoordinator(environment: Self.env(
+            receiveSafetyState: { .stopped },
+            pending: [offer],
+            recorder: recorder,
+            acceptIntoTarget: { _, _ in
+                manualTargetReached = true
+                return nil
+            }
+        ))
+
+        c.runAutomaticPass()
+        c.accept(offer, source: .manual)
+        c.retry(offer)
+        let targetError = c.acceptManually(folder: offer, intoTargetNamed: "Target")
+
+        #expect(recorder.accepts.isEmpty)
+        #expect(!manualTargetReached)
+        #expect(c.pendingMergeConfirmation == nil)
+        #expect(c.pendingShareFailures[offer.id]?.category == .conflictRetentionSafetyStop)
+        #expect(targetError?.localizedCaseInsensitiveContains("try again") == false)
+    }
+
+    @Test("An omitted receive-safety dependency defaults to unknown and accepts nothing (#150)")
+    func omittedReceiveSafetyDependencyIsFailClosedIssue150() {
+        let recorder = Recorder()
+        let offer = Self.offer("f1")
+        let c = ShareAcceptCoordinator(environment: .init(
+            settled: { true },
+            vaultAccessible: { true },
+            pendingFolders: { [offer] },
+            autoAcceptEligible: { [offer] },
+            accept: { folder, mergeConfirmed in
+                recorder.accepts.append((folder.id, mergeConfirmed))
+                return .accepted
+            },
+            acceptIntoTarget: { _, _ in nil },
+            unignorePendingFolder: { _ in },
+            ignorePendingFolder: { _ in }
+        ))
+
+        c.runAutomaticPass()
+
+        #expect(recorder.accepts.isEmpty)
+        #expect(c.pendingShareFailures[offer.id]?.category == .conflictRetentionSafetyStop)
     }
 
     @Test("Unsettled paths hold the automatic pass without recording failures (decision 008 — nothing may block the re-fire)")

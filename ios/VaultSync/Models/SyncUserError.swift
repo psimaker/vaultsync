@@ -11,6 +11,7 @@ enum SyncUserErrorCategory: String, Sendable {
     case relayProvision = "relay_provision"
     case fileAccess = "file_access"
     case folderMarkerMissing = "folder_marker_missing"
+    case conflictRetentionSafetyStop = "conflict_retention_safety_stop"
     case unknown
 }
 
@@ -36,6 +37,26 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
     static func from(rawMessage: String, fallbackTitle: String = L10n.tr("Sync Error")) -> SyncUserError {
         let normalized = rawMessage.lowercased()
 
+        if normalized.contains("vaultsync-conflict-recovery-unavailable") {
+            return SyncUserError(
+                category: .conflictRetentionSafetyStop,
+                title: L10n.tr("Conflict Recovery Unavailable"),
+                message: L10n.tr("Conflict recovery actions are not available in this version."),
+                remediation: L10n.tr("Review the copies that are still available here. Leave files unchanged; VaultSync cannot run a recovery action in this version."),
+                technicalDetails: nil
+            )
+        }
+
+        if normalized.contains(ConflictSafetyPolicy.stoppedReason)
+            || normalized.contains(ConflictSafetyPolicy.engineStopMarker) {
+            return conflictSafetyError(for: .stopped)
+        }
+        if normalized.contains(ConflictSafetyPolicy.statusUnavailableActionCode)
+            || normalized.contains(ConflictSafetyPolicy.folderErrorEvidenceUnavailableReason)
+            || normalized.contains(ConflictSafetyPolicy.folderCompletionEvidenceUnavailableReason) {
+            return conflictSafetyError(for: .unknown)
+        }
+
         if normalized.contains("syncthing not running") || normalized.contains("not running") {
             return SyncUserError(
                 category: .syncthingNotRunning,
@@ -58,7 +79,7 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
                 category: .config,
                 title: L10n.tr("Conflict Resolution Failed"),
                 message: L10n.tr("Keep Both did not change any files because the new copy name is already in use."),
-                remediation: L10n.tr("Rename the existing copy in Files, then try Keep Both again."),
+                remediation: L10n.tr("Leave both copies unchanged. Do not repeat this action until a separately verified recovery is available."),
                 technicalDetails: rawMessage
             )
         }
@@ -68,7 +89,7 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
                 category: .fileAccess,
                 title: L10n.tr("Conflict Resolution Failed"),
                 message: L10n.tr("Keep Both did not change any files because this storage location does not support safe renaming."),
-                remediation: L10n.tr("Resolve this conflict manually in Files without replacing either file."),
+                remediation: L10n.tr("Leave both copies unchanged. Do not repeat this action until a separately verified recovery is available."),
                 technicalDetails: rawMessage
             )
         }
@@ -188,6 +209,15 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
         path: String?
     ) -> SyncUserError {
         let normalizedReason = (reason ?? "").lowercased()
+
+        if normalizedReason == ConflictSafetyPolicy.stoppedReason {
+            return conflictSafetyError(for: .stopped)
+        }
+        if normalizedReason == ConflictSafetyPolicy.folderErrorEvidenceUnavailableReason
+            || normalizedReason == ConflictSafetyPolicy.folderCompletionEvidenceUnavailableReason {
+            return conflictSafetyError(for: .unknown)
+        }
+
         let detail = message ?? L10n.tr("Folder is currently in an error state.")
         let pathHint = path.map { L10n.fmt(" (%@)", $0) } ?? ""
 
@@ -234,6 +264,27 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
         }
     }
 
+    static func conflictSafetyError(for state: ConflictSafetyPolicy.State) -> SyncUserError {
+        switch state {
+        case .stopped:
+            return SyncUserError(
+                category: .conflictRetentionSafetyStop,
+                title: L10n.tr("Conflict Safety Review Required"),
+                message: L10n.tr("VaultSync keeps receive-capable vaults read-only in this version."),
+                remediation: L10n.tr("You can review available status and conflict copies, but receive-side changes and conflict recovery are unavailable."),
+                technicalDetails: nil
+            )
+        case .unknown, .clear:
+            return SyncUserError(
+                category: .conflictRetentionSafetyStop,
+                title: L10n.tr("Conflict Safety Status Unavailable"),
+                message: L10n.tr("VaultSync keeps receive-capable vaults read-only in this version."),
+                remediation: L10n.tr("You can review available status and conflict copies, but receive-side changes and conflict recovery are unavailable."),
+                technicalDetails: nil
+            )
+        }
+    }
+
     /// Syncthing's marker-missing error means the folder was moved, renamed,
     /// replaced, or deleted outside the app while still configured to sync.
     /// Doctrine-002 mapping: explain, stay stopped, let the user act — a
@@ -249,7 +300,7 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
                 "VaultSync can no longer verify that this folder still holds this vault's data%@ — the folder was likely moved, renamed, replaced, or deleted outside VaultSync. Syncing has stopped to protect your notes.",
                 pathHint
             ),
-            remediation: L10n.tr("If you moved or renamed the folder, move it back to its original place. If it is gone, remove this vault on this iPhone and accept it again under Pending Shares. VaultSync never moves, recreates, or deletes folders on its own."),
+            remediation: L10n.tr("If you moved or renamed the folder, move it back to its original place. If it is gone, keep this vault stopped and preserve all remaining copies. New share acceptance is unavailable in this version. VaultSync never moves, recreates, or deletes folders on its own."),
             technicalDetails: detail
         )
     }
@@ -287,7 +338,7 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
         SyncUserError(
             category: .permission,
             title: L10n.tr("Push Registration Failed"),
-            message: L10n.tr("iOS did not provide a push token required for instant sync."),
+            message: L10n.tr("iOS did not provide a push token required for Cloud Relay wake-ups."),
             remediation: L10n.tr("Notification permission is not required for this. Check that the iPhone is online and signed in to an Apple Account, then reopen the app so push registration can retry."),
             technicalDetails: reason
         )
@@ -316,6 +367,8 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
             }
         case .folderMarkerMissing:
             anchor = "vault-folder-was-moved-or-deleted"
+        case .conflictRetentionSafetyStop:
+            return nil
         case .config, .validation:
             if details.contains("pending") || details.contains("share") {
                 anchor = "no-pending-shares-appear"

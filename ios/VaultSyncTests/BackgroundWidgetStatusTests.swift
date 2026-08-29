@@ -193,6 +193,7 @@ struct DurableIssueFloorTests {
         #expect(floor([(.conflicts, .warning)]) == .warning)
         #expect(floor([(.pathCollision, .critical)]) == .critical)
         #expect(floor([(.nestedFolders, .critical)]) == .critical)
+        #expect(floor([(.conflictRetentionSafety, .critical)]) == .critical)
         #expect(floor([(.folderErrors, .critical)]) == .critical)
         #expect(floor([(.pendingShares, .warning), (.pathCollision, .critical)]) == .critical)
     }
@@ -240,13 +241,33 @@ struct IssueFloorWiringTests {
             SyncthingManager.FolderInfo(
                 id: "vault-a",
                 label: "Vault A",
-                path: "/tmp/issuefloor/vault-a",
-                type: "sendreceive",
+                path: "/redaction-probe/vault-a",
+                type: "sendonly",
                 paused: false,
                 deviceIDs: []
             ),
         ])
+        manager._testSetFolderStatuses(["vault-a": clearStatus()])
         return manager
+    }
+
+    private func clearStatus() -> SyncthingManager.FolderStatusInfo {
+        SyncthingManager.FolderStatusInfo(payload: .init(
+            state: "idle",
+            stateChanged: "2026-07-07T10:00:00Z",
+            completionPct: 100,
+            globalBytes: 0,
+            globalFiles: 0,
+            localBytes: 0,
+            localFiles: 0,
+            needBytes: 0,
+            needFiles: 0,
+            inProgressBytes: 0,
+            errorReason: nil,
+            errorMessage: nil,
+            errorPath: nil,
+            errorChanged: nil
+        ))
     }
 
     private func errorStatus() -> SyncthingManager.FolderStatusInfo {
@@ -296,5 +317,25 @@ struct IssueFloorWiringTests {
         manager._testWriteWidgetSnapshot()
         #expect(manager._testLastWrittenIssueFloor() == WidgetSnapshotStore.IssueFloor.none)
         #expect(manager._testLastWrittenWidgetSnapshot()?.status == SyncStatus.synced.wireValue)
+    }
+
+    @MainActor
+    @Test("A receive-capable folder records the critical containment floor (#150)")
+    func receiveFolderRecordsContainmentFloorIssue150() {
+        let manager = makeManager(lastSync: Date())
+        manager._testSetFolders([
+            .init(
+                id: "vault-a",
+                label: "Vault A",
+                path: "/redaction-probe/vault-a",
+                type: "sendreceive",
+                paused: false,
+                deviceIDs: []
+            ),
+        ])
+        manager._testWriteWidgetSnapshot()
+
+        #expect(manager._testLastWrittenIssueFloor() == .critical)
+        #expect(manager._testLastWrittenWidgetSnapshot()?.status == SyncStatus.attention.wireValue)
     }
 }

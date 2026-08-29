@@ -155,10 +155,15 @@ final class SetupChecklistViewModel {
 
     private var firstShareItem: ChecklistItem {
         if !syncthingManager.folders.isEmpty {
+            let hasSendOnly = syncthingManager.folders.contains {
+                ConflictSafetyPolicy.runtimeState(forFolderType: $0.type) == .clear
+            }
             return ChecklistItem(
                 requirement: .firstShareDetectedOrAccepted,
-                title: L10n.tr("Vault syncing"),
-                description: L10n.tr("At least one Obsidian vault is active in VaultSync."),
+                title: L10n.tr("Vault configured"),
+                description: hasSendOnly
+                    ? L10n.tr("At least one Send Only vault can continue uploading local changes.")
+                    : L10n.tr("Existing receive-capable vaults are available for review only in this version."),
                 remediation: "",
                 isOptional: false,
                 isComplete: true
@@ -168,24 +173,20 @@ final class SetupChecklistViewModel {
         if !syncthingManager.actionablePendingFolders.isEmpty {
             return ChecklistItem(
                 requirement: .firstShareDetectedOrAccepted,
-                title: L10n.tr("Vault syncing"),
-                description: L10n.tr("A vault offer is waiting to be accepted."),
-                remediation: L10n.tr("A vault offer is waiting. Accept it from Pending Shares on the home screen."),
+                title: L10n.tr("Vault setup"),
+                description: L10n.tr("A vault offer is available for inspection."),
+                remediation: L10n.tr("Open Pending Shares to inspect the offer details. This version cannot accept it."),
                 isOptional: false,
                 isComplete: false
             )
         }
 
-        // An ignored offer cannot be revived from the desktop: sharing again
-        // produces no new offer while the old one sits ignored, so the
-        // "share again from your computer" advice below would be a dead end
-        // (#95). Point at the in-app restore instead.
         if !syncthingManager.ignoredPendingFolders.isEmpty {
             return ChecklistItem(
                 requirement: .firstShareDetectedOrAccepted,
-                title: L10n.tr("Vault syncing"),
-                description: L10n.tr("A vault offer was ignored on this iPhone, so it is not accepted automatically."),
-                remediation: L10n.tr("Open \"Ignored shares\" under Pending Shares on the home screen and tap \"Restore Share\". Sharing again from your computer will not create a new offer."),
+                title: L10n.tr("Vault setup"),
+                description: L10n.tr("An ignored vault offer remains stored on this iPhone."),
+                remediation: L10n.tr("Open Pending Shares to inspect its details. No action is available in this version."),
                 isOptional: false,
                 isComplete: false
             )
@@ -194,9 +195,9 @@ final class SetupChecklistViewModel {
         if syncthingManager.hasSeenPendingFolderOffer {
             return ChecklistItem(
                 requirement: .firstShareDetectedOrAccepted,
-                title: L10n.tr("Vault syncing"),
-                description: L10n.tr("A vault offer was seen earlier, but no vault is syncing right now."),
-                remediation: L10n.tr("If syncing has not started, share your Obsidian vault again from Syncthing on your computer."),
+                title: L10n.tr("Vault setup"),
+                description: L10n.tr("A vault offer was seen earlier, but no vault is configured right now."),
+                remediation: L10n.tr("New share acceptance is unavailable in this version."),
                 isOptional: false,
                 isComplete: false
             )
@@ -204,9 +205,9 @@ final class SetupChecklistViewModel {
 
         return ChecklistItem(
             requirement: .firstShareDetectedOrAccepted,
-            title: L10n.tr("Vault syncing"),
+            title: L10n.tr("Vault setup"),
             description: L10n.tr("No Obsidian vault is active in VaultSync yet."),
-            remediation: L10n.tr("Share your Obsidian vault from Syncthing on your computer."),
+            remediation: L10n.tr("New shared vault offers can be inspected, but not accepted in this version."),
             isOptional: false,
             isComplete: false
         )
@@ -237,8 +238,8 @@ final class SetupChecklistViewModel {
             return ChecklistItem(
                 requirement: .relayConfigured,
                 title: L10n.tr("Cloud Relay"),
-                description: L10n.tr("Cloud Relay is not enabled. Without it, incoming changes arrive when you open VaultSync."),
-                remediation: L10n.tr("Enable Cloud Relay on the Relay tab if you want changes pushed the moment they happen."),
+                description: L10n.tr("Cloud Relay is not enabled. Open VaultSync to review current status and conflict copies."),
+                remediation: L10n.tr("Enable Cloud Relay on the Relay tab to wake VaultSync for background checks."),
                 isOptional: true,
                 isComplete: false,
                 action: .openRelayTab
@@ -257,7 +258,7 @@ final class SetupChecklistViewModel {
             return ChecklistItem(
                 requirement: .relayConfigured,
                 title: L10n.tr("Cloud Relay active"),
-                description: L10n.tr("Wake-ups are being delivered — incoming changes sync the moment they happen."),
+                description: L10n.tr("Wake-ups are being delivered. VaultSync can check status in the background, and Send Only vaults can upload local changes."),
                 remediation: "",
                 isOptional: true,
                 isComplete: true

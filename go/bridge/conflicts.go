@@ -40,6 +40,15 @@ const maxConflictScan = 10000
 
 const keepBothTargetExistsError = "keep both target already exists"
 
+// Conflict recovery is inspection-only until a separately approved
+// byte-preserving recovery doctrine exists. Keep this value independent of
+// runtime, folder, path, and device state so the ABI cannot leak user data.
+const conflictRecoveryUnavailableError = "vaultsync-conflict-recovery-unavailable"
+
+// Conflict inspection has a separate stable result from a verified empty
+// scan. It deliberately carries no folder, path, filename, or driver detail.
+const conflictInspectionUnavailableError = "vaultsync-conflict-inspection-unavailable"
+
 // Syncthing's fs.IsTemporary recognizes the .syncthing. prefix, so the scanner
 // ignores these short-lived files instead of publishing them as vault content.
 // Keep the pattern independent of the user filename to stay below conservative
@@ -87,28 +96,34 @@ func systemKeepBothFileOperations() keepBothFileOperations {
 }
 
 // GetConflictFilesJSON scans the folder's directory for .sync-conflict-* files.
-// Returns a JSON array of ConflictFile objects. Stops after scanning maxConflictScan files.
+// It returns a JSON array only after a complete bounded walk; an unavailable,
+// failed, or truncated inspection returns the stable path-free error instead.
 func GetConflictFilesJSON(folderID string) string {
 	folders := getFolderConfigs()
 	if folders == nil {
-		return "[]"
+		return conflictInspectionUnavailableError
 	}
 
 	folder, exists := folders[folderID]
 	if !exists {
-		return "[]"
+		return conflictInspectionUnavailableError
 	}
 
 	var conflicts []ConflictFile
 	scanned := 0
+	truncated := false
 
-	filepath.WalkDir(folder.Path, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+	walkErr := filepath.WalkDir(folder.Path, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
 			return nil
 		}
 
 		scanned++
 		if scanned > maxConflictScan {
+			truncated = true
 			return filepath.SkipAll
 		}
 
@@ -127,7 +142,10 @@ func GetConflictFilesJSON(folderID string) string {
 		shortID := matches[3]
 		ext := matches[4]
 
-		relPath, _ := filepath.Rel(folder.Path, path)
+		relPath, err := filepath.Rel(folder.Path, path)
+		if err != nil {
+			return err
+		}
 		dir := filepath.Dir(relPath)
 
 		originalRel := baseName + ext
@@ -144,6 +162,9 @@ func GetConflictFilesJSON(folderID string) string {
 
 		return nil
 	})
+	if walkErr != nil || truncated {
+		return conflictInspectionUnavailableError
+	}
 
 	if conflicts == nil {
 		conflicts = []ConflictFile{}
@@ -151,7 +172,7 @@ func GetConflictFilesJSON(folderID string) string {
 
 	data, err := json.Marshal(conflicts)
 	if err != nil {
-		return "[]"
+		return conflictInspectionUnavailableError
 	}
 	return string(data)
 }
@@ -167,26 +188,11 @@ func safePath(folderRoot, relPath string) (string, error) {
 	return cleaned, nil
 }
 
-// KeepBothConflict renames a conflict file so Syncthing no longer treats it as a conflict,
-// preserving both the original and the conflict version as regular files.
-// The conflict file is renamed from "name.sync-conflict-DATE-SHORTID.ext" to "name.conflict-SHORTID.ext".
-// Returns empty string on success, error message on failure.
+// KeepBothConflict is retained for gomobile ABI compatibility. Conflict
+// recovery is currently inspection-only, so it never accesses or mutates the
+// filesystem and always returns a stable, path-free error.
 func KeepBothConflict(folderID, conflictFileName string) string {
-	folders := getFolderConfigs()
-	if folders == nil {
-		return "syncthing not running"
-	}
-
-	folder, exists := folders[folderID]
-	if !exists {
-		return "folder not found"
-	}
-
-	conflictPath, err := safePath(folder.Path, conflictFileName)
-	if err != nil {
-		return "invalid path: outside folder root"
-	}
-	return keepBothConflictFile(conflictPath, conflictFileName, systemKeepBothFileOperations())
+	return conflictRecoveryUnavailableError
 }
 
 func keepBothConflictFile(conflictPath, conflictFileName string, ops keepBothFileOperations) string {
@@ -227,77 +233,51 @@ func keepBothConflictFile(conflictPath, conflictFileName string, ops keepBothFil
 	return ""
 }
 
-// ReadFileContent reads a text file within a folder and returns its content.
-// folderID identifies the Syncthing folder; relPath is relative to the folder root.
-// Returns the file content on success (may be empty for an empty file).
-// Returns a string prefixed with "error:" if the file cannot be read or the path is invalid,
-// allowing callers to distinguish read errors from legitimately empty files.
+// ReadFileContent reads a text file within a folder and returns a JSON envelope.
+// The exported Go signature stays ABI-compatible, while the envelope keeps an
+// empty file and legitimate "error:" content distinct from an unavailable
+// inspection. Failures expose only the fixed path-free code.
 func ReadFileContent(folderID, relPath string) string {
+	type result struct {
+		Content *string `json:"content,omitempty"`
+		Error   string  `json:"error,omitempty"`
+	}
+	emit := func(value result) string {
+		data, err := json.Marshal(value)
+		if err != nil {
+			return `{"error":"vaultsync-conflict-inspection-unavailable"}`
+		}
+		return string(data)
+	}
+	unavailable := func() string {
+		return emit(result{Error: conflictInspectionUnavailableError})
+	}
+
 	folders := getFolderConfigs()
 	if folders == nil {
-		return "error:syncthing not running"
+		return unavailable()
 	}
 	folder, exists := folders[folderID]
 	if !exists {
-		return "error:folder not found"
+		return unavailable()
 	}
 	absPath, err := safePath(folder.Path, relPath)
 	if err != nil {
-		return "error:invalid path"
+		return unavailable()
 	}
 	data, err := os.ReadFile(absPath)
 	if err != nil {
-		return fmt.Sprintf("error:%v", err)
+		return unavailable()
 	}
-	return string(data)
+	content := string(data)
+	return emit(result{Content: &content})
 }
 
-// ResolveConflict resolves a sync conflict for a folder.
-// conflictFileName is the relative path of the conflict file within the folder.
-// If keepConflict is true, the conflict version replaces the original.
-// If keepConflict is false, the conflict file is simply deleted.
-// Returns empty string on success, error message on failure.
+// ResolveConflict is retained for gomobile ABI compatibility. Conflict
+// recovery is currently inspection-only, so it never accesses or mutates the
+// filesystem and always returns a stable, path-free error.
 func ResolveConflict(folderID, conflictFileName string, keepConflict bool) string {
-	folders := getFolderConfigs()
-	if folders == nil {
-		return "syncthing not running"
-	}
-
-	folder, exists := folders[folderID]
-	if !exists {
-		return "folder not found"
-	}
-
-	conflictPath, err := safePath(folder.Path, conflictFileName)
-	if err != nil {
-		return "invalid path: outside folder root"
-	}
-
-	if _, err := os.Stat(conflictPath); os.IsNotExist(err) {
-		return "conflict file not found"
-	}
-
-	if keepConflict {
-		name := filepath.Base(conflictFileName)
-		matches := conflictPattern.FindStringSubmatch(name)
-		if matches == nil {
-			return "invalid conflict filename"
-		}
-
-		originalName := matches[1] + matches[4]
-		originalPath := filepath.Join(filepath.Dir(conflictPath), originalName)
-
-		if err := replaceConflictAndRemoveSource(conflictPath, originalPath, systemConflictFileOperations()); err != nil {
-			return err.Error()
-		}
-		return ""
-	}
-
-	if err := os.Remove(conflictPath); err != nil {
-		return fmt.Sprintf("delete conflict file: %v", err)
-	}
-
-	return ""
+	return conflictRecoveryUnavailableError
 }
 
 func replaceConflictAndRemoveSource(conflictPath, originalPath string, ops conflictFileOperations) error {
@@ -367,102 +347,18 @@ func closeConflictTempAfterError(tempFile conflictTempFile, operation string, op
 	return fmt.Errorf("%s: %w", operation, operationErr)
 }
 
-// RemoveConflictFilesForOriginal removes every sync-conflict copy of the file
-// at originalPath inside the given folder. The original file is NOT touched.
+// RemoveConflictFilesForOriginal is retained for gomobile ABI compatibility.
+// Conflict recovery is currently inspection-only, so it never accesses or
+// mutates the filesystem.
 //
 // Returns a JSON string of the form:
 //
 //	{"removed": <int>, "error": "<msg or empty>"}
 //
-// Possible error envelopes: "syncthing not running", "folder not found",
-// "invalid path: outside folder root", or "remove <name>: <err>" if an
-// individual deletion failed mid-loop.
-//
 // Symmetric with GetConflictFilesJSON's JSON-return style — keeps the gomobile
 // surface uniform (no tuple returns across the bridge).
 func RemoveConflictFilesForOriginal(folderID, originalPath string) string {
-	type result struct {
-		Removed int    `json:"removed"`
-		Error   string `json:"error"`
-	}
-	emit := func(r result) string {
-		data, err := json.Marshal(r)
-		if err != nil {
-			return `{"removed":0,"error":"marshal failed"}`
-		}
-		return string(data)
-	}
-
-	folders := getFolderConfigs()
-	if folders == nil {
-		return emit(result{Error: "syncthing not running"})
-	}
-
-	folder, exists := folders[folderID]
-	if !exists {
-		return emit(result{Error: "folder not found"})
-	}
-
-	// Validate the original path is inside the folder root.
-	absOriginal, err := safePath(folder.Path, originalPath)
-	if err != nil {
-		return emit(result{Error: "invalid path: outside folder root"})
-	}
-	// Reject paths that resolve to the folder root itself — there is no
-	// "original file" at the root, and walking its parent would scan
-	// outside the folder.
-	if absOriginal == folder.Path {
-		return emit(result{Error: "invalid path: outside folder root"})
-	}
-
-	dir := filepath.Dir(absOriginal)
-	baseName := filepath.Base(originalPath)
-	ext := filepath.Ext(baseName)
-	stem := strings.TrimSuffix(baseName, ext)
-	// Common prefix of every conflict copy of this file.
-	conflictPrefix := stem + ".sync-conflict-"
-
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		// If the directory does not exist there are simply no conflicts to remove.
-		if os.IsNotExist(err) {
-			return emit(result{Removed: 0})
-		}
-		return emit(result{Error: fmt.Sprintf("read dir: %v", err)})
-	}
-
-	removed := 0
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		if !strings.HasPrefix(name, conflictPrefix) {
-			continue
-		}
-		// Must also match the canonical conflict regex so we only delete real
-		// Syncthing-generated copies, not user files that happen to share the prefix.
-		matches := conflictPattern.FindStringSubmatch(name)
-		if matches == nil {
-			continue
-		}
-		// Defensive: matched stem must equal what we expected.
-		if matches[1] != stem {
-			continue
-		}
-		// Extension on the conflict copy must equal the original's extension
-		// (handles files where stem itself contains dots).
-		if matches[4] != ext {
-			continue
-		}
-		fullPath := filepath.Join(dir, name)
-		if err := os.Remove(fullPath); err != nil {
-			return emit(result{Removed: removed, Error: fmt.Sprintf("remove %s: %v", name, err)})
-		}
-		removed++
-	}
-
-	return emit(result{Removed: removed})
+	return `{"removed":0,"error":"vaultsync-conflict-recovery-unavailable"}`
 }
 
 // AutoResolveStateConflicts is retained for gomobile ABI compatibility but no

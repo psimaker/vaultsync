@@ -24,7 +24,7 @@ struct WidgetCompletionWriteTests {
                 id: "vault-a",
                 label: "Vault A",
                 path: "/tmp/widget77/vault-a",
-                type: "sendreceive",
+                type: "sendonly",
                 paused: false,
                 deviceIDs: []
             ),
@@ -32,7 +32,7 @@ struct WidgetCompletionWriteTests {
         return manager
     }
 
-    private func status(state: String) -> SyncthingManager.FolderStatusInfo {
+    private func status(state: String, errorReason: String? = nil) -> SyncthingManager.FolderStatusInfo {
         SyncthingManager.FolderStatusInfo(payload: .init(
             state: state,
             stateChanged: "2026-07-07T10:00:00Z",
@@ -44,7 +44,7 @@ struct WidgetCompletionWriteTests {
             needBytes: 0,
             needFiles: 0,
             inProgressBytes: 0,
-            errorReason: nil,
+            errorReason: errorReason,
             errorMessage: nil,
             errorPath: nil,
             errorChanged: nil
@@ -83,5 +83,31 @@ struct WidgetCompletionWriteTests {
         manager._testSetFolderStatuses(idle)
         manager._testWriteWidgetSnapshot()
         #expect(manager._testLastWrittenWidgetSnapshot() == afterCompletion)
+    }
+
+    @MainActor
+    @Test("Safety stop and unknown status never stamp completion metrics or green (#150)")
+    func conflictSafetyDoesNotWriteCompletion() throws {
+        for reason in [
+            ConflictSafetyPolicy.stoppedReason,
+            ConflictSafetyPolicy.folderErrorEvidenceUnavailableReason,
+        ] {
+            let manager = makeManager()
+            let syncing = ["vault-a": status(state: "syncing")]
+            let clearIdle = ["vault-a": status(state: "idle")]
+            manager._testUpdateWidgetSyncMetrics(previousStatuses: [:], newStatuses: syncing)
+            manager._testUpdateWidgetSyncMetrics(previousStatuses: syncing, newStatuses: clearIdle)
+            let lastSuccess = try #require(manager._testLastWrittenWidgetSnapshot())
+
+            manager._testUpdateWidgetSyncMetrics(previousStatuses: clearIdle, newStatuses: syncing)
+            let blockedIdle = ["vault-a": status(state: "idle", errorReason: reason)]
+            manager._testUpdateWidgetSyncMetrics(previousStatuses: syncing, newStatuses: blockedIdle)
+            let blocked = try #require(manager._testLastWrittenWidgetSnapshot())
+
+            #expect(blocked.status != SyncStatus.synced.wireValue)
+            #expect(blocked.lastSyncTime == lastSuccess.lastSyncTime)
+            #expect(blocked.lastSyncDuration == lastSuccess.lastSyncDuration)
+            #expect(blocked.filesSynced == lastSuccess.filesSynced)
+        }
     }
 }

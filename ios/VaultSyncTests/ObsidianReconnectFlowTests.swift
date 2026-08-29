@@ -3,10 +3,10 @@ import Testing
 @testable import VaultSync
 
 @MainActor
-@Suite("Auto-accept fires after Obsidian reconnect (#53)")
+@Suite("Obsidian reconnect never mutates pending shares (#150)")
 struct ObsidianReconnectFlowTests {
 
-    @Test("Successful grant runs the full sequence in order: immediate feedback, reconcile, then the accept pass")
+    @Test("Successful grant publishes feedback then reconciles without a pending-share effect (#150)")
     func successRunsFullSequenceInOrder() async {
         var events: [String] = []
 
@@ -20,55 +20,54 @@ struct ObsidianReconnectFlowTests {
                 // and break the order assertion below.
                 await Task.yield()
                 events.append("reconcile-end")
-            },
-            retryPendingShares: { events.append("retry") }
+            }
         )
 
         #expect(error == nil)
-        #expect(events == ["grant", "feedback", "reconcile-start", "reconcile-end", "retry"])
+        #expect(events == ["grant", "feedback", "reconcile-start", "reconcile-end"])
     }
 
-    @Test("Failed grant short-circuits: no feedback, no reconcile, no accept pass")
+    @Test("Failed grant short-circuits before feedback and reconcile (#150)")
     func failedGrantShortCircuits() async {
         var events: [String] = []
 
         let error = await ObsidianReconnectFlow.run(
             grantAccess: { events.append("grant"); return "no access" },
             onGrantSucceeded: { events.append("feedback") },
-            reconcile: { events.append("reconcile") },
-            retryPendingShares: { events.append("retry") }
+            reconcile: { events.append("reconcile") }
         )
 
         #expect(error == "no access")
         #expect(events == ["grant"])
     }
 
-    @Test("A reconcile that does not return fires no accept pass — no timeout fallback; the standing pendingFolders change trigger covers that case — and a late reconcile still completes the sequence")
-    func hangingReconcileFiresNoRetryUntilItReturns() async {
-        var retried = false
+    @Test("A reconnect waits for reconciliation and has no timeout side effect (#150)")
+    func hangingReconcileHasNoTimeoutSideEffect() async {
+        var finished = false
         var releaseReconcile: CheckedContinuation<Void, Never>?
 
         let flow = Task {
-            await ObsidianReconnectFlow.run(
+            let result = await ObsidianReconnectFlow.run(
                 grantAccess: { nil },
                 onGrantSucceeded: { },
                 reconcile: {
                     await withCheckedContinuation { releaseReconcile = $0 }
-                },
-                retryPendingShares: { retried = true }
+                }
             )
+            finished = true
+            return result
         }
 
         // Wait until the flow is suspended inside the reconcile, then give it
-        // ample opportunity to (wrongly) fire the retry while still pending.
+        // ample opportunity to (wrongly) finish while still pending.
         while releaseReconcile == nil { await Task.yield() }
         for _ in 0..<50 { await Task.yield() }
-        #expect(!retried)
+        #expect(!finished)
 
         // A reconcile that eventually returns still completes the sequence.
         releaseReconcile?.resume()
         let error = await flow.value
         #expect(error == nil)
-        #expect(retried)
+        #expect(finished)
     }
 }

@@ -5,7 +5,6 @@ struct SyncIssuesView: View {
     let syncthingManager: SyncthingManager
     let onRescanFailedFolders: () -> Void
     let onOpenAddDevice: () -> Void
-    let onAcceptFirstPendingShare: () -> Void
     let onRescanAllVaults: () -> Void
 
     var body: some View {
@@ -46,7 +45,7 @@ struct SyncIssuesView: View {
 
     private func symbol(for issue: SyncthingManager.SyncIssueItem) -> String {
         switch issue.kind {
-        case .pathCollision, .nestedFolders, .folderErrors, .conflicts, .staleSync:
+        case .pathCollision, .nestedFolders, .conflictRetentionSafety, .folderErrors, .conflicts, .staleSync:
             return "exclamationmark.triangle.fill"
         case .backgroundSync:
             return "clock.badge.exclamationmark"
@@ -80,6 +79,25 @@ struct SyncIssuesView: View {
             // re-added into its own folder).
             EmptyView()
 
+        case .conflictRetentionSafety:
+            // The stop is deliberately read-only. Any conflict copies still
+            // present in the refreshed cache remain reviewable (#150).
+            if let destination = Self.conflictDestination(
+                preferredFolderID: issue.folderID,
+                conflictFiles: syncthingManager.conflictFiles,
+                unavailableFolderIDs: syncthingManager.conflictInspectionUnavailableFolderIDs,
+                allowFallback: false
+            ) {
+                NavigationLink(L10n.tr("Review Conflicts")) {
+                    ConflictListView(
+                        folderID: destination,
+                        syncthingManager: syncthingManager
+                    )
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+            }
+
         case .folderErrors:
             // A rescan cannot recreate a missing folder marker — when marker
             // loss is the only error, hide the button and let the prose
@@ -101,23 +119,20 @@ struct SyncIssuesView: View {
             .controlSize(.regular)
 
         case .pendingShares:
-            if !syncthingManager.actionablePendingFolders.isEmpty {
-                // "First" only when there IS a queue — for a single share the
-                // qualifier read as if more were hiding somewhere (#71).
-                Button(syncthingManager.actionablePendingFolders.count == 1
-                    ? L10n.tr("Accept Pending Share")
-                    : L10n.tr("Accept First Pending Share")) {
-                    onAcceptFirstPendingShare()
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.regular)
-            }
+            // Retained enum case for durable snapshot compatibility. Pending
+            // offers are inspection-only in 2.0.2 and have no issue action.
+            EmptyView()
 
         case .conflicts:
-            if let destination = firstConflictDestination(preferredFolderID: issue.folderID) {
-                NavigationLink("Resolve Conflicts") {
+            if let destination = Self.conflictDestination(
+                preferredFolderID: issue.folderID,
+                conflictFiles: syncthingManager.conflictFiles,
+                unavailableFolderIDs: syncthingManager.conflictInspectionUnavailableFolderIDs,
+                allowFallback: true
+            ) {
+                NavigationLink(L10n.tr("Review Conflicts")) {
                     ConflictListView(
-                        folderID: destination.folderID,
+                        folderID: destination,
                         syncthingManager: syncthingManager
                     )
                 }
@@ -126,7 +141,7 @@ struct SyncIssuesView: View {
             }
 
         case .staleSync:
-            if !syncthingManager.folders.isEmpty {
+            if !syncthingManager.foregroundRescanEligibleFolderIDs.isEmpty {
                 Button("Rescan All Vaults") {
                     onRescanAllVaults()
                 }
@@ -135,7 +150,7 @@ struct SyncIssuesView: View {
             }
 
         case .backgroundSync:
-            if !syncthingManager.folders.isEmpty {
+            if !syncthingManager.foregroundRescanEligibleFolderIDs.isEmpty {
                 Button("Run Foreground Rescan") {
                     onRescanAllVaults()
                 }
@@ -145,27 +160,32 @@ struct SyncIssuesView: View {
         }
     }
 
-    private func firstConflictDestination(
-        preferredFolderID: String?
-    ) -> (folderID: String, conflicts: [SyncthingManager.ConflictInfo])? {
+    nonisolated static func conflictDestination(
+        preferredFolderID: String?,
+        conflictFiles: [String: [SyncthingManager.ConflictInfo]],
+        unavailableFolderIDs: Set<String> = [],
+        allowFallback: Bool
+    ) -> String? {
         if let preferredFolderID,
-           let conflicts = syncthingManager.conflictFiles[preferredFolderID],
-           !conflicts.isEmpty {
-            return (preferredFolderID, conflicts)
+           conflictFiles[preferredFolderID]?.isEmpty == false
+            || unavailableFolderIDs.contains(preferredFolderID) {
+            return preferredFolderID
         }
 
-        guard let entry = syncthingManager.conflictFiles
+        guard allowFallback else { return nil }
+
+        if let entry = conflictFiles
             .sorted(by: { $0.key < $1.key })
-            .first(where: { !$0.value.isEmpty }) else {
-            return nil
+            .first(where: { !$0.value.isEmpty }) {
+            return entry.key
         }
-        return (entry.key, entry.value)
+        return unavailableFolderIDs.sorted().first
     }
 
     private func troubleshootingURL(for kind: SyncthingManager.SyncIssueItem.Kind) -> URL? {
         let anchor: String
         switch kind {
-        case .pathCollision, .nestedFolders:
+        case .pathCollision, .nestedFolders, .conflictRetentionSafety, .pendingShares:
             // No troubleshooting-doc section for this yet, and the inline
             // remediation is the complete fix path — don't surface a
             // misdirecting link (same stance as `.conflicts`).
@@ -174,13 +194,11 @@ struct SyncIssuesView: View {
             anchor = "bookmark-access-expired"
         case .disconnectedPeers:
             anchor = "required-device-disconnected"
-        case .pendingShares:
-            anchor = "no-pending-shares-appear"
         case .conflicts:
             // No conflict-resolution section exists in the troubleshooting doc,
             // and "Background Sync Not Working" is unrelated. The inline
-            // "Resolve Conflicts" action is the correct fix path, so don't
-            // surface a misdirecting link here.
+            // review action is the complete read-only path, so don't surface a
+            // misdirecting link here.
             return nil
         case .staleSync, .backgroundSync:
             anchor = "background-sync-not-working"

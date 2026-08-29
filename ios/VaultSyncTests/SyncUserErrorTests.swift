@@ -39,6 +39,28 @@ struct SyncUserErrorTests {
         )
         #expect(missing.category == .config)
         #expect(missing.title == L10n.tr("Folder Not Configured"))
+
+        let retentionStop = SyncUserError.fromFolderStatus(
+            reason: ConflictSafetyPolicy.stoppedReason,
+            message: "marker missing at /redaction-probe/vault-note",
+            path: "/redaction-probe/vault-note"
+        )
+        #expect(retentionStop.category == .conflictRetentionSafetyStop)
+        #expect(retentionStop.title == L10n.tr("Conflict Safety Review Required"))
+        #expect(retentionStop.technicalDetails == nil)
+        #expect(SyncUserError.troubleshootingURL(for: retentionStop) == nil)
+        let rendered = "\(retentionStop.id)|\(retentionStop.userVisibleDescription)"
+        #expect(!rendered.contains("redaction-probe"))
+
+        let unavailable = SyncUserError.fromFolderStatus(
+            reason: ConflictSafetyPolicy.folderErrorEvidenceUnavailableReason,
+            message: "sensitive reason /redaction-probe/path",
+            path: "/redaction-probe/path"
+        )
+        #expect(unavailable.category == .conflictRetentionSafetyStop)
+        #expect(unavailable.title == L10n.tr("Conflict Safety Status Unavailable"))
+        #expect(unavailable.technicalDetails == nil)
+        #expect(!"\(unavailable.id)|\(unavailable.userVisibleDescription)".contains("/redaction-probe/path"))
     }
 
     @Test("Maps relay provisioning failures for rate limiting and unknown causes")
@@ -60,6 +82,52 @@ struct SyncUserErrorTests {
         #expect(error.title == "Bridge Failure")
         #expect(error.remediation == L10n.tr("Retry the action. If it keeps failing, restart the app and check Settings diagnostics."))
     }
+
+    @Test("Conflict recovery error is fixed path-free and never retryable (#150)")
+    func conflictRecoveryUnavailableIsReadOnly() {
+        let error = SyncUserError.from(rawMessage: "vaultsync-conflict-recovery-unavailable")
+
+        #expect(error.category == .conflictRetentionSafetyStop)
+        #expect(error.title == L10n.tr("Conflict Recovery Unavailable"))
+        #expect(error.message == L10n.tr("Conflict recovery actions are not available in this version."))
+        #expect(error.remediation == L10n.tr("Review the copies that are still available here. Leave files unchanged; VaultSync cannot run a recovery action in this version."))
+        #expect(error.technicalDetails == nil)
+        #expect(SyncUserError.troubleshootingURL(for: error) == nil)
+
+        let rendered = "\(error.id)|\(error.userVisibleDescription)".lowercased()
+        for forbidden in [
+            "vaultsync-conflict-recovery-unavailable",
+            "retry",
+            "success",
+            "renamed",
+            "removed",
+            "discarded",
+        ] {
+            #expect(!rendered.contains(forbidden))
+        }
+    }
+
+    @Test("Global receive safety copy states read-only policy without an unproved block claim (#150)")
+    func receiveSafetyCopyIsNeutralIssue150() {
+        let stopped = SyncUserError.conflictSafetyError(for: .stopped)
+        let unknown = SyncUserError.conflictSafetyError(for: .unknown)
+
+        #expect(stopped.message == L10n.tr("VaultSync keeps receive-capable vaults read-only in this version."))
+        #expect(unknown.message == L10n.tr("VaultSync keeps receive-capable vaults read-only in this version."))
+        for error in [stopped, unknown] {
+            #expect(error.remediation == L10n.tr("You can review available status and conflict copies, but receive-side changes and conflict recovery are unavailable."))
+            let rendered = error.userVisibleDescription.lowercased()
+            for forbidden in [
+                "blocked an unsafe conflict change",
+                "before it could",
+                "affected copies",
+                "success",
+                "retry",
+            ] {
+                #expect(!rendered.contains(forbidden))
+            }
+        }
+    }
 }
 
 @Suite("Keep Both collision error mapping (#144)")
@@ -72,7 +140,7 @@ struct KeepBothCollisionErrorMappingTests {
         #expect(error.category == .config)
         #expect(error.title == L10n.tr("Conflict Resolution Failed"))
         #expect(error.message == L10n.tr("Keep Both did not change any files because the new copy name is already in use."))
-        #expect(error.remediation == L10n.tr("Rename the existing copy in Files, then try Keep Both again."))
+        #expect(error.remediation == L10n.tr("Leave both copies unchanged. Do not repeat this action until a separately verified recovery is available."))
         #expect(error.technicalDetails == raw)
     }
 
@@ -84,7 +152,7 @@ struct KeepBothCollisionErrorMappingTests {
         #expect(error.category == .fileAccess)
         #expect(error.title == L10n.tr("Conflict Resolution Failed"))
         #expect(error.message == L10n.tr("Keep Both did not change any files because this storage location does not support safe renaming."))
-        #expect(error.remediation == L10n.tr("Resolve this conflict manually in Files without replacing either file."))
+        #expect(error.remediation == L10n.tr("Leave both copies unchanged. Do not repeat this action until a separately verified recovery is available."))
         #expect(error.technicalDetails == raw)
     }
 }
@@ -160,7 +228,7 @@ struct FolderMarkerMissingMappingTests {
     }
 }
 
-@Suite("Rescan CTA availability under marker loss (#65)")
+@Suite("Rescan CTA availability under marker loss and unknown conflict safety (#65, #150)")
 struct RescanCTAAvailabilityTests {
     private func errorStatus(message: String) -> SyncthingManager.FolderStatusInfo {
         SyncthingManager.FolderStatusInfo(payload: .init(
@@ -192,16 +260,16 @@ struct RescanCTAAvailabilityTests {
         #expect(manager.hasRescanableFolderErrors == false)
     }
 
-    @Test("A non-marker folder error keeps the rescan path available")
+    @Test("An unclassified folder error hides the rescan path (#150)")
     @MainActor
-    func otherErrorsStayRescanable() {
+    func unknownErrorEvidenceIsNotRescanable() {
         let manager = SyncthingManager()
         manager._testSetFolderStatuses([
             "vault-a": errorStatus(message: FolderMarkerMissingMappingTests.rawEngineText),
             "vault-b": errorStatus(message: "database is locked"),
         ])
 
-        #expect(manager.hasRescanableFolderErrors)
+        #expect(manager.hasRescanableFolderErrors == false)
     }
 }
 

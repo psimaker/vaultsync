@@ -8,8 +8,8 @@ import Foundation
 /// (parked shares, disconnected required peers, conflicts, stale sync) never
 /// reached the header and a green "All Synced" coexisted with visible issue
 /// rows. The header now derives from the max severity of that same issue
-/// list, and "Ready" is claimed only when the app is genuinely armed to
-/// accept a share (Obsidian folder accessible and a vault exists).
+/// list. A folder-less installation remains neutral: new share acceptance is
+/// unavailable in 2.0.2, even when a local vault is detected (#150).
 ///
 /// Pure and value-typed so the precedence cascade is exhaustively
 /// unit-testable without a manager or the bridge.
@@ -71,9 +71,7 @@ enum SyncHeaderModel {
             return State(status: .synced, titleKey: "All Synced")
         }
         if inputs.hasDetectedVaults {
-            // Genuinely armed: the auto-accept pass can act the moment a
-            // share arrives — this is the only folder-less "Ready".
-            return State(status: .synced, titleKey: "Ready")
+            return State(status: .starting, titleKey: "No Vaults Syncing")
         }
         // Accessible but no vault exists yet — waiting on the user to create
         // one in Obsidian. A calm waiting state, never a green check.
@@ -81,7 +79,7 @@ enum SyncHeaderModel {
     }
 
     /// Widget-snapshot tier (#73). The widget carries no vault-setup surface,
-    /// so the vault tiers are pinned "armed" and the cascade reduces to the
+    /// so vault access and detection are pinned true and the cascade reduces to the
     /// engine / issue / transfer tiers — but it IS the same cascade above
     /// (decision 012), so an issue kind that reaches the header can never
     /// miss the widget again. Before this, the widget only knew

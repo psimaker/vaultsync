@@ -5,7 +5,6 @@ struct ContentView: View {
     var syncthingManager: SyncthingManager
     var vaultManager: VaultManager
     var subscriptionManager: SubscriptionManager
-    var shareAccept: ShareAcceptCoordinator
     @State private var showAddDevice = false
     @State private var showSettings = false
     @State private var showSetupChecklist = false
@@ -21,7 +20,6 @@ struct ContentView: View {
     /// it is not presented under the "Error" title.
     @State private var infoMessage: String?
     @State private var showInfoAlert = false
-    @State private var shareTargetPickerFolder: SyncthingManager.PendingFolderInfo?
     @State private var pendingFilterSheetFolder: SyncthingManager.FolderInfo?
     @State private var vaultPendingRemoval: VaultRemovalTarget?
     @State private var showRelayUpsellCard = false
@@ -135,11 +133,6 @@ struct ContentView: View {
                     if let err = await ObsidianReconnectFlow.run(
                         grantAccess: { vaultManager.grantAccess(url: url) },
                         onGrantSucceeded: {
-                            // A share that had no safe location under the old
-                            // root (e.g. the root was itself a vault, #45
-                            // follow-up) may succeed under the new one — clear
-                            // the failures so the retry pass attempts it.
-                            shareAccept.clearRecordedFailures()
                             if let advisory = vaultManager.selectionAdvisory {
                                 infoMessage = advisory
                                 showInfoAlert = true
@@ -154,13 +147,6 @@ struct ContentView: View {
                             await syncthingManager.reconcileFolderPaths(
                                 obsidianRoot: vaultManager.obsidianBasePath
                             ).value
-                        },
-                        retryPendingShares: {
-                            // Reconnecting produces no pendingFolders change
-                            // event, so the standing onChange trigger stays
-                            // silent — run the accept pass explicitly, on
-                            // settled paths (#53).
-                            shareAccept.runAutomaticPass()
                         }
                     ) {
                         alertMessage = mappedError(err, fallbackTitle: L10n.tr("Obsidian Folder Connection Failed")).userVisibleDescription
@@ -186,52 +172,6 @@ struct ContentView: View {
         } message: { target in
             Text(L10n.fmt("“%@” will stop syncing on this iPhone. Files already on your other devices are not deleted.", target.label))
         }
-        .alert(
-            L10n.tr("Sync into a folder that already contains files?"),
-            isPresented: mergeConfirmationBinding,
-            presenting: shareAccept.pendingMergeConfirmation
-        ) { request in
-            Button(L10n.tr("Merge and Sync"), role: .destructive) {
-                shareAccept.confirmMergeAccept(request)
-            }
-            Button(L10n.tr("Cancel"), role: .cancel) { shareAccept.pendingMergeConfirmation = nil }
-        } message: { request in
-            Text(L10n.fmt(
-                "The folder \"%@\" already contains files. If you accept, those files and the contents of the shared vault \"%@\" will be combined and synced to the other devices sharing this vault. Accept only if this folder holds this vault's own earlier notes — for example after removing the vault and accepting its share again. If it is a different vault or unrelated files, cancel and use \"Choose Vault…\" to pick a different location.",
-                request.targetName,
-                request.folder.label.isEmpty ? request.folder.id : request.folder.label
-            ))
-        }
-        .sheet(item: $shareTargetPickerFolder) { folder in
-            ShareTargetPickerView(
-                shareLabel: folder.label.isEmpty ? folder.id : folder.label,
-                defaultName: VaultManager.sanitizeDirectoryName(folder.label.isEmpty ? folder.id : folder.label),
-                eligibleVaults: vaultManager.eligibleShareTargets(syncthingManager: syncthingManager),
-                onConfirm: { targetName in
-                    shareAccept.acceptManually(folder: folder, intoTargetNamed: targetName)
-                }
-            )
-        }
-        .onChange(of: syncthingManager.pendingFolders, initial: true) { _, _ in
-            shareAccept.runAutomaticPass()
-        }
-        .onChange(of: syncthingManager.pathSettlement.settled) { _, settled in
-            // Paths just settled: run the pass that was held during the
-            // reconcile (#56). pendingFolders itself did not change, so the
-            // standing trigger above stays silent — the same gap #53 closed
-            // for the reconnect flow.
-            if settled {
-                shareAccept.runAutomaticPass()
-            }
-        }
-        .onChange(of: shareAccept.alertMessage) { _, message in
-            // The coordinator is host-agnostic (#92): whichever view is
-            // mounted routes its one-shot messages into its own alert.
-            guard let message else { return }
-            shareAccept.alertMessage = nil
-            alertMessage = message
-            showAlert = true
-        }
         .onChange(of: syncthingManager.lastSyncTime, initial: true) { _, _ in
             maybePresentRelayUpsell()
             maybePresentNotificationPrimer()
@@ -255,12 +195,6 @@ struct ContentView: View {
                         device: Self.uiAuditFixtureDevice,
                         syncthingManager: syncthingManager
                     )
-                case .conflictResolve:
-                    ConflictDiffView(
-                        folderID: "uiaudit-vault",
-                        conflict: Self.uiAuditFixtureConflict,
-                        syncthingManager: syncthingManager
-                    )
                 }
             }
         }
@@ -281,8 +215,7 @@ struct ContentView: View {
             }
             .refreshable {
                 // Re-detect vaults created in Obsidian since the last scan
-                // (#95). Read-only: republishes detectedVaults only — the
-                // accept pass keys on pendingFolders/settlement, never on this.
+                // (#95). Read-only: republishes detectedVaults only.
                 vaultManager.scanForVaults()
                 await syncthingManager.performForegroundSync()
             }
@@ -463,7 +396,7 @@ struct ContentView: View {
     private func presentDeviceAddedHintIfNeeded() {
         guard showDeviceAddedHint else { return }
         showDeviceAddedHint = false
-        infoMessage = L10n.tr("Device added. Now confirm this iPhone in Syncthing on your computer — a confirmation prompt appears there. Then share your vault to start syncing.")
+        infoMessage = L10n.tr("Device added. Now confirm this iPhone in Syncthing on your computer — a confirmation prompt appears there. New shared vault offers are inspection-only in this version.")
         showInfoAlert = true
     }
 
@@ -472,7 +405,6 @@ struct ContentView: View {
     #if DEBUG
     private enum UIAuditDetailFixture: String, Identifiable {
         case deviceRemoval
-        case conflictResolve
         var id: String { rawValue }
     }
 
@@ -483,15 +415,6 @@ struct ContentView: View {
     /// see UIAuditFixture. Compiled out of release builds.
     private func applyUIAuditFixture() {
         switch UIAuditFixture.active {
-        case UIAuditFixture.mergeConsent:
-            shareAccept.pendingMergeConfirmation = ShareAcceptCoordinator.MergeConfirmationRequest(
-                folder: SyncthingManager.PendingFolderInfo(
-                    id: "uiaudit-vault",
-                    label: "Life Notes",
-                    offeredBy: []
-                ),
-                targetName: "Life Notes"
-            )
         case UIAuditFixture.removalConsent:
             vaultPendingRemoval = VaultRemovalTarget(id: "uiaudit-vault", label: "Life Notes")
         case UIAuditFixture.markerError:
@@ -525,8 +448,6 @@ struct ContentView: View {
             ])
         case UIAuditFixture.deviceRemovalConsent:
             uiAuditDetailFixture = .deviceRemoval
-        case UIAuditFixture.conflictResolveConsent:
-            uiAuditDetailFixture = .conflictResolve
         default:
             break
         }
@@ -541,12 +462,6 @@ struct ContentView: View {
         )
     }()
 
-    private static let uiAuditFixtureConflict = SyncthingManager.ConflictInfo(
-        originalPath: "Notes/daily.md",
-        conflictPath: "Notes/daily.sync-conflict-20260707-101010-UIAUDIT.md",
-        conflictDate: "2026-07-07T10:10:10Z",
-        deviceShortID: "UIAUDIT"
-    )
     #endif
 
     // MARK: - Dashboard Section
@@ -613,7 +528,7 @@ struct ContentView: View {
                 }
             } else if !syncthingManager.folders.isEmpty, !showRelayUpsellCard {
                 relayNavRow(
-                    title: L10n.tr("Get instant updates"),
+                    title: L10n.tr("Enable background wake-ups"),
                     subtitle: L10n.tr("Turn on Cloud Relay"),
                     status: nil,
                     systemImage: "antenna.radiowaves.left.and.right"
@@ -734,10 +649,10 @@ struct ContentView: View {
                 Image(systemName: "antenna.radiowaves.left.and.right")
                     .foregroundStyle(accent)
                     .accessibilityHidden(true)
-                Text(L10n.tr("Get instant updates"))
+                Text(L10n.tr("Enable background wake-ups"))
                     .font(.headline)
             }
-            Text(L10n.tr("Your first sync is done. Cloud Relay wakes this iPhone the moment your notes change — even while the app is closed."))
+            Text(L10n.tr("Cloud Relay can wake this iPhone for background checks. Send Only vaults can upload local changes."))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -773,7 +688,7 @@ struct ContentView: View {
                 Text(L10n.tr("Get notified about conflicts"))
                     .font(.headline)
             }
-            Text(L10n.tr("If a note changes on two devices at the same time, VaultSync can alert you so you can choose which version to keep."))
+            Text(L10n.tr("If VaultSync detects conflicting copies, it can alert you so you can inspect them. Recovery actions are unavailable in this version."))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -898,7 +813,7 @@ struct ContentView: View {
         if let issue = vaultManager.accessIssue {
             return joinedErrorMessage(issue.message, issue.remediation)
         }
-        return L10n.tr("VaultSync needs one-time access to your Obsidian folder before it can accept shares.")
+        return L10n.tr("VaultSync needs one-time access to your Obsidian folder to inspect local vaults and existing sync status.")
     }
 
     /// Picker guidance + first-install help below the connect button.
@@ -940,28 +855,7 @@ struct ContentView: View {
             Section("Pending Shares") {
                 PendingSharesView(
                     pendingFolders: pendingFolders,
-                    ignoredFolders: ignoredFolders,
-                    failureByFolderID: shareAccept.pendingShareFailures,
-                    inFlightFolderIDs: shareAccept.pendingShareInFlight,
-                    obsidianAccessible: vaultManager.isAccessible,
-                    onAccept: { folder in
-                        shareAccept.accept(folder, source: .manual)
-                    },
-                    onRetry: { folder in
-                        shareAccept.retry(folder)
-                    },
-                    onIgnore: { folder in
-                        shareAccept.ignore(folder)
-                    },
-                    onRestoreIgnored: { folder in
-                        syncthingManager.unignorePendingFolder(id: folder.id)
-                    },
-                    onChooseTarget: { folder in
-                        shareTargetPickerFolder = folder
-                    },
-                    onReconnectObsidian: {
-                        showObsidianPicker = true
-                    }
+                    ignoredFolders: ignoredFolders
                 )
             }
         }
@@ -979,46 +873,26 @@ struct ContentView: View {
                     syncthingManager: syncthingManager,
                     onRescanFailedFolders: rescanFailedVaults,
                     onOpenAddDevice: { showAddDevice = true },
-                    onAcceptFirstPendingShare: acceptFirstPendingShareFromIssues,
                     onRescanAllVaults: rescanAllVaults
                 )
             }
         }
     }
 
-    private func acceptFirstPendingShareFromIssues() {
-        guard let first = syncthingManager.actionablePendingFolders.first else { return }
-        shareAccept.accept(first, source: .manual)
-    }
-
     private func rescanFailedVaults() {
         // Don't rescan folders surfaced as unreachable — a rescan can't fix a
         // stale/missing path, so it would be a no-op recovery for those.
         let unreachable = Set(syncthingManager.unreachableFolders.map(\.id))
-        rescanFolders(ids: syncthingManager.folderIDsWithErrors.filter { !unreachable.contains($0) })
+        let sendOnlyIDs = Set(syncthingManager.foregroundRescanEligibleFolderIDs)
+        let targets = syncthingManager.folderIDsWithErrors.filter {
+            !unreachable.contains($0) && sendOnlyIDs.contains($0)
+        }
+        guard !targets.isEmpty else { return }
+        syncthingManager.triggerForegroundSync(folderIDs: targets)
     }
 
     private func rescanAllVaults() {
-        rescanFolders(ids: syncthingManager.folders.map(\.id))
-    }
-
-    private func rescanFolders(ids: [String]) {
-        let uniqueIDs = Array(Set(ids)).sorted()
-        guard !uniqueIDs.isEmpty else { return }
-
-        var failures: [String] = []
-        for id in uniqueIDs {
-            if let err = syncthingManager.rescanFolder(id: id) {
-                let folderName = syncthingManager.folders.first(where: { $0.id == id })?.label ?? id
-                let userError = mappedError(err, fallbackTitle: L10n.tr("Rescan Failed"))
-                failures.append(L10n.fmt("%@: %@", folderName, userError.message))
-            }
-        }
-
-        if !failures.isEmpty {
-            alertMessage = failures.joined(separator: "\n")
-            showAlert = true
-        }
+        syncthingManager.triggerForegroundSync()
     }
 
     // MARK: - Unreachable Vaults
@@ -1077,10 +951,6 @@ struct ContentView: View {
         Binding(get: { vaultPendingRemoval != nil }, set: { if !$0 { vaultPendingRemoval = nil } })
     }
 
-    private var mergeConfirmationBinding: Binding<Bool> {
-        Binding(get: { shareAccept.pendingMergeConfirmation != nil }, set: { if !$0 { shareAccept.pendingMergeConfirmation = nil } })
-    }
-
     private func removeVault(id: String) {
         vaultPendingRemoval = nil
         if let err = syncthingManager.removeFolder(id: id) {
@@ -1125,13 +995,12 @@ struct ContentView: View {
         )
     }
 
-    /// Not navigable on purpose: the missing step (sharing) happens on the
-    /// desktop, so the row can only explain that — there is no detail screen
-    /// that would not be empty.
+    /// Not navigable on purpose: no new sync action is available in this
+    /// version, so a detail screen would expose no valid control (#150).
     private func unsyncedVaultRow(_ name: String) -> some View {
         StatusRow(
             name,
-            subtitle: L10n.tr("Not syncing yet — share this vault from your computer to start."),
+            subtitle: L10n.tr("Not syncing in this version — new share offers are inspection-only."),
             systemImage: "folder",
             glyphTint: .statusInactive
         )
@@ -1146,7 +1015,7 @@ struct ContentView: View {
             ContentUnavailableView {
                 Label(L10n.tr("Connect to Obsidian first"), systemImage: "folder.badge.gearshape")
             } description: {
-                Text("VaultSync needs one-time access to your Obsidian folder before it can accept shares.")
+                Text(L10n.tr("VaultSync needs one-time access to your Obsidian folder to inspect local vaults and existing sync status."))
             }
         } else if vaultManager.detectedVaults.isEmpty {
             ContentUnavailableView {
@@ -1158,7 +1027,7 @@ struct ContentView: View {
             ContentUnavailableView {
                 Label(L10n.tr("No folders syncing yet"), systemImage: "arrow.triangle.2.circlepath")
             } description: {
-                Text("Share a folder from your desktop Syncthing — it will be accepted automatically.")
+                Text(L10n.tr("New shared vault offers can be inspected, but not accepted in this version."))
             }
         }
     }
@@ -1234,12 +1103,12 @@ struct ContentView: View {
         // Distinct conflicted files, not copies — same semantics as the
         // home-screen issue banner (SyncthingManager.unresolvedConflictCount).
         let conflictCount = Set(conflicts(for: item).map(\.originalPath)).count
-        let syncStatus = folderSyncStatus(status?.state ?? "unknown")
+        let safetyState = syncthingManager.conflictSafetyState(folderID: item.folder.id)
+        let syncStatus = folderSyncStatus(status?.state ?? "unknown", safetyState: safetyState)
 
-        var subtitle: String?
-        if let status {
-            subtitle = localizedState(status.state, folderID: item.folder.id)
-            if status.completionPct < 100, status.completionPct > 0 {
+        var subtitle: String? = localizedState(status?.state ?? "unknown", folderID: item.folder.id)
+        if let status, safetyState == .clear {
+            if status.completionPct < 100, status.completionPct > 0, subtitle != nil {
                 subtitle! += " " + L10n.fmt("(%d%%)", Int(status.completionPct))
             }
         }
@@ -1262,7 +1131,18 @@ struct ContentView: View {
     /// the folder row's glyph + color stay identical to the rest of the app (one
     /// source of truth). Unknown states stay neutral rather than being forced to a
     /// misleading "attention".
-    private func folderSyncStatus(_ state: String) -> SyncStatus? {
+    private func folderSyncStatus(
+        _ state: String,
+        safetyState: ConflictSafetyPolicy.State = .clear
+    ) -> SyncStatus? {
+        switch safetyState {
+        case .stopped:
+            return .error
+        case .unknown:
+            return .attention
+        case .clear:
+            break
+        }
         switch state {
         case "idle": return .synced
         case "scanning", "syncing": return .syncing
@@ -1271,19 +1151,53 @@ struct ContentView: View {
         }
     }
 
-    private func stateIcon(_ state: String) -> String {
-        folderSyncStatus(state)?.symbolName ?? "questionmark.circle"
+    private func stateIcon(_ state: String, folderID: String) -> String {
+        folderSyncStatus(
+            state,
+            safetyState: syncthingManager.conflictSafetyState(folderID: folderID)
+        )?.symbolName ?? "questionmark.circle"
     }
 
-    private func stateColor(_ state: String) -> Color {
-        folderSyncStatus(state)?.tint ?? .statusInactive
+    private func stateColor(_ state: String, folderID: String) -> Color {
+        folderSyncStatus(
+            state,
+            safetyState: syncthingManager.conflictSafetyState(folderID: folderID)
+        )?.tint ?? .statusInactive
     }
 
     // MARK: - Vault Detail
 
+    nonisolated static func shouldOfferSyncFilterRecommendation(
+        safetyState: ConflictSafetyPolicy.State,
+        isUnreachable: Bool,
+        hasShown: Bool,
+        isAlreadyPresented: Bool
+    ) -> Bool {
+        ConflictSafetyPolicy.allowsMutation(for: safetyState)
+            && !isUnreachable
+            && !hasShown
+            && !isAlreadyPresented
+    }
+
+    private func offerSyncFilterRecommendationIfAllowed(
+        for folder: SyncthingManager.FolderInfo,
+        safetyState: ConflictSafetyPolicy.State
+    ) {
+        let isUnreachable = syncthingManager.unreachableFolders.contains { $0.id == folder.id }
+        guard Self.shouldOfferSyncFilterRecommendation(
+            safetyState: safetyState,
+            isUnreachable: isUnreachable,
+            hasShown: syncthingManager.hasShownRecommendationSheet(folderID: folder.id),
+            isAlreadyPresented: pendingFilterSheetFolder != nil
+        ) else { return }
+        pendingFilterSheetFolder = folder
+    }
+
     private func vaultDetailView(_ item: VaultRowItem) -> some View {
         let folder = item.folder
         let status = syncthingManager.folderStatuses[folder.id]
+        let safetyState = syncthingManager.conflictSafetyState(folderID: folder.id)
+        let allowsConflictMutation = ConflictSafetyPolicy.allowsMutation(for: safetyState)
         let conflicts = self.conflicts(for: item)
         return List {
             Section {
@@ -1300,30 +1214,29 @@ struct ContentView: View {
             Section("Sync Status") {
                 LabeledContent("State") {
                     HStack(spacing: 6) {
-                        Image(systemName: stateIcon(status?.state ?? "unknown"))
-                            .foregroundStyle(stateColor(status?.state ?? "unknown"))
+                        Image(systemName: stateIcon(status?.state ?? "unknown", folderID: folder.id))
+                            .foregroundStyle(stateColor(status?.state ?? "unknown", folderID: folder.id))
                             .font(.caption2)
                             .accessibilityHidden(true)
                         Text(localizedState(status?.state ?? "unknown", folderID: folder.id))
                     }
                     .accessibilityElement(children: .combine)
                 }
-                if let status {
+                if let status, safetyState == .clear {
                     LabeledContent("Completion", value: "\(Int(status.completionPct))%")
                     LabeledContent("Local Files", value: "\(status.localFiles)")
                     LabeledContent("Global Files", value: "\(status.globalFiles)")
-                    if status.state == "error",
-                       let folderError = syncthingManager.folderUserError(folderID: folder.id) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(folderError.message)
-                                .font(.caption)
-                            Text(folderError.remediation)
+                }
+                if let folderError = syncthingManager.folderUserError(folderID: folder.id) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(folderError.message)
+                            .font(.caption)
+                        Text(folderError.remediation)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        if let url = troubleshootingURL(for: folderError) {
+                            ExternalLinkButton(titleKey: "Learn how to fix", url: url)
                                 .font(.caption2)
-                                .foregroundStyle(.secondary)
-                            if let url = troubleshootingURL(for: folderError) {
-                                ExternalLinkButton(titleKey: "Learn how to fix", url: url)
-                                    .font(.caption2)
-                            }
                         }
                     }
                 }
@@ -1350,15 +1263,25 @@ struct ContentView: View {
             }
 
             Section {
-                NavigationLink {
-                    IgnorePatternsView(
-                        folderID: folder.id,
-                        syncthingManager: syncthingManager
-                    )
-                } label: {
-                    Label(L10n.tr("Sync Filters"), systemImage: "line.3.horizontal.decrease.circle")
+                if allowsConflictMutation {
+                    NavigationLink {
+                        IgnorePatternsView(
+                            folderID: folder.id,
+                            syncthingManager: syncthingManager
+                        )
+                    } label: {
+                        Label(L10n.tr("Sync Filters"), systemImage: "line.3.horizontal.decrease.circle")
+                    }
+                    .accessibilityHint(L10n.tr("Choose what gets synced to this iPhone"))
+                } else {
+                    let safetyError = SyncUserError.conflictSafetyError(for: safetyState)
+                    VStack(alignment: .leading, spacing: VaultSpacing.xxs) {
+                        Label(safetyError.title, systemImage: "lock.fill")
+                        Text(safetyError.message)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                .accessibilityHint(L10n.tr("Choose what gets synced to this iPhone"))
             }
 
             Section("Shared With") {
@@ -1414,7 +1337,7 @@ struct ContentView: View {
                         }
                     }
                 }
-                .disabled(isScanning)
+                .disabled(isScanning || !allowsConflictMutation)
             }
 
             // A 1:1 sync folder maps to exactly one vault, so removing it is
@@ -1439,10 +1362,13 @@ struct ContentView: View {
         .navigationTitle(item.name)
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
-            // Don't nudge sync filters for a vault that can't sync at all.
-            let isUnreachable = syncthingManager.unreachableFolders.contains { $0.id == folder.id }
-            if !isUnreachable, !syncthingManager.hasShownRecommendationSheet(folderID: folder.id) {
-                pendingFilterSheetFolder = folder
+            offerSyncFilterRecommendationIfAllowed(for: folder, safetyState: safetyState)
+        }
+        .onChange(of: safetyState) { _, newState in
+            if ConflictSafetyPolicy.allowsMutation(for: newState) {
+                offerSyncFilterRecommendationIfAllowed(for: folder, safetyState: newState)
+            } else if pendingFilterSheetFolder?.id == folder.id {
+                pendingFilterSheetFolder = nil
             }
         }
         .sheet(item: $pendingFilterSheetFolder) { folder in
@@ -1553,6 +1479,14 @@ struct ContentView: View {
     /// successful sync must not read "Up to Date" — before the first exchange
     /// the honest label is that it is still waiting for one.
     private func localizedState(_ state: String, folderID: String) -> String {
+        switch syncthingManager.conflictSafetyState(folderID: folderID) {
+        case .stopped:
+            return L10n.tr("Conflict Safety Stop")
+        case .unknown:
+            return L10n.tr("Checking Conflict Safety")
+        case .clear:
+            break
+        }
         if state.lowercased() == "idle",
            syncthingManager.lastSyncTimeByFolder[folderID] == nil {
             return L10n.tr("Waiting for first sync")
@@ -1584,9 +1518,6 @@ struct ContentView: View {
     ContentView(
         syncthingManager: syncthing,
         vaultManager: vault,
-        subscriptionManager: SubscriptionManager(),
-        shareAccept: ShareAcceptCoordinator(
-            environment: .live(syncthingManager: syncthing, vaultManager: vault)
-        )
+        subscriptionManager: SubscriptionManager()
     )
 }

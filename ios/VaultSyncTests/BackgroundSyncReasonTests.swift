@@ -20,6 +20,7 @@ struct BackgroundSyncReasonTests {
             .bridgeStartFailed,
             .notIdleBeforeDeadline,
             .failed,
+            .settledWithFolderError,
         ]
 
         for result in failures {
@@ -31,6 +32,33 @@ struct BackgroundSyncReasonTests {
         }
     }
 
+    @Test("Safety ItemFinished is never local-data progress (#150)")
+    func safetyItemIsNotProgress() {
+        let startedAt = SyncBridgeService.parseBridgeTimestamp("2027-01-15T08:00:00Z")!
+        var tracker = BackgroundSyncService.SilentPushProgressTracker(
+            lastEventID: 40,
+            startedAt: startedAt
+        )
+        tracker.requiresLocalDataProgress = true
+
+        let snapshot = tracker.observe([
+            .init(
+                id: 41,
+                type: "ItemFinished",
+                time: "2027-01-15T08:00:01Z",
+                data: [
+                    "folder": "redaction-probe-folder",
+                    "type": "file",
+                    "action": "update",
+                    "reason": ConflictSafetyPolicy.stoppedReason,
+                ]
+            ),
+        ])
+
+        #expect(snapshot.requiresLocalDataProgress)
+        #expect(!snapshot.sawLocalDataProgress)
+    }
+
     @Test("Specific reason code copy remains actionable")
     func specificReasonCodeCopy() {
         #expect(BackgroundSyncService.SyncResult.noBookmarkAccess.issueTitle == L10n.tr("Background Sync Could Not Access Obsidian"))
@@ -39,8 +67,20 @@ struct BackgroundSyncReasonTests {
         #expect(BackgroundSyncService.SyncResult.notIdleBeforeDeadline.issueTitle == L10n.tr("Background Sync Timed Out"))
         #expect(
             BackgroundSyncService.SyncResult.noBookmarkAccess.remediation
-                == L10n.tr("Reconnect your Obsidian folder access in VaultSync, then run a foreground rescan.")
+                == L10n.tr("Reconnect your Obsidian folder access in VaultSync, then review the affected vault. Receive-capable vaults remain read-only in this version.")
         )
+    }
+
+    @Test("Engine safety stop is non-retryable while ordinary start failures remain retryable (#150)")
+    func engineSafetyStopStartResultIsFailClosed() {
+        #expect(BackgroundSyncService.syncResultForBridgeStartFailure(
+            ConflictSafetyPolicy.engineStopMarker
+        ) == .settledWithFolderError)
+        #expect(BackgroundSyncService.syncResultForBridgeStartFailure(
+            "redaction-probe-engine-start-error"
+        ) == .bridgeStartFailed)
+        #expect(!BackgroundSyncService.SyncResult.settledWithFolderError.remediation
+            .lowercased().contains("retry"))
     }
 
     @Test("Silent push restart requires fresh local data progress before success")

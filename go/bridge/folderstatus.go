@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/syncthing/syncthing/lib/config"
+	"github.com/syncthing/syncthing/lib/model"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/syncthing"
 )
@@ -53,6 +54,19 @@ func getFolderConfigs() map[string]config.FolderConfiguration {
 	return stCfg.Folders()
 }
 
+func folderStatusRequiresCompleteSafetyEvidence(folderID string) bool {
+	folders := getFolderConfigs()
+	if folders == nil {
+		return true
+	}
+	folder, exists := folders[folderID]
+	return folderTypeRequiresCompleteSafetyEvidence(folder.Type, exists)
+}
+
+func folderTypeRequiresCompleteSafetyEvidence(folderType config.FolderType, exists bool) bool {
+	return !exists || receiveSideReadOnlyForFolderType(folderType)
+}
+
 // GetFolderStatusJSON returns the sync status of a folder as JSON.
 // Includes state (idle/scanning/syncing/error), completion percentage, and file counts.
 func GetFolderStatusJSON(folderID string) string {
@@ -60,16 +74,30 @@ func GetFolderStatusJSON(folderID string) string {
 	if internals == nil {
 		return "{}"
 	}
+	requireCompleteSafetyEvidence := folderStatusRequiresCompleteSafetyEvidence(folderID)
 
 	status := FolderStatus{}
 
-	// Get folder state (idle, scanning, syncing, error, etc.).
-	state, stateChanged, err := internals.FolderState(folderID)
-	if err != nil {
-		status.State = "error"
+	// Obtain state and item-level error evidence independently. A safety stop can
+	// be the reason FolderState itself fails, and FolderErrors can fail while the
+	// cached runner state still says idle. Resolve both before any success-shaped
+	// return so neither condition can expose raw paths or hide missing evidence.
+	state, stateChanged, stateErr := internals.FolderState(folderID)
+	status.State = state
+	if stateErr != nil || stateChanged.IsZero() {
 		status.StateChanged = time.Now().Format("2006-01-02T15:04:05Z07:00")
-		status.ErrorReason = classifyFolderErrorReason(err.Error())
-		status.ErrorMessage = err.Error()
+	} else {
+		status.StateChanged = stateChanged.Format("2006-01-02T15:04:05Z07:00")
+	}
+	folderErrors, folderErrorsErr := internals.FolderErrors(folderID)
+	if applyFolderSafetyEvidence(&status, stateErr, folderErrors, folderErrorsErr, requireCompleteSafetyEvidence) {
+		return marshalFolderStatus(status)
+	}
+
+	if stateErr != nil {
+		status.State = "error"
+		status.ErrorReason = classifyFolderErrorReason(stateErr.Error())
+		status.ErrorMessage = stateErr.Error()
 
 		if inferred, ok := inferFolderPathErrorDetail(folderID); ok {
 			if status.ErrorReason == "" || status.ErrorReason == "unknown_error" {
@@ -87,8 +115,6 @@ func GetFolderStatusJSON(folderID string) string {
 		}
 		return marshalFolderStatus(status)
 	}
-	status.State = state
-	status.StateChanged = stateChanged.Format("2006-01-02T15:04:05Z07:00")
 
 	// Some Syncthing internals return an empty state for unknown folders
 	// instead of an explicit error. Normalize this into an error contract.
@@ -109,12 +135,8 @@ func GetFolderStatusJSON(folderID string) string {
 
 	// Get completion for local device (how much of global state we have).
 	completion, err := internals.Completion(protocol.LocalDeviceID, folderID)
-	if err == nil {
-		status.CompletionPct = completion.CompletionPct
-		status.NeedBytes = completion.NeedBytes
-		status.NeedFiles = completion.NeedItems
-		status.GlobalBytes = completion.GlobalBytes
-		status.GlobalFiles = completion.GlobalItems
+	if !applyFolderCompletionEvidence(&status, completion, err, requireCompleteSafetyEvidence) {
+		return marshalFolderStatus(status)
 	}
 
 	// Get local file counts.
@@ -156,6 +178,81 @@ func GetFolderStatusJSON(folderID string) string {
 	return marshalFolderStatus(status)
 }
 
+func applyFolderCompletionEvidence(status *FolderStatus, completion model.FolderCompletion, err error, requireCompleteEvidence bool) bool {
+	if err == nil {
+		status.CompletionPct = completion.CompletionPct
+		status.NeedBytes = completion.NeedBytes
+		status.NeedFiles = completion.NeedItems
+		status.GlobalBytes = completion.GlobalBytes
+		status.GlobalFiles = completion.GlobalItems
+		return true
+	}
+	if isConflictRetentionSafetyError(err.Error()) {
+		applyConflictRetentionSafetyStatus(status, []model.FileError{{Err: err.Error()}})
+		return false
+	}
+	if !requireCompleteEvidence {
+		return true
+	}
+
+	status.State = "error"
+	status.ErrorReason = folderCompletionEvidenceUnavailableReason
+	status.ErrorMessage = folderCompletionEvidenceUnavailableMessage
+	status.ErrorPath = ""
+	if status.ErrorChanged == "" {
+		status.ErrorChanged = status.StateChanged
+	}
+	return false
+}
+
+// applyFolderSafetyEvidence resolves the two safety-bearing evidence channels
+// before normal state handling. Exact safety sentinels remain terminal for all
+// folder types. Missing ordinary evidence is terminal only when receive-side
+// behavior is possible; SendOnly keeps Syncthing's existing state diagnosis.
+// Every terminal status is fixed and path-free because upstream errors may
+// contain user-derived names and paths.
+func applyFolderSafetyEvidence(status *FolderStatus, stateErr error, folderErrors []model.FileError, folderErrorsErr error, requireCompleteEvidence bool) bool {
+	if stateErr != nil && isConflictRetentionSafetyError(stateErr.Error()) {
+		applyConflictRetentionSafetyStatus(status, []model.FileError{{Err: stateErr.Error()}})
+		return true
+	}
+	if applyConflictRetentionSafetyStatus(status, folderErrors) {
+		return true
+	}
+	if folderErrorsErr == nil {
+		return false
+	}
+	if !requireCompleteEvidence {
+		return false
+	}
+
+	status.State = "error"
+	status.ErrorReason = folderErrorEvidenceUnavailableReason
+	status.ErrorMessage = folderErrorEvidenceUnavailableMessage
+	status.ErrorPath = ""
+	if status.ErrorChanged == "" {
+		status.ErrorChanged = status.StateChanged
+	}
+	return true
+}
+
+func applyConflictRetentionSafetyStatus(status *FolderStatus, folderErrors []model.FileError) bool {
+	for _, folderError := range folderErrors {
+		if !isConflictRetentionSafetyError(folderError.Err) {
+			continue
+		}
+		status.State = "error"
+		status.ErrorReason = conflictRetentionSafetyErrorReason
+		status.ErrorMessage = conflictRetentionSafetyErrorMessage
+		status.ErrorPath = ""
+		if status.ErrorChanged == "" {
+			status.ErrorChanged = status.StateChanged
+		}
+		return true
+	}
+	return false
+}
+
 // GetFolderIgnores returns the .stignore lines for a folder as a JSON array.
 // Reads the .stignore file directly from disk to avoid model cache staleness.
 func GetFolderIgnores(folderID string) string {
@@ -195,6 +292,9 @@ func GetFolderIgnores(folderID string) string {
 // ignoresJSON must be a JSON array of strings, e.g. ["*.tmp", ".DS_Store"].
 // Returns empty string on success, error message on failure.
 func SetFolderIgnores(folderID, ignoresJSON string) string {
+	if receiveSideReadOnlyFolder(folderID) {
+		return conflictRetentionSafetyMarker
+	}
 	internals := getInternals()
 	if internals == nil {
 		return "syncthing not running"
@@ -224,6 +324,9 @@ func SetFolderIgnores(folderID, ignoresJSON string) string {
 // just the defaults. Returns empty string on success — including the no-op case
 // where every default is already present — or an error message on failure.
 func EnsureDefaultIgnores(folderID, defaultsJSON string) string {
+	if receiveSideReadOnlyFolder(folderID) {
+		return conflictRetentionSafetyMarker
+	}
 	var defaults []string
 	if err := json.Unmarshal([]byte(defaultsJSON), &defaults); err != nil {
 		return fmt.Sprintf("invalid JSON: %v", err)
@@ -287,16 +390,31 @@ func EnsureDefaultIgnores(folderID, defaultsJSON string) string {
 // RescanFolder triggers a rescan of all files in the folder.
 // Returns empty string on success, error message on failure.
 func RescanFolder(folderID string) string {
+	if receiveSideReadOnlyFolder(folderID) {
+		return conflictRetentionSafetyMarker
+	}
 	internals := getInternals()
 	if internals == nil {
 		return "syncthing not running"
 	}
 
 	if err := internals.ScanFolderSubdirs(folderID, nil); err != nil {
+		if isConflictRetentionSafetyError(err.Error()) {
+			return conflictRetentionSafetyMarker
+		}
 		return fmt.Sprintf("rescan: %v", err)
 	}
 
 	return ""
+}
+
+func receiveSideReadOnlyFolder(folderID string) bool {
+	folders := getFolderConfigs()
+	if folders == nil {
+		return false
+	}
+	folder, exists := folders[folderID]
+	return !exists || receiveSideReadOnlyForFolderType(folder.Type)
 }
 
 func marshalFolderStatus(status FolderStatus) string {

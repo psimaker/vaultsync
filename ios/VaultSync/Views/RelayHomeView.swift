@@ -62,10 +62,10 @@ struct RelayHomeView: View {
                     .foregroundStyle(Color.vaultAccent)
                     .accessibilityHidden(true)
 
-                Text(L10n.tr("Instant sync, still private"))
+                Text(L10n.tr("Private background wake-ups"))
                     .font(.title2.weight(.bold))
 
-                Text(L10n.tr("Your notes never touch our servers. Cloud Relay sends a tiny wake-up so changes from your other devices land the moment they happen — even with the app closed."))
+                Text(L10n.tr("Your notes never touch our servers. Cloud Relay sends only a wake-up so VaultSync can check status in the background. Send Only vaults can upload local changes."))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -84,7 +84,7 @@ struct RelayHomeView: View {
                 .foregroundStyle(Color.vaultAccent)
                 .padding(.top, VaultSpacing.xs)
                 .popover(isPresented: $showPrivacyInfo) {
-                    Text(L10n.tr("Your vault already syncs free and peer-to-peer. Relay only removes the “open the app to sync” wait — it isn’t cloud storage."))
+                    Text(L10n.tr("VaultSync remains peer-to-peer. Relay provides background wake-ups; it is not cloud storage and never carries your notes."))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.leading)
@@ -173,7 +173,7 @@ struct RelayHomeView: View {
                         .font(.headline)
                 }
             } footer: {
-                Text(L10n.tr("One step left: run a single line on your server and instant updates start. The helper only sends a wake-up — it never sees your notes."))
+                Text(L10n.tr("One step left: run one command on your server to enable background wake-ups. The helper never sees your notes."))
             }
         } else if relayUserStatus == .relayObservedWaitingForWakeUp {
             Section {

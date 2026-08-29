@@ -10,10 +10,6 @@ struct VaultSyncApp: App {
     @State private var syncthingManager: SyncthingManager
     @State private var vaultManager: VaultManager
     @State private var subscriptionManager = SubscriptionManager()
-    // ONE coordinator for both mount points (#92, decision 015): a failure or
-    // parked merge recorded during onboarding must survive into the home
-    // screen and keep blocking auto-retries there.
-    @State private var shareAccept: ShareAcceptCoordinator
     @State private var lastBackgroundedAt: Date?
     @Environment(\.scenePhase) private var scenePhase
 
@@ -24,9 +20,6 @@ struct VaultSyncApp: App {
         let vault = VaultManager()
         _syncthingManager = State(initialValue: syncthing)
         _vaultManager = State(initialValue: vault)
-        _shareAccept = State(initialValue: ShareAcceptCoordinator(
-            environment: .live(syncthingManager: syncthing, vaultManager: vault)
-        ))
         // Conflict banners default ON. Registered defaults are per-process and
         // not persisted, so the background handler still relies on its own
         // `?? true` fallback — this only keeps foreground `bool(forKey:)` reads
@@ -55,16 +48,14 @@ struct VaultSyncApp: App {
                     ContentView(
                         syncthingManager: syncthingManager,
                         vaultManager: vaultManager,
-                        subscriptionManager: subscriptionManager,
-                        shareAccept: shareAccept
+                        subscriptionManager: subscriptionManager
                     )
                 } else {
                     OnboardingView(
                         hasCompletedOnboarding: $hasCompletedOnboarding,
                         syncthingManager: syncthingManager,
                         vaultManager: vaultManager,
-                        subscriptionManager: subscriptionManager,
-                        shareAccept: shareAccept
+                        subscriptionManager: subscriptionManager
                     )
                 }
             }

@@ -524,9 +524,9 @@ enum BackgroundSyncService {
 
         var shouldSurfaceIssue: Bool {
             switch self {
-            case .synced, .alreadyIdle, .settledWithFolderError:
+            case .synced, .alreadyIdle:
                 return false
-            case .noBookmarkAccess, .noFoldersConfigured, .bridgeStartFailed, .notIdleBeforeDeadline, .failed:
+            case .noBookmarkAccess, .noFoldersConfigured, .bridgeStartFailed, .notIdleBeforeDeadline, .failed, .settledWithFolderError:
                 return true
             }
         }
@@ -543,8 +543,10 @@ enum BackgroundSyncService {
                 return L10n.tr("Background Sync Timed Out")
             case .failed:
                 return L10n.tr("Background Sync Failed")
-            case .synced, .alreadyIdle, .settledWithFolderError:
+            case .synced, .alreadyIdle:
                 return L10n.tr("Background Sync Completed")
+            case .settledWithFolderError:
+                return L10n.tr("Background Sync Stopped for Safety")
             }
         }
 
@@ -565,26 +567,37 @@ enum BackgroundSyncService {
             case .alreadyIdle:
                 return L10n.tr("Background sync ran, but folders were already idle.")
             case .settledWithFolderError:
-                return L10n.tr("Background sync settled with at least one folder in an error state.")
+                return L10n.tr("Background sync stopped because the engine or a folder reported a safety issue.")
             }
         }
 
         var remediation: String {
             switch self {
             case .noBookmarkAccess:
-                return L10n.tr("Reconnect your Obsidian folder access in VaultSync, then run a foreground rescan.")
+                return L10n.tr("Reconnect your Obsidian folder access in VaultSync, then review the affected vault. Receive-capable vaults remain read-only in this version.")
             case .noFoldersConfigured:
-                return L10n.tr("Accept or create a shared vault before relying on background sync.")
+                return L10n.tr("Open VaultSync to inspect device and folder configuration. New share acceptance is unavailable in this version.")
             case .bridgeStartFailed:
                 return L10n.tr("Open VaultSync once to restart Syncthing, then retry.")
             case .notIdleBeforeDeadline:
                 return L10n.tr("Open VaultSync to allow a longer foreground sync session.")
             case .failed:
                 return L10n.tr("Retry from the app and review relay/background diagnostics in Settings.")
-            case .synced, .alreadyIdle, .settledWithFolderError:
+            case .synced, .alreadyIdle:
                 return L10n.tr("No action needed.")
+            case .settledWithFolderError:
+                return L10n.tr("Open VaultSync to review the safety issue. Leave conflict copies unchanged while safety recovery is unavailable.")
             }
         }
+    }
+
+    /// Pure bridge-start classification shared by initial and forced starts.
+    /// Only the exact path-free #150 marker changes the result; arbitrary
+    /// bridge detail remains an ordinary start failure and is never surfaced.
+    static func syncResultForBridgeStartFailure(_ bridgeError: String?) -> SyncResult {
+        bridgeError == ConflictSafetyPolicy.engineStopMarker
+            ? .settledWithFolderError
+            : .bridgeStartFailed
     }
 
     static func lastSyncOutcome(defaults: UserDefaults = .standard) -> SyncOutcome? {
@@ -661,11 +674,10 @@ enum BackgroundSyncService {
         }
         guard didAcquireSyncSlot else {
             logger.info("Background sync already in flight — coalescing (reason=\(reason))")
-            trace("Concurrent background sync suppressed (reason=\(reason)); nudging rescan.")
-            if SyncBridgeService.isRunning() {
-                _ = requestFolderRescans()
-            }
-            return .alreadyIdle
+            trace("Concurrent background sync suppressed (reason=\(reason)); evaluating rescan.")
+            guard SyncBridgeService.isRunning() else { return .failed }
+            let rescanResult = requestFolderRescans()
+            return coalescedSyncResult(rescanResult: rescanResult)
         }
         defer { syncInFlightLock.withLock { $0 = false } }
 
@@ -689,10 +701,19 @@ enum BackgroundSyncService {
         trace("Bridge state before sync: running=\(alreadyRunning).")
         if BackgroundSyncGuards.shouldFastPathRescan(reason: reason, bridgeAlreadyRunning: alreadyRunning) {
             logger.info("Silent push: triggering folder rescans to wake Syncthing peer dialer")
-            if let rescanCount = requestFolderRescans() {
+            let rescanResult = requestFolderRescans()
+            if case let .rescanned(rescanCount) = rescanResult {
                 trace("Silent push fast path: rescanning \(rescanCount) folder(s).")
             } else {
-                trace("Silent push fast path: folder decode failed before rescan.")
+                let result = syncResultForRescanFailure(rescanResult) ?? .failed
+                trace("Silent push fast path: rescan stopped by safety preflight.")
+                return completeSync(
+                    reason: reason,
+                    result: result,
+                    detail: result.issueMessage,
+                    startedAt: syncStartedAt,
+                    initialEventCursor: syncStartEventCursor
+                )
             }
             traceRelevantBridgeEvents(since: &telemetryEventCursor, label: "after-fast-path-rescan")
         }
@@ -729,12 +750,15 @@ enum BackgroundSyncService {
             let configDir = syncthingConfigDir()
             let err = SyncBridgeService.startSyncthing(configDir: configDir)
             if let err, !err.isEmpty, !SyncBridgeService.isRunning() {
+                let result = syncResultForBridgeStartFailure(err)
                 logger.error("Background bridge start failed")
                 trace("Bridge start failed.")
                 return completeSync(
                     reason: reason,
-                    result: .bridgeStartFailed,
-                    detail: L10n.tr("The embedded sync engine could not start."),
+                    result: result,
+                    detail: result == .settledWithFolderError
+                        ? result.issueMessage
+                        : L10n.tr("The embedded sync engine could not start."),
                     startedAt: syncStartedAt,
                     initialEventCursor: syncStartEventCursor
                 )
@@ -852,7 +876,7 @@ enum BackgroundSyncService {
                     trace("Forced restart failed.")
                     let completion = completeSync(
                         reason: reason,
-                        result: .bridgeStartFailed,
+                        result: restart.failureResult ?? .bridgeStartFailed,
                         detail: restart.errorDetail ?? L10n.tr("Forced silent-push restart failed."),
                         startedAt: syncStartedAt,
                         initialEventCursor: syncStartEventCursor
@@ -898,10 +922,21 @@ enum BackgroundSyncService {
                     FolderPathReconciler.reconcileLive(obsidianRoot: managedAccess.url?.path)
                 }
 
-                if let rescanCount = requestFolderRescans() {
+                let rescanResult = requestFolderRescans()
+                if case let .rescanned(rescanCount) = rescanResult {
                     trace("Post-restart local rescan requested for \(rescanCount) folder(s).")
                 } else {
-                    trace("Post-restart local rescan skipped because folder decode failed.")
+                    let result = syncResultForRescanFailure(rescanResult) ?? .failed
+                    trace("Post-restart local rescan stopped by safety preflight.")
+                    let completion = completeSync(
+                        reason: reason,
+                        result: result,
+                        detail: result.issueMessage,
+                        startedAt: syncStartedAt,
+                        initialEventCursor: syncStartEventCursor
+                    )
+                    cleanupBackgroundManaged()
+                    return completion
                 }
                 traceRelevantBridgeEvents(since: &telemetryEventCursor, label: "after-post-restart-rescan")
             }
@@ -967,8 +1002,14 @@ enum BackgroundSyncService {
             }
         }
 
-        let idle = allFoldersIdle()
-        let settledWithError = !idle && allFoldersSettledOrErrored()
+        // Derive the terminal result from one coherent snapshot. Reading idle
+        // and error settlement separately could cross a safety-stop transition
+        // and turn contradictory evidence into a success claim.
+        let finalSettlements = folderSettlements()
+        let idle = finalSettlements?.allSatisfy { $0 == .idle } == true
+        let settledWithError = finalSettlements.map {
+            !$0.allSatisfy { $0 == .idle } && $0.allSatisfy { $0 != .active }
+        } ?? false
         let progressSnapshot = progressTracker?.poll()
         if let progressSnapshot {
             progressTrackerTraceIfNeeded(progressSnapshot)
@@ -998,7 +1039,7 @@ enum BackgroundSyncService {
             // but don't report a clean success either (the widget should still
             // reflect the error, not a green idle state).
             result = .settledWithFolderError
-            detail = L10n.tr("Background sync settled with at least one folder in an error state.")
+            detail = result.issueMessage
         } else {
             result = .notIdleBeforeDeadline
             detail = L10n.fmt("Sync did not reach idle before %ds deadline.", Int(maxDuration))
@@ -1446,8 +1487,8 @@ enum BackgroundSyncService {
         case .noFoldersConfigured, .notIdleBeforeDeadline:
             severities.append(.warning)
         case .noBookmarkAccess, .bridgeStartFailed, .failed, .settledWithFolderError:
-            // settledWithFolderError surfaces in-app via the folderErrors
-            // issue (critical), not via backgroundSyncIssueItem — same tier.
+            // A terminal folder error is critical whether the foreground also
+            // has fresh enough evidence to surface a dedicated folder issue.
             severities.append(.critical)
         }
         return SyncHeaderModel.deriveWidgetStatus(
@@ -1529,20 +1570,33 @@ enum BackgroundSyncService {
         initialEventCursor: Int,
         localDataProgressObserved: Bool = false
     ) -> SyncResult {
+        // Every success claim gets one final coherent status read after the
+        // caller's last await and event poll. A safety stop, active folder, or
+        // unreadable evidence appearing in that window cannot be persisted as
+        // synced/already-idle (#150).
+        let finalResult = resultAfterFinalStatusValidation(
+            proposed: result,
+            finalSettlements: result.isSuccessful ? folderSettlements() : nil
+        )
+        let verifiedLocalDataProgress = validatedLocalDataProgressObserved(
+            proposed: localDataProgressObserved,
+            finalResult: finalResult
+        )
+        let finalDetail = finalResult == result ? detail : finalResult.issueMessage
         let outcome = SyncOutcome(
             timestamp: Date(),
             triggerReason: reason,
-            result: result,
-            detail: detail,
-            localDataProgressObserved: localDataProgressObserved
+            result: finalResult,
+            detail: finalDetail,
+            localDataProgressObserved: verifiedLocalDataProgress
         )
         persistSyncOutcome(outcome)
-        if reason == "silent-push", localDataProgressObserved {
+        if reason == "silent-push", verifiedLocalDataProgress {
             RelaySyncProofStore.markLocalDataProgressObserved(at: outcome.timestamp)
         }
         WidgetSnapshotStore.write(
             snapshot: backgroundCompletionSnapshot(
-                result: result,
+                result: finalResult,
                 issueFloor: WidgetSnapshotStore.readIssueFloor(),
                 completedAt: outcome.timestamp,
                 startedAt: startedAt,
@@ -1552,9 +1606,19 @@ enum BackgroundSyncService {
                 previous: WidgetSnapshotStore.read()
             )
         )
-        trace("Completed with result=\(result.rawValue).")
-        logger.info("Background sync completed (reason=\(reason), result=\(result.rawValue))")
-        return result
+        trace("Finished with result=\(finalResult.rawValue).")
+        logger.info("Background sync finished (reason=\(reason), result=\(finalResult.rawValue))")
+        return finalResult
+    }
+
+    /// A progress event is evidence only for a finally successful run. The
+    /// final safety validation can downgrade a proposed success after that
+    /// event, in which case neither the outcome nor relay proof may retain it.
+    static func validatedLocalDataProgressObserved(
+        proposed: Bool,
+        finalResult: SyncResult
+    ) -> Bool {
+        proposed && finalResult.isSuccessful
     }
 
     private static func persistSyncOutcome(_ outcome: SyncOutcome) {
@@ -1572,12 +1636,27 @@ enum BackgroundSyncService {
         case active      // scanning, syncing, or outstanding work to pull
     }
 
+    struct FolderStatusCollection: Equatable, Sendable {
+        let orderedFolderIDs: [String]
+        let settlements: [String: FolderSettlement]
+        let allStatusesReadable: Bool
+    }
+
     static func folderSettlement(
         state: String,
         needFiles: Int,
         needBytes: Int64,
-        inProgressBytes: Int64
+        inProgressBytes: Int64,
+        errorReason: String? = nil,
+        hasRawErrorDetail: Bool = false
     ) -> FolderSettlement {
+        let safetyState = ConflictSafetyPolicy.classify(
+            statusReadable: true,
+            state: state,
+            errorReason: errorReason,
+            hasRawErrorDetail: hasRawErrorDetail
+        )
+        if safetyState != .clear { return .errored }
         if state == "error" { return .errored }
         // A folder is truly idle only when Syncthing is neither scanning nor
         // syncing AND has no outstanding work. The state field alone is not
@@ -1590,58 +1669,96 @@ enum BackgroundSyncService {
         return .active
     }
 
-    /// Per-folder settlement snapshot, or nil when the folder list is empty or a
-    /// status fails to decode (can't confirm state — caller treats as not-idle).
-    private static func folderSettlements() -> [FolderSettlement]? {
-        let json = SyncBridgeService.getFoldersJSON()
-        guard let data = json.data(using: .utf8),
+    /// Decode every readable status without side effects. Missing or malformed
+    /// evidence stays incomplete and callers must treat it as non-success.
+    static func collectFolderStatusSnapshot(
+        foldersJSON: String,
+        statusJSON: (_ folderID: String) -> String
+    ) -> FolderStatusCollection? {
+        guard let data = foldersJSON.data(using: .utf8),
               let folders = try? JSONDecoder().decode([FolderStub].self, from: data),
-              !folders.isEmpty else {
+              Set(folders.map(\.id)).count == folders.count,
+              folders.allSatisfy({ !$0.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
             return nil
         }
 
-        var settlements: [FolderSettlement] = []
+        var settlements: [String: FolderSettlement] = [:]
         settlements.reserveCapacity(folders.count)
+        var allStatusesReadable = true
         for folder in folders {
-            let statusJSON = SyncBridgeService.getFolderStatusJSON(folderID: folder.id)
-            guard let statusData = statusJSON.data(using: .utf8),
+            let encodedStatus = statusJSON(folder.id)
+            guard let statusData = encodedStatus.data(using: .utf8),
                   let status = try? JSONDecoder().decode(StatusStub.self, from: statusData) else {
-                return nil
+                allStatusesReadable = false
+                continue
             }
-            settlements.append(folderSettlement(
+            let statusSettlement = folderSettlement(
                 state: status.state,
                 needFiles: status.needFiles,
                 needBytes: status.needBytes,
-                inProgressBytes: status.inProgressBytes
-            ))
+                inProgressBytes: status.inProgressBytes,
+                errorReason: status.errorReason,
+                hasRawErrorDetail: status.errorMessage?.isEmpty == false
+                    || status.errorPath?.isEmpty == false
+            )
+            settlements[folder.id] = ConflictSafetyPolicy.runtimeState(
+                forFolderType: folder.type
+            ) == .clear ? statusSettlement : .errored
         }
-        return settlements
+        return FolderStatusCollection(
+            orderedFolderIDs: folders.map(\.id),
+            settlements: settlements,
+            allStatusesReadable: allStatusesReadable
+        )
+    }
+
+    private static func liveFolderStatusCollection() -> FolderStatusCollection? {
+        return collectFolderStatusSnapshot(
+            foldersJSON: SyncBridgeService.getFoldersJSON(),
+            statusJSON: { SyncBridgeService.getFolderStatusJSON(folderID: $0) }
+        )
+    }
+
+    /// Per-folder settlement snapshot, or nil when the folder list is empty or a
+    /// status fails to decode (can't confirm state — caller treats as not-idle).
+    private static func folderSettlements() -> [FolderSettlement]? {
+        guard let collection = liveFolderStatusCollection() else { return nil }
+        guard collection.allStatusesReadable,
+              !collection.orderedFolderIDs.isEmpty,
+              collection.orderedFolderIDs.allSatisfy({ collection.settlements[$0] != nil }) else {
+            return nil
+        }
+        return collection.orderedFolderIDs.compactMap { collection.settlements[$0] }
+    }
+
+    static func continuedProcessingFolderSnapshot(
+        foldersJSON: String,
+        statusJSON: (_ folderID: String) -> String
+    ) -> ContinuedProcessingRun.FolderSnapshot {
+        guard let collection = collectFolderStatusSnapshot(
+            foldersJSON: foldersJSON,
+            statusJSON: statusJSON
+        ), collection.allStatusesReadable else {
+            return .unreadable
+        }
+        return .readable(
+            folderIDs: Set(collection.orderedFolderIDs),
+            settlements: collection.settlements
+        )
     }
 
     private static func continuedProcessingFolderSnapshot() -> ContinuedProcessingRun.FolderSnapshot {
-        let json = SyncBridgeService.getFoldersJSON()
-        guard let data = json.data(using: .utf8),
-              let folders = try? JSONDecoder().decode([FolderStub].self, from: data) else {
-            return .unreadable
-        }
-
-        let expectedFolderIDs = Set(folders.map(\.id))
-        var settlements: [String: FolderSettlement] = [:]
-        settlements.reserveCapacity(expectedFolderIDs.count)
-        for folder in folders {
-            let statusJSON = SyncBridgeService.getFolderStatusJSON(folderID: folder.id)
-            guard let statusData = statusJSON.data(using: .utf8),
-                  let status = try? JSONDecoder().decode(StatusStub.self, from: statusData) else {
-                continue
-            }
-            settlements[folder.id] = folderSettlement(
-                state: status.state,
-                needFiles: status.needFiles,
-                needBytes: status.needBytes,
-                inProgressBytes: status.inProgressBytes
+        let collection = collectFolderStatusSnapshot(
+            foldersJSON: SyncBridgeService.getFoldersJSON(),
+            statusJSON: { SyncBridgeService.getFolderStatusJSON(folderID: $0) }
+        )
+        if let collection, collection.allStatusesReadable {
+            return .readable(
+                folderIDs: Set(collection.orderedFolderIDs),
+                settlements: collection.settlements
             )
         }
-        return .readable(folderIDs: expectedFolderIDs, settlements: settlements)
+        return .unreadable
     }
 
     private static func allFoldersIdle() -> Bool {
@@ -1691,6 +1808,7 @@ enum BackgroundSyncService {
         let events = decodeBridgeEvents(from: SyncBridgeService.getEventsSince(lastID: lastEventID))
         return events.reduce(into: 0) { count, event in
             guard event.type == "ItemFinished" else { return }
+            guard ConflictSafetyPolicy.state(forEventReason: event.data?["reason"]) == nil else { return }
             let error = event.data?["error"] ?? ""
             if error.isEmpty {
                 count += 1
@@ -1739,14 +1857,14 @@ enum BackgroundSyncService {
             let content = UNMutableNotificationContent()
             content.title = L10n.tr("Sync Conflicts")
             content.body = count == 1
-                ? L10n.tr("1 file has a sync conflict. Open VaultSync to resolve it.")
-                : L10n.fmt("%d files have sync conflicts. Open VaultSync to resolve them.", count)
+                ? L10n.tr("1 file has a sync conflict. Open VaultSync to see which copies are still available.")
+                : L10n.fmt("%d files have sync conflicts. Open VaultSync to see which copies are still available.", count)
             if action == .alert {
                 content.sound = .default
                 content.interruptionLevel = .active
             } else {
-                // Count dropped (some resolved) — refresh the number without a
-                // sound or screen-wake.
+                // Count dropped — refresh the number without a sound or
+                // screen-wake. Do not infer how the files changed.
                 content.interruptionLevel = .passive
             }
 
@@ -1839,16 +1957,117 @@ enum BackgroundSyncService {
         return docs.appendingPathComponent("syncthing", isDirectory: true).path
     }
 
-    private static func requestFolderRescans() -> Int? {
-        let json = SyncBridgeService.getFoldersJSON()
-        guard let data = json.data(using: .utf8),
-              let folders = try? JSONDecoder().decode([FolderStub].self, from: data) else {
+    enum FolderRescanResult: Equatable, Sendable {
+        case rescanned(Int)
+        case noFolders
+        case blocked
+        case unreadable
+        case failed
+    }
+
+    /// Preflights every mutable SendOnly folder before the first rescan. A
+    /// receive-capable sibling is left untouched, while an exact #150 stop on
+    /// any target can never leave an earlier folder partially rescanned.
+    static func requestFolderRescans(
+        foldersJSON: String,
+        statusJSON: (_ folderID: String) -> String,
+        rescan: (_ folderID: String) -> String?
+    ) -> FolderRescanResult {
+        guard let data = foldersJSON.data(using: .utf8),
+              let folders = try? JSONDecoder().decode([FolderStub].self, from: data),
+              Set(folders.map(\.id)).count == folders.count,
+              folders.allSatisfy({ !$0.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
+            return .unreadable
+        }
+        guard !folders.isEmpty else { return .noFolders }
+
+        // Folder mode is the permanent 2.0.2 boundary. Receive-capable and
+        // unknown folders are not automatic-rescan targets; only the selected
+        // SendOnly subset is read or mutated.
+        let targets = folders.filter {
+            ConflictSafetyPolicy.runtimeState(forFolderType: $0.type) == .clear
+        }
+        guard !targets.isEmpty else {
+            return .blocked
+        }
+
+        func safetyState(folderID: String) -> ConflictSafetyPolicy.State {
+            let encodedStatus = statusJSON(folderID)
+            guard let statusData = encodedStatus.data(using: .utf8),
+                  let status = try? JSONDecoder().decode(StatusStub.self, from: statusData) else {
+                // Folder type already proves this is SendOnly. Preserve its
+                // established repair rescan and let the bridge enforce the
+                // mutation hard floor again at the ABI.
+                return .clear
+            }
+            return ConflictSafetyPolicy.state(forEventReason: status.errorReason) ?? .clear
+        }
+
+        // Complete the read-only pass before the first rescan so a later
+        // blocked folder cannot leave an earlier folder partially rescanned.
+        for folder in targets {
+            let state = safetyState(folderID: folder.id)
+            guard state == .clear else { return .blocked }
+        }
+
+        var count = 0
+        for folder in targets {
+            // Re-read synchronously at the individual mutation gate; the
+            // all-folder preflight above is not treated as a durable lease.
+            let state = safetyState(folderID: folder.id)
+            guard state == .clear else { return .blocked }
+            if let error = rescan(folder.id), !error.isEmpty {
+                return .failed
+            }
+            count += 1
+        }
+        return .rescanned(count)
+    }
+
+    static func syncResultForRescanFailure(_ result: FolderRescanResult) -> SyncResult? {
+        switch result {
+        case .rescanned:
             return nil
+        case .noFolders:
+            return .noFoldersConfigured
+        case .blocked:
+            return .settledWithFolderError
+        case .unreadable, .failed:
+            return .failed
         }
-        for folder in folders {
-            _ = SyncBridgeService.rescanFolder(folderID: folder.id)
+    }
+
+    static func resultAfterFinalStatusValidation(
+        proposed: SyncResult,
+        finalSettlements: [FolderSettlement]?
+    ) -> SyncResult {
+        guard proposed.isSuccessful else { return proposed }
+        guard let finalSettlements, !finalSettlements.isEmpty else { return .failed }
+        if finalSettlements.contains(.errored) {
+            return .settledWithFolderError
         }
-        return folders.count
+        guard finalSettlements.allSatisfy({ $0 == .idle }) else { return .failed }
+        return proposed
+    }
+
+    static func coalescedSyncResult(
+        rescanResult: FolderRescanResult
+    ) -> SyncResult {
+        if let failure = syncResultForRescanFailure(rescanResult) {
+            return failure
+        }
+        // Another run owns the lifecycle and a successful rescan request is
+        // only queued work. The loser has no settlement evidence of its own,
+        // so it must never emit a success-shaped result (#150).
+        return .failed
+    }
+
+    private static func requestFolderRescans() -> FolderRescanResult {
+        requestFolderRescans(
+            foldersJSON: SyncBridgeService.getFoldersJSON(),
+            statusJSON: { SyncBridgeService.getFolderStatusJSON(folderID: $0) },
+            rescan: { SyncBridgeService.rescanFolder(folderID: $0) }
+        )
     }
 
     private static func waitForSilentPushWakeEvidence(maxWait: TimeInterval) async -> Bool {
@@ -1884,25 +2103,32 @@ enum BackgroundSyncService {
     }
 
     private static func forceRestartForSilentPush()
-        async -> (success: Bool, errorDetail: String?) {
+        async -> (success: Bool, failureResult: SyncResult?, errorDetail: String?) {
         if SyncBridgeService.isRunning() {
             trace("Forced restart stopping running bridge first.")
             SyncBridgeService.stopSyncthing()
             try? await Task.sleep(for: .milliseconds(350))
             if Task.isCancelled {
-                return (false, SyncResult.failed.issueMessage)
+                return (false, .failed, SyncResult.failed.issueMessage)
             }
         }
 
         let configDir = syncthingConfigDir()
         let err = SyncBridgeService.startSyncthing(configDir: configDir)
         if let err, !err.isEmpty, !SyncBridgeService.isRunning() {
+            let result = syncResultForBridgeStartFailure(err)
             trace("Forced restart start failed.")
-            return (false, L10n.tr("The embedded sync engine could not restart."))
+            return (
+                false,
+                result,
+                result == .settledWithFolderError
+                    ? result.issueMessage
+                    : L10n.tr("The embedded sync engine could not restart.")
+            )
         }
 
         trace("Forced restart started bridge successfully.")
-        return (true, nil)
+        return (true, nil, nil)
     }
 
     private static func traceFolderStatuses(label: String) {
@@ -1928,7 +2154,10 @@ enum BackgroundSyncService {
                 state: status.state,
                 needFiles: status.needFiles,
                 needBytes: status.needBytes,
-                inProgressBytes: status.inProgressBytes
+                inProgressBytes: status.inProgressBytes,
+                errorReason: status.errorReason,
+                hasRawErrorDetail: status.errorMessage?.isEmpty == false
+                    || status.errorPath?.isEmpty == false
             ) {
             case .idle: idleCount += 1
             case .active: activeCount += 1
@@ -1998,6 +2227,7 @@ enum BackgroundSyncService {
 
     private struct FolderStub: Decodable {
         let id: String
+        let type: String?
     }
 
     private struct DeviceStub: Decodable {
@@ -2022,6 +2252,9 @@ enum BackgroundSyncService {
         let needFiles: Int
         let needBytes: Int64
         let inProgressBytes: Int64
+        let errorReason: String?
+        let errorMessage: String?
+        let errorPath: String?
     }
 
     private struct ConflictStub: Decodable {
@@ -2087,7 +2320,8 @@ enum BackgroundSyncService {
         }
 
         func indicatesLocalDataProgress(since startedAt: Date) -> Bool {
-            guard type == "ItemFinished",
+            guard ConflictSafetyPolicy.state(forEventReason: data?["reason"]) == nil,
+                  type == "ItemFinished",
                   data?["type"] == "file",
                   data?["action"] == "update" || data?["action"] == "delete",
                   (data?["error"] ?? "").isEmpty,

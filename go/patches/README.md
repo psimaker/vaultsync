@@ -39,6 +39,14 @@ Two safety nets compensate:
   rampup is otherwise clamped to 5s rounds while the discovery cache is still
   empty) and TCP dial timeout 10s→5s (a stale cached LAN address must fail
   over to the relay path quickly). iOS-specific tuning, not for upstreaming.
+- `syncthing/004-issue-150-loss-aware-conflict-retention.patch` — the temporary
+  2.0.2 receive-side read-only policy for issues #150/#167. Receive-capable
+  folders stop before local file/index mutation while authenticated remote
+  indexes can still persist Need. Canonical database-name and integrity
+  preflight, exact one-shot configuration capabilities, inert runtime runners,
+  inspection-only versioning, restart behavior, and privacy-safe runtime logs
+  are covered by the patch's `TestIssue150...` regressions. Send Only retains
+  its existing behavior.
 - `go-stun/001-nil-safe-host-methods.patch` — nil-safe host methods.
 
 ## Before each release

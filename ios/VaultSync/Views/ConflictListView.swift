@@ -8,31 +8,63 @@ struct ConflictListView: View {
     var pathPrefix: String? = nil
     let syncthingManager: SyncthingManager
 
-    /// Read live from the manager so a conflict resolved in the detail view
-    /// disappears immediately. The view previously held a by-value snapshot
-    /// captured at push time, which left resolved files as tappable dead rows.
+    /// Read live from the manager so an engine refresh is reflected without
+    /// retaining a stale by-value snapshot captured at navigation time.
     private var conflicts: [SyncthingManager.ConflictInfo] {
         let all = syncthingManager.conflictFiles[folderID] ?? []
         guard let prefix = pathPrefix else { return all }
         return all.filter { $0.belongs(toVault: prefix) }
     }
 
+    private var inspectionUnavailable: Bool {
+        syncthingManager.conflictInspectionUnavailableFolderIDs.contains(folderID)
+    }
+
     var body: some View {
         List {
             Section {
                 VStack(alignment: .leading, spacing: VaultSpacing.s) {
-                    Text("What is a conflict?")
+                    Text(L10n.tr("What is a conflict?"))
                         .font(.headline)
-                    Text("A conflict happens when a file is edited on two devices at the same time. Syncthing saves both versions to prevent data loss.")
+                    Text(L10n.tr("A conflict can happen when a file changes on two devices at the same time. Review every visible copy, because automatic retention cannot guarantee that every version will remain available."))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
                 .padding(.vertical, VaultSpacing.xs)
             }
-            
+
             Section {
-                if conflicts.isEmpty {
-                    Label("All conflicts resolved", systemImage: "checkmark.circle")
+                VStack(alignment: .leading, spacing: VaultSpacing.xs) {
+                    Label(L10n.tr("Conflict Recovery Unavailable"), systemImage: "lock.fill")
+                        .foregroundStyle(Color.statusAttention)
+                        .font(.headline)
+                    Text(L10n.tr("Conflict recovery actions are not available in this version."))
+                        .font(.subheadline)
+                    Text(L10n.tr("Review the copies that are still available here. Leave files unchanged; VaultSync cannot run a recovery action in this version."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, VaultSpacing.xs)
+            }
+
+            Section {
+                if inspectionUnavailable {
+                    VStack(alignment: .leading, spacing: VaultSpacing.xs) {
+                        Label(
+                            L10n.tr("Conflict inspection is unavailable."),
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                        .font(.headline)
+                        .foregroundStyle(Color.statusAttention)
+                        Text(L10n.tr("VaultSync cannot verify whether the conflict list is complete. Previously visible copies remain shown for review."))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, VaultSpacing.xs)
+                }
+
+                if conflicts.isEmpty, !inspectionUnavailable {
+                    Label(L10n.tr("No conflicts found"), systemImage: "doc.text.magnifyingglass")
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(conflicts) { conflict in
@@ -48,7 +80,7 @@ struct ConflictListView: View {
                                     .font(.body)
                                 HStack(spacing: VaultSpacing.s) {
                                     Label(conflict.formattedConflictDate, systemImage: "clock")
-                                    Label(conflict.deviceShortID, systemImage: "laptopcomputer")
+                                    Label(L10n.tr("Conflict Copy"), systemImage: "doc.on.doc")
                                 }
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -59,10 +91,10 @@ struct ConflictListView: View {
                     }
                 }
             } header: {
-                Text("Conflicted Files")
+                Text(L10n.tr("Conflicted Files"))
             }
         }
-        .navigationTitle("Conflicts")
+        .navigationTitle(L10n.tr("Conflicts"))
         .navigationBarTitleDisplayMode(.inline)
     }
 

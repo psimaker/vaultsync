@@ -73,6 +73,62 @@ jobs:
         # separate runner needed.
         run: go test -tags noassets ./bridge -count=1
 
+      - name: Run patched Syncthing conflict-safety tests
+        working-directory: go
+        run: |
+          expected="$(cat <<'EOF'
+          TestIssue150ConcurrentCapabilityReuseAllowsExactlyOneQueuedUse
+          TestIssue150ConfigStartupPreflightRunsBeforeUpgradeSave
+          TestIssue150ExactProtectedCapabilitiesAuthorizeOnlyTheirBoundDiffs
+          TestIssue150FolderDatabaseNameValidationPreservesHistoricalCanonicalASCII
+          TestIssue150GenericDeviceRemovalCannotDeriveProtectedMembershipDiff
+          TestIssue150GenericProtectedConfigurationDiffsStopBeforeSubscribers
+          TestIssue150GenericProtectedRemovalStopsInEitherFolderOrder
+          TestIssue150NoOpCapabilityUseIsConsumed
+          TestIssue150ProtectedAppStartupSkipsGlobalMutationServices
+          TestIssue150ProtectedCapabilitiesAreOneShotAndNonTransferable
+          TestIssue150ProtectedCapabilitiesRejectAdditionalOrReorderedDiffs
+          TestIssue150ProtectedDatabaseOpenDoesNotCleanOrphanDatabaseArtifacts
+          TestIssue150ProtectedFullAndDeltaPersistAuthenticatedNeed
+          TestIssue150ProtectedIntroducerDiffDoesNotLogLabelBeforeConfigGuard
+          TestIssue150ProtectedRequestKeepsReadsButDoesNotRecheckOrLeak
+          TestIssue150ProtectedRunnerIgnoresAtomicReplaceDuringRemoteIndex
+          TestIssue150ProtectedRunnerStartsWithoutMarkerOrLocalIndex
+          TestIssue150ProtectedSendReceiveRemoteIndexPreservesLocalStateForEveryMaxConflictsValue
+          TestIssue150ProtectedShareCapabilityRejectsPrepareDerivedAdditionalDiff
+          TestIssue150ProtectedVersionerIsPrivateAndInspectionOnly
+          TestIssue150ProtectionIsOptInAndCapabilityRequiresEnabledWrapper
+          TestIssue150PureSendOnlyAppKeepsStandardStartupServices
+          TestIssue150PureSendOnlyDatabaseOpenKeepsExistingWriteSemantics
+          TestIssue150ReceiveSideDatabaseOptionStopsBeforePathCreation
+          TestIssue150ReceiveSideDatabasePreflightNormalizesLateMutatingMainOpenFailure
+          TestIssue150ReceiveSideDatabasePreflightRejectsExistingPhysicalAliasesBeforeMutation
+          TestIssue150ReceiveSideDatabasePreflightRejectsFutureCaseFoldAliasesBeforeMutation
+          TestIssue150ReceiveSideDatabasePreflightRejectsNoncanonicalRegisteredNamesBeforeMutation
+          TestIssue150ReceiveSideDatabasePreflightRejectsRecognizableDatabaseDeviationsBeforeMutation
+          TestIssue150ReceiveSideDatabasePreflightRejectsUncheckpointedAppOwnedWALWithoutMutation
+          TestIssue150ReceiveSideDatabaseSafetyStopReusesCanonicalConfigError
+          TestIssue150ReceiveSideReadOnlyDisablesAutoAcceptBeforeConfigOrFilesystem
+          TestIssue150SendOnlyGenericConfigurationRetainsExistingSemantics
+          TestIssue150ZeroValueCapabilityFailsClosed
+          EOF
+          )"
+          discovered="$(go test -mod=readonly \
+            github.com/syncthing/syncthing/internal/db/sqlite \
+            github.com/syncthing/syncthing/lib/config \
+            github.com/syncthing/syncthing/lib/model \
+            github.com/syncthing/syncthing/lib/syncthing \
+            github.com/syncthing/syncthing/lib/versioner \
+            -list '^TestIssue150[A-Z]' | grep '^TestIssue150[A-Z]' | LC_ALL=C sort -u)"
+          diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$discovered")
+          go test -mod=readonly \
+            github.com/syncthing/syncthing/internal/db/sqlite \
+            github.com/syncthing/syncthing/lib/config \
+            github.com/syncthing/syncthing/lib/model \
+            github.com/syncthing/syncthing/lib/syncthing \
+            github.com/syncthing/syncthing/lib/versioner \
+            -run '^TestIssue150[A-Z]' -count=1 -timeout=15m
+
   notify-tests:
     name: Notify Tests
     runs-on: ubuntu-latest

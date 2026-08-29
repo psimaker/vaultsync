@@ -1,8 +1,4 @@
 "About" = "关于";
-"Accept First Pending Share" = "接受第一个待处理共享";
-"Accept Pending Share" = "接受待处理共享";
-"Accept Share" = "接受共享";
-"Accept a share to activate syncing for that vault." = "接受一个共享以激活该 Vault 的同步。";
 "Action Needed" = "需要操作";
 "Actions" = "操作";
 "Active" = "已激活";
@@ -45,11 +41,9 @@
 "Completion" = "完成度";
 "Configuration Error" = "配置错误";
 "Conflict Resolution Failed" = "冲突解决失败";
-"Conflict Resolved" = "冲突已解决";
 "Conflicted Files" = "冲突文件";
 "Conflicts" = "冲突";
-"Conflicts mean multiple versions exist and need a manual decision." = "冲突表示存在多个版本，需要手动决定保留哪一个。";
-"Connect Obsidian to accept shares" = "连接 Obsidian 以接受共享";
+"A separate conflict copy was detected for a file." = "检测到某个文件存在单独的冲突副本。";
 "Connect Obsidian Folder" = "连接 Obsidian 文件夹";
 "Connect to Obsidian first" = "请先连接 Obsidian";
 "Connected" = "已连接";
@@ -105,23 +99,16 @@
 "Healthy" = "正常";
 "How to fix: %@" = "修复方法：%@";
 "How to share from your computer" = "如何从电脑共享";
-"If a note changes on two devices at the same time, VaultSync can alert you so you can choose which version to keep." = "如果一条笔记同时在两台设备上被修改，VaultSync 可以提醒你，由你决定保留哪个版本。";
+"If VaultSync detects conflicting copies, it can alert you so you can inspect them. Recovery actions are unavailable in this version." = "如果 VaultSync 检测到冲突副本，它可以提醒你进行检查。此版本不提供恢复操作。";
 "Ignore for Now" = "暂时忽略";
 "Ignored shares (%d)" = "已忽略的共享（%d）";
 "In progress" = "进行中";
 "Install Obsidian from the App Store and open it once. The folder appears after Obsidian creates it." = "从 App Store 安装 Obsidian 并打开一次。文件夹会在 Obsidian 创建后出现。";
 "Invalid Input" = "输入无效";
 "Invalid folder name: '%@'" = "无效的文件夹名称：“%@”";
-"Keep Both" = "两者都保留";
 "Keep Both did not change any files because the new copy name is already in use." = "“两者都保留”未更改任何文件，因为新副本名称已被使用。";
 "Keep Both did not change any files because this storage location does not support safe renaming." = "“两者都保留”未更改任何文件，因为此存储位置不支持安全重命名。";
-"Keep Other" = "保留对方版本";
-"Keep Other Device's Version" = "保留另一台设备的版本";
-"Keep This" = "保留此版本";
-"Keep This Device's Version" = "保留此设备版本";
-"Keep both versions" = "保留两个版本";
 "Keep the app open for a moment and retry. If this persists, restart VaultSync." = "请保持应用打开片刻后重试。如果问题持续存在，请重启 VaultSync。";
-"Keeps your local file and renames the other device's file." = "保留你的本地文件，并重命名另一台设备的文件。";
 "Last Check" = "上次检查";
 "Last Failure" = "上次失败";
 "Last Relay Error" = "上次 Relay 错误";
@@ -179,7 +166,7 @@
 "Open VaultSync" = "打开 VaultSync";
 "Open VaultSync once to restart Syncthing, then retry." = "打开 VaultSync 一次以重启 Syncthing，然后重试。";
 "Open VaultSync to allow a longer foreground sync session." = "打开 VaultSync，以允许更长的前台同步会话。";
-"Open conflicts and choose which version to keep." = "打开冲突并选择要保留的版本。";
+"Open conflicts to see which copies are still available. Recovery actions are unavailable." = "打开冲突以查看哪些副本仍然可用。恢复操作不可用。";
 "Open full relay troubleshooting" = "打开完整 Relay 故障排查";
 "Open iOS Notification Settings" = "打开 iOS 通知设置";
 "Open iOS Settings → VaultSync and check that all permissions are enabled, then retry." = "打开 iOS 设置 → VaultSync，检查所有权限都已启用，然后重试。";
@@ -187,11 +174,9 @@
 "Opens discovery, relay, and notification settings." = "打开发现、Relay 和通知设置。";
 "Opens the form to add a Syncthing device." = "打开添加 Syncthing 设备的表单。";
 "Optional" = "可选";
-"Overwrites your local file with the version from the other device." = "使用另一台设备的版本覆盖你的本地文件。";
 "Path" = "路径";
 "Peer connection is active." = "对端连接已激活。";
 "Pending Shares" = "待处理共享";
-"Pending shares are waiting to be accepted before sync can start." = "待处理共享需要先被接受，同步才能开始。";
 "Per-Device Provisioning" = "按设备配置";
 "Permission Required" = "需要权限";
 "Please select a folder. In the picker choose \"On My iPhone\" → \"Obsidian\"." = "请选择一个文件夹。在选择器中选择“在我的 iPhone 上” → “Obsidian”。";
@@ -206,7 +191,7 @@
 "Reconnect Obsidian Folder" = "重新连接 Obsidian 文件夹";
 "Reconnect Obsidian access or adjust folder permissions on the host device." = "重新连接 Obsidian 访问权限，或在主机设备上调整文件夹权限。";
 "Reconnect devices or add missing peers to restore continuous sync." = "重新连接设备或添加缺失的对端，以恢复持续同步。";
-"Reconnect your Obsidian folder access in VaultSync, then run a foreground rescan." = "在 VaultSync 中重新连接 Obsidian 文件夹访问权限，然后执行一次前台重新扫描。";
+"Reconnect your Obsidian folder access in VaultSync, then review the affected vault. Receive-capable vaults remain read-only in this version." = "在 VaultSync 中重新连接 Obsidian 文件夹访问权限，然后检查受影响的 Vault。可接收内容的 Vault 在此版本中仍保持只读。";
 "Recreate or reselect the folder, then trigger a rescan." = "重新创建或重新选择文件夹，然后触发重新扫描。";
 "Registered" = "已注册";
 "Relay Backend" = "Relay 后端";
@@ -235,19 +220,16 @@
 "Remove and re-share the folder from your desktop device." = "从桌面设备中移除该文件夹并重新共享。";
 "Removed line. %@" = "已删除行。%@";
 "Rename Failed" = "重命名失败";
-"Rename the existing copy in Files, then try Keep Both again." = "请在“文件”中重命名现有副本，然后再次尝试保留两者。";
-"Resolve this conflict manually in Files without replacing either file." = "请在“文件”中手动解决此冲突，不要替换任何文件。";
+"Leave both copies unchanged. Do not repeat this action until a separately verified recovery is available." = "请保持两个副本不变。在单独验证的恢复方案可用之前，请勿重复此操作。";
 "Renews" = "续订";
 "Requesting camera access…" = "正在请求相机权限…";
 "Rescan Failed" = "重新扫描失败";
 "Rescan Failed Vaults" = "重新扫描失败的 Vault";
 "Rescan Vault" = "重新扫描 Vault";
 "Rescan failed vaults, then verify folder access and permissions." = "重新扫描失败的 Vault，然后检查文件夹访问和权限。";
-"Resolve Conflict" = "解决冲突";
-"Resolve Conflicts" = "解决冲突";
 "Restore Purchases" = "恢复购买";
 "Restore Share" = "恢复共享";
-"A conflict happens when a file is edited on two devices at the same time. Syncthing saves both versions to prevent data loss." = "当同一个文件同时在两台设备上被编辑时，就会发生冲突。Syncthing 会保存两个版本以防止数据丢失。";
+"A conflict can happen when a file changes on two devices at the same time. Review every visible copy, because automatic retention cannot guarantee that every version will remain available." = "当同一文件同时在两台设备上发生更改时，可能会出现冲突。请检查每个可见副本，因为自动保留无法保证所有版本都会继续可用。";
 "APNs Registration" = "APNs 注册";
 "APNs Token" = "APNs 令牌";
 "Context: %@ · %@" = "上下文：%@ · %@";
@@ -256,7 +238,6 @@
 "Present" = "存在";
 "Purchase Failed" = "购买失败";
 "Rescan All Vaults" = "重新扫描所有 Vault";
-"Review and Accept" = "查看并接受";
 "Selects this plan." = "选择此方案。";
 "Something Went Wrong" = "出了点问题";
 "Sync Conflicts" = "同步冲突";
@@ -279,8 +260,6 @@
 "Scanning completed in %@" = "%@ 中的扫描已完成";
 "Scanning started in %@" = "%@ 中开始扫描";
 "Settings" = "设置";
-"Share a folder from your desktop Syncthing — it will be accepted automatically." = "从桌面 Syncthing 共享一个文件夹——它会被自动接受。";
-"Share requests are shown below, but Accept and Retry are disabled until your Obsidian folder is connected." = "共享请求显示在下方，但在连接 Obsidian 文件夹之前，“接受”和“重试”按钮会被禁用。";
 "Shared" = "已共享";
 "Shared With" = "共享给";
 "Shared by an unknown device" = "由未知设备共享";
@@ -318,8 +297,6 @@
 "Terms of Use" = "使用条款";
 "The device will be disconnected and removed from all shared folders." = "该设备将被断开连接，并从所有共享文件夹中移除。";
 "The embedded Syncthing bridge did not start for a background sync." = "嵌入式 Syncthing bridge 未能为后台同步启动。";
-"The file '%@' was kept as your local version. The other device's version was discarded." = "文件“%@”已保留为你的本地版本。另一台设备的版本已被丢弃。";
-"The file '%@' was overwritten with the version from the other device." = "文件“%@”已被另一台设备的版本覆盖。";
 "The folder path no longer exists%@." = "该文件夹路径已不存在%@。";
 "The folder scan finished successfully." = "文件夹扫描已成功完成。";
 "The sync engine stopped unexpectedly." = "同步引擎意外停止。";
@@ -359,7 +336,6 @@
 "VaultSync does not have the required permission for this action." = "VaultSync 没有所需的权限来执行此操作。";
 "VaultSync found a configuration problem." = "VaultSync 检测到配置问题。";
 "VaultSync needs camera access to scan Syncthing Device ID QR codes. Please enable it in Settings." = "VaultSync 需要相机权限来扫描 Syncthing 设备 ID 的二维码。请在设置中启用。";
-"VaultSync needs one-time access to your Obsidian folder before it can accept shares." = "VaultSync 需要一次性访问你的 Obsidian 文件夹后，才能接受共享。";
 "VaultSync reported an unexpected error." = "VaultSync 报告了一个意外错误。";
 "Wait a moment and retry." = "请稍等片刻后重试。";
 "What is a conflict?" = "什么是冲突？";
@@ -370,9 +346,9 @@
 "hours" = "小时";
 "No Activity Yet" = "还没有活动";
 "Sync engine running" = "同步引擎正在运行";
-"onboarding.welcome.title" = "你的 Obsidian 笔记，私密同步。";
-"onboarding.welcome.subtitle" = "在你自己的设备之间同步 Vault，无需依赖第三方云存储。";
-"onboarding.welcome.benefit.private" = "只在你的设备之间同步";
+"onboarding.welcome.title" = "你的 Obsidian 设置，以隐私为本。";
+"onboarding.welcome.subtitle" = "连接 Obsidian 和你自己的设备。此版本可以查看新的共享 Vault 邀请，但无法接受。";
+"onboarding.welcome.benefit.private" = "在你的设备之间保持私密";
 "onboarding.welcome.benefit.obsidian" = "专为 Obsidian Vault 打造";
 "onboarding.welcome.benefit.noCloud" = "无需云账号";
 "onboarding.cta.continue" = "继续";
@@ -388,18 +364,14 @@
 "VaultSync cannot access your local Obsidian folder." = "VaultSync 无法访问你的本地 Obsidian 文件夹。";
 "Connect your Obsidian folder from the VaultSync home screen." = "请在 VaultSync 主屏幕连接你的 Obsidian 文件夹。";
 "Computer or server added" = "已添加电脑或服务器";
-"Your first sync is done. Cloud Relay wakes this iPhone the moment your notes change — even while the app is closed." = "首次同步已完成。Cloud Relay 会在笔记发生变化时立即发送唤醒信号唤醒这部 iPhone——即使应用已关闭。";
+"Cloud Relay can wake this iPhone for background checks. Send Only vaults can upload local changes." = "Cloud Relay 可以唤醒这部 iPhone 进行后台检查。仅发送 Vault 可以上传本地更改。";
 "Your iPhone is paired with at least one Syncthing device." = "你的 iPhone 已与至少一台 Syncthing 设备配对。";
 "Your iPhone is not paired with a Syncthing device yet." = "你的 iPhone 尚未与 Syncthing 设备配对。";
 "Add your computer or server from the Devices section on the home screen." = "请在主屏幕的“设备”部分添加你的电脑或服务器。";
-"Vault syncing" = "Vault 正在同步";
+"Vault setup" = "Vault 设置";
 "At least one Obsidian vault is active in VaultSync." = "至少有一个 Obsidian Vault 已在 VaultSync 中激活。";
-"A vault offer is waiting to be accepted." = "有一个 Vault 共享邀请正等待接受。";
-"A vault offer is waiting. Accept it from Pending Shares on the home screen." = "有一个 Vault 邀请正在等待处理。请在主屏幕的“待处理共享”中接受它。";
-"A vault offer was seen earlier, but no vault is syncing right now." = "之前检测到过 Vault 共享邀请，但目前没有 Vault 正在同步。";
-"If syncing has not started, share your Obsidian vault again from Syncthing on your computer." = "如果同步尚未开始，请在电脑上的 Syncthing 中重新共享你的 Obsidian Vault。";
+"A vault offer was seen earlier, but no vault is configured right now." = "之前检测到过 Vault 共享邀请，但目前未配置任何 Vault。";
 "No Obsidian vault is active in VaultSync yet." = "目前还没有 Obsidian Vault 在 VaultSync 中激活。";
-"Share your Obsidian vault from Syncthing on your computer." = "请在电脑上的 Syncthing 中共享你的 Obsidian Vault。";
 "VaultSync’s sync engine is running." = "VaultSync 的同步引擎正在运行。";
 "VaultSync’s sync engine is still starting or unavailable." = "VaultSync 的同步引擎仍在启动或当前不可用。";
 "If this stays unavailable, restart VaultSync and check the home screen for issues." = "如果此状态持续不可用，请重启 VaultSync 并在主屏幕检查问题。";
@@ -415,12 +387,6 @@
 "Skip these on this iPhone? You can change this anytime in Sync Filters." = "在此 iPhone 上跳过这些？你可以随时在同步过滤器中修改。";
 "Skip" = "跳过";
 "Choose what gets synced to this iPhone" = "选择要同步到此 iPhone 的内容";
-"Always skip on this iPhone" = "在此 iPhone 上始终跳过";
-"More actions" = "更多操作";
-"Skipping enabled" = "跳过已启用";
-"'%@' and its conflict copies will no longer sync to this iPhone. You can undo this in Sync Filters." = "“%@”及其冲突副本将不再同步到此 iPhone。你可以在同步过滤器中撤销。";
-"1 existing conflict copy was removed." = "已移除 1 个现有冲突副本。";
-"%d existing conflict copies were removed." = "已移除 %d 个现有冲突副本。";
 "+ conflict copies" = "+ 冲突副本";
 "Could not add filter" = "无法添加过滤器";
 "Could not save filters" = "无法保存过滤器";
@@ -450,17 +416,17 @@
 "%d Required Devices Are Disconnected" = "%d 台必需设备已断开连接";
 "1 Pending Share Needs Attention" = "1 个待处理共享需要处理";
 "%d Pending Shares Need Attention" = "%d 个待处理共享需要处理";
-"1 Conflict Needs Resolution" = "1 个冲突待解决";
-"%d Conflicts Need Resolution" = "%d 个冲突待解决";
+"1 Conflict Available for Review" = "有 1 个冲突可供检查";
+"%d Conflicts Available for Review" = "有 %d 个冲突可供检查";
 
 /* Issue #10 — conflict notification body */
-"1 file has a sync conflict. Open VaultSync to resolve it." = "1 个文件存在同步冲突。打开 VaultSync 解决。";
-"%d files have sync conflicts. Open VaultSync to resolve them." = "%d 个文件存在同步冲突。打开 VaultSync 解决。";
+"1 file has a sync conflict. Open VaultSync to see which copies are still available." = "1 个文件存在同步冲突。请打开 VaultSync 查看哪些副本仍然可用。";
+"%d files have sync conflicts. Open VaultSync to see which copies are still available." = "%d 个文件存在同步冲突。请打开 VaultSync 查看哪些副本仍然可用。";
 
 /* Issue #10 — conflict-notifications toggle (Settings) */
 "Notifications" = "通知";
 "Conflict Notifications" = "冲突通知";
-"Show a banner when sync conflicts are detected. Turning this off does not affect Cloud Relay or background sync — your vault keeps syncing." = "检测到同步冲突时显示提醒横幅。关闭此项不会影响 Cloud Relay 或后台同步——你的 Vault 会继续同步。";
+"Show a banner when conflict copies are detected. Turning this off does not affect Cloud Relay, background checks, or Send Only uploads." = "检测到冲突副本时显示横幅。关闭此项不会影响 Cloud Relay、后台检查或仅发送 Vault 的上传。";
 
 /* Issue #10 — relay/alert decoupling (Relay Diagnostics) */
 "Alert Banners" = "提醒横幅";
@@ -472,7 +438,7 @@
 "APNs registration failed. Check your internet connection and retry registration. Silent push does not require notification banners to be enabled." = "APNs 注册失败。请检查网络连接并重试注册。静默推送无需启用提醒横幅。";
 
 /* Issue #10 — background-sync reliability (error-settled outcome) */
-"Background sync settled with at least one folder in an error state." = "后台同步已结束——至少一个文件夹处于错误状态。";
+"Background sync stopped because the engine or a folder reported a safety issue." = "后台同步已停止，因为引擎或文件夹报告了安全问题。";
 
 /* Issue #10 — relay reachable (vs delivering) */
 "Cloud Relay looks reachable" = "Cloud Relay 似乎可达";
@@ -508,18 +474,12 @@
 "Remove this device?" = "移除此设备？";
 "Double-tap to share this vault with this device." = "双击以与此设备共享此 Vault。";
 "Double-tap to stop sharing this vault with this device." = "双击以停止与此设备共享此 Vault。";
-"All conflicts resolved" = "所有冲突已解决";
+"No conflicts found" = "未发现冲突";
 "Loading files…" = "正在加载文件…";
 "Computing diff…" = "正在计算差异…";
-"Other Device" = "其他设备";
-"Other Device (%@)" = "其他设备（%@）";
-"Added lines come from the other device; removed lines are your version on this device." = "添加的行来自其他设备；删除的行是此设备上你的版本。";
-"(empty or unreadable)" = "（为空或无法读取）";
-"a new name" = "一个新名称";
-"Both versions were kept.\n\nYour local version remains as '%@'.\nThe other device's version was renamed to '%@'." = "已保留两个版本。\n\n你的本地版本保留为“%@”。\n其他设备的版本已重命名为“%@”。";
 "%d conflicts" = "%d 个冲突";
 "Your contribution is pending approval." = "你的支持正在等待批准。";
-"iOS did not provide a push token required for instant sync." = "iOS 未提供即时同步所需的推送令牌。";
+"iOS did not provide a push token required for Cloud Relay wake-ups." = "iOS 未提供 Cloud Relay 唤醒信号所需的推送令牌。";
 "%@ (Trigger: %@)" = "%@（触发：%@）";
 "1 additional file synced in %@" = "在 %@ 中同步了 1 个额外文件";
 "%d additional files synced in %@" = "在 %2$@ 中同步了 %1$d 个额外文件";
@@ -535,7 +495,6 @@
 "No folders were available after forced silent-push restart." = "强制静默推送重启后没有可用的文件夹。";
 "No folders were available for background sync." = "没有可用于后台同步的文件夹。";
 "No security-scoped bookmark access was available." = "没有可用的安全范围书签访问权限。";
-"Accept or create a shared vault before relying on background sync." = "在依赖后台同步前，请接受或创建一个共享 Vault。";
 "Retry from the app and review relay/background diagnostics in Settings." = "请在应用中重试，并在设置中查看 Relay/后台诊断。";
 "Silent push restarted Syncthing, but no real sync progress was observed before the app returned to idle." = "静默推送已重启 Syncthing，但在应用返回空闲前未观察到实际同步进展。";
 "Sync did not reach idle before %ds deadline." = "同步未在 %d 秒截止时间前进入空闲状态。";
@@ -548,12 +507,12 @@
 "relay network: %@" = "Relay 网络：%@";
 
 /* Cloud Relay activation (2026-05-31): honest server-setup + conversion */
-"Cloud Relay is not enabled. Without it, incoming changes arrive when you open VaultSync." = "Cloud Relay 未启用。没有它，传入的改动会在你打开 VaultSync 时到达。";
-"Enable Cloud Relay on the Relay tab if you want changes pushed the moment they happen." = "如果希望改动在发生的那一刻就推送过来，请在 Relay 标签页中启用 Cloud Relay。";
+"Cloud Relay is not enabled. Open VaultSync to review current status and conflict copies." = "Cloud Relay 未启用。打开 VaultSync 以检查当前状态和冲突副本。";
+"Enable Cloud Relay on the Relay tab to wake VaultSync for background checks." = "在 Relay 标签页中启用 Cloud Relay，以唤醒 VaultSync 进行后台检查。";
 "Cloud Relay — finish server setup" = "Cloud Relay — 完成服务器设置";
 "You’re subscribed, but no recent wake-up has arrived. Make sure the vaultsync-notify helper is running on your server." = "你已订阅，但尚未收到最近的唤醒信号。请确认 vaultsync-notify 助手正在你的服务器上运行。";
 "Set up the server helper from the Relay tab → Set Up Your Server." = "在 Relay 标签页 →“设置你的服务器”中配置服务器助手。";
-"Wake-ups are being delivered — incoming changes sync the moment they happen." = "唤醒信号正在送达——传入的改动会在发生的那一刻同步。";
+"Wake-ups are being delivered. VaultSync can check status in the background, and Send Only vaults can upload local changes." = "唤醒信号正在送达。VaultSync 可以在后台检查状态，仅发送 Vault 可以上传本地更改。";
 "Your server helper is running — wake-ups are being delivered." = "你的服务器助手正在运行——唤醒信号正在送达。";
 "Why this step" = "为什么需要这一步";
 "Cloud Relay needs a small helper on your server. It watches Syncthing for changes and sends VaultSync a wake-up signal — it never sees your notes. Without it, the subscription has nothing to wake the app with." = "Cloud Relay 需要在你的服务器上运行一个小助手。它监视 Syncthing 的改动并向 VaultSync 发送唤醒信号——它从不查看你的笔记。没有它，订阅就无法唤醒应用。";
@@ -570,7 +529,7 @@
 "Last wake-up" = "上次唤醒";
 "Auto-renews until canceled. Cancel anytime in Settings → Subscriptions." = "自动续订，直至取消。可随时在“设置 → 订阅”中取消。";
 "Cancel anytime in Settings → Subscriptions" = "可随时在“设置 → 订阅”中取消";
-"Get instant updates" = "获取即时更新";
+"Enable background wake-ups" = "启用后台唤醒";
 "Turn on Cloud Relay" = "启用 Cloud Relay";
 
 /* Redesign (Vault OS) strings — added in branch redesign/vault-os-foundation */
@@ -581,35 +540,28 @@
 "Add your server first" = "请先添加你的服务器";
 "Best value" = "最划算";
 "Cloud Relay wakes a specific device. Pair the computer or server that hosts your vault on the Devices tab, then come back to subscribe." = "Cloud Relay 会唤醒指定的设备。请先在“设备”标签页中配对承载你 Vault 的电脑或服务器，然后再回来订阅。";
-"Complete these steps right here. They light up green as you go — and you can always finish them later from the home screen." = "直接在这里完成这些步骤。随着你的进展，它们会亮起绿色——你也可以稍后随时从主屏幕完成它们。";
 "Connect your Obsidian folder" = "连接你的 Obsidian 文件夹";
 "Double tap to copy" = "双击以复制";
-"Give VaultSync one-time access to your local Obsidian folder so it can sync your notes." = "授予 VaultSync 对本地 Obsidian 文件夹的一次性访问权限，以便同步你的笔记。";
 "How is this private?" = "这如何保护隐私？";
-"Instant sync, still private" = "即时同步，依然私密";
-"Let’s get your vault synced" = "来同步你的 Vault 吧";
+"Private background wake-ups" = "私密的后台唤醒";
 "Loading plans…" = "正在加载方案…";
 "Manage" = "管理";
 "Monthly" = "按月";
 "One step left to activate" = "还差一步即可激活";
-"Optional: turn on Cloud Relay later for instant updates — you’ll find it on the Relay tab." = "可选：之后可启用 Cloud Relay 以获得即时更新——你可以在 Relay 标签页中找到它。";
+"Optional: turn on Cloud Relay later for background wake-ups — you’ll find it on the Relay tab." = "可选：之后可启用 Cloud Relay 以接收后台唤醒信号——你可以在 Relay 标签页中找到它。";
 "Pair this iPhone with the Syncthing device that hosts your vault, by Device ID or QR code." = "通过设备 ID 或二维码，将此 iPhone 与承载你 Vault 的 Syncthing 设备配对。";
 "Relay" = "Relay";
 "Relay health & diagnostics" = "Relay 健康状况与诊断";
-"One step left: run a single line on your server and instant updates start. The helper only sends a wake-up — it never sees your notes." = "只差一步：在你的服务器上运行一行命令，即时更新就会开始。助手只发送唤醒信号——绝不会看到你的笔记。";
+"One step left: run one command on your server to enable background wake-ups. The helper never sees your notes." = "只差一步：在你的服务器上运行一条命令以启用后台唤醒信号。助手绝不会看到你的笔记。";
 "Save %d%%" = "节省 %d%%";
 "Server helper setup" = "服务器助手设置";
 "Set up the server helper" = "设置服务器助手";
-"Share your Obsidian vault from Syncthing on your computer. VaultSync accepts it automatically — this turns green the moment it arrives." = "在你的电脑上通过 Syncthing 共享你的 Obsidian Vault。VaultSync 会自动接受——它一到达就会变绿。";
 "Starts a subscription purchase." = "开始订阅购买。";
 "Sync" = "同步";
-"Sync your first vault" = "同步你的第一个 Vault";
-"Wake-ups are being delivered — changes from your other devices arrive instantly." = "唤醒信号正在送达——来自你其他设备的更改会即时到达。";
 "Yearly" = "按年";
-"Your local version is kept, and the other device’s version is added under a new name. Nothing is discarded." = "保留你的本地版本，另一台设备的版本会以新名称添加。不会丢弃任何内容。";
-"Your notes never touch our servers. Cloud Relay sends a tiny wake-up so changes from your other devices land the moment they happen — even with the app closed." = "你的笔记绝不会经过我们的服务器。Cloud Relay 只发送一个微小的唤醒信号，让来自你其他设备的更改在发生的那一刻就送达——即使应用已关闭。";
+"Your notes never touch our servers. Cloud Relay sends only a wake-up so VaultSync can check status in the background. Send Only vaults can upload local changes." = "你的笔记绝不会经过我们的服务器。Cloud Relay 只发送唤醒信号，让 VaultSync 可以在后台检查状态。仅发送 Vault 可以上传本地更改。";
 "One-step setup: a single line on your server." = "一步设置：只需在服务器上运行一行命令。";
-"Your vault already syncs free and peer-to-peer. Relay only removes the “open the app to sync” wait — it isn’t cloud storage." = "你的 Vault 本身就已经免费、点对点地同步。Relay 只是免去了“打开应用才能同步”的等待——它不是云存储。";
+"VaultSync remains peer-to-peer. Relay provides background wake-ups; it is not cloud storage and never carries your notes." = "VaultSync 始终采用点对点方式。Relay 提供后台唤醒信号；它不是云存储，也绝不会传输你的笔记。";
 "You’re subscribed, but no wake-up has arrived yet. Cloud Relay only delivers once the helper is running on your server." = "你已订阅，但尚未收到唤醒信号。只有当助手在你的服务器上运行时，Cloud Relay 才会送达。";
 
 /* Folder path resilience (#25) */
@@ -629,7 +581,6 @@
 "You’re subscribed, but your server has never woken this iPhone. One step finishes setup." = "你已订阅，但你的服务器从未唤醒过此 iPhone。一步即可完成设置。";
 "Opens Cloud Relay setup." = "打开 Cloud Relay 设置。";
 "Cloud Relay went quiet" = "Cloud Relay 暂无动静";
-"Your server just reached this iPhone. Incoming changes now sync the moment they happen." = "你的服务器刚刚联系上了此 iPhone。现在，传入的改动会在发生的那一刻同步。";
 "Great" = "太好了";
 "Not active yet" = "尚未激活";
 "You’re subscribed. Wake-ups start once the helper is running on the computer or server you keep on — finish setup below." = "你已订阅。当助手在你常开的电脑或服务器上运行后，唤醒信号即会开始送达——请在下方完成设置。";
@@ -646,7 +597,7 @@
 
 /* Manual conflict review — notes and .obsidian state (Settings) */
 "Review Conflicts Manually" = "手动检查冲突";
-"VaultSync does not automatically choose between conflicting copies in your notes, Obsidian settings, or plugin state. Review each conflict and decide what to keep." = "VaultSync 不会自动在笔记、Obsidian 设置或插件状态的冲突副本之间做出选择。请逐一检查冲突，并决定要保留的内容。";
+"VaultSync does not automatically choose between conflicting copies in your notes, Obsidian settings, or plugin state. You can inspect each conflict, but recovery actions are unavailable in this version." = "VaultSync 不会自动在笔记、Obsidian 设置或插件状态的冲突副本之间做出选择。你可以检查每个冲突，但此版本无法执行恢复操作。";
 
 /* Path collision migration shield (#45) — vaults an older version already merged onto one folder */
 "Two Vaults Are Sharing One Folder" = "两个 Vault 共用同一个文件夹";
@@ -667,9 +618,7 @@
 "The folder \"%@\" already contains files. Accepting this share would combine its contents with the shared vault and sync the result to the other devices." = "文件夹“%@”已包含文件。接受此共享会将其内容与共享的 Vault 合并，并将结果同步到其他设备。";
 "Vault Folder Was Moved or Deleted" = "Vault 文件夹已被移动或删除";
 "VaultSync can no longer verify that this folder still holds this vault's data%@ — the folder was likely moved, renamed, replaced, or deleted outside VaultSync. Syncing has stopped to protect your notes." = "VaultSync 已无法确认此文件夹仍包含该 Vault 的数据%@——该文件夹可能在 VaultSync 之外被移动、重命名、替换或删除。同步已停止，以保护你的笔记。";
-"If you moved or renamed the folder, move it back to its original place. If it is gone, remove this vault on this iPhone and accept it again under Pending Shares. VaultSync never moves, recreates, or deletes folders on its own." = "如果你移动或重命名了该文件夹，请将它移回原来的位置。如果它已不存在，请在此 iPhone 上移除该 Vault，然后在“待处理共享”中重新接受它。VaultSync 绝不会自行移动、重新创建或删除文件夹。";
 "Follow the recovery steps shown with the affected vault — rescanning cannot fix a vault folder that was moved or deleted." = "请按照受影响 Vault 旁显示的恢复步骤操作——重新扫描无法修复已被移动或删除的 Vault 文件夹。";
-"Offer “%@” received — accepting…" = "已收到“%@”的共享邀请——正在接受…";
 "Offer “%@” received — connect your Obsidian folder first." = "已收到“%@”的共享邀请——请先连接你的 Obsidian 文件夹。";
 "Offer “%@” needs your attention. Tap “Finish Setup Later” below to review it on the home screen." = "共享邀请“%@”需要你处理。点按下方“稍后完成设置”，在主屏幕上查看。";
 
@@ -688,10 +637,8 @@
 "Waiting for first sync" = "等待首次同步";
 
 /* Onboarding guidance polish (#95) */
-"Device added. Now confirm this iPhone in Syncthing on your computer — a confirmation prompt appears there. Then share your vault to start syncing." = "设备已添加。现在请在电脑上的 Syncthing 中确认这台 iPhone——那里会出现一个确认请求。然后共享你的 Vault 即可开始同步。";
 "The folder you selected is stored in iCloud Drive. iCloud can keep files as placeholders that are not fully downloaded on this iPhone, which can stall syncing and create conflicts. For reliable syncing, use your vaults under \"On My iPhone\" → \"Obsidian\" and select that folder instead." = "你选择的文件夹存储在 iCloud 云盘中。iCloud 可能将文件保留为未完全下载到这台 iPhone 的占位文件，这会使同步停滞并产生冲突。为了可靠同步，请将你的 Vault 放在“在我的 iPhone 上” → “Obsidian”中，并改为选择该文件夹。";
 "Opens the setup checklist." = "打开设置检查清单。";
-"A vault offer was ignored on this iPhone, so it is not accepted automatically." = "此 iPhone 上忽略了一个 Vault 共享邀请，因此不会自动接受。";
 "Open \"Ignored shares\" under Pending Shares on the home screen and tap \"Restore Share\". Sharing again from your computer will not create a new offer." = "在主屏幕的待处理共享中打开“已忽略的共享”，然后点按“恢复共享”。在电脑上重新共享不会产生新的邀请。";
 "Camera Unavailable" = "相机不可用";
 "The camera could not be started on this device. Enter the Device ID manually instead — in Syncthing on your computer, choose Actions → Show ID." = "无法在此设备上启动相机。请改为手动输入设备 ID——在电脑上的 Syncthing 中选择“操作” → “显示 ID”。";
@@ -940,3 +887,52 @@
 "Upload check rate limited — upload unobserved" = "上传检查受到速率限制 — 未观察到上传";
 "Upload check unsupported for this exact folder and peer" = "此精确文件夹和对等设备不支持上传检查";
 "Upload capability unavailable — no upload evidence" = "上传能力不可用 — 没有上传证据";
+"Upload and download checks are unavailable while receive-side changes are disabled. Pairing details remain available for review." = "接收端更改停用期间，上传和下载检查不可用。配对详情仍可供查看。";
+"Conflict Safety Review Required" = "需要进行冲突安全检查";
+"Conflict Safety Status Unavailable" = "冲突安全状态不可用";
+"Background Sync Stopped for Safety" = "后台同步已为安全起见停止";
+"Open VaultSync to review the safety issue. Leave conflict copies unchanged while safety recovery is unavailable." = "请打开 VaultSync 检查安全问题。在安全恢复方案不可用时，请保持冲突副本不变。";
+"Conflict Safety Stop" = "冲突安全停止";
+"Checking Conflict Safety" = "正在检查冲突安全性";
+"Conflict Recovery Unavailable" = "冲突恢复不可用";
+"Conflict recovery actions are not available in this version." = "此版本不提供冲突恢复操作。";
+"Review the copies that are still available here. Leave files unchanged; VaultSync cannot run a recovery action in this version." = "请在此检查仍然可用的副本。请保持文件不变；此版本的 VaultSync 无法执行恢复操作。";
+"Conflict Details" = "冲突详情";
+"Review Conflicts" = "检查冲突";
+"VaultSync keeps receive-capable vaults read-only in this version." = "VaultSync 在此版本中将可接收内容的 Vault 保持为只读状态。";
+"You can review available status and conflict copies, but receive-side changes and conflict recovery are unavailable." = "你可以查看可用状态和冲突副本，但接收端更改和冲突恢复不可用。";
+"If you moved or renamed the folder, move it back to its original place. If it is gone, keep this vault stopped and preserve all remaining copies. New share acceptance is unavailable in this version. VaultSync never moves, recreates, or deletes folders on its own." = "如果你移动或重命名了文件夹，请将其移回原位。如果文件夹已不存在，请让此 Vault 保持停止状态并保留所有剩余副本。此版本无法接受新的共享。VaultSync 绝不会自行移动、重新创建或删除文件夹。";
+"Keep the affected vaults paused and preserve every remaining copy. New share acceptance is unavailable in this version." = "请让受影响的 Vault 保持暂停状态，并保留每一份剩余副本。此版本无法接受新的共享。";
+"A vault offer is available for inspection." = "有一个 Vault 邀请可供查看。";
+"Open Pending Shares to inspect the offer details. This version cannot accept it." = "打开“待处理共享”以查看邀请详情。此版本无法接受它。";
+"An ignored vault offer remains stored on this iPhone." = "已忽略的 Vault 邀请仍保存在此 iPhone 上。";
+"Open Pending Shares to inspect its details. No action is available in this version." = "打开“待处理共享”以查看其详情。此版本不提供任何操作。";
+"New share acceptance is unavailable in this version." = "此版本无法接受新的共享。";
+"New shared vault offers can be inspected, but not accepted in this version." = "此版本可以查看新的共享 Vault 邀请，但无法接受。";
+"Device added. Now confirm this iPhone in Syncthing on your computer — a confirmation prompt appears there. New shared vault offers are inspection-only in this version." = "设备已添加。现在请在电脑上的 Syncthing 中确认此 iPhone——确认提示会显示在那里。此版本中的新共享 Vault 邀请仅供查看。";
+"VaultSync needs one-time access to your Obsidian folder to inspect local vaults and existing sync status." = "VaultSync 需要一次性访问你的 Obsidian 文件夹，以查看本地 Vault 和现有同步状态。";
+"Not syncing in this version — new share offers are inspection-only." = "此版本中未同步——新的共享邀请仅供查看。";
+"Set up VaultSync" = "设置 VaultSync";
+"Connect Obsidian and a device here. New shared vault offers are inspection-only in this version." = "在此连接 Obsidian 和一台设备。此版本中的新共享 Vault 邀请仅供查看。";
+"Offer “%@” is available for inspection only. This version cannot accept it." = "邀请“%@”仅供查看。此版本无法接受它。";
+"Pending shares are read-only in this version." = "此版本中的待处理共享为只读。";
+"You can inspect who shared each offer, but no action is available." = "你可以查看每个邀请的共享来源，但没有可用操作。";
+"Read Only" = "只读";
+"No Vaults Syncing" = "没有 Vault 正在同步";
+"Conflict Inspection Unavailable" = "冲突检查不可用";
+"VaultSync cannot verify whether the conflict list is complete." = "VaultSync 无法验证冲突列表是否完整。";
+"Open conflicts to review any previously visible copies. No recovery action is available." = "打开冲突以检查先前可见的副本。恢复操作不可用。";
+"Current File" = "当前文件";
+"Conflict Copy" = "冲突副本";
+"Added lines are from the conflict copy; removed lines are from the current file." = "添加的行来自冲突副本；删除的行来自当前文件。";
+"(empty)" = "（空）";
+"This copy is unavailable for inspection." = "此副本无法检查。";
+"Conflict inspection is unavailable." = "冲突检查不可用。";
+"VaultSync cannot verify whether the conflict list is complete. Previously visible copies remain shown for review." = "VaultSync 无法验证冲突列表是否完整。先前可见的副本仍会保留以供检查。";
+"Vault Folder Needs Manual Recovery" = "Vault 文件夹需要手动恢复";
+"VaultSync can no longer verify the configured vault folder." = "VaultSync 无法再验证已配置的 Vault 文件夹。";
+"Keep this vault stopped and preserve every remaining copy. Restore the original folder at its original location; VaultSync will not move or re-point it automatically." = "请保持此 Vault 停止并保留所有剩余副本。将原始文件夹恢复到原始位置；VaultSync 不会自动移动或重新指向它。";
+"Vault configured" = "Vault 已配置";
+"At least one Send Only vault can continue uploading local changes." = "至少一个仅发送 Vault 可以继续上传本地更改。";
+"Existing receive-capable vaults are available for review only in this version." = "在此版本中，现有可接收内容的 Vault 仅供检查。";
+"Open VaultSync to inspect device and folder configuration. New share acceptance is unavailable in this version." = "打开 VaultSync 以检查设备和文件夹配置。此版本无法接受新的共享。";

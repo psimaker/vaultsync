@@ -185,6 +185,21 @@ enum FolderPathReconciler {
     private struct BridgeFolder: Decodable {
         let id: String
         let path: String
+        let type: String?
+    }
+
+    /// Only send-only folders may enter the mutating reconcile core in 2.0.2.
+    /// Receive-capable and unknown future types are omitted before reading or
+    /// writing the sidecar, probing paths, or calling `SetFolderPath` (#150).
+    static func liveReconcileCandidates(
+        _ folders: [(id: String, path: String, type: String?)]
+    ) -> [(id: String, path: String)] {
+        folders.compactMap { folder in
+            guard ConflictSafetyPolicy.runtimeState(forFolderType: folder.type) == .clear else {
+                return nil
+            }
+            return (id: folder.id, path: folder.path)
+        }
     }
 
     /// Read the live folder list from the bridge and reconcile their paths
@@ -196,7 +211,9 @@ enum FolderPathReconciler {
               let decoded = try? JSONDecoder().decode([BridgeFolder].self, from: data) else {
             return
         }
-        let folders = decoded.map { (id: $0.id, path: $0.path) }
+        let folders = liveReconcileCandidates(
+            decoded.map { (id: $0.id, path: $0.path, type: $0.type) }
+        )
         guard !folders.isEmpty else { return }
 
         let env = Environment(

@@ -89,13 +89,13 @@ struct SyncHeaderModelTests {
         #expect(SyncHeaderModel.derive(healthy()) == .init(status: .synced, titleKey: "All Synced"))
     }
 
-    // "Ready" only when genuinely armed: vault accessible and a vault exists,
-    // so the auto-accept pass could act the moment a share arrives.
-    @Test("No sync folders but armed reads Ready")
-    func armedReadsReady() {
+    // New share acceptance is unavailable in 2.0.2, so a detected local vault
+    // cannot make a folder-less installation ready or synced (#150).
+    @Test("No sync folders stay neutral while share acceptance is unavailable (#150)")
+    func folderlessStateIsReadOnlyIssue150() {
         var inputs = healthy()
         inputs.hasSyncFolders = false
-        #expect(SyncHeaderModel.derive(inputs) == .init(status: .synced, titleKey: "Ready"))
+        #expect(SyncHeaderModel.derive(inputs) == .init(status: .starting, titleKey: "No Vaults Syncing"))
     }
 
     // The reported contradiction: green "Ready" next to "No vaults found /
@@ -135,7 +135,7 @@ struct SyncHeaderModelTests {
     func onlyKnownTitleKeys() {
         let knownKeys: Set<String> = [
             "Error", "Starting…", "Sync Issue", "Syncing…", "Action Needed",
-            "Finish Setup", "All Synced", "Ready", "No Vaults Yet",
+            "Finish Setup", "All Synced", "No Vaults Syncing", "No Vaults Yet",
         ]
         var inputs = SyncHeaderModel.Inputs(
             hasEngineError: false,

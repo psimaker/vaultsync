@@ -3,14 +3,250 @@ package bridge
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"syscall"
 	"testing"
 	"time"
 )
+
+const issue150ConflictRecoveryUnavailable = "vaultsync-conflict-recovery-unavailable"
+
+type issue150RecoveryEntry struct {
+	Mode    os.FileMode
+	ModTime time.Time
+	Content []byte
+}
+
+func issue150RecoverySnapshot(t *testing.T, root string) map[string]issue150RecoveryEntry {
+	t.Helper()
+
+	snapshot := make(map[string]issue150RecoveryEntry)
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		item := issue150RecoveryEntry{
+			Mode:    info.Mode(),
+			ModTime: info.ModTime(),
+		}
+		if info.Mode().IsRegular() {
+			item.Content, err = os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+		}
+		snapshot[rel] = item
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("snapshot recovery fixture: %v", err)
+	}
+	return snapshot
+}
+
+func TestIssue150ConflictRecoveryABIStubsAreStablePathFreeAndReadOnly(t *testing.T) {
+	configDir := testConfigDir(t)
+	if errMsg := StartSyncthing(configDir); errMsg != "" {
+		t.Fatalf("StartSyncthing() failed: %s", errMsg)
+	}
+	t.Cleanup(StopSyncthing)
+
+	const folderID = "issue150-recovery-read-only"
+	folderPath := filepath.Join(configDir, folderID)
+	if errMsg := addFolderForTesting(folderID, "Issue 150 synthetic recovery", folderPath); errMsg != "" {
+		t.Fatalf("AddFolder failed: %s", errMsg)
+	}
+	removeError := func(raw string) string {
+		var result struct {
+			Removed int    `json:"removed"`
+			Error   string `json:"error"`
+		}
+		if err := json.Unmarshal([]byte(raw), &result); err != nil {
+			t.Errorf("decode recovery stub response: %v (raw: %q)", err, raw)
+			return raw
+		}
+		if result.Removed != 0 {
+			t.Errorf("removed = %d, want zero", result.Removed)
+		}
+		return result.Error
+	}
+
+	type recoveryCall struct {
+		name                string
+		conflictInspectable bool
+		call                func(conflictName, originalName string) string
+	}
+	calls := []recoveryCall{
+		{
+			name: "ResolveConflict Keep This (#150)",
+			call: func(conflictName, _ string) string {
+				return ResolveConflict(folderID, conflictName, false)
+			},
+		},
+		{
+			name: "ResolveConflict Keep Other (#150)",
+			call: func(conflictName, _ string) string {
+				return ResolveConflict(folderID, conflictName, true)
+			},
+		},
+		{
+			name:                "KeepBothConflict (#150)",
+			conflictInspectable: true,
+			call: func(conflictName, _ string) string {
+				return KeepBothConflict(folderID, conflictName)
+			},
+		},
+		{
+			name: "RemoveConflictFilesForOriginal Always Skip (#150)",
+			call: func(_, originalName string) string {
+				return removeError(RemoveConflictFilesForOriginal(folderID, originalName))
+			},
+		},
+	}
+
+	for index, testCase := range calls {
+		t.Run(testCase.name, func(t *testing.T) {
+			dirName := fmt.Sprintf("case-%d", index)
+			dir := filepath.Join(folderPath, dirName)
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatalf("create recovery fixture: %v", err)
+			}
+			originalName := filepath.Join(dirName, "note.md")
+			conflictName := filepath.Join(dirName, "note.sync-conflict-20260829-120000-ABC1234.md")
+			fixtures := map[string][]byte{
+				filepath.Join(folderPath, originalName):                     []byte("local version\n"),
+				filepath.Join(folderPath, conflictName):                     []byte("other version\n"),
+				filepath.Join(dir, ".stignore"):                             []byte("existing-rule\n"),
+				filepath.Join(dir, ".syncthing.vaultsync-resolve-existing"): []byte("existing temporary bytes\n"),
+			}
+			for path, content := range fixtures {
+				if err := os.WriteFile(path, content, 0o640); err != nil {
+					t.Fatalf("write recovery fixture: %v", err)
+				}
+			}
+
+			before := issue150RecoverySnapshot(t, dir)
+			got := testCase.call(conflictName, originalName)
+			if got != issue150ConflictRecoveryUnavailable {
+				t.Errorf("error = %q, want fixed recovery-unavailable code", got)
+			}
+			for _, forbidden := range []string{folderID, folderPath, originalName, conflictName, "ABC1234"} {
+				if strings.Contains(got, forbidden) {
+					t.Errorf("fixed recovery error leaked input %q: %q", forbidden, got)
+				}
+			}
+			if testCase.conflictInspectable {
+				var conflicts []ConflictFile
+				raw := GetConflictFilesJSON(folderID)
+				if err := json.Unmarshal([]byte(raw), &conflicts); err != nil {
+					t.Fatalf("decode conflict inspection response: %v (raw: %q)", err, raw)
+				}
+				found := false
+				for _, conflict := range conflicts {
+					if conflict.ConflictPath == conflictName {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("read-only Keep Both hid conflict %q from inspection", conflictName)
+				}
+			}
+			after := issue150RecoverySnapshot(t, dir)
+			if !reflect.DeepEqual(after, before) {
+				t.Errorf("recovery ABI mutated filesystem or temporary entries:\nbefore=%#v\nafter=%#v", before, after)
+			}
+		})
+	}
+
+	invalidCalls := []struct {
+		name string
+		call func() string
+	}{
+		{
+			name: "ResolveConflict Keep This traversal (#150)",
+			call: func() string {
+				return ResolveConflict(folderID, filepath.Join("..", "outside.sync-conflict-20260829-120000-ABC1234.md"), false)
+			},
+		},
+		{
+			name: "ResolveConflict Keep This invalid filename (#150)",
+			call: func() string {
+				return ResolveConflict(folderID, "not-a-conflict.md", false)
+			},
+		},
+		{
+			name: "ResolveConflict Keep Other traversal (#150)",
+			call: func() string {
+				return ResolveConflict(folderID, filepath.Join("..", "outside.sync-conflict-20260829-120000-ABC1234.md"), true)
+			},
+		},
+		{
+			name: "ResolveConflict Keep Other invalid filename (#150)",
+			call: func() string {
+				return ResolveConflict(folderID, "not-a-conflict.md", true)
+			},
+		},
+		{
+			name: "KeepBothConflict traversal (#150)",
+			call: func() string {
+				return KeepBothConflict(folderID, filepath.Join("..", "outside.sync-conflict-20260829-120000-ABC1234.md"))
+			},
+		},
+		{
+			name: "KeepBothConflict invalid filename (#150)",
+			call: func() string {
+				return KeepBothConflict(folderID, "not-a-conflict.md")
+			},
+		},
+		{
+			name: "RemoveConflictFilesForOriginal traversal (#150)",
+			call: func() string {
+				return removeError(RemoveConflictFilesForOriginal(folderID, filepath.Join("..", "outside.md")))
+			},
+		},
+		{
+			name: "RemoveConflictFilesForOriginal invalid root path (#150)",
+			call: func() string {
+				return removeError(RemoveConflictFilesForOriginal(folderID, "."))
+			},
+		},
+	}
+	for _, testCase := range invalidCalls {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := testCase.call(); got != issue150ConflictRecoveryUnavailable {
+				t.Errorf("invalid-input error = %q, want context-independent fixed code", got)
+			}
+		})
+	}
+
+	StopSyncthing()
+	for _, got := range []string{
+		ResolveConflict("redaction-probe-folder", "redaction-probe/path.sync-conflict-20260829-120000-ABC1234.md", false),
+		ResolveConflict("redaction-probe-folder", "redaction-probe/path.sync-conflict-20260829-120000-ABC1234.md", true),
+		KeepBothConflict("redaction-probe-folder", "redaction-probe/path.sync-conflict-20260829-120000-ABC1234.md"),
+	} {
+		if got != issue150ConflictRecoveryUnavailable {
+			t.Errorf("stopped-engine error = %q, want context-independent fixed code", got)
+		}
+	}
+	if got := removeError(RemoveConflictFilesForOriginal("redaction-probe-folder", "redaction-probe/path.md")); got != issue150ConflictRecoveryUnavailable {
+		t.Errorf("stopped-engine remove error = %q, want context-independent fixed code", got)
+	}
+}
 
 func TestGetConflictFilesJSON(t *testing.T) {
 	configDir := testConfigDir(t)
@@ -22,7 +258,7 @@ func TestGetConflictFilesJSON(t *testing.T) {
 
 	// Add a folder.
 	folderPath := filepath.Join(configDir, "conflicttest")
-	if errMsg := AddFolder("conflicttest", "Conflict Test", folderPath); errMsg != "" {
+	if errMsg := addFolderForTesting("conflicttest", "Conflict Test", folderPath); errMsg != "" {
 		t.Fatalf("AddFolder failed: %s", errMsg)
 	}
 
@@ -91,9 +327,9 @@ func TestGetConflictFilesJSON(t *testing.T) {
 		t.Error("subdirectory conflict not found")
 	}
 
-	// Nonexistent folder returns empty array.
-	if got := GetConflictFilesJSON("nonexistent"); got != "[]" {
-		t.Errorf("nonexistent folder = %q, want '[]'", got)
+	// An unavailable folder must not be confused with a verified empty scan.
+	if got := GetConflictFilesJSON("nonexistent"); got != conflictInspectionUnavailableError {
+		t.Errorf("nonexistent folder = %q, want fixed unavailable code", got)
 	}
 }
 
@@ -106,35 +342,46 @@ func TestReadFileContent(t *testing.T) {
 	defer StopSyncthing()
 
 	folderPath := filepath.Join(configDir, "readtest")
-	if errMsg := AddFolder("readtest", "Read Test", folderPath); errMsg != "" {
+	if errMsg := addFolderForTesting("readtest", "Read Test", folderPath); errMsg != "" {
 		t.Fatalf("AddFolder failed: %s", errMsg)
 	}
 
 	content := "# Hello World\n\nThis is a test."
 	os.WriteFile(filepath.Join(folderPath, "test.md"), []byte(content), 0o644)
 
-	got := ReadFileContent("readtest", "test.md")
-	if got != content {
-		t.Errorf("ReadFileContent = %q, want %q", got, content)
+	type result struct {
+		Content *string `json:"content"`
+		Error   string  `json:"error"`
+	}
+	decode := func(raw string) result {
+		t.Helper()
+		var got result
+		if err := json.Unmarshal([]byte(raw), &got); err != nil {
+			t.Fatalf("decode inspection result %q: %v", raw, err)
+		}
+		return got
 	}
 
-	// Nonexistent file returns error prefix.
-	if got := ReadFileContent("readtest", "nope.md"); !strings.HasPrefix(got, "error:") {
-		t.Errorf("nonexistent file = %q, want error: prefix", got)
+	got := decode(ReadFileContent("readtest", "test.md"))
+	if got.Content == nil || *got.Content != content || got.Error != "" {
+		t.Errorf("ReadFileContent = %+v, want exact content", got)
 	}
 
-	// Path traversal returns error prefix.
-	if got := ReadFileContent("readtest", "../../etc/passwd"); !strings.HasPrefix(got, "error:") {
-		t.Errorf("path traversal = %q, want error: prefix", got)
+	// Inspection failures return only the stable path-free code.
+	if got := decode(ReadFileContent("readtest", "nope.md")); got.Content != nil || got.Error != conflictInspectionUnavailableError {
+		t.Errorf("nonexistent file = %+v, want unavailable", got)
 	}
 
-	// Nonexistent folder returns error prefix.
-	if got := ReadFileContent("nonexistent", "test.md"); !strings.HasPrefix(got, "error:") {
-		t.Errorf("nonexistent folder = %q, want error: prefix", got)
+	if got := decode(ReadFileContent("readtest", "../../etc/passwd")); got.Content != nil || got.Error != conflictInspectionUnavailableError {
+		t.Errorf("path traversal = %+v, want unavailable", got)
+	}
+
+	if got := decode(ReadFileContent("nonexistent", "test.md")); got.Content != nil || got.Error != conflictInspectionUnavailableError {
+		t.Errorf("nonexistent folder = %+v, want unavailable", got)
 	}
 }
 
-func TestResolveConflictKeepOriginal(t *testing.T) {
+func TestIssue150ConflictInspectionFailureIsNotAnEmptySuccess(t *testing.T) {
 	configDir := testConfigDir(t)
 
 	if errMsg := StartSyncthing(configDir); errMsg != "" {
@@ -142,36 +389,27 @@ func TestResolveConflictKeepOriginal(t *testing.T) {
 	}
 	defer StopSyncthing()
 
-	folderPath := filepath.Join(configDir, "resolvetest")
-	if errMsg := AddFolder("resolvetest", "Resolve Test", folderPath); errMsg != "" {
+	folderPath := filepath.Join(configDir, "issue150-inspection-unavailable")
+	if errMsg := addFolderForTesting("issue150-inspection-unavailable", "Inspection", folderPath); errMsg != "" {
 		t.Fatalf("AddFolder failed: %s", errMsg)
 	}
-
-	// Create original and conflict.
-	original := filepath.Join(folderPath, "doc.md")
-	os.WriteFile(original, []byte("original"), 0o644)
-
-	conflictName := "doc.sync-conflict-20260406-100000-DEF5678.md"
-	os.WriteFile(filepath.Join(folderPath, conflictName), []byte("conflict version"), 0o644)
-
-	// Resolve: keep original (delete conflict).
-	if errMsg := ResolveConflict("resolvetest", conflictName, false); errMsg != "" {
-		t.Fatalf("ResolveConflict(keepConflict=false) failed: %s", errMsg)
+	if err := os.RemoveAll(folderPath); err != nil {
+		t.Fatalf("remove isolated fixture folder: %v", err)
 	}
 
-	// Original should be unchanged.
-	data, _ := os.ReadFile(original)
-	if string(data) != "original" {
-		t.Errorf("original content = %q, want %q", string(data), "original")
+	if got := GetConflictFilesJSON("issue150-inspection-unavailable"); got != conflictInspectionUnavailableError {
+		t.Fatalf("missing-folder inspection = %q, want fixed unavailable code", got)
 	}
-
-	// Conflict file should be gone.
-	if _, err := os.Stat(filepath.Join(folderPath, conflictName)); !os.IsNotExist(err) {
-		t.Error("conflict file should have been deleted")
+	if got := GetConflictFilesJSON("issue150-unknown-folder"); got != conflictInspectionUnavailableError {
+		t.Fatalf("unknown-folder inspection = %q, want fixed unavailable code", got)
+	}
+	StopSyncthing()
+	if got := GetConflictFilesJSON("issue150-inspection-unavailable"); got != conflictInspectionUnavailableError {
+		t.Fatalf("stopped-engine inspection = %q, want fixed unavailable code", got)
 	}
 }
 
-func TestResolveConflictKeepConflict(t *testing.T) {
+func TestIssue150ConflictInspectionDistinguishesEmptyContentAndUnavailableWithoutDetails(t *testing.T) {
 	configDir := testConfigDir(t)
 
 	if errMsg := StartSyncthing(configDir); errMsg != "" {
@@ -179,170 +417,53 @@ func TestResolveConflictKeepConflict(t *testing.T) {
 	}
 	defer StopSyncthing()
 
-	folderPath := filepath.Join(configDir, "resolvetest2")
-	if errMsg := AddFolder("resolvetest2", "Resolve Test 2", folderPath); errMsg != "" {
+	folderPath := filepath.Join(configDir, "issue150-content-inspection")
+	if errMsg := addFolderForTesting("issue150-content-inspection", "Inspection", folderPath); errMsg != "" {
 		t.Fatalf("AddFolder failed: %s", errMsg)
 	}
 
-	// Create original and conflict.
-	original := filepath.Join(folderPath, "doc.md")
-	os.WriteFile(original, []byte("original"), 0o644)
-
-	conflictName := "doc.sync-conflict-20260406-100000-DEF5678.md"
-	os.WriteFile(filepath.Join(folderPath, conflictName), []byte("conflict version"), 0o644)
-
-	// Resolve: keep conflict (replace original).
-	if errMsg := ResolveConflict("resolvetest2", conflictName, true); errMsg != "" {
-		t.Fatalf("ResolveConflict(keepConflict=true) failed: %s", errMsg)
+	type result struct {
+		Content *string `json:"content"`
+		Error   string  `json:"error"`
 	}
-
-	// Original should now have conflict content.
-	data, _ := os.ReadFile(original)
-	if string(data) != "conflict version" {
-		t.Errorf("original content = %q, want %q", string(data), "conflict version")
-	}
-
-	// Conflict file should be gone.
-	if _, err := os.Stat(filepath.Join(folderPath, conflictName)); !os.IsNotExist(err) {
-		t.Error("conflict file should have been deleted")
-	}
-}
-
-func TestIssue143ResolveConflictPreservesExistingTemporaryFile(t *testing.T) {
-	configDir := testConfigDir(t)
-
-	if errMsg := StartSyncthing(configDir); errMsg != "" {
-		t.Fatalf("StartSyncthing() failed: %s", errMsg)
-	}
-	defer StopSyncthing()
-
-	const folderID = "issue143temp"
-	folderPath := filepath.Join(configDir, folderID)
-	if errMsg := AddFolder(folderID, "Issue 143 Temp Collision", folderPath); errMsg != "" {
-		t.Fatalf("AddFolder failed: %s", errMsg)
-	}
-
-	const conflictName = "doc.sync-conflict-20260406-100000-DEF5678.md"
-	originalPath := filepath.Join(folderPath, "doc.md")
-	conflictPath := filepath.Join(folderPath, conflictName)
-	tempPath := originalPath + ".vaultsync-tmp"
-	unrelatedPath := filepath.Join(folderPath, "unrelated-sentinel.md")
-
-	originalSentinel := []byte("issue-143-original-sentinel")
-	conflictSentinel := []byte("issue-143-conflict-sentinel")
-	tempSentinel := []byte("issue-143-existing-temp-sentinel")
-	unrelatedSentinel := []byte("issue-143-unrelated-sentinel")
-	fixtures := []struct {
-		name string
-		path string
-		data []byte
-	}{
-		{name: "original", path: originalPath, data: originalSentinel},
-		{name: "conflict", path: conflictPath, data: conflictSentinel},
-		{name: "pre-existing temp", path: tempPath, data: tempSentinel},
-		{name: "unrelated", path: unrelatedPath, data: unrelatedSentinel},
-	}
-	for _, fixture := range fixtures {
-		if err := os.WriteFile(fixture.path, fixture.data, 0o644); err != nil {
-			t.Fatalf("write %s fixture: %v", fixture.name, err)
+	decode := func(raw string) result {
+		t.Helper()
+		var got result
+		if err := json.Unmarshal([]byte(raw), &got); err != nil {
+			t.Fatalf("decode inspection result %q: %v", raw, err)
 		}
-		got, err := os.ReadFile(fixture.path)
-		if err != nil {
-			t.Fatalf("read back %s fixture: %v", fixture.name, err)
+		return got
+	}
+
+	fixtures := map[string]string{
+		"empty.md":        "",
+		"error-prefix.md": "error:this is legitimate note content",
+	}
+	for name, content := range fixtures {
+		if err := os.WriteFile(filepath.Join(folderPath, name), []byte(content), 0o644); err != nil {
+			t.Fatalf("write fixture: %v", err)
 		}
-		if !bytes.Equal(got, fixture.data) {
-			t.Fatalf("%s fixture bytes = %q, want %q", fixture.name, got, fixture.data)
+		got := decode(ReadFileContent("issue150-content-inspection", name))
+		if got.Content == nil || *got.Content != content || got.Error != "" {
+			t.Fatalf("successful inspection for %q = %+v, want exact content", name, got)
 		}
 	}
 
-	if errMsg := ResolveConflict(folderID, conflictName, true); errMsg != "" {
-		t.Fatalf("ResolveConflict(keepConflict=true) failed: %s", errMsg)
-	}
-
-	tempAfter, err := os.ReadFile(tempPath)
-	if err != nil {
-		t.Fatalf("pre-existing temp file was not preserved: %v", err)
-	}
-	if !bytes.Equal(tempAfter, tempSentinel) {
-		t.Errorf("pre-existing temp bytes = %q, want %q", tempAfter, tempSentinel)
-	}
-
-	originalAfter, err := os.ReadFile(originalPath)
-	if err != nil {
-		t.Fatalf("read resolved original: %v", err)
-	}
-	if !bytes.Equal(originalAfter, conflictSentinel) {
-		t.Errorf("resolved original bytes = %q, want conflict bytes %q", originalAfter, conflictSentinel)
-	}
-	if _, err := os.Stat(conflictPath); !os.IsNotExist(err) {
-		t.Errorf("resolved conflict path still exists or stat failed: %v", err)
-	}
-	unrelatedAfter, err := os.ReadFile(unrelatedPath)
-	if err != nil {
-		t.Fatalf("read unrelated file: %v", err)
-	}
-	if !bytes.Equal(unrelatedAfter, unrelatedSentinel) {
-		t.Errorf("unrelated bytes = %q, want %q", unrelatedAfter, unrelatedSentinel)
-	}
-	ownedTemps, err := filepath.Glob(filepath.Join(folderPath, ".syncthing.vaultsync-resolve-*"))
-	if err != nil {
-		t.Fatalf("glob VaultSync temporary files: %v", err)
-	}
-	if len(ownedTemps) != 0 {
-		t.Errorf("successful resolution left VaultSync temporary files: %v", ownedTemps)
-	}
-}
-
-func TestIssue143ResolveConflictRejectsPathTraversal(t *testing.T) {
-	configDir := testConfigDir(t)
-
-	if errMsg := StartSyncthing(configDir); errMsg != "" {
-		t.Fatalf("StartSyncthing() failed: %s", errMsg)
-	}
-	defer StopSyncthing()
-
-	const folderID = "issue143traversal"
-	folderPath := filepath.Join(configDir, folderID)
-	if errMsg := AddFolder(folderID, "Issue 143 Traversal", folderPath); errMsg != "" {
-		t.Fatalf("AddFolder failed: %s", errMsg)
-	}
-
-	const conflictName = "outside.sync-conflict-20260406-100000-DEF5678.md"
-	originalPath := filepath.Join(configDir, "outside.md")
-	conflictPath := filepath.Join(configDir, conflictName)
-	legacyPath := originalPath + ".vaultsync-tmp"
-	unrelatedPath := filepath.Join(configDir, "outside-unrelated-sentinel.md")
-	originalBytes := []byte("issue-143-traversal-original")
-	conflictBytes := []byte("issue-143-traversal-conflict")
-	legacyBytes := []byte("issue-143-traversal-legacy-temp")
-	unrelatedBytes := []byte("issue-143-traversal-unrelated")
-
-	fixtures := []struct {
-		name string
-		path string
-		data []byte
-	}{
-		{name: "outside original", path: originalPath, data: originalBytes},
-		{name: "outside conflict", path: conflictPath, data: conflictBytes},
-		{name: "outside legacy temp", path: legacyPath, data: legacyBytes},
-		{name: "outside unrelated", path: unrelatedPath, data: unrelatedBytes},
-	}
-	for _, fixture := range fixtures {
-		if err := os.WriteFile(fixture.path, fixture.data, 0o600); err != nil {
-			t.Fatalf("write %s: %v", fixture.name, err)
+	for _, raw := range []string{
+		ReadFileContent("issue150-content-inspection", "missing-redaction-probe.md"),
+		ReadFileContent("issue150-content-inspection", "../outside-redaction-probe.md"),
+		ReadFileContent("issue150-unknown-folder", "missing-redaction-probe.md"),
+	} {
+		got := decode(raw)
+		if got.Content != nil || got.Error != conflictInspectionUnavailableError {
+			t.Fatalf("failed inspection = %+v, want fixed unavailable result", got)
 		}
-		issue143AssertFileBytes(t, fixture.path, fixture.data)
+		for _, sensitiveDetail := range []string{"missing-redaction-probe", "outside-redaction-probe", folderPath} {
+			if strings.Contains(raw, sensitiveDetail) {
+				t.Fatalf("failed inspection leaked private detail in %q", raw)
+			}
+		}
 	}
-
-	errMsg := ResolveConflict(folderID, filepath.Join("..", conflictName), true)
-	if errMsg != "invalid path: outside folder root" {
-		t.Fatalf("ResolveConflict traversal error = %q, want invalid path error", errMsg)
-	}
-
-	for _, fixture := range fixtures {
-		issue143AssertFileBytes(t, fixture.path, fixture.data)
-	}
-	issue143AssertNoOperationTemps(t, configDir)
 }
 
 func TestIssue143ResolveConflictPreservesModeAndSupportsMissingOriginal(t *testing.T) {
@@ -843,214 +964,6 @@ func issue143OperationTemps(t *testing.T, dir string) []string {
 	return temps
 }
 
-func TestResolveConflictErrors(t *testing.T) {
-	configDir := testConfigDir(t)
-
-	if errMsg := StartSyncthing(configDir); errMsg != "" {
-		t.Fatalf("StartSyncthing() failed: %s", errMsg)
-	}
-	defer StopSyncthing()
-
-	folderPath := filepath.Join(configDir, "resolveerr")
-	if errMsg := AddFolder("resolveerr", "Resolve Err", folderPath); errMsg != "" {
-		t.Fatalf("AddFolder failed: %s", errMsg)
-	}
-
-	// Nonexistent folder.
-	if errMsg := ResolveConflict("nonexistent", "file.md", false); errMsg != "folder not found" {
-		t.Errorf("nonexistent folder = %q, want 'folder not found'", errMsg)
-	}
-
-	// Nonexistent conflict file.
-	if errMsg := ResolveConflict("resolveerr", "nope.sync-conflict-20260406-100000-ABC1234.md", false); errMsg != "conflict file not found" {
-		t.Errorf("nonexistent file = %q, want 'conflict file not found'", errMsg)
-	}
-
-	// Invalid conflict filename with keepConflict=true.
-	normalFile := filepath.Join(folderPath, "normal.md")
-	os.WriteFile(normalFile, []byte("normal"), 0o644)
-	if errMsg := ResolveConflict("resolveerr", "normal.md", true); errMsg != "invalid conflict filename" {
-		t.Errorf("invalid filename = %q, want 'invalid conflict filename'", errMsg)
-	}
-}
-
-func TestKeepBothConflict(t *testing.T) {
-	configDir := testConfigDir(t)
-
-	if errMsg := StartSyncthing(configDir); errMsg != "" {
-		t.Fatalf("StartSyncthing() failed: %s", errMsg)
-	}
-	defer StopSyncthing()
-
-	folderPath := filepath.Join(configDir, "keepbothtest")
-	if errMsg := AddFolder("keepbothtest", "Keep Both Test", folderPath); errMsg != "" {
-		t.Fatalf("AddFolder failed: %s", errMsg)
-	}
-
-	// Create original and conflict.
-	original := filepath.Join(folderPath, "doc.md")
-	os.WriteFile(original, []byte("original"), 0o644)
-
-	conflictName := "doc.sync-conflict-20260406-100000-DEF5678.md"
-	os.WriteFile(filepath.Join(folderPath, conflictName), []byte("conflict version"), 0o644)
-
-	// Keep both: rename conflict to non-conflict name.
-	if errMsg := KeepBothConflict("keepbothtest", conflictName); errMsg != "" {
-		t.Fatalf("KeepBothConflict failed: %s", errMsg)
-	}
-
-	// Original should still exist unchanged.
-	data, _ := os.ReadFile(original)
-	if string(data) != "original" {
-		t.Errorf("original content = %q, want %q", string(data), "original")
-	}
-
-	// Conflict file should be gone.
-	if _, err := os.Stat(filepath.Join(folderPath, conflictName)); !os.IsNotExist(err) {
-		t.Error("conflict file should have been renamed")
-	}
-
-	// Renamed file should exist with new name.
-	renamedPath := filepath.Join(folderPath, "doc.conflict-DEF5678.md")
-	data, err := os.ReadFile(renamedPath)
-	if err != nil {
-		t.Fatalf("renamed file not found: %v", err)
-	}
-	if string(data) != "conflict version" {
-		t.Errorf("renamed content = %q, want %q", string(data), "conflict version")
-	}
-
-	// Should no longer appear in conflict scan.
-	got := GetConflictFilesJSON("keepbothtest")
-	var conflicts []ConflictFile
-	if err := json.Unmarshal([]byte(got), &conflicts); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if len(conflicts) != 0 {
-		t.Errorf("expected 0 conflicts after keep-both, got %d", len(conflicts))
-	}
-}
-
-func TestIssue144KeepBothPreservesExistingTarget(t *testing.T) {
-	configDir := testConfigDir(t)
-
-	if errMsg := StartSyncthing(configDir); errMsg != "" {
-		t.Fatalf("StartSyncthing() failed: %s", errMsg)
-	}
-	defer StopSyncthing()
-
-	const folderID = "issue144keepbothcollision"
-	folderPath := filepath.Join(configDir, folderID)
-	if errMsg := AddFolder(folderID, "Issue 144 Keep Both Collision", folderPath); errMsg != "" {
-		t.Fatalf("AddFolder failed: %s", errMsg)
-	}
-
-	conflictName := "doc.sync-conflict-20260406-100000-DEF5678.md"
-	originalPath := filepath.Join(folderPath, "doc.md")
-	conflictPath := filepath.Join(folderPath, conflictName)
-	targetPath := filepath.Join(folderPath, "doc.conflict-DEF5678.md")
-	originalBytes := []byte("issue-144-original-sentinel")
-	conflictBytes := []byte("issue-144-conflict-sentinel")
-	targetBytes := []byte("issue-144-existing-target-sentinel")
-
-	if bytes.Equal(originalBytes, conflictBytes) || bytes.Equal(originalBytes, targetBytes) || bytes.Equal(conflictBytes, targetBytes) {
-		t.Fatal("issue #144 fixture bytes must be pairwise distinct")
-	}
-
-	fixtureFiles := []struct {
-		name string
-		path string
-		data []byte
-	}{
-		{name: "original", path: originalPath, data: originalBytes},
-		{name: "conflict", path: conflictPath, data: conflictBytes},
-		{name: "existing Keep Both target", path: targetPath, data: targetBytes},
-	}
-	for _, file := range fixtureFiles {
-		if err := os.WriteFile(file.path, file.data, 0o600); err != nil {
-			t.Fatalf("write %s fixture: %v", file.name, err)
-		}
-	}
-
-	before := make(map[string][]byte, len(fixtureFiles))
-	for _, file := range fixtureFiles {
-		got, err := os.ReadFile(file.path)
-		if err != nil {
-			t.Fatalf("read back %s fixture: %v", file.name, err)
-		}
-		if !bytes.Equal(got, file.data) {
-			t.Fatalf("%s fixture bytes = %q, want %q", file.name, got, file.data)
-		}
-		before[file.path] = append([]byte(nil), got...)
-	}
-
-	errMsg := KeepBothConflict(folderID, conflictName)
-
-	targetAfter, err := os.ReadFile(targetPath)
-	if err != nil {
-		t.Fatalf("read existing Keep Both target after KeepBothConflict: %v", err)
-	}
-	if !bytes.Equal(targetAfter, before[targetPath]) {
-		t.Errorf(
-			"existing Keep Both target bytes after KeepBothConflict(error=%q) = %q, want preserved bytes %q",
-			errMsg,
-			targetAfter,
-			before[targetPath],
-		)
-	}
-
-	originalAfter, err := os.ReadFile(originalPath)
-	if err != nil {
-		t.Fatalf("read original after KeepBothConflict: %v", err)
-	}
-	if !bytes.Equal(originalAfter, before[originalPath]) {
-		t.Errorf("original bytes after KeepBothConflict = %q, want %q", originalAfter, before[originalPath])
-	}
-
-	if errMsg != "" {
-		if errMsg != keepBothTargetExistsError {
-			t.Errorf("KeepBothConflict collision error = %q, want %q", errMsg, keepBothTargetExistsError)
-		}
-		conflictAfter, err := os.ReadFile(conflictPath)
-		if err != nil {
-			t.Fatalf("read conflict after non-destructive error %q: %v", errMsg, err)
-		}
-		if !bytes.Equal(conflictAfter, before[conflictPath]) {
-			t.Errorf("conflict bytes after error %q = %q, want %q", errMsg, conflictAfter, before[conflictPath])
-		}
-		return
-	}
-
-	if _, err := os.Stat(conflictPath); !os.IsNotExist(err) {
-		t.Errorf("successful KeepBothConflict left the sync-conflict source in place: %v", err)
-	}
-
-	entries, err := os.ReadDir(folderPath)
-	if err != nil {
-		t.Fatalf("read folder after KeepBothConflict: %v", err)
-	}
-	preservedConflictPath := ""
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		candidatePath := filepath.Join(folderPath, entry.Name())
-		candidateBytes, err := os.ReadFile(candidatePath)
-		if err != nil {
-			t.Fatalf("read %q while locating preserved conflict bytes: %v", entry.Name(), err)
-		}
-		if bytes.Equal(candidateBytes, before[conflictPath]) {
-			preservedConflictPath = candidatePath
-			break
-		}
-	}
-	if preservedConflictPath == "" {
-		t.Error("successful KeepBothConflict lost the conflict bytes")
-	} else if conflictPattern.MatchString(filepath.Base(preservedConflictPath)) {
-		t.Errorf("successful KeepBothConflict left conflict bytes under sync-conflict name %q", filepath.Base(preservedConflictPath))
-	}
-}
-
 func TestIssue144KeepBothSuccessPreservesAllContents(t *testing.T) {
 	dir := t.TempDir()
 	conflictName := "doc.sync-conflict-20260406-100000-DEF5678.md"
@@ -1074,36 +987,6 @@ func TestIssue144KeepBothSuccessPreservesAllContents(t *testing.T) {
 	issue144AssertPathMissing(t, conflictPath)
 	issue144AssertFileBytes(t, targetPath, conflictBytes)
 	issue144AssertFileBytes(t, unrelatedPath, unrelatedBytes)
-}
-
-func TestIssue144KeepBothSameShortIDCollisionPreservesAllContents(t *testing.T) {
-	const folderID = "issue144sameid"
-	folderPath := issue144StartFolder(t, folderID)
-	originalPath := filepath.Join(folderPath, "doc.md")
-	firstName := "doc.sync-conflict-20260406-100000-DEF5678.md"
-	secondName := "doc.sync-conflict-20260406-100001-DEF5678.md"
-	firstPath := filepath.Join(folderPath, firstName)
-	secondPath := filepath.Join(folderPath, secondName)
-	targetPath := filepath.Join(folderPath, "doc.conflict-DEF5678.md")
-	originalBytes := []byte("issue-144-same-id-original")
-	firstBytes := []byte("issue-144-same-id-first")
-	secondBytes := []byte("issue-144-same-id-second")
-
-	issue144WriteAndReadBack(t, originalPath, originalBytes)
-	issue144WriteAndReadBack(t, firstPath, firstBytes)
-	issue144WriteAndReadBack(t, secondPath, secondBytes)
-
-	if errMsg := KeepBothConflict(folderID, firstName); errMsg != "" {
-		t.Fatalf("first KeepBothConflict failed: %s", errMsg)
-	}
-	if errMsg := KeepBothConflict(folderID, secondName); errMsg != keepBothTargetExistsError {
-		t.Fatalf("second KeepBothConflict error = %q, want %q", errMsg, keepBothTargetExistsError)
-	}
-
-	issue144AssertFileBytes(t, originalPath, originalBytes)
-	issue144AssertPathMissing(t, firstPath)
-	issue144AssertFileBytes(t, targetPath, firstBytes)
-	issue144AssertFileBytes(t, secondPath, secondBytes)
 }
 
 func TestIssue144KeepBothParallelCollisionPreservesAllContents(t *testing.T) {
@@ -1317,30 +1200,6 @@ func TestIssue144KeepBothOperationFailuresPreserveAllContents(t *testing.T) {
 	}
 }
 
-func TestIssue144KeepBothRejectsPathTraversal(t *testing.T) {
-	const folderID = "issue144traversal"
-	folderPath := issue144StartFolder(t, folderID)
-	outsideDir := filepath.Dir(folderPath)
-	outsideConflictName := "outside.sync-conflict-20260406-100000-DEF5678.md"
-	outsideConflictPath := filepath.Join(outsideDir, outsideConflictName)
-	outsideTargetPath := filepath.Join(outsideDir, "outside.conflict-DEF5678.md")
-	unrelatedPath := filepath.Join(outsideDir, "issue-144-traversal-unrelated.md")
-	conflictBytes := []byte("issue-144-traversal-conflict")
-	targetBytes := []byte("issue-144-traversal-target")
-	unrelatedBytes := []byte("issue-144-traversal-unrelated")
-	issue144WriteAndReadBack(t, outsideConflictPath, conflictBytes)
-	issue144WriteAndReadBack(t, outsideTargetPath, targetBytes)
-	issue144WriteAndReadBack(t, unrelatedPath, unrelatedBytes)
-
-	errMsg := KeepBothConflict(folderID, filepath.Join("..", outsideConflictName))
-	if errMsg != "invalid path: outside folder root" {
-		t.Fatalf("path traversal error = %q, want %q", errMsg, "invalid path: outside folder root")
-	}
-	issue144AssertFileBytes(t, outsideConflictPath, conflictBytes)
-	issue144AssertFileBytes(t, outsideTargetPath, targetBytes)
-	issue144AssertFileBytes(t, unrelatedPath, unrelatedBytes)
-}
-
 func TestIssue144KeepBothPreservesUnexpectedTargetNodes(t *testing.T) {
 	t.Run("directory", func(t *testing.T) {
 		dir := t.TempDir()
@@ -1402,7 +1261,7 @@ func issue144StartFolder(t *testing.T, folderID string) string {
 	t.Cleanup(func() { StopSyncthing() })
 
 	folderPath := filepath.Join(configDir, folderID)
-	if errMsg := AddFolder(folderID, "Issue 144 Keep Both", folderPath); errMsg != "" {
+	if errMsg := addFolderForTesting(folderID, "Issue 144 Keep Both", folderPath); errMsg != "" {
 		t.Fatalf("AddFolder failed: %s", errMsg)
 	}
 	return folderPath
@@ -1484,175 +1343,6 @@ func TestRenameDevice(t *testing.T) {
 	}
 }
 
-func TestRemoveConflictFilesForOriginal(t *testing.T) {
-	configDir := testConfigDir(t)
-
-	if errMsg := StartSyncthing(configDir); errMsg != "" {
-		t.Fatalf("StartSyncthing() failed: %s", errMsg)
-	}
-	defer StopSyncthing()
-
-	folderPath := filepath.Join(configDir, "skipfamily")
-	if errMsg := AddFolder("skipfamily", "Skip Family", folderPath); errMsg != "" {
-		t.Fatalf("AddFolder failed: %s", errMsg)
-	}
-
-	// Root-level original + two conflict copies (different timestamps/devices).
-	if err := os.WriteFile(filepath.Join(folderPath, "notes.md"), []byte("original"), 0o644); err != nil {
-		t.Fatalf("write notes.md: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(folderPath, "notes.sync-conflict-20260520-120000-AAA1111.md"), []byte("c1"), 0o644); err != nil {
-		t.Fatalf("write notes conflict c1: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(folderPath, "notes.sync-conflict-20260521-130000-BBB2222.md"), []byte("c2"), 0o644); err != nil {
-		t.Fatalf("write notes conflict c2: %v", err)
-	}
-
-	// Unrelated file that must not be touched.
-	if err := os.WriteFile(filepath.Join(folderPath, "other.md"), []byte("other"), 0o644); err != nil {
-		t.Fatalf("write other.md: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(folderPath, "other.sync-conflict-20260520-120000-CCC3333.md"), []byte("o1"), 0o644); err != nil {
-		t.Fatalf("write other conflict: %v", err)
-	}
-
-	// Nested original + nested conflict.
-	subDir := filepath.Join(folderPath, "Personal")
-	if err := os.MkdirAll(subDir, 0o755); err != nil {
-		t.Fatalf("mkdir subDir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(subDir, "diary.md"), []byte("d"), 0o644); err != nil {
-		t.Fatalf("write diary.md: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(subDir, "diary.sync-conflict-20260520-120000-DDD4444.md"), []byte("d1"), 0o644); err != nil {
-		t.Fatalf("write diary conflict: %v", err)
-	}
-
-	// Remove conflict copies for "notes.md" only.
-	got := RemoveConflictFilesForOriginal("skipfamily", "notes.md")
-	var result struct {
-		Removed int    `json:"removed"`
-		Error   string `json:"error"`
-	}
-	if err := json.Unmarshal([]byte(got), &result); err != nil {
-		t.Fatalf("unmarshal: %v (raw: %s)", err, got)
-	}
-	if result.Error != "" {
-		t.Fatalf("unexpected error: %s", result.Error)
-	}
-	if result.Removed != 2 {
-		t.Errorf("removed = %d, want 2", result.Removed)
-	}
-
-	// Original "notes.md" must survive.
-	if _, err := os.Stat(filepath.Join(folderPath, "notes.md")); err != nil {
-		t.Errorf("notes.md should still exist: %v", err)
-	}
-
-	// Both notes conflict copies must be gone.
-	for _, name := range []string{
-		"notes.sync-conflict-20260520-120000-AAA1111.md",
-		"notes.sync-conflict-20260521-130000-BBB2222.md",
-	} {
-		if _, err := os.Stat(filepath.Join(folderPath, name)); !os.IsNotExist(err) {
-			t.Errorf("%s should have been deleted", name)
-		}
-	}
-
-	// Unrelated "other.*" files must survive.
-	if _, err := os.Stat(filepath.Join(folderPath, "other.md")); err != nil {
-		t.Errorf("other.md should still exist: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(folderPath, "other.sync-conflict-20260520-120000-CCC3333.md")); err != nil {
-		t.Errorf("other.sync-conflict-* should still exist: %v", err)
-	}
-
-	// Nested originals and their conflicts in another directory must survive
-	// when we ask for the root file only.
-	if _, err := os.Stat(filepath.Join(subDir, "diary.sync-conflict-20260520-120000-DDD4444.md")); err != nil {
-		t.Errorf("nested conflict should still exist: %v", err)
-	}
-
-	// Now ask for nested "Personal/diary.md" and verify only the nested copy goes.
-	got = RemoveConflictFilesForOriginal("skipfamily", filepath.Join("Personal", "diary.md"))
-	if err := json.Unmarshal([]byte(got), &result); err != nil {
-		t.Fatalf("unmarshal nested: %v (raw: %s)", err, got)
-	}
-	if result.Removed != 1 || result.Error != "" {
-		t.Errorf("nested call result = %+v, want removed=1 error=\"\"", result)
-	}
-
-	// Dotted-stem regression: archive.tar.gz must match its own conflict copy
-	// but not a sibling that happens to share the inner stem.
-	if err := os.WriteFile(filepath.Join(folderPath, "archive.tar.gz"), []byte("a"), 0o644); err != nil {
-		t.Fatalf("write archive.tar.gz: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(folderPath, "archive.tar.sync-conflict-20260520-120000-EEE5555.gz"), []byte("ac"), 0o644); err != nil {
-		t.Fatalf("write archive conflict copy: %v", err)
-	}
-	// Same inner stem but different extension — must NOT match.
-	if err := os.WriteFile(filepath.Join(folderPath, "archive.tar.sync-conflict-20260520-120000-FFF6666.md"), []byte("decoy"), 0o644); err != nil {
-		t.Fatalf("write decoy: %v", err)
-	}
-
-	got = RemoveConflictFilesForOriginal("skipfamily", "archive.tar.gz")
-	if err := json.Unmarshal([]byte(got), &result); err != nil {
-		t.Fatalf("unmarshal dotted: %v (raw: %s)", err, got)
-	}
-	if result.Removed != 1 || result.Error != "" {
-		t.Errorf("dotted-stem call result = %+v, want removed=1 error=\"\"", result)
-	}
-	if _, err := os.Stat(filepath.Join(folderPath, "archive.tar.sync-conflict-20260520-120000-EEE5555.gz")); !os.IsNotExist(err) {
-		t.Error("archive.tar.gz conflict copy should have been deleted")
-	}
-	if _, err := os.Stat(filepath.Join(folderPath, "archive.tar.sync-conflict-20260520-120000-FFF6666.md")); err != nil {
-		t.Errorf("decoy with different extension should still exist: %v", err)
-	}
-
-	// Idempotency: running again returns removed=0, no error.
-	got = RemoveConflictFilesForOriginal("skipfamily", "notes.md")
-	if err := json.Unmarshal([]byte(got), &result); err != nil {
-		t.Fatalf("unmarshal idempotent: %v (raw: %s)", err, got)
-	}
-	if result.Removed != 0 || result.Error != "" {
-		t.Errorf("idempotent call = %+v, want removed=0 error=\"\"", result)
-	}
-}
-
-func TestRemoveConflictFilesForOriginalErrors(t *testing.T) {
-	configDir := testConfigDir(t)
-
-	if errMsg := StartSyncthing(configDir); errMsg != "" {
-		t.Fatalf("StartSyncthing() failed: %s", errMsg)
-	}
-	defer StopSyncthing()
-
-	folderPath := filepath.Join(configDir, "skipfamilyerr")
-	if errMsg := AddFolder("skipfamilyerr", "Skip Family Err", folderPath); errMsg != "" {
-		t.Fatalf("AddFolder failed: %s", errMsg)
-	}
-
-	// Unknown folder.
-	got := RemoveConflictFilesForOriginal("nonexistent", "x.md")
-	if !strings.Contains(got, `"error":"folder not found"`) {
-		t.Errorf("unknown folder result = %q, want error 'folder not found'", got)
-	}
-
-	// Path traversal.
-	got = RemoveConflictFilesForOriginal("skipfamilyerr", "../../etc/passwd")
-	if !strings.Contains(got, `"error":"invalid path: outside folder root"`) {
-		t.Errorf("traversal result = %q, want invalid-path error", got)
-	}
-
-	// Empty / root-equivalent paths must be rejected (would otherwise scan outside folder root).
-	for _, rp := range []string{"", ".", "/"} {
-		got := RemoveConflictFilesForOriginal("skipfamilyerr", rp)
-		if !strings.Contains(got, `"error":"invalid path: outside folder root"`) {
-			t.Errorf("root path %q result = %q, want invalid-path error", rp, got)
-		}
-	}
-}
-
 func TestIssue145AutoResolveStateConflictsPreservesLegacyScenarios(t *testing.T) {
 	configDir := testConfigDir(t)
 
@@ -1663,7 +1353,7 @@ func TestIssue145AutoResolveStateConflictsPreservesLegacyScenarios(t *testing.T)
 
 	const folderID = "issue145-legacy"
 	folderPath := filepath.Join(configDir, folderID)
-	if errMsg := AddFolder(folderID, "Issue 145 Legacy Scenarios", folderPath); errMsg != "" {
+	if errMsg := addFolderForTesting(folderID, "Issue 145 Legacy Scenarios", folderPath); errMsg != "" {
 		t.Fatalf("AddFolder failed: %s", errMsg)
 	}
 
@@ -1910,7 +1600,7 @@ func TestIssue145AutoResolveStateConflictsPreservesAllFiles(t *testing.T) {
 	defer StopSyncthing()
 
 	folderPath := filepath.Join(configDir, folderID)
-	if errMsg := AddFolder(folderID, "Issue 145 Preserve", folderPath); errMsg != "" {
+	if errMsg := addFolderForTesting(folderID, "Issue 145 Preserve", folderPath); errMsg != "" {
 		t.Fatalf("AddFolder failed: %s", errMsg)
 	}
 

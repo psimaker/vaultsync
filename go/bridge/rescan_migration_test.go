@@ -17,7 +17,7 @@ func TestAddFolder_DefaultsTo60sRescan(t *testing.T) {
 	defer StopSyncthing()
 
 	folderPath := filepath.Join(configDir, "rescan-default")
-	if errMsg := AddFolder("rescan-default", "Rescan Default", folderPath); errMsg != "" {
+	if errMsg := addFolderForTesting("rescan-default", "Rescan Default", folderPath); errMsg != "" {
 		t.Fatalf("AddFolder failed: %s", errMsg)
 	}
 
@@ -38,7 +38,7 @@ func TestStart_MigratesLegacy3600(t *testing.T) {
 	}
 
 	folderPath := filepath.Join(configDir, "legacy-folder")
-	if errMsg := AddFolder("legacy", "Legacy", folderPath); errMsg != "" {
+	if errMsg := addFolderForTesting("legacy", "Legacy", folderPath); errMsg != "" {
 		t.Fatalf("AddFolder failed: %s", errMsg)
 	}
 
@@ -81,7 +81,7 @@ func TestStart_PreservesCustomInterval(t *testing.T) {
 	}
 
 	folderPath := filepath.Join(configDir, "custom-folder")
-	if errMsg := AddFolder("custom", "Custom", folderPath); errMsg != "" {
+	if errMsg := addFolderForTesting("custom", "Custom", folderPath); errMsg != "" {
 		t.Fatalf("AddFolder failed: %s", errMsg)
 	}
 

@@ -55,6 +55,7 @@ struct CoordinatorRefusalModalGateTests {
         let env = ShareAcceptCoordinator.Environment(
             settled: { true },
             vaultAccessible: { true },
+            receiveSafetyState: { .clear },
             pendingFolders: { [SyncthingManager.PendingFolderInfo(id: "f1", label: "F1", offeredBy: [])] },
             autoAcceptEligible: { [SyncthingManager.PendingFolderInfo(id: "f1", label: "F1", offeredBy: [])] },
             accept: { _, _ in .refused(message: "no safe location") },
@@ -77,6 +78,7 @@ struct CoordinatorRefusalModalGateTests {
         let env = ShareAcceptCoordinator.Environment(
             settled: { true },
             vaultAccessible: { true },
+            receiveSafetyState: { .clear },
             pendingFolders: { [SyncthingManager.PendingFolderInfo(id: "f1", label: "F1", offeredBy: [])] },
             autoAcceptEligible: { [SyncthingManager.PendingFolderInfo(id: "f1", label: "F1", offeredBy: [])] },
             accept: { _, _ in .refused(message: "no safe location") },
@@ -102,6 +104,7 @@ struct CoordinatorRefusalModalGateTests {
         let env = ShareAcceptCoordinator.Environment(
             settled: { true },
             vaultAccessible: { true },
+            receiveSafetyState: { .clear },
             pendingFolders: { [f1, f2] },
             autoAcceptEligible: { [f1, f2] },
             accept: { _, _ in .refused(message: "no safe location") },
@@ -127,6 +130,7 @@ struct CoordinatorRefusalModalGateTests {
         let env = ShareAcceptCoordinator.Environment(
             settled: { true },
             vaultAccessible: { true },
+            receiveSafetyState: { .clear },
             pendingFolders: { [SyncthingManager.PendingFolderInfo(id: "f1", label: "F1", offeredBy: [])] },
             autoAcceptEligible: { [SyncthingManager.PendingFolderInfo(id: "f1", label: "F1", offeredBy: [])] },
             accept: { _, _ in .accepted },
@@ -147,16 +151,16 @@ struct SyncHeaderOpensChecklistTests {
     func gating() {
         #expect(SyncHeaderModel.opensChecklist(titleKey: "Finish Setup"))
         #expect(SyncHeaderModel.opensChecklist(titleKey: "Action Needed"))
-        for key in ["Error", "Starting…", "Sync Issue", "Syncing…", "All Synced", "Ready", "No Vaults Yet"] {
+        for key in ["Error", "Starting…", "Sync Issue", "Syncing…", "All Synced", "No Vaults Syncing", "No Vaults Yet"] {
             #expect(!SyncHeaderModel.opensChecklist(titleKey: key), "\(key) must not open the checklist")
         }
     }
 }
 
 @MainActor
-@Suite("Checklist ignored-offer remediation (#95)", .serialized)
+@Suite("Checklist pending offers stay inspection-only (#95, #150)", .serialized)
 struct ChecklistIgnoredOfferTests {
-    @Test("An ignored-only offer points at Restore Share, not at re-sharing from the desktop")
+    @Test("An ignored-only offer exposes details without a recovery action (#150)")
     func ignoredOnlyOfferBranch() {
         TestSupport.resetSyncthingState()
         TestSupport.resetRelayState()
@@ -178,12 +182,11 @@ struct ChecklistIgnoredOfferTests {
 
         let item = viewModel.items.first { $0.requirement == .firstShareDetectedOrAccepted }
         #expect(item?.isComplete == false)
-        #expect(item?.remediation.contains("Restore Share") == true)
-        // The dead-end advice must be gone in this state:
-        #expect(item?.remediation.contains("share your Obsidian vault again") != true)
+        #expect(item?.description == L10n.tr("An ignored vault offer remains stored on this iPhone."))
+        #expect(item?.remediation == L10n.tr("Open Pending Shares to inspect its details. No action is available in this version."))
     }
 
-    @Test("An actionable offer still wins over an ignored one")
+    @Test("An actionable offer wins but remains inspection-only (#150)")
     func actionableWinsOverIgnored() {
         TestSupport.resetSyncthingState()
         TestSupport.resetRelayState()
@@ -202,6 +205,7 @@ struct ChecklistIgnoredOfferTests {
         defer { TestSupport.resetSyncthingState() }
 
         let item = viewModel.items.first { $0.requirement == .firstShareDetectedOrAccepted }
-        #expect(item?.description.contains("waiting") == true) // "A vault offer is waiting to be accepted."
+        #expect(item?.description == L10n.tr("A vault offer is available for inspection."))
+        #expect(item?.remediation == L10n.tr("Open Pending Shares to inspect the offer details. This version cannot accept it."))
     }
 }

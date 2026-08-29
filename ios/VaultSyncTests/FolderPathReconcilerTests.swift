@@ -4,6 +4,20 @@ import Testing
 
 @Suite("FolderPathReconciler — launch-time path rebasing")
 struct FolderPathReconcilerTests {
+    @Test("Live reconcile excludes every receive type but preserves send-only (#150)")
+    func liveReconcileCandidatesRespectImmutableReceivePolicy() {
+        let candidates = FolderPathReconciler.liveReconcileCandidates([
+            (id: "sr", path: "/sr", type: "sendreceive"),
+            (id: "ro", path: "/ro", type: "receiveonly"),
+            (id: "re", path: "/re", type: "receiveencrypted"),
+            (id: "so", path: "/so", type: "sendonly"),
+            (id: "future", path: "/future", type: "future-mode"),
+        ])
+
+        #expect(candidates.map(\.id) == ["so"])
+        #expect(candidates.map(\.path) == ["/so"])
+    }
+
 
     /// In-memory backing for an injected `Environment`, recording every
     /// `setPath` call and exposing the final relative-path map.

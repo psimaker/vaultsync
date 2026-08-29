@@ -53,7 +53,7 @@ func AddDevice(deviceID string, name string) string {
 		cfg.Devices = append(cfg.Devices, newDevice)
 	})
 	if err != nil {
-		return fmt.Sprintf("modify config: %v", err)
+		return folderConfigurationError(err)
 	}
 	waiter.Wait()
 
@@ -85,7 +85,7 @@ func RemoveDevice(deviceID string) string {
 		cfg.Devices = devices
 	})
 	if err != nil {
-		return fmt.Sprintf("modify config: %v", err)
+		return folderConfigurationError(err)
 	}
 	waiter.Wait()
 

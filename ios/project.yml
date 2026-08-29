@@ -85,7 +85,7 @@ targets:
         # (Syncthing's multicast *discovery* additionally needs the restricted
         # com.apple.developer.networking.multicast entitlement — Apple-approved
         # for this App ID and enabled in the entitlements below; see docs/architecture.md.)
-        NSLocalNetworkUsageDescription: "VaultSync connects directly to your other devices on the same network so your vaults sync instantly, without a detour through the internet."
+        NSLocalNetworkUsageDescription: "VaultSync uses the local network to connect directly to your other devices for status checks and Send Only uploads."
         # NOTE: NSAppTransportSecurity is deliberately NOT set, so shipping (Release)
         # builds keep the strictest ATS posture. The production app only talks HTTPS to
         # the relay. The DEBUG mock-relay loop targets http://127.0.0.1 (loopback),

@@ -1,8 +1,4 @@
 "About" = "About";
-"Accept First Pending Share" = "Accept First Pending Share";
-"Accept Pending Share" = "Accept Pending Share";
-"Accept Share" = "Accept Share";
-"Accept a share to activate syncing for that vault." = "Accept a share to activate syncing for that vault.";
 "Action Needed" = "Action Needed";
 "Actions" = "Actions";
 "Active" = "Active";
@@ -45,11 +41,9 @@
 "Completion" = "Completion";
 "Configuration Error" = "Configuration Error";
 "Conflict Resolution Failed" = "Conflict Resolution Failed";
-"Conflict Resolved" = "Conflict Resolved";
 "Conflicted Files" = "Conflicted Files";
 "Conflicts" = "Conflicts";
-"Conflicts mean multiple versions exist and need a manual decision." = "Conflicts mean multiple versions exist and need a manual decision.";
-"Connect Obsidian to accept shares" = "Connect Obsidian to accept shares";
+"A separate conflict copy was detected for a file." = "A separate conflict copy was detected for a file.";
 "Connect Obsidian Folder" = "Connect Obsidian Folder";
 "Connect to Obsidian first" = "Connect to Obsidian first";
 "Connected" = "Connected";
@@ -105,23 +99,16 @@
 "Healthy" = "Healthy";
 "How to fix: %@" = "How to fix: %@";
 "How to share from your computer" = "How to share from your computer";
-"If a note changes on two devices at the same time, VaultSync can alert you so you can choose which version to keep." = "If a note changes on two devices at the same time, VaultSync can alert you so you can choose which version to keep.";
+"If VaultSync detects conflicting copies, it can alert you so you can inspect them. Recovery actions are unavailable in this version." = "If VaultSync detects conflicting copies, it can alert you so you can inspect them. Recovery actions are unavailable in this version.";
 "Ignore for Now" = "Ignore for Now";
 "Ignored shares (%d)" = "Ignored shares (%d)";
 "In progress" = "In progress";
 "Install Obsidian from the App Store and open it once. The folder appears after Obsidian creates it." = "Install Obsidian from the App Store and open it once. The folder appears after Obsidian creates it.";
 "Invalid Input" = "Invalid Input";
 "Invalid folder name: '%@'" = "Invalid folder name: '%@'";
-"Keep Both" = "Keep Both";
 "Keep Both did not change any files because the new copy name is already in use." = "Keep Both did not change any files because the new copy name is already in use.";
 "Keep Both did not change any files because this storage location does not support safe renaming." = "Keep Both did not change any files because this storage location does not support safe renaming.";
-"Keep Other" = "Keep Other";
-"Keep Other Device's Version" = "Keep Other Device's Version";
-"Keep This" = "Keep This";
-"Keep This Device's Version" = "Keep This Device's Version";
-"Keep both versions" = "Keep both versions";
 "Keep the app open for a moment and retry. If this persists, restart VaultSync." = "Keep the app open for a moment and retry. If this persists, restart VaultSync.";
-"Keeps your local file and renames the other device's file." = "Keeps your local file and renames the other device's file.";
 "Last Check" = "Last Check";
 "Last Failure" = "Last Failure";
 "Last Relay Error" = "Last Relay Error";
@@ -179,7 +166,7 @@
 "Open VaultSync" = "Open VaultSync";
 "Open VaultSync once to restart Syncthing, then retry." = "Open VaultSync once to restart Syncthing, then retry.";
 "Open VaultSync to allow a longer foreground sync session." = "Open VaultSync to allow a longer foreground sync session.";
-"Open conflicts and choose which version to keep." = "Open conflicts and choose which version to keep.";
+"Open conflicts to see which copies are still available. Recovery actions are unavailable." = "Open conflicts to see which copies are still available. Recovery actions are unavailable.";
 "Open full relay troubleshooting" = "Open full relay troubleshooting";
 "Open iOS Notification Settings" = "Open iOS Notification Settings";
 "Open iOS Settings → VaultSync and check that all permissions are enabled, then retry." = "Open iOS Settings → VaultSync and check that all permissions are enabled, then retry.";
@@ -187,11 +174,9 @@
 "Opens discovery, relay, and notification settings." = "Opens discovery, relay, and notification settings.";
 "Opens the form to add a Syncthing device." = "Opens the form to add a Syncthing device.";
 "Optional" = "Optional";
-"Overwrites your local file with the version from the other device." = "Overwrites your local file with the version from the other device.";
 "Path" = "Path";
 "Peer connection is active." = "Peer connection is active.";
 "Pending Shares" = "Pending Shares";
-"Pending shares are waiting to be accepted before sync can start." = "Pending shares are waiting to be accepted before sync can start.";
 "Per-Device Provisioning" = "Per-Device Provisioning";
 "Permission Required" = "Permission Required";
 "Please select a folder. In the picker choose \"On My iPhone\" → \"Obsidian\"." = "Please select a folder. In the picker choose \"On My iPhone\" → \"Obsidian\".";
@@ -206,7 +191,7 @@
 "Reconnect Obsidian Folder" = "Reconnect Obsidian Folder";
 "Reconnect Obsidian access or adjust folder permissions on the host device." = "Reconnect Obsidian access or adjust folder permissions on the host device.";
 "Reconnect devices or add missing peers to restore continuous sync." = "Reconnect devices or add missing peers to restore continuous sync.";
-"Reconnect your Obsidian folder access in VaultSync, then run a foreground rescan." = "Reconnect your Obsidian folder access in VaultSync, then run a foreground rescan.";
+"Reconnect your Obsidian folder access in VaultSync, then review the affected vault. Receive-capable vaults remain read-only in this version." = "Reconnect your Obsidian folder access in VaultSync, then review the affected vault. Receive-capable vaults remain read-only in this version.";
 "Recreate or reselect the folder, then trigger a rescan." = "Recreate or reselect the folder, then trigger a rescan.";
 "Registered" = "Registered";
 "Relay Backend" = "Relay Backend";
@@ -235,19 +220,16 @@
 "Remove and re-share the folder from your desktop device." = "Remove and re-share the folder from your desktop device.";
 "Removed line. %@" = "Removed line. %@";
 "Rename Failed" = "Rename Failed";
-"Rename the existing copy in Files, then try Keep Both again." = "Rename the existing copy in Files, then try Keep Both again.";
-"Resolve this conflict manually in Files without replacing either file." = "Resolve this conflict manually in Files without replacing either file.";
+"Leave both copies unchanged. Do not repeat this action until a separately verified recovery is available." = "Leave both copies unchanged. Do not repeat this action until a separately verified recovery is available.";
 "Renews" = "Renews";
 "Requesting camera access…" = "Requesting camera access…";
 "Rescan Failed" = "Rescan Failed";
 "Rescan Failed Vaults" = "Rescan Failed Vaults";
 "Rescan Vault" = "Rescan Vault";
 "Rescan failed vaults, then verify folder access and permissions." = "Rescan failed vaults, then verify folder access and permissions.";
-"Resolve Conflict" = "Resolve Conflict";
-"Resolve Conflicts" = "Resolve Conflicts";
 "Restore Purchases" = "Restore Purchases";
 "Restore Share" = "Restore Share";
-"A conflict happens when a file is edited on two devices at the same time. Syncthing saves both versions to prevent data loss." = "A conflict happens when a file is edited on two devices at the same time. Syncthing saves both versions to prevent data loss.";
+"A conflict can happen when a file changes on two devices at the same time. Review every visible copy, because automatic retention cannot guarantee that every version will remain available." = "A conflict can happen when a file changes on two devices at the same time. Review every visible copy, because automatic retention cannot guarantee that every version will remain available.";
 "APNs Registration" = "APNs Registration";
 "APNs Token" = "APNs Token";
 "Context: %@ · %@" = "Context: %@ · %@";
@@ -256,7 +238,6 @@
 "Present" = "Present";
 "Purchase Failed" = "Purchase Failed";
 "Rescan All Vaults" = "Rescan All Vaults";
-"Review and Accept" = "Review and Accept";
 "Selects this plan." = "Selects this plan.";
 "Something Went Wrong" = "Something Went Wrong";
 "Sync Conflicts" = "Sync Conflicts";
@@ -279,8 +260,6 @@
 "Scanning completed in %@" = "Scanning completed in %@";
 "Scanning started in %@" = "Scanning started in %@";
 "Settings" = "Settings";
-"Share a folder from your desktop Syncthing — it will be accepted automatically." = "Share a folder from your desktop Syncthing — it will be accepted automatically.";
-"Share requests are shown below, but Accept and Retry are disabled until your Obsidian folder is connected." = "Share requests are shown below, but Accept and Retry are disabled until your Obsidian folder is connected.";
 "Shared" = "Shared";
 "Shared With" = "Shared With";
 "Shared by an unknown device" = "Shared by an unknown device";
@@ -318,8 +297,6 @@
 "Terms of Use" = "Terms of Use";
 "The device will be disconnected and removed from all shared folders." = "The device will be disconnected and removed from all shared folders.";
 "The embedded Syncthing bridge did not start for a background sync." = "The embedded Syncthing bridge did not start for a background sync.";
-"The file '%@' was kept as your local version. The other device's version was discarded." = "The file '%@' was kept as your local version. The other device's version was discarded.";
-"The file '%@' was overwritten with the version from the other device." = "The file '%@' was overwritten with the version from the other device.";
 "The folder path no longer exists%@." = "The folder path no longer exists%@.";
 "The folder scan finished successfully." = "The folder scan finished successfully.";
 "The sync engine stopped unexpectedly." = "The sync engine stopped unexpectedly.";
@@ -359,7 +336,6 @@
 "VaultSync does not have the required permission for this action." = "VaultSync does not have the required permission for this action.";
 "VaultSync found a configuration problem." = "VaultSync found a configuration problem.";
 "VaultSync needs camera access to scan Syncthing Device ID QR codes. Please enable it in Settings." = "VaultSync needs camera access to scan Syncthing Device ID QR codes. Please enable it in Settings.";
-"VaultSync needs one-time access to your Obsidian folder before it can accept shares." = "VaultSync needs one-time access to your Obsidian folder before it can accept shares.";
 "VaultSync reported an unexpected error." = "VaultSync reported an unexpected error.";
 "Wait a moment and retry." = "Wait a moment and retry.";
 "What is a conflict?" = "What is a conflict?";
@@ -370,8 +346,8 @@
 "hours" = "hours";
 "No Activity Yet" = "No Activity Yet";
 "Sync engine running" = "Sync engine running";
-"onboarding.welcome.title" = "Your Obsidian notes. Privately synced.";
-"onboarding.welcome.subtitle" = "Keep your vault in sync between your own devices — without relying on third-party cloud storage.";
+"onboarding.welcome.title" = "Your Obsidian setup. Private by design.";
+"onboarding.welcome.subtitle" = "Connect Obsidian and your own devices. New shared vault offers can be inspected, but not accepted in this version.";
 "onboarding.welcome.benefit.private" = "Private between your devices";
 "onboarding.welcome.benefit.obsidian" = "Built for Obsidian vaults";
 "onboarding.welcome.benefit.noCloud" = "No cloud account required";
@@ -388,18 +364,14 @@
 "VaultSync cannot access your local Obsidian folder." = "VaultSync cannot access your local Obsidian folder.";
 "Connect your Obsidian folder from the VaultSync home screen." = "Connect your Obsidian folder from the VaultSync home screen.";
 "Computer or server added" = "Computer or server added";
-"Your first sync is done. Cloud Relay wakes this iPhone the moment your notes change — even while the app is closed." = "Your first sync is done. Cloud Relay wakes this iPhone the moment your notes change — even while the app is closed.";
+"Cloud Relay can wake this iPhone for background checks. Send Only vaults can upload local changes." = "Cloud Relay can wake this iPhone for background checks. Send Only vaults can upload local changes.";
 "Your iPhone is paired with at least one Syncthing device." = "Your iPhone is paired with at least one Syncthing device.";
 "Your iPhone is not paired with a Syncthing device yet." = "Your iPhone is not paired with a Syncthing device yet.";
 "Add your computer or server from the Devices section on the home screen." = "Add your computer or server from the Devices section on the home screen.";
-"Vault syncing" = "Vault syncing";
+"Vault setup" = "Vault setup";
 "At least one Obsidian vault is active in VaultSync." = "At least one Obsidian vault is active in VaultSync.";
-"A vault offer is waiting to be accepted." = "A vault offer is waiting to be accepted.";
-"A vault offer is waiting. Accept it from Pending Shares on the home screen." = "A vault offer is waiting. Accept it from Pending Shares on the home screen.";
-"A vault offer was seen earlier, but no vault is syncing right now." = "A vault offer was seen earlier, but no vault is syncing right now.";
-"If syncing has not started, share your Obsidian vault again from Syncthing on your computer." = "If syncing has not started, share your Obsidian vault again from Syncthing on your computer.";
+"A vault offer was seen earlier, but no vault is configured right now." = "A vault offer was seen earlier, but no vault is configured right now.";
 "No Obsidian vault is active in VaultSync yet." = "No Obsidian vault is active in VaultSync yet.";
-"Share your Obsidian vault from Syncthing on your computer." = "Share your Obsidian vault from Syncthing on your computer.";
 "VaultSync’s sync engine is running." = "VaultSync’s sync engine is running.";
 "VaultSync’s sync engine is still starting or unavailable." = "VaultSync’s sync engine is still starting or unavailable.";
 "If this stays unavailable, restart VaultSync and check the home screen for issues." = "If this stays unavailable, restart VaultSync and check the home screen for issues.";
@@ -415,12 +387,6 @@
 "Skip these on this iPhone? You can change this anytime in Sync Filters." = "Skip these on this iPhone? You can change this anytime in Sync Filters.";
 "Skip" = "Skip";
 "Choose what gets synced to this iPhone" = "Choose what gets synced to this iPhone";
-"Always skip on this iPhone" = "Always skip on this iPhone";
-"More actions" = "More actions";
-"Skipping enabled" = "Skipping enabled";
-"'%@' and its conflict copies will no longer sync to this iPhone. You can undo this in Sync Filters." = "'%@' and its conflict copies will no longer sync to this iPhone. You can undo this in Sync Filters.";
-"1 existing conflict copy was removed." = "1 existing conflict copy was removed.";
-"%d existing conflict copies were removed." = "%d existing conflict copies were removed.";
 "+ conflict copies" = "+ conflict copies";
 "Could not add filter" = "Could not add filter";
 "Could not save filters" = "Could not save filters";
@@ -450,17 +416,17 @@
 "%d Required Devices Are Disconnected" = "%d Required Devices Are Disconnected";
 "1 Pending Share Needs Attention" = "1 Pending Share Needs Attention";
 "%d Pending Shares Need Attention" = "%d Pending Shares Need Attention";
-"1 Conflict Needs Resolution" = "1 Conflict Needs Resolution";
-"%d Conflicts Need Resolution" = "%d Conflicts Need Resolution";
+"1 Conflict Available for Review" = "1 Conflict Available for Review";
+"%d Conflicts Available for Review" = "%d Conflicts Available for Review";
 
 /* Issue #10 — conflict notification body */
-"1 file has a sync conflict. Open VaultSync to resolve it." = "1 file has a sync conflict. Open VaultSync to resolve it.";
-"%d files have sync conflicts. Open VaultSync to resolve them." = "%d files have sync conflicts. Open VaultSync to resolve them.";
+"1 file has a sync conflict. Open VaultSync to see which copies are still available." = "1 file has a sync conflict. Open VaultSync to see which copies are still available.";
+"%d files have sync conflicts. Open VaultSync to see which copies are still available." = "%d files have sync conflicts. Open VaultSync to see which copies are still available.";
 
 /* Issue #10 — conflict-notifications toggle (Settings) */
 "Notifications" = "Notifications";
 "Conflict Notifications" = "Conflict Notifications";
-"Show a banner when sync conflicts are detected. Turning this off does not affect Cloud Relay or background sync — your vault keeps syncing." = "Show a banner when sync conflicts are detected. Turning this off does not affect Cloud Relay or background sync — your vault keeps syncing.";
+"Show a banner when conflict copies are detected. Turning this off does not affect Cloud Relay, background checks, or Send Only uploads." = "Show a banner when conflict copies are detected. Turning this off does not affect Cloud Relay, background checks, or Send Only uploads.";
 
 /* Issue #10 — relay/alert decoupling (Relay Diagnostics) */
 "Alert Banners" = "Alert Banners";
@@ -472,7 +438,7 @@
 "APNs registration failed. Check your internet connection and retry registration. Silent push does not require notification banners to be enabled." = "APNs registration failed. Check your internet connection and retry registration. Silent push does not require notification banners to be enabled.";
 
 /* Issue #10 — background-sync reliability (error-settled outcome) */
-"Background sync settled with at least one folder in an error state." = "Background sync settled with at least one folder in an error state.";
+"Background sync stopped because the engine or a folder reported a safety issue." = "Background sync stopped because the engine or a folder reported a safety issue.";
 
 /* Issue #10 — relay reachable (vs delivering) */
 "Cloud Relay looks reachable" = "Cloud Relay looks reachable";
@@ -508,18 +474,12 @@
 "Remove this device?" = "Remove this device?";
 "Double-tap to share this vault with this device." = "Double-tap to share this vault with this device.";
 "Double-tap to stop sharing this vault with this device." = "Double-tap to stop sharing this vault with this device.";
-"All conflicts resolved" = "All conflicts resolved";
+"No conflicts found" = "No conflicts found";
 "Loading files…" = "Loading files…";
 "Computing diff…" = "Computing diff…";
-"Other Device" = "Other Device";
-"Other Device (%@)" = "Other Device (%@)";
-"Added lines come from the other device; removed lines are your version on this device." = "Added lines come from the other device; removed lines are your version on this device.";
-"(empty or unreadable)" = "(empty or unreadable)";
-"a new name" = "a new name";
-"Both versions were kept.\n\nYour local version remains as '%@'.\nThe other device's version was renamed to '%@'." = "Both versions were kept.\n\nYour local version remains as '%@'.\nThe other device's version was renamed to '%@'.";
 "%d conflicts" = "%d conflicts";
 "Your contribution is pending approval." = "Your contribution is pending approval.";
-"iOS did not provide a push token required for instant sync." = "iOS did not provide a push token required for instant sync.";
+"iOS did not provide a push token required for Cloud Relay wake-ups." = "iOS did not provide a push token required for Cloud Relay wake-ups.";
 "%@ (Trigger: %@)" = "%@ (Trigger: %@)";
 "1 additional file synced in %@" = "1 additional file synced in %@";
 "%d additional files synced in %@" = "%d additional files synced in %@";
@@ -535,7 +495,6 @@
 "No folders were available after forced silent-push restart." = "No folders were available after forced silent-push restart.";
 "No folders were available for background sync." = "No folders were available for background sync.";
 "No security-scoped bookmark access was available." = "No security-scoped bookmark access was available.";
-"Accept or create a shared vault before relying on background sync." = "Accept or create a shared vault before relying on background sync.";
 "Retry from the app and review relay/background diagnostics in Settings." = "Retry from the app and review relay/background diagnostics in Settings.";
 "Silent push restarted Syncthing, but no real sync progress was observed before the app returned to idle." = "Silent push restarted Syncthing, but no real sync progress was observed before the app returned to idle.";
 "Sync did not reach idle before %ds deadline." = "Sync did not reach idle before %ds deadline.";
@@ -548,12 +507,12 @@
 "relay network: %@" = "relay network: %@";
 
 /* Cloud Relay activation (2026-05-31): honest server-setup + conversion */
-"Cloud Relay is not enabled. Without it, incoming changes arrive when you open VaultSync." = "Cloud Relay is not enabled. Without it, incoming changes arrive when you open VaultSync.";
-"Enable Cloud Relay on the Relay tab if you want changes pushed the moment they happen." = "Enable Cloud Relay on the Relay tab if you want changes pushed the moment they happen.";
+"Cloud Relay is not enabled. Open VaultSync to review current status and conflict copies." = "Cloud Relay is not enabled. Open VaultSync to review current status and conflict copies.";
+"Enable Cloud Relay on the Relay tab to wake VaultSync for background checks." = "Enable Cloud Relay on the Relay tab to wake VaultSync for background checks.";
 "Cloud Relay — finish server setup" = "Cloud Relay — finish server setup";
 "You’re subscribed, but no recent wake-up has arrived. Make sure the vaultsync-notify helper is running on your server." = "You’re subscribed, but no recent wake-up has arrived. Make sure the vaultsync-notify helper is running on your server.";
 "Set up the server helper from the Relay tab → Set Up Your Server." = "Set up the server helper from the Relay tab → Set Up Your Server.";
-"Wake-ups are being delivered — incoming changes sync the moment they happen." = "Wake-ups are being delivered — incoming changes sync the moment they happen.";
+"Wake-ups are being delivered. VaultSync can check status in the background, and Send Only vaults can upload local changes." = "Wake-ups are being delivered. VaultSync can check status in the background, and Send Only vaults can upload local changes.";
 "Your server helper is running — wake-ups are being delivered." = "Your server helper is running — wake-ups are being delivered.";
 "Why this step" = "Why this step";
 "Cloud Relay needs a small helper on your server. It watches Syncthing for changes and sends VaultSync a wake-up signal — it never sees your notes. Without it, the subscription has nothing to wake the app with." = "Cloud Relay needs a small helper on your server. It watches Syncthing for changes and sends VaultSync a wake-up signal — it never sees your notes. Without it, the subscription has nothing to wake the app with.";
@@ -570,7 +529,7 @@
 "Last wake-up" = "Last wake-up";
 "Auto-renews until canceled. Cancel anytime in Settings → Subscriptions." = "Auto-renews until canceled. Cancel anytime in Settings → Subscriptions.";
 "Cancel anytime in Settings → Subscriptions" = "Cancel anytime in Settings → Subscriptions";
-"Get instant updates" = "Get instant updates";
+"Enable background wake-ups" = "Enable background wake-ups";
 "Turn on Cloud Relay" = "Turn on Cloud Relay";
 
 /* Redesign (Vault OS) strings — added in branch redesign/vault-os-foundation */
@@ -581,35 +540,28 @@
 "Add your server first" = "Add your server first";
 "Best value" = "Best value";
 "Cloud Relay wakes a specific device. Pair the computer or server that hosts your vault on the Devices tab, then come back to subscribe." = "Cloud Relay wakes a specific device. Pair the computer or server that hosts your vault on the Devices tab, then come back to subscribe.";
-"Complete these steps right here. They light up green as you go — and you can always finish them later from the home screen." = "Complete these steps right here. They light up green as you go — and you can always finish them later from the home screen.";
 "Connect your Obsidian folder" = "Connect your Obsidian folder";
 "Double tap to copy" = "Double tap to copy";
-"Give VaultSync one-time access to your local Obsidian folder so it can sync your notes." = "Give VaultSync one-time access to your local Obsidian folder so it can sync your notes.";
 "How is this private?" = "How is this private?";
-"Instant sync, still private" = "Instant sync, still private";
-"Let’s get your vault synced" = "Let’s get your vault synced";
+"Private background wake-ups" = "Private background wake-ups";
 "Loading plans…" = "Loading plans…";
 "Manage" = "Manage";
 "Monthly" = "Monthly";
 "One step left to activate" = "One step left to activate";
-"Optional: turn on Cloud Relay later for instant updates — you’ll find it on the Relay tab." = "Optional: turn on Cloud Relay later for instant updates — you’ll find it on the Relay tab.";
+"Optional: turn on Cloud Relay later for background wake-ups — you’ll find it on the Relay tab." = "Optional: turn on Cloud Relay later for background wake-ups — you’ll find it on the Relay tab.";
 "Pair this iPhone with the Syncthing device that hosts your vault, by Device ID or QR code." = "Pair this iPhone with the Syncthing device that hosts your vault, by Device ID or QR code.";
 "Relay" = "Relay";
 "Relay health & diagnostics" = "Relay health & diagnostics";
-"One step left: run a single line on your server and instant updates start. The helper only sends a wake-up — it never sees your notes." = "One step left: run a single line on your server and instant updates start. The helper only sends a wake-up — it never sees your notes.";
+"One step left: run one command on your server to enable background wake-ups. The helper never sees your notes." = "One step left: run one command on your server to enable background wake-ups. The helper never sees your notes.";
 "Save %d%%" = "Save %d%%";
 "Server helper setup" = "Server helper setup";
 "Set up the server helper" = "Set up the server helper";
-"Share your Obsidian vault from Syncthing on your computer. VaultSync accepts it automatically — this turns green the moment it arrives." = "Share your Obsidian vault from Syncthing on your computer. VaultSync accepts it automatically — this turns green the moment it arrives.";
 "Starts a subscription purchase." = "Starts a subscription purchase.";
 "Sync" = "Sync";
-"Sync your first vault" = "Sync your first vault";
-"Wake-ups are being delivered — changes from your other devices arrive instantly." = "Wake-ups are being delivered — changes from your other devices arrive instantly.";
 "Yearly" = "Yearly";
-"Your local version is kept, and the other device’s version is added under a new name. Nothing is discarded." = "Your local version is kept, and the other device’s version is added under a new name. Nothing is discarded.";
-"Your notes never touch our servers. Cloud Relay sends a tiny wake-up so changes from your other devices land the moment they happen — even with the app closed." = "Your notes never touch our servers. Cloud Relay sends a tiny wake-up so changes from your other devices land the moment they happen — even with the app closed.";
+"Your notes never touch our servers. Cloud Relay sends only a wake-up so VaultSync can check status in the background. Send Only vaults can upload local changes." = "Your notes never touch our servers. Cloud Relay sends only a wake-up so VaultSync can check status in the background. Send Only vaults can upload local changes.";
 "One-step setup: a single line on your server." = "One-step setup: a single line on your server.";
-"Your vault already syncs free and peer-to-peer. Relay only removes the “open the app to sync” wait — it isn’t cloud storage." = "Your vault already syncs free and peer-to-peer. Relay only removes the “open the app to sync” wait — it isn’t cloud storage.";
+"VaultSync remains peer-to-peer. Relay provides background wake-ups; it is not cloud storage and never carries your notes." = "VaultSync remains peer-to-peer. Relay provides background wake-ups; it is not cloud storage and never carries your notes.";
 "You’re subscribed, but no wake-up has arrived yet. Cloud Relay only delivers once the helper is running on your server." = "You’re subscribed, but no wake-up has arrived yet. Cloud Relay only delivers once the helper is running on your server.";
 
 /* Folder path resilience (#25) */
@@ -629,7 +581,6 @@
 "You’re subscribed, but your server has never woken this iPhone. One step finishes setup." = "You’re subscribed, but your server has never woken this iPhone. One step finishes setup.";
 "Opens Cloud Relay setup." = "Opens Cloud Relay setup.";
 "Cloud Relay went quiet" = "Cloud Relay went quiet";
-"Your server just reached this iPhone. Incoming changes now sync the moment they happen." = "Your server just reached this iPhone. Incoming changes now sync the moment they happen.";
 "Great" = "Great";
 "Not active yet" = "Not active yet";
 "You’re subscribed. Wake-ups start once the helper is running on the computer or server you keep on — finish setup below." = "You’re subscribed. Wake-ups start once the helper is running on the computer or server you keep on — finish setup below.";
@@ -646,7 +597,7 @@
 
 /* Manual conflict review — notes and .obsidian state (Settings) */
 "Review Conflicts Manually" = "Review Conflicts Manually";
-"VaultSync does not automatically choose between conflicting copies in your notes, Obsidian settings, or plugin state. Review each conflict and decide what to keep." = "VaultSync does not automatically choose between conflicting copies in your notes, Obsidian settings, or plugin state. Review each conflict and decide what to keep.";
+"VaultSync does not automatically choose between conflicting copies in your notes, Obsidian settings, or plugin state. You can inspect each conflict, but recovery actions are unavailable in this version." = "VaultSync does not automatically choose between conflicting copies in your notes, Obsidian settings, or plugin state. You can inspect each conflict, but recovery actions are unavailable in this version.";
 
 /* Path collision migration shield (#45) — vaults an older version already merged onto one folder */
 "Two Vaults Are Sharing One Folder" = "Two Vaults Are Sharing One Folder";
@@ -667,9 +618,7 @@
 "The folder \"%@\" already contains files. Accepting this share would combine its contents with the shared vault and sync the result to the other devices." = "The folder \"%@\" already contains files. Accepting this share would combine its contents with the shared vault and sync the result to the other devices.";
 "Vault Folder Was Moved or Deleted" = "Vault Folder Was Moved or Deleted";
 "VaultSync can no longer verify that this folder still holds this vault's data%@ — the folder was likely moved, renamed, replaced, or deleted outside VaultSync. Syncing has stopped to protect your notes." = "VaultSync can no longer verify that this folder still holds this vault's data%@ — the folder was likely moved, renamed, replaced, or deleted outside VaultSync. Syncing has stopped to protect your notes.";
-"If you moved or renamed the folder, move it back to its original place. If it is gone, remove this vault on this iPhone and accept it again under Pending Shares. VaultSync never moves, recreates, or deletes folders on its own." = "If you moved or renamed the folder, move it back to its original place. If it is gone, remove this vault on this iPhone and accept it again under Pending Shares. VaultSync never moves, recreates, or deletes folders on its own.";
 "Follow the recovery steps shown with the affected vault — rescanning cannot fix a vault folder that was moved or deleted." = "Follow the recovery steps shown with the affected vault — rescanning cannot fix a vault folder that was moved or deleted.";
-"Offer “%@” received — accepting…" = "Offer “%@” received — accepting…";
 "Offer “%@” received — connect your Obsidian folder first." = "Offer “%@” received — connect your Obsidian folder first.";
 "Offer “%@” needs your attention. Tap “Finish Setup Later” below to review it on the home screen." = "Offer “%@” needs your attention. Tap “Finish Setup Later” below to review it on the home screen.";
 
@@ -688,10 +637,8 @@
 "Waiting for first sync" = "Waiting for first sync";
 
 /* Onboarding guidance polish (#95) */
-"Device added. Now confirm this iPhone in Syncthing on your computer — a confirmation prompt appears there. Then share your vault to start syncing." = "Device added. Now confirm this iPhone in Syncthing on your computer — a confirmation prompt appears there. Then share your vault to start syncing.";
 "The folder you selected is stored in iCloud Drive. iCloud can keep files as placeholders that are not fully downloaded on this iPhone, which can stall syncing and create conflicts. For reliable syncing, use your vaults under \"On My iPhone\" → \"Obsidian\" and select that folder instead." = "The folder you selected is stored in iCloud Drive. iCloud can keep files as placeholders that are not fully downloaded on this iPhone, which can stall syncing and create conflicts. For reliable syncing, use your vaults under \"On My iPhone\" → \"Obsidian\" and select that folder instead.";
 "Opens the setup checklist." = "Opens the setup checklist.";
-"A vault offer was ignored on this iPhone, so it is not accepted automatically." = "A vault offer was ignored on this iPhone, so it is not accepted automatically.";
 "Open \"Ignored shares\" under Pending Shares on the home screen and tap \"Restore Share\". Sharing again from your computer will not create a new offer." = "Open \"Ignored shares\" under Pending Shares on the home screen and tap \"Restore Share\". Sharing again from your computer will not create a new offer.";
 "Camera Unavailable" = "Camera Unavailable";
 "The camera could not be started on this device. Enter the Device ID manually instead — in Syncthing on your computer, choose Actions → Show ID." = "The camera could not be started on this device. Enter the Device ID manually instead — in Syncthing on your computer, choose Actions → Show ID.";
@@ -940,3 +887,52 @@
 "Upload check rate limited — upload unobserved" = "Upload check rate limited — upload unobserved";
 "Upload check unsupported for this exact folder and peer" = "Upload check unsupported for this exact folder and peer";
 "Upload capability unavailable — no upload evidence" = "Upload capability unavailable — no upload evidence";
+"Upload and download checks are unavailable while receive-side changes are disabled. Pairing details remain available for review." = "Upload and download checks are unavailable while receive-side changes are disabled. Pairing details remain available for review.";
+"Conflict Safety Review Required" = "Conflict Safety Review Required";
+"Conflict Safety Status Unavailable" = "Conflict Safety Status Unavailable";
+"Background Sync Stopped for Safety" = "Background Sync Stopped for Safety";
+"Open VaultSync to review the safety issue. Leave conflict copies unchanged while safety recovery is unavailable." = "Open VaultSync to review the safety issue. Leave conflict copies unchanged while safety recovery is unavailable.";
+"Conflict Safety Stop" = "Conflict Safety Stop";
+"Checking Conflict Safety" = "Checking Conflict Safety";
+"Conflict Recovery Unavailable" = "Conflict Recovery Unavailable";
+"Conflict recovery actions are not available in this version." = "Conflict recovery actions are not available in this version.";
+"Review the copies that are still available here. Leave files unchanged; VaultSync cannot run a recovery action in this version." = "Review the copies that are still available here. Leave files unchanged; VaultSync cannot run a recovery action in this version.";
+"Conflict Details" = "Conflict Details";
+"Review Conflicts" = "Review Conflicts";
+"VaultSync keeps receive-capable vaults read-only in this version." = "VaultSync keeps receive-capable vaults read-only in this version.";
+"You can review available status and conflict copies, but receive-side changes and conflict recovery are unavailable." = "You can review available status and conflict copies, but receive-side changes and conflict recovery are unavailable.";
+"If you moved or renamed the folder, move it back to its original place. If it is gone, keep this vault stopped and preserve all remaining copies. New share acceptance is unavailable in this version. VaultSync never moves, recreates, or deletes folders on its own." = "If you moved or renamed the folder, move it back to its original place. If it is gone, keep this vault stopped and preserve all remaining copies. New share acceptance is unavailable in this version. VaultSync never moves, recreates, or deletes folders on its own.";
+"Keep the affected vaults paused and preserve every remaining copy. New share acceptance is unavailable in this version." = "Keep the affected vaults paused and preserve every remaining copy. New share acceptance is unavailable in this version.";
+"A vault offer is available for inspection." = "A vault offer is available for inspection.";
+"Open Pending Shares to inspect the offer details. This version cannot accept it." = "Open Pending Shares to inspect the offer details. This version cannot accept it.";
+"An ignored vault offer remains stored on this iPhone." = "An ignored vault offer remains stored on this iPhone.";
+"Open Pending Shares to inspect its details. No action is available in this version." = "Open Pending Shares to inspect its details. No action is available in this version.";
+"New share acceptance is unavailable in this version." = "New share acceptance is unavailable in this version.";
+"New shared vault offers can be inspected, but not accepted in this version." = "New shared vault offers can be inspected, but not accepted in this version.";
+"Device added. Now confirm this iPhone in Syncthing on your computer — a confirmation prompt appears there. New shared vault offers are inspection-only in this version." = "Device added. Now confirm this iPhone in Syncthing on your computer — a confirmation prompt appears there. New shared vault offers are inspection-only in this version.";
+"VaultSync needs one-time access to your Obsidian folder to inspect local vaults and existing sync status." = "VaultSync needs one-time access to your Obsidian folder to inspect local vaults and existing sync status.";
+"Not syncing in this version — new share offers are inspection-only." = "Not syncing in this version — new share offers are inspection-only.";
+"Set up VaultSync" = "Set up VaultSync";
+"Connect Obsidian and a device here. New shared vault offers are inspection-only in this version." = "Connect Obsidian and a device here. New shared vault offers are inspection-only in this version.";
+"Offer “%@” is available for inspection only. This version cannot accept it." = "Offer “%@” is available for inspection only. This version cannot accept it.";
+"Pending shares are read-only in this version." = "Pending shares are read-only in this version.";
+"You can inspect who shared each offer, but no action is available." = "You can inspect who shared each offer, but no action is available.";
+"Read Only" = "Read Only";
+"No Vaults Syncing" = "No Vaults Syncing";
+"Conflict Inspection Unavailable" = "Conflict Inspection Unavailable";
+"VaultSync cannot verify whether the conflict list is complete." = "VaultSync cannot verify whether the conflict list is complete.";
+"Open conflicts to review any previously visible copies. No recovery action is available." = "Open conflicts to review any previously visible copies. No recovery action is available.";
+"Current File" = "Current File";
+"Conflict Copy" = "Conflict Copy";
+"Added lines are from the conflict copy; removed lines are from the current file." = "Added lines are from the conflict copy; removed lines are from the current file.";
+"(empty)" = "(empty)";
+"This copy is unavailable for inspection." = "This copy is unavailable for inspection.";
+"Conflict inspection is unavailable." = "Conflict inspection is unavailable.";
+"VaultSync cannot verify whether the conflict list is complete. Previously visible copies remain shown for review." = "VaultSync cannot verify whether the conflict list is complete. Previously visible copies remain shown for review.";
+"Vault Folder Needs Manual Recovery" = "Vault Folder Needs Manual Recovery";
+"VaultSync can no longer verify the configured vault folder." = "VaultSync can no longer verify the configured vault folder.";
+"Keep this vault stopped and preserve every remaining copy. Restore the original folder at its original location; VaultSync will not move or re-point it automatically." = "Keep this vault stopped and preserve every remaining copy. Restore the original folder at its original location; VaultSync will not move or re-point it automatically.";
+"Vault configured" = "Vault configured";
+"At least one Send Only vault can continue uploading local changes." = "At least one Send Only vault can continue uploading local changes.";
+"Existing receive-capable vaults are available for review only in this version." = "Existing receive-capable vaults are available for review only in this version.";
+"Open VaultSync to inspect device and folder configuration. New share acceptance is unavailable in this version." = "Open VaultSync to inspect device and folder configuration. New share acceptance is unavailable in this version.";

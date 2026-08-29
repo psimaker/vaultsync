@@ -1,8 +1,8 @@
 # Sync Filters — UX Spec
 
 > **Internal design reference — not user documentation.** This captures the rationale, layout, and trade-offs behind the Sync Filters feature for maintainers extending it.
-> Status: **implemented** (issue [#1](https://github.com/psimaker/vaultsync/issues/1), shipped in v1.2.0; Conflict→Skip extended to Skip Family in v1.3.2, issue [#8](https://github.com/psimaker/vaultsync/issues/8); automatic `.obsidian` conflict resolution added in v1.7.0 and retired under issue [#145](https://github.com/psimaker/vaultsync/issues/145), §6.6; multi-line paste + order-preserving filter writes in v1.7.1, issue [#43](https://github.com/psimaker/vaultsync/issues/43), §6.7). Current shipped app: v2.0.1.
-> Last updated: 2026-08-16
+> Status: **implemented** (issue [#1](https://github.com/psimaker/vaultsync/issues/1), shipped in v1.2.0; Conflict→Skip extended to Skip Family in v1.3.2, issue [#8](https://github.com/psimaker/vaultsync/issues/8); automatic `.obsidian` conflict resolution added in v1.7.0 and retired under issue [#145](https://github.com/psimaker/vaultsync/issues/145), §6.6; the still-open fail-closed release requirement is tracked under issues [#150](https://github.com/psimaker/vaultsync/issues/150) and [#167](https://github.com/psimaker/vaultsync/issues/167), §6 and §6.6; multi-line paste + order-preserving filter writes in v1.7.1, issue [#43](https://github.com/psimaker/vaultsync/issues/43), §6.7). Current shipped app: v2.0.1.
+> Last updated: 2026-08-28
 
 This document is the design reference for the Sync Filters feature — the UI for excluding files and folders from sync requested in issue #1 by @vitaly74. It captures the rationale behind the layout, preset catalog, migration path, and multi-vault behavior; refer to it when extending or modifying the feature.
 
@@ -10,7 +10,7 @@ This document is the design reference for the Sync Filters feature — the UI fo
 
 ## 1. Why
 
-The Syncthing engine already supports per-folder ignore patterns via `.stignore` files. VaultSync's Go bridge already exposes them (`GetFolderIgnores`, `SetFolderIgnores`). What's missing is the **UI** — without it, users can't see, add, or remove patterns from inside the app.
+The Syncthing engine supports per-folder ignore patterns via `.stignore` files, exposed by VaultSync's Go bridge through `GetFolderIgnores` and `SetFolderIgnores`. In 2.0.2, only existing Send Only folders may read or edit Sync Filters; receive-capable and unknown folder modes stop before filter access or mutation.
 
 The goal isn't to expose raw Syncthing pattern syntax. The goal is **"keep this off my iPhone"** in plain language. Most users don't know what a glob pattern is, but they do know that `.git` is taking 45 MB and they don't need it on mobile.
 
@@ -21,13 +21,13 @@ Per-vault, on the existing vault detail screen. A new `Sync Filters` link appear
 ```
 Vault                    (name, path)
 Sync Status              (state, completion, errors)
-Conflicts                (when present)
-► Sync Filters           ← new
+Conflicts                (inspection only when present)
+► Sync Filters           (editable for Send Only only in 2.0.2)
 Shared With              (devices)
-Rescan Vault
+Rescan Vault             (Send Only only in 2.0.2)
 ```
 
-Position is intentional: filters are configuration, sharing/rescan are actions. Right after Conflicts means a user who just resolved a `workspace.json` conflict sees the link to "stop this from happening again" immediately below.
+Position is intentional: filters are configuration, sharing/rescan are actions. Right after Conflicts keeps prevention controls near the copies a user has just inspected, without implying that 2.0.2 can resolve those conflicts.
 
 ## 3. The screen — `IgnorePatternsView`
 
@@ -63,13 +63,13 @@ Position is intentional: filters are configuration, sharing/rescan are actions. 
 
 Five sections, each rendered as a `List` section:
 
-1. **Recommended** — always visible. Workspace state + Trash, both ON by default for new vaults.
+1. **Recommended** — always visible. Workspace state + Trash are preselected in the first-run recommendation sheet; the regular list reflects only patterns actually stored in `.stignore`.
 2. **Found in this vault** — only renders when the vault scan returned results. Shows actual byte size + file count for each detected heavy folder. The scanner checks both the sync folder root and one level deep (the typical "Obsidian root with vault subdirs" layout) and aggregates matches per pattern (e.g. ".git in 3 vaults — 127 MB total"). The most persuasive piece of UI.
 3. **Other presets** — every preset that isn't already in Recommended or Found.
 4. **Custom patterns** — anything in `.stignore` that isn't part of any preset. User can swipe-to-delete or add a new line.
 5. **Footer** — link to the Syncthing pattern docs for power users.
 
-All toggles write through to `.stignore` immediately. No save button.
+For an existing Send Only folder, toggles write through to `.stignore` immediately. There is no save button. Receive-capable and unknown folders expose no filter read or write path in 2.0.2, and their rescan actions remain disabled.
 
 ## 4. Preset catalog
 
@@ -107,40 +107,38 @@ Two presets that the issue thread mentioned but I'm **not** including in the ini
 └─────────────────────────────────────────┘
 ```
 
-Shown the **first time** a user opens a vault's detail screen, per vault. Persisted via a `UserDefaults` array of folder IDs that have been shown.
+Shown the **first time** a user opens an existing Send Only vault's detail screen, per vault. It is not shown for receive-capable or unknown folders. The shown-state is persisted via a `UserDefaults` array of folder IDs.
 
-- **Done** — applies the checked presets/patterns to `.stignore` and dismisses.
+- **Done** — applies the checked presets/patterns to the Send Only folder's `.stignore` and dismisses.
 - **Skip** — dismisses without changing `.stignore`. The folder is still marked as "seen", so the sheet won't reappear.
 - Detected heavy folders are pre-checked but the user can uncheck before applying.
 
-The Recommended set is also auto-applied silently when a new folder is added (so a fresh vault never syncs `workspace.json` even if the user instantly closes the sheet without tapping Done).
+New vault creation and share acceptance are unavailable in 2.0.2. Loading an
+existing folder at startup never writes a filter automatically. For an existing
+Send Only folder, the preselected Recommended set reaches `.stignore` only when
+the user taps **Done**. This avoids a delayed `.stignore` write and scheduled
+scan racing a conflict safety stop; **Skip** remains non-mutating.
 
 ## 6. Conflict → Ignore
 
-In `ConflictDiffView`, a toolbar menu appears (top-right `⋯`):
+Versions before 2.0.2 offered **Always skip on this iPhone** from
+`ConflictDiffView`. That legacy action wrote the original path plus a matching
+`<path>.sync-conflict-*` pattern, removed existing conflict copies, and requested
+a rescan. It could therefore mutate evidence before a byte-preserving recovery
+had been proven.
 
-```text
-⋯ menu
-└─ Always skip on this iPhone
-```
+In 2.0.2 the conflict view is inspection-only in every engine safety state.
+There is no Skip Family menu, confirmation, filter write, conflict removal,
+user-triggered rescan, retry prompt, or success summary. The bridge and manager
+compatibility entry points return the stable path-free recovery-unavailable
+error before accessing the folder or `.stignore`. Normal explicit Sync Filters
+remain available only for Send Only folders; receive-capable and unknown modes
+stop before filter access or mutation.
 
-Tapping it performs a **Skip Family** action (added in v1.3.2, see issue [#8](https://github.com/psimaker/vaultsync/issues/8)):
-
-1. Writes a *pair* of patterns to `.stignore`: the file's exact relative path and a matching `<path>.sync-conflict-*` glob.
-2. Deletes any sync-conflict copies of that file currently on disk.
-3. Rescans the folder and refreshes the conflict cache so the conflict disappears from the home-screen Sync Issues list immediately.
-
-Confirmation alert:
-
-> "`'.obsidian/plugins/dataview/cache.db'` and its conflict copies will no longer sync to this iPhone. You can undo this in Sync Filters."
-
-If existing conflict copies were removed, a second line is appended:
-
-> "2 existing conflict copies were removed."
-
-Reasoning behind the family approach: the v1.2.0 design used an exact-path pattern for predictability, but that left a hole — a fresh `sync-conflict-…` copy with a new timestamp would arrive from the desktop and the conflict reappeared. Pairing the original path with the conflict-copy glob makes "skip" actually mean skip, without sacrificing predictability: the two `.stignore` lines are still plain, no smart-glob heuristics, no hidden state. In the Sync Filters list the pair is presented as a single row with a `+ conflict copies` caption.
-
-The original file itself is **not** deleted from disk — only the conflict-copy variants. Users who later want to revert can swipe-to-delete the row in Sync Filters; both lines are removed atomically.
+Previously recorded filter pairs remain stored and editable in Sync Filters;
+there is no migration or automatic rewrite. Their representation as one row
+with a `+ conflict copies` caption remains unchanged. This preserves an explicit
+past choice without treating it as consent for a new conflict recovery action.
 
 ## 6.5 Multi-vault setups
 
@@ -155,10 +153,10 @@ settings and plugin state that users expect to sync. VaultSync therefore keeps
 these files in the same explicit conflict workflow as notes instead of choosing
 a winner automatically:
 
-- **No app-owned automatic mutation.** Foreground and background sync leave
-  originals and conflict copies unchanged, regardless of their modification
-  times or whether the original is missing. Detected conflicts inside and
-  outside `.obsidian` remain available in the manual conflict UI.
+- **The app-owned automatic resolver is retired.** Foreground and background
+  code no longer invoke VaultSync's former modification-time resolver. This
+  does not claim that the embedded engine retains every copy; the conflict UI
+  shows only copies that are still available when they are read.
 - **Legacy state cannot opt back in.** The historical
   `auto-resolve-state-conflicts-v1` preference remains stored so an update does
   not delete or reset user preferences, but its value is ignored. A persisted
@@ -167,15 +165,35 @@ a winner automatically:
   `AutoResolveStateConflicts` entry point remains as a gomobile compatibility
   no-op and makes no filesystem changes. Foreground and background code do not
   call it.
-- **Manual choices remain available.** Keep This, Keep Other, Keep Both, and
-  Skip Family still run only after the user's explicit decision.
+- **Receive-side sync is read-only in 2.0.2.** Existing send-receive,
+  receive-only, and receive-encrypted folders do not scan, watch, pull, request
+  file data, clean versions, mutate vault bytes or metadata, or mutate their
+  local file index. Authenticated remote indexes may persist Need using only
+  the derived local global/needed flags and resulting count buckets. Send Only
+  retains its existing behavior.
+- **The boundary starts at database open.** Protected folder databases with a
+  pending migration stop before it runs; unknown orphan databases remain
+  untouched, and recognizable schema, identity, alias, or integrity deviations
+  stop before mutation. In supported iOS operation the internal engine database
+  belongs exclusively to the foreground app process; decision 034 records this
+  narrow 2.0.2 trust boundary. External vault editors and atomic-save races stay
+  inside the receive-side protection model.
+- **Explicit recovery is globally unavailable in 2.0.2.** Keep This, Keep Other,
+  Keep Both, Skip Family, and conflict-triggered rescan controls are absent in
+  every safety state. Their ABI-compatible entry points stop before runtime,
+  folder, filter, filesystem, temporary-file, database, or rescan access.
+  A stopped folder is not automatically paused, rewritten, migrated, or
+  reaccepted.
+- **Explicit recovery is a separate design boundary.** The existing path-based
+  actions are not described as lossless recovery: a source or destination can
+  change during a rename, capacity can fail, and independently derived names
+  can collide across peers. A replacement recovery needs separate race,
+  crash-cutpoint, capacity, restart, and two-node-convergence proof before the
+  UI may expose it.
 - **Counts mean files now.** The home banner, vault badges, and notifications
-  count distinct conflicted files instead of conflict copies — with
-  `MaxConflicts: 10` a single churn-prone file used to read as "10 conflicts".
-- **Retention is a separate Syncthing policy.** VaultSync shows conflict copies
-  that Syncthing leaves on disk, but does not guarantee that Syncthing retains
-  any copy indefinitely. This manual-review doctrine does not change
-  Syncthing's own retention or versioning behavior.
+  count distinct conflicted files instead of conflict copies. Saved
+  `MaxConflicts` values remain unchanged, including `0`, positive values, and
+  `-1`, but none can reactivate receive-side mutation in 2.0.2.
 
 ## 6.7 Multi-line paste & order-preserving writes (v1.7.1)
 
@@ -203,19 +221,21 @@ delete button was added.
 ## 7. Migration
 
 For users updating from a current build:
-- The 3 silent default patterns (`.Trash`, `.obsidian/workspace.json`, `.obsidian/workspace-mobile.json`) **stay on disk untouched**.
-- The new derived state automatically shows "Workspace state" and "Trash" as ON.
+- The three previously auto-applied default patterns (`.Trash`, `.obsidian/workspace.json`, `.obsidian/workspace-mobile.json`) **stay on disk untouched**.
+- The derived state shows "Workspace state" and "Trash" as ON only when those patterns are already present.
 - No migration sheet. No disk changes. No surprise.
 
-For new vaults added after this lands:
-- Recommended presets are silently applied (same as before — keeps `workspace.json` from generating immediate conflicts).
-- The first-run sheet appears on first vault-detail open, with Recommended already checked and any scan results pre-checked.
+New vault creation and share acceptance are unavailable in 2.0.2. If a later
+release re-enables either flow, no preset or rescan may be applied by a delayed
+Add, Accept, or startup task; the first-run sheet may write only after explicit
+**Done** consent on an eligible Send Only folder, while **Skip** writes nothing.
 
 ## 8. Naming
 
-Throughout the app:
+In the 2.0.2 app:
 - Section title: **"Sync Filters"**
-- CTAs and copy: **"Skip on this iPhone"**, **"Always skip on this iPhone"**, **"Choose what gets synced to this iPhone"**
+- Send Only filter copy may use **"Choose what gets synced to this iPhone"**.
+- Conflict views contain no Skip or Always Skip action. **"Always skip on this iPhone"** is historical terminology documented only in §6.
 
 Avoiding:
 - "Ignore patterns" — Syncthing-jargon, users don't think in patterns

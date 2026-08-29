@@ -188,7 +188,8 @@ struct DiagnosticsForegroundUploadRuntimeTests {
             uploadSleep: {
                 clock.advance(by: TimeInterval($0))
                 await Task.yield()
-            }
+            },
+            receiveSideReadOnlyRuntimeEnabled: false
         )
         controller.refresh()
         await controller.checkCapability(recordID: record.id)
@@ -196,6 +197,7 @@ struct DiagnosticsForegroundUploadRuntimeTests {
 
         controller.beginForegroundUpload(
             recordID: record.id,
+            receiveSafetyState: { .clear },
             preflight: { _, _, requireEmptySlot in
                 DiagnosticsUploadPreflight(
                     folderID: record.folderID,
@@ -295,6 +297,7 @@ struct DiagnosticsForegroundUploadRuntimeTests {
         await replayController.checkCapability(recordID: record.id)
         replayController.beginForegroundUpload(
             recordID: record.id,
+            receiveSafetyState: { .clear },
             preflight: { _, _, requireEmptySlot in
                 self.validPreflight(
                     record: record,
@@ -343,6 +346,7 @@ struct DiagnosticsForegroundUploadRuntimeTests {
         await lateController.checkCapability(recordID: record.id)
         lateController.beginForegroundUpload(
             recordID: record.id,
+            receiveSafetyState: { .clear },
             preflight: { _, _, requireEmptySlot in
                 self.validPreflight(
                     record: record,
@@ -389,6 +393,7 @@ struct DiagnosticsForegroundUploadRuntimeTests {
         await restartController.checkCapability(recordID: record.id)
         restartController.beginForegroundUpload(
             recordID: record.id,
+            receiveSafetyState: { .clear },
             preflight: { _, _, requireEmptySlot in
                 self.validPreflight(
                     record: record,
@@ -434,6 +439,7 @@ struct DiagnosticsForegroundUploadRuntimeTests {
         await racedController.checkCapability(recordID: record.id)
         racedController.beginForegroundUpload(
             recordID: record.id,
+            receiveSafetyState: { .clear },
             preflight: { _, _, requireEmptySlot in
                 self.validPreflight(
                     record: record,
@@ -491,6 +497,7 @@ struct DiagnosticsForegroundUploadRuntimeTests {
             await rateController.checkCapability(recordID: record.id)
             rateController.beginForegroundUpload(
                 recordID: record.id,
+                receiveSafetyState: { .clear },
                 preflight: { _, _, requireEmptySlot in
                     self.validPreflight(
                         record: record,
@@ -511,6 +518,7 @@ struct DiagnosticsForegroundUploadRuntimeTests {
         await rateController.checkCapability(recordID: record.id)
         rateController.beginForegroundUpload(
             recordID: record.id,
+            receiveSafetyState: { .clear },
             preflight: { _, _, requireEmptySlot in
                 self.validPreflight(
                     record: record,
@@ -551,6 +559,7 @@ struct DiagnosticsForegroundUploadRuntimeTests {
         await timeoutController.checkCapability(recordID: record.id)
         timeoutController.beginForegroundUpload(
             recordID: record.id,
+            receiveSafetyState: { .clear },
             preflight: { _, _, requireEmptySlot in
                 self.validPreflight(
                     record: record,
@@ -594,6 +603,7 @@ struct DiagnosticsForegroundUploadRuntimeTests {
         await rejectedController.checkCapability(recordID: record.id)
         rejectedController.beginForegroundUpload(
             recordID: record.id,
+            receiveSafetyState: { .clear },
             preflight: { _, _, requireEmptySlot in
                 let valid = self.validPreflight(
                     record: record,
@@ -743,7 +753,8 @@ struct DiagnosticsForegroundUploadRuntimeTests {
             uploadSleep: {
                 clock.advance(by: TimeInterval($0))
                 await Task.yield()
-            }
+            },
+            receiveSideReadOnlyRuntimeEnabled: false
         )
     }
 

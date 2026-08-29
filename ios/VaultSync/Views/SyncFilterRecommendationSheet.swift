@@ -13,55 +13,90 @@ struct SyncFilterRecommendationSheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    Text(L10n.tr("Skip these on this iPhone? You can change this anytime in Sync Filters."))
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section(header: Text(L10n.tr("Recommended"))) {
-                    ForEach(IgnorePreset.recommended) { preset in
-                        presetToggle(preset)
-                    }
-                }
-
-                if !detected.isEmpty {
-                    Section(header: Text(L10n.tr("Found in this vault"))) {
-                        ForEach(detected) { item in
-                            detectedToggle(item)
+            Group {
+                if allowsChanges {
+                    List {
+                        Section {
+                            Text(L10n.tr("Skip these on this iPhone? You can change this anytime in Sync Filters."))
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
                         }
+
+                        Section(header: Text(L10n.tr("Recommended"))) {
+                            ForEach(IgnorePreset.recommended) { preset in
+                                presetToggle(preset)
+                            }
+                        }
+
+                        if !detected.isEmpty {
+                            Section(header: Text(L10n.tr("Found in this vault"))) {
+                                ForEach(detected) { item in
+                                    detectedToggle(item)
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    ContentUnavailableView {
+                        Label(safetyError.title, systemImage: "lock.fill")
+                    } description: {
+                        Text(safetyError.message)
+                        Text(safetyError.remediation)
                     }
                 }
             }
             .navigationTitle(L10n.tr("Sync Filters"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button(L10n.tr("Skip")) {
-                        syncthingManager.markRecommendationSheetShown(folderID: folderID)
-                        dismiss()
-                    }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button(L10n.tr("Done")) {
-                        if let err = apply() {
-                            applyErrorMessage = err.message
-                            return
+                if allowsChanges {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button(L10n.tr("Skip")) {
+                            syncthingManager.markRecommendationSheetShown(folderID: folderID)
+                            dismiss()
                         }
-                        syncthingManager.markRecommendationSheetShown(folderID: folderID)
-                        dismiss()
                     }
-                    .bold()
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(L10n.tr("Done")) {
+                            if let err = apply() {
+                                applyErrorMessage = err.message
+                                return
+                            }
+                            syncthingManager.markRecommendationSheetShown(folderID: folderID)
+                            dismiss()
+                        }
+                        .bold()
+                    }
+                } else {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button(L10n.tr("Cancel")) {
+                            applyErrorMessage = nil
+                            dismiss()
+                        }
+                    }
                 }
             }
-            .task { await scan() }
+            .task(id: safetyState) {
+                guard allowsChanges else { return }
+                await scan()
+            }
             .alert(L10n.tr("Could not save filters"), isPresented: errorBinding) {
                 Button(L10n.tr("OK")) { applyErrorMessage = nil }
             } message: {
                 Text(applyErrorMessage ?? "")
             }
         }
+    }
+
+    private var safetyState: ConflictSafetyPolicy.State {
+        syncthingManager.conflictSafetyState(folderID: folderID)
+    }
+
+    private var allowsChanges: Bool {
+        ConflictSafetyPolicy.allowsMutation(for: safetyState)
+    }
+
+    private var safetyError: SyncUserError {
+        SyncUserError.conflictSafetyError(for: safetyState)
     }
 
     private var errorBinding: Binding<Bool> {

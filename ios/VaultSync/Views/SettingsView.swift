@@ -126,7 +126,7 @@ struct SettingsView: View {
         } header: {
             Text(L10n.tr("Conflicts"))
         } footer: {
-            Text(L10n.tr("VaultSync does not automatically choose between conflicting copies in your notes, Obsidian settings, or plugin state. Review each conflict and decide what to keep."))
+            Text(L10n.tr("VaultSync does not automatically choose between conflicting copies in your notes, Obsidian settings, or plugin state. You can inspect each conflict, but recovery actions are unavailable in this version."))
         }
     }
 
@@ -140,7 +140,7 @@ struct SettingsView: View {
         } header: {
             Text(L10n.tr("Notifications"))
         } footer: {
-            Text(L10n.tr("Show a banner when sync conflicts are detected. Turning this off does not affect Cloud Relay or background sync — your vault keeps syncing."))
+            Text(L10n.tr("Show a banner when conflict copies are detected. Turning this off does not affect Cloud Relay, background checks, or Send Only uploads."))
         }
     }
 

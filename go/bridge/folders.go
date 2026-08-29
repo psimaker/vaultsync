@@ -4,6 +4,7 @@ package bridge
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,10 +29,20 @@ type FolderInfo struct {
 	DeviceIDs []string `json:"deviceIDs"`
 }
 
-// AddFolder adds a new folder with SendReceive type.
-// The local device is automatically included in the share list.
-// Returns empty string on success, error message on failure.
+// AddFolder retains the pre-2.0.2 ABI but does not create a folder. It returns
+// the stable, path-free receive-side safety error without inspecting its
+// arguments or mutating filesystem or configuration state (#150).
 func AddFolder(id, label, path string) string {
+	// VaultSync 2.0.2 never creates a receive-capable folder through this ABI.
+	// Keep the signature stable, but stop before path validation, filesystem
+	// creation, config mutation, or runner startup (#150).
+	return conflictRetentionSafetyMarker
+}
+
+// addFolderForTesting retains the validation core for focused bridge tests.
+// Its fixture is send-only so tests cannot bypass the receive-side hard floor.
+// Production code must use the exported inspection-only ABI above.
+func addFolderForTesting(id, label, path string) string {
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -67,7 +78,7 @@ func AddFolder(id, label, path string) string {
 		ID:               id,
 		Label:            label,
 		Path:             path,
-		Type:             config.FolderTypeSendReceive,
+		Type:             config.FolderTypeSendOnly,
 		RescanIntervalS:  defaultRescanIntervalS,
 		FSWatcherEnabled: true,
 		FSWatcherDelayS:  10,
@@ -102,11 +113,12 @@ func RemoveFolder(id string) string {
 
 	// Check if folder exists.
 	folders := stCfg.Folders()
-	if _, exists := folders[id]; !exists {
+	folder, exists := folders[id]
+	if !exists {
 		return "folder not found"
 	}
 
-	waiter, err := stCfg.Modify(func(cfg *config.Configuration) {
+	modify := func(cfg *config.Configuration) {
 		filtered := make([]config.FolderConfiguration, 0, len(cfg.Folders))
 		for _, f := range cfg.Folders {
 			if f.ID != id {
@@ -114,9 +126,14 @@ func RemoveFolder(id string) string {
 			}
 		}
 		cfg.Folders = filtered
-	})
+	}
+	waiter, err := modifyFolderConfiguration(
+		folder,
+		config.NewVaultSyncRemoveFolderCapability(id),
+		modify,
+	)
 	if err != nil {
-		return fmt.Sprintf("modify config: %v", err)
+		return folderConfigurationError(err)
 	}
 	waiter.Wait()
 
@@ -151,7 +168,10 @@ func SetFolderPath(folderID, newPath string) string {
 	folders := stCfg.Folders()
 	folder, exists := folders[folderID]
 	if !exists {
-		return "folder not found"
+		return conflictRetentionSafetyMarker
+	}
+	if receiveSideReadOnlyForFolderType(folder.Type) {
+		return conflictRetentionSafetyMarker
 	}
 
 	// No-op when the path is effectively unchanged — avoids a needless folder
@@ -198,6 +218,10 @@ func SetFolderPath(folderID, newPath string) string {
 	waiter.Wait()
 
 	return ""
+}
+
+func receiveSideReadOnlyForFolderType(folderType config.FolderType) bool {
+	return folderType != config.FolderTypeSendOnly
 }
 
 // verifyFolderMarker returns "" if newPath holds the Syncthing folder marker for
@@ -257,16 +281,21 @@ func SetFolderPaused(folderID string, paused bool) string {
 		return ""
 	}
 
-	waiter, err := stCfg.Modify(func(cfg *config.Configuration) {
+	modify := func(cfg *config.Configuration) {
 		for i := range cfg.Folders {
 			if cfg.Folders[i].ID == folderID {
 				cfg.Folders[i].Paused = paused
 				break
 			}
 		}
-	})
+	}
+	waiter, err := modifyFolderConfiguration(
+		folder,
+		config.NewVaultSyncSetFolderPausedCapability(folderID, paused),
+		modify,
+	)
 	if err != nil {
-		return fmt.Sprintf("modify config: %v", err)
+		return folderConfigurationError(err)
 	}
 	waiter.Wait()
 
@@ -328,6 +357,9 @@ func ShareFolderWithDevice(folderID, deviceID string) string {
 	if !exists {
 		return "folder not found"
 	}
+	if _, exists := stCfg.Devices()[devID]; !exists {
+		return "device not found"
+	}
 
 	for _, d := range folder.Devices {
 		if d.DeviceID == devID {
@@ -335,7 +367,7 @@ func ShareFolderWithDevice(folderID, deviceID string) string {
 		}
 	}
 
-	waiter, err := stCfg.Modify(func(cfg *config.Configuration) {
+	modify := func(cfg *config.Configuration) {
 		for i, f := range cfg.Folders {
 			if f.ID == folderID {
 				cfg.Folders[i].Devices = append(cfg.Folders[i].Devices, config.FolderDeviceConfiguration{
@@ -344,9 +376,14 @@ func ShareFolderWithDevice(folderID, deviceID string) string {
 				break
 			}
 		}
-	})
+	}
+	waiter, err := modifyFolderConfiguration(
+		folder,
+		config.NewVaultSyncShareFolderCapability(folderID, devID),
+		modify,
+	)
 	if err != nil {
-		return fmt.Sprintf("modify config: %v", err)
+		return folderConfigurationError(err)
 	}
 	waiter.Wait()
 
@@ -373,7 +410,19 @@ func UnshareFolderFromDevice(folderID, deviceID string) string {
 		return "cannot unshare from own device"
 	}
 
-	waiter, err := stCfg.Modify(func(cfg *config.Configuration) {
+	folder, exists := stCfg.Folders()[folderID]
+	if !exists {
+		return "folder not found"
+	}
+	if !folderHasConfiguredDevice(folder, devID) {
+		if receiveSideReadOnlyForFolderType(folder.Type) {
+			return conflictRetentionSafetyMarker
+		}
+		// Preserve the existing idempotent SendOnly no-op.
+		return ""
+	}
+
+	modify := func(cfg *config.Configuration) {
 		for i, f := range cfg.Folders {
 			if f.ID == folderID {
 				devices := make([]config.FolderDeviceConfiguration, 0, len(f.Devices))
@@ -386,11 +435,39 @@ func UnshareFolderFromDevice(folderID, deviceID string) string {
 				break
 			}
 		}
-	})
+	}
+	waiter, err := modifyFolderConfiguration(
+		folder,
+		config.NewVaultSyncUnshareFolderCapability(folderID, devID),
+		modify,
+	)
 	if err != nil {
-		return fmt.Sprintf("modify config: %v", err)
+		return folderConfigurationError(err)
 	}
 	waiter.Wait()
 
 	return ""
+}
+
+func modifyFolderConfiguration(folder config.FolderConfiguration, capability config.VaultSyncConfigCapability, modify config.ModifyFunction) (config.Waiter, error) {
+	if receiveSideReadOnlyForFolderType(folder.Type) {
+		return config.ModifyWithVaultSyncCapability(stCfg, capability, modify)
+	}
+	return stCfg.Modify(modify)
+}
+
+func folderConfigurationError(err error) string {
+	if errors.Is(err, config.ErrVaultSyncReceiveSideSafetyStop) {
+		return conflictRetentionSafetyMarker
+	}
+	return fmt.Sprintf("modify config: %v", err)
+}
+
+func folderHasConfiguredDevice(folder config.FolderConfiguration, deviceID protocol.DeviceID) bool {
+	for _, device := range folder.Devices {
+		if device.DeviceID == deviceID {
+			return true
+		}
+	}
+	return false
 }

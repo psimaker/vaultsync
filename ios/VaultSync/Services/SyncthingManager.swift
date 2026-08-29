@@ -131,6 +131,7 @@ final class SyncthingManager {
     private(set) var folders: [FolderInfo] = []
     private(set) var folderStatuses: [String: FolderStatusInfo] = [:]
     private(set) var conflictFiles: [String: [ConflictInfo]] = [:]
+    private(set) var conflictInspectionUnavailableFolderIDs: Set<String> = []
     private(set) var pendingFolders: [PendingFolderInfo] = []
     private(set) var ignoredPendingFolderIDs: Set<String> = []
     /// Folder IDs the user removed on this iPhone. While a peer still shares
@@ -157,7 +158,6 @@ final class SyncthingManager {
     }
 
     private var pollTask: Task<Void, Never>?
-    private var rescanTask: Task<Void, Never>?
     /// True once this externally initiated engine generation has used its one
     /// automatic restart after a detected engine death (#61). Reset by every
     /// external lifecycle transition (`stop`, `resetForRestart`,
@@ -183,18 +183,6 @@ final class SyncthingManager {
     private static let maxSyncActivityItems = 120
     private static let maxFileEventsPerFolderPerPoll = 6
 
-    /// Migration-safe silent auto-apply patterns. Hard-coded to the historical
-    /// set so future changes to `IgnorePreset.recommended` (which can grow or
-    /// shrink over time) do not silently mutate `.stignore` on existing vaults
-    /// during startup auto-merge. The first-run recommendation sheet uses
-    /// `IgnorePreset.recommended` separately for UI defaults — see
-    /// `SyncFilterRecommendationSheet`.
-    private nonisolated static let defaultIgnorePatterns: [String] = [
-        ".Trash",
-        ".obsidian/workspace.json",
-        ".obsidian/workspace-mobile.json",
-    ]
-
     /// Retired preference key from the former automatic last-writer-wins
     /// resolver. Keep the key stable and leave existing values untouched so an
     /// upgrade never rewrites user preferences as part of this safety change.
@@ -210,7 +198,6 @@ final class SyncthingManager {
         false
     }
 
-    private var hasAppliedStartupIgnores = false
     private var activeWidgetSyncStart: Date?
     private var activeWidgetSyncFilesSynced = 0
     private var lastWidgetSyncCompletionTime: Date?
@@ -317,6 +304,44 @@ final class SyncthingManager {
         var id: String { conflictPath }
     }
 
+    struct ConflictInspectionSnapshot: Sendable {
+        let conflicts: [String: [ConflictInfo]]
+        let unavailableFolderIDs: Set<String>
+    }
+
+    /// A verified empty JSON array may remove cached conflicts. Any missing,
+    /// malformed, or explicitly unavailable response preserves the last
+    /// reviewable copies for that active folder and records incomplete
+    /// evidence instead of claiming that no conflicts exist (#150).
+    nonisolated static func mergeConflictInspection(
+        previous: [String: [ConflictInfo]],
+        activeFolderIDs: [String],
+        rawByFolder: [String: String]
+    ) -> ConflictInspectionSnapshot {
+        let activeIDs = Set(activeFolderIDs)
+        var conflicts: [String: [ConflictInfo]] = [:]
+        var unavailable: Set<String> = []
+
+        for folderID in activeIDs.sorted() {
+            guard let raw = rawByFolder[folderID],
+                  let data = raw.data(using: .utf8),
+                  let decoded = try? JSONDecoder().decode([ConflictInfo].self, from: data) else {
+                if let retained = previous[folderID], !retained.isEmpty {
+                    conflicts[folderID] = retained
+                }
+                unavailable.insert(folderID)
+                continue
+            }
+            if !decoded.isEmpty {
+                conflicts[folderID] = decoded
+            }
+        }
+        return ConflictInspectionSnapshot(
+            conflicts: conflicts,
+            unavailableFolderIDs: unavailable
+        )
+    }
+
     struct PendingFolderInfo: Codable, Identifiable, Hashable, Sendable {
         let id: String
         let label: String
@@ -338,6 +363,7 @@ final class SyncthingManager {
         enum Kind: String, Sendable {
             case pathCollision
             case nestedFolders
+            case conflictRetentionSafety
             case folderErrors
             case disconnectedPeers
             case pendingShares
@@ -424,6 +450,93 @@ final class SyncthingManager {
             .filter { $0.value.state == "error" }
             .map(\.key)
             .sorted()
+    }
+
+    nonisolated static func conflictSafetyState(
+        for status: FolderStatusInfo?
+    ) -> ConflictSafetyPolicy.State {
+        guard let status else {
+            return .unknown
+        }
+        return ConflictSafetyPolicy.classify(
+            statusReadable: true,
+            state: status.state,
+            errorReason: status.errorReason,
+            hasRawErrorDetail: status.errorMessage?.isEmpty == false || status.errorPath?.isEmpty == false
+        )
+    }
+
+    /// Combines the immutable 2.0.2 folder-mode policy with live engine
+    /// evidence for receive-capable and unknown modes. Known SendOnly folders
+    /// retain their normal diagnostics; only fixed #150 reasons override that
+    /// mode globally.
+    nonisolated static func effectiveConflictSafetyState(
+        folderType: String?,
+        status: FolderStatusInfo?
+    ) -> ConflictSafetyPolicy.State {
+        let runtimeState = ConflictSafetyPolicy.runtimeState(forFolderType: folderType)
+        if runtimeState == .clear {
+            return ConflictSafetyPolicy.state(forEventReason: status?.errorReason) ?? .clear
+        }
+        return ConflictSafetyPolicy.aggregate([
+            runtimeState,
+            conflictSafetyState(for: status),
+        ])
+    }
+
+    nonisolated static func conflictMutationBlockCode(
+        folderType: String? = nil,
+        cachedStatus: FolderStatusInfo?,
+        liveStatusJSON: String
+    ) -> String? {
+        let cachedState = effectiveConflictSafetyState(
+            folderType: folderType,
+            status: cachedStatus
+        )
+        if let cachedCode = ConflictSafetyPolicy.actionErrorCode(for: cachedState) {
+            return cachedCode
+        }
+
+        guard let data = liveStatusJSON.data(using: .utf8),
+              let liveStatus = try? JSONDecoder().decode(SyncBridgeService.FolderStatusPayload.self, from: data) else {
+            return ConflictSafetyPolicy.actionErrorCode(
+                for: ConflictSafetyPolicy.runtimeState(forFolderType: folderType)
+            )
+        }
+        let liveState = effectiveConflictSafetyState(
+            folderType: folderType,
+            status: FolderStatusInfo(payload: liveStatus)
+        )
+        return ConflictSafetyPolicy.actionErrorCode(for: liveState)
+    }
+
+    func conflictSafetyState(folderID: String) -> ConflictSafetyPolicy.State {
+        let folderType = folders.first(where: { $0.id == folderID })?.type
+        return Self.effectiveConflictSafetyState(
+            folderType: folderType,
+            status: folderStatuses[folderID]
+        )
+    }
+
+    /// Folder mode and live engine evidence jointly authorize receive-side
+    /// work. A missing status after a restart remains unknown for an unknown
+    /// mode, and every receive-capable mode remains stopped even when the
+    /// bridge reports a clear-shaped status. SendOnly keeps its normal status
+    /// diagnostics unless the bridge supplies a fixed #150 reason.
+    var conflictRetentionSafetyFolderIDs: [String] {
+        folders.compactMap { folder in
+            conflictSafetyState(folderID: folder.id) == .stopped ? folder.id : nil
+        }.sorted()
+    }
+
+    var conflictSafetyUnknownFolderIDs: [String] {
+        folders.compactMap { folder in
+            conflictSafetyState(folderID: folder.id) == .unknown ? folder.id : nil
+        }.sorted()
+    }
+
+    var conflictSafetyBlockedFolderIDs: [String] {
+        Array(Set(conflictRetentionSafetyFolderIDs).union(conflictSafetyUnknownFolderIDs)).sorted()
     }
 
     /// When a device's reconnect grace window ends. Disconnects first observed
@@ -514,7 +627,7 @@ final class SyncthingManager {
                     kind: .pathCollision,
                     title: L10n.tr("Two Vaults Are Sharing One Folder"),
                     message: L10n.tr("Two or more vaults sync into the same local folder, so their contents are being mixed together. The affected vaults have been paused to stop further damage."),
-                    remediation: L10n.tr("Remove an affected vault on this iPhone, then accept it again under Pending Shares — it moves into its own folder. If the files are already mixed, restore the clean copy on your computer first."),
+                    remediation: L10n.tr("Keep the affected vaults paused and preserve every remaining copy. New share acceptance is unavailable in this version."),
                     severity: .critical,
                     count: affectedCount,
                     folderID: collisionGroups.flatMap { $0 }.min(),
@@ -539,10 +652,31 @@ final class SyncthingManager {
                     kind: .nestedFolders,
                     title: L10n.tr("One Vault Is Nested Inside Another"),
                     message: L10n.tr("A vault's folder is inside another vault's folder, so the outer vault syncs the inner vault's notes to its own devices. The affected vaults have been paused to stop further mixing."),
-                    remediation: L10n.tr("Select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") as VaultSync's Obsidian directory, then remove the inner vault on this iPhone and accept it again under Pending Shares — it gets its own folder. Only afterwards, delete the leftover copy inside the outer vault on your other devices."),
+                    remediation: L10n.tr("Keep the affected vaults paused and preserve every remaining copy. New share acceptance is unavailable in this version."),
                     severity: .critical,
                     count: nestedIDs.count,
                     folderID: nestedIDs.min(),
+                    deviceID: nil
+                )
+            )
+        }
+
+        let conflictSafetyBlockedIDs = conflictSafetyBlockedFolderIDs
+        let specificIntegrityErrorIDs = Set(conflictSafetyBlockedIDs.filter {
+            recognizableProtectedIntegrityError(folderID: $0) != nil
+        })
+        for folderID in conflictSafetyBlockedIDs where !specificIntegrityErrorIDs.contains(folderID) {
+            let state = conflictSafetyState(folderID: folderID)
+            let safetyError = SyncUserError.conflictSafetyError(for: state)
+            issues.append(
+                SyncIssueItem(
+                    kind: .conflictRetentionSafety,
+                    title: safetyError.title,
+                    message: safetyError.message,
+                    remediation: safetyError.remediation,
+                    severity: .critical,
+                    count: 1,
+                    folderID: folderID,
                     deviceID: nil
                 )
             )
@@ -553,7 +687,10 @@ final class SyncthingManager {
         // double-listing them with the generic (and, for them, useless)
         // "rescan failed vaults" remediation.
         let unreachableIDs = Set(unreachableFolders.map(\.id))
-        let erroredFolderIDs = folderIDsWithErrors.filter { !unreachableIDs.contains($0) }
+        let erroredFolderIDs = folderIDsWithErrors.filter {
+            !unreachableIDs.contains($0)
+                && (!conflictSafetyBlockedIDs.contains($0) || specificIntegrityErrorIDs.contains($0))
+        }
         if !erroredFolderIDs.isEmpty {
             let count = erroredFolderIDs.count
             issues.append(
@@ -591,37 +728,42 @@ final class SyncthingManager {
             )
         }
 
-        let pendingCount = actionablePendingFolders.count
-        if pendingCount > 0 {
-            issues.append(
-                SyncIssueItem(
-                    kind: .pendingShares,
-                    title: pendingCount == 1 ? L10n.tr("1 Pending Share Needs Attention") : L10n.fmt("%d Pending Shares Need Attention", pendingCount),
-                    message: L10n.tr("Pending shares are waiting to be accepted before sync can start."),
-                    remediation: L10n.tr("Accept a share to activate syncing for that vault."),
-                    severity: .warning,
-                    count: pendingCount,
-                    folderID: actionablePendingFolders.first?.id,
-                    deviceID: actionablePendingFolders.first?.offeredBy.first?.deviceID
-                )
-            )
+        // Conflict review remains read-only and available even when the folder
+        // is safety-stopped or its status evidence is incomplete (#150).
+        let reviewableConflictFiles = conflictFiles.filter { !$0.value.isEmpty }
+        let reviewableConflictCount = reviewableConflictFiles.values.reduce(0) {
+            $0 + Set($1.map(\.originalPath)).count
         }
-
-        if unresolvedConflictCount > 0 {
-            let firstFolderID = conflictFiles
-                .filter { !$0.value.isEmpty }
+        if reviewableConflictCount > 0 {
+            let firstFolderID = reviewableConflictFiles
                 .sorted(by: { $0.key < $1.key })
                 .first?
                 .key
             issues.append(
                 SyncIssueItem(
                     kind: .conflicts,
-                    title: unresolvedConflictCount == 1 ? L10n.tr("1 Conflict Needs Resolution") : L10n.fmt("%d Conflicts Need Resolution", unresolvedConflictCount),
-                    message: L10n.tr("Conflicts mean multiple versions exist and need a manual decision."),
-                    remediation: L10n.tr("Open conflicts and choose which version to keep."),
+                    title: reviewableConflictCount == 1 ? L10n.tr("1 Conflict Available for Review") : L10n.fmt("%d Conflicts Available for Review", reviewableConflictCount),
+                    message: L10n.tr("A separate conflict copy was detected for a file."),
+                    remediation: L10n.tr("Open conflicts to see which copies are still available. Recovery actions are unavailable."),
                     severity: .warning,
-                    count: unresolvedConflictCount,
+                    count: reviewableConflictCount,
                     folderID: firstFolderID,
+                    deviceID: nil
+                )
+            )
+        }
+
+        if !conflictInspectionUnavailableFolderIDs.isEmpty {
+            let count = conflictInspectionUnavailableFolderIDs.count
+            issues.append(
+                SyncIssueItem(
+                    kind: .conflicts,
+                    title: L10n.tr("Conflict Inspection Unavailable"),
+                    message: L10n.tr("VaultSync cannot verify whether the conflict list is complete."),
+                    remediation: L10n.tr("Open conflicts to review any previously visible copies. No recovery action is available."),
+                    severity: .warning,
+                    count: count,
+                    folderID: conflictInspectionUnavailableFolderIDs.sorted().first,
                     deviceID: nil
                 )
             )
@@ -655,11 +797,11 @@ final class SyncthingManager {
 
         let severity: SyncIssueSeverity
         switch outcome.result {
-        case .bridgeStartFailed, .noBookmarkAccess, .failed:
+        case .bridgeStartFailed, .noBookmarkAccess, .failed, .settledWithFolderError:
             severity = .critical
         case .noFoldersConfigured, .notIdleBeforeDeadline:
             severity = .warning
-        case .synced, .alreadyIdle, .settledWithFolderError:
+        case .synced, .alreadyIdle:
             return nil
         }
 
@@ -832,6 +974,7 @@ final class SyncthingManager {
         folders = []
         folderStatuses = [:]
         conflictFiles = [:]
+        conflictInspectionUnavailableFolderIDs = []
         pendingFolders = []
         // New generation: accepts hold until the next start's reconcile
         // completes, and a still-running reconcile's late outcome is ignored
@@ -866,19 +1009,11 @@ final class SyncthingManager {
 
     // MARK: - Folder management
 
-    /// Add a new folder.
+    /// Retained facade for the existing add-folder API. The bridge creates a
+    /// receive-capable folder, which is read-only in 2.0.2, so return before
+    /// bridge, refresh, marker, scan, or persistence work (#150).
     func addFolder(id: String, label: String, path: String) -> String? {
-        let result = SyncBridgeService.addFolder(id: id, label: label, path: path)
-        if result == nil {
-            refreshFolders()
-            let folderID = id
-            Task.detached {
-                try? await Task.sleep(for: .seconds(2))
-                guard !Task.isCancelled else { return }
-                Self.applyDefaultIgnoresIfNeeded(folderID: folderID)
-            }
-        }
-        return result
+        "vaultsync-conflict-retention-safety-stop"
     }
 
     /// Remove a folder by ID.
@@ -927,7 +1062,95 @@ final class SyncthingManager {
 
     /// Trigger a rescan of a folder.
     func rescanFolder(id: String) -> String? {
-        SyncBridgeService.rescanFolder(folderID: id)
+        if let errorCode = conflictMutationBlockCode(folderID: id) {
+            return errorCode
+        }
+        return SyncBridgeService.rescanFolder(folderID: id)
+    }
+
+    enum ForegroundRescanResult: Equatable, Sendable {
+        case triggered
+        case blocked(String)
+        case failed(String)
+    }
+
+    nonisolated static func defaultForegroundRescanTargetFolderIDs(
+        _ configuredFolders: [FolderInfo]
+    ) -> [String] {
+        configuredFolders.compactMap { folder in
+            ConflictSafetyPolicy.runtimeState(forFolderType: folder.type) == .clear
+                ? folder.id
+                : nil
+        }.sorted()
+    }
+
+    var foregroundRescanEligibleFolderIDs: [String] {
+        Self.defaultForegroundRescanTargetFolderIDs(folders)
+    }
+
+    /// Runs a complete read-only safety pass before the first foreground
+    /// rescan, then rechecks the exact folder at its mutation gate (#150).
+    nonisolated static func performForegroundRescans(
+        configuredFolders: [FolderInfo],
+        targetFolderIDs: [String],
+        statusJSON: (_ folderID: String) -> String,
+        rescan: (_ folderID: String) -> String?
+    ) -> ForegroundRescanResult {
+        let configuredIDs = configuredFolders.map(\.id)
+        guard !targetFolderIDs.isEmpty,
+              Set(configuredIDs).count == configuredIDs.count,
+              Set(targetFolderIDs).count == targetFolderIDs.count,
+              configuredIDs.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }),
+              targetFolderIDs.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
+            return .blocked(ConflictSafetyPolicy.engineStopMarker)
+        }
+        let foldersByID = Dictionary(uniqueKeysWithValues: configuredFolders.map { ($0.id, $0) })
+        guard targetFolderIDs.allSatisfy({ foldersByID[$0] != nil }) else {
+            return .blocked(ConflictSafetyPolicy.engineStopMarker)
+        }
+        let orderedFolderIDs = targetFolderIDs.sorted()
+
+        // Folder type is checked before the first status read or bridge call.
+        // Receive-capable targets stop the entire requested operation, while a
+        // receive sibling cannot suppress an explicitly send-only request.
+        for folderID in orderedFolderIDs {
+            let runtimeState = ConflictSafetyPolicy.runtimeState(
+                forFolderType: foldersByID[folderID]?.type
+            )
+            if let code = ConflictSafetyPolicy.actionErrorCode(for: runtimeState) {
+                return .blocked(code)
+            }
+        }
+
+        func blockCode(folderID: String) -> String? {
+            let encodedStatus = statusJSON(folderID)
+            guard let data = encodedStatus.data(using: .utf8),
+                  let status = try? JSONDecoder().decode(SyncBridgeService.FolderStatusPayload.self, from: data) else {
+                // The configured type is the SendOnly authorization boundary.
+                // Ordinary or temporarily unreadable status must not disable
+                // that mode's established repair rescan; the bridge repeats
+                // the hard-floor check at the mutation ABI.
+                return nil
+            }
+            let state = ConflictSafetyPolicy.state(forEventReason: status.errorReason) ?? .clear
+            return ConflictSafetyPolicy.actionErrorCode(for: state)
+        }
+
+        for folderID in orderedFolderIDs {
+            if let code = blockCode(folderID: folderID) {
+                return .blocked(code)
+            }
+        }
+
+        for folderID in orderedFolderIDs {
+            if let code = blockCode(folderID: folderID) {
+                return .blocked(code)
+            }
+            if let error = rescan(folderID) {
+                return .failed(error)
+            }
+        }
+        return .triggered
     }
 
     /// Trigger a foreground sync using the same rescan path as the main UI.
@@ -940,6 +1163,17 @@ final class SyncthingManager {
 
         Task {
             await performForegroundSyncRequest(folderID: folderID)
+        }
+    }
+
+    func triggerForegroundSync(folderIDs: [String]) {
+        guard !isAnySyncing else {
+            logger.info("Ignoring sync request because a sync is already in progress")
+            return
+        }
+
+        Task {
+            await performForegroundSyncRequest(folderIDs: folderIDs)
         }
     }
 
@@ -956,62 +1190,37 @@ final class SyncthingManager {
 
     // MARK: - Conflict management
 
-    /// Resolve a conflict file. Returns nil on success.
-    func resolveConflict(folderID: String, conflictFileName: String, keepConflict: Bool) -> String? {
-        let result = SyncBridgeService.resolveConflict(
-            folderID: folderID,
-            conflictFileName: conflictFileName,
-            keepConflict: keepConflict
+    private func conflictMutationBlockCode(folderID: String) -> String? {
+        let folderType = folders.first(where: { $0.id == folderID })?.type
+        return Self.conflictMutationBlockCode(
+            folderType: folderType,
+            cachedStatus: folderStatuses[folderID],
+            liveStatusJSON: SyncBridgeService.getFolderStatusJSON(folderID: folderID)
         )
-        if result == nil {
-            refreshConflicts()
-        }
-        return result
     }
 
-    /// Keep both versions by renaming the conflict file. Returns (nil, newPath) on success, or (error, nil) on failure.
+    /// Retained Swift facade for the stable gomobile conflict ABI.
+    ///
+    /// Conflict recovery is intentionally unavailable in 2.0.2. Return the
+    /// fixed path-free error before reading status or reaching an older
+    /// framework that may still contain the retired mutating implementation.
+    func resolveConflict(folderID: String, conflictFileName: String, keepConflict: Bool) -> String? {
+        "vaultsync-conflict-recovery-unavailable"
+    }
+
+    /// Retained Swift facade for the stable gomobile conflict ABI. No name is
+    /// derived and no bridge call is made while recovery is unavailable.
     func keepBothConflict(folderID: String, conflict: ConflictInfo) -> (error: String?, newPath: String?) {
-        let result = SyncBridgeService.keepBothConflict(folderID: folderID, conflictFileName: conflict.conflictPath)
-        if result == nil {
-            refreshConflicts()
-            let url = URL(fileURLWithPath: conflict.originalPath)
-            let ext = url.pathExtension
-            let base = url.deletingPathExtension().path
-            let newPath = ext.isEmpty ? "\(base).conflict-\(conflict.deviceShortID)" : "\(base).conflict-\(conflict.deviceShortID).\(ext)"
-            return (nil, newPath)
-        }
-        return (result, nil)
+        ("vaultsync-conflict-recovery-unavailable", nil)
     }
 
     // MARK: - Pending folder shares
 
-    /// Accept a pending folder offer. Creates the folder locally and shares with offering devices.
-    /// `allowNonEmpty` carries the user's explicit merge confirmation (or a
-    /// recorded manual target, #52) through to the Go hard floor (#54).
+    /// Retained facade for pending-share ABI compatibility. Every accepted
+    /// offer is receive-capable, so 2.0.2 returns before bridge, folder-list,
+    /// removed-state, sidecar, scan, or persistence work (#150).
     func acceptPendingFolder(folderID: String, label: String, path: String, allowNonEmpty: Bool) -> String? {
-        let result = SyncBridgeService.acceptPendingFolder(folderID: folderID, label: label, path: path, allowNonEmpty: allowNonEmpty)
-        if result == nil {
-            // An explicit accept supersedes an earlier removal — lift the
-            // auto-accept suppression for this folder ID (#52).
-            if userRemovedFolderIDs.contains(folderID) {
-                userRemovedFolderIDs.remove(folderID)
-                persistUserRemovedFolderIDs()
-            }
-            refreshFolders()
-            refreshPendingFolders()
-            // Trigger a rescan after a short delay to kick-start initial sync.
-            // The delay gives Syncthing time to initialize the folder model
-            // before we request the scan.
-            let id = folderID
-            rescanTask?.cancel()
-            rescanTask = Task.detached {
-                try? await Task.sleep(for: .seconds(2))
-                guard !Task.isCancelled else { return }
-                Self.applyDefaultIgnoresIfNeeded(folderID: id)
-                _ = SyncBridgeService.rescanFolder(folderID: id)
-            }
-        }
-        return result
+        "vaultsync-conflict-retention-safety-stop"
     }
 
     // MARK: - Device rename
@@ -1038,6 +1247,7 @@ final class SyncthingManager {
         folders = []
         folderStatuses = [:]
         conflictFiles = [:]
+        conflictInspectionUnavailableFolderIDs = []
         pendingFolders = []
         // New generation, same as stop(): the restarted engine's paths count
         // as unsettled until its own reconcile completes (#56).
@@ -1087,27 +1297,6 @@ final class SyncthingManager {
             // share accept indefinitely, because a scene return over a
             // running engine (`alreadyAttached`) never fires one.
             reconcileFolderPaths(obsidianRoot: lastReconcileObsidianRoot)
-        }
-    }
-
-    // MARK: - Default ignore patterns
-
-    /// Apply default .stignore patterns for an Obsidian vault folder.
-    ///
-    /// Delegates the read-merge-write to the Go bridge's `EnsureDefaultIgnores`,
-    /// which distinguishes "no .stignore yet" (safe to create) from "could not
-    /// read .stignore" (transient error) and aborts on the latter. A naive
-    /// Swift-side read could see a momentary empty/unreadable result and
-    /// overwrite a populated `.stignore` with just the defaults — this avoids
-    /// that data-loss path entirely.
-    /// `nonisolated` so callers can run the bridge read-merge-write off the main
-    /// actor — it touches no main-actor state, only the bridge and the logger.
-    private nonisolated static func applyDefaultIgnoresIfNeeded(folderID: String) {
-        guard let data = try? JSONEncoder().encode(defaultIgnorePatterns),
-              let json = String(data: data, encoding: .utf8) else { return }
-
-        if SyncBridgeService.ensureDefaultIgnores(folderID: folderID, defaultsJSON: json) != nil {
-            logger.warning("Failed to ensure default ignore rules")
         }
     }
 
@@ -1161,18 +1350,6 @@ final class SyncthingManager {
             applyDeviceList(decoded)
         }
 
-        // One-time check: apply default .stignore patterns for existing folders.
-        if !hasAppliedStartupIgnores && !folders.isEmpty {
-            hasAppliedStartupIgnores = true
-            let folderIDs = folders.map(\.id)
-            Task.detached {
-                try? await Task.sleep(for: .seconds(3))
-                for id in folderIDs {
-                    Self.applyDefaultIgnoresIfNeeded(folderID: id)
-                }
-            }
-        }
-
         if let data = snapshot.2.data(using: .utf8),
            let decoded = try? JSONDecoder().decode([PendingFolderInfo].self, from: data) {
             pendingFolders = decoded
@@ -1199,31 +1376,36 @@ final class SyncthingManager {
                 return (device.deviceID, displayName)
             }
         )
-        appendActivityEvents(
-            bridgeEvents,
-            folderNamesByID: folderNameByID,
-            deviceNamesByID: deviceNameByID
-        )
-
         // Folder statuses + conflicts need the current folder list.
         let currentFolders = folders
         let statusSnapshot = await Task.detached {
             var statuses: [String: FolderStatusInfo] = [:]
-            var conflicts: [String: Data] = [:]
+            var conflicts: [String: String] = [:]
             for folder in currentFolders {
                 if let status = SyncBridgeService.getFolderStatus(folderID: folder.id) {
                     statuses[folder.id] = FolderStatusInfo(payload: status)
                 }
-                let cJSON = SyncBridgeService.getConflictFilesJSON(folderID: folder.id)
-                if let d = cJSON.data(using: .utf8) {
-                    conflicts[folder.id] = d
-                }
+                conflicts[folder.id] = SyncBridgeService.getConflictFilesJSON(folderID: folder.id)
             }
             return (statuses, conflicts)
         }.value
 
         let previousStatuses = folderStatuses
         let newStatuses = statusSnapshot.0
+        let safetyStates = Dictionary(
+            uniqueKeysWithValues: currentFolders.map {
+                ($0.id, Self.effectiveConflictSafetyState(
+                    folderType: $0.type,
+                    status: newStatuses[$0.id]
+                ))
+            }
+        )
+        appendActivityEvents(
+            bridgeEvents,
+            folderNamesByID: folderNameByID,
+            deviceNamesByID: deviceNameByID,
+            folderSafetyStates: safetyStates
+        )
         updateWidgetSyncMetrics(previousStatuses: previousStatuses, newStatuses: newStatuses)
         updateSyncHistory(
             newStatuses: newStatuses,
@@ -1235,22 +1417,22 @@ final class SyncthingManager {
         )
         folderStatuses = newStatuses
 
-        var newConflicts: [String: [ConflictInfo]] = [:]
-        for (id, data) in statusSnapshot.1 {
-            if let decoded = try? JSONDecoder().decode([ConflictInfo].self, from: data), !decoded.isEmpty {
-                newConflicts[id] = decoded
-            }
+        let conflictSnapshot = Self.mergeConflictInspection(
+            previous: conflictFiles,
+            activeFolderIDs: currentFolders.map(\.id),
+            rawByFolder: statusSnapshot.1
+        )
+        conflictFiles = conflictSnapshot.conflicts
+        conflictInspectionUnavailableFolderIDs = conflictSnapshot.unavailableFolderIDs
+        if conflictSnapshot.unavailableFolderIDs.isEmpty {
+            BackgroundSyncService.reconcileConflictNotificationBaseline(currentCount: unresolvedConflictCount)
         }
-        conflictFiles = newConflicts
-        BackgroundSyncService.reconcileConflictNotificationBaseline(currentCount: unresolvedConflictCount)
         writeWidgetSnapshotIfNeeded()
     }
 
     private func stopPolling() {
         pollTask?.cancel()
         pollTask = nil
-        rescanTask?.cancel()
-        rescanTask = nil
     }
 
     private func refreshBackgroundSyncOutcome() {
@@ -1345,19 +1527,21 @@ final class SyncthingManager {
     }
 
     private func refreshConflicts() {
-        var allConflicts: [String: [ConflictInfo]] = [:]
-        for folder in folders {
-            let json = SyncBridgeService.getConflictFilesJSON(folderID: folder.id)
-            guard let data = json.data(using: .utf8),
-                  let decoded = try? JSONDecoder().decode([ConflictInfo].self, from: data) else {
-                continue
+        let rawByFolder = Dictionary(
+            uniqueKeysWithValues: folders.map {
+                ($0.id, SyncBridgeService.getConflictFilesJSON(folderID: $0.id))
             }
-            if !decoded.isEmpty {
-                allConflicts[folder.id] = decoded
-            }
+        )
+        let snapshot = Self.mergeConflictInspection(
+            previous: conflictFiles,
+            activeFolderIDs: folders.map(\.id),
+            rawByFolder: rawByFolder
+        )
+        conflictFiles = snapshot.conflicts
+        conflictInspectionUnavailableFolderIDs = snapshot.unavailableFolderIDs
+        if snapshot.unavailableFolderIDs.isEmpty {
+            BackgroundSyncService.reconcileConflictNotificationBaseline(currentCount: unresolvedConflictCount)
         }
-        conflictFiles = allConflicts
-        BackgroundSyncService.reconcileConflictNotificationBaseline(currentCount: unresolvedConflictCount)
     }
 
     private func refreshPendingFolders() {
@@ -1384,7 +1568,8 @@ final class SyncthingManager {
     private func appendActivityEvents(
         _ bridgeEvents: [BridgeEventInfo],
         folderNamesByID: [String: String],
-        deviceNamesByID: [String: String]
+        deviceNamesByID: [String: String],
+        folderSafetyStates: [String: ConflictSafetyPolicy.State]
     ) {
         guard !bridgeEvents.isEmpty else { return }
 
@@ -1398,7 +1583,8 @@ final class SyncthingManager {
             guard let item = makeSyncEventItem(
                 from: event,
                 folderNamesByID: folderNamesByID,
-                deviceNamesByID: deviceNamesByID
+                deviceNamesByID: deviceNamesByID,
+                folderSafetyStates: folderSafetyStates
             ) else {
                 continue
             }
@@ -1464,10 +1650,24 @@ final class SyncthingManager {
     private func makeSyncEventItem(
         from event: BridgeEventInfo,
         folderNamesByID: [String: String],
-        deviceNamesByID: [String: String]
+        deviceNamesByID: [String: String],
+        folderSafetyStates: [String: ConflictSafetyPolicy.State] = [:]
     ) -> SyncEventItem? {
         let data = event.data ?? [:]
         let timestamp = parseBridgeDate(event.time) ?? Date()
+
+        // The fixed reason wins before event type, raw state, folder/name/path,
+        // or success handling. In particular, pathless ItemFinished safety
+        // events must never disappear or become a successful file event.
+        if let safetyState = ConflictSafetyPolicy.state(forEventReason: data["reason"]) {
+            return conflictSafetyEvent(id: event.id, date: timestamp, state: safetyState)
+        }
+        if let folderID = data["folder"],
+           let safetyState = folderSafetyStates[folderID],
+           safetyState != .clear,
+           event.type == "StateChanged" || event.type == "ItemFinished" || event.type == "FolderErrors" {
+            return conflictSafetyEvent(id: event.id, date: timestamp, state: safetyState)
+        }
 
         switch event.type {
         case "StateChanged":
@@ -1623,6 +1823,24 @@ final class SyncthingManager {
         }
     }
 
+    private func conflictSafetyEvent(
+        id: Int,
+        date: Date,
+        state: ConflictSafetyPolicy.State
+    ) -> SyncEventItem {
+        let safetyError = SyncUserError.conflictSafetyError(for: state)
+        return SyncEventItem(
+            id: id,
+            kind: .folderError,
+            date: date,
+            title: safetyError.title,
+            detail: safetyError.message,
+            folderID: nil,
+            deviceID: nil,
+            filePath: nil
+        )
+    }
+
     private func isDuplicateActivity(_ item: SyncEventItem) -> Bool {
         let fingerprint = [
             item.kind.rawValue,
@@ -1697,15 +1915,21 @@ final class SyncthingManager {
         foldersWithConnectedPeer: Set<String>
     ) {
         var didChange = false
+        let folderTypesByID = Dictionary(uniqueKeysWithValues: folders.map { ($0.id, $0.type) })
 
         for (folderID, status) in newStatuses {
             let previousState = previousFolderStates[folderID]
             let hasConnectedPeer = foldersWithConnectedPeer.contains(folderID)
+            let safetyState = Self.effectiveConflictSafetyState(
+                folderType: folderTypesByID[folderID],
+                status: status
+            )
 
             if Self.didTransitionToSuccessfulIdle(
                 previousState: previousState,
                 status: status,
-                hasConnectedPeer: hasConnectedPeer
+                hasConnectedPeer: hasConnectedPeer,
+                safetyState: safetyState
             ) {
                 if upsertLastSyncDate(folderID: folderID, date: Date()) {
                     didChange = true
@@ -1716,7 +1940,8 @@ final class SyncthingManager {
                 status: status,
                 stateChangedAt: parseBridgeDate(status.stateChanged),
                 existingDate: lastSyncTimeByFolder[folderID],
-                hasConnectedPeer: hasConnectedPeer
+                hasConnectedPeer: hasConnectedPeer,
+                safetyState: safetyState
             ),
                let changedAt = parseBridgeDate(status.stateChanged),
                upsertLastSyncDate(folderID: folderID, date: changedAt) {
@@ -1752,11 +1977,13 @@ final class SyncthingManager {
     nonisolated static func didTransitionToSuccessfulIdle(
         previousState: String?,
         status: FolderStatusInfo,
-        hasConnectedPeer: Bool
+        hasConnectedPeer: Bool,
+        safetyState: ConflictSafetyPolicy.State? = nil
     ) -> Bool {
         guard let previousState else { return false }
         let wasActive = previousState == "syncing" || previousState == "scanning"
         guard wasActive, status.state == "idle" else { return false }
+        guard (safetyState ?? conflictSafetyState(for: status)) == .clear else { return false }
         guard hasConnectedPeer else { return false }
         return status.needFiles == 0 && status.errorMessage == nil
     }
@@ -1769,9 +1996,11 @@ final class SyncthingManager {
         status: FolderStatusInfo,
         stateChangedAt: Date?,
         existingDate: Date?,
-        hasConnectedPeer: Bool
+        hasConnectedPeer: Bool,
+        safetyState: ConflictSafetyPolicy.State? = nil
     ) -> Bool {
         guard status.state == "idle" else { return false }
+        guard (safetyState ?? conflictSafetyState(for: status)) == .clear else { return false }
         guard status.needFiles == 0 else { return false }
         guard status.errorMessage == nil else { return false }
         guard hasConnectedPeer else { return false }
@@ -1822,26 +2051,40 @@ final class SyncthingManager {
     }
 
     private func performForegroundSyncRequest(folderID: String?) async {
+        await performForegroundSyncRequest(folderIDs: folderID.map { [$0] })
+    }
+
+    private func performForegroundSyncRequest(folderIDs requestedFolderIDs: [String]?) async {
         if !isRunning {
             await start()
         }
 
-        let normalizedFolderID = folderID?.trimmingCharacters(in: .whitespacesAndNewlines)
         let availableFolders = await waitForFoldersForSyncRequest(maxWait: 3)
 
         let targetFolderIDs: [String]
-        if let normalizedFolderID, !normalizedFolderID.isEmpty {
-            guard availableFolders.contains(where: { $0.id == normalizedFolderID }) else {
-                logger.warning("Ignoring sync request for an unknown folder")
+        if let requestedFolderIDs {
+            let normalized = requestedFolderIDs.map {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            let availableIDs = Set(availableFolders.map(\.id))
+            guard !normalized.isEmpty,
+                  normalized.allSatisfy({ !$0.isEmpty }),
+                  Set(normalized).count == normalized.count,
+                  normalized.allSatisfy(availableIDs.contains) else {
+                logger.warning("Ignoring sync request with invalid folder selection")
                 return
             }
-            targetFolderIDs = [normalizedFolderID]
+            targetFolderIDs = normalized.sorted()
         } else {
             guard !availableFolders.isEmpty else {
                 logger.info("Ignoring sync request because no folders are configured")
                 return
             }
-            targetFolderIDs = availableFolders.map(\.id)
+            targetFolderIDs = Self.defaultForegroundRescanTargetFolderIDs(availableFolders)
+            guard !targetFolderIDs.isEmpty else {
+                logger.info("Ignoring sync request because no SendOnly folders are mutable")
+                return
+            }
         }
 
         guard !isAnySyncing else {
@@ -1849,35 +2092,35 @@ final class SyncthingManager {
             return
         }
 
-        beginWidgetSyncSessionIfNeeded(startDate: Date())
+        let triggerResult = Self.performForegroundRescans(
+            configuredFolders: availableFolders,
+            targetFolderIDs: targetFolderIDs,
+            statusJSON: { SyncBridgeService.getFolderStatusJSON(folderID: $0) },
+            rescan: { SyncBridgeService.rescanFolder(folderID: $0) }
+        )
 
-        var didTriggerSync = false
-        var lastTriggerError: String?
-
-        for id in Array(Set(targetFolderIDs)).sorted() {
-            if let err = rescanFolder(id: id) {
-                lastTriggerError = err
-                logger.error("Foreground sync trigger failed")
-            } else {
-                didTriggerSync = true
-            }
-        }
-
-        if didTriggerSync {
+        switch triggerResult {
+        case .triggered:
+            beginWidgetSyncSessionIfNeeded(startDate: Date())
             error = nil
             userError = nil
             writeWidgetSnapshotIfNeeded(statusOverride: .syncing)
-            return
-        }
-
-        if let lastTriggerError {
-            error = lastTriggerError
+        case let .blocked(code):
+            error = code
             userError = SyncUserError.from(
-                rawMessage: lastTriggerError,
+                rawMessage: code,
                 fallbackTitle: L10n.tr("Could Not Start Sync")
             )
+            completeWidgetSyncSession(status: .error, completedAt: Date())
+        case let .failed(triggerError):
+            logger.error("Foreground sync trigger failed")
+            error = triggerError
+            userError = SyncUserError.from(
+                rawMessage: triggerError,
+                fallbackTitle: L10n.tr("Could Not Start Sync")
+            )
+            completeWidgetSyncSession(status: .error, completedAt: Date())
         }
-        completeWidgetSyncSession(status: .error, completedAt: Date())
     }
 
     private func waitForFoldersForSyncRequest(maxWait: TimeInterval) async -> [FolderInfo] {
@@ -1905,6 +2148,19 @@ final class SyncthingManager {
         if isSyncingNow {
             beginWidgetSyncSessionIfNeeded(startDate: Date())
         } else if wasSyncing || activeWidgetSyncStart != nil {
+            let safetyClear = folders.allSatisfy {
+                Self.effectiveConflictSafetyState(
+                    folderType: $0.type,
+                    status: newStatuses[$0.id]
+                ) == .clear
+            }
+            guard safetyClear else {
+                abandonWidgetSyncSession()
+                writeWidgetSnapshotIfNeeded(
+                    statusOverride: currentWidgetSnapshotStatus(using: newStatuses)
+                )
+                return
+            }
             // Close the session BEFORE deriving the tier: with the session
             // still open, the cascade reports .syncing and the completion
             // write persists a stale snapshot the poll-end write immediately
@@ -1933,11 +2189,16 @@ final class SyncthingManager {
         activeWidgetSyncFilesSynced = 0
     }
 
+    private func abandonWidgetSyncSession() {
+        activeWidgetSyncStart = nil
+        activeWidgetSyncFilesSynced = 0
+    }
+
     private func completeWidgetSyncSession(
         status: SyncStatus,
-        completedAt: Date
+        completedAt _: Date
     ) {
-        finalizeWidgetSyncSession(completedAt: completedAt)
+        abandonWidgetSyncSession()
         writeWidgetSnapshotIfNeeded(statusOverride: status)
     }
 
@@ -1951,10 +2212,25 @@ final class SyncthingManager {
     private func currentWidgetSnapshotStatus(
         using statuses: [String: FolderStatusInfo]? = nil
     ) -> SyncStatus {
+        let usesFreshStatuses = statuses != nil
         let statuses = statuses ?? folderStatuses
 
-        var severities = unresolvedIssues.map(\.severity)
+        // During a poll, `unresolvedIssues` still reflects the previously
+        // published statuses. Replace only its safety tier with the supplied
+        // fresh snapshot so an old unknown cannot mask a newly verified clear
+        // status (and a new stop can never wait until the next write).
+        var severities = unresolvedIssues.compactMap {
+            usesFreshStatuses && $0.kind == .conflictRetentionSafety ? nil : $0.severity
+        }
         if statuses.values.contains(where: { $0.state == "error" }) {
+            severities.append(.critical)
+        }
+        if folders.contains(where: {
+            Self.effectiveConflictSafetyState(
+                folderType: $0.type,
+                status: statuses[$0.id]
+            ) != .clear
+        }) {
             severities.append(.critical)
         }
 
@@ -2020,11 +2296,53 @@ final class SyncthingManager {
     }
 
     func folderUserError(folderID: String) -> SyncUserError? {
+        if let integrityError = recognizableProtectedIntegrityError(folderID: folderID) {
+            return integrityError
+        }
+        let safetyState = conflictSafetyState(folderID: folderID)
+        if safetyState != .clear {
+            return SyncUserError.conflictSafetyError(for: safetyState)
+        }
         guard let status = folderStatuses[folderID], status.state == "error" else { return nil }
         return SyncUserError.fromFolderStatus(
             reason: status.errorReason,
             message: status.errorMessage,
             path: status.errorPath
+        )
+    }
+
+    private func recognizableProtectedIntegrityError(folderID: String) -> SyncUserError? {
+        let folderType = folders.first(where: { $0.id == folderID })?.type
+        guard ConflictSafetyPolicy.runtimeState(forFolderType: folderType) != .clear,
+              let status = folderStatuses[folderID],
+              status.state == "error" else {
+            return nil
+        }
+
+        let mapped = SyncUserError.fromFolderStatus(
+            reason: status.errorReason,
+            message: status.errorMessage,
+            path: nil
+        )
+        if mapped.category == .folderMarkerMissing {
+            return mapped
+        }
+
+        let pathReasons: Set<String> = [
+            "permission_denied",
+            "folder_path_missing",
+            "folder_path_invalid",
+            "folder_path_unreadable",
+        ]
+        guard let reason = status.errorReason?.lowercased(), pathReasons.contains(reason) else {
+            return nil
+        }
+        return SyncUserError(
+            category: .fileAccess,
+            title: L10n.tr("Vault Folder Needs Manual Recovery"),
+            message: L10n.tr("VaultSync can no longer verify the configured vault folder."),
+            remediation: L10n.tr("Keep this vault stopped and preserve every remaining copy. Restore the original folder at its original location; VaultSync will not move or re-point it automatically."),
+            technicalDetails: nil
         )
     }
 
@@ -2035,7 +2353,12 @@ final class SyncthingManager {
     /// guidance (#65).
     var hasRescanableFolderErrors: Bool {
         folderIDsWithErrors.contains { id in
-            folderUserError(folderID: id)?.category != .folderMarkerMissing
+            guard let type = folders.first(where: { $0.id == id })?.type,
+                  ConflictSafetyPolicy.runtimeState(forFolderType: type) == .clear else {
+                return false
+            }
+            guard let category = folderUserError(folderID: id)?.category else { return false }
+            return category != .folderMarkerMissing && category != .conflictRetentionSafetyStop
         }
     }
 
@@ -2064,6 +2387,9 @@ final class SyncthingManager {
         ]
         let rel = FolderPathReconciler.loadRel()
         return folders.compactMap { folder in
+            guard ConflictSafetyPolicy.runtimeState(forFolderType: folder.type) == .clear else {
+                return nil
+            }
             guard let status = folderStatuses[folder.id], status.state == "error",
                   let reason = status.errorReason, pathErrorReasons.contains(reason)
             else { return nil }
@@ -2150,6 +2476,11 @@ final class SyncthingManager {
         SyncUserError.from(rawMessage: L10n.tr("Could not read current sync filters. Please try again."))
     }
 
+    private func conflictMutationUserError(folderID: String) -> SyncUserError? {
+        guard let code = conflictMutationBlockCode(folderID: folderID) else { return nil }
+        return SyncUserError.from(rawMessage: code)
+    }
+
     /// Read current `.stignore` lines for a folder. Display-friendly: returns
     /// an empty list if the bridge response cannot be parsed. Read-modify-write
     /// flows must use `readIgnorePatternsOrNil` instead.
@@ -2164,6 +2495,9 @@ final class SyncthingManager {
               let json = String(data: data, encoding: .utf8) else {
             return SyncUserError.from(rawMessage: "encoding ignore patterns failed")
         }
+        if let safetyError = conflictMutationUserError(folderID: folderID) {
+            return safetyError
+        }
         if let err = SyncBridgeService.setFolderIgnores(folderID: folderID, ignoresJSON: json) {
             return SyncUserError.from(rawMessage: err)
         }
@@ -2175,6 +2509,9 @@ final class SyncthingManager {
     /// unreadable bridge response can never wipe existing rules.
     @discardableResult
     func togglePreset(_ preset: IgnorePreset, folderID: String, enabled: Bool) -> SyncUserError? {
+        if let safetyError = conflictMutationUserError(folderID: folderID) {
+            return safetyError
+        }
         guard var current = readIgnorePatternsOrNil(folderID: folderID) else {
             return unreadableFiltersError()
         }
@@ -2204,6 +2541,9 @@ final class SyncthingManager {
     /// bridge response can never wipe or reorder existing rules.
     @discardableResult
     func addIgnorePatterns(_ patterns: [String], folderID: String) -> SyncUserError? {
+        if let safetyError = conflictMutationUserError(folderID: folderID) {
+            return safetyError
+        }
         guard var current = readIgnorePatternsOrNil(folderID: folderID) else {
             return unreadableFiltersError()
         }
@@ -2225,6 +2565,9 @@ final class SyncthingManager {
     /// semantically significant, e.g. for `!` un-ignore rules).
     @discardableResult
     func removeIgnorePatterns(_ patterns: [String], folderID: String) -> SyncUserError? {
+        if let safetyError = conflictMutationUserError(folderID: folderID) {
+            return safetyError
+        }
         guard var current = readIgnorePatternsOrNil(folderID: folderID) else {
             return unreadableFiltersError()
         }
@@ -2248,6 +2591,9 @@ final class SyncthingManager {
         detectedPatterns: [String],
         enabledDetectedPatterns: Set<String>
     ) -> SyncUserError? {
+        if let safetyError = conflictMutationUserError(folderID: folderID) {
+            return safetyError
+        }
         guard let existing = readIgnorePatternsOrNil(folderID: folderID) else {
             return unreadableFiltersError()
         }
@@ -2314,55 +2660,16 @@ final class SyncthingManager {
         return "\(parent)/\(glob)"
     }
 
-    /// Perform the full "Always skip on this iPhone" action atomically:
-    ///   1. Add both the original-path pattern and its conflict-copies glob to `.stignore`.
-    ///   2. Remove every existing sync-conflict copy of the original file from disk.
-    ///   3. Trigger a folder rescan so Syncthing's in-memory index reflects the changes.
-    ///   4. Refresh the iOS-side conflict cache so the resolved conflict disappears.
-    /// Returns:
-    ///   - `error`: a user-facing error if ANY step failed (`.stignore` write,
-    ///     conflict-copy cleanup, or rescan). The `.stignore` write may have
-    ///     succeeded even when a later step reported an error — check
-    ///     `removedConflicts` to see how many copies were actually deleted
-    ///     before the failure.
-    ///   - `removedConflicts`: the number of on-disk conflict-copy files that were deleted.
+    /// Retained facade for the former conflict-originated Always Skip flow.
+    /// Recovery is read-only in 2.0.2, so this returns before reading or writing
+    /// `.stignore`, removing conflict copies, requesting a scan, or refreshing
+    /// state. Normal explicit Sync Filters remain available separately.
     @discardableResult
     func skipFileAndCleanupConflicts(folderID: String, originalPath: String) -> (error: SyncUserError?, removedConflicts: Int) {
-        let glob = Self.conflictGlob(forOriginalPath: originalPath)
-
-        guard var current = readIgnorePatternsOrNil(folderID: folderID) else {
-            return (unreadableFiltersError(), 0)
-        }
-        if !current.contains(originalPath) {
-            current.append(originalPath)
-        }
-        if !current.contains(glob) {
-            current.append(glob)
-        }
-        if let err = setIgnorePatterns(folderID: folderID, patterns: current) {
-            return (err, 0)
-        }
-
-        let cleanup = SyncBridgeService.removeConflictFilesForOriginal(
-            folderID: folderID,
-            originalPath: originalPath
+        (
+            SyncUserError.from(rawMessage: "vaultsync-conflict-recovery-unavailable"),
+            0
         )
-        if let cleanupError = cleanup.error {
-            // .stignore write succeeded but on-disk cleanup didn't.
-            // Surface the failure so the user knows the leftover copies
-            // haven't been removed and the home-screen Sync Issues entry
-            // may still flag the file.
-            refreshConflicts()
-            return (SyncUserError.from(rawMessage: cleanupError), cleanup.removed)
-        }
-
-        if let rescanError = SyncBridgeService.rescanFolder(folderID: folderID) {
-            refreshConflicts()
-            return (SyncUserError.from(rawMessage: rescanError), cleanup.removed)
-        }
-        refreshConflicts()
-
-        return (nil, cleanup.removed)
     }
 
     // MARK: - Test hooks
@@ -2394,6 +2701,11 @@ final class SyncthingManager {
 
     func _testSetConflictFiles(_ newConflicts: [String: [ConflictInfo]]) {
         conflictFiles = newConflicts
+        conflictInspectionUnavailableFolderIDs = []
+    }
+
+    func _testSetConflictInspectionUnavailableFolderIDs(_ folderIDs: Set<String>) {
+        conflictInspectionUnavailableFolderIDs = folderIDs
     }
 
     func _testSetFolderStatuses(_ newStatuses: [String: FolderStatusInfo]) {
@@ -2402,6 +2714,23 @@ final class SyncthingManager {
 
     func _testSetRunning(_ running: Bool) {
         isRunning = running
+    }
+
+    func _testMakeSyncEventItem(
+        id: Int = 1,
+        type: String,
+        time: String = "2026-08-28T12:00:00Z",
+        data: [String: String],
+        folderNamesByID: [String: String] = [:],
+        deviceNamesByID: [String: String] = [:],
+        folderSafetyStates: [String: ConflictSafetyPolicy.State] = [:]
+    ) -> SyncEventItem? {
+        makeSyncEventItem(
+            from: BridgeEventInfo(id: id, type: type, time: time, relevant: true, data: data),
+            folderNamesByID: folderNamesByID,
+            deviceNamesByID: deviceNamesByID,
+            folderSafetyStates: folderSafetyStates
+        )
     }
 
     func _testUpdateWidgetSyncMetrics(
