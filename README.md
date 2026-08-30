@@ -25,6 +25,18 @@ Your notes sync peer-to-peer over Syncthing, straight into Obsidian's iOS sandbo
 
 ---
 
+> [!IMPORTANT]
+> **VaultSync 2.0.2 is a temporary data-safety containment release.** Vaults
+> created or accepted by VaultSync 1.8.2, 2.0.0, and 2.0.1 are normally
+> Send & Receive. After upgrading, those vaults are frozen: they neither
+> download server changes nor scan and upload new iPhone edits. Existing Send
+> Only folders continue to upload. New vault creation, share acceptance, and
+> conflict recovery are unavailable. Cloud Relay can still wake the app and
+> report status, but cannot download changes into a frozen vault. A previous
+> unclean engine shutdown can also make 2.0.2 refuse to start rather than alter
+> uncertain stored state. VaultSync does not automatically repair or convert a
+> live folder, and does not weaken this safety boundary.
+
 ## 🔭 Why VaultSync
 
 - **Peer-to-peer & private** — syncs directly between your own devices over [Syncthing](https://syncthing.net/). No note cloud, no account, no tracking.

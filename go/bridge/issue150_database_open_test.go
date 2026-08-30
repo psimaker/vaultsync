@@ -29,14 +29,7 @@ func TestIssue150ReceiveReadOnlyBridgeOpenDatabaseRejectsPendingMigrationWithPat
 		}
 	})
 
-	configDir := t.TempDir()
-	dataDir := filepath.Join(configDir, "data")
-	if err := locations.SetBaseDir(locations.ConfigBaseDir, configDir); err != nil {
-		t.Fatalf("set synthetic config base: %v", err)
-	}
-	if err := locations.SetBaseDir(locations.DataBaseDir, dataDir); err != nil {
-		t.Fatalf("set synthetic data base: %v", err)
-	}
+	configDir := testConfigDir(t)
 
 	certificate, err := tlsutil.NewCertificate(
 		locations.Get(locations.CertFile),
@@ -139,14 +132,7 @@ func TestIssue150DatabaseSafetyStopPrecedesConfigUpgradeMutation(t *testing.T) {
 		}
 	})
 
-	configDir := t.TempDir()
-	dataDir := filepath.Join(configDir, "data")
-	if err := locations.SetBaseDir(locations.ConfigBaseDir, configDir); err != nil {
-		t.Fatalf("set config base: %v", err)
-	}
-	if err := locations.SetBaseDir(locations.DataBaseDir, dataDir); err != nil {
-		t.Fatalf("set data base: %v", err)
-	}
+	configDir := testConfigDir(t)
 
 	certificate, err := tlsutil.NewCertificate(
 		locations.Get(locations.CertFile),

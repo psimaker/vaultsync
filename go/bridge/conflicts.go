@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -34,9 +35,13 @@ type ConflictFile struct {
 // Example: notes.sync-conflict-20260406-143022-ABC1234.md
 var conflictPattern = regexp.MustCompile(`^(.+)\.sync-conflict-(\d{8}-\d{6})-([A-Z0-9]{7})(\..+)$`)
 
-// maxConflictScan limits the number of files examined during conflict detection
-// to prevent excessive I/O on very large vaults.
-const maxConflictScan = 10000
+const (
+	// Keep both limits independent: the visit ceiling is the I/O hard bound,
+	// while the collection ceiling bounds the response retained in memory.
+	maxConflictScanVisitedEntries     = 10000
+	maxConflictScanCollectedConflicts = 10000
+	conflictInspectionJSONVersion     = 2
+)
 
 const keepBothTargetExistsError = "keep both target already exists"
 
@@ -95,46 +100,104 @@ func systemKeepBothFileOperations() keepBothFileOperations {
 	}
 }
 
-// GetConflictFilesJSON scans the folder's directory for .sync-conflict-* files.
-// It returns a JSON array only after a complete bounded walk; an unavailable,
-// failed, or truncated inspection returns the stable path-free error instead.
-func GetConflictFilesJSON(folderID string) string {
+type conflictInspectionLimits struct {
+	maxVisitedEntries     int
+	maxCollectedConflicts int
+}
+
+type conflictInspectionWalk func(string, fs.WalkDirFunc) error
+
+type conflictInspectionResultV2 struct {
+	Version   int            `json:"version"`
+	Conflicts []ConflictFile `json:"conflicts"`
+	Complete  bool           `json:"complete"`
+	Error     string         `json:"error,omitempty"`
+}
+
+func unavailableConflictInspectionV2() conflictInspectionResultV2 {
+	return conflictInspectionResultV2{
+		Version:   conflictInspectionJSONVersion,
+		Conflicts: []ConflictFile{},
+		Complete:  false,
+		Error:     conflictInspectionUnavailableError,
+	}
+}
+
+func configuredConflictInspection(folderID string) conflictInspectionResultV2 {
 	folders := getFolderConfigs()
 	if folders == nil {
-		return conflictInspectionUnavailableError
+		return unavailableConflictInspectionV2()
 	}
 
 	folder, exists := folders[folderID]
 	if !exists {
-		return conflictInspectionUnavailableError
+		return unavailableConflictInspectionV2()
+	}
+	return inspectConflictFiles(folder.Path, conflictInspectionLimits{
+		maxVisitedEntries:     maxConflictScanVisitedEntries,
+		maxCollectedConflicts: maxConflictScanCollectedConflicts,
+	}, filepath.WalkDir)
+}
+
+func inspectConflictFiles(root string, limits conflictInspectionLimits, walk conflictInspectionWalk) conflictInspectionResultV2 {
+	result := conflictInspectionResultV2{
+		Version:   conflictInspectionJSONVersion,
+		Conflicts: []ConflictFile{},
+		Complete:  true,
+	}
+	if limits.maxVisitedEntries <= 0 || limits.maxCollectedConflicts <= 0 || walk == nil {
+		return unavailableConflictInspectionV2()
 	}
 
-	var conflicts []ConflictFile
-	scanned := 0
-	truncated := false
-
-	walkErr := filepath.WalkDir(folder.Path, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
+	rootAvailable := false
+	partial := false
+	visitedEntries := 0
+	walkErr := walk(root, func(path string, entry fs.DirEntry, entryErr error) error {
+		if !rootAvailable {
+			if entryErr != nil {
+				return entryErr
+			}
+			if entry == nil || filepath.Clean(path) != filepath.Clean(root) || !entry.IsDir() {
+				return fs.ErrInvalid
+			}
+			rootAvailable = true
+			return nil
 		}
-		if d.IsDir() {
+		if entryErr != nil || entry == nil {
+			partial = true
+			return fs.SkipAll
+		}
+
+		visitedEntries++
+		stopAfterEntry := visitedEntries >= limits.maxVisitedEntries
+		if entry.IsDir() {
+			if stopAfterEntry {
+				partial = true
+				return fs.SkipAll
+			}
 			return nil
 		}
 
-		scanned++
-		if scanned > maxConflictScan {
-			truncated = true
-			return filepath.SkipAll
-		}
-
-		name := d.Name()
+		name := entry.Name()
 		if !strings.Contains(name, ".sync-conflict-") {
+			if stopAfterEntry {
+				partial = true
+				return fs.SkipAll
+			}
 			return nil
 		}
 
 		matches := conflictPattern.FindStringSubmatch(name)
 		if matches == nil {
+			if stopAfterEntry {
+				partial = true
+				return fs.SkipAll
+			}
 			return nil
+		}
+		if len(result.Conflicts) >= limits.maxCollectedConflicts {
+			partial = true
+			return fs.SkipAll
 		}
 
 		baseName := matches[1]
@@ -142,9 +205,10 @@ func GetConflictFilesJSON(folderID string) string {
 		shortID := matches[3]
 		ext := matches[4]
 
-		relPath, err := filepath.Rel(folder.Path, path)
+		relPath, err := filepath.Rel(root, path)
 		if err != nil {
-			return err
+			partial = true
+			return fs.SkipAll
 		}
 		dir := filepath.Dir(relPath)
 
@@ -153,28 +217,54 @@ func GetConflictFilesJSON(folderID string) string {
 			originalRel = filepath.Join(dir, originalRel)
 		}
 
-		conflicts = append(conflicts, ConflictFile{
+		result.Conflicts = append(result.Conflicts, ConflictFile{
 			OriginalPath:  originalRel,
 			ConflictPath:  relPath,
 			ConflictDate:  date,
 			DeviceShortID: shortID,
 		})
 
+		if stopAfterEntry {
+			partial = true
+			return fs.SkipAll
+		}
 		return nil
 	})
-	if walkErr != nil || truncated {
-		return conflictInspectionUnavailableError
+	if !rootAvailable || (visitedEntries == 0 && (partial || walkErr != nil)) {
+		return unavailableConflictInspectionV2()
 	}
-
-	if conflicts == nil {
-		conflicts = []ConflictFile{}
+	if walkErr != nil {
+		partial = true
 	}
+	result.Complete = !partial
+	return result
+}
 
-	data, err := json.Marshal(conflicts)
+func marshalConflictInspectionV2(result conflictInspectionResultV2) string {
+	data, err := json.Marshal(result)
 	if err != nil {
-		return conflictInspectionUnavailableError
+		data, _ = json.Marshal(unavailableConflictInspectionV2())
 	}
 	return string(data)
+}
+
+// GetConflictFilesJSON preserves the historical bridge contract: every result
+// is a JSON array. New callers must use GetConflictFilesInspectionJSONV2 so an
+// unavailable or partial inspection cannot be mistaken for verified empty.
+func GetConflictFilesJSON(folderID string) string {
+	result := configuredConflictInspection(folderID)
+	data, err := json.Marshal(result.Conflicts)
+	if err != nil {
+		return "[]"
+	}
+	return string(data)
+}
+
+// GetConflictFilesInspectionJSONV2 returns the versioned conflict-inspection
+// contract. Complete=false with no error is a bounded partial list;
+// Complete=false with the stable error is completely unavailable.
+func GetConflictFilesInspectionJSONV2(folderID string) string {
+	return marshalConflictInspectionV2(configuredConflictInspection(folderID))
 }
 
 // safePath validates that relPath stays within folderRoot after cleaning.
@@ -233,44 +323,65 @@ func keepBothConflictFile(conflictPath, conflictFileName string, ops keepBothFil
 	return ""
 }
 
-// ReadFileContent reads a text file within a folder and returns a JSON envelope.
-// The exported Go signature stays ABI-compatible, while the envelope keeps an
-// empty file and legitimate "error:" content distinct from an unavailable
-// inspection. Failures expose only the fixed path-free code.
-func ReadFileContent(folderID, relPath string) string {
-	type result struct {
-		Content *string `json:"content,omitempty"`
-		Error   string  `json:"error,omitempty"`
-	}
-	emit := func(value result) string {
-		data, err := json.Marshal(value)
-		if err != nil {
-			return `{"error":"vaultsync-conflict-inspection-unavailable"}`
-		}
-		return string(data)
-	}
-	unavailable := func() string {
-		return emit(result{Error: conflictInspectionUnavailableError})
-	}
-
+func readFileContent(folderID, relPath string) (string, bool) {
 	folders := getFolderConfigs()
 	if folders == nil {
-		return unavailable()
+		return "", false
 	}
 	folder, exists := folders[folderID]
 	if !exists {
-		return unavailable()
+		return "", false
 	}
 	absPath, err := safePath(folder.Path, relPath)
 	if err != nil {
-		return unavailable()
+		return "", false
 	}
 	data, err := os.ReadFile(absPath)
 	if err != nil {
-		return unavailable()
+		return "", false
 	}
-	content := string(data)
-	return emit(result{Content: &content})
+	return string(data), true
+}
+
+// ReadFileContent preserves the historical raw-text bridge contract. Failures
+// retain the legacy error: prefix but expose only the fixed path-free code.
+func ReadFileContent(folderID, relPath string) string {
+	content, ok := readFileContent(folderID, relPath)
+	if !ok {
+		return "error:" + conflictInspectionUnavailableError
+	}
+	return content
+}
+
+type readFileContentResultV2 struct {
+	Version int     `json:"version"`
+	Content *string `json:"content,omitempty"`
+	Error   string  `json:"error,omitempty"`
+}
+
+func unavailableReadFileContentV2() readFileContentResultV2 {
+	return readFileContentResultV2{
+		Version: conflictInspectionJSONVersion,
+		Error:   conflictInspectionUnavailableError,
+	}
+}
+
+// ReadFileContentJSONV2 returns an unambiguous versioned envelope so empty
+// files and legitimate content beginning with error: remain distinguishable.
+func ReadFileContentJSONV2(folderID, relPath string) string {
+	content, ok := readFileContent(folderID, relPath)
+	result := unavailableReadFileContentV2()
+	if ok {
+		result = readFileContentResultV2{
+			Version: conflictInspectionJSONVersion,
+			Content: &content,
+		}
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		data, _ = json.Marshal(unavailableReadFileContentV2())
+	}
+	return string(data)
 }
 
 // ResolveConflict is retained for gomobile ABI compatibility. Conflict
@@ -358,7 +469,7 @@ func closeConflictTempAfterError(tempFile conflictTempFile, operation string, op
 // Symmetric with GetConflictFilesJSON's JSON-return style — keeps the gomobile
 // surface uniform (no tuple returns across the bridge).
 func RemoveConflictFilesForOriginal(folderID, originalPath string) string {
-	return `{"removed":0,"error":"vaultsync-conflict-recovery-unavailable"}`
+	return fmt.Sprintf(`{"removed":0,"error":%q}`, conflictRecoveryUnavailableError)
 }
 
 // AutoResolveStateConflicts is retained for gomobile ABI compatibility but no

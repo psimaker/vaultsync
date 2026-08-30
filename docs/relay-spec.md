@@ -2,6 +2,14 @@
 
 > **Status:** Cloud Relay 1.3.2 and VaultSync 2.0.1 are in production, and helper 2.0.2 is published. Relay 1.3 provisioning requires a verified StoreKit signed transaction and gives exact pre-existing legacy registrations a bounded compatibility window through October 31, 2026. Helper publication state is determined only by the newest public `notify-v*` release and its exact manifest; `notify-v1.8.0` remains the fixed rollback baseline for helper 2.0.2. A Relay-observed signal proves only accepted Relay processing: not helper identity, APNs delivery, background start, local data progress, upload, download, or a roundtrip. Existing Relay v1 provisioning, trigger, and push contracts remain unchanged. This document is the protocol and architecture reference for the relay, the `vaultsync-notify` sidecar, and the iOS client.
 
+> [!IMPORTANT]
+> VaultSync 2.0.2 keeps entitlement verification, provisioning, Relay status,
+> and APNs wake-up handling, but its #150 containment boundary prevents all
+> receive-capable folders from pulling. A wake-up therefore cannot deliver a
+> server change into a regular vault created or accepted by VaultSync 1.8.2,
+> 2.0.0, or 2.0.1. It also cannot make those folders scan and upload new iPhone
+> edits. Existing Send Only folders remain eligible for upload work.
+
 ## Overview
 
 Push-notification service that forwards Syncthing file-change events to iOS devices via APNs. It solves the core iOS limitation — no real-time background sync — by waking the app on demand instead of polling.

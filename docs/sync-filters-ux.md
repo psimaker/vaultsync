@@ -135,10 +135,12 @@ error before accessing the folder or `.stignore`. Normal explicit Sync Filters
 remain available only for Send Only folders; receive-capable and unknown modes
 stop before filter access or mutation.
 
-Previously recorded filter pairs remain stored and editable in Sync Filters;
-there is no migration or automatic rewrite. Their representation as one row
-with a `+ conflict copies` caption remains unchanged. This preserves an explicit
-past choice without treating it as consent for a new conflict recovery action.
+Previously recorded filter pairs remain stored without migration or automatic
+rewrite. They remain visible and editable only for an existing Send Only folder
+whose current safety state is clear. Receive-capable, unknown, and safety-stopped
+folders expose no filter access. The pairs' representation as one row with a
+`+ conflict copies` caption remains unchanged. This preserves an explicit past
+choice without treating it as consent for a new conflict recovery action.
 
 ## 6.5 Multi-vault setups
 

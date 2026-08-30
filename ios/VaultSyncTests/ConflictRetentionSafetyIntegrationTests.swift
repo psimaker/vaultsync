@@ -1132,7 +1132,7 @@ struct ConflictRetentionSafetyIntegrationTests {
             from: "func addFolder(id:",
             to: "/// Remove a folder by ID."
         )
-        #expect(add.contains(ConflictSafetyPolicy.engineStopMarker))
+        #expect(add.contains("ConflictSafetyPolicy.engineStopMarker"))
         #expect(!add.contains("SyncBridgeService.addFolder"))
 
         let accept = try sourceSection(
@@ -1140,7 +1140,7 @@ struct ConflictRetentionSafetyIntegrationTests {
             from: "func acceptPendingFolder(folderID:",
             to: "// MARK: - Device rename"
         )
-        #expect(accept.contains(ConflictSafetyPolicy.engineStopMarker))
+        #expect(accept.contains("ConflictSafetyPolicy.engineStopMarker"))
         #expect(!accept.contains("SyncBridgeService.acceptPendingFolder"))
 
         let diagnostics = try productSource("VaultSync/Views/ControlledDiagnosticsView.swift")
@@ -1163,30 +1163,37 @@ struct ConflictRetentionSafetyIntegrationTests {
 
     @Test("Conflict inspection distinguishes content, empty files, and unavailable reads (#150)")
     func conflictFileInspectionPayloadIsUnambiguousIssue150() {
-        #expect(SyncBridgeService.decodeFileInspectionResult(
-            #"{"content":"error:legitimate note text"}"#
+        #expect(SyncBridgeService.decodeFileInspectionResultV2(
+            #"{"version":2,"content":"error:legitimate note text"}"#
         ) == .content("error:legitimate note text"))
-        #expect(SyncBridgeService.decodeFileInspectionResult(
-            #"{"content":""}"#
+        #expect(SyncBridgeService.decodeFileInspectionResultV2(
+            #"{"version":2,"content":""}"#
         ) == .content(""))
-        #expect(SyncBridgeService.decodeFileInspectionResult(
-            #"{"error":"vaultsync-conflict-inspection-unavailable"}"#
+        #expect(SyncBridgeService.decodeFileInspectionResultV2(
+            #"{"version":2,"error":"vaultsync-conflict-inspection-unavailable"}"#
         ) == .unavailable)
-        #expect(SyncBridgeService.decodeFileInspectionResult(
+        #expect(SyncBridgeService.decodeFileInspectionResultV2(
+            #"{"content":"legacy-envelope-without-version"}"#
+        ) == .unavailable)
+        #expect(SyncBridgeService.decodeFileInspectionResultV2(
             "error:redaction-probe-note.md"
         ) == .unavailable)
     }
 
     @Test("Unavailable conflict inspection preserves prior review copies without claiming empty (#150)")
     func conflictInspectionCacheIsFailClosedIssue150() {
+        let conflictsJSON = String(
+            data: try! JSONEncoder().encode([conflict]),
+            encoding: .utf8
+        )!
         let previous = ["a": [conflict], "removed": [conflict]]
-        let snapshot = SyncthingManager.mergeConflictInspection(
+        let snapshot = SyncthingManager.mergeConflictInspectionV2(
             previous: previous,
             activeFolderIDs: ["a", "b", "c"],
             rawByFolder: [
-                "a": "vaultsync-conflict-inspection-unavailable",
-                "b": "[]",
-                "c": String(data: try! JSONEncoder().encode([conflict]), encoding: .utf8)!,
+                "a": #"{"version":2,"conflicts":[],"complete":false,"error":"vaultsync-conflict-inspection-unavailable"}"#,
+                "b": #"{"version":2,"conflicts":[],"complete":true}"#,
+                "c": #"{"version":2,"conflicts":\#(conflictsJSON),"complete":true}"#,
             ]
         )
 
@@ -1195,6 +1202,360 @@ struct ConflictRetentionSafetyIntegrationTests {
         #expect(snapshot.conflicts["c"]?.map(\.conflictPath) == [conflict.conflictPath])
         #expect(snapshot.conflicts["removed"] == nil)
         #expect(snapshot.unavailableFolderIDs == ["a"])
+    }
+
+    @Test("Partial conflict inspection retains prior copies and marks the list incomplete (#150)")
+    func partialConflictInspectionRetainsPriorCopiesIssue150() {
+        let newlyObserved = SyncthingManager.ConflictInfo(
+            originalPath: "later-fixture-note.md",
+            conflictPath: "later-fixture-note.sync-conflict-20000101-000000-FIXTURE.md",
+            conflictDate: "20000101-000000",
+            deviceShortID: "FIXTURE"
+        )
+        let partialJSON = String(
+            data: try! JSONEncoder().encode([newlyObserved]),
+            encoding: .utf8
+        )!
+        let snapshot = SyncthingManager.mergeConflictInspectionV2(
+            previous: ["partial": [conflict]],
+            activeFolderIDs: ["partial"],
+            rawByFolder: [
+                "partial": #"{"version":2,"conflicts":\#(partialJSON),"complete":false}"#,
+            ]
+        )
+
+        #expect(Set(snapshot.conflicts["partial", default: []].map(\.conflictPath)) == [
+            conflict.conflictPath,
+            newlyObserved.conflictPath,
+        ])
+        #expect(snapshot.unavailableFolderIDs == ["partial"])
+    }
+
+    @Test("Conflict inspection V2 rejects legacy future and contradictory envelopes (#150)")
+    func conflictInspectionV2DecoderFailsClosedIssue150() {
+        for raw in [
+            "[]",
+            #"{"version":1,"conflicts":[],"complete":true}"#,
+            #"{"version":3,"conflicts":[],"complete":true}"#,
+            #"{"version":2,"conflicts":[],"complete":true,"error":"contradictory"}"#,
+            #"{"version":2,"conflicts":[],"complete":false,"error":"vaultsync-conflict-inspection-unavailable"}"#,
+            "not-json",
+        ] {
+            if case .unavailable = SyncthingManager.decodeConflictInspectionV2(raw) {
+                // Expected fail-closed result.
+            } else {
+                Issue.record("unexpectedly accepted conflict inspection: \(raw)")
+            }
+        }
+    }
+
+    @Test("Current Swift uses only additive V2 inspection entry points (#150)")
+    func currentSwiftUsesOnlyV2InspectionEntryPointsIssue150() throws {
+        let bridge = try productSource("VaultSync/Services/SyncBridgeService.swift")
+        #expect(bridge.contains("BridgeGetConflictFilesInspectionJSONV2("))
+        #expect(bridge.contains("BridgeReadFileContentJSONV2("))
+        #expect(!bridge.contains("BridgeGetConflictFilesJSON("))
+        #expect(!bridge.contains("BridgeReadFileContent("))
+
+        let manager = try productSource("VaultSync/Services/SyncthingManager.swift")
+        #expect(manager.contains("getConflictFilesInspectionJSONV2(folderID:"))
+        #expect(manager.contains("mergeConflictInspectionV2("))
+        #expect(!manager.contains("getConflictFilesJSON(folderID:"))
+
+        let background = try productSource("VaultSync/Services/BackgroundSyncService.swift")
+        #expect(background.contains("getConflictFilesInspectionJSONV2(folderID:"))
+        #expect(background.contains("decodeConflictInspectionV2("))
+        #expect(!background.contains("getConflictFilesJSON(folderID:"))
+    }
+
+    @Test("Retained conflict and unavailable inspection keep unique stable issue identities (#150)")
+    @MainActor
+    func retainedConflictAndUnavailableInspectionHaveUniqueStableIDsIssue150() {
+        let manager = makeManager(folderType: "sendonly")
+        manager._testSetConflictFiles(["fixture-folder-a": [conflict]])
+        manager._testSetConflictInspectionUnavailableFolderIDs(["fixture-folder-a"])
+
+        let conflictIssues = manager.unresolvedIssues.filter {
+            $0.title == L10n.tr("1 Conflict Available for Review")
+                || $0.title == L10n.tr("Conflict Inspection Unavailable")
+        }
+
+        #expect(conflictIssues.count == 2)
+        #expect(Set(conflictIssues.map(\.kind)) == [.conflicts, .conflictInspectionUnavailable])
+        #expect(Set(conflictIssues.map(\.id)).count == conflictIssues.count)
+        #expect(conflictIssues.allSatisfy {
+            SyncIssuesView.conflictDestination(
+                preferredFolderID: $0.folderID,
+                conflictFiles: manager.conflictFiles,
+                unavailableFolderIDs: manager.conflictInspectionUnavailableFolderIDs,
+                allowFallback: true
+            ) == "fixture-folder-a"
+        })
+        #expect(SyncthingManager.durableIssueFloor(
+            issues: conflictIssues.map { ($0.kind, $0.severity) },
+            hasUnreachableFolders: false
+        ) == .warning)
+
+        let one = SyncthingManager.SyncIssueItem(
+            kind: .conflicts,
+            title: "Fixture",
+            message: "Fixture",
+            remediation: "Fixture",
+            severity: .warning,
+            count: 1,
+            folderID: "fixture-folder-a",
+            deviceID: nil
+        )
+        let two = SyncthingManager.SyncIssueItem(
+            kind: .conflicts,
+            title: "Changed fixture title",
+            message: "Changed fixture message",
+            remediation: "Changed fixture remediation",
+            severity: .warning,
+            count: 2,
+            folderID: "fixture-folder-a",
+            deviceID: nil
+        )
+        #expect(one.id == two.id)
+    }
+
+    @Test("Filter scans require generation folder cancellation and fresh safety guards (#150)")
+    func filterScansExposeEveryStaleResultGuardIssue150() throws {
+        let ignorePatterns = try productSource("VaultSync/Views/IgnorePatternsView.swift")
+        let ignoreLoad = try sourceSection(
+            ignorePatterns,
+            from: "private func initialLoad() async",
+            to: "private func reloadPatterns()"
+        )
+        let recommendation = try productSource("VaultSync/Views/SyncFilterRecommendationSheet.swift")
+        let recommendationScan = try sourceSection(
+            recommendation,
+            from: "private func scan() async",
+            to: "/// Delegate the deselect-aware"
+        )
+
+        for source in [ignoreLoad, recommendationScan] {
+            #expect(source.contains("scanGeneration"))
+            #expect(source.contains("Task.isCancelled"))
+            #expect(source.contains("capturedFolderID"))
+            #expect(source.contains("safetyState == .clear"))
+            #expect(source.contains("await scanner(capturedFolderID)"))
+            #expect(source.contains("case .complete"))
+        }
+        #expect(ignorePatterns.contains(".task(id: scanTaskID)"))
+        #expect(recommendation.contains(".task(id: scanTaskID)"))
+        #expect(ignorePatterns.contains("detected.removeAll()"))
+        #expect(recommendation.contains("enabledDetectedPatterns.removeAll()"))
+    }
+
+    @Test("Filter scan task identity includes folder and fresh safety state (#150)")
+    func filterScanTaskIdentityIncludesFolderAndSafetyIssue150() {
+        let clearA = FilterScanTaskID(folderID: "fixture-folder-a", safetyState: .clear)
+        let clearB = FilterScanTaskID(folderID: "fixture-folder-b", safetyState: .clear)
+        let stoppedA = FilterScanTaskID(folderID: "fixture-folder-a", safetyState: .stopped)
+
+        #expect(clearA != clearB)
+        #expect(clearA != stoppedA)
+
+        var scanGeneration = FilterScanGeneration()
+        let scanA = scanGeneration.begin(folderID: clearA.folderID, safetyState: clearA.safetyState)!
+        #expect(scanGeneration.complete(
+            token: scanA,
+            currentFolderID: clearA.folderID,
+            currentSafetyState: clearA.safetyState,
+            taskCancelled: false,
+            scanComplete: true
+        ) == .commit)
+        #expect(scanGeneration.begin(folderID: clearB.folderID, safetyState: clearB.safetyState) != nil)
+    }
+
+    @Test("Reappearing clear filter task supersedes an unfinished scan (#150)")
+    func reappearingClearFilterTaskSupersedesUnfinishedScanIssue150() {
+        var scanGeneration = FilterScanGeneration()
+        let scanA = scanGeneration.begin(
+            folderID: "fixture-folder-a",
+            safetyState: .clear
+        )!
+
+        let scanB = scanGeneration.begin(
+            folderID: "fixture-folder-a",
+            safetyState: .clear
+        )
+        #expect(scanB != nil)
+        guard let scanB else { return }
+
+        #expect(scanGeneration.complete(
+            token: scanB,
+            currentFolderID: "fixture-folder-a",
+            currentSafetyState: .clear,
+            taskCancelled: false,
+            scanComplete: true
+        ) == .commit)
+        #expect(scanGeneration.complete(
+            token: scanA,
+            currentFolderID: "fixture-folder-a",
+            currentSafetyState: .clear,
+            taskCancelled: true,
+            scanComplete: true
+        ) == .stale)
+        #expect(!scanGeneration.needsScan)
+        #expect(scanGeneration.begin(
+            folderID: "fixture-folder-a",
+            safetyState: .clear
+        ) == nil)
+    }
+
+    @Test("Known-pattern scan decoding requires explicit complete evidence (#150)")
+    func filterScanDecoderIsExplicitlyCompleteIssue150() {
+        #expect(SyncthingManager.decodeKnownPatternScan(
+            #"{"detected":[],"complete":true}"#
+        ) == .complete([]))
+        #expect(SyncthingManager.decodeKnownPatternScan(
+            #"{"detected":[]}"#
+        ) == .unavailable)
+        #expect(SyncthingManager.decodeKnownPatternScan(
+            #"{"detected":[],"complete":false,"error":"vaultsync-filter-scan-unavailable"}"#
+        ) == .unavailable)
+        #expect(SyncthingManager.decodeKnownPatternScan(
+            #"{"detected":[],"complete":true,"error":"contradictory"}"#
+        ) == .unavailable)
+        #expect(SyncthingManager.decodeKnownPatternScan("not-json") == .unavailable)
+    }
+
+    @Test("Non-clear filter safety never starts an injected scanner (#150)")
+    func nonClearFilterSafetyStartsNoScannerIssue150() async {
+        var scanGeneration = FilterScanGeneration()
+        var scannerCallCount = 0
+
+        if scanGeneration.begin(folderID: "fixture-folder-a", safetyState: .stopped) != nil {
+            scannerCallCount += 1
+        }
+
+        #expect(scannerCallCount == 0)
+        #expect(scanGeneration.needsScan)
+        #expect(scanGeneration.activeToken == nil)
+    }
+
+    @Test("Clear to stopped rejects a late filter result and retries safely (#150)")
+    func stoppedFilterSafetyRejectsLateResultIssue150() {
+        var scanGeneration = FilterScanGeneration()
+        let scanA = scanGeneration.begin(folderID: "fixture-folder-a", safetyState: .clear)
+        #expect(scanA != nil)
+
+        scanGeneration.invalidate()
+        var detected = ["stale-before-stop"]
+        var automaticSelections: Set<String> = ["stale-before-stop"]
+        detected.removeAll()
+        automaticSelections.removeAll()
+
+        let completion = scanGeneration.complete(
+            token: scanA!,
+            currentFolderID: "fixture-folder-a",
+            currentSafetyState: .stopped,
+            taskCancelled: true,
+            scanComplete: true
+        )
+        if completion == .commit {
+            detected = ["scan-a"]
+            automaticSelections = ["scan-a"]
+        }
+
+        #expect(completion == .stale)
+        #expect(detected.isEmpty)
+        #expect(automaticSelections.isEmpty)
+        #expect(scanGeneration.needsScan)
+    }
+
+    @Test("A newer clear filter scan wins without stale selection or retry changes (#150)")
+    func newerFilterScanWinsAndOlderScanStaysInertIssue150() {
+        var scanGeneration = FilterScanGeneration()
+        let scanA = scanGeneration.begin(folderID: "fixture-folder-a", safetyState: .clear)!
+        scanGeneration.invalidate()
+        let scanB = scanGeneration.begin(folderID: "fixture-folder-a", safetyState: .clear)!
+
+        var detected: [String] = []
+        var automaticSelections: Set<String> = []
+        let completionB = scanGeneration.complete(
+            token: scanB,
+            currentFolderID: "fixture-folder-a",
+            currentSafetyState: .clear,
+            taskCancelled: false,
+            scanComplete: true
+        )
+        if completionB == .commit {
+            detected = ["scan-b"]
+            automaticSelections = ["scan-b"]
+        }
+        #expect(!scanGeneration.needsScan)
+
+        let completionA = scanGeneration.complete(
+            token: scanA,
+            currentFolderID: "fixture-folder-a",
+            currentSafetyState: .clear,
+            taskCancelled: false,
+            scanComplete: true
+        )
+        if completionA == .commit {
+            detected = ["scan-a"]
+            automaticSelections = ["scan-a"]
+        }
+
+        #expect(completionB == .commit)
+        #expect(completionA == .stale)
+        #expect(detected == ["scan-b"])
+        #expect(automaticSelections == ["scan-b"])
+        #expect(!scanGeneration.needsScan)
+    }
+
+    @Test("Cancelled current filter scan retries without authorizing its result (#150)")
+    func cancelledCurrentFilterScanRetriesIssue150() {
+        var scanGeneration = FilterScanGeneration()
+        let cancelled = scanGeneration.begin(folderID: "fixture-folder-a", safetyState: .clear)!
+        let completion = scanGeneration.complete(
+            token: cancelled,
+            currentFolderID: "fixture-folder-a",
+            currentSafetyState: .clear,
+            taskCancelled: true,
+            scanComplete: true
+        )
+
+        #expect(completion == .retry)
+        #expect(scanGeneration.needsScan)
+        #expect(scanGeneration.begin(folderID: "fixture-folder-a", safetyState: .clear) != nil)
+    }
+
+    @Test("SendOnly clear safety still commits an injected filter scan (#150)")
+    func sendOnlyFilterScanPositiveControlIssue150() {
+        var scanGeneration = FilterScanGeneration()
+        let state = ConflictSafetyPolicy.runtimeState(forFolderType: "sendonly")
+        let token = scanGeneration.begin(folderID: "fixture-folder-a", safetyState: state)!
+        let completion = scanGeneration.complete(
+            token: token,
+            currentFolderID: "fixture-folder-a",
+            currentSafetyState: state,
+            taskCancelled: false,
+            scanComplete: true
+        )
+
+        #expect(state == .clear)
+        #expect(completion == .commit)
+        #expect(!scanGeneration.needsScan)
+    }
+
+    @Test("Unavailable injected filter scan cannot commit an empty result (#150)")
+    func unavailableFilterScanCannotCommitEmptyIssue150() {
+        var scanGeneration = FilterScanGeneration()
+        let token = scanGeneration.begin(folderID: "fixture-folder-a", safetyState: .clear)!
+        let completion = scanGeneration.complete(
+            token: token,
+            currentFolderID: "fixture-folder-a",
+            currentSafetyState: .clear,
+            taskCancelled: false,
+            scanComplete: false
+        )
+
+        #expect(completion == .retry)
+        #expect(scanGeneration.needsScan)
     }
 
     @Test("Default foreground rescans select only SendOnly folders as one batch (#150)")
@@ -1316,7 +1677,24 @@ struct ConflictRetentionSafetyIntegrationTests {
             receiveSafetyState: { .stopped },
             preflight: { _, _, _ in
                 counter.record("preflight")
-                fatalError("preflight must remain unreachable")
+                Issue.record("preflight must remain unreachable")
+                return DiagnosticsUploadPreflight(
+                    folderID: "",
+                    folderPath: "",
+                    peerID: "",
+                    engineGeneration: 0,
+                    engineRunning: false,
+                    pathsSettled: false,
+                    folderMode: "",
+                    folderPaused: true,
+                    folderHealthy: false,
+                    designatedPeerIDs: [],
+                    peerConnected: false,
+                    peerPaused: true,
+                    pathOverlap: true,
+                    namespacePathAllowed: false,
+                    operationSlotEmpty: false
+                )
             },
             rescan: {
                 counter.record("rescan")
@@ -1358,4 +1736,3 @@ struct ConflictRetentionSafetyIntegrationTests {
         return String(source[start..<end])
     }
 }
-

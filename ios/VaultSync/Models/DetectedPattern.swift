@@ -11,6 +11,13 @@ struct DetectedPattern: Codable, Identifiable, Sendable, Hashable {
     var id: String { pattern }
 }
 
-struct DetectedScan: Codable, Sendable {
+struct DetectedScan: Decodable, Sendable {
     let detected: [DetectedPattern]
+    let complete: Bool
+    let error: String?
+}
+
+enum KnownPatternScanResult: Equatable, Sendable {
+    case complete([DetectedPattern])
+    case unavailable
 }

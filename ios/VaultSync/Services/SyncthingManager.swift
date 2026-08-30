@@ -309,11 +309,38 @@ final class SyncthingManager {
         let unavailableFolderIDs: Set<String>
     }
 
-    /// A verified empty JSON array may remove cached conflicts. Any missing,
-    /// malformed, or explicitly unavailable response preserves the last
-    /// reviewable copies for that active folder and records incomplete
-    /// evidence instead of claiming that no conflicts exist (#150).
-    nonisolated static func mergeConflictInspection(
+    enum ConflictInspectionResultV2: Sendable {
+        case complete([ConflictInfo])
+        case partial([ConflictInfo])
+        case unavailable
+    }
+
+    private struct ConflictInspectionPayloadV2: Decodable {
+        let version: Int
+        let conflicts: [ConflictInfo]
+        let complete: Bool
+        let error: String?
+    }
+
+    nonisolated static func decodeConflictInspectionV2(
+        _ raw: String
+    ) -> ConflictInspectionResultV2 {
+        guard let data = raw.data(using: .utf8),
+              let payload = try? JSONDecoder().decode(ConflictInspectionPayloadV2.self, from: data),
+              payload.version == 2,
+              payload.error == nil else {
+            return .unavailable
+        }
+        return payload.complete
+            ? .complete(payload.conflicts)
+            : .partial(payload.conflicts)
+    }
+
+    /// A verified complete V2 result may replace cached conflicts. Partial or
+    /// unavailable evidence remains visible as an incomplete warning, and a
+    /// partial list is unioned with prior copies so the visit bound cannot
+    /// silently erase conflicts that were already reviewable (#150).
+    nonisolated static func mergeConflictInspectionV2(
         previous: [String: [ConflictInfo]],
         activeFolderIDs: [String],
         rawByFolder: [String: String]
@@ -323,17 +350,31 @@ final class SyncthingManager {
         var unavailable: Set<String> = []
 
         for folderID in activeIDs.sorted() {
-            guard let raw = rawByFolder[folderID],
-                  let data = raw.data(using: .utf8),
-                  let decoded = try? JSONDecoder().decode([ConflictInfo].self, from: data) else {
+            let inspection = rawByFolder[folderID].map(decodeConflictInspectionV2)
+                ?? .unavailable
+            switch inspection {
+            case let .complete(decoded):
+                if !decoded.isEmpty {
+                    conflicts[folderID] = decoded
+                }
+
+            case let .partial(decoded):
+                var merged: [ConflictInfo] = []
+                var seenPaths: Set<String> = []
+                for conflict in decoded + previous[folderID, default: []]
+                    where seenPaths.insert(conflict.conflictPath).inserted {
+                    merged.append(conflict)
+                }
+                if !merged.isEmpty {
+                    conflicts[folderID] = merged
+                }
+                unavailable.insert(folderID)
+
+            case .unavailable:
                 if let retained = previous[folderID], !retained.isEmpty {
                     conflicts[folderID] = retained
                 }
                 unavailable.insert(folderID)
-                continue
-            }
-            if !decoded.isEmpty {
-                conflicts[folderID] = decoded
             }
         }
         return ConflictInspectionSnapshot(
@@ -368,6 +409,7 @@ final class SyncthingManager {
             case disconnectedPeers
             case pendingShares
             case conflicts
+            case conflictInspectionUnavailable
             case staleSync
             case backgroundSync
         }
@@ -382,7 +424,7 @@ final class SyncthingManager {
         let deviceID: String?
 
         var id: String {
-            "\(kind.rawValue)|\(count)|\(folderID ?? "")|\(deviceID ?? "")"
+            "\(kind.rawValue)|\(folderID ?? "")|\(deviceID ?? "")"
         }
     }
 
@@ -757,7 +799,7 @@ final class SyncthingManager {
             let count = conflictInspectionUnavailableFolderIDs.count
             issues.append(
                 SyncIssueItem(
-                    kind: .conflicts,
+                    kind: .conflictInspectionUnavailable,
                     title: L10n.tr("Conflict Inspection Unavailable"),
                     message: L10n.tr("VaultSync cannot verify whether the conflict list is complete."),
                     remediation: L10n.tr("Open conflicts to review any previously visible copies. No recovery action is available."),
@@ -1013,7 +1055,7 @@ final class SyncthingManager {
     /// receive-capable folder, which is read-only in 2.0.2, so return before
     /// bridge, refresh, marker, scan, or persistence work (#150).
     func addFolder(id: String, label: String, path: String) -> String? {
-        "vaultsync-conflict-retention-safety-stop"
+        ConflictSafetyPolicy.engineStopMarker
     }
 
     /// Remove a folder by ID.
@@ -1220,7 +1262,7 @@ final class SyncthingManager {
     /// offer is receive-capable, so 2.0.2 returns before bridge, folder-list,
     /// removed-state, sidecar, scan, or persistence work (#150).
     func acceptPendingFolder(folderID: String, label: String, path: String, allowNonEmpty: Bool) -> String? {
-        "vaultsync-conflict-retention-safety-stop"
+        ConflictSafetyPolicy.engineStopMarker
     }
 
     // MARK: - Device rename
@@ -1385,7 +1427,7 @@ final class SyncthingManager {
                 if let status = SyncBridgeService.getFolderStatus(folderID: folder.id) {
                     statuses[folder.id] = FolderStatusInfo(payload: status)
                 }
-                conflicts[folder.id] = SyncBridgeService.getConflictFilesJSON(folderID: folder.id)
+                conflicts[folder.id] = SyncBridgeService.getConflictFilesInspectionJSONV2(folderID: folder.id)
             }
             return (statuses, conflicts)
         }.value
@@ -1417,7 +1459,7 @@ final class SyncthingManager {
         )
         folderStatuses = newStatuses
 
-        let conflictSnapshot = Self.mergeConflictInspection(
+        let conflictSnapshot = Self.mergeConflictInspectionV2(
             previous: conflictFiles,
             activeFolderIDs: currentFolders.map(\.id),
             rawByFolder: statusSnapshot.1
@@ -1529,10 +1571,10 @@ final class SyncthingManager {
     private func refreshConflicts() {
         let rawByFolder = Dictionary(
             uniqueKeysWithValues: folders.map {
-                ($0.id, SyncBridgeService.getConflictFilesJSON(folderID: $0.id))
+                ($0.id, SyncBridgeService.getConflictFilesInspectionJSONV2(folderID: $0.id))
             }
         )
-        let snapshot = Self.mergeConflictInspection(
+        let snapshot = Self.mergeConflictInspectionV2(
             previous: conflictFiles,
             activeFolderIDs: folders.map(\.id),
             rawByFolder: rawByFolder
@@ -2612,16 +2654,25 @@ final class SyncthingManager {
         return setIgnorePatterns(folderID: folderID, patterns: patterns)
     }
 
+    /// Decode only explicit complete evidence. Older envelopes and bridge
+    /// refusal states cannot impersonate a verified empty scan (#150).
+    nonisolated static func decodeKnownPatternScan(_ raw: String) -> KnownPatternScanResult {
+        guard let data = raw.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode(DetectedScan.self, from: data),
+              decoded.complete,
+              decoded.error?.isEmpty != false else {
+            return .unavailable
+        }
+        return .complete(decoded.detected)
+    }
+
     /// Run the Go-side scanner for known heavy directories.
     /// `nonisolated static` so views can dispatch it on a detached Task without
     /// blocking the main actor.
-    nonisolated static func scanFolderForKnownPatterns(folderID: String) -> [DetectedPattern] {
-        let raw = SyncBridgeService.scanFolderForKnownPatterns(folderID: folderID)
-        guard let data = raw.data(using: .utf8),
-              let decoded = try? JSONDecoder().decode(DetectedScan.self, from: data) else {
-            return []
-        }
-        return decoded.detected
+    nonisolated static func scanFolderForKnownPatterns(folderID: String) -> KnownPatternScanResult {
+        decodeKnownPatternScan(
+            SyncBridgeService.scanFolderForKnownPatterns(folderID: folderID)
+        )
     }
 
     func hasShownRecommendationSheet(folderID: String) -> Bool {

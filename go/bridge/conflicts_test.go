@@ -3,7 +3,9 @@ package bridge
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -15,6 +17,37 @@ import (
 )
 
 const issue150ConflictRecoveryUnavailable = "vaultsync-conflict-recovery-unavailable"
+
+type issue150ConflictInspectionV2Payload struct {
+	Version   int            `json:"version"`
+	Conflicts []ConflictFile `json:"conflicts"`
+	Complete  bool           `json:"complete"`
+	Error     string         `json:"error"`
+}
+
+type issue150ReadFileContentV2Payload struct {
+	Version int     `json:"version"`
+	Content *string `json:"content"`
+	Error   string  `json:"error"`
+}
+
+func issue150DecodeConflictInspectionV2(t *testing.T, raw string) issue150ConflictInspectionV2Payload {
+	t.Helper()
+	var result issue150ConflictInspectionV2Payload
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		t.Fatalf("decode V2 conflict inspection: %v (raw: %q)", err, raw)
+	}
+	return result
+}
+
+func issue150DecodeReadFileContentV2(t *testing.T, raw string) issue150ReadFileContentV2Payload {
+	t.Helper()
+	var result issue150ReadFileContentV2Payload
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		t.Fatalf("decode V2 file-content inspection: %v (raw: %q)", err, raw)
+	}
+	return result
+}
 
 type issue150RecoveryEntry struct {
 	Mode    os.FileMode
@@ -327,9 +360,232 @@ func TestGetConflictFilesJSON(t *testing.T) {
 		t.Error("subdirectory conflict not found")
 	}
 
-	// An unavailable folder must not be confused with a verified empty scan.
-	if got := GetConflictFilesJSON("nonexistent"); got != conflictInspectionUnavailableError {
-		t.Errorf("nonexistent folder = %q, want fixed unavailable code", got)
+	// The historical endpoint always returns an array, including unavailable.
+	if got := GetConflictFilesJSON("nonexistent"); got != "[]" {
+		t.Errorf("nonexistent legacy folder = %q, want []", got)
+	}
+}
+
+func TestIssue150LegacyConflictInspectionWireShapeRemainsJSONArray(t *testing.T) {
+	StopSyncthing()
+	for _, raw := range []string{
+		GetConflictFilesJSON("issue150-stopped-legacy-inspection"),
+	} {
+		var conflicts []ConflictFile
+		if err := json.Unmarshal([]byte(raw), &conflicts); err != nil {
+			t.Fatalf("legacy stopped-engine response is not a JSON array: %v (raw: %q)", err, raw)
+		}
+	}
+
+	configDir := testConfigDir(t)
+	if errMsg := StartSyncthing(configDir); errMsg != "" {
+		t.Fatalf("StartSyncthing() failed: %s", errMsg)
+	}
+	if raw := GetConflictFilesJSON("issue150-unknown-legacy-inspection"); raw != "[]" {
+		t.Fatalf("legacy unknown-folder response = %q, want []", raw)
+	}
+}
+
+func TestIssue150LegacyReadFileContentWireShapeRemainsRawOrErrorPrefixed(t *testing.T) {
+	configDir := testConfigDir(t)
+	if errMsg := StartSyncthing(configDir); errMsg != "" {
+		t.Fatalf("StartSyncthing() failed: %s", errMsg)
+	}
+
+	folderPath := filepath.Join(configDir, "issue150-legacy-read")
+	if errMsg := addFolderForTesting("issue150-legacy-read", "Legacy Read", folderPath); errMsg != "" {
+		t.Fatalf("AddFolder failed: %s", errMsg)
+	}
+	fixtures := map[string]string{
+		"empty.md":        "",
+		"error-prefix.md": "error:legitimate note content",
+		"note.md":         "plain note content\n",
+	}
+	for name, content := range fixtures {
+		if err := os.WriteFile(filepath.Join(folderPath, name), []byte(content), 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+		if got := ReadFileContent("issue150-legacy-read", name); got != content {
+			t.Errorf("legacy content for %s = %q, want exact raw bytes %q", name, got, content)
+		}
+	}
+
+	for _, raw := range []string{
+		ReadFileContent("issue150-legacy-read", "missing-redaction-probe.md"),
+		ReadFileContent("issue150-legacy-read", "../outside-redaction-probe.md"),
+		ReadFileContent("issue150-unknown-legacy-read", "note.md"),
+	} {
+		if !strings.HasPrefix(raw, "error:") {
+			t.Errorf("legacy read failure = %q, want error: prefix", raw)
+		}
+		for _, privateDetail := range []string{"missing-redaction-probe", "outside-redaction-probe", folderPath} {
+			if strings.Contains(raw, privateDetail) {
+				t.Errorf("legacy read failure leaked private detail %q: %q", privateDetail, raw)
+			}
+		}
+	}
+}
+
+func TestIssue150ConflictInspectionV2DistinguishesCompleteEmptyListAndUnavailable(t *testing.T) {
+	configDir := testConfigDir(t)
+	if errMsg := StartSyncthing(configDir); errMsg != "" {
+		t.Fatalf("StartSyncthing() failed: %s", errMsg)
+	}
+
+	folderID := "issue150-v2-inspection"
+	folderPath := filepath.Join(configDir, folderID)
+	if errMsg := addFolderForTesting(folderID, "V2 Inspection", folderPath); errMsg != "" {
+		t.Fatalf("AddFolder failed: %s", errMsg)
+	}
+
+	empty := issue150DecodeConflictInspectionV2(t, GetConflictFilesInspectionJSONV2(folderID))
+	if empty.Version != 2 || !empty.Complete || empty.Error != "" || empty.Conflicts == nil || len(empty.Conflicts) != 0 {
+		t.Fatalf("complete empty inspection = %+v, want versioned verified empty", empty)
+	}
+
+	conflictName := "note.sync-conflict-20260830-120000-ABC1234.md"
+	if err := os.WriteFile(filepath.Join(folderPath, conflictName), []byte("other bytes"), 0o600); err != nil {
+		t.Fatalf("write conflict fixture: %v", err)
+	}
+	complete := issue150DecodeConflictInspectionV2(t, GetConflictFilesInspectionJSONV2(folderID))
+	if complete.Version != 2 || !complete.Complete || complete.Error != "" || len(complete.Conflicts) != 1 {
+		t.Fatalf("complete conflict inspection = %+v, want exact complete list", complete)
+	}
+	if complete.Conflicts[0].ConflictPath != conflictName {
+		t.Fatalf("conflict path = %q, want %q", complete.Conflicts[0].ConflictPath, conflictName)
+	}
+
+	if err := os.RemoveAll(folderPath); err != nil {
+		t.Fatalf("remove inspection fixture: %v", err)
+	}
+	missing := issue150DecodeConflictInspectionV2(t, GetConflictFilesInspectionJSONV2(folderID))
+	if missing.Version != 2 || missing.Complete || missing.Error != conflictInspectionUnavailableError || missing.Conflicts == nil || len(missing.Conflicts) != 0 {
+		t.Fatalf("missing-path inspection = %+v, want explicit unavailable", missing)
+	}
+
+	for _, raw := range []string{
+		GetConflictFilesInspectionJSONV2("issue150-v2-unknown"),
+	} {
+		unavailable := issue150DecodeConflictInspectionV2(t, raw)
+		if unavailable.Version != 2 || unavailable.Complete || unavailable.Error != conflictInspectionUnavailableError || unavailable.Conflicts == nil || len(unavailable.Conflicts) != 0 {
+			t.Fatalf("unknown inspection = %+v, want explicit unavailable", unavailable)
+		}
+		if strings.Contains(raw, "issue150-") || strings.Contains(raw, folderPath) {
+			t.Fatalf("unavailable V2 inspection leaked private detail: %q", raw)
+		}
+	}
+}
+
+func TestIssue150ConflictInspectionV2KeepsPreLimitAndRejectsPostLimitEntries(t *testing.T) {
+	root := t.TempDir()
+	beforeName := "00-before.sync-conflict-20260830-120000-ABC1234.md"
+	afterName := "02-after.sync-conflict-20260830-120001-XYZ9876.md"
+	for _, name := range []string{beforeName, "01-ordinary.md", afterName} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0o600); err != nil {
+			t.Fatalf("write bounded inspection fixture %q: %v", name, err)
+		}
+	}
+
+	result := inspectConflictFiles(root, conflictInspectionLimits{
+		maxVisitedEntries:     2,
+		maxCollectedConflicts: 10,
+	}, filepath.WalkDir)
+	if result.Version != 2 || result.Complete || result.Error != "" {
+		t.Fatalf("visit-limited inspection = %+v, want versioned partial result", result)
+	}
+	if len(result.Conflicts) != 1 || result.Conflicts[0].ConflictPath != beforeName {
+		t.Fatalf("partial conflicts = %+v, want only pre-limit %q", result.Conflicts, beforeName)
+	}
+	for _, conflict := range result.Conflicts {
+		if conflict.ConflictPath == afterName {
+			t.Fatalf("post-limit conflict was included: %+v", conflict)
+		}
+	}
+}
+
+func TestIssue150ConflictInspectionV2UsesIndependentCollectionBound(t *testing.T) {
+	root := t.TempDir()
+	firstName := "00-first.sync-conflict-20260830-120000-ABC1234.md"
+	secondName := "01-second.sync-conflict-20260830-120001-XYZ9876.md"
+	for _, name := range []string{firstName, secondName} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(name), 0o600); err != nil {
+			t.Fatalf("write collection-bound fixture %q: %v", name, err)
+		}
+	}
+
+	result := inspectConflictFiles(root, conflictInspectionLimits{
+		maxVisitedEntries:     10,
+		maxCollectedConflicts: 1,
+	}, filepath.WalkDir)
+	if result.Version != 2 || result.Complete || result.Error != "" {
+		t.Fatalf("collection-limited inspection = %+v, want versioned partial result", result)
+	}
+	if len(result.Conflicts) != 1 || result.Conflicts[0].ConflictPath != firstName {
+		t.Fatalf("collection-limited conflicts = %+v, want only %q", result.Conflicts, firstName)
+	}
+}
+
+func TestIssue150ConflictInspectionV2ClassifiesPreEntryWalkFailureAsUnavailable(t *testing.T) {
+	root := t.TempDir()
+	walk := func(root string, visit fs.WalkDirFunc) error {
+		info, err := os.Stat(root)
+		if err != nil {
+			t.Fatalf("stat synthetic inspection root: %v", err)
+		}
+		if err := visit(root, fs.FileInfoToDirEntry(info), nil); err != nil {
+			return err
+		}
+		return errors.New("synthetic pre-entry walk failure")
+	}
+
+	result := inspectConflictFiles(root, conflictInspectionLimits{
+		maxVisitedEntries:     10,
+		maxCollectedConflicts: 10,
+	}, walk)
+	if result.Version != 2 || result.Complete || result.Error != conflictInspectionUnavailableError || result.Conflicts == nil || len(result.Conflicts) != 0 {
+		t.Fatalf("pre-entry walk failure = %+v, want explicit unavailable", result)
+	}
+}
+
+func TestIssue150ReadFileContentV2DistinguishesEmptyErrorPrefixedAndUnavailable(t *testing.T) {
+	configDir := testConfigDir(t)
+	if errMsg := StartSyncthing(configDir); errMsg != "" {
+		t.Fatalf("StartSyncthing() failed: %s", errMsg)
+	}
+
+	folderID := "issue150-v2-read"
+	folderPath := filepath.Join(configDir, folderID)
+	if errMsg := addFolderForTesting(folderID, "V2 Read", folderPath); errMsg != "" {
+		t.Fatalf("AddFolder failed: %s", errMsg)
+	}
+	fixtures := map[string]string{
+		"empty.md":        "",
+		"error-prefix.md": "error:legitimate note content",
+	}
+	for name, content := range fixtures {
+		if err := os.WriteFile(filepath.Join(folderPath, name), []byte(content), 0o600); err != nil {
+			t.Fatalf("write V2 read fixture %q: %v", name, err)
+		}
+		got := issue150DecodeReadFileContentV2(t, ReadFileContentJSONV2(folderID, name))
+		if got.Version != 2 || got.Content == nil || *got.Content != content || got.Error != "" {
+			t.Fatalf("V2 read for %q = %+v, want exact content", name, got)
+		}
+	}
+
+	for _, raw := range []string{
+		ReadFileContentJSONV2(folderID, "missing-redaction-probe.md"),
+		ReadFileContentJSONV2(folderID, "../outside-redaction-probe.md"),
+		ReadFileContentJSONV2("issue150-v2-unknown", "missing-redaction-probe.md"),
+	} {
+		got := issue150DecodeReadFileContentV2(t, raw)
+		if got.Version != 2 || got.Content != nil || got.Error != conflictInspectionUnavailableError {
+			t.Fatalf("V2 unavailable read = %+v, want fixed unavailable", got)
+		}
+		for _, privateDetail := range []string{"missing-redaction-probe", "outside-redaction-probe", folderPath} {
+			if strings.Contains(raw, privateDetail) {
+				t.Fatalf("V2 unavailable read leaked private detail %q: %q", privateDetail, raw)
+			}
+		}
 	}
 }
 
@@ -362,21 +618,21 @@ func TestReadFileContent(t *testing.T) {
 		return got
 	}
 
-	got := decode(ReadFileContent("readtest", "test.md"))
+	got := decode(ReadFileContentJSONV2("readtest", "test.md"))
 	if got.Content == nil || *got.Content != content || got.Error != "" {
 		t.Errorf("ReadFileContent = %+v, want exact content", got)
 	}
 
 	// Inspection failures return only the stable path-free code.
-	if got := decode(ReadFileContent("readtest", "nope.md")); got.Content != nil || got.Error != conflictInspectionUnavailableError {
+	if got := decode(ReadFileContentJSONV2("readtest", "nope.md")); got.Content != nil || got.Error != conflictInspectionUnavailableError {
 		t.Errorf("nonexistent file = %+v, want unavailable", got)
 	}
 
-	if got := decode(ReadFileContent("readtest", "../../etc/passwd")); got.Content != nil || got.Error != conflictInspectionUnavailableError {
+	if got := decode(ReadFileContentJSONV2("readtest", "../../etc/passwd")); got.Content != nil || got.Error != conflictInspectionUnavailableError {
 		t.Errorf("path traversal = %+v, want unavailable", got)
 	}
 
-	if got := decode(ReadFileContent("nonexistent", "test.md")); got.Content != nil || got.Error != conflictInspectionUnavailableError {
+	if got := decode(ReadFileContentJSONV2("nonexistent", "test.md")); got.Content != nil || got.Error != conflictInspectionUnavailableError {
 		t.Errorf("nonexistent folder = %+v, want unavailable", got)
 	}
 }
@@ -397,16 +653,17 @@ func TestIssue150ConflictInspectionFailureIsNotAnEmptySuccess(t *testing.T) {
 		t.Fatalf("remove isolated fixture folder: %v", err)
 	}
 
-	if got := GetConflictFilesJSON("issue150-inspection-unavailable"); got != conflictInspectionUnavailableError {
-		t.Fatalf("missing-folder inspection = %q, want fixed unavailable code", got)
+	assertUnavailable := func(label, raw string) {
+		t.Helper()
+		got := issue150DecodeConflictInspectionV2(t, raw)
+		if got.Complete || got.Error != conflictInspectionUnavailableError || len(got.Conflicts) != 0 {
+			t.Fatalf("%s inspection = %+v, want fixed unavailable", label, got)
+		}
 	}
-	if got := GetConflictFilesJSON("issue150-unknown-folder"); got != conflictInspectionUnavailableError {
-		t.Fatalf("unknown-folder inspection = %q, want fixed unavailable code", got)
-	}
+	assertUnavailable("missing-folder", GetConflictFilesInspectionJSONV2("issue150-inspection-unavailable"))
+	assertUnavailable("unknown-folder", GetConflictFilesInspectionJSONV2("issue150-unknown-folder"))
 	StopSyncthing()
-	if got := GetConflictFilesJSON("issue150-inspection-unavailable"); got != conflictInspectionUnavailableError {
-		t.Fatalf("stopped-engine inspection = %q, want fixed unavailable code", got)
-	}
+	assertUnavailable("stopped-engine", GetConflictFilesInspectionJSONV2("issue150-inspection-unavailable"))
 }
 
 func TestIssue150ConflictInspectionDistinguishesEmptyContentAndUnavailableWithoutDetails(t *testing.T) {
@@ -443,16 +700,16 @@ func TestIssue150ConflictInspectionDistinguishesEmptyContentAndUnavailableWithou
 		if err := os.WriteFile(filepath.Join(folderPath, name), []byte(content), 0o644); err != nil {
 			t.Fatalf("write fixture: %v", err)
 		}
-		got := decode(ReadFileContent("issue150-content-inspection", name))
+		got := decode(ReadFileContentJSONV2("issue150-content-inspection", name))
 		if got.Content == nil || *got.Content != content || got.Error != "" {
 			t.Fatalf("successful inspection for %q = %+v, want exact content", name, got)
 		}
 	}
 
 	for _, raw := range []string{
-		ReadFileContent("issue150-content-inspection", "missing-redaction-probe.md"),
-		ReadFileContent("issue150-content-inspection", "../outside-redaction-probe.md"),
-		ReadFileContent("issue150-unknown-folder", "missing-redaction-probe.md"),
+		ReadFileContentJSONV2("issue150-content-inspection", "missing-redaction-probe.md"),
+		ReadFileContentJSONV2("issue150-content-inspection", "../outside-redaction-probe.md"),
+		ReadFileContentJSONV2("issue150-unknown-folder", "missing-redaction-probe.md"),
 	} {
 		got := decode(raw)
 		if got.Content != nil || got.Error != conflictInspectionUnavailableError {

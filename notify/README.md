@@ -4,6 +4,13 @@ Small sidecar that watches your Syncthing instance and sends a **wake-up signal*
 
 > Cloud Relay accelerates **server → iPhone** only. For **iPhone → server**, open VaultSync (see **Product scope** below).
 
+> [!IMPORTANT]
+> VaultSync 2.0.2 can still receive and report this helper's wake-up, but its
+> temporary #150 containment boundary prevents regular receive-capable vaults
+> from pulling server changes or scanning and uploading new iPhone edits.
+> Existing Send Only folders remain eligible for upload work. A recent wake-up
+> is therefore not evidence that a frozen vault synchronized.
+
 ---
 
 ## ⚡ One-step setup

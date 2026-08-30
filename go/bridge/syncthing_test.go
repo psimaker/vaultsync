@@ -4,27 +4,88 @@ import (
 	"encoding/json"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/syncthing/syncthing/lib/locations"
 )
 
-// testConfigDir creates a temporary config directory that won't fail
-// on cleanup if Syncthing's database files are still being flushed.
+var bridgeTestEnvironmentMu sync.Mutex
+
+// testConfigDir serializes every test that can mutate Syncthing's process-wide
+// location bases. Cleanup stops the engine, restores both bases, and only then
+// removes the synthetic home.
 func testConfigDir(t *testing.T) string {
 	t.Helper()
+	bridgeTestEnvironmentMu.Lock()
+	previousConfigBase := locations.GetBaseDir(locations.ConfigBaseDir)
+	previousDataBase := locations.GetBaseDir(locations.DataBaseDir)
+
 	dir, err := os.MkdirTemp("", "vaultsync-test-*")
 	if err != nil {
+		bridgeTestEnvironmentMu.Unlock()
 		t.Fatal(err)
 	}
+	dataDir := dir + "/data"
+	if err := locations.SetBaseDir(locations.ConfigBaseDir, dir); err != nil {
+		_ = os.RemoveAll(dir)
+		bridgeTestEnvironmentMu.Unlock()
+		t.Fatalf("set synthetic config base: %v", err)
+	}
+	if err := locations.SetBaseDir(locations.DataBaseDir, dataDir); err != nil {
+		_ = locations.SetBaseDir(locations.ConfigBaseDir, previousConfigBase)
+		_ = locations.SetBaseDir(locations.DataBaseDir, previousDataBase)
+		_ = os.RemoveAll(dir)
+		bridgeTestEnvironmentMu.Unlock()
+		t.Fatalf("set synthetic data base: %v", err)
+	}
+
 	t.Cleanup(func() {
 		StopSyncthing()
+		configRestoreErr := locations.SetBaseDir(locations.ConfigBaseDir, previousConfigBase)
+		dataRestoreErr := locations.SetBaseDir(locations.DataBaseDir, previousDataBase)
 		// Allow Syncthing's async config flush to complete before
 		// removing the temp directory — avoids "rename config.xml"
 		// log noise during test teardown.
 		time.Sleep(100 * time.Millisecond)
-		os.RemoveAll(dir)
+		removeErr := os.RemoveAll(dir)
+		bridgeTestEnvironmentMu.Unlock()
+
+		if configRestoreErr != nil {
+			t.Errorf("restore config base: %v", configRestoreErr)
+		}
+		if dataRestoreErr != nil {
+			t.Errorf("restore data base: %v", dataRestoreErr)
+		}
+		if removeErr != nil {
+			t.Errorf("remove synthetic bridge home: %v", removeErr)
+		}
 	})
 	return dir
+}
+
+func TestIssue150BridgeTestHomeRestoresLocationBasesBeforeDeletion(t *testing.T) {
+	beforeConfig := locations.GetBaseDir(locations.ConfigBaseDir)
+	beforeData := locations.GetBaseDir(locations.DataBaseDir)
+	var configDir string
+
+	t.Run("isolated lifecycle (#150)", func(t *testing.T) {
+		configDir = testConfigDir(t)
+		if errMsg := StartSyncthing(configDir); errMsg != "" {
+			t.Fatalf("StartSyncthing() failed: %s", errMsg)
+		}
+	})
+
+	if got := locations.GetBaseDir(locations.ConfigBaseDir); got != beforeConfig {
+		t.Errorf("ConfigBaseDir after cleanup = %q, want restored %q", got, beforeConfig)
+	}
+	if got := locations.GetBaseDir(locations.DataBaseDir); got != beforeData {
+		t.Errorf("DataBaseDir after cleanup = %q, want restored %q", got, beforeData)
+	}
+	if _, err := os.Stat(configDir); !os.IsNotExist(err) {
+		t.Errorf("synthetic bridge home still exists after cleanup: %v", err)
+	}
 }
 
 func TestStartStopSyncthing(t *testing.T) {

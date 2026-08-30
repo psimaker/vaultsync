@@ -243,9 +243,9 @@ struct SyncBridgeService {
 
     // MARK: - Phase 6: Conflict management
 
-    /// Get all conflict files in a folder as JSON.
-    static func getConflictFilesJSON(folderID: String) -> String {
-        BridgeGetConflictFilesJSON(folderID)
+    /// Get versioned complete, partial, or unavailable conflict evidence.
+    static func getConflictFilesInspectionJSONV2(folderID: String) -> String {
+        BridgeGetConflictFilesInspectionJSONV2(folderID)
     }
 
     enum FileInspectionResult: Equatable, Sendable {
@@ -254,15 +254,18 @@ struct SyncBridgeService {
     }
 
     private struct FileInspectionPayload: Decodable {
+        let version: Int
         let content: String?
         let error: String?
     }
 
-    /// Decodes the bridge's unambiguous inspection envelope. Unknown, legacy,
-    /// contradictory, or detailed errors fail closed to one generic state.
-    static func decodeFileInspectionResult(_ raw: String) -> FileInspectionResult {
+    /// Decodes only the V2 bridge's unambiguous inspection envelope. Unknown,
+    /// legacy, contradictory, or detailed errors fail closed to one generic
+    /// state (#150).
+    static func decodeFileInspectionResultV2(_ raw: String) -> FileInspectionResult {
         guard let data = raw.data(using: .utf8),
               let payload = try? JSONDecoder().decode(FileInspectionPayload.self, from: data),
+              payload.version == 2,
               payload.error == nil,
               let content = payload.content else {
             return .unavailable
@@ -272,7 +275,7 @@ struct SyncBridgeService {
 
     /// Read a text file within a folder without exposing bridge/path detail.
     static func readFileContent(folderID: String, relPath: String) -> FileInspectionResult {
-        decodeFileInspectionResult(BridgeReadFileContent(folderID, relPath))
+        decodeFileInspectionResultV2(BridgeReadFileContentJSONV2(folderID, relPath))
     }
 
     /// ABI-compatible inspection-only recovery stub. The current bridge always

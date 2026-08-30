@@ -45,7 +45,8 @@ struct SyncIssuesView: View {
 
     private func symbol(for issue: SyncthingManager.SyncIssueItem) -> String {
         switch issue.kind {
-        case .pathCollision, .nestedFolders, .conflictRetentionSafety, .folderErrors, .conflicts, .staleSync:
+        case .pathCollision, .nestedFolders, .conflictRetentionSafety, .folderErrors,
+             .conflicts, .conflictInspectionUnavailable, .staleSync:
             return "exclamationmark.triangle.fill"
         case .backgroundSync:
             return "clock.badge.exclamationmark"
@@ -124,21 +125,10 @@ struct SyncIssuesView: View {
             EmptyView()
 
         case .conflicts:
-            if let destination = Self.conflictDestination(
-                preferredFolderID: issue.folderID,
-                conflictFiles: syncthingManager.conflictFiles,
-                unavailableFolderIDs: syncthingManager.conflictInspectionUnavailableFolderIDs,
-                allowFallback: true
-            ) {
-                NavigationLink(L10n.tr("Review Conflicts")) {
-                    ConflictListView(
-                        folderID: destination,
-                        syncthingManager: syncthingManager
-                    )
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.regular)
-            }
+            conflictReviewAction(for: issue)
+
+        case .conflictInspectionUnavailable:
+            conflictReviewAction(for: issue)
 
         case .staleSync:
             if !syncthingManager.foregroundRescanEligibleFolderIDs.isEmpty {
@@ -157,6 +147,25 @@ struct SyncIssuesView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.regular)
             }
+        }
+    }
+
+    @ViewBuilder
+    private func conflictReviewAction(for issue: SyncthingManager.SyncIssueItem) -> some View {
+        if let destination = Self.conflictDestination(
+            preferredFolderID: issue.folderID,
+            conflictFiles: syncthingManager.conflictFiles,
+            unavailableFolderIDs: syncthingManager.conflictInspectionUnavailableFolderIDs,
+            allowFallback: true
+        ) {
+            NavigationLink(L10n.tr("Review Conflicts")) {
+                ConflictListView(
+                    folderID: destination,
+                    syncthingManager: syncthingManager
+                )
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.regular)
         }
     }
 
@@ -194,7 +203,7 @@ struct SyncIssuesView: View {
             anchor = "bookmark-access-expired"
         case .disconnectedPeers:
             anchor = "required-device-disconnected"
-        case .conflicts:
+        case .conflicts, .conflictInspectionUnavailable:
             // No conflict-resolution section exists in the troubleshooting doc,
             // and "Background Sync Not Working" is unrelated. The inline
             // review action is the complete read-only path, so don't surface a

@@ -1903,10 +1903,10 @@ enum BackgroundSyncService {
 
         var count = 0
         for folder in folders {
-            let cJSON = SyncBridgeService.getConflictFilesJSON(folderID: folder.id)
-            guard let cData = cJSON.data(using: .utf8),
-                  let conflicts = try? JSONDecoder().decode([ConflictStub].self, from: cData) else {
-                // Suppress rather than undercount this folder's conflicts to 0.
+            let raw = SyncBridgeService.getConflictFilesInspectionJSONV2(folderID: folder.id)
+            guard case let .complete(conflicts) = SyncthingManager.decodeConflictInspectionV2(raw) else {
+                // Suppress rather than undercount a partial or unavailable
+                // folder inspection to zero.
                 return nil
             }
             count += Set(conflicts.map(\.originalPath)).count
@@ -2255,11 +2255,6 @@ enum BackgroundSyncService {
         let errorReason: String?
         let errorMessage: String?
         let errorPath: String?
-    }
-
-    private struct ConflictStub: Decodable {
-        let originalPath: String
-        let conflictPath: String
     }
 
     struct SilentPushProgressTracker: Sendable {

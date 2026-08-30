@@ -183,10 +183,10 @@ you're subscribed but wake-ups never arrive; or per-device provisioning says
 
 **Fix:**
 1. If you moved or renamed the folder: move it back to its original place and name — syncing resumes on its own.
-2. If the folder is gone or was replaced: remove the vault in VaultSync on this iPhone, then accept its share again under **Pending Shares** — it syncs into a fresh folder.
-3. If notes are missing on this iPhone, they are still on your other synced devices — re-accepting the share in step 2 brings them back.
+2. In VaultSync 2.0.2, do not remove the vault as a recovery attempt. New share acceptance is unavailable, so removal would leave no supported way to restore the share in this release.
+3. Keep the intact copies on your other devices unchanged. VaultSync never repoints, recreates, or repopulates the missing folder automatically.
 
-VaultSync never moves, recreates, or deletes folders on its own, and a rescan cannot fix this — recovery here is always your manual decision.
+VaultSync never moves, recreates, or deletes folders on its own, and a rescan cannot fix this. A future recovery path must remain an explicit manual decision rather than an automatic repair.
 
 ---
 
@@ -198,20 +198,43 @@ VaultSync re-derives every vault's location from your Obsidian folder on launch,
 
 **Fix:**
 1. Tap **Reconnect to Obsidian** and re-select the same Obsidian folder in the Files picker.
-2. Keep VaultSync in the foreground and run a rescan.
-3. If a vault points at storage that's truly gone, use **Remove this vault** (it only stops syncing on this iPhone — your other devices keep their notes).
+2. For an existing Send Only vault whose safety state is clear, keep VaultSync in the foreground and run a rescan. Receive-capable vaults remain frozen in 2.0.2.
+3. If a vault points at storage that is truly gone, do not remove it as a 2.0.2 recovery attempt: this release cannot accept its share again. Preserve the intact copies on your other devices.
 
 ---
 
 ## Background Sync Not Working
 
-iOS controls background time and may delay or skip it. Cloud Relay makes `server → iPhone` feel near-realtime; `iPhone → server` is reliable only when VaultSync is open.
+### VaultSync 2.0.2 containment
+
+VaultSync 2.0.2 intentionally freezes every Send & Receive, Receive Only, and
+Receive Encrypted vault before download, scan, watch, local indexing, filter, or
+rescan work. Regular vaults created or accepted by VaultSync 1.8.2, 2.0.0, and
+2.0.1 are Send & Receive, so after upgrading they neither download server
+changes nor upload new iPhone edits. Cloud Relay may still show a received
+wake-up, but the protected vault remains frozen and the background run reports
+failure rather than claiming success.
+
+Do not remove and re-accept the vault, edit Syncthing's database, or change its
+folder type as a workaround. VaultSync has no approved automatic recovery or
+conversion path in 2.0.2. Existing Send Only folders continue to work when their
+safety state is clear.
+
+A previous unclean engine shutdown can also make 2.0.2 refuse to start when its
+stored sync state is ambiguous. VaultSync leaves that state untouched instead
+of attempting an automatic repair; this release has no supported self-service
+recovery for that stop.
+
+iOS controls background time and may delay or skip it. Outside the 2.0.2
+receive containment, Cloud Relay can make `server → iPhone` feel near-realtime;
+`iPhone → server` is most reliable with VaultSync open. In 2.0.2 the following
+steps can help only an existing Send Only vault whose safety state is clear.
 
 **Looks like:** last sync goes stale; sync works in the foreground but not when the app is closed.
 
 **Fix:**
 1. Open VaultSync and run a manual rescan.
-2. Clear any **Sync Issues** first (folder errors, pending shares, disconnected peers).
+2. Clear any actionable **Sync Issues** first. Pending shares and receive-capable vaults have no executable recovery in 2.0.2.
 3. Reconnect the Obsidian folder if access warnings appear.
 4. For relay users, confirm `vaultsync-notify --doctor` is green and **Last Wake-up Received** is recent.
 5. Re-check the **Last sync** timestamp after the next background window.

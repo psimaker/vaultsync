@@ -2,6 +2,7 @@
 
 - Context: Existing recovery actions can delete, replace, rename, ignore, or rescan conflict files without a proven byte-preserving recovery doctrine (#150/#167).
 - Decision: `ResolveConflict`, `KeepBothConflict`, and `RemoveConflictFilesForOriginal` retain their ABI signatures but return one stable, path-free recovery-unavailable error before any runtime, filesystem, temporary-file, database, filter, or rescan access.
+- Inspection ABI: Historical conflict-list and file-read entry points retain their wire shapes; additive `*V2` entry points carry versioned complete, partial, and unavailable evidence, and current Swift fails closed on every other shape.
 - UI: Conflict copies still present can be inspected, but 2.0.2 makes no retention guarantee and exposes no executable recovery, retry, skip, confirmation, or success flow.
 - Scope: `AutoResolveStateConflicts` remains non-mutating; no folder pause, configuration rewrite, persisted-state migration, or automatic reacceptance is introduced.
 - Why: Inspection adds no recovery mutation, while an unproven action can silently propagate lost bytes to every peer.

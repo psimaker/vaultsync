@@ -3,13 +3,28 @@ import SwiftUI
 struct SyncFilterRecommendationSheet: View {
     let folderID: String
     let syncthingManager: SyncthingManager
+    private let scanner: @Sendable (String) async -> KnownPatternScanResult
     @Environment(\.dismiss) private var dismiss
 
     @State private var detected: [DetectedPattern] = []
     @State private var enabledPresetIDs: Set<String> = Set(IgnorePreset.recommended.map(\.id))
     @State private var enabledDetectedPatterns: Set<String> = []
-    @State private var hasScanned = false
+    @State private var scanGeneration = FilterScanGeneration()
     @State private var applyErrorMessage: String?
+
+    init(
+        folderID: String,
+        syncthingManager: SyncthingManager,
+        scanner: @escaping @Sendable (String) async -> KnownPatternScanResult = { capturedFolderID in
+            await Task.detached(priority: .utility) {
+                SyncthingManager.scanFolderForKnownPatterns(folderID: capturedFolderID)
+            }.value
+        }
+    ) {
+        self.folderID = folderID
+        self.syncthingManager = syncthingManager
+        self.scanner = scanner
+    }
 
     var body: some View {
         NavigationStack {
@@ -75,8 +90,7 @@ struct SyncFilterRecommendationSheet: View {
                     }
                 }
             }
-            .task(id: safetyState) {
-                guard allowsChanges else { return }
+            .task(id: scanTaskID) {
                 await scan()
             }
             .alert(L10n.tr("Could not save filters"), isPresented: errorBinding) {
@@ -89,6 +103,10 @@ struct SyncFilterRecommendationSheet: View {
 
     private var safetyState: ConflictSafetyPolicy.State {
         syncthingManager.conflictSafetyState(folderID: folderID)
+    }
+
+    private var scanTaskID: FilterScanTaskID {
+        FilterScanTaskID(folderID: folderID, safetyState: safetyState)
     }
 
     private var allowsChanges: Bool {
@@ -154,12 +172,40 @@ struct SyncFilterRecommendationSheet: View {
     }
 
     private func scan() async {
-        guard !hasScanned else { return }
-        hasScanned = true
-        let id = folderID
-        let result = await Task.detached {
-            SyncthingManager.scanFolderForKnownPatterns(folderID: id)
-        }.value
+        guard safetyState == .clear else {
+            scanGeneration.invalidate()
+            detected.removeAll()
+            enabledDetectedPatterns.removeAll()
+            enabledPresetIDs = Set(IgnorePreset.recommended.map(\.id))
+            return
+        }
+        guard let token = scanGeneration.begin(
+            folderID: folderID,
+            safetyState: safetyState
+        ) else { return }
+        detected.removeAll()
+        enabledDetectedPatterns.removeAll()
+        enabledPresetIDs = Set(IgnorePreset.recommended.map(\.id))
+
+        let capturedFolderID = folderID
+        let scanResult = await scanner(capturedFolderID)
+        let scanComplete: Bool
+        switch scanResult {
+        case .complete:
+            scanComplete = true
+        case .unavailable:
+            scanComplete = false
+        }
+        let completion = scanGeneration.complete(
+            token: token,
+            currentFolderID: folderID,
+            currentSafetyState: safetyState,
+            taskCancelled: Task.isCancelled,
+            scanComplete: scanComplete
+        )
+        guard completion == .commit,
+              case let .complete(result) = scanResult else { return }
+
         detected = result
         for item in result {
             if let preset = IgnorePreset.preset(forDetectedPattern: item.pattern) {

@@ -17,11 +17,23 @@ VaultSync embeds Syncthing's Go reference implementation as an iOS library via g
 └─────────────────────────────────┘
 ```
 
+> [!IMPORTANT]
+> VaultSync 2.0.2 is a temporary data-safety containment release. Existing
+> Send Only folders keep their scan, index, filter, rescan, and upload behavior.
+> Send & Receive, Receive Only, and Receive Encrypted folders do not pull, scan,
+> watch, clean versions, or index new local edits. Because VaultSync 1.8.2,
+> 2.0.0, and 2.0.1 created and accepted regular vaults as Send & Receive, those
+> vaults are frozen after upgrade: they neither download server changes nor
+> upload new iPhone edits. New vault creation and share acceptance are also
+> unavailable. Cloud Relay can still deliver and report a wake-up, but cannot
+> pull changes into a frozen folder. VaultSync never converts a live folder to
+> Send Only automatically and does not weaken this boundary to restore service.
+
 ## 🔄 Sync strategy
 
-- **Foreground** — Syncthing runs unrestricted: immediate, continuous sync.
-- **Background** — `BGAppRefreshTask` (requested ~15 min out; iOS decides the actual timing) + `BGProcessingTask` (overnight catch-up: multi-minute budget while charging with network) + `BGContinuedProcessingTask` (iOS 26+, longer runtime for user-initiated tasks). A ~30s grace window after backgrounding lets in-flight work finish.
-- **Push (Cloud Relay)** — optional. Near-realtime `server → iPhone` wake-ups via APNs silent push. See [relay-spec.md](relay-spec.md).
+- **Foreground** — in 2.0.2, existing Send Only folders run normally; receive-capable folders remain stopped before local or receive-side mutation.
+- **Background** — `BGAppRefreshTask` (requested ~15 min out; iOS decides the actual timing) + `BGProcessingTask` (overnight catch-up: multi-minute budget while charging with network) + `BGContinuedProcessingTask` (iOS 26+, longer runtime for user-initiated tasks). A ~30s grace window after backgrounding lets eligible Send Only work finish; a protected receive-capable folder reports failure rather than a false success.
+- **Push (Cloud Relay)** — optional. APNs can still request a background wake-up in 2.0.2, but a wake-up cannot pull into a protected receive-capable folder. See [relay-spec.md](relay-spec.md).
 
 VaultSync is intentionally **asymmetric**:
 
@@ -31,6 +43,29 @@ VaultSync is intentionally **asymmetric**:
 | **iPhone → Server** | iOS doesn't guarantee timely background execution for local edits. The reliable path is to open VaultSync and let embedded Syncthing run in the foreground — a [Shortcuts automation](instant-upload.md) can do that automatically whenever you leave Obsidian. |
 
 Cloud Relay is a `server → iPhone` *acceleration* path, not a guarantee of symmetric real-time background sync.
+
+### Versioned bridge inspection contracts
+
+Bridge ABI compatibility and inspection truth are separate requirements:
+
+- `GetConflictFilesJSON` remains the historical JSON-array entry point. It
+  returns an array for every outcome so an older app/bridge pair keeps its wire
+  shape; it cannot distinguish unavailable from verified empty.
+- `ReadFileContent` remains the historical raw-text or `error:` entry point.
+  Its fixed error contains no path, filename, folder, or driver detail.
+- Current Swift uses the additive `GetConflictFilesInspectionJSONV2` and
+  `ReadFileContentJSONV2` entry points. Their envelopes carry `version: 2` and
+  distinguish complete empty, complete results, bounded partial results, and
+  unavailable inspection. Unknown, legacy, malformed, or contradictory
+  envelopes fail closed.
+- Conflict inspection retains a hard visited-entry bound and a separate
+  collected-conflict bound. A partial result keeps every conflict found so far,
+  is unioned with previously visible copies, and always surfaces an incomplete
+  warning; only a complete empty result may clear cached conflicts.
+- `ScanFolderForKnownPatterns` returns explicit `complete` evidence and checks
+  the live configured folder type before any filesystem inspection. Only an
+  exact Send Only folder is authorized; stopped, unknown, or receive-capable
+  states return a fixed path-free unavailable result.
 
 ### Relay and sync proof hierarchy
 
@@ -277,7 +312,7 @@ Minimal API exported via gomobile. Only primitives + `string` + `[]byte` cross t
 - **Folders:** `AddFolder`, `RemoveFolder`, `RescanFolder`, `GetFoldersJSON`, `ShareFolderWithDevice`, `UnshareFolderFromDevice`
 - **Status & config:** `GetFolderStatusJSON`, `GetConnectionsJSON`, `GetConfigJSON`, `SetDiscoveryEnabled`
 - **Pending shares:** `GetPendingFoldersJSON`, `AcceptPendingFolder`
-- **Conflicts:** `GetConflictFilesJSON`, `ResolveConflict`, `KeepBothConflict`, `ReadFileContent`, `RemoveConflictFilesForOriginal`
+- **Conflicts:** `GetConflictFilesJSON`, `GetConflictFilesInspectionJSONV2`, `ResolveConflict`, `KeepBothConflict`, `ReadFileContent`, `ReadFileContentJSONV2`, `RemoveConflictFilesForOriginal`
 - **Filters:** `GetFolderIgnores`, `SetFolderIgnores`, `ScanFolderForKnownPatterns`
 - **Events:** `GetEventsSince`, `EventStreamGeneration`
 </details>

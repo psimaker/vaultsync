@@ -198,6 +198,11 @@ struct DurableIssueFloorTests {
         #expect(floor([(.pendingShares, .warning), (.pathCollision, .critical)]) == .critical)
     }
 
+    @Test("Conflict inspection unavailable remains a durable widget warning (#150)")
+    func conflictInspectionUnavailableIsDurableIssue150() {
+        #expect(floor([(.conflictInspectionUnavailable, .warning)]) == .warning)
+    }
+
     // A successful background run resolves staleness by definition, and the
     // completion write knows the fresh background outcome — recording either
     // would stick a false amber only a foreground open could clear.
