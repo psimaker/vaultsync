@@ -7,7 +7,7 @@
 **Self-hosted Obsidian vault sync for iPhone and iPad.**<br>
 Your notes sync peer-to-peer over Syncthing, straight into Obsidian's iOS sandbox — no note cloud, no account, no tracking.
 
-<a href="https://apps.apple.com/app/vaultsync/id6761845197">
+<a href="https://apps.apple.com/de/app/vaultsync-for-obsidian/id6761845197">
   <img src="https://developer.apple.com/assets/elements/badges/download-on-the-app-store.svg" height="44" alt="Download on the App Store">
 </a>
 
@@ -53,7 +53,7 @@ Syncthing runs on a machine you keep on; VaultSync joins as a peer and syncs int
 
 ## 🚀 Quick start
 
-1. **Install** VaultSync from the [App Store](https://apps.apple.com/app/vaultsync/id6761845197).
+1. **Install** VaultSync from the [App Store](https://apps.apple.com/de/app/vaultsync-for-obsidian/id6761845197).
 2. **Pair your server** — scan its Syncthing Device ID by QR (or paste it), then accept the connection in that Syncthing instance.
 3. **Sync your vault** — VaultSync detects your Obsidian vaults, connects the share, and runs the first sync. Open Obsidian; your notes are there.
 4. **(Optional)** Enable **Cloud Relay** for faster server→iPhone updates — see below.
