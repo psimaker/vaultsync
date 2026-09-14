@@ -148,7 +148,31 @@ func (s *pairingServer) handler() http.Handler {
 	mux.HandleFunc("POST /v1/pair/start", s.handleStart)
 	mux.HandleFunc("POST /v1/pair/finish", s.handleFinish)
 	mux.HandleFunc("POST /v1/pair/provision", s.handleProvision)
-	return mux
+	return localNetworkOnly(mux)
+}
+
+// localNetworkOnly refuses every request whose source address is not a
+// private, loopback or link-local address. The listener binds all interfaces
+// (host networking), so this is the defence for an operator who forwards the
+// port against the documentation: an Internet client gets a 403 before any
+// pairing state is touched. It is not a substitute for not forwarding — a
+// router that rewrites source addresses would still defeat it.
+func localNetworkOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isLocalNetworkAddress(remoteIP(r)) {
+			writeError(w, http.StatusForbidden, "pairing is only available from the local network")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func isLocalNetworkAddress(host string) bool {
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
 }
 
 func (s *pairingServer) handleInfo(w http.ResponseWriter, _ *http.Request) {
@@ -322,8 +346,14 @@ func (s *pairingServer) provision(ctx context.Context, sess *pairingSession, p p
 	}); err != nil {
 		s.logf("pairing: could not record device: %v", err)
 	}
-	s.logf("pairing: shared vault %q with a new device", target.Label)
-	return &vaultInfo{ID: target.ID, Label: target.Label}, ""
+	s.logf("pairing: shared vault %s with a paired device", target.ID)
+	// The device decides whether it may accept into a non-empty directory
+	// from this count; unknown (-1) makes it fail closed.
+	files := int64(-1)
+	if st, err := s.prov.client.DBStatus(ctx, target.ID); err == nil {
+		files = st.LocalFiles
+	}
+	return &vaultInfo{ID: target.ID, Label: target.Label, Files: files}, ""
 }
 
 func (s *pairingServer) hubPayload(ctx context.Context, provisioned *vaultInfo, errMsg string) hubPayload {

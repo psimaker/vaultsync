@@ -265,11 +265,17 @@ func TestE2EHubPairsDeviceAndSyncsBothWays(t *testing.T) {
 	if err != nil || reply.Error != "" {
 		t.Fatalf("list: %+v %v", reply, err)
 	}
+	seq := uint64(2)
 	waitUntil(t, "hub file count", 30*time.Second, func() bool {
-		r, err := client.provision(ctx, 3, devST.id, "E2E Device", "", false)
+		seq++
+		r, err := client.provision(ctx, seq, devST.id, "E2E Device", "", false)
 		return err == nil && len(r.Vaults) == 1 && r.Vaults[0].Files > 0
 	})
-	r, _ := client.provision(ctx, 4, devST.id, "E2E Device", "", false)
+	seq++
+	r, err := client.provision(ctx, seq, devST.id, "E2E Device", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
 	fake := vaultInfo{ID: "vs-000000000000", Label: "Other", Files: r.Vaults[0].Files}
 	if err := acceptShareLocally(ctx, devST.client, localProv, hubST.id, devST.id, fake, other); err == nil || !strings.Contains(err.Error(), "never merges") {
 		t.Fatalf("non-empty/non-empty accept must refuse: %v", err)

@@ -199,7 +199,7 @@ write_hub_files() {
 services:
   syncthing:
     image: syncthing/syncthing:1
-    container_name: vaultsync-syncthing
+    container_name: vaultsync-hub-syncthing
     hostname: ${VAULTSYNC_HUB_NAME:-VaultSync Hub}
     environment:
       PUID: ${PUID:-1000}
@@ -248,7 +248,9 @@ services:
 
   notify:
     image: ghcr.io/psimaker/vaultsync-notify:2.0.2
-    container_name: vaultsync-notify
+    # Distinct from the `vaultsync-notify` container the notify.sh installer
+    # creates for a pre-existing Syncthing, so both can coexist on one host.
+    container_name: vaultsync-hub-notify
     user: "${PUID:-1000}:${PGID:-1000}"
     environment:
       SYNCTHING_CONFIG: /var/syncthing/config/config.xml
@@ -300,6 +302,11 @@ setup_hub() {
 	GUI_PORT=8384
 	if [ -d "$HUB_DIR" ] && [ -f "$HUB_DIR/.env" ]; then
 		info "Existing Hub found in $HUB_DIR — updating it (your .env is kept)."
+		# The hints below must name the ports this Hub actually uses.
+		existing_sync=$(sed -n 's/^SYNC_PORT=//p' "$HUB_DIR/.env" | tail -1)
+		existing_gui=$(sed -n 's/^GUI_PORT=//p' "$HUB_DIR/.env" | tail -1)
+		[ -z "$existing_sync" ] || SYNC_PORT="$existing_sync"
+		[ -z "$existing_gui" ] || GUI_PORT="$existing_gui"
 	else
 		if port_in_use 22000; then
 			warn "Port 22000 is already in use (another Syncthing?). The Hub will use 22001."

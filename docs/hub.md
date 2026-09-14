@@ -1,8 +1,8 @@
 # VaultSync Hub
 
 The Hub is the simplest way to run VaultSync: one server or NAS keeps every
-vault, every device pairs with a short code, and nobody has to see a Syncthing
-Web UI. "Bring your own Syncthing" keeps working exactly as before — the Hub is
+vault, computers pair with a short code (the iPhone app pairs by Device ID
+until code/QR pairing ships), and nobody has to see a Syncthing Web UI. "Bring your own Syncthing" keeps working exactly as before — the Hub is
 an addition, not a replacement.
 
 ## Set up a Hub (once)
@@ -35,7 +35,7 @@ read `hub/scripts/setup.sh`.
 |---|---|---|
 | 22000 tcp+udp | sync protocol | forward on your router if devices should sync from outside the home network (optional — Syncthing relays work without it) |
 | 21027 udp | Syncthing local discovery | LAN |
-| 8390 tcp+udp | pairing and Hub discovery | **LAN only — never forward it** |
+| 8390 tcp+udp | pairing and Hub discovery | listens on all interfaces, answers only private/loopback/link-local source addresses — **never forward it** |
 | 8384 | Syncthing Web UI | loopback only (`ssh -L 8384:127.0.0.1:8384 hub`) |
 
 If port 22000 is already taken (an existing Syncthing on the same machine), the
@@ -71,15 +71,17 @@ Pairing by code or QR from the app follows in a later release.
   empty directory under `vaults/`. A directory that already holds files becomes
   a vault only when you say so on the Hub's own shell: `vaultsync-hub vault adopt NAME`.
   On a device, `--path` must be empty unless the Hub's vault is brand new.
-- **Nothing is ever deleted or moved.** The Hub never changes a folder's path,
-  never removes a folder, never repoints anything. Conflict copies are kept
-  without limit, and staggered versioning keeps 30 days of history in
-  `.stversions` inside each vault.
+- **The Hub never deletes or moves your files.** It never changes a folder's
+  path, never removes a folder, never repoints anything. Conflict copies are
+  kept without limit. Overwritten and deleted versions are kept for 30 days in
+  `.stversions` inside each vault, then cleaned by Syncthing's versioner.
 - **Two vaults never overlap on disk.** Same rule as in the app.
 - **Pairing is local and authenticated.** The code is turned into a session key
   with a password-authenticated key exchange (SPAKE2). Someone listening on the
   network learns nothing that lets them guess the code offline, and someone
-  without the code cannot impersonate the Hub or a device.
+  without the code cannot impersonate the Hub or a device. Requests from
+  non-private addresses are refused outright, but that is a backstop, not a
+  reason to forward the port.
 
 ## Everyday commands
 

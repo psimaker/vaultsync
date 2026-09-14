@@ -13,7 +13,7 @@
 services:
   syncthing:
     image: syncthing/syncthing:1
-    container_name: vaultsync-syncthing
+    container_name: vaultsync-hub-syncthing
     hostname: ${VAULTSYNC_HUB_NAME:-VaultSync Hub}
     environment:
       PUID: ${PUID:-1000}
@@ -62,7 +62,9 @@ services:
 
   notify:
     image: ghcr.io/psimaker/vaultsync-notify:2.0.2
-    container_name: vaultsync-notify
+    # Distinct from the `vaultsync-notify` container the notify.sh installer
+    # creates for a pre-existing Syncthing, so both can coexist on one host.
+    container_name: vaultsync-hub-notify
     user: "${PUID:-1000}:${PGID:-1000}"
     environment:
       SYNCTHING_CONFIG: /var/syncthing/config/config.xml

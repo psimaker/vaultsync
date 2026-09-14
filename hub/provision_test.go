@@ -2,7 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/pem"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -220,5 +224,48 @@ func TestDetectSyncthingParsesGUIBlock(t *testing.T) {
 	det, err = detectSyncthing("http://syncthing:8384")
 	if err != nil || det.APIURL != "http://syncthing:8384" {
 		t.Fatalf("override ignored: %+v %v", det, err)
+	}
+}
+
+func TestAutoDetectedTLSGUITrustsSyncthingCertificate(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-API-Key") != "k" {
+			http.Error(w, "nope", http.StatusForbidden)
+			return
+		}
+		_, _ = w.Write([]byte(`{"ping":"pong"}`))
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "https-cert.pem")
+	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewSyncthingClient(srv.URL, "k").Ping(context.Background()); err == nil {
+		t.Fatal("system roots must not trust Syncthing's self-signed certificate")
+	}
+	trusted, err := newSyncthingClientTLS(srv.URL, "k", certPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := trusted.Ping(context.Background()); err != nil {
+		t.Fatalf("pinned certificate rejected: %v", err)
+	}
+	if _, err := newSyncthingClientTLS(srv.URL, "k", filepath.Join(dir, "missing.pem")); err == nil {
+		t.Fatal("missing certificate file must be an error, not silent insecurity")
+	}
+	// Detection reports the certificate only for TLS GUIs without an override.
+	cfg := filepath.Join(dir, "config.xml")
+	if err := writeFile(cfg, `<configuration><gui tls="true"><address>127.0.0.1:8384</address><apikey>k</apikey></gui></configuration>`); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SYNCTHING_CONFIG", cfg)
+	det, err := detectSyncthing("")
+	if err != nil || det.CertPath != certPath || det.APIURL != "https://127.0.0.1:8384" {
+		t.Fatalf("detected %+v %v", det, err)
+	}
+	det, _ = detectSyncthing("http://syncthing:8384")
+	if det.CertPath != "" {
+		t.Fatal("an explicit override must keep normal certificate verification")
 	}
 }

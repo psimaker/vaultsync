@@ -271,3 +271,54 @@ func TestLooksLikeDeviceID(t *testing.T) {
 		}
 	}
 }
+
+func TestProvisionedVaultReportsHubFileCount(t *testing.T) {
+	fx := newPairingFixture(t)
+	ctx := context.Background()
+	c := fx.client()
+	if _, err := c.handshake(ctx, fx.code); err != nil {
+		t.Fatal(err)
+	}
+	reply, err := c.provision(ctx, 1, fakeDeviceID, "Laptop", "Notes", true)
+	if err != nil || reply.Provisioned == nil {
+		t.Fatalf("%+v %v", reply, err)
+	}
+	if reply.Provisioned.Files != 0 {
+		t.Fatalf("fresh vault must report 0 files, got %d", reply.Provisioned.Files)
+	}
+	fx.fake.mu.Lock()
+	fx.fake.dbFiles[reply.Provisioned.ID] = 42
+	fx.fake.mu.Unlock()
+	reply, err = c.provision(ctx, 2, fakeDeviceID, "Laptop", "Notes", false)
+	if err != nil || reply.Provisioned == nil {
+		t.Fatalf("%+v %v", reply, err)
+	}
+	if reply.Provisioned.Files != 42 {
+		t.Fatalf("existing vault must report the Hub's file count, got %d", reply.Provisioned.Files)
+	}
+}
+
+func TestPairingRefusesNonPrivateSourceAddresses(t *testing.T) {
+	fx := newPairingFixture(t)
+	h := fx.server.handler()
+	for _, tc := range []struct {
+		remote string
+		want   int
+	}{
+		{"203.0.113.9:4444", http.StatusForbidden},
+		{"[2001:db8::1]:4444", http.StatusForbidden},
+		{"192.168.1.20:4444", http.StatusOK},
+		{"10.0.0.7:4444", http.StatusOK},
+		{"[fe80::1]:4444", http.StatusOK},
+		{"127.0.0.1:4444", http.StatusOK},
+		{"garbage", http.StatusForbidden},
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/v1/hub", nil)
+		req.RemoteAddr = tc.remote
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != tc.want {
+			t.Errorf("remote %s: got %d, want %d", tc.remote, rec.Code, tc.want)
+		}
+	}
+}

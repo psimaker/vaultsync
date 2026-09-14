@@ -20,7 +20,7 @@ User documentation: [`docs/hub.md`](../docs/hub.md). Design records:
 | `pake/` | SPAKE2 over edwards25519 (RFC 9382) — the pairing code becomes a session key |
 | `pairing.go` / `pairclient.go` | pairing protocol v1 (start / finish / provision) — server and device side |
 | `discovery.go` | LAN discovery by UDP broadcast (`VSHUB1?` → `VSHUB1 <port> <name>`) |
-| `provision.go` | guarded Syncthing changes: slugged vault paths under one root, overlap check, no sync into non-empty directories, never PATCH a folder |
+| `provision.go` | guarded Syncthing changes: slugged vault paths under one root, overlap check, pairing refuses non-empty directories (only the operator's `vault adopt` may take one over), never PATCH a folder |
 | `syncthing.go` | minimal REST client + `config.xml` API-key discovery |
 | `state.go` | Hub state file (pairing scalar, paired devices), atomic 0600 |
 | `docker-compose.yml` | the stack `setup.sh` installs (Syncthing + hub + notify), bind mounts only |
@@ -51,7 +51,7 @@ scripts/tests/setup-dry-run-test.sh
 | `VAULTSYNC_HUB_STATE` | `/var/lib/vaultsync-hub/state.json` | Hub state file |
 | `VAULTSYNC_HUB_VAULTS` | `/var/syncthing/vaults` | vaults root as Syncthing sees it |
 | `VAULTSYNC_HUB_VAULTS_LOCAL` | same | vaults root as the hub process sees it |
-| `VAULTSYNC_HUB_PORT` | `8390` | pairing (TCP) and discovery (UDP) port — LAN only, never forward it |
+| `VAULTSYNC_HUB_PORT` | `8390` | pairing (TCP) and discovery (UDP) port; bound on all interfaces, non-private source addresses are refused — never forward it |
 | `VAULTSYNC_HUB_NAME` | `VaultSync Hub` | how the Hub introduces itself |
 
 ## Release

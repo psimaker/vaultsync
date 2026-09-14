@@ -21,6 +21,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -265,15 +266,25 @@ func cmdServe(ctx context.Context, cfg config, args []string) error {
 	prov := newProvisioner(client, cfg.vaultsRoot, cfg.vaultsLocal)
 	srv := newPairingServer(store, prov, cfg.hubName, version)
 	addr := *listen
+	port := cfg.port
 	if addr == "" {
-		addr = ":" + strconv.Itoa(cfg.port)
+		addr = ":" + strconv.Itoa(port)
+	} else {
+		// Discovery must advertise the port pairing actually listens on.
+		_, p, err := net.SplitHostPort(addr)
+		if err != nil {
+			return fmt.Errorf("--listen must be host:port: %w", err)
+		}
+		if port, err = strconv.Atoi(p); err != nil || port < 1 || port > 65535 {
+			return fmt.Errorf("--listen has an invalid port %q", p)
+		}
 	}
 	errCh := make(chan error, 2)
 	if !*noDiscovery {
-		go func() { errCh <- serveDiscovery(ctx, cfg.port, cfg.hubName, srv.logf) }()
+		go func() { errCh <- serveDiscovery(ctx, port, cfg.hubName, srv.logf) }()
 	}
 	go func() { errCh <- servePairingHTTP(ctx, addr, srv) }()
-	srv.logf("vaultsync-hub %s: pairing on %s, discovery on udp/%d", version, addr, cfg.port)
+	srv.logf("vaultsync-hub %s: pairing on %s, discovery on udp/%d", version, addr, port)
 	select {
 	case <-ctx.Done():
 		return nil
@@ -593,8 +604,15 @@ func acceptShareLocally(ctx context.Context, local *SyncthingClient, prov *provi
 	if err != nil {
 		return err
 	}
-	if exists && !empty && v.Files > 0 {
-		return fmt.Errorf("%s already holds files and the Hub's vault is not empty — nothing was changed. Move one of them aside; VaultSync never merges two vaults on its own", abs)
+	if exists && !empty {
+		// Merging two non-empty sides is the one operation VaultSync never
+		// performs on its own. An unknown Hub file count (< 0) fails closed.
+		if v.Files < 0 {
+			return fmt.Errorf("%s already holds files and the Hub could not confirm that its vault is empty — nothing was changed. Use an empty directory, or retry", abs)
+		}
+		if v.Files > 0 {
+			return fmt.Errorf("%s already holds files and the Hub's vault is not empty — nothing was changed. Move one of them aside; VaultSync never merges two vaults on its own", abs)
+		}
 	}
 	if !exists {
 		if err := prov.mkdir(abs); err != nil {

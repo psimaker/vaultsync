@@ -71,7 +71,7 @@ curl -fsSL https://vaultsync.eu/setup.sh | sh
 
 Choose **2) Hub** on the server (once) and **1) Obsidian device** on every
 computer. The Hub keeps every vault as plain files under `/srv/vaultsync/vaults`,
-keeps 30 days of versions and every conflict copy, and never merges, deletes or
+keeps every conflict copy and 30 days of versions, and never merges, deletes or
 moves anything on its own. Details, ports and commands: [docs/hub.md](docs/hub.md).
 "Bring your own Syncthing" keeps working unchanged.
 

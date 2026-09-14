@@ -137,14 +137,18 @@ pass "embedded compose matches hub/docker-compose.yml"
 
 # --- Menu without a terminal must not hang or guess ---------------------------
 
-if out=$(sh "$SETUP_SH" --dry-run </dev/null 2>&1); then
-	# A terminal was available (developer machine); the menu answered itself.
-	printf '%s\n' "$out" | grep -q "Choice" || fail "menu missing:
+# setsid detaches from the controlling terminal so `ask` cannot read /dev/tty;
+# without it (macOS) the check would block on a developer's terminal, so skip.
+if command -v setsid >/dev/null 2>&1; then
+	if out=$(setsid sh "$SETUP_SH" --dry-run </dev/null 2>&1); then
+		fail "menu without a terminal must fail instead of guessing:
 $out"
-else
+	fi
 	printf '%s\n' "$out" | grep -q -- "--device or --hub" || fail "no-terminal case does not name the flags:
 $out"
+	pass "menu without a terminal names --device/--hub and stops"
+else
+	pass "menu-without-terminal check skipped (no setsid on this platform)"
 fi
-pass "menu handles a missing terminal"
 
 echo "setup.sh dry-run smoke test: all checks passed"

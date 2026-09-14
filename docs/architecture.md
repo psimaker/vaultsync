@@ -312,7 +312,7 @@ with a coordinator next to it.
  │       └─ provision   create/share vaults via REST, guarded   │
  │ notify (wake-up helper)      reads config.xml read-only      │
  └──────────────────────────────────────────────────────────────┘
-        ▲ 22000 sync (Syncthing TLS, device IDs)     ▲ 8390 pairing (LAN only)
+        ▲ 22000 sync (Syncthing TLS, device IDs)     ▲ 8390 pairing (private addresses only)
         │                                            │
    iPhone (VaultSync app)                    computer (`vaultsync-hub pair`)
 ```

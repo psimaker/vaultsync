@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"encoding/xml"
 	"errors"
@@ -35,16 +37,38 @@ type SyncthingClient struct {
 // NewSyncthingClient builds a client. Redirects are refused: the API key must
 // never follow a redirect to another host.
 func NewSyncthingClient(apiURL, apiKey string) *SyncthingClient {
+	c, _ := newSyncthingClientTLS(apiURL, apiKey, "")
+	return c
+}
+
+// newSyncthingClientTLS builds a client that, when certPath is set, trusts
+// exactly that PEM certificate (Syncthing's self-signed https-cert.pem next to
+// config.xml) instead of the system roots. Used only for auto-detected TLS
+// GUIs; an explicit SYNCTHING_API_URL keeps normal verification.
+func newSyncthingClientTLS(apiURL, apiKey, certPath string) (*SyncthingClient, error) {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if certPath != "" {
+		pem, err := os.ReadFile(certPath)
+		if err != nil {
+			return nil, fmt.Errorf("read Syncthing GUI certificate: %w", err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("%s holds no usable certificate", certPath)
+		}
+		transport.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+	}
 	return &SyncthingClient{
 		baseURL: strings.TrimRight(apiURL, "/"),
 		apiKey:  apiKey,
 		http: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout:   30 * time.Second,
+			Transport: transport,
 			CheckRedirect: func(*http.Request, []*http.Request) error {
 				return errors.New("redirects are not followed")
 			},
 		},
-	}
+	}, nil
 }
 
 // --- config.xml discovery ---------------------------------------------------
@@ -68,6 +92,9 @@ type detectedSyncthing struct {
 	APIKey string
 	APIURL string
 	Source string
+	// CertPath is Syncthing's own GUI certificate when the detected GUI uses
+	// TLS and no URL override is in effect; empty otherwise.
+	CertPath string
 }
 
 // syncthingConfigCandidates lists where to look for config.xml, most specific
@@ -141,6 +168,9 @@ func detectSyncthing(apiURLOverride string) (detectedSyncthing, error) {
 			d.APIURL = apiURLOverride
 		} else {
 			d.APIURL = guiURL(cfg.GUI.Address, cfg.GUI.TLS)
+			if strings.EqualFold(cfg.GUI.TLS, "true") {
+				d.CertPath = filepath.Join(filepath.Dir(p), "https-cert.pem")
+			}
 		}
 		return d, nil
 	}
@@ -398,11 +428,14 @@ func waitForSyncthing(ctx context.Context, apiURLOverride string, timeout time.D
 	for {
 		det, err := detectSyncthing(apiURLOverride)
 		if err == nil {
-			client := NewSyncthingClient(det.APIURL, det.APIKey)
-			if perr := client.Ping(ctx); perr == nil {
-				return client, det, nil
-			} else {
-				err = perr
+			var client *SyncthingClient
+			client, err = newSyncthingClientTLS(det.APIURL, det.APIKey, det.CertPath)
+			if err == nil {
+				if perr := client.Ping(ctx); perr == nil {
+					return client, det, nil
+				} else {
+					err = perr
+				}
 			}
 		}
 		lastErr = err

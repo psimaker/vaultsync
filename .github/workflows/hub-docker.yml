@@ -89,6 +89,7 @@ jobs:
 
   binaries:
     name: Release binaries
+    needs: image
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     timeout-minutes: 15

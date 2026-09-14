@@ -1,15 +1,19 @@
 name: Dependabot auto-merge
 
 # Enables GitHub native auto-merge for low-risk Dependabot PRs only:
-# github-actions MINOR/PATCH bumps. Those are the bumps actually exercised by
-# the PR's required checks (ci.yml + security.yml run on pull_request), so a
-# green PR is meaningful for them.
+#   - github-actions MINOR/PATCH bumps
+#   - gomod MINOR/PATCH bumps in /go, /notify and /hub
+# Those are the bumps actually exercised by the PR's required checks (Go Tests,
+# Notify Tests, Hub Tests and the govulncheck gates all compile and run the
+# changed module on pull_request), so a green PR is meaningful for them.
+# A merged /go bump still needs an xcframework rebuild before the next archive
+# (AGENTS.md handoff rule) — the bump itself is safe to land.
 #
-# Deliberately NOT auto-merged — left for weekly manual review — because their
+# Deliberately NOT auto-merged — left for manual review — because their
 # changed code never runs on a pull_request, so a green PR proves nothing:
 #   - github-actions MAJOR bumps (input / Node-runtime / behaviour changes)
-#   - gomod                      (native bridge; judgement call)
-#   - /notify base images        (docker.yml builds + Trivy-scans only on push/tag)
+#   - gomod MAJOR bumps          (API changes; judgement call)
+#   - /notify and /hub base images (docker.yml builds + Trivy-scans only on push/tag)
 #
 # `--auto` hands the merge to GitHub, which still blocks on the branch-protection
 # required checks (Go Tests, Notify Tests, PR Title). No approval step is needed:
@@ -36,9 +40,10 @@ jobs:
       # the actions-minor-patch group reports minor/patch and merges, while the
       # actions-major group reports major and is held for review. Matching on the
       # branch prefix avoids any github_actions vs github-actions naming ambiguity.
-      - name: Enable auto-merge (github-actions minor/patch only)
+      - name: Enable auto-merge (github-actions and gomod minor/patch only)
         if: >-
-          startsWith(github.head_ref, 'dependabot/github_actions/') &&
+          (startsWith(github.head_ref, 'dependabot/github_actions/') ||
+           startsWith(github.head_ref, 'dependabot/go_modules/')) &&
           (steps.meta.outputs.update-type == 'version-update:semver-minor' ||
            steps.meta.outputs.update-type == 'version-update:semver-patch')
         run: gh pr merge --auto --squash "$PR_URL"

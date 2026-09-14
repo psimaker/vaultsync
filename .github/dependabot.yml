@@ -54,6 +54,34 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+    # The Go toolchain version is a repo-wide decision (go.mod in go/, notify/
+    # and hub/ declare the exact version; CI and the xcframework build follow
+    # it). A builder-image minor bump on its own would desynchronise that, so
+    # Dependabot only proposes patch/digest updates here.
+    ignore:
+      - dependency-name: golang
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
+  # Hub coordinator container base image — same policy as notify.
+  - package-ecosystem: docker
+    directory: /hub
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    ignore:
+      - dependency-name: golang
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
+  # Hub dependencies (filippo.io/edwards25519 today). Exercised on every PR by
+  # Hub Tests + govulncheck (hub).
+  - package-ecosystem: gomod
+    directory: /hub
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 7
 
   # Notify dependencies. The glob module and calmh replacement must stay byte-
   # aligned with the bundled Syncthing ignore matcher, so that pair is reviewed
