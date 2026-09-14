@@ -294,3 +294,39 @@ Minimal API exported via gomobile. Only primitives + `string` + `[]byte` cross t
 | `Resources/` · `*.lproj/` | assets, theme, localization helpers (en, de, es, zh-Hans) |
 
 The optional `notify/` sidecar watches Syncthing on the homeserver and sends APNs wake-ups; see [relay-spec.md](relay-spec.md) for the protocol and [troubleshooting.md](troubleshooting.md) for end-user issues.
+
+## 🏠 VaultSync Hub (`hub/`)
+
+The Hub is an optional self-hosted stack (Docker Compose) that turns "install
+Syncthing, exchange device IDs, accept folders" into "run one link, type one
+code". It does not change the sync model: the Hub is a normal Syncthing peer
+with a coordinator next to it.
+
+```
+ server / NAS  (/srv/vaultsync, bind mounts only)
+ ┌──────────────────────────────────────────────────────────────┐
+ │ syncthing (official image)   ./syncthing  ./vaults/<slug>    │
+ │ hub  (vaultsync-hub serve)   host network: udp/tcp 8390      │
+ │       ├─ discovery   answers "VSHUB1?" broadcasts on the LAN │
+ │       ├─ pairing     SPAKE2 (RFC 9382) with the short code   │
+ │       └─ provision   create/share vaults via REST, guarded   │
+ │ notify (wake-up helper)      reads config.xml read-only      │
+ └──────────────────────────────────────────────────────────────┘
+        ▲ 22000 sync (Syncthing TLS, device IDs)     ▲ 8390 pairing (LAN only)
+        │                                            │
+   iPhone (VaultSync app)                    computer (`vaultsync-hub pair`)
+```
+
+- **Coordinator, not a proxy.** After pairing, devices talk to the Hub's
+  Syncthing directly; the coordinator only exchanged the two device IDs and
+  configured the folder. Nothing routes through it.
+- **Guards mirror the app** (`hub/provision.go`): vaults only under one root
+  with slugged names, overlap check against every folder, no vault over
+  existing content without `vault adopt`, never repoint, never delete, never
+  PATCH a folder (decision 037).
+- **Pairing** (`hub/pairing.go`, `hub/pake`): discovery → SPAKE2 → mutual
+  confirmation → AES-GCM boxes; codes expire after 24 h and lock after five
+  failures (decision 036).
+- **Device side** (`vaultsync-hub pair`): works with any stock Syncthing today
+  and is the core of the future desktop agent; through gomobile it can also back
+  the iOS app's code/QR pairing.

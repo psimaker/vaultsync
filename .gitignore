@@ -53,3 +53,7 @@ docs/superpowers/
 
 # Go build artifact (binary named after the dir)
 /notify/notify
+
+# Hub build artifacts
+/hub/hub
+/hub/dist/

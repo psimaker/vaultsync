@@ -4,6 +4,16 @@ All notable changes to VaultSync are documented here.
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **VaultSync Hub: a self-hosted stack you install with one link and pair with a short code** — `curl -fsSL https://vaultsync.eu/setup.sh | sh` asks `1) Obsidian device / 2) Hub`. The Hub path starts the Hub's own Syncthing, the new `vaultsync-hub` coordinator and the `notify` wake-up helper as a Docker Compose stack under `/srv/vaultsync` (plain bind mounts: `vaults/`, `syncthing/`, `hub/`), applies Hub defaults (30 days of staggered versions, unlimited conflict copies, no usage reporting) and prints a pairing code such as `TULIP-ANCHOR-42`. The device path finds the Hub on the local network, turns the code into a session key with SPAKE2 (RFC 9382), lets the Hub create or share a vault and accepts it into an empty directory. Guards match the app's doctrine: vaults live only under one root, never overlap, are never created over existing content without an explicit `vault adopt`, and the Hub never changes a folder's path or deletes anything. Codes expire after 24 hours and lock after five wrong attempts; pairing is restricted to the LAN by design. The iPhone app pairs with a Hub by Device ID for now; pairing by code or QR from the app is a follow-up. Documented in `docs/hub.md`; decisions 035–037.
+
+### Changed
+
+- **The withdrawn 2.0.2 "containment" candidate is not the release line** ([#150](https://github.com/psimaker/vaultsync/issues/150), [#167](https://github.com/psimaker/vaultsync/issues/167), [#168](https://github.com/psimaker/vaultsync/pull/168), [#169](https://github.com/psimaker/vaultsync/issues/169)) — the branch that froze receive-capable vaults and disabled vault creation to avoid Syncthing's conflict-copy limit is not merged. Conflict retention on devices follows upstream Syncthing; the Hub keeps every conflict copy and 30 days of versions, which is where lost edits are recovered from. Recorded in decision 035.
+
 ## [2.0.2] — 2026-08-27
 
 ### Privacy

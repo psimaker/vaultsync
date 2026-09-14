@@ -1,0 +1,132 @@
+name: Hub Docker
+
+# Builds ghcr.io/psimaker/vaultsync-hub.
+#   pull_request  → build only (proves the Dockerfile), nothing is pushed
+#   push to main  → publishes :dev-<sha> and :main (for the owner's own tests)
+#   hub-v* tag    → publishes :<version> and :latest — what setup.sh installs
+#
+# Deliberately simpler than notify's docker.yml: no binaries yet (setup.sh's
+# device path needs them — see the release job below), no rollout evidence.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "hub/**"
+      - ".github/workflows/hub-docker.yml"
+  push:
+    branches: [main]
+    paths:
+      - "hub/**"
+      - ".github/workflows/hub-docker.yml"
+    tags:
+      - "hub-v*"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: ghcr.io/psimaker/vaultsync-hub
+
+jobs:
+  image:
+    name: Build image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4
+
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+
+      - name: Resolve version stamp
+        id: stamp
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "version=${GITHUB_REF_NAME#hub-v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=dev-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
+        id: meta
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=dev-,enable=${{ github.event_name == 'push' && github.ref_type == 'branch' }}
+            type=ref,event=branch,enable=${{ github.event_name == 'push' && github.ref_type == 'branch' }}
+            type=match,pattern=hub-v(.*),group=1,enable=${{ github.ref_type == 'tag' }}
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
+
+      - name: Log in to ghcr.io
+        if: github.event_name == 'push'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build (and push on main / tags)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: hub
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: VERSION=${{ steps.stamp.outputs.version }}
+          provenance: false
+
+  binaries:
+    name: Release binaries
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: hub/go.mod
+          cache-dependency-path: hub/go.sum
+
+      # Asset names are a contract with setup.sh (detect_asset): vaultsync-hub_<goos>_<goarch>.
+      - name: Build binaries
+        working-directory: hub
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          version="${GITHUB_REF_NAME#hub-v}"
+          mkdir -p dist
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            goos="${target%/*}"; goarch="${target#*/}"
+            out="dist/vaultsync-hub_${goos}_${goarch}"
+            [ "$goos" = windows ] && out="$out.exe"
+            GOOS="$goos" GOARCH="$goarch" go build -trimpath -buildvcs=false \
+              -ldflags="-s -w -X main.version=${version}" -o "$out" .
+          done
+          (cd dist && sha256sum vaultsync-hub_* > SHA256SUMS)
+          ls -l dist
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --verify-tag \
+            --title "VaultSync Hub ${GITHUB_REF_NAME#hub-v}" \
+            --notes "Hub image: ${IMAGE_NAME}:${GITHUB_REF_NAME#hub-v}. Installed by \`curl -fsSL https://vaultsync.eu/setup.sh | sh\`." \
+            hub/dist/*

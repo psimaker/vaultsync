@@ -48,6 +48,7 @@ jobs:
               - 'go/**'
               - 'ios/**'
               - 'notify/**'
+              - 'hub/**'
               - '.github/**'
 
   go-tests:
@@ -90,6 +91,61 @@ jobs:
       - name: Run notify smoke tests
         working-directory: notify
         run: go test ./... -count=1
+
+  hub-tests:
+    name: Hub Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: hub/go.mod
+          cache-dependency-path: hub/go.sum
+
+      - name: Run hub tests (race detector)
+        working-directory: hub
+        run: go test ./... -count=1 -race
+
+      - name: go vet (hub)
+        working-directory: hub
+        run: go vet ./...
+
+  hub-syncthing-e2e:
+    name: Hub Syncthing E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+
+      - name: Patch vendored dependencies
+        working-directory: go
+        run: make patch
+
+      - name: Build local-only Syncthing test binary
+        working-directory: go/_syncthing_patched
+        env:
+          CGO_ENABLED: "0"
+        run: go build -tags noassets -o /tmp/vaultsync-hub-syncthing ./cmd/syncthing
+
+      # Two real Syncthing instances pinned to loopback (no discovery, relays
+      # or NAT): a device pairs with the Hub by code, the Hub creates and
+      # shares the vault, the device accepts it, files sync both ways.
+      - name: Prove pairing and two-way sync through two loopback instances
+        working-directory: hub
+        env:
+          VAULTSYNC_HUB_SYNCTHING_BIN: /tmp/vaultsync-hub-syncthing
+        run: go test . -run '^TestE2E' -count=1 -v -timeout 6m
 
   m4-docker-confinement:
     name: M4 Docker Confinement
@@ -196,12 +252,19 @@ jobs:
           shellcheck -s sh notify/scripts/diagnostics-docker.sh
           shellcheck -s sh notify/tests/runtime-packaging/run.sh
           shellcheck -s sh notify/tests/runtime-packaging/run-linux-host.sh
+          shellcheck -s sh hub/scripts/setup.sh hub/scripts/tests/setup-dry-run-test.sh
 
       - name: install.sh --dry-run smoke test
         # Hermetic: fixture config.xml + PATH shims; asserts dry-run changes
         # nothing, prints the config owner's uid:gid, and that install.sh and
         # docker.yml still agree on the release asset naming.
         run: notify/scripts/tests/install-dry-run-test.sh
+
+      - name: setup.sh --dry-run smoke test
+        # Hermetic (PATH shims, pinned uname): both menu paths change nothing,
+        # print the right owner and plan, and the compose text embedded in the
+        # one-link script is byte-identical to hub/docker-compose.yml.
+        run: hub/scripts/tests/setup-dry-run-test.sh
 
       - name: install.ps1 parse check
         # A syntax error in the Windows installer (#90) would otherwise only

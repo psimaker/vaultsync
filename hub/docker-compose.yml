@@ -1,0 +1,78 @@
+# VaultSync Hub — the self-hosted stack `setup.sh` installs.
+#
+#   syncthing   the Hub's own Syncthing instance (your notes live in ./vaults)
+#   hub         pairing coordinator: LAN discovery + pairing codes (host network,
+#               so UDP broadcasts from your devices reach it)
+#   notify      wake-up helper for VaultSync on iPhone (Cloud Relay subscribers)
+#
+# Everything is a bind mount under this directory — plain files you can back up,
+# inspect and move. No named volumes, no hidden state.
+#
+# Values come from .env (written by setup.sh): PUID/PGID, ports, image tags.
+
+services:
+  syncthing:
+    image: syncthing/syncthing:1
+    container_name: vaultsync-syncthing
+    hostname: ${VAULTSYNC_HUB_NAME:-VaultSync Hub}
+    environment:
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      STGUIADDRESS: 0.0.0.0:8384
+      STNODEFAULTFOLDER: "1"
+      STNOUPGRADE: "1"
+    volumes:
+      - ./syncthing:/var/syncthing
+      - ./vaults:/var/syncthing/vaults
+    ports:
+      - "127.0.0.1:${GUI_PORT:-8384}:8384"   # Web UI, loopback only (ssh tunnel to reach it)
+      - "${SYNC_PORT:-22000}:22000/tcp"      # sync protocol
+      - "${SYNC_PORT:-22000}:22000/udp"      # sync protocol (QUIC)
+      - "21027:21027/udp"                    # local discovery
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8384/rest/noauth/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+    restart: unless-stopped
+
+  hub:
+    image: ${VAULTSYNC_HUB_IMAGE:-ghcr.io/psimaker/vaultsync-hub:0.1.0}
+    container_name: vaultsync-hub
+    # Host networking: LAN discovery answers UDP broadcasts, which never cross a
+    # Docker bridge. The pairing port (8390) is LAN-only by design — do not
+    # forward it on your router.
+    network_mode: host
+    user: "${PUID:-1000}:${PGID:-1000}"
+    environment:
+      SYNCTHING_CONFIG: /var/syncthing/config/config.xml
+      SYNCTHING_API_URL: http://127.0.0.1:${GUI_PORT:-8384}
+      VAULTSYNC_HUB_VAULTS: /var/syncthing/vaults
+      VAULTSYNC_HUB_PORT: ${HUB_PORT:-8390}
+      VAULTSYNC_HUB_NAME: ${VAULTSYNC_HUB_NAME:-VaultSync Hub}
+    volumes:
+      - ./syncthing:/var/syncthing:ro        # reads config.xml (API key) only
+      - ./vaults:/var/syncthing/vaults       # creates vault directories
+      - ./hub:/var/lib/vaultsync-hub         # pairing state (0600)
+    depends_on:
+      syncthing:
+        condition: service_healthy
+    restart: unless-stopped
+
+  notify:
+    image: ghcr.io/psimaker/vaultsync-notify:2.0.2
+    container_name: vaultsync-notify
+    user: "${PUID:-1000}:${PGID:-1000}"
+    environment:
+      SYNCTHING_CONFIG: /var/syncthing/config/config.xml
+      SYNCTHING_API_URL: http://syncthing:8384
+      RELAY_URL: ${RELAY_URL:-https://relay.vaultsync.eu}
+      STARTUP_ANNOUNCE: ${STARTUP_ANNOUNCE:-true}
+      SYNCTHING_CONFIG_WAIT_SECONDS: "120"
+    volumes:
+      - ./syncthing:/var/syncthing:ro
+    depends_on:
+      syncthing:
+        condition: service_healthy
+    restart: unless-stopped

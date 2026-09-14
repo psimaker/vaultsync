@@ -60,6 +60,21 @@ Syncthing runs on a machine you keep on; VaultSync joins as a peer and syncs int
 
 ---
 
+## 🏠 VaultSync Hub (one link, no Web UI)
+
+Run your own Hub on a Linux server or NAS with Docker, then pair every device
+with a short code instead of device IDs:
+
+```sh
+curl -fsSL https://vaultsync.eu/setup.sh | sh
+```
+
+Choose **2) Hub** on the server (once) and **1) Obsidian device** on every
+computer. The Hub keeps every vault as plain files under `/srv/vaultsync/vaults`,
+keeps 30 days of versions and every conflict copy, and never merges, deletes or
+moves anything on its own. Details, ports and commands: [docs/hub.md](docs/hub.md).
+"Bring your own Syncthing" keeps working unchanged.
+
 ## ☁️ Cloud Relay (optional)
 
 Without it, VaultSync syncs server changes when you open the app. **With it, Cloud Relay can request a background wake-up after your server changes** — iOS still decides whether and when to run the app.
@@ -131,6 +146,7 @@ Full build, signing, and test steps: [docs/setup.md](docs/setup.md).
 
 | Doc | What it covers |
 |---|---|
+| [docs/hub.md](docs/hub.md) | VaultSync Hub: one-link server stack, pairing codes, guarantees |
 | [docs/setup.md](docs/setup.md) | Build and development setup |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Common failures and exact fixes |
 | [docs/architecture.md](docs/architecture.md) | Codebase structure and sync strategy |

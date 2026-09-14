@@ -1,0 +1,11 @@
+# 037 — Hub storage layout and configuration rules
+
+**Context.** The Hub is a Docker Compose stack that users install with one link and must be able to back up, inspect and move without help. It changes Syncthing's configuration on the user's behalf, which is exactly where the app's data-safety doctrine applies.
+
+**Decision.** Layout: one directory (`/srv/vaultsync` by default) with three bind mounts — `vaults/` (every vault at `vaults/<slug>`), `syncthing/` (identity, config, database), `hub/` (pairing state). No named volumes. Configuration rules for the coordinator: (1) new vaults are created only under the vaults root with a slug derived from the name, so overlap with anything outside is impossible by construction, and the overlap check (decision 001) still runs against every configured folder; (2) a directory that already holds files becomes a vault only through the operator's `vault adopt`, never through pairing (decision 007); (3) a folder's path is never changed, no folder is ever removed, nothing is deleted (decisions 002/003); (4) folders are never PATCHed — Syncthing's `FolderConfiguration.UnmarshalJSON` resets every default-tagged field before applying a PATCH, so a `devices`-only patch silently turns `maxConflicts -1` into `10` (verified against the pinned source and a live instance); changes are read-modify-write of the raw folder object followed by PUT; (5) Hub folder defaults: send-receive, staggered versioning 30 days, `maxConflicts -1`, `ignorePerms`, watcher on.
+
+**Why.** Plain directories are the promise ("your notes are files on your server"), they make backups trivial, and they satisfy the deployment matrix of decision 023 (exact host-bind subdirectories) so the Hub can host the diagnostics capability later. The configuration rules are the app's invariants applied server-side; the PATCH rule exists because the E2E test caught the reset the first time it ran.
+
+**Rejected alternative.** Named Docker volumes (hidden, hard to back up, unsupported in 023). Auto-accepting folders offered by devices (`autoAcceptFolders`): would let any paired device create folders on the Hub with Syncthing's own path choice, bypassing the guards.
+
+**Links.** `hub/docker-compose.yml`, `hub/provision.go`, `hub/syncthing.go` (`FolderRaw`/`PutFolderRaw`); decisions 001, 002, 003, 007, 023.
