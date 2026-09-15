@@ -17,6 +17,7 @@ All notable changes to VaultSync are documented here.
 ### Fixed
 
 - **The app now notices when the sync engine stops on its own, instead of showing “Ready” over a dead engine** ([#181](https://github.com/psimaker/vaultsync/issues/181)) — the engine’s “running” state follows its supervisor’s real state, so the one automatic restart (decision 009) actually runs and a second stop shows why the engine exited. Every wait in starting and stopping the engine has a deadline and reports a timeout as an error rather than freezing every later call; a stop that overruns its deadline keeps a second engine from starting over the same data until it has finished. Recorded in decision 038.
+- **Very large conflicting notes no longer freeze the app when opened for comparison** ([#184](https://github.com/psimaker/vaultsync/issues/184)) — a note above 1 MB is not loaded for comparison; the conflict screen says so, names both sizes and keeps the Keep This / Keep Both / Keep Other choices, so you compare the versions in Obsidian and decide here. Skipping a file with its conflict copies and the foreground rescans no longer run on the main thread. Recorded in decision 041.
 
 ## [2.0.2] — 2026-08-27
 

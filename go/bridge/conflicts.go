@@ -227,6 +227,17 @@ func keepBothConflictFile(conflictPath, conflictFileName string, ops keepBothFil
 	return ""
 }
 
+// maxReadFileBytes bounds ReadFileContent (#184). A conflict note above it is
+// not loaded at all: the app shows a "too large to compare" state and the
+// user compares the versions in Obsidian. The app renders the same bound,
+// read through MaxReadFileBytes, so the two layers never disagree.
+const maxReadFileBytes int64 = 1 << 20
+
+// MaxReadFileBytes returns the ReadFileContent bound in bytes (#184).
+func MaxReadFileBytes() int64 {
+	return maxReadFileBytes
+}
+
 // ReadFileContent reads a text file within a folder and returns its content.
 // folderID identifies the Syncthing folder; relPath is relative to the folder root.
 // Returns the file content on success (may be empty for an empty file).
@@ -245,9 +256,35 @@ func ReadFileContent(folderID, relPath string) string {
 	if err != nil {
 		return "error:invalid path"
 	}
-	data, err := os.ReadFile(absPath)
+	info, err := os.Stat(absPath)
 	if err != nil {
 		return fmt.Sprintf("error:%v", err)
+	}
+	if !info.Mode().IsRegular() {
+		return "error:not a regular file"
+	}
+	// Refuse before reading: a note above the bound is never loaded into
+	// memory, let alone handed across the bridge (#184).
+	if info.Size() > maxReadFileBytes {
+		return fmt.Sprintf("error:too large:%d", info.Size())
+	}
+	f, err := os.Open(absPath)
+	if err != nil {
+		return fmt.Sprintf("error:%v", err)
+	}
+	defer f.Close()
+	// Read at most one byte past the bound, so a file that grew since the
+	// stat is still refused instead of loaded in full.
+	data, err := io.ReadAll(io.LimitReader(f, maxReadFileBytes+1))
+	if err != nil {
+		return fmt.Sprintf("error:%v", err)
+	}
+	if int64(len(data)) > maxReadFileBytes {
+		size := int64(len(data))
+		if grown, statErr := f.Stat(); statErr == nil {
+			size = grown.Size()
+		}
+		return fmt.Sprintf("error:too large:%d", size)
 	}
 	return string(data)
 }

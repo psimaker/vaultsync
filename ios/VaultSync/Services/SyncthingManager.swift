@@ -1859,17 +1859,23 @@ final class SyncthingManager {
 
         beginWidgetSyncSessionIfNeeded(startDate: Date())
 
-        var didTriggerSync = false
-        var lastTriggerError: String?
-
-        for id in Array(Set(targetFolderIDs)).sorted() {
-            if let err = rescanFolder(id: id) {
-                lastTriggerError = err
-                logger.error("Foreground sync trigger failed")
-            } else {
-                didTriggerSync = true
+        // Rescans block on the bridge lock — off the main actor (#184).
+        let requestedIDs = Array(Set(targetFolderIDs)).sorted()
+        let trigger = await Task.detached(priority: .userInitiated) { () -> (didTriggerSync: Bool, lastTriggerError: String?) in
+            var didTriggerSync = false
+            var lastTriggerError: String?
+            for id in requestedIDs {
+                if let err = SyncBridgeService.rescanFolder(folderID: id) {
+                    lastTriggerError = err
+                    logger.error("Foreground sync trigger failed")
+                } else {
+                    didTriggerSync = true
+                }
             }
-        }
+            return (didTriggerSync, lastTriggerError)
+        }.value
+        let didTriggerSync = trigger.didTriggerSync
+        let lastTriggerError = trigger.lastTriggerError
 
         if didTriggerSync {
             error = nil
@@ -2146,6 +2152,12 @@ final class SyncthingManager {
     /// response can never silently cause `.stignore` to be overwritten with
     /// an empty list (CodeRabbit data-loss guard).
     private func readIgnorePatternsOrNil(folderID: String) -> [String]? {
+        Self.readIgnorePatternsFromBridge(folderID: folderID)
+    }
+
+    /// The bridge read behind `readIgnorePatternsOrNil`, callable off the
+    /// main actor (#184).
+    private nonisolated static func readIgnorePatternsFromBridge(folderID: String) -> [String]? {
         let raw = SyncBridgeService.getFolderIgnores(folderID: folderID)
         guard let data = raw.data(using: .utf8),
               let decoded = try? JSONDecoder().decode([String].self, from: data) else {
@@ -2155,6 +2167,10 @@ final class SyncthingManager {
     }
 
     private func unreadableFiltersError() -> SyncUserError {
+        Self.unreadableFiltersUserError()
+    }
+
+    private nonisolated static func unreadableFiltersUserError() -> SyncUserError {
         SyncUserError.from(rawMessage: L10n.tr("Could not read current sync filters. Please try again."))
     }
 
@@ -2168,6 +2184,12 @@ final class SyncthingManager {
     /// Replace all `.stignore` lines for a folder.
     @discardableResult
     func setIgnorePatterns(folderID: String, patterns: [String]) -> SyncUserError? {
+        Self.writeIgnorePatternsToBridge(folderID: folderID, patterns: patterns)
+    }
+
+    /// The bridge write behind `setIgnorePatterns`, callable off the main
+    /// actor (#184).
+    private nonisolated static func writeIgnorePatternsToBridge(folderID: String, patterns: [String]) -> SyncUserError? {
         guard let data = try? JSONEncoder().encode(patterns),
               let json = String(data: data, encoding: .utf8) else {
             return SyncUserError.from(rawMessage: "encoding ignore patterns failed")
@@ -2335,11 +2357,30 @@ final class SyncthingManager {
     ///     before the failure.
     ///   - `removedConflicts`: the number of on-disk conflict-copy files that were deleted.
     @discardableResult
-    func skipFileAndCleanupConflicts(folderID: String, originalPath: String) -> (error: SyncUserError?, removedConflicts: Int) {
-        let glob = Self.conflictGlob(forOriginalPath: originalPath)
+    func skipFileAndCleanupConflicts(folderID: String, originalPath: String) async -> (error: SyncUserError?, removedConflicts: Int) {
+        // The .stignore read-modify-write, the conflict-copy walk over the
+        // vault and the rescan all block on disk and on the bridge lock —
+        // off the main actor (#184). Only the cache refresh touches manager
+        // state, and it runs after every outcome so a partial cleanup (the
+        // .stignore write succeeded, the copies did not go) is visible too.
+        let outcome = await Task.detached(priority: .userInitiated) {
+            Self.performSkipFileAndCleanup(folderID: folderID, originalPath: originalPath)
+        }.value
+        refreshConflicts()
+        return outcome
+    }
 
-        guard var current = readIgnorePatternsOrNil(folderID: folderID) else {
-            return (unreadableFiltersError(), 0)
+    /// The bridge sequence behind `skipFileAndCleanupConflicts`: ignore
+    /// write, conflict-copy cleanup, rescan. Pure bridge work, no manager
+    /// state (#184).
+    private nonisolated static func performSkipFileAndCleanup(
+        folderID: String,
+        originalPath: String
+    ) -> (error: SyncUserError?, removedConflicts: Int) {
+        let glob = conflictGlob(forOriginalPath: originalPath)
+
+        guard var current = readIgnorePatternsFromBridge(folderID: folderID) else {
+            return (unreadableFiltersUserError(), 0)
         }
         if !current.contains(originalPath) {
             current.append(originalPath)
@@ -2347,7 +2388,7 @@ final class SyncthingManager {
         if !current.contains(glob) {
             current.append(glob)
         }
-        if let err = setIgnorePatterns(folderID: folderID, patterns: current) {
+        if let err = writeIgnorePatternsToBridge(folderID: folderID, patterns: current) {
             return (err, 0)
         }
 
@@ -2356,19 +2397,16 @@ final class SyncthingManager {
             originalPath: originalPath
         )
         if let cleanupError = cleanup.error {
-            // .stignore write succeeded but on-disk cleanup didn't.
-            // Surface the failure so the user knows the leftover copies
-            // haven't been removed and the home-screen Sync Issues entry
-            // may still flag the file.
-            refreshConflicts()
+            // .stignore write succeeded but on-disk cleanup didn't. Surface
+            // the failure so the user knows the leftover copies haven't been
+            // removed and the home-screen Sync Issues entry may still flag
+            // the file.
             return (SyncUserError.from(rawMessage: cleanupError), cleanup.removed)
         }
 
         if let rescanError = SyncBridgeService.rescanFolder(folderID: folderID) {
-            refreshConflicts()
             return (SyncUserError.from(rawMessage: rescanError), cleanup.removed)
         }
-        refreshConflicts()
 
         return (nil, cleanup.removed)
     }
