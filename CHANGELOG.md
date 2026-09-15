@@ -17,6 +17,7 @@ All notable changes to VaultSync are documented here.
 ### Fixed
 
 - **The app now notices when the sync engine stops on its own, instead of showing “Ready” over a dead engine** ([#181](https://github.com/psimaker/vaultsync/issues/181)) — the engine’s “running” state follows its supervisor’s real state, so the one automatic restart (decision 009) actually runs and a second stop shows why the engine exited. Every wait in starting and stopping the engine has a deadline and reports a timeout as an error rather than freezing every later call; a stop that overruns its deadline keeps a second engine from starting over the same data until it has finished. Recorded in decision 038.
+- **Foreground and background no longer fight over the sync engine** ([#183](https://github.com/psimaker/vaultsync/issues/183)) — a background wake-up that is stopping the engine now claims that stop first, so opening the app in that moment cold-starts a fresh engine instead of attaching to one about to stop; after the app goes to the background, a stop by a background wake-up no longer triggers a foreground restart; and when two background wake-ups overlap, the second reports what the first actually achieved instead of a stand-in “already idle”. Recorded in decision 040.
 
 ## [2.0.2] — 2026-08-27
 

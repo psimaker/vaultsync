@@ -36,7 +36,7 @@ extension EngineBridgeSuites {
         @Test("First death after adoption auto-restarts the engine instead of polling 'Ready' forever")
         func firstDeathAutoRestarts() async {
             TestSupport.resetSyncthingState()
-            BackgroundSyncService.lifecycleLock.withLock { $0.foregroundActive = false }
+            BackgroundSyncService.lifecycleLock.withLock { $0.releaseForeground() }
 
             let startErr = SyncBridgeService.startSyncthing(configDir: TestSupport.syncthingConfigPath())
             #expect(startErr == nil)
@@ -64,7 +64,7 @@ extension EngineBridgeSuites {
         @Test("Second death in the same generation stays stopped and surfaces an honest error, never 'Ready'")
         func secondDeathSurfacesStoppedState() async {
             TestSupport.resetSyncthingState()
-            BackgroundSyncService.lifecycleLock.withLock { $0.foregroundActive = false }
+            BackgroundSyncService.lifecycleLock.withLock { $0.releaseForeground() }
 
             let startErr = SyncBridgeService.startSyncthing(configDir: TestSupport.syncthingConfigPath())
             #expect(startErr == nil)
@@ -101,7 +101,7 @@ extension EngineBridgeSuites {
         @Test("stop() and resetForRestart() hand the next generation a fresh auto-restart budget")
         func externalTransitionsResetBudget() {
             TestSupport.resetSyncthingState()
-            BackgroundSyncService.lifecycleLock.withLock { $0.foregroundActive = false }
+            BackgroundSyncService.lifecycleLock.withLock { $0.releaseForeground() }
 
             let manager = SyncthingManager()
 

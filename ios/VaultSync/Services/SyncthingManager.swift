@@ -693,14 +693,22 @@ final class SyncthingManager {
         let configDir = Self.configDirectory()
         logger.info("Starting Syncthing")
 
-        BackgroundSyncService.lifecycleLock.withLock { $0.foregroundActive = true }
+        // Claim first, so no new background stop can begin; then wait for a
+        // stop that is already in flight — starting into it would bounce off
+        // the bridge's "already running" or attach to the dying engine (#183).
+        // The wait is bounded like the bridge's own stop deadline.
+        BackgroundSyncService.lifecycleLock.withLock { $0.claimForegroundForStart() }
+        let stopCleared = await BackgroundSyncService.waitForBackgroundStopToClear(timeout: 35)
+        if !stopCleared {
+            logger.warning("A background engine stop did not clear in time — starting anyway, the bridge serializes")
+        }
 
         let startError = await Task.detached(priority: .userInitiated) {
             SyncBridgeService.startSyncthing(configDir: configDir)
         }.value
 
         if let err = startError {
-            BackgroundSyncService.lifecycleLock.withLock { $0.foregroundActive = false }
+            BackgroundSyncService.lifecycleLock.withLock { $0.releaseForeground() }
             logger.error("Failed to start Syncthing")
             error = err
             userError = SyncUserError.from(rawMessage: err, fallbackTitle: L10n.tr("Could Not Start Sync"))
@@ -734,19 +742,25 @@ final class SyncthingManager {
         guard !isRunning, !isStarting else { return isRunning }
 
         // Claim the lifecycle lock BEFORE verifying the engine still runs —
-        // never the other way around. The background handlers re-read this
-        // lock immediately before their stop (`cleanupBackgroundManaged`, the
-        // BGTask expiration handlers), so claiming first closes the window in
-        // which a finishing background sync would stop the engine under the
-        // freshly adopted foreground. Verify-then-claim re-opens that window:
-        // the engine could pass the check and be stopped before the claim
-        // lands, leaving the manager attached to nothing.
-        BackgroundSyncService.lifecycleLock.withLock { $0.foregroundActive = true }
+        // never the other way around. The background handlers claim their
+        // stop under this same lock (`stopEngineIfBackgroundOwned`), so
+        // claiming first closes the window in which a finishing background
+        // sync would stop the engine under the freshly adopted foreground.
+        // Verify-then-claim re-opens that window: the engine could pass the
+        // check and be stopped before the claim lands, leaving the manager
+        // attached to nothing. And a stop already claimed refuses the
+        // adoption outright (#183): that engine is about to die, so the
+        // caller cold-starts instead — `start()` waits for the stop to clear.
+        let claim = BackgroundSyncService.lifecycleLock.withLock { $0.claimForegroundForAdoption() }
+        guard claim == .claimed else {
+            logger.info("Adoption refused: a background engine stop is in flight — cold-starting instead")
+            return false
+        }
 
         guard SyncBridgeService.isRunning() else {
             // Nothing to adopt — release the claim so background handlers
             // regain lifecycle ownership, and let the caller cold-start.
-            BackgroundSyncService.lifecycleLock.withLock { $0.foregroundActive = false }
+            BackgroundSyncService.lifecycleLock.withLock { $0.releaseForeground() }
             return false
         }
 
@@ -828,7 +842,7 @@ final class SyncthingManager {
             // no user data.
             logger.warning("Stopping the sync engine overran its deadline: \(stopError, privacy: .public)")
         }
-        BackgroundSyncService.lifecycleLock.withLock { $0.foregroundActive = false }
+        BackgroundSyncService.lifecycleLock.withLock { $0.releaseForeground() }
         isRunning = false
         deviceID = ""
         devices = []
@@ -1034,7 +1048,7 @@ final class SyncthingManager {
     /// (e.g., by a BGTask expiration handler). Does NOT call the bridge.
     func resetForRestart() {
         stopPolling()
-        BackgroundSyncService.lifecycleLock.withLock { $0.foregroundActive = false }
+        BackgroundSyncService.lifecycleLock.withLock { $0.releaseForeground() }
         isRunning = false
         deviceID = ""
         devices = []
@@ -1064,6 +1078,18 @@ final class SyncthingManager {
     /// flap a crash-looping engine.
     private func handleEngineDeath(exitReason: String?) {
         guard isRunning else { return }
+        // The manager heals a dead engine only while the foreground owns the
+        // lifecycle. After the scene released it (it went to the background),
+        // a stop is a background handler's own doing — restarting would put
+        // two owners on one engine and leave it running in the background
+        // with nobody to stop it (#183, decision 040). Detach quietly; the
+        // next scene activation attaches again (cold start or adoption).
+        let foregroundOwns = BackgroundSyncService.lifecycleLock.withLock { $0.foregroundActive }
+        guard foregroundOwns else {
+            logger.info("Sync engine stopped while the foreground does not own the lifecycle — detaching without restart")
+            resetForRestart()
+            return
+        }
         let restartAllowed = !engineDeathAutoRestartConsumed
         logger.warning("Sync engine died under an attached manager (autoRestartAllowed=\(restartAllowed)) reason=\(exitReason ?? "", privacy: .private)")
 
