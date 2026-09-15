@@ -940,3 +940,6 @@
 "Upload check rate limited — upload unobserved" = "Comprobación de carga limitada por frecuencia — carga sin observar";
 "Upload check unsupported for this exact folder and peer" = "Comprobación de carga no compatible con esta carpeta y este par exactos";
 "Upload capability unavailable — no upload evidence" = "Capacidad de carga no disponible — sin evidencia de carga";
+"Sync Engine Still Stopping" = "El motor de sincronización aún se está deteniendo";
+"A background sync is still shutting the engine down." = "Una sincronización en segundo plano todavía está apagando el motor.";
+"Wait a moment, then reopen VaultSync or pull to refresh." = "Espera un momento y vuelve a abrir VaultSync o desliza para actualizar.";

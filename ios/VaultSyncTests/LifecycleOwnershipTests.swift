@@ -75,7 +75,7 @@ extension EngineBridgeSuites {
             }
 
             let claimed = BackgroundSyncService.lifecycleLock.withLock { $0.beginBackgroundStop() }
-            #expect(claimed)
+            #expect(claimed == .claimed)
 
             let manager = SyncthingManager()
             let adopted = manager.adoptRunningEngine()
@@ -103,7 +103,7 @@ extension EngineBridgeSuites {
             }
 
             let claimed = BackgroundSyncService.lifecycleLock.withLock { $0.beginBackgroundStop() }
-            #expect(claimed)
+            #expect(claimed == .claimed)
 
             let manager = SyncthingManager()
             let starting = Task { @MainActor in await manager.start() }
@@ -143,6 +143,37 @@ extension EngineBridgeSuites {
             let followerResult = await follower.value
             #expect(leaderResult == .noFoldersConfigured)
             #expect(followerResult == leaderResult, "the follower must mirror the leader's result")
+        }
+
+        /// The bounded wait for a background stop can expire (the handler's
+        /// own stop deadline is the bridge's). Starting then would bounce off
+        /// the bridge and show a start failure; the manager gives the
+        /// lifecycle back, says what is happening and starts on the next try.
+        @MainActor
+        @Test("A cold start that outwaits a background stop defers with a clear state instead of failing")
+        func startDefersWhenStopOutlastsTheWait() async {
+            TestSupport.resetSyncthingState()
+            Self.resetLifecycle()
+            defer {
+                TestSupport.resetSyncthingState()
+                Self.resetLifecycle()
+            }
+            let claimed = BackgroundSyncService.lifecycleLock.withLock { $0.beginBackgroundStop() }
+            #expect(claimed == .claimed)
+
+            let manager = SyncthingManager()
+            await manager.start(waitingForBackgroundStopUpTo: 0.3)
+            #expect(!manager.isRunning)
+            #expect(!SyncBridgeService.isRunning(), "the bridge must not be started into a stop claim")
+            #expect(manager.userError?.title == L10n.tr("Sync Engine Still Stopping"))
+            let foregroundActive = BackgroundSyncService.lifecycleLock.withLock { $0.foregroundActive }
+            #expect(!foregroundActive, "a deferred start leaves no claim behind")
+
+            BackgroundSyncService.lifecycleLock.withLock { $0.endBackgroundStop() }
+            await manager.start()
+            #expect(manager.isRunning)
+            #expect(manager.userError == nil)
+            manager.stop()
         }
     }
 }

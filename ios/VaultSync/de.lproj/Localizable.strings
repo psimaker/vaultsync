@@ -940,3 +940,6 @@
 "Upload check rate limited — upload unobserved" = "Upload-Prüfung ratenbegrenzt — Upload unbeobachtet";
 "Upload check unsupported for this exact folder and peer" = "Upload-Prüfung für genau diesen Ordner und Peer nicht unterstützt";
 "Upload capability unavailable — no upload evidence" = "Upload-Capability nicht verfügbar — keine Upload-Evidence";
+"Sync Engine Still Stopping" = "Sync-Engine wird noch beendet";
+"A background sync is still shutting the engine down." = "Eine Hintergrund-Synchronisation fährt die Engine gerade noch herunter.";
+"Wait a moment, then reopen VaultSync or pull to refresh." = "Warte einen Moment, öffne VaultSync dann erneut oder zieh zum Aktualisieren.";

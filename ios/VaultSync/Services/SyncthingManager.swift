@@ -686,6 +686,12 @@ final class SyncthingManager {
     /// the method is `async`. Re-entrant calls during an in-flight start are
     /// no-ops, mirroring the `isRunning` guard.
     func start() async {
+        await start(waitingForBackgroundStopUpTo: 35)
+    }
+
+    /// `backgroundStopTimeout` bounds the wait for an in-flight background
+    /// stop like the bridge's own stop deadline; tests shorten it.
+    func start(waitingForBackgroundStopUpTo backgroundStopTimeout: TimeInterval) async {
         guard !isRunning, !isStarting else { return }
         isStarting = true
         defer { isStarting = false }
@@ -698,9 +704,24 @@ final class SyncthingManager {
         // the bridge's "already running" or attach to the dying engine (#183).
         // The wait is bounded like the bridge's own stop deadline.
         BackgroundSyncService.lifecycleLock.withLock { $0.claimForegroundForStart() }
-        let stopCleared = await BackgroundSyncService.waitForBackgroundStopToClear(timeout: 35)
-        if !stopCleared {
-            logger.warning("A background engine stop did not clear in time — starting anyway, the bridge serializes")
+        let stopCleared = await BackgroundSyncService.waitForBackgroundStopToClear(timeout: backgroundStopTimeout)
+        guard stopCleared else {
+            // Starting now would run into the bridge's own refusal ("the
+            // previous engine is still stopping") and show it as a start
+            // failure. Give the lifecycle back so the background handler can
+            // finish, and say what is happening; the next scene activation
+            // or pull-to-refresh starts again (#183).
+            BackgroundSyncService.lifecycleLock.withLock { $0.releaseForeground() }
+            logger.warning("A background engine stop did not clear in time — start deferred")
+            error = "background engine stop still in progress"
+            userError = SyncUserError(
+                category: .syncthingNotRunning,
+                title: L10n.tr("Sync Engine Still Stopping"),
+                message: L10n.tr("A background sync is still shutting the engine down."),
+                remediation: L10n.tr("Wait a moment, then reopen VaultSync or pull to refresh."),
+                technicalDetails: nil
+            )
+            return
         }
 
         let startError = await Task.detached(priority: .userInitiated) {

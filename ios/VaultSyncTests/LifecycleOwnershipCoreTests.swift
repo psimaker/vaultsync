@@ -12,12 +12,12 @@ struct LifecycleOwnershipCoreTests {
         var state = SyncLifecycleState()
         state.claimForegroundForStart()
         let refused = state.beginBackgroundStop()
-        #expect(!refused)
+        #expect(refused == .refusedForegroundOwns)
         #expect(!state.backgroundStopInProgress)
 
         state.releaseForeground()
         let claimed = state.beginBackgroundStop()
-        #expect(claimed)
+        #expect(claimed == .claimed)
         #expect(state.backgroundStopInProgress)
         state.endBackgroundStop()
         #expect(!state.backgroundStopInProgress)
@@ -27,7 +27,7 @@ struct LifecycleOwnershipCoreTests {
     func adoptionRefusedDuringStopClaim() {
         var state = SyncLifecycleState()
         let stopClaimed = state.beginBackgroundStop()
-        #expect(stopClaimed)
+        #expect(stopClaimed == .claimed)
         let adoption = state.claimForegroundForAdoption()
         #expect(adoption == .refusedStopInProgress)
         #expect(!state.foregroundActive, "a refused adoption leaves no claim behind")
@@ -37,14 +37,14 @@ struct LifecycleOwnershipCoreTests {
         #expect(state.backgroundStopInProgress, "the in-flight stop keeps its claim until it ends")
         state.endBackgroundStop()
         let newStop = state.beginBackgroundStop()
-        #expect(!newStop, "no new stop may begin under a foreground claim")
+        #expect(newStop == .refusedForegroundOwns, "no new stop may begin under a foreground claim")
     }
 
     @Test("Adoption claims once the stop claim clears")
     func adoptionAfterStopClears() {
         var state = SyncLifecycleState()
         let stopClaimed = state.beginBackgroundStop()
-        #expect(stopClaimed)
+        #expect(stopClaimed == .claimed)
         state.endBackgroundStop()
         let adoption = state.claimForegroundForAdoption()
         #expect(adoption == .claimed)
@@ -100,5 +100,41 @@ struct LifecycleOwnershipCoreTests {
         }
         #expect(await follower.value == .follower(leaderResult: nil))
         flight.finish(.synced)
+    }
+
+    @Test("A second background stop claim is refused while the first holds, and distinct from the foreground refusal")
+    func secondStopClaimRefused() {
+        var state = SyncLifecycleState()
+        let first = state.beginBackgroundStop()
+        #expect(first == .claimed)
+        let second = state.beginBackgroundStop()
+        #expect(second == .refusedAlreadyStopping, "a second holder would release the flag under the first stop")
+        #expect(state.backgroundStopInProgress)
+        state.endBackgroundStop()
+        #expect(!state.backgroundStopInProgress, "only one release, by the one holder")
+        let third = state.beginBackgroundStop()
+        #expect(third == .claimed)
+    }
+
+    @Test("The single-flight knows which run token leads; followers and finished leaders are not leaders")
+    func leaderTokenIsTracked() async {
+        let flight = BackgroundSyncSingleFlight()
+        let leaderToken = BackgroundSyncRunToken()
+        let followerToken = BackgroundSyncRunToken()
+        #expect(await flight.enter(token: leaderToken) == .leader)
+        #expect(flight.isLeader(leaderToken))
+        #expect(!flight.isLeader(followerToken))
+
+        let registration = AsyncStream<Void>.makeStream()
+        let follower = Task {
+            await flight.enter(token: followerToken, onFollow: { registration.continuation.yield(()) })
+        }
+        for await _ in registration.stream { break }
+        #expect(!flight.isLeader(followerToken), "a follower never owns the engine")
+        #expect(flight.isLeader(leaderToken))
+
+        flight.finish(.synced)
+        _ = await follower.value
+        #expect(!flight.isLeader(leaderToken), "a finished leader owns nothing")
     }
 }

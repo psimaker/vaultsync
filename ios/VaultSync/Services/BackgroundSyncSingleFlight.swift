@@ -23,6 +23,9 @@ final class BackgroundSyncSingleFlight: Sendable {
 
     private struct State: Sendable {
         var leaderInFlight = false
+        /// The run token of the current leader, when it passed one: the
+        /// expiration handlers stop the engine only for the leader (#183).
+        var leaderToken: ObjectIdentifier?
         var nextWaiter: UInt64 = 0
         var waiters: [UInt64: CheckedContinuation<Entry, Never>] = [:]
     }
@@ -34,7 +37,7 @@ final class BackgroundSyncSingleFlight: Sendable {
     /// follower. `onFollow` runs on the follower's task right after admission,
     /// before it suspends — the place for a rescan nudge the leader benefits
     /// from while it is still running.
-    func enter(onFollow: @Sendable () -> Void = {}) async -> Entry {
+    func enter(token: BackgroundSyncRunToken? = nil, onFollow: @Sendable () -> Void = {}) async -> Entry {
         let waiterID = lock.withLock { state -> UInt64 in
             state.nextWaiter += 1
             return state.nextWaiter
@@ -44,6 +47,7 @@ final class BackgroundSyncSingleFlight: Sendable {
                 let immediate: Entry? = lock.withLock { state in
                     if !state.leaderInFlight {
                         state.leaderInFlight = true
+                        state.leaderToken = token.map(ObjectIdentifier.init)
                         return .leader
                     }
                     // A cancellation that arrived before this registration ran
@@ -74,6 +78,7 @@ final class BackgroundSyncSingleFlight: Sendable {
     func finish(_ result: SyncResult) {
         let waiters = lock.withLock { state -> [CheckedContinuation<Entry, Never>] in
             state.leaderInFlight = false
+            state.leaderToken = nil
             let pending = Array(state.waiters.values)
             state.waiters.removeAll()
             return pending
@@ -86,5 +91,11 @@ final class BackgroundSyncSingleFlight: Sendable {
     /// Whether a leader is in flight right now (diagnostics and tests).
     var isLeaderInFlight: Bool {
         lock.withLock { $0.leaderInFlight }
+    }
+
+    /// Whether the run identified by `token` is the leader in flight. A
+    /// follower's expiration handler asks this before touching the engine.
+    func isLeader(_ token: BackgroundSyncRunToken) -> Bool {
+        lock.withLock { $0.leaderInFlight && $0.leaderToken == ObjectIdentifier(token) }
     }
 }
