@@ -67,8 +67,18 @@ jobs:
         working-directory: go
         run: make patch
 
+      # A loopback peer for the index-exchange regression (#185): the bridge
+      # suite pairs a real engine with a stock-like syncthing built from the
+      # pinned module (build-enabling patches only, never the behavioural
+      # ones). Built here once so the test does not build it on demand.
+      - name: Build loopback peer Syncthing for the bridge suite
+        working-directory: go
+        run: ./scripts/build-peer-syncthing.sh /tmp/vaultsync-bridge-peer
+
       - name: Run Go tests
         working-directory: go
+        env:
+          VAULTSYNC_BRIDGE_PEER_BIN: /tmp/vaultsync-bridge-peer
         # The status/event schema regression tests (Phase 1/3 fields, folder
         # error details) live in ./bridge and run as part of this package — no
         # separate runner needed.

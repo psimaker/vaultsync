@@ -39,6 +39,15 @@ Two safety nets compensate:
   rampup is otherwise clamped to 5s rounds while the discovery cache is still
   empty) and TCP dial timeout 10s→5s (a stale cached LAN address must fail
   over to the relay path quickly). iOS-specific tuning, not for upstreaming.
+- `syncthing/004-enforce-negotiated-connection-count.patch` — after a new
+  connection is accounted, close the newest connections (by connection ID,
+  identical on both ends) beyond the negotiated count (#185, decision 042).
+  Two simultaneous dials pass the accept check on both sides before either
+  has counted the other, and upstream never closes the extra; each side then
+  promotes a different connection and the peer's index arrives on the one
+  without a registered index handler, which closes it ("folder is not
+  running"). With the bridge pinning one connection per peer, this keeps it
+  at one. Worth reporting upstream.
 - `go-stun/001-nil-safe-host-methods.patch` — nil-safe host methods.
 
 ## Before each release

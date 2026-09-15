@@ -1,0 +1,56 @@
+--- a/lib/connections/service.go
++++ b/lib/connections/service.go
+@@ -72,6 +72,8 @@
+ 
+ 	// A connection is being closed to make space for better ones
+ 	errReplacingConnection = errors.New("replacing connection")
++	// VaultSync (#185): a connection beyond the negotiated count.
++	errTooManyConnections = errors.New("more connections than negotiated")
+ )
+ 
+ const (
+@@ -439,6 +441,18 @@
+ 		slog.InfoContext(ctx, "Established secure connection", remoteID.LogAttr(), slog.Any("connection", c))
+ 
+ 		s.model.AddConnection(protoConn, hello)
++
++		// VaultSync (#185): enforce the negotiated connection count. Two
++		// simultaneous dials pass the accept check on both sides before
++		// either has counted the other, and nothing closes the extra
++		// connection afterwards. Each side then promotes a different
++		// connection, the peer's index arrives on the one without a
++		// registered index handler, and that connection is closed with
++		// "folder is not running" — with a heavy index, over and over.
++		// Connection IDs start with the sum of both hello timestamps, so
++		// both ends order them identically: closing the newest keeps the
++		// same connection alive on both sides.
++		s.closeConnectionsBeyondLimit(remoteID, s.desiredConnectionsToDevice(remoteID))
+ 		continue
+ 	}
+ }
+@@ -1344,6 +1358,25 @@
+ 	c.closeWorsePriorityConnectionsLocked(d, conn.Priority()-upgradeThreshold)
+ }
+ 
++// closeConnectionsBeyondLimit closes the newest connections to d, by
++// connection ID (identical on both ends), until at most limit remain.
++// VaultSync (#185).
++func (c *deviceConnectionTracker) closeConnectionsBeyondLimit(d protocol.DeviceID, limit int) {
++	c.connectionsMut.Lock()
++	defer c.connectionsMut.Unlock()
++	if limit <= 0 || len(c.connections[d]) <= limit {
++		return
++	}
++	sorted := slices.Clone(c.connections[d])
++	slices.SortFunc(sorted, func(a, b protocol.Connection) int {
++		return strings.Compare(a.ConnectionID(), b.ConnectionID())
++	})
++	for _, conn := range sorted[limit:] {
++		l.Debugf("Closing connection %s to %s beyond the negotiated limit of %d", conn, d.Short(), limit)
++		go conn.Close(errTooManyConnections)
++	}
++}
++
+ func (c *deviceConnectionTracker) accountRemovedConnection(conn protocol.Connection) {
+ 	c.connectionsMut.Lock()
+ 	defer c.connectionsMut.Unlock()

@@ -54,6 +54,13 @@ var (
 	stEarlyCancel context.CancelFunc
 )
 
+// singleConnectionPerDevice pins every peer to one connection (#185): the
+// multi-connection promotion race in Syncthing 2.x can strand an index
+// exchange, and a phone gains nothing from parallel connections to one peer.
+// Negotiated with the peer through the hello message, so the peer also
+// dials only once.
+const singleConnectionPerDevice = 1
+
 // lifecycleTimeouts bounds every wait on another goroutine in the engine
 // lifecycle. Without a deadline a dead early supervisor turns the waiting
 // call into a permanent hang that holds mu, and every later bridge call
@@ -257,6 +264,27 @@ func StartSyncthing(configDir string) string {
 	if err != nil {
 		cancel()
 		return fmt.Sprintf("migrate rescan interval: %v", err)
+	}
+
+	// Migration: one connection per peer (#185). Syncthing 2.x opens up to
+	// three connections to a device by default and promotes one of them per
+	// side to carry index messages; the two sides can promote different
+	// connections, and an index that then arrives on the other one closes
+	// that connection with "folder is not running". A heavy index widens
+	// that window until the exchange never completes. Either side asking
+	// for a single connection makes both sides use one, so the race has no
+	// second connection to land on. Idempotent; applies to devices added by
+	// older builds and by peers' share offers.
+	err = commitConfigLocked(func(cfg *config.Configuration) {
+		for i := range cfg.Devices {
+			if cfg.Devices[i].RawNumConnections != singleConnectionPerDevice {
+				cfg.Devices[i].RawNumConnections = singleConnectionPerDevice
+			}
+		}
+	})
+	if err != nil {
+		cancel()
+		return fmt.Sprintf("migrate connection count: %v", err)
 	}
 
 	// Open database. Synchronous work, not a wait — see lifecycleTimeouts.
