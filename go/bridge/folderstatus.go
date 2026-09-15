@@ -3,6 +3,7 @@ package bridge
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -171,8 +172,17 @@ func GetFolderIgnores(folderID string) string {
 
 	ignorePath := filepath.Join(folder.Path, ".stignore")
 	raw, err := os.ReadFile(ignorePath)
-	if err != nil {
+	switch {
+	case err == nil:
+	case os.IsNotExist(err):
+		// No .stignore yet: legitimately no filters.
 		return "[]"
+	default:
+		// Any other failure must not read as "no filters" — the file may well
+		// hold patterns the app then hides (#182). Return an error object the
+		// client cannot mistake for a pattern list; strip the path from the
+		// OS error so the payload carries no user data.
+		return marshalIgnoreReadError(err)
 	}
 
 	content := strings.TrimSpace(string(raw))
@@ -187,6 +197,22 @@ func GetFolderIgnores(folderID string) string {
 	data, err := json.Marshal(lines)
 	if err != nil {
 		return "[]"
+	}
+	return string(data)
+}
+
+// marshalIgnoreReadError encodes a failed .stignore read as {"error": ...}
+// with the underlying OS error only (no path).
+func marshalIgnoreReadError(err error) string {
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		err = pathErr.Err
+	}
+	data, mErr := json.Marshal(struct {
+		Error string `json:"error"`
+	}{Error: "read .stignore: " + err.Error()})
+	if mErr != nil {
+		return `{"error":"read .stignore failed"}`
 	}
 	return string(data)
 }

@@ -940,3 +940,5 @@
 "Upload check rate limited — upload unobserved" = "Comprobación de carga limitada por frecuencia — carga sin observar";
 "Upload check unsupported for this exact folder and peer" = "Comprobación de carga no compatible con esta carpeta y este par exactos";
 "Upload capability unavailable — no upload evidence" = "Capacidad de carga no disponible — sin evidencia de carga";
+"Sync filters are unavailable" = "Los filtros de sincronización no están disponibles";
+"The filter file for this vault could not be read. Make sure the vault is still accessible, then try again." = "No se pudo leer el archivo de filtros de este Vault. Asegúrate de que el Vault siga siendo accesible y vuelve a intentarlo.";

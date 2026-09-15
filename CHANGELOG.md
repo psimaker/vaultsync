@@ -14,6 +14,10 @@ All notable changes to VaultSync are documented here.
 
 - **The withdrawn 2.0.2 "containment" candidate is not the release line** ([#150](https://github.com/psimaker/vaultsync/issues/150), [#167](https://github.com/psimaker/vaultsync/issues/167), [#168](https://github.com/psimaker/vaultsync/pull/168), [#169](https://github.com/psimaker/vaultsync/issues/169)) — the branch that froze receive-capable vaults and disabled vault creation to avoid Syncthing's conflict-copy limit is not merged. Conflict retention on devices follows upstream Syncthing; the Hub keeps every conflict copy and 30 days of versions, which is where lost edits are recovered from. Recorded in decision 035.
 
+### Fixed
+
+- **A share is no longer accepted when its offer cannot be read, and sync filters no longer show as empty when the filter file cannot be read** ([#182](https://github.com/psimaker/vaultsync/issues/182)) — accepting a share used to go ahead on a failed read of the pending offers and create a local vault that no device shares, looking exactly like a successful accept; the accept is now refused with the error. An unreadable `.stignore` used to display as “no filters”; the Sync Filters screen now says the filters are unavailable and hides the toggles, so nothing rewrites the file from that false picture. Recorded in decision 039.
+
 ## [2.0.2] — 2026-08-27
 
 ### Privacy

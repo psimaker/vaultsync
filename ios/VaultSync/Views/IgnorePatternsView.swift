@@ -9,15 +9,20 @@ struct IgnorePatternsView: View {
     @State private var newPattern: String = ""
     @State private var alertMessage: String?
     @State private var hasLoadedScan = false
+    @State private var filtersUnavailable = false
 
     var body: some View {
         List {
-            recommendedSection
-            if !detected.isEmpty {
-                foundSection
+            if filtersUnavailable {
+                unavailableSection
+            } else {
+                recommendedSection
+                if !detected.isEmpty {
+                    foundSection
+                }
+                otherPresetsSection
+                customSection
             }
-            otherPresetsSection
-            customSection
             footerSection
         }
         .navigationTitle(L10n.tr("Sync Filters"))
@@ -30,6 +35,21 @@ struct IgnorePatternsView: View {
 
     private var errorBinding: Binding<Bool> {
         Binding(get: { alertMessage != nil }, set: { if !$0 { alertMessage = nil } })
+    }
+
+    /// The filter file could not be read (#182). Rendering every preset as
+    /// "off" would claim there are no filters while filters may exist, and a
+    /// toggle would then rewrite the file from that false picture — so the
+    /// toggles stay hidden until a read succeeds.
+    private var unavailableSection: some View {
+        Section {
+            Label(L10n.tr("Sync filters are unavailable"), systemImage: "exclamationmark.triangle")
+                .foregroundStyle(Color.statusAttention)
+            Text(L10n.tr("The filter file for this vault could not be read. Make sure the vault is still accessible, then try again."))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Button(L10n.tr("Try Again")) { reloadPatterns() }
+        }
     }
 
     private var recommendedSection: some View {
@@ -217,7 +237,13 @@ struct IgnorePatternsView: View {
     }
 
     private func reloadPatterns() {
-        ignoredPatterns = Set(syncthingManager.ignorePatterns(folderID: folderID))
+        if let patterns = syncthingManager.ignorePatterns(folderID: folderID) {
+            ignoredPatterns = Set(patterns)
+            filtersUnavailable = false
+        } else {
+            ignoredPatterns = []
+            filtersUnavailable = true
+        }
     }
 
     // MARK: - Formatting
