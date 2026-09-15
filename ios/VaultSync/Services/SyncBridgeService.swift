@@ -54,13 +54,28 @@ struct SyncBridgeService {
     }
 
     /// Stop the running Syncthing instance.
-    static func stopSyncthing() {
-        BridgeStopSyncthing()
+    /// - Returns: nil on success, or the bridge's error text when the stop
+    ///   overran its deadline (#181). The engine then finishes stopping in the
+    ///   background and the bridge refuses a new start until it has.
+    @discardableResult
+    static func stopSyncthing() -> String? {
+        let result = BridgeStopSyncthing()
+        return result.isEmpty ? nil : result
     }
 
-    /// Whether Syncthing is currently running.
+    /// Whether Syncthing is currently running — an engine was started and
+    /// its supervisor has not exited (#181).
     static func isRunning() -> Bool {
         BridgeIsRunning()
+    }
+
+    /// Why the engine stopped on its own, for the "stopped unexpectedly"
+    /// error (#181). Nil while it runs, after a stop through the bridge, and
+    /// once a new start has begun. May carry upstream error text with paths —
+    /// log it as private.
+    static func engineExitReason() -> String? {
+        let result = BridgeEngineExitReason()
+        return result.isEmpty ? nil : result
     }
 
     /// This device's ID in canonical format (e.g. XXXXXXX-XXXXXXX-...).

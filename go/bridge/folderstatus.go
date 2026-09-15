@@ -38,7 +38,7 @@ type FolderStatus struct {
 func getInternals() *syncthing.Internals {
 	mu.Lock()
 	defer mu.Unlock()
-	if !stRunning || stApp == nil {
+	if !engineUpLocked() || stApp == nil {
 		return nil
 	}
 	return stApp.Internals
@@ -48,7 +48,7 @@ func getInternals() *syncthing.Internals {
 func getFolderConfigs() map[string]config.FolderConfiguration {
 	mu.Lock()
 	defer mu.Unlock()
-	if !stRunning || stCfg == nil {
+	if !engineUpLocked() || stCfg == nil {
 		return nil
 	}
 	return stCfg.Folders()

@@ -33,7 +33,7 @@ func GetPendingFoldersJSON() string {
 	mu.Lock()
 	defer mu.Unlock()
 
-	if !stRunning || stApp == nil || stApp.Internals == nil {
+	if !engineUpLocked() || stApp == nil || stApp.Internals == nil {
 		return "[]"
 	}
 
@@ -101,7 +101,7 @@ func AcceptPendingFolder(folderID, label, path string, allowNonEmpty bool) strin
 	mu.Lock()
 	defer mu.Unlock()
 
-	if !stRunning || stApp == nil || stCfg == nil {
+	if !engineUpLocked() || stApp == nil || stCfg == nil {
 		return "syncthing not running"
 	}
 
@@ -184,13 +184,11 @@ func AcceptPendingFolder(folderID, label, path string, allowNonEmpty bool) strin
 		Devices:          devices,
 	}
 
-	waiter, err := stCfg.Modify(func(cfg *config.Configuration) {
+	if err := commitConfigLocked(func(cfg *config.Configuration) {
 		cfg.Folders = append(cfg.Folders, newFolder)
-	})
-	if err != nil {
+	}); err != nil {
 		return fmt.Sprintf("modify config: %v", err)
 	}
-	waiter.Wait()
 
 	return ""
 }

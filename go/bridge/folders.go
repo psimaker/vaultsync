@@ -35,7 +35,7 @@ func AddFolder(id, label, path string) string {
 	mu.Lock()
 	defer mu.Unlock()
 
-	if !stRunning || stCfg == nil {
+	if !engineUpLocked() || stCfg == nil {
 		return "syncthing not running"
 	}
 
@@ -79,13 +79,11 @@ func AddFolder(id, label, path string) string {
 		},
 	}
 
-	waiter, err := stCfg.Modify(func(cfg *config.Configuration) {
+	if err := commitConfigLocked(func(cfg *config.Configuration) {
 		cfg.Folders = append(cfg.Folders, newFolder)
-	})
-	if err != nil {
+	}); err != nil {
 		return fmt.Sprintf("modify config: %v", err)
 	}
-	waiter.Wait()
 
 	return ""
 }
@@ -96,7 +94,7 @@ func RemoveFolder(id string) string {
 	mu.Lock()
 	defer mu.Unlock()
 
-	if !stRunning || stCfg == nil {
+	if !engineUpLocked() || stCfg == nil {
 		return "syncthing not running"
 	}
 
@@ -106,7 +104,7 @@ func RemoveFolder(id string) string {
 		return "folder not found"
 	}
 
-	waiter, err := stCfg.Modify(func(cfg *config.Configuration) {
+	if err := commitConfigLocked(func(cfg *config.Configuration) {
 		filtered := make([]config.FolderConfiguration, 0, len(cfg.Folders))
 		for _, f := range cfg.Folders {
 			if f.ID != id {
@@ -114,11 +112,9 @@ func RemoveFolder(id string) string {
 			}
 		}
 		cfg.Folders = filtered
-	})
-	if err != nil {
+	}); err != nil {
 		return fmt.Sprintf("modify config: %v", err)
 	}
-	waiter.Wait()
 
 	return ""
 }
@@ -144,7 +140,7 @@ func SetFolderPath(folderID, newPath string) string {
 	mu.Lock()
 	defer mu.Unlock()
 
-	if !stRunning || stCfg == nil {
+	if !engineUpLocked() || stCfg == nil {
 		return "syncthing not running"
 	}
 
@@ -184,18 +180,16 @@ func SetFolderPath(folderID, newPath string) string {
 		return markerErr
 	}
 
-	waiter, err := stCfg.Modify(func(cfg *config.Configuration) {
+	if err := commitConfigLocked(func(cfg *config.Configuration) {
 		for i := range cfg.Folders {
 			if cfg.Folders[i].ID == folderID {
 				cfg.Folders[i].Path = newPath
 				break
 			}
 		}
-	})
-	if err != nil {
+	}); err != nil {
 		return fmt.Sprintf("modify config: %v", err)
 	}
-	waiter.Wait()
 
 	return ""
 }
@@ -241,7 +235,7 @@ func SetFolderPaused(folderID string, paused bool) string {
 	mu.Lock()
 	defer mu.Unlock()
 
-	if !stRunning || stCfg == nil {
+	if !engineUpLocked() || stCfg == nil {
 		return "syncthing not running"
 	}
 
@@ -257,18 +251,16 @@ func SetFolderPaused(folderID string, paused bool) string {
 		return ""
 	}
 
-	waiter, err := stCfg.Modify(func(cfg *config.Configuration) {
+	if err := commitConfigLocked(func(cfg *config.Configuration) {
 		for i := range cfg.Folders {
 			if cfg.Folders[i].ID == folderID {
 				cfg.Folders[i].Paused = paused
 				break
 			}
 		}
-	})
-	if err != nil {
+	}); err != nil {
 		return fmt.Sprintf("modify config: %v", err)
 	}
-	waiter.Wait()
 
 	return ""
 }
@@ -278,7 +270,7 @@ func GetFoldersJSON() string {
 	mu.Lock()
 	defer mu.Unlock()
 
-	if !stRunning || stCfg == nil {
+	if !engineUpLocked() || stCfg == nil {
 		return "[]"
 	}
 
@@ -314,7 +306,7 @@ func ShareFolderWithDevice(folderID, deviceID string) string {
 	mu.Lock()
 	defer mu.Unlock()
 
-	if !stRunning || stCfg == nil {
+	if !engineUpLocked() || stCfg == nil {
 		return "syncthing not running"
 	}
 
@@ -335,7 +327,7 @@ func ShareFolderWithDevice(folderID, deviceID string) string {
 		}
 	}
 
-	waiter, err := stCfg.Modify(func(cfg *config.Configuration) {
+	if err := commitConfigLocked(func(cfg *config.Configuration) {
 		for i, f := range cfg.Folders {
 			if f.ID == folderID {
 				cfg.Folders[i].Devices = append(cfg.Folders[i].Devices, config.FolderDeviceConfiguration{
@@ -344,11 +336,9 @@ func ShareFolderWithDevice(folderID, deviceID string) string {
 				break
 			}
 		}
-	})
-	if err != nil {
+	}); err != nil {
 		return fmt.Sprintf("modify config: %v", err)
 	}
-	waiter.Wait()
 
 	return ""
 }
@@ -360,7 +350,7 @@ func UnshareFolderFromDevice(folderID, deviceID string) string {
 	mu.Lock()
 	defer mu.Unlock()
 
-	if !stRunning || stCfg == nil {
+	if !engineUpLocked() || stCfg == nil {
 		return "syncthing not running"
 	}
 
@@ -373,7 +363,7 @@ func UnshareFolderFromDevice(folderID, deviceID string) string {
 		return "cannot unshare from own device"
 	}
 
-	waiter, err := stCfg.Modify(func(cfg *config.Configuration) {
+	if err := commitConfigLocked(func(cfg *config.Configuration) {
 		for i, f := range cfg.Folders {
 			if f.ID == folderID {
 				devices := make([]config.FolderDeviceConfiguration, 0, len(f.Devices))
@@ -386,11 +376,9 @@ func UnshareFolderFromDevice(folderID, deviceID string) string {
 				break
 			}
 		}
-	})
-	if err != nil {
+	}); err != nil {
 		return fmt.Sprintf("modify config: %v", err)
 	}
-	waiter.Wait()
 
 	return ""
 }

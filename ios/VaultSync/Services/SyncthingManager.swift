@@ -822,7 +822,12 @@ final class SyncthingManager {
     /// Stop the running Syncthing instance.
     func stop() {
         stopPolling()
-        SyncBridgeService.stopSyncthing()
+        if let stopError = SyncBridgeService.stopSyncthing() {
+            // The engine finishes stopping in the background and the bridge
+            // refuses a new start until it has (#181). Bridge-constant text,
+            // no user data.
+            logger.warning("Stopping the sync engine overran its deadline: \(stopError, privacy: .public)")
+        }
         BackgroundSyncService.lifecycleLock.withLock { $0.foregroundActive = false }
         isRunning = false
         deviceID = ""
@@ -1057,10 +1062,10 @@ final class SyncthingManager {
     /// once per external generation; a second death in the same generation
     /// stays stopped and tells the user, because blind restarts would just
     /// flap a crash-looping engine.
-    private func handleEngineDeath() {
+    private func handleEngineDeath(exitReason: String?) {
         guard isRunning else { return }
         let restartAllowed = !engineDeathAutoRestartConsumed
-        logger.warning("Sync engine died under an attached manager (autoRestartAllowed=\(restartAllowed))")
+        logger.warning("Sync engine died under an attached manager (autoRestartAllowed=\(restartAllowed)) reason=\(exitReason ?? "", privacy: .private)")
 
         // Same reset as the scene-activation cold-start path. It also clears
         // engineDeathAutoRestartConsumed, so consume AFTER the reset — the
@@ -1074,7 +1079,7 @@ final class SyncthingManager {
                 title: L10n.tr("Sync Engine Stopped"),
                 message: L10n.tr("The sync engine stopped unexpectedly."),
                 remediation: L10n.tr("Close and reopen VaultSync to restart syncing."),
-                technicalDetails: nil
+                technicalDetails: exitReason
             )
             return
         }
@@ -1145,7 +1150,10 @@ final class SyncthingManager {
         }.value
 
         guard let snapshot else {
-            handleEngineDeath()
+            // Read the bridge's exit reason off the main actor, before the
+            // restart clears it (#181).
+            let exitReason = await Task.detached { SyncBridgeService.engineExitReason() }.value
+            handleEngineDeath(exitReason: exitReason)
             return
         }
 

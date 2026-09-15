@@ -271,7 +271,7 @@ Minimal API exported via gomobile. Only primitives + `string` + `[]byte` cross t
 <details>
 <summary>Key exports</summary>
 
-- **Lifecycle:** `StartSyncthing`, `StopSyncthing`, `IsRunning`
+- **Lifecycle:** `StartSyncthing`, `StopSyncthing`, `IsRunning`, `EngineExitReason` — liveness follows the engine supervisor; every lifecycle wait has a deadline and a timeout comes back as the error string (decision 038)
 - **Identity:** `DeviceID`
 - **Devices:** `AddDevice`, `RemoveDevice`, `RenameDevice`, `GetDevicesJSON`
 - **Folders:** `AddFolder`, `RemoveFolder`, `RescanFolder`, `GetFoldersJSON`, `ShareFolderWithDevice`, `UnshareFolderFromDevice`
