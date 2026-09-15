@@ -43,7 +43,7 @@ func GetConnectionsJSON() string {
 	mu.Lock()
 	defer mu.Unlock()
 
-	if !stRunning || stCfg == nil {
+	if !engineUpLocked() || stCfg == nil {
 		return "[]"
 	}
 
@@ -126,7 +126,7 @@ func GetConfigJSON() string {
 	mu.Lock()
 	defer mu.Unlock()
 
-	if !stRunning || stCfg == nil {
+	if !engineUpLocked() || stCfg == nil {
 		return "{}"
 	}
 
@@ -144,18 +144,16 @@ func SetDiscoveryEnabled(local bool, global bool) string {
 	mu.Lock()
 	defer mu.Unlock()
 
-	if !stRunning || stCfg == nil {
+	if !engineUpLocked() || stCfg == nil {
 		return "syncthing not running"
 	}
 
-	waiter, err := stCfg.Modify(func(cfg *config.Configuration) {
+	if err := commitConfigLocked(func(cfg *config.Configuration) {
 		cfg.Options.LocalAnnEnabled = local
 		cfg.Options.GlobalAnnEnabled = global
-	})
-	if err != nil {
+	}); err != nil {
 		return fmt.Sprintf("modify config: %v", err)
 	}
-	waiter.Wait()
 
 	return ""
 }
@@ -287,7 +285,7 @@ func getFolderErrorDetail(folderID string) (folderErrorDetail, bool) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	if !stRunning {
+	if !engineUpLocked() {
 		return folderErrorDetail{}, false
 	}
 	refreshFolderErrorCacheLocked()

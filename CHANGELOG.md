@@ -14,6 +14,10 @@ All notable changes to VaultSync are documented here.
 
 - **The withdrawn 2.0.2 "containment" candidate is not the release line** ([#150](https://github.com/psimaker/vaultsync/issues/150), [#167](https://github.com/psimaker/vaultsync/issues/167), [#168](https://github.com/psimaker/vaultsync/pull/168), [#169](https://github.com/psimaker/vaultsync/issues/169)) — the branch that froze receive-capable vaults and disabled vault creation to avoid Syncthing's conflict-copy limit is not merged. Conflict retention on devices follows upstream Syncthing; the Hub keeps every conflict copy and 30 days of versions, which is where lost edits are recovered from. Recorded in decision 035.
 
+### Fixed
+
+- **The app now notices when the sync engine stops on its own, instead of showing “Ready” over a dead engine** ([#181](https://github.com/psimaker/vaultsync/issues/181)) — the engine’s “running” state follows its supervisor’s real state, so the one automatic restart (decision 009) actually runs and a second stop shows why the engine exited. Every wait in starting and stopping the engine has a deadline and reports a timeout as an error rather than freezing every later call; a stop that overruns its deadline keeps a second engine from starting over the same data until it has finished. Recorded in decision 038.
+
 ## [2.0.2] — 2026-08-27
 
 ### Privacy

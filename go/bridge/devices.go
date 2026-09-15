@@ -24,7 +24,7 @@ func AddDevice(deviceID string, name string) string {
 	mu.Lock()
 	defer mu.Unlock()
 
-	if !stRunning || stCfg == nil {
+	if !engineUpLocked() || stCfg == nil {
 		return "syncthing not running"
 	}
 
@@ -49,13 +49,11 @@ func AddDevice(deviceID string, name string) string {
 		Name:     name,
 	}
 
-	waiter, err := stCfg.Modify(func(cfg *config.Configuration) {
+	if err := commitConfigLocked(func(cfg *config.Configuration) {
 		cfg.Devices = append(cfg.Devices, newDevice)
-	})
-	if err != nil {
+	}); err != nil {
 		return fmt.Sprintf("modify config: %v", err)
 	}
-	waiter.Wait()
 
 	return ""
 }
@@ -66,7 +64,7 @@ func RemoveDevice(deviceID string) string {
 	mu.Lock()
 	defer mu.Unlock()
 
-	if !stRunning || stCfg == nil {
+	if !engineUpLocked() || stCfg == nil {
 		return "syncthing not running"
 	}
 
@@ -75,7 +73,7 @@ func RemoveDevice(deviceID string) string {
 		return fmt.Sprintf("invalid device ID: %v", err)
 	}
 
-	waiter, err := stCfg.Modify(func(cfg *config.Configuration) {
+	if err := commitConfigLocked(func(cfg *config.Configuration) {
 		devices := make([]config.DeviceConfiguration, 0, len(cfg.Devices))
 		for _, dev := range cfg.Devices {
 			if dev.DeviceID != id {
@@ -83,11 +81,9 @@ func RemoveDevice(deviceID string) string {
 			}
 		}
 		cfg.Devices = devices
-	})
-	if err != nil {
+	}); err != nil {
 		return fmt.Sprintf("modify config: %v", err)
 	}
-	waiter.Wait()
 
 	return ""
 }
@@ -98,7 +94,7 @@ func RenameDevice(deviceID string, newName string) string {
 	mu.Lock()
 	defer mu.Unlock()
 
-	if !stRunning || stCfg == nil {
+	if !engineUpLocked() || stCfg == nil {
 		return "syncthing not running"
 	}
 
@@ -122,18 +118,16 @@ func RenameDevice(deviceID string, newName string) string {
 		return "device not found"
 	}
 
-	waiter, err := stCfg.Modify(func(cfg *config.Configuration) {
+	if err := commitConfigLocked(func(cfg *config.Configuration) {
 		for i, dev := range cfg.Devices {
 			if dev.DeviceID == id {
 				cfg.Devices[i].Name = newName
 				break
 			}
 		}
-	})
-	if err != nil {
+	}); err != nil {
 		return fmt.Sprintf("modify config: %v", err)
 	}
-	waiter.Wait()
 
 	return ""
 }
@@ -143,7 +137,7 @@ func GetDevicesJSON() string {
 	mu.Lock()
 	defer mu.Unlock()
 
-	if !stRunning || stCfg == nil {
+	if !engineUpLocked() || stCfg == nil {
 		return "[]"
 	}
 
