@@ -310,7 +310,7 @@ struct ConflictDiffView: View {
         return formatter.string(fromByteCount: bytes)
     }
 
-    private struct LoadedContent: Sendable {
+    struct LoadedContent: Equatable, Sendable {
         var original = ""
         var conflict = ""
         var tooLargeBytes: Int64?
@@ -325,36 +325,7 @@ struct ConflictDiffView: View {
             let limit = SyncBridgeService.maxReadFileBytes()
             let o = Self.boundedRead(folderID: capturedFolderID, relPath: capturedConflict.originalPath, limit: limit)
             let c = Self.boundedRead(folderID: capturedFolderID, relPath: capturedConflict.conflictPath, limit: limit)
-
-            // Either version over the bound: nothing to compare here. Report
-            // the larger size so the message matches what the user sees in
-            // Obsidian.
-            var tooLarge: Int64?
-            for read in [o, c] {
-                if case .tooLarge(let bytes) = read {
-                    tooLarge = max(tooLarge ?? 0, bytes)
-                }
-            }
-            if let tooLarge {
-                return LoadedContent(tooLargeBytes: tooLarge)
-            }
-
-            switch (o, c) {
-            case (.failed(let oErr), .failed(let cErr)):
-                let oUser = SyncUserError.from(rawMessage: oErr, fallbackTitle: L10n.tr("File Read Failed"))
-                let cUser = SyncUserError.from(rawMessage: cErr, fallbackTitle: L10n.tr("File Read Failed"))
-                return LoadedContent(error: L10n.fmt("Could not read files.\n\n%@\n%@", oUser.message, cUser.message))
-            case (.failed(let oErr), .content(let cText)):
-                let user = SyncUserError.from(rawMessage: oErr, fallbackTitle: L10n.tr("File Read Failed"))
-                return LoadedContent(conflict: cText, error: L10n.fmt("Could not read original file.\n\n%@", user.userVisibleDescription))
-            case (.content(let oText), .failed(let cErr)):
-                let user = SyncUserError.from(rawMessage: cErr, fallbackTitle: L10n.tr("File Read Failed"))
-                return LoadedContent(original: oText, error: L10n.fmt("Could not read conflict file.\n\n%@", user.userVisibleDescription))
-            case (.content(let oText), .content(let cText)):
-                return LoadedContent(original: oText, conflict: cText)
-            default:
-                return LoadedContent(error: L10n.tr("Could not read files."))
-            }
+            return Self.loadedContent(original: o, conflict: c)
         }.value
 
         originalContent = loaded.original
@@ -364,6 +335,41 @@ struct ConflictDiffView: View {
             loadError = err
         }
         isLoading = false
+    }
+
+    /// What the screen shows for a pair of reads. A failed read wins over an
+    /// oversized one: the failure state hides the resolution actions, and a
+    /// version that could not be read must never be discarded or overwritten
+    /// by a choice made without seeing it (#184).
+    nonisolated static func loadedContent(
+        original o: SyncBridgeService.ConflictFileRead,
+        conflict c: SyncBridgeService.ConflictFileRead
+    ) -> LoadedContent {
+        switch (o, c) {
+        case (.failed(let oErr), .failed(let cErr)):
+            let oUser = SyncUserError.from(rawMessage: oErr, fallbackTitle: L10n.tr("File Read Failed"))
+            let cUser = SyncUserError.from(rawMessage: cErr, fallbackTitle: L10n.tr("File Read Failed"))
+            return LoadedContent(error: L10n.fmt("Could not read files.\n\n%@\n%@", oUser.message, cUser.message))
+        case (.failed(let oErr), _):
+            let user = SyncUserError.from(rawMessage: oErr, fallbackTitle: L10n.tr("File Read Failed"))
+            var loaded = LoadedContent(error: L10n.fmt("Could not read original file.\n\n%@", user.userVisibleDescription))
+            if case .content(let cText) = c { loaded.conflict = cText }
+            return loaded
+        case (_, .failed(let cErr)):
+            let user = SyncUserError.from(rawMessage: cErr, fallbackTitle: L10n.tr("File Read Failed"))
+            var loaded = LoadedContent(error: L10n.fmt("Could not read conflict file.\n\n%@", user.userVisibleDescription))
+            if case .content(let oText) = o { loaded.original = oText }
+            return loaded
+        case (.tooLarge(let oBytes), .tooLarge(let cBytes)):
+            // Either version over the bound: nothing to compare here. Report
+            // the larger size so the message matches what the user sees in
+            // Obsidian.
+            return LoadedContent(tooLargeBytes: max(oBytes, cBytes))
+        case (.tooLarge(let bytes), .content), (.content, .tooLarge(let bytes)):
+            return LoadedContent(tooLargeBytes: bytes)
+        case (.content(let oText), .content(let cText)):
+            return LoadedContent(original: oText, conflict: cText)
+        }
     }
 
     /// The bridge enforces the bound; this side re-checks the bytes it got,

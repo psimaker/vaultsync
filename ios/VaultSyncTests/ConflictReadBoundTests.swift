@@ -14,6 +14,34 @@ struct ConflictReadProtocolTests {
         #expect(SyncBridgeService.parseConflictFileRead("error:folder not found") == .failed("folder not found"))
         #expect(SyncBridgeService.parseConflictFileRead("error:too large:x") == .failed("too large:x"))
     }
+
+    /// A failed read must win over an oversized one: the failure state hides
+    /// the resolution actions, so a version nobody could read is never
+    /// discarded or overwritten by a choice made without seeing it.
+    @Test("A failed read is reported before an oversized one; two oversized reads report the larger size")
+    func failureWinsOverTooLarge() {
+        let tooLarge = SyncBridgeService.ConflictFileRead.tooLarge(bytes: 2_000_000)
+        let failed = SyncBridgeService.ConflictFileRead.failed("permission denied")
+        let content = SyncBridgeService.ConflictFileRead.content("# note")
+
+        let failedOriginal = ConflictDiffView.loadedContent(original: failed, conflict: tooLarge)
+        #expect(failedOriginal.error != nil)
+        #expect(failedOriginal.tooLargeBytes == nil)
+
+        let failedConflict = ConflictDiffView.loadedContent(original: tooLarge, conflict: failed)
+        #expect(failedConflict.error != nil)
+        #expect(failedConflict.tooLargeBytes == nil)
+
+        let oneOversized = ConflictDiffView.loadedContent(original: content, conflict: tooLarge)
+        #expect(oneOversized.error == nil)
+        #expect(oneOversized.tooLargeBytes == 2_000_000)
+
+        let bothOversized = ConflictDiffView.loadedContent(original: .tooLarge(bytes: 3_000_000), conflict: tooLarge)
+        #expect(bothOversized.tooLargeBytes == 3_000_000)
+
+        let both = ConflictDiffView.loadedContent(original: content, conflict: content)
+        #expect(both == ConflictDiffView.LoadedContent(original: "# note", conflict: "# note"))
+    }
 }
 
 extension EngineBridgeSuites {
@@ -94,6 +122,39 @@ extension EngineBridgeSuites {
             let patterns = manager.ignorePatterns(folderID: folderID)
             #expect(patterns.contains(original))
             #expect(patterns.contains(SyncthingManager.conflictGlob(forOriginalPath: original)))
+        }
+
+        /// The skip flow edits `.stignore` off the main actor while the preset
+        /// and pattern edits run on it. Every read-modify-write goes through
+        /// one lock, so no interleaving can drop the other side's rule.
+        @MainActor
+        @Test("Concurrent ignore edits from the skip flow and the main actor never lose a rule")
+        func concurrentIgnoreEditsKeepEveryRule() async throws {
+            TestSupport.resetSyncthingState()
+            let manager = SyncthingManager()
+            await manager.start()
+            defer {
+                manager.stop()
+                TestSupport.resetSyncthingState()
+            }
+            #expect(manager.isRunning)
+
+            let folderID = "ignore-race-\(UUID().uuidString.prefix(8))"
+            let folderURL = Self.makeFolderURL(folderID)
+            #expect(manager.addFolder(id: folderID, label: "Ignore Race", path: folderURL.path) == nil)
+
+            for round in 0..<20 {
+                let skipped = "skipped-\(round).md"
+                let custom = "custom-\(round)"
+                async let skip = manager.skipFileAndCleanupConflicts(folderID: folderID, originalPath: skipped)
+                let addError = manager.addIgnorePatterns([custom], folderID: folderID)
+                let skipOutcome = await skip
+                #expect(addError == nil)
+                #expect(skipOutcome.error == nil)
+                let patterns = manager.ignorePatterns(folderID: folderID)
+                #expect(patterns.contains(skipped), "round \(round): the skip rule was lost")
+                #expect(patterns.contains(custom), "round \(round): the custom rule was lost")
+            }
         }
     }
 }

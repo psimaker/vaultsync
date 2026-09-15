@@ -1111,7 +1111,12 @@ final class SyncthingManager {
         guard let data = try? JSONEncoder().encode(defaultIgnorePatterns),
               let json = String(data: data, encoding: .utf8) else { return }
 
-        if SyncBridgeService.ensureDefaultIgnores(folderID: folderID, defaultsJSON: json) != nil {
+        // The Go merge is its own read-modify-write: same lock as every
+        // Swift-side edit of the file (#184).
+        let mergeError = ignoreRulesLock.withLockUnchecked {
+            SyncBridgeService.ensureDefaultIgnores(folderID: folderID, defaultsJSON: json)
+        }
+        if mergeError != nil {
             logger.warning("Failed to ensure default ignore rules")
         }
     }
@@ -1353,18 +1358,28 @@ final class SyncthingManager {
     }
 
     private func refreshConflicts() {
+        applyConflictSnapshot(Self.conflictSnapshot(folderIDs: folders.map(\.id)))
+    }
+
+    /// The conflict cache for the given folders, read through the bridge.
+    /// Pure bridge work, callable off the main actor (#184).
+    private nonisolated static func conflictSnapshot(folderIDs: [String]) -> [String: [ConflictInfo]] {
         var allConflicts: [String: [ConflictInfo]] = [:]
-        for folder in folders {
-            let json = SyncBridgeService.getConflictFilesJSON(folderID: folder.id)
+        for folderID in folderIDs {
+            let json = SyncBridgeService.getConflictFilesJSON(folderID: folderID)
             guard let data = json.data(using: .utf8),
                   let decoded = try? JSONDecoder().decode([ConflictInfo].self, from: data) else {
                 continue
             }
             if !decoded.isEmpty {
-                allConflicts[folder.id] = decoded
+                allConflicts[folderID] = decoded
             }
         }
-        conflictFiles = allConflicts
+        return allConflicts
+    }
+
+    private func applyConflictSnapshot(_ snapshot: [String: [ConflictInfo]]) {
+        conflictFiles = snapshot
         BackgroundSyncService.reconcileConflictNotificationBaseline(currentCount: unresolvedConflictCount)
     }
 
@@ -2155,6 +2170,29 @@ final class SyncthingManager {
         Self.readIgnorePatternsFromBridge(folderID: folderID)
     }
 
+    /// Serializes every `.stignore` read-modify-write this app performs
+    /// (#184). The skip flow runs its RMW off the main actor while the
+    /// preset toggles run on it; without one boundary the two can read the
+    /// same old list and the last write drops the other's rule. Held only
+    /// across the read and the write, never across a walk or a rescan.
+    private nonisolated static let ignoreRulesLock = OSAllocatedUnfairLock()
+
+    /// Read, transform and write a folder's `.stignore` under the ignore
+    /// rules lock. `transform` returns nil to skip the write (nothing to
+    /// change); a failed read never writes.
+    private nonisolated static func modifyIgnorePatterns(
+        folderID: String,
+        _ transform: ([String]) -> [String]?
+    ) -> SyncUserError? {
+        ignoreRulesLock.withLockUnchecked {
+            guard let current = readIgnorePatternsFromBridge(folderID: folderID) else {
+                return unreadableFiltersUserError()
+            }
+            guard let next = transform(current) else { return nil }
+            return writeIgnorePatternsToBridge(folderID: folderID, patterns: next)
+        }
+    }
+
     /// The bridge read behind `readIgnorePatternsOrNil`, callable off the
     /// main actor (#184).
     private nonisolated static func readIgnorePatternsFromBridge(folderID: String) -> [String]? {
@@ -2205,18 +2243,18 @@ final class SyncthingManager {
     /// unreadable bridge response can never wipe existing rules.
     @discardableResult
     func togglePreset(_ preset: IgnorePreset, folderID: String, enabled: Bool) -> SyncUserError? {
-        guard var current = readIgnorePatternsOrNil(folderID: folderID) else {
-            return unreadableFiltersError()
-        }
-        let presetSet = Set(preset.patterns)
-        if enabled {
-            for pattern in preset.patterns where !current.contains(pattern) {
-                current.append(pattern)
+        Self.modifyIgnorePatterns(folderID: folderID) { existing in
+            var current = existing
+            let presetSet = Set(preset.patterns)
+            if enabled {
+                for pattern in preset.patterns where !current.contains(pattern) {
+                    current.append(pattern)
+                }
+            } else {
+                current.removeAll { presetSet.contains($0) }
             }
-        } else {
-            current.removeAll { presetSet.contains($0) }
+            return current
         }
-        return setIgnorePatterns(folderID: folderID, patterns: current)
     }
 
     /// Add a single pattern (e.g. exact relPath from a conflict). No-op if
@@ -2234,18 +2272,17 @@ final class SyncthingManager {
     /// bridge response can never wipe or reorder existing rules.
     @discardableResult
     func addIgnorePatterns(_ patterns: [String], folderID: String) -> SyncUserError? {
-        guard var current = readIgnorePatternsOrNil(folderID: folderID) else {
-            return unreadableFiltersError()
+        Self.modifyIgnorePatterns(folderID: folderID) { existing in
+            var current = existing
+            var seen = Set(current)
+            var appended = false
+            for pattern in patterns where !seen.contains(pattern) {
+                current.append(pattern)
+                seen.insert(pattern)
+                appended = true
+            }
+            return appended ? current : nil
         }
-        var seen = Set(current)
-        var appended = false
-        for pattern in patterns where !seen.contains(pattern) {
-            current.append(pattern)
-            seen.insert(pattern)
-            appended = true
-        }
-        guard appended else { return nil }
-        return setIgnorePatterns(folderID: folderID, patterns: current)
     }
 
     /// Remove the given patterns from `.stignore`, preserving the order of every
@@ -2255,14 +2292,13 @@ final class SyncthingManager {
     /// semantically significant, e.g. for `!` un-ignore rules).
     @discardableResult
     func removeIgnorePatterns(_ patterns: [String], folderID: String) -> SyncUserError? {
-        guard var current = readIgnorePatternsOrNil(folderID: folderID) else {
-            return unreadableFiltersError()
+        Self.modifyIgnorePatterns(folderID: folderID) { existing in
+            var current = existing
+            let removeSet = Set(patterns)
+            let before = current.count
+            current.removeAll { removeSet.contains($0) }
+            return current.count != before ? current : nil
         }
-        let removeSet = Set(patterns)
-        let before = current.count
-        current.removeAll { removeSet.contains($0) }
-        guard current.count != before else { return nil }
-        return setIgnorePatterns(folderID: folderID, patterns: current)
     }
 
     /// Apply a target set of preset toggles and detected-pattern toggles to
@@ -2278,22 +2314,21 @@ final class SyncthingManager {
         detectedPatterns: [String],
         enabledDetectedPatterns: Set<String>
     ) -> SyncUserError? {
-        guard let existing = readIgnorePatternsOrNil(folderID: folderID) else {
-            return unreadableFiltersError()
-        }
-        let managed = Set(IgnorePreset.all.flatMap(\.patterns))
-            .union(detectedPatterns)
-        var patterns = existing.filter { !managed.contains($0) }
+        Self.modifyIgnorePatterns(folderID: folderID) { existing in
+            let managed = Set(IgnorePreset.all.flatMap(\.patterns))
+                .union(detectedPatterns)
+            var patterns = existing.filter { !managed.contains($0) }
 
-        for preset in IgnorePreset.all where enabledPresetIDs.contains(preset.id) {
-            for pattern in preset.patterns where !patterns.contains(pattern) {
+            for preset in IgnorePreset.all where enabledPresetIDs.contains(preset.id) {
+                for pattern in preset.patterns where !patterns.contains(pattern) {
+                    patterns.append(pattern)
+                }
+            }
+            for pattern in enabledDetectedPatterns where !patterns.contains(pattern) {
                 patterns.append(pattern)
             }
+            return patterns
         }
-        for pattern in enabledDetectedPatterns where !patterns.contains(pattern) {
-            patterns.append(pattern)
-        }
-        return setIgnorePatterns(folderID: folderID, patterns: patterns)
     }
 
     /// Run the Go-side scanner for known heavy directories.
@@ -2363,10 +2398,14 @@ final class SyncthingManager {
         // off the main actor (#184). Only the cache refresh touches manager
         // state, and it runs after every outcome so a partial cleanup (the
         // .stignore write succeeded, the copies did not go) is visible too.
-        let outcome = await Task.detached(priority: .userInitiated) {
-            Self.performSkipFileAndCleanup(folderID: folderID, originalPath: originalPath)
+        let folderIDs = folders.map(\.id)
+        let (outcome, snapshot) = await Task.detached(priority: .userInitiated) {
+            let outcome = Self.performSkipFileAndCleanup(folderID: folderID, originalPath: originalPath)
+            // The conflict cache refresh walks every folder through the
+            // bridge — the same detached work, not the main actor (#184).
+            return (outcome, Self.conflictSnapshot(folderIDs: folderIDs))
         }.value
-        refreshConflicts()
+        applyConflictSnapshot(snapshot)
         return outcome
     }
 
@@ -2379,17 +2418,18 @@ final class SyncthingManager {
     ) -> (error: SyncUserError?, removedConflicts: Int) {
         let glob = conflictGlob(forOriginalPath: originalPath)
 
-        guard var current = readIgnorePatternsFromBridge(folderID: folderID) else {
-            return (unreadableFiltersUserError(), 0)
+        let ignoreError = modifyIgnorePatterns(folderID: folderID) { existing in
+            var current = existing
+            if !current.contains(originalPath) {
+                current.append(originalPath)
+            }
+            if !current.contains(glob) {
+                current.append(glob)
+            }
+            return current
         }
-        if !current.contains(originalPath) {
-            current.append(originalPath)
-        }
-        if !current.contains(glob) {
-            current.append(glob)
-        }
-        if let err = writeIgnorePatternsToBridge(folderID: folderID, patterns: current) {
-            return (err, 0)
+        if let ignoreError {
+            return (ignoreError, 0)
         }
 
         let cleanup = SyncBridgeService.removeConflictFilesForOriginal(

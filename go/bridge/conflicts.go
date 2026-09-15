@@ -280,8 +280,10 @@ func ReadFileContent(folderID, relPath string) string {
 		return fmt.Sprintf("error:%v", err)
 	}
 	if int64(len(data)) > maxReadFileBytes {
+		// The observed length is the lower bound: a file that grew and then
+		// shrank again must not report a size at or below the limit.
 		size := int64(len(data))
-		if grown, statErr := f.Stat(); statErr == nil {
+		if grown, statErr := f.Stat(); statErr == nil && grown.Size() > size {
 			size = grown.Size()
 		}
 		return fmt.Sprintf("error:too large:%d", size)
