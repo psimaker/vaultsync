@@ -940,3 +940,5 @@
 "Upload check rate limited — upload unobserved" = "上传检查受到速率限制 — 未观察到上传";
 "Upload check unsupported for this exact folder and peer" = "此精确文件夹和对等设备不支持上传检查";
 "Upload capability unavailable — no upload evidence" = "上传能力不可用 — 没有上传证据";
+"Sync filters are unavailable" = "同步过滤器不可用";
+"The filter file for this vault could not be read. Make sure the vault is still accessible, then try again." = "无法读取此 Vault 的过滤器文件。请确认该 Vault 仍可访问，然后重试。";

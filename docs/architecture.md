@@ -278,7 +278,7 @@ Minimal API exported via gomobile. Only primitives + `string` + `[]byte` cross t
 - **Status & config:** `GetFolderStatusJSON`, `GetConnectionsJSON`, `GetConfigJSON`, `SetDiscoveryEnabled`
 - **Pending shares:** `GetPendingFoldersJSON`, `AcceptPendingFolder`
 - **Conflicts:** `GetConflictFilesJSON`, `ResolveConflict`, `KeepBothConflict`, `ReadFileContent`, `RemoveConflictFilesForOriginal`
-- **Filters:** `GetFolderIgnores`, `SetFolderIgnores`, `ScanFolderForKnownPatterns`
+- **Filters:** `GetFolderIgnores` (a failed read answers `{"error": …}`, never an empty list — decision 039), `SetFolderIgnores`, `ScanFolderForKnownPatterns`
 - **Events:** `GetEventsSince`, `EventStreamGeneration`
 </details>
 

@@ -940,3 +940,5 @@
 "Upload check rate limited — upload unobserved" = "Upload-Prüfung ratenbegrenzt — Upload unbeobachtet";
 "Upload check unsupported for this exact folder and peer" = "Upload-Prüfung für genau diesen Ordner und Peer nicht unterstützt";
 "Upload capability unavailable — no upload evidence" = "Upload-Capability nicht verfügbar — keine Upload-Evidence";
+"Sync filters are unavailable" = "Sync-Filter sind nicht verfügbar";
+"The filter file for this vault could not be read. Make sure the vault is still accessible, then try again." = "Die Filterdatei dieses Vaults konnte nicht gelesen werden. Stell sicher, dass der Vault noch erreichbar ist, und versuch es dann erneut.";

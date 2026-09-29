@@ -2141,10 +2141,11 @@ final class SyncthingManager {
     private static let recommendationSheetShownKey = "syncthing.recommendationSheetShownFolders"
 
     /// Read current `.stignore` lines, distinguishing "no patterns yet" from
-    /// "could not parse bridge output". Returns nil only on decode failure.
-    /// Used internally by every read-modify-write flow so a malformed bridge
-    /// response can never silently cause `.stignore` to be overwritten with
-    /// an empty list (CodeRabbit data-loss guard).
+    /// "could not read or parse". Returns nil when the bridge reports a failed
+    /// read — an `{"error": …}` object instead of a list (#182) — or when its
+    /// output cannot be decoded. Used internally by every read-modify-write
+    /// flow so a failed read can never silently cause `.stignore` to be
+    /// overwritten with an empty list (CodeRabbit data-loss guard).
     private func readIgnorePatternsOrNil(folderID: String) -> [String]? {
         let raw = SyncBridgeService.getFolderIgnores(folderID: folderID)
         guard let data = raw.data(using: .utf8),
@@ -2158,11 +2159,12 @@ final class SyncthingManager {
         SyncUserError.from(rawMessage: L10n.tr("Could not read current sync filters. Please try again."))
     }
 
-    /// Read current `.stignore` lines for a folder. Display-friendly: returns
-    /// an empty list if the bridge response cannot be parsed. Read-modify-write
-    /// flows must use `readIgnorePatternsOrNil` instead.
-    func ignorePatterns(folderID: String) -> [String] {
-        readIgnorePatternsOrNil(folderID: folderID) ?? []
+    /// Read current `.stignore` lines for a folder. Returns nil when the
+    /// filter file could not be read (#182): the view then shows "unavailable"
+    /// instead of an empty list that would claim there are no filters.
+    /// Read-modify-write flows must use `readIgnorePatternsOrNil` instead.
+    func ignorePatterns(folderID: String) -> [String]? {
+        readIgnorePatternsOrNil(folderID: folderID)
     }
 
     /// Replace all `.stignore` lines for a folder.
