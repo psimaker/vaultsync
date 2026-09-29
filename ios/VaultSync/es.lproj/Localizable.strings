@@ -942,3 +942,6 @@
 "Upload capability unavailable — no upload evidence" = "Capacidad de carga no disponible — sin evidencia de carga";
 "Sync filters are unavailable" = "Los filtros de sincronización no están disponibles";
 "The filter file for this vault could not be read. Make sure the vault is still accessible, then try again." = "No se pudo leer el archivo de filtros de este Vault. Asegúrate de que el Vault siga siendo accesible y vuelve a intentarlo.";
+"Sync Engine Still Stopping" = "El motor de sincronización aún se está deteniendo";
+"A background sync is still shutting the engine down." = "Una sincronización en segundo plano todavía está apagando el motor.";
+"Wait a moment, then reopen VaultSync or pull to refresh." = "Espera un momento y vuelve a abrir VaultSync o desliza para actualizar.";

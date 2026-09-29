@@ -26,7 +26,7 @@ extension EngineBridgeSuites {
         func startAgainstLiveEngineSurfacesUserError() async {
             TestSupport.resetSyncthingState()
             defer { TestSupport.resetSyncthingState() }
-            BackgroundSyncService.lifecycleLock.withLock { $0.foregroundActive = false }
+            BackgroundSyncService.lifecycleLock.withLock { $0.releaseForeground() }
 
             let startErr = SyncBridgeService.startSyncthing(configDir: TestSupport.syncthingConfigPath())
             #expect(startErr == nil)
@@ -47,7 +47,7 @@ extension EngineBridgeSuites {
         func adoptAttachesToLiveEngine() {
             TestSupport.resetSyncthingState()
             defer { TestSupport.resetSyncthingState() }
-            BackgroundSyncService.lifecycleLock.withLock { $0.foregroundActive = false }
+            BackgroundSyncService.lifecycleLock.withLock { $0.releaseForeground() }
 
             let startErr = SyncBridgeService.startSyncthing(configDir: TestSupport.syncthingConfigPath())
             #expect(startErr == nil)
@@ -74,7 +74,7 @@ extension EngineBridgeSuites {
         func attachHelperAdoptsLiveEngine() {
             TestSupport.resetSyncthingState()
             defer { TestSupport.resetSyncthingState() }
-            BackgroundSyncService.lifecycleLock.withLock { $0.foregroundActive = false }
+            BackgroundSyncService.lifecycleLock.withLock { $0.releaseForeground() }
 
             let startErr = SyncBridgeService.startSyncthing(configDir: TestSupport.syncthingConfigPath())
             #expect(startErr == nil)
@@ -103,7 +103,7 @@ extension EngineBridgeSuites {
         func attachHelperReportsAlreadyAttached() {
             TestSupport.resetSyncthingState()
             defer { TestSupport.resetSyncthingState() }
-            BackgroundSyncService.lifecycleLock.withLock { $0.foregroundActive = false }
+            BackgroundSyncService.lifecycleLock.withLock { $0.releaseForeground() }
 
             let startErr = SyncBridgeService.startSyncthing(configDir: TestSupport.syncthingConfigPath())
             #expect(startErr == nil)
