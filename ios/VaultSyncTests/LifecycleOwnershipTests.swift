@@ -118,6 +118,84 @@ extension EngineBridgeSuites {
             manager.stop()
         }
 
+        /// The claim taken before the wait is not still held when the wait
+        /// ends: `scenePhase == .background` releases it
+        /// (`VaultSyncApp` -> `releaseForegroundLifecycleLock`). Starting the
+        /// engine anyway leaves one that nobody owns — a background handler
+        /// may stop it right away while the manager polls it as running,
+        /// which is the very split #183 closes.
+        @MainActor
+        @Test("A start whose claim was released while it waited does not start the engine")
+        func startAbandonedWhenSceneLeftForeground() async {
+            TestSupport.resetSyncthingState()
+            Self.resetLifecycle()
+            BackgroundSyncService.setSceneActive(true)
+            defer {
+                BackgroundSyncService.setSceneActive(false)
+                TestSupport.resetSyncthingState()
+                Self.resetLifecycle()
+            }
+
+            let claimed = BackgroundSyncService.lifecycleLock.withLock { $0.beginBackgroundStop() }
+            #expect(claimed == .claimed)
+
+            let manager = SyncthingManager()
+            let starting = Task { @MainActor in await manager.start() }
+            try? await Task.sleep(for: .milliseconds(800))
+
+            // The scene leaves the foreground mid-wait, exactly as
+            // VaultSyncApp does it: scene flag first, then the claim.
+            BackgroundSyncService.setSceneActive(false)
+            BackgroundSyncService.releaseForegroundLifecycleLock()
+
+            BackgroundSyncService.lifecycleLock.withLock { $0.endBackgroundStop() }
+            await starting.value
+
+            #expect(!SyncBridgeService.isRunning(), "an engine started without the claim is owned by nobody")
+            #expect(!manager.isRunning)
+            let foregroundActive = BackgroundSyncService.lifecycleLock.withLock { $0.foregroundActive }
+            #expect(!foregroundActive, "the abandoned start leaves no claim behind")
+        }
+
+        /// The same release, but the scene is back in the foreground when the
+        /// wait ends (background → foreground inside the wait window). The
+        /// second activation's `start()` is swallowed by the in-flight one, so
+        /// abandoning here would leave the foreground without an engine: the
+        /// waiting start takes the lifecycle again instead.
+        @MainActor
+        @Test("A start whose claim was released takes it back when the scene is foreground again")
+        func startReclaimsWhenSceneReturned() async {
+            TestSupport.resetSyncthingState()
+            Self.resetLifecycle()
+            BackgroundSyncService.setSceneActive(true)
+            defer {
+                BackgroundSyncService.setSceneActive(false)
+                TestSupport.resetSyncthingState()
+                Self.resetLifecycle()
+            }
+
+            let claimed = BackgroundSyncService.lifecycleLock.withLock { $0.beginBackgroundStop() }
+            #expect(claimed == .claimed)
+
+            let manager = SyncthingManager()
+            let starting = Task { @MainActor in await manager.start() }
+            try? await Task.sleep(for: .milliseconds(800))
+
+            BackgroundSyncService.setSceneActive(false)
+            BackgroundSyncService.releaseForegroundLifecycleLock()
+            // ... and back to the foreground before the stop clears.
+            BackgroundSyncService.setSceneActive(true)
+
+            BackgroundSyncService.lifecycleLock.withLock { $0.endBackgroundStop() }
+            await starting.value
+
+            #expect(manager.isRunning, "the foreground must not be left without an engine")
+            #expect(SyncBridgeService.isRunning())
+            let foregroundActive = BackgroundSyncService.lifecycleLock.withLock { $0.foregroundActive }
+            #expect(foregroundActive, "the engine the foreground started must be owned by it")
+            manager.stop()
+        }
+
         /// Two background wake-ups overlap: the second (follower) used to answer
         /// `.alreadyIdle` on its own, so a failed leader run still read as
         /// success (decision 029). The follower must report what the leader

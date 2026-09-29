@@ -724,6 +724,20 @@ final class SyncthingManager {
             return
         }
 
+        // The claim taken above is not still held just because the wait
+        // succeeded: `scenePhase == .background` releases it while this start
+        // waits (`VaultSyncApp` -> `releaseForegroundLifecycleLock`).
+        // Starting anyway leaves an engine nobody owns — the next background
+        // handler may stop it right away while this manager keeps polling it
+        // as running (#183, decision 040).
+        switch BackgroundSyncService.reclaimForegroundForStart() {
+        case .held, .reclaimed:
+            break
+        case .abandonedSceneLeftForeground:
+            logger.info("The scene left the foreground while the start waited — the engine stays with the background handlers")
+            return
+        }
+
         let startError = await Task.detached(priority: .userInitiated) {
             SyncBridgeService.startSyncthing(configDir: configDir)
         }.value

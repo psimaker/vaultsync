@@ -51,6 +51,36 @@ struct LifecycleOwnershipCoreTests {
         #expect(state.foregroundActive)
     }
 
+    @Test("A start that kept its claim through the wait needs no reclaim")
+    func startClaimHeldThroughWait() {
+        var state = SyncLifecycleState()
+        state.claimForegroundForStart()
+        #expect(state.reclaimForegroundForStart(sceneForeground: true) == .held)
+        #expect(state.foregroundActive)
+        // Even with the scene already gone, a claim still held is not dropped
+        // here — only the release paths drop it.
+        #expect(state.reclaimForegroundForStart(sceneForeground: false) == .held)
+        #expect(state.foregroundActive)
+    }
+
+    @Test("A start whose claim was released mid-wait reclaims only while the scene is in the foreground")
+    func startClaimReleasedMidWait() {
+        var state = SyncLifecycleState()
+        state.claimForegroundForStart()
+        state.releaseForeground() // scene went to the background
+
+        #expect(state.reclaimForegroundForStart(sceneForeground: false) == .abandonedSceneLeftForeground)
+        #expect(!state.foregroundActive, "an abandoned start leaves no claim behind")
+        // A background stop can still begin — the engine is the background's.
+        #expect(state.beginBackgroundStop() == .claimed)
+        state.endBackgroundStop()
+
+        // Scene returned inside the wait window: the start takes it back.
+        #expect(state.reclaimForegroundForStart(sceneForeground: true) == .reclaimed)
+        #expect(state.foregroundActive)
+        #expect(state.beginBackgroundStop() == .refusedForegroundOwns, "the reclaimed lifecycle excludes background stops again")
+    }
+
     @Test("A follower mirrors the leader's result and the slot frees for the next leader")
     func followerMirrorsLeader() async {
         let flight = BackgroundSyncSingleFlight()

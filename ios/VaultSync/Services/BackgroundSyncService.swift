@@ -134,6 +134,34 @@ struct SyncLifecycleState: Sendable {
     mutating func endBackgroundStop() {
         backgroundStopInProgress = false
     }
+
+    enum ForegroundStartClaim: Equatable, Sendable {
+        /// The claim taken before the wait is still held.
+        case held
+        /// It was released while the start waited, but the scene is in the
+        /// foreground again: the start takes the lifecycle back.
+        case reclaimed
+        /// Released while the start waited and the scene is not in the
+        /// foreground: the engine belongs to the background handlers.
+        case abandonedSceneLeftForeground
+    }
+
+    /// A cold start re-verifies its claim after waiting for an in-flight
+    /// background stop. `claimForegroundForStart` runs before that wait, and
+    /// `scenePhase == .background` releases the claim while it runs, so the
+    /// claim is not still held by the time the bridge would be started. An
+    /// engine started without it is one nobody owns: the next background
+    /// handler may stop it right away while this manager polls it as running
+    /// — the split #183 exists to close. `sceneForeground` decides between
+    /// taking the lifecycle back (the scene returned inside the wait window,
+    /// and that activation's own start was swallowed by this one) and leaving
+    /// the engine to the background handlers.
+    mutating func reclaimForegroundForStart(sceneForeground: Bool) -> ForegroundStartClaim {
+        if foregroundActive { return .held }
+        guard sceneForeground else { return .abandonedSceneLeftForeground }
+        foregroundActive = true
+        return .reclaimed
+    }
 }
 
 /// Identity of one background handler run (#183). The single-flight records
@@ -291,6 +319,16 @@ enum BackgroundSyncService {
     /// foreground so that silent-push and BGAppRefresh handlers can manage
     /// the Syncthing bridge. Without this, `performBackgroundSync` stays in
     /// `backgroundManaged=false` mode and never reconnects dead sockets.
+    /// `SyncthingManager.start()` re-verifies its claim through this after
+    /// waiting for an in-flight background stop (#183). The scene flag is
+    /// read inside the lifecycle lock, so a `.background` landing between the
+    /// two — it sets the flag first, then releases the claim — cannot leave a
+    /// claim behind that nothing releases. Lock order is lifecycle -> scene,
+    /// never the reverse.
+    static func reclaimForegroundForStart() -> SyncLifecycleState.ForegroundStartClaim {
+        lifecycleLock.withLock { $0.reclaimForegroundForStart(sceneForeground: isSceneActive()) }
+    }
+
     static func releaseForegroundLifecycleLock() {
         lifecycleLock.withLock { $0.releaseForeground() }
         logger.info("Foreground lifecycle lock released")
