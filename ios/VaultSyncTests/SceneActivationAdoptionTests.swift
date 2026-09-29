@@ -58,7 +58,7 @@ extension EngineBridgeSuites {
         @Test("Adopting a dead engine fails, releases the lifecycle claim, and leaves the manager cold")
         func adoptWithDeadEngineFailsClean() {
             TestSupport.resetSyncthingState() // guarantees the bridge is stopped
-            BackgroundSyncService.lifecycleLock.withLock { $0.foregroundActive = false }
+            BackgroundSyncService.lifecycleLock.withLock { $0.releaseForeground() }
 
             let manager = SyncthingManager()
             let adopted = manager.adoptRunningEngine()
@@ -80,7 +80,7 @@ extension EngineBridgeSuites {
         @Test("Adoption never settles paths — accepts stay held until the follow-up reconcile completes")
         func adoptionLeavesPathsUnsettled() {
             TestSupport.resetSyncthingState()
-            BackgroundSyncService.lifecycleLock.withLock { $0.foregroundActive = false }
+            BackgroundSyncService.lifecycleLock.withLock { $0.releaseForeground() }
 
             let manager = SyncthingManager()
             #expect(!manager.pathSettlement.settled)
