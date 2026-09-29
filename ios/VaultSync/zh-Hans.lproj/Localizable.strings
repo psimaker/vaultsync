@@ -942,3 +942,6 @@
 "Upload capability unavailable — no upload evidence" = "上传能力不可用 — 没有上传证据";
 "Sync filters are unavailable" = "同步过滤器不可用";
 "The filter file for this vault could not be read. Make sure the vault is still accessible, then try again." = "无法读取此 Vault 的过滤器文件。请确认该 Vault 仍可访问，然后重试。";
+"Sync Engine Still Stopping" = "同步引擎仍在停止";
+"A background sync is still shutting the engine down." = "一次后台同步仍在关闭引擎。";
+"Wait a moment, then reopen VaultSync or pull to refresh." = "请稍等片刻，然后重新打开 VaultSync 或下拉刷新。";

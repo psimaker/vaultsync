@@ -66,9 +66,109 @@ final class BackgroundTaskCancellationRelay: @unchecked Sendable {
 /// Tracks whether the foreground (SyncthingManager) owns the Syncthing lifecycle.
 /// Both SyncthingManager and BackgroundSyncService coordinate through this lock
 /// to prevent races where background stops a foreground-managed instance or vice versa.
+/// Who owns the engine lifecycle right now — the one place the ownership
+/// invariants live (#183, decision 040). Every transition goes through these
+/// methods, so no caller can half-claim: the foreground claims before it
+/// starts or adopts, a background stop is claimed before it runs, and the two
+/// claims exclude each other.
 struct SyncLifecycleState: Sendable {
-    var foregroundActive = false
+    /// The foreground scene holds the engine lifecycle (start, stop, the
+    /// one automatic restart of decision 009).
+    private(set) var foregroundActive = false
+    /// A background handler is stopping the engine right now. Set under the
+    /// lock before the seconds-long stop runs outside it, so a foreground
+    /// adoption landing in between is refused instead of attaching to an
+    /// engine that is about to die.
+    private(set) var backgroundStopInProgress = false
+
+    enum ForegroundClaim: Equatable, Sendable {
+        case claimed
+        /// A background stop is in flight: adopt nothing, cold-start after it.
+        case refusedStopInProgress
+    }
+
+    /// The foreground takes the lifecycle for a cold start. Always succeeds;
+    /// `SyncthingManager.start()` then waits for an in-flight background stop
+    /// to clear before it touches the bridge, and the claim keeps a new stop
+    /// from beginning meanwhile.
+    mutating func claimForegroundForStart() {
+        foregroundActive = true
+    }
+
+    /// The foreground takes the lifecycle to adopt a running engine. Refused
+    /// while a background stop is in flight — that engine is about to stop.
+    mutating func claimForegroundForAdoption() -> ForegroundClaim {
+        if backgroundStopInProgress {
+            return .refusedStopInProgress
+        }
+        foregroundActive = true
+        return .claimed
+    }
+
+    mutating func releaseForeground() {
+        foregroundActive = false
+    }
+
+    enum BackgroundStopClaim: Equatable, Sendable {
+        case claimed
+        /// The foreground owns the lifecycle: its engine, not ours to stop.
+        case refusedForegroundOwns
+        /// Another background stop already holds the claim. It finishes the
+        /// stop and releases the flag; a second holder would release it
+        /// while the first stop still runs, and a foreground adoption could
+        /// then attach to an engine that is still going down.
+        case refusedAlreadyStopping
+    }
+
+    /// A background handler claims the right to stop (or stop and restart)
+    /// the engine. Refused while the foreground owns the lifecycle and while
+    /// another background stop holds the claim; the claim holds until
+    /// `endBackgroundStop` and refuses foreground adoption meanwhile.
+    mutating func beginBackgroundStop() -> BackgroundStopClaim {
+        if foregroundActive { return .refusedForegroundOwns }
+        if backgroundStopInProgress { return .refusedAlreadyStopping }
+        backgroundStopInProgress = true
+        return .claimed
+    }
+
+    mutating func endBackgroundStop() {
+        backgroundStopInProgress = false
+    }
+
+    enum ForegroundStartClaim: Equatable, Sendable {
+        /// The claim taken before the wait is still held.
+        case held
+        /// It was released while the start waited, but the scene is in the
+        /// foreground again: the start takes the lifecycle back.
+        case reclaimed
+        /// Released while the start waited and the scene is not in the
+        /// foreground: the engine belongs to the background handlers.
+        case abandonedSceneLeftForeground
+    }
+
+    /// A cold start re-verifies its claim after waiting for an in-flight
+    /// background stop. `claimForegroundForStart` runs before that wait, and
+    /// `scenePhase == .background` releases the claim while it runs, so the
+    /// claim is not still held by the time the bridge would be started. An
+    /// engine started without it is one nobody owns: the next background
+    /// handler may stop it right away while this manager polls it as running
+    /// — the split #183 exists to close. `sceneForeground` decides between
+    /// taking the lifecycle back (the scene returned inside the wait window,
+    /// and that activation's own start was swallowed by this one) and leaving
+    /// the engine to the background handlers.
+    mutating func reclaimForegroundForStart(sceneForeground: Bool) -> ForegroundStartClaim {
+        if foregroundActive { return .held }
+        guard sceneForeground else { return .abandonedSceneLeftForeground }
+        foregroundActive = true
+        return .reclaimed
+    }
 }
+
+/// Identity of one background handler run (#183). The single-flight records
+/// which run leads, so a handler's expiration stops the engine only when its
+/// own run is the leader — a follower's expiration cancels the follower and
+/// nothing else.
+final class BackgroundSyncRunToken: Sendable {}
 
 /// Manages background sync via BGAppRefreshTask and BGContinuedProcessingTask.
 enum BackgroundSyncService {
@@ -80,11 +180,11 @@ enum BackgroundSyncService {
     /// Shared lock coordinating Syncthing bridge start/stop across foreground and background.
     static let lifecycleLock = OSAllocatedUnfairLock(initialState: SyncLifecycleState())
 
-    /// Single-flight guard: only one background sync may drive the shared
-    /// Syncthing instance at a time. Distinct from `lifecycleLock`, which only
-    /// tracks whether the foreground owns start/stop — this prevents two
-    /// concurrent background wake-ups from tearing down each other's sync.
-    private static let syncInFlightLock = OSAllocatedUnfairLock(initialState: false)
+    /// Single-flight admission: only one background sync — the leader — may
+    /// drive the shared Syncthing instance at a time; a run admitted while the
+    /// leader is in flight waits for it and reports the leader's result
+    /// (#183). Distinct from `lifecycleLock`, which tracks who owns start/stop.
+    private static let singleFlight = BackgroundSyncSingleFlight()
 
     /// Whether the scene is currently foreground-active. Drives conflict-banner
     /// behavior: while active, the in-app UI surfaces conflicts so no banner is
@@ -219,8 +319,18 @@ enum BackgroundSyncService {
     /// foreground so that silent-push and BGAppRefresh handlers can manage
     /// the Syncthing bridge. Without this, `performBackgroundSync` stays in
     /// `backgroundManaged=false` mode and never reconnects dead sockets.
+    /// `SyncthingManager.start()` re-verifies its claim through this after
+    /// waiting for an in-flight background stop (#183). The scene flag is
+    /// read inside the lifecycle lock, so a `.background` landing between the
+    /// two — it sets the flag first, then releases the claim — cannot leave a
+    /// claim behind that nothing releases. Lock order is lifecycle -> scene,
+    /// never the reverse.
+    static func reclaimForegroundForStart() -> SyncLifecycleState.ForegroundStartClaim {
+        lifecycleLock.withLock { $0.reclaimForegroundForStart(sceneForeground: isSceneActive()) }
+    }
+
     static func releaseForegroundLifecycleLock() {
-        lifecycleLock.withLock { $0.foregroundActive = false }
+        lifecycleLock.withLock { $0.releaseForeground() }
         logger.info("Foreground lifecycle lock released")
     }
 
@@ -297,6 +407,74 @@ enum BackgroundSyncService {
         guard previous != .invalid else { return }
         UIApplication.shared.endBackgroundTask(previous)
         logger.info("Background assertion released (id=\(previous.rawValue))")
+    }
+
+    /// Wait until no background stop claim is held (#183). A cold start that
+    /// runs into an in-flight stop would bounce off the bridge's "already
+    /// running" or attach to the dying engine; the stop itself is bounded by
+    /// the bridge's deadline, so this wait is bounded the same way.
+    /// Returns false when the claim did not clear within `timeout`.
+    static func waitForBackgroundStopToClear(timeout: TimeInterval) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while lifecycleLock.withLock({ $0.backgroundStopInProgress }) {
+            if Date() >= deadline { return false }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        return true
+    }
+
+    /// The one background stop path (#183, decision 040): claims the stop
+    /// under the lifecycle lock, stops outside it — a stop blocks for seconds
+    /// and the lock is also taken on the main thread (decision 009) — and
+    /// releases the claim. Returns false when the foreground owns the
+    /// lifecycle and nothing was stopped.
+    @discardableResult
+    static func stopEngineIfBackgroundOwned(context: String) -> Bool {
+        switch lifecycleLock.withLock({ $0.beginBackgroundStop() }) {
+        case .claimed:
+            break
+        case .refusedForegroundOwns:
+            logger.info("\(context, privacy: .public) — skipped engine stop (foreground owns lifecycle)")
+            return false
+        case .refusedAlreadyStopping:
+            logger.info("\(context, privacy: .public) — skipped engine stop (another background stop is in flight)")
+            return false
+        }
+        defer { lifecycleLock.withLock { $0.endBackgroundStop() } }
+        if let stopError = SyncBridgeService.stopSyncthing() {
+            logger.warning("\(context, privacy: .public) — engine stop overran its deadline: \(stopError, privacy: .public)")
+        }
+        logger.info("\(context, privacy: .public) — Syncthing stopped")
+        return true
+    }
+
+    enum ClaimedRun<Value: Sendable>: Sendable {
+        case ran(Value)
+        case foregroundOwns
+        case alreadyStopping
+    }
+
+    /// Runs `body` under one background stop claim (#183). The claim holds
+    /// across every await inside, so a stop-then-start sequence (the forced
+    /// silent-push restart) cannot be interleaved by a foreground start or
+    /// adoption between its two halves — the two would end up as two owners
+    /// of the restarted engine.
+    static func withBackgroundStopClaim<Value: Sendable>(
+        context: String,
+        _ body: () async -> Value
+    ) async -> ClaimedRun<Value> {
+        switch lifecycleLock.withLock({ $0.beginBackgroundStop() }) {
+        case .claimed:
+            break
+        case .refusedForegroundOwns:
+            logger.info("\(context, privacy: .public) — skipped (foreground owns lifecycle)")
+            return .foregroundOwns
+        case .refusedAlreadyStopping:
+            logger.info("\(context, privacy: .public) — skipped (another background stop is in flight)")
+            return .alreadyStopping
+        }
+        defer { lifecycleLock.withLock { $0.endBackgroundStop() } }
+        return .ran(await body())
     }
 
     // MARK: - Scheduling
@@ -628,12 +806,14 @@ enum BackgroundSyncService {
     /// Used by BGAppRefreshTask handler and Silent Push handler.
     static func performBackgroundSync(
         reason: String,
-        maxDuration: TimeInterval = 25
+        maxDuration: TimeInterval = 25,
+        runToken: BackgroundSyncRunToken? = nil
     ) async -> SyncResult {
         await BackgroundSecurityScopedAccess.withRunOwnedLease { managedAccess, accessOwner in
             await performBackgroundSyncRun(
                 reason: reason,
                 maxDuration: maxDuration,
+                runToken: runToken,
                 managedAccess: managedAccess,
                 accessOwner: accessOwner
             )
@@ -643,6 +823,7 @@ enum BackgroundSyncService {
     private static func performBackgroundSyncRun(
         reason: String,
         maxDuration: TimeInterval,
+        runToken: BackgroundSyncRunToken?,
         managedAccess: BackgroundSecurityScopedAccess,
         accessOwner: SecurityScopedLeaseOwner
     ) async -> SyncResult {
@@ -652,23 +833,45 @@ enum BackgroundSyncService {
         // Single-flight: a second concurrent background wake-up must not drive
         // the shared Syncthing instance while another sync is mid-flight — one
         // task's expiration/cleanup could stop the bridge under the other and
-        // silently abort a transfer. The loser just nudges a rescan so its
-        // changes are still picked up, then returns without competing.
-        let didAcquireSyncSlot = syncInFlightLock.withLock { inFlight -> Bool in
-            if inFlight { return false }
-            inFlight = true
-            return true
-        }
-        guard didAcquireSyncSlot else {
-            logger.info("Background sync already in flight — coalescing (reason=\(reason))")
-            trace("Concurrent background sync suppressed (reason=\(reason)); nudging rescan.")
+        // silently abort a transfer. The follower nudges a rescan so its
+        // changes reach the leader's run, then waits and reports the leader's
+        // result — never a stand-in success of its own (#183, decision 029).
+        let entry = await singleFlight.enter(token: runToken, onFollow: {
+            logger.info("Background sync already in flight — waiting for the leader (reason=\(reason))")
+            trace("Concurrent background sync coalesced (reason=\(reason)); nudging rescan, mirroring the leader.")
             if SyncBridgeService.isRunning() {
                 _ = requestFolderRescans()
             }
-            return .alreadyIdle
+        })
+        switch entry {
+        case .leader:
+            break
+        case .follower(let leaderResult):
+            guard let leaderResult else {
+                trace("Coalesced background sync cancelled before the leader finished.")
+                return .failed
+            }
+            trace("Coalesced background sync mirrors the leader: \(leaderResult.rawValue).")
+            return leaderResult
         }
-        defer { syncInFlightLock.withLock { $0 = false } }
 
+        let result = await performBackgroundSyncLeader(
+            reason: reason,
+            maxDuration: maxDuration,
+            managedAccess: managedAccess,
+            accessOwner: accessOwner
+        )
+        singleFlight.finish(result)
+        return result
+    }
+
+    /// The leader's run: owns the engine for this cycle when nobody else does.
+    private static func performBackgroundSyncLeader(
+        reason: String,
+        maxDuration: TimeInterval,
+        managedAccess: BackgroundSecurityScopedAccess,
+        accessOwner: SecurityScopedLeaseOwner
+    ) async -> SyncResult {
         let syncStartedAt = Date()
         var telemetryEventCursor = latestBridgeEventID()
         let syncStartEventCursor = telemetryEventCursor
@@ -837,7 +1040,6 @@ enum BackgroundSyncService {
                     return completion
                 }
 
-                ownsLifecycle = true
                 let restart = await forceRestartForSilentPush()
                 if Task.isCancelled {
                     let completion = completeCancelledSync(
@@ -848,12 +1050,23 @@ enum BackgroundSyncService {
                     cleanupBackgroundManaged()
                     return completion
                 }
-                guard restart.success else {
+                switch restart {
+                case .restarted:
+                    // The stop and start both ran under this cycle's claim:
+                    // background owns the engine from here on.
+                    ownsLifecycle = true
+                case .foregroundOwns:
+                    // The foreground claimed the lifecycle between the guard's
+                    // re-read and the stop claim (#183): the engine keeps
+                    // running under the foreground; observe it, never own it.
+                    trace("Forced restart skipped: the foreground took the lifecycle.")
+                    ownsLifecycle = false
+                case .failed(let detail):
                     trace("Forced restart failed.")
                     let completion = completeSync(
                         reason: reason,
                         result: .bridgeStartFailed,
-                        detail: restart.errorDetail ?? L10n.tr("Forced silent-push restart failed."),
+                        detail: detail ?? L10n.tr("Forced silent-push restart failed."),
                         startedAt: syncStartedAt,
                         initialEventCursor: syncStartEventCursor
                     )
@@ -861,7 +1074,7 @@ enum BackgroundSyncService {
                     return completion
                 }
 
-                forcedRestartPerformed = true
+                forcedRestartPerformed = restart == .restarted
                 progressTracker?.requiresLocalDataProgress = true
                 progressTracker?.lastEventID = latestBridgeEventID()
                 trace("Forced restart succeeded. Background now owns lifecycle=\(ownsLifecycle).")
@@ -1027,19 +1240,21 @@ enum BackgroundSyncService {
         }
 
         let cancellationRelay = BackgroundTaskCancellationRelay()
+        let runToken = BackgroundSyncRunToken()
         task.expirationHandler = {
             cancellationRelay.expire()
-            let shouldStop = lifecycleLock.withLock { !$0.foregroundActive }
-            if shouldStop {
-                SyncBridgeService.stopSyncthing()
-                logger.info("Background refresh expired — Syncthing stopped")
-            } else {
-                logger.info("Background refresh expired — skipped stop (foreground active)")
+            // Only the single-flight leader owns the engine for this cycle;
+            // a follower's expiration ends the follower and nothing else —
+            // the leader's transfer keeps its engine (#183).
+            guard singleFlight.isLeader(runToken) else {
+                logger.info("Background refresh expired — follower run, engine left to the leader")
+                return
             }
+            stopEngineIfBackgroundOwned(context: "Background refresh expired")
         }
 
         let syncTask = cancellationRelay.makeTask {
-            await performBackgroundSync(reason: "app-refresh")
+            await performBackgroundSync(reason: "app-refresh", runToken: runToken)
         }
         let result = await syncTask.value
         cancellationRelay.finish()
@@ -1060,19 +1275,21 @@ enum BackgroundSyncService {
         }
 
         let cancellationRelay = BackgroundTaskCancellationRelay()
+        let runToken = BackgroundSyncRunToken()
         task.expirationHandler = {
             cancellationRelay.expire()
-            let shouldStop = lifecycleLock.withLock { !$0.foregroundActive }
-            if shouldStop {
-                SyncBridgeService.stopSyncthing()
-                logger.info("Background processing expired — Syncthing stopped")
-            } else {
-                logger.info("Background processing expired — skipped stop (foreground active)")
+            // Only the single-flight leader owns the engine for this cycle;
+            // a follower's expiration ends the follower and nothing else —
+            // the leader's transfer keeps its engine (#183).
+            guard singleFlight.isLeader(runToken) else {
+                logger.info("Background processing expired — follower run, engine left to the leader")
+                return
             }
+            stopEngineIfBackgroundOwned(context: "Background processing expired")
         }
 
         let syncTask = cancellationRelay.makeTask {
-            await performBackgroundSync(reason: "processing", maxDuration: 180)
+            await performBackgroundSync(reason: "processing", maxDuration: 180, runToken: runToken)
         }
         let result = await syncTask.value
         cancellationRelay.finish()
@@ -1279,14 +1496,11 @@ enum BackgroundSyncService {
     }
 
     private static func stopContinuedProcessingEngineIfBackgroundOwned() {
-        let foregroundOwnsLifecycle = lifecycleLock.withLock { $0.foregroundActive }
-        let sceneActive = isSceneActive()
-        guard !sceneActive, !foregroundOwnsLifecycle else {
-            logger.info("Continued processing termination skipped engine stop (foreground active)")
+        guard !isSceneActive() else {
+            logger.info("Continued processing termination skipped engine stop (scene active)")
             return
         }
-        SyncBridgeService.stopSyncthing()
-        logger.info("Continued processing termination stopped Syncthing")
+        stopEngineIfBackgroundOwned(context: "Continued processing termination")
     }
 
     private static func continuedProcessingObservation() -> ContinuedProcessingRun.Observation {
@@ -1415,10 +1629,7 @@ enum BackgroundSyncService {
     /// Engine cleanup only. The run-owned security-scope token is released by
     /// `withRunOwnedLease` regardless of lifecycle takeover.
     private static func cleanupBackgroundManaged() {
-        let shouldStop = lifecycleLock.withLock { !$0.foregroundActive }
-        if shouldStop && SyncBridgeService.isRunning() {
-            SyncBridgeService.stopSyncthing()
-        }
+        stopEngineIfBackgroundOwned(context: "Background sync cleanup")
     }
 
     /// Widget tier for a background completion (#76). Pure so the matrix is
@@ -1883,26 +2094,52 @@ enum BackgroundSyncService {
         return devices.contains { $0.connected && !$0.paused }
     }
 
-    private static func forceRestartForSilentPush()
-        async -> (success: Bool, errorDetail: String?) {
-        if SyncBridgeService.isRunning() {
-            trace("Forced restart stopping running bridge first.")
-            SyncBridgeService.stopSyncthing()
-            try? await Task.sleep(for: .milliseconds(350))
-            if Task.isCancelled {
-                return (false, SyncResult.failed.issueMessage)
-            }
-        }
+    enum ForcedRestartOutcome: Equatable, Sendable {
+        case restarted
+        /// The foreground claimed the lifecycle before the stop claim landed:
+        /// the running engine is the foreground's now, nothing was stopped.
+        case foregroundOwns
+        case failed(detail: String?)
+    }
 
+    private static func forceRestartForSilentPush() async -> ForcedRestartOutcome {
+        // One claim across stop, settle and start (#183): a foreground start
+        // or adoption cannot slip in between the two halves, so the
+        // restarted engine has exactly one owner — this run.
+        let run = await withBackgroundStopClaim(context: "Forced silent-push restart") { () -> ForcedRestartOutcome in
+            if SyncBridgeService.isRunning() {
+                trace("Forced restart stopping running bridge first.")
+                if let stopError = SyncBridgeService.stopSyncthing() {
+                    logger.warning("Forced silent-push restart — engine stop overran its deadline: \(stopError, privacy: .public)")
+                }
+                try? await Task.sleep(for: .milliseconds(350))
+                if Task.isCancelled {
+                    return .failed(detail: SyncResult.failed.issueMessage)
+                }
+            }
+            return startBridgeForForcedRestart()
+        }
+        switch run {
+        case .ran(let outcome):
+            return outcome
+        case .foregroundOwns:
+            return .foregroundOwns
+        case .alreadyStopping:
+            // Only this leader's own expiration handler can hold the other
+            // claim: the run is being cancelled, nothing restarts.
+            return .failed(detail: SyncResult.failed.issueMessage)
+        }
+    }
+
+    private static func startBridgeForForcedRestart() -> ForcedRestartOutcome {
         let configDir = syncthingConfigDir()
         let err = SyncBridgeService.startSyncthing(configDir: configDir)
         if let err, !err.isEmpty, !SyncBridgeService.isRunning() {
             trace("Forced restart start failed.")
-            return (false, L10n.tr("The embedded sync engine could not restart."))
+            return .failed(detail: L10n.tr("The embedded sync engine could not restart."))
         }
-
         trace("Forced restart started bridge successfully.")
-        return (true, nil)
+        return .restarted
     }
 
     private static func traceFolderStatuses(label: String) {
