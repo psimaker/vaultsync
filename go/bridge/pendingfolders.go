@@ -10,6 +10,7 @@ import (
 
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/protocol"
+	"github.com/syncthing/syncthing/lib/syncthing"
 )
 
 // PendingFolderInfo represents a folder offered by one or more remote devices.
@@ -139,22 +140,20 @@ func AcceptPendingFolder(folderID, label, path string, allowNonEmpty bool) strin
 		}
 	}
 
-	// Look up which devices offered this folder.
-	var offeringDevices []protocol.DeviceID
-	if stApp.Internals != nil {
-		pending, err := stApp.Internals.PendingFolders(protocol.EmptyDeviceID)
-		if err == nil {
-			if pf, ok := pending[folderID]; ok {
-				for devID := range pf.OfferedBy {
-					offeringDevices = append(offeringDevices, devID)
-				}
-			}
-		}
+	// Look up which devices offered this folder. A failed read refuses the
+	// accept: going ahead would create a local-only folder that no peer
+	// shares, indistinguishable from a real accept, and the caller cannot
+	// tell "no offer" from "could not read the offers" (#182). Only a
+	// successful read that finds no offer — the offer was withdrawn between
+	// listing and acceptance — still creates the folder with the local
+	// device only; the user can share it manually later.
+	if stApp.Internals == nil {
+		return "read pending folder offers: engine internals unavailable"
 	}
-
-	// Note: offeringDevices may be empty if the offer disappeared between
-	// listing and acceptance. The folder is still created with local device
-	// only; the user can manually share it later.
+	offeringDevices, err := offeringDevicesFor(stApp.Internals, folderID)
+	if err != nil {
+		return fmt.Sprintf("read pending folder offers: %v", err)
+	}
 
 	// Ensure folder path exists.
 	if err := os.MkdirAll(path, 0o700); err != nil {
@@ -192,6 +191,22 @@ func AcceptPendingFolder(folderID, label, path string, allowNonEmpty bool) strin
 	}
 
 	return ""
+}
+
+// offeringDevicesFor lists the devices currently offering folderID. A
+// variable so tests can inject a failed read of the pending offers (#182).
+var offeringDevicesFor = func(internals *syncthing.Internals, folderID string) ([]protocol.DeviceID, error) {
+	pending, err := internals.PendingFolders(protocol.EmptyDeviceID)
+	if err != nil {
+		return nil, err
+	}
+	var devices []protocol.DeviceID
+	if pf, ok := pending[folderID]; ok {
+		for devID := range pf.OfferedBy {
+			devices = append(devices, devID)
+		}
+	}
+	return devices, nil
 }
 
 // nonEmptyTargetError returns a non-empty error message when path exists and

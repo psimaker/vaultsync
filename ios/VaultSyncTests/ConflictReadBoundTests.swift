@@ -119,7 +119,10 @@ extension EngineBridgeSuites {
             #expect(!FileManager.default.fileExists(atPath: folderURL.appendingPathComponent(copy).path))
             #expect(FileManager.default.fileExists(atPath: folderURL.appendingPathComponent(original).path))
 
-            let patterns = manager.ignorePatterns(folderID: folderID)
+            // #182 made a failed filter read answer nil instead of an empty
+            // list; here the read must succeed, so a nil is a failure of this
+            // test's premise, not an empty rule set.
+            let patterns = try #require(manager.ignorePatterns(folderID: folderID))
             #expect(patterns.contains(original))
             #expect(patterns.contains(SyncthingManager.conflictGlob(forOriginalPath: original)))
         }
@@ -151,7 +154,7 @@ extension EngineBridgeSuites {
                 let skipOutcome = await skip
                 #expect(addError == nil)
                 #expect(skipOutcome.error == nil)
-                let patterns = manager.ignorePatterns(folderID: folderID)
+                let patterns = try #require(manager.ignorePatterns(folderID: folderID))
                 #expect(patterns.contains(skipped), "round \(round): the skip rule was lost")
                 #expect(patterns.contains(custom), "round \(round): the custom rule was lost")
             }
