@@ -263,14 +263,38 @@ struct SyncBridgeService {
         BridgeGetConflictFilesJSON(folderID)
     }
 
-    /// Read a text file's content within a folder. relPath is relative to the folder root.
-    /// Returns `(content, nil)` on success, or `(nil, errorMessage)` on failure.
-    static func readFileContent(folderID: String, relPath: String) -> (content: String?, error: String?) {
-        let result = BridgeReadFileContent(folderID, relPath)
-        if result.hasPrefix("error:") {
-            return (nil, String(result.dropFirst(6)))
+    /// Outcome of a bounded conflict-file read (#184).
+    enum ConflictFileRead: Equatable, Sendable {
+        case content(String)
+        /// The file exceeds the bridge's read bound (`maxReadFileBytes`);
+        /// nothing was read. The app shows it as too large to compare.
+        case tooLarge(bytes: Int64)
+        case failed(String)
+    }
+
+    /// Read a text file's content within a folder. relPath is relative to the
+    /// folder root. Bounded by `maxReadFileBytes()` on the Go side (#184).
+    static func readFileContent(folderID: String, relPath: String) -> ConflictFileRead {
+        parseConflictFileRead(BridgeReadFileContent(folderID, relPath))
+    }
+
+    /// The Go bridge's read bound in bytes — the app renders the same limit
+    /// it enforces (#184, decision 041).
+    static func maxReadFileBytes() -> Int64 {
+        BridgeMaxReadFileBytes()
+    }
+
+    /// Pure decoder of the bridge's read protocol: the content, or an `error:`
+    /// line where `too large:<bytes>` is the bound refusal (#184).
+    static func parseConflictFileRead(_ raw: String) -> ConflictFileRead {
+        let errorPrefix = "error:"
+        guard raw.hasPrefix(errorPrefix) else { return .content(raw) }
+        let message = String(raw.dropFirst(errorPrefix.count))
+        let marker = "too large:"
+        if message.hasPrefix(marker), let bytes = Int64(message.dropFirst(marker.count)) {
+            return .tooLarge(bytes: bytes)
         }
-        return (result, nil)
+        return .failed(message)
     }
 
     /// Resolve a sync conflict. If keepConflict is true, the conflict version replaces the original.
