@@ -1,0 +1,18 @@
+--- a/lib/stun/stun.go
++++ b/lib/stun/stun.go
+@@ -153,8 +153,13 @@
+ 	var natType stun.NATType
+ 	var extAddr *stun.Host
+ 	err = svcutil.CallWithContext(ctx, func() error {
+-		natType, extAddr, err = s.client.Discover()
+-		return err
++		// VaultSync (#152): this closure keeps running after a canceled
++		// CallWithContext has returned, so it must not assign err, which
++		// the caller assigns, reads and returns. natType and extAddr are
++		// only read when the call has completed.
++		var discoverErr error
++		natType, extAddr, discoverErr = s.client.Discover()
++		return discoverErr
+ 	})
+ 	if err != nil {
+ 		l.Debugf("%s stun discovery on %s: %v", s, addr, err)

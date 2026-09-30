@@ -48,6 +48,15 @@ Two safety nets compensate:
   without a registered index handler, which closes it ("folder is not
   running"). With the bridge pinning one connection per peer, this keeps it
   at one. Worth reporting upstream.
+- `syncthing/005-stun-discovery-cancel-race.patch` — the STUN service runs
+  its blocking NAT discovery through `svcutil.CallWithContext`, which returns
+  as soon as the context is canceled while the discovery finishes on its own
+  goroutine. Upstream's closure assigned the caller's `err` from there while
+  the returning call assigned, read and returned it — a data race on every
+  engine stop during a discovery (#152, decision 043). The closure now has
+  its own error variable. Unfixed upstream as of v2.1.6-rc.4: carry it
+  across a bump, and drop it only once upstream changes the closure and
+  `TestIssue152_*` stays green under `-race`. Worth reporting upstream.
 - `go-stun/001-nil-safe-host-methods.patch` — nil-safe host methods.
 
 ## Before each release
