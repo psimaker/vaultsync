@@ -273,7 +273,7 @@ Minimal API exported via gomobile. Only primitives + `string` + `[]byte` cross t
 
 - **Lifecycle:** `StartSyncthing`, `StopSyncthing`, `IsRunning`, `EngineExitReason` — liveness follows the engine supervisor; every lifecycle wait has a deadline and a timeout comes back as the error string (decision 038)
 - **Identity:** `DeviceID`
-- **Devices:** `AddDevice`, `RemoveDevice`, `RenameDevice`, `GetDevicesJSON`
+- **Devices:** `AddDevice`, `RemoveDevice`, `RenameDevice`, `GetDevicesJSON` — every peer is pinned to one connection (`numConnections = 1`, migrated on start; decision 042)
 - **Folders:** `AddFolder`, `RemoveFolder`, `RescanFolder`, `GetFoldersJSON`, `ShareFolderWithDevice`, `UnshareFolderFromDevice`
 - **Status & config:** `GetFolderStatusJSON`, `GetConnectionsJSON`, `GetConfigJSON`, `SetDiscoveryEnabled`
 - **Pending shares:** `GetPendingFoldersJSON`, `AcceptPendingFolder`

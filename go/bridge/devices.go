@@ -45,8 +45,9 @@ func AddDevice(deviceID string, name string) string {
 	}
 
 	newDevice := config.DeviceConfiguration{
-		DeviceID: id,
-		Name:     name,
+		DeviceID:          id,
+		Name:              name,
+		RawNumConnections: singleConnectionPerDevice,
 	}
 
 	if err := commitConfigLocked(func(cfg *config.Configuration) {
