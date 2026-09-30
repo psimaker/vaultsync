@@ -157,9 +157,14 @@ func TestIssue185_HeavyTombstoneIndexExchangeSurvives(t *testing.T) {
 	var last FolderStatus
 	lastTrace := time.Now()
 	waitFor(t, "accepted folder settled after index exchange", 120*time.Second, func() bool {
+		// A drop right at index exchange is the reported symptom, and it
+		// has to fail here: the engine may well reconnect and settle the
+		// folder on a later attempt, and a settled folder at the end would
+		// then hide exactly the crash-loop this test exists to catch.
 		if !bridgeConnected(peer.id) {
-			// A drop right at index exchange is the reported symptom.
-			t.Logf("connection to peer dropped during index exchange")
+			t.Fatalf("connection to the peer dropped during index exchange "+
+				"(folder state=%s global=%d local=%d need=%d)",
+				last.State, last.GlobalFiles, last.LocalFiles, last.NeedFiles)
 		}
 		if err := json.Unmarshal([]byte(GetFolderStatusJSON(folderID)), &last); err != nil {
 			return false
@@ -243,20 +248,33 @@ type peerDBStatus struct {
 
 // peerBinary returns a stock-like syncthing for the loopback peer:
 // VAULTSYNC_BRIDGE_PEER_BIN when set (CI builds it once), otherwise a build
-// through scripts/build-peer-syncthing.sh into the temp dir that later runs
-// on this machine reuse. The peer carries only the build-enabling patches,
-// never the behavioural ones — it has to behave like a real server.
+// that later runs on this machine reuse. The peer carries only the
+// build-enabling patches, never the behavioural ones — it has to behave like
+// a real server.
+//
+// The cache lives in the user cache directory, not in the shared temp dir:
+// a predictable path under /tmp is writable by every local user, so anything
+// already sitting there would be executed with this test runner's rights on
+// the next run (CWE-377). Without a user cache directory the binary is built
+// per run into the test's own temp dir instead of into a shared one.
 func peerBinary(t *testing.T) string {
 	t.Helper()
 	if bin := os.Getenv("VAULTSYNC_BRIDGE_PEER_BIN"); bin != "" {
 		return bin
 	}
-	dir := filepath.Join(os.TempDir(), "vaultsync-bridge-peer")
+	dir := ""
+	if cache, err := os.UserCacheDir(); err == nil {
+		dir = filepath.Join(cache, "vaultsync-bridge-peer")
+	} else {
+		t.Logf("no user cache directory (%v) — building the peer for this run only", err)
+		dir = t.TempDir()
+	}
 	bin := filepath.Join(dir, "syncthing")
 	if info, err := os.Stat(bin); err == nil && info.Size() > 0 {
 		return bin
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	// 0o700: only this user may put anything next to the binary we run.
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("building peer syncthing into %s (first run on this machine)", bin)

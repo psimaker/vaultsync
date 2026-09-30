@@ -28,13 +28,26 @@
  		continue
  	}
  }
-@@ -1344,6 +1358,25 @@
+@@ -1344,6 +1358,41 @@
  	c.closeWorsePriorityConnectionsLocked(d, conn.Priority()-upgradeThreshold)
  }
  
-+// closeConnectionsBeyondLimit closes the newest connections to d, by
-+// connection ID (identical on both ends), until at most limit remain.
-+// VaultSync (#185).
++// closeConnectionsBeyondLimit closes connections to d until at most limit
++// remain, worst first: by priority, then by connection ID. VaultSync (#185).
++//
++// The ID is the tie-break that makes the simultaneous-dial case work: two
++// connections of the same kind have the same priority, their IDs start with
++// the sum of both hello timestamps, so both ends order them identically and
++// keep the same connection.
++//
++// Priority has to come first. accountAddedConnection appends the new
++// connection and only starts closing the ones it replaces (go conn.Close),
++// and they leave c.connections when their Closed() fires — so during a
++// priority upgrade this list still holds the connection that is on its way
++// out. Ordering by ID alone would then close the newer, better connection
++// while the older one is already going: both gone, sync interrupted until
++// the next dial. Ordering by priority keeps the connection upstream just
++// decided to keep, and closing an already-closing connection is a no-op.
 +func (c *deviceConnectionTracker) closeConnectionsBeyondLimit(d protocol.DeviceID, limit int) {
 +	c.connectionsMut.Lock()
 +	defer c.connectionsMut.Unlock()
@@ -43,6 +56,9 @@
 +	}
 +	sorted := slices.Clone(c.connections[d])
 +	slices.SortFunc(sorted, func(a, b protocol.Connection) int {
++		if byPriority := a.Priority() - b.Priority(); byPriority != 0 {
++			return byPriority
++		}
 +		return strings.Compare(a.ConnectionID(), b.ConnectionID())
 +	})
 +	for _, conn := range sorted[limit:] {

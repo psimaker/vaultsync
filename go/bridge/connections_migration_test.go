@@ -2,9 +2,9 @@ package bridge
 
 import (
 	"encoding/json"
+	"encoding/xml"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -50,11 +50,14 @@ func TestIssue185_OneConnectionPerDevice(t *testing.T) {
 		t.Fatalf("StopSyncthing() = %q", errMsg)
 	}
 	// The config wrapper saves asynchronously and StopSyncthing does not
-	// wait for the flush (tracked in #151 as configuration durability);
-	// give the file time to carry the device before the restart reads it.
-	waitFor(t, "config.xml to hold the device", 5*time.Second, func() bool {
-		raw, err := os.ReadFile(filepath.Join(configDir, "config.xml"))
-		return err == nil && strings.Contains(string(raw), peer)
+	// wait for the flush (tracked in #151 as configuration durability).
+	// Waiting for the device ID alone is not enough: AddDevice already
+	// wrote it with the pin, so the restart could read numConnections=1
+	// and the assertion below would pass without the migration ever
+	// running. Wait for the legacy value to reach the file.
+	waitFor(t, "config.xml to hold the legacy connection count", 10*time.Second, func() bool {
+		n, ok := persistedNumConnections(t, configDir, peer)
+		return ok && n == 0
 	})
 
 	if errMsg := StartSyncthing(configDir); errMsg != "" {
@@ -83,4 +86,34 @@ func numConnectionsFor(t *testing.T, deviceID string) int {
 	}
 	t.Fatalf("device %s not in config", deviceID)
 	return -1
+}
+
+// persistedNumConnections reads the device's connection count straight from
+// config.xml — what the next start will actually load. The attribute is
+// absent when it was never written, which is the legacy state (0).
+func persistedNumConnections(t *testing.T, configDir, deviceID string) (int, bool) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(configDir, "config.xml"))
+	if err != nil {
+		return 0, false
+	}
+	var cfg struct {
+		Devices []struct {
+			ID             string `xml:"id,attr"`
+			NumConnections *int   `xml:"numConnections"`
+		} `xml:"device"`
+	}
+	if err := xml.Unmarshal(raw, &cfg); err != nil {
+		return 0, false
+	}
+	for _, d := range cfg.Devices {
+		if d.ID != deviceID {
+			continue
+		}
+		if d.NumConnections == nil {
+			return 0, true
+		}
+		return *d.NumConnections, true
+	}
+	return 0, false
 }

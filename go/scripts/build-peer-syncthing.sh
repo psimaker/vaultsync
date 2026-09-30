@@ -8,9 +8,18 @@
 #
 # Usage: go/scripts/build-peer-syncthing.sh <output-binary>
 set -euo pipefail
-cd "$(dirname "$0")/.."
 
+# Resolve the output path against the caller's directory before anything cd's:
+# the build runs inside a temp checkout that the EXIT trap deletes, so a
+# relative path would put the binary there and report success over nothing.
 out="${1:?usage: build-peer-syncthing.sh <output-binary>}"
+case "$out" in
+  /*) ;;
+  *) out="$PWD/$out" ;;
+esac
+mkdir -p "$(dirname "$out")"
+
+cd "$(dirname "$0")/.."
 st_version=$(grep 'syncthing/syncthing' go.sum | head -1 | awk '{print $2}' | sed 's|/go.mod||')
 src="$(go env GOMODCACHE)/github.com/syncthing/syncthing@${st_version}"
 if [ ! -d "$src" ]; then
