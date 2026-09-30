@@ -9,6 +9,9 @@ struct ConflictDiffView: View {
     @State private var conflictContent = ""
     @State private var isLoading = true
     @State private var loadError: String?
+    /// Set when either version exceeds the bridge's read bound (#184):
+    /// nothing was loaded, the comparison happens in Obsidian.
+    @State private var tooLargeBytes: Int64?
     @State private var alertMessage: String?
     @State private var showAlert = false
     @State private var showLineDiff = false
@@ -45,6 +48,8 @@ struct ConflictDiffView: View {
                     systemImage: "exclamationmark.triangle",
                     description: Text(loadError)
                 )
+            } else if let tooLargeBytes {
+                tooLargeContent(bytes: tooLargeBytes)
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
@@ -247,17 +252,11 @@ struct ConflictDiffView: View {
     }
 
     private func skipThisFile() {
-        // Wrap the call in a Task so the button handler returns immediately
-        // and SwiftUI can dispatch any UI updates (alert presentation, view
-        // dismiss) cleanly. The work itself still runs on the main actor —
-        // skipFileAndCleanupConflicts is @MainActor-isolated because it
-        // reads/writes SyncthingManager state — so this does not yet move
-        // the file I/O off the main thread. A fuller move to a background
-        // executor would require splitting the bridge cleanup, rescan, and
-        // refresh paths into nonisolated entry points, which is a separate
-        // refactor.
+        // The button handler returns immediately; the ignore write, the
+        // conflict-copy cleanup and the rescan run off the main actor inside
+        // the manager (#184), and only the alert state comes back here.
         Task { @MainActor in
-            let (err, removed) = syncthingManager.skipFileAndCleanupConflicts(
+            let (err, removed) = await syncthingManager.skipFileAndCleanupConflicts(
                 folderID: folderID,
                 originalPath: conflict.originalPath
             )
@@ -289,35 +288,99 @@ struct ConflictDiffView: View {
         }
     }
 
+    /// The note exceeds the bridge's read bound (#184, decision 041): nothing
+    /// was loaded, so nothing is rendered or diffed here. The resolution bar
+    /// stays — the choice remains manual (decision 028); only the comparison
+    /// moves to Obsidian.
+    private func tooLargeContent(bytes: Int64) -> some View {
+        ContentUnavailableView {
+            Label(L10n.tr("Too Large to Compare"), systemImage: "doc.text.magnifyingglass")
+        } description: {
+            Text(L10n.fmt(
+                "This note is %@ — above the %@ VaultSync loads for a comparison. Compare the versions in Obsidian, then choose which one to keep below.",
+                Self.formattedBytes(bytes),
+                Self.formattedBytes(SyncBridgeService.maxReadFileBytes())
+            ))
+        }
+    }
+
+    private static func formattedBytes(_ bytes: Int64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: bytes)
+    }
+
+    struct LoadedContent: Equatable, Sendable {
+        var original = ""
+        var conflict = ""
+        var tooLargeBytes: Int64?
+        var error: String?
+    }
+
     private func loadContent() async {
         let capturedFolderID = folderID
         let capturedConflict = conflict
 
-        let (orig, conf, err): (String, String, String?) = await Task.detached {
-            let o = SyncBridgeService.readFileContent(folderID: capturedFolderID, relPath: capturedConflict.originalPath)
-            let c = SyncBridgeService.readFileContent(folderID: capturedFolderID, relPath: capturedConflict.conflictPath)
-            if let oErr = o.error, let cErr = c.error {
-                let oUser = SyncUserError.from(rawMessage: oErr, fallbackTitle: L10n.tr("File Read Failed"))
-                let cUser = SyncUserError.from(rawMessage: cErr, fallbackTitle: L10n.tr("File Read Failed"))
-                return ("", "", L10n.fmt("Could not read files.\n\n%@\n%@", oUser.message, cUser.message))
-            }
-            if let oErr = o.error {
-                let user = SyncUserError.from(rawMessage: oErr, fallbackTitle: L10n.tr("File Read Failed"))
-                return ("", c.content ?? "", L10n.fmt("Could not read original file.\n\n%@", user.userVisibleDescription))
-            }
-            if let cErr = c.error {
-                let user = SyncUserError.from(rawMessage: cErr, fallbackTitle: L10n.tr("File Read Failed"))
-                return (o.content ?? "", "", L10n.fmt("Could not read conflict file.\n\n%@", user.userVisibleDescription))
-            }
-            return (o.content ?? "", c.content ?? "", nil as String?)
+        let loaded: LoadedContent = await Task.detached {
+            let limit = SyncBridgeService.maxReadFileBytes()
+            let o = Self.boundedRead(folderID: capturedFolderID, relPath: capturedConflict.originalPath, limit: limit)
+            let c = Self.boundedRead(folderID: capturedFolderID, relPath: capturedConflict.conflictPath, limit: limit)
+            return Self.loadedContent(original: o, conflict: c)
         }.value
 
-        originalContent = orig
-        conflictContent = conf
-        if let err {
+        originalContent = loaded.original
+        conflictContent = loaded.conflict
+        tooLargeBytes = loaded.tooLargeBytes
+        if let err = loaded.error {
             loadError = err
         }
         isLoading = false
+    }
+
+    /// What the screen shows for a pair of reads. A failed read wins over an
+    /// oversized one: the failure state hides the resolution actions, and a
+    /// version that could not be read must never be discarded or overwritten
+    /// by a choice made without seeing it (#184).
+    nonisolated static func loadedContent(
+        original o: SyncBridgeService.ConflictFileRead,
+        conflict c: SyncBridgeService.ConflictFileRead
+    ) -> LoadedContent {
+        switch (o, c) {
+        case (.failed(let oErr), .failed(let cErr)):
+            let oUser = SyncUserError.from(rawMessage: oErr, fallbackTitle: L10n.tr("File Read Failed"))
+            let cUser = SyncUserError.from(rawMessage: cErr, fallbackTitle: L10n.tr("File Read Failed"))
+            return LoadedContent(error: L10n.fmt("Could not read files.\n\n%@\n%@", oUser.message, cUser.message))
+        case (.failed(let oErr), _):
+            let user = SyncUserError.from(rawMessage: oErr, fallbackTitle: L10n.tr("File Read Failed"))
+            var loaded = LoadedContent(error: L10n.fmt("Could not read original file.\n\n%@", user.userVisibleDescription))
+            if case .content(let cText) = c { loaded.conflict = cText }
+            return loaded
+        case (_, .failed(let cErr)):
+            let user = SyncUserError.from(rawMessage: cErr, fallbackTitle: L10n.tr("File Read Failed"))
+            var loaded = LoadedContent(error: L10n.fmt("Could not read conflict file.\n\n%@", user.userVisibleDescription))
+            if case .content(let oText) = o { loaded.original = oText }
+            return loaded
+        case (.tooLarge(let oBytes), .tooLarge(let cBytes)):
+            // Either version over the bound: nothing to compare here. Report
+            // the larger size so the message matches what the user sees in
+            // Obsidian.
+            return LoadedContent(tooLargeBytes: max(oBytes, cBytes))
+        case (.tooLarge(let bytes), .content), (.content, .tooLarge(let bytes)):
+            return LoadedContent(tooLargeBytes: bytes)
+        case (.content(let oText), .content(let cText)):
+            return LoadedContent(original: oText, conflict: cText)
+        }
+    }
+
+    /// The bridge enforces the bound; this side re-checks the bytes it got,
+    /// so a stale bridge can never hand the diff a note above the limit
+    /// (same bound in both layers, decision 041).
+    private nonisolated static func boundedRead(folderID: String, relPath: String, limit: Int64) -> SyncBridgeService.ConflictFileRead {
+        let read = SyncBridgeService.readFileContent(folderID: folderID, relPath: relPath)
+        if case .content(let text) = read, Int64(text.utf8.count) > limit {
+            return .tooLarge(bytes: Int64(text.utf8.count))
+        }
+        return read
     }
 
     private func confirmAction(_ action: ResolveAction) {

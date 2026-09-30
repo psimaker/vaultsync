@@ -945,3 +945,5 @@
 "Sync Engine Still Stopping" = "Sync-Engine wird noch beendet";
 "A background sync is still shutting the engine down." = "Eine Hintergrund-Synchronisation fährt die Engine gerade noch herunter.";
 "Wait a moment, then reopen VaultSync or pull to refresh." = "Warte einen Moment, öffne VaultSync dann erneut oder zieh zum Aktualisieren.";
+"Too Large to Compare" = "Zu groß zum Vergleichen";
+"This note is %@ — above the %@ VaultSync loads for a comparison. Compare the versions in Obsidian, then choose which one to keep below." = "Diese Notiz ist %@ groß — mehr als die %@, die VaultSync für einen Vergleich lädt. Vergleich die Versionen in Obsidian und wähl dann unten, welche du behalten willst.";
