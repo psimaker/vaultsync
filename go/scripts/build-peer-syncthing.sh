@@ -7,7 +7,22 @@
 # behavioural patches (004 and up), which the bridge under test carries.
 #
 # Usage: go/scripts/build-peer-syncthing.sh <output-binary>
+#        go/scripts/build-peer-syncthing.sh --print-version
+#
+# --print-version resolves the pinned upstream version and exits without
+# building, so callers can key a cache on it instead of resolving it twice.
 set -euo pipefail
+
+go_dir="$(cd "$(dirname "$0")/.." && pwd)"
+
+resolve_version() {
+  grep 'syncthing/syncthing' "$go_dir/go.sum" | head -1 | awk '{print $2}' | sed 's|/go.mod||'
+}
+
+if [ "${1:-}" = "--print-version" ]; then
+  resolve_version
+  exit 0
+fi
 
 # Resolve the output path against the caller's directory before anything cd's:
 # the build runs inside a temp checkout that the EXIT trap deletes, so a
@@ -19,8 +34,8 @@ case "$out" in
 esac
 mkdir -p "$(dirname "$out")"
 
-cd "$(dirname "$0")/.."
-st_version=$(grep 'syncthing/syncthing' go.sum | head -1 | awk '{print $2}' | sed 's|/go.mod||')
+cd "$go_dir"
+st_version=$(resolve_version)
 src="$(go env GOMODCACHE)/github.com/syncthing/syncthing@${st_version}"
 if [ ! -d "$src" ]; then
   echo "module cache lacks ${src}; run 'make patch' (go mod download) first" >&2

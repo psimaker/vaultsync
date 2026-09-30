@@ -255,19 +255,30 @@ type peerDBStatus struct {
 // The cache lives in the user cache directory, not in the shared temp dir:
 // a predictable path under /tmp is writable by every local user, so anything
 // already sitting there would be executed with this test runner's rights on
-// the next run (CWE-377). Without a user cache directory the binary is built
-// per run into the test's own temp dir instead of into a shared one.
+// the next run (CWE-377). It is keyed by the pinned upstream version, so
+// changing the pin builds a new peer instead of testing against the old
+// server. Without a user cache directory or a resolvable version the binary
+// is built per run into the test's own temp dir instead.
 func peerBinary(t *testing.T) string {
 	t.Helper()
 	if bin := os.Getenv("VAULTSYNC_BRIDGE_PEER_BIN"); bin != "" {
 		return bin
 	}
+	script := filepath.Join("..", "scripts", "build-peer-syncthing.sh")
 	dir := ""
-	if cache, err := os.UserCacheDir(); err == nil {
-		dir = filepath.Join(cache, "vaultsync-bridge-peer")
-	} else {
-		t.Logf("no user cache directory (%v) — building the peer for this run only", err)
+	version, err := exec.Command(script, "--print-version").Output()
+	switch {
+	case err != nil || len(bytes.TrimSpace(version)) == 0:
+		t.Logf("cannot resolve the pinned syncthing version (%v) — building the peer for this run only", err)
 		dir = t.TempDir()
+	default:
+		cache, cacheErr := os.UserCacheDir()
+		if cacheErr != nil {
+			t.Logf("no user cache directory (%v) — building the peer for this run only", cacheErr)
+			dir = t.TempDir()
+			break
+		}
+		dir = filepath.Join(cache, "vaultsync-bridge-peer", string(bytes.TrimSpace(version)))
 	}
 	bin := filepath.Join(dir, "syncthing")
 	if info, err := os.Stat(bin); err == nil && info.Size() > 0 {
@@ -278,7 +289,7 @@ func peerBinary(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Logf("building peer syncthing into %s (first run on this machine)", bin)
-	cmd := exec.Command(filepath.Join("..", "scripts", "build-peer-syncthing.sh"), bin)
+	cmd := exec.Command(script, bin)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build peer syncthing: %v\n%s", err, out)
 	}
