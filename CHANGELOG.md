@@ -4,6 +4,12 @@ All notable changes to VaultSync are documented here.
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **Stopping sync while the engine is still probing the network no longer leaves a data race behind** ([#152](https://github.com/psimaker/vaultsync/issues/152)) — after every start, the embedded Syncthing detects the network's NAT type over STUN, which takes several seconds; when the engine stopped during that probe, the probe finished afterwards and wrote an error value that the stopping code was still assigning, reading and returning. No crash or sync problem has been traced to it; at worst the stopping code could read a half-written value. A small patch to the embedded Syncthing gives the probe its own error value — upstream Syncthing still has the race (checked up to 2.1.6-rc.4). Recorded in decision 043.
+
 ## [2.1.0] — 2026-09-30
 
 ### Added

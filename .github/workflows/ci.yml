@@ -84,6 +84,13 @@ jobs:
         # separate runner needed.
         run: go test -tags noassets ./bridge -count=1
 
+      # The STUN race regression (#152, decision 043) has the race detector
+      # as its only oracle; without -race it just checks that a stop does not
+      # wait for the discovery.
+      - name: Run STUN race regression (race detector)
+        working-directory: go
+        run: go test -race -tags noassets ./bridge -run '^TestIssue152_' -count=1
+
   notify-tests:
     name: Notify Tests
     runs-on: ubuntu-latest
