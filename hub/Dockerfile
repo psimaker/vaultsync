@@ -1,4 +1,4 @@
-FROM golang:1.26-alpine@sha256:ce864e7223ac17b1775e6fd0b4c0db580c2eb50e7953a427916379e4b92a1628 AS builder
+FROM golang:1.26-alpine@sha256:8ac98ca534ac3f51e1f420a1dd2c15e74c75cfa0f23f3ad27eb5d7236c349a0c AS builder
 # Stamped by hub-docker.yml (release tag or dev-<sha>); `vaultsync-hub version`
 # prints it.
 ARG VERSION=dev
