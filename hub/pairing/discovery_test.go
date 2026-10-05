@@ -65,10 +65,13 @@ func TestDiscoverCollectsAnswersAndStopsOnCancel(t *testing.T) {
 }
 
 func TestIssue174_SanitizeNameCutsOnRuneBoundaries(t *testing.T) {
-	long := strings.Repeat("ä", 40) // 80 bytes
-	got := SanitizeName(long)
-	if !utf8.ValidString(got) || len(got) > 64 || got != strings.Repeat("ä", 32) {
-		t.Fatalf("SanitizeName = %q (%d bytes)", got, len(got))
+	// 63 ASCII bytes, then a multi-byte rune across the 64-byte limit: a
+	// byte cut would keep part of it.
+	for _, tail := range []string{"ä", "€"} {
+		got := SanitizeName(strings.Repeat("a", 63) + tail)
+		if !utf8.ValidString(got) || got != strings.Repeat("a", 63) {
+			t.Fatalf("SanitizeName(63 × a + %q) = %q (%d bytes)", tail, got, len(got))
+		}
 	}
 	if got := SanitizeName("  Küchen\nHub\x7f  "); got != "KüchenHub" {
 		t.Fatalf("control characters: %q", got)
