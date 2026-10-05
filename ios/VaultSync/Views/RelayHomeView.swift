@@ -61,9 +61,9 @@ struct RelayHomeView: View {
     private var pitchContent: some View {
         VStack(alignment: .leading, spacing: 14) {
             VaultHeroHeader(
-                status: .syncing,
-                title: L10n.tr("Instant sync, still private"),
-                systemImage: "antenna.radiowaves.left.and.right"
+                tone: .accent,
+                systemImage: "antenna.radiowaves.left.and.right",
+                title: L10n.tr("Instant sync, still private")
             )
             .accessibilityElement(children: .combine)
 
@@ -252,17 +252,18 @@ struct RelayHomeView: View {
         }
     }
 
-    /// Title + status word as one VoiceOver element: the well's color alone
-    /// would not say whether this is good news.
+    /// The Relay's own words carry the meaning: each title ("Cloud Relay
+    /// active", "Connected", the waiting titles) already says what the state
+    /// is. The sync status only picks the well's tone — its spoken label
+    /// ("All Synced", "Paused") would claim something a wake-up does not
+    /// prove (#187 review).
     private func heroHeader(status: SyncStatus, title: String) -> some View {
         VaultHeroHeader(
-            status: status,
-            title: title,
-            systemImage: status == .synced ? "antenna.radiowaves.left.and.right" : nil
+            tone: status.tone,
+            systemImage: status == .synced ? "antenna.radiowaves.left.and.right" : status.wellSymbolName,
+            title: title
         )
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(title)
-        .accessibilityValue(status.label)
+        .accessibilityElement(children: .combine)
     }
 
     private func heroDetail(_ text: String) -> some View {

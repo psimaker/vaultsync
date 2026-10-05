@@ -19,11 +19,16 @@ struct OnboardingView: View {
     /// Set when AddDeviceSheet reports a successful add; presented from the
     /// sheet's onDismiss (#95).
     @State private var showDeviceAddedHint = false
+    @Environment(\.openURL) private var openURL
 
     private var obsidianConnected: Bool { vaultManager.isAccessible }
     private var deviceAdded: Bool { !syncthingManager.devices.isEmpty }
     private var vaultSyncing: Bool { !syncthingManager.folders.isEmpty }
     private var allStepsComplete: Bool { obsidianConnected && deviceAdded && vaultSyncing }
+    /// The first unfinished step — its action is the screen's main action.
+    private var nextStep: Int? {
+        [obsidianConnected, deviceAdded, vaultSyncing].firstIndex(of: false).map { $0 + 1 }
+    }
 
     var body: some View {
         NavigationStack {
@@ -152,7 +157,7 @@ struct OnboardingView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.isHeader)
 
-            Text(L10n.tr("Complete these steps right here. They light up green as you go — and you can always finish them later from the home screen."))
+            Text(L10n.tr("Three steps. They turn green as you go; you can finish later from the home screen."))
                 .font(.body)
                 .foregroundStyle(Color.vaultSecondaryLabel)
                 .fixedSize(horizontal: false, vertical: true)
@@ -234,9 +239,14 @@ struct OnboardingView: View {
                     Text(title)
                         .font(.body.weight(.semibold))
                         .foregroundStyle(isComplete ? Color.vaultSecondaryLabel : Color.vaultLabel)
-                    Text(description)
-                        .font(.subheadline)
-                        .foregroundStyle(Color.vaultSecondaryLabel)
+                    // A finished step needs no explanation any more: the
+                    // check and the title say it, and the open steps move up
+                    // (#187 review).
+                    if !isComplete {
+                        Text(description)
+                            .font(.subheadline)
+                            .foregroundStyle(Color.vaultSecondaryLabel)
+                    }
                 }
                 // Without this the title truncates ("Deinen Obsidian-O…")
                 // instead of wrapping at accessibility Dynamic Type (#67).
@@ -245,21 +255,45 @@ struct OnboardingView: View {
                 .accessibilityValue(isComplete ? L10n.tr("Done") : "")
 
                 if !isComplete, let linkTitleKey, let linkURL {
-                    ExternalLinkButton(titleKey: linkTitleKey, url: linkURL)
-                        .font(.subheadline.weight(.semibold))
-                        .frame(minHeight: VaultMetrics.compactButtonHeight)
+                    if number == nextStep {
+                        // The step that happens on the other machine: its
+                        // guide is the main action while it is next.
+                        Button {
+                            openURL(linkURL)
+                        } label: {
+                            HStack(spacing: VaultSpacing.xs) {
+                                Text(linkTitleKey)
+                                Image(systemName: "arrow.up.right")
+                                    .imageScale(.small)
+                                    .accessibilityHidden(true)
+                            }
+                        }
+                        .buttonStyle(.vault(.primary, compact: true))
+                        .padding(.top, VaultSpacing.xs)
+                    } else {
+                        ExternalLinkButton(titleKey: linkTitleKey, url: linkURL)
+                            .font(.subheadline.weight(.semibold))
+                    }
                 }
 
                 if !isComplete, let actionTitle, let action {
-                    Button(action: action) {
-                        HStack(spacing: VaultSpacing.xs) {
-                            Text(actionTitle)
-                            Image(systemName: "chevron.right")
-                                .font(.footnote.weight(.semibold))
-                                .accessibilityHidden(true)
+                    if number == nextStep {
+                        // The next unfinished step carries the screen's main
+                        // action; leaving setup is the quieter choice below.
+                        Button(actionTitle, action: action)
+                            .buttonStyle(.vault(.primary, compact: true))
+                            .padding(.top, VaultSpacing.xs)
+                    } else {
+                        Button(action: action) {
+                            HStack(spacing: VaultSpacing.xs) {
+                                Text(actionTitle)
+                                Image(systemName: "chevron.right")
+                                    .font(.footnote.weight(.semibold))
+                                    .accessibilityHidden(true)
+                            }
                         }
+                        .buttonStyle(.vaultLink)
                     }
-                    .buttonStyle(.vaultLink)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -365,7 +399,8 @@ struct OnboardingView: View {
 
     /// The exit stays honest (#69): "Open VaultSync" only once every step is
     /// actually done — otherwise the button says what really happens (setup
-    /// continues later from the home screen).
+    /// continues later from the home screen). Until then it is the quiet
+    /// choice: the next step's own action is the main one (#187 review).
     private var bottomBar: some View {
         VStack(spacing: VaultSpacing.s) {
             Button {
@@ -375,7 +410,7 @@ struct OnboardingView: View {
                     ? L10n.tr("onboarding.cta.openVaultSync")
                     : L10n.tr("onboarding.cta.finishLater"))
             }
-            .buttonStyle(.vault(.primary))
+            .buttonStyle(.vault(allStepsComplete ? .primary : .neutral))
 
             Text(L10n.tr("onboarding.welcome.benefit.noCloud"))
                 .font(.footnote)

@@ -1,6 +1,4 @@
 "About" = "Über";
-"Accept First Pending Share" = "Erste Freigabe annehmen";
-"Accept Pending Share" = "Ausstehende Freigabe annehmen";
 "Accept Share" = "Freigabe annehmen";
 "Accept a share to activate syncing for that vault." = "Nimm eine Freigabe an, um die Synchronisation für diesen Vault zu aktivieren.";
 "Action Needed" = "Aktion erforderlich";
@@ -111,7 +109,6 @@
 "Keep Both" = "Beide behalten";
 "Keep Both did not change any files because the new copy name is already in use." = "„Beide behalten“ hat keine Dateien geändert, weil der Name der neuen Kopie bereits verwendet wird.";
 "Keep Both did not change any files because this storage location does not support safe renaming." = "„Beide behalten“ hat keine Dateien geändert, weil dieser Speicherort sicheres Umbenennen nicht unterstützt.";
-"Keep Other" = "Andere behalten";
 "Keep Other Device's Version" = "Version des anderen Geräts behalten";
 "Keep This" = "Diese behalten";
 "Keep This Device's Version" = "Version dieses Geräts behalten";
@@ -158,7 +155,6 @@
 "Not now" = "Nicht jetzt";
 "Not attempted" = "Nicht versucht";
 "Not checked" = "Nicht geprüft";
-"Not shared" = "Nicht geteilt";
 "OK" = "OK";
 "Obsidian Folder Connection Failed" = "Verbindung zum Obsidian-Ordner fehlgeschlagen";
 "Obsidian Vaults" = "Obsidian-Vaults";
@@ -237,7 +233,6 @@
 "Rescan Vault" = "Vault erneut scannen";
 "Rescan failed vaults, then verify folder access and permissions." = "Scanne fehlgeschlagene Vaults erneut und prüfe dann Ordnerzugriff und Berechtigungen.";
 "Resolve Conflict" = "Konflikt lösen";
-"Resolve Conflicts" = "Konflikte lösen";
 "Restore Purchases" = "Käufe wiederherstellen";
 "Restore Share" = "Freigabe wiederherstellen";
 "APNs Registration" = "APNs-Registrierung";
@@ -273,7 +268,6 @@
 "Settings" = "Einstellungen";
 "Share a folder from your desktop Syncthing — it will be accepted automatically." = "Teile einen Ordner aus Syncthing auf deinem Desktop – er wird automatisch angenommen.";
 "Share requests are shown below, but Accept and Retry are disabled until your Obsidian folder is connected." = "Freigabeanfragen werden unten angezeigt, aber Annehmen und Erneut versuchen sind deaktiviert, bis dein Obsidian-Ordner verbunden ist.";
-"Shared" = "Geteilt";
 "Shared With" = "Geteilt mit";
 "Shared by an unknown device" = "Geteilt von einem unbekannten Gerät";
 "Shared by: %@" = "Geteilt von: %@";
@@ -330,7 +324,6 @@
 "Unknown Folder" = "Unbekannter Ordner";
 "Unnamed" = "Unbenannt";
 "Unnamed Device" = "Unbenanntes Gerät";
-"Unnamed device" = "Unbenanntes Gerät";
 "Unreachable" = "Nicht erreichbar";
 "Vault" = "Vault";
 "Vault locations are still being checked. Try again in a moment." = "Die Speicherorte der Vaults werden noch geprüft. Versuche es gleich noch einmal.";
@@ -563,7 +556,6 @@
 "Add your server first" = "Füge zuerst deinen Server hinzu";
 "Best value" = "Bestes Angebot";
 "Cloud Relay wakes a specific device. Pair the computer or server that hosts your vault on the Devices tab, then come back to subscribe." = "Cloud Relay weckt ein bestimmtes Gerät. Verbinde im Tab „Geräte“ den Computer oder Server, der deinen Vault bereitstellt, und komm dann zum Abonnieren zurück.";
-"Complete these steps right here. They light up green as you go — and you can always finish them later from the home screen." = "Erledige diese Schritte direkt hier. Sie leuchten grün auf, während du vorankommst – und du kannst sie jederzeit später vom Startbildschirm aus abschließen.";
 "Connect your Obsidian folder" = "Deinen Obsidian-Ordner verbinden";
 "Double tap to copy" = "Zum Kopieren doppeltippen";
 "Give VaultSync one-time access to your local Obsidian folder so it can sync your notes." = "Gib VaultSync einmaligen Zugriff auf deinen lokalen Obsidian-Ordner, damit es deine Notizen synchronisieren kann.";
@@ -942,3 +934,5 @@
 "This device is no longer paired with this iPhone." = "Dieses Gerät ist nicht mehr mit diesem iPhone gekoppelt.";
 "Two devices changed the same note while apart. Nothing is deleted until you choose, and “Keep Both” never overwrites a copy." = "Zwei Geräte haben dieselbe Notiz geändert, während sie getrennt waren. Nichts wird gelöscht, bevor du entscheidest, und „Beide behalten“ überschreibt nie eine Kopie.";
 "Version %@ (%@)" = "Version %@ (%@)";
+"Waiting for First Sync" = "Wartet auf die erste Synchronisierung";
+"Three steps. They turn green as you go; you can finish later from the home screen." = "Drei Schritte. Sie leuchten grün auf, sobald sie erledigt sind – abschließen kannst du sie auch später vom Startbildschirm aus.";

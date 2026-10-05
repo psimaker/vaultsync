@@ -187,53 +187,67 @@ struct ConflictDiffView: View {
             .background(.bar)
     }
 
+    /// Keep Both — the one choice that discards nothing — leads. The two
+    /// single-version choices sit side by side with equal weight: either one
+    /// discards a version, so neither may look like the safe default
+    /// (decisions 027/028, #187 review). Every choice still confirms in an
+    /// alert with Cancel.
     private var resolutionButtons: some View {
         VStack(spacing: VaultSpacing.s) {
             Button {
-                confirmAction(.keepThis)
+                confirmAction(.keepBoth)
             } label: {
-                Label(L10n.tr("Keep This Device's Version"), systemImage: "iphone")
+                Text(L10n.tr("Keep Both"))
             }
             .buttonStyle(.vault(.primary, compact: true))
-            .accessibilityHint(L10n.tr("Discards the version from the other device."))
+            .accessibilityHint(L10n.tr("Keeps your local file and renames the other device's file."))
 
             VaultButtonRow {
                 Button {
-                    confirmAction(.keepBoth)
+                    confirmAction(.keepThis)
                 } label: {
-                    Text(L10n.tr("Keep Both"))
+                    Label(L10n.tr("Keep This Device's Version"), systemImage: "iphone")
                 }
-                .buttonStyle(.vault(.tinted, compact: true))
-                .accessibilityHint(L10n.tr("Keeps your local file and renames the other device's file."))
+                .buttonStyle(.vault(.neutral, compact: true))
+                .accessibilityHint(L10n.tr("Discards the version from the other device."))
 
-                Button(role: .destructive) {
+                Button {
                     confirmAction(.keepOther)
                 } label: {
-                    Text(L10n.tr("Keep Other"))
+                    Label(L10n.tr("Keep Other Device's Version"), systemImage: "laptopcomputer")
                 }
-                .buttonStyle(.vault(.destructive, compact: true))
+                .buttonStyle(.vault(.neutral, compact: true))
                 .accessibilityHint(L10n.tr("Overwrites your local file with the version from the other device."))
             }
         }
     }
 
-    /// File, other device and conflict time — the card the canvas opens the
-    /// conflict with.
+    /// File name, its folder, the other device and the conflict time. At the
+    /// accessibility sizes the glyph moves above the text, so the file name
+    /// gets the card's full width instead of breaking mid-word (#187 review).
     private var conflictHeader: some View {
-        HStack(alignment: .top, spacing: VaultSpacing.m) {
+        let fileName = (conflict.originalPath as NSString).lastPathComponent
+        let folder = (conflict.originalPath as NSString).deletingLastPathComponent
+        let layout = actionsInline
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: VaultSpacing.s))
+            : AnyLayout(HStackLayout(alignment: .top, spacing: VaultSpacing.m))
+        return layout {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.title3)
                 .foregroundStyle(Color.statusAttention)
-                .frame(width: 28)
+                .frame(minWidth: 28, alignment: .leading)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: VaultSpacing.xs) {
-                Text(conflict.originalPath)
+                Text(fileName)
                     .font(.headline)
                     .foregroundStyle(Color.vaultLabel)
                     .fixedSize(horizontal: false, vertical: true)
                 // Wraps label by label at large text sizes instead of
-                // breaking the device ID and the date mid-word.
+                // breaking the folder, the device ID or the date mid-word.
                 VaultFlowLayout(spacing: VaultSpacing.s) {
+                    if !folder.isEmpty {
+                        Label(folder, systemImage: "folder")
+                    }
                     Label(conflict.deviceShortID, systemImage: "laptopcomputer")
                     Label(conflict.formattedConflictDate, systemImage: "clock")
                 }
@@ -243,6 +257,7 @@ struct ConflictDiffView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(VaultSpacing.l)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .vaultCard()
         .accessibilityElement(children: .combine)
     }
@@ -267,15 +282,13 @@ struct ConflictDiffView: View {
             fileSection(
                 title: L10n.tr("This Device"),
                 icon: "iphone",
-                content: originalContent,
-                emphasized: true
+                content: originalContent
             )
 
             fileSection(
                 title: L10n.fmt("Other Device (%@)", conflict.deviceShortID),
                 icon: "laptopcomputer",
-                content: conflictContent,
-                emphasized: false
+                content: conflictContent
             )
         }
     }
@@ -314,20 +327,28 @@ struct ConflictDiffView: View {
         }
     }
 
-    /// One version of the note. This device's version carries the accent
-    /// outline (the canvas's "this iPhone" box), the other device's copy the
-    /// hairline.
-    private func fileSection(title: String, icon: String, content: String, emphasized: Bool) -> some View {
-        VStack(alignment: .leading, spacing: VaultSpacing.s) {
+    /// One version of the note. Both versions look alike, so neither reads
+    /// as the one to keep (#187 review). Long lines scroll sideways with a
+    /// visible indicator; at the accessibility sizes they wrap instead, where
+    /// a sideways scroller would show only a sliver of each line.
+    private func fileSection(title: String, icon: String, content: String) -> some View {
+        let text = Text(content.isEmpty ? L10n.tr("(empty or unreadable)") : content)
+            .font(.vaultMono(.caption))
+            .foregroundStyle(Color.vaultLabel)
+        return VStack(alignment: .leading, spacing: VaultSpacing.s) {
             Label(title, systemImage: icon)
                 .font(.subheadline.bold())
                 .foregroundStyle(Color.vaultLabel)
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                Text(content.isEmpty ? L10n.tr("(empty or unreadable)") : content)
-                    .font(.vaultMono(.caption))
-                    .foregroundStyle(Color.vaultLabel)
+            if actionsInline {
+                text
+                    .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                ScrollView(.horizontal) {
+                    text
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
         }
         .padding(VaultSpacing.m)
@@ -335,7 +356,7 @@ struct ConflictDiffView: View {
         .background(Color.vaultSurface, in: RoundedRectangle(cornerRadius: VaultRadius.control, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: VaultRadius.control, style: .continuous)
-                .strokeBorder(emphasized ? Color.vaultAccent : Color.vaultHairline, lineWidth: emphasized ? 1.5 : 1)
+                .strokeBorder(Color.vaultHairline, lineWidth: 1)
         )
     }
 
@@ -375,6 +396,7 @@ struct ConflictDiffView: View {
         if UIAuditFixture.active == UIAuditFixture.designPreview {
             originalContent = DesignPreviewFixture.conflictLocalText
             conflictContent = DesignPreviewFixture.conflictRemoteText
+            showLineDiff = DesignPreviewFixture.showsLineDiff
             isLoading = false
             return
         }

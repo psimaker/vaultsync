@@ -34,8 +34,10 @@ struct ExternalLinkButton: View {
             // Accent TEXT token, not the tint: the brand teal is short of
             // 4.5:1 for text, and these links sit on tinted cards (#187).
             .foregroundStyle(Color.vaultAccentText)
+            // The 44pt minimum touch target lives in the label, so every
+            // help link gets it at any font size (#187 review).
+            .frame(minHeight: 44)
             .contentShape(Rectangle())
-            .padding(.vertical, 4)
         }
         .buttonStyle(.borderless)
     }

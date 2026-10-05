@@ -28,6 +28,15 @@ enum DesignPreviewFixture {
         case settings
         /// First run: Obsidian connected, no device yet.
         case onboarding
+        /// First run: Obsidian connected and a device added — the share
+        /// from the computer is the next step.
+        case onboardingShare = "onboarding-share"
+    }
+
+    /// `-design-preview-line-diff YES` opens the resolve screen with the
+    /// line-by-line comparison switched on.
+    static var showsLineDiff: Bool {
+        UserDefaults.standard.bool(forKey: "design-preview-line-diff")
     }
 
     static var screen: Screen {
@@ -69,16 +78,17 @@ enum DesignPreviewFixture {
     @MainActor
     static func seed(syncthingManager: SyncthingManager, vaultManager: VaultManager) {
         let screen = self.screen
+        let firstRun = screen == .onboarding || screen == .onboardingShare
         vaultManager._testSetAccess(
             accessible: true,
-            detectedVaults: screen == .onboarding ? [] : ["Notes", "Work"],
+            detectedVaults: firstRun ? [] : ["Notes", "Work"],
             obsidianDirectoryURL: URL(fileURLWithPath: root, isDirectory: true)
         )
         syncthingManager._testSetRunning(true)
         syncthingManager._testSetLastBackgroundSyncOutcome(nil)
-        guard screen != .onboarding else {
+        guard !firstRun else {
             syncthingManager._testSetFolders([])
-            syncthingManager._testApplyDeviceList([])
+            syncthingManager._testApplyDeviceList(screen == .onboardingShare ? devices : [])
             return
         }
 

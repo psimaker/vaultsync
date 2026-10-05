@@ -557,7 +557,7 @@ struct ContentView: View {
     private func openDesignPreviewScreen() {
         let notes = DesignPreviewFixture.notesID
         switch DesignPreviewFixture.screen {
-        case .home, .attention, .syncing, .onboarding:
+        case .home, .attention, .syncing, .onboarding, .onboardingShare:
             break
         case .devices:
             selectedTab = .devices
@@ -727,8 +727,18 @@ struct ContentView: View {
             hasSyncFolders: !syncthingManager.folders.isEmpty,
             vaultAccessible: vaultManager.isAccessible,
             vaultNeedsReconnect: vaultManager.needsReconnect,
-            hasDetectedVaults: !vaultManager.detectedVaults.isEmpty
+            hasDetectedVaults: !vaultManager.detectedVaults.isEmpty,
+            hasVaultsAwaitingFirstSync: hasVaultsAwaitingFirstSync
         ))
+    }
+
+    /// Any vault row that reads "Waiting for first sync" — taken from the
+    /// rows' own model, so the hero can never say "All Synced" above one.
+    private var hasVaultsAwaitingFirstSync: Bool {
+        let unreachableIDs = unreachableFolderIDs
+        return vaultRows.contains {
+            vaultState($0, unreachableIDs: unreachableIDs).label == .waitingForFirstSync
+        }
     }
 
     /// Secondary line for the status hero — the reconnecting progress or the
@@ -916,7 +926,11 @@ struct ContentView: View {
     /// hero never says "All Synced" above a card in this section.
     @ViewBuilder
     private var syncIssuesSection: some View {
-        let issues = syncthingManager.unresolvedIssues
+        // A pending share is presented once, in Pending Shares below, with
+        // its name, sender and choices; as an issue card it repeated itself
+        // with a context-free "Accept Pending Share" (#187 review). It still
+        // drives the hero through the full list (`headerState`).
+        let issues = syncthingManager.unresolvedIssues.filter { $0.kind != .pendingShares }
         let unreachable = syncthingManager.unreachableFolders
         let folderErrorIDs = folderErrorCardIDs(excluding: unreachable)
         if currentSyncError != nil || !unreachable.isEmpty || !folderErrorIDs.isEmpty || !issues.isEmpty {
@@ -943,7 +957,6 @@ struct ContentView: View {
                 syncthingManager: syncthingManager,
                 onRescanFailedFolders: rescanFailedVaults,
                 onOpenAddDevice: { showAddDevice = true },
-                onAcceptFirstPendingShare: acceptFirstPendingShareFromIssues,
                 onRescanAllVaults: rescanAllVaults
             )
         }
@@ -1014,11 +1027,6 @@ struct ContentView: View {
         .padding(VaultSpacing.l)
         .frame(maxWidth: .infinity, alignment: .leading)
         .vaultCard(tone: .attention)
-    }
-
-    private func acceptFirstPendingShareFromIssues() {
-        guard let first = syncthingManager.actionablePendingFolders.first else { return }
-        shareAccept.accept(first, source: .manual)
     }
 
     private func rescanFailedVaults() {
@@ -1580,27 +1588,41 @@ struct ContentView: View {
         }
     }
 
+    /// A labeled switch per device: on means this vault is shared with it.
+    /// The subtitle only says whether the device is online — a separate
+    /// fact, which a bare checkmark next to it made easy to misread (#187
+    /// review).
     private func sharedDeviceRow(_ device: SyncthingManager.DeviceInfo, folder: SyncthingManager.FolderInfo) -> some View {
         let isShared = folder.deviceIDs.contains(device.deviceID)
-        return Button {
-            toggleDeviceSharing(folderID: folder.id, deviceID: device.deviceID, isShared: isShared)
-        } label: {
-            VaultRow(
-                device.name.isEmpty ? L10n.tr("Unnamed") : device.name,
-                subtitle: devicePresence(device).label,
-                systemImage: "laptopcomputer",
-                iconTint: .vaultSecondaryLabel
-            ) {
-                Image(systemName: isShared ? "checkmark.circle.fill" : "circle")
+        let name = device.name.isEmpty ? L10n.tr("Unnamed") : device.name
+        return Toggle(isOn: Binding(
+            get: { isShared },
+            set: { newValue in
+                guard newValue != isShared else { return }
+                toggleDeviceSharing(folderID: folder.id, deviceID: device.deviceID, isShared: isShared)
+            }
+        )) {
+            HStack(spacing: VaultSpacing.m) {
+                Image(systemName: "laptopcomputer")
                     .font(.title3)
-                    .foregroundStyle(isShared ? Color.vaultAccent : Color.vaultSecondaryLabel)
+                    .foregroundStyle(Color.vaultSecondaryLabel)
+                    .frame(width: 28)
                     .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: VaultSpacing.xxs) {
+                    Text(name)
+                        .font(.body)
+                        .foregroundStyle(Color.vaultLabel)
+                    Text(devicePresence(device).label)
+                        .font(.footnote)
+                        .foregroundStyle(Color.vaultSecondaryLabel)
+                }
+                .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .buttonStyle(.vaultRow)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(device.name.isEmpty ? L10n.tr("Unnamed device") : device.name)
-        .accessibilityValue(isShared ? L10n.tr("Shared") : L10n.tr("Not shared"))
+        .tint(Color.vaultAccent)
+        .padding(.horizontal, VaultSpacing.l)
+        .padding(.vertical, 10)
+        .frame(minHeight: VaultMetrics.rowMinHeight)
         .accessibilityHint(isShared
             ? L10n.tr("Double-tap to stop sharing this vault with this device.")
             : L10n.tr("Double-tap to share this vault with this device."))

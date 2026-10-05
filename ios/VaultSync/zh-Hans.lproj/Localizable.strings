@@ -1,6 +1,4 @@
 "About" = "关于";
-"Accept First Pending Share" = "接受第一个待处理共享";
-"Accept Pending Share" = "接受待处理共享";
 "Accept Share" = "接受共享";
 "Accept a share to activate syncing for that vault." = "接受一个共享以激活该 Vault 的同步。";
 "Action Needed" = "需要操作";
@@ -111,7 +109,6 @@
 "Keep Both" = "两者都保留";
 "Keep Both did not change any files because the new copy name is already in use." = "“两者都保留”未更改任何文件，因为新副本名称已被使用。";
 "Keep Both did not change any files because this storage location does not support safe renaming." = "“两者都保留”未更改任何文件，因为此存储位置不支持安全重命名。";
-"Keep Other" = "保留对方版本";
 "Keep Other Device's Version" = "保留另一台设备的版本";
 "Keep This" = "保留此版本";
 "Keep This Device's Version" = "保留此设备版本";
@@ -158,7 +155,6 @@
 "Not now" = "暂不";
 "Not attempted" = "未尝试";
 "Not checked" = "未检查";
-"Not shared" = "未共享";
 "OK" = "确定";
 "Obsidian Folder Connection Failed" = "连接 Obsidian 文件夹失败";
 "Obsidian Vaults" = "Obsidian Vault";
@@ -237,7 +233,6 @@
 "Rescan Vault" = "重新扫描 Vault";
 "Rescan failed vaults, then verify folder access and permissions." = "重新扫描失败的 Vault，然后检查文件夹访问和权限。";
 "Resolve Conflict" = "解决冲突";
-"Resolve Conflicts" = "解决冲突";
 "Restore Purchases" = "恢复购买";
 "Restore Share" = "恢复共享";
 "APNs Registration" = "APNs 注册";
@@ -273,7 +268,6 @@
 "Settings" = "设置";
 "Share a folder from your desktop Syncthing — it will be accepted automatically." = "从桌面 Syncthing 共享一个文件夹——它会被自动接受。";
 "Share requests are shown below, but Accept and Retry are disabled until your Obsidian folder is connected." = "共享请求显示在下方，但在连接 Obsidian 文件夹之前，“接受”和“重试”按钮会被禁用。";
-"Shared" = "已共享";
 "Shared With" = "共享给";
 "Shared by an unknown device" = "由未知设备共享";
 "Shared by: %@" = "共享者：%@";
@@ -330,7 +324,6 @@
 "Unknown Folder" = "未知文件夹";
 "Unnamed" = "未命名";
 "Unnamed Device" = "未命名设备";
-"Unnamed device" = "未命名设备";
 "Unreachable" = "无法访问";
 "Vault" = "Vault";
 "Vault locations are still being checked. Try again in a moment." = "Vault 的存储位置仍在检查中。请稍后再试。";
@@ -563,7 +556,6 @@
 "Add your server first" = "请先添加你的服务器";
 "Best value" = "最划算";
 "Cloud Relay wakes a specific device. Pair the computer or server that hosts your vault on the Devices tab, then come back to subscribe." = "Cloud Relay 会唤醒指定的设备。请先在“设备”标签页中配对承载你 Vault 的电脑或服务器，然后再回来订阅。";
-"Complete these steps right here. They light up green as you go — and you can always finish them later from the home screen." = "直接在这里完成这些步骤。随着你的进展，它们会亮起绿色——你也可以稍后随时从主屏幕完成它们。";
 "Connect your Obsidian folder" = "连接你的 Obsidian 文件夹";
 "Double tap to copy" = "双击以复制";
 "Give VaultSync one-time access to your local Obsidian folder so it can sync your notes." = "授予 VaultSync 对本地 Obsidian 文件夹的一次性访问权限，以便同步你的笔记。";
@@ -942,3 +934,5 @@
 "This device is no longer paired with this iPhone." = "此设备已不再与此 iPhone 配对。";
 "Two devices changed the same note while apart. Nothing is deleted until you choose, and “Keep Both” never overwrites a copy." = "两台设备在彼此断开时修改了同一条笔记。在你做出选择之前不会删除任何内容，“两者都保留”也绝不会覆盖任何副本。";
 "Version %@ (%@)" = "版本 %@（%@）";
+"Waiting for First Sync" = "等待首次同步";
+"Three steps. They turn green as you go; you can finish later from the home screen." = "三个步骤，完成后会亮起绿色；你也可以稍后从主屏幕完成。";

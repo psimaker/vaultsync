@@ -431,10 +431,11 @@ struct StatusHeroCard<Chips: View>: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: VaultSpacing.m) {
                 VaultHeroHeader(
-                    status: status,
+                    tone: status.tone,
+                    systemImage: systemImage ?? status.wellSymbolName,
                     title: title,
                     subtitle: subtitle,
-                    systemImage: systemImage,
+                    pulses: status == .syncing,
                     busy: busy
                 )
                 if showsDisclosure {
@@ -453,14 +454,20 @@ struct StatusHeroCard<Chips: View>: View {
     }
 }
 
-/// The top of a hero card: the round status well and the title pair. Its
-/// own component so a hero that also holds a button (the Cloud Relay
+/// The top of a hero card: the round well and the title pair. Its own
+/// component so a hero that also holds a button (the Cloud Relay
 /// celebration) can keep that button focusable outside the combined text.
+/// Takes a tone and an explicit pulse rather than a `SyncStatus`, so a hero
+/// that is not a sync state (Cloud Relay, M2's pairing steps) neither
+/// borrows a status's spoken label nor its transfer animation.
 struct VaultHeroHeader: View {
-    let status: SyncStatus
+    let tone: VaultTone
+    let systemImage: String
     let title: String
     var subtitle: String?
-    var systemImage: String?
+    /// Pulse the glyph — an active transfer, nothing else.
+    var pulses = false
+    /// Spinner in the well instead of the glyph (reconnecting).
     var busy = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -469,16 +476,16 @@ struct VaultHeroHeader: View {
         HStack(spacing: VaultSpacing.m) {
             ZStack {
                 Circle()
-                    .fill(status.fill)
+                    .fill(tone.fill)
                 if busy {
                     ProgressView()
-                        .tint(status.tint)
+                        .tint(tone.tint)
                 } else {
-                    Image(systemName: systemImage ?? status.wellSymbolName)
+                    Image(systemName: systemImage)
                         .font(.title3.weight(.semibold))
-                        .foregroundStyle(status.tint)
+                        .foregroundStyle(tone.tint)
                         .contentTransition(.symbolEffect(.replace))
-                        .symbolEffect(.pulse, isActive: status == .syncing && !reduceMotion)
+                        .symbolEffect(.pulse, isActive: pulses && !reduceMotion)
                 }
             }
             .frame(width: VaultMetrics.heroIconSize, height: VaultMetrics.heroIconSize)

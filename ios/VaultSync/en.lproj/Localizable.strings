@@ -1,6 +1,4 @@
 "About" = "About";
-"Accept First Pending Share" = "Accept First Pending Share";
-"Accept Pending Share" = "Accept Pending Share";
 "Accept Share" = "Accept Share";
 "Accept a share to activate syncing for that vault." = "Accept a share to activate syncing for that vault.";
 "Action Needed" = "Action Needed";
@@ -111,7 +109,6 @@
 "Keep Both" = "Keep Both";
 "Keep Both did not change any files because the new copy name is already in use." = "Keep Both did not change any files because the new copy name is already in use.";
 "Keep Both did not change any files because this storage location does not support safe renaming." = "Keep Both did not change any files because this storage location does not support safe renaming.";
-"Keep Other" = "Keep Other";
 "Keep Other Device's Version" = "Keep Other Device's Version";
 "Keep This" = "Keep This";
 "Keep This Device's Version" = "Keep This Device's Version";
@@ -158,7 +155,6 @@
 "Not now" = "Not now";
 "Not attempted" = "Not attempted";
 "Not checked" = "Not checked";
-"Not shared" = "Not shared";
 "OK" = "OK";
 "Obsidian Folder Connection Failed" = "Obsidian Folder Connection Failed";
 "Obsidian Vaults" = "Obsidian Vaults";
@@ -237,7 +233,6 @@
 "Rescan Vault" = "Rescan Vault";
 "Rescan failed vaults, then verify folder access and permissions." = "Rescan failed vaults, then verify folder access and permissions.";
 "Resolve Conflict" = "Resolve Conflict";
-"Resolve Conflicts" = "Resolve Conflicts";
 "Restore Purchases" = "Restore Purchases";
 "Restore Share" = "Restore Share";
 "APNs Registration" = "APNs Registration";
@@ -273,7 +268,6 @@
 "Settings" = "Settings";
 "Share a folder from your desktop Syncthing — it will be accepted automatically." = "Share a folder from your desktop Syncthing — it will be accepted automatically.";
 "Share requests are shown below, but Accept and Retry are disabled until your Obsidian folder is connected." = "Share requests are shown below, but Accept and Retry are disabled until your Obsidian folder is connected.";
-"Shared" = "Shared";
 "Shared With" = "Shared With";
 "Shared by an unknown device" = "Shared by an unknown device";
 "Shared by: %@" = "Shared by: %@";
@@ -330,7 +324,6 @@
 "Unknown Folder" = "Unknown Folder";
 "Unnamed" = "Unnamed";
 "Unnamed Device" = "Unnamed Device";
-"Unnamed device" = "Unnamed device";
 "Unreachable" = "Unreachable";
 "Vault" = "Vault";
 "Vault locations are still being checked. Try again in a moment." = "Vault locations are still being checked. Try again in a moment.";
@@ -563,7 +556,6 @@
 "Add your server first" = "Add your server first";
 "Best value" = "Best value";
 "Cloud Relay wakes a specific device. Pair the computer or server that hosts your vault on the Devices tab, then come back to subscribe." = "Cloud Relay wakes a specific device. Pair the computer or server that hosts your vault on the Devices tab, then come back to subscribe.";
-"Complete these steps right here. They light up green as you go — and you can always finish them later from the home screen." = "Complete these steps right here. They light up green as you go — and you can always finish them later from the home screen.";
 "Connect your Obsidian folder" = "Connect your Obsidian folder";
 "Double tap to copy" = "Double tap to copy";
 "Give VaultSync one-time access to your local Obsidian folder so it can sync your notes." = "Give VaultSync one-time access to your local Obsidian folder so it can sync your notes.";
@@ -942,3 +934,5 @@
 "This device is no longer paired with this iPhone." = "This device is no longer paired with this iPhone.";
 "Two devices changed the same note while apart. Nothing is deleted until you choose, and “Keep Both” never overwrites a copy." = "Two devices changed the same note while apart. Nothing is deleted until you choose, and “Keep Both” never overwrites a copy.";
 "Version %@ (%@)" = "Version %@ (%@)";
+"Waiting for First Sync" = "Waiting for First Sync";
+"Three steps. They turn green as you go; you can finish later from the home screen." = "Three steps. They turn green as you go; you can finish later from the home screen.";

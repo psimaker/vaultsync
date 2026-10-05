@@ -24,14 +24,16 @@ struct SettingsView: View {
 
     var body: some View {
         NavigationStack {
+            // Operational settings first, the contribution ask after them,
+            // About last (#187 review).
             VaultPage {
-                supportSection
                 conflictsSection
                 notificationsSection
-                aboutSection
                 thisDeviceSection
                 setupStatusSection
                 diagnosticsSection
+                supportSection
+                aboutSection
             }
             .navigationTitle(L10n.tr("Settings"))
             .navigationBarTitleDisplayMode(.large)
