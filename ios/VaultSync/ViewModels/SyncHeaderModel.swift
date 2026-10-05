@@ -32,6 +32,12 @@ enum SyncHeaderModel {
         /// connected" (finish setup) when the vault is not accessible.
         var vaultNeedsReconnect: Bool
         var hasDetectedVaults: Bool
+        /// At least one vault row reads "Waiting for first sync" in
+        /// `VaultStatusModel` — idle, but no sync with a peer recorded yet
+        /// (#94, decision 016). Fed from that model so the hero and the rows
+        /// cannot disagree (#187). The widget has no per-vault data and pins
+        /// this to false (`deriveWidgetStatus`).
+        var hasVaultsAwaitingFirstSync: Bool = false
     }
 
     struct State: Equatable {
@@ -41,7 +47,8 @@ enum SyncHeaderModel {
     }
 
     /// Precedence: engine failure → engine starting → critical issues →
-    /// active transfer → warning-tier issues → not armed → armed/synced.
+    /// active transfer → warning-tier issues → not armed → a vault waiting
+    /// for its first sync → armed/synced.
     /// A transfer outranks warnings deliberately: syncing is short-lived and
     /// the warning surfaces the moment it settles, instead of the header
     /// flickering between the two mid-transfer.
@@ -68,6 +75,14 @@ enum SyncHeaderModel {
             )
         }
         if inputs.hasSyncFolders {
+            // A vault that never completed a sync with a peer is not synced:
+            // claiming "All Synced" above its "Waiting for first sync" row
+            // was the contradiction the per-vault model exists to remove.
+            // Calm, not a warning — the first exchange is usually seconds
+            // away, and a stalled one surfaces through the issue list.
+            if inputs.hasVaultsAwaitingFirstSync {
+                return State(status: .starting, titleKey: "Waiting for First Sync")
+            }
             return State(status: .synced, titleKey: "All Synced")
         }
         if inputs.hasDetectedVaults {
@@ -111,7 +126,11 @@ enum SyncHeaderModel {
             hasSyncFolders: hasSyncFolders,
             vaultAccessible: true,
             vaultNeedsReconnect: false,
-            hasDetectedVaults: true
+            hasDetectedVaults: true,
+            // The snapshot carries no per-vault state, so the widget cannot
+            // see a vault waiting for its first sync — a documented boundary
+            // (#187, decision 044), not a disagreement over issues.
+            hasVaultsAwaitingFirstSync: false
         )).status
     }
 }

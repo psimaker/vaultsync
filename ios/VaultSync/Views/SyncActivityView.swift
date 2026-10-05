@@ -39,6 +39,7 @@ struct SyncActivityView: View {
                 }
             }
         }
+        .vaultListBackground()
         .navigationTitle("Sync Activity")
         .navigationBarTitleDisplayMode(.inline)
     }

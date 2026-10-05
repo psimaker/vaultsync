@@ -102,6 +102,7 @@ struct ShareTargetPickerView: View {
                     }
                 }
             }
+            .vaultListBackground()
             .navigationTitle(L10n.tr("Choose Vault"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

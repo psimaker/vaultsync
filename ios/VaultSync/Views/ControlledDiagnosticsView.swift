@@ -31,6 +31,7 @@ struct ControlledDiagnosticsView: View {
             newPairingSection
             compatibilitySection
         }
+        .vaultListBackground()
         .navigationTitle(L10n.tr("Controlled Diagnostics"))
         .navigationBarTitleDisplayMode(.inline)
         .task {
@@ -712,6 +713,7 @@ private struct DiagnosticsCredentialMaintenanceView: View {
                 Text(L10n.tr("Revocation and recovery"))
             }
         }
+        .vaultListBackground()
         .navigationTitle(L10n.tr("Credential Maintenance"))
         .navigationBarTitleDisplayMode(.inline)
         .alert(L10n.tr("Rotate the app signing key?"), isPresented: $showAppRotationConfirmation) {

@@ -34,6 +34,7 @@ struct SyncFilterRecommendationSheet: View {
                     }
                 }
             }
+            .vaultListBackground()
             .navigationTitle(L10n.tr("Sync Filters"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

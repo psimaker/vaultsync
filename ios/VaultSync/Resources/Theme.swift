@@ -73,55 +73,87 @@ extension Color {
         darkHC: (74, 222, 202)
     )
 
-    /// Brand teal — kept as the historical name so existing call sites keep
-    /// working, now dark-aware. Identical to `vaultAccent`.
-    static let vaultTeal = Color.vaultAccent
+    // Muted fill: retires the hand-rolled `colorScheme == .dark ? 0.22 : 0.14`
+    // opacity math the views used to carry.
 
-    /// Deep neutral slate, used for muted fills/surfaces. Dark-aware so fills no
-    /// longer need per-call-site opacity math.
-    static let vaultSlate = vaultColor(
-        light: (38, 50, 56),        // #263238
-        dark: (176, 190, 197)       // #B0BEC5 — readable as a muted accent in dark
-    )
-
-    // Muted decorative fills. These retire the last of the hand-rolled
-    // `colorScheme == .dark ? 0.22 : 0.14` opacity math (onboarding chips, page
-    // dots, blurred background circles). Two emphasis levels per hue are enough.
-
-    /// Brand-accent wash for icon chips and selected decorations.
+    /// Brand-accent wash for icon wells, tinted buttons and selected
+    /// decorations.
     static let vaultAccentFill = vaultColor(
         light: (0, 137, 123), dark: (38, 196, 176),
-        lightAlpha: 0.14, darkAlpha: 0.22
-    )
-    /// Fainter accent wash for large background decorations.
-    static let vaultAccentFillSubtle = vaultColor(
-        light: (0, 137, 123), dark: (38, 196, 176),
-        lightAlpha: 0.08, darkAlpha: 0.14
-    )
-    /// Neutral slate wash for inactive decorations (page dots, accent bars).
-    static let vaultSlateFill = vaultColor(
-        light: (38, 50, 56), dark: (176, 190, 197),
-        lightAlpha: 0.20, darkAlpha: 0.34
-    )
-    /// Fainter slate wash for large background decorations.
-    static let vaultSlateFillSubtle = vaultColor(
-        light: (38, 50, 56), dark: (176, 190, 197),
-        lightAlpha: 0.05, darkAlpha: 0.10
+        lightAlpha: 0.12, darkAlpha: 0.20
     )
 
-    /// Hairline stroke for card borders — the system separator, tuned per scheme
-    /// so it reads on elevated cards in dark without dominating in light.
-    static let vaultHairline: Color = {
-        #if canImport(UIKit)
-        Color(uiColor: UIColor { traits in
-            UIColor.separator.withAlphaComponent(
-                traits.userInterfaceStyle == .dark ? 0.45 : 0.18
-            )
-        })
-        #else
-        Color.gray.opacity(0.18)
-        #endif
-    }()
+    /// Hairline stroke for card borders: slate at low alpha, so the border
+    /// carries the palette's cool tint instead of the neutral system separator.
+    /// The alphas follow the approved #187 canvas (Direction A).
+    static let vaultHairline = vaultColor(
+        light: (38, 50, 56), dark: (176, 190, 197),
+        lightAlpha: 0.12, darkAlpha: 0.16
+    )
+}
+
+// MARK: - Surfaces & text (#187)
+//
+// The fresh design's canvas: a cool off-white page, white cards, slate text.
+// Screens built on `VaultPage` use these instead of the system grouped
+// backgrounds so light and dark keep the same slate tint everywhere.
+
+extension Color {
+    /// Page background behind cards.
+    static let vaultBackground = vaultColor(
+        light: (245, 247, 247),     // #F5F7F7
+        dark: (15, 20, 22)          // #0F1416
+    )
+    /// Card / row surface.
+    static let vaultSurface = vaultColor(
+        light: (255, 255, 255),
+        dark: (23, 29, 32)          // #171D20
+    )
+    /// Primary text on cards.
+    static let vaultLabel = vaultColor(
+        light: (27, 35, 38),        // #1B2326
+        dark: (232, 237, 239),      // #E8EDEF
+        lightHC: (0, 0, 0),
+        darkHC: (255, 255, 255)
+    )
+    /// Secondary text (subtitles, captions, section headers). 5.5:1 on white
+    /// and 5.1:1 on the page background — the system secondary label measures
+    /// 3.4:1 on white, which is why the cards do not use it.
+    static let vaultSecondaryLabel = vaultColor(
+        light: (91, 107, 114),      // #5B6B72
+        dark: (152, 169, 176),      // #98A9B0
+        lightHC: (60, 72, 78),
+        darkHC: (190, 203, 209)
+    )
+    /// Neutral wash for secondary buttons and icon wells.
+    static let vaultNeutralFill = vaultColor(
+        light: (38, 50, 56), dark: (176, 190, 197),
+        lightAlpha: 0.06, darkAlpha: 0.10
+    )
+    /// Accent-colored TEXT (links, tinted buttons, row actions). The brand
+    /// teal itself measures 4.32:1 on white — fine for glyphs and fills, short
+    /// of WCAG AA for 15–17pt text — so text uses this deeper light variant
+    /// (6.2:1 on white, 5.3:1 on `vaultAccentFill`).
+    static let vaultAccentText = vaultColor(
+        light: (0, 110, 99),
+        dark: (38, 196, 176),
+        lightHC: (0, 88, 79),
+        darkHC: (74, 222, 202)
+    )
+    /// Fill of the primary button. One step deeper than the brand teal in
+    /// light so white label text clears 4.5:1 (4.84:1; the brand teal gives
+    /// 4.32:1); dark keeps the lifted teal under `vaultOnAccent` text (7.7:1).
+    static let vaultAccentProminent = vaultColor(
+        light: (0, 128, 115),
+        dark: (38, 196, 176),
+        lightHC: (0, 110, 99),
+        darkHC: (74, 222, 202)
+    )
+    /// Text and glyphs on a `vaultAccentProminent` fill.
+    static let vaultOnAccent = vaultColor(
+        light: (255, 255, 255),
+        dark: (7, 33, 29)           // #07211D
+    )
 }
 
 // MARK: - Typography
@@ -133,6 +165,19 @@ extension Font {
     static func vaultMono(_ style: Font.TextStyle = .footnote, weight: Font.Weight = .regular) -> Font {
         .system(style, design: .monospaced).weight(weight)
     }
+
+    // The #187 type scale. All Dynamic Type text styles, so every size grows
+    // with the user's setting: 34 large title (navigation), 22 hero, 17 row
+    // title and button, 15 body copy, 13 subtitles / chips / section headers.
+
+    /// Title of the status hero card.
+    static let vaultHeroTitle = Font.title2.weight(.bold)
+    /// Uppercase header above a card group.
+    static let vaultSectionHeader = Font.footnote.weight(.semibold)
+    /// Chip and pill text.
+    static let vaultChip = Font.footnote.weight(.semibold)
+    /// Button labels.
+    static let vaultButton = Font.body.weight(.semibold)
 }
 
 // MARK: - Semantic status palette
@@ -186,6 +231,114 @@ extension Color {
     static let statusInactive = Color.secondary
 }
 
+// MARK: - Status washes and text on washes (#187)
+//
+// Chips, tinted cards and the destructive button put status TEXT on that
+// status's own 12–18 % wash. The plain status colors drop to 3.8–4.2:1 there
+// in light mode (and error/info in dark), so text on a wash uses these
+// deeper (light) / brighter (dark) variants; every pair clears 4.8:1, and
+// the HC variants go further for Increase Contrast.
+
+extension Color {
+    static let statusSuccessFill = vaultColor(
+        light: (26, 120, 78), dark: (52, 199, 127),
+        lightAlpha: 0.12, darkAlpha: 0.18
+    )
+    static let statusStartingFill = vaultColor(
+        light: (78, 124, 168), dark: (127, 168, 208),
+        lightAlpha: 0.12, darkAlpha: 0.18
+    )
+    static let statusAttentionFill = vaultColor(
+        light: (160, 100, 0), dark: (242, 169, 59),
+        lightAlpha: 0.12, darkAlpha: 0.18
+    )
+    static let statusErrorFill = vaultColor(
+        light: (210, 69, 59), dark: (232, 92, 82),
+        lightAlpha: 0.12, darkAlpha: 0.18
+    )
+    static let statusInfoFill = vaultColor(
+        light: (78, 111, 181), dark: (110, 143, 216),
+        lightAlpha: 0.12, darkAlpha: 0.18
+    )
+
+    static let statusSuccessText = vaultColor(
+        light: (17, 95, 60), dark: (52, 199, 127),
+        lightHC: (12, 78, 48), darkHC: (94, 222, 158)
+    )
+    static let statusStartingText = vaultColor(
+        light: (50, 92, 133), dark: (127, 168, 208),
+        lightHC: (38, 74, 110), darkHC: (162, 197, 235)
+    )
+    static let statusAttentionText = vaultColor(
+        light: (122, 76, 0), dark: (242, 169, 59),
+        lightHC: (100, 62, 0), darkHC: (255, 193, 101)
+    )
+    static let statusErrorText = vaultColor(
+        light: (166, 42, 34), dark: (255, 128, 118),
+        lightHC: (140, 32, 26), darkHC: (255, 152, 143)
+    )
+    static let statusInfoText = vaultColor(
+        light: (52, 82, 148), dark: (150, 178, 240),
+        lightHC: (40, 66, 128), darkHC: (178, 200, 248)
+    )
+}
+
+// MARK: - Tones (#187)
+
+/// The color role of a chip, tinted card, icon well or button: which glyph
+/// color, which wash, and which text-on-wash color belong together, so no
+/// call site can pair a wash with a text color that fails contrast on it.
+/// Status views map through `SyncStatus.tone`; everything else (an accent
+/// "Cloud Relay active" chip, a neutral vault count) picks a tone directly.
+enum VaultTone: Sendable {
+    case neutral
+    case accent
+    case success
+    case starting
+    case attention
+    case error
+    case info
+
+    /// Glyphs and dots.
+    var tint: Color {
+        switch self {
+        case .neutral: return .vaultSecondaryLabel
+        case .accent: return .vaultAccent
+        case .success: return .statusSuccess
+        case .starting: return .statusStarting
+        case .attention: return .statusAttention
+        case .error: return .statusError
+        case .info: return .statusInfo
+        }
+    }
+
+    /// The tone's wash.
+    var fill: Color {
+        switch self {
+        case .neutral: return .vaultNeutralFill
+        case .accent: return .vaultAccentFill
+        case .success: return .statusSuccessFill
+        case .starting: return .statusStartingFill
+        case .attention: return .statusAttentionFill
+        case .error: return .statusErrorFill
+        case .info: return .statusInfoFill
+        }
+    }
+
+    /// Text placed on `fill`.
+    var text: Color {
+        switch self {
+        case .neutral: return .vaultLabel
+        case .accent: return .vaultAccentText
+        case .success: return .statusSuccessText
+        case .starting: return .statusStartingText
+        case .attention: return .statusAttentionText
+        case .error: return .statusErrorText
+        case .info: return .statusInfoText
+        }
+    }
+}
+
 // MARK: - Spacing & radius scale
 
 /// 8pt soft grid. Replaces the 14-value padding literal soup.
@@ -195,14 +348,34 @@ enum VaultSpacing {
     static let s: CGFloat = 8
     static let m: CGFloat = 12
     static let l: CGFloat = 16
+    /// Page side margin and hero-card padding (#187 canvas).
+    static let gutter: CGFloat = 20
     static let xl: CGFloat = 24
 }
 
 /// Continuous corner radii. Replaces the 8/10/11/12/14/22/24/28 spread.
 enum VaultRadius {
     static let control: CGFloat = 12
+    static let button: CGFloat = 14
     static let card: CGFloat = 16
     static let hero: CGFloat = 28
+}
+
+/// Minimum sizes of the #187 components. Minimums, not fixed heights: every
+/// one of them grows with Dynamic Type.
+enum VaultMetrics {
+    /// List-row minimum height inside a card.
+    static let rowMinHeight: CGFloat = 60
+    /// Full-width primary / secondary button.
+    static let buttonHeight: CGFloat = 50
+    /// Compact button (inline actions) — still the 44pt touch minimum.
+    static let compactButtonHeight: CGFloat = 44
+    /// Round status well in the hero card.
+    static let heroIconSize: CGFloat = 44
+    /// Status dot at the end of a row.
+    static let statusDotSize: CGFloat = 10
+    /// Readable column width on iPad; cards never stretch past it.
+    static let readableWidth: CGFloat = 640
 }
 
 // MARK: - Sync status registry
@@ -255,6 +428,38 @@ enum SyncStatus: String, Sendable, CaseIterable {
         case .attention: return .statusAttention
         case .error: return .statusError
         case .paused: return .statusInactive
+        }
+    }
+
+    /// Color role of this status for chips, wells and tinted cards.
+    var tone: VaultTone {
+        switch self {
+        case .synced: return .success
+        case .syncing: return .accent
+        case .starting: return .starting
+        case .attention: return .attention
+        case .error: return .error
+        case .paused: return .neutral
+        }
+    }
+
+    /// The status's own wash — hero icon well, chips, tinted cards.
+    var fill: Color { tone.fill }
+
+    /// Text color for the status ON its `fill` (chips, pills) — see the
+    /// "text on washes" tokens for why this is not `tint`.
+    var textOnFill: Color { tone.text }
+
+    /// Bare glyph for a round status well (the hero card), where the
+    /// `.circle.fill` variants of `symbolName` would draw a circle in a circle.
+    var wellSymbolName: String {
+        switch self {
+        case .synced: return "checkmark"
+        case .syncing: return "arrow.triangle.2.circlepath"
+        case .starting: return "hourglass"
+        case .attention: return "exclamationmark"
+        case .error: return "xmark"
+        case .paused: return "pause.fill"
         }
     }
 

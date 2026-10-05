@@ -89,6 +89,52 @@ struct SyncHeaderModelTests {
         #expect(SyncHeaderModel.derive(healthy()) == .init(status: .synced, titleKey: "All Synced"))
     }
 
+    // #187 review: one vault had synced, another sat idle without a sync
+    // with a peer ever recorded — its row read "Waiting for first sync"
+    // while the hero above it claimed "All Synced".
+    @Test("A vault waiting for its first sync keeps the hero from claiming All Synced (#187)")
+    func waitingVaultIsNotAllSynced() {
+        var inputs = healthy()
+        inputs.hasVaultsAwaitingFirstSync = true
+        let state = SyncHeaderModel.derive(inputs)
+        #expect(state.status != .synced)
+        #expect(state == .init(status: .starting, titleKey: "Waiting for First Sync"))
+        #expect(!SyncHeaderModel.opensChecklist(titleKey: state.titleKey))
+    }
+
+    @Test("Issues, transfers and missing access still outrank a vault waiting for its first sync (#187)")
+    func waitingVaultRanksBelowEverythingElse() {
+        var inputs = healthy()
+        inputs.hasVaultsAwaitingFirstSync = true
+
+        inputs.issueSeverities = [.warning]
+        #expect(SyncHeaderModel.derive(inputs).titleKey == "Action Needed")
+
+        inputs.issueSeverities = []
+        inputs.isSyncing = true
+        #expect(SyncHeaderModel.derive(inputs).titleKey == "Syncing…")
+
+        inputs.isSyncing = false
+        inputs.vaultAccessible = false
+        inputs.vaultNeedsReconnect = true
+        #expect(SyncHeaderModel.derive(inputs).titleKey == "Action Needed")
+    }
+
+    // The widget snapshot has no per-vault state: its derivation pins the
+    // waiting tier off (a documented boundary, decision 044).
+    @Test("The widget derivation never reports a waiting vault (#187)")
+    func widgetPinsWaitingTierOff() {
+        let widget = SyncHeaderModel.deriveWidgetStatus(
+            hasEngineError: false,
+            engineRunning: true,
+            issueSeverities: [],
+            hasUnreachableFolders: false,
+            isSyncing: false,
+            hasSyncFolders: true
+        )
+        #expect(widget == .synced)
+    }
+
     // "Ready" only when genuinely armed: vault accessible and a vault exists,
     // so the auto-accept pass could act the moment a share arrives.
     @Test("No sync folders but armed reads Ready")
@@ -136,6 +182,7 @@ struct SyncHeaderModelTests {
         let knownKeys: Set<String> = [
             "Error", "Starting…", "Sync Issue", "Syncing…", "Action Needed",
             "Finish Setup", "All Synced", "Ready", "No Vaults Yet",
+            "Waiting for First Sync",
         ]
         var inputs = SyncHeaderModel.Inputs(
             hasEngineError: false,
@@ -157,16 +204,19 @@ struct SyncHeaderModelTests {
                                 for accessible in [false, true] {
                                     for reconnect in [false, true] {
                                         for vaults in [false, true] {
-                                            inputs.hasEngineError = engineError
-                                            inputs.engineRunning = running
-                                            inputs.issueSeverities = severities
-                                            inputs.hasUnreachableFolders = unreachable
-                                            inputs.isSyncing = syncing
-                                            inputs.hasSyncFolders = folders
-                                            inputs.vaultAccessible = accessible
-                                            inputs.vaultNeedsReconnect = reconnect
-                                            inputs.hasDetectedVaults = vaults
-                                            #expect(knownKeys.contains(SyncHeaderModel.derive(inputs).titleKey))
+                                            for awaiting in [false, true] {
+                                                inputs.hasEngineError = engineError
+                                                inputs.engineRunning = running
+                                                inputs.issueSeverities = severities
+                                                inputs.hasUnreachableFolders = unreachable
+                                                inputs.isSyncing = syncing
+                                                inputs.hasSyncFolders = folders
+                                                inputs.vaultAccessible = accessible
+                                                inputs.vaultNeedsReconnect = reconnect
+                                                inputs.hasDetectedVaults = vaults
+                                                inputs.hasVaultsAwaitingFirstSync = awaiting
+                                                #expect(knownKeys.contains(SyncHeaderModel.derive(inputs).titleKey))
+                                            }
                                         }
                                     }
                                 }

@@ -18,45 +18,56 @@ struct LineDiffView: View {
 
     @State private var diffLines: [DiffLine] = []
     @State private var isComputing = true
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         Group {
             if isComputing {
                 ProgressView("Computing diff…")
                     .padding()
+            } else if dynamicTypeSize.isAccessibilitySize {
+                // At the accessibility sizes the lines wrap: a sideways
+                // scroller would show only a sliver of each line (#187
+                // review).
+                linesColumn
+                    .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        ForEach(diffLines) { line in
-                            HStack(alignment: .top, spacing: 6) {
-                                Text(linePrefix(for: line.type))
-                                    .font(.vaultMono(.caption, weight: .semibold))
-                                    .foregroundStyle(foregroundColor(for: line.type))
-                                    .accessibilityHidden(true)
-                                Text(line.text.isEmpty ? " " : line.text)
-                                    .font(.vaultMono(.caption))
-                                    .foregroundStyle(foregroundColor(for: line.type))
-                            }
-                            .padding(.horizontal, VaultSpacing.xs)
-                            .padding(.vertical, VaultSpacing.xxs)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(backgroundColor(for: line.type))
-                            .accessibilityElement(children: .ignore)
-                            .accessibilityLabel(accessibilityDescription(for: line))
-                        }
-                    }
-                    .padding()
-                    // Size the column to its widest line so every row's
-                    // highlight fills the same width (inside a horizontal
-                    // ScrollView, maxWidth: .infinity alone clamps to each
-                    // line's own width, leaving ragged backgrounds).
-                    .fixedSize(horizontal: true, vertical: false)
+                ScrollView(.horizontal) {
+                    linesColumn
+                        // Size the column to its widest line so every row's
+                        // highlight fills the same width (inside a horizontal
+                        // ScrollView, maxWidth: .infinity alone clamps to each
+                        // line's own width, leaving ragged backgrounds).
+                        .fixedSize(horizontal: true, vertical: false)
                 }
             }
         }
         .task(id: original + conflict) {
             await computeDiff()
         }
+    }
+
+    private var linesColumn: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(diffLines) { line in
+                HStack(alignment: .top, spacing: 6) {
+                    Text(linePrefix(for: line.type))
+                        .font(.vaultMono(.caption, weight: .semibold))
+                        .foregroundStyle(foregroundColor(for: line.type))
+                        .accessibilityHidden(true)
+                    Text(line.text.isEmpty ? " " : line.text)
+                        .font(.vaultMono(.caption))
+                        .foregroundStyle(foregroundColor(for: line.type))
+                }
+                .padding(.horizontal, VaultSpacing.xs)
+                .padding(.vertical, VaultSpacing.xxs)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(backgroundColor(for: line.type))
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(accessibilityDescription(for: line))
+            }
+        }
+        .padding()
     }
 
     private func computeDiff() async {
@@ -111,19 +122,21 @@ struct LineDiffView: View {
         isComputing = false
     }
 
+    // Text-on-wash tokens (#187): the plain status colors on their own
+    // wash measured 3.8–4.6:1, short of AA for caption-sized code.
     private func backgroundColor(for type: DiffLine.LineType) -> Color {
         switch type {
         case .unchanged: return Color.clear
-        case .added: return Color.statusSuccess.opacity(0.18)
-        case .removed: return Color.statusError.opacity(0.18)
+        case .added: return Color.statusSuccessFill
+        case .removed: return Color.statusErrorFill
         }
     }
 
     private func foregroundColor(for type: DiffLine.LineType) -> Color {
         switch type {
-        case .unchanged: return Color.primary
-        case .added: return Color.statusSuccess
-        case .removed: return Color.statusError
+        case .unchanged: return Color.vaultLabel
+        case .added: return Color.statusSuccessText
+        case .removed: return Color.statusErrorText
         }
     }
 

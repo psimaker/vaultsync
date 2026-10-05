@@ -1,6 +1,4 @@
 "About" = "About";
-"Accept First Pending Share" = "Accept First Pending Share";
-"Accept Pending Share" = "Accept Pending Share";
 "Accept Share" = "Accept Share";
 "Accept a share to activate syncing for that vault." = "Accept a share to activate syncing for that vault.";
 "Action Needed" = "Action Needed";
@@ -21,7 +19,6 @@
 "Background Sync Failed" = "Background Sync Failed";
 "Background Sync Found No Vaults" = "Background Sync Found No Vaults";
 "Background Sync Timed Out" = "Background Sync Timed Out";
-"Background sync: %@" = "Background sync: %@";
 "Camera Access Required" = "Camera Access Required";
 "Can't find the Obsidian folder?" = "Can't find the Obsidian folder?";
 "Cancel" = "Cancel";
@@ -42,7 +39,6 @@
 "Cloud Relay provisioning could not contact the relay backend." = "Cloud Relay provisioning could not contact the relay backend.";
 "Cloud Relay provisioning did not complete." = "Cloud Relay provisioning did not complete.";
 "Cloud Relay provisioning is temporarily rate limited." = "Cloud Relay provisioning is temporarily rate limited.";
-"Completion" = "Completion";
 "Configuration Error" = "Configuration Error";
 "Conflict Resolution Failed" = "Conflict Resolution Failed";
 "Conflict Resolved" = "Conflict Resolved";
@@ -69,7 +65,6 @@
 "Could not read original file.\n\n%@" = "Could not read original file.\n\n%@";
 "Create a vault in Obsidian first. VaultSync will detect it automatically." = "Create a vault in Obsidian first. VaultSync will detect it automatically.";
 "Creates a folder with this name in your Obsidian directory and syncs the share into it." = "Creates a folder with this name in your Obsidian directory and syncs the share into it.";
-"Device" = "Device";
 "Device ID" = "Device ID";
 "%d of %d devices connected" = "%d of %d devices connected";
 "Device name" = "Device name";
@@ -100,7 +95,6 @@
 "Folder reached idle state after syncing." = "Folder reached idle state after syncing.";
 "Folder reported an error." = "Folder reported an error.";
 "Get notified about conflicts" = "Get notified about conflicts";
-"Global Files" = "Global Files";
 "Health Endpoint" = "Health Endpoint";
 "Healthy" = "Healthy";
 "How to fix: %@" = "How to fix: %@";
@@ -115,7 +109,6 @@
 "Keep Both" = "Keep Both";
 "Keep Both did not change any files because the new copy name is already in use." = "Keep Both did not change any files because the new copy name is already in use.";
 "Keep Both did not change any files because this storage location does not support safe renaming." = "Keep Both did not change any files because this storage location does not support safe renaming.";
-"Keep Other" = "Keep Other";
 "Keep Other Device's Version" = "Keep Other Device's Version";
 "Keep This" = "Keep This";
 "Keep This Device's Version" = "Keep This Device's Version";
@@ -135,7 +128,6 @@
 "Learn how to fix" = "Learn how to fix";
 "Link Share" = "Link Share";
 "Loading…" = "Loading…";
-"Local Files" = "Local Files";
 "Log" = "Log";
 "Manage Subscription" = "Manage Subscription";
 "Name" = "Name";
@@ -161,10 +153,8 @@
 "Not Configured" = "Not Configured";
 "Not syncing yet — share this vault from your computer to start." = "Not syncing yet — share this vault from your computer to start.";
 "Not now" = "Not now";
-"Not Shared" = "Not Shared";
 "Not attempted" = "Not attempted";
 "Not checked" = "Not checked";
-"Not shared" = "Not shared";
 "OK" = "OK";
 "Obsidian Folder Connection Failed" = "Obsidian Folder Connection Failed";
 "Obsidian Vaults" = "Obsidian Vaults";
@@ -188,7 +178,6 @@
 "Opens the form to add a Syncthing device." = "Opens the form to add a Syncthing device.";
 "Optional" = "Optional";
 "Overwrites your local file with the version from the other device." = "Overwrites your local file with the version from the other device.";
-"Path" = "Path";
 "Peer connection is active." = "Peer connection is active.";
 "Pending Shares" = "Pending Shares";
 "Pending shares are waiting to be accepted before sync can start." = "Pending shares are waiting to be accepted before sync can start.";
@@ -244,10 +233,8 @@
 "Rescan Vault" = "Rescan Vault";
 "Rescan failed vaults, then verify folder access and permissions." = "Rescan failed vaults, then verify folder access and permissions.";
 "Resolve Conflict" = "Resolve Conflict";
-"Resolve Conflicts" = "Resolve Conflicts";
 "Restore Purchases" = "Restore Purchases";
 "Restore Share" = "Restore Share";
-"A conflict happens when a file is edited on two devices at the same time. Syncthing saves both versions to prevent data loss." = "A conflict happens when a file is edited on two devices at the same time. Syncthing saves both versions to prevent data loss.";
 "APNs Registration" = "APNs Registration";
 "APNs Token" = "APNs Token";
 "Context: %@ · %@" = "Context: %@ · %@";
@@ -281,7 +268,6 @@
 "Settings" = "Settings";
 "Share a folder from your desktop Syncthing — it will be accepted automatically." = "Share a folder from your desktop Syncthing — it will be accepted automatically.";
 "Share requests are shown below, but Accept and Retry are disabled until your Obsidian folder is connected." = "Share requests are shown below, but Accept and Retry are disabled until your Obsidian folder is connected.";
-"Shared" = "Shared";
 "Shared With" = "Shared With";
 "Shared by an unknown device" = "Shared by an unknown device";
 "Shared by: %@" = "Shared by: %@";
@@ -295,8 +281,6 @@
 "Starting…" = "Starting…";
 "Starting" = "Starting";
 "Paused" = "Paused";
-"State" = "State";
-"Status" = "Status";
 "Subscribe" = "Subscribe";
 "Sync Activity" = "Sync Activity";
 "Sync Activity Looks Stale" = "Sync Activity Looks Stale";
@@ -305,7 +289,6 @@
 "Sync Error" = "Sync Error";
 "Sync Issue" = "Sync Issue";
 "Sync Issues" = "Sync Issues";
-"Sync Status" = "Sync Status";
 "Sync completed in %@" = "Sync completed in %@";
 "Sync error in %@" = "Sync error in %@";
 "Sync started in %@" = "Sync started in %@";
@@ -341,7 +324,6 @@
 "Unknown Folder" = "Unknown Folder";
 "Unnamed" = "Unnamed";
 "Unnamed Device" = "Unnamed Device";
-"Unnamed device" = "Unnamed device";
 "Unreachable" = "Unreachable";
 "Vault" = "Vault";
 "Vault locations are still being checked. Try again in a moment." = "Vault locations are still being checked. Try again in a moment.";
@@ -362,7 +344,6 @@
 "VaultSync needs one-time access to your Obsidian folder before it can accept shares." = "VaultSync needs one-time access to your Obsidian folder before it can accept shares.";
 "VaultSync reported an unexpected error." = "VaultSync reported an unexpected error.";
 "Wait a moment and retry." = "Wait a moment and retry.";
-"What is a conflict?" = "What is a conflict?";
 "day" = "day";
 "days" = "days";
 "e.g. My Laptop" = "e.g. My Laptop";
@@ -370,14 +351,8 @@
 "hours" = "hours";
 "No Activity Yet" = "No Activity Yet";
 "Sync engine running" = "Sync engine running";
-"onboarding.welcome.title" = "Your Obsidian notes. Privately synced.";
-"onboarding.welcome.subtitle" = "Keep your vault in sync between your own devices — without relying on third-party cloud storage.";
-"onboarding.welcome.benefit.private" = "Private between your devices";
-"onboarding.welcome.benefit.obsidian" = "Built for Obsidian vaults";
 "onboarding.welcome.benefit.noCloud" = "No cloud account required";
-"onboarding.cta.continue" = "Continue";
 "onboarding.cta.openVaultSync" = "Open VaultSync";
-"onboarding.accessibility.page" = "Page %d of 2";
 "Setup Status" = "Setup Status";
 "Check setup progress and troubleshooting tips." = "Check setup progress and troubleshooting tips.";
 "Check the essentials for syncing. You can complete setup actions from the VaultSync home screen." = "Check the essentials for syncing. You can complete setup actions from the VaultSync home screen.";
@@ -581,7 +556,6 @@
 "Add your server first" = "Add your server first";
 "Best value" = "Best value";
 "Cloud Relay wakes a specific device. Pair the computer or server that hosts your vault on the Devices tab, then come back to subscribe." = "Cloud Relay wakes a specific device. Pair the computer or server that hosts your vault on the Devices tab, then come back to subscribe.";
-"Complete these steps right here. They light up green as you go — and you can always finish them later from the home screen." = "Complete these steps right here. They light up green as you go — and you can always finish them later from the home screen.";
 "Connect your Obsidian folder" = "Connect your Obsidian folder";
 "Double tap to copy" = "Double tap to copy";
 "Give VaultSync one-time access to your local Obsidian folder so it can sync your notes." = "Give VaultSync one-time access to your local Obsidian folder so it can sync your notes.";
@@ -947,3 +921,18 @@
 "Wait a moment, then reopen VaultSync or pull to refresh." = "Wait a moment, then reopen VaultSync or pull to refresh.";
 "Too Large to Compare" = "Too Large to Compare";
 "This note is %@ — above the %@ VaultSync loads for a comparison. Compare the versions in Obsidian, then choose which one to keep below." = "This note is %@ — above the %@ VaultSync loads for a comparison. Compare the versions in Obsidian, then choose which one to keep below.";
+"1 conflict" = "1 conflict";
+"1 vault" = "1 vault";
+"%d vaults" = "%d vaults";
+"1 file" = "1 file";
+"%@ files" = "%@ files";
+"Location" = "Location";
+"Options" = "Options";
+"Files" = "Files";
+"On this iPhone" = "On this iPhone";
+"This vault is no longer synced on this iPhone." = "This vault is no longer synced on this iPhone.";
+"This device is no longer paired with this iPhone." = "This device is no longer paired with this iPhone.";
+"Two devices changed the same note while apart. Nothing is deleted until you choose, and “Keep Both” never overwrites a copy." = "Two devices changed the same note while apart. Nothing is deleted until you choose, and “Keep Both” never overwrites a copy.";
+"Version %@ (%@)" = "Version %@ (%@)";
+"Waiting for First Sync" = "Waiting for First Sync";
+"Three steps. They turn green as you go; you can finish later from the home screen." = "Three steps. They turn green as you go; you can finish later from the home screen.";

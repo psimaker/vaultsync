@@ -25,6 +25,7 @@ struct IgnorePatternsView: View {
             }
             footerSection
         }
+        .vaultListBackground()
         .navigationTitle(L10n.tr("Sync Filters"))
         .navigationBarTitleDisplayMode(.inline)
         .task { await initialLoad() }
