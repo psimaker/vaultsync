@@ -18,52 +18,49 @@ struct ConflictListView: View {
     }
 
     var body: some View {
-        List {
-            Section {
-                VStack(alignment: .leading, spacing: VaultSpacing.s) {
-                    Text("What is a conflict?")
-                        .font(.headline)
-                    Text("A conflict happens when a file is edited on two devices at the same time. Syncthing saves both versions to prevent data loss.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.vertical, VaultSpacing.xs)
+        VaultPage {
+            if !conflicts.isEmpty {
+                StatusChip(
+                    text: VaultStatusModel.Label.conflicts(Set(conflicts.map(\.originalPath)).count).text,
+                    tone: .attention,
+                    systemImage: "exclamationmark.triangle.fill"
+                )
             }
-            
-            Section {
-                if conflicts.isEmpty {
-                    Label("All conflicts resolved", systemImage: "checkmark.circle")
-                        .foregroundStyle(.secondary)
-                } else {
+
+            // The doctrine in one sentence (decisions 027/028): no automatic
+            // choice, and Keep Both never replaces a file.
+            Text(L10n.tr("Two devices changed the same note while apart. Nothing is deleted until you choose, and “Keep Both” never overwrites a copy."))
+                .font(.subheadline)
+                .foregroundStyle(Color.vaultSecondaryLabel)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, VaultSpacing.xs)
+
+            if conflicts.isEmpty {
+                VaultEmptyState(
+                    systemImage: "checkmark",
+                    title: L10n.tr("All conflicts resolved")
+                )
+            } else {
+                VaultSectionHeader(L10n.tr("Conflicted Files"))
+                VaultCardGroup {
                     ForEach(conflicts) { conflict in
-                        NavigationLink {
-                            ConflictDiffView(
-                                folderID: folderID,
-                                conflict: conflict,
-                                syncthingManager: syncthingManager
-                            )
-                        } label: {
-                            VStack(alignment: .leading, spacing: VaultSpacing.xs) {
-                                Text(conflict.originalPath)
-                                    .font(.body)
-                                HStack(spacing: VaultSpacing.s) {
-                                    Label(conflict.formattedConflictDate, systemImage: "clock")
-                                    Label(conflict.deviceShortID, systemImage: "laptopcomputer")
-                                }
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                        NavigationLink(value: SyncRoute.conflict(folderID: folderID, conflict: conflict)) {
+                            VaultRow(
+                                conflict.originalPath,
+                                subtitle: conflict.formattedConflictDate + " · " + conflict.deviceShortID,
+                                systemImage: "doc.text",
+                                iconTint: .statusAttention
+                            ) {
+                                VaultChevron()
                             }
-                            .padding(.vertical, VaultSpacing.xxs)
-                            .accessibilityElement(children: .combine)
                         }
+                        .buttonStyle(.vaultRow)
                     }
                 }
-            } header: {
-                Text("Conflicted Files")
             }
         }
-        .navigationTitle("Conflicts")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationTitle(L10n.tr("Conflicts"))
+        .navigationBarTitleDisplayMode(.large)
     }
 
 }

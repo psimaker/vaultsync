@@ -111,19 +111,21 @@ struct LineDiffView: View {
         isComputing = false
     }
 
+    // Text-on-wash tokens (#187): the plain status colors on their own
+    // wash measured 3.8–4.6:1, short of AA for caption-sized code.
     private func backgroundColor(for type: DiffLine.LineType) -> Color {
         switch type {
         case .unchanged: return Color.clear
-        case .added: return Color.statusSuccess.opacity(0.18)
-        case .removed: return Color.statusError.opacity(0.18)
+        case .added: return Color.statusSuccessFill
+        case .removed: return Color.statusErrorFill
         }
     }
 
     private func foregroundColor(for type: DiffLine.LineType) -> Color {
         switch type {
-        case .unchanged: return Color.primary
-        case .added: return Color.statusSuccess
-        case .removed: return Color.statusError
+        case .unchanged: return Color.vaultLabel
+        case .added: return Color.statusSuccessText
+        case .removed: return Color.statusErrorText
         }
     }
 

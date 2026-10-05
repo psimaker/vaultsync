@@ -14,7 +14,7 @@ struct PendingSharesView: View {
     var onReconnectObsidian: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: VaultSpacing.l) {
+        VStack(alignment: .leading, spacing: VaultSpacing.m) {
             if !obsidianAccessible {
                 ActionCard(
                     status: .attention,
@@ -26,138 +26,151 @@ struct PendingSharesView: View {
             }
 
             if pendingFolders.isEmpty {
-                Label("No active pending shares", systemImage: "checkmark.circle")
+                Label(L10n.tr("No active pending shares"), systemImage: "checkmark.circle")
                     .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.vaultSecondaryLabel)
+                    .padding(.horizontal, VaultSpacing.xs)
             }
 
             ForEach(pendingFolders) { folder in
-                pendingRow(folder)
+                pendingCard(folder)
             }
 
             if !ignoredFolders.isEmpty {
-                DisclosureGroup(L10n.fmt("Ignored shares (%d)", ignoredFolders.count)) {
-                    VStack(alignment: .leading, spacing: VaultSpacing.s) {
-                        ForEach(ignoredFolders) { folder in
-                            HStack {
-                                VStack(alignment: .leading, spacing: VaultSpacing.xxs) {
-                                    Text(displayName(for: folder))
-                                        .font(.subheadline.weight(.semibold))
-                                    Text(offeredByDescription(for: folder))
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                // Restoring hands the share back to auto-accept;
-                                // "Choose Vault…" accepts it directly into a
-                                // picked target instead (#52).
-                                VStack(alignment: .trailing, spacing: VaultSpacing.xs) {
-                                    Button("Restore Share") {
-                                        onRestoreIgnored(folder)
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.regular)
-                                    Button("Choose Vault…") {
-                                        onChooseTarget(folder)
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.regular)
-                                    .disabled(!obsidianAccessible)
-                                }
-                            }
-                        }
-                    }
-                    .padding(.top, VaultSpacing.s)
-                }
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+                ignoredSharesCard
             }
         }
-        .padding(.vertical, VaultSpacing.xs)
     }
 
-    @ViewBuilder
-    private func pendingRow(_ folder: SyncthingManager.PendingFolderInfo) -> some View {
+    /// One offer on the info wash (#187) — the attention wash once the
+    /// automatic pass parked it, so a share waiting on a decision reads
+    /// differently from one that is simply ready.
+    private func pendingCard(_ folder: SyncthingManager.PendingFolderInfo) -> some View {
         let failure = failureByFolderID[folder.id]
         let hasFailure = failure != nil
-        VStack(alignment: .leading, spacing: VaultSpacing.s) {
-            HStack(alignment: .top, spacing: VaultSpacing.s) {
+        let inFlight = inFlightFolderIDs.contains(folder.id)
+        return VStack(alignment: .leading, spacing: VaultSpacing.m) {
+            HStack(alignment: .top, spacing: VaultSpacing.m) {
                 Image(systemName: hasFailure ? "exclamationmark.circle.fill" : "tray.and.arrow.down.fill")
+                    .font(.title3)
                     .foregroundStyle(hasFailure ? Color.statusAttention : Color.statusInfo)
+                    .frame(width: 28)
                     .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: VaultSpacing.xs) {
-                    HStack(spacing: VaultSpacing.xs) {
-                        Text(displayName(for: folder))
-                            .font(.body.weight(.semibold))
-                        StatusTag(
-                            text: hasFailure ? L10n.tr("Needs Attention") : L10n.tr("Ready"),
-                            tint: hasFailure ? Color.statusAttention : Color.statusInfo
-                        )
-                    }
-
+                    Text(displayName(for: folder))
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(Color.vaultLabel)
+                    StatusChip(
+                        text: hasFailure ? L10n.tr("Needs Attention") : L10n.tr("Ready"),
+                        tone: hasFailure ? .attention : .info
+                    )
                     Text(offeredByDescription(for: folder))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(.footnote)
+                        .foregroundStyle(Color.vaultSecondaryLabel)
 
                     if let failure {
                         Text(failure.message)
-                            .font(.caption)
-                            .foregroundStyle(Color.statusAttention)
+                            .font(.subheadline)
+                            .foregroundStyle(Color.statusAttentionText)
                         if !failure.remediation.isEmpty {
                             Text(failure.remediation)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+                                .font(.footnote)
+                                .foregroundStyle(Color.vaultSecondaryLabel)
                         }
                     }
                 }
-                Spacer()
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .accessibilityElement(children: .combine)
 
-            HStack(spacing: VaultSpacing.s) {
-                if inFlightFolderIDs.contains(folder.id) {
-                    ProgressView()
-                        .controlSize(.small)
-                        .accessibilityHidden(true)
-                    Text("Applying…")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            VaultButtonRow {
+                if inFlight {
+                    HStack(spacing: VaultSpacing.s) {
+                        ProgressView()
+                            .controlSize(.small)
+                            .accessibilityHidden(true)
+                        Text(L10n.tr("Applying…"))
+                            .font(.footnote)
+                            .foregroundStyle(Color.vaultSecondaryLabel)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: VaultMetrics.compactButtonHeight)
                 } else if failure == nil {
-                    Button("Accept Share") {
+                    Button(L10n.tr("Accept Share")) {
                         onAccept(folder)
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.vault(.primary, compact: true))
                     .disabled(!obsidianAccessible)
                 } else {
                     // Not "Retry": most parks come from the AUTOMATIC pass
                     // (e.g. a merge waiting for consent) — "Retry" falsely
                     // implied a prior attempt by the user (#71).
-                    Button("Review and Accept") {
+                    Button(L10n.tr("Review and Accept")) {
                         onRetry(folder)
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.vault(.primary, compact: true))
                     .disabled(!obsidianAccessible)
                 }
 
-                Button("Ignore for Now") {
+                Button(L10n.tr("Ignore for Now")) {
                     onIgnore(folder)
                 }
-                .buttonStyle(.bordered)
-                .disabled(inFlightFolderIDs.contains(folder.id))
+                .buttonStyle(.vault(.neutral, compact: true))
+                .disabled(inFlight)
             }
 
             // The per-share manual path (#52): pick an existing empty vault or
             // create a custom-named folder instead of the share-label default.
-            if !inFlightFolderIDs.contains(folder.id) {
-                Button("Choose Vault…") {
+            if !inFlight {
+                Button(L10n.tr("Choose Vault…")) {
                     onChooseTarget(folder)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.vault(.neutral, compact: true))
                 .disabled(!obsidianAccessible)
             }
         }
-        .padding(VaultSpacing.m)
+        .padding(VaultSpacing.l)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .vaultCard(tone: hasFailure ? .attention : .info)
+    }
+
+    private var ignoredSharesCard: some View {
+        DisclosureGroup(L10n.fmt("Ignored shares (%d)", ignoredFolders.count)) {
+            VStack(alignment: .leading, spacing: VaultSpacing.l) {
+                ForEach(ignoredFolders) { folder in
+                    VStack(alignment: .leading, spacing: VaultSpacing.s) {
+                        VStack(alignment: .leading, spacing: VaultSpacing.xxs) {
+                            Text(displayName(for: folder))
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(Color.vaultLabel)
+                            Text(offeredByDescription(for: folder))
+                                .font(.footnote)
+                                .foregroundStyle(Color.vaultSecondaryLabel)
+                        }
+                        .accessibilityElement(children: .combine)
+                        // Restoring hands the share back to auto-accept;
+                        // "Choose Vault…" accepts it directly into a picked
+                        // target instead (#52).
+                        VaultButtonRow {
+                            Button(L10n.tr("Restore Share")) {
+                                onRestoreIgnored(folder)
+                            }
+                            .buttonStyle(.vault(.neutral, compact: true))
+                            Button(L10n.tr("Choose Vault…")) {
+                                onChooseTarget(folder)
+                            }
+                            .buttonStyle(.vault(.neutral, compact: true))
+                            .disabled(!obsidianAccessible)
+                        }
+                    }
+                }
+            }
+            .padding(.top, VaultSpacing.m)
+        }
+        .font(.subheadline)
+        .tint(Color.vaultAccentText)
+        .padding(VaultSpacing.l)
         .vaultCard()
     }
 

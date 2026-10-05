@@ -16,22 +16,34 @@ struct DeviceDetailView: View {
             && syncthingManager.isWithinReconnectGrace(deviceID: device.deviceID)
     }
 
-    var body: some View {
-        List {
-            Section("Device") {
-                VStack(alignment: .leading, spacing: VaultSpacing.xs) {
-                    Text("Device ID")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    MonoField(text: device.deviceID, accessibilityName: L10n.tr("Device ID"))
-                }
-                .padding(.vertical, VaultSpacing.xs)
+    /// Same escalation as the device-list row: calm "Connecting…" during
+    /// the reconnect grace window, "Paused" for intentionally disabled peers,
+    /// neutral "Offline" after the grace — no ✕ for a state that is normal
+    /// when the other device is simply not running.
+    private var presence: (status: SyncStatus, label: String, symbol: String) {
+        if isConnecting {
+            return (.starting, L10n.tr("Connecting…"), "hourglass")
+        }
+        if device.paused {
+            return (.paused, L10n.tr("Paused"), "pause.circle.fill")
+        }
+        if device.connected {
+            return (.synced, L10n.tr("Connected"), "checkmark.circle.fill")
+        }
+        return (.paused, L10n.tr("Offline"), "moon.zzz.fill")
+    }
 
-                HStack {
-                    Text("Name")
-                    Spacer()
-                    TextField("Device name", text: $editedName)
-                        .multilineTextAlignment(.trailing)
+    var body: some View {
+        VaultPage {
+            StatusChip(text: presence.label, tone: presence.status.tone, systemImage: presence.symbol)
+                .accessibilityHint(L10n.tr("Shows whether this Syncthing device is currently reachable."))
+
+            VaultSectionHeader(L10n.tr("Name"))
+            VaultCardGroup {
+                HStack(spacing: VaultSpacing.m) {
+                    TextField(L10n.tr("Device name"), text: $editedName)
+                        .foregroundStyle(Color.vaultLabel)
+                        .submitLabel(.done)
                         .onSubmit {
                             saveName()
                         }
@@ -44,51 +56,25 @@ struct DeviceDetailView: View {
                             .accessibilityLabel(L10n.tr("Name saved"))
                     }
                 }
-
-                LabeledContent("Status") {
-                    // Mirrors the device-list row: calm "Connecting…" during
-                    // the reconnect grace window, "Paused" for intentionally
-                    // disabled peers, neutral "Offline" after the grace — no ✕
-                    // glyph for a state that is normal when the other device
-                    // is simply not running.
-                    HStack(spacing: 6) {
-                        if isConnecting {
-                            ProgressView()
-                                .controlSize(.small)
-                                .tint(Color.statusStarting)
-                                .accessibilityHidden(true)
-                            Text(L10n.tr("Connecting…"))
-                        } else if device.paused {
-                            Image(systemName: "pause.circle.fill")
-                                .foregroundStyle(Color.statusInactive)
-                                .accessibilityHidden(true)
-                            Text(L10n.tr("Paused"))
-                        } else if device.connected {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(Color.statusSuccess)
-                                .accessibilityHidden(true)
-                            Text(L10n.tr("Connected"))
-                        } else {
-                            Image(systemName: "moon.zzz.fill")
-                                .foregroundStyle(Color.statusInactive)
-                                .accessibilityHidden(true)
-                            Text(L10n.tr("Offline"))
-                        }
-                    }
-                    .accessibilityHint("Shows whether this Syncthing device is currently reachable.")
-                }
+                .padding(.horizontal, VaultSpacing.l)
+                .frame(minHeight: VaultMetrics.rowMinHeight)
             }
 
-            Section {
-                Button(role: .destructive) {
-                    showRemoveConfirm = true
-                } label: {
-                    Label("Remove Device", systemImage: "trash")
-                }
+            VaultSectionHeader(L10n.tr("Device ID"))
+            MonoField(text: device.deviceID, accessibilityName: L10n.tr("Device ID"))
+                .padding(VaultSpacing.m)
+                .vaultCard()
+
+            Button(role: .destructive) {
+                showRemoveConfirm = true
+            } label: {
+                Label(L10n.tr("Remove Device"), systemImage: "trash")
             }
+            .buttonStyle(.vault(.destructive))
+            .padding(.top, VaultSpacing.s)
         }
         .navigationTitle(device.name.isEmpty ? L10n.tr("Unnamed Device") : device.name)
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarTitleDisplayMode(.large)
         .onAppear {
             editedName = device.name
             #if DEBUG

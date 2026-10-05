@@ -21,6 +21,7 @@ struct RelayDiagnosticsView: View {
             actionSection
             troubleshootingSection
         }
+        .vaultListBackground()
         .navigationTitle("Relay Diagnostics")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: subscriptionManager.relayStatusPollViewState) {

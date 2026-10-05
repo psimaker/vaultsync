@@ -913,6 +913,22 @@ final class VaultManager {
             technicalDetails: reason
         )
     }
+
+    // MARK: - Test hooks
+
+    #if DEBUG
+    /// LAB: seed the published access state for a design-preview fixture run
+    /// (#187), where no folder picker can grant real access on a simulator.
+    /// Sets only the observable values the UI reads — no bookmark, lease, or
+    /// filesystem access happens. Compiled out of release builds.
+    func _testSetAccess(accessible: Bool, detectedVaults: [String], obsidianDirectoryURL: URL?) {
+        self.obsidianDirectoryURL = obsidianDirectoryURL
+        self.detectedVaults = detectedVaults
+        isAccessible = accessible
+        needsReconnect = false
+        accessIssue = nil
+    }
+    #endif
 }
 
 /// Outcome of deciding where a share may sync: a safe absolute path, a

@@ -21,7 +21,6 @@
 "Background Sync Failed" = "La sincronización en segundo plano falló";
 "Background Sync Found No Vaults" = "La sincronización en segundo plano no encontró Vaults";
 "Background Sync Timed Out" = "La sincronización en segundo plano agotó el tiempo de espera";
-"Background sync: %@" = "Sincronización en segundo plano: %@";
 "Camera Access Required" = "Se requiere acceso a la cámara";
 "Can't find the Obsidian folder?" = "¿No encuentras la carpeta de Obsidian?";
 "Cancel" = "Cancelar";
@@ -42,7 +41,6 @@
 "Cloud Relay provisioning could not contact the relay backend." = "El aprovisionamiento de Cloud Relay no pudo contactar con el backend del relay.";
 "Cloud Relay provisioning did not complete." = "El aprovisionamiento de Cloud Relay no se completó.";
 "Cloud Relay provisioning is temporarily rate limited." = "El aprovisionamiento de Cloud Relay está temporalmente limitado por frecuencia.";
-"Completion" = "Progreso";
 "Configuration Error" = "Error de configuración";
 "Conflict Resolution Failed" = "No se pudo resolver el conflicto";
 "Conflict Resolved" = "Conflicto resuelto";
@@ -69,7 +67,6 @@
 "Could not read original file.\n\n%@" = "No se pudo leer el archivo original.\n\n%@";
 "Create a vault in Obsidian first. VaultSync will detect it automatically." = "Crea primero un Vault en Obsidian. VaultSync lo detectará automáticamente.";
 "Creates a folder with this name in your Obsidian directory and syncs the share into it." = "Crea una carpeta con este nombre en tu directorio de Obsidian y sincroniza la compartición en ella.";
-"Device" = "Dispositivo";
 "Device ID" = "ID del dispositivo";
 "%d of %d devices connected" = "%d de %d dispositivos conectados";
 "Device name" = "Nombre del dispositivo";
@@ -100,7 +97,6 @@
 "Folder reached idle state after syncing." = "La carpeta alcanzó el estado inactivo tras la sincronización.";
 "Folder reported an error." = "La carpeta informó de un error.";
 "Get notified about conflicts" = "Recibe avisos de conflictos";
-"Global Files" = "Archivos globales";
 "Health Endpoint" = "Endpoint de salud";
 "Healthy" = "En buen estado";
 "How to fix: %@" = "Cómo solucionarlo: %@";
@@ -135,7 +131,6 @@
 "Learn how to fix" = "Aprende a solucionarlo";
 "Link Share" = "Vincular compartición";
 "Loading…" = "Cargando…";
-"Local Files" = "Archivos locales";
 "Log" = "Registro";
 "Manage Subscription" = "Gestionar suscripción";
 "Name" = "Nombre";
@@ -161,7 +156,6 @@
 "Not Configured" = "No configurado";
 "Not syncing yet — share this vault from your computer to start." = "Aún no se sincroniza: comparte este Vault desde tu ordenador para empezar.";
 "Not now" = "Ahora no";
-"Not Shared" = "No compartido";
 "Not attempted" = "No intentado";
 "Not checked" = "No comprobado";
 "Not shared" = "No compartido";
@@ -188,7 +182,6 @@
 "Opens the form to add a Syncthing device." = "Abre el formulario para añadir un dispositivo de Syncthing.";
 "Optional" = "Opcional";
 "Overwrites your local file with the version from the other device." = "Sobrescribe tu archivo local con la versión del otro dispositivo.";
-"Path" = "Ruta";
 "Peer connection is active." = "La conexión con el par está activa.";
 "Pending Shares" = "Comparticiones pendientes";
 "Pending shares are waiting to be accepted before sync can start." = "Las comparticiones pendientes esperan a ser aceptadas antes de que pueda comenzar la sincronización.";
@@ -247,7 +240,6 @@
 "Resolve Conflicts" = "Resolver conflictos";
 "Restore Purchases" = "Restaurar compras";
 "Restore Share" = "Restaurar compartición";
-"A conflict happens when a file is edited on two devices at the same time. Syncthing saves both versions to prevent data loss." = "Un conflicto ocurre cuando un archivo se edita en dos dispositivos a la vez. Syncthing guarda ambas versiones para evitar la pérdida de datos.";
 "APNs Registration" = "Registro de APNs";
 "APNs Token" = "Token de APNs";
 "Context: %@ · %@" = "Contexto: %@ · %@";
@@ -295,8 +287,6 @@
 "Starting…" = "Iniciando…";
 "Starting" = "Iniciando";
 "Paused" = "En pausa";
-"State" = "Estado";
-"Status" = "Estado";
 "Subscribe" = "Suscribirse";
 "Sync Activity" = "Actividad de sincronización";
 "Sync Activity Looks Stale" = "La actividad de sincronización parece desactualizada";
@@ -305,7 +295,6 @@
 "Sync Error" = "Error de sincronización";
 "Sync Issue" = "Problema de sincronización";
 "Sync Issues" = "Problemas de sincronización";
-"Sync Status" = "Estado de sincronización";
 "Sync completed in %@" = "Sincronización completada en %@";
 "Sync error in %@" = "Error de sincronización en %@";
 "Sync started in %@" = "Sincronización iniciada en %@";
@@ -362,7 +351,6 @@
 "VaultSync needs one-time access to your Obsidian folder before it can accept shares." = "VaultSync necesita acceso por única vez a tu carpeta de Obsidian antes de poder aceptar comparticiones.";
 "VaultSync reported an unexpected error." = "VaultSync informó de un error inesperado.";
 "Wait a moment and retry." = "Espera un momento y vuelve a intentarlo.";
-"What is a conflict?" = "¿Qué es un conflicto?";
 "day" = "día";
 "days" = "días";
 "e.g. My Laptop" = "p. ej. Mi portátil";
@@ -370,14 +358,8 @@
 "hours" = "horas";
 "No Activity Yet" = "Aún no hay actividad";
 "Sync engine running" = "Motor de sincronización en ejecución";
-"onboarding.welcome.title" = "Tus notas de Obsidian. Sincronizadas en privado.";
-"onboarding.welcome.subtitle" = "Mantén tu Vault sincronizado entre tus propios dispositivos, sin depender del almacenamiento en la nube de terceros.";
-"onboarding.welcome.benefit.private" = "Privado entre tus dispositivos";
-"onboarding.welcome.benefit.obsidian" = "Diseñado para Vaults de Obsidian";
 "onboarding.welcome.benefit.noCloud" = "No requiere cuenta en la nube";
-"onboarding.cta.continue" = "Continuar";
 "onboarding.cta.openVaultSync" = "Abrir VaultSync";
-"onboarding.accessibility.page" = "Página %d de 2";
 "Setup Status" = "Estado de la configuración";
 "Check setup progress and troubleshooting tips." = "Consulta el progreso de la configuración y los consejos para resolver problemas.";
 "Check the essentials for syncing. You can complete setup actions from the VaultSync home screen." = "Comprueba lo esencial para sincronizar. Puedes completar las acciones de configuración desde la pantalla de inicio de VaultSync.";
@@ -947,3 +929,16 @@
 "Wait a moment, then reopen VaultSync or pull to refresh." = "Espera un momento y vuelve a abrir VaultSync o desliza para actualizar.";
 "Too Large to Compare" = "Demasiado grande para comparar";
 "This note is %@ — above the %@ VaultSync loads for a comparison. Compare the versions in Obsidian, then choose which one to keep below." = "Esta nota ocupa %@, más de los %@ que VaultSync carga para una comparación. Compara las versiones en Obsidian y elige abajo cuál conservar.";
+"1 conflict" = "1 conflicto";
+"1 vault" = "1 Vault";
+"%d vaults" = "%d Vaults";
+"1 file" = "1 archivo";
+"%@ files" = "%@ archivos";
+"Location" = "Ubicación";
+"Options" = "Opciones";
+"Files" = "Archivos";
+"On this iPhone" = "En este iPhone";
+"This vault is no longer synced on this iPhone." = "Este Vault ya no se sincroniza en este iPhone.";
+"This device is no longer paired with this iPhone." = "Este dispositivo ya no está vinculado con este iPhone.";
+"Two devices changed the same note while apart. Nothing is deleted until you choose, and “Keep Both” never overwrites a copy." = "Dos dispositivos cambiaron la misma nota mientras estaban separados. No se elimina nada hasta que elijas, y \"Conservar ambas\" nunca sobrescribe una copia.";
+"Version %@ (%@)" = "Versión %@ (%@)";

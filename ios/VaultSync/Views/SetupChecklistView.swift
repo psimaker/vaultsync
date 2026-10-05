@@ -8,22 +8,26 @@ struct SetupChecklistView: View {
     var onAction: ((SetupChecklistViewModel.ChecklistAction) -> Void)? = nil
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
+    /// #187: the summary and every item are their own cards on the page,
+    /// instead of bordered boxes nested inside one big card.
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            headerSection
+        VStack(alignment: .leading, spacing: VaultSpacing.m) {
+            VStack(alignment: .leading, spacing: VaultSpacing.l) {
+                headerSection
 
-            ProgressView(value: viewModel.completionProgress)
-                .tint(viewModel.isReadyToFinish ? Color.statusSuccess : Color.statusAttention)
-                .accessibilityLabel(L10n.tr("Setup status progress"))
-                .accessibilityValue(L10n.fmt("%d of %d essentials ready", viewModel.completedRequiredCount, viewModel.totalRequiredCount))
+                ProgressView(value: viewModel.completionProgress)
+                    .tint(viewModel.isReadyToFinish ? Color.statusSuccess : Color.statusAttention)
+                    .accessibilityLabel(L10n.tr("Setup status progress"))
+                    .accessibilityValue(L10n.fmt("%d of %d essentials ready", viewModel.completedRequiredCount, viewModel.totalRequiredCount))
+            }
+            .padding(VaultSpacing.l)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .vaultCard()
 
             ForEach(viewModel.items) { item in
                 checklistRow(item)
             }
-
         }
-        .padding(VaultSpacing.l)
-        .vaultCard()
     }
 
     @ViewBuilder
@@ -32,28 +36,26 @@ struct SetupChecklistView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text(L10n.tr("Check the essentials for syncing. You can complete setup actions from the VaultSync home screen."))
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                Text(L10n.fmt("%d of %d essentials ready", viewModel.completedRequiredCount, viewModel.totalRequiredCount))
-                    .font(.caption.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, VaultSpacing.s)
-                    .padding(.vertical, VaultSpacing.xs)
-                    .background(Color(.tertiarySystemBackground), in: Capsule())
+                    .foregroundStyle(Color.vaultSecondaryLabel)
+                progressChip
             }
         } else {
             HStack(alignment: .firstTextBaseline) {
                 Text(L10n.tr("Check the essentials for syncing. You can complete setup actions from the VaultSync home screen."))
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.vaultSecondaryLabel)
                 Spacer()
-                Text(L10n.fmt("%d of %d essentials ready", viewModel.completedRequiredCount, viewModel.totalRequiredCount))
-                    .font(.caption.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, VaultSpacing.s)
-                    .padding(.vertical, VaultSpacing.xs)
-                    .background(Color(.tertiarySystemBackground), in: Capsule())
+                progressChip
             }
         }
+    }
+
+    private var progressChip: some View {
+        StatusChip(
+            text: L10n.fmt("%d of %d essentials ready", viewModel.completedRequiredCount, viewModel.totalRequiredCount),
+            tone: viewModel.isReadyToFinish ? .success : .neutral
+        )
+        .monospacedDigit()
     }
 
     @ViewBuilder
@@ -90,17 +92,17 @@ struct SetupChecklistView: View {
 
             Text(item.description)
                 .font(.subheadline)
-                .foregroundStyle(item.isComplete ? .secondary : .primary)
+                .foregroundStyle(item.isComplete ? Color.vaultSecondaryLabel : Color.vaultLabel)
 
             if !item.remediation.isEmpty && !item.isComplete {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "arrow.forward.circle.fill")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.vaultSecondaryLabel)
                         .accessibilityHidden(true)
                     Text(item.remediation)
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .font(.footnote)
+                .foregroundStyle(Color.vaultSecondaryLabel)
                 .accessibilityElement(children: .combine)
             }
 
@@ -108,20 +110,14 @@ struct SetupChecklistView: View {
                 Button(actionTitle(for: action)) {
                     onAction(action)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.regular)
+                .buttonStyle(.vault(.primary, compact: true))
                 .padding(.top, VaultSpacing.xxs)
             }
 
         }
-        .padding(VaultSpacing.m)
+        .padding(VaultSpacing.l)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.systemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: VaultRadius.control, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: VaultRadius.control, style: .continuous)
-                .stroke(Color(.separator), lineWidth: 0.5)
-        )
+        .vaultCard()
     }
 
     private func statusIcon(for item: SetupChecklistViewModel.ChecklistItem) -> String {
@@ -134,7 +130,7 @@ struct SetupChecklistView: View {
 
     private func statusColor(for item: SetupChecklistViewModel.ChecklistItem) -> Color {
         if item.isOptional {
-            return item.isComplete ? .statusSuccess : .secondary
+            return item.isComplete ? .statusSuccess : .vaultSecondaryLabel
         }
         if item.isComplete { return .statusSuccess }
         return .statusAttention
@@ -154,7 +150,7 @@ struct SetupChecklistView: View {
     @ViewBuilder
     private func optionalBadge(for item: SetupChecklistViewModel.ChecklistItem) -> some View {
         if item.isOptional {
-            StatusTag(text: L10n.tr("Optional"), tint: statusColor(for: item))
+            StatusChip(text: L10n.tr("Optional"), tone: item.isComplete ? .success : .neutral)
         }
     }
 
@@ -178,7 +174,7 @@ struct SetupChecklistSheet: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
+            VaultPage {
                 SetupChecklistView(
                     viewModel: SetupChecklistViewModel(
                         syncthingManager: syncthingManager,
@@ -187,10 +183,9 @@ struct SetupChecklistSheet: View {
                     ),
                     onAction: onAction
                 )
-                .padding(VaultSpacing.l)
             }
             .navigationTitle(L10n.tr("Setup Status"))
-            .navigationBarTitleDisplayMode(.inline)
+            .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }

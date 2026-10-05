@@ -2553,6 +2553,13 @@ final class SyncthingManager {
         isRunning = running
     }
 
+    /// Seeds the sync history the dashboard reads (header subtitle, the #94
+    /// "waiting for first sync" floor) without touching the history store.
+    func _testSetLastSyncTimes(global: Date?, byFolder: [String: Date]) {
+        lastSyncTime = global
+        lastSyncTimeByFolder = byFolder
+    }
+
     func _testUpdateWidgetSyncMetrics(
         previousStatuses: [String: FolderStatusInfo],
         newStatuses: [String: FolderStatusInfo]

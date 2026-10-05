@@ -31,6 +31,9 @@ struct ExternalLinkButton: View {
                     .imageScale(.small)
                     .accessibilityHidden(true)
             }
+            // Accent TEXT token, not the tint: the brand teal is short of
+            // 4.5:1 for text, and these links sit on tinted cards (#187).
+            .foregroundStyle(Color.vaultAccentText)
             .contentShape(Rectangle())
             .padding(.vertical, 4)
         }

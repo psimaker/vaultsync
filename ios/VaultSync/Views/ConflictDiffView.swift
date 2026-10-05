@@ -31,6 +31,12 @@ struct ConflictDiffView: View {
     @State private var showSkipError = false
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    /// At the accessibility text sizes a pinned three-button bar would take
+    /// half the screen and leave the two versions a sliver to scroll in —
+    /// the actions move to the end of the page instead.
+    private var actionsInline: Bool { dynamicTypeSize.isAccessibilitySize }
     
     enum ResolveAction {
         case keepThis
@@ -49,35 +55,37 @@ struct ConflictDiffView: View {
                     description: Text(loadError)
                 )
             } else if let tooLargeBytes {
-                tooLargeContent(bytes: tooLargeBytes)
-            } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(conflict.originalPath)
-                                .font(.headline)
-                            HStack(spacing: 8) {
-                                Label(conflict.deviceShortID, systemImage: "laptopcomputer")
-                                Label(conflict.formattedConflictDate, systemImage: "clock")
-                            }
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .accessibilityElement(children: .combine)
-                        }
-                        .padding(.horizontal)
-                        
-                        Divider()
-                        
-                        Toggle("Show Line-by-Line Diff", isOn: $showLineDiff)
-                            .padding(.horizontal)
-                            .padding(.bottom, 4)
-
-                        comparisonContent
+                if actionsInline {
+                    VaultPage {
+                        tooLargeContent(bytes: tooLargeBytes)
+                        resolutionButtons
                     }
-                    .padding(.vertical)
+                } else {
+                    tooLargeContent(bytes: tooLargeBytes)
+                }
+            } else {
+                VaultPage {
+                    conflictHeader
+
+                    Toggle(L10n.tr("Show Line-by-Line Diff"), isOn: $showLineDiff)
+                        .font(.subheadline)
+                        .foregroundStyle(Color.vaultLabel)
+                        .tint(Color.vaultAccent)
+                        .padding(.horizontal, VaultSpacing.l)
+                        .frame(minHeight: VaultMetrics.compactButtonHeight)
+                        .vaultCard()
+
+                    comparisonContent
+
+                    if actionsInline {
+                        resolutionButtons
+                            .padding(.top, VaultSpacing.s)
+                    }
                 }
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.vaultBackground.ignoresSafeArea())
         .navigationTitle("Resolve Conflict")
         .navigationBarTitleDisplayMode(.inline)
         #if DEBUG
@@ -106,7 +114,7 @@ struct ConflictDiffView: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            if !isLoading && loadError == nil {
+            if !isLoading && loadError == nil && !actionsInline {
                 resolutionBar
             }
         }
@@ -171,40 +179,72 @@ struct ConflictDiffView: View {
     /// all three confirm before mutating files — including Keep Both, which used
     /// to mutate with no confirmation.
     private var resolutionBar: some View {
+        resolutionButtons
+            .padding(.horizontal, VaultSpacing.gutter)
+            .padding(.vertical, VaultSpacing.m)
+            .frame(maxWidth: VaultMetrics.readableWidth)
+            .frame(maxWidth: .infinity)
+            .background(.bar)
+    }
+
+    private var resolutionButtons: some View {
         VStack(spacing: VaultSpacing.s) {
             Button {
                 confirmAction(.keepThis)
             } label: {
                 Label(L10n.tr("Keep This Device's Version"), systemImage: "iphone")
-                    .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.vault(.primary, compact: true))
             .accessibilityHint(L10n.tr("Discards the version from the other device."))
 
-            HStack(spacing: VaultSpacing.s) {
+            VaultButtonRow {
                 Button {
                     confirmAction(.keepBoth)
                 } label: {
                     Text(L10n.tr("Keep Both"))
-                        .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.vault(.tinted, compact: true))
                 .accessibilityHint(L10n.tr("Keeps your local file and renames the other device's file."))
 
                 Button(role: .destructive) {
                     confirmAction(.keepOther)
                 } label: {
                     Text(L10n.tr("Keep Other"))
-                        .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.vault(.destructive, compact: true))
                 .accessibilityHint(L10n.tr("Overwrites your local file with the version from the other device."))
             }
         }
-        .controlSize(.large)
-        .tint(.vaultAccent)
+    }
+
+    /// File, other device and conflict time — the card the canvas opens the
+    /// conflict with.
+    private var conflictHeader: some View {
+        HStack(alignment: .top, spacing: VaultSpacing.m) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.title3)
+                .foregroundStyle(Color.statusAttention)
+                .frame(width: 28)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: VaultSpacing.xs) {
+                Text(conflict.originalPath)
+                    .font(.headline)
+                    .foregroundStyle(Color.vaultLabel)
+                    .fixedSize(horizontal: false, vertical: true)
+                // Wraps label by label at large text sizes instead of
+                // breaking the device ID and the date mid-word.
+                VaultFlowLayout(spacing: VaultSpacing.s) {
+                    Label(conflict.deviceShortID, systemImage: "laptopcomputer")
+                    Label(conflict.formattedConflictDate, systemImage: "clock")
+                }
+                .font(.footnote)
+                .foregroundStyle(Color.vaultSecondaryLabel)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
         .padding(VaultSpacing.l)
-        .background(.bar)
+        .vaultCard()
+        .accessibilityElement(children: .combine)
     }
 
     /// The body of the comparison — line-by-line diff (with a colour/sign legend)
@@ -213,24 +253,29 @@ struct ConflictDiffView: View {
     @ViewBuilder
     private var comparisonContent: some View {
         if showLineDiff {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: VaultSpacing.s) {
                 Text("Differences")
                     .font(.subheadline.bold())
-                    .padding(.horizontal)
+                    .foregroundStyle(Color.vaultLabel)
                 diffLegend
                 LineDiffView(original: originalContent, conflict: conflictContent)
             }
+            .padding(VaultSpacing.l)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .vaultCard()
         } else {
             fileSection(
                 title: L10n.tr("This Device"),
                 icon: "iphone",
-                content: originalContent
+                content: originalContent,
+                emphasized: true
             )
 
             fileSection(
                 title: L10n.fmt("Other Device (%@)", conflict.deviceShortID),
                 icon: "laptopcomputer",
-                content: conflictContent
+                content: conflictContent,
+                emphasized: false
             )
         }
     }
@@ -241,12 +286,11 @@ struct ConflictDiffView: View {
     private var diffLegend: some View {
         HStack(spacing: 12) {
             Label(L10n.tr("Other Device"), systemImage: "plus")
-                .foregroundStyle(Color.statusSuccess)
+                .foregroundStyle(Color.statusSuccessText)
             Label(L10n.tr("This Device"), systemImage: "minus")
-                .foregroundStyle(Color.statusError)
+                .foregroundStyle(Color.statusErrorText)
         }
         .font(.caption2)
-        .padding(.horizontal)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(L10n.tr("Added lines come from the other device; removed lines are your version on this device."))
     }
@@ -270,22 +314,29 @@ struct ConflictDiffView: View {
         }
     }
 
-    private func fileSection(title: String, icon: String, content: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+    /// One version of the note. This device's version carries the accent
+    /// outline (the canvas's "this iPhone" box), the other device's copy the
+    /// hairline.
+    private func fileSection(title: String, icon: String, content: String, emphasized: Bool) -> some View {
+        VStack(alignment: .leading, spacing: VaultSpacing.s) {
             Label(title, systemImage: icon)
                 .font(.subheadline.bold())
-                .padding(.horizontal)
+                .foregroundStyle(Color.vaultLabel)
 
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(content.isEmpty ? L10n.tr("(empty or unreadable)") : content)
                     .font(.vaultMono(.caption))
-                    .padding(VaultSpacing.m)
+                    .foregroundStyle(Color.vaultLabel)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .background(Color(.secondarySystemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: VaultRadius.control, style: .continuous))
-            .padding(.horizontal)
         }
+        .padding(VaultSpacing.m)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.vaultSurface, in: RoundedRectangle(cornerRadius: VaultRadius.control, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: VaultRadius.control, style: .continuous)
+                .strokeBorder(emphasized ? Color.vaultAccent : Color.vaultHairline, lineWidth: emphasized ? 1.5 : 1)
+        )
     }
 
     /// The note exceeds the bridge's read bound (#184, decision 041): nothing
@@ -318,6 +369,16 @@ struct ConflictDiffView: View {
     }
 
     private func loadContent() async {
+        #if DEBUG
+        // LAB: the design-preview fixture runs without an engine, so there
+        // is nothing to read — show its fictional note bodies (#187).
+        if UIAuditFixture.active == UIAuditFixture.designPreview {
+            originalContent = DesignPreviewFixture.conflictLocalText
+            conflictContent = DesignPreviewFixture.conflictRemoteText
+            isLoading = false
+            return
+        }
+        #endif
         let capturedFolderID = folderID
         let capturedConflict = conflict
 

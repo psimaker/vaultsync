@@ -15,6 +15,9 @@ enum UIAuditFixture {
     static let markerError = "marker-error"
     static let deviceRemovalConsent = "device-removal-consent"
     static let conflictResolveConsent = "conflict-resolve-consent"
+    /// Representative fictional state for redesign screenshots (#187) —
+    /// see `DesignPreviewFixture`.
+    static let designPreview = "design-preview"
 
     /// The fixture named by `-uiaudit-fixture <name>`, read via the argument
     /// domain UserDefaults overlay; nil in any normal run.

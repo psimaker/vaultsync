@@ -6,6 +6,10 @@ All notable changes to VaultSync are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- **A fresh, calm design: one status you can trust at a glance, everything else in quiet cards** ([#187](https://github.com/psimaker/vaultsync/issues/187)) — the home screen opens with a single status card (the same honest state as before, now with the vault count, connected devices and Cloud Relay beside it), followed by sync issues, pending shares and your vaults. Every vault shows its own status — up to date, syncing with progress, waiting for its first sync, conflicts, paused, or folder missing — the same on the home screen and on the vault's own screen, together with its files, size and devices. The vault, conflict, device, Cloud Relay, Settings and setup screens share the new look in light and dark, and setup is now a single screen. Text on the new cards, chips and buttons meets WCAG AA contrast, and Increase Contrast deepens it further. Consent dialogs, the subscription plan picker and all sync behavior are unchanged. Recorded in decision 044.
+
 ### Fixed
 
 - **Stopping sync while the engine is still probing the network no longer leaves a data race behind** ([#152](https://github.com/psimaker/vaultsync/issues/152)) — after every start, the embedded Syncthing detects the network's NAT type over STUN, which takes several seconds; when the engine stopped during that probe, the probe finished afterwards and wrote an error value that the stopping code was still assigning, reading and returning. No crash or sync problem has been traced to it; at worst the stopping code could read a half-written value. A small patch to the embedded Syncthing gives the probe its own error value — upstream Syncthing still has the race (checked up to 2.1.6-rc.4). Recorded in decision 043.

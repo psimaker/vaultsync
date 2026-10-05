@@ -8,39 +8,46 @@ struct SyncIssuesView: View {
     let onAcceptFirstPendingShare: () -> Void
     let onRescanAllVaults: () -> Void
 
+    /// One card per issue (#187), on the wash of its severity: critical
+    /// issues on the error wash, warnings on the attention wash.
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ForEach(issues) { issue in
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: symbol(for: issue))
-                            .foregroundStyle(color(for: issue))
-                            .font(.body.weight(.semibold))
-                            .accessibilityHidden(true)
+        ForEach(issues) { issue in
+            VStack(alignment: .leading, spacing: VaultSpacing.m) {
+                HStack(alignment: .top, spacing: VaultSpacing.m) {
+                    Image(systemName: symbol(for: issue))
+                        .font(.title3)
+                        .foregroundStyle(color(for: issue))
+                        .frame(width: 28)
+                        .accessibilityHidden(true)
 
-                        VStack(alignment: .leading, spacing: 3) {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(issue.title)
-                                    .font(.subheadline.weight(.semibold))
-                                Text(issue.message)
-                                    .font(.caption)
-                                Text(issue.remediation)
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .accessibilityElement(children: .combine)
+                    VStack(alignment: .leading, spacing: VaultSpacing.xs) {
+                        VStack(alignment: .leading, spacing: VaultSpacing.xs) {
+                            Text(issue.title)
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(Color.vaultLabel)
+                            Text(issue.message)
+                                .font(.subheadline)
+                                .foregroundStyle(Color.vaultLabel)
+                            Text(issue.remediation)
+                                .font(.footnote)
+                                .foregroundStyle(Color.vaultSecondaryLabel)
+                        }
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityElement(children: .combine)
 
-                            if let url = troubleshootingURL(for: issue.kind) {
-                                ExternalLinkButton(titleKey: "Learn how to fix", url: url)
-                                    .font(.caption2)
-                            }
+                        if let url = troubleshootingURL(for: issue.kind) {
+                            ExternalLinkButton(titleKey: "Learn how to fix", url: url)
+                                .font(.footnote)
                         }
                     }
-
-                    actionView(for: issue)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(.vertical, 4)
+
+                actionView(for: issue)
             }
+            .padding(VaultSpacing.l)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .vaultCard(tone: issue.severity == .critical ? .error : .attention)
         }
     }
 
@@ -66,9 +73,9 @@ struct SyncIssuesView: View {
         }
     }
 
-    // Buttons are `.regular` (the 44pt minimum touch target — `.small` violated
-    // it), and a button that could do nothing is hidden instead of disabled with
-    // no explanation: the prose remediation above it remains the guidance.
+    // Buttons keep the 44pt minimum touch target (`.small` violated it), and a
+    // button that could do nothing is hidden instead of disabled with no
+    // explanation: the prose remediation above it remains the guidance.
     @ViewBuilder
     private func actionView(for issue: SyncthingManager.SyncIssueItem) -> some View {
         switch issue.kind {
@@ -89,16 +96,14 @@ struct SyncIssuesView: View {
                 Button("Rescan Failed Vaults") {
                     onRescanFailedFolders()
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.regular)
+                .buttonStyle(.vault(.primary, compact: true))
             }
 
         case .disconnectedPeers:
             Button("Add or Reconnect Device") {
                 onOpenAddDevice()
             }
-            .buttonStyle(.bordered)
-            .controlSize(.regular)
+            .buttonStyle(.vault(.primary, compact: true))
 
         case .pendingShares:
             if !syncthingManager.actionablePendingFolders.isEmpty {
@@ -109,20 +114,15 @@ struct SyncIssuesView: View {
                     : L10n.tr("Accept First Pending Share")) {
                     onAcceptFirstPendingShare()
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.regular)
+                .buttonStyle(.vault(.primary, compact: true))
             }
 
         case .conflicts:
             if let destination = firstConflictDestination(preferredFolderID: issue.folderID) {
-                NavigationLink("Resolve Conflicts") {
-                    ConflictListView(
-                        folderID: destination.folderID,
-                        syncthingManager: syncthingManager
-                    )
+                NavigationLink(value: SyncRoute.conflicts(folderID: destination.folderID, pathPrefix: nil)) {
+                    Text("Resolve Conflicts")
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.regular)
+                .buttonStyle(.vault(.primary, compact: true))
             }
 
         case .staleSync:
@@ -130,8 +130,7 @@ struct SyncIssuesView: View {
                 Button("Rescan All Vaults") {
                     onRescanAllVaults()
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.regular)
+                .buttonStyle(.vault(.primary, compact: true))
             }
 
         case .backgroundSync:
@@ -139,8 +138,7 @@ struct SyncIssuesView: View {
                 Button("Run Foreground Rescan") {
                     onRescanAllVaults()
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.regular)
+                .buttonStyle(.vault(.primary, compact: true))
             }
         }
     }

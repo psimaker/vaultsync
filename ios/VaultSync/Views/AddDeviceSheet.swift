@@ -55,6 +55,7 @@ struct AddDeviceSheet: View {
             } message: {
                 Text(L10n.tr("This is not a Syncthing device QR code. On the other device, open Syncthing → Actions → Show ID and scan the QR code shown there."))
             }
+            .vaultListBackground()
             .navigationTitle("Add Device")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

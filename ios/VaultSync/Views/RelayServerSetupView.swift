@@ -119,6 +119,7 @@ struct RelayServerSetupView: View {
                 }
             }
         }
+        .vaultListBackground()
         .navigationTitle(L10n.tr("Set Up Your Server"))
         .navigationBarTitleDisplayMode(.inline)
     }
