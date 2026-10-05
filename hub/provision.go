@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode"
+
+	"github.com/psimaker/vaultsync/hub/pairing"
 )
 
 // Provisioning is the only place the Hub changes Syncthing's configuration,
@@ -90,12 +92,7 @@ func dirStateFS(path string) (bool, bool, error) {
 }
 
 // vaultInfo is what pairing and `status` report about one folder.
-type vaultInfo struct {
-	ID         string   `json:"id"`
-	Label      string   `json:"label"`
-	Files      int64    `json:"files"`
-	SharedWith []string `json:"sharedWith"`
-}
+type vaultInfo = pairing.VaultInfo
 
 // slugify maps a human vault name onto a safe directory name: ASCII letters
 // and digits, lower case, dashes between words. Everything else — including

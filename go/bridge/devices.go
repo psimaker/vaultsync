@@ -44,11 +44,7 @@ func AddDevice(deviceID string, name string) string {
 		}
 	}
 
-	newDevice := config.DeviceConfiguration{
-		DeviceID:          id,
-		Name:              name,
-		RawNumConnections: singleConnectionPerDevice,
-	}
+	newDevice := peerDeviceConfig(id, name)
 
 	if err := commitConfigLocked(func(cfg *config.Configuration) {
 		cfg.Devices = append(cfg.Devices, newDevice)
@@ -57,6 +53,16 @@ func AddDevice(deviceID string, name string) string {
 	}
 
 	return ""
+}
+
+// peerDeviceConfig is the configuration every peer this device adds gets —
+// by Device ID (AddDevice) or by pairing with a Hub (ensureHubDevice).
+func peerDeviceConfig(id protocol.DeviceID, name string) config.DeviceConfiguration {
+	return config.DeviceConfiguration{
+		DeviceID:          id,
+		Name:              name,
+		RawNumConnections: singleConnectionPerDevice,
+	}
 }
 
 // RemoveDevice removes a peer device by its Device ID string.

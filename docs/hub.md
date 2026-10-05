@@ -1,8 +1,8 @@
 # VaultSync Hub
 
 The Hub is the simplest way to run VaultSync: one server or NAS keeps every
-vault, computers pair with a short code (the iPhone app pairs by Device ID
-until code/QR pairing ships), and nobody has to see a Syncthing Web UI. "Bring your own Syncthing" keeps working exactly as before — the Hub is
+vault, computers and iPhones pair with a short code (or the iPhone scans its QR
+code), and nobody has to see a Syncthing Web UI. "Bring your own Syncthing" keeps working exactly as before — the Hub is
 an addition, not a replacement.
 
 ## Set up a Hub (once)
@@ -51,6 +51,13 @@ one any time:
 cd /srv/vaultsync && docker compose exec hub vaultsync-hub code
 ```
 
+Next to the code, `code` prints a QR code for VaultSync on iPhone and the same
+pairing link as text: `vaultsync://pair?code=TULIP-ANCHOR-42&hub=192.168.1.20%3A8390`.
+`hub=` is the Hub's address on your network (the address of its default route,
+when that is a private one) and lets the iPhone skip the search; pass
+`--address 192.168.1.20` when it picks the wrong one (a VPN, say), or
+`--no-qr` when your terminal cannot draw the QR code.
+
 **Computer with Syncthing installed** — run the same link and choose
 **1) Obsidian device**, then enter the code. The setup finds the Hub on your
 network, asks which vault to join (or creates a new one) and either accepts the
@@ -61,9 +68,20 @@ Syncthing. Non-interactive:
 vaultsync-hub pair --code TULIP-ANCHOR-42 --vault "Notes" --create --path ~/Obsidian/Notes
 ```
 
-**iPhone** — today: add the Hub in VaultSync by its Device ID (shown by the
-setup and by `vaultsync-hub status`), then accept the vault the Hub shares.
-Pairing by code or QR from the app follows in a later release.
+**iPhone** — in VaultSync, open Devices → + → **Add Hub** (or **Add Hub** in
+setup). Type the code, or tap **Scan QR instead** — scanning the QR code with
+the iPhone's Camera app opens the same screen, already filled in. The app finds
+the Hub on your network (the iPhone must be on the same network; allow
+VaultSync under Settings → Privacy & Security → Local Network), asks which
+vault to sync, and the Hub shares it. The vault is then accepted like every
+other share: into its own folder inside your Obsidian folder, and never into a
+folder that already holds files without asking you — that decision waits under
+**Pending Shares** on the Sync tab. A link or QR code only fills in the screen;
+pairing always takes your tap, and only with an address on your local network.
+Your Hub's vault list is offered as it is: to start a new vault from the
+iPhone's notes, create it on the Hub first (`vaultsync-hub vault create NAME`)
+and choose it — the iPhone asks before it combines its folder of the same name
+with the Hub's. The Device ID way (Add Device) keeps working.
 
 ## What the Hub guarantees
 
@@ -99,7 +117,12 @@ docker compose pull && docker compose up -d           # update
 
 - **"no Hub answered"** on a device: device and Hub must be on the same network
   for pairing (afterwards they sync from anywhere). Pass `--hub HOST:8390` to
-  skip discovery. The `hub` container runs with host networking on purpose —
+  skip discovery. On iPhone, also check Settings → Privacy & Security → Local
+  Network → VaultSync, or scan the QR code: it carries the Hub's address.
+- **"The Hub address from the QR code did not answer"** on iPhone: the address
+  `code` put into the QR code is not reachable from the iPhone (a VPN or a
+  second network on the Hub). Tap **Search the Network Instead**, or print a
+  new code with `vaultsync-hub code --address <the Hub's LAN IP>`. The `hub` container runs with host networking on purpose —
   Docker Desktop on macOS/Windows cannot do that, which is why the Hub targets
   Linux.
 - **"the pairing code was locked"**: issue a new one with `vaultsync-hub code`.

@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/psimaker/vaultsync/hub/pairing"
 )
 
 func TestDiscoveryResponderAnswersProbe(t *testing.T) {
@@ -43,7 +45,7 @@ func TestDiscoveryResponderAnswersProbe(t *testing.T) {
 		if _, err := probe.WriteTo([]byte("garbage"), target); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := probe.WriteTo([]byte(discoveryProbe), target); err != nil {
+		if _, err := probe.WriteTo([]byte(pairing.DiscoveryProbe), target); err != nil {
 			t.Fatal(err)
 		}
 		_ = probe.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
@@ -56,7 +58,7 @@ func TestDiscoveryResponderAnswersProbe(t *testing.T) {
 			t.Fatalf("no discovery reply within the deadline: %v", err)
 		}
 	}
-	hub, ok := parseDiscoveryReply(string(buf[:n]), from)
+	hub, ok := pairing.ParseDiscoveryReply(string(buf[:n]), from)
 	if !ok {
 		t.Fatalf("unparseable reply %q", buf[:n])
 	}
@@ -66,18 +68,5 @@ func TestDiscoveryResponderAnswersProbe(t *testing.T) {
 	cancel()
 	if err := <-done; err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestParseDiscoveryReplyRejectsGarbage(t *testing.T) {
-	from := &net.UDPAddr{IP: net.IPv4(10, 0, 0, 5), Port: 5000}
-	for _, msg := range []string{"", "VSHUB1", "VSHUB1 abc name", "VSHUB1 70000 x", "VSHUB2 8390 x"} {
-		if _, ok := parseDiscoveryReply(msg, from); ok {
-			t.Errorf("accepted %q", msg)
-		}
-	}
-	hub, ok := parseDiscoveryReply("VSHUB1 8390", from)
-	if !ok || hub.Address != "10.0.0.5:8390" || hub.Name != "" {
-		t.Fatalf("minimal reply: %+v %v", hub, ok)
 	}
 }

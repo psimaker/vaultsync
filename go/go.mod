@@ -7,7 +7,13 @@ replace github.com/syncthing/syncthing => ./_syncthing_patched
 
 replace github.com/ccding/go-stun => ./_go-stun_patched
 
+// The Hub pairing client (hub/pairing, hub/pake) is linked into the app from
+// this repository's own hub module — one SPAKE2 implementation for the Hub,
+// its CLI and the iPhone (#174, decision 045).
+replace github.com/psimaker/vaultsync/hub => ../hub
+
 require (
+	github.com/psimaker/vaultsync/hub v0.0.0-00010101000000-000000000000
 	github.com/syncthing/syncthing v1.30.0-rc.1.0.20260211104138-dc2a77ab8e5b
 	github.com/thejerf/suture/v4 v4.0.6
 	golang.org/x/mobile v0.0.0-20260312152759-81488f6aeb60
@@ -15,6 +21,7 @@ require (
 )
 
 require (
+	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/Azure/go-ntlmssp v0.1.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/calmh/incontainer v1.0.0 // indirect

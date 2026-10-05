@@ -6,10 +6,13 @@ struct OnboardingView: View {
     var vaultManager: VaultManager
     var subscriptionManager: SubscriptionManager
     var shareAccept: ShareAcceptCoordinator
+    var hubLinkRouter: HubLinkRouter
 
     // Live setup actions — each step launches the real task instead of describing it.
     @State private var showObsidianPicker = false
     @State private var showAddDevice = false
+    /// The Add Hub sheet (#174), with the pairing link that opened it, if any.
+    @State private var addHubRequest: AddHubRequest?
     @State private var alertMessage: String?
     @State private var showAlert = false
     /// Non-error notice (e.g. "you selected a single vault") — its own alert so
@@ -84,6 +87,16 @@ struct OnboardingView: View {
                     onAdded: { showDeviceAddedHint = true }
                 )
             }
+            .sheet(item: $addHubRequest) { request in
+                // Onboarding shows the Hub's share on its own step 3, so
+                // the hand-off has no "Review in Sync".
+                AddHubSheet(
+                    syncthingManager: syncthingManager,
+                    vaultManager: vaultManager,
+                    shareAccept: shareAccept,
+                    link: request.link
+                )
+            }
             .alert(L10n.tr("Something Went Wrong"), isPresented: $showAlert) {
                 Button("OK") { }
             } message: {
@@ -132,6 +145,31 @@ struct OnboardingView: View {
             shareAccept.alertMessage = nil
             alertMessage = message
             showAlert = true
+        }
+        // A pairing link from the Camera app (#174) opens the Add Hub sheet
+        // here too — once no other sheet or alert is up.
+        .onChange(of: hubLinkRouter.pending, initial: true) { _, _ in
+            presentPendingHubLink()
+        }
+        .onChange(of: canPresentHubLink) { _, ready in
+            if ready { presentPendingHubLink() }
+        }
+    }
+
+    private var canPresentHubLink: Bool {
+        !showObsidianPicker && !showAddDevice && addHubRequest == nil && !showAlert && !showInfoAlert
+    }
+
+    private func presentPendingHubLink() {
+        guard hubLinkRouter.pending != nil, canPresentHubLink else { return }
+        switch hubLinkRouter.take() {
+        case .pair(let link):
+            addHubRequest = AddHubRequest(link: link)
+        case .unusable(let problem):
+            alertMessage = HubPairingCopy.scanProblem(problem)
+            showAlert = true
+        case nil:
+            break
         }
     }
 
@@ -185,17 +223,19 @@ struct OnboardingView: View {
         stepCard(
             number: 2,
             isComplete: deviceAdded,
-            title: L10n.tr("Add your computer or server"),
-            description: L10n.tr("Pair this iPhone with the Syncthing device that hosts your vault, by Device ID or QR code."),
-            actionTitle: L10n.tr("Add Device"),
-            action: { showAddDevice = true }
+            title: L10n.tr("Add your Hub or computer"),
+            description: L10n.tr("Type the code your Hub printed, or scan its QR code. Using Syncthing on a computer instead? Add it by its Device ID."),
+            actionTitle: L10n.tr("Add Hub"),
+            action: { addHubRequest = AddHubRequest() },
+            secondaryActionTitle: L10n.tr("Add Device"),
+            secondaryAction: { showAddDevice = true }
         )
 
         stepCard(
             number: 3,
             isComplete: vaultSyncing,
             title: L10n.tr("Sync your first vault"),
-            description: L10n.tr("Share your Obsidian vault from Syncthing on your computer. VaultSync accepts it automatically — this turns green the moment it arrives."),
+            description: L10n.tr("Pick a vault when you add your Hub, or share one from Syncthing on your computer. VaultSync accepts it automatically — this turns green the moment it arrives."),
             actionTitle: nil,
             action: nil,
             // The only step that happens on ANOTHER machine — without a
@@ -224,6 +264,8 @@ struct OnboardingView: View {
         description: String,
         actionTitle: String?,
         action: (() -> Void)?,
+        secondaryActionTitle: String? = nil,
+        secondaryAction: (() -> Void)? = nil,
         linkTitleKey: LocalizedStringKey? = nil,
         linkURL: URL? = nil
     ) -> some View {
@@ -280,19 +322,22 @@ struct OnboardingView: View {
                     if number == nextStep {
                         // The next unfinished step carries the screen's main
                         // action; leaving setup is the quieter choice below.
-                        Button(actionTitle, action: action)
-                            .buttonStyle(.vault(.primary, compact: true))
-                            .padding(.top, VaultSpacing.xs)
-                    } else {
-                        Button(action: action) {
-                            HStack(spacing: VaultSpacing.xs) {
-                                Text(actionTitle)
-                                Image(systemName: "chevron.right")
-                                    .font(.footnote.weight(.semibold))
-                                    .accessibilityHidden(true)
+                        VaultButtonRow {
+                            Button(actionTitle, action: action)
+                                .buttonStyle(.vault(.primary, compact: true))
+                            if let secondaryActionTitle, let secondaryAction {
+                                Button(secondaryActionTitle, action: secondaryAction)
+                                    .buttonStyle(.vault(.neutral, compact: true))
                             }
                         }
-                        .buttonStyle(.vaultLink)
+                        .padding(.top, VaultSpacing.xs)
+                    } else {
+                        VaultFlowLayout(spacing: VaultSpacing.l) {
+                            stepLink(actionTitle, action: action)
+                            if let secondaryActionTitle, let secondaryAction {
+                                stepLink(secondaryActionTitle, action: secondaryAction)
+                            }
+                        }
                     }
                 }
             }
@@ -301,6 +346,18 @@ struct OnboardingView: View {
         .padding(VaultSpacing.l)
         .frame(maxWidth: .infinity, alignment: .leading)
         .vaultCard()
+    }
+
+    private func stepLink(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: VaultSpacing.xs) {
+                Text(title)
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .accessibilityHidden(true)
+            }
+        }
+        .buttonStyle(.vaultLink)
     }
 
     /// The canvas's step marker: the step number in an outlined circle, a

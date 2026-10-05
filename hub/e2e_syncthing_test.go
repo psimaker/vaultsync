@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/psimaker/vaultsync/hub/pairing"
 )
 
 // End-to-end against two real Syncthing instances: a Hub and a device. Runs
@@ -169,7 +171,7 @@ func TestE2EHubPairsDeviceAndSyncsBothWays(t *testing.T) {
 	srv.logf = t.Logf
 	pairingHTTP := httptest.NewServer(srv.handler())
 	defer pairingHTTP.Close()
-	code, err := generateCode()
+	code, err := pairing.GenerateCode()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,8 +184,8 @@ func TestE2EHubPairsDeviceAndSyncsBothWays(t *testing.T) {
 	}
 
 	// --- Device side: pair, then accept locally ----------------------------
-	client := newPairClient(strings.TrimPrefix(pairingHTTP.URL, "http://"))
-	hello, err := client.handshake(ctx, code)
+	client := pairing.NewClient(strings.TrimPrefix(pairingHTTP.URL, "http://"))
+	hello, err := client.Handshake(ctx, code)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +200,7 @@ func TestE2EHubPairsDeviceAndSyncsBothWays(t *testing.T) {
 	if err := devST.client.PatchDevice(ctx, hubST.id, map[string]any{"addresses": []string{hubST.listen}}); err != nil {
 		t.Fatal(err)
 	}
-	reply, err := client.provision(ctx, 1, devST.id, "E2E Device", "Notes", true)
+	reply, err := client.Provision(ctx, 1, devST.id, "E2E Device", "Notes", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,18 +263,18 @@ func TestE2EHubPairsDeviceAndSyncsBothWays(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Hub vault now has files (>0) — ask the hub for a fresh view.
-	reply, err = client.provision(ctx, 2, devST.id, "E2E Device", "", false)
+	reply, err = client.Provision(ctx, 2, devST.id, "E2E Device", "", false)
 	if err != nil || reply.Error != "" {
 		t.Fatalf("list: %+v %v", reply, err)
 	}
 	seq := uint64(2)
 	waitUntil(t, "hub file count", 30*time.Second, func() bool {
 		seq++
-		r, err := client.provision(ctx, seq, devST.id, "E2E Device", "", false)
+		r, err := client.Provision(ctx, seq, devST.id, "E2E Device", "", false)
 		return err == nil && len(r.Vaults) == 1 && r.Vaults[0].Files > 0
 	})
 	seq++
-	r, err := client.provision(ctx, seq, devST.id, "E2E Device", "", false)
+	r, err := client.Provision(ctx, seq, devST.id, "E2E Device", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}

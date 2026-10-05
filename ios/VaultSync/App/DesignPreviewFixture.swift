@@ -31,6 +31,15 @@ enum DesignPreviewFixture {
         /// First run: Obsidian connected and a device added — the share
         /// from the computer is the next step.
         case onboardingShare = "onboarding-share"
+        /// The Add Hub sheet (#174) over a first pairing — no device, no
+        /// vault yet. `-design-preview-add-hub-step code|code-found|vault|done`
+        /// picks the step (default: code, the search still running).
+        case addHub = "add-hub"
+    }
+
+    /// The Add Hub step a design-preview run shows.
+    static var addHubStep: String {
+        UserDefaults.standard.string(forKey: "design-preview-add-hub-step") ?? "code"
     }
 
     /// `-design-preview-line-diff YES` opens the resolve screen with the
@@ -78,7 +87,7 @@ enum DesignPreviewFixture {
     @MainActor
     static func seed(syncthingManager: SyncthingManager, vaultManager: VaultManager) {
         let screen = self.screen
-        let firstRun = screen == .onboarding || screen == .onboardingShare
+        let firstRun = screen == .onboarding || screen == .onboardingShare || screen == .addHub
         vaultManager._testSetAccess(
             accessible: true,
             detectedVaults: firstRun ? [] : ["Notes", "Work"],
@@ -124,6 +133,40 @@ enum DesignPreviewFixture {
                 ]
             ),
         ] : [])
+    }
+
+    /// The Add Hub flow at the requested step, without a network: a Hub
+    /// that answered the search, the canvas's code and catalog.
+    @MainActor
+    static func hubPairingModel(syncthingManager: SyncthingManager) -> HubPairingModel {
+        let notes = HubVault(id: "vs-4f2a91c07b3e", label: "Notes", files: 1_284, devices: 2)
+        let work = HubVault(id: "vs-9c1d22aa0e57", label: "Work", files: 310, devices: 1)
+        let hello = HubHello(hubName: "VaultSync Hub", hubDeviceID: serverID, catalogAvailable: true, vaults: [notes, work])
+        let model = HubPairingModel(environment: HubPairingModel.Environment(
+            begin: { "design-preview" },
+            end: { _ in },
+            normalizeCode: { SyncBridgeService.hubPairingNormalizeCode($0) },
+            discover: { _ in .success([HubCandidate(address: "192.168.1.20:8390", name: "VaultSync Hub")]) },
+            handshake: { _, _, _ in .success(hello) },
+            provision: { _, _, _ in .success(notes) },
+            engineRunning: { true },
+            localFolderIDs: { [] },
+            deviceName: { "iPhone" }
+        ))
+        let fields = HubCodeFields(first: "TULIP", second: "ANCHOR", number: "42")
+        let found = HubPairingModel.Discovery.found([HubCandidate(address: "192.168.1.20:8390", name: "VaultSync Hub")])
+        switch addHubStep {
+        case "vault":
+            model._previewSet(fields: fields, discovery: found, hello: hello, selectedVaultID: notes.id, provisioned: nil, path: [.vault])
+        case "done":
+            model._previewSet(fields: fields, discovery: found, hello: hello, selectedVaultID: notes.id, provisioned: notes, path: [.vault, .done])
+        case "code-found":
+            model._previewSet(fields: fields, discovery: found, hello: nil, selectedVaultID: nil, provisioned: nil, path: [])
+        default:
+            // The canvas's moment: the code typed, the search still running.
+            model._previewSet(fields: fields, discovery: .searching, hello: nil, selectedVaultID: nil, provisioned: nil, path: [])
+        }
+        return model
     }
 
     private static func folder(id: String, label: String, deviceIDs: [String]) -> SyncthingManager.FolderInfo {

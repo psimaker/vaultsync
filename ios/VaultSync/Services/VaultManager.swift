@@ -374,63 +374,25 @@ final class VaultManager {
         syncthingManager: SyncthingManager,
         mergeConfirmed: Bool
     ) -> PendingShareAcceptOutcome {
-        let rawName = folder.label.isEmpty ? folder.id : folder.label
-        let folderName = Self.sanitizeDirectoryName(rawName)
-
-        guard !folderName.isEmpty else {
-            return .refused(message: L10n.fmt("Invalid folder name: '%@'", rawName))
+        let placement: SharePlacement
+        switch sharePlacement(
+            folderID: folder.id,
+            label: folder.label,
+            syncthingManager: syncthingManager,
+            mergeConfirmed: mergeConfirmed
+        ) {
+        case .refused(let message):
+            return .refused(message: message)
+        case .decided(let decided):
+            placement = decided
         }
-
-        guard let basePath = obsidianBasePath,
-              let baseURL = obsidianDirectoryURL else {
-            return .refused(message: L10n.tr("Obsidian directory not accessible."))
-        }
-
-        let fm = FileManager.default
-        var isDir: ObjCBool = false
-        let baseHasOwnConfig = fm.fileExists(
-            atPath: baseURL.appendingPathComponent(".obsidian", isDirectory: true).path,
-            isDirectory: &isDir
-        ) && isDir.boolValue
-
-        // Fresh filesystem read (not the cached detectedVaults): this decides
-        // a sync target, so it must classify against the disk as it is now.
-        let baseIsVault = Self.rootIsItselfVault(
-            hasOwnConfig: baseHasOwnConfig,
-            hasVaultSubfolders: !(Self.vaultSubfolderNames(in: baseURL) ?? []).isEmpty
-        )
-
-        let nameMatchesBase = baseURL.lastPathComponent
-            .compare(folderName, options: .caseInsensitive) == .orderedSame
-
-        // Canonical, lowercased paths already held by *other* folders. The share
-        // must never reuse one of these — that is exactly the merge that corrupts
-        // both vaults (#45). `folders` is refreshed synchronously after every
-        // accept, so sequential auto-accepts each see the prior vault's path.
-        let occupied = Set(syncthingManager.folders.map {
-            FolderPathReconciler.canonical($0.path).lowercased()
-        })
-
-        // A manually chosen target (#52) wins over the label-derived mapping.
-        // The record survives folder removal, so remove + re-accept lands the
-        // share back where the user put it, never silently at the label default.
-        let manualTarget = ManualShareTargetStore.target(forFolder: folder.id)
-
-        let decision = Self.resolveAcceptPath(
-            manualTarget: manualTarget,
-            rawRoot: basePath,
-            baseIsVault: baseIsVault,
-            nameMatchesBase: nameMatchesBase,
-            folderName: folderName,
-            occupiedCanonLower: occupied,
-            mergeConfirmed: mergeConfirmed,
-            canonicalize: FolderPathReconciler.canonical,
-            // Full listing, hidden entries included — a `.stfolder` marker or
-            // hidden leftover is exactly what must disqualify a target (#54).
-            // nil covers both "does not exist" and "unreadable": the Go hard
-            // floor re-checks on its own and refuses what it cannot verify.
-            listingFor: { try? FileManager.default.contentsOfDirectory(atPath: $0) }
-        )
+        let decision = placement.decision
+        let folderName = placement.folderName
+        let manualTarget = placement.manualTarget
+        let basePath = placement.basePath
+        let baseIsVault = placement.baseIsVault
+        let nameMatchesBase = placement.nameMatchesBase
+        let occupied = placement.occupied
 
         let path: String
         switch decision {
@@ -484,6 +446,119 @@ final class VaultManager {
         scanForVaults()
         logger.info("Auto-accepted pending share")
         return .accepted
+    }
+
+    /// Everything an accept decides before it acts: the target decision and
+    /// the inputs it was made from (kept for the accept's log line).
+    private struct SharePlacement {
+        let decision: ShareTargetDecision
+        let folderName: String
+        let manualTarget: String?
+        let basePath: String
+        let baseIsVault: Bool
+        let nameMatchesBase: Bool
+        let occupied: Set<String>
+    }
+
+    private enum SharePlacementResult {
+        case refused(String)
+        case decided(SharePlacement)
+    }
+
+    /// The placement decision for a share — computed in exactly one place, so
+    /// the accept and the read-only preview (`previewShareDestination`) can
+    /// never disagree.
+    private func sharePlacement(
+        folderID: String,
+        label: String,
+        syncthingManager: SyncthingManager,
+        mergeConfirmed: Bool
+    ) -> SharePlacementResult {
+        let rawName = label.isEmpty ? folderID : label
+        let folderName = Self.sanitizeDirectoryName(rawName)
+
+        guard !folderName.isEmpty else {
+            return .refused(L10n.fmt("Invalid folder name: '%@'", rawName))
+        }
+
+        guard let basePath = obsidianBasePath,
+              let baseURL = obsidianDirectoryURL else {
+            return .refused(L10n.tr("Obsidian directory not accessible."))
+        }
+
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        let baseHasOwnConfig = fm.fileExists(
+            atPath: baseURL.appendingPathComponent(".obsidian", isDirectory: true).path,
+            isDirectory: &isDir
+        ) && isDir.boolValue
+
+        // Fresh filesystem read (not the cached detectedVaults): this decides
+        // a sync target, so it must classify against the disk as it is now.
+        let baseIsVault = Self.rootIsItselfVault(
+            hasOwnConfig: baseHasOwnConfig,
+            hasVaultSubfolders: !(Self.vaultSubfolderNames(in: baseURL) ?? []).isEmpty
+        )
+
+        let nameMatchesBase = baseURL.lastPathComponent
+            .compare(folderName, options: .caseInsensitive) == .orderedSame
+
+        // Canonical, lowercased paths already held by *other* folders. The share
+        // must never reuse one of these — that is exactly the merge that corrupts
+        // both vaults (#45). `folders` is refreshed synchronously after every
+        // accept, so sequential auto-accepts each see the prior vault's path.
+        let occupied = Set(syncthingManager.folders.map {
+            FolderPathReconciler.canonical($0.path).lowercased()
+        })
+
+        // A manually chosen target (#52) wins over the label-derived mapping.
+        // The record survives folder removal, so remove + re-accept lands the
+        // share back where the user put it, never silently at the label default.
+        let manualTarget = ManualShareTargetStore.target(forFolder: folderID)
+
+        let decision = Self.resolveAcceptPath(
+            manualTarget: manualTarget,
+            rawRoot: basePath,
+            baseIsVault: baseIsVault,
+            nameMatchesBase: nameMatchesBase,
+            folderName: folderName,
+            occupiedCanonLower: occupied,
+            mergeConfirmed: mergeConfirmed,
+            canonicalize: FolderPathReconciler.canonical,
+            // Full listing, hidden entries included — a `.stfolder` marker or
+            // hidden leftover is exactly what must disqualify a target (#54).
+            // nil covers both "does not exist" and "unreadable": the Go hard
+            // floor re-checks on its own and refuses what it cannot verify.
+            listingFor: { try? FileManager.default.contentsOfDirectory(atPath: $0) }
+        )
+        return .decided(SharePlacement(
+            decision: decision,
+            folderName: folderName,
+            manualTarget: manualTarget,
+            basePath: basePath,
+            baseIsVault: baseIsVault,
+            nameMatchesBase: nameMatchesBase,
+            occupied: occupied
+        ))
+    }
+
+    /// Where a share with this folder ID and label would land if it arrived
+    /// now — the accept's own decision, without accepting anything (#174: the
+    /// Add Hub sheet names the destination before the Hub shares the vault).
+    /// Nil while the Obsidian folder is not connected. Advisory only: the
+    /// accept decides again, on settled paths, when the share arrives.
+    func previewShareDestination(
+        folderID: String,
+        label: String,
+        syncthingManager: SyncthingManager
+    ) -> ShareTargetDecision? {
+        guard isAccessible, obsidianBasePath != nil else { return nil }
+        switch sharePlacement(folderID: folderID, label: label, syncthingManager: syncthingManager, mergeConfirmed: false) {
+        case .refused(let message):
+            return .refused(message: message)
+        case .decided(let placement):
+            return placement.decision
+        }
     }
 
     /// Decide the local directory an incoming share syncs into, guaranteeing it

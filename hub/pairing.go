@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -17,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/psimaker/vaultsync/hub/pairing"
 	"github.com/psimaker/vaultsync/hub/pake"
 )
 
@@ -45,62 +44,23 @@ const (
 	pairingSessionTTL   = 5 * time.Minute
 	pairingMaxSessions  = 32
 	pairingStartsPerMin = 10
-	pairingMaxBody      = 64 << 10
-	protocolVersion     = 1
+	pairingMaxBody      = pairing.MaxBody
+	protocolVersion     = pairing.ProtocolVersion
 )
 
-type startRequest struct {
-	PA string `json:"pa"`
-}
-
-type startResponse struct {
-	Session string `json:"session"`
-	PB      string `json:"pb"`
-}
-
-type finishRequest struct {
-	Session string `json:"session"`
-	Confirm string `json:"confirm"`
-}
-
-type finishResponse struct {
-	Confirm string `json:"confirm"`
-	Box     string `json:"box"`
-}
-
-type provisionRequest struct {
-	Session string `json:"session"`
-	Box     string `json:"box"`
-}
-
-type boxResponse struct {
-	Box string `json:"box"`
-}
-
-// hubPayload is the Hub's encrypted answer to finish and to every provision.
-type hubPayload struct {
-	Version     int         `json:"version"`
-	HubDeviceID string      `json:"hubDeviceID"`
-	HubName     string      `json:"hubName"`
-	Vaults      []vaultInfo `json:"vaults"`
-	Provisioned *vaultInfo  `json:"provisioned,omitempty"`
-	Error       string      `json:"error,omitempty"`
-}
-
-// provisionPayload identifies the device and asks the Hub to share (or create
-// and share) one vault with it. An empty Vault only registers the device.
-type provisionPayload struct {
-	Version  int    `json:"version"`
-	Seq      uint64 `json:"seq"`
-	DeviceID string `json:"deviceID"`
-	Name     string `json:"name"`
-	Vault    string `json:"vault"`
-	Create   bool   `json:"create"`
-}
-
-type errorResponse struct {
-	Error string `json:"error"`
-}
+// The wire types live in the pairing package, which the device side (the
+// `pair` command and, through gomobile, the iOS app) shares with this server.
+type (
+	startRequest     = pairing.StartRequest
+	startResponse    = pairing.StartResponse
+	finishRequest    = pairing.FinishRequest
+	finishResponse   = pairing.FinishResponse
+	provisionRequest = pairing.ProvisionRequest
+	boxResponse      = pairing.BoxResponse
+	hubPayload       = pairing.HubPayload
+	provisionPayload = pairing.ProvisionPayload
+	errorResponse    = pairing.ErrorResponse
+)
 
 // --- sessions ---------------------------------------------------------------
 
@@ -448,49 +408,15 @@ func (s *pairingServer) countFailure() {
 
 // --- boxes ------------------------------------------------------------------
 
-func aead(key []byte) (cipher.AEAD, error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	return cipher.NewGCM(block)
-}
+// Boxes are AES-256-GCM under the session key with "<session>|<direction>" as
+// associated data (pairing.SealBox / pairing.OpenBox).
 
 func sealBox(sess *pairingSession, direction string, v any) (string, error) {
-	plain, err := json.Marshal(v)
-	if err != nil {
-		return "", err
-	}
-	g, err := aead(sess.key)
-	if err != nil {
-		return "", err
-	}
-	nonce := make([]byte, g.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return "", err
-	}
-	ad := []byte(sess.id + "|" + direction)
-	return b64e(append(nonce, g.Seal(nil, nonce, plain, ad)...)), nil
+	return pairing.SealBox(sess.id, sess.key, direction, v)
 }
 
 func openBox(sess *pairingSession, direction string, box string, v any) error {
-	raw, err := b64d(box)
-	if err != nil {
-		return err
-	}
-	g, err := aead(sess.key)
-	if err != nil {
-		return err
-	}
-	if len(raw) < g.NonceSize() {
-		return errors.New("box too short")
-	}
-	ad := []byte(sess.id + "|" + direction)
-	plain, err := g.Open(nil, raw[:g.NonceSize()], raw[g.NonceSize():], ad)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(plain, v)
+	return pairing.OpenBox(sess.id, sess.key, direction, box, v)
 }
 
 // --- helpers ----------------------------------------------------------------

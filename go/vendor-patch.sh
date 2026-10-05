@@ -8,20 +8,26 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# Temporarily drop replace directives so go mod download can fetch
-# the original modules (they point to dirs that don't exist yet).
+# Temporarily drop the fork replace directives so go mod download can fetch
+# the original modules (they point to dirs that don't exist yet). The hub
+# module's replace (../hub) stays: it points at this repository's own hub/
+# directory, which always exists and has no published version to fetch
+# instead (#174).
 echo "==> Temporarily removing replace directives..."
 cp go.mod go.mod.bak
+# A failed download must not leave go.mod without its replace directives.
+trap '[ -f go.mod.bak ] && mv go.mod.bak go.mod' EXIT
 # Portable across BSD (macOS) and GNU (Linux) sed: rewrite via a temp file
 # instead of in-place editing, whose `-i` syntax differs between the two.
 # go.mod is restored from go.mod.bak below, so this only affects the download.
-grep -v '^replace ' go.mod > go.mod.tmp && mv go.mod.tmp go.mod
+grep -v -E '^replace (github\.com/syncthing/syncthing|github\.com/ccding/go-stun) ' go.mod > go.mod.tmp && mv go.mod.tmp go.mod
 
 echo "==> Downloading Go modules..."
 go mod download
 
 echo "==> Restoring replace directives..."
 mv go.mod.bak go.mod
+trap - EXIT
 
 GOMODCACHE=$(go env GOMODCACHE)
 
