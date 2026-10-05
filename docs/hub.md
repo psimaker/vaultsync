@@ -81,7 +81,9 @@ pairing always takes your tap, and only with an address on your local network.
 Your Hub's vault list is offered as it is: to start a new vault from the
 iPhone's notes, create it on the Hub first (`vaultsync-hub vault create NAME`)
 and choose it — the iPhone asks before it combines its folder of the same name
-with the Hub's. The Device ID way (Add Device) keeps working.
+with the Hub's. When every vault on the Hub is already on the iPhone, Add Hub
+offers **Reconnect with Hub** instead (it re-adds the Hub as a device if it was
+removed). The Device ID way (Add Device) keeps working.
 
 ## What the Hub guarantees
 

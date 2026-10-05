@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/psimaker/vaultsync/hub/pairing"
+	"github.com/syncthing/syncthing/lib/protocol"
 )
 
 // --- envelope helpers ---------------------------------------------------------
@@ -166,6 +167,9 @@ func TestIssue174_ProvisionFailureKinds(t *testing.T) {
 	}{
 		{&pairing.APIError{Status: http.StatusForbidden, Body: "unknown or expired pairing session"}, "sessionExpired"},
 		{&pairing.APIError{Status: http.StatusBadRequest, Body: "replayed request"}, "other"},
+		// The Hub answers 500 when sealing its reply fails — after it shared.
+		{&pairing.APIError{Status: http.StatusInternalServerError, Body: "encryption failed"}, "outcomeUnknown"},
+		{&pairing.APIError{Status: http.StatusBadGateway, Body: "Bad Gateway"}, "outcomeUnknown"},
 		{&net.OpError{Op: "dial", Err: errors.New("connection refused")}, "unreachable"},
 		{fmt.Errorf("dial: %w", pairing.ErrNotLocal), "notLocal"},
 		{&net.OpError{Op: "read", Err: errors.New("connection reset by peer")}, "outcomeUnknown"},
@@ -193,6 +197,11 @@ type hubFakeSyncthing struct {
 	devices []map[string]any
 	folders []map[string]any
 	files   map[string]int64
+	// breakStatusAfterShare makes /rest/system/status fail once a folder
+	// was rewritten (shared): the Hub then reports an error next to a
+	// share that went through.
+	breakStatusAfterShare bool
+	statusBroken          bool
 }
 
 func (f *hubFakeSyncthing) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -218,6 +227,10 @@ func (f *hubFakeSyncthing) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case path == "/rest/system/ping":
 		write(map[string]string{"ping": "pong"})
 	case path == "/rest/system/status":
+		if f.statusBroken {
+			http.Error(w, "status unavailable", http.StatusInternalServerError)
+			return
+		}
 		write(map[string]string{"myID": hubTestDeviceID})
 	case path == "/rest/config/options" && r.Method == http.MethodGet:
 		write(map[string]any{"urAccepted": -1})
@@ -267,6 +280,9 @@ func (f *hubFakeSyncthing) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		for i := range f.folders {
 			if f.folders[i]["id"] == id {
 				f.folders[i] = folder
+				if f.breakStatusAfterShare {
+					f.statusBroken = true
+				}
 				return
 			}
 		}
@@ -340,6 +356,9 @@ func startHubUnderTest(t *testing.T) *hubUnderTest {
 		devices: []map[string]any{{"deviceID": hubTestDeviceID, "name": "host"}},
 		folders: []map[string]any{{
 			"id": "vs-aaaaaaaaaaaa", "label": "Notes", "path": filepath.Join(dir, "vaults", "notes"),
+			"type": "sendreceive", "devices": []any{map[string]any{"deviceID": hubTestDeviceID}},
+		}, {
+			"id": "vs-bbbbbbbbbbbb", "label": "Work", "path": filepath.Join(dir, "vaults", "work"),
 			"type": "sendreceive", "devices": []any{map[string]any{"deviceID": hubTestDeviceID}},
 		}},
 		files: map[string]int64{"vs-aaaaaaaaaaaa": 3},
@@ -507,7 +526,7 @@ func TestIssue174_PairsWithTheRealHub(t *testing.T) {
 	if hello.HubName != "Test Hub" || hello.HubDeviceID != hubTestDeviceID || !hello.CatalogAvailable {
 		t.Fatalf("hello: %+v", hello)
 	}
-	if len(hello.Vaults) != 1 || hello.Vaults[0].ID != "vs-aaaaaaaaaaaa" || hello.Vaults[0].Label != "Notes" || hello.Vaults[0].Files != 3 {
+	if len(hello.Vaults) != 2 || hello.Vaults[0].ID != "vs-aaaaaaaaaaaa" || hello.Vaults[0].Label != "Notes" || hello.Vaults[0].Files != 3 {
 		t.Fatalf("catalog: %+v", hello.Vaults)
 	}
 	wantHubKind(t, HubPairingProvision(flow, "vs-not-on-hub", "Test iPhone"), "unknownVault")
@@ -551,6 +570,25 @@ func TestIssue174_PairsWithTheRealHub(t *testing.T) {
 		t.Fatalf("re-pairing changed the configured hub: %+v", devices)
 	}
 
+	// A share that went through is the answer even when the Hub then fails
+	// to read its own state for the reply and reports an error beside it.
+	hub.fake.mu.Lock()
+	hub.fake.breakStatusAfterShare = true
+	hub.fake.mu.Unlock()
+	work := wantHubOK[hubProvisionData](t, HubPairingProvision(flow, "vs-bbbbbbbbbbbb", "Test iPhone"))
+	if work.Provisioned.ID != "vs-bbbbbbbbbbbb" || !hub.fake.sharedWith("vs-bbbbbbbbbbbb", myID) {
+		t.Fatalf("share with an error beside it: %+v", work.Provisioned)
+	}
+	hub.fake.mu.Lock()
+	hub.fake.breakStatusAfterShare, hub.fake.statusBroken = false, false
+	hub.fake.mu.Unlock()
+
+	// Every vault already here: pairing only registers this device.
+	registered := wantHubOK[map[string]bool](t, HubPairingProvision(flow, "", "Test iPhone"))
+	if !registered["registered"] {
+		t.Fatalf("registration only: %+v", registered)
+	}
+
 	// The local deadline ends a session before the Hub's five minutes do.
 	wantHubOK[hubHandshakeData](t, HubPairingHandshake(flow, hub.addr, code))
 	hubNow = func() time.Time { return time.Now().Add(hubSessionDeadline + time.Second) }
@@ -560,4 +598,53 @@ func TestIssue174_PairsWithTheRealHub(t *testing.T) {
 	// An expired code is refused before any key exchange.
 	hub.expireCode(t)
 	wantHubKind(t, HubPairingHandshake(flow, hub.addr, code), "codeExpired")
+}
+
+// A pairing that ends while provisioning waits for the engine changes
+// nothing: the flow is checked under the engine lock, right before the Hub
+// would be added as a device (#174).
+func TestIssue174_EndedFlowAddsNoDeviceAfterWaitingForTheEngine(t *testing.T) {
+	configDir := testConfigDir(t)
+	if errMsg := StartSyncthing(configDir); errMsg != "" {
+		t.Fatalf("StartSyncthing() failed: %s", errMsg)
+	}
+	hubID, err := protocol.DeviceIDFromString(hubTestDeviceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hubMu.Lock()
+	hubCurrent = &hubFlow{
+		id:       "ended-flow",
+		client:   pairing.NewLocalClient("127.0.0.1:9"),
+		hubID:    hubID,
+		hubName:  "Test Hub",
+		catalog:  []pairing.VaultInfo{{ID: "vs-aaaaaaaaaaaa", Label: "Notes"}},
+		pairedAt: hubNow(),
+	}
+	f := hubCurrent
+	hubMu.Unlock()
+
+	mu.Lock() // the engine is busy
+	result := make(chan string, 1)
+	go func() { result <- HubPairingProvision("ended-flow", "vs-aaaaaaaaaaaa", "Test iPhone") }()
+	for {
+		hubMu.Lock()
+		busy := f.busy
+		hubMu.Unlock()
+		if busy {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	HubPairingEnd("ended-flow")
+	mu.Unlock()
+
+	wantHubKind(t, <-result, "cancelled")
+	var devices []DeviceInfo
+	if err := json.Unmarshal([]byte(GetDevicesJSON()), &devices); err != nil {
+		t.Fatal(err)
+	}
+	if len(devices) != 0 {
+		t.Fatalf("an ended pairing added a device: %+v", devices)
+	}
 }

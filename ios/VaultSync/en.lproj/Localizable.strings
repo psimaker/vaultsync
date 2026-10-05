@@ -953,7 +953,6 @@
 "First word" = "First word";
 "Found %d Hubs on this network. Choose yours." = "Found %d Hubs on this network. Choose yours.";
 "Found “%@” on this network." = "Found “%@” on this network.";
-"It arrives in a moment. VaultSync adds it to your Obsidian folder by itself — you can close this screen." = "It arrives in a moment. VaultSync adds it to your Obsidian folder by itself — you can close this screen.";
 "It needs your decision — review it under Pending Shares on the Sync tab." = "It needs your decision — review it under Pending Shares on the Sync tab.";
 "It needs your decision. Tap “Finish Setup Later” and review it under Pending Shares." = "It needs your decision. Tap “Finish Setup Later” and review it under Pending Shares.";
 "It syncs with your Hub from now on." = "It syncs with your Hub from now on.";
@@ -995,7 +994,6 @@
 "Type the code your Hub printed, or scan its QR code. Using Syncthing on a computer instead? Add it by its Device ID." = "Type the code your Hub printed, or scan its QR code. Using Syncthing on a computer instead? Add it by its Device ID.";
 "Using the Hub address from the QR code." = "Using the Hub address from the QR code.";
 "VaultSync could not search this network. Turn on Wi‑Fi and allow VaultSync in Settings → Privacy & Security → Local Network." = "VaultSync could not search this network. Turn on Wi‑Fi and allow VaultSync in Settings → Privacy & Security → Local Network.";
-"VaultSync couldn’t confirm whether your Hub shared the vault. If it did, it appears under Pending Shares in a moment — otherwise pair again." = "VaultSync couldn’t confirm whether your Hub shared the vault. If it did, it appears under Pending Shares in a moment — otherwise pair again.";
 "VaultSync Hub" = "VaultSync Hub";
 "VaultSync needs camera access to scan the QR code your Hub printed. Please enable it in Settings." = "VaultSync needs camera access to scan the QR code your Hub printed. Please enable it in Settings.";
 "Your Hub could not list its vaults just now. Go back and pair again in a moment." = "Your Hub could not list its vaults just now. Go back and pair again in a moment.";
@@ -1012,3 +1010,9 @@
 "“%@” is on this iPhone" = "“%@” is on this iPhone";
 "“%@” will be created inside your Obsidian folder as “%@”. VaultSync never merges into a folder that already has files without asking you." = "“%@” will be created inside your Obsidian folder as “%@”. VaultSync never merges into a folder that already has files without asking you.";
 "“%@” will be created inside your Obsidian folder. VaultSync never merges into a folder that already has files without asking you." = "“%@” will be created inside your Obsidian folder. VaultSync never merges into a folder that already has files without asking you.";
+"Every vault on your Hub is already on this iPhone. Reconnect so your Hub and this iPhone know each other again." = "Every vault on your Hub is already on this iPhone. Reconnect so your Hub and this iPhone know each other again.";
+"It arrives in a moment. VaultSync then adds it to your Obsidian folder — or asks you first when it needs your decision. You can close this screen." = "It arrives in a moment. VaultSync then adds it to your Obsidian folder — or asks you first when it needs your decision. You can close this screen.";
+"Reconnect with Hub" = "Reconnect with Hub";
+"VaultSync couldn’t confirm whether your Hub shared the vault. If it did, it appears here in a moment — otherwise pair again." = "VaultSync couldn’t confirm whether your Hub shared the vault. If it did, it appears here in a moment — otherwise pair again.";
+"Your Hub may be sharing “%@”" = "Your Hub may be sharing “%@”";
+"Your vaults on this iPhone sync with it. If one does not, open the vault and turn on sharing with your Hub." = "Your vaults on this iPhone sync with it. If one does not, open the vault and turn on sharing with your Hub.";

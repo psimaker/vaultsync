@@ -22,6 +22,9 @@
 // Results are JSON envelopes: {"v":1,"ok":true,"data":{…}} or
 // {"v":1,"ok":false,"error":{"kind":"…","message":"…"}}. The message is
 // diagnostic text and may carry addresses — log it as private.
+//
+// Lock order: the engine's mu before hubMu. Nothing here holds hubMu while it
+// takes mu, and no network call runs under either lock.
 package bridge
 
 import (
@@ -201,7 +204,7 @@ func HubPairingDiscover(flow string, waitMillis int) string {
 	defer done()
 	found, err := pairing.DiscoverHubs(ctx, pairing.DefaultPort, wait)
 	if !hubStillCurrent(f) {
-		return hubFail(hubKindCancelled, errors.New("pairing ended"))
+		return hubFail(hubKindCancelled, errHubFlowEnded)
 	}
 	if errors.Is(err, pairing.ErrNoProbeSent) {
 		return hubFail(hubKindNoNetwork, err)
@@ -255,7 +258,7 @@ func HubPairingHandshake(flow, address, code string) string {
 	hubMu.Lock()
 	defer hubMu.Unlock()
 	if hubCurrent != f {
-		return hubFail(hubKindCancelled, errors.New("pairing ended"))
+		return hubFail(hubKindCancelled, errHubFlowEnded)
 	}
 	if err != nil {
 		return hubFail(string(pairing.FailureKind(err)), err)
@@ -279,8 +282,10 @@ func HubPairingHandshake(flow, address, code string) string {
 // HubPairingProvision adds the flow's Hub as a device here (unless it already
 // is one), then asks the Hub to register this device under deviceName and
 // share the vault vaultID from the handshake's catalog: data
-// {"provisioned":{"id","label","files","devices"}}. The share then arrives as
-// a pending folder; this call never accepts it. Failure kinds: "noSession",
+// {"provisioned":{"id","label","files","devices"}}. An empty vaultID only
+// registers this device — for a Hub whose vaults are all on this iPhone
+// already: data {"registered":true}. A share then arrives as a pending
+// folder; this call never accepts it. Failure kinds: "noSession",
 // "sessionExpired", "unknownVault", "engine", "hubRefused" (the Hub's reason
 // in the message), "outcomeUnknown" (the request may have reached the Hub —
 // never retried automatically), "staleFlow", "inProgress", "cancelled",
@@ -301,11 +306,17 @@ func HubPairingProvision(flow, vaultID, deviceName string) string {
 	if hubNow().Sub(pairedAt) > hubSessionDeadline {
 		return hubFail(string(pairing.KindSessionExpired), errors.New("the pairing session is about to expire — enter the code again"))
 	}
-	if err := hubCheckVault(catalog, vaultID); err != nil {
-		return hubFail(hubKindUnknownVault, err)
+	registerOnly := vaultID == ""
+	if !registerOnly {
+		if err := hubCheckVault(catalog, vaultID); err != nil {
+			return hubFail(hubKindUnknownVault, err)
+		}
 	}
 
-	myID, err := ensureHubDevice(hubID, hubName)
+	myID, err := ensureHubDevice(f, hubID, hubName)
+	if errors.Is(err, errHubFlowEnded) {
+		return hubFail(hubKindCancelled, err)
+	}
 	if err != nil {
 		return hubFail(hubKindEngine, err)
 	}
@@ -313,7 +324,7 @@ func HubPairingProvision(flow, vaultID, deviceName string) string {
 	hubMu.Lock()
 	if hubCurrent != f {
 		hubMu.Unlock()
-		return hubFail(hubKindCancelled, errors.New("pairing ended"))
+		return hubFail(hubKindCancelled, errHubFlowEnded)
 	}
 	f.seq++
 	seq := f.seq
@@ -323,20 +334,29 @@ func HubPairingProvision(flow, vaultID, deviceName string) string {
 	if err != nil {
 		kind := hubProvisionFailureKind(err)
 		if !hubStillCurrent(f) && kind != hubKindOutcomeUnknown {
-			return hubFail(hubKindCancelled, errors.New("pairing ended"))
+			return hubFail(hubKindCancelled, errHubFlowEnded)
 		}
 		return hubFail(kind, err)
 	}
 	// The Hub has acted by now; report what it did even if the flow ended.
-	if reply.Error != "" {
-		return hubFail(hubKindHubRefused, errors.New(reply.Error))
+	if registerOnly {
+		if reply.Error != "" {
+			return hubFail(hubKindHubRefused, errors.New(reply.Error))
+		}
+		return hubOK(map[string]any{"registered": true})
 	}
 	if reply.Provisioned == nil {
+		if reply.Error != "" {
+			return hubFail(hubKindHubRefused, errors.New(reply.Error))
+		}
 		return hubFail(hubKindHubRefused, errors.New("the hub did not share a vault"))
 	}
 	if reply.Provisioned.ID != vaultID {
 		return hubFail(hubKindProtocol, errors.New("the hub shared a different vault than the one chosen"))
 	}
+	// A shared vault is the answer, even when the Hub also reports an error:
+	// it fills Error when reading its own state for the reply fails after
+	// the share went through (its device ID, its vault list).
 	return hubOK(map[string]any{"provisioned": hubVault(*reply.Provisioned)})
 }
 
@@ -398,13 +418,18 @@ func hubCheckVault(catalog []pairing.VaultInfo, vaultID string) error {
 	return nil
 }
 
-// hubProvisionFailureKind sorts a failed provision: a refusal the Hub sent,
-// or a connection that never opened, is a definite failure; anything that
-// broke after the request may have left — a timeout, a reset connection, an
-// answer that does not decrypt — leaves the outcome unknown.
+// hubProvisionFailureKind sorts a failed provision: a request the Hub refused
+// before acting (4xx), or a connection that never opened, is a definite
+// failure; anything that broke after the request may have left — a server
+// error (the Hub answers 500 when sealing its reply fails, after it shared),
+// a timeout, a reset connection, an answer that does not decrypt — leaves
+// the outcome unknown.
 func hubProvisionFailureKind(err error) string {
 	var apiErr *pairing.APIError
 	if errors.As(err, &apiErr) {
+		if apiErr.Status >= 500 {
+			return hubKindOutcomeUnknown
+		}
 		return string(pairing.FailureKind(err))
 	}
 	if errors.Is(err, pairing.ErrNotLocal) {
@@ -417,12 +442,19 @@ func hubProvisionFailureKind(err error) string {
 	return hubKindOutcomeUnknown
 }
 
+var errHubFlowEnded = errors.New("pairing ended")
+
 // ensureHubDevice makes the Hub a configured device so its share can arrive,
 // and returns this device's ID. A Hub that is already configured stays as it
-// is — name, addresses, paused state: the user may have changed them.
-func ensureHubDevice(id protocol.DeviceID, name string) (string, error) {
+// is — name, addresses, paused state: the user may have changed them. The
+// flow is checked under mu, right before the change: a pairing that ended
+// while this call waited for the engine changes nothing.
+func ensureHubDevice(f *hubFlow, id protocol.DeviceID, name string) (string, error) {
 	mu.Lock()
 	defer mu.Unlock()
+	if !hubStillCurrent(f) {
+		return "", errHubFlowEnded
+	}
 	if !engineUpLocked() || stCfg == nil {
 		return "", errors.New("syncthing not running")
 	}

@@ -144,11 +144,16 @@ struct ContentView: View {
         }
         // A pairing link opened from the Camera app (#174) waits until no
         // other sheet or dialog is up — it never replaces one.
-        .onChange(of: hubLinkRouter.pending, initial: true) { _, _ in
-            presentPendingHubLink()
-        }
-        .onChange(of: canPresentHubLink) { _, ready in
-            if ready { presentPendingHubLink() }
+        .task(id: hubLinkRouter.pending) {
+            var gate = HubLinkGate()
+            while hubLinkRouter.pending != nil, !Task.isCancelled {
+                let blocked = !canPresentHubLink || HubLinkGate.somethingIsPresented()
+                if gate.shouldPresent(blocked: blocked, now: Date()) {
+                    presentPendingHubLink()
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(200))
+            }
         }
         .sheet(isPresented: $showSettings, onDismiss: runPendingChecklistAction) {
             SettingsView(
@@ -540,6 +545,7 @@ struct ContentView: View {
             && addHubRequest == nil && shareTargetPickerFolder == nil && pendingFilterSheetFolder == nil
             && vaultPendingRemoval == nil && shareAccept.pendingMergeConfirmation == nil
             && !showAlert && !showInfoAlert
+            && pendingChecklistAction == nil && !showDeviceAddedHint
     }
 
     private func presentPendingHubLink() {

@@ -54,6 +54,9 @@ struct AddHubSheet: View {
                         HubVaultStep(model: model, vaultManager: vaultManager, syncthingManager: syncthingManager)
                             .navigationTitle(L10n.tr("Choose a vault"))
                             .navigationBarTitleDisplayMode(.inline)
+                            // No way back while the Hub is being asked: its
+                            // answer belongs to this step.
+                            .navigationBarBackButtonHidden(model.isWorking)
                             .toolbar { cancelItem }
                     case .done:
                         HubDoneStep(
@@ -72,6 +75,9 @@ struct AddHubSheet: View {
                     }
                 }
         }
+        // Toolbar text (Cancel, Back) in the text token, not the brand teal:
+        // text never takes the brand color (decision 044).
+        .tint(Color.vaultAccentText)
         .onAppear { model.start(link: link) }
         .onDisappear { model.stop() }
         .onChange(of: model.path) { _, _ in model.returnedToCode() }
@@ -404,12 +410,17 @@ private struct HubVaultStep: View {
     let vaultManager: VaultManager
     let syncthingManager: SyncthingManager
 
+    @AccessibilityFocusState private var failureFocused: Bool
+
     var body: some View {
         VaultPage {
             if let hello = model.hello {
                 connectedLine(hello.hubName)
                 content(hello)
             }
+        }
+        .onChange(of: model.failure) { _, failure in
+            if failure != nil { failureFocused = true }
         }
     }
 
@@ -467,8 +478,37 @@ private struct HubVaultStep: View {
                     text: HubPairingCopy.message(for: failure.kind, vault: model.selectedVault?.label),
                     tone: HubPairingCopy.tone(for: failure.kind)
                 )
+                .accessibilityFocused($failureFocused)
             }
 
+            if model.everyVaultIsHere {
+                VaultNotice(
+                    systemImage: "checkmark.circle",
+                    text: L10n.tr("Every vault on your Hub is already on this iPhone. Reconnect so your Hub and this iPhone know each other again."),
+                    tone: .info
+                )
+                Button(action: model.reconnect) {
+                    HStack(spacing: VaultSpacing.s) {
+                        if model.isWorking {
+                            ProgressView()
+                                .tint(Color.vaultOnAccent)
+                                .accessibilityHidden(true)
+                            Text(L10n.tr("Asking your Hub…"))
+                        } else {
+                            Text(L10n.tr("Reconnect with Hub"))
+                        }
+                    }
+                }
+                .buttonStyle(.vault(.primary))
+                .disabled(!model.canReconnect)
+                .padding(.top, VaultSpacing.xs)
+            } else {
+                syncButton
+            }
+        }
+    }
+
+    private var syncButton: some View {
             Button(action: model.syncSelectedVault) {
                 HStack(spacing: VaultSpacing.s) {
                     if model.isWorking {
@@ -486,7 +526,6 @@ private struct HubVaultStep: View {
             .buttonStyle(.vault(.primary))
             .disabled(!model.canSync)
             .padding(.top, VaultSpacing.xs)
-        }
     }
 
     private func vaultRow(_ vault: HubVault) -> some View {
@@ -548,18 +587,21 @@ private struct HubVaultStep: View {
 private struct HubRadioMark: View {
     let selected: Bool
 
+    /// The disc and its check scale together with Dynamic Type.
+    @ScaledMetric(relativeTo: .body) private var size: CGFloat = 24
+
     var body: some View {
         ZStack {
             if selected {
                 Circle().fill(Color.vaultAccentProminent)
                 Image(systemName: "checkmark")
-                    .font(.caption.weight(.bold))
+                    .font(.system(size: size * 0.5, weight: .bold))
                     .foregroundStyle(Color.vaultOnAccent)
             } else {
                 Circle().strokeBorder(Color.vaultHairline, lineWidth: 2)
             }
         }
-        .frame(width: 24, height: 24)
+        .frame(width: size, height: size)
         .accessibilityHidden(true)
     }
 }
@@ -592,31 +634,54 @@ private struct HubDoneStep: View {
         let label = model.provisioned?.label ?? ""
         let state = handoff
         VaultPage {
-            VaultHeroHeader(
-                tone: state == .syncing ? .success : (state == .needsDecision || state == .waitingForObsidian ? .attention : .accent),
-                systemImage: state == .syncing ? "checkmark" : (state == .needsDecision || state == .waitingForObsidian ? "exclamationmark" : "arrow.down"),
-                title: state == .syncing
-                    ? L10n.fmt("“%@” is on this iPhone", label)
-                    : L10n.fmt("Your Hub is sharing “%@”", label),
-                subtitle: subtitle(state, label: label),
-                busy: state == .waitingForShare || state == .accepting
-            )
-            .padding(.vertical, VaultSpacing.s)
-            .accessibilityElement(children: .combine)
+            if model.reconnected {
+                VaultHeroHeader(
+                    tone: .success,
+                    systemImage: "checkmark",
+                    title: L10n.fmt("Connected to %@", HubPairingCopy.hubName(model.hello?.hubName ?? "")),
+                    subtitle: L10n.tr("Your vaults on this iPhone sync with it. If one does not, open the vault and turn on sharing with your Hub.")
+                )
+                .padding(.vertical, VaultSpacing.s)
+                .accessibilityElement(children: .combine)
+            } else {
+                VaultHeroHeader(
+                    tone: state == .syncing ? .success : (state == .needsDecision || state == .waitingForObsidian ? .attention : .accent),
+                    systemImage: state == .syncing ? "checkmark" : (state == .needsDecision || state == .waitingForObsidian ? "exclamationmark" : "arrow.down"),
+                    title: title(state, label: label),
+                    subtitle: subtitle(state, label: label),
+                    busy: state == .waitingForShare || state == .accepting
+                )
+                .padding(.vertical, VaultSpacing.s)
+                .accessibilityElement(children: .combine)
 
-            if state == .needsDecision, let onReviewShares {
-                Button(L10n.tr("Review in Sync"), action: onReviewShares)
-                    .buttonStyle(.vault(.tinted))
+                if state == .needsDecision, let onReviewShares {
+                    Button(L10n.tr("Review in Sync"), action: onReviewShares)
+                        .buttonStyle(.vault(.tinted))
+                }
             }
             Button(L10n.tr("Done"), action: onDone)
                 .buttonStyle(.vault(.primary))
         }
     }
 
+    private func title(_ state: HubShareHandoff, label: String) -> String {
+        if state == .syncing {
+            return L10n.fmt("“%@” is on this iPhone", label)
+        }
+        // A lost answer is never reported as a share.
+        if model.provisionUncertain, state == .waitingForShare {
+            return L10n.fmt("Your Hub may be sharing “%@”", label)
+        }
+        return L10n.fmt("Your Hub is sharing “%@”", label)
+    }
+
     private func subtitle(_ state: HubShareHandoff, label: String) -> String {
         switch state {
         case .waitingForShare:
-            return L10n.tr("It arrives in a moment. VaultSync adds it to your Obsidian folder by itself — you can close this screen.")
+            if model.provisionUncertain {
+                return HubPairingCopy.message(for: .outcomeUnknown)
+            }
+            return L10n.tr("It arrives in a moment. VaultSync then adds it to your Obsidian folder — or asks you first when it needs your decision. You can close this screen.")
         case .waitingForObsidian:
             return L10n.tr("Connect your Obsidian folder so VaultSync can add it.")
         case .accepting:
@@ -687,7 +752,7 @@ enum HubPairingCopy {
             }
             return L10n.tr("Your Hub could not share the vault. Check the Hub with “vaultsync-hub status”, then try again.")
         case .outcomeUnknown:
-            return L10n.tr("VaultSync couldn’t confirm whether your Hub shared the vault. If it did, it appears under Pending Shares in a moment — otherwise pair again.")
+            return L10n.tr("VaultSync couldn’t confirm whether your Hub shared the vault. If it did, it appears here in a moment — otherwise pair again.")
         case .badCode:
             return L10n.tr("That doesn’t look like a code from your Hub. Check the two words and the number.")
         case .badAddress, .noNetwork, .staleFlow, .inProgress, .cancelled, .protocolError, .other:

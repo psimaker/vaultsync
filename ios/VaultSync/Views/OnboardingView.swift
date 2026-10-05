@@ -148,16 +148,22 @@ struct OnboardingView: View {
         }
         // A pairing link from the Camera app (#174) opens the Add Hub sheet
         // here too — once no other sheet or alert is up.
-        .onChange(of: hubLinkRouter.pending, initial: true) { _, _ in
-            presentPendingHubLink()
-        }
-        .onChange(of: canPresentHubLink) { _, ready in
-            if ready { presentPendingHubLink() }
+        .task(id: hubLinkRouter.pending) {
+            var gate = HubLinkGate()
+            while hubLinkRouter.pending != nil, !Task.isCancelled {
+                let blocked = !canPresentHubLink || HubLinkGate.somethingIsPresented()
+                if gate.shouldPresent(blocked: blocked, now: Date()) {
+                    presentPendingHubLink()
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(200))
+            }
         }
     }
 
     private var canPresentHubLink: Bool {
         !showObsidianPicker && !showAddDevice && addHubRequest == nil && !showAlert && !showInfoAlert
+            && !showDeviceAddedHint
     }
 
     private func presentPendingHubLink() {

@@ -29,14 +29,18 @@ struct HubPairingModelTests {
         var discovered: Result<[HubCandidate], HubPairingFailure> = .success([HubFixture.kitchen])
         var handshakeResult: Result<HubHello, HubPairingFailure> = .success(HubFixture.hello)
         var provisionResult: Result<HubVault, HubPairingFailure> = .success(HubFixture.notes)
+        var registerResult: Result<Void, HubPairingFailure> = .success(())
         var handshakes: [(address: String, code: String)] = []
         var provisions: [String] = []
+        var registrations = 0
         var discoveries = 0
         var ended: [String] = []
         var engineRunning = true
         var localFolders: Set<String> = []
-        /// When set, the handshake waits for it before answering.
+        /// When set, the call waits for it before answering.
         var handshakeGate: AsyncStream<Void>?
+        var discoveryGate: AsyncStream<Void>?
+        var provisionGate: AsyncStream<Void>?
     }
 
     func makeModel(_ recorder: Recorder) -> HubPairingModel {
@@ -46,6 +50,9 @@ struct HubPairingModelTests {
             normalizeCode: { HubPairingLink.Rules.live.normalizeCode($0) },
             discover: { _ in
                 await MainActor.run { recorder.discoveries += 1 }
+                if let gate = await MainActor.run(body: { recorder.discoveryGate }) {
+                    for await _ in gate { break }
+                }
                 return await MainActor.run { recorder.discovered }
             },
             handshake: { _, address, code in
@@ -57,7 +64,14 @@ struct HubPairingModelTests {
             },
             provision: { _, vaultID, _ in
                 await MainActor.run { recorder.provisions.append(vaultID) }
+                if let gate = await MainActor.run(body: { recorder.provisionGate }) {
+                    for await _ in gate { break }
+                }
                 return await MainActor.run { recorder.provisionResult }
+            },
+            register: { _, _ in
+                await MainActor.run { recorder.registrations += 1 }
+                return await MainActor.run { recorder.registerResult }
             },
             engineRunning: { recorder.engineRunning },
             localFolderIDs: { recorder.localFolders },
@@ -234,7 +248,7 @@ struct HubPairingModelTests {
         #expect(model.path == [.vault, .done])
     }
 
-    @Test("An unknown provisioning outcome is reported and never retried")
+    @Test("An unknown provisioning outcome moves to the hand-off and is never asked again")
     func outcomeUnknownIsNotRetried() async {
         let recorder = Recorder()
         recorder.localFolders = [Self.work.id]
@@ -247,9 +261,111 @@ struct HubPairingModelTests {
         await model.runningTask?.value
         model.syncSelectedVault()
         await model.runningTask?.value
-        #expect(model.failure?.kind == .outcomeUnknown)
-        #expect(recorder.provisions.count == 1)
-        #expect(model.path == [.vault])
+        #expect(model.provisionUncertain)
+        #expect(model.provisioned == Self.notes)
+        #expect(model.path == [.vault, .done])
+        #expect(!model.canSync)
+        model.syncSelectedVault()
+        await model.runningTask?.value
+        #expect(recorder.provisions.count == 1, "a lost answer is never followed by a second request")
+    }
+
+    @Test("A Hub address scanned during a search wins over the search's late answer")
+    func scannedAddressBeatsLateSearch() async {
+        let recorder = Recorder()
+        let (gate, open) = AsyncStream<Void>.makeStream()
+        recorder.discoveryGate = gate
+        let model = makeModel(recorder)
+        model.start()
+        #expect(model.discovery == .searching)
+        model.apply(link: HubPairingLink(code: "OTTER-PIANO-07", hubAddress: "10.0.0.5:8390"))
+        #expect(model.discovery == .fromLink("10.0.0.5:8390"))
+        model.pair() // waits for the search still in flight
+        open.yield()
+        open.finish()
+        await model.runningTask?.value
+        #expect(model.discovery == .fromLink("10.0.0.5:8390"), "the late search answer must not replace the scanned Hub")
+        #expect(recorder.handshakes.map(\.address) == ["10.0.0.5:8390"])
+    }
+
+    @Test("A scanned code without an address lets the running search finish")
+    func scannedCodeKeepsSearch() async {
+        let recorder = Recorder()
+        let (gate, open) = AsyncStream<Void>.makeStream()
+        recorder.discoveryGate = gate
+        let model = makeModel(recorder)
+        model.start()
+        model.apply(link: HubPairingLink(code: "OTTER-PIANO-07", hubAddress: nil))
+        open.yield()
+        open.finish()
+        await model.runningTask?.value
+        #expect(recorder.discoveries == 1)
+        #expect(model.discovery == .found([Self.kitchen]))
+        #expect(model.canonicalCode == "OTTER-PIANO-07")
+    }
+
+    @Test("Back during provisioning changes nothing, and the answer never rebuilds the navigation")
+    func backDuringProvisioning() async {
+        let recorder = Recorder()
+        recorder.localFolders = [Self.work.id]
+        let (gate, open) = AsyncStream<Void>.makeStream()
+        let model = makeModel(recorder)
+        model.start()
+        await model.runningTask?.value
+        type(model, "TULIP", "ANCHOR", "42")
+        model.pair()
+        await model.runningTask?.value
+        recorder.provisionGate = gate
+        model.syncSelectedVault()
+        #expect(model.isWorking)
+        model.path = [] // the sheet hides Back meanwhile; the model must not rely on it
+        model.returnedToCode()
+        #expect(model.hello != nil, "nothing is torn down while the Hub is being asked")
+        open.yield()
+        open.finish()
+        await model.runningTask?.value
+        #expect(model.path.isEmpty, "a late answer must not push the hand-off from elsewhere")
+        #expect(model.provisioned == Self.notes)
+    }
+
+    @Test("Every vault already here: reconnect registers once and ends on the hand-off")
+    func reconnectWhenEverythingIsHere() async {
+        let recorder = Recorder()
+        recorder.localFolders = [Self.notes.id, Self.work.id]
+        let model = makeModel(recorder)
+        model.start()
+        await model.runningTask?.value
+        type(model, "TULIP", "ANCHOR", "42")
+        model.pair()
+        await model.runningTask?.value
+        #expect(model.everyVaultIsHere)
+        #expect(!model.canSync)
+        #expect(model.canReconnect)
+        model.reconnect()
+        await model.runningTask?.value
+        #expect(recorder.registrations == 1)
+        #expect(model.reconnected)
+        #expect(model.path == [.vault, .done])
+        #expect(!model.canReconnect)
+    }
+
+    @Test("A waiting link presents only after the screen stayed free for the grace period")
+    func linkGate() {
+        var gate = HubLinkGate()
+        let t0 = Date(timeIntervalSince1970: 1_000)
+        let steps: [(blocked: Bool, at: TimeInterval, presents: Bool)] = [
+            (true, 0, false),
+            (false, 0, false),
+            (false, 0.5, false),
+            (true, 0.6, false), // a dialog appearing resets the wait
+            (false, 0.7, false),
+            (false, 1.4, false),
+            (false, 1.6, true),
+        ]
+        for step in steps {
+            let presents = gate.shouldPresent(blocked: step.blocked, now: t0.addingTimeInterval(step.at))
+            #expect(presents == step.presents, "at \(step.at)s")
+        }
     }
 
     @Test("An expired session returns to the code, which stays filled in")

@@ -413,6 +413,13 @@ struct SyncBridgeService {
         HubPairingEnvelope.decode(BridgeHubPairingProvision(flow, vaultID, deviceName), as: HubProvisionPayload.self).map(\.provisioned)
     }
 
+    /// Registers this iPhone with the flow's Hub without asking for a vault
+    /// (and adds the Hub as a device here unless it is one) — for a Hub whose
+    /// vaults are all on this iPhone already (blocks).
+    static func hubPairingRegister(flow: String, deviceName: String) -> Result<Void, HubPairingFailure> {
+        HubPairingEnvelope.decode(BridgeHubPairingProvision(flow, "", deviceName), as: HubRegistrationPayload.self).map { _ in () }
+    }
+
     // MARK: - Phase 6: Device rename
 
     /// Rename a peer device.

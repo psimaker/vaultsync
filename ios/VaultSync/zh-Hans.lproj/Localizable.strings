@@ -953,7 +953,6 @@
 "First word" = "第一个单词";
 "Found %d Hubs on this network. Choose yours." = "在此网络中找到 %d 个 Hub。请选择你的 Hub。";
 "Found “%@” on this network." = "已在此网络中找到“%@”。";
-"It arrives in a moment. VaultSync adds it to your Obsidian folder by itself — you can close this screen." = "它马上就会到达。VaultSync 会自动把它添加到你的 Obsidian 文件夹——你可以关闭此页面。";
 "It needs your decision — review it under Pending Shares on the Sync tab." = "需要你做出决定——请在“同步”标签页的“待处理共享”中查看。";
 "It needs your decision. Tap “Finish Setup Later” and review it under Pending Shares." = "需要你做出决定。请轻点“稍后完成设置”，然后在“待处理共享”中查看。";
 "It syncs with your Hub from now on." = "从现在起，它会与你的 Hub 同步。";
@@ -995,7 +994,6 @@
 "Type the code your Hub printed, or scan its QR code. Using Syncthing on a computer instead? Add it by its Device ID." = "输入你的 Hub 输出的代码，或扫描它的二维码。改用电脑上的 Syncthing？请通过设备 ID 添加它。";
 "Using the Hub address from the QR code." = "正在使用二维码中的 Hub 地址。";
 "VaultSync could not search this network. Turn on Wi‑Fi and allow VaultSync in Settings → Privacy & Security → Local Network." = "VaultSync 无法搜索此网络。请打开无线局域网，并在“设置”→“隐私与安全性”→“本地网络”中允许 VaultSync。";
-"VaultSync couldn’t confirm whether your Hub shared the vault. If it did, it appears under Pending Shares in a moment — otherwise pair again." = "VaultSync 无法确认你的 Hub 是否已共享该 Vault。如果已共享，它会很快出现在“待处理共享”中——否则请重新配对。";
 "VaultSync Hub" = "VaultSync Hub";
 "VaultSync needs camera access to scan the QR code your Hub printed. Please enable it in Settings." = "VaultSync 需要相机权限来扫描你的 Hub 输出的二维码。请在“设置”中开启。";
 "Your Hub could not list its vaults just now. Go back and pair again in a moment." = "你的 Hub 暂时无法列出其 Vault。请返回，稍后重新配对。";
@@ -1012,3 +1010,9 @@
 "“%@” is on this iPhone" = "“%@”已在此 iPhone 上";
 "“%@” will be created inside your Obsidian folder as “%@”. VaultSync never merges into a folder that already has files without asking you." = "“%@”将以“%@”为名创建在你的 Obsidian 文件夹中。VaultSync 绝不会在未询问你的情况下合并到已有文件的文件夹。";
 "“%@” will be created inside your Obsidian folder. VaultSync never merges into a folder that already has files without asking you." = "“%@”将创建在你的 Obsidian 文件夹中。VaultSync 绝不会在未询问你的情况下合并到已有文件的文件夹。";
+"Every vault on your Hub is already on this iPhone. Reconnect so your Hub and this iPhone know each other again." = "你的 Hub 上的每个 Vault 都已在这台 iPhone 上。请重新连接，让你的 Hub 和这台 iPhone 重新相互识别。";
+"It arrives in a moment. VaultSync then adds it to your Obsidian folder — or asks you first when it needs your decision. You can close this screen." = "它马上就会到达。随后 VaultSync 会把它添加到你的 Obsidian 文件夹——如果需要你做决定，会先询问你。你可以关闭此页面。";
+"Reconnect with Hub" = "重新连接 Hub";
+"VaultSync couldn’t confirm whether your Hub shared the vault. If it did, it appears here in a moment — otherwise pair again." = "VaultSync 无法确认你的 Hub 是否已共享该 Vault。如果已共享，它很快就会出现在这里——否则请重新配对。";
+"Your Hub may be sharing “%@”" = "你的 Hub 可能正在共享“%@”";
+"Your vaults on this iPhone sync with it. If one does not, open the vault and turn on sharing with your Hub." = "这台 iPhone 上的 Vault 会与它同步。如果某个 Vault 没有同步，请打开该 Vault 并开启与你的 Hub 的共享。";

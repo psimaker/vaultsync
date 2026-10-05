@@ -36,6 +36,9 @@ final class HubPairingModel {
         var discover: (_ flow: String) async -> Result<[HubCandidate], HubPairingFailure>
         var handshake: (_ flow: String, _ address: String, _ code: String) async -> Result<HubHello, HubPairingFailure>
         var provision: (_ flow: String, _ vaultID: String, _ deviceName: String) async -> Result<HubVault, HubPairingFailure>
+        /// Registers this iPhone without asking for a vault — for a Hub whose
+        /// vaults are all here already.
+        var register: (_ flow: String, _ deviceName: String) async -> Result<Void, HubPairingFailure>
         var engineRunning: @MainActor () -> Bool
         /// Folder IDs configured on this iPhone — a Hub vault with one of
         /// them is already here.
@@ -63,6 +66,11 @@ final class HubPairingModel {
                 provision: { flow, vaultID, deviceName in
                     await Task.detached(priority: .userInitiated) {
                         SyncBridgeService.hubPairingProvision(flow: flow, vaultID: vaultID, deviceName: deviceName)
+                    }.value
+                },
+                register: { flow, deviceName in
+                    await Task.detached(priority: .userInitiated) {
+                        SyncBridgeService.hubPairingRegister(flow: flow, deviceName: deviceName)
                     }.value
                 },
                 engineRunning: { syncthingManager.isRunning },
@@ -110,6 +118,11 @@ final class HubPairingModel {
     private(set) var hello: HubHello?
     var selectedVaultID: String?
     private(set) var provisioned: HubVault?
+    /// The Hub may have shared, but its answer was lost: the hand-off shows
+    /// what arrives; nothing is asked again in this session.
+    private(set) var provisionUncertain = false
+    /// Every vault was here already; the Hub only registered this iPhone.
+    private(set) var reconnected = false
     /// The sheet's navigation path after the code step.
     var path: [Step] = []
 
@@ -117,6 +130,10 @@ final class HubPairingModel {
     private let environment: Environment
     /// The step running in the background, for tests to await.
     @ObservationIgnored private(set) var runningTask: Task<Void, Never>?
+    /// The search in flight. A newer search or a scanned address supersedes
+    /// it: its answer is dropped when `searchToken` moved on.
+    @ObservationIgnored private var searchTask: Task<Void, Never>?
+    @ObservationIgnored private var searchToken = 0
 
     init(environment: Environment) {
         self.environment = environment
@@ -147,11 +164,16 @@ final class HubPairingModel {
         failure = nil
         linkAddressUnreachable = false
         if let address = link.hubAddress {
+            // The scanned address wins over a search still in flight.
+            searchToken += 1
             discovery = .fromLink(address)
             chosenHub = nil
-        } else if case .found = discovery {
-            // Keep what the search already found.
-        } else {
+            return
+        }
+        switch discovery {
+        case .found, .searching:
+            break // keep what the search found, or let it finish
+        default:
             search()
         }
     }
@@ -229,9 +251,15 @@ final class HubPairingModel {
         failure = nil
         discovery = .searching
         chosenHub = nil
-        runningTask = Task {
+        searchToken += 1
+        let token = searchToken
+        let previous = searchTask
+        searchTask = Task {
+            // One bridge call per flow at a time: a superseded search ends
+            // first (its answer is dropped by the token).
+            await previous?.value
             let result = await environment.discover(flow)
-            guard self.flow == flow else { return }
+            guard self.flow == flow, searchToken == token else { return }
             switch result {
             case .success(let hubs):
                 discovery = hubs.isEmpty ? .noneFound : .found(hubs)
@@ -247,6 +275,7 @@ final class HubPairingModel {
                 }
             }
         }
+        runningTask = searchTask
     }
 
     /// Exchanges the code with the target Hub. On success the vault step
@@ -259,7 +288,11 @@ final class HubPairingModel {
         let fromLink: Bool
         if case .fromLink = discovery { fromLink = true } else { fromLink = false }
         logger.info("Pairing with a Hub (address from \(fromLink ? "link" : "search", privacy: .public)) \(address, privacy: .private)")
+        let search = searchTask
         runningTask = Task {
+            // A search still in flight (superseded by a scanned address)
+            // ends first: the bridge runs one call per flow at a time.
+            await search?.value
             let result = await environment.handshake(flow, address, code)
             guard self.flow == flow else { return }
             isWorking = false
@@ -267,6 +300,8 @@ final class HubPairingModel {
             case .success(let hello):
                 self.hello = hello
                 provisioned = nil
+                provisionUncertain = false
+                reconnected = false
                 let selectable = selectableVaults
                 selectedVaultID = selectable.count == 1 ? selectable[0].id : nil
                 path = [.vault]
@@ -300,8 +335,24 @@ final class HubPairingModel {
         return selectableVaults.first { $0.id == id }
     }
 
+    /// The Hub has vaults, and all of them are on this iPhone already.
+    var everyVaultIsHere: Bool {
+        guard let hello, hello.catalogAvailable, !hello.vaults.isEmpty else { return false }
+        return selectableVaults.isEmpty
+    }
+
+    /// Nothing is asked of the Hub twice in one session: after an answer —
+    /// or a lost one — the flow only moves on.
+    private var provisioningDone: Bool {
+        provisioned != nil || reconnected
+    }
+
     var canSync: Bool {
-        flow != nil && !isWorking && selectedVault != nil && environment.engineRunning()
+        flow != nil && !isWorking && !provisioningDone && selectedVault != nil && environment.engineRunning()
+    }
+
+    var canReconnect: Bool {
+        flow != nil && !isWorking && !provisioningDone && everyVaultIsHere && environment.engineRunning()
     }
 
     /// Asks the Hub to share the chosen vault with this iPhone.
@@ -316,7 +367,7 @@ final class HubPairingModel {
             switch result {
             case .success(let shared):
                 provisioned = shared
-                path = [.vault, .done]
+                showHandoff()
                 logger.info("Hub shares vault \(shared.label, privacy: .private) with this iPhone")
             case .failure(let failure):
                 guard failure.kind != .staleFlow, failure.kind != .cancelled else { return }
@@ -329,6 +380,12 @@ final class HubPairingModel {
                     selectedVaultID = nil
                     path = []
                     self.failure = HubPairingFailure(kind: .sessionExpired, message: failure.message)
+                case .outcomeUnknown:
+                    // The request may have reached the Hub. Never asked
+                    // again: the hand-off shows whether the share arrives.
+                    provisioned = vault
+                    provisionUncertain = true
+                    showHandoff()
                 default:
                     self.failure = failure
                 }
@@ -336,10 +393,49 @@ final class HubPairingModel {
         }
     }
 
+    /// Every vault is here already: registers this iPhone with the Hub again
+    /// (and the Hub as a device here, should it have been removed).
+    func reconnect() {
+        guard canReconnect, let flow else { return }
+        isWorking = true
+        failure = nil
+        runningTask = Task {
+            let result = await environment.register(flow, environment.deviceName())
+            guard self.flow == flow else { return }
+            isWorking = false
+            switch result {
+            case .success:
+                reconnected = true
+                showHandoff()
+            case .failure(let failure):
+                guard failure.kind != .staleFlow, failure.kind != .cancelled else { return }
+                logger.error("Hub registration failed: \(failure.kind.rawValue, privacy: .public) \(failure.message, privacy: .private)")
+                switch failure.kind {
+                case .sessionExpired, .noSession:
+                    hello = nil
+                    path = []
+                    self.failure = HubPairingFailure(kind: .sessionExpired, message: failure.message)
+                default:
+                    self.failure = failure
+                }
+            }
+        }
+    }
+
+    /// The hand-off follows the vault step — and only from there: an answer
+    /// that arrives elsewhere never rebuilds the navigation.
+    private func showHandoff() {
+        if path == [.vault] {
+            path = [.vault, .done]
+        }
+    }
+
     /// Leaving the vault step by Back: the session is not reused — pairing
-    /// again starts a fresh one.
+    /// again starts a fresh one. Never while the Hub is being asked (the
+    /// vault step hides Back meanwhile).
     func returnedToCode() {
-        if path.isEmpty, hello != nil, provisioned == nil {
+        guard !isWorking else { return }
+        if path.isEmpty, hello != nil, !provisioningDone {
             hello = nil
             selectedVaultID = nil
             failure = nil
@@ -349,6 +445,7 @@ final class HubPairingModel {
     #if DEBUG
     /// DEBUG only: the design-preview fixture shows a step without a network.
     func _previewSet(fields: HubCodeFields, discovery: Discovery, hello: HubHello?, selectedVaultID: String?, provisioned: HubVault?, path: [Step]) {
+        searchToken += 1
         flow = "design-preview"
         self.fields = fields
         self.discovery = discovery

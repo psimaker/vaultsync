@@ -953,7 +953,6 @@
 "First word" = "Erstes Wort";
 "Found %d Hubs on this network. Choose yours." = "%d Hubs in diesem Netzwerk gefunden. Wähle deinen aus.";
 "Found “%@” on this network." = "„%@“ in diesem Netzwerk gefunden.";
-"It arrives in a moment. VaultSync adds it to your Obsidian folder by itself — you can close this screen." = "Er kommt gleich an. VaultSync fügt ihn selbst zu deinem Obsidian-Ordner hinzu — du kannst diesen Bildschirm schließen.";
 "It needs your decision — review it under Pending Shares on the Sync tab." = "Er braucht deine Entscheidung — prüfe ihn unter „Ausstehende Freigaben“ im Tab „Sync“.";
 "It needs your decision. Tap “Finish Setup Later” and review it under Pending Shares." = "Er braucht deine Entscheidung. Tippe auf „Einrichtung später abschließen“ und prüfe ihn unter „Ausstehende Freigaben“.";
 "It syncs with your Hub from now on." = "Ab jetzt synchronisiert er mit deinem Hub.";
@@ -995,7 +994,6 @@
 "Type the code your Hub printed, or scan its QR code. Using Syncthing on a computer instead? Add it by its Device ID." = "Gib den Code ein, den dein Hub ausgegeben hat, oder scanne seinen QR-Code. Nutzt du stattdessen Syncthing auf einem Computer? Füge ihn per Geräte-ID hinzu.";
 "Using the Hub address from the QR code." = "Die Hub-Adresse aus dem QR-Code wird verwendet.";
 "VaultSync could not search this network. Turn on Wi‑Fi and allow VaultSync in Settings → Privacy & Security → Local Network." = "VaultSync konnte dieses Netzwerk nicht durchsuchen. Schalte WLAN ein und erlaube VaultSync unter Einstellungen → Datenschutz & Sicherheit → Lokales Netzwerk.";
-"VaultSync couldn’t confirm whether your Hub shared the vault. If it did, it appears under Pending Shares in a moment — otherwise pair again." = "VaultSync konnte nicht bestätigen, ob dein Hub den Vault freigegeben hat. Falls ja, erscheint er gleich unter „Ausstehende Freigaben“ — sonst kopple erneut.";
 "VaultSync Hub" = "VaultSync Hub";
 "VaultSync needs camera access to scan the QR code your Hub printed. Please enable it in Settings." = "VaultSync braucht Zugriff auf die Kamera, um den QR-Code deines Hubs zu scannen. Bitte erlaube ihn in den Einstellungen.";
 "Your Hub could not list its vaults just now. Go back and pair again in a moment." = "Dein Hub konnte seine Vaults gerade nicht auflisten. Geh zurück und kopple gleich noch einmal.";
@@ -1012,3 +1010,9 @@
 "“%@” is on this iPhone" = "„%@“ ist auf diesem iPhone";
 "“%@” will be created inside your Obsidian folder as “%@”. VaultSync never merges into a folder that already has files without asking you." = "„%@“ wird in deinem Obsidian-Ordner als „%@“ angelegt. VaultSync führt nie ohne Rückfrage mit einem Ordner zusammen, der schon Dateien enthält.";
 "“%@” will be created inside your Obsidian folder. VaultSync never merges into a folder that already has files without asking you." = "„%@“ wird in deinem Obsidian-Ordner angelegt. VaultSync führt nie ohne Rückfrage mit einem Ordner zusammen, der schon Dateien enthält.";
+"Every vault on your Hub is already on this iPhone. Reconnect so your Hub and this iPhone know each other again." = "Jeder Vault deines Hubs ist schon auf diesem iPhone. Verbinde neu, damit dein Hub und dieses iPhone einander wieder kennen.";
+"It arrives in a moment. VaultSync then adds it to your Obsidian folder — or asks you first when it needs your decision. You can close this screen." = "Er kommt gleich an. VaultSync fügt ihn dann deinem Obsidian-Ordner hinzu — oder fragt dich zuerst, wenn es deine Entscheidung braucht. Du kannst diesen Bildschirm schließen.";
+"Reconnect with Hub" = "Neu mit Hub verbinden";
+"VaultSync couldn’t confirm whether your Hub shared the vault. If it did, it appears here in a moment — otherwise pair again." = "VaultSync konnte nicht bestätigen, ob dein Hub den Vault freigegeben hat. Falls ja, erscheint er gleich hier — sonst kopple erneut.";
+"Your Hub may be sharing “%@”" = "Dein Hub gibt „%@“ vielleicht frei";
+"Your vaults on this iPhone sync with it. If one does not, open the vault and turn on sharing with your Hub." = "Deine Vaults auf diesem iPhone synchronisieren mit ihm. Falls einer es nicht tut, öffne den Vault und schalte die Freigabe für deinen Hub ein.";

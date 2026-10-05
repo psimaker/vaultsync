@@ -149,6 +149,7 @@ enum DesignPreviewFixture {
             discover: { _ in .success([HubCandidate(address: "192.168.1.20:8390", name: "VaultSync Hub")]) },
             handshake: { _, _, _ in .success(hello) },
             provision: { _, _, _ in .success(notes) },
+            register: { _, _ in .success(()) },
             engineRunning: { true },
             localFolderIDs: { [] },
             deviceName: { "iPhone" }

@@ -132,3 +132,7 @@ struct HubDiscoveryPayload: Decodable, Sendable {
 struct HubProvisionPayload: Decodable, Sendable {
     let provisioned: HubVault
 }
+
+struct HubRegistrationPayload: Decodable, Sendable {
+    let registered: Bool
+}
