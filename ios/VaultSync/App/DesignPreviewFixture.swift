@@ -32,14 +32,21 @@ enum DesignPreviewFixture {
         /// from the computer is the next step.
         case onboardingShare = "onboarding-share"
         /// The Add Hub sheet (#174) over a first pairing — no device, no
-        /// vault yet. `-design-preview-add-hub-step code|code-found|vault|done`
-        /// picks the step (default: code, the search still running).
+        /// vault yet. `-design-preview-add-hub-step code|code-found|code-keyboard|vault|done`
+        /// picks the step (default: code, the search still running;
+        /// code-keyboard focuses the number field to show the number pad).
         case addHub = "add-hub"
     }
 
     /// The Add Hub step a design-preview run shows.
     static var addHubStep: String {
         UserDefaults.standard.string(forKey: "design-preview-add-hub-step") ?? "code"
+    }
+
+    /// The code step with the number field focused: the number pad and the
+    /// Done above it.
+    static var addHubShowsKeyboard: Bool {
+        addHubStep == "code-keyboard"
     }
 
     /// `-design-preview-line-diff YES` opens the resolve screen with the
@@ -161,7 +168,7 @@ enum DesignPreviewFixture {
             model._previewSet(fields: fields, discovery: found, hello: hello, selectedVaultID: notes.id, provisioned: nil, path: [.vault])
         case "done":
             model._previewSet(fields: fields, discovery: found, hello: hello, selectedVaultID: notes.id, provisioned: notes, path: [.vault, .done])
-        case "code-found":
+        case "code-found", "code-keyboard":
             model._previewSet(fields: fields, discovery: found, hello: nil, selectedVaultID: nil, provisioned: nil, path: [])
         default:
             // The canvas's moment: the code typed, the search still running.

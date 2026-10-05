@@ -1015,4 +1015,8 @@
 "Reconnect with Hub" = "Reconnect with Hub";
 "VaultSync couldn’t confirm whether your Hub shared the vault. If it did, it appears here in a moment — otherwise pair again." = "VaultSync couldn’t confirm whether your Hub shared the vault. If it did, it appears here in a moment — otherwise pair again.";
 "Your Hub may be sharing “%@”" = "Your Hub may be sharing “%@”";
-"Your vaults on this iPhone sync with it. If one does not, open the vault and turn on sharing with your Hub." = "Your vaults on this iPhone sync with it. If one does not, open the vault and turn on sharing with your Hub.";
+"Your Hub and this iPhone are paired. To sync a vault, make sure sharing is enabled on both devices." = "Your Hub and this iPhone are paired. To sync a vault, make sure sharing is enabled on both devices.";
+"VaultSync couldn’t confirm the reconnect" = "VaultSync couldn’t confirm the reconnect";
+"If a vault does not sync with your Hub, pair again." = "If a vault does not sync with your Hub, pair again.";
+"This Is a Hub QR Code" = "This Is a Hub QR Code";
+"Open Add Hub to pair this iPhone with your VaultSync Hub." = "Open Add Hub to pair this iPhone with your VaultSync Hub.";

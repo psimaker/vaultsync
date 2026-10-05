@@ -200,8 +200,9 @@ type hubFakeSyncthing struct {
 	// breakStatusAfterShare makes /rest/system/status fail once a folder
 	// was rewritten (shared): the Hub then reports an error next to a
 	// share that went through.
-	breakStatusAfterShare bool
-	statusBroken          bool
+	breakStatusAfterShare     bool
+	breakStatusAfterDeviceAdd bool
+	statusBroken              bool
 }
 
 func (f *hubFakeSyncthing) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -244,6 +245,9 @@ func (f *hubFakeSyncthing) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		var d map[string]any
 		if decode(&d) {
 			f.devices = append(f.devices, d)
+			if f.breakStatusAfterDeviceAdd {
+				f.statusBroken = true
+			}
 		}
 	case strings.HasPrefix(path, "/rest/config/devices/") && r.Method == http.MethodPatch:
 		var patch map[string]any
@@ -588,6 +592,25 @@ func TestIssue174_PairsWithTheRealHub(t *testing.T) {
 	if !registered["registered"] {
 		t.Fatalf("registration only: %+v", registered)
 	}
+	// A Hub that registered this device and then failed to read its own
+	// state for the reply still registered it.
+	hub.fake.mu.Lock()
+	var others []map[string]any
+	for _, d := range hub.fake.devices {
+		if d["deviceID"] != myID {
+			others = append(others, d)
+		}
+	}
+	hub.fake.devices = others
+	hub.fake.breakStatusAfterDeviceAdd = true
+	hub.fake.mu.Unlock()
+	wantHubOK[map[string]bool](t, HubPairingProvision(flow, "", "Test iPhone"))
+	if _, ok := hub.fake.hasDevice(myID); !ok {
+		t.Fatal("the hub did not register this device again")
+	}
+	hub.fake.mu.Lock()
+	hub.fake.breakStatusAfterDeviceAdd, hub.fake.statusBroken = false, false
+	hub.fake.mu.Unlock()
 
 	// The local deadline ends a session before the Hub's five minutes do.
 	wantHubOK[hubHandshakeData](t, HubPairingHandshake(flow, hub.addr, code))

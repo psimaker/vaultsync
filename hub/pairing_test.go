@@ -441,3 +441,25 @@ func TestIssue174_FailureKindsMatchServerTexts(t *testing.T) {
 		t.Fatalf("unreachable: %q", k)
 	}
 }
+
+// The iPhone tells "the Hub could not register this device" from an error the
+// Hub reports after it acted by this prefix (#174); pin it to the server's
+// real text.
+func TestIssue174_RegistrationRefusalCarriesThePrefix(t *testing.T) {
+	fx := newPairingFixture(t)
+	ctx := context.Background()
+	c := fx.client()
+	if _, err := c.Handshake(ctx, fx.code); err != nil {
+		t.Fatal(err)
+	}
+	fx.fake.mu.Lock()
+	fx.fake.failDeviceAdd = true
+	fx.fake.mu.Unlock()
+	reply, err := c.Provision(ctx, 1, fakeDeviceID, "iPhone", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(reply.Error, pairing.RegistrationRefusedPrefix) {
+		t.Fatalf("registration refusal reads %q", reply.Error)
+	}
+}

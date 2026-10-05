@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // LAN discovery: a device broadcasts "VSHUB1?" on UDP, every Hub answers with
@@ -158,8 +159,11 @@ func SanitizeName(name string) string {
 		b.WriteRune(r)
 	}
 	out := b.String()
-	if len(out) > 64 {
-		out = out[:64]
+	// At most 64 bytes, cut on a rune boundary: a byte cut through a
+	// multi-byte character would put invalid UTF-8 on the wire.
+	for len(out) > 64 {
+		_, size := utf8.DecodeLastRuneInString(out)
+		out = out[:len(out)-size]
 	}
 	return out
 }

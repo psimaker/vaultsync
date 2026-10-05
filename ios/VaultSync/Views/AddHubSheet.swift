@@ -22,6 +22,7 @@ struct AddHubSheet: View {
     @State private var showScanner = false
     @State private var scannedText: String?
     @State private var scanProblem: HubPairingLink.ParseError?
+    @FocusState private var codeFocus: HubCodeField?
     @Environment(\.dismiss) private var dismiss
 
     init(
@@ -44,10 +45,19 @@ struct AddHubSheet: View {
 
     var body: some View {
         NavigationStack(path: $model.path) {
-            HubCodeStep(model: model, onScan: { showScanner = true })
+            HubCodeStep(model: model, focus: $codeFocus, onScan: { showScanner = true })
                 .navigationTitle(L10n.tr("Add Hub"))
                 .navigationBarTitleDisplayMode(.inline)
-                .toolbar { cancelItem }
+                .toolbar {
+                    cancelItem
+                    // The number pad has no return key and covers the
+                    // buttons. In a second .toolbar inside the step this
+                    // item never showed (iOS 26), so it shares this one.
+                    ToolbarItemGroup(placement: .keyboard) {
+                        Spacer()
+                        Button(L10n.tr("Done")) { codeFocus = nil }
+                    }
+                }
                 .navigationDestination(for: HubPairingModel.Step.self) { step in
                     switch step {
                     case .vault:
@@ -129,6 +139,7 @@ struct AddHubSheet: View {
 
 private struct HubCodeStep: View {
     let model: HubPairingModel
+    var focus: FocusState<HubCodeField?>.Binding
     var onScan: () -> Void
 
     @AccessibilityFocusState private var failureFocused: Bool
@@ -153,7 +164,7 @@ private struct HubCodeStep: View {
             .padding(.top, VaultSpacing.m)
             .padding(.bottom, VaultSpacing.xs)
 
-            HubCodeEntry(model: model)
+            HubCodeEntry(model: model, focus: focus)
                 .padding(.vertical, VaultSpacing.s)
 
             if model.codeLooksWrong {
@@ -179,7 +190,10 @@ private struct HubCodeStep: View {
                 HubChooser(model: model, hubs: hubs)
             }
 
-            Button(action: model.pair) {
+            Button {
+                focus.wrappedValue = nil
+                model.pair()
+            } label: {
                 HStack(spacing: VaultSpacing.s) {
                     if model.isWorking {
                         ProgressView()
@@ -215,9 +229,20 @@ private struct HubCodeStep: View {
             .padding(.vertical, VaultSpacing.s)
             .accessibilityElement(children: .combine)
         }
+        // A drag on the page puts the keyboard away too.
+        .scrollDismissesKeyboard(.interactively)
         .onChange(of: model.failure) { _, failure in
             if failure != nil { failureFocused = true }
         }
+        #if DEBUG
+        .task {
+            // LAB: the design preview's code-keyboard step (#174).
+            guard UIAuditFixture.active == UIAuditFixture.designPreview,
+                  DesignPreviewFixture.addHubShowsKeyboard else { return }
+            try? await Task.sleep(for: .milliseconds(600))
+            focus.wrappedValue = .number
+        }
+        #endif
     }
 }
 
@@ -226,8 +251,8 @@ private struct HubCodeStep: View {
 /// pasted anywhere fills all three. Never submits on its own.
 private struct HubCodeEntry: View {
     let model: HubPairingModel
+    var focus: FocusState<HubCodeField?>.Binding
 
-    @FocusState private var focus: HubCodeField?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
@@ -257,19 +282,19 @@ private struct HubCodeEntry: View {
 
     private func field(_ which: HubCodeField, text: String, label: String) -> some View {
         let isNumber = which == .number
-        let active = focus == which || !text.isEmpty
+        let active = focus.wrappedValue == which || !text.isEmpty
         return TextField(
             "",
             text: Binding(
                 get: { text },
                 set: { newValue in
                     if let next = model.update(which, with: newValue) {
-                        focus = next == HubCodeField.none ? nil : next
+                        focus.wrappedValue = next == HubCodeField.none ? nil : next
                     }
                 }
             )
         )
-        .focused($focus, equals: which)
+        .focused(focus, equals: which)
         .font(.vaultMono(.title3, weight: .semibold))
         .tracking(1)
         .multilineTextAlignment(.center)
@@ -280,9 +305,9 @@ private struct HubCodeEntry: View {
         .submitLabel(.next)
         .onSubmit {
             switch which {
-            case .first: focus = .second
-            case .second: focus = .number
-            default: focus = nil
+            case .first: focus.wrappedValue = .second
+            case .second: focus.wrappedValue = .number
+            default: focus.wrappedValue = nil
             }
         }
         .padding(.horizontal, VaultSpacing.s)
@@ -293,7 +318,7 @@ private struct HubCodeEntry: View {
                 .strokeBorder(active ? Color.vaultAccent : Color.vaultHairline, lineWidth: 1.5)
         }
         .contentShape(RoundedRectangle(cornerRadius: VaultRadius.button, style: .continuous))
-        .onTapGesture { focus = which }
+        .onTapGesture { focus.wrappedValue = which }
         .accessibilityLabel(label)
     }
 }
@@ -636,10 +661,14 @@ private struct HubDoneStep: View {
         VaultPage {
             if model.reconnected {
                 VaultHeroHeader(
-                    tone: .success,
-                    systemImage: "checkmark",
-                    title: L10n.fmt("Connected to %@", HubPairingCopy.hubName(model.hello?.hubName ?? "")),
-                    subtitle: L10n.tr("Your vaults on this iPhone sync with it. If one does not, open the vault and turn on sharing with your Hub.")
+                    tone: model.reconnectUncertain ? .attention : .success,
+                    systemImage: model.reconnectUncertain ? "exclamationmark" : "checkmark",
+                    title: model.reconnectUncertain
+                        ? L10n.tr("VaultSync couldn’t confirm the reconnect")
+                        : L10n.fmt("Connected to %@", HubPairingCopy.hubName(model.hello?.hubName ?? "")),
+                    subtitle: model.reconnectUncertain
+                        ? L10n.tr("If a vault does not sync with your Hub, pair again.")
+                        : L10n.tr("Your Hub and this iPhone are paired. To sync a vault, make sure sharing is enabled on both devices.")
                 )
                 .padding(.vertical, VaultSpacing.s)
                 .accessibilityElement(children: .combine)

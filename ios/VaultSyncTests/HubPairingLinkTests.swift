@@ -164,6 +164,21 @@ struct HubPairingLinkTests {
         #expect(!HubPairingLink.isPairingURL(URL(string: "https://pair.example.com")!))
     }
 
+    @Test("A Hub QR scanned in Add Device is recognized instead of being called unusable")
+    func addDeviceRecognizesHubLinks() {
+        let link = "vaultsync://pair?code=TULIP-ANCHOR-42&hub=192.168.1.20%3A8390"
+        #expect(AddDeviceScan.classify(link, recognizeHubLinks: true, rules: rules)
+            == .hubLink(HubPairingLink(code: "TULIP-ANCHOR-42", hubAddress: "192.168.1.20:8390")))
+        #expect(AddDeviceScan.classify(link, recognizeHubLinks: false, rules: rules) == .unusable)
+        // A device ID still fills the field in canonical form (#93).
+        let deviceID = "P56IOI7-MZJNU2Y-IQGDREY-DM2MGTI-MGL3BXN-PQ6W5BM-TBBZ4TJ-XZWICQ2"
+        #expect(AddDeviceScan.classify(deviceID.lowercased(), recognizeHubLinks: true, rules: rules) == .deviceID(deviceID))
+        // A link the strict parser refuses stays unusable, like any other QR.
+        for other in ["vaultsync://pair?code=TULIP-ANCHOR-42&hub=8.8.8.8", "https://vaultsync.eu", "WIFI:T:WPA;S:HomeNet;P:secret;;"] {
+            #expect(AddDeviceScan.classify(other, recognizeHubLinks: true, rules: rules) == .unusable, "\(other)")
+        }
+    }
+
     /// Form-encodes a query value like Go's url.Values.Encode does.
     private static func encoded(_ value: String) -> String {
         var allowed = CharacterSet.alphanumerics

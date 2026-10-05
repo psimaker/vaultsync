@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import UIKit
 @testable import VaultSync
 
 /// The Add Hub flow without the bridge or a network (#174): which Hub a code
@@ -198,6 +199,7 @@ struct HubPairingModelTests {
         #expect(recorder.ended == ["flow-1"])
         #expect(model.path.isEmpty, "a late handshake must not move an ended flow on")
         #expect(model.hello == nil)
+        #expect(!model.isWorking)
     }
 
     @Test("Vaults already on this iPhone cannot be chosen; the only other one is preselected")
@@ -345,8 +347,60 @@ struct HubPairingModelTests {
         await model.runningTask?.value
         #expect(recorder.registrations == 1)
         #expect(model.reconnected)
+        #expect(!model.reconnectUncertain)
         #expect(model.path == [.vault, .done])
         #expect(!model.canReconnect)
+    }
+
+    @Test("A reconnect whose answer was lost ends on the hand-off and is never asked again")
+    func reconnectOutcomeUnknownIsFinal() async {
+        let recorder = Recorder()
+        recorder.localFolders = [Self.notes.id, Self.work.id]
+        recorder.registerResult = .failure(HubPairingFailure(kind: .outcomeUnknown, message: "reset"))
+        let model = makeModel(recorder)
+        model.start()
+        await model.runningTask?.value
+        type(model, "TULIP", "ANCHOR", "42")
+        model.pair()
+        await model.runningTask?.value
+        model.reconnect()
+        await model.runningTask?.value
+        #expect(model.reconnectUncertain)
+        #expect(model.path == [.vault, .done])
+        #expect(model.failure == nil)
+        #expect(!model.canReconnect)
+        model.reconnect()
+        await model.runningTask?.value
+        #expect(recorder.registrations == 1, "a lost answer is never followed by a second request")
+    }
+
+    @Test("A Hub QR scanned in Add Device waits in the router for the Add Hub sheet")
+    func scannedLinkIsQueued() {
+        let router = HubLinkRouter()
+        let link = HubPairingLink(code: "OTTER-PIANO-07", hubAddress: "10.0.0.5:8390")
+        router.queue(link)
+        #expect(router.pending == .pair(link))
+        #expect(router.take() == .pair(link))
+        #expect(router.pending == nil)
+    }
+
+    /// A child screen (a tab, a pushed view) presents its dialogs from its own
+    /// controller; the root's `presentedViewController` stays nil meanwhile.
+    @Test("A dialog presented anywhere below the root blocks a waiting link")
+    func presentationProbeWalksChildren() {
+        final class PresentingController: UIViewController {
+            var presenting: UIViewController?
+            override var presentedViewController: UIViewController? { presenting }
+        }
+        let root = UIViewController()
+        let tab = UIViewController()
+        let screen = PresentingController()
+        root.addChild(tab)
+        tab.addChild(screen)
+        #expect(!HubLinkGate.hasPresentation(in: root))
+        screen.presenting = UIViewController()
+        #expect(HubLinkGate.hasPresentation(in: root), "a child's removal confirmation must hold the link back")
+        #expect(!HubLinkGate.hasPresentation(in: nil))
     }
 
     @Test("A waiting link presents only after the screen stayed free for the grace period")

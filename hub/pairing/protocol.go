@@ -106,6 +106,12 @@ type ErrorResponse struct {
 	Error string `json:"error"`
 }
 
+// RegistrationRefusedPrefix starts the Error of a provision reply when the Hub
+// could not register the device at all. Any other Error in a reply comes
+// after the Hub acted (reading its own state for the reply failed) and does
+// not undo the registration or the share.
+const RegistrationRefusedPrefix = "could not register the device"
+
 // --- boxes ------------------------------------------------------------------
 
 func aead(key []byte) (cipher.AEAD, error) {

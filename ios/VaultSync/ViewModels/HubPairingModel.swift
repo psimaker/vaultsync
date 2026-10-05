@@ -123,6 +123,8 @@ final class HubPairingModel {
     private(set) var provisionUncertain = false
     /// Every vault was here already; the Hub only registered this iPhone.
     private(set) var reconnected = false
+    /// The reconnect's answer was lost: it may or may not have happened.
+    private(set) var reconnectUncertain = false
     /// The sheet's navigation path after the code step.
     var path: [Step] = []
 
@@ -178,9 +180,14 @@ final class HubPairingModel {
         }
     }
 
-    /// Ends the flow (sheet dismissed). What the Hub already did stays done.
+    /// Ends the flow (sheet dismissed). What the Hub already did stays done;
+    /// an answer still on its way is dropped (its flow is gone).
     func stop() {
         guard let flow else { return }
+        runningTask?.cancel()
+        runningTask = nil
+        searchToken += 1
+        isWorking = false
         environment.end(flow)
         self.flow = nil
     }
@@ -415,6 +422,11 @@ final class HubPairingModel {
                     hello = nil
                     path = []
                     self.failure = HubPairingFailure(kind: .sessionExpired, message: failure.message)
+                case .outcomeUnknown:
+                    // As with a share: a lost answer is never asked again.
+                    reconnected = true
+                    reconnectUncertain = true
+                    showHandoff()
                 default:
                     self.failure = failure
                 }

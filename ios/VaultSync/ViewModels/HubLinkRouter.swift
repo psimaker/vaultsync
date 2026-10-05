@@ -35,6 +35,12 @@ final class HubLinkRouter {
         }
     }
 
+    /// Queues a link that was scanned in the wrong place (the Add Device
+    /// sheet): the Add Hub sheet opens with it once that sheet is gone.
+    func queue(_ link: HubPairingLink) {
+        pending = .pair(link)
+    }
+
     /// Hands the waiting request to the screen that presents it.
     func take() -> Request? {
         defer { pending = nil }
@@ -74,7 +80,7 @@ struct HubLinkGate {
         return now.timeIntervalSince(since) >= Self.grace
     }
 
-    /// Whether anything is presented over the app's key window — UIKit sees
+    /// Whether anything is presented in the app's key window — UIKit sees
     /// the presentations of child views that SwiftUI state up here does not.
     @MainActor
     static func somethingIsPresented() -> Bool {
@@ -82,9 +88,20 @@ struct HubLinkGate {
         UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .flatMap(\.windows)
-            .contains { $0.isKeyWindow && $0.rootViewController?.presentedViewController != nil }
+            .contains { $0.isKeyWindow && hasPresentation(in: $0.rootViewController) }
         #else
         false
         #endif
     }
+
+    #if canImport(UIKit)
+    /// Whether this controller or any controller below it presents
+    /// something: a child (a tab, a navigation level) may present on its own.
+    @MainActor
+    static func hasPresentation(in controller: UIViewController?) -> Bool {
+        guard let controller else { return false }
+        if controller.presentedViewController != nil { return true }
+        return controller.children.contains { hasPresentation(in: $0) }
+    }
+    #endif
 }

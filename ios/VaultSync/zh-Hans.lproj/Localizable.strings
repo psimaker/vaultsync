@@ -1015,4 +1015,8 @@
 "Reconnect with Hub" = "重新连接 Hub";
 "VaultSync couldn’t confirm whether your Hub shared the vault. If it did, it appears here in a moment — otherwise pair again." = "VaultSync 无法确认你的 Hub 是否已共享该 Vault。如果已共享，它很快就会出现在这里——否则请重新配对。";
 "Your Hub may be sharing “%@”" = "你的 Hub 可能正在共享“%@”";
-"Your vaults on this iPhone sync with it. If one does not, open the vault and turn on sharing with your Hub." = "这台 iPhone 上的 Vault 会与它同步。如果某个 Vault 没有同步，请打开该 Vault 并开启与你的 Hub 的共享。";
+"Your Hub and this iPhone are paired. To sync a vault, make sure sharing is enabled on both devices." = "你的 Hub 和这台 iPhone 已配对。要同步某个 Vault，请确保两台设备上都已开启共享。";
+"VaultSync couldn’t confirm the reconnect" = "VaultSync 无法确认重新连接";
+"If a vault does not sync with your Hub, pair again." = "如果某个 Vault 没有与你的 Hub 同步，请重新配对。";
+"This Is a Hub QR Code" = "这是 Hub 二维码";
+"Open Add Hub to pair this iPhone with your VaultSync Hub." = "打开“添加 Hub”，将这台 iPhone 与你的 VaultSync Hub 配对。";

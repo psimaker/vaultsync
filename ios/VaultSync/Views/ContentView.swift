@@ -136,7 +136,9 @@ struct ContentView: View {
                     alertMessage = message
                     showAlert = true
                 },
-                onAdded: { showDeviceAddedHint = true }
+                onAdded: { showDeviceAddedHint = true },
+                // A Hub QR scanned here opens Add Hub once this sheet is gone.
+                onHubLink: { hubLinkRouter.queue($0) }
             )
         }
         .sheet(item: $addHubRequest) { request in

@@ -53,10 +53,11 @@ cd /srv/vaultsync && docker compose exec hub vaultsync-hub code
 
 Next to the code, `code` prints a QR code for VaultSync on iPhone and the same
 pairing link as text: `vaultsync://pair?code=TULIP-ANCHOR-42&hub=192.168.1.20%3A8390`.
-`hub=` is the Hub's address on your network (the address of its default route,
-when that is a private one) and lets the iPhone skip the search; pass
-`--address 192.168.1.20` when it picks the wrong one (a VPN, say), or
-`--no-qr` when your terminal cannot draw the QR code.
+`hub=` is the Hub's address on your network and lets the iPhone skip the
+search. It is there only when the Hub knows that address — the address of its
+default route, when that is a private one — or when you name it: pass
+`--address 192.168.1.20` when the link has no `hub=` or the wrong one (a VPN,
+say), or `--no-qr` when your terminal cannot draw the QR code.
 
 **Computer with Syncthing installed** — run the same link and choose
 **1) Obsidian device**, then enter the code. The setup finds the Hub on your
@@ -83,7 +84,8 @@ iPhone's notes, create it on the Hub first (`vaultsync-hub vault create NAME`)
 and choose it — the iPhone asks before it combines its folder of the same name
 with the Hub's. When every vault on the Hub is already on the iPhone, Add Hub
 offers **Reconnect with Hub** instead (it re-adds the Hub as a device if it was
-removed). The Device ID way (Add Device) keeps working.
+removed). The Device ID way (Add Device) keeps working; a Hub's QR code scanned
+there offers **Add Hub** instead.
 
 ## What the Hub guarantees
 
@@ -120,7 +122,9 @@ docker compose pull && docker compose up -d           # update
 - **"no Hub answered"** on a device: device and Hub must be on the same network
   for pairing (afterwards they sync from anywhere). Pass `--hub HOST:8390` to
   skip discovery. On iPhone, also check Settings → Privacy & Security → Local
-  Network → VaultSync, or scan the QR code: it carries the Hub's address.
+  Network → VaultSync, or scan the QR code — it carries the Hub's address when
+  the printed link has `hub=`; if it has none, print a new code with
+  `vaultsync-hub code --address <the Hub's LAN IP>`.
 - **"The Hub address from the QR code did not answer"** on iPhone: the address
   `code` put into the QR code is not reachable from the iPhone (a VPN or a
   second network on the Hub). Tap **Search the Network Instead**, or print a

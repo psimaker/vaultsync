@@ -4,8 +4,10 @@ import (
 	"context"
 	"net"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestParseDiscoveryReplyRejectsGarbage(t *testing.T) {
@@ -59,5 +61,19 @@ func TestDiscoverCollectsAnswersAndStopsOnCancel(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 3*time.Second {
 		t.Fatalf("cancelled discovery took %s", elapsed)
+	}
+}
+
+func TestIssue174_SanitizeNameCutsOnRuneBoundaries(t *testing.T) {
+	long := strings.Repeat("ä", 40) // 80 bytes
+	got := SanitizeName(long)
+	if !utf8.ValidString(got) || len(got) > 64 || got != strings.Repeat("ä", 32) {
+		t.Fatalf("SanitizeName = %q (%d bytes)", got, len(got))
+	}
+	if got := SanitizeName("  Küchen\nHub\x7f  "); got != "KüchenHub" {
+		t.Fatalf("control characters: %q", got)
+	}
+	if got := SanitizeName(strings.Repeat("a", 70)); len(got) != 64 {
+		t.Fatalf("ASCII cut: %d bytes", len(got))
 	}
 }

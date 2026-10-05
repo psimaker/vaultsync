@@ -340,7 +340,9 @@ func HubPairingProvision(flow, vaultID, deviceName string) string {
 	}
 	// The Hub has acted by now; report what it did even if the flow ended.
 	if registerOnly {
-		if reply.Error != "" {
+		// Only a failed registration is a refusal; an error the Hub reports
+		// after registering (reading its own state for the reply) is not.
+		if strings.HasPrefix(reply.Error, pairing.RegistrationRefusedPrefix) {
 			return hubFail(hubKindHubRefused, errors.New(reply.Error))
 		}
 		return hubOK(map[string]any{"registered": true})
