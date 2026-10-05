@@ -28,7 +28,8 @@ enum VaultStatusModel {
         var conflictCount: Int
         /// A successful sync has been recorded for the folder (#94).
         var hasCompletedSync: Bool
-        /// Engine completion percentage, when reported.
+        /// Sync completion (local vs. global index), when reported. Not scan
+        /// progress — a scan shows no percentage.
         var completionPct: Double?
     }
 
@@ -36,7 +37,7 @@ enum VaultStatusModel {
         case unreachable
         case paused
         case error
-        case scanning(percent: Int?)
+        case scanning
         case syncing(percent: Int?)
         case conflicts(Int)
         case waitingForFirstSync
@@ -69,7 +70,9 @@ enum VaultStatusModel {
             return State(status: .syncing, label: .syncing(percent: inProgressPercent(inputs.completionPct)))
         }
         if state == "scanning" {
-            return State(status: .syncing, label: .scanning(percent: inProgressPercent(inputs.completionPct)))
+            // completionPct measures sync completion, not progress through
+            // the scan — "Scanning (63%)" would read as scan progress.
+            return State(status: .syncing, label: .scanning)
         }
         if inputs.conflictCount > 0 {
             return State(status: .attention, label: .conflicts(inputs.conflictCount))
@@ -101,8 +104,8 @@ extension VaultStatusModel.Label {
             return L10n.tr("Paused")
         case .error:
             return L10n.tr("Error")
-        case .scanning(let percent):
-            return Self.withPercent(L10n.tr("Scanning"), percent)
+        case .scanning:
+            return L10n.tr("Scanning")
         case .syncing(let percent):
             return Self.withPercent(L10n.tr("Syncing"), percent)
         case .conflicts(let count):

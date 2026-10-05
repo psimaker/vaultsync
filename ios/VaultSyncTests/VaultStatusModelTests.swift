@@ -48,16 +48,19 @@ struct VaultStatusModelTests {
         }
     }
 
-    @Test("Syncing and scanning render as a transfer with a meaningful percentage")
+    @Test("Syncing and scanning render as a transfer; only syncing shows progress")
     func transferStates() {
         var inputs = settled()
         inputs.engineState = "syncing"
         inputs.completionPct = 42.7
         #expect(VaultStatusModel.derive(inputs) == .init(status: .syncing, label: .syncing(percent: 42)))
 
+        // completionPct is sync completion, not scan progress: a folder 63 %
+        // in sync that starts a scan must not read "Scanning (63%)".
         inputs.engineState = "scanning"
-        inputs.completionPct = nil
-        #expect(VaultStatusModel.derive(inputs) == .init(status: .syncing, label: .scanning(percent: nil)))
+        inputs.completionPct = 63
+        #expect(VaultStatusModel.derive(inputs) == .init(status: .syncing, label: .scanning))
+        #expect(VaultStatusModel.derive(inputs).label.text == "Scanning")
     }
 
     @Test("0 % and 100 % are not shown as progress")
@@ -115,7 +118,7 @@ struct VaultStatusModelTests {
         #expect(VaultStatusModel.Label.conflicts(1).text == "1 conflict")
         #expect(VaultStatusModel.Label.conflicts(4).text == "4 conflicts")
         #expect(VaultStatusModel.Label.syncing(percent: 42).text == "Syncing (42%)")
-        #expect(VaultStatusModel.Label.scanning(percent: nil).text == "Scanning")
+        #expect(VaultStatusModel.Label.scanning.text == "Scanning")
         #expect(VaultStatusModel.Label.unreachable.text == "Folder Path Missing")
     }
 }
