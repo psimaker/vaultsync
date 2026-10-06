@@ -49,7 +49,9 @@ func (s service) unitPath() (string, error) {
 	case "darwin":
 		return filepath.Join(s.home, "Library", "LaunchAgents", launchdLabel+".plist"), nil
 	case "linux":
-		config := s.getenv("XDG_CONFIG_HOME")
+		// Where the user manager looks, which is its XDG_CONFIG_HOME — not
+		// necessarily the one of the shell running setup.
+		config := s.managerEnv()["XDG_CONFIG_HOME"]
 		if config == "" || !filepath.IsAbs(config) {
 			config = filepath.Join(s.home, ".config")
 		}
@@ -63,16 +65,19 @@ func (s service) unitFile(exe string) ([]byte, error) {
 	if strings.ContainsAny(exe, "\n\r\x00") {
 		return nil, fmt.Errorf("the path %q cannot be written into a service file", exe)
 	}
+	if strings.ContainsAny(s.lay.Base, "\n\r\x00") {
+		return nil, fmt.Errorf("the path %q cannot be written into a service file", s.lay.Base)
+	}
 	switch s.goos {
 	case "darwin":
-		return launchdPlist(exe, filepath.Join(s.lay.Logs, "vaultsync.log")), nil
+		return launchdPlist(exe, s.lay.Base, filepath.Join(s.lay.Logs, "vaultsync.log")), nil
 	case "linux":
-		return systemdUnitFile(exe), nil
+		return systemdUnitFile(exe, s.lay.Base), nil
 	}
 	return nil, fmt.Errorf("no background service on %s yet", s.goos)
 }
 
-func launchdPlist(exe, logFile string) []byte {
+func launchdPlist(exe, stateDir, logFile string) []byte {
 	esc := func(v string) string {
 		var b bytes.Buffer
 		_ = xml.EscapeText(&b, []byte(v))
@@ -88,6 +93,8 @@ func launchdPlist(exe, logFile string) []byte {
 	<array>
 		<string>` + esc(exe) + `</string>
 		<string>run</string>
+		<string>--state-dir</string>
+		<string>` + esc(stateDir) + `</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
@@ -111,13 +118,13 @@ func systemdQuote(s string) string {
 	return `"` + r.Replace(s) + `"`
 }
 
-func systemdUnitFile(exe string) []byte {
+func systemdUnitFile(exe, stateDir string) []byte {
 	return []byte(`[Unit]
 Description=VaultSync — keeps your Obsidian vaults in sync with your Hub
 Documentation=https://github.com/psimaker/vaultsync/blob/main/docs/hub.md
 
 [Service]
-ExecStart=` + systemdQuote(exe) + ` run
+ExecStart=` + systemdQuote(exe) + ` run --state-dir ` + systemdQuote(stateDir) + `
 Restart=always
 RestartSec=10
 
@@ -295,6 +302,25 @@ func (s service) running() bool {
 		return err == nil && strings.TrimSpace(out) == "active"
 	}
 	return false
+}
+
+// managerEnv is the systemd user manager's environment (empty off Linux or
+// when it does not answer).
+func (s service) managerEnv() map[string]string {
+	env := map[string]string{}
+	if s.goos != "linux" {
+		return env
+	}
+	out, err := s.run.run("systemctl", "--user", "show-environment")
+	if err != nil {
+		return env
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if k, v, ok := strings.Cut(strings.TrimSpace(line), "="); ok {
+			env[k] = v
+		}
+	}
+	return env
 }
 
 // userManagerAvailable checks, before anything is installed, that systemd

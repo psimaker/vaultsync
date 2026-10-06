@@ -36,6 +36,14 @@ type fakeEngine struct {
 	pending   map[string]map[string]string // folder → device → label
 	patches   []map[string]any
 	client    *syncthing.Client
+	// flap, when set, withdraws the pending offer right after the agent
+	// first saw it, runs during, and offers again after back.
+	flap *offerFlap
+}
+
+type offerFlap struct {
+	back   time.Duration
+	during func()
 }
 
 func newFakeEngine(t *testing.T) *fakeEngine {
@@ -94,6 +102,22 @@ func (e *fakeEngine) serve(w http.ResponseWriter, r *http.Request) {
 			out[id] = map[string]any{"offeredBy": offered}
 		}
 		write(out)
+		if e.flap != nil && len(e.pending) > 0 {
+			// The offer was seen once; it goes away and comes back later,
+			// so the next wait is a real one.
+			flap := e.flap
+			e.flap = nil
+			saved := e.pending
+			e.pending = map[string]map[string]string{}
+			go flap.during()
+			time.AfterFunc(flap.back, func() {
+				e.mu.Lock()
+				defer e.mu.Unlock()
+				for id, by := range saved {
+					e.pending[id] = by
+				}
+			})
+		}
 	default:
 		http.NotFound(w, r)
 	}
@@ -138,6 +162,9 @@ type fakeHub struct {
 	tamper func(*pairing.HubPayload)
 	// offerDelay > 0 holds the engine's pending offer back; < 0 never sends it.
 	offerDelay time.Duration
+	// catalogueUnreadable makes every answer carry no vault list (null), as
+	// the real Hub does when it cannot read its own vaults.
+	catalogueUnreadable bool
 }
 
 type fakeHubSession struct {
@@ -216,9 +243,13 @@ func (h *fakeHub) finish(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(pairing.FinishResponse{Confirm: pairing.B64Encode(sess.hubConfirm), Box: box})
 }
 
+// payloadLocked answers like the real Hub: an empty list is [], and a list
+// the Hub cannot read is left out (null).
 func (h *fakeHub) payloadLocked(p *pairing.VaultInfo, errMsg string) pairing.HubPayload {
 	out := pairing.HubPayload{Version: pairing.ProtocolVersion, HubDeviceID: h.id, HubName: h.name, Provisioned: p, Error: errMsg}
-	out.Vaults = append(out.Vaults, h.vaults...)
+	if !h.catalogueUnreadable {
+		out.Vaults = append([]pairing.VaultInfo{}, h.vaults...)
+	}
 	return out
 }
 

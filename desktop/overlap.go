@@ -2,10 +2,13 @@ package main
 
 import (
 	"encoding/xml"
+	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 // The agent's own overlap check, in front of the shared guard (decision 001,
@@ -91,10 +94,16 @@ func userSyncthingConfigs(goos, home string, getenv func(string) string) []strin
 // here", with Unreadable set.
 func findUserSyncthing(goos, home string, getenv func(string) string) (userSyncthing, bool) {
 	for _, p := range userSyncthingConfigs(goos, home, getenv) {
-		if _, err := os.Stat(p); err != nil {
+		_, err := os.Stat(p)
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
 			continue
 		}
 		us := userSyncthing{ConfigPath: p}
+		if err != nil {
+			// Not "absent" — unreachable (permissions, I/O): fail closed.
+			us.Unreadable = err
+			return us, true
+		}
 		f, err := os.Open(p)
 		if err != nil {
 			us.Unreadable = err

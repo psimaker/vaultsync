@@ -20,7 +20,9 @@ Design record: [046](../docs/decisions/046-desktop-agent-pinned-syncthing-child.
 | `cloud.go` | the cloud-folder block (iCloud Drive, OneDrive, Dropbox, Google Drive, Nextcloud) |
 | `overlap.go` | overlap on disk (symlinks, case, file identity) and the read-only look at the user's own Syncthing |
 | `service.go` | LaunchAgent / systemd user unit, install, stop/start, uninstall |
-| `uninstall.go` | `--remove-data`, anchored to VaultSync's own folder |
+| `status.go` | `status`: service, engine, Hub connection, each vault's state on both sides |
+| `attempts.go` | the pairing journal (`pairing.json`): recorded before the Hub is asked |
+| `uninstall.go`, `mount_*.go` | `uninstall`; `--remove-data` anchored to VaultSync's own folder, stopping at links and mounts |
 
 The pairing protocol, the Syncthing REST client and the device-side accept
 guard come from the Hub's module (`hub/pairing`, `hub/syncthing`, `hub/join`)

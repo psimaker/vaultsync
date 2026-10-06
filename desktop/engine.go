@@ -55,21 +55,41 @@ func (e engine) prepared() bool {
 }
 
 // prepare gives a fresh engine its identity and config, adjusted before its
-// first start. An existing config is never regenerated: it holds the device
-// identity the Hub knows.
+// first start. Both are made in a staging folder and moved into place in one
+// rename only after the adjustments succeeded, so an interrupted prepare
+// never leaves an engine that looks ready but runs on stock settings. An
+// existing config is never regenerated: it holds the identity the Hub knows.
 func (e engine) prepare(ctx context.Context, st *agentState) error {
 	if e.prepared() {
+		if st.GUIPort == 0 {
+			// agent.json was lost or never written; the port is in the config.
+			port, err := e.guiPortFromConfig()
+			if err != nil {
+				return err
+			}
+			st.GUIPort = port
+		}
 		return nil
 	}
-	if err := os.MkdirAll(e.lay.Home, 0o700); err != nil {
+	if entries, err := os.ReadDir(e.lay.Home); err == nil && len(entries) > 0 {
+		return fmt.Errorf("the sync engine's folder %s is incomplete (it has no config.xml); nothing in it was changed — move it aside, then run vaultsync setup again", e.lay.Home)
+	}
+	staging := e.lay.Home + ".new"
+	// Only an interrupted prepare leaves this folder behind; it never held
+	// anything but a half-made engine identity that nobody knows yet.
+	if err := os.RemoveAll(staging); err != nil {
 		return err
 	}
+	if err := os.MkdirAll(staging, 0o700); err != nil {
+		return err
+	}
+	defer os.RemoveAll(staging) // a no-op after the rename
 	var pw [24]byte
 	if _, err := rand.Read(pw[:]); err != nil {
 		return err
 	}
 	cmd := exec.CommandContext(ctx, e.lay.Syncthing, "generate",
-		"--home="+e.lay.Home, "--gui-user=vaultsync", "--gui-password=-", "--no-port-probing")
+		"--home="+staging, "--gui-user=vaultsync", "--gui-password=-", "--no-port-probing")
 	// The password travels on stdin, never on the command line, and is
 	// forgotten right away: only the API key is ever used.
 	cmd.Stdin = strings.NewReader(hex.EncodeToString(pw[:]) + "\n")
@@ -77,14 +97,42 @@ func (e engine) prepare(ctx context.Context, st *agentState) error {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("syncthing generate: %v: %s", err, lastLine(out))
 	}
-	if st.GUIPort == 0 {
-		port, err := freeLoopbackPort()
-		if err != nil {
+	port := st.GUIPort
+	if port == 0 {
+		var err error
+		if port, err = freeLoopbackPort(); err != nil {
 			return err
 		}
-		st.GUIPort = port
 	}
-	return e.adjustFreshConfig(st.GUIPort)
+	if err := e.adjustFreshConfig(filepath.Join(staging, "config.xml"), port); err != nil {
+		return err
+	}
+	_ = os.Remove(e.lay.Home) // an empty folder from an earlier attempt
+	if err := os.Rename(staging, e.lay.Home); err != nil {
+		return err
+	}
+	st.GUIPort = port
+	return nil
+}
+
+// guiPortFromConfig reads the port the agent wrote into the engine's GUI
+// address.
+func (e engine) guiPortFromConfig() (int, error) {
+	f, err := os.Open(e.configPath())
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	gui, err := syncthing.ParseGUIConfig(f)
+	if err != nil {
+		return 0, fmt.Errorf("read the engine's config: %w", err)
+	}
+	_, p, err := net.SplitHostPort(strings.TrimSpace(gui.Address))
+	port, perr := strconv.Atoi(p)
+	if err != nil || perr != nil || port <= 0 || port == 8384 {
+		return 0, fmt.Errorf("the engine's config has no VaultSync API address (%q)", gui.Address)
+	}
+	return port, nil
 }
 
 // adjustFreshConfig edits the config.xml `syncthing generate` just wrote —
@@ -92,8 +140,8 @@ func (e engine) prepare(ctx context.Context, st *agentState) error {
 // report, opens a browser or checks for upgrades (the agent owns upgrades).
 // The pinned version's config shape is known; anything else stops setup
 // instead of being guessed at.
-func (e engine) adjustFreshConfig(guiPort int) error {
-	data, err := os.ReadFile(e.configPath())
+func (e engine) adjustFreshConfig(path string, guiPort int) error {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
@@ -131,7 +179,7 @@ func (e engine) adjustFreshConfig(guiPort int) error {
 		}
 		data = bytes.Replace(data, []byte(ed[0]), []byte(ed[1]), 1)
 	}
-	return writeFileAtomic(e.configPath(), data, 0o600)
+	return writeFileAtomic(path, data, 0o600)
 }
 
 // apiKey reads the engine's API key from its own config.xml.
@@ -200,6 +248,9 @@ const exitRestart = 3
 // and returns an error when the engine stops on its own — the service
 // manager then restarts the agent after its throttle interval.
 func (e engine) supervise(ctx context.Context, st agentState, logf func(string, ...any)) error {
+	if st.GUIPort <= 0 {
+		return errors.New("the sync engine is not set up yet — run vaultsync setup")
+	}
 	unlock, err := lockFile(e.lay.Lock)
 	if err != nil {
 		return err
@@ -244,9 +295,16 @@ func (e engine) runOnce(ctx context.Context, guiPort int, logf func(string, ...a
 		"--log-max-size=10485760", "--log-max-old-files=3",
 	)
 	cmd.Env = engineEnv()
-	// Syncthing logs to its own rotated file; only a crash's stderr is kept.
+	// Syncthing's log names vaults and paths, so it stays in the engine's
+	// private folder (0700): its rotated log file, and a crash's stderr in
+	// syncthing-stderr.log. Nothing of it reaches the service log or journal.
 	cmd.Stdout = io.Discard
-	cmd.Stderr = os.Stderr
+	stderr, err := openStderrLog(filepath.Join(e.lay.Home, "syncthing-stderr.log"))
+	if err != nil {
+		return -1, err
+	}
+	defer stderr.Close()
+	cmd.Stderr = stderr
 	setChildAttrs(cmd)
 	if err := cmd.Start(); err != nil {
 		return -1, err
@@ -268,6 +326,19 @@ func (e engine) runOnce(ctx context.Context, guiPort int, logf func(string, ...a
 			return exitCode(err), nil
 		}
 	}
+}
+
+// openStderrLog appends to the engine's crash log, starting it over once it
+// passes 1 MiB.
+func openStderrLog(path string) (*os.File, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, err
+	}
+	flags := os.O_CREATE | os.O_WRONLY | os.O_APPEND
+	if st, err := os.Stat(path); err == nil && st.Size() > 1<<20 {
+		flags |= os.O_TRUNC
+	}
+	return os.OpenFile(path, flags, 0o600)
 }
 
 func exitCode(err error) int {

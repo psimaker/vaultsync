@@ -15,10 +15,16 @@ type fakeRunner struct {
 	calls  []string
 	loaded bool
 	fail   map[string]error
+	// answers holds the output of a command (by its full text).
+	answers map[string]string
 }
 
 func (f *fakeRunner) run(name string, args ...string) (string, error) {
 	call := name + " " + strings.Join(args, " ")
+	if call == "systemctl --user show-environment" {
+		// Asked for the manager's environment; not an action worth asserting.
+		return f.answers[call], nil
+	}
 	f.calls = append(f.calls, call)
 	for prefix, err := range f.fail {
 		if strings.HasPrefix(call, prefix) {
@@ -67,7 +73,7 @@ func TestIssue175_LaunchAgentFile(t *testing.T) {
 	text := string(data)
 	for _, want := range []string{
 		"<key>Label</key>\n\t<string>eu.vaultsync.agent</string>",
-		"<string>" + exe + "</string>\n\t\t<string>run</string>",
+		"<string>" + exe + "</string>\n\t\t<string>run</string>\n\t\t<string>--state-dir</string>\n\t\t<string>" + svc.lay.Base + "</string>",
 		"<key>RunAtLoad</key>\n\t<true/>",
 		"<key>KeepAlive</key>\n\t<true/>",
 		"<string>" + filepath.Join(home, "Library", "Logs", "VaultSync", "vaultsync.log") + "</string>",
@@ -98,7 +104,7 @@ func TestIssue175_SystemdUserUnitFile(t *testing.T) {
 	}
 	text := string(data)
 	for _, want := range []string{
-		"ExecStart=\"" + exe + "\" run\n",
+		"ExecStart=\"" + exe + "\" run --state-dir \"" + svc.lay.Base + "\"\n",
 		"Restart=always\n",
 		"RestartSec=10\n",
 		"WantedBy=default.target\n",
@@ -114,10 +120,17 @@ func TestIssue175_SystemdUserUnitFile(t *testing.T) {
 	if p, _ := svc.unitPath(); p != filepath.Join(home, ".config", "systemd", "user", "vaultsync.service") {
 		t.Fatalf("unit path: %s", p)
 	}
+	// The unit goes where the user manager looks: its XDG_CONFIG_HOME, not
+	// the shell's (Codex review of #212).
 	xdg := filepath.Join(t.TempDir(), "cfg")
-	svc.getenv = envOf(map[string]string{"XDG_CONFIG_HOME": xdg})
+	svc.getenv = envOf(map[string]string{"XDG_CONFIG_HOME": filepath.Join(t.TempDir(), "shell-only")})
+	svc.run = &fakeRunner{answers: map[string]string{"systemctl --user show-environment": "HOME=/home/me\nXDG_CONFIG_HOME=" + xdg}}
 	if p, _ := svc.unitPath(); p != filepath.Join(xdg, "systemd", "user", "vaultsync.service") {
-		t.Fatalf("unit path with XDG_CONFIG_HOME: %s", p)
+		t.Fatalf("unit path from the manager's XDG_CONFIG_HOME: %s", p)
+	}
+	svc.run = &fakeRunner{}
+	if p, _ := svc.unitPath(); p != filepath.Join(home, ".config", "systemd", "user", "vaultsync.service") {
+		t.Fatalf("unit path without a manager XDG_CONFIG_HOME: %s", p)
 	}
 }
 

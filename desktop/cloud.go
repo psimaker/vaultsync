@@ -189,7 +189,8 @@ func dropboxPaths(infoJSON string) []string {
 }
 
 // nextcloudPaths reads every synced folder from a Nextcloud client's
-// nextcloud.cfg (Qt INI: "0\Folders\1\localPath=/Users/me/Nextcloud/").
+// nextcloud.cfg (Qt INI: "0\Folders\1\localPath=/Users/me/Nextcloud/";
+// Qt quotes and escapes a value with commas, semicolons, quotes and the like).
 func nextcloudPaths(cfg string) []string {
 	data, err := readSmallFile(cfg)
 	if err != nil {
@@ -202,11 +203,51 @@ func nextcloudPaths(cfg string) []string {
 		if !ok || !(strings.HasSuffix(key, `\localPath`) || strings.HasSuffix(key, "/localPath")) {
 			continue
 		}
-		if value = strings.TrimSpace(value); value != "" {
+		if value = qtINIValue(value); filepath.IsAbs(value) || strings.HasPrefix(value, "/") {
 			out = append(out, value)
 		}
 	}
 	return out
+}
+
+// qtINIValue decodes one QSettings INI value: surrounding double quotes are
+// removed and backslash escapes resolved (\" \\ \n \t \r \xHH…), the way
+// QSettings::iniUnescapedStringList reads them.
+func qtINIValue(raw string) string {
+	raw = strings.TrimSpace(raw)
+	var b strings.Builder
+	for i := 0; i < len(raw); i++ {
+		ch := raw[i]
+		switch {
+		case ch == '"': // quotes only delimit; they are not part of the value
+		case ch == '\\' && i+1 < len(raw):
+			i++
+			switch e := raw[i]; e {
+			case 'n':
+				b.WriteByte('\n')
+			case 't':
+				b.WriteByte('\t')
+			case 'r':
+				b.WriteByte('\r')
+			case 'x':
+				j := i + 1
+				for j < len(raw) && j < i+5 && strings.IndexByte("0123456789abcdefABCDEF", raw[j]) >= 0 {
+					j++
+				}
+				if n, err := strconv.ParseUint(raw[i+1:j], 16, 32); err == nil && j > i+1 {
+					b.WriteRune(rune(n))
+					i = j - 1
+				} else {
+					b.WriteByte('x')
+				}
+			default:
+				b.WriteByte(e)
+			}
+		default:
+			b.WriteByte(ch)
+		}
+	}
+	return b.String()
 }
 
 // oneDriveLinuxSyncDir reads sync_dir from the onedrive client's config; the

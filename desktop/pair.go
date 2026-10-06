@@ -109,6 +109,29 @@ type plan struct {
 	name     string            // planNew: the name on the Hub
 	path     string            // resolved local folder
 	hadFiles bool              // what the folder held when the person decided
+	// The folder the person decided on, by identity: dir when it existed,
+	// otherwise its nearest existing ancestor (anchor). A replaced folder, a
+	// vanished one or a disconnected disk is noticed before anything syncs.
+	dir        os.FileInfo
+	anchorPath string
+	anchor     os.FileInfo
+}
+
+// withIdentity records which folder the plan means.
+func (p plan) withIdentity() plan {
+	if fi, err := os.Stat(p.path); err == nil {
+		p.dir = fi
+		return p
+	}
+	for a := filepath.Dir(p.path); ; a = filepath.Dir(a) {
+		if fi, err := os.Stat(a); err == nil {
+			p.anchorPath, p.anchor = a, fi
+			return p
+		}
+		if filepath.Dir(a) == a {
+			return p
+		}
+	}
 }
 
 func (p plan) label() string {
@@ -141,6 +164,11 @@ func (s *pairSession) run(ctx context.Context) error {
 	}
 	if err := s.connect(ctx); err != nil {
 		return err
+	}
+	if s.hello.Vaults == nil {
+		// The Hub sends no list (null, not an empty one) when it cannot read
+		// its own vaults; nothing may be decided on that.
+		return refuse("Your Hub could not list its vaults just now. Run vaultsync pair again in a moment.")
 	}
 	if err := s.addHubDevice(ctx); err != nil {
 		return err
@@ -400,6 +428,9 @@ func (s *pairSession) reconnect(ctx context.Context) error {
 	if err := s.handshake(ctx, s.code); err != nil {
 		return refuse("%s", handshakeText(err, s))
 	}
+	if s.hello.Vaults == nil {
+		return refuse("Your Hub could not list its vaults just now. Run vaultsync pair again in a moment.")
+	}
 	return nil
 }
 
@@ -456,14 +487,15 @@ func (s *pairSession) buildMenu(ctx context.Context) (vaultMenu, error) {
 		m.registryNote = "Obsidian’s list of vaults could not be read; vaults it lists may be missing here."
 	}
 	if len(vaults) == 0 && len(errs) == 0 {
+		roots := s.env.cloud() // once per scan, not once per folder visited
 		vaults = scanForVaults(s.env.scanRoots, func(p string) bool {
-			_, blocked := cloudBlock(p, s.env.cloud(), s.env.goos)
+			_, blocked := cloudBlock(p, roots, s.env.goos)
 			return blocked
 		}, scanLimits{depth: 3, maxDirs: 4000, deadline: time.Now().Add(3 * time.Second)})
 	}
 	for _, v := range vaults {
 		e := menuEntry{label: filepath.Base(v.Path), path: v.Path, note: tildePath(s.env.home, v.Path)}
-		if v.Opened.IsZero() == false {
+		if !v.Opened.IsZero() {
 			e.note += "  " + openedAgo(s.env.now(), v.Opened)
 		}
 		if st, err := os.Stat(v.Path); err != nil || !st.IsDir() {
@@ -555,7 +587,7 @@ func openedAgo(now, t time.Time) string {
 }
 
 func (s *pairSession) choose(ctx context.Context) (plan, error) {
-	if !s.t.interactive() {
+	if !s.t.interactive() || s.opts.vault != "" {
 		return s.chooseFromFlags(ctx)
 	}
 	for {
@@ -684,22 +716,31 @@ func (s *pairSession) planForLocal(ctx context.Context, path string) (plan, erro
 		return plan{}, err
 	}
 	if !empty {
-		for _, w := range syncPluginWarnings(path) {
-			s.t.say("  %s", w)
-		}
-		s.t.blank()
-		s.t.say("  %s at %s already contains files. VaultSync will sync this folder with %s.", quoted(name), tildePath(s.env.home, path), quoted(s.hubLabel()))
-		s.t.say("  Edits and deletions on connected devices will also change this folder.")
-		ok, err := s.t.confirm("  Start syncing?")
-		if err != nil {
+		if err := s.askConsent(name, path); err != nil {
 			return plan{}, err
 		}
-		if !ok {
-			s.t.say("  Nothing was changed.")
-			return plan{}, errCancelled
-		}
 	}
-	return plan{kind: planNew, name: name, path: path, hadFiles: !empty}, nil
+	return plan{kind: planNew, name: name, path: path, hadFiles: !empty}.withIdentity(), nil
+}
+
+// askConsent is rule 7's explicit consent for a folder that holds files,
+// naming the consequence; the default is No.
+func (s *pairSession) askConsent(name, path string) error {
+	for _, w := range syncPluginWarnings(path) {
+		s.t.say("  %s", w)
+	}
+	s.t.blank()
+	s.t.say("  %s at %s already contains files. VaultSync will sync this folder with %s.", quoted(name), tildePath(s.env.home, path), quoted(s.hubLabel()))
+	s.t.say("  Edits and deletions on connected devices will also change this folder.")
+	ok, err := s.t.confirm("  Start syncing?")
+	if err != nil {
+		return err
+	}
+	if !ok {
+		s.t.say("  Nothing was changed.")
+		return errCancelled
+	}
+	return nil
 }
 
 // askHubName asks for the vault's name on the Hub. A name the Hub already
@@ -762,15 +803,18 @@ func (s *pairSession) planForHub(ctx context.Context, v pairing.VaultInfo) (plan
 		if a == "" {
 			a = def
 		}
+		if strings.EqualFold(a, "q") {
+			return plan{}, errCancelled
+		}
 		path, err := expandPath(s.env.home, a)
 		if err != nil {
-			s.t.say("  %s is not a folder path.", a)
+			s.t.say("  %s is not a folder path. Type another folder, or Q to go back.", a)
 			continue
 		}
 		p, err := s.downloadPlan(ctx, v, path)
 		var r *refusal
 		if errors.As(err, &r) {
-			s.t.say("  %s", r.msg)
+			s.t.say("  %s Type another folder, or Q to go back.", r.msg)
 			continue
 		}
 		return p, err
@@ -801,7 +845,7 @@ func (s *pairSession) downloadPlan(ctx context.Context, v pairing.VaultInfo, pat
 	if st, err := os.Stat(parent); (err != nil || !st.IsDir()) && parent != vaults {
 		return plan{}, refuse("The folder above %s does not exist. Create it first, or choose another place.", tildePath(s.env.home, path))
 	}
-	return plan{kind: planDownload, vault: v, path: path}, nil
+	return plan{kind: planDownload, vault: v, path: path}.withIdentity(), nil
 }
 
 func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
@@ -848,9 +892,14 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 	}
 	hasFiles := exists && !empty
 	if hasFiles && !s.opts.yes {
-		return plan{}, refuse("%s already contains files. VaultSync would sync it with your Hub as the new vault %s, and edits and deletions on connected devices would also change this folder. Pass --yes to agree.", tildePath(s.env.home, path), quoted(name))
+		if !s.t.interactive() {
+			return plan{}, refuse("%s already contains files. VaultSync would sync it with your Hub as the new vault %s, and edits and deletions on connected devices would also change this folder. Pass --yes to agree.", tildePath(s.env.home, path), quoted(name))
+		}
+		if err := s.askConsent(name, path); err != nil {
+			return plan{}, err
+		}
 	}
-	return plan{kind: planNew, name: name, path: path, hadFiles: hasFiles}, nil
+	return plan{kind: planNew, name: name, path: path, hadFiles: hasFiles}.withIdentity(), nil
 }
 
 // --- the checks -------------------------------------------------------------
@@ -915,31 +964,36 @@ func (s *pairSession) finish(ctx context.Context, p plan) error {
 	var err error
 	if p.kind == planDownload {
 		att.VaultID = p.vault.ID
-		s.recordAttempt(att, "sending")
+		if err := s.recordAttempt(att, "sending"); err != nil {
+			return err
+		}
 		reply, err = s.provision(ctx, p.vault.ID, false)
 	} else {
 		if p.hadFiles {
 			// The name must still be free right before the Hub starts the
-			// vault — a fresh catalogue, not the one from the handshake.
+			// vault — a fresh catalogue, not the one from the handshake, and
+			// one the Hub could actually read (null means it could not).
 			fresh, ferr := s.provision(ctx, "", false)
-			if ferr != nil || catalogueMatchesIn(fresh.Vaults, p.name) > 0 {
+			if ferr != nil || fresh.Vaults == nil || catalogueMatchesIn(fresh.Vaults, p.name) > 0 {
 				return s.notNew(att, label)
 			}
 			s.hello.Vaults = fresh.Vaults
 		}
-		s.recordAttempt(att, "sending")
+		if err := s.recordAttempt(att, "sending"); err != nil {
+			return err
+		}
 		reply, err = s.provision(ctx, p.name, true)
 	}
 	if errors.Is(err, errOutcomeUnknown) {
-		s.recordAttempt(att, "unknown")
+		_ = s.recordAttempt(att, "unknown")
 		return refuse("VaultSync couldn’t confirm whether your Hub shared %s. Run vaultsync status to check before trying again.", quoted(label))
 	}
 	if err != nil {
-		s.recordAttempt(att, "refused")
+		_ = s.recordAttempt(att, "refused")
 		return err
 	}
 	if reply.Provisioned == nil {
-		s.recordAttempt(att, "refused")
+		_ = s.recordAttempt(att, "refused")
 		if strings.HasPrefix(reply.Error, pairing.RegistrationRefusedPrefix) {
 			return refuse("Your Hub could not register this computer: %s. Check the Hub with “vaultsync-hub status”, then try again.", strings.TrimPrefix(reply.Error, pairing.RegistrationRefusedPrefix+": "))
 		}
@@ -948,20 +1002,20 @@ func (s *pairSession) finish(ctx context.Context, p plan) error {
 	vault := *reply.Provisioned
 	att.VaultID = vault.ID
 	if p.kind == planDownload && vault.ID != p.vault.ID {
-		s.recordAttempt(att, "refused")
+		_ = s.recordAttempt(att, "refused")
 		return refuse("Your Hub shared a different vault than the one you chose. Nothing was set up — pair again.")
 	}
 	if p.kind == planNew && !strings.EqualFold(strings.TrimSpace(vault.Label), strings.TrimSpace(p.name)) {
-		s.recordAttempt(att, "refused")
+		_ = s.recordAttempt(att, "refused")
 		return refuse("Your Hub shared %s instead of %s. Nothing was set up — pair again.", quoted(vault.Label), quoted(p.name))
 	}
 	if p.kind == planNew && p.hadFiles {
 		if catalogueMatchesIn(s.hello.Vaults, vault.ID) > 0 || !s.provedNew(ctx, vault) {
-			s.recordAttempt(att, "refused")
+			_ = s.recordAttempt(att, "refused")
 			return refuse("VaultSync could not confirm that %s is a new, empty vault. Your local folder was not connected.", quoted(label))
 		}
 	}
-	s.recordAttempt(att, "shared")
+	_ = s.recordAttempt(att, "shared")
 	s.t.say("✓ Your Hub is sharing %s.", quoted(label))
 
 	fmt.Fprint(s.t.out, "  Waiting for your Hub to reach this computer… ")
@@ -976,7 +1030,7 @@ func (s *pairSession) finish(ctx context.Context, p plan) error {
 	if err := s.accept(ctx, p, vault); err != nil {
 		return err
 	}
-	s.recordAttempt(att, "accepted")
+	_ = s.recordAttempt(att, "accepted")
 	s.t.blank()
 	s.t.say("✓ %s is set up to sync at %s. First sync is starting; check vaultsync status.", quoted(label), tildePath(s.env.home, p.path))
 	if p.kind == planDownload {
@@ -995,7 +1049,7 @@ func (s *pairSession) provedNew(ctx context.Context, v pairing.VaultInfo) bool {
 		return false
 	}
 	reply, err := s.provision(ctx, "", false)
-	if err != nil {
+	if err != nil || reply.Vaults == nil {
 		return false
 	}
 	for _, c := range reply.Vaults {
@@ -1013,7 +1067,7 @@ func (s *pairSession) provedNew(ctx context.Context, v pairing.VaultInfo) bool {
 }
 
 func (s *pairSession) notNew(att pairAttempt, label string) error {
-	s.recordAttempt(att, "refused")
+	_ = s.recordAttempt(att, "refused")
 	return refuse("VaultSync could not confirm that %s would be a new, empty vault on your Hub. Your local folder was not connected.", quoted(label))
 }
 
@@ -1025,8 +1079,20 @@ func (s *pairSession) accept(ctx context.Context, p plan, v pairing.VaultInfo) e
 		Client:         s.env.engine,
 		PendingTimeout: 5 * time.Second, // the offer is already there
 		Reporter:       rep,
+		Mkdir: func(path string) error {
+			// Only a folder that did not exist when the person decided is
+			// created — never a vault that vanished, never on a disk that
+			// went away (its mount point would take the folder instead).
+			if p.dir != nil {
+				return refuse("%s disappeared while VaultSync was waiting for your Hub. Nothing was connected — reconnect its disk, then run vaultsync pair again.", tildePath(s.env.home, path))
+			}
+			if err := s.checkAnchor(p); err != nil {
+				return err
+			}
+			return os.MkdirAll(path, 0o755)
+		},
 		BeforeAdd: func(abs string) error {
-			return s.finalGate(ctx, p, abs)
+			return s.finalGate(ctx, p, v, abs)
 		},
 	}, s.hello.HubDeviceID, s.myID, v, p.path)
 	if rep.alreadyAt != "" {
@@ -1054,10 +1120,18 @@ func isRefusal(err error) bool {
 // finalGate runs after the last wait, right before the folder is added: the
 // engine is the one the checks ran against, the folder passes every rule
 // again, and it still holds what the person decided on.
-func (s *pairSession) finalGate(ctx context.Context, p plan, abs string) error {
+func (s *pairSession) finalGate(ctx context.Context, p plan, v pairing.VaultInfo, abs string) error {
 	start, err := engineStartTime(ctx, s.env.engine)
 	if err != nil || start != s.engineStart {
 		return refuse("The sync engine restarted while VaultSync was setting up %s. Nothing was connected — run vaultsync pair again.", quoted(p.label()))
+	}
+	// The very folder the person decided on — not another one put in its place.
+	if p.dir != nil {
+		if fi, err := os.Stat(abs); err != nil || !os.SameFile(fi, p.dir) {
+			return refuse("%s was replaced while VaultSync was waiting for your Hub. Nothing was connected — run vaultsync pair again.", tildePath(s.env.home, abs))
+		}
+	} else if err := s.checkAnchor(p); err != nil {
+		return err
 	}
 	enginePaths, err := s.enginePaths(ctx)
 	if err != nil {
@@ -1072,6 +1146,24 @@ func (s *pairSession) finalGate(ctx context.Context, p plan, abs string) error {
 	}
 	if empty == p.hadFiles {
 		return refuse("%s changed while VaultSync was waiting for your Hub. Nothing was connected — run vaultsync pair again.", tildePath(s.env.home, abs))
+	}
+	// The Hub side again, now, after every wait: a folder with files joins
+	// only a vault that is still new, empty and shared with this computer
+	// alone (another device may have joined it while this one waited).
+	if p.kind == planNew && p.hadFiles && !s.provedNew(ctx, v) {
+		return refuse("VaultSync could not confirm that %s is still a new, empty vault. Your local folder was not connected.", quoted(p.label()))
+	}
+	return nil
+}
+
+// checkAnchor: the nearest existing folder above a new destination is still
+// the one it was when the person decided (a disk that went away changes it).
+func (s *pairSession) checkAnchor(p plan) error {
+	if p.anchor == nil {
+		return refuse("The place for %s cannot be checked. Nothing was connected.", tildePath(s.env.home, p.path))
+	}
+	if fi, err := os.Stat(p.anchorPath); err != nil || !os.SameFile(fi, p.anchor) {
+		return refuse("The place for %s changed while VaultSync was waiting (a disk was disconnected?). Nothing was connected — run vaultsync pair again.", tildePath(s.env.home, p.path))
 	}
 	return nil
 }

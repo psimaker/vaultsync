@@ -613,7 +613,7 @@ func chooseHubTTY(hubs []discoveredHub) (int, error) {
 	if err != nil {
 		return 0, &join.SeveralHubsError{Hubs: hubs}
 	}
-	defer in.Close()
+	defer closeTTY(in)
 	reader := bufio.NewReader(in)
 	fmt.Println()
 	fmt.Println("Several Hubs answered:")
@@ -644,7 +644,7 @@ func chooseVault(vaults []vaultInfo) (string, bool, error) {
 	if err != nil {
 		return "", false, errors.New("no terminal available — pass --vault NAME (and --create for a new vault)")
 	}
-	defer in.Close()
+	defer closeTTY(in)
 	reader := bufio.NewReader(in)
 	fmt.Println()
 	fmt.Println("Vaults on the Hub:")
@@ -683,6 +683,14 @@ func openTTY() (*os.File, error) {
 		return os.Stdin, nil
 	}
 	return os.OpenFile("/dev/tty", os.O_RDONLY, 0)
+}
+
+// closeTTY closes what openTTY opened — never standard input, which a later
+// question in the same run still reads (Windows).
+func closeTTY(f *os.File) {
+	if f != os.Stdin {
+		f.Close()
+	}
 }
 
 // acceptShareLocally accepts the Hub's share into path under the device-side

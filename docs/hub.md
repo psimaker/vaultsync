@@ -103,8 +103,15 @@ Get it from the newest `desktop-v*` release on GitHub
 release's `SHA256SUMS`, make it executable and run it in a terminal:
 
 ```sh
+curl -fLO https://github.com/psimaker/vaultsync/releases/download/desktop-vX.Y.Z/vaultsync_darwin_arm64
+curl -fLO https://github.com/psimaker/vaultsync/releases/download/desktop-vX.Y.Z/SHA256SUMS
+shasum -a 256 -c --ignore-missing SHA256SUMS
 chmod +x vaultsync_darwin_arm64 && ./vaultsync_darwin_arm64 setup
 ```
+
+Download it in a terminal as above: the agent is not notarized by Apple yet,
+so macOS refuses to run a copy that a web browser downloaded. If that
+happened, allow it once under System Settings → Privacy & Security.
 
 (The setup link above switches its "1) Obsidian device" path to the agent
 once a release of it exists.) `setup`
@@ -121,12 +128,20 @@ once a release of it exists.) `setup`
    computer, newest first, and the vaults on your Hub. A vault from your Hub
    goes into a new, empty folder (default `~/Vaults/<name>`); a vault from
    this computer becomes a new vault on your Hub — when its folder already
-   holds files, only after you agree to sync it, and only with a vault this
-   pairing just started on the Hub.
+   holds files, only after you agree to sync that very folder, and only with
+   a vault your Hub reports as new, empty and shared with this computer
+   alone. Everything is checked again right before the folder starts
+   syncing.
 
-Everything VaultSync keeps lives in one folder:
+VaultSync keeps its sync engine, settings and pairing identity in one folder —
 `~/Library/Application Support/VaultSync` on macOS,
-`~/.local/state/vaultsync` on Linux. Your vaults stay where they are.
+`~/.local/state/vaultsync` on Linux — plus the service file where the system
+expects it (`~/Library/LaunchAgents`, `~/.config/systemd/user`) and, on a Mac,
+a log in `~/Library/Logs/VaultSync`. Your vaults stay where they are. The
+sync engine's own log (in that folder's `syncthing/`) names your vaults and
+their paths; it never leaves this computer. `setup` also links the command
+as `~/.local/bin/vaultsync` (unless that name is taken) and says how to call
+it if that folder is not on your `PATH`.
 
 ```sh
 vaultsync status       # what syncs where, and whether your Hub is connected

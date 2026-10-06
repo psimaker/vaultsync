@@ -41,13 +41,21 @@ func layoutFor(goos, home string, getenv func(string) string) (layout, error) {
 	default:
 		return layout{}, fmt.Errorf("VaultSync's desktop agent runs on macOS and Linux; %s comes later", goos)
 	}
+	return l.at(l.Base), nil
+}
+
+// at roots the layout at base. The background service is started with the
+// base setup resolved (`run --state-dir`), so it never depends on the
+// service manager's own environment (XDG_STATE_HOME may differ there).
+func (l layout) at(base string) layout {
+	l.Base = base
 	l.Bin = filepath.Join(l.Base, "bin")
 	l.Agent = filepath.Join(l.Bin, "vaultsync")
 	l.Syncthing = filepath.Join(l.Bin, "syncthing")
 	l.Home = filepath.Join(l.Base, "syncthing")
 	l.State = filepath.Join(l.Base, "agent.json")
 	l.Lock = filepath.Join(l.Base, "agent.lock")
-	return l, nil
+	return l
 }
 
 // agentState is agent.json: what the agent installed and where its engine

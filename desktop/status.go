@@ -30,6 +30,13 @@ type folderSummary struct {
 	WatchError  string `json:"watchError"`
 }
 
+// remoteCompletion is how far a Hub has this folder (/rest/db/completion).
+type remoteCompletion struct {
+	Completion  float64 `json:"completion"`
+	NeedItems   int     `json:"needItems"`
+	RemoteState string  `json:"remoteState"` // unknown, notSharing, paused, valid
+}
+
 type systemStatusView struct {
 	MyID           string `json:"myID"`
 	LastDialStatus map[string]struct {
@@ -137,7 +144,17 @@ func (a *app) onlineStatus(ctx context.Context, w io.Writer, c *syncthing.Client
 		var sum folderSummary
 		state := "unknown"
 		if err := c.Get(ctx, "/rest/db/status?folder="+url.QueryEscape(f.ID), &sum); err == nil {
-			state = describeFolder(f, sum, conns, sys.MyID)
+			remote := map[string]remoteCompletion{}
+			for _, d := range f.Devices {
+				if d.DeviceID == sys.MyID {
+					continue
+				}
+				var rc remoteCompletion
+				if err := c.Get(ctx, "/rest/db/completion?folder="+url.QueryEscape(f.ID)+"&device="+url.QueryEscape(d.DeviceID), &rc); err == nil {
+					remote[d.DeviceID] = rc
+				}
+			}
+			state = describeFolder(f, sum, conns, remote, sys.MyID)
 		}
 		fmt.Fprintf(w, "  %-14s %-28s %s\n", f.Label, tildePath(a.home, f.Path), state)
 	}
@@ -156,7 +173,11 @@ func (a *app) onlineStatus(ctx context.Context, w io.Writer, c *syncthing.Client
 	return nil
 }
 
-func describeFolder(f syncthing.FolderConfig, s folderSummary, conns connectionsView, myID string) string {
+// describeFolder says where a vault stands. "Up to date" needs both sides:
+// nothing left to pull here, and every connected Hub reporting the folder
+// active and complete — a Hub that is still receiving this computer's files
+// is "uploading".
+func describeFolder(f syncthing.FolderConfig, s folderSummary, conns connectionsView, remote map[string]remoteCompletion, myID string) string {
 	if f.Paused {
 		return "paused"
 	}
@@ -166,15 +187,6 @@ func describeFolder(f syncthing.FolderConfig, s folderSummary, conns connections
 			msg += " — allow access to this folder (on a Mac: System Settings → Privacy & Security → Files and Folders or Full Disk Access)"
 		}
 		return "error: " + msg
-	}
-	connected := false
-	for _, d := range f.Devices {
-		if d.DeviceID == myID {
-			continue
-		}
-		if cn, ok := conns.Connections[d.DeviceID]; ok && cn.Connected {
-			connected = true
-		}
 	}
 	switch s.State {
 	case "scanning", "scan-waiting":
@@ -188,11 +200,35 @@ func describeFolder(f syncthing.FolderConfig, s folderSummary, conns connections
 	if s.Errors > 0 {
 		return fmt.Sprintf("%d files could not sync — see the engine's log", s.Errors)
 	}
-	if !connected {
+	connected := 0
+	lowest := 100.0
+	for _, d := range f.Devices {
+		if d.DeviceID == myID {
+			continue
+		}
+		if cn, ok := conns.Connections[d.DeviceID]; !ok || !cn.Connected {
+			continue
+		}
+		connected++
+		rc, ok := remote[d.DeviceID]
+		switch {
+		case !ok || rc.RemoteState == "unknown" || rc.RemoteState == "notSharing":
+			return "waiting for your Hub to take it"
+		case rc.RemoteState == "paused":
+			return "paused on your Hub"
+		}
+		if rc.Completion < lowest {
+			lowest = rc.Completion
+		}
+	}
+	if connected == 0 {
 		return "waiting for your Hub"
 	}
 	if s.NeedTotal > 0 {
 		return fmt.Sprintf("%d items left to sync", s.NeedTotal)
+	}
+	if lowest < 100 {
+		return fmt.Sprintf("uploading to your Hub — %d %%", int(lowest))
 	}
 	return "up to date"
 }
@@ -256,7 +292,12 @@ func (a *app) offlineFolders(w io.Writer, eng engine) map[string]bool {
 // printAttempts shows pairings that did not finish, unless the vault was set
 // up after all (configured, or a later attempt was accepted).
 func (a *app) printAttempts(w io.Writer, configured map[string]bool) {
-	all := loadAttempts(a.lay)
+	all, err := loadAttempts(a.lay)
+	if err != nil {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, err)
+		return
+	}
 	done := map[string]bool{}
 	for _, at := range all {
 		if at.State == "accepted" && at.VaultID != "" {

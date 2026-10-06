@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -270,7 +272,17 @@ func TestIssue175_E2EFreshHomeInstallsPairsAndSyncs(t *testing.T) {
 	}
 	runCtx, stopEngine := context.WithCancel(ctx)
 	engineDone := make(chan error, 1)
-	go func() { engineDone <- eng.supervise(runCtx, st, t.Logf) }()
+	// What the agent itself logs goes to the service log or journal: it must
+	// never name a vault or a path (checked at the end).
+	var serviceLog strings.Builder
+	var logMu sync.Mutex
+	logf := func(format string, args ...any) {
+		logMu.Lock()
+		defer logMu.Unlock()
+		serviceLog.WriteString(fmt.Sprintf(format, args...) + "\n")
+		t.Logf(format, args...)
+	}
+	go func() { engineDone <- eng.supervise(runCtx, st, logf) }()
 	t.Cleanup(func() {
 		stopEngine()
 		<-engineDone
@@ -379,6 +391,15 @@ func TestIssue175_E2EFreshHomeInstallsPairsAndSyncs(t *testing.T) {
 		t.Fatalf("the Hub started a vault without consent: %+v", fs)
 	}
 	assertUntouched(t, third)
+
+	logMu.Lock()
+	logged := serviceLog.String()
+	logMu.Unlock()
+	for _, secret := range []string{"Notes", "Third", "Other", home, code} {
+		if strings.Contains(logged, secret) {
+			t.Errorf("the agent's own log names %q:\n%s", secret, logged)
+		}
+	}
 }
 
 // testWriter sends the agent's output to the test log.

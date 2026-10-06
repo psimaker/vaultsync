@@ -190,7 +190,7 @@ func TestIssue175_UnknownOutcomeIsNeverRetried(t *testing.T) {
 	if n := hub.provisionCount("vs-aaaaaaaaaaaa"); n != 1 {
 		t.Fatalf("the share request was sent %d times", n)
 	}
-	att := loadAttempts(s.env.lay)
+	att, _ := loadAttempts(s.env.lay)
 	if len(att) != 1 || att[0].State != "unknown" {
 		t.Fatalf("the attempt is not recorded as unknown: %+v", att)
 	}
@@ -217,7 +217,7 @@ func TestIssue175_DownloadIntoANewFolder(t *testing.T) {
 			t.Errorf("output lacks %q:\n%s", line, out)
 		}
 	}
-	if att := loadAttempts(s.env.lay); len(att) != 1 || att[0].State != "accepted" {
+	if att, _ := loadAttempts(s.env.lay); len(att) != 1 || att[0].State != "accepted" {
 		t.Fatalf("attempt: %+v", att)
 	}
 }
@@ -380,7 +380,7 @@ func TestIssue175_FinalGateRunsAfterTheWait(t *testing.T) {
 		if !strings.Contains(refusalText(err), "has not received the share yet") || eng.folderCount() != 0 {
 			t.Fatalf("got %v", err)
 		}
-		if att := loadAttempts(s.env.lay); len(att) != 1 || att[0].State != "shared" {
+		if att, _ := loadAttempts(s.env.lay); len(att) != 1 || att[0].State != "shared" {
 			t.Fatalf("attempt: %+v", att)
 		}
 	})
@@ -451,5 +451,178 @@ func TestIssue175_SyncPluginWarnings(t *testing.T) {
 	writeFile(t, filepath.Join(v, ".obsidian", "community-plugins.json"), `[]`)
 	if w := syncPluginWarnings(v); len(w) != 1 {
 		t.Fatalf("the older list format: %v", w)
+	}
+}
+
+// Codex review of #212, blocker 3: the Hub answers without a vault list
+// (null) when it cannot read its vaults; that is never an empty catalogue.
+func TestIssue175_UnreadableCatalogueDecidesNothing(t *testing.T) {
+	ctx := context.Background()
+	t.Run("at the handshake", func(t *testing.T) {
+		eng := newFakeEngine(t)
+		hub := newFakeHub(t, eng, pairing.VaultInfo{ID: "vs-aaaaaaaaaaaa", Label: "Notes", Files: 3})
+		hub.catalogueUnreadable = true
+		s, _ := testSession(t, eng, hub, pairOptions{vault: "Notes", path: "/tmp/never"})
+		s.opts.code = hub.code
+		err := s.run(ctx)
+		if !strings.Contains(refusalText(err), "could not list its vaults") || len(hub.provisions) != 0 {
+			t.Fatalf("got %v; provisions=%d", err, len(hub.provisions))
+		}
+	})
+	t.Run("right before starting a vault for a folder with files", func(t *testing.T) {
+		eng := newFakeEngine(t)
+		hub := newFakeHub(t, eng)
+		s, _ := testSession(t, eng, hub, pairOptions{vault: "Notes", create: true, yes: true})
+		s.opts.code = hub.code
+		local := filepath.Join(s.env.home, "Notes")
+		mkVault(t, local)
+		s.opts.path = local
+		// Readable at the handshake, unreadable from the next request on.
+		hub.tamper = func(p *pairing.HubPayload) { p.Vaults = nil }
+		err := s.run(ctx)
+		if !strings.Contains(refusalText(err), "could not confirm") || hub.provisionCount("Notes") != 0 || eng.folderCount() != 0 {
+			t.Fatalf("got %v; provisions=%d folders=%d", err, hub.provisionCount("Notes"), eng.folderCount())
+		}
+		assertUntouched(t, local)
+	})
+}
+
+// Codex review of #212, blocker 2: consent belongs to the folder the person
+// chose — not to whatever sits at that path when the share arrives.
+func TestIssue175_ConsentIsBoundToTheFolder(t *testing.T) {
+	ctx := context.Background()
+	upload := func(t *testing.T) (*fakeEngine, *fakeHub, *pairSession, string) {
+		eng := newFakeEngine(t)
+		hub := newFakeHub(t, eng)
+		s, _ := testSession(t, eng, hub, pairOptions{vault: "Notes", create: true, yes: true})
+		s.opts.code = hub.code
+		local := filepath.Join(s.env.home, "Notes")
+		mkVault(t, local)
+		s.opts.path = local
+		return eng, hub, s, local
+	}
+	t.Run("replaced during the last wait", func(t *testing.T) {
+		eng, _, s, local := upload(t)
+		eng.flap = &offerFlap{back: 2500 * time.Millisecond, during: func() {
+			time.Sleep(500 * time.Millisecond) // inside AcceptShare's own wait
+			if err := os.Rename(local, local+"-moved"); err != nil {
+				t.Error(err)
+			}
+			mkVault(t, local)
+		}}
+		err := s.run(ctx)
+		if !strings.Contains(refusalText(err), "was replaced") || eng.folderCount() != 0 {
+			t.Fatalf("got %v; folders=%d", err, eng.folderCount())
+		}
+	})
+	t.Run("vanished during the wait is never recreated", func(t *testing.T) {
+		eng, hub, s, local := upload(t)
+		hub.offerDelay = 300 * time.Millisecond
+		time.AfterFunc(100*time.Millisecond, func() {
+			if err := os.Rename(local, local+"-moved"); err != nil {
+				t.Error(err)
+			}
+		})
+		err := s.run(ctx)
+		if !strings.Contains(refusalText(err), "disappeared") || eng.folderCount() != 0 {
+			t.Fatalf("got %v; folders=%d", err, eng.folderCount())
+		}
+		if _, err := os.Stat(local); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("the vanished folder was created again")
+		}
+	})
+	t.Run("the place above a new folder changed", func(t *testing.T) {
+		eng := newFakeEngine(t)
+		hub := newFakeHub(t, eng, pairing.VaultInfo{ID: "vs-aaaaaaaaaaaa", Label: "Recipes", Files: 12})
+		hub.offerDelay = 300 * time.Millisecond
+		s, _ := testSession(t, eng, hub, pairOptions{vault: "Recipes"})
+		s.opts.code = hub.code
+		disk := filepath.Join(s.env.home, "Disk")
+		if err := os.MkdirAll(disk, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		s.opts.path = filepath.Join(disk, "Recipes")
+		// The "disk" goes away and another folder takes its name.
+		time.AfterFunc(100*time.Millisecond, func() {
+			if err := os.Rename(disk, disk+"-gone"); err != nil {
+				t.Error(err)
+			}
+			if err := os.Mkdir(disk, 0o755); err != nil {
+				t.Error(err)
+			}
+		})
+		err := s.run(ctx)
+		if !strings.Contains(refusalText(err), "changed while VaultSync was waiting") || eng.folderCount() != 0 {
+			t.Fatalf("got %v; folders=%d", err, eng.folderCount())
+		}
+	})
+}
+
+// Codex review of #212, major 4: the Hub side is checked again after every
+// wait — another device that joined the new vault meanwhile stops the accept.
+func TestIssue175_HubEvidenceIsRefreshedBeforeAdding(t *testing.T) {
+	eng := newFakeEngine(t)
+	hub := newFakeHub(t, eng)
+	hub.offerDelay = 300 * time.Millisecond
+	s, _ := testSession(t, eng, hub, pairOptions{vault: "Notes", create: true, yes: true})
+	s.opts.code = hub.code
+	local := filepath.Join(s.env.home, "Notes")
+	mkVault(t, local)
+	s.opts.path = local
+	time.AfterFunc(150*time.Millisecond, func() {
+		hub.mu.Lock()
+		defer hub.mu.Unlock()
+		for i := range hub.vaults {
+			hub.vaults[i].SharedWith = append(hub.vaults[i].SharedWith, otherID)
+		}
+	})
+	err := s.run(context.Background())
+	if !strings.Contains(refusalText(err), "still a new, empty vault") || eng.folderCount() != 0 {
+		t.Fatalf("got %v; folders=%d", err, eng.folderCount())
+	}
+	assertUntouched(t, local)
+}
+
+// Codex review of #212, minor 15: explicit flags are honoured with a terminal
+// too; a folder with files then asks for consent instead of refusing.
+func TestIssue175_FlagsWinOverTheMenu(t *testing.T) {
+	eng := newFakeEngine(t)
+	hub := newFakeHub(t, eng)
+	s, out := testSession(t, eng, hub, pairOptions{vault: "Notes", create: true}, "y")
+	s.opts.code = hub.code
+	local := filepath.Join(s.env.home, "Notes")
+	mkVault(t, local)
+	s.opts.path = local
+	if err := s.run(context.Background()); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if strings.Contains(out.String(), "Choose a vault to sync") || !strings.Contains(out.String(), "Start syncing? [y/N]") || eng.folderCount() != 1 {
+		t.Fatalf("output:\n%s", out)
+	}
+}
+
+// Codex review of #212, major 8: nothing is asked of the Hub that could not
+// be recorded, and unresolved attempts are never dropped to make room.
+func TestIssue175_PairingJournal(t *testing.T) {
+	eng := newFakeEngine(t)
+	hub := newFakeHub(t, eng, pairing.VaultInfo{ID: "vs-aaaaaaaaaaaa", Label: "Recipes", Files: 12})
+	s, _ := testSession(t, eng, hub, pairOptions{vault: "Recipes"})
+	s.opts.code = hub.code
+	s.opts.path = filepath.Join(s.env.home, "Vaults", "Recipes")
+	writeFile(t, attemptsPath(s.env.lay), "{damaged")
+	err := s.run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "damaged") || hub.provisionCount("vs-aaaaaaaaaaaa") != 0 {
+		t.Fatalf("got %v; provisions=%d", err, hub.provisionCount("vs-aaaaaaaaaaaa"))
+	}
+
+	var list []pairAttempt
+	base := time.Now()
+	list = append(list, pairAttempt{Vault: "lost", State: "unknown", At: base})
+	for i := 1; i <= 2*attemptsKept; i++ {
+		list = append(list, pairAttempt{Vault: "done", State: "accepted", At: base.Add(time.Duration(i) * time.Second)})
+	}
+	trimmed := trimAttempts(list)
+	if len(trimmed) != attemptsKept || trimmed[0].Vault != "lost" {
+		t.Fatalf("the unresolved attempt was dropped: %+v", trimmed[0])
 	}
 }

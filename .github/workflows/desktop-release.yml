@@ -90,5 +90,5 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --latest=false \
             --title "VaultSync for Mac and Linux ${GITHUB_REF_NAME#desktop-v}" \
-            --notes "The desktop agent \`vaultsync\` for macOS and Linux: it installs its own pinned Syncthing, pairs with your VaultSync Hub by code and keeps your Obsidian vaults in sync. Check downloads against SHA256SUMS. Setup: docs/hub.md." \
+            --notes "The desktop agent \`vaultsync\` for macOS and Linux: it installs its own pinned Syncthing, pairs with your VaultSync Hub by code and keeps your Obsidian vaults in sync. Check downloads against SHA256SUMS. On a Mac, download with curl — the binaries are not notarized yet, so a browser download is blocked. Setup: docs/hub.md." \
             dist/*

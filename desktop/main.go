@@ -18,8 +18,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -111,7 +113,7 @@ func runCLI(args []string) error {
 	case "uninstall":
 		return app.uninstall(ctx, args)
 	case "run":
-		return app.run(ctx)
+		return app.run(ctx, args)
 	}
 	usage(os.Stderr)
 	return fmt.Errorf("unknown command %q", cmd)
@@ -188,34 +190,59 @@ func (a *app) setup(ctx context.Context, args []string) error {
 	t.say("  Your vaults stay where they are; VaultSync keeps its own files in %s.", tildePath(a.home, a.lay.Base))
 	t.blank()
 
+	// One setup at a time: two would install and generate the engine's
+	// identity over each other.
+	unlockSetup, err := lockFile(filepath.Join(a.lay.Base, "setup.lock"))
+	if errors.Is(err, ErrEngineRunning) {
+		return refuse("Another vaultsync setup is running on this computer — wait for it to finish.")
+	}
+	if err != nil {
+		return err
+	}
 	st, engineChanged, err := a.ensureEngine(ctx, t)
 	if err != nil {
+		unlockSetup()
 		return err
 	}
 	eng := a.engine()
 	if err := eng.prepare(ctx, &st); err != nil {
+		unlockSetup()
 		return fmt.Errorf("could not set up the sync engine: %w", err)
 	}
 	if err := saveState(a.lay.State, st); err != nil {
+		unlockSetup()
 		return err
 	}
 	agentChanged, err := installAgentCopy(a.lay.Agent)
+	unlockSetup()
 	if err != nil {
 		return fmt.Errorf("could not install VaultSync into %s: %w", tildePath(a.home, a.lay.Bin), err)
 	}
 
-	runCtx, stopTemporary := context.WithCancel(ctx)
-	defer stopTemporary()
-	temporaryDone := make(chan error, 1)
+	var temporaryDone chan error
 	if *noService {
-		// A temporary engine for pairing only: it stops when setup ends.
+		// A temporary engine for pairing only. Whatever happens next, it is
+		// stopped and waited for before setup returns — never left behind
+		// (macOS has no way to stop a child when its parent dies).
+		runCtx, stopTemporary := context.WithCancel(ctx)
+		temporaryDone = make(chan error, 1)
 		go func() { temporaryDone <- eng.supervise(runCtx, st, func(string, ...any) {}) }()
+		defer func() {
+			stopTemporary()
+			select {
+			case <-temporaryDone:
+			case <-time.After(30 * time.Second):
+			}
+		}()
 	} else {
 		if err := a.svc.userManagerAvailable(); err != nil {
 			return refuse("This computer has no systemd user session (%v), so VaultSync cannot run in the background here. Run vaultsync setup --no-service, then keep vaultsync run running — for example from your desktop's autostart.", err)
 		}
 		if _, err := a.svc.install(a.lay.Agent, agentChanged || engineChanged); err != nil {
-			return fmt.Errorf("could not start the background service: %w", err)
+			if a.goos == "darwin" {
+				return refuse("Could not start the background service (%v). Run vaultsync setup in Terminal on this Mac while you are logged in — not over SSH — or use vaultsync setup --no-service and keep vaultsync run running yourself.", err)
+			}
+			return refuse("Could not start the background service (%v). Check `systemctl --user status vaultsync`, or use vaultsync setup --no-service and keep vaultsync run running yourself.", err)
 		}
 		t.say("✓ Background service running — it starts again when you log in")
 	}
@@ -223,15 +250,14 @@ func (a *app) setup(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := waitReady(ctx, client, 60*time.Second); err != nil {
+	if err := waitEngine(ctx, client, 60*time.Second, temporaryDone); err != nil {
 		return fmt.Errorf("the sync engine did not start: %w — see %s", err, a.logHint())
 	}
+	command := a.installCommand(t)
 	err = a.pairWith(ctx, t, opts, client)
 	if *noService {
-		stopTemporary()
-		<-temporaryDone
 		t.blank()
-		t.say("VaultSync has no background service on this computer: run vaultsync run to keep syncing.")
+		t.say("VaultSync has no background service on this computer: run %s run to keep syncing.", command)
 	}
 	if errors.Is(err, errCancelled) {
 		t.blank()
@@ -244,10 +270,59 @@ func (a *app) setup(ctx context.Context, args []string) error {
 	}
 	if err == nil {
 		t.blank()
-		t.say("  Check on it any time:  vaultsync status")
+		t.say("  Check on it any time:  %s status", command)
 		t.say("  Next device: run the same setup link, or in VaultSync on iPhone tap Add Hub.")
 	}
 	return err
+}
+
+// waitEngine waits for the engine's API — and stops waiting when the
+// supervisor that should start it has already given up.
+func waitEngine(ctx context.Context, c *syncthing.Client, timeout time.Duration, supervisor <-chan error) error {
+	ready := make(chan error, 1)
+	wctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() { ready <- waitReady(wctx, c, timeout) }()
+	select {
+	case err := <-ready:
+		return err
+	case err := <-supervisor:
+		if err == nil {
+			err = errors.New("it stopped")
+		}
+		return err
+	}
+}
+
+// installCommand puts `vaultsync` on the usual per-user command path
+// (~/.local/bin) as a link to the copy the service runs — unless something
+// else already has that name — and says how to call it.
+func (a *app) installCommand(t *term) string {
+	link := filepath.Join(a.home, ".local", "bin", "vaultsync")
+	if target, err := os.Readlink(link); err == nil && target == a.lay.Agent {
+		// already ours
+	} else if _, err := os.Lstat(link); errors.Is(err, fs.ErrNotExist) {
+		if err := os.MkdirAll(filepath.Dir(link), 0o755); err == nil {
+			_ = os.Symlink(a.lay.Agent, link)
+		}
+	}
+	if found, err := exec.LookPath("vaultsync"); err == nil {
+		if r, err := filepath.EvalSymlinks(found); err == nil && (r == a.lay.Agent || found == link) {
+			return "vaultsync"
+		}
+	}
+	if target, err := os.Readlink(link); err == nil && target == a.lay.Agent {
+		return tildePath(a.home, link)
+	}
+	return shellQuote(a.lay.Agent)
+}
+
+// shellQuote quotes a path for copying into a shell when it needs it.
+func shellQuote(p string) string {
+	if strings.ContainsAny(p, " '\"$`\\") {
+		return "'" + strings.ReplaceAll(p, "'", `'\''`) + "'"
+	}
+	return p
 }
 
 // ensureEngine installs the pinned Syncthing unless the installed one is
@@ -382,7 +457,21 @@ func (a *app) pairWith(ctx context.Context, t *term, opts pairOptions, client *s
 
 // --- run (the background service) -------------------------------------------
 
-func (a *app) run(ctx context.Context) error {
+func (a *app) run(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("run", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	stateDir := fs.String("state-dir", "", "")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if *stateDir != "" {
+		// The service names the folder setup used (see layout.at).
+		if !filepath.IsAbs(*stateDir) {
+			return errors.New("--state-dir must be an absolute path")
+		}
+		a.lay = a.lay.at(filepath.Clean(*stateDir))
+		a.svc.lay = a.lay
+	}
 	logger := log.New(os.Stderr, "", log.LstdFlags)
 	logf := func(format string, args ...any) { logger.Printf(format, args...) }
 	st, err := loadState(a.lay.State)

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -152,5 +153,87 @@ func TestIssue175_AgentCopyIsIdempotent(t *testing.T) {
 	}
 	if changed, err := installAgentCopy(dst); err != nil || changed {
 		t.Fatalf("second copy changed something: %v %v", changed, err)
+	}
+}
+
+// --remove-data removes nothing of VaultSync's own when a list of synced
+// folders cannot be read: it could not rule out a vault inside.
+func TestIssue175_RemoveDataFailsClosedOnUnreadableLists(t *testing.T) {
+	cases := map[string]string{
+		".local/state/syncthing/config.xml": "<configuration><folder path=",
+		".config/obsidian/obsidian.json":    `{"vaults":`,
+	}
+	for file, content := range cases {
+		t.Run(file, func(t *testing.T) {
+			tmp, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			home := filepath.Join(tmp, "home")
+			lay, err := layoutFor("linux", home, envOf(nil))
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, filepath.Join(lay.Base, "bin", "syncthing"), "x")
+			if err := saveState(lay.State, agentState{GUIPort: 1}); err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, filepath.Join(home, file), content)
+			run := &fakeRunner{}
+			var out strings.Builder
+			a := &app{goos: "linux", home: home, getenv: envOf(nil), lay: lay, out: &out,
+				svc: service{goos: "linux", home: home, uid: 1000, getenv: envOf(nil), lay: lay, run: run}}
+			err = a.uninstall(context.Background(), []string{"--remove-data", "--yes"})
+			if !strings.Contains(refusalText(err), "cannot rule out") {
+				t.Fatalf("got %v\n%s", err, out.String())
+			}
+			if _, err := os.Stat(filepath.Join(lay.Base, "bin", "syncthing")); err != nil {
+				t.Fatal("VaultSync's files were removed despite the refusal")
+			}
+		})
+	}
+}
+
+// Codex review of #212, blocker 1: the log folder is checked like the rest —
+// a link there is never followed into a vault.
+func TestIssue175_RemoveDataNeverFollowsTheLogFolder(t *testing.T) {
+	lay, _ := ownedFixture(t)
+	vault := filepath.Join(filepath.Dir(lay.Base), "..", "Vault")
+	mkVault(t, vault)
+	writeFile(t, filepath.Join(vault, "vaultsync.log"), "a note that happens to have this name")
+	if err := os.RemoveAll(lay.Logs); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(vault, lay.Logs); err != nil {
+		t.Fatal(err)
+	}
+	_, err := removeOwnData(lay, nil, "darwin")
+	if !strings.Contains(refusalText(err), "not a plain folder") {
+		t.Fatalf("got %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(vault, "vaultsync.log")); err != nil || !strings.HasPrefix(string(data), "a note") {
+		t.Fatal("a file in the vault behind the link was removed")
+	}
+}
+
+// A bind mount keeps its file system's device number; the mount table shows
+// it, and nothing is removed around it.
+func TestIssue175_RemoveDataStopsAtMounts(t *testing.T) {
+	lay, _ := ownedFixture(t)
+	orig := mountPoints
+	defer func() { mountPoints = orig }()
+	mountPoints = func() ([]string, error) {
+		return []string{"/", filepath.Join(lay.Base, "syncthing", "index-v2")}, nil
+	}
+	_, err := removeOwnData(lay, nil, "darwin")
+	if !strings.Contains(refusalText(err), "mounted at or inside") {
+		t.Fatalf("got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(lay.Base, "syncthing", "config.xml")); err != nil {
+		t.Fatal("files were removed around a mount")
+	}
+	mountPoints = func() ([]string, error) { return nil, errors.New("no /proc") }
+	if _, err := removeOwnData(lay, nil, "darwin"); !strings.Contains(refusalText(err), "could not list this computer's mounts") {
+		t.Fatalf("an unknown mount table must stop the removal, got %v", err)
 	}
 }
