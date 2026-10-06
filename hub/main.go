@@ -6,7 +6,7 @@
 //
 //	vaultsync-hub init                 apply the Hub defaults (idempotent)
 //	vaultsync-hub serve                run discovery + pairing (the container's command)
-//	vaultsync-hub code                 issue a new pairing code (24 h)
+//	vaultsync-hub code                 issue a new pairing code (24 h) + QR
 //	vaultsync-hub status               device ID, vaults, paired devices
 //	vaultsync-hub vault list|create NAME|adopt NAME
 //
@@ -30,6 +30,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/psimaker/vaultsync/hub/pairing"
 )
 
 // version is stamped by the Dockerfile / release build.
@@ -148,7 +150,9 @@ func usage() {
 Hub commands:
   init                       apply the Hub defaults to Syncthing (safe to repeat)
   serve                      run LAN discovery and the pairing service
-  code                       issue a new pairing code (valid 24 hours)
+  code [--no-qr] [--address IP]
+                             issue a new pairing code (valid 24 hours) and
+                             its QR code for VaultSync on iPhone
   status                     show device ID, vaults and paired devices
   vault list                 list vaults
   vault create NAME          create an empty vault
@@ -297,10 +301,16 @@ func cmdServe(ctx context.Context, cfg config, args []string) error {
 
 func cmdCode(ctx context.Context, cfg config, args []string) error {
 	fs := flag.NewFlagSet("code", flag.ContinueOnError)
+	noQR := fs.Bool("no-qr", false, "print the pairing link without drawing it as a QR code")
+	address := fs.String("address", "", "this Hub's LAN address for the QR link (IP[:PORT]; default: the address of its default route, when private)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	code, err := generateCode()
+	hubAddr, err := advertisedAddress(*address, cfg.port)
+	if err != nil {
+		return err
+	}
+	code, err := pairing.GenerateCode()
 	if err != nil {
 		return err
 	}
@@ -316,15 +326,71 @@ func cmdCode(ctx context.Context, cfg config, args []string) error {
 	}); err != nil {
 		return err
 	}
+	link := pairing.Link(code, hubAddr)
 	fmt.Println()
 	fmt.Println("  Pairing code (valid 24 hours, on this network only):")
 	fmt.Println()
 	fmt.Printf("      %s\n", code)
 	fmt.Println()
 	fmt.Println("  On the next device:  curl -fsSL https://vaultsync.eu/setup.sh | sh")
-	fmt.Println("  In VaultSync on iPhone: Add Hub → enter this code")
+	fmt.Println("  In VaultSync on iPhone: Add Hub, then enter this code or scan the QR code:")
+	fmt.Println()
+	if !*noQR {
+		// The code is stored already; a drawing failure costs only the QR.
+		if qr, err := renderQR(link); err == nil {
+			fmt.Print(qr)
+			fmt.Println()
+		}
+	}
+	fmt.Printf("  Pairing link: %s\n", link)
 	fmt.Println()
 	_ = ctx
+	return nil
+}
+
+// advertisedAddress is the hub= of the pairing link: the operator's --address
+// (a private, loopback or link-local IP of this Hub; the pairing port when
+// none is given) or, by default, the source address of this host's default
+// route when it is private. That default is a hint, not a fact — a VPN can
+// own the default route — so the app offers discovery whenever the address
+// does not answer. Empty means no hub= (the app searches the network).
+func advertisedAddress(explicit string, port int) (string, error) {
+	explicit = strings.TrimSpace(explicit)
+	if explicit != "" {
+		if _, _, err := net.SplitHostPort(explicit); err != nil {
+			// No port given: the pairing port, not the protocol default —
+			// VAULTSYNC_HUB_PORT may differ.
+			switch {
+			case strings.HasPrefix(explicit, "[") && strings.HasSuffix(explicit, "]"):
+				explicit += ":" + strconv.Itoa(port)
+			case strings.Count(explicit, ":") != 1:
+				explicit = net.JoinHostPort(explicit, strconv.Itoa(port))
+			}
+		}
+		addr, err := pairing.LocalHubAddress(explicit)
+		if err != nil {
+			return "", fmt.Errorf("--address must be this Hub's IP address on your local network, e.g. 192.168.1.20 (%w)", err)
+		}
+		return addr, nil
+	}
+	if ip := defaultRouteIPv4(); ip != nil && ip.IsPrivate() {
+		return net.JoinHostPort(ip.String(), strconv.Itoa(port)), nil
+	}
+	return "", nil
+}
+
+// defaultRouteIPv4 returns the local address of the default IPv4 route. A UDP
+// "connection" only consults the routing table: no packet is sent, and
+// 192.0.2.1 (TEST-NET-1) is never reached.
+func defaultRouteIPv4() net.IP {
+	conn, err := net.Dial("udp4", "192.0.2.1:9")
+	if err != nil {
+		return nil
+	}
+	defer conn.Close()
+	if a, ok := conn.LocalAddr().(*net.UDPAddr); ok {
+		return a.IP.To4()
+	}
 	return nil
 }
 
@@ -433,7 +499,7 @@ func cmdPair(ctx context.Context, cfg config, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	code, err := normalizeCode(*codeFlag)
+	code, err := pairing.NormalizeCode(*codeFlag)
 	if err != nil {
 		return errors.New("--code must look like WORD-WORD-NN, exactly as the Hub printed it")
 	}
@@ -457,16 +523,16 @@ func cmdPair(ctx context.Context, cfg config, args []string) error {
 	if err != nil {
 		return err
 	}
-	var client *pairClient
+	var client *pairing.Client
 	var hello hubPayload
 	for _, cand := range candidates {
-		c := newPairClient(cand.Address)
-		reply, err := c.handshake(ctx, code)
+		c := pairing.NewClient(cand.Address)
+		reply, err := c.Handshake(ctx, code)
 		if err == nil {
 			client, hello = c, reply
 			break
 		}
-		if !errors.Is(err, errCodeRejected) {
+		if !errors.Is(err, pairing.ErrCodeRejected) {
 			fmt.Printf("  hub at %s did not answer properly: %v\n", cand.Address, err)
 		}
 	}
@@ -489,7 +555,7 @@ func cmdPair(ctx context.Context, cfg config, args []string) error {
 		}
 	}
 	var seq uint64 = 1
-	reply, err := client.provision(ctx, seq, myID, deviceName, chosen, *create)
+	reply, err := client.Provision(ctx, seq, myID, deviceName, chosen, *create)
 	if err != nil {
 		return err
 	}
@@ -518,7 +584,7 @@ func hubCandidates(ctx context.Context, port int, explicit string) ([]discovered
 		return []discoveredHub{{Address: explicit}}, nil
 	}
 	fmt.Print("  Looking for a Hub on this network… ")
-	hubs, err := discoverHubs(ctx, port, 3*time.Second)
+	hubs, err := pairing.DiscoverHubs(ctx, port, 3*time.Second)
 	if err != nil {
 		fmt.Println()
 		return nil, err

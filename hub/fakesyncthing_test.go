@@ -27,6 +27,7 @@ type fakeSyncthing struct {
 	pending        map[string][]string // folder → offered by
 	devicePatches  []map[string]any
 	optionPatches  []map[string]any
+	failDeviceAdd  bool // POST /rest/config/devices answers 500
 }
 
 const (
@@ -89,6 +90,10 @@ func (f *fakeSyncthing) serve(w http.ResponseWriter, r *http.Request) {
 	case path == "/rest/config/devices" && r.Method == http.MethodGet:
 		write(f.devices)
 	case path == "/rest/config/devices" && r.Method == http.MethodPost:
+		if f.failDeviceAdd {
+			http.Error(w, "config locked", http.StatusInternalServerError)
+			return
+		}
 		var d deviceConfig
 		if !decode(&d) {
 			return

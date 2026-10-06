@@ -1,6 +1,8 @@
-package main
+package pairing
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"testing"
@@ -24,11 +26,11 @@ func TestWordListIsFixedAndClean(t *testing.T) {
 
 func TestGenerateCodeIsCanonical(t *testing.T) {
 	for range 50 {
-		code, err := generateCode()
+		code, err := GenerateCode()
 		if err != nil {
 			t.Fatal(err)
 		}
-		norm, err := normalizeCode(code)
+		norm, err := NormalizeCode(code)
 		if err != nil {
 			t.Fatalf("generated code %q does not normalize: %v", code, err)
 		}
@@ -50,17 +52,29 @@ func TestNormalizeCodeForgivesHumanInput(t *testing.T) {
 		"tulip--anchor--00":   "TULIP-ANCHOR-00",
 	}
 	for in, want := range cases {
-		got, err := normalizeCode(in)
+		got, err := NormalizeCode(in)
 		if err != nil || got != want {
-			t.Errorf("normalizeCode(%q) = %q, %v; want %q", in, got, err, want)
+			t.Errorf("NormalizeCode(%q) = %q, %v; want %q", in, got, err, want)
 		}
 	}
 }
 
 func TestNormalizeCodeRejectsGarbage(t *testing.T) {
 	for _, in := range []string{"", "tulip", "tulip-anchor", "tulip-anchor-123", "tulip-anchor-x1", "zzzz-anchor-01", "tulip-anchor-01-extra", "TULIP ANCHOR"} {
-		if _, err := normalizeCode(in); !errors.Is(err, errInvalidCode) {
-			t.Errorf("normalizeCode(%q) accepted: %v", in, err)
+		if _, err := NormalizeCode(in); !errors.Is(err, ErrInvalidCode) {
+			t.Errorf("NormalizeCode(%q) accepted: %v", in, err)
 		}
+	}
+}
+
+// The word list must never change once shipped: codes are not versioned, so a
+// reordered or edited list would silently turn every issued code into a
+// different password scalar. Pinned when the list moved into this package
+// (#174); the hash is of the list as it shipped in hub-v0.1.0.
+func TestIssue174_WordListUnchanged(t *testing.T) {
+	sum := sha256.Sum256([]byte(strings.Join(wordList[:], ",")))
+	const shipped = "a803f2cd6c5dfc92f7e7bd40b335147252800bbe2b3f144bb50ce8337145fb26"
+	if got := hex.EncodeToString(sum[:]); got != shipped {
+		t.Fatalf("word list changed: sha256 %s, shipped %s", got, shipped)
 	}
 }

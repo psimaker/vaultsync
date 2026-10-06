@@ -363,6 +363,63 @@ struct SyncBridgeService {
         return result.isEmpty ? nil : result
     }
 
+    // MARK: - Hub pairing (#174, decision 045)
+    //
+    // The Go bridge runs the pairing protocol with the vaultsync-hub CLI's own
+    // client, SPAKE2 and word list. Every call blocks on the network (except
+    // the two pure rules) — call them off the main actor. One flow at a time:
+    // `hubPairingBegin` ends any older flow, and every call names its flow.
+    // Nothing here accepts a share; the Hub's share arrives as a pending
+    // folder and goes through the app's accept flow (decisions 001/007/008).
+
+    /// The canonical form of a typed code (TULIP-ANCHOR-42), or nil when it
+    /// cannot be a code — the CLI's normalization, word list included.
+    static func hubPairingNormalizeCode(_ raw: String) -> String? {
+        let code = BridgeHubPairingNormalizeCode(raw)
+        return code.isEmpty ? nil : code
+    }
+
+    /// Validates a Hub address from a QR code or link: ip:port on the local
+    /// network, or a failure of kind `.notLocal` / `.badAddress`.
+    static func hubPairingCheckAddress(_ raw: String) -> Result<String, HubPairingFailure> {
+        HubPairingEnvelope.decode(BridgeHubPairingCheckAddress(raw), as: HubAddressPayload.self).map(\.address)
+    }
+
+    /// Starts a pairing flow and returns its ID; any older flow ends.
+    static func hubPairingBegin() -> String {
+        BridgeHubPairingBegin()
+    }
+
+    /// Ends the flow if it is still the current one, aborting its call in
+    /// flight. Cannot undo what the Hub already did.
+    static func hubPairingEnd(flow: String) {
+        BridgeHubPairingEnd(flow)
+    }
+
+    /// Broadcasts the discovery probe and collects answers (blocks up to
+    /// `waitMillis`).
+    static func hubPairingDiscover(flow: String, waitMillis: Int) -> Result<[HubCandidate], HubPairingFailure> {
+        HubPairingEnvelope.decode(BridgeHubPairingDiscover(flow, waitMillis), as: HubDiscoveryPayload.self).map(\.hubs)
+    }
+
+    /// Runs the code exchange with the Hub at `address` (blocks).
+    static func hubPairingHandshake(flow: String, address: String, code: String) -> Result<HubHello, HubPairingFailure> {
+        HubPairingEnvelope.decode(BridgeHubPairingHandshake(flow, address, code), as: HubHello.self)
+    }
+
+    /// Adds the flow's Hub as a device here (unless it is one), registers this
+    /// iPhone on the Hub and asks it to share `vaultID` (blocks).
+    static func hubPairingProvision(flow: String, vaultID: String, deviceName: String) -> Result<HubVault, HubPairingFailure> {
+        HubPairingEnvelope.decode(BridgeHubPairingProvision(flow, vaultID, deviceName), as: HubProvisionPayload.self).map(\.provisioned)
+    }
+
+    /// Registers this iPhone with the flow's Hub without asking for a vault
+    /// (and adds the Hub as a device here unless it is one) — for a Hub whose
+    /// vaults are all on this iPhone already (blocks).
+    static func hubPairingRegister(flow: String, deviceName: String) -> Result<Void, HubPairingFailure> {
+        HubPairingEnvelope.decode(BridgeHubPairingProvision(flow, "", deviceName), as: HubRegistrationPayload.self).map { _ in () }
+    }
+
     // MARK: - Phase 6: Device rename
 
     /// Rename a peer device.

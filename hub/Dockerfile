@@ -7,6 +7,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY *.go ./
 COPY pake ./pake
+COPY pairing ./pairing
 RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w -X main.version=${VERSION}" -o /vaultsync-hub
 
 FROM scratch

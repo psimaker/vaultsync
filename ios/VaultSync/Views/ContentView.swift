@@ -37,7 +37,10 @@ struct ContentView: View {
     var vaultManager: VaultManager
     var subscriptionManager: SubscriptionManager
     var shareAccept: ShareAcceptCoordinator
+    var hubLinkRouter: HubLinkRouter
     @State private var showAddDevice = false
+    /// The Add Hub sheet (#174), with the pairing link that opened it, if any.
+    @State private var addHubRequest: AddHubRequest?
     @State private var showSettings = false
     @State private var showSetupChecklist = false
     @State private var showObsidianPicker = false
@@ -133,8 +136,26 @@ struct ContentView: View {
                     alertMessage = message
                     showAlert = true
                 },
-                onAdded: { showDeviceAddedHint = true }
+                onAdded: { showDeviceAddedHint = true },
+                // A Hub QR scanned here opens Add Hub once this sheet is gone.
+                onHubLink: { hubLinkRouter.queue($0) }
             )
+        }
+        .sheet(item: $addHubRequest) { request in
+            addHubSheet(request)
+        }
+        // A pairing link opened from the Camera app (#174) waits until no
+        // other sheet or dialog is up — it never replaces one.
+        .task(id: hubLinkRouter.pending) {
+            var gate = HubLinkGate()
+            while hubLinkRouter.pending != nil, !Task.isCancelled {
+                let blocked = !canPresentHubLink || HubLinkGate.somethingIsPresented()
+                if gate.shouldPresent(blocked: blocked, now: Date()) {
+                    presentPendingHubLink()
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(200))
+            }
         }
         .sheet(isPresented: $showSettings, onDismiss: runPendingChecklistAction) {
             SettingsView(
@@ -351,14 +372,25 @@ struct ContentView: View {
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showAddDevice = true
+                    // Two ways to add: a Hub by its pairing code (#174), or
+                    // any Syncthing device by its Device ID.
+                    Menu {
+                        Button {
+                            addHubRequest = AddHubRequest()
+                        } label: {
+                            Label(L10n.tr("Add Hub"), systemImage: "server.rack")
+                        }
+                        Button {
+                            showAddDevice = true
+                        } label: {
+                            Label(L10n.tr("Add Device by ID"), systemImage: "laptopcomputer")
+                        }
                     } label: {
                         Image(systemName: "plus")
                     }
                     .disabled(!syncthingManager.isRunning)
-                    .accessibilityLabel(L10n.tr("Add Device"))
-                    .accessibilityHint(L10n.tr("Opens the form to add a Syncthing device."))
+                    .accessibilityLabel(L10n.tr("Add Hub or Device"))
+                    .accessibilityHint(L10n.tr("Pair with your VaultSync Hub by its code, or add a Syncthing device by its Device ID."))
                 }
             }
             .navigationDestination(for: DeviceRoute.self) { route in
@@ -485,6 +517,53 @@ struct ContentView: View {
         showInfoAlert = true
     }
 
+    // MARK: - Add Hub (#174)
+
+    @ViewBuilder
+    private func addHubSheet(_ request: AddHubRequest) -> some View {
+        #if DEBUG
+        AddHubSheet(
+            syncthingManager: syncthingManager,
+            vaultManager: vaultManager,
+            shareAccept: shareAccept,
+            link: request.link,
+            onReviewShares: { selectedTab = .sync },
+            model: request.previewModel
+        )
+        #else
+        AddHubSheet(
+            syncthingManager: syncthingManager,
+            vaultManager: vaultManager,
+            shareAccept: shareAccept,
+            link: request.link,
+            onReviewShares: { selectedTab = .sync }
+        )
+        #endif
+    }
+
+    /// No sheet and no dialog is up, so an opened pairing link may present.
+    private var canPresentHubLink: Bool {
+        !showAddDevice && !showSettings && !showSetupChecklist && !showObsidianPicker
+            && addHubRequest == nil && shareTargetPickerFolder == nil && pendingFilterSheetFolder == nil
+            && vaultPendingRemoval == nil && shareAccept.pendingMergeConfirmation == nil
+            && !showAlert && !showInfoAlert
+            && pendingChecklistAction == nil && !showDeviceAddedHint
+    }
+
+    private func presentPendingHubLink() {
+        guard hubLinkRouter.pending != nil, canPresentHubLink else { return }
+        switch hubLinkRouter.take() {
+        case .pair(let link):
+            selectedTab = .devices
+            addHubRequest = AddHubRequest(link: link)
+        case .unusable(let problem):
+            alertMessage = HubPairingCopy.scanProblem(problem)
+            showAlert = true
+        case nil:
+            break
+        }
+    }
+
     // MARK: - UI-Audit Fixtures (#64/#65)
 
     #if DEBUG
@@ -578,6 +657,9 @@ struct ContentView: View {
             selectedTab = .relay
         case .settings:
             showSettings = true
+        case .addHub:
+            selectedTab = .devices
+            addHubRequest = AddHubRequest(previewModel: DesignPreviewFixture.hubPairingModel(syncthingManager: syncthingManager))
         }
     }
 
@@ -1730,12 +1812,18 @@ struct ContentView: View {
             VaultEmptyState(
                 systemImage: "laptopcomputer.and.iphone",
                 title: L10n.tr("No devices configured"),
-                message: L10n.tr("Add a device using its Syncthing Device ID. Find it in the Syncthing web UI under Actions > Show ID.")
+                message: L10n.tr("Pair with your VaultSync Hub by the code it printed, or add a device by its Syncthing Device ID — in the Syncthing web UI under Actions > Show ID.")
             ) {
-                Button(L10n.tr("Add Device")) {
-                    showAddDevice = true
+                VaultButtonRow {
+                    Button(L10n.tr("Add Hub")) {
+                        addHubRequest = AddHubRequest()
+                    }
+                    .buttonStyle(.vault(.primary, compact: true))
+                    Button(L10n.tr("Add Device")) {
+                        showAddDevice = true
+                    }
+                    .buttonStyle(.vault(.neutral, compact: true))
                 }
-                .buttonStyle(.vault(.primary, compact: true))
                 .disabled(!syncthingManager.isRunning)
             }
         } else {
@@ -1850,6 +1938,7 @@ struct ContentView: View {
         subscriptionManager: SubscriptionManager(),
         shareAccept: ShareAcceptCoordinator(
             environment: .live(syncthingManager: syncthing, vaultManager: vault)
-        )
+        ),
+        hubLinkRouter: HubLinkRouter()
     )
 }

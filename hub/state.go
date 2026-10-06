@@ -21,6 +21,9 @@ import (
 
 const stateVersion = 1
 
+// maxCodeFailures wrong codes lock the active pairing code (decision 036).
+const maxCodeFailures = 5
+
 type pairingCodeState struct {
 	Scalar    []byte    `json:"scalar"`
 	CreatedAt time.Time `json:"createdAt"`

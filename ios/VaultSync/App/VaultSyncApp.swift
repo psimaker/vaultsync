@@ -14,6 +14,9 @@ struct VaultSyncApp: App {
     // parked merge recorded during onboarding must survive into the home
     // screen and keep blocking auto-retries there.
     @State private var shareAccept: ShareAcceptCoordinator
+    // Owned above the onboarding/home switch (#174): a pairing link opened
+    // from the Camera app waits here for whichever screen is mounted.
+    @State private var hubLinkRouter = HubLinkRouter()
     @State private var lastBackgroundedAt: Date?
     @Environment(\.scenePhase) private var scenePhase
 
@@ -56,7 +59,8 @@ struct VaultSyncApp: App {
                         syncthingManager: syncthingManager,
                         vaultManager: vaultManager,
                         subscriptionManager: subscriptionManager,
-                        shareAccept: shareAccept
+                        shareAccept: shareAccept,
+                        hubLinkRouter: hubLinkRouter
                     )
                 } else {
                     OnboardingView(
@@ -64,7 +68,8 @@ struct VaultSyncApp: App {
                         syncthingManager: syncthingManager,
                         vaultManager: vaultManager,
                         subscriptionManager: subscriptionManager,
-                        shareAccept: shareAccept
+                        shareAccept: shareAccept,
+                        hubLinkRouter: hubLinkRouter
                     )
                 }
             }
@@ -187,6 +192,14 @@ struct VaultSyncApp: App {
             return
         }
         #endif
+
+        // A Hub's pairing QR code (#174): queued for the mounted screen, which
+        // only prefills its Add Hub sheet — the link never pairs by itself.
+        if HubPairingLink.isPairingURL(url) {
+            logger.info("Received a Hub pairing link")
+            hubLinkRouter.open(url)
+            return
+        }
 
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               components.scheme?.caseInsensitiveCompare("vaultsync") == .orderedSame,
