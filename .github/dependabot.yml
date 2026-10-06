@@ -1,13 +1,22 @@
 version: 2
 updates:
-  # Go bridge dependencies. The patched Syncthing and go-stun forks are local
-  # replace-shadowed copies pinned to a 2.x pseudo-version, so Dependabot can't
-  # reason about them — ignore to avoid noise. They are tracked manually against
-  # upstream security advisories (see go/patches/README.md).
-  # NOT auto-merged: a behaviour regression in the native bridge needs human
-  # judgement even when Go Tests + govulncheck are green.
+  # The Go modules that build together: go/ (the iOS bridge, decision 045) and
+  # desktop/ (the desktop agent, #175) link hub/ through
+  # `replace github.com/psimaker/vaultsync/hub => ../hub`, so a dependency of
+  # hub — filippo.io/edwards25519 for SPAKE2 today — must move in all three at
+  # once: a bump in /hub alone leaves go/ and desktop/ with a go.mod that needs
+  # updating, and Go Tests and Desktop Tests fail (#220). group-by makes ONE
+  # pull request per dependency across the three directories (a dependency
+  # only one of them uses still touches only that one).
+  # The patched Syncthing and go-stun forks in go/ are local replace-shadowed
+  # copies pinned to a 2.x pseudo-version, so Dependabot can't reason about
+  # them — ignored; they are tracked manually against upstream security
+  # advisories (see go/patches/README.md).
+  # Minor/patch bumps are auto-merged (dependabot-auto-merge.yml) once Go Tests,
+  # Hub Tests, Desktop Tests and the govulncheck gates pass; a merged go/ bump
+  # still needs an xcframework rebuild before the next archive.
   - package-ecosystem: gomod
-    directory: /go
+    directories: ["/go", "/hub", "/desktop"]
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
@@ -18,6 +27,10 @@ updates:
     ignore:
       - dependency-name: github.com/syncthing/syncthing
       - dependency-name: github.com/ccding/go-stun
+    groups:
+      linked-modules:
+        patterns: ["*"]
+        group-by: dependency-name
 
   # GitHub Actions across all workflows. Grouped into ONE weekly PR, split so the
   # auto-merge workflow (.github/workflows/dependabot-auto-merge.yml) can act on
@@ -72,16 +85,6 @@ updates:
     ignore:
       - dependency-name: golang
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
-
-  # Hub dependencies (filippo.io/edwards25519 today). Exercised on every PR by
-  # Hub Tests + govulncheck (hub).
-  - package-ecosystem: gomod
-    directory: /hub
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 3
-    cooldown:
-      default-days: 7
 
   # Notify dependencies. The glob module and calmh replacement must stay byte-
   # aligned with the bundled Syncthing ignore matcher, so that pair is reviewed
