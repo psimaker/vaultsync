@@ -413,18 +413,20 @@ jobs:
     name: Build & Test
     runs-on: macos-26 # Xcode 26.2 default, iOS 26 SDK required for BGContinuedProcessingTask
     timeout-minutes: 45 # guard against a hung simulator/xcodebuild burning 10x macOS minutes
+    # Only required checks may gate this job. Build & Test is itself a
+    # required check, and GitHub counts a skipped required check as passed
+    # (#218): a failed non-required job in `needs` would skip the build and
+    # let the PR merge although the iOS suite never ran. A failed required
+    # job skips it too, but then that job's own red status blocks the merge.
     needs:
       - changes
       - go-tests
       - notify-tests
-      - m4-docker-confinement
-      - helper-runtime-packaging
-      - m5-syncthing-upload-e2e
       - design-lint
-    # Skip the expensive macOS build on docs-only changes. It is not a required
-    # status check, so skipping never blocks a PR. The plain expression (no
-    # always()/status function) keeps the implicit "all needs succeeded" gate,
-    # so a failed test job still skips the build exactly as before.
+    # Skip the expensive macOS build on docs-only changes — safe, because no
+    # code changed. The plain expression (no always()/status function) keeps
+    # the implicit "all needs succeeded" gate, so a failed required job still
+    # skips the build to save macOS minutes.
     if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v7
