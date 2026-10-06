@@ -182,17 +182,38 @@ the Hub cannot close yet: it counts the files it holds, not files still
 arriving, so a vault it reports as new and empty could, in a narrow race,
 receive another device's files while this computer's are on their way.
 
-**On a Mac.** macOS may ask whether *vaultsync* may find devices on your local
-network and access a folder in Documents, Desktop or Downloads; allow both, or
-the background service cannot reach your Hub directly (it then falls back to
-a slower relay) or cannot read the vault. `vaultsync status` names the
-setting when it sees macOS refusing. Keeping vaults in `~/Vaults` avoids the
-folder prompt.
+**One sync service per vault.** If Obsidian Sync or a sync plugin also syncs
+a vault, turn that off for the vault before VaultSync syncs it — two services
+syncing the same notes work against each other. VaultSync names Remotely Save,
+Self-hosted LiveSync and Obsidian Git when they are enabled in a vault; it
+cannot tell from the vault whether Obsidian Sync is connected, because
+Obsidian keeps that outside the vault.
+
+**On a Mac.** When the background service starts, macOS asks whether
+“vaultsync” may find devices on your local network, and notes that “vaultsync”
+can run in the background. For a vault in Documents, Desktop or Downloads it
+also asks twice for that folder: once for Terminal (where `setup` reads it),
+once for “vaultsync” (the background service). Allow all of them. Without
+local network access, `vaultsync setup` and `pair` cannot reach your Hub —
+the decision belongs to the program, also when it runs in Terminal; without
+folder access the vault does not sync. Chose “Don’t Allow”? Turn it on under
+System Settings → Privacy & Security → Local Network or Files & Folders, then
+run `vaultsync stop` and `vaultsync start`; `vaultsync status` and `pair`
+name the setting when they see macOS refusing. Keeping vaults in `~/Vaults`
+avoids the folder prompts. After an update macOS may ask again: VaultSync is
+not signed with a developer certificate yet, so to macOS every version is a
+different program, and a folder permission belongs to the version it was
+given to.
 
 **On Linux.** The service runs while you are logged in. To keep syncing after
 you log out, allow it once: `loginctl enable-linger` (setup never does this
 for you). Without a systemd user session (some containers, WSL), run
 `vaultsync setup --no-service` and keep `vaultsync run` running yourself.
+The service logs to the journal: `journalctl --user -u vaultsync`. Systems
+that keep the journal only in memory — Raspberry Pi OS does — have no journal
+per user, so that shows nothing; read the system journal instead:
+`sudo journalctl _UID=$(id -u) _SYSTEMD_USER_UNIT=vaultsync.service`
+(members of the `adm` or `systemd-journal` group can leave out `sudo`).
 
 ## What the Hub guarantees
 

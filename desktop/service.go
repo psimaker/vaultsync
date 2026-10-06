@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // The background service: a launchd LaunchAgent on macOS, a systemd user unit
@@ -42,6 +43,41 @@ type service struct {
 	getenv func(string) string
 	lay    layout
 	run    runner
+	// pause waits between two looks at the service manager (nil: sleep).
+	pause func(time.Duration)
+}
+
+func (s service) wait(d time.Duration) {
+	if s.pause != nil {
+		s.pause(d)
+		return
+	}
+	time.Sleep(d)
+}
+
+// launchdGone waits until launchd no longer has the job: it removes a
+// booted-out job a moment after `launchctl bootout` returns (100–200 ms on
+// macOS 27), and a start or bootstrap in that moment finds a job that is
+// about to vanish.
+func (s service) launchdGone() error {
+	for i := 0; i < 300; i++ {
+		if _, err := s.run.run("launchctl", "print", s.launchdTarget()); err != nil {
+			return nil
+		}
+		s.wait(100 * time.Millisecond)
+	}
+	return errors.New("launchd still has the background service 30 seconds after stopping it")
+}
+
+// waitRunning gives a started service up to 10 seconds to run.
+func (s service) waitRunning() bool {
+	for i := 0; i < 40; i++ {
+		if s.running() {
+			return true
+		}
+		s.wait(250 * time.Millisecond)
+	}
+	return false
 }
 
 func (s service) unitPath() (string, error) {
@@ -178,6 +214,9 @@ func (s service) launchdStart(plist string, fileChanged, binaryChanged bool) err
 		if out, err := s.run.run("launchctl", "bootout", s.launchdTarget()); err != nil {
 			return fmt.Errorf("launchctl bootout: %v: %s", err, out)
 		}
+		if err := s.launchdGone(); err != nil {
+			return err
+		}
 		loaded = false
 	}
 	if !loaded {
@@ -260,6 +299,11 @@ func (s service) stop() error {
 			if out, err := s.run.run("launchctl", "bootout", s.launchdTarget()); err != nil {
 				return fmt.Errorf("launchctl bootout: %v: %s", err, out)
 			}
+			// Return only once the job is gone, so a start right after this
+			// one finds it stopped.
+			if err := s.launchdGone(); err != nil {
+				return err
+			}
 		}
 	case "linux":
 		if out, err := s.run.run("systemctl", "--user", "disable", "--now", systemdUnit); err != nil {
@@ -282,7 +326,24 @@ func (s service) start() error {
 	}
 	switch s.goos {
 	case "darwin":
-		return s.launchdStart(path, false, false)
+		// enable first: it undoes a stop also when launchd still holds the
+		// job, which would otherwise stay disabled — now and at every login.
+		if out, err := s.run.run("launchctl", "enable", s.launchdTarget()); err != nil {
+			return fmt.Errorf("launchctl enable: %v: %s", err, out)
+		}
+		if _, err := s.run.run("launchctl", "print", s.launchdTarget()); err == nil {
+			// Still loaded: idle, disabled while loaded, or on its way out
+			// after a stop that ran out of time — launchd shows all of them
+			// alike, so the job is loaded afresh. Its bootout may fail when
+			// it is already going; waiting for it to be gone settles both.
+			_, _ = s.run.run("launchctl", "bootout", s.launchdTarget())
+			if err := s.launchdGone(); err != nil {
+				return err
+			}
+		}
+		if out, err := s.run.run("launchctl", "bootstrap", "gui/"+strconv.Itoa(s.uid), path); err != nil {
+			return fmt.Errorf("launchctl bootstrap: %v: %s", err, out)
+		}
 	case "linux":
 		if out, err := s.run.run("systemctl", "--user", "enable", "--now", systemdUnit); err != nil {
 			return fmt.Errorf("systemctl --user enable --now: %v: %s", err, out)

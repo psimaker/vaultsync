@@ -177,6 +177,10 @@ func TestIssue175_StatusWording(t *testing.T) {
 		{folderSummary{State: "scanning"}, true, complete, "scanning the folder"},
 		{folderSummary{State: "error", Error: "folder path missing"}, true, complete, "error: folder path missing"},
 		{folderSummary{State: "idle", Error: "open /v: operation not permitted"}, true, complete, "Privacy & Security"},
+		// The engine checks a folder it could not open again only at its next
+		// full scan (an hour by default); the manual test needed a restart.
+		{folderSummary{State: "idle", Error: "open /v: operation not permitted"}, true, complete, "then run vaultsync stop and vaultsync start"},
+		// Never Full Disk Access for a vault: Files & Folders is enough.
 		{folderSummary{State: "idle", NeedTotal: 3}, true, complete, "3 items left to sync"},
 		// Idle here does not mean the Hub has everything.
 		{folderSummary{State: "idle"}, true, map[string]remoteCompletion{hub: {Completion: 60, NeedItems: 40, RemoteState: "valid"}}, "uploading to your Hub — 60 %"},
@@ -189,12 +193,24 @@ func TestIssue175_StatusWording(t *testing.T) {
 		{folderSummary{State: "idle"}, true, map[string]remoteCompletion{hub: {Completion: 100, RemoteState: ""}}, "waiting for your Hub to take it"},
 	}
 	for _, c := range cases {
-		if got := describeFolder(f, c.sum, conns(c.connected), c.remote, "ME"); !strings.Contains(got, c.want) {
+		if got := describeFolder(f, c.sum, conns(c.connected), c.remote, "ME", true); !strings.Contains(got, c.want) {
 			t.Errorf("%+v connected=%v remote=%v: %q, want %q", c.sum, c.connected, c.remote, got, c.want)
 		}
 	}
+	denied := folderSummary{State: "idle", Error: "open /v: operation not permitted"}
+	if got := describeFolder(f, denied, conns(true), complete, "ME", true); strings.Contains(got, "Full Disk Access") {
+		t.Errorf("more access than a vault needs: %q", got)
+	}
+	// Without the background service the engine runs in a terminal: the
+	// terminal app needs the access, and `vaultsync run` the restart.
+	if got := describeFolder(f, denied, conns(true), complete, "ME", false); !strings.Contains(got, "the app you run vaultsync in") || !strings.Contains(got, "restart vaultsync run") || strings.Contains(got, "vaultsync stop") {
+		t.Errorf("foreground engine: %q", got)
+	}
+	if !strings.Contains(localNetworkHint(true), "vaultsync stop and vaultsync start") || !strings.Contains(localNetworkHint(false), "restart vaultsync run") {
+		t.Errorf("local network hints: %q / %q", localNetworkHint(true), localNetworkHint(false))
+	}
 	f.Paused = true
-	if got := describeFolder(f, folderSummary{State: "idle"}, conns(true), complete, "ME"); got != "paused" {
+	if got := describeFolder(f, folderSummary{State: "idle"}, conns(true), complete, "ME", true); got != "paused" {
 		t.Errorf("paused: %q", got)
 	}
 
