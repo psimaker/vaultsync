@@ -31,6 +31,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/psimaker/vaultsync/hub/join"
 	"github.com/psimaker/vaultsync/hub/pairing"
 )
 
@@ -523,21 +524,9 @@ func cmdPair(ctx context.Context, cfg config, args []string) error {
 	if err != nil {
 		return err
 	}
-	var client *pairing.Client
-	var hello hubPayload
-	for _, cand := range candidates {
-		c := pairing.NewClient(cand.Address)
-		reply, err := c.Handshake(ctx, code)
-		if err == nil {
-			client, hello = c, reply
-			break
-		}
-		if !errors.Is(err, pairing.ErrCodeRejected) {
-			fmt.Printf("  hub at %s did not answer properly: %v\n", cand.Address, err)
-		}
-	}
-	if client == nil {
-		return errors.New("no hub accepted this code — check the code, or issue a new one with `vaultsync-hub code` on the Hub")
+	client, hello, err := handshakeChosenHub(ctx, candidates, code, chooseHubTTY)
+	if err != nil {
+		return err
 	}
 	fmt.Printf("✓ Connected to %s\n", hello.HubName)
 
@@ -597,6 +586,58 @@ func hubCandidates(ctx context.Context, port int, explicit string) ([]discovered
 	return hubs, nil
 }
 
+// handshakeChosenHub runs the code against exactly one Hub: the only one that
+// answered, or the one the user picks when several did (decision 045). A
+// wrong code is a counted failure on the Hub that hears it — five lock the
+// code — so the code is never tried on the other Hubs in turn (#204).
+func handshakeChosenHub(ctx context.Context, candidates []discoveredHub, code string, choose func([]discoveredHub) (int, error)) (*pairing.Client, hubPayload, error) {
+	hub, err := join.PickHub(candidates, choose)
+	if err != nil {
+		return nil, hubPayload{}, err
+	}
+	client := pairing.NewClient(hub.Address)
+	hello, err := client.Handshake(ctx, code)
+	if errors.Is(err, pairing.ErrCodeRejected) {
+		return nil, hubPayload{}, errors.New("the Hub did not accept this code — check the code, or issue a new one with `vaultsync-hub code` on the Hub")
+	}
+	if err != nil {
+		return nil, hubPayload{}, fmt.Errorf("hub at %s did not answer properly: %w", hub.Address, err)
+	}
+	return client, hello, nil
+}
+
+// chooseHubTTY asks on the terminal which of several Hubs printed the code.
+// Without a terminal it picks none: `pair` then stops and asks for --hub.
+func chooseHubTTY(hubs []discoveredHub) (int, error) {
+	in, err := openTTY()
+	if err != nil {
+		return 0, &join.SeveralHubsError{Hubs: hubs}
+	}
+	defer in.Close()
+	reader := bufio.NewReader(in)
+	fmt.Println()
+	fmt.Println("Several Hubs answered:")
+	for i, h := range hubs {
+		name := h.Name
+		if name == "" {
+			name = "(unnamed Hub)"
+		}
+		fmt.Printf("  %d) %s  (%s)\n", i+1, name, h.Address)
+	}
+	for {
+		fmt.Print("Which Hub printed your code? ")
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return 0, err
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(line))
+		if err != nil || n < 1 || n > len(hubs) {
+			continue
+		}
+		return n - 1, nil
+	}
+}
+
 // chooseVault asks interactively; returns (name, create).
 func chooseVault(vaults []vaultInfo) (string, bool, error) {
 	in, err := openTTY()
@@ -644,95 +685,17 @@ func openTTY() (*os.File, error) {
 	return os.OpenFile("/dev/tty", os.O_RDONLY, 0)
 }
 
-// acceptShareLocally waits for the Hub's share to arrive as a pending folder
-// and adds it with the given path. Safety: the path must be empty (or absent)
-// unless the vault on the Hub is brand new, in which case existing local
-// content becomes the first copy. Two non-empty sides never get merged here.
+// acceptShareLocally accepts the Hub's share into path under the device-side
+// merge guard (join.AcceptShare): the path must be empty (or absent) unless
+// the vault on the Hub is brand new, in which case existing local content
+// becomes the first copy. Two non-empty sides never get merged here.
 func acceptShareLocally(ctx context.Context, local *SyncthingClient, prov *provisioner, hubID, myID string, v vaultInfo, path string) error {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return err
-	}
-	folders, err := local.Folders(ctx)
-	if err != nil {
-		return err
-	}
-	for _, f := range folders {
-		if f.ID == v.ID {
-			fmt.Printf("✓ Vault already configured locally at %s\n", f.Path)
-			return nil
-		}
-		if pathsOverlap(f.Path, abs) {
-			return fmt.Errorf("%s overlaps the existing Syncthing folder %q — choose another directory", abs, f.Label)
-		}
-	}
-	exists, empty, err := prov.dirState(abs)
-	if err != nil {
-		return err
-	}
-	if exists && !empty {
-		// Merging two non-empty sides is the one operation VaultSync never
-		// performs on its own. An unknown Hub file count (< 0) fails closed.
-		if v.Files < 0 {
-			return fmt.Errorf("%s already holds files and the Hub could not confirm that its vault is empty — nothing was changed. Use an empty directory, or retry", abs)
-		}
-		if v.Files > 0 {
-			return fmt.Errorf("%s already holds files and the Hub's vault is not empty — nothing was changed. Move one of them aside; VaultSync never merges two vaults on its own", abs)
-		}
-	}
-	if !exists {
-		if err := prov.mkdir(abs); err != nil {
-			return err
-		}
-	}
-	fmt.Print("  Waiting for the share to arrive… ")
-	if err := waitForPendingFolder(ctx, local, hubID, v.ID, 90*time.Second); err != nil {
-		fmt.Println()
-		return err
-	}
-	fmt.Println("ok")
-	f := folderConfig{
-		ID:               v.ID,
-		Label:            v.Label,
-		Path:             abs,
-		Type:             "sendreceive",
-		Devices:          []folderDevice{{DeviceID: myID}, {DeviceID: hubID}},
-		RescanIntervalS:  hubRescanIntervalS,
-		FSWatcherEnabled: true,
-		FSWatcherDelayS:  hubFSWatcherDelayS,
-		IgnorePerms:      true,
-		AutoNormalize:    true,
-		MaxConflicts:     hubMaxConflicts,
-	}
-	if err := local.AddFolder(ctx, f); err != nil {
-		return err
-	}
-	fmt.Printf("✓ Vault %q syncs with the Hub at %s\n", v.Label, abs)
-	return nil
-}
-
-func waitForPendingFolder(ctx context.Context, client *SyncthingClient, fromDevice, folderID string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for {
-		pending, err := client.PendingFolders(ctx)
-		if err == nil {
-			if offers, ok := pending[folderID]; ok {
-				for _, o := range offers {
-					if o == fromDevice {
-						return nil
-					}
-				}
-			}
-		}
-		if time.Now().After(deadline) {
-			return errors.New("the Hub's share did not arrive in time — is the Hub reachable from this computer? (Syncthing needs a few seconds to connect; re-run to retry)")
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(2 * time.Second):
-		}
-	}
+	return join.AcceptShare(ctx, join.Local{
+		Client:   local,
+		DirState: prov.dirState,
+		Mkdir:    prov.mkdir,
+		Reporter: join.TextReporter{W: os.Stdout},
+	}, hubID, myID, v, path)
 }
 
 func passwordScalarForCode(code string) []byte {

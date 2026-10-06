@@ -1,0 +1,444 @@
+// vaultsync is VaultSync's desktop agent: it brings its own pinned Syncthing,
+// pairs this computer with a VaultSync Hub by code, syncs Obsidian vaults
+// under VaultSync's data-safety rules and runs as a background service.
+//
+//	vaultsync                 in a terminal: the same as `vaultsync setup`
+//	vaultsync setup           install the sync engine and the background
+//	                          service, pair with your Hub, choose a vault
+//	vaultsync pair            sync another vault (or another Hub)
+//	vaultsync status          what syncs where
+//	vaultsync stop | start    pause or resume the background service
+//	vaultsync uninstall       remove the background service (vaults stay)
+//	vaultsync run             the background service itself
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"log"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/psimaker/vaultsync/hub/join"
+	"github.com/psimaker/vaultsync/hub/pairing"
+	"github.com/psimaker/vaultsync/hub/syncthing"
+)
+
+// version is stamped by the release build.
+var version = "dev"
+
+func main() {
+	if err := runCLI(os.Args[1:]); err != nil {
+		var r *refusal
+		switch {
+		case errors.Is(err, errCancelled):
+			os.Exit(2)
+		case errors.As(err, &r):
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintln(os.Stderr, r.msg)
+		default:
+			fmt.Fprintln(os.Stderr, "error:", err)
+		}
+		os.Exit(1)
+	}
+}
+
+func usage(w io.Writer) {
+	fmt.Fprint(w, `vaultsync — keeps your Obsidian vaults in sync with your VaultSync Hub
+
+  vaultsync setup        install the sync engine and the background service,
+                         pair with your Hub and choose a vault
+  vaultsync pair         sync another vault, or pair with another Hub
+  vaultsync status       what syncs where, and whether your Hub is connected
+  vaultsync stop         pause the background service (until vaultsync start)
+  vaultsync start        resume it
+  vaultsync uninstall    stop and remove the background service; your vaults stay
+         [--remove-data] also remove VaultSync's settings, pairing identity and
+                         sync database on this computer. Never removes vault files.
+  vaultsync version
+
+Flags for setup and pair:
+  --code WORD-WORD-NN   the code your Hub printed (asked when missing)
+  --hub IP[:PORT]       skip the search and use the Hub at this address
+  --vault NAME          the vault on your Hub (with --create: the new vault's name)
+  --create              start --vault on your Hub when it does not exist yet
+  --path FOLDER         this computer's folder for the vault
+  --yes                 agree to sync a --path that already holds files with a
+                        new vault on your Hub
+  --name NAME           how this computer appears on your Hub
+  --no-service          (setup) no background service; run "vaultsync run" yourself
+`)
+}
+
+func runCLI(args []string) error {
+	cmd := "setup"
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		cmd, args = args[0], args[1:]
+	}
+	switch cmd {
+	case "version", "--version":
+		fmt.Printf("vaultsync %s (Syncthing %s)\n", version, strings.TrimPrefix(syncthingVersion, "v"))
+		return nil
+	case "help", "--help", "-h":
+		usage(os.Stdout)
+		return nil
+	}
+	app, err := newApp()
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	switch cmd {
+	case "setup":
+		return app.setup(ctx, args)
+	case "pair":
+		return app.pair(ctx, args)
+	case "status":
+		return app.status(ctx)
+	case "stop":
+		return app.stopService()
+	case "start":
+		return app.startService()
+	case "uninstall":
+		return app.uninstall(ctx, args)
+	case "run":
+		return app.run(ctx)
+	}
+	usage(os.Stderr)
+	return fmt.Errorf("unknown command %q", cmd)
+}
+
+// app is the live environment: this computer, this user.
+type app struct {
+	goos, home string
+	getenv     func(string) string
+	lay        layout
+	svc        service
+	out        io.Writer
+}
+
+func newApp() (*app, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	lay, err := layoutFor(runtime.GOOS, home, os.Getenv)
+	if err != nil {
+		return nil, err
+	}
+	a := &app{goos: runtime.GOOS, home: home, getenv: os.Getenv, lay: lay, out: os.Stdout}
+	a.svc = service{goos: a.goos, home: home, uid: os.Getuid(), getenv: os.Getenv, lay: lay, run: execRunner{}}
+	return a, nil
+}
+
+func (a *app) userSyncthing() (userSyncthing, bool) {
+	return findUserSyncthing(a.goos, a.home, a.getenv)
+}
+
+func (a *app) engine() engine {
+	_, hasUser := a.userSyncthing()
+	return engine{lay: a.lay, opts: engineOptions{avoidDefaultPorts: hasUser}}
+}
+
+func pairFlags(name string, opts *pairOptions) *flag.FlagSet {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.StringVar(&opts.code, "code", "", "")
+	fs.StringVar(&opts.hub, "hub", "", "")
+	fs.StringVar(&opts.vault, "vault", "", "")
+	fs.BoolVar(&opts.create, "create", false, "")
+	fs.StringVar(&opts.path, "path", "", "")
+	fs.BoolVar(&opts.yes, "yes", false, "")
+	fs.StringVar(&opts.name, "name", "", "")
+	return fs
+}
+
+func parseFlags(fs *flag.FlagSet, args []string) error {
+	if err := fs.Parse(args); err != nil {
+		return fmt.Errorf("%v — see vaultsync help", err)
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("unexpected %q — see vaultsync help", fs.Arg(0))
+	}
+	return nil
+}
+
+// --- setup ------------------------------------------------------------------
+
+func (a *app) setup(ctx context.Context, args []string) error {
+	var opts pairOptions
+	fs := pairFlags("setup", &opts)
+	noService := fs.Bool("no-service", false, "")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	t, closeTerm := openTerm(a.out)
+	defer closeTerm()
+	t.blank()
+	t.say("  VaultSync — keeps your Obsidian vaults in sync with your Hub.")
+	t.say("  Your vaults stay where they are; VaultSync keeps its own files in %s.", tildePath(a.home, a.lay.Base))
+	t.blank()
+
+	st, engineChanged, err := a.ensureEngine(ctx, t)
+	if err != nil {
+		return err
+	}
+	eng := a.engine()
+	if err := eng.prepare(ctx, &st); err != nil {
+		return fmt.Errorf("could not set up the sync engine: %w", err)
+	}
+	if err := saveState(a.lay.State, st); err != nil {
+		return err
+	}
+	agentChanged, err := installAgentCopy(a.lay.Agent)
+	if err != nil {
+		return fmt.Errorf("could not install VaultSync into %s: %w", tildePath(a.home, a.lay.Bin), err)
+	}
+
+	runCtx, stopTemporary := context.WithCancel(ctx)
+	defer stopTemporary()
+	temporaryDone := make(chan error, 1)
+	if *noService {
+		// A temporary engine for pairing only: it stops when setup ends.
+		go func() { temporaryDone <- eng.supervise(runCtx, st, func(string, ...any) {}) }()
+	} else {
+		if err := a.svc.userManagerAvailable(); err != nil {
+			return refuse("This computer has no systemd user session (%v), so VaultSync cannot run in the background here. Run vaultsync setup --no-service, then keep vaultsync run running — for example from your desktop's autostart.", err)
+		}
+		if _, err := a.svc.install(a.lay.Agent, agentChanged || engineChanged); err != nil {
+			return fmt.Errorf("could not start the background service: %w", err)
+		}
+		t.say("✓ Background service running — it starts again when you log in")
+	}
+	client, err := eng.client(st)
+	if err != nil {
+		return err
+	}
+	if err := waitReady(ctx, client, 60*time.Second); err != nil {
+		return fmt.Errorf("the sync engine did not start: %w — see %s", err, a.logHint())
+	}
+	err = a.pairWith(ctx, t, opts, client)
+	if *noService {
+		stopTemporary()
+		<-temporaryDone
+		t.blank()
+		t.say("VaultSync has no background service on this computer: run vaultsync run to keep syncing.")
+	}
+	if errors.Is(err, errCancelled) {
+		t.blank()
+		if *noService {
+			t.say("Nothing was paired. Run vaultsync pair any time.")
+		} else {
+			t.say("Nothing was paired. The sync engine and the background service stay installed: run vaultsync pair any time, or vaultsync uninstall to remove the background service.")
+		}
+		return nil
+	}
+	if err == nil {
+		t.blank()
+		t.say("  Check on it any time:  vaultsync status")
+		t.say("  Next device: run the same setup link, or in VaultSync on iPhone tap Add Hub.")
+	}
+	return err
+}
+
+// ensureEngine installs the pinned Syncthing unless the installed one is
+// exactly it (re-verified by its checksum).
+func (a *app) ensureEngine(ctx context.Context, t *term) (agentState, bool, error) {
+	st, err := loadState(a.lay.State)
+	if err != nil {
+		return st, false, err
+	}
+	if st.Syncthing.Version == syncthingVersion && st.Syncthing.BinarySHA256 != "" {
+		if sum, err := fileSHA256(a.lay.Syncthing); err == nil && sum == st.Syncthing.BinarySHA256 {
+			t.say("✓ Sync engine ready (Syncthing %s)", strings.TrimPrefix(syncthingVersion, "v"))
+			return st, false, nil
+		}
+	}
+	in, err := newInstaller(a.lay.Bin, a.goos, runtime.GOARCH)
+	if err != nil {
+		return st, false, refuse("VaultSync has no sync engine for this computer (%s/%s) yet.", a.goos, runtime.GOARCH)
+	}
+	fmt.Fprintf(t.out, "  Downloading Syncthing %s from github.com… ", strings.TrimPrefix(syncthingVersion, "v"))
+	got, err := in.install(ctx)
+	if err != nil {
+		t.blank()
+		if errors.Is(err, ErrChecksumMismatch) {
+			return st, false, refuse("The sync engine download failed its integrity check and was not installed. Run vaultsync setup again. If it fails again, report it at https://github.com/psimaker/vaultsync/issues.")
+		}
+		return st, false, refuse("Could not download Syncthing %s (%v). No new sync engine was installed. Check your internet connection, then run vaultsync setup again.", strings.TrimPrefix(syncthingVersion, "v"), err)
+	}
+	t.say("done")
+	st.Syncthing.Version = syncthingVersion
+	st.Syncthing.BinarySHA256 = got.SHA256
+	if err := saveState(a.lay.State, st); err != nil {
+		return st, false, err
+	}
+	t.say("✓ Sync engine installed (Syncthing %s, checksum verified)", strings.TrimPrefix(syncthingVersion, "v"))
+	return st, true, nil
+}
+
+// installAgentCopy puts this executable where the service runs it from, so
+// the service never depends on where the download landed.
+func installAgentCopy(dst string) (bool, error) {
+	self, err := os.Executable()
+	if err != nil {
+		return false, err
+	}
+	if self, err = filepath.EvalSymlinks(self); err != nil {
+		return false, err
+	}
+	if same, _ := filepath.EvalSymlinks(dst); same == self {
+		return false, nil
+	}
+	want, err := fileSHA256(self)
+	if err != nil {
+		return false, err
+	}
+	if have, err := fileSHA256(dst); err == nil && have == want {
+		return false, nil
+	}
+	data, err := os.ReadFile(self)
+	if err != nil {
+		return false, err
+	}
+	if err := writeFileAtomic(dst, data, 0o755); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (a *app) logHint() string {
+	if a.goos == "darwin" {
+		return tildePath(a.home, filepath.Join(a.lay.Logs, "vaultsync.log"))
+	}
+	return "journalctl --user -u vaultsync"
+}
+
+// --- pair -------------------------------------------------------------------
+
+func (a *app) pair(ctx context.Context, args []string) error {
+	var opts pairOptions
+	if err := parseFlags(pairFlags("pair", &opts), args); err != nil {
+		return err
+	}
+	st, err := loadState(a.lay.State)
+	if err != nil {
+		return err
+	}
+	eng := a.engine()
+	if !eng.prepared() || st.GUIPort == 0 {
+		return refuse("VaultSync is not set up on this computer yet. Run vaultsync setup.")
+	}
+	client, err := eng.client(st)
+	if err != nil {
+		return err
+	}
+	if err := waitReady(ctx, client, 10*time.Second); err != nil {
+		return refuse("The sync engine is not running. Start it with vaultsync start (or vaultsync setup), then try again.")
+	}
+	t, closeTerm := openTerm(a.out)
+	defer closeTerm()
+	err = a.pairWith(ctx, t, opts, client)
+	if errors.Is(err, errCancelled) {
+		t.blank()
+		t.say("Nothing was paired.")
+		return nil
+	}
+	return err
+}
+
+func (a *app) pairWith(ctx context.Context, t *term, opts pairOptions, client *syncthing.Client) error {
+	unitPath, _ := a.svc.unitPath()
+	s := &pairSession{
+		t:    t,
+		opts: opts,
+		env: pairEnv{
+			goos: a.goos, home: a.home, getenv: a.getenv, lay: a.lay, engine: client,
+			discover: func(ctx context.Context) ([]pairing.DiscoveredHub, error) {
+				return pairing.DiscoverHubs(ctx, pairing.DefaultPort, hubDiscoveryWait)
+			},
+			dial:           pairing.NewLocalClient,
+			registries:     obsidianRegistries(a.goos, a.home, a.getenv),
+			scanRoots:      []string{a.home},
+			cloud:          func() []cloudRoot { return cloudRoots(liveCloudEnv(a.goos, a.home)) },
+			userST:         a.userSyncthing,
+			unitDir:        filepath.Dir(unitPath),
+			pendingTimeout: join.DefaultPendingTimeout,
+			deviceName:     computerName(a.goos),
+			now:            time.Now,
+		},
+	}
+	return s.run(ctx)
+}
+
+// --- run (the background service) -------------------------------------------
+
+func (a *app) run(ctx context.Context) error {
+	logger := log.New(os.Stderr, "", log.LstdFlags)
+	logf := func(format string, args ...any) { logger.Printf(format, args...) }
+	st, err := loadState(a.lay.State)
+	if err != nil {
+		return err
+	}
+	eng := a.engine()
+	sum, sumErr := fileSHA256(a.lay.Syncthing)
+	if st.Syncthing.Version != syncthingVersion || sumErr != nil || sum != st.Syncthing.BinarySHA256 {
+		// Missing, another version, or changed since it was installed:
+		// install the pinned one again (verified against the checksum).
+		logf("vaultsync %s: installing Syncthing %s", version, syncthingVersion)
+		in, err := newInstaller(a.lay.Bin, a.goos, runtime.GOARCH)
+		if err != nil {
+			return err
+		}
+		got, err := in.install(ctx)
+		if err != nil {
+			return err
+		}
+		st.Syncthing.Version, st.Syncthing.BinarySHA256 = syncthingVersion, got.SHA256
+		if err := saveState(a.lay.State, st); err != nil {
+			return err
+		}
+	}
+	if err := eng.prepare(ctx, &st); err != nil {
+		return err
+	}
+	if err := saveState(a.lay.State, st); err != nil {
+		return err
+	}
+	logf("vaultsync %s: running the sync engine", version)
+	err = eng.supervise(ctx, st, logf)
+	if errors.Is(err, ErrEngineRunning) {
+		return refuse("VaultSync is already running on this computer (the background service). See vaultsync status.")
+	}
+	return err
+}
+
+// --- stop / start -----------------------------------------------------------
+
+func (a *app) stopService() error {
+	if !a.svc.installed() {
+		return refuse("The background service is not installed.")
+	}
+	if err := a.svc.stop(); err != nil {
+		return err
+	}
+	fmt.Fprintln(a.out, "✓ VaultSync is paused on this computer. Nothing syncs until you run vaultsync start.")
+	return nil
+}
+
+func (a *app) startService() error {
+	if err := a.svc.start(); err != nil {
+		return err
+	}
+	fmt.Fprintln(a.out, "✓ VaultSync is running again.")
+	return nil
+}

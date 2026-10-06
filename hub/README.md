@@ -18,10 +18,13 @@ User documentation: [`docs/hub.md`](../docs/hub.md). Design records:
 |---|---|
 | `main.go` | CLI: `init`, `serve`, `code`, `status`, `vault …` (Hub) and `pair` (device) |
 | `pake/` | SPAKE2 over edwards25519 (RFC 9382) — the pairing code becomes a session key |
-| `pairing.go` / `pairclient.go` | pairing protocol v1 (start / finish / provision) — server and device side |
-| `discovery.go` | LAN discovery by UDP broadcast (`VSHUB1?` → `VSHUB1 <port> <name>`) |
+| `pairing/` | device side of pairing protocol v1 and the shared wire types, boxes, code words, discovery, QR link (decision 045) — also linked by the iOS bridge |
+| `pairing.go` | the Hub's server side of the protocol: sessions, rate limits, failure counting |
+| `discovery.go` | LAN discovery responder (`VSHUB1?` → `VSHUB1 <port> <name>`) |
 | `provision.go` | guarded Syncthing changes: slugged vault paths under one root, overlap check, pairing refuses non-empty directories (only the operator's `vault adopt` may take one over), never PATCH a folder |
-| `syncthing.go` | minimal REST client + `config.xml` API-key discovery |
+| `syncthing/` | minimal Syncthing REST client, shared with the device side (`pair`, the desktop agent) |
+| `join/` | device side after pairing: one Hub per code (#204), the Hub as a device, the merge guard that accepts a share (`AcceptShare`) — used by `pair` and the desktop agent |
+| `syncthing.go` | how the Hub finds its own Syncthing (`config.xml` API-key discovery) |
 | `state.go` | Hub state file (pairing scalar, paired devices), atomic 0600 |
 | `docker-compose.yml` | the stack `setup.sh` installs (Syncthing + hub + notify), bind mounts only |
 | `scripts/setup.sh` | the one link: menu `1) Obsidian device / 2) Hub` |

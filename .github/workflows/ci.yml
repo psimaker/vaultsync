@@ -166,6 +166,91 @@ jobs:
           VAULTSYNC_HUB_SYNCTHING_BIN: /tmp/vaultsync-hub-syncthing
         run: go test . -run '^TestE2E' -count=1 -v -timeout 6m
 
+  desktop-tests:
+    name: Desktop Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: desktop/go.mod
+          cache-dependency-path: desktop/go.sum
+
+      # Hermetic: registry parsing, the cloud-folder block, service files,
+      # the checksum refusal and the pairing flow against a fake Hub. The
+      # real-Syncthing E2E is its own job below.
+      - name: Run desktop tests (race detector)
+        working-directory: desktop
+        run: go test ./... -count=1 -race
+
+      - name: go vet (desktop)
+        working-directory: desktop
+        run: go vet ./...
+
+  desktop-tests-macos:
+    name: Desktop Tests (macOS)
+    runs-on: macos-26
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: desktop/go.mod
+          cache-dependency-path: desktop/go.sum
+
+      # The macOS paths (launchd, iCloud Drive, ~/Library/CloudStorage, a
+      # case-insensitive file system) on a real Mac.
+      - name: Run desktop tests
+        working-directory: desktop
+        run: go test ./... -count=1
+
+  desktop-syncthing-e2e:
+    name: Desktop Syncthing E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: desktop/go.mod
+          cache-dependency-path: desktop/go.sum
+
+      # The stock release the agent pins. Not checked here on purpose: the
+      # test serves it to the agent, which must accept it against the
+      # checksum compiled into it — a wrong pin fails the job.
+      - name: Download the pinned Syncthing archive
+        run: |
+          version="$(sed -n 's/^const syncthingVersion = "\(v[0-9.]*\)"$/\1/p' desktop/pins.go)"
+          test -n "$version"
+          archive="syncthing-linux-amd64-${version}.tar.gz"
+          curl -fsSL --retry 3 -o "/tmp/${archive}" \
+            "https://github.com/syncthing/syncthing/releases/download/${version}/${archive}"
+          echo "VAULTSYNC_DESKTOP_SYNCTHING_ARCHIVE=/tmp/${archive}" >> "$GITHUB_ENV"
+
+      # A fresh home directory: the agent installs Syncthing from that
+      # archive, pairs with the real vaultsync-hub (built from hub/) by code,
+      # and a vault syncs both ways through two Syncthing instances pinned
+      # to loopback; a target folder that already holds files is refused.
+      - name: Prove install, pairing and sync through two loopback instances
+        working-directory: desktop
+        run: go test . -run '^TestIssue175_(E2E|RealArchive)' -count=1 -v -timeout 10m
+
   m4-docker-confinement:
     name: M4 Docker Confinement
     runs-on: ubuntu-latest
