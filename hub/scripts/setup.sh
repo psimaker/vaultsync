@@ -468,6 +468,9 @@ setup_device() {
 case "$CHOICE" in
 	1) setup_device "$@" ;;
 	2)
+		# A pairing code and agent arguments belong to the device setup; the
+		# Hub prints its own code. Silently ignoring them would hide a mix-up.
+		[ -z "$CODE" ] || fail "--code belongs to the device setup (1) Obsidian device); the Hub prints its own code."
 		[ $# -eq 0 ] || fail "Arguments after -- belong to the device setup (1) Obsidian device)."
 		setup_hub
 		;;

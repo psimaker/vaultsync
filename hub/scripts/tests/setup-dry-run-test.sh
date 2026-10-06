@@ -215,7 +215,11 @@ if out=$(sh "$SETUP_SH" --hub --dry-run -- --vault Notes 2>&1); then
 	fail "the Hub path must refuse arguments meant for the device setup:
 $out"
 fi
-pass "the Hub path refuses device arguments"
+if out=$(sh "$SETUP_SH" --hub --dry-run --code tulip-anchor-07 2>&1); then
+	fail "the Hub path must refuse a pairing code instead of ignoring it:
+$out"
+fi
+pass "the Hub path refuses device arguments and a pairing code"
 
 if [ -s "$VIOLATIONS" ]; then
 	fail "privileged or network command executed under --dry-run:
