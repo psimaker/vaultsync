@@ -53,8 +53,14 @@ Latest — that stays the iOS app's release).
 
 ## Bumping Syncthing
 
-Change `syncthingVersion` and the four entries in `pins.go`. Take each
-checksum from the release's signed `sha256sum.txt.asc` and compare it with
+Change `syncthingVersion` and the four entries in `pins.go`. First verify
+the release's `sha256sum.txt.asc` with Syncthing's release key
+(`curl -fsSL https://syncthing.net/release-key.txt | gpg --import`, then
+`gpg --verify sha256sum.txt.asc`). v2.1.6 is signed by
+`FBA2 E162 F2F4 4657 B38F 0309 E566 5F9B D597 0C47`, a key that the older
+release key `37C8 4554 E7E0 A261 E4F7 6E1E D26E 6ED0 0065 4A3E` certifies;
+a signature by any other key stops the bump until that key is certified the
+same way. Take each checksum from the verified file and compare it with
 GitHub's asset digest
 (`gh api repos/syncthing/syncthing/releases/tags/vX.Y.Z --jq '.assets[] | [.name, .digest]'`).
 The Desktop Syncthing E2E must pass on the new archive: the engine's first
