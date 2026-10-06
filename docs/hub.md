@@ -59,16 +59,26 @@ default route, when that is a private one — or when you name it: pass
 `--address 192.168.1.20` when the link has no `hub=` or the wrong one (a VPN,
 say), or `--no-qr` when your terminal cannot draw the QR code.
 
-**Mac or Linux computer, nothing else installed** — the VaultSync desktop
-agent `vaultsync` brings its own Syncthing (see
-[Desktop agent](#desktop-agent-macos-and-linux) below): run `vaultsync setup`
-and enter the code.
+**Mac or Linux computer** — run the same link and choose **1) Obsidian
+device**. It installs VaultSync for Mac and Linux, the desktop agent
+`vaultsync` that brings its own Syncthing (see
+[Desktop agent](#desktop-agent-macos-and-linux) below), from its newest
+release — checked against the release's `SHA256SUMS` — and runs its setup,
+which asks for the code and the vault. Nothing else needs to be installed; a
+Syncthing you already run is never touched. Scripts pass everything after
+`--` to the agent:
 
-**Computer with Syncthing installed** — run the same link and choose
-**1) Obsidian device**, then enter the code. The setup finds the Hub on your
-network, asks which vault to join (or creates a new one) and either accepts the
-share into a directory you name (`--path`) or leaves it for you to accept in
-Syncthing. Non-interactive:
+```sh
+curl -fsSL https://vaultsync.eu/setup.sh | sh -s -- --device --code TULIP-ANCHOR-42 \
+  -- --vault Notes --create --path ~/Vaults/Notes --yes
+```
+
+**Your own Syncthing instead** — to pair a Syncthing you already run with the
+Hub (no second engine), use `vaultsync-hub pair` from the newest `hub-v*`
+release (`vaultsync-hub_<os>_<arch>`, checked against its `SHA256SUMS`). It
+finds the Hub on your network, asks which vault to join (or creates a new one)
+and either accepts the share into a directory you name (`--path`) or leaves it
+for you to accept in Syncthing. Non-interactive:
 
 ```sh
 vaultsync-hub pair --code TULIP-ANCHOR-42 --vault "Notes" --create --path ~/Obsidian/Notes
@@ -98,9 +108,10 @@ there offers **Add Hub** instead.
 VaultSync device: it installs its own Syncthing, pairs with your Hub by code
 and keeps your Obsidian vaults in sync in the background. Windows follows.
 
-Get it from the newest `desktop-v*` release on GitHub
-(`vaultsync_darwin_arm64`, `vaultsync_linux_amd64`, …), check it against the
-release's `SHA256SUMS`, make it executable and run it in a terminal:
+The setup link does all of this (**1) Obsidian device** above). By hand: get
+it from the newest `desktop-v*` release on GitHub (`vaultsync_darwin_arm64`,
+`vaultsync_linux_amd64`, …), check it against the release's `SHA256SUMS`,
+make it executable and run it in a terminal:
 
 ```sh
 curl -fLO https://github.com/psimaker/vaultsync/releases/download/desktop-vX.Y.Z/vaultsync_darwin_arm64
@@ -113,8 +124,7 @@ Download it in a terminal as above: the agent is not notarized by Apple yet,
 so macOS refuses to run a copy that a web browser downloaded. If that
 happened, allow it once under System Settings → Privacy & Security.
 
-(The setup link above switches its "1) Obsidian device" path to the agent
-once a release of it exists.) `setup`
+`setup`
 
 1. downloads Syncthing 2.1.6 from github.com and installs it only if it
    matches the checksum built into VaultSync,
