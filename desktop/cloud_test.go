@@ -163,3 +163,29 @@ func TestIssue175_CloudFoldersOnWindowsLayout(t *testing.T) {
 		t.Fatalf("OneDrive from the environment: blocked=%v %q", ok, r.Provider)
 	}
 }
+
+// Codex review of #212, major 7: Qt quotes and escapes a nextcloud.cfg value
+// with commas, semicolons, quotes and the like; the quoted form must block
+// the real folder.
+func TestIssue175_NextcloudQuotedPathsAreDecoded(t *testing.T) {
+	for raw, want := range map[string]string{
+		`/home/me/Nextcloud/`:           `/home/me/Nextcloud/`,
+		`"/home/me/Cloud, Work/"`:       `/home/me/Cloud, Work/`,
+		`"/home/me/a \"quoted\" name/"`: `/home/me/a "quoted" name/`,
+		`"/home/me/back\\slash/"`:       `/home/me/back\slash/`,
+		`"/home/me/\x4e\x43/"`:          `/home/me/NC/`,
+	} {
+		if got := qtINIValue(raw); got != want {
+			t.Errorf("qtINIValue(%s) = %q, want %q", raw, got, want)
+		}
+	}
+	env := cloudFixture(t, "linux", []string{"Cloud, Work/Notes", "Cloud/Notes"}, map[string]string{
+		".config/Nextcloud/nextcloud.cfg": "[Accounts]\n0\\Folders\\3\\localPath=\"$HOME/Cloud, Work/\"\n0\\Folders\\4\\localPath=@Invalid()\n",
+	})
+	if p, ok := blocked(t, env, "Cloud, Work/Notes"); !ok || p != "Nextcloud" {
+		t.Fatalf("a quoted Nextcloud folder: blocked=%v %q", ok, p)
+	}
+	if p, ok := blocked(t, env, "Cloud/Notes"); ok {
+		t.Fatalf("the quotes' remains matched another folder: %q", p)
+	}
+}
