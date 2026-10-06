@@ -455,7 +455,7 @@ func TestIssue175_SyncPluginWarnings(t *testing.T) {
 	}
 }
 
-// Codex review of #212, blocker 3: the Hub answers without a vault list
+// The Hub answers without a vault list
 // (null) when it cannot read its vaults; that is never an empty catalogue.
 func TestIssue175_UnreadableCatalogueDecidesNothing(t *testing.T) {
 	ctx := context.Background()
@@ -488,7 +488,7 @@ func TestIssue175_UnreadableCatalogueDecidesNothing(t *testing.T) {
 	})
 }
 
-// Codex review of #212, blocker 2: consent belongs to the folder the person
+// Consent belongs to the folder the person
 // chose — not to whatever sits at that path when the share arrives.
 func TestIssue175_ConsentIsBoundToTheFolder(t *testing.T) {
 	ctx := context.Background()
@@ -559,7 +559,7 @@ func TestIssue175_ConsentIsBoundToTheFolder(t *testing.T) {
 	})
 }
 
-// Codex review of #212, major 4: the Hub side is checked again after every
+// The Hub side is checked again after every
 // wait — another device that joined the new vault meanwhile stops the accept.
 func TestIssue175_HubEvidenceIsRefreshedBeforeAdding(t *testing.T) {
 	eng := newFakeEngine(t)
@@ -584,7 +584,7 @@ func TestIssue175_HubEvidenceIsRefreshedBeforeAdding(t *testing.T) {
 	assertUntouched(t, local)
 }
 
-// Codex review of #212, minor 15: explicit flags are honoured with a terminal
+// Explicit flags are honoured with a terminal
 // too; a folder with files then asks for consent instead of refusing.
 func TestIssue175_FlagsWinOverTheMenu(t *testing.T) {
 	eng := newFakeEngine(t)
@@ -602,7 +602,7 @@ func TestIssue175_FlagsWinOverTheMenu(t *testing.T) {
 	}
 }
 
-// Codex review of #212, major 8: nothing is asked of the Hub that could not
+// Nothing is asked of the Hub that could not
 // be recorded, and unresolved attempts are never dropped to make room.
 func TestIssue175_PairingJournal(t *testing.T) {
 	eng := newFakeEngine(t)
@@ -641,7 +641,7 @@ func TestIssue175_PairingJournal(t *testing.T) {
 	}
 }
 
-// Codex review of #212, round 2: the consent belongs to the folder that was
+// The consent belongs to the folder that was
 // looked at — not to one put in its place while the question was open, and
 // not to one swapped in while the agent asked the Hub one last time.
 func TestIssue175_ConsentWindowsAreClosed(t *testing.T) {
@@ -694,7 +694,7 @@ func TestIssue175_ConsentWindowsAreClosed(t *testing.T) {
 	})
 }
 
-// Codex review of #212, round 3: the gate's last request (the engine's
+// The gate's last request (the engine's
 // folder list) comes before the file-system checks — a swap during it is
 // still caught.
 func TestIssue175_NoRequestBetweenTheLastChecksAndTheAdd(t *testing.T) {
@@ -725,7 +725,7 @@ func TestIssue175_NoRequestBetweenTheLastChecksAndTheAdd(t *testing.T) {
 	}
 }
 
-// Codex review of #212, round 3: the menu's own path (Another folder…) binds
+// The menu's own path (Another folder…) binds
 // the answers to the folder too.
 func TestIssue175_MenuAnswersBelongToTheFolder(t *testing.T) {
 	eng := newFakeEngine(t)

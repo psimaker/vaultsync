@@ -14,7 +14,7 @@ import (
 	"github.com/psimaker/vaultsync/hub/syncthing"
 )
 
-// Codex review of #212, major 11: setup stops waiting for an engine whose
+// Setup stops waiting for an engine whose
 // supervisor already gave up, instead of waiting out the whole minute.
 func TestIssue175_SetupNoticesAFailedTemporaryEngine(t *testing.T) {
 	// A supervisor that gives up at once: another one holds the engine.
@@ -37,7 +37,7 @@ func TestIssue175_SetupNoticesAFailedTemporaryEngine(t *testing.T) {
 	}
 }
 
-// Codex review of #212, round 2: `run` prepares the engine under the lock
+// `run` prepares the engine under the lock
 // setup holds while it prepares — never at the same time.
 func TestIssue175_RunWaitsForSetupToFinishPreparing(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "setup.lock")
@@ -62,7 +62,7 @@ func TestIssue175_RunWaitsForSetupToFinishPreparing(t *testing.T) {
 	}
 }
 
-// Codex review of #212, major 12: uninstall does not claim sync stopped while
+// Uninstall does not claim sync stopped while
 // a `vaultsync run` in a terminal still owns the engine.
 func TestIssue175_UninstallSeesAForegroundEngine(t *testing.T) {
 	lay, err := layoutFor("linux", t.TempDir(), envOf(nil))
@@ -85,7 +85,7 @@ func TestIssue175_UninstallSeesAForegroundEngine(t *testing.T) {
 	}
 }
 
-// Codex review of #212, major 13: the service runs with the folder setup
+// The service runs with the folder setup
 // resolved, whatever the service manager's environment says.
 func TestIssue175_RunTakesTheStateDirSetupResolved(t *testing.T) {
 	a := &app{goos: "linux", home: t.TempDir(), getenv: envOf(nil)}
@@ -99,7 +99,7 @@ func TestIssue175_RunTakesTheStateDirSetupResolved(t *testing.T) {
 	}
 }
 
-// Codex review of #212, minor 16: `vaultsync` becomes callable by name
+// `vaultsync` becomes callable by name
 // through ~/.local/bin — without replacing anything already there.
 func TestIssue175_CommandLinkIsOursOrNothing(t *testing.T) {
 	home := t.TempDir()
@@ -143,7 +143,7 @@ func TestIssue175_CommandLinkIsOursOrNothing(t *testing.T) {
 	}
 }
 
-// Codex review of #212, round 3: `run` itself waits while setup prepares —
+// `run` itself waits while setup prepares —
 // it neither installs nor prepares anything during that time.
 func TestIssue175_RunDoesNotPrepareWhileSetupHoldsTheLock(t *testing.T) {
 	home := t.TempDir()

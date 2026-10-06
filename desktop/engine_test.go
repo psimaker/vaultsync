@@ -178,7 +178,7 @@ func TestIssue175_StatusWording(t *testing.T) {
 		{folderSummary{State: "error", Error: "folder path missing"}, true, complete, "error: folder path missing"},
 		{folderSummary{State: "idle", Error: "open /v: operation not permitted"}, true, complete, "Privacy & Security"},
 		{folderSummary{State: "idle", NeedTotal: 3}, true, complete, "3 items left to sync"},
-		// Idle here does not mean the Hub has everything (Codex review of #212).
+		// Idle here does not mean the Hub has everything.
 		{folderSummary{State: "idle"}, true, map[string]remoteCompletion{hub: {Completion: 60, NeedItems: 40, RemoteState: "valid"}}, "uploading to your Hub — 60 %"},
 		{folderSummary{State: "idle"}, true, map[string]remoteCompletion{hub: {Completion: 100, RemoteState: "notSharing"}}, "waiting for your Hub to take it"},
 		{folderSummary{State: "idle"}, true, map[string]remoteCompletion{}, "waiting for your Hub to take it"},

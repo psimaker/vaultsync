@@ -164,7 +164,7 @@ func TestIssue175_CloudFoldersOnWindowsLayout(t *testing.T) {
 	}
 }
 
-// Codex review of #212, major 7: Qt quotes and escapes a nextcloud.cfg value
+// Qt quotes and escapes a nextcloud.cfg value
 // with commas, semicolons, quotes and the like; the quoted form must block
 // the real folder.
 func TestIssue175_NextcloudQuotedPathsAreDecoded(t *testing.T) {

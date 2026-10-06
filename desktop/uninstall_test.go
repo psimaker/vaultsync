@@ -194,7 +194,7 @@ func TestIssue175_RemoveDataFailsClosedOnUnreadableLists(t *testing.T) {
 	}
 }
 
-// Codex review of #212, blocker 1: the log folder is checked like the rest —
+// The log folder is checked like the rest —
 // a link there is never followed into a vault.
 func TestIssue175_RemoveDataNeverFollowsTheLogFolder(t *testing.T) {
 	lay, _ := ownedFixture(t)
@@ -238,7 +238,7 @@ func TestIssue175_RemoveDataStopsAtMounts(t *testing.T) {
 	}
 }
 
-// Codex review of #212, round 2: VaultSync's folder below a linked folder
+// VaultSync's folder below a linked folder
 // (a custom XDG_STATE_HOME pointing elsewhere) — the mount table names the
 // real path, and the removal still stops there.
 func TestIssue175_RemoveDataSeesMountsBehindALinkedParent(t *testing.T) {

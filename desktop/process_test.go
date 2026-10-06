@@ -41,7 +41,7 @@ func runService(t *testing.T, bin, home, stateDir string) string {
 	return out.String()
 }
 
-// Codex review of #212, round 2: what the service writes to its log or the
+// What the service writes to its log or the
 // journal names neither the account's home folder nor a vault — also when it
 // fails, and also when the engine writes to its stderr.
 func TestIssue175_ServiceOutputStaysPrivate(t *testing.T) {
@@ -105,7 +105,7 @@ func TestIssue175_ServiceOutputStaysPrivate(t *testing.T) {
 	})
 }
 
-// Codex review of #212, round 3: the service may be told a folder outside
+// The service may be told a folder outside
 // the home folder (run --state-dir); its errors name neither.
 func TestIssue175_ServiceOutputHidesACustomStateDir(t *testing.T) {
 	if testing.Short() {
@@ -128,7 +128,7 @@ func TestIssue175_ServiceOutputHidesACustomStateDir(t *testing.T) {
 	}
 }
 
-// Codex review of #212, rounds 4 and 5: a path above a custom state folder
+// A path above a custom state folder
 // (a file where a folder should be, with spaces in its name) is part of the
 // error — the service prints only the kind of failure.
 func TestIssue175_ServiceOutputHidesEveryPath(t *testing.T) {

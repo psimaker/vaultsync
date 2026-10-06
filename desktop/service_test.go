@@ -121,7 +121,7 @@ func TestIssue175_SystemdUserUnitFile(t *testing.T) {
 		t.Fatalf("unit path: %s", p)
 	}
 	// The unit goes where the user manager looks: its XDG_CONFIG_HOME, not
-	// the shell's (Codex review of #212).
+	// the shell's.
 	xdg := filepath.Join(t.TempDir(), "cfg")
 	svc.getenv = envOf(map[string]string{"XDG_CONFIG_HOME": filepath.Join(t.TempDir(), "shell-only")})
 	svc.run = &fakeRunner{answers: map[string]string{"systemctl --user show-environment": "HOME=/home/me\nXDG_CONFIG_HOME=" + xdg}}
@@ -242,7 +242,7 @@ func mustUnitPath(t *testing.T, s service) string {
 	return p
 }
 
-// Codex review of #212, round 2: systemctl show-environment quotes values
+// `systemctl --user show-environment` quotes values
 // (shell_maybe_quote); a config folder with a space must still be found.
 func TestIssue175_ManagerEnvironmentIsUnquoted(t *testing.T) {
 	for raw, want := range map[string]string{

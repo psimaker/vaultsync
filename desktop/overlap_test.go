@@ -166,7 +166,7 @@ func TestIssue175_AgentStateIsPrivateAndAtomic(t *testing.T) {
 	}
 }
 
-// Codex review of #212, round 2: a Syncthing config that cannot be reached
+// A Syncthing config that cannot be reached
 // because a folder above it is closed is not "no Syncthing".
 func TestIssue175_UserSyncthingBehindAClosedFolderFailsClosed(t *testing.T) {
 	if os.Geteuid() == 0 {
