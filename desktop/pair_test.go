@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"net/http"
@@ -615,6 +616,19 @@ func TestIssue175_PairingJournal(t *testing.T) {
 		t.Fatalf("got %v; provisions=%d", err, hub.provisionCount("vs-aaaaaaaaaaaa"))
 	}
 
+	// A record that cannot be made durable stops the pairing before the Hub
+	// is asked.
+	if err := os.Remove(attemptsPath(s.env.lay)); err != nil {
+		t.Fatal(err)
+	}
+	origSync := syncDir
+	syncDir = func(string) error { return errors.New("disk full") }
+	err = s.run(context.Background())
+	syncDir = origSync
+	if err == nil || !strings.Contains(err.Error(), "nothing was sent to your Hub") || hub.provisionCount("vs-aaaaaaaaaaaa") != 0 {
+		t.Fatalf("got %v; provisions=%d", err, hub.provisionCount("vs-aaaaaaaaaaaa"))
+	}
+
 	var list []pairAttempt
 	base := time.Now()
 	list = append(list, pairAttempt{Vault: "lost", State: "unknown", At: base})
@@ -625,4 +639,57 @@ func TestIssue175_PairingJournal(t *testing.T) {
 	if len(trimmed) != attemptsKept || trimmed[0].Vault != "lost" {
 		t.Fatalf("the unresolved attempt was dropped: %+v", trimmed[0])
 	}
+}
+
+// Codex review of #212, round 2: the consent belongs to the folder that was
+// looked at — not to one put in its place while the question was open, and
+// not to one swapped in while the agent asked the Hub one last time.
+func TestIssue175_ConsentWindowsAreClosed(t *testing.T) {
+	ctx := context.Background()
+	swap := func(t *testing.T, path string) {
+		t.Helper()
+		if err := os.Rename(path, path+"-other"); err != nil {
+			t.Fatal(err)
+		}
+		mkVault(t, path)
+	}
+
+	t.Run("replaced while the consent question was open", func(t *testing.T) {
+		eng := newFakeEngine(t)
+		hub := newFakeHub(t, eng)
+		s, _ := testSession(t, eng, hub, pairOptions{vault: "Notes", create: true})
+		s.opts.code = hub.code
+		local := filepath.Join(s.env.home, "Notes")
+		mkVault(t, local)
+		s.opts.path = local
+		s.t.in = bufio.NewReader(&hookReader{before: func() { swap(t, local) }, r: strings.NewReader("y\n")})
+		err := s.run(ctx)
+		if !strings.Contains(refusalText(err), "changed while you were answering") {
+			t.Fatalf("got %v", err)
+		}
+		if hub.provisionCount("Notes") != 0 || eng.folderCount() != 0 {
+			t.Fatal("the Hub was asked or a folder was added")
+		}
+	})
+
+	t.Run("replaced during the last Hub request", func(t *testing.T) {
+		eng := newFakeEngine(t)
+		hub := newFakeHub(t, eng)
+		s, _ := testSession(t, eng, hub, pairOptions{vault: "Notes", create: true, yes: true})
+		s.opts.code = hub.code
+		local := filepath.Join(s.env.home, "Notes")
+		mkVault(t, local)
+		s.opts.path = local
+		// Requests: catalogue before create, create, evidence after create,
+		// evidence in the final gate — the folder is swapped during the last.
+		hub.onProvision = func(n int, _ pairing.ProvisionPayload) {
+			if n == 4 {
+				swap(t, local)
+			}
+		}
+		err := s.run(ctx)
+		if !strings.Contains(refusalText(err), "was replaced") || eng.folderCount() != 0 {
+			t.Fatalf("got %v; folders=%d", err, eng.folderCount())
+		}
+	})
 }

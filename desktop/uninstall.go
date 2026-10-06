@@ -248,10 +248,19 @@ func openOwnedDir(dir string, vaults []string, goos string) (*os.Root, os.FileIn
 	if err != nil {
 		return nil, nil, refuse("VaultSync could not list this computer's mounts (%v), so it cannot rule out a disk mounted inside %s. Nothing was removed there.", err, dir)
 	}
-	clean := filepath.Clean(dir)
+	// The mount table names resolved paths: compare with the folder as given
+	// and as it resolves (a linked folder above it, such as a custom
+	// XDG_STATE_HOME, would hide a mount from the first spelling).
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return nil, nil, err
+	}
 	for _, m := range mounts {
-		if m = filepath.Clean(m); m == clean || strings.HasPrefix(m, clean+string(filepath.Separator)) {
-			return nil, nil, refuse("Something is mounted at or inside %s (%s), so VaultSync does not remove anything there.", dir, m)
+		m = filepath.Clean(m)
+		for _, d := range []string{filepath.Clean(dir), filepath.Clean(resolved)} {
+			if m == d || strings.HasPrefix(m, d+string(filepath.Separator)) {
+				return nil, nil, refuse("Something is mounted at or inside %s (%s), so VaultSync does not remove anything there.", dir, m)
+			}
 		}
 	}
 	root, err := os.OpenRoot(dir)

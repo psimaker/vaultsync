@@ -45,12 +45,26 @@ func main() {
 			os.Exit(2)
 		case errors.As(err, &r):
 			fmt.Fprintln(os.Stderr)
-			fmt.Fprintln(os.Stderr, r.msg)
+			fmt.Fprintln(os.Stderr, redactHome(r.msg))
 		default:
-			fmt.Fprintln(os.Stderr, "error:", err)
+			fmt.Fprintln(os.Stderr, "error:", redactHome(err.Error()))
 		}
 		os.Exit(1)
 	}
+}
+
+// redactHome writes the home folder as ~ in what is printed: under the
+// background service that output lands in a log or the journal, which
+// should not carry the account's path.
+func redactHome(msg string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" || home == "/" {
+		return msg
+	}
+	if resolved, err := filepath.EvalSymlinks(home); err == nil && resolved != home {
+		msg = strings.ReplaceAll(msg, resolved, "~")
+	}
+	return strings.ReplaceAll(msg, home, "~")
 }
 
 func usage(w io.Writer) {
@@ -219,21 +233,13 @@ func (a *app) setup(ctx context.Context, args []string) error {
 		return fmt.Errorf("could not install VaultSync into %s: %w", tildePath(a.home, a.lay.Bin), err)
 	}
 
-	var temporaryDone chan error
+	var temporary *supervision
 	if *noService {
 		// A temporary engine for pairing only. Whatever happens next, it is
 		// stopped and waited for before setup returns — never left behind
 		// (macOS has no way to stop a child when its parent dies).
-		runCtx, stopTemporary := context.WithCancel(ctx)
-		temporaryDone = make(chan error, 1)
-		go func() { temporaryDone <- eng.supervise(runCtx, st, func(string, ...any) {}) }()
-		defer func() {
-			stopTemporary()
-			select {
-			case <-temporaryDone:
-			case <-time.After(30 * time.Second):
-			}
-		}()
+		temporary = superviseInBackground(ctx, eng, st)
+		defer temporary.stop(30 * time.Second)
 	} else {
 		if err := a.svc.userManagerAvailable(); err != nil {
 			return refuse("This computer has no systemd user session (%v), so VaultSync cannot run in the background here. Run vaultsync setup --no-service, then keep vaultsync run running — for example from your desktop's autostart.", err)
@@ -250,7 +256,7 @@ func (a *app) setup(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := waitEngine(ctx, client, 60*time.Second, temporaryDone); err != nil {
+	if err := waitEngine(ctx, client, 60*time.Second, temporary); err != nil {
 		return fmt.Errorf("the sync engine did not start: %w — see %s", err, a.logHint())
 	}
 	command := a.installCommand(t)
@@ -276,21 +282,70 @@ func (a *app) setup(ctx context.Context, args []string) error {
 	return err
 }
 
+// supervision is an engine supervisor running in the background; done is
+// closed when it returned, err holds what it returned.
+type supervision struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+	err    error
+}
+
+func superviseInBackground(ctx context.Context, eng engine, st agentState) *supervision {
+	runCtx, cancel := context.WithCancel(ctx)
+	s := &supervision{cancel: cancel, done: make(chan struct{})}
+	go func() {
+		s.err = eng.supervise(runCtx, st, func(string, ...any) {})
+		close(s.done)
+	}()
+	return s
+}
+
+// stop ends the engine and waits for it (at most grace).
+func (s *supervision) stop(grace time.Duration) {
+	s.cancel()
+	select {
+	case <-s.done:
+	case <-time.After(grace):
+	}
+}
+
 // waitEngine waits for the engine's API — and stops waiting when the
-// supervisor that should start it has already given up.
-func waitEngine(ctx context.Context, c *syncthing.Client, timeout time.Duration, supervisor <-chan error) error {
+// supervisor that should start it has already given up (nil: no supervisor
+// of ours, the background service starts it).
+func waitEngine(ctx context.Context, c *syncthing.Client, timeout time.Duration, sup *supervision) error {
 	ready := make(chan error, 1)
 	wctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() { ready <- waitReady(wctx, c, timeout) }()
+	var gaveUp <-chan struct{}
+	if sup != nil {
+		gaveUp = sup.done
+	}
 	select {
 	case err := <-ready:
 		return err
-	case err := <-supervisor:
-		if err == nil {
-			err = errors.New("it stopped")
+	case <-gaveUp:
+		if sup.err != nil {
+			return sup.err
 		}
-		return err
+		return errors.New("it stopped")
+	}
+}
+
+// waitForLock takes a lock another VaultSync process may hold for a moment
+// (setup preparing the engine), waiting at most timeout.
+func waitForLock(ctx context.Context, path string, timeout time.Duration) (func(), error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		unlock, err := lockFile(path)
+		if !errors.Is(err, ErrEngineRunning) || time.Now().After(deadline) {
+			return unlock, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(time.Second):
+		}
 	}
 }
 
@@ -306,8 +361,10 @@ func (a *app) installCommand(t *term) string {
 			_ = os.Symlink(a.lay.Agent, link)
 		}
 	}
+	// "vaultsync" alone only when it reaches this very program.
 	if found, err := exec.LookPath("vaultsync"); err == nil {
-		if r, err := filepath.EvalSymlinks(found); err == nil && (r == a.lay.Agent || found == link) {
+		agent, aerr := filepath.EvalSymlinks(a.lay.Agent)
+		if r, err := filepath.EvalSymlinks(found); err == nil && aerr == nil && r == agent {
 			return "vaultsync"
 		}
 	}
@@ -474,8 +531,16 @@ func (a *app) run(ctx context.Context, args []string) error {
 	}
 	logger := log.New(os.Stderr, "", log.LstdFlags)
 	logf := func(format string, args ...any) { logger.Printf(format, args...) }
+	// Installing and preparing the engine happens under the same lock setup
+	// takes: two preparations at once would generate identities over each
+	// other.
+	unlockSetup, err := waitForLock(ctx, filepath.Join(a.lay.Base, "setup.lock"), 2*time.Minute)
+	if err != nil {
+		return err
+	}
 	st, err := loadState(a.lay.State)
 	if err != nil {
+		unlockSetup()
 		return err
 	}
 	eng := a.engine()
@@ -486,21 +551,27 @@ func (a *app) run(ctx context.Context, args []string) error {
 		logf("vaultsync %s: installing Syncthing %s", version, syncthingVersion)
 		in, err := newInstaller(a.lay.Bin, a.goos, runtime.GOARCH)
 		if err != nil {
+			unlockSetup()
 			return err
 		}
 		got, err := in.install(ctx)
 		if err != nil {
+			unlockSetup()
 			return err
 		}
 		st.Syncthing.Version, st.Syncthing.BinarySHA256 = syncthingVersion, got.SHA256
 		if err := saveState(a.lay.State, st); err != nil {
+			unlockSetup()
 			return err
 		}
 	}
 	if err := eng.prepare(ctx, &st); err != nil {
+		unlockSetup()
 		return err
 	}
-	if err := saveState(a.lay.State, st); err != nil {
+	err = saveState(a.lay.State, st)
+	unlockSetup()
+	if err != nil {
 		return err
 	}
 	logf("vaultsync %s: running the sync engine", version)

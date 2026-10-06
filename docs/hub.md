@@ -171,9 +171,12 @@ a vanished placeholder looks like a deletion that would reach every device.
 Make a fully downloaded copy outside, for example in `~/Vaults`, and open
 that copy in Obsidian. A folder that overlaps one VaultSync — or the
 Syncthing you run yourself — already syncs. A folder with files for a vault
-your Hub already has: VaultSync never combines two vaults; download your
-Hub's vault into a new folder, or give this computer's vault a different name
-on your Hub. Decision 046 records the rules.
+your Hub already has: VaultSync does not combine two vaults on its own;
+download your Hub's vault into a new folder, or give this computer's vault a
+different name on your Hub. Decision 046 records the rules — and the one gap
+the Hub cannot close yet: it counts the files it holds, not files still
+arriving, so a vault it reports as new and empty could, in a narrow race,
+receive another device's files while this computer's are on their way.
 
 **On a Mac.** macOS may ask whether *vaultsync* may find devices on your local
 network and access a folder in Documents, Desktop or Downloads; allow both, or

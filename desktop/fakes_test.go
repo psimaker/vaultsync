@@ -165,6 +165,9 @@ type fakeHub struct {
 	// catalogueUnreadable makes every answer carry no vault list (null), as
 	// the real Hub does when it cannot read its own vaults.
 	catalogueUnreadable bool
+	// onProvision runs inside the n-th provision request (1-based), before
+	// it is answered.
+	onProvision func(n int, p pairing.ProvisionPayload)
 }
 
 type fakeHubSession struct {
@@ -271,6 +274,9 @@ func (h *fakeHub) provision(w http.ResponseWriter, r *http.Request) {
 	}
 	sess.lastSeq = p.Seq
 	h.provisions = append(h.provisions, p)
+	if h.onProvision != nil {
+		h.onProvision(len(h.provisions), p)
+	}
 	var shared *pairing.VaultInfo
 	errMsg := ""
 	if strings.TrimSpace(p.Vault) != "" {
@@ -391,3 +397,18 @@ func syncthingFolder(id, label, path string) syncthing.FolderConfig {
 }
 
 func folderDeviceOf(id string) syncthing.FolderDevice { return syncthing.FolderDevice{DeviceID: id} }
+
+// hookReader runs before once, then reads like strings.Reader: a person who
+// answers only after something changed on disk.
+type hookReader struct {
+	before func()
+	r      *strings.Reader
+}
+
+func (h *hookReader) Read(b []byte) (int, error) {
+	if h.before != nil {
+		h.before()
+		h.before = nil
+	}
+	return h.r.Read(b)
+}

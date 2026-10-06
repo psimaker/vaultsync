@@ -183,6 +183,10 @@ func TestIssue175_StatusWording(t *testing.T) {
 		{folderSummary{State: "idle"}, true, map[string]remoteCompletion{hub: {Completion: 100, RemoteState: "notSharing"}}, "waiting for your Hub to take it"},
 		{folderSummary{State: "idle"}, true, map[string]remoteCompletion{}, "waiting for your Hub to take it"},
 		{folderSummary{State: "idle"}, true, map[string]remoteCompletion{hub: {Completion: 100, RemoteState: "paused"}}, "paused on your Hub"},
+		// Byte-based 100 % with an empty note or a deletion still outstanding.
+		{folderSummary{State: "idle"}, true, map[string]remoteCompletion{hub: {Completion: 100, NeedItems: 1, RemoteState: "valid"}}, "uploading to your Hub — 1 item left"},
+		{folderSummary{State: "idle"}, true, map[string]remoteCompletion{hub: {Completion: 100, NeedDeletes: 2, RemoteState: "valid"}}, "uploading to your Hub — 2 items left"},
+		{folderSummary{State: "idle"}, true, map[string]remoteCompletion{hub: {Completion: 100, RemoteState: ""}}, "waiting for your Hub to take it"},
 	}
 	for _, c := range cases {
 		if got := describeFolder(f, c.sum, conns(c.connected), c.remote, "ME"); !strings.Contains(got, c.want) {

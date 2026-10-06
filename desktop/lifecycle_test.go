@@ -17,12 +17,48 @@ import (
 // Codex review of #212, major 11: setup stops waiting for an engine whose
 // supervisor already gave up, instead of waiting out the whole minute.
 func TestIssue175_SetupNoticesAFailedTemporaryEngine(t *testing.T) {
-	gaveUp := make(chan error, 1)
-	gaveUp <- ErrEngineRunning
+	// A supervisor that gives up at once: another one holds the engine.
+	eng, st := engineFixture(t)
+	unlock, err := lockFile(eng.lay.Lock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
 	start := time.Now()
-	err := waitEngine(context.Background(), syncthing.NewClient("http://127.0.0.1:1", "k"), time.Minute, gaveUp)
-	if !errors.Is(err, ErrEngineRunning) || time.Since(start) > 10*time.Second {
-		t.Fatalf("got %v after %s", err, time.Since(start))
+	sup := superviseInBackground(context.Background(), eng, st)
+	err = waitEngine(context.Background(), syncthing.NewClient("http://127.0.0.1:1", "k"), time.Minute, sup)
+	if !errors.Is(err, ErrEngineRunning) {
+		t.Fatalf("got %v", err)
+	}
+	// Stopping an engine that already ended does not wait out the grace.
+	sup.stop(30 * time.Second)
+	if time.Since(start) > 10*time.Second {
+		t.Fatalf("took %s", time.Since(start))
+	}
+}
+
+// Codex review of #212, round 2: `run` prepares the engine under the lock
+// setup holds while it prepares — never at the same time.
+func TestIssue175_RunWaitsForSetupToFinishPreparing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "setup.lock")
+	unlock, err := lockFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.AfterFunc(1500*time.Millisecond, unlock)
+	start := time.Now()
+	got, err := waitForLock(context.Background(), path, 10*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got()
+	if waited := time.Since(start); waited < time.Second {
+		t.Fatalf("took the lock while setup still held it (after %s)", waited)
+	}
+	hold, _ := lockFile(path)
+	defer hold()
+	if _, err := waitForLock(context.Background(), path, time.Second); !errors.Is(err, ErrEngineRunning) {
+		t.Fatalf("a lock held past the timeout must be refused, got %v", err)
 	}
 }
 
@@ -87,16 +123,22 @@ func TestIssue175_CommandLinkIsOursOrNothing(t *testing.T) {
 		t.Fatalf("on PATH: %q", got)
 	}
 
-	// Someone else's vaultsync stays where it is.
+	// Someone else's vaultsync stays where it is — and is never recommended,
+	// even when it is the one on PATH.
 	other := t.TempDir()
 	lay2, _ := layoutFor("linux", other, envOf(nil))
 	writeFile(t, lay2.Agent, "#!/bin/sh\n")
 	foreign := filepath.Join(other, ".local", "bin", "vaultsync")
-	writeFile(t, foreign, "a different program")
+	writeFile(t, foreign, "#!/bin/sh\necho a different program\n")
+	if err := os.Chmod(foreign, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	b := &app{goos: "linux", home: other, lay: lay2}
-	t.Setenv("PATH", "/usr/bin:/bin")
-	b.installCommand(&term{out: os.Stdout})
-	if data, _ := os.ReadFile(foreign); string(data) != "a different program" {
+	t.Setenv("PATH", filepath.Dir(foreign)+":/usr/bin:/bin")
+	if got := b.installCommand(&term{out: os.Stdout}); got != lay2.Agent {
+		t.Fatalf("recommended %q instead of VaultSync's own %q", got, lay2.Agent)
+	}
+	if data, _ := os.ReadFile(foreign); !strings.Contains(string(data), "a different program") {
 		t.Fatal("an existing ~/.local/bin/vaultsync was replaced")
 	}
 }

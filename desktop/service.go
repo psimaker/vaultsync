@@ -317,10 +317,83 @@ func (s service) managerEnv() map[string]string {
 	}
 	for _, line := range strings.Split(out, "\n") {
 		if k, v, ok := strings.Cut(strings.TrimSpace(line), "="); ok {
-			env[k] = v
+			env[k] = unquoteShellValue(v)
 		}
 	}
 	return env
+}
+
+// unquoteShellValue reads one value as systemctl show-environment prints it
+// (shell_maybe_quote): bare, $'…' with C escapes, or "…" with backslash
+// escapes — without ever running a shell.
+func unquoteShellValue(v string) string {
+	switch {
+	case strings.HasPrefix(v, "$'") && strings.HasSuffix(v, "'") && len(v) >= 3:
+		return cUnescape(v[2 : len(v)-1])
+	case strings.HasPrefix(v, "\"") && strings.HasSuffix(v, "\"") && len(v) >= 2:
+		var b strings.Builder
+		in := v[1 : len(v)-1]
+		for i := 0; i < len(in); i++ {
+			if in[i] == '\\' && i+1 < len(in) && strings.IndexByte("\"\\$`\n", in[i+1]) >= 0 {
+				i++
+			}
+			b.WriteByte(in[i])
+		}
+		return b.String()
+	}
+	return v
+}
+
+// cUnescape resolves the C escapes of a $'…' string.
+func cUnescape(in string) string {
+	var b strings.Builder
+	for i := 0; i < len(in); i++ {
+		if in[i] != '\\' || i+1 >= len(in) {
+			b.WriteByte(in[i])
+			continue
+		}
+		i++
+		switch c := in[i]; c {
+		case 'a':
+			b.WriteByte('\a')
+		case 'b':
+			b.WriteByte('\b')
+		case 'e', 'E':
+			b.WriteByte(0x1b)
+		case 'f':
+			b.WriteByte('\f')
+		case 'n':
+			b.WriteByte('\n')
+		case 'r':
+			b.WriteByte('\r')
+		case 't':
+			b.WriteByte('\t')
+		case 'v':
+			b.WriteByte('\v')
+		case 'x':
+			j := i + 1
+			for j < len(in) && j < i+3 && strings.IndexByte("0123456789abcdefABCDEF", in[j]) >= 0 {
+				j++
+			}
+			if n, err := strconv.ParseUint(in[i+1:j], 16, 8); err == nil && j > i+1 {
+				b.WriteByte(byte(n))
+				i = j - 1
+			} else {
+				b.WriteByte('x')
+			}
+		case '0', '1', '2', '3', '4', '5', '6', '7':
+			j := i
+			for j < len(in) && j < i+3 && in[j] >= '0' && in[j] <= '7' {
+				j++
+			}
+			n, _ := strconv.ParseUint(in[i:j], 8, 8)
+			b.WriteByte(byte(n))
+			i = j - 1
+		default: // \\ \' \" \? and anything else stand for themselves
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
 }
 
 // userManagerAvailable checks, before anything is installed, that systemd

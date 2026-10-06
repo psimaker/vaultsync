@@ -241,3 +241,25 @@ func mustUnitPath(t *testing.T, s service) string {
 	}
 	return p
 }
+
+// Codex review of #212, round 2: systemctl show-environment quotes values
+// (shell_maybe_quote); a config folder with a space must still be found.
+func TestIssue175_ManagerEnvironmentIsUnquoted(t *testing.T) {
+	for raw, want := range map[string]string{
+		`/home/me/.config`:          `/home/me/.config`,
+		`$'/home/me/my config'`:     `/home/me/my config`,
+		`$'/home/me/it\'s\x41\101'`: `/home/me/it'sAA`,
+		`"/home/me/a \"b\" \$c"`:    `/home/me/a "b" $c`,
+	} {
+		if got := unquoteShellValue(raw); got != want {
+			t.Errorf("unquoteShellValue(%s) = %q, want %q", raw, got, want)
+		}
+	}
+	svc, home := testService(t, "linux", &fakeRunner{answers: map[string]string{
+		"systemctl --user show-environment": "LANG=C.UTF-8\nXDG_CONFIG_HOME=$'" + filepath.Join("/srv", "my config") + "'\nHOME=" + "/home/me",
+	}})
+	_ = home
+	if p, _ := svc.unitPath(); p != filepath.Join("/srv", "my config", "systemd", "user", "vaultsync.service") {
+		t.Fatalf("unit path: %s", p)
+	}
+}

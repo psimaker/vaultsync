@@ -165,3 +165,23 @@ func TestIssue175_AgentStateIsPrivateAndAtomic(t *testing.T) {
 		t.Fatal("a newer state format must not be read as this one")
 	}
 }
+
+// Codex review of #212, round 2: a Syncthing config that cannot be reached
+// because a folder above it is closed is not "no Syncthing".
+func TestIssue175_UserSyncthingBehindAClosedFolderFailsClosed(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads any folder")
+	}
+	home := t.TempDir()
+	cfg := filepath.Join(home, ".local", "state", "syncthing", "config.xml")
+	writeFile(t, cfg, `<configuration></configuration>`)
+	closed := filepath.Join(home, ".local", "state")
+	if err := os.Chmod(closed, 0); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(closed, 0o755)
+	us, ok := findUserSyncthing("linux", home, envOf(nil))
+	if !ok || us.Unreadable == nil {
+		t.Fatalf("found=%v %+v", ok, us)
+	}
+}

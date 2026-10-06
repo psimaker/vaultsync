@@ -707,20 +707,49 @@ func (s *pairSession) planForLocal(ctx context.Context, path string) (plan, erro
 	if err := s.checkTarget(ctx, path, filepath.Base(path), enginePaths); err != nil {
 		return plan{}, err
 	}
+	// The folder is pinned before anything is asked: every answer below is
+	// about this very folder.
+	p := plan{kind: planNew, path: path}.withIdentity()
+	if p.dir == nil {
+		return plan{}, refuse("%s is not a folder on this computer.", tildePath(s.env.home, path))
+	}
 	_, empty, err := join.DirState(path)
 	if err != nil {
 		return plan{}, refuse("VaultSync cannot read %s. Check its permissions or reconnect its disk, then try again.", tildePath(s.env.home, path))
 	}
-	name, err := s.askHubName(filepath.Base(path), !empty)
-	if err != nil {
+	p.hadFiles = !empty
+	if p.name, err = s.askHubName(filepath.Base(path), p.hadFiles); err != nil {
 		return plan{}, err
 	}
-	if !empty {
-		if err := s.askConsent(name, path); err != nil {
+	if p.hadFiles {
+		if err := s.askConsent(p.name, path); err != nil {
 			return plan{}, err
 		}
 	}
-	return plan{kind: planNew, name: name, path: path, hadFiles: !empty}.withIdentity(), nil
+	if err := s.stillTheSame(p); err != nil {
+		return plan{}, err
+	}
+	return p, nil
+}
+
+// stillTheSame: the folder the person just answered about is the one that
+// was looked at — same file identity (or, for a new one, the same place
+// above it) and the same "empty or not".
+func (s *pairSession) stillTheSame(p plan) error {
+	changed := refuse("%s changed while you were answering. Nothing was changed — choose it again.", tildePath(s.env.home, p.path))
+	if p.dir != nil {
+		fi, err := os.Stat(p.path)
+		if err != nil || !os.SameFile(fi, p.dir) {
+			return changed
+		}
+	} else if err := s.checkAnchor(p); err != nil {
+		return changed
+	}
+	exists, empty, err := join.DirState(p.path)
+	if err != nil || (exists && !empty) != p.hadFiles {
+		return changed
+	}
+	return nil
 }
 
 // askConsent is rule 7's explicit consent for a folder that holds files,
@@ -890,16 +919,19 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 			return plan{}, refuse("The folder above %s does not exist. Create it first, or choose another place.", tildePath(s.env.home, path))
 		}
 	}
-	hasFiles := exists && !empty
-	if hasFiles && !s.opts.yes {
+	p := plan{kind: planNew, name: name, path: path, hadFiles: exists && !empty}.withIdentity()
+	if p.hadFiles && !s.opts.yes {
 		if !s.t.interactive() {
 			return plan{}, refuse("%s already contains files. VaultSync would sync it with your Hub as the new vault %s, and edits and deletions on connected devices would also change this folder. Pass --yes to agree.", tildePath(s.env.home, path), quoted(name))
 		}
 		if err := s.askConsent(name, path); err != nil {
 			return plan{}, err
 		}
+		if err := s.stillTheSame(p); err != nil {
+			return plan{}, err
+		}
 	}
-	return plan{kind: planNew, name: name, path: path, hadFiles: hasFiles}.withIdentity(), nil
+	return p, nil
 }
 
 // --- the checks -------------------------------------------------------------
@@ -1121,6 +1153,14 @@ func isRefusal(err error) bool {
 // engine is the one the checks ran against, the folder passes every rule
 // again, and it still holds what the person decided on.
 func (s *pairSession) finalGate(ctx context.Context, p plan, v pairing.VaultInfo, abs string) error {
+	// The Hub side first — its request can take a while — so that every
+	// local check below runs last, right before the folder is added: a
+	// folder with files joins only a vault that is still new, empty and
+	// shared with this computer alone (another device may have joined it
+	// while this one waited).
+	if p.kind == planNew && p.hadFiles && !s.provedNew(ctx, v) {
+		return refuse("VaultSync could not confirm that %s is still a new, empty vault. Your local folder was not connected.", quoted(p.label()))
+	}
 	start, err := engineStartTime(ctx, s.env.engine)
 	if err != nil || start != s.engineStart {
 		return refuse("The sync engine restarted while VaultSync was setting up %s. Nothing was connected — run vaultsync pair again.", quoted(p.label()))
@@ -1146,12 +1186,6 @@ func (s *pairSession) finalGate(ctx context.Context, p plan, v pairing.VaultInfo
 	}
 	if empty == p.hadFiles {
 		return refuse("%s changed while VaultSync was waiting for your Hub. Nothing was connected — run vaultsync pair again.", tildePath(s.env.home, abs))
-	}
-	// The Hub side again, now, after every wait: a folder with files joins
-	// only a vault that is still new, empty and shared with this computer
-	// alone (another device may have joined it while this one waited).
-	if p.kind == planNew && p.hadFiles && !s.provedNew(ctx, v) {
-		return refuse("VaultSync could not confirm that %s is still a new, empty vault. Your local folder was not connected.", quoted(p.label()))
 	}
 	return nil
 }

@@ -34,6 +34,7 @@ type folderSummary struct {
 type remoteCompletion struct {
 	Completion  float64 `json:"completion"`
 	NeedItems   int     `json:"needItems"`
+	NeedDeletes int     `json:"needDeletes"`
 	RemoteState string  `json:"remoteState"` // unknown, notSharing, paused, valid
 }
 
@@ -202,6 +203,7 @@ func describeFolder(f syncthing.FolderConfig, s folderSummary, conns connections
 	}
 	connected := 0
 	lowest := 100.0
+	outstanding := 0
 	for _, d := range f.Devices {
 		if d.DeviceID == myID {
 			continue
@@ -216,10 +218,15 @@ func describeFolder(f syncthing.FolderConfig, s folderSummary, conns connections
 			return "waiting for your Hub to take it"
 		case rc.RemoteState == "paused":
 			return "paused on your Hub"
+		case rc.RemoteState != "valid":
+			return "waiting for your Hub to take it"
 		}
 		if rc.Completion < lowest {
 			lowest = rc.Completion
 		}
+		// The percentage counts bytes: an empty note or a deletion still
+		// outstanding leaves it at 100.
+		outstanding += rc.NeedItems + rc.NeedDeletes
 	}
 	if connected == 0 {
 		return "waiting for your Hub"
@@ -229,6 +236,12 @@ func describeFolder(f syncthing.FolderConfig, s folderSummary, conns connections
 	}
 	if lowest < 100 {
 		return fmt.Sprintf("uploading to your Hub — %d %%", int(lowest))
+	}
+	if outstanding == 1 {
+		return "uploading to your Hub — 1 item left"
+	}
+	if outstanding > 1 {
+		return fmt.Sprintf("uploading to your Hub — %d items left", outstanding)
 	}
 	return "up to date"
 }

@@ -237,3 +237,41 @@ func TestIssue175_RemoveDataStopsAtMounts(t *testing.T) {
 		t.Fatalf("an unknown mount table must stop the removal, got %v", err)
 	}
 }
+
+// Codex review of #212, round 2: VaultSync's folder below a linked folder
+// (a custom XDG_STATE_HOME pointing elsewhere) — the mount table names the
+// real path, and the removal still stops there.
+func TestIssue175_RemoveDataSeesMountsBehindALinkedParent(t *testing.T) {
+	tmp, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	realState := filepath.Join(tmp, "real-state")
+	if err := os.MkdirAll(realState, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(tmp, "alias-state")
+	if err := os.Symlink(realState, alias); err != nil {
+		t.Fatal(err)
+	}
+	lay, err := layoutFor("linux", filepath.Join(tmp, "home"), envOf(map[string]string{"XDG_STATE_HOME": alias}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(lay.Base, "syncthing", "data", "note.md"), "mounted vault content")
+	if err := saveState(lay.State, agentState{GUIPort: 1}); err != nil {
+		t.Fatal(err)
+	}
+	orig := mountPoints
+	defer func() { mountPoints = orig }()
+	mountPoints = func() ([]string, error) {
+		return []string{"/", filepath.Join(realState, "vaultsync", "syncthing", "data")}, nil
+	}
+	_, err = removeOwnData(lay, nil, "linux")
+	if !strings.Contains(refusalText(err), "mounted at or inside") {
+		t.Fatalf("got %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(lay.Base, "syncthing", "data", "note.md")); err != nil || string(data) != "mounted vault content" {
+		t.Fatal("content behind the mount was removed")
+	}
+}
