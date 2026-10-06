@@ -59,6 +59,11 @@ default route, when that is a private one — or when you name it: pass
 `--address 192.168.1.20` when the link has no `hub=` or the wrong one (a VPN,
 say), or `--no-qr` when your terminal cannot draw the QR code.
 
+**Mac or Linux computer, nothing else installed** — the VaultSync desktop
+agent `vaultsync` brings its own Syncthing (see
+[Desktop agent](#desktop-agent-macos-and-linux) below): run `vaultsync setup`
+and enter the code.
+
 **Computer with Syncthing installed** — run the same link and choose
 **1) Obsidian device**, then enter the code. The setup finds the Hub on your
 network, asks which vault to join (or creates a new one) and either accepts the
@@ -86,6 +91,108 @@ with the Hub's. When every vault on the Hub is already on the iPhone, Add Hub
 offers **Reconnect with Hub** instead (it re-adds the Hub as a device if it was
 removed). The Device ID way (Add Device) keeps working; a Hub's QR code scanned
 there offers **Add Hub** instead.
+
+## Desktop agent (macOS and Linux)
+
+`vaultsync` is one program that turns a Mac or a Linux computer into a
+VaultSync device: it installs its own Syncthing, pairs with your Hub by code
+and keeps your Obsidian vaults in sync in the background. Windows follows.
+
+Get it from the newest `desktop-v*` release on GitHub
+(`vaultsync_darwin_arm64`, `vaultsync_linux_amd64`, …), check it against the
+release's `SHA256SUMS`, make it executable and run it in a terminal:
+
+```sh
+curl -fLO https://github.com/psimaker/vaultsync/releases/download/desktop-vX.Y.Z/vaultsync_darwin_arm64
+curl -fLO https://github.com/psimaker/vaultsync/releases/download/desktop-vX.Y.Z/SHA256SUMS
+shasum -a 256 -c --ignore-missing SHA256SUMS
+chmod +x vaultsync_darwin_arm64 && ./vaultsync_darwin_arm64 setup
+```
+
+Download it in a terminal as above: the agent is not notarized by Apple yet,
+so macOS refuses to run a copy that a web browser downloaded. If that
+happened, allow it once under System Settings → Privacy & Security.
+
+(The setup link above switches its "1) Obsidian device" path to the agent
+once a release of it exists.) `setup`
+
+1. downloads Syncthing 2.1.6 from github.com and installs it only if it
+   matches the checksum built into VaultSync,
+2. installs a background service — a LaunchAgent on macOS, a systemd user
+   service on Linux; no administrator rights — which runs that Syncthing with
+   its own settings, next to (and never touching) a Syncthing you may run
+   yourself,
+3. finds your Hub on the network (several answer: it asks which one printed
+   your code — the code only ever goes to that one) and asks for the code,
+4. shows **Choose a vault to sync**: the vaults Obsidian lists on this
+   computer, newest first, and the vaults on your Hub. A vault from your Hub
+   goes into a new, empty folder (default `~/Vaults/<name>`); a vault from
+   this computer becomes a new vault on your Hub — when its folder already
+   holds files, only after you agree to sync that very folder, and only with
+   a vault your Hub reports as new, empty and shared with this computer
+   alone. Everything is checked again right before the folder starts
+   syncing.
+
+VaultSync keeps its sync engine, settings and pairing identity in one folder —
+`~/Library/Application Support/VaultSync` on macOS,
+`~/.local/state/vaultsync` on Linux — plus the service file where the system
+expects it (`~/Library/LaunchAgents`, `~/.config/systemd/user`) and, on a Mac,
+a log in `~/Library/Logs/VaultSync`. Your vaults stay where they are. The
+sync engine's own log (in that folder's `syncthing/`) names your vaults and
+their paths; it never leaves this computer. The background service's own
+log (`~/Library/Logs/VaultSync` on a Mac, the journal on Linux) names no
+vault and no path; when the service stops, the reason is in that folder's
+`last-error.txt`. `setup` also links the command
+as `~/.local/bin/vaultsync` (unless that name is taken) and says how to call
+it if that folder is not on your `PATH`.
+
+```sh
+vaultsync status       # what syncs where, and whether your Hub is connected
+vaultsync pair         # another vault, or another Hub
+vaultsync stop         # pause until vaultsync start
+vaultsync uninstall    # remove the background service; vaults stay
+                       # (--remove-data also removes the settings, the pairing
+                       #  identity, the sync database and the command link —
+                       #  never vault files)
+```
+
+Scripts and remote shells pass everything as flags; anything that would need
+a decision is refused with the flag to add:
+
+```sh
+vaultsync setup --code TULIP-ANCHOR-42 --hub 192.168.1.20 \
+  --vault Notes --create --path ~/Vaults/Notes --yes
+```
+
+`--yes` is consent to sync a `--path` that already holds files with the new
+vault named by `--vault`; it never chooses a Hub and never overrides a
+refusal.
+
+**What the agent refuses — and why.** A vault inside iCloud Drive, OneDrive,
+Dropbox, Google Drive or Nextcloud (or one that contains such a folder):
+those services replace files they have not downloaded with placeholders, and
+a vanished placeholder looks like a deletion that would reach every device.
+Make a fully downloaded copy outside, for example in `~/Vaults`, and open
+that copy in Obsidian. A folder that overlaps one VaultSync — or the
+Syncthing you run yourself — already syncs. A folder with files for a vault
+your Hub already has: VaultSync does not combine two vaults on its own;
+download your Hub's vault into a new folder, or give this computer's vault a
+different name on your Hub. Decision 046 records the rules — and the one gap
+the Hub cannot close yet: it counts the files it holds, not files still
+arriving, so a vault it reports as new and empty could, in a narrow race,
+receive another device's files while this computer's are on their way.
+
+**On a Mac.** macOS may ask whether *vaultsync* may find devices on your local
+network and access a folder in Documents, Desktop or Downloads; allow both, or
+the background service cannot reach your Hub directly (it then falls back to
+a slower relay) or cannot read the vault. `vaultsync status` names the
+setting when it sees macOS refusing. Keeping vaults in `~/Vaults` avoids the
+folder prompt.
+
+**On Linux.** The service runs while you are logged in. To keep syncing after
+you log out, allow it once: `loginctl enable-linger` (setup never does this
+for you). Without a systemd user session (some containers, WSL), run
+`vaultsync setup --no-service` and keep `vaultsync run` running yourself.
 
 ## What the Hub guarantees
 

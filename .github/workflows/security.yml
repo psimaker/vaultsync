@@ -44,7 +44,7 @@ jobs:
       # without materialising the patched Syncthing tree.
       - name: gofmt
         run: |
-          unformatted="$(gofmt -l go/bridge notify hub)"
+          unformatted="$(gofmt -l go/bridge notify hub desktop)"
           if [ -n "$unformatted" ]; then
             echo "::error::These files need gofmt:"
             echo "$unformatted"
@@ -57,6 +57,10 @@ jobs:
 
       - name: go vet (hub)
         working-directory: hub
+        run: go vet ./...
+
+      - name: go vet (desktop)
+        working-directory: desktop
         run: go vet ./...
 
       # Optional next step: add golangci-lint here (golangci-lint-action@v9 needs
@@ -128,6 +132,29 @@ jobs:
 
       - name: govulncheck
         working-directory: hub
+        run: |
+          # Pinned (same reasoning as the gomobile pin in ci.yml): a govulncheck
+          # release must not change scan results without a repo change (#85).
+          go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+          govulncheck ./...
+
+  govulncheck-desktop:
+    name: govulncheck (desktop)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: desktop/go.mod
+
+      # Covers the hub packages the agent links (pairing, pake, syncthing,
+      # join) through the replace directive, as built into the agent.
+      - name: govulncheck
+        working-directory: desktop
         run: |
           # Pinned (same reasoning as the gomobile pin in ci.yml): a govulncheck
           # release must not change scan results without a repo change (#85).

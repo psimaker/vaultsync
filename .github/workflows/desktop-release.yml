@@ -1,0 +1,94 @@
+name: Desktop Release
+
+# Builds the `vaultsync` desktop agent (desktop/).
+#   pull_request  → cross-builds every release target (proves they compile),
+#                   publishes nothing
+#   desktop-v* tag → a GitHub release with vaultsync_<os>_<arch> binaries and
+#                   SHA256SUMS — the asset names setup.sh will download once
+#                   its device path switches to the agent (separate change).
+#
+# macOS and Linux only for now; Windows follows its own service model (#175).
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "desktop/**"
+      - "hub/**"
+      - ".github/workflows/desktop-release.yml"
+  push:
+    tags:
+      - "desktop-v*"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build binaries
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: desktop/go.mod
+          cache-dependency-path: desktop/go.sum
+
+      # Asset names are a contract with setup.sh: vaultsync_<goos>_<goarch>.
+      - name: Build binaries
+        working-directory: desktop
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            version="${GITHUB_REF_NAME#desktop-v}"
+          else
+            version="dev-${GITHUB_SHA::7}"
+          fi
+          mkdir -p dist
+          for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
+            goos="${target%/*}"; goarch="${target#*/}"
+            GOOS="$goos" GOARCH="$goarch" go build -trimpath -buildvcs=false \
+              -ldflags="-s -w -X main.version=${version}" -o "dist/vaultsync_${goos}_${goarch}" .
+          done
+          (cd dist && sha256sum vaultsync_* > SHA256SUMS)
+          ls -l dist
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: vaultsync-desktop-binaries
+          path: desktop/dist/
+          retention-days: 7
+          if-no-files-found: error
+
+  release:
+    name: GitHub release
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: vaultsync-desktop-binaries
+          path: dist
+
+      # --latest=false: "Latest" on the repository is the iOS app's release.
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --latest=false \
+            --title "VaultSync for Mac and Linux ${GITHUB_REF_NAME#desktop-v}" \
+            --notes "The desktop agent \`vaultsync\` for macOS and Linux: it installs its own pinned Syncthing, pairs with your VaultSync Hub by code and keeps your Obsidian vaults in sync. Check downloads against SHA256SUMS. On a Mac, download with curl — the binaries are not notarized yet, so a browser download is blocked. Setup: docs/hub.md." \
+            dist/*

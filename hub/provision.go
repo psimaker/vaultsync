@@ -11,6 +11,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/psimaker/vaultsync/hub/join"
 	"github.com/psimaker/vaultsync/hub/pairing"
 )
 
@@ -73,23 +74,9 @@ func newProvisioner(client *SyncthingClient, vaultsRoot, localRoot string) *prov
 	}
 }
 
-func dirStateFS(path string) (bool, bool, error) {
-	entries, err := os.ReadDir(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, true, nil
-	}
-	if err != nil {
-		return true, false, err
-	}
-	for _, e := range entries {
-		// Syncthing's own marker does not count as user content.
-		if e.Name() == ".stfolder" || e.Name() == ".stversions" {
-			continue
-		}
-		return true, false, nil
-	}
-	return true, true, nil
-}
+// dirStateFS is the shared emptiness rule (join.DirState): Syncthing's own
+// marker and version store do not count as content.
+func dirStateFS(path string) (bool, bool, error) { return join.DirState(path) }
 
 // vaultInfo is what pairing and `status` report about one folder.
 type vaultInfo = pairing.VaultInfo
@@ -143,16 +130,9 @@ func slugify(name string) (string, error) {
 }
 
 // pathsOverlap reports whether two cleaned paths are equal or nested — the same
-// rule as the iOS app's folderPathOverlapError (decision 001).
-func pathsOverlap(a, b string) bool {
-	a = filepath.Clean(a)
-	b = filepath.Clean(b)
-	if a == b {
-		return true
-	}
-	sep := string(filepath.Separator)
-	return strings.HasPrefix(a, strings.TrimSuffix(b, sep)+sep) || strings.HasPrefix(b, strings.TrimSuffix(a, sep)+sep)
-}
+// rule as the iOS app's folderPathOverlapError (decision 001), shared with the
+// device side as join.PathsOverlap.
+func pathsOverlap(a, b string) bool { return join.PathsOverlap(a, b) }
 
 func newFolderID() (string, error) {
 	var b [6]byte
@@ -278,29 +258,10 @@ func hubVersioning() versioningConfig {
 }
 
 // ensureDevice adds the device to Syncthing if it is unknown. An existing
-// entry is left untouched except for filling in an empty name.
+// entry is left untouched except for filling in an empty name
+// (join.EnsureDevice, which the device side uses for the Hub).
 func (p *provisioner) ensureDevice(ctx context.Context, deviceID, name string) error {
-	devices, err := p.client.Devices(ctx)
-	if err != nil {
-		return err
-	}
-	for _, d := range devices {
-		if d.DeviceID == deviceID {
-			if d.Name == "" && name != "" {
-				return p.client.PatchDevice(ctx, deviceID, map[string]any{"name": name})
-			}
-			return nil
-		}
-	}
-	return p.client.AddDevice(ctx, deviceConfig{
-		DeviceID:          deviceID,
-		Name:              name,
-		Addresses:         []string{"dynamic"},
-		Compression:       "metadata",
-		Introducer:        false,
-		Paused:            false,
-		AutoAcceptFolders: false,
-	})
+	return join.EnsureDevice(ctx, p.client, deviceID, name)
 }
 
 // shareVault adds deviceID to the folder's device list. Idempotent; the
