@@ -78,6 +78,9 @@ func startSyncthing(t *testing.T, bin, name string) *stInstance {
 		"<natEnabled>true</natEnabled>":                       "<natEnabled>false</natEnabled>",
 		"<urAccepted>0</urAccepted>":                          "<urAccepted>-1</urAccepted>",
 		"<crashReportingEnabled>true</crashReportingEnabled>": "<crashReportingEnabled>false</crashReportingEnabled>",
+		// applyHubDefaults switches global discovery on for the Hub
+		// instance; its announcements then go nowhere (#215).
+		"<globalAnnounceServer>default</globalAnnounceServer>": "<globalAnnounceServer>https://127.0.0.1:1/</globalAnnounceServer>",
 	} {
 		if !strings.Contains(cfg, old) {
 			t.Fatalf("generated config.xml lacks %q — adjust the test for this Syncthing version", old)
@@ -163,6 +166,21 @@ func TestE2EHubPairsDeviceAndSyncsBothWays(t *testing.T) {
 	// --- Hub side: init + pairing service ---------------------------------
 	if _, err := applyHubDefaults(ctx, hubST.client, "E2E Hub", true); err != nil {
 		t.Fatal(err)
+	}
+	// The Hub defaults switch discovery, relays and NAT on; switch them off
+	// again — this test stays on loopback (#215).
+	offline := map[string]any{"globalAnnounceEnabled": false, "localAnnounceEnabled": false, "relaysEnabled": false, "natEnabled": false}
+	if err := hubST.client.PatchOptions(ctx, offline); err != nil {
+		t.Fatal(err)
+	}
+	if opts, err := hubST.client.Options(ctx); err != nil {
+		t.Fatal(err)
+	} else {
+		for k := range offline {
+			if opts[k] != false {
+				t.Fatalf("the Hub instance left loopback: %s = %v", k, opts[k])
+			}
+		}
 	}
 	vaultsRoot := filepath.Join(hubST.home, "vaults")
 	prov := newProvisioner(hubST.client, vaultsRoot, vaultsRoot)
