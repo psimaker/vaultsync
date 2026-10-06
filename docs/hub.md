@@ -114,8 +114,23 @@ docker compose exec hub vaultsync-hub code            # new pairing code
 docker compose exec hub vaultsync-hub vault list
 docker compose exec hub vaultsync-hub vault create "Work"
 docker compose exec hub vaultsync-hub vault adopt "Old Notes"   # existing dir in vaults/
-docker compose pull && docker compose up -d           # update
+docker compose pull && docker compose up -d           # refresh the images .env names
 ```
+
+## Update the Hub
+
+`docker compose pull` fetches the images at the tags the stack names: the
+Hub's Syncthing follows its 1.x line, but the Hub itself stays on the version
+in `.env` (`VAULTSYNC_HUB_IMAGE`) — re-running the setup keeps `.env` too. To
+move a Hub to 0.2.0 (the release that prints the QR code):
+
+```sh
+cd /srv/vaultsync
+sed -i 's|^VAULTSYNC_HUB_IMAGE=.*|VAULTSYNC_HUB_IMAGE=ghcr.io/psimaker/vaultsync-hub:0.2.0|' .env
+docker compose pull && docker compose up -d
+```
+
+Vaults, paired devices and an open pairing code carry over unchanged.
 
 ## Troubleshooting
 

@@ -123,11 +123,14 @@ jobs:
           (cd dist && sha256sum vaultsync-hub_* > SHA256SUMS)
           ls -l dist
 
+      # --latest=false: "Latest" on the repository is the iOS app's release
+      # (AGENTS.md release step 7). Without it the API marks this newest
+      # release as Latest and the app's release loses the badge.
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" --verify-tag \
+          gh release create "$GITHUB_REF_NAME" --verify-tag --latest=false \
             --title "VaultSync Hub ${GITHUB_REF_NAME#hub-v}" \
             --notes "Hub image: ${IMAGE_NAME}:${GITHUB_REF_NAME#hub-v}. Installed by \`curl -fsSL https://vaultsync.eu/setup.sh | sh\`." \
             hub/dist/*
