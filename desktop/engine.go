@@ -30,6 +30,9 @@ import (
 // ErrEngineRunning means another `vaultsync run` already owns the engine.
 var ErrEngineRunning = errors.New("VaultSync's sync engine is already running on this computer")
 
+// errEngineStoppedOnItsOwn: the engine ended without being asked to.
+var errEngineStoppedOnItsOwn = errors.New("the sync engine stopped on its own")
+
 type engineOptions struct {
 	// loopbackOnly pins the engine to 127.0.0.1 with every way out of the
 	// computer switched off. Only tests set it; the CLI has no switch.
@@ -286,7 +289,7 @@ func (e engine) supervise(ctx context.Context, st agentState, logf func(string, 
 		if err != nil {
 			return fmt.Errorf("the sync engine stopped: %w", err)
 		}
-		return errors.New("the sync engine stopped on its own")
+		return errEngineStoppedOnItsOwn
 	}
 }
 

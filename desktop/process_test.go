@@ -4,11 +4,15 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -54,8 +58,12 @@ func TestIssue175_ServiceOutputStaysPrivate(t *testing.T) {
 		lay, _ := layoutFor("linux", home, envOf(nil))
 		writeFile(t, lay.State, "{")
 		out := runService(t, bin, home, lay.Base)
-		if !strings.Contains(out, "agent.json is damaged") || strings.Contains(out, home) {
+		if strings.Contains(out, home) || strings.Contains(out, "agent.json") || !strings.Contains(out, "could not run the sync engine") {
 			t.Fatalf("service output:\n%s", out)
+		}
+		details, _ := os.ReadFile(filepath.Join(lay.Base, "last-error.txt"))
+		if !strings.Contains(string(details), "agent.json is damaged") {
+			t.Fatalf("the details were not kept in VaultSync's folder: %q", details)
 		}
 	})
 
@@ -115,14 +123,14 @@ func TestIssue175_ServiceOutputHidesACustomStateDir(t *testing.T) {
 	state := filepath.Join(elsewhere, "PrivateClient", "vaultsync")
 	writeFile(t, filepath.Join(state, "agent.json"), "{")
 	out := runService(t, bin, home, state)
-	if strings.Contains(out, elsewhere) || !strings.Contains(out, "<VaultSync folder>/agent.json is damaged") {
+	if strings.Contains(out, elsewhere) || strings.Contains(out, "PrivateClient") || !strings.Contains(out, "could not run the sync engine") {
 		t.Fatalf("service output:\n%s", out)
 	}
 }
 
-// Codex review of #212, round 4: a path above a custom state folder (a file
-// where a folder should be) appears in the error — the service prints no
-// path at all.
+// Codex review of #212, rounds 4 and 5: a path above a custom state folder
+// (a file where a folder should be, with spaces in its name) is part of the
+// error — the service prints only the kind of failure.
 func TestIssue175_ServiceOutputHidesEveryPath(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds the vaultsync binary")
@@ -136,24 +144,29 @@ func TestIssue175_ServiceOutputHidesEveryPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	blocker := filepath.Join(elsewhere, "PrivateClient")
+	blocker := filepath.Join(elsewhere, "Clients PrivateClient")
 	writeFile(t, blocker, "a file, not a folder")
 	out := runService(t, bin, home, filepath.Join(blocker, "vaultsync"))
-	if strings.Contains(out, "PrivateClient") || strings.Contains(out, elsewhere) || !strings.Contains(out, "<path>") {
+	for _, secret := range []string{"PrivateClient", "Clients", elsewhere} {
+		if strings.Contains(out, secret) {
+			t.Fatalf("the service output names %q:\n%s", secret, out)
+		}
+	}
+	if !strings.Contains(out, "a file operation failed (mkdir: not a directory)") {
 		t.Fatalf("service output:\n%s", out)
 	}
 }
 
-func TestIssue175_PrintableScrubsPathsOnlyUnderTheService(t *testing.T) {
-	defer func() { serviceMode = false }()
-	msg := `mkdir /srv/PrivateClient: not a directory; see https://github.com/psimaker/vaultsync and "/etc/x"`
-	serviceMode = false
-	if got := printable(msg); !strings.Contains(got, "/srv/PrivateClient") {
-		t.Fatalf("an interactive error keeps its path: %s", got)
-	}
-	serviceMode = true
-	got := printable(msg)
-	if strings.Contains(got, "/srv") || strings.Contains(got, "/etc") || !strings.Contains(got, "https://github.com/psimaker/vaultsync") {
-		t.Fatalf("service error: %s", got)
+func TestIssue175_ServiceSummaryCarriesNoFreeText(t *testing.T) {
+	secret := "/srv/Clients PrivateClient/Notes"
+	for _, err := range []error{
+		fmt.Errorf("%s is damaged: %w", secret, errors.New("unexpected end of JSON input")),
+		refuse("%s overlaps the vault %s", secret, secret),
+		&fs.PathError{Op: "open", Path: secret, Err: syscall.EACCES},
+		fmt.Errorf("download %s: %w", secret, ErrChecksumMismatch),
+	} {
+		if got := serviceSummary(err); strings.Contains(got, "PrivateClient") || strings.Contains(got, "Notes") {
+			t.Errorf("serviceSummary(%v) = %q", err, got)
+		}
 	}
 }

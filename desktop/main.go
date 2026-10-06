@@ -24,7 +24,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strings"
 	"syscall"
@@ -44,11 +43,18 @@ func main() {
 		switch {
 		case errors.Is(err, errCancelled):
 			os.Exit(2)
+		case serviceMode:
+			// A log or the journal: a fixed summary that carries no path or
+			// name; the whole message stays in VaultSync's own folder.
+			fmt.Fprintln(os.Stderr, "error:", serviceSummary(err))
+			if stateDirShown != "" {
+				_ = writeFileAtomic(filepath.Join(stateDirShown, "last-error.txt"), []byte(redactPaths(err.Error())+"\n"), 0o600)
+			}
 		case errors.As(err, &r):
 			fmt.Fprintln(os.Stderr)
-			fmt.Fprintln(os.Stderr, printable(r.msg))
+			fmt.Fprintln(os.Stderr, redactPaths(r.msg))
 		default:
-			fmt.Fprintln(os.Stderr, "error:", printable(err.Error()))
+			fmt.Fprintln(os.Stderr, "error:", redactPaths(err.Error()))
 		}
 		os.Exit(1)
 	}
@@ -58,22 +64,36 @@ func main() {
 // home folder (run --state-dir); printed paths below it are shortened too.
 var stateDirShown string
 
-// serviceMode is set by `run`: its output goes to a log or the journal, so
-// no path at all survives in what it prints.
+// serviceMode is set by `run` when its output goes to a log or the journal
+// (stderr is no terminal): it then prints no free text at all.
 var serviceMode bool
 
-// absolutePath matches a path that starts a word (after a space, quote,
-// bracket or "="), not the "//" of a URL.
-var absolutePath = regexp.MustCompile(`(^|[\s"'(=])/[^\s"':,()]*`)
-
-// printable is an error as the person sees it: home and VaultSync's folder
-// shortened, and under the service every other path replaced as well.
-func printable(msg string) string {
-	msg = redactPaths(msg)
-	if serviceMode {
-		msg = absolutePath.ReplaceAllString(msg, "$1<path>")
+// serviceSummary describes a failure of the background service from the
+// error's kind alone — never from text that could hold a path or a name.
+func serviceSummary(err error) string {
+	var pe *fs.PathError
+	var le *os.LinkError
+	var se *os.SyscallError
+	var ee *exec.ExitError
+	switch {
+	case errors.Is(err, ErrChecksumMismatch):
+		return ErrChecksumMismatch.Error() + " — nothing was installed"
+	case errors.Is(err, ErrEngineRunning):
+		return ErrEngineRunning.Error()
+	case errors.Is(err, ErrNoPin):
+		return ErrNoPin.Error()
+	case errors.Is(err, errEngineStoppedOnItsOwn):
+		return errEngineStoppedOnItsOwn.Error()
+	case errors.As(err, &ee):
+		return "the sync engine stopped (" + ee.String() + ")"
+	case errors.As(err, &pe):
+		return "a file operation failed (" + pe.Op + ": " + pe.Err.Error() + ")"
+	case errors.As(err, &le):
+		return "a file operation failed (" + le.Op + ": " + le.Err.Error() + ")"
+	case errors.As(err, &se):
+		return "a system call failed (" + se.Syscall + ": " + se.Err.Error() + ")"
 	}
-	return msg
+	return "the background service could not run the sync engine"
 }
 
 // redactPaths shortens the paths in what is printed: under the background
@@ -559,7 +579,10 @@ func (a *app) run(ctx context.Context, args []string) error {
 		a.lay = a.lay.at(filepath.Clean(*stateDir))
 		a.svc.lay = a.lay
 	}
-	stateDirShown, serviceMode = a.lay.Base, true
+	stateDirShown = a.lay.Base
+	if st, err := os.Stderr.Stat(); err == nil && st.Mode()&os.ModeCharDevice == 0 {
+		serviceMode = true
+	}
 	logger := log.New(os.Stderr, "", log.LstdFlags)
 	logf := func(format string, args ...any) { logger.Printf(format, args...) }
 	// Installing and preparing the engine happens under the same lock setup

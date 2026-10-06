@@ -24,7 +24,7 @@ func ownedFixture(t *testing.T) (layout, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, f := range []string{"bin/vaultsync", "bin/syncthing", "syncthing/config.xml", "syncthing/index-v2/db.sqlite", "pairing.json", ".agent.json.123"} {
+	for _, f := range []string{"bin/vaultsync", "bin/syncthing", "syncthing/config.xml", "syncthing/index-v2/db.sqlite", "pairing.json", "last-error.txt", ".agent.json.123"} {
 		writeFile(t, filepath.Join(lay.Base, f), "x")
 	}
 	if err := saveState(lay.State, agentState{GUIPort: 1}); err != nil {
@@ -42,7 +42,7 @@ func TestIssue175_RemoveDataRemovesOnlyOwnEntries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, gone := range []string{"bin", "syncthing", "agent.json", "pairing.json", ".agent.json.123"} {
+	for _, gone := range []string{"bin", "syncthing", "agent.json", "pairing.json", "last-error.txt", ".agent.json.123"} {
 		if _, err := os.Lstat(filepath.Join(lay.Base, gone)); !errors.Is(err, os.ErrNotExist) {
 			t.Errorf("%s survived", gone)
 		}
