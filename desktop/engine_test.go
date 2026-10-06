@@ -280,6 +280,31 @@ func TestIssue175_InterruptedPrepareLeavesNoHalfReadyEngine(t *testing.T) {
 	}
 }
 
+// An engine folder that cannot be read is no empty one: setup stops before
+// generating anything.
+func TestIssue175_UnreadableEngineFolderStopsSetup(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads any folder")
+	}
+	eng, _ := engineFixture(t)
+	if err := os.MkdirAll(eng.lay.Home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(eng.lay.Home, "cert.pem"), "identity")
+	if err := os.Chmod(eng.lay.Home, 0); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(eng.lay.Home, 0o700)
+	fakeGenerate(t, eng.lay, generatedShape)
+	var st agentState
+	if err := eng.prepare(context.Background(), &st); err == nil || !strings.Contains(err.Error(), "cannot be read") {
+		t.Fatalf("got %v", err)
+	}
+	if _, err := os.Stat(eng.lay.Home + ".new"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("setup generated an identity despite the unreadable folder")
+	}
+}
+
 // A non-empty engine folder without a config is never overwritten.
 func TestIssue175_IncompleteEngineFolderIsLeftAlone(t *testing.T) {
 	eng, _ := engineFixture(t)

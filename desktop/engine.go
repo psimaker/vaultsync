@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"os/exec"
@@ -71,7 +72,12 @@ func (e engine) prepare(ctx context.Context, st *agentState) error {
 		}
 		return nil
 	}
-	if entries, err := os.ReadDir(e.lay.Home); err == nil && len(entries) > 0 {
+	entries, err := os.ReadDir(e.lay.Home)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+	case err != nil:
+		return fmt.Errorf("the sync engine's folder %s cannot be read (%v); nothing in it was changed", e.lay.Home, err)
+	case len(entries) > 0:
 		return fmt.Errorf("the sync engine's folder %s is incomplete (it has no config.xml); nothing in it was changed — move it aside, then run vaultsync setup again", e.lay.Home)
 	}
 	staging := e.lay.Home + ".new"
