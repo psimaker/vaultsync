@@ -314,7 +314,7 @@ with a coordinator next to it.
  └──────────────────────────────────────────────────────────────┘
         ▲ 22000 sync (Syncthing TLS, device IDs)     ▲ 8390 pairing (private addresses only)
         │                                            │
-   iPhone (VaultSync app)                    computer (`vaultsync-hub pair`)
+   iPhone (VaultSync app)                    computer (`vaultsync` agent)
 ```
 
 - **Coordinator, not a proxy.** After pairing, devices talk to the Hub's
@@ -327,6 +327,7 @@ with a coordinator next to it.
 - **Pairing** (`hub/pairing.go`, `hub/pake`): discovery → SPAKE2 → mutual
   confirmation → AES-GCM boxes; codes expire after 24 h and lock after five
   failures (decision 036).
-- **Device side** (`vaultsync-hub pair`): works with any stock Syncthing today
-  and is the core of the future desktop agent; through gomobile it can also back
-  the iOS app's code/QR pairing.
+- **Device side**: the pairing client is the package `hub/pairing`, shared by
+  the desktop agent `vaultsync` (`desktop/`, decision 046 — the setup link's
+  device path installs it), by `vaultsync-hub pair` for a Syncthing you run
+  yourself, and through gomobile by the iOS app (decision 045).

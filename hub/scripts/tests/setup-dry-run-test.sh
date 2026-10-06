@@ -6,8 +6,12 @@
 #   1. --dry-run exits 0 and creates nothing under the Hub directory.
 #   2. The Hub path prints the compose/env plan with the caller's uid:gid and
 #      the discovered port fallback.
-#   3. The device path never executes a privileged or network-changing command
-#      (sudo/chown shims are tripwires; curl only answers the release lookup).
+#   3. The device path plans VaultSync for Mac and Linux from the newest stable
+#      desktop-v* release (versions compared as numbers; drafts, pre-releases
+#      and -rc tags skipped), never prints the pairing code, passes arguments
+#      after -- to `vaultsync setup`, and never executes a privileged or
+#      network-changing command (sudo/chown shims are tripwires; curl only
+#      answers the release lookup).
 #   4. The embedded compose text in setup.sh is byte-identical to
 #      hub/docker-compose.yml — the one link must ship exactly the reviewed stack.
 set -eu
@@ -43,10 +47,20 @@ esac
 printf 'docker %s\n' "$*" >>"$VIOLATIONS"
 exit 1
 SHIM
+# The release list as GitHub sends it: pretty-printed, ordered by commit date
+# (not by version), "draft" and "prerelease" after "tag_name". The newest
+# stable desktop release is desktop-v0.10.0: 0.11.0 is a pre-release,
+# 0.12.0-rc.1 carries a suffix, and 0.10.0 > 0.9.1 only as numbers.
 cat >"$SANDBOX/bin/curl" <<'SHIM'
 #!/usr/bin/env sh
 case "$*" in
-	*api.github.com*) printf '[{"tag_name": "v2.0.2"}, {"tag_name": "hub-v0.1.0"}]\n'; exit 0 ;;
+	*api.github.com*)
+		for r in hub-v0.2.0:false desktop-v0.9.1:false desktop-v0.12.0-rc.1:false \
+			desktop-v0.11.0:true desktop-v0.10.0:false v2.1.0:false desktop-v0.1.0:false; do
+			printf '  {\n    "tag_name": "%s",\n    "name": "x",\n    "draft": false,\n    "prerelease": %s,\n    "assets": [\n      { "name": "a" }\n    ]\n  },\n' "${r%:*}" "${r#*:}"
+		done
+		exit 0
+		;;
 esac
 printf 'curl %s\n' "$*" >>"$VIOLATIONS"
 exit 1
@@ -100,25 +114,52 @@ pass "hub dry-run plans compose up, init and pairing code with the right owner"
 
 # --- 3. Device path ----------------------------------------------------------
 
-printf '<configuration><gui><apikey>x</apikey></gui></configuration>\n' >"$HOME/.local/state/syncthing/config.xml"
+release="https://github.com/psimaker/vaultsync/releases/download/desktop-v0.10.0"
 out=$(sh "$SETUP_SH" --device --code "tulip-anchor-07" --dry-run 2>&1) ||
 	fail "device dry-run exited non-zero:
 $out"
-printf '%s\n' "$out" | grep -q "would download: https://github.com/psimaker/vaultsync/releases/download/hub-v0.1.0/vaultsync-hub_" ||
-	fail "device dry-run does not resolve the newest hub-v* release asset:
+printf '%s\n' "$out" | grep -q "would download: $release/vaultsync_linux_amd64 " ||
+	fail "device dry-run does not resolve the newest stable desktop-v* asset:
 $out"
-printf '%s\n' "$out" | grep -q "pair --code tulip-anchor-07" ||
-	fail "device dry-run does not plan the pair command:
+printf '%s\n' "$out" | grep -q "would run: <temporary folder>/vaultsync setup --code <code>\$" ||
+	fail "device dry-run does not plan vaultsync setup with the code:
 $out"
-pass "device dry-run resolves the release and plans pairing"
+if printf '%s\n' "$out" | grep -qi "tulip-anchor-07"; then
+	fail "device dry-run printed the pairing code:
+$out"
+fi
+if printf '%s\n' "$out" | grep -q "already set up"; then
+	fail "device dry-run mentions a Syncthing this computer does not have:
+$out"
+fi
+pass "device dry-run plans the newest stable agent release and hides the code"
 
-# Without Syncthing the device path must explain and exit 0, never install.
+out=$(sh "$SETUP_SH" --device --dry-run -- --vault Notes --path /tmp/Notes 2>&1) ||
+	fail "device dry-run with agent arguments exited non-zero:
+$out"
+printf '%s\n' "$out" | grep -q "would run: <temporary folder>/vaultsync setup --vault Notes --path /tmp/Notes\$" ||
+	fail "arguments after -- do not reach vaultsync setup:
+$out"
+pass "arguments after -- reach vaultsync setup"
+
+# A Syncthing of the person's own is never touched; the setup only names the
+# other route (pairing that Syncthing itself).
+printf '<configuration><gui><apikey>x</apikey></gui></configuration>\n' >"$HOME/.local/state/syncthing/config.xml"
+out=$(sh "$SETUP_SH" --device --dry-run 2>&1) || fail "device dry-run with Syncthing exited non-zero:
+$out"
+printf '%s\n' "$out" | grep -q "vaultsync-hub pair" || fail "device path does not name the route for an existing Syncthing:
+$out"
+printf '%s\n' "$out" | grep -q "would run: <temporary folder>/vaultsync setup\$" ||
+	fail "device path with an existing Syncthing does not plan the agent:
+$out"
 rm "$HOME/.local/state/syncthing/config.xml"
-out=$(sh "$SETUP_SH" --device --dry-run 2>&1) || fail "device dry-run without Syncthing exited non-zero:
+pass "an existing Syncthing gets a word, the agent setup runs anyway"
+
+if out=$(sh "$SETUP_SH" --hub --dry-run -- --vault Notes 2>&1); then
+	fail "the Hub path must refuse arguments meant for the device setup:
 $out"
-printf '%s\n' "$out" | grep -qi "no Syncthing yet" || fail "device path without Syncthing does not explain itself:
-$out"
-pass "device path without Syncthing explains and stops"
+fi
+pass "the Hub path refuses device arguments"
 
 if [ -s "$VIOLATIONS" ]; then
 	fail "privileged or network command executed under --dry-run:

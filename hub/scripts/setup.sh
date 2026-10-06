@@ -4,7 +4,9 @@
 #   curl -fsSL https://vaultsync.eu/setup.sh | sh
 #
 # It asks one question:
-#   1) Obsidian device   this computer edits notes and syncs them with your Hub
+#   1) Obsidian device   this computer edits notes and syncs them with your Hub:
+#                        installs VaultSync for Mac and Linux (`vaultsync`, it
+#                        brings its own Syncthing) and runs its setup
 #   2) Hub               a server or NAS that keeps every vault (set up once)
 #
 # Skeptical of curl|sh? Append `-s -- --dry-run` to see every action without
@@ -13,6 +15,8 @@
 # Flags:            --hub | --device   skip the menu
 #                   --code WORD-WORD-NN pairing code (device)
 #                   --dry-run          print actions only
+#                   -- ARGS            (device) passed on to `vaultsync setup`,
+#                                      e.g. -- --vault Notes --path ~/Vaults/Notes
 # Environment:      VAULTSYNC_HUB_DIR  where the Hub stack lives (default /srv/vaultsync)
 #                   VAULTSYNC_HUB_NAME how the Hub introduces itself
 #                   VAULTSYNC_HUB_IMAGE / RELAY_URL   development overrides
@@ -36,6 +40,11 @@ while [ $# -gt 0 ]; do
 			shift
 			[ $# -gt 0 ] || { printf 'ERROR: --code needs a value\n' >&2; exit 1; }
 			CODE="$1"
+			;;
+		--)
+			# Everything after -- belongs to `vaultsync setup` (device path).
+			shift
+			break
 			;;
 		*)
 			printf 'ERROR: unknown argument: %s\n' "$1" >&2
@@ -119,27 +128,50 @@ port_in_use() {
 	return 1
 }
 
+# detect_asset NAME prints the release asset for this computer: NAME_<os>_<arch>.
 detect_asset() {
 	os=$(uname -s)
 	arch=$(uname -m)
 	case "$os" in
 		Linux) goos="linux" ;;
 		Darwin) goos="darwin" ;;
-		*) fail "Unsupported OS: $os (Linux and macOS are supported today; Windows follows with the desktop app)." ;;
+		*) fail "Unsupported OS: $os (Linux and macOS are supported today; Windows follows)." ;;
 	esac
 	case "$arch" in
 		x86_64 | amd64) goarch="amd64" ;;
 		aarch64 | arm64) goarch="arm64" ;;
 		*) fail "Unsupported CPU architecture: $arch (prebuilt binaries cover amd64 and arm64)." ;;
 	esac
-	printf 'vaultsync-hub_%s_%s\n' "$goos" "$goarch"
+	printf '%s_%s_%s\n' "$1" "$goos" "$goarch"
 }
 
-latest_hub_tag() {
-	curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=30" |
-		grep -o '"tag_name": *"hub-v[^"]*"' |
-		head -1 |
-		sed 's/.*"\(hub-v[^"]*\)"/\1/'
+# latest_stable_tag PREFIX prints the newest stable release tagged PREFIX<x.y.z>:
+# no draft, no pre-release, no "-rc" style suffix, compared as versions —
+# GitHub lists releases by their commit date, not by version. The release
+# objects come pretty-printed with "draft" and "prerelease" after "tag_name".
+latest_stable_tag() {
+	prefix="$1"
+	curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=100" |
+		awk -v prefix="$prefix" '
+			function flush() {
+				if (tag != "" && draft == "false" && pre == "false") print tag
+				tag = ""; draft = ""; pre = ""
+			}
+			/"tag_name":/ {
+				flush()
+				t = $0
+				sub(/.*"tag_name": *"/, "", t); sub(/".*/, "", t)
+				if (index(t, prefix) == 1 && substr(t, length(prefix) + 1) ~ /^[0-9]+\.[0-9]+\.[0-9]+$/) tag = t
+				next
+			}
+			tag != "" && draft == "" && /"draft":/ { draft = ($0 ~ /true/) ? "true" : "false" }
+			tag != "" && pre == "" && /"prerelease":/ { pre = ($0 ~ /true/) ? "true" : "false" }
+			END { flush() }
+		' |
+		sed "s/^$prefix//" |
+		sort -t. -k1,1n -k2,2n -k3,3n |
+		tail -1 |
+		sed "s/^/$prefix/"
 }
 
 # Download a release binary and verify it against the release's SHA256SUMS.
@@ -359,56 +391,67 @@ setup_hub() {
 
 # --- 1) Obsidian device ------------------------------------------------------
 
+# A Syncthing the person already runs. The agent never touches it; it is
+# only worth a word because pairing that Syncthing itself is another route.
 find_syncthing_config() {
-	if [ -n "${SYNCTHING_CONFIG:-}" ]; then
-		[ -r "$SYNCTHING_CONFIG" ] && { printf '%s\n' "$SYNCTHING_CONFIG"; return 0; }
-		return 1
-	fi
 	for c in \
 		"${XDG_STATE_HOME:-$HOME/.local/state}/syncthing/config.xml" \
 		"${XDG_CONFIG_HOME:-$HOME/.config}/syncthing/config.xml" \
 		"$HOME/Library/Application Support/Syncthing/config.xml"; do
-		[ -r "$c" ] && { printf '%s\n' "$c"; return 0; }
+		[ -r "$c" ] && return 0
 	done
 	return 1
 }
 
+# The device path installs VaultSync for Mac and Linux (`vaultsync`, it brings
+# its own Syncthing) from the newest stable desktop-v* release, verified
+# against that release's SHA256SUMS, and runs its setup: the agent asks for
+# the code and the vault on the terminal itself (it reads /dev/tty, so
+# curl|sh can ask), installs its background service and links itself as
+# ~/.local/bin/vaultsync. The downloaded copy is only the installer and is
+# removed afterwards. Arguments after -- go to `vaultsync setup`.
 setup_device() {
-	if config=$(find_syncthing_config); then
-		info "✓ Syncthing found ($config)"
-	else
-		info ""
-		info "This computer has no Syncthing yet. The VaultSync desktop app (which brings"
-		info "its own) is on the way; until then install Syncthing and re-run this setup:"
-		case "$(uname -s)" in
-			Darwin) info "    brew install syncthing && brew services start syncthing" ;;
-			*) info "    your package manager, e.g.  sudo apt install syncthing  then  systemctl --user enable --now syncthing" ;;
-		esac
-		info ""
-		exit 0
-	fi
 	command -v curl >/dev/null 2>&1 || fail "curl is required."
-	asset=$(detect_asset)
-	tag=$(latest_hub_tag) || tag=""
-	[ -n "$tag" ] || fail "Could not find a Hub release on GitHub ($REPO). Check your network."
-	bin="${VAULTSYNC_BIN_DIR:-$HOME/.local/bin}/vaultsync-hub"
-	download_binary "$asset" "$tag" "$bin"
-
-	if [ -z "$CODE" ]; then
-		CODE=$(ask "  Pairing code from your Hub (WORD-WORD-NN): " "") ||
-			fail "No terminal to ask on. Re-run with --code WORD-WORD-NN."
+	asset=$(detect_asset vaultsync)
+	tag=$(latest_stable_tag desktop-v) || tag=""
+	[ -n "$tag" ] || fail "Could not find a VaultSync release for Mac and Linux on GitHub ($REPO). Check your network."
+	info "VaultSync for Mac and Linux ${tag#desktop-v} ($asset)"
+	if find_syncthing_config; then
+		info "  Syncthing is already set up on this computer. VaultSync runs its own and never"
+		info "  touches yours. To pair your own Syncthing with your Hub instead, see"
+		info "  https://github.com/$REPO/blob/main/docs/hub.md (vaultsync-hub pair)."
 	fi
-	[ -n "$CODE" ] || fail "A pairing code is required. Get one on the Hub: vaultsync-hub code"
+	set -- setup ${CODE:+--code "$CODE"} "$@"
 	if [ "$DRY_RUN" = 1 ]; then
-		info "[dry-run] would run: $bin pair --code $CODE"
+		download_binary "$asset" "$tag" "<temporary folder>/vaultsync"
+		# Never print the pairing code.
+		shown=""
+		hide=0
+		for a in "$@"; do
+			if [ "$hide" = 1 ]; then
+				a="<code>"
+				hide=0
+			fi
+			[ "$a" = "--code" ] && hide=1
+			shown="$shown $a"
+		done
+		info "[dry-run] would run: <temporary folder>/vaultsync$shown"
 		return 0
 	fi
-	"$bin" pair --code "$CODE"
+	installer_dir=$(mktemp -d)
+	download_binary "$asset" "$tag" "$installer_dir/vaultsync"
+	# download_binary's trap cleans its own folder; this one goes too.
+	trap 'rm -rf "$tmpdir" "$installer_dir"' EXIT
+	info ""
+	"$installer_dir/vaultsync" "$@"
 }
 
 case "$CHOICE" in
-	1) setup_device ;;
-	2) setup_hub ;;
+	1) setup_device "$@" ;;
+	2)
+		[ $# -eq 0 ] || fail "Arguments after -- belong to the device setup (1) Obsidian device)."
+		setup_hub
+		;;
 esac
 
 if [ "$DRY_RUN" = 1 ]; then
