@@ -147,12 +147,20 @@ detect_asset() {
 
 # latest_stable_tag PREFIX prints the newest stable release tagged PREFIX<x.y.z>:
 # no draft, no pre-release, no "-rc" style suffix, compared as versions —
-# GitHub lists releases by their commit date, not by version. The release
-# objects come pretty-printed with "draft" and "prerelease" after "tag_name".
+# GitHub lists releases by their commit date, not by version, and 100 per
+# page, so every page is read (until an empty one; at most 10). A failed
+# request fails the lookup instead of choosing from a partial list. The
+# release objects come pretty-printed with "draft" and "prerelease" after
+# "tag_name".
 latest_stable_tag() {
 	prefix="$1"
-	curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=100" |
-		awk -v prefix="$prefix" '
+	found=""
+	page=1
+	while [ "$page" -le 10 ]; do
+		json=$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=100&page=$page") || return 1
+		printf '%s\n' "$json" | grep -q '"tag_name":' || break
+		found="$found
+$(printf '%s\n' "$json" | awk -v prefix="$prefix" '
 			function flush() {
 				if (tag != "" && draft == "false" && pre == "false") print tag
 				tag = ""; draft = ""; pre = ""
@@ -167,25 +175,29 @@ latest_stable_tag() {
 			tag != "" && draft == "" && /"draft":/ { draft = ($0 ~ /true/) ? "true" : "false" }
 			tag != "" && pre == "" && /"prerelease":/ { pre = ($0 ~ /true/) ? "true" : "false" }
 			END { flush() }
-		' |
-		sed "s/^$prefix//" |
+		')"
+		page=$((page + 1))
+	done
+	printf '%s\n' "$found" |
+		sed -n "s/^$prefix//p" |
 		sort -t. -k1,1n -k2,2n -k3,3n |
 		tail -1 |
 		sed "s/^/$prefix/"
 }
 
-# Download a release binary and verify it against the release's SHA256SUMS.
+# download_binary ASSET TAG DEST WORKDIR downloads a release binary into
+# WORKDIR, verifies it against the release's SHA256SUMS and moves it to DEST.
+# The caller owns WORKDIR and its cleanup.
 download_binary() {
 	asset="$1"
 	tag="$2"
 	dest="$3"
+	tmpdir="$4"
 	base="https://github.com/$REPO/releases/download/$tag"
 	if [ "$DRY_RUN" = 1 ]; then
 		info "[dry-run] would download: $base/$asset -> $dest (verified against $base/SHA256SUMS)"
 		return 0
 	fi
-	tmpdir=$(mktemp -d)
-	trap 'rm -rf "$tmpdir"' EXIT
 	curl -fsSL -o "$tmpdir/$asset" "$base/$asset" || fail "Download failed: $base/$asset"
 	curl -fsSL -o "$tmpdir/SHA256SUMS" "$base/SHA256SUMS" || fail "Could not fetch SHA256SUMS for $tag — nothing was installed."
 	checksum=$(awk -v asset="$asset" '$2 == asset { n++; v = $1 } END { if (n != 1) exit 1; print v }' "$tmpdir/SHA256SUMS") ||
@@ -423,8 +435,8 @@ setup_device() {
 	fi
 	set -- setup ${CODE:+--code "$CODE"} "$@"
 	if [ "$DRY_RUN" = 1 ]; then
-		download_binary "$asset" "$tag" "<temporary folder>/vaultsync"
-		# Never print the pairing code.
+		download_binary "$asset" "$tag" "<temporary folder>/vaultsync" ""
+		# Never print the pairing code, in any spelling the agent accepts.
 		shown=""
 		hide=0
 		for a in "$@"; do
@@ -432,16 +444,23 @@ setup_device() {
 				a="<code>"
 				hide=0
 			fi
-			[ "$a" = "--code" ] && hide=1
+			case "$a" in
+				--code | -code) hide=1 ;;
+				--code=* | -code=*) a="${a%%=*}=<code>" ;;
+			esac
 			shown="$shown $a"
 		done
 		info "[dry-run] would run: <temporary folder>/vaultsync$shown"
 		return 0
 	fi
 	installer_dir=$(mktemp -d)
-	download_binary "$asset" "$tag" "$installer_dir/vaultsync"
-	# download_binary's trap cleans its own folder; this one goes too.
-	trap 'rm -rf "$tmpdir" "$installer_dir"' EXIT
+	# The download is gone however this ends — also on Ctrl-C or a kill.
+	trap 'rm -rf "$installer_dir"' EXIT
+	trap 'rm -rf "$installer_dir"; exit 129' HUP
+	trap 'rm -rf "$installer_dir"; exit 130' INT
+	trap 'rm -rf "$installer_dir"; exit 143' TERM
+	mkdir "$installer_dir/download"
+	download_binary "$asset" "$tag" "$installer_dir/vaultsync" "$installer_dir/download"
 	info ""
 	"$installer_dir/vaultsync" "$@"
 }
