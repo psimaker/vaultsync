@@ -24,6 +24,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"syscall"
@@ -45,9 +46,9 @@ func main() {
 			os.Exit(2)
 		case errors.As(err, &r):
 			fmt.Fprintln(os.Stderr)
-			fmt.Fprintln(os.Stderr, redactPaths(r.msg))
+			fmt.Fprintln(os.Stderr, printable(r.msg))
 		default:
-			fmt.Fprintln(os.Stderr, "error:", redactPaths(err.Error()))
+			fmt.Fprintln(os.Stderr, "error:", printable(err.Error()))
 		}
 		os.Exit(1)
 	}
@@ -56,6 +57,24 @@ func main() {
 // stateDirShown is VaultSync's folder when the service named one outside the
 // home folder (run --state-dir); printed paths below it are shortened too.
 var stateDirShown string
+
+// serviceMode is set by `run`: its output goes to a log or the journal, so
+// no path at all survives in what it prints.
+var serviceMode bool
+
+// absolutePath matches a path that starts a word (after a space, quote,
+// bracket or "="), not the "//" of a URL.
+var absolutePath = regexp.MustCompile(`(^|[\s"'(=])/[^\s"':,()]*`)
+
+// printable is an error as the person sees it: home and VaultSync's folder
+// shortened, and under the service every other path replaced as well.
+func printable(msg string) string {
+	msg = redactPaths(msg)
+	if serviceMode {
+		msg = absolutePath.ReplaceAllString(msg, "$1<path>")
+	}
+	return msg
+}
 
 // redactPaths shortens the paths in what is printed: under the background
 // service that output lands in a log or the journal, which should carry
@@ -540,7 +559,7 @@ func (a *app) run(ctx context.Context, args []string) error {
 		a.lay = a.lay.at(filepath.Clean(*stateDir))
 		a.svc.lay = a.lay
 	}
-	stateDirShown = a.lay.Base
+	stateDirShown, serviceMode = a.lay.Base, true
 	logger := log.New(os.Stderr, "", log.LstdFlags)
 	logf := func(format string, args ...any) { logger.Printf(format, args...) }
 	// Installing and preparing the engine happens under the same lock setup

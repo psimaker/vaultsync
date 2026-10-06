@@ -119,3 +119,41 @@ func TestIssue175_ServiceOutputHidesACustomStateDir(t *testing.T) {
 		t.Fatalf("service output:\n%s", out)
 	}
 }
+
+// Codex review of #212, round 4: a path above a custom state folder (a file
+// where a folder should be) appears in the error — the service prints no
+// path at all.
+func TestIssue175_ServiceOutputHidesEveryPath(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds the vaultsync binary")
+	}
+	bin := buildAgent(t)
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	elsewhere, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocker := filepath.Join(elsewhere, "PrivateClient")
+	writeFile(t, blocker, "a file, not a folder")
+	out := runService(t, bin, home, filepath.Join(blocker, "vaultsync"))
+	if strings.Contains(out, "PrivateClient") || strings.Contains(out, elsewhere) || !strings.Contains(out, "<path>") {
+		t.Fatalf("service output:\n%s", out)
+	}
+}
+
+func TestIssue175_PrintableScrubsPathsOnlyUnderTheService(t *testing.T) {
+	defer func() { serviceMode = false }()
+	msg := `mkdir /srv/PrivateClient: not a directory; see https://github.com/psimaker/vaultsync and "/etc/x"`
+	serviceMode = false
+	if got := printable(msg); !strings.Contains(got, "/srv/PrivateClient") {
+		t.Fatalf("an interactive error keeps its path: %s", got)
+	}
+	serviceMode = true
+	got := printable(msg)
+	if strings.Contains(got, "/srv") || strings.Contains(got, "/etc") || !strings.Contains(got, "https://github.com/psimaker/vaultsync") {
+		t.Fatalf("service error: %s", got)
+	}
+}

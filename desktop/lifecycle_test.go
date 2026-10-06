@@ -163,7 +163,8 @@ func TestIssue175_RunDoesNotPrepareWhileSetupHoldsTheLock(t *testing.T) {
 	if err := a.run(ctx, nil); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("run did not wait for setup: %v", err)
 	}
-	for _, p := range []string{lay.Syncthing, lay.Home, lay.State} {
+	// Not even the download started: it would have created bin/.
+	for _, p := range []string{lay.Bin, lay.Syncthing, lay.Home, lay.State} {
 		if _, err := os.Stat(p); !errors.Is(err, os.ErrNotExist) {
 			t.Errorf("run touched %s while setup held the lock", p)
 		}
