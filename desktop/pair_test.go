@@ -442,16 +442,18 @@ func TestIssue175_SyncPluginWarnings(t *testing.T) {
 	if w := syncPluginWarnings(v); len(w) != 0 {
 		t.Fatalf("no .obsidian, no warnings: %v", w)
 	}
+	// Obsidian turns its core Sync plugin on in every new vault (1.14.4 in
+	// the manual test wrote "sync": true for a vault never connected to
+	// Obsidian Sync), and the connection itself is kept outside the vault: a
+	// warning from core-plugins.json would greet every vault.
 	writeFile(t, filepath.Join(v, ".obsidian", "core-plugins.json"), `{"file-explorer":true,"sync":true}`)
-	writeFile(t, filepath.Join(v, ".obsidian", "community-plugins.json"), `["dataview","remotely-save"]`)
-	w := syncPluginWarnings(v)
-	if len(w) != 2 || !strings.Contains(w[0], "Obsidian Sync enabled") || !strings.Contains(w[1], "Remotely Save") {
-		t.Fatalf("warnings: %v", w)
+	if w := syncPluginWarnings(v); len(w) != 0 {
+		t.Fatalf("Obsidian's default core plugins: %v", w)
 	}
-	writeFile(t, filepath.Join(v, ".obsidian", "core-plugins.json"), `["file-explorer","sync"]`)
-	writeFile(t, filepath.Join(v, ".obsidian", "community-plugins.json"), `[]`)
-	if w := syncPluginWarnings(v); len(w) != 1 {
-		t.Fatalf("the older list format: %v", w)
+	writeFile(t, filepath.Join(v, ".obsidian", "community-plugins.json"), `["dataview","remotely-save","obsidian-git"]`)
+	w := syncPluginWarnings(v)
+	if len(w) != 2 || !strings.Contains(w[0], "Remotely Save") || !strings.Contains(w[1], "Obsidian Git") {
+		t.Fatalf("warnings: %v", w)
 	}
 }
 

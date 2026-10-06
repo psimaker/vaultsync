@@ -659,6 +659,10 @@ func (a *app) startService() error {
 	if err := a.svc.start(); err != nil {
 		return err
 	}
+	// Say "running" only for a service that runs.
+	if !a.svc.waitRunning() {
+		return refuse("VaultSync asked the system to start its background service, but it is not running. See %s, or run vaultsync setup again.", a.logHint())
+	}
 	fmt.Fprintln(a.out, "✓ VaultSync is running again.")
 	return nil
 }

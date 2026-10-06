@@ -128,7 +128,7 @@ func (a *app) onlineStatus(ctx context.Context, w io.Writer, c *syncthing.Client
 		fmt.Fprintln(w, "  none yet — run vaultsync pair")
 	}
 	if hubs > 0 && !anyConnected && a.goos == "darwin" && localNetworkRefused(sys) {
-		fmt.Fprintln(w, "  macOS refused the connection on your local network. Allow VaultSync in System Settings → Privacy & Security → Local Network, then run vaultsync stop and vaultsync start.")
+		fmt.Fprintln(w, "  "+localNetworkHint)
 	}
 
 	folders, err := c.Folders(ctx)
@@ -185,7 +185,10 @@ func describeFolder(f syncthing.FolderConfig, s folderSummary, conns connections
 	if s.State == "error" || s.Error != "" {
 		msg := s.Error
 		if strings.Contains(msg, "operation not permitted") || strings.Contains(msg, "permission denied") {
-			msg += " — allow access to this folder (on a Mac: System Settings → Privacy & Security → Files and Folders or Full Disk Access)"
+			// The engine looks at a folder it could not open again only at its
+			// next full scan, an hour later by default: a restart applies the
+			// new permission now.
+			msg += " — allow access to this folder (on a Mac: allow “vaultsync” in System Settings → Privacy & Security → Files & Folders or Full Disk Access), then run vaultsync stop and vaultsync start"
 		}
 		return "error: " + msg
 	}
@@ -245,6 +248,12 @@ func describeFolder(f syncthing.FolderConfig, s folderSummary, conns connections
 	}
 	return "up to date"
 }
+
+// localNetworkSetting is where macOS lists the programs that may use the
+// local network; it lists the agent by its file name, “vaultsync”.
+const localNetworkSetting = "System Settings → Privacy & Security → Local Network"
+
+const localNetworkHint = "macOS refused the connection on your local network. Allow “vaultsync” in " + localNetworkSetting + ", then run vaultsync stop and vaultsync start."
 
 // localNetworkRefused: the engine's last dials to local addresses failed
 // with "no route to host" — how macOS Local Network privacy shows to a

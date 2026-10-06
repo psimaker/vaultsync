@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeRunner records the service manager's commands; loaded says whether
@@ -17,6 +18,13 @@ type fakeRunner struct {
 	fail   map[string]error
 	// answers holds the output of a command (by its full text).
 	answers map[string]string
+	// Like launchd: a disabled job cannot be bootstrapped; a booted-out job
+	// still answers lingerAfterBootout prints before it is gone; an idle job
+	// is loaded without running; neverRuns keeps every job idle.
+	disabled           bool
+	idle, neverRuns    bool
+	lingerAfterBootout int
+	lingering          int
 }
 
 func (f *fakeRunner) run(name string, args ...string) (string, error) {
@@ -33,13 +41,34 @@ func (f *fakeRunner) run(name string, args ...string) (string, error) {
 	}
 	switch {
 	case strings.HasPrefix(call, "launchctl print"):
+		if f.lingering > 0 {
+			f.lingering--
+			return "\tstate = running\n", nil // still on its way out
+		}
 		if !f.loaded {
 			return "", errors.New("not loaded")
 		}
+		if f.idle || f.neverRuns {
+			return "\tstate = not running\n", nil
+		}
+		return "\tstate = running\n", nil
 	case strings.HasPrefix(call, "launchctl bootstrap"):
-		f.loaded = true
+		if f.disabled {
+			return "Bootstrap failed: 5: Input/output error", errors.New("exit status 5")
+		}
+		f.loaded, f.idle = true, false
 	case strings.HasPrefix(call, "launchctl bootout"):
 		f.loaded = false
+		f.lingering = f.lingerAfterBootout
+	case strings.HasPrefix(call, "launchctl disable"):
+		f.disabled = true
+	case strings.HasPrefix(call, "launchctl enable"):
+		f.disabled = false
+	case strings.HasPrefix(call, "launchctl kickstart"):
+		if !f.loaded || f.disabled {
+			return "", errors.New("cannot kickstart")
+		}
+		f.idle = false
 	}
 	return "", nil
 }
@@ -51,7 +80,7 @@ func testService(t *testing.T, goos string, run runner) (service, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return service{goos: goos, home: home, uid: 501, getenv: envOf(nil), lay: lay, run: run}, home
+	return service{goos: goos, home: home, uid: 501, getenv: envOf(nil), lay: lay, run: run, pause: func(time.Duration) {}}, home
 }
 
 func TestIssue175_LaunchAgentFile(t *testing.T) {
@@ -162,17 +191,18 @@ func TestIssue175_LaunchAgentInstallIsIdempotent(t *testing.T) {
 	}
 	run.calls = nil
 	if _, err := svc.install(exe+"-moved", false); err != nil ||
-		strings.Join(run.calls, "|") != "launchctl print gui/501/eu.vaultsync.agent|launchctl bootout gui/501/eu.vaultsync.agent|launchctl enable gui/501/eu.vaultsync.agent|launchctl bootstrap gui/501 "+mustUnitPath(t, svc) {
+		strings.Join(run.calls, "|") != "launchctl print gui/501/eu.vaultsync.agent|launchctl bootout gui/501/eu.vaultsync.agent|launchctl print gui/501/eu.vaultsync.agent|launchctl enable gui/501/eu.vaultsync.agent|launchctl bootstrap gui/501 "+mustUnitPath(t, svc) {
 		t.Fatalf("plist change: %v %v", err, run.calls)
 	}
 
-	// stop pauses the job across restarts; start brings it back.
+	// stop pauses the job across restarts and returns once launchd let go of
+	// it; start enables it first, then brings it back.
 	run.calls = nil
-	if err := svc.stop(); err != nil || strings.Join(run.calls, "|") != "launchctl disable gui/501/eu.vaultsync.agent|launchctl print gui/501/eu.vaultsync.agent|launchctl bootout gui/501/eu.vaultsync.agent" {
+	if err := svc.stop(); err != nil || strings.Join(run.calls, "|") != "launchctl disable gui/501/eu.vaultsync.agent|launchctl print gui/501/eu.vaultsync.agent|launchctl bootout gui/501/eu.vaultsync.agent|launchctl print gui/501/eu.vaultsync.agent" {
 		t.Fatalf("stop: %v %v", err, run.calls)
 	}
 	run.calls = nil
-	if err := svc.start(); err != nil || strings.Join(run.calls, "|") != "launchctl print gui/501/eu.vaultsync.agent|launchctl enable gui/501/eu.vaultsync.agent|launchctl bootstrap gui/501 "+mustUnitPath(t, svc) {
+	if err := svc.start(); err != nil || strings.Join(run.calls, "|") != "launchctl enable gui/501/eu.vaultsync.agent|launchctl print gui/501/eu.vaultsync.agent|launchctl bootstrap gui/501 "+mustUnitPath(t, svc) {
 		t.Fatalf("start: %v %v", err, run.calls)
 	}
 

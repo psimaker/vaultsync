@@ -177,6 +177,9 @@ func TestIssue175_StatusWording(t *testing.T) {
 		{folderSummary{State: "scanning"}, true, complete, "scanning the folder"},
 		{folderSummary{State: "error", Error: "folder path missing"}, true, complete, "error: folder path missing"},
 		{folderSummary{State: "idle", Error: "open /v: operation not permitted"}, true, complete, "Privacy & Security"},
+		// The engine checks a folder it could not open again only at its next
+		// full scan (an hour by default); the manual test needed a restart.
+		{folderSummary{State: "idle", Error: "open /v: operation not permitted"}, true, complete, "then run vaultsync stop and vaultsync start"},
 		{folderSummary{State: "idle", NeedTotal: 3}, true, complete, "3 items left to sync"},
 		// Idle here does not mean the Hub has everything.
 		{folderSummary{State: "idle"}, true, map[string]remoteCompletion{hub: {Completion: 60, NeedItems: 40, RemoteState: "valid"}}, "uploading to your Hub — 60 %"},

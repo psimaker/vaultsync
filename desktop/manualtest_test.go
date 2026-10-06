@@ -1,0 +1,164 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io/fs"
+	"net"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/psimaker/vaultsync/hub/pairing"
+)
+
+// Regression tests for what the first manual run of the agent found (#175):
+// a fresh macOS 27 user, a Raspberry Pi with Debian 13, a Hub on Syncthing 1.
+
+// launchd removes a booted-out job a moment after `launchctl bootout`
+// returns (100–200 ms on macOS 27). `vaultsync stop; vaultsync start` used to
+// find the job still there, do nothing, leave it disabled and report that
+// VaultSync runs again — while nothing ran, not even after the next login.
+func TestIssue175_StopThenStartResumesTheLaunchAgent(t *testing.T) {
+	run := &fakeRunner{lingerAfterBootout: 2}
+	svc, _ := testService(t, "darwin", run)
+	if _, err := svc.install(svc.lay.Agent, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.stop(); err != nil {
+		t.Fatal(err)
+	}
+	if run.loaded || !run.disabled {
+		t.Fatalf("stop returned before launchd let go of the job: loaded=%v disabled=%v %v", run.loaded, run.disabled, run.calls)
+	}
+	if err := svc.start(); err != nil {
+		t.Fatal(err)
+	}
+	if !run.loaded || run.disabled {
+		t.Fatalf("start right after stop: loaded=%v disabled=%v %v", run.loaded, run.disabled, run.calls)
+	}
+}
+
+// A job that is loaded but disabled (a stop that ran into a timeout, or a
+// `launchctl disable` by hand) is enabled and started again by start.
+func TestIssue175_StartEnablesALoadedJob(t *testing.T) {
+	run := &fakeRunner{}
+	svc, _ := testService(t, "darwin", run)
+	if _, err := svc.install(svc.lay.Agent, true); err != nil {
+		t.Fatal(err)
+	}
+	run.disabled, run.idle = true, true
+	run.calls = nil
+	if err := svc.start(); err != nil {
+		t.Fatal(err)
+	}
+	if run.disabled || run.idle {
+		t.Fatalf("start left the job disabled=%v idle=%v: %v", run.disabled, run.idle, run.calls)
+	}
+}
+
+// start says so when the background service does not come up, instead of
+// "running again".
+func TestIssue175_StartSaysSoWhenTheServiceDoesNotRun(t *testing.T) {
+	run := &fakeRunner{neverRuns: true}
+	svc, _ := testService(t, "darwin", run)
+	if _, err := svc.install(svc.lay.Agent, true); err != nil {
+		t.Fatal(err)
+	}
+	out := &bytes.Buffer{}
+	a := &app{goos: "darwin", home: svc.home, getenv: envOf(nil), lay: svc.lay, svc: svc, out: out}
+	err := a.startService()
+	if err == nil || strings.Contains(out.String(), "running again") {
+		t.Fatalf("err=%v out=%q", err, out)
+	}
+	if !strings.Contains(refusalText(err), "vaultsync.log") {
+		t.Fatalf("the refusal should point at the log: %q", refusalText(err))
+	}
+}
+
+// A vault that syncs and that Obsidian also lists was shown twice under
+// "Already syncing": once from Obsidian's list, once from the Hub's.
+func TestIssue175_MenuListsASyncingVaultOnce(t *testing.T) {
+	eng := newFakeEngine(t)
+	hub := newFakeHub(t, eng)
+	s, _ := testSession(t, eng, hub, pairOptions{})
+	local := filepath.Join(s.env.home, "Documents", "Testvault")
+	mkVault(t, local)
+	eng.folders = append(eng.folders, syncthingFolder("vs-1", "Testvault", local))
+	registry := filepath.Join(s.env.home, "obsidian.json")
+	writeFile(t, registry, fmt.Sprintf(`{"vaults":{"9f561515d74acab7":{"path":%q,"ts":%d,"open":true}}}`, local, time.Now().UnixMilli()))
+	s.env.registries = []string{registry}
+	s.hello.Vaults = []pairing.VaultInfo{
+		{ID: "vs-1", Label: "Testvault", Files: 6},
+		{ID: "vs-2", Label: "Hub-Test", Files: 1},
+		{ID: "vs-3", Label: "Notizen", Files: 4},
+	}
+	m, err := s.buildMenu(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.already) != 1 || m.already[0].label != "Testvault" {
+		t.Fatalf("already syncing: %+v", m.already)
+	}
+	if len(m.hub) != 2 || m.hub[0].note != "1 file on your Hub" || m.hub[1].note != "4 files on your Hub" {
+		t.Fatalf("on your Hub: %+v", m.hub)
+	}
+}
+
+// With "Don't Allow" on macOS's local network question, macOS refuses the
+// agent's connection to the Hub at once ("no route to host") — also when
+// vaultsync runs in Terminal, because the decision belongs to the program.
+// Pairing said "Your Hub did not answer" and never named the setting.
+func TestIssue175_PairingNamesTheLocalNetworkSetting(t *testing.T) {
+	refused := &url.Error{Op: "Post", URL: "http://192.168.8.70:8390/v1/pair/start", Err: &net.OpError{
+		Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", syscall.EHOSTUNREACH),
+	}}
+	s := &pairSession{env: pairEnv{goos: "darwin"}, hub: pairing.DiscoveredHub{Address: "192.168.8.70:8390"}}
+	got := handshakeText(refused, s)
+	if !strings.Contains(got, "Local Network") || !strings.Contains(got, "“vaultsync”") {
+		t.Fatalf("darwin, no route to host: %q", got)
+	}
+	if !strings.Contains(localNetworkHint, "“vaultsync”") {
+		t.Fatalf("System Settings lists the program as “vaultsync”: %q", localNetworkHint)
+	}
+	s.env.goos = "linux"
+	if got := handshakeText(refused, s); strings.Contains(got, "Local Network") || !strings.Contains(got, "did not answer") {
+		t.Fatalf("linux: %q", got)
+	}
+	s.env.goos = "darwin"
+	down := &url.Error{Op: "Post", URL: "http://192.168.8.70:8390/v1/pair/start", Err: &net.OpError{
+		Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", syscall.ECONNREFUSED),
+	}}
+	if got := handshakeText(down, s); strings.Contains(got, "Local Network") {
+		t.Fatalf("a refused port is no privacy setting: %q", got)
+	}
+}
+
+// A folder in Documents, Desktop or Downloads that macOS does not let the
+// terminal read fails with "operation not permitted". Pairing said "check its
+// permissions or reconnect its disk".
+func TestIssue175_ReadRefusalNamesFilesAndFolders(t *testing.T) {
+	home := "/Users/vstest"
+	path := filepath.Join(home, "Documents", "Testvault")
+	tcc := &fs.PathError{Op: "open", Path: path, Err: syscall.EPERM}
+	got := refusalText(cannotRead("darwin", home, path, tcc))
+	if !strings.Contains(got, "Files & Folders") || !strings.Contains(got, "~/Documents/Testvault") {
+		t.Fatalf("darwin, operation not permitted: %q", got)
+	}
+	for _, c := range []struct {
+		goos string
+		err  error
+	}{
+		{"linux", tcc},
+		{"darwin", &fs.PathError{Op: "open", Path: path, Err: syscall.EACCES}},
+	} {
+		if got := refusalText(cannotRead(c.goos, home, path, c.err)); strings.Contains(got, "Files & Folders") || !strings.Contains(got, "Check its permissions") {
+			t.Fatalf("%s %v: %q", c.goos, c.err, got)
+		}
+	}
+}

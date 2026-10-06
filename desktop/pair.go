@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -352,12 +353,30 @@ func handshakeText(err error, s *pairSession) string {
 	case pairing.KindSessionExpired:
 		return "Pairing took too long. Run vaultsync pair again — your code may still be valid."
 	case pairing.KindUnreachable:
+		// macOS answers "no route to host" at once when vaultsync may not use
+		// the local network. The decision is made for the program the
+		// background service runs, and it holds for the same program in
+		// Terminal too.
+		if s.env.goos == "darwin" && errors.Is(err, syscall.EHOSTUNREACH) {
+			return fmt.Sprintf("VaultSync could not reach your Hub at %s (“no route to host”). On a Mac this usually means vaultsync may not use your local network: allow “vaultsync” in %s, then try again.", hostOf(s.hub.Address), localNetworkSetting)
+		}
 		if s.opts.hub != "" {
 			return fmt.Sprintf("Your Hub did not answer at %s. Check that it is running and on the same network as this computer.", s.hub.Address)
 		}
 		return "Your Hub did not answer. Check that it is running and on the same network as this computer."
 	}
 	return fmt.Sprintf("Pairing with your Hub failed: %v", err)
+}
+
+// cannotRead is the refusal for a folder VaultSync could not read. On a Mac,
+// "operation not permitted" on a folder in Documents, Desktop or Downloads is
+// macOS privacy protection, not the folder's permissions: the app vaultsync
+// runs in needs access under Files & Folders.
+func cannotRead(goos, home, path string, err error) error {
+	if goos == "darwin" && errors.Is(err, syscall.EPERM) {
+		return refuse("macOS did not let VaultSync read %s. Allow the app you run vaultsync in (Terminal, for example) to access this folder in System Settings → Privacy & Security → Files & Folders, then try again.", tildePath(home, path))
+	}
+	return refuse("VaultSync cannot read %s. Check its permissions or reconnect its disk, then try again.", tildePath(home, path))
 }
 
 // addHubDevice makes the Hub a known device of the engine, so its share can
@@ -477,6 +496,7 @@ func (s *pairSession) buildMenu(ctx context.Context) (vaultMenu, error) {
 		return m, fmt.Errorf("the sync engine does not answer: %w", err)
 	}
 	configured := map[string]syncthing.FolderConfig{}
+	listed := map[string]bool{} // engine folders already under "Already syncing"
 	var enginePaths []string
 	for _, f := range folders {
 		configured[f.ID] = f
@@ -506,6 +526,7 @@ func (s *pairSession) buildMenu(ctx context.Context) (vaultMenu, error) {
 		if f, ok := sameConfigured(v.Path, folders, s.env.goos); ok {
 			e.note = tildePath(s.env.home, f.Path)
 			m.already = append(m.already, e)
+			listed[f.ID] = true
 			continue
 		}
 		if err := s.checkTarget(ctx, v.Path, filepath.Base(v.Path), enginePaths); err != nil {
@@ -522,10 +543,16 @@ func (s *pairSession) buildMenu(ctx context.Context) (vaultMenu, error) {
 	for i := range s.hello.Vaults {
 		v := s.hello.Vaults[i]
 		e := menuEntry{label: pairing.SanitizeName(v.Label), vault: &v}
-		if v.Files > 0 {
+		switch {
+		case v.Files == 1:
+			e.note = "1 file on your Hub"
+		case v.Files > 1:
 			e.note = fmt.Sprintf("%d files on your Hub", v.Files)
 		}
 		if f, ok := configured[v.ID]; ok {
+			if listed[v.ID] {
+				continue // already shown from Obsidian's list
+			}
 			e.note = tildePath(s.env.home, f.Path)
 			m.already = append(m.already, e)
 			continue
@@ -715,7 +742,7 @@ func (s *pairSession) planForLocal(ctx context.Context, path string) (plan, erro
 	}
 	_, empty, err := join.DirState(path)
 	if err != nil {
-		return plan{}, refuse("VaultSync cannot read %s. Check its permissions or reconnect its disk, then try again.", tildePath(s.env.home, path))
+		return plan{}, cannotRead(s.env.goos, s.env.home, path, err)
 	}
 	p.hadFiles = !empty
 	if p.name, err = s.askHubName(filepath.Base(path), p.hadFiles); err != nil {
@@ -864,7 +891,7 @@ func (s *pairSession) downloadPlan(ctx context.Context, v pairing.VaultInfo, pat
 	}
 	exists, empty, err := join.DirState(path)
 	if err != nil {
-		return plan{}, refuse("VaultSync cannot read %s. Check its permissions or reconnect its disk, then try again.", tildePath(s.env.home, path))
+		return plan{}, cannotRead(s.env.goos, s.env.home, path, err)
 	}
 	if exists && !empty {
 		return plan{}, refuse("%s already holds files. VaultSync downloads a vault from your Hub only into a new or empty folder — choose another one.", tildePath(s.env.home, path))
@@ -912,7 +939,7 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 	}
 	exists, empty, err := join.DirState(path)
 	if err != nil {
-		return plan{}, refuse("VaultSync cannot read %s. Check its permissions or reconnect its disk, then try again.", tildePath(s.env.home, path))
+		return plan{}, cannotRead(s.env.goos, s.env.home, path, err)
 	}
 	if !exists {
 		if st, err := os.Stat(filepath.Dir(path)); err != nil || !st.IsDir() {
@@ -1184,7 +1211,7 @@ func (s *pairSession) finalGate(ctx context.Context, p plan, v pairing.VaultInfo
 	}
 	_, empty, err := join.DirState(abs)
 	if err != nil {
-		return refuse("VaultSync cannot read %s. Check its permissions or reconnect its disk, then try again.", tildePath(s.env.home, abs))
+		return cannotRead(s.env.goos, s.env.home, abs, err)
 	}
 	if empty == p.hadFiles {
 		return refuse("%s changed while VaultSync was waiting for your Hub. Nothing was connected — run vaultsync pair again.", tildePath(s.env.home, abs))
@@ -1333,20 +1360,11 @@ func safeVaultName(label string) string {
 // syncPluginWarnings names another sync service enabled in a vault: enabled
 // is not proof that it syncs this vault, so it is a warning, not a block.
 func syncPluginWarnings(vault string) []string {
+	// Obsidian Sync is not detected: Obsidian turns its core Sync plugin on
+	// in every new vault and keeps the connection to a remote vault outside
+	// the vault folder, so nothing in .obsidian tells whether it syncs — a
+	// warning from core-plugins.json would greet every vault (#175).
 	var found []string
-	if data, err := readSmallFile(filepath.Join(vault, ".obsidian", "core-plugins.json")); err == nil {
-		var list []string
-		var set map[string]bool
-		if json.Unmarshal(data, &list) == nil {
-			for _, p := range list {
-				if p == "sync" {
-					found = append(found, "Obsidian Sync")
-				}
-			}
-		} else if json.Unmarshal(data, &set) == nil && set["sync"] {
-			found = append(found, "Obsidian Sync")
-		}
-	}
 	plugins := map[string]string{
 		"remotely-save":     "Remotely Save",
 		"obsidian-livesync": "Self-hosted LiveSync",
