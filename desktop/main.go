@@ -399,11 +399,17 @@ func waitForLock(ctx context.Context, path string, timeout time.Duration) (func(
 	}
 }
 
+// commandLink is where setup links `vaultsync` on the usual per-user command
+// path; uninstall --remove-data removes only that link.
+func commandLink(home string) string {
+	return filepath.Join(home, ".local", "bin", "vaultsync")
+}
+
 // installCommand puts `vaultsync` on the usual per-user command path
 // (~/.local/bin) as a link to the copy the service runs — unless something
 // else already has that name — and says how to call it.
 func (a *app) installCommand(t *term) string {
-	link := filepath.Join(a.home, ".local", "bin", "vaultsync")
+	link := commandLink(a.home)
 	if target, err := os.Readlink(link); err == nil && target == a.lay.Agent {
 		// already ours
 	} else if _, err := os.Lstat(link); errors.Is(err, fs.ErrNotExist) {

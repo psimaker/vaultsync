@@ -101,6 +101,9 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 		vaults = append(vaults, us.Folders...)
 	}
 	removed, err := removeOwnData(a.lay, vaults, a.goos)
+	if link, ok := a.removeCommandLink(); ok {
+		removed = append(removed, link)
+	}
 	for _, r := range removed {
 		t.say("  removed %s", tildePath(a.home, r))
 	}
@@ -109,6 +112,23 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 	}
 	t.say("✓ VaultSync's own files are removed. Your vault files were not touched.")
 	return nil
+}
+
+// removeCommandLink removes the command link setup made, but only while it
+// still points at VaultSync's own copy and that copy is gone: a `vaultsync`
+// someone else put there, or a link that still works, stays.
+func (a *app) removeCommandLink() (string, bool) {
+	link := commandLink(a.home)
+	if target, err := os.Readlink(link); err != nil || target != a.lay.Agent {
+		return "", false
+	}
+	if _, err := os.Lstat(a.lay.Agent); !errors.Is(err, fs.ErrNotExist) {
+		return "", false
+	}
+	if err := os.Remove(link); err != nil {
+		return "", false
+	}
+	return link, true
 }
 
 // engineOwnerRunning reports whether some process still owns the engine once

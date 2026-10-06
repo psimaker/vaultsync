@@ -152,7 +152,8 @@ vaultsync pair         # another vault, or another Hub
 vaultsync stop         # pause until vaultsync start
 vaultsync uninstall    # remove the background service; vaults stay
                        # (--remove-data also removes the settings, the pairing
-                       #  identity and the sync database — never vault files)
+                       #  identity, the sync database and the command link —
+                       #  never vault files)
 ```
 
 Scripts and remote shells pass everything as flags; anything that would need

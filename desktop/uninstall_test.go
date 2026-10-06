@@ -194,6 +194,119 @@ func TestIssue175_RemoveDataFailsClosedOnUnreadableLists(t *testing.T) {
 	}
 }
 
+// setup links the command as ~/.local/bin/vaultsync; once --remove-data has
+// removed the copy it points to, the link goes too. A `vaultsync` there that
+// setup did not make stays, and so does the link while the copy is kept.
+func TestIssue175_RemoveDataRemovesTheCommandLink(t *testing.T) {
+	uninstall := func(t *testing.T, args ...string) (layout, string) {
+		t.Helper()
+		tmp, err := filepath.EvalSymlinks(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		home := filepath.Join(tmp, "home")
+		lay, err := layoutFor("linux", home, envOf(nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, lay.Agent, "agent")
+		if err := saveState(lay.State, agentState{GUIPort: 1}); err != nil {
+			t.Fatal(err)
+		}
+		var out strings.Builder
+		a := &app{goos: "linux", home: home, getenv: envOf(nil), lay: lay, out: &out,
+			svc: service{goos: "linux", home: home, uid: 1000, getenv: envOf(nil), lay: lay, run: &fakeRunner{}}}
+		a.installCommand(&term{out: &out})
+		link := filepath.Join(home, ".local", "bin", "vaultsync")
+		if target, err := os.Readlink(link); err != nil || target != lay.Agent {
+			t.Fatalf("setup made no link: %q %v", target, err)
+		}
+		if err := a.uninstall(context.Background(), append(args, "--yes")); err != nil {
+			t.Fatalf("%v\n%s", err, out.String())
+		}
+		return lay, link
+	}
+
+	t.Run("removed with the data", func(t *testing.T) {
+		_, link := uninstall(t, "--remove-data")
+		if _, err := os.Lstat(link); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("the command link survived the copy it points to")
+		}
+	})
+	t.Run("kept with the copy", func(t *testing.T) {
+		lay, link := uninstall(t)
+		if target, err := os.Readlink(link); err != nil || target != lay.Agent {
+			t.Fatalf("the link went although the copy stays: %v", err)
+		}
+	})
+	t.Run("someone else's command stays", func(t *testing.T) {
+		tmp, err := filepath.EvalSymlinks(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		home := filepath.Join(tmp, "home")
+		lay, err := layoutFor("linux", home, envOf(nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, lay.Agent, "agent")
+		if err := saveState(lay.State, agentState{GUIPort: 1}); err != nil {
+			t.Fatal(err)
+		}
+		other := filepath.Join(home, ".local", "bin", "vaultsync")
+		writeFile(t, other, "someone else's vaultsync")
+		var out strings.Builder
+		a := &app{goos: "linux", home: home, getenv: envOf(nil), lay: lay, out: &out,
+			svc: service{goos: "linux", home: home, uid: 1000, getenv: envOf(nil), lay: lay, run: &fakeRunner{}}}
+		if err := a.uninstall(context.Background(), []string{"--remove-data", "--yes"}); err != nil {
+			t.Fatalf("%v\n%s", err, out.String())
+		}
+		if data, err := os.ReadFile(other); err != nil || string(data) != "someone else's vaultsync" {
+			t.Fatalf("a command setup did not make was touched: %v", err)
+		}
+	})
+	t.Run("only a link to the removed copy goes", func(t *testing.T) {
+		tmp, err := filepath.EvalSymlinks(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		home := filepath.Join(tmp, "home")
+		lay, err := layoutFor("linux", home, envOf(nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		a := &app{home: home, lay: lay}
+		link := commandLink(home)
+		if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		// A link to another program that is gone as well stays.
+		if err := os.Symlink(filepath.Join(tmp, "elsewhere", "vaultsync"), link); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := a.removeCommandLink(); ok {
+			t.Fatal("removed a link to another program")
+		}
+		// VaultSync's link stays while its copy is still there.
+		if err := os.Remove(link); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(lay.Agent, link); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, lay.Agent, "agent")
+		if _, ok := a.removeCommandLink(); ok {
+			t.Fatal("removed a link that still works")
+		}
+		if err := os.Remove(lay.Agent); err != nil {
+			t.Fatal(err)
+		}
+		if got, ok := a.removeCommandLink(); !ok || got != link {
+			t.Fatalf("the dangling link stayed: %q %v", got, ok)
+		}
+	})
+}
+
 // The log folder is checked like the rest —
 // a link there is never followed into a vault.
 func TestIssue175_RemoveDataNeverFollowsTheLogFolder(t *testing.T) {
