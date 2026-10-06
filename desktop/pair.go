@@ -1165,16 +1165,18 @@ func (s *pairSession) finalGate(ctx context.Context, p plan, v pairing.VaultInfo
 	if err != nil || start != s.engineStart {
 		return refuse("The sync engine restarted while VaultSync was setting up %s. Nothing was connected — run vaultsync pair again.", quoted(p.label()))
 	}
+	enginePaths, err := s.enginePaths(ctx)
+	if err != nil {
+		return err
+	}
+	// From here on only the file system is read — no request to wait for
+	// between these checks and the add.
 	// The very folder the person decided on — not another one put in its place.
 	if p.dir != nil {
 		if fi, err := os.Stat(abs); err != nil || !os.SameFile(fi, p.dir) {
 			return refuse("%s was replaced while VaultSync was waiting for your Hub. Nothing was connected — run vaultsync pair again.", tildePath(s.env.home, abs))
 		}
 	} else if err := s.checkAnchor(p); err != nil {
-		return err
-	}
-	enginePaths, err := s.enginePaths(ctx)
-	if err != nil {
 		return err
 	}
 	if err := s.checkTarget(ctx, abs, p.label(), enginePaths); err != nil {

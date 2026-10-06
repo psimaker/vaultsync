@@ -96,3 +96,26 @@ func TestIssue175_ServiceOutputStaysPrivate(t *testing.T) {
 		}
 	})
 }
+
+// Codex review of #212, round 3: the service may be told a folder outside
+// the home folder (run --state-dir); its errors name neither.
+func TestIssue175_ServiceOutputHidesACustomStateDir(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds the vaultsync binary")
+	}
+	bin := buildAgent(t)
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	elsewhere, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(elsewhere, "PrivateClient", "vaultsync")
+	writeFile(t, filepath.Join(state, "agent.json"), "{")
+	out := runService(t, bin, home, state)
+	if strings.Contains(out, elsewhere) || !strings.Contains(out, "<VaultSync folder>/agent.json is damaged") {
+		t.Fatalf("service output:\n%s", out)
+	}
+}

@@ -142,3 +142,30 @@ func TestIssue175_CommandLinkIsOursOrNothing(t *testing.T) {
 		t.Fatal("an existing ~/.local/bin/vaultsync was replaced")
 	}
 }
+
+// Codex review of #212, round 3: `run` itself waits while setup prepares —
+// it neither installs nor prepares anything during that time.
+func TestIssue175_RunDoesNotPrepareWhileSetupHoldsTheLock(t *testing.T) {
+	home := t.TempDir()
+	lay, err := layoutFor("linux", home, envOf(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hold, err := lockFile(filepath.Join(lay.Base, "setup.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hold()
+	a := &app{goos: "linux", home: home, getenv: envOf(nil), lay: lay,
+		svc: service{goos: "linux", home: home, getenv: envOf(nil), lay: lay, run: &fakeRunner{}}}
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	if err := a.run(ctx, nil); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("run did not wait for setup: %v", err)
+	}
+	for _, p := range []string{lay.Syncthing, lay.Home, lay.State} {
+		if _, err := os.Stat(p); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("run touched %s while setup held the lock", p)
+		}
+	}
+}

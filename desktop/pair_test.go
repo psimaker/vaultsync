@@ -693,3 +693,63 @@ func TestIssue175_ConsentWindowsAreClosed(t *testing.T) {
 		}
 	})
 }
+
+// Codex review of #212, round 3: the gate's last request (the engine's
+// folder list) comes before the file-system checks — a swap during it is
+// still caught.
+func TestIssue175_NoRequestBetweenTheLastChecksAndTheAdd(t *testing.T) {
+	eng := newFakeEngine(t)
+	hub := newFakeHub(t, eng)
+	s, _ := testSession(t, eng, hub, pairOptions{vault: "Notes", create: true, yes: true})
+	s.opts.code = hub.code
+	local := filepath.Join(s.env.home, "Notes")
+	mkVault(t, local)
+	s.opts.path = local
+	// After the final gate's Hub request, swap the folder inside the next
+	// folder-list request — the gate's own.
+	hub.onProvision = func(n int, _ pairing.ProvisionPayload) {
+		if n == 4 {
+			eng.mu.Lock()
+			eng.onNextFolders = func() {
+				if err := os.Rename(local, local+"-other"); err != nil {
+					t.Error(err)
+				}
+				mkVault(t, local)
+			}
+			eng.mu.Unlock()
+		}
+	}
+	err := s.run(context.Background())
+	if !strings.Contains(refusalText(err), "was replaced") || eng.folderCount() != 0 {
+		t.Fatalf("got %v; folders=%d", err, eng.folderCount())
+	}
+}
+
+// Codex review of #212, round 3: the menu's own path (Another folder…) binds
+// the answers to the folder too.
+func TestIssue175_MenuAnswersBelongToTheFolder(t *testing.T) {
+	eng := newFakeEngine(t)
+	hub := newFakeHub(t, eng)
+	s, out := testSession(t, eng, hub, pairOptions{})
+	s.opts.code = hub.code
+	local := filepath.Join(s.env.home, "Notes")
+	mkVault(t, local)
+	// Menu: A (another folder), the folder, the name (default), then the
+	// consent — the folder is swapped right before that last answer.
+	s.t.in = bufio.NewReader(&lineReader{
+		lines: []string{"A", local, "", "y"},
+		before: map[int]func(){3: func() {
+			if err := os.Rename(local, local+"-other"); err != nil {
+				t.Error(err)
+			}
+			mkVault(t, local)
+		}},
+	})
+	_ = s.run(context.Background()) // the menu comes back, then input ends
+	if !strings.Contains(out.String(), "changed while you were answering") {
+		t.Fatalf("output:\n%s", out)
+	}
+	if hub.provisionCount("Notes") != 0 || eng.folderCount() != 0 {
+		t.Fatal("the Hub was asked or a folder was added")
+	}
+}

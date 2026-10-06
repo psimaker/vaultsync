@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -39,6 +40,8 @@ type fakeEngine struct {
 	// flap, when set, withdraws the pending offer right after the agent
 	// first saw it, runs during, and offers again after back.
 	flap *offerFlap
+	// onNextFolders runs inside the next GET of the folder list.
+	onNextFolders func()
 }
 
 type offerFlap struct {
@@ -86,6 +89,10 @@ func (e *fakeEngine) serve(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&m)
 		e.patches = append(e.patches, m)
 	case p == "/rest/config/folders" && r.Method == http.MethodGet:
+		if hook := e.onNextFolders; hook != nil {
+			e.onNextFolders = nil
+			hook()
+		}
 		write(e.folders)
 	case p == "/rest/config/folders" && r.Method == http.MethodPost:
 		var f syncthing.FolderConfig
@@ -411,4 +418,24 @@ func (h *hookReader) Read(b []byte) (int, error) {
 		h.before = nil
 	}
 	return h.r.Read(b)
+}
+
+// lineReader answers one line per Read, running before[i] ahead of line i, so
+// a bufio.Reader on top of it hands out exactly one answer per question.
+type lineReader struct {
+	lines  []string
+	before map[int]func()
+	next   int
+}
+
+func (l *lineReader) Read(b []byte) (int, error) {
+	if l.next >= len(l.lines) {
+		return 0, io.EOF
+	}
+	if hook := l.before[l.next]; hook != nil {
+		hook()
+	}
+	n := copy(b, l.lines[l.next]+"\n")
+	l.next++
+	return n, nil
 }

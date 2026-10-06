@@ -45,26 +45,37 @@ func main() {
 			os.Exit(2)
 		case errors.As(err, &r):
 			fmt.Fprintln(os.Stderr)
-			fmt.Fprintln(os.Stderr, redactHome(r.msg))
+			fmt.Fprintln(os.Stderr, redactPaths(r.msg))
 		default:
-			fmt.Fprintln(os.Stderr, "error:", redactHome(err.Error()))
+			fmt.Fprintln(os.Stderr, "error:", redactPaths(err.Error()))
 		}
 		os.Exit(1)
 	}
 }
 
-// redactHome writes the home folder as ~ in what is printed: under the
-// background service that output lands in a log or the journal, which
-// should not carry the account's path.
-func redactHome(msg string) string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" || home == "/" {
-		return msg
+// stateDirShown is VaultSync's folder when the service named one outside the
+// home folder (run --state-dir); printed paths below it are shortened too.
+var stateDirShown string
+
+// redactPaths shortens the paths in what is printed: under the background
+// service that output lands in a log or the journal, which should carry
+// neither the account's home folder nor where VaultSync keeps its files.
+// VaultSync's folder becomes <VaultSync folder>, the home folder ~.
+func redactPaths(msg string) string {
+	replace := func(path, with string) {
+		if path == "" || path == "/" {
+			return
+		}
+		if resolved, err := filepath.EvalSymlinks(path); err == nil && resolved != path {
+			msg = strings.ReplaceAll(msg, resolved, with)
+		}
+		msg = strings.ReplaceAll(msg, path, with)
 	}
-	if resolved, err := filepath.EvalSymlinks(home); err == nil && resolved != home {
-		msg = strings.ReplaceAll(msg, resolved, "~")
+	replace(stateDirShown, "<VaultSync folder>")
+	if home, err := os.UserHomeDir(); err == nil {
+		replace(home, "~")
 	}
-	return strings.ReplaceAll(msg, home, "~")
+	return msg
 }
 
 func usage(w io.Writer) {
@@ -529,6 +540,7 @@ func (a *app) run(ctx context.Context, args []string) error {
 		a.lay = a.lay.at(filepath.Clean(*stateDir))
 		a.svc.lay = a.lay
 	}
+	stateDirShown = a.lay.Base
 	logger := log.New(os.Stderr, "", log.LstdFlags)
 	logf := func(format string, args ...any) { logger.Printf(format, args...) }
 	// Installing and preparing the engine happens under the same lock setup
