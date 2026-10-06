@@ -58,8 +58,15 @@ func (f *fakeRunner) run(name string, args ...string) (string, error) {
 		}
 		f.loaded, f.idle = true, false
 	case strings.HasPrefix(call, "launchctl bootout"):
-		f.loaded = false
-		f.lingering = f.lingerAfterBootout
+		switch {
+		case f.loaded:
+			f.loaded = false
+			f.lingering = f.lingerAfterBootout
+		case f.lingering > 0:
+			// already on its way out; the removal goes on
+		default:
+			return "Boot-out failed: 3: No such process", errors.New("exit status 3")
+		}
 	case strings.HasPrefix(call, "launchctl disable"):
 		f.disabled = true
 	case strings.HasPrefix(call, "launchctl enable"):

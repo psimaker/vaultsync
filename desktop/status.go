@@ -128,7 +128,7 @@ func (a *app) onlineStatus(ctx context.Context, w io.Writer, c *syncthing.Client
 		fmt.Fprintln(w, "  none yet — run vaultsync pair")
 	}
 	if hubs > 0 && !anyConnected && a.goos == "darwin" && localNetworkRefused(sys) {
-		fmt.Fprintln(w, "  "+localNetworkHint)
+		fmt.Fprintln(w, "  "+localNetworkHint(a.svc.installed()))
 	}
 
 	folders, err := c.Folders(ctx)
@@ -155,7 +155,7 @@ func (a *app) onlineStatus(ctx context.Context, w io.Writer, c *syncthing.Client
 					remote[d.DeviceID] = rc
 				}
 			}
-			state = describeFolder(f, sum, conns, remote, sys.MyID)
+			state = describeFolder(f, sum, conns, remote, sys.MyID, a.svc.installed())
 		}
 		fmt.Fprintf(w, "  %-14s %-28s %s\n", f.Label, tildePath(a.home, f.Path), state)
 	}
@@ -178,7 +178,9 @@ func (a *app) onlineStatus(ctx context.Context, w io.Writer, c *syncthing.Client
 // nothing left to pull here, and every connected Hub reporting the folder
 // active and complete — a Hub that is still receiving this computer's files
 // is "uploading".
-func describeFolder(f syncthing.FolderConfig, s folderSummary, conns connectionsView, remote map[string]remoteCompletion, myID string) string {
+// background says whether the engine runs as the background service (the
+// remedies differ from a `vaultsync run` in a terminal).
+func describeFolder(f syncthing.FolderConfig, s folderSummary, conns connectionsView, remote map[string]remoteCompletion, myID string, background bool) string {
 	if f.Paused {
 		return "paused"
 	}
@@ -187,8 +189,14 @@ func describeFolder(f syncthing.FolderConfig, s folderSummary, conns connections
 		if strings.Contains(msg, "operation not permitted") || strings.Contains(msg, "permission denied") {
 			// The engine looks at a folder it could not open again only at its
 			// next full scan, an hour later by default: a restart applies the
-			// new permission now.
-			msg += " — allow access to this folder (on a Mac: allow “vaultsync” in System Settings → Privacy & Security → Files & Folders or Full Disk Access), then run vaultsync stop and vaultsync start"
+			// new permission now. Files & Folders covers Documents, Desktop,
+			// Downloads and other volumes; Full Disk Access would be more than
+			// a vault needs.
+			if background {
+				msg += " — allow access to this folder (on a Mac: allow “vaultsync” in System Settings → Privacy & Security → Files & Folders), then run vaultsync stop and vaultsync start"
+			} else {
+				msg += " — allow access to this folder (on a Mac: allow the app you run vaultsync in, Terminal for example, in System Settings → Privacy & Security → Files & Folders), then restart vaultsync run"
+			}
 		}
 		return "error: " + msg
 	}
@@ -253,7 +261,15 @@ func describeFolder(f syncthing.FolderConfig, s folderSummary, conns connections
 // local network; it lists the agent by its file name, “vaultsync”.
 const localNetworkSetting = "System Settings → Privacy & Security → Local Network"
 
-const localNetworkHint = "macOS refused the connection on your local network. Allow “vaultsync” in " + localNetworkSetting + ", then run vaultsync stop and vaultsync start."
+// localNetworkHint is status's remedy when macOS refuses the engine's
+// connections on the local network.
+func localNetworkHint(background bool) string {
+	restart := "then run vaultsync stop and vaultsync start."
+	if !background {
+		restart = "then restart vaultsync run."
+	}
+	return "macOS refused the connection on your local network. Allow “vaultsync” in " + localNetworkSetting + ", " + restart
+}
 
 // localNetworkRefused: the engine's last dials to local addresses failed
 // with "no route to host" — how macOS Local Network privacy shows to a

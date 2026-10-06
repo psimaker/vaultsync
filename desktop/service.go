@@ -331,18 +331,18 @@ func (s service) start() error {
 		if out, err := s.run.run("launchctl", "enable", s.launchdTarget()); err != nil {
 			return fmt.Errorf("launchctl enable: %v: %s", err, out)
 		}
-		out, err := s.run.run("launchctl", "print", s.launchdTarget())
-		if err != nil {
-			if out, err := s.run.run("launchctl", "bootstrap", "gui/"+strconv.Itoa(s.uid), path); err != nil {
-				return fmt.Errorf("launchctl bootstrap: %v: %s", err, out)
+		if _, err := s.run.run("launchctl", "print", s.launchdTarget()); err == nil {
+			// Still loaded: idle, disabled while loaded, or on its way out
+			// after a stop that ran out of time — launchd shows all of them
+			// alike, so the job is loaded afresh. Its bootout may fail when
+			// it is already going; waiting for it to be gone settles both.
+			_, _ = s.run.run("launchctl", "bootout", s.launchdTarget())
+			if err := s.launchdGone(); err != nil {
+				return err
 			}
-			return nil
 		}
-		if !strings.Contains(out, "state = running") {
-			// Loaded but not running (disabled while it was loaded).
-			if out, err := s.run.run("launchctl", "kickstart", s.launchdTarget()); err != nil {
-				return fmt.Errorf("launchctl kickstart: %v: %s", err, out)
-			}
+		if out, err := s.run.run("launchctl", "bootstrap", "gui/"+strconv.Itoa(s.uid), path); err != nil {
+			return fmt.Errorf("launchctl bootstrap: %v: %s", err, out)
 		}
 	case "linux":
 		if out, err := s.run.run("systemctl", "--user", "enable", "--now", systemdUnit); err != nil {

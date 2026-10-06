@@ -199,7 +199,7 @@ func (s *pairSession) findHub(ctx context.Context) error {
 	found, err := s.env.discover(ctx)
 	if err != nil {
 		s.t.blank()
-		return refuse("Could not search this network for your Hub (%v). If this computer is on the same network as your Hub, name it instead: vaultsync pair --hub 192.168.1.20", err)
+		return refuse("Could not search this network for your Hub (%v). If this computer is on the same network as your Hub, name it instead: vaultsync pair --hub 192.168.1.20%s", err, macLocalNetworkNote(s.env.goos))
 	}
 	// Answers are hints from anyone on the network: only local addresses.
 	var hubs []pairing.DiscoveredHub
@@ -212,7 +212,7 @@ func (s *pairSession) findHub(ctx context.Context) error {
 	switch len(hubs) {
 	case 0:
 		s.t.say("none answered.")
-		return refuse("No Hub answered on this network. Pairing needs this computer and your Hub on the same network (afterwards they sync from anywhere). If they are, name your Hub: vaultsync pair --hub 192.168.1.20")
+		return refuse("No Hub answered on this network. Pairing needs this computer and your Hub on the same network (afterwards they sync from anywhere). If they are, name your Hub: vaultsync pair --hub 192.168.1.20%s", macLocalNetworkNote(s.env.goos))
 	case 1:
 		s.t.say("found %s (%s)", quoted(hubName(hubs[0])), hostOf(hubs[0].Address))
 	default:
@@ -366,6 +366,16 @@ func handshakeText(err error, s *pairSession) string {
 		return "Your Hub did not answer. Check that it is running and on the same network as this computer."
 	}
 	return fmt.Sprintf("Pairing with your Hub failed: %v", err)
+}
+
+// macLocalNetworkNote is the possible cause a Mac adds when the search for a
+// Hub came back empty or failed: macOS may keep vaultsync off the local
+// network, and its search then finds nothing.
+func macLocalNetworkNote(goos string) string {
+	if goos != "darwin" {
+		return ""
+	}
+	return " On a Mac, also check that “vaultsync” may use your local network: " + localNetworkSetting + "."
 }
 
 // cannotRead is the refusal for a folder VaultSync could not read. On a Mac,
@@ -788,6 +798,8 @@ func (s *pairSession) askConsent(name, path string) error {
 	s.t.blank()
 	s.t.say("  %s at %s already contains files. VaultSync will sync this folder with %s.", quoted(name), tildePath(s.env.home, path), quoted(s.hubLabel()))
 	s.t.say("  Edits and deletions on connected devices will also change this folder.")
+	// Obsidian Sync cannot be detected from the vault (see syncPluginWarnings).
+	s.t.say("  If Obsidian Sync or another service also syncs this folder, turn that off for it first.")
 	ok, err := s.t.confirm("  Start syncing?")
 	if err != nil {
 		return err

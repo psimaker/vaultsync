@@ -123,8 +123,8 @@ func TestIssue175_PairingNamesTheLocalNetworkSetting(t *testing.T) {
 	if !strings.Contains(got, "Local Network") || !strings.Contains(got, "“vaultsync”") {
 		t.Fatalf("darwin, no route to host: %q", got)
 	}
-	if !strings.Contains(localNetworkHint, "“vaultsync”") {
-		t.Fatalf("System Settings lists the program as “vaultsync”: %q", localNetworkHint)
+	if !strings.Contains(localNetworkHint(true), "“vaultsync”") {
+		t.Fatalf("System Settings lists the program as “vaultsync”: %q", localNetworkHint(true))
 	}
 	s.env.goos = "linux"
 	if got := handshakeText(refused, s); strings.Contains(got, "Local Network") || !strings.Contains(got, "did not answer") {
@@ -160,5 +160,66 @@ func TestIssue175_ReadRefusalNamesFilesAndFolders(t *testing.T) {
 		if got := refusalText(cannotRead(c.goos, home, path, c.err)); strings.Contains(got, "Files & Folders") || !strings.Contains(got, "Check its permissions") {
 			t.Fatalf("%s %v: %q", c.goos, c.err, got)
 		}
+	}
+}
+
+// A stop that ran out of time leaves a job that launchd is still removing;
+// launchd shows it like a running one. start loaded nothing, saw "running"
+// and reported success — then the job was gone.
+func TestIssue175_StartAfterAStopThatRanOutOfTime(t *testing.T) {
+	run := &fakeRunner{lingerAfterBootout: 302} // longer than stop waits
+	svc, _ := testService(t, "darwin", run)
+	if _, err := svc.install(svc.lay.Agent, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.stop(); err == nil {
+		t.Fatal("stop should report a job launchd did not let go of")
+	}
+	out := &bytes.Buffer{}
+	a := &app{goos: "darwin", home: svc.home, getenv: envOf(nil), lay: svc.lay, svc: svc, out: out}
+	if err := a.startService(); err != nil {
+		t.Fatalf("start: %v (%v)", err, run.calls)
+	}
+	if !run.loaded || run.disabled || run.lingering != 0 {
+		t.Fatalf("start reported success for a job that is gone: loaded=%v disabled=%v lingering=%d", run.loaded, run.disabled, run.lingering)
+	}
+}
+
+// When macOS keeps vaultsync off the local network, its search for a Hub may
+// find nothing or fail; on a Mac both say where to look.
+func TestIssue175_DiscoveryNamesTheLocalNetworkSetting(t *testing.T) {
+	for _, c := range []struct {
+		goos string
+		err  error
+		want bool
+	}{
+		{"darwin", nil, true},
+		{"darwin", pairing.ErrNoProbeSent, true},
+		{"linux", nil, false},
+		{"linux", pairing.ErrNoProbeSent, false},
+	} {
+		eng := newFakeEngine(t)
+		s, _ := testSession(t, eng, nil, pairOptions{})
+		s.env.goos = c.goos
+		s.env.discover = func(context.Context) ([]pairing.DiscoveredHub, error) { return nil, c.err }
+		got := refusalText(s.findHub(context.Background()))
+		if strings.Contains(got, "Local Network") != c.want || !strings.Contains(got, "--hub") {
+			t.Errorf("%s, %v: %q", c.goos, c.err, got)
+		}
+	}
+}
+
+// Obsidian Sync cannot be seen from the vault, so the consent for a folder
+// with files says what to turn off.
+func TestIssue175_ConsentMentionsOtherSyncServices(t *testing.T) {
+	eng := newFakeEngine(t)
+	s, out := testSession(t, eng, nil, pairOptions{}, "", "n")
+	local := filepath.Join(s.env.home, "Notes")
+	mkVault(t, local)
+	if _, err := s.planForLocal(context.Background(), local); err != errCancelled {
+		t.Fatalf("no consent: %v", err)
+	}
+	if !strings.Contains(out.String(), "If Obsidian Sync or another service also syncs this folder, turn that off for it first.") {
+		t.Fatalf("consent:\n%s", out)
 	}
 }
