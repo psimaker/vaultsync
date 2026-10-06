@@ -60,10 +60,11 @@ func (a *app) status(ctx context.Context) error {
 		fmt.Fprintln(w, "VaultSync is not set up on this computer yet. Run vaultsync setup.")
 		return nil
 	}
+	background := a.backgroundEngine()
 	switch {
 	case !a.svc.installed():
 		fmt.Fprintln(w, "Background service: not installed (vaultsync setup installs it; vaultsync run runs the engine in this terminal)")
-	case a.svc.running():
+	case background:
 		fmt.Fprintln(w, "Background service: running")
 	default:
 		fmt.Fprintln(w, "Background service: stopped — vaultsync start resumes it")
@@ -85,10 +86,19 @@ func (a *app) status(ctx context.Context) error {
 		return nil
 	}
 	fmt.Fprintln(w, "Sync engine: running")
-	return a.onlineStatus(ctx, w, client)
+	return a.onlineStatus(ctx, w, client, background)
 }
 
-func (a *app) onlineStatus(ctx context.Context, w io.Writer, c *syncthing.Client) error {
+// backgroundEngine says whether the engine belongs to the background service.
+// An installed service that is stopped (vaultsync stop, or a setup that fell
+// back to --no-service) leaves the engine to a `vaultsync run` in a terminal,
+// whose remedies differ: the terminal app needs the access, and that run
+// the restart.
+func (a *app) backgroundEngine() bool {
+	return a.svc.installed() && a.svc.running()
+}
+
+func (a *app) onlineStatus(ctx context.Context, w io.Writer, c *syncthing.Client, background bool) error {
 	var sys systemStatusView
 	if err := c.Get(ctx, "/rest/system/status", &sys); err != nil {
 		return err
@@ -128,7 +138,7 @@ func (a *app) onlineStatus(ctx context.Context, w io.Writer, c *syncthing.Client
 		fmt.Fprintln(w, "  none yet — run vaultsync pair")
 	}
 	if hubs > 0 && !anyConnected && a.goos == "darwin" && localNetworkRefused(sys) {
-		fmt.Fprintln(w, "  "+localNetworkHint(a.svc.installed()))
+		fmt.Fprintln(w, "  "+localNetworkHint(background))
 	}
 
 	folders, err := c.Folders(ctx)
@@ -155,7 +165,7 @@ func (a *app) onlineStatus(ctx context.Context, w io.Writer, c *syncthing.Client
 					remote[d.DeviceID] = rc
 				}
 			}
-			state = describeFolder(f, sum, conns, remote, sys.MyID, a.svc.installed())
+			state = describeFolder(f, sum, conns, remote, sys.MyID, background)
 		}
 		fmt.Fprintf(w, "  %-14s %-28s %s\n", f.Label, tildePath(a.home, f.Path), state)
 	}

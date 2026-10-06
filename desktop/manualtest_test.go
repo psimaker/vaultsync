@@ -223,3 +223,27 @@ func TestIssue175_ConsentMentionsOtherSyncServices(t *testing.T) {
 		t.Fatalf("consent:\n%s", out)
 	}
 }
+
+// status picks its remedies by who runs the engine: an installed but stopped
+// service (vaultsync stop, then vaultsync run in a terminal) is no background
+// engine, so Terminal needs the access and `vaultsync run` the restart.
+func TestIssue175_StatusKnowsAForegroundEngine(t *testing.T) {
+	run := &fakeRunner{}
+	svc, _ := testService(t, "darwin", run)
+	a := &app{goos: "darwin", home: svc.home, getenv: envOf(nil), lay: svc.lay, svc: svc, out: &bytes.Buffer{}}
+	if a.backgroundEngine() {
+		t.Fatal("no service installed: the engine runs in a terminal")
+	}
+	if _, err := svc.install(svc.lay.Agent, true); err != nil {
+		t.Fatal(err)
+	}
+	if !a.backgroundEngine() {
+		t.Fatal("installed and running: the background service owns the engine")
+	}
+	if err := svc.stop(); err != nil {
+		t.Fatal(err)
+	}
+	if a.backgroundEngine() {
+		t.Fatal("installed but stopped: a running engine is a vaultsync run in a terminal")
+	}
+}
