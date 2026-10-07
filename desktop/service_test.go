@@ -25,21 +25,37 @@ type fakeRunner struct {
 	idle, neverRuns    bool
 	lingerAfterBootout int
 	lingering          int
+	// noSession: the user has no session for the service to run in — launchd
+	// has no gui domain for them, the systemd user manager is not running
+	// (#232). Every launchctl / systemctl call fails the way the real ones do.
+	noSession bool
 }
 
 func (f *fakeRunner) run(name string, args ...string) (string, error) {
 	call := name + " " + strings.Join(args, " ")
 	if call == "systemctl --user show-environment" {
 		// Asked for the manager's environment; not an action worth asserting.
+		if f.noSession {
+			return "Failed to connect to bus: No medium found", errors.New("exit status 1")
+		}
 		return f.answers[call], nil
 	}
 	f.calls = append(f.calls, call)
+	if f.noSession {
+		if name == "launchctl" {
+			return "Bad request.\nCould not find domain for user gui: 501", errors.New("exit status 112")
+		}
+		return "Failed to connect to bus: No medium found", errors.New("exit status 1")
+	}
 	for prefix, err := range f.fail {
 		if strings.HasPrefix(call, prefix) {
 			return "boom", err
 		}
 	}
 	switch {
+	case call == "launchctl print gui/501":
+		// The domain itself: there as long as the user has a desktop session.
+		return "gui/501 = {\n", nil
 	case strings.HasPrefix(call, "launchctl print"):
 		if f.lingering > 0 {
 			f.lingering--

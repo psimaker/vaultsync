@@ -215,9 +215,12 @@ name the setting when they see macOS refusing. Keeping vaults in `~/Vaults`
 avoids the folder prompts. After an update macOS may ask again: VaultSync is
 not signed with a developer certificate yet, so to macOS every version is a
 different program, and a folder permission belongs to the version it was
-given to.
+given to. The service runs in your desktop session: over SSH before you
+log in at the screen, `vaultsync status` says it waits for your login, and it
+starts with the login.
 
-**On Linux.** The service runs while you are logged in. To keep syncing after
+**On Linux.** The service runs while you are logged in; `vaultsync status`
+says it waits for your login while you are not. To keep syncing after
 you log out, allow it once: `loginctl enable-linger` (setup never does this
 for you). Without a systemd user session (some containers, WSL), run
 `vaultsync setup --no-service` and keep `vaultsync run` running yourself.

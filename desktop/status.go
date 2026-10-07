@@ -66,6 +66,9 @@ func (a *app) status(ctx context.Context) error {
 		fmt.Fprintln(w, "Background service: not installed (vaultsync setup installs it; vaultsync run runs the engine in this terminal)")
 	case background:
 		fmt.Fprintln(w, "Background service: running")
+	case a.svc.noSession():
+		// Not stopped: there is no session for it yet (#232).
+		fmt.Fprintln(w, "Background service: "+a.svc.sessionNote())
 	default:
 		fmt.Fprintln(w, "Background service: stopped — vaultsync start resumes it")
 	}

@@ -329,6 +329,9 @@ func (s service) start() error {
 		// enable first: it undoes a stop also when launchd still holds the
 		// job, which would otherwise stay disabled — now and at every login.
 		if out, err := s.run.run("launchctl", "enable", s.launchdTarget()); err != nil {
+			if s.noSession() {
+				return s.waitsForLogin()
+			}
 			return fmt.Errorf("launchctl enable: %v: %s", err, out)
 		}
 		if _, err := s.run.run("launchctl", "print", s.launchdTarget()); err == nil {
@@ -346,10 +349,46 @@ func (s service) start() error {
 		}
 	case "linux":
 		if out, err := s.run.run("systemctl", "--user", "enable", "--now", systemdUnit); err != nil {
+			if s.noSession() {
+				return s.waitsForLogin()
+			}
 			return fmt.Errorf("systemctl --user enable --now: %v: %s", err, out)
 		}
 	}
 	return nil
+}
+
+// noSession reports whether the service has no session to run in right now:
+// launchd keeps a user's gui domain only while they are logged in at the
+// screen, and the systemd user manager runs only while the user has a
+// session, unless lingering is enabled. Until then the service is neither
+// running nor startable — but it was not stopped either (#232).
+func (s service) noSession() bool {
+	switch s.goos {
+	case "darwin":
+		_, err := s.run.run("launchctl", "print", "gui/"+strconv.Itoa(s.uid))
+		return err != nil
+	case "linux":
+		return s.userManagerAvailable() != nil
+	}
+	return false
+}
+
+// sessionNote is what status says about a service without a session.
+func (s service) sessionNote() string {
+	if s.goos == "linux" {
+		return "waits for your login — it runs while you are logged in (loginctl enable-linger keeps it running after you log out)"
+	}
+	return "waits for your login — it runs in your desktop session"
+}
+
+// waitsForLogin is start's answer without a session: the service manager's
+// error would send the user nowhere.
+func (s service) waitsForLogin() error {
+	if s.goos == "linux" {
+		return refuse("The background service runs while you are logged in, and you are not logged in right now. Log in and it starts on its own — to keep it running after you log out, run loginctl enable-linger once.")
+	}
+	return refuse("The background service runs in your desktop session, and you are not logged in at the screen right now. Log in on this Mac and it starts on its own.")
 }
 
 // running asks the service manager whether the service is up.
