@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -45,6 +46,9 @@ type service struct {
 	run    runner
 	// pause waits between two looks at the service manager (nil: sleep).
 	pause func(time.Duration)
+	// stat looks at a path (nil: os.Stat); session's look at the user
+	// manager's runtime directory goes through it.
+	stat func(string) error
 }
 
 func (s service) wait(d time.Duration) {
@@ -329,6 +333,9 @@ func (s service) start() error {
 		// enable first: it undoes a stop also when launchd still holds the
 		// job, which would otherwise stay disabled — now and at every login.
 		if out, err := s.run.run("launchctl", "enable", s.launchdTarget()); err != nil {
+			if state, _ := s.session(); state == sessionAbsent {
+				return s.waitsForLogin()
+			}
 			return fmt.Errorf("launchctl enable: %v: %s", err, out)
 		}
 		if _, err := s.run.run("launchctl", "print", s.launchdTarget()); err == nil {
@@ -346,10 +353,109 @@ func (s service) start() error {
 		}
 	case "linux":
 		if out, err := s.run.run("systemctl", "--user", "enable", "--now", systemdUnit); err != nil {
+			if state, _ := s.session(); state == sessionAbsent {
+				return s.waitsForLogin()
+			}
 			return fmt.Errorf("systemctl --user enable --now: %v: %s", err, out)
 		}
 	}
 	return nil
+}
+
+// sessionState is what the service manager says about this user's session —
+// the one the service runs in.
+type sessionState int
+
+const (
+	sessionPresent sessionState = iota // the service can run, start and stop
+	sessionAbsent                      // no session: nothing runs it, nothing starts it
+	sessionUnknown                     // the manager could not be asked from here
+)
+
+// session asks the service manager for this user's session. launchd keeps a
+// user's gui domain only while they are logged in at the screen, and the
+// systemd user manager runs only while the user has a session, unless
+// lingering is on: without one the service is neither running nor startable,
+// but it was not stopped either (#232). Absent is claimed only on evidence
+// from a manager that answered — launchd's own "no domain" answers, or on
+// Linux the user manager's runtime directory /run/user/<uid> missing (it
+// goes with the last session). Anything else is unknown, with the words
+// kept: a command that did not run at all, a shell without the session's
+// environment, a permission.
+func (s service) session() (sessionState, string) {
+	switch s.goos {
+	case "darwin":
+		out, err := s.run.run("launchctl", "print", "gui/"+strconv.Itoa(s.uid))
+		switch {
+		case err == nil:
+			return sessionPresent, ""
+		case strings.Contains(out, "Could not find domain") || strings.Contains(out, "Domain does not support specified action"):
+			return sessionAbsent, ""
+		}
+		return sessionUnknown, firstLine(out, err)
+	case "linux":
+		out, err := s.run.run("systemctl", "--user", "show-environment")
+		if err == nil {
+			return sessionPresent, ""
+		}
+		if !exited(err) {
+			return sessionUnknown, firstLine(out, err)
+		}
+		switch serr := s.statPath(filepath.Join("/run", "user", strconv.Itoa(s.uid))); {
+		case errors.Is(serr, fs.ErrNotExist):
+			return sessionAbsent, ""
+		case serr != nil:
+			return sessionUnknown, serr.Error()
+		}
+		return sessionUnknown, firstLine(out, err)
+	}
+	return sessionPresent, ""
+}
+
+func (s service) statPath(path string) error {
+	if s.stat != nil {
+		return s.stat(path)
+	}
+	_, err := os.Stat(path)
+	return err
+}
+
+// exited reports whether a service manager command ran and ended with an
+// exit status — as opposed to never running (not found, not executable),
+// which says nothing about the session. launchd needs no such check: its
+// words are the evidence, and a command that never ran has none.
+func exited(err error) bool {
+	var ee interface{ ExitCode() int }
+	return errors.As(err, &ee)
+}
+
+// firstLine is the manager's first line of output, else the error.
+func firstLine(out string, err error) string {
+	if line, _, _ := strings.Cut(strings.TrimSpace(out), "\n"); line != "" {
+		return line
+	}
+	return err.Error()
+}
+
+// waitsForLoginNote is what status says about a service without a session.
+// A service stopped with vaultsync stop stays disabled across the login, so
+// the note does not promise that it starts on its own.
+func (s service) waitsForLoginNote() string {
+	if s.goos == "linux" {
+		return "waits for your login — it runs while you are logged in (loginctl enable-linger keeps it running after you log out). Stopped it with vaultsync stop? Then run vaultsync start once you are logged in."
+	}
+	return "waits for your login — it runs in your desktop session. Stopped it with vaultsync stop? Then run vaultsync start once you are logged in."
+}
+
+// waitsForLogin is start's answer without a session: the service manager's
+// error would send the user nowhere. The enable that failed may have been
+// the one undoing a vaultsync stop, so start is to be run again after the
+// login.
+func (s service) waitsForLogin() error {
+	if s.goos == "linux" {
+		return refuse("The background service runs while you are logged in, and no session of yours is running right now. Log in, then run vaultsync start again — and run loginctl enable-linger once to keep it running after you log out.")
+	}
+	return refuse("The background service runs in your desktop session, and you are not logged in at the screen right now. Log in on this Mac, then run vaultsync start again.")
 }
 
 // running asks the service manager whether the service is up.
