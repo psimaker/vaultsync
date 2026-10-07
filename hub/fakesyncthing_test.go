@@ -23,6 +23,15 @@ type fakeSyncthing struct {
 	options        map[string]any
 	folderDefaults map[string]any
 	dbFiles        map[string]int64
+	dbGlobal       map[string]int64  // folder → globalFiles; absent: the local count
+	dbDirs         map[string]int64  // folder → globalDirectories
+	dbLocalDirs    map[string]int64  // folder → localDirectories
+	dbSymlinks     map[string]int64  // folder → globalSymlinks
+	dbLocalLinks   map[string]int64  // folder → localSymlinks
+	dbDeleted      map[string]int64  // folder → globalDeleted and localDeleted (tombstones)
+	dbState        map[string]string // folder → db/status state; absent: defaultState, then idle
+	dbStatusFail   map[string]bool   // folder → db/status answers 500
+	defaultState   string            // the state of folders without an entry — also those a test creates
 	connected      map[string]bool
 	pending        map[string][]string // folder → offered by
 	devicePatches  []map[string]any
@@ -45,6 +54,14 @@ func newFakeSyncthing(t *testing.T, myID string) (*fakeSyncthing, *httptest.Serv
 		options:        map[string]any{"urAccepted": float64(0), "startBrowser": true},
 		folderDefaults: map[string]any{},
 		dbFiles:        map[string]int64{},
+		dbGlobal:       map[string]int64{},
+		dbDirs:         map[string]int64{},
+		dbLocalDirs:    map[string]int64{},
+		dbSymlinks:     map[string]int64{},
+		dbLocalLinks:   map[string]int64{},
+		dbDeleted:      map[string]int64{},
+		dbState:        map[string]string{},
+		dbStatusFail:   map[string]bool{},
 		connected:      map[string]bool{},
 		pending:        map[string][]string{},
 	}
@@ -201,7 +218,27 @@ func (f *fakeSyncthing) serve(w http.ResponseWriter, r *http.Request) {
 		}
 	case path == "/rest/db/status":
 		id := r.URL.Query().Get("folder")
-		write(map[string]any{"localFiles": f.dbFiles[id], "state": "idle"})
+		if f.dbStatusFail[id] {
+			http.Error(w, "database unavailable", http.StatusInternalServerError)
+			return
+		}
+		state, ok := f.dbState[id]
+		if !ok {
+			state = f.defaultState
+			if state == "" {
+				state = "idle"
+			}
+		}
+		global, ok := f.dbGlobal[id]
+		if !ok {
+			global = f.dbFiles[id]
+		}
+		write(map[string]any{
+			"localFiles": f.dbFiles[id], "globalFiles": global, "state": state,
+			"localDirectories": f.dbLocalDirs[id], "globalDirectories": f.dbDirs[id],
+			"localSymlinks": f.dbLocalLinks[id], "globalSymlinks": f.dbSymlinks[id],
+			"localDeleted": f.dbDeleted[id], "globalDeleted": f.dbDeleted[id],
+		})
 	case path == "/rest/cluster/pending/folders":
 		out := map[string]any{}
 		for id, devs := range f.pending {

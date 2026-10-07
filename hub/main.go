@@ -395,6 +395,20 @@ func defaultRouteIPv4() net.IP {
 	return nil
 }
 
+// fileCount words a vault's count: the Hub reports unknownFiles when it
+// does not know (vaultFiles — content its index has not seen, a paused
+// folder, a status it could not read), and one file is "1 file" (#223).
+func fileCount(n int64) string {
+	switch {
+	case n < 0:
+		return "unknown"
+	case n == 1:
+		return "1 file"
+	default:
+		return fmt.Sprintf("%d files", n)
+	}
+}
+
 // --- status -----------------------------------------------------------------
 
 func cmdStatus(ctx context.Context, cfg config) error {
@@ -430,7 +444,7 @@ func cmdStatus(ctx context.Context, cfg config) error {
 	fmt.Println()
 	fmt.Printf("Vaults (%d):\n", len(vaults))
 	for _, v := range vaults {
-		fmt.Printf("  %-32s %8d files   shared with %d device(s)\n", v.Label, v.Files, len(v.SharedWith))
+		fmt.Printf("  %-32s %14s   shared with %d device(s)\n", v.Label, fileCount(v.Files), len(v.SharedWith))
 	}
 	fmt.Println()
 	fmt.Printf("Devices (%d):\n", len(devices)-1)
@@ -469,7 +483,7 @@ func cmdVault(ctx context.Context, cfg config, args []string) error {
 			return err
 		}
 		for _, v := range vaults {
-			fmt.Printf("%-32s %8d files   %s\n", v.Label, v.Files, v.ID)
+			fmt.Printf("%-32s %14s   %s\n", v.Label, fileCount(v.Files), v.ID)
 		}
 		return nil
 	case "create", "adopt":
@@ -649,7 +663,7 @@ func chooseVault(vaults []vaultInfo) (string, bool, error) {
 	fmt.Println()
 	fmt.Println("Vaults on the Hub:")
 	for i, v := range vaults {
-		fmt.Printf("  %d) %s  (%d files)\n", i+1, v.Label, v.Files)
+		fmt.Printf("  %d) %s  (%s)\n", i+1, v.Label, fileCount(v.Files))
 	}
 	fmt.Printf("  %d) New vault\n", len(vaults)+1)
 	for {
