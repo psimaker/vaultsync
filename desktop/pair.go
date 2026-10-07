@@ -158,7 +158,7 @@ func (s *pairSession) run(ctx context.Context) error {
 		return fmt.Errorf("the sync engine does not answer: %w", err)
 	}
 	if done, err := s.resumePending(ctx); done || err != nil {
-		return err
+		return s.unlessAlreadySyncing(err)
 	}
 	if err := s.findHub(ctx); err != nil {
 		return err
@@ -171,14 +171,58 @@ func (s *pairSession) run(ctx context.Context) error {
 		// its own vaults; nothing may be decided on that.
 		return refuse("Your Hub could not list its vaults just now. Run vaultsync pair again in a moment.")
 	}
+	p, err := s.choose(ctx)
+	if err != nil {
+		return s.unlessAlreadySyncing(err)
+	}
+	// The Hub becomes a device of this engine only once a plan stands: a
+	// refusal, and a setup that finds its vault already set up (#228),
+	// leave the engine's configuration as it was. The share the Hub sends
+	// in finish needs the device known, so this comes right before.
 	if err := s.addHubDevice(ctx); err != nil {
 		return err
 	}
-	p, err := s.choose(ctx)
-	if err != nil {
-		return err
-	}
 	return s.finish(ctx, p)
+}
+
+// alreadySyncing: the chosen Hub vault is already set up at the chosen folder
+// on this computer (#228). Not a refusal — the setup ends as succeeded.
+type alreadySyncing struct{ label, path string }
+
+func (e *alreadySyncing) Error() string {
+	return fmt.Sprintf("%s is already set up to sync at %s.", quoted(e.label), e.path)
+}
+
+// unlessAlreadySyncing turns the alreadySyncing sentinel — from the flags
+// path or from a pending share resumed onto its own folder — into a success
+// line and no error; any other error passes through.
+func (s *pairSession) unlessAlreadySyncing(err error) error {
+	var already *alreadySyncing
+	if errors.As(err, &already) {
+		s.t.say("✓ %s is already set up to sync at %s.", quoted(already.label), already.path)
+		return nil
+	}
+	return err
+}
+
+// sameFolder: the chosen path is the configured folder itself — by directory
+// identity when both exist (a case-insensitive volume answers for itself),
+// by the exact resolved path when the folder is away. Folding case by OS
+// would call two distinct folders on a case-sensitive volume the same.
+func sameFolder(path, configured string) bool {
+	a, errA := os.Stat(path)
+	b, errB := os.Stat(configured)
+	if errA == nil || errB == nil {
+		return errA == nil && errB == nil && a.IsDir() && os.SameFile(a, b)
+	}
+	for _, x := range resolvedForms(path) {
+		for _, y := range resolvedForms(configured) {
+			if x == y {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // --- the Hub ----------------------------------------------------------------
@@ -893,11 +937,26 @@ func (s *pairSession) planForHub(ctx context.Context, v pairing.VaultInfo) (plan
 // below an existing folder (VaultSync creates ~/Vaults, nothing else — a
 // missing parent can be a disk that is not connected).
 func (s *pairSession) downloadPlan(ctx context.Context, v pairing.VaultInfo, path string) (plan, error) {
-	enginePaths, err := s.enginePaths(ctx)
+	folders, err := s.env.engine.Folders(ctx)
 	if err != nil {
-		return plan{}, err
+		return plan{}, fmt.Errorf("the sync engine does not answer: %w", err)
 	}
 	path = resolveExistingPrefix(path)
+	// This vault may already sync on this computer (#228): at this very
+	// folder there is nothing to do — the overlap check below would report
+	// the folder as overlapping itself. Elsewhere, a vault has one folder
+	// per computer, said after the folder's own rules. Neither asks the Hub.
+	var configured *syncthing.FolderConfig
+	enginePaths := make([]string, 0, len(folders))
+	for i := range folders {
+		enginePaths = append(enginePaths, folders[i].Path)
+		if folders[i].ID == v.ID {
+			configured = &folders[i]
+		}
+	}
+	if configured != nil && sameFolder(path, configured.Path) {
+		return plan{}, &alreadySyncing{label: v.Label, path: tildePath(s.env.home, configured.Path)}
+	}
 	if err := s.checkTarget(ctx, path, v.Label, enginePaths); err != nil {
 		return plan{}, err
 	}
@@ -907,6 +966,9 @@ func (s *pairSession) downloadPlan(ctx context.Context, v pairing.VaultInfo, pat
 	}
 	if exists && !empty {
 		return plan{}, refuse("%s already holds files. VaultSync downloads a vault from your Hub only into a new or empty folder — choose another one.", tildePath(s.env.home, path))
+	}
+	if configured != nil {
+		return plan{}, refuse("%s is already set up to sync at %s on this computer. A vault has one folder here — nothing was changed.", quoted(v.Label), tildePath(s.env.home, configured.Path))
 	}
 	parent := filepath.Dir(path)
 	vaults := resolveExistingPrefix(filepath.Join(s.env.home, "Vaults"))

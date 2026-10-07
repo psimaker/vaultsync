@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -12,13 +13,30 @@ import (
 	"time"
 
 	"github.com/psimaker/vaultsync/hub/pairing"
+	"github.com/psimaker/vaultsync/hub/syncthing"
 )
 
 // mkVault creates a folder that already holds notes.
 func mkVault(t *testing.T, path string) {
 	t.Helper()
-	writeFile(t, filepath.Join(path, ".obsidian", "app.json"), "{}")
-	writeFile(t, filepath.Join(path, "Welcome.md"), "# hello\n")
+	if err := populate(path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// populate writes a small vault. A hook that runs off the test goroutine
+// uses it directly and reports through t.Error.
+func populate(path string) error {
+	for name, content := range map[string]string{filepath.Join(".obsidian", "app.json"): "{}", "Welcome.md": "# hello\n"} {
+		p := filepath.Join(path, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func refusalText(err error) string {
@@ -180,7 +198,7 @@ func TestIssue175_UnknownOutcomeIsNeverRetried(t *testing.T) {
 	eng := newFakeEngine(t)
 	hub := newFakeHub(t, eng, pairing.VaultInfo{ID: "vs-aaaaaaaaaaaa", Label: "Recipes", Files: 12})
 	hub.provisionStatus = http.StatusInternalServerError
-	hub.offerDelay = -1
+	hub.noOffer = true
 	s, _ := testSession(t, eng, hub, pairOptions{vault: "Recipes"})
 	s.opts.code = hub.code
 	s.opts.path = filepath.Join(s.env.home, "Vaults", "Recipes")
@@ -337,17 +355,22 @@ func TestIssue175_FinalGateRunsAfterTheWait(t *testing.T) {
 	ctx := context.Background()
 	t.Run("the empty destination gained files", func(t *testing.T) {
 		eng := newFakeEngine(t)
-		hub := newFakeHub(t, eng, pairing.VaultInfo{ID: "vs-aaaaaaaaaaaa", Label: "Recipes", Files: 12})
-		hub.offerDelay = 300 * time.Millisecond
+		// An empty Hub vault: the shared guard would let a folder with
+		// files become its first copy, so only the final gate can notice
+		// that this is not the empty folder the person decided on.
+		hub := newFakeHub(t, eng, pairing.VaultInfo{ID: "vs-aaaaaaaaaaaa", Label: "Recipes"})
+		hub.offerOnQuery = true
 		s, _ := testSession(t, eng, hub, pairOptions{vault: "Recipes"})
 		s.opts.code = hub.code
 		dest := filepath.Join(s.env.home, "Vaults", "Recipes")
 		s.opts.path = dest
-		time.AfterFunc(100*time.Millisecond, func() { mkVault(t, dest) })
-		// Whichever check sees the files first — the shared guard or the
-		// agent's final gate — nothing is added and the files stay.
+		hub.beforeOffer = func() {
+			if err := populate(dest); err != nil {
+				t.Error(err)
+			}
+		}
 		err := s.run(ctx)
-		if err == nil || eng.folderCount() != 0 {
+		if !strings.Contains(refusalText(err), "changed while VaultSync was waiting for your Hub") || eng.folderCount() != 0 {
 			t.Fatalf("got %v, folders=%d", err, eng.folderCount())
 		}
 		assertUntouched(t, dest)
@@ -355,15 +378,15 @@ func TestIssue175_FinalGateRunsAfterTheWait(t *testing.T) {
 	t.Run("the engine restarted", func(t *testing.T) {
 		eng := newFakeEngine(t)
 		hub := newFakeHub(t, eng, pairing.VaultInfo{ID: "vs-aaaaaaaaaaaa", Label: "Recipes", Files: 12})
-		hub.offerDelay = 300 * time.Millisecond
+		hub.offerOnQuery = true
 		s, _ := testSession(t, eng, hub, pairOptions{vault: "Recipes"})
 		s.opts.code = hub.code
 		s.opts.path = filepath.Join(s.env.home, "Vaults", "Recipes")
-		time.AfterFunc(100*time.Millisecond, func() {
+		hub.beforeOffer = func() {
 			eng.mu.Lock()
 			eng.startTime = "2026-10-06T10:05:00Z"
 			eng.mu.Unlock()
-		})
+		}
 		err := s.run(ctx)
 		if !strings.Contains(refusalText(err), "restarted") || eng.folderCount() != 0 {
 			t.Fatalf("got %v, folders=%d", err, eng.folderCount())
@@ -372,7 +395,7 @@ func TestIssue175_FinalGateRunsAfterTheWait(t *testing.T) {
 	t.Run("the share never arrives", func(t *testing.T) {
 		eng := newFakeEngine(t)
 		hub := newFakeHub(t, eng, pairing.VaultInfo{ID: "vs-aaaaaaaaaaaa", Label: "Recipes", Files: 12})
-		hub.offerDelay = -1
+		hub.noOffer = true
 		s, _ := testSession(t, eng, hub, pairOptions{vault: "Recipes"})
 		s.opts.code = hub.code
 		s.opts.path = filepath.Join(s.env.home, "Vaults", "Recipes")
@@ -506,12 +529,15 @@ func TestIssue175_ConsentIsBoundToTheFolder(t *testing.T) {
 	}
 	t.Run("replaced during the last wait", func(t *testing.T) {
 		eng, _, s, local := upload(t)
-		eng.flap = &offerFlap{back: 2500 * time.Millisecond, during: func() {
-			time.Sleep(500 * time.Millisecond) // inside AcceptShare's own wait
+		// Inside AcceptShare's own wait, the folder is swapped for another
+		// one with the same files.
+		eng.flap = &offerFlap{during: func() {
 			if err := os.Rename(local, local+"-moved"); err != nil {
 				t.Error(err)
 			}
-			mkVault(t, local)
+			if err := populate(local); err != nil {
+				t.Error(err)
+			}
 		}}
 		err := s.run(ctx)
 		if !strings.Contains(refusalText(err), "was replaced") || eng.folderCount() != 0 {
@@ -520,12 +546,12 @@ func TestIssue175_ConsentIsBoundToTheFolder(t *testing.T) {
 	})
 	t.Run("vanished during the wait is never recreated", func(t *testing.T) {
 		eng, hub, s, local := upload(t)
-		hub.offerDelay = 300 * time.Millisecond
-		time.AfterFunc(100*time.Millisecond, func() {
+		hub.offerOnQuery = true
+		hub.beforeOffer = func() {
 			if err := os.Rename(local, local+"-moved"); err != nil {
 				t.Error(err)
 			}
-		})
+		}
 		err := s.run(ctx)
 		if !strings.Contains(refusalText(err), "disappeared") || eng.folderCount() != 0 {
 			t.Fatalf("got %v; folders=%d", err, eng.folderCount())
@@ -537,7 +563,7 @@ func TestIssue175_ConsentIsBoundToTheFolder(t *testing.T) {
 	t.Run("the place above a new folder changed", func(t *testing.T) {
 		eng := newFakeEngine(t)
 		hub := newFakeHub(t, eng, pairing.VaultInfo{ID: "vs-aaaaaaaaaaaa", Label: "Recipes", Files: 12})
-		hub.offerDelay = 300 * time.Millisecond
+		hub.offerOnQuery = true
 		s, _ := testSession(t, eng, hub, pairOptions{vault: "Recipes"})
 		s.opts.code = hub.code
 		disk := filepath.Join(s.env.home, "Disk")
@@ -546,17 +572,21 @@ func TestIssue175_ConsentIsBoundToTheFolder(t *testing.T) {
 		}
 		s.opts.path = filepath.Join(disk, "Recipes")
 		// The "disk" goes away and another folder takes its name.
-		time.AfterFunc(100*time.Millisecond, func() {
+		hub.beforeOffer = func() {
 			if err := os.Rename(disk, disk+"-gone"); err != nil {
 				t.Error(err)
 			}
 			if err := os.Mkdir(disk, 0o755); err != nil {
 				t.Error(err)
 			}
-		})
+		}
 		err := s.run(ctx)
 		if !strings.Contains(refusalText(err), "changed while VaultSync was waiting") || eng.folderCount() != 0 {
 			t.Fatalf("got %v; folders=%d", err, eng.folderCount())
+		}
+		// Not created on whatever took the disk's place either.
+		if _, err := os.Stat(s.opts.path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("a folder was created on the replacement disk")
 		}
 	})
 }
@@ -566,19 +596,22 @@ func TestIssue175_ConsentIsBoundToTheFolder(t *testing.T) {
 func TestIssue175_HubEvidenceIsRefreshedBeforeAdding(t *testing.T) {
 	eng := newFakeEngine(t)
 	hub := newFakeHub(t, eng)
-	hub.offerDelay = 300 * time.Millisecond
+	hub.offerOnQuery = true
 	s, _ := testSession(t, eng, hub, pairOptions{vault: "Notes", create: true, yes: true})
 	s.opts.code = hub.code
 	local := filepath.Join(s.env.home, "Notes")
 	mkVault(t, local)
 	s.opts.path = local
-	time.AfterFunc(150*time.Millisecond, func() {
+	// Another device joins the vault the agent was told is its alone while
+	// the agent waits for the share: after the proof it took right after
+	// the create, before the one it takes right before the add.
+	hub.beforeOffer = func() {
 		hub.mu.Lock()
 		defer hub.mu.Unlock()
 		for i := range hub.vaults {
 			hub.vaults[i].SharedWith = append(hub.vaults[i].SharedWith, otherID)
 		}
-	})
+	}
 	err := s.run(context.Background())
 	if !strings.Contains(refusalText(err), "still a new, empty vault") || eng.folderCount() != 0 {
 		t.Fatalf("got %v; folders=%d", err, eng.folderCount())
@@ -648,12 +681,16 @@ func TestIssue175_PairingJournal(t *testing.T) {
 // not to one swapped in while the agent asked the Hub one last time.
 func TestIssue175_ConsentWindowsAreClosed(t *testing.T) {
 	ctx := context.Background()
+	// swap runs off the test goroutine (a reader hook, a Hub request) and
+	// so reports through t.Error.
 	swap := func(t *testing.T, path string) {
-		t.Helper()
 		if err := os.Rename(path, path+"-other"); err != nil {
-			t.Fatal(err)
+			t.Error(err)
+			return
 		}
-		mkVault(t, path)
+		if err := populate(path); err != nil {
+			t.Error(err)
+		}
 	}
 
 	t.Run("replaced while the consent question was open", func(t *testing.T) {
@@ -716,7 +753,9 @@ func TestIssue175_NoRequestBetweenTheLastChecksAndTheAdd(t *testing.T) {
 				if err := os.Rename(local, local+"-other"); err != nil {
 					t.Error(err)
 				}
-				mkVault(t, local)
+				if err := populate(local); err != nil {
+					t.Error(err)
+				}
 			}
 			eng.mu.Unlock()
 		}
@@ -754,4 +793,161 @@ func TestIssue175_MenuAnswersBelongToTheFolder(t *testing.T) {
 	if hub.provisionCount("Notes") != 0 || eng.folderCount() != 0 {
 		t.Fatal("the Hub was asked or a folder was added")
 	}
+}
+
+// Setup run again with the same flags — as a script would — meets the vault
+// it already set up (#228): at the same folder there is nothing to do and
+// the setup succeeds; at another folder it says where the vault syncs. Both
+// before the Hub is asked. Another vault into a folder inside the synced one
+// is still an overlap.
+func TestIssue228_SetupAgainWithTheSameFlags(t *testing.T) {
+	ctx := context.Background()
+	const id = "vs-aaaaaaaaaaaa"
+	configured := func(t *testing.T, vault, path string) (*fakeEngine, *fakeHub, *pairSession, *bytes.Buffer) {
+		eng := newFakeEngine(t)
+		hub := newFakeHub(t, eng,
+			pairing.VaultInfo{ID: id, Label: "Hub-Test", Files: 3, SharedWith: []string{testMyID}},
+			pairing.VaultInfo{ID: "vs-bbbbbbbbbbbb", Label: "Work", Files: 5})
+		s, out := testSession(t, eng, hub, pairOptions{vault: vault})
+		s.opts.code = hub.code
+		local := filepath.Join(s.env.home, "Vaults", "Hub-Test-neu")
+		mkVault(t, local)
+		eng.mu.Lock()
+		eng.folders = append(eng.folders, syncthing.FolderConfig{ID: id, Label: "Hub-Test", Path: local})
+		eng.mu.Unlock()
+		s.opts.path = path
+		return eng, hub, s, out
+	}
+	t.Run("the same folder: nothing to do", func(t *testing.T) {
+		eng, hub, s, out := configured(t, "Hub-Test", "~/Vaults/Hub-Test-neu")
+		if err := s.run(ctx); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if !strings.Contains(out.String(), "✓ “Hub-Test” is already set up to sync at ~/Vaults/Hub-Test-neu.") || strings.Contains(out.String(), "overlaps") {
+			t.Fatalf("output:\n%s", out)
+		}
+		if hub.provisionCount(id) != 0 || eng.folderCount() != 1 {
+			t.Fatalf("the Hub was asked (%d) or a folder was added (%d)", hub.provisionCount(id), eng.folderCount())
+		}
+		eng.mu.Lock()
+		devices := len(eng.devices)
+		eng.mu.Unlock()
+		if devices != 1 {
+			t.Fatalf("the engine's devices changed: %d", devices)
+		}
+		assertUntouched(t, filepath.Join(s.env.home, "Vaults", "Hub-Test-neu"))
+	})
+	t.Run("another folder: one folder per vault", func(t *testing.T) {
+		eng, hub, s, _ := configured(t, "Hub-Test", "~/Vaults/Elsewhere")
+		err := s.run(ctx)
+		if !strings.Contains(refusalText(err), "“Hub-Test” is already set up to sync at ~/Vaults/Hub-Test-neu on this computer") || strings.Contains(refusalText(err), "overlaps") {
+			t.Fatalf("got %v", err)
+		}
+		if hub.provisionCount(id) != 0 || eng.folderCount() != 1 {
+			t.Fatalf("the Hub was asked (%d) or a folder was added (%d)", hub.provisionCount(id), eng.folderCount())
+		}
+		if _, err := os.Stat(filepath.Join(s.env.home, "Vaults", "Elsewhere")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("a folder was created")
+		}
+	})
+	t.Run("the same folder through a link", func(t *testing.T) {
+		eng, hub, s, out := configured(t, "Hub-Test", "~/Links/notes")
+		if err := os.MkdirAll(filepath.Join(s.env.home, "Links"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(s.env.home, "Vaults", "Hub-Test-neu"), filepath.Join(s.env.home, "Links", "notes")); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.run(ctx); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if !strings.Contains(out.String(), "✓ “Hub-Test” is already set up to sync at ~/Vaults/Hub-Test-neu.") || hub.provisionCount(id) != 0 || eng.folderCount() != 1 {
+			t.Fatalf("output:\n%s", out)
+		}
+	})
+	t.Run("a name that differs only in case is another folder on a case-sensitive volume", func(t *testing.T) {
+		eng, hub, s, out := configured(t, "Hub-Test", "~/Vaults/hub-test-neu")
+		other := filepath.Join(s.env.home, "Vaults", "hub-test-neu")
+		if err := os.MkdirAll(other, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		a, _ := os.Stat(other)
+		b, _ := os.Stat(filepath.Join(s.env.home, "Vaults", "Hub-Test-neu"))
+		if os.SameFile(a, b) {
+			t.Skip("a case-insensitive volume: both names are one folder")
+		}
+		s.env.goos = "darwin" // where case used to be folded by OS, not by the volume
+		if err := s.run(ctx); err == nil || strings.Contains(out.String(), "is already set up to sync") {
+			t.Fatalf("two folders were taken for one: %v\n%s", err, out)
+		}
+		if hub.provisionCount(id) != 0 || eng.folderCount() != 1 {
+			t.Fatalf("the Hub was asked (%d) or a folder was added (%d)", hub.provisionCount(id), eng.folderCount())
+		}
+	})
+	t.Run("the same folder under another spelling of its case", func(t *testing.T) {
+		eng, hub, s, out := configured(t, "Hub-Test", "~/Vaults/hub-test-neu")
+		a, errA := os.Stat(filepath.Join(s.env.home, "Vaults", "hub-test-neu"))
+		b, errB := os.Stat(filepath.Join(s.env.home, "Vaults", "Hub-Test-neu"))
+		if errA != nil || errB != nil || !os.SameFile(a, b) {
+			t.Skip("a case-sensitive volume: another spelling is another folder")
+		}
+		// Two spellings, one directory: only its identity says so.
+		if err := s.run(ctx); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if !strings.Contains(out.String(), "✓ “Hub-Test” is already set up to sync at ~/Vaults/Hub-Test-neu.") || hub.provisionCount(id) != 0 || eng.folderCount() != 1 {
+			t.Fatalf("output:\n%s", out)
+		}
+	})
+	t.Run("a file at the chosen path is not the folder", func(t *testing.T) {
+		eng, hub, s, out := configured(t, "Hub-Test", "~/Vaults/note.md")
+		writeFile(t, filepath.Join(s.env.home, "Vaults", "note.md"), "# a note\n")
+		err := s.run(ctx)
+		if err == nil || strings.Contains(out.String(), "is already set up to sync") {
+			t.Fatalf("a file was taken for the folder: %v\n%s", err, out)
+		}
+		if hub.provisionCount(id) != 0 || eng.folderCount() != 1 {
+			t.Fatalf("the Hub was asked (%d) or a folder was added (%d)", hub.provisionCount(id), eng.folderCount())
+		}
+	})
+	t.Run("a pending share resumed onto its own folder", func(t *testing.T) {
+		eng := newFakeEngine(t)
+		hub := newFakeHub(t, eng)
+		s, out := testSession(t, eng, hub, pairOptions{}, "y", "~/Vaults/Hub-Test-neu")
+		local := filepath.Join(s.env.home, "Vaults", "Hub-Test-neu")
+		mkVault(t, local)
+		eng.mu.Lock()
+		eng.devices = append(eng.devices, syncthing.DeviceConfig{DeviceID: testHubID, Name: "Test Hub"})
+		eng.folders = append(eng.folders, syncthing.FolderConfig{ID: id, Label: "Hub-Test", Path: local})
+		eng.pending[id] = map[string]string{testHubID: "Hub-Test"}
+		eng.mu.Unlock()
+		if err := s.run(ctx); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if !strings.Contains(out.String(), "✓ “Hub-Test” is already set up to sync at ~/Vaults/Hub-Test-neu.") || strings.Contains(out.String(), "error") || eng.folderCount() != 1 {
+			t.Fatalf("output:\n%s", out)
+		}
+	})
+	t.Run("another folder that holds files: the merge guard speaks first", func(t *testing.T) {
+		eng, hub, s, _ := configured(t, "Hub-Test", "~/Vaults/Full")
+		mkVault(t, filepath.Join(s.env.home, "Vaults", "Full"))
+		err := s.run(ctx)
+		if !strings.Contains(refusalText(err), "only into a new or empty folder") {
+			t.Fatalf("got %v", err)
+		}
+		if hub.provisionCount(id) != 0 || eng.folderCount() != 1 {
+			t.Fatalf("the Hub was asked (%d) or a folder was added (%d)", hub.provisionCount(id), eng.folderCount())
+		}
+		assertUntouched(t, filepath.Join(s.env.home, "Vaults", "Full"))
+	})
+	t.Run("another vault into a folder inside the synced one is still an overlap", func(t *testing.T) {
+		eng, hub, s, _ := configured(t, "Work", "~/Vaults/Hub-Test-neu/Notes")
+		err := s.run(ctx)
+		if !strings.Contains(refusalText(err), "overlaps ~/Vaults/Hub-Test-neu, which VaultSync already syncs") {
+			t.Fatalf("got %v", err)
+		}
+		if hub.provisionCount("vs-bbbbbbbbbbbb") != 0 || eng.folderCount() != 1 {
+			t.Fatalf("the Hub was asked (%d) or a folder was added (%d)", hub.provisionCount(id), eng.folderCount())
+		}
+	})
 }

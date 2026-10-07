@@ -176,7 +176,9 @@ vaultsync setup --code TULIP-ANCHOR-42 --hub 192.168.1.20 \
 
 `--yes` is consent to sync a `--path` that already holds files with the new
 vault named by `--vault`; it never chooses a Hub and never overrides a
-refusal.
+refusal. Run the same command again and it changes nothing: the vault is
+already set up to sync there, setup says so and succeeds — no second share
+request reaches your Hub.
 
 **What the agent refuses — and why.** A vault inside iCloud Drive, OneDrive,
 Dropbox, Google Drive or Nextcloud (or one that contains such a folder):
