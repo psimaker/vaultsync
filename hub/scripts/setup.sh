@@ -163,15 +163,17 @@ replace_env_image() {
 	[ "$(env_image_line "$ENV_EDIT_OUT")" = "$HUB_IMAGE" ] || return 1
 	mv -f "$ENV_EDIT_OUT" "$file" || return 1
 	ENV_EDIT_OUT=""
-	rm -f "$ENV_EDIT_TMP" 2>/dev/null || true
-	ENV_EDIT_TMP=""
+	# The snapshot stays tracked: release_env_edit removes it and reports
+	# a removal that fails.
 	return 0
 }
 
+# The hint names the shipped release as a target only on condition — the
+# callers that could not read .env do not know what it names today.
 manual_image_hint() {
-	info "  To move later: in $HUB_DIR/.env change the VAULTSYNC_HUB_IMAGE line to"
-	info "  VAULTSYNC_HUB_IMAGE=$HUB_IMAGE (that one line, by hand), then run"
-	info "  docker compose pull && docker compose up -d there (docs/hub.md → Update the Hub)."
+	info "  To move by hand: if $HUB_DIR/.env names an older vaultsync-hub release than $new_ver,"
+	info "  change its VAULTSYNC_HUB_IMAGE line to VAULTSYNC_HUB_IMAGE=$HUB_IMAGE (that one line),"
+	info "  then run docker compose pull && docker compose up -d there (docs/hub.md → Update the Hub)."
 }
 
 # An existing Hub stays on the image its .env names — re-running the setup

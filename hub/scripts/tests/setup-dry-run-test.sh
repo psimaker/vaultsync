@@ -173,13 +173,16 @@ chmod +x "$SANDBOX/bin/"*
 # failure) or the rename to fail (FAIL_MV).
 REAL_SED=$(command -v sed)
 REAL_MV=$(command -v mv)
+# NOOP_SED_WRITE: the write expression "succeeds" without replacing anything
+# — the output is the input, status zero.
 cat >"$SANDBOX/bin/sed" <<SHIM
 #!/usr/bin/env sh
-if [ -n "\${FAIL_SED_WRITE:-}" ]; then
-	case "\$*" in
-		*"s|^VAULTSYNC_HUB_IMAGE="*) printf 'PUID=1000\\n'; exit 1 ;;
-	esac
-fi
+case "\$*" in
+	*"s|^VAULTSYNC_HUB_IMAGE="*)
+		if [ -n "\${FAIL_SED_WRITE:-}" ]; then printf 'PUID=1000\\n'; exit 1; fi
+		if [ -n "\${NOOP_SED_WRITE:-}" ]; then for a in "\$@"; do :; done; cat "\$a"; exit 0; fi
+		;;
+esac
 exec "$REAL_SED" "\$@"
 SHIM
 cat >"$SANDBOX/bin/mv" <<SHIM
@@ -193,7 +196,16 @@ cat >"$SANDBOX/bin/mktemp" <<SHIM
 [ -z "\${FAIL_MKTEMP:-}" ] || exit 1
 exec "$REAL_MKTEMP" "\$@"
 SHIM
-chmod +x "$SANDBOX/bin/sed" "$SANDBOX/bin/mv" "$SANDBOX/bin/mktemp"
+# FAIL_RM_TMP: removing a .env.setup.* file fails (the file stays).
+REAL_RM=$(command -v rm)
+cat >"$SANDBOX/bin/rm" <<SHIM
+#!/usr/bin/env sh
+if [ -n "\${FAIL_RM_TMP:-}" ]; then
+	case "\$*" in *.env.setup.*) exit 1 ;; esac
+fi
+exec "$REAL_RM" "\$@"
+SHIM
+chmod +x "$SANDBOX/bin/sed" "$SANDBOX/bin/mv" "$SANDBOX/bin/mktemp" "$SANDBOX/bin/rm"
 export VIOLATIONS
 export PATH="$SANDBOX/bin:$PATH"
 export HOME="$SANDBOX/home"
@@ -307,7 +319,7 @@ $(cat "$COMPOSE_LOG")"
 	cp "$EXISTING/.env" "$SANDBOX/results/env-before"
 	out=$(existing_hub_run n) || fail "existing-hub setup (no) exited non-zero:
 $out"
-	if ! printf '%s\n' "$out" | grep -q "Kept 0.1.0" || ! printf '%s\n' "$out" | grep -q "To move later"; then
+	if ! printf '%s\n' "$out" | grep -q "Kept 0.1.0" || ! printf '%s\n' "$out" | grep -q "To move by hand"; then
 		fail "a no is not reported with the manual step:
 $out"
 	fi
@@ -420,8 +432,21 @@ $(cat "$COMPOSE_LOG")"
 		pass "$1 stops the setup and leaves .env whole"
 	}
 	failed_midway "a sed that fails with partial output" FAIL_SED_WRITE
+	failed_midway "a sed that replaces nothing and reports success" NOOP_SED_WRITE
 	failed_midway "a rename that fails" FAIL_MV
 	failed_midway "a temporary file that cannot be reserved" FAIL_MKTEMP
+
+	# A snapshot that cannot be removed afterwards is reported, and the lock
+	# is released all the same.
+	plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
+	out=$(FAIL_RM_TMP=1 existing_hub_run y) || fail "existing-hub setup (snapshot removal fails) exited non-zero:
+$out"
+	printf '%s\n' "$out" | grep -q "Could not remove the temporary file" || fail "a snapshot that cannot be removed is not reported:
+$out"
+	cmp -s "$EXISTING/.env" "$SANDBOX/results/env-expected" || fail "the move did not happen although only the snapshot removal failed"
+	[ ! -d "$EXISTING/.env.setup-lock" ] || fail "a failed snapshot removal left the lock behind"
+	"$REAL_RM" -f "$EXISTING"/.env.setup.*
+	pass "a snapshot that cannot be removed is reported, the lock released"
 
 	# The temporary names are reserved: a link planted under the name a
 	# predictable scheme would use (.env.setup.<pid of the setup>) catches
@@ -437,10 +462,11 @@ $(cat "$SANDBOX/results/sentinel")"
 	pass "a link planted under a predictable temporary name catches nothing"
 
 	# The whole file is checked again after the answer, not just the line:
-	# a quoted value grown around it while setup was asking stops the edit.
+	# a quoted value grown around the very line that was offered — still the
+	# only image line, still reading the same — stops the edit.
 	plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
-	printf 'PUID=1000\nVAULTSYNC_HUB_IMAGE=ghcr.io/psimaker/vaultsync-hub:0.1.0\nNOTES=%s\n' "'before:
-VAULTSYNC_HUB_IMAGE=ghcr.io/psimaker/vaultsync-hub:0.0.1
+	printf 'PUID=1000\nNOTES=%s\n' "'pinned:
+VAULTSYNC_HUB_IMAGE=ghcr.io/psimaker/vaultsync-hub:0.1.0
 '" >"$SANDBOX/results/env-reshaped"
 	out=$(MUTATE_BEFORE_ANSWER="cp '$SANDBOX/results/env-reshaped' '$EXISTING/.env'" existing_hub_run y) || fail "existing-hub setup (reshaped meanwhile) exited non-zero:
 $out"
@@ -514,7 +540,7 @@ if command -v setsid >/dev/null 2>&1; then
 	cp "$EXISTING/.env" "$SANDBOX/results/env-before"
 	out=$(VAULTSYNC_HUB_DIR="$EXISTING" VIOLATIONS="$SANDBOX/results/violations-existing.log" ALLOW_COMPOSE=1 setsid sh "$SETUP_SH" --hub </dev/null 2>&1) || fail "existing-hub setup without a terminal exited non-zero:
 $out"
-	printf '%s\n' "$out" | grep -q "To move later" || fail "without a terminal the manual step is not named:
+	printf '%s\n' "$out" | grep -q "To move by hand" || fail "without a terminal the manual step is not named:
 $out"
 	cmp -s "$EXISTING/.env" "$SANDBOX/results/env-before" || fail "without a terminal .env was changed"
 	pass "without a terminal .env is kept and the manual step named"
