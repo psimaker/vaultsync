@@ -28,3 +28,8 @@ func peerUID(conn *net.UnixConn) (int, error) {
 	}
 	return uid, cerr
 }
+
+// sunPathMax is the size of a unix socket address's path on this system,
+// its terminating byte included: a path that long or longer cannot be
+// listened on or dialed.
+const sunPathMax = 104

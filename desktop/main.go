@@ -641,7 +641,7 @@ func uniqRoots(in []cloudRoot) []cloudRoot {
 
 // --- run (the background service) -------------------------------------------
 
-func (a *app) run(ctx context.Context, args []string) error {
+func (a *app) run(ctx context.Context, args []string) (retErr error) {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	stateDir := fs.String("state-dir", "", "")
@@ -724,9 +724,12 @@ func (a *app) run(ctx context.Context, args []string) error {
 	} else {
 		// On the way out the place is taken out of agent.json again: a
 		// recorded place nobody serves is one another account could take.
+		// A write that fails is reported with whatever ended the run.
 		defer func() {
 			stop()
-			_ = updateState(a.lay.State, func(s *agentState) { s.ControlSocket = "" })
+			if err := updateState(a.lay.State, func(s *agentState) { s.ControlSocket = "" }); err != nil {
+				retErr = errors.Join(retErr, fmt.Errorf("the control socket's place could not be taken out of agent.json: %w", err))
+			}
 		}()
 		if socket == a.lay.Socket {
 			socket = ""

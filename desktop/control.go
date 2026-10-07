@@ -430,12 +430,17 @@ func (c *controlServer) pair(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// nobodyListens: a connection to the engine's loopback port found no
-// server — refused, or reset during the connect, which is what a listener
-// that closes before accepting leaves behind (the supervisor's own port
-// check is such a listener for a moment). A server that answers never
-// does either.
+// nobodyListens: the connect to the engine's loopback port found no
+// server — refused, or reset during the connect itself, which is what a
+// listener that closes before accepting leaves behind (the supervisor's
+// own port check is such a listener for a moment). Only the dial counts:
+// a connection that was made and then reset, or failed to read or write,
+// is a server that failed, and says nothing about whether it listens.
 func nobodyListens(err error) bool {
+	var ne *net.OpError
+	if !errors.As(err, &ne) || ne.Op != "dial" {
+		return false
+	}
 	return errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET)
 }
 
@@ -497,13 +502,14 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 type controlClient struct {
 	http *http.Client
+	path string
 }
 
 // errForeignSocket: the socket is served by another account.
 var errForeignSocket = errors.New("the control socket is served by another account; VaultSync does not use it")
 
 func newControlClient(path string) *controlClient {
-	return &controlClient{http: &http.Client{Transport: &http.Transport{
+	return &controlClient{path: path, http: &http.Client{Transport: &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			var d net.Dialer
 			conn, err := d.DialContext(ctx, "unix", path)
@@ -565,6 +571,12 @@ func (c *controlClient) pair(ctx context.Context, req pairRequest) (pairResponse
 }
 
 func (c *controlClient) do(ctx context.Context, method, path string, in, out any) error {
+	// A socket address too long for this system cannot be served by anyone
+	// — the agent fell back elsewhere, or runs without a socket — so it is
+	// no agent, not an error of its own.
+	if len(c.path) >= sunPathMax {
+		return errNoAgent
+	}
 	var body io.Reader
 	if in != nil {
 		b, err := json.Marshal(in)

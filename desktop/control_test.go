@@ -813,9 +813,13 @@ func TestIssue176_SocketIsFreshOwnerOnlyAndGoneAfterwards(t *testing.T) {
 	}
 }
 
-// run serves the socket for as long as it runs the engine, records where
-// when that is not the usual place, and takes the socket down with it.
-func TestIssue176_RunServesTheSocketWhileTheEngineRuns(t *testing.T) {
+// runFixture is an app ready for run: a fake engine binary with its
+// checksum recorded, a prepared config with one vault, the layout's socket
+// too deep for a socket address (made so here, whatever the temporary
+// folder's length on this system) and a runtime directory of the user's
+// own to fall back into.
+func runFixture(t *testing.T) (*app, string) {
+	t.Helper()
 	tmp, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -840,15 +844,18 @@ func TestIssue176_RunServesTheSocketWhileTheEngineRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(lay.Home, "config.xml"), "<configuration><folder id=\"vs-aaaaaaaaaaaa\" label=\"Notes\" path=\""+filepath.Join(home, "Notes")+"\"></folder><gui><address>127.0.0.1:"+strconv.Itoa(port)+"</address><apikey>k</apikey></gui></configuration>\n")
-	// The layout's socket lies too deep for a socket address (made so here,
-	// whatever the temporary folder's length on this system): run falls
-	// back into the session's runtime directory — a folder of the user's
-	// own — and records the place.
 	lay.Socket = filepath.Join(lay.Base, strings.Repeat("d", 120), "agent.sock")
 	runtimeDir := shortDir(t)
 	env := envOf(map[string]string{"XDG_RUNTIME_DIR": runtimeDir})
-	a := &app{goos: "linux", home: home, getenv: env, lay: lay, out: io.Discard,
-		svc: service{goos: "linux", home: home, getenv: env, lay: lay, run: &fakeRunner{}}}
+	return &app{goos: "linux", home: home, getenv: env, lay: lay, out: io.Discard,
+		svc: service{goos: "linux", home: home, getenv: env, lay: lay, run: &fakeRunner{}}}, runtimeDir
+}
+
+// run serves the socket for as long as it runs the engine, records where
+// when that is not the usual place, and takes the socket down with it.
+func TestIssue176_RunServesTheSocketWhileTheEngineRuns(t *testing.T) {
+	a, runtimeDir := runFixture(t)
+	lay := a.lay
 	// At the moment run records the socket's place, it still holds the
 	// setup lock: a second run cannot load agent.json in between and save
 	// an older copy over the place (a lost update).
@@ -917,9 +924,49 @@ func TestIssue176_RunServesTheSocketWhileTheEngineRuns(t *testing.T) {
 	if _, err := os.Stat(socket); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the socket stays behind at %s", socket)
 	}
-	// And the place is out of agent.json again: nobody serves it now.
+	// And the place is out of agent.json again: nobody serves it now — and
+	// the terminal, dialing the layout's overlong address, reads the engine
+	// directly instead of failing.
 	if st, err := loadState(lay.State); err != nil || st.ControlSocket != "" {
 		t.Fatalf("the place stays recorded: %q %v", st.ControlSocket, err)
+	}
+	a.out = &bytes.Buffer{}
+	if err := a.status(context.Background()); err != nil || !strings.Contains(a.out.(*bytes.Buffer).String(), "Sync engine: not running — nothing syncs right now") {
+		t.Fatalf("status after the agent is gone: %v\n%s", err, a.out)
+	}
+}
+
+// A write of agent.json that fails on the way out — the place would stay
+// recorded — is reported, with whatever ended the run.
+func TestIssue176_RunReportsAFailedCleanup(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root writes anywhere")
+	}
+	a, _ := runFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- a.run(ctx, nil) }()
+	e2eWait(t, "the control socket", 15*time.Second, func() bool {
+		st, err := loadState(a.lay.State)
+		if err != nil || st.ControlSocket == "" {
+			return false
+		}
+		_, err = os.Stat(st.ControlSocket)
+		return err == nil
+	})
+	// VaultSync's folder can no longer take a new file: the write fails.
+	if err := os.Chmod(a.lay.Base, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(a.lay.Base, 0o700) })
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "could not be taken out of agent.json") {
+			t.Fatalf("run must report the failed cleanup, got %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("run did not stop")
 	}
 }
 
@@ -1243,15 +1290,68 @@ func TestIssue176_OnlyTheOwnerTalksToTheAgent(t *testing.T) {
 // listener closed before accepting, as the supervisor's own port check
 // does for a moment; both say the same.
 func TestIssue176_ARefusedOrResetConnectIsNobodyListening(t *testing.T) {
-	for _, err := range []error{syscall.ECONNREFUSED, syscall.ECONNRESET, &net.OpError{Op: "dial", Err: &os.SyscallError{Syscall: "connect", Err: syscall.ECONNRESET}}} {
+	dial := func(e error) error {
+		return &net.OpError{Op: "dial", Err: &os.SyscallError{Syscall: "connect", Err: e}}
+	}
+	for _, err := range []error{dial(syscall.ECONNREFUSED), dial(syscall.ECONNRESET)} {
 		if !nobodyListens(err) {
 			t.Fatalf("%v is nobody listening", err)
 		}
 	}
-	for _, err := range []error{syscall.EACCES, context.DeadlineExceeded, errors.New("403 Forbidden")} {
+	// A reset or a failure after the connect is a server that failed; a
+	// bare error without the dial is not a connect that found nobody.
+	for _, err := range []error{
+		&net.OpError{Op: "read", Err: &os.SyscallError{Syscall: "read", Err: syscall.ECONNRESET}},
+		&net.OpError{Op: "write", Err: &os.SyscallError{Syscall: "write", Err: syscall.ECONNRESET}},
+		syscall.ECONNRESET, syscall.ECONNREFUSED,
+		dial(syscall.EACCES), context.DeadlineExceeded, errors.New("403 Forbidden"),
+	} {
 		if nobodyListens(err) {
 			t.Fatalf("%v says nothing about a listener", err)
 		}
+	}
+
+	// An engine that accepts and then resets the connection is an engine
+	// that failed, not one on its way up: the agent's status says so.
+	eng := newFakeEngine(t)
+	a := agentApp(t, eng)
+	resetting, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		for {
+			c, err := resetting.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.(*net.TCPConn).SetLinger(0)
+			c.Close()
+		}
+	}()
+	t.Cleanup(func() { resetting.Close() })
+	writeFile(t, filepath.Join(a.lay.Home, "config.xml"), "<configuration><gui><address>"+resetting.Addr().String()+"</address><apikey>engine-key</apikey></gui></configuration>\n")
+	if err := saveState(a.lay.State, agentState{GUIPort: resetting.Addr().(*net.TCPAddr).Port, Env: map[string]string{}}); err != nil {
+		t.Fatal(err)
+	}
+	client := serveControl(t, a)
+	if _, err := client.status(context.Background()); err == nil || !strings.Contains(err.Error(), "the sync engine does not answer") {
+		t.Fatalf("an engine that accepts and resets: %v", err)
+	}
+}
+
+// A socket address too long for this system is no agent: the terminal
+// reads the engine directly — after an agent that fell back is gone and
+// its place is out of agent.json, and for an agent that has no folder of
+// the user's own to fall back into.
+func TestIssue176_AnOverlongSocketAddressIsNoAgent(t *testing.T) {
+	deep := filepath.Join(shortDir(t), strings.Repeat("d", 120), "agent.sock")
+	if err := newControlClient(deep).do(context.Background(), http.MethodGet, "/v1/status", nil, nil); !errors.Is(err, errNoAgent) {
+		t.Fatalf("an overlong address: %v", err)
+	}
+	a := terminalApp(t, deep)
+	if err := a.status(context.Background()); err != nil || !strings.Contains(a.out.(*bytes.Buffer).String(), "Sync engine: not running — nothing syncs right now") {
+		t.Fatalf("status with an overlong default address: %v\n%s", err, a.out)
 	}
 }
 
