@@ -653,7 +653,11 @@ func shortReason(s *pairSession, path string, enginePaths []string) string {
 	if r, ok := cloudBlock(path, s.env.cloud(), s.env.goos); ok {
 		return r.Provider + " — make a local copy first (A shows how)"
 	}
-	if _, ok := onDiskOverlap(path, s.reserved(), s.env.goos); ok {
+	reserved, err := s.reserved()
+	if err != nil {
+		return "VaultSync’s own places could not be read"
+	}
+	if _, ok := onDiskOverlap(path, reserved, s.env.goos); ok {
 		return "inside VaultSync’s own folder"
 	}
 	if us, ok := s.env.userST(); ok {
@@ -1089,7 +1093,12 @@ func (s *pairSession) enginePaths(ctx context.Context) ([]string, error) {
 // reserved are VaultSync's own places: a vault may be neither inside one nor
 // around one — `uninstall --remove-data` deletes some of them, and the
 // engine's keys must never sync.
-func (s *pairSession) reserved() []string {
+// reserved is every place of VaultSync's own that no vault may be inside
+// or around. One of them is read from agent.json — the control socket's
+// own folder when it lives outside VaultSync's (control.go) — so an
+// agent.json that cannot be read means the list is not known, and the
+// caller refuses rather than guesses.
+func (s *pairSession) reserved() ([]string, error) {
 	out := []string{s.env.lay.Base}
 	if s.env.lay.Logs != "" {
 		out = append(out, s.env.lay.Logs)
@@ -1097,19 +1106,25 @@ func (s *pairSession) reserved() []string {
 	if s.env.unitDir != "" {
 		out = append(out, s.env.unitDir)
 	}
-	// The control socket's own folder when it lives outside VaultSync's
-	// (control.go): the agent makes it and takes it away again.
-	if st, err := loadState(s.env.lay.State); err == nil && st.ControlSocket != "" {
+	st, err := loadState(s.env.lay.State)
+	if err != nil {
+		return nil, fmt.Errorf("VaultSync's own places are not known (%w) — nothing was changed", err)
+	}
+	if st.ControlSocket != "" {
 		out = append(out, filepath.Dir(st.ControlSocket))
 	}
-	return out
+	return out, nil
 }
 
 // checkTarget runs every rule a folder must pass before it may sync, and
 // again right before it is added.
 func (s *pairSession) checkTarget(ctx context.Context, path, name string, enginePaths []string) error {
 	home := s.env.home
-	if r, ok := onDiskOverlap(path, s.reserved(), s.env.goos); ok {
+	reserved, err := s.reserved()
+	if err != nil {
+		return err
+	}
+	if r, ok := onDiskOverlap(path, reserved, s.env.goos); ok {
 		return refuse("VaultSync keeps its own files in %s. A vault can be neither inside that folder nor around it — choose another one.", tildePath(home, r))
 	}
 	if r, ok := cloudBlock(path, s.env.cloud(), s.env.goos); ok {

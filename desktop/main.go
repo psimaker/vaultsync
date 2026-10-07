@@ -726,7 +726,9 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 		// recorded place nobody serves is one another account could take.
 		// A write that fails is reported with whatever ended the run.
 		defer func() {
-			stop()
+			if err := stop(); err != nil {
+				retErr = errors.Join(retErr, err)
+			}
 			if err := updateState(a.lay.State, func(s *agentState) { s.ControlSocket = "" }); err != nil {
 				retErr = errors.Join(retErr, fmt.Errorf("the control socket's place could not be taken out of agent.json: %w", err))
 			}

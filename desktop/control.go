@@ -132,7 +132,7 @@ func (c *controlServer) handler() http.Handler {
 // engine lock must be held: a socket file found at the place belongs to an
 // agent that is gone. It returns the path listened on. Only the user's
 // own account is served: a connection from any other is closed unread.
-func (c *controlServer) serve(ctx context.Context) (path string, stop func(), err error) {
+func (c *controlServer) serve(ctx context.Context) (path string, stop func() error, err error) {
 	fallback := socketFallbackDir(c.a.goos, c.a.getenv, os.Getuid(), os.Lstat)
 	l, path, cleanup, err := listenControl(c.a.lay.Socket, fallback)
 	if err != nil {
@@ -146,7 +146,7 @@ func (c *controlServer) serve(ctx context.Context) (path string, stop func(), er
 	diag, err := openStderrLog(filepath.Join(c.a.lay.Base, "control-socket.log"))
 	if err != nil {
 		l.Close()
-		cleanup()
+		_ = cleanup()
 		return "", nil, err
 	}
 	// A pairing takes minutes (discovery, the Hub, the wait for its share),
@@ -171,14 +171,17 @@ func (c *controlServer) serve(ctx context.Context) (path string, stop func(), er
 		}
 		close(done)
 	}()
-	stop = func() {
+	// stop takes the socket down and says when it could not: a socket left
+	// behind is a place that stays recorded as served.
+	stop = func() error {
 		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(sctx)
 		_ = srv.Close()
 		<-done
-		cleanup()
+		err := cleanup()
 		diag.Close()
+		return err
 	}
 	return path, stop, nil
 }
@@ -186,31 +189,49 @@ func (c *controlServer) serve(ctx context.Context) (path string, stop func(), er
 // listenControl listens at path — or, when VaultSync's folder lies too deep
 // for a socket address, in a folder of our own under fallbackDir (the
 // user's own place, see socketFallbackDir; empty: no fallback). cleanup
-// removes what was made: the socket, and the folder only when nothing
-// else is in it — never anything inside it (a vault placed there by hand
-// would be a vault; pairing refuses the folder, see pairSession.reserved).
-func listenControl(path, fallbackDir string) (l net.Listener, at string, cleanup func(), err error) {
+// removes what was made and reports what it could not: the socket, and
+// the folder only when nothing else is in it — never anything inside it
+// (a vault placed there by hand would be a vault; pairing refuses the
+// folder, see pairSession.reserved). When the fallback fails too, both
+// errors are reported.
+func listenControl(path, fallbackDir string) (l net.Listener, at string, cleanup func() error, err error) {
 	l, err = listenUnix(path)
 	if err == nil {
-		return l, path, func() { _ = os.Remove(path) }, nil
+		return l, path, func() error { return removeSocket(path) }, nil
 	}
 	if fallbackDir == "" {
-		return nil, "", nil, err
+		return nil, "", nil, fmt.Errorf("%w (and no folder of the user's own to fall back into)", err)
 	}
 	dir, derr := os.MkdirTemp(fallbackDir, "vaultsync-")
 	if derr != nil {
-		return nil, "", nil, err
+		return nil, "", nil, errors.Join(err, fmt.Errorf("fallback: %w", derr))
 	}
 	at = filepath.Join(dir, "agent.sock")
 	l, lerr := listenUnix(at)
 	if lerr != nil {
 		_ = os.Remove(dir)
-		return nil, "", nil, err // the first error names the real place
+		return nil, "", nil, errors.Join(err, fmt.Errorf("fallback: %w", lerr))
 	}
-	return l, at, func() {
-		_ = os.Remove(at)
-		_ = os.Remove(dir)
+	return l, at, func() error {
+		if err := removeSocket(at); err != nil {
+			return err
+		}
+		// The folder goes only when it is empty; one that holds something
+		// else is left as it is, on purpose.
+		if err := os.Remove(dir); err != nil && !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTEMPTY) && !errors.Is(err, syscall.EEXIST) {
+			return fmt.Errorf("the socket's folder could not be removed: %w", err)
+		}
+		return nil
 	}, nil
+}
+
+// removeSocket takes the socket file away; one that is already gone is
+// no failure.
+func removeSocket(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("the control socket could not be removed: %w", err)
+	}
+	return nil
 }
 
 // listenUnix listens on a fresh socket at path, owner-only.
@@ -631,8 +652,11 @@ func (c *controlClient) do(ctx context.Context, method, path string, in, out any
 // — without the error's words, which name paths (the log is read by
 // others; the folder is not) — and keeps the words in VaultSync's folder.
 func logSocketError(logf func(string, ...any), base string, err error) {
+	if werr := writeFileAtomic(filepath.Join(base, "control-socket-error.txt"), []byte(err.Error()+"\n"), 0o600); werr != nil {
+		logf("no control socket — %s; vaultsync status reads the engine directly (the details could not be written to control-socket-error.txt: %s)", serviceSummary(err), serviceSummary(werr))
+		return
+	}
 	logf("no control socket — %s; vaultsync status reads the engine directly (details in control-socket-error.txt)", serviceSummary(err))
-	_ = writeFileAtomic(filepath.Join(base, "control-socket-error.txt"), []byte(err.Error()+"\n"), 0o600)
 }
 
 // noAgentForPause: no agent answers on the socket — which does not prove

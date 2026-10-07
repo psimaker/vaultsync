@@ -774,8 +774,19 @@ func TestIssue176_SocketIsFreshOwnerOnlyAndGoneAfterwards(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(deep), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := listenControl(deep, ""); err == nil {
-		t.Fatal("too deep and no fallback folder must fail")
+	if _, _, _, err := listenControl(deep, ""); err == nil || !strings.Contains(err.Error(), "no folder of the user's own") {
+		t.Fatalf("too deep and no fallback folder must fail and say so: %v", err)
+	}
+	// A fallback that fails too is reported next to the first error.
+	if os.Getuid() != 0 {
+		sealed := shortDir(t)
+		if err := os.Chmod(sealed, 0o500); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(sealed, 0o700) })
+		if _, _, _, err := listenControl(deep, sealed); err == nil || !strings.Contains(err.Error(), "fallback:") || !strings.Contains(err.Error(), "permission denied") {
+			t.Fatalf("both errors: %v", err)
+		}
 	}
 	own := shortDir(t)
 	l3, at, cleanup, err := listenControl(deep, own)
@@ -789,7 +800,9 @@ func TestIssue176_SocketIsFreshOwnerOnlyAndGoneAfterwards(t *testing.T) {
 		t.Fatalf("fallback folder mode %v", fi.Mode())
 	}
 	l3.Close()
-	cleanup()
+	if err := cleanup(); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Stat(filepath.Dir(at)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("the empty fallback folder stays behind")
 	}
@@ -804,7 +817,9 @@ func TestIssue176_SocketIsFreshOwnerOnlyAndGoneAfterwards(t *testing.T) {
 	writeFile(t, note, "a vault someone keeps here\n")
 	t.Cleanup(func() { _ = os.RemoveAll(filepath.Dir(at)) })
 	l4.Close()
-	cleanup()
+	if err := cleanup(); err != nil {
+		t.Fatalf("a folder kept on purpose is no failure: %v", err)
+	}
 	if _, err := os.Lstat(at); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("the socket stays behind")
 	}
@@ -933,6 +948,43 @@ func TestIssue176_RunServesTheSocketWhileTheEngineRuns(t *testing.T) {
 	a.out = &bytes.Buffer{}
 	if err := a.status(context.Background()); err != nil || !strings.Contains(a.out.(*bytes.Buffer).String(), "Sync engine: not running — nothing syncs right now") {
 		t.Fatalf("status after the agent is gone: %v\n%s", err, a.out)
+	}
+}
+
+// A socket that cannot be taken down on the way out is reported, with
+// whatever ended the run — a place that stays recorded as served must not
+// pass in silence.
+func TestIssue176_RunReportsASocketLeftBehind(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root removes anything")
+	}
+	a, _ := runFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- a.run(ctx, nil) }()
+	var socket string
+	e2eWait(t, "the control socket", 15*time.Second, func() bool {
+		st, err := loadState(a.lay.State)
+		if err != nil || st.ControlSocket == "" {
+			return false
+		}
+		socket = st.ControlSocket
+		_, err = os.Stat(socket)
+		return err == nil
+	})
+	// The socket's folder can no longer lose an entry: the removal fails.
+	if err := os.Chmod(filepath.Dir(socket), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(filepath.Dir(socket), 0o700) })
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "the control socket could not be removed") {
+			t.Fatalf("run must report the socket left behind, got %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("run did not stop")
 	}
 }
 
@@ -1283,6 +1335,55 @@ func TestIssue176_OnlyTheOwnerTalksToTheAgent(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(filepath.Join(a.lay.Base, "control-socket.log")); !strings.Contains(string(data), "another account") {
 		t.Fatalf("the closed connection is noted in the private log: %q", data)
+	}
+}
+
+// VaultSync's own places include the socket's folder, read from
+// agent.json: when that cannot be read, a pairing refuses rather than
+// trusts a list it does not have.
+func TestIssue176_UnreadableStateStopsAPairingBeforeAnyCheck(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root reads anything")
+	}
+	eng := newFakeEngine(t)
+	hub := newFakeHub(t, eng)
+	a := agentApp(t, eng)
+	fresh := filepath.Join(a.home, "Fresh")
+	if err := os.Chmod(a.lay.State, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(a.lay.State, 0o600) })
+	_, err := a.pairWith(context.Background(), &term{out: io.Discard}, pairOptions{code: hub.code, hub: hub.addr, vault: "Fresh", create: true, path: fresh}, eng.client, pairOrigin{})
+	if err == nil || isRefusal(err) || !strings.Contains(err.Error(), "VaultSync's own places are not known") || !strings.Contains(err.Error(), "nothing was changed") {
+		t.Fatalf("a pairing with agent.json unreadable: %v", err)
+	}
+	if eng.folderCount() != 0 {
+		t.Fatal("a folder was added without the reserved places known")
+	}
+	if _, err := os.Stat(fresh); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("the folder was made")
+	}
+}
+
+// When the socket's details cannot be written, the log says so instead
+// of pointing at a file that is not there — and still names no path.
+func TestIssue176_SocketErrorLogSaysWhenTheDetailsCouldNotBeWritten(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root writes anywhere")
+	}
+	base := t.TempDir()
+	if err := os.Chmod(base, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(base, 0o700) })
+	var logged []string
+	err := &os.PathError{Op: "listen", Path: filepath.Join(base, "agent.sock"), Err: errors.New("invalid argument")}
+	logSocketError(func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }, base, err)
+	if len(logged) != 1 || !strings.Contains(logged[0], "could not be written") || strings.Contains(logged[0], "details in control-socket-error.txt") || strings.Contains(logged[0], base) {
+		t.Fatalf("log: %v", logged)
+	}
+	if _, serr := os.Stat(filepath.Join(base, "control-socket-error.txt")); !errors.Is(serr, os.ErrNotExist) {
+		t.Fatal("the details file exists after all")
 	}
 }
 
