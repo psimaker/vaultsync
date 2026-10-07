@@ -144,7 +144,7 @@ func (c *controlServer) serve(ctx context.Context) (path string, stop func() err
 	// could not read — name the socket's path: they go to a private file in
 	// VaultSync's folder (0600, started over past 1 MiB), never to the
 	// service log.
-	f, err := openStderrLog(filepath.Join(c.a.lay.Base, "control-socket.log"))
+	f, err := openDiagLog(filepath.Join(c.a.lay.Base, "control-socket.log"))
 	if err != nil {
 		l.Close()
 		return "", nil, errors.Join(err, cleanup())
@@ -174,17 +174,28 @@ func (c *controlServer) serve(ctx context.Context) (path string, stop func() err
 	}()
 	// stop takes the socket down and says when it could not: a socket left
 	// behind is a place that stays recorded as served — and diagnostics
-	// that could not be written are said too.
+	// that could not be written are said too. What it says goes to the
+	// service log here as well, in its own words: the error it returns is
+	// summarized by kind at the service boundary, and the file that keeps
+	// the full words may be the very thing that could not be written.
 	stop = func() error {
 		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(sctx)
 		_ = srv.Close()
 		<-done
-		return errors.Join(cleanup(), diag.close())
+		err := errors.Join(cleanup(), diag.close())
+		if err != nil {
+			c.logf("control socket: %s", redactPaths(err.Error()))
+		}
+		return err
 	}
 	return path, stop, nil
 }
+
+// openDiagLog opens the socket's private diagnostic file; a variable so a
+// test can hand out one that takes no write.
+var openDiagLog = openStderrLog
 
 // diagLog is the socket's private diagnostic file. A log.Logger says
 // nothing about a write that failed, so the file keeps the first failure

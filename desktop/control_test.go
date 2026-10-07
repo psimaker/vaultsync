@@ -1500,6 +1500,41 @@ func TestIssue176_DiagnosticsThatCouldNotBeWrittenAreReported(t *testing.T) {
 	}
 }
 
+// What the stop could not do is in the service log in its own words,
+// whatever becomes of the error afterwards: the socket that stayed, the
+// diagnostics that could not be kept.
+func TestIssue176_StopSaysInTheServiceLogWhatItCouldNotDo(t *testing.T) {
+	eng := newFakeEngine(t)
+	a := agentApp(t, eng)
+	defer func(real func(string) (*os.File, error)) { openDiagLog = real }(openDiagLog)
+	openDiagLog = func(path string) (*os.File, error) {
+		return os.OpenFile(path, os.O_CREATE|os.O_RDONLY, 0o600) // takes no write
+	}
+	logged := &logLines{}
+	ctl := &controlServer{a: a, eng: a.engine(), logf: func(format string, args ...any) { logged.add(fmt.Sprintf(format, args...)) }}
+	_, stop, err := ctl.serve(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctl.srv.ErrorLog.Printf("http: Accept error: accept unix %s: too many open files", a.lay.Socket)
+	err = stop()
+	if err == nil || !strings.Contains(err.Error(), "writing:") {
+		t.Fatalf("stop: %v", err)
+	}
+	var said bool
+	for _, line := range logged.all() {
+		if strings.Contains(line, "could not all be kept") && strings.Contains(line, "writing:") {
+			said = true
+		}
+		if strings.Contains(line, a.lay.Socket) || strings.Contains(line, a.lay.Base) {
+			t.Fatalf("a path in the service log: %q", line)
+		}
+	}
+	if !said {
+		t.Fatalf("the service log lacks the stop's words: %v", logged.all())
+	}
+}
+
 // A port nobody serves answers with a refusal — or with a reset, when a
 // listener closed before accepting, as the supervisor's own port check
 // does for a moment; both say the same.
