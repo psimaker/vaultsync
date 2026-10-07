@@ -557,11 +557,6 @@ func (a *app) pair(ctx context.Context, args []string) error {
 	if !eng.prepared() || st.GUIPort == 0 {
 		return refuse("VaultSync is not set up on this computer yet. Run vaultsync setup.")
 	}
-	// The shell's environment may have changed since setup: the service's
-	// pairings look where this terminal looks.
-	if err := a.rememberShellEnv(&st); err != nil {
-		return err
-	}
 	client, err := eng.client(st)
 	if err != nil {
 		return err
@@ -582,24 +577,28 @@ func (a *app) pair(ctx context.Context, args []string) error {
 
 // rememberShellEnv records the shell's guard variables in agent.json when
 // they differ from what is recorded, so a pairing run by the service looks
-// where this terminal looks.
-func (a *app) rememberShellEnv(st *agentState) error {
-	recorded := recordGuardEnv(a.getenv)
+// where this terminal looks. Called under the pairing lock only (the
+// pairing flow does it): uninstall --remove-data takes agent.json away
+// after seeing that lock free, and a record written outside it could
+// bring the file back after the removal was reported done.
+func rememberShellEnv(statePath string, getenv func(string) string) error {
+	st, err := loadState(statePath)
+	if err != nil {
+		return err
+	}
+	recorded := recordGuardEnv(getenv)
 	if st.Env != nil && maps.Equal(recorded, st.Env) {
 		return nil
 	}
-	if err := updateState(a.lay.State, func(s *agentState) { s.Env = recorded }); err != nil {
-		return err
-	}
-	st.Env = recorded
-	return nil
+	return updateState(statePath, func(s *agentState) { s.Env = recorded })
 }
 
 // pairOrigin says where a pairing runs. background: inside the background
 // service (the control socket), whose permissions macOS grants to
 // "vaultsync", not to a terminal app. shellEnv: the shell's variables as
 // setup recorded them, for a process whose own environment is not the
-// shell's — the guards then look in both.
+// shell's — the guards then look in both. A pairing from a terminal
+// (neither) records the shell's variables itself, under the pairing lock.
 type pairOrigin struct {
 	background bool
 	shellEnv   map[string]string
@@ -613,6 +612,9 @@ func (a *app) pairWith(ctx context.Context, t *term, opts pairOptions, client *s
 	if origin.shellEnv != nil {
 		envs = append([]func(string) string{func(k string) string { return origin.shellEnv[k] }}, envs...)
 	}
+	// A terminal's pairing is the shell: it records where it looks, so
+	// the service's pairings can look there too.
+	rememberShell := !origin.background && origin.shellEnv == nil
 	var registries []string
 	for _, env := range envs {
 		registries = append(registries, obsidianRegistries(a.goos, a.home, env)...)
@@ -641,6 +643,7 @@ func (a *app) pairWith(ctx context.Context, t *term, opts pairOptions, client *s
 			deviceName:     computerName(a.goos),
 			now:            time.Now,
 			background:     origin.background,
+			rememberShell:  rememberShell,
 		},
 	}
 	return s, s.run(ctx)

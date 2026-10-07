@@ -1204,7 +1204,8 @@ func TestIssue176_StateUpdatesNeverLoseEachOthersFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.getenv = envOf(map[string]string{"XDG_CONFIG_HOME": "/data/config"})
-	if err := a.rememberShellEnv(&stale); err != nil {
+	_ = stale
+	if err := rememberShellEnv(a.lay.State, a.getenv); err != nil {
 		t.Fatal(err)
 	}
 	if st, err = loadState(a.lay.State); err != nil || st.ControlSocket != "/tmp/y/agent.sock" || st.Env["XDG_CONFIG_HOME"] != "/data/config" || st.GUIPort != 20 {
@@ -1232,22 +1233,62 @@ func TestIssue176_TheShellsEnvironmentIsRecorded(t *testing.T) {
 	eng := newFakeEngine(t)
 	a := agentApp(t, eng)
 	a.getenv = envOf(map[string]string{"XDG_CONFIG_HOME": "/data/config"})
-	st, err := loadState(a.lay.State)
-	if err != nil {
+	if err := rememberShellEnv(a.lay.State, a.getenv); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.rememberShellEnv(&st); err != nil {
-		t.Fatal(err)
-	}
-	if st, err = loadState(a.lay.State); err != nil || st.Env["XDG_CONFIG_HOME"] != "/data/config" || len(st.Env) != 1 {
+	if st, err := loadState(a.lay.State); err != nil || st.Env["XDG_CONFIG_HOME"] != "/data/config" || len(st.Env) != 1 {
 		t.Fatalf("recorded: %v %v", st.Env, err)
 	}
 	before, _ := os.Stat(a.lay.State)
-	if err := a.rememberShellEnv(&st); err != nil {
+	if err := rememberShellEnv(a.lay.State, a.getenv); err != nil {
 		t.Fatal(err)
 	}
 	if after, _ := os.Stat(a.lay.State); !after.ModTime().Equal(before.ModTime()) {
 		t.Fatal("an unchanged shell rewrote agent.json")
+	}
+}
+
+// A terminal's pairing records the shell only under the pairing lock —
+// the lock uninstall --remove-data waits on before it takes agent.json
+// away — so a pairing that finds the lock taken writes nothing, and a
+// record cannot bring agent.json back after a removal.
+func TestIssue176_TheShellIsRecordedOnlyUnderThePairingLock(t *testing.T) {
+	eng := newFakeEngine(t)
+	a := agentApp(t, eng)
+	a.getenv = envOf(map[string]string{"XDG_CONFIG_HOME": "/data/config"})
+	ctx := context.Background()
+	hold, err := lockFile(filepath.Join(a.lay.Base, "pair.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.Stat(a.lay.State)
+	if _, err := a.pairWith(ctx, &term{out: io.Discard}, pairOptions{}, eng.client, pairOrigin{}); !errors.Is(err, errPairingBusy) {
+		t.Fatalf("with the lock taken: %v", err)
+	}
+	if st, _ := loadState(a.lay.State); st.Env["XDG_CONFIG_HOME"] != "" {
+		t.Fatal("the shell was recorded without the pairing lock")
+	}
+	if after, _ := os.Stat(a.lay.State); !after.ModTime().Equal(before.ModTime()) {
+		t.Fatal("agent.json was written without the pairing lock")
+	}
+	hold()
+	if _, err := a.pairWith(ctx, &term{out: io.Discard}, pairOptions{}, eng.client, pairOrigin{}); err == nil || !isRefusal(err) {
+		t.Fatalf("with the lock free the pairing goes on to its refusal: %v", err)
+	}
+	if st, _ := loadState(a.lay.State); st.Env["XDG_CONFIG_HOME"] != "/data/config" {
+		t.Fatalf("the shell is recorded under the lock: %v", st.Env)
+	}
+	// The service's pairing records nothing: the record is the shell's.
+	st, _ := loadState(a.lay.State)
+	st.Env = map[string]string{"XDG_STATE_HOME": "/from/the/shell"}
+	if err := saveState(a.lay.State, st); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.pairWith(ctx, &term{out: io.Discard}, pairOptions{}, eng.client, pairOrigin{background: true, shellEnv: st.Env}); err == nil || !isRefusal(err) {
+		t.Fatalf("the service's pairing: %v", err)
+	}
+	if st, _ := loadState(a.lay.State); st.Env["XDG_STATE_HOME"] != "/from/the/shell" || st.Env["XDG_CONFIG_HOME"] != "" {
+		t.Fatalf("the service's pairing changed the record: %v", st.Env)
 	}
 }
 

@@ -83,6 +83,9 @@ type pairEnv struct {
 	// background: the pairing runs inside the background service, so a
 	// folder macOS refuses is "vaultsync" to allow — not the terminal app.
 	background bool
+	// rememberShell: this pairing runs in the shell, and records the
+	// shell's guard variables in agent.json under the pairing lock.
+	rememberShell bool
 }
 
 type pairSession struct {
@@ -157,6 +160,13 @@ func (s *pairSession) run(ctx context.Context) error {
 		return err
 	}
 	defer unlock()
+	if s.env.rememberShell {
+		// Under the lock that uninstall --remove-data waits on: a record
+		// written outside it could bring agent.json back after the removal.
+		if err := rememberShellEnv(s.env.lay.State, s.env.getenv); err != nil {
+			return err
+		}
+	}
 	if s.myID, err = s.env.engine.MyID(ctx); err != nil {
 		return fmt.Errorf("the sync engine does not answer: %w", err)
 	}
