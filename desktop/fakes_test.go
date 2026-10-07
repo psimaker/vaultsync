@@ -38,15 +38,28 @@ type fakeEngine struct {
 	patches   []map[string]any
 	client    *syncthing.Client
 	// flap, when set, withdraws the pending offer right after the agent
-	// first saw it, runs during, and offers again after back.
+	// first saw it, so the agent's next wait is a real one; at the query
+	// after that — inside that wait — during runs and the offer is back.
 	flap *offerFlap
+	// onPendingQuery runs once, right before the next query for pending
+	// offers is answered, outside the lock: the Hub delivers an offer this
+	// way when the agent must be inside its wait first (offerOnQuery).
+	onPendingQuery func()
 	// onNextFolders runs inside the next GET of the folder list.
 	onNextFolders func()
 }
 
 type offerFlap struct {
-	back   time.Duration
 	during func()
+	// saved holds the withdrawn offers until the next query.
+	saved map[string]map[string]string
+}
+
+// deliverOnQuery arms f to run at the next query for pending offers.
+func (e *fakeEngine) deliverOnQuery(f func()) {
+	e.mu.Lock()
+	e.onPendingQuery = f
+	e.mu.Unlock()
 }
 
 func newFakeEngine(t *testing.T) *fakeEngine {
@@ -67,6 +80,30 @@ func (e *fakeEngine) serve(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("X-API-Key") != "engine-key" {
 		http.Error(w, "Not Authorized", http.StatusForbidden)
 		return
+	}
+	if r.URL.Path == "/rest/cluster/pending/folders" {
+		// What a test lets happen while the agent waits for the share runs
+		// here, before the answer — outside the lock, since it may offer.
+		e.mu.Lock()
+		hook := e.onPendingQuery
+		e.onPendingQuery = nil
+		var flap *offerFlap
+		if e.flap != nil && e.flap.saved != nil {
+			flap = e.flap
+			e.flap = nil
+		}
+		e.mu.Unlock()
+		if flap != nil {
+			flap.during()
+			e.mu.Lock()
+			for id, by := range flap.saved {
+				e.pending[id] = by
+			}
+			e.mu.Unlock()
+		}
+		if hook != nil {
+			hook()
+		}
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -109,21 +146,10 @@ func (e *fakeEngine) serve(w http.ResponseWriter, r *http.Request) {
 			out[id] = map[string]any{"offeredBy": offered}
 		}
 		write(out)
-		if e.flap != nil && len(e.pending) > 0 {
-			// The offer was seen once; it goes away and comes back later,
-			// so the next wait is a real one.
-			flap := e.flap
-			e.flap = nil
-			saved := e.pending
+		if e.flap != nil && e.flap.saved == nil && len(e.pending) > 0 {
+			// The offer was seen once; it is gone until the next query.
+			e.flap.saved = e.pending
 			e.pending = map[string]map[string]string{}
-			go flap.during()
-			time.AfterFunc(flap.back, func() {
-				e.mu.Lock()
-				defer e.mu.Unlock()
-				for id, by := range saved {
-					e.pending[id] = by
-				}
-			})
 		}
 	default:
 		http.NotFound(w, r)
@@ -167,18 +193,23 @@ type fakeHub struct {
 	provisionStatus int
 	// tamper changes a reply before it is sealed.
 	tamper func(*pairing.HubPayload)
-	// offerDelay > 0 holds the engine's pending offer back; < 0 never sends it.
-	offerDelay time.Duration
+	// noOffer: the share never reaches the engine.
+	noOffer bool
+	// offerOnQuery delivers the share only when the agent's wait first asks
+	// the engine for pending offers — so every check before the wait has
+	// run by then, and beforeOffer acts inside the wait.
+	offerOnQuery bool
 	// catalogueUnreadable makes every answer carry no vault list (null), as
 	// the real Hub does when it cannot read its own vaults.
 	catalogueUnreadable bool
 	// onProvision runs inside the n-th provision request (1-based), before
 	// it is answered.
 	onProvision func(n int, p pairing.ProvisionPayload)
-	// beforeOffer runs right before the engine gets the pending offer, after
-	// the provision reply was composed, without h.mu held: what it changes —
-	// on the Hub or on this computer — is what the agent meets after it
-	// decided on that reply, however long the handshake took.
+	// beforeOffer runs right before the engine gets the pending offer,
+	// without h.mu held. With offerOnQuery that is inside the agent's wait
+	// for the share: what it changes — on the Hub or on this computer — is
+	// what the agent's checks after the wait meet, whatever the machine's
+	// speed.
 	beforeOffer func()
 }
 
@@ -335,7 +366,7 @@ func (h *fakeHub) provision(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *fakeHub) sendOffer(v pairing.VaultInfo) {
-	if h.engine == nil || h.offerDelay < 0 {
+	if h.engine == nil || h.noOffer {
 		return
 	}
 	deliver := func() {
@@ -344,11 +375,11 @@ func (h *fakeHub) sendOffer(v pairing.VaultInfo) {
 		}
 		h.engine.offer(v.ID, h.id, v.Label)
 	}
-	if h.offerDelay == 0 {
-		deliver()
+	if h.offerOnQuery {
+		h.engine.deliverOnQuery(deliver)
 		return
 	}
-	time.AfterFunc(h.offerDelay, deliver)
+	deliver()
 }
 
 func (h *fakeHub) provisionCount(vault string) int {
