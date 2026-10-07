@@ -324,7 +324,7 @@ func TestIssue175_E2EFreshHomeInstallsPairsAndSyncs(t *testing.T) {
 				goos: runtime.GOOS, home: home, getenv: envOf(nil), lay: lay, engine: client,
 				discover:       func(context.Context) ([]pairing.DiscoveredHub, error) { return nil, nil },
 				dial:           pairing.NewLocalClient,
-				registries:     obsidianRegistries(runtime.GOOS, home, envOf(nil)),
+				registries:     func() []string { return obsidianRegistries(runtime.GOOS, home, envOf(nil)) },
 				scanRoots:      []string{home},
 				cloud:          func() []cloudRoot { return cloudRoots(cloudEnv{goos: runtime.GOOS, home: home, getenv: envOf(nil)}) },
 				userST:         func() (userSyncthing, bool) { return findUserSyncthing(runtime.GOOS, home, envOf(nil)) },

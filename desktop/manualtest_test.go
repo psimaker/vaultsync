@@ -92,7 +92,7 @@ func TestIssue175_MenuListsASyncingVaultOnce(t *testing.T) {
 	eng.folders = append(eng.folders, syncthingFolder("vs-1", "Testvault", local))
 	registry := filepath.Join(s.env.home, "obsidian.json")
 	writeFile(t, registry, fmt.Sprintf(`{"vaults":{"9f561515d74acab7":{"path":%q,"ts":%d,"open":true}}}`, local, time.Now().UnixMilli()))
-	s.env.registries = []string{registry}
+	s.env.registries = func() []string { return []string{registry} }
 	s.hello.Vaults = []pairing.VaultInfo{
 		{ID: "vs-1", Label: "Testvault", Files: 6},
 		{ID: "vs-2", Label: "Hub-Test", Files: 1},

@@ -1310,7 +1310,7 @@ func TestIssue176_TheShellIsRecordedOnlyUnderThePairingLock(t *testing.T) {
 	if err := saveState(a.lay.State, st); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.pairWith(ctx, &term{out: io.Discard}, pairOptions{}, eng.client, pairOrigin{background: true, shellEnv: st.Env}); err == nil || !isRefusal(err) {
+	if _, err := a.pairWith(ctx, &term{out: io.Discard}, pairOptions{}, eng.client, pairOrigin{background: true, service: true}); err == nil || !isRefusal(err) {
 		t.Fatalf("the service's pairing: %v", err)
 	}
 	if st, _ := loadState(a.lay.State); st.Env["XDG_STATE_HOME"] != "/from/the/shell" || st.Env["XDG_CONFIG_HOME"] != "" {
@@ -1449,8 +1449,8 @@ func TestIssue176_UnreadableStateStopsAPairingBeforeAnyCheck(t *testing.T) {
 	if err == nil || isRefusal(err) || !strings.Contains(err.Error(), "could not be read") || !strings.Contains(err.Error(), "nothing was changed") {
 		t.Fatalf("a terminal pairing with agent.json unreadable: %v", err)
 	}
-	_, err = a.pairWith(context.Background(), &term{out: io.Discard}, pairOptions{code: hub.code, hub: hub.addr, vault: "Fresh", create: true, path: fresh}, eng.client, pairOrigin{background: true, shellEnv: map[string]string{}})
-	if err == nil || isRefusal(err) || !strings.Contains(err.Error(), "VaultSync's own places are not known") || !strings.Contains(err.Error(), "nothing was changed") {
+	_, err = a.pairWith(context.Background(), &term{out: io.Discard}, pairOptions{code: hub.code, hub: hub.addr, vault: "Fresh", create: true, path: fresh}, eng.client, pairOrigin{background: true, service: true})
+	if err == nil || isRefusal(err) || !strings.Contains(err.Error(), "could not be read") || !strings.Contains(err.Error(), "nothing was changed") {
 		t.Fatalf("a service pairing with agent.json unreadable: %v", err)
 	}
 	if eng.folderCount() != 0 {
@@ -1749,6 +1749,41 @@ func TestIssue176_StopSaysInTheServiceLogWhatItCouldNotDo(t *testing.T) {
 	if !saidDiag || !saidSocket {
 		t.Fatalf("the service log lacks the stop's words (diagnostics %v, socket %v): %v", saidDiag, saidSocket, logged.all())
 	}
+}
+
+// The service's pairing loads the shell's record under the pairing lock,
+// not when the request arrives: a terminal's pairing that records other
+// places just before the lock is taken is what the guards then look at.
+func TestIssue176_TheRecordIsLoadedUnderThePairingLock(t *testing.T) {
+	eng := newFakeEngine(t)
+	hub := newFakeHub(t, eng)
+	a := agentApp(t, eng)
+	client := serveControl(t, a)
+	notes := filepath.Join(a.home, "Notes")
+	mkVault(t, notes)
+	shellState := filepath.Join(t.TempDir(), "state")
+	writeFile(t, filepath.Join(shellState, "syncthing", "config.xml"), "<configuration><folder id=\"x\" label=\"Notes\" path=\""+notes+"\"></folder></configuration>\n")
+	// The request is in and the handler has read the state for its engine
+	// client — and right then, before the pairing lock, a terminal's
+	// pairing records the shell's XDG_STATE_HOME, where a Syncthing of the
+	// user's own syncs ~/Notes.
+	beforePairingLock = func() {
+		st, err := loadState(a.lay.State)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		st.Env = map[string]string{"XDG_STATE_HOME": shellState}
+		if err := saveState(a.lay.State, st); err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { beforePairingLock = nil })
+	pr, err := client.pair(context.Background(), pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Notes", Create: true, Path: notes, Yes: true})
+	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "already synced by the Syncthing on this computer") || eng.folderCount() != 0 {
+		t.Fatalf("the record made just before the lock must be the one checked: %+v %v", pr, err)
+	}
+	assertUntouched(t, notes)
 }
 
 // A port nobody serves answers with a refusal — or with a reset, when a

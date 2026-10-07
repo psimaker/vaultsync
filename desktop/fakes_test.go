@@ -48,6 +48,8 @@ type fakeEngine struct {
 	onPendingQuery func()
 	// onNextFolders runs inside the next GET of the folder list.
 	onNextFolders func()
+	// onNextDevices runs inside the next GET of the device list.
+	onNextDevices func()
 	// folderState answers /rest/db/status for a folder (idle when unset).
 	folderState map[string]map[string]any
 	// failFolders makes the next GET of the folder list fail, like an
@@ -126,6 +128,10 @@ func (e *fakeEngine) serve(w http.ResponseWriter, r *http.Request) {
 	case p == "/rest/system/connections":
 		write(map[string]any{"connections": map[string]any{}})
 	case p == "/rest/config/devices" && r.Method == http.MethodGet:
+		if hook := e.onNextDevices; hook != nil {
+			e.onNextDevices = nil
+			hook()
+		}
 		write(e.devices)
 	case p == "/rest/config/devices" && r.Method == http.MethodPost:
 		var d syncthing.DeviceConfig

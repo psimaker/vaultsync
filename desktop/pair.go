@@ -68,7 +68,7 @@ type pairEnv struct {
 	engine     *syncthing.Client
 	discover   func(context.Context) ([]pairing.DiscoveredHub, error)
 	dial       func(addr string) *pairing.Client
-	registries []string
+	registries func() []string
 	scanRoots  []string
 	cloud      func() []cloudRoot
 	userST     func() (userSyncthing, bool)
@@ -86,6 +86,12 @@ type pairEnv struct {
 	// rememberShell: this pairing runs in the shell, and records the
 	// shell's guard variables in agent.json under the pairing lock.
 	rememberShell bool
+	// shellRecord, for a pairing run by the service, loads the shell's
+	// record — under the pairing lock, so that a terminal's pairing or a
+	// setup that changes it cannot slip in between the load and the
+	// checks; what it loads lands in shellSlot, which the lookups read.
+	shellRecord func() (map[string]string, error)
+	shellSlot   *map[string]string
 }
 
 type pairSession struct {
@@ -151,7 +157,14 @@ func (p plan) label() string {
 	return p.name
 }
 
+// beforePairingLock runs right before a pairing takes its lock; a test
+// uses it to change what the pairing must then read under the lock.
+var beforePairingLock func()
+
 func (s *pairSession) run(ctx context.Context) error {
+	if beforePairingLock != nil {
+		beforePairingLock()
+	}
 	unlock, err := lockFile(filepath.Join(s.env.lay.Base, "pair.lock"))
 	if errors.Is(err, ErrEngineRunning) {
 		return errPairingBusy
@@ -166,6 +179,15 @@ func (s *pairSession) run(ctx context.Context) error {
 		if err := rememberShellEnv(s.env.lay.State, s.env.getenv); err != nil {
 			return err
 		}
+	}
+	if s.env.shellRecord != nil {
+		// Under the lock every writer of the record takes: the places the
+		// guards look at are the ones recorded now, not a moment ago.
+		rec, err := s.env.shellRecord()
+		if err != nil {
+			return err
+		}
+		*s.env.shellSlot = rec
 	}
 	if s.myID, err = s.env.engine.MyID(ctx); err != nil {
 		return fmt.Errorf("the sync engine does not answer: %w", err)
@@ -582,7 +604,11 @@ func (s *pairSession) buildMenu(ctx context.Context) (vaultMenu, error) {
 		configured[f.ID] = f
 		enginePaths = append(enginePaths, f.Path)
 	}
-	vaults, errs := knownVaults(s.env.registries)
+	var regs []string
+	if s.env.registries != nil {
+		regs = s.env.registries()
+	}
+	vaults, errs := knownVaults(regs)
 	if len(errs) > 0 {
 		m.registryNote = "Obsidian’s list of vaults could not be read; vaults it lists may be missing here."
 	}

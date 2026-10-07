@@ -542,20 +542,7 @@ func (c *controlServer) pair(w http.ResponseWriter, r *http.Request) {
 	resp := pairResponse{}
 	var out bytes.Buffer
 	opts := pairOptions{code: req.Code, hub: req.Hub, vault: req.Vault, create: req.Create, path: req.Path, yes: req.Yes, name: req.Name}
-	st, err := loadState(c.a.lay.State)
-	if err != nil {
-		fail(w, http.StatusInternalServerError, err)
-		return
-	}
-	if st.Env == nil {
-		// An agent.json from before the record: the guards would look only
-		// where the service looks, which may not be where the user's own
-		// Syncthing or cloud settings are — the terminal records that once.
-		resp.Refusal = "VaultSync has not recorded where this computer keeps its settings yet. Run vaultsync pair in a terminal once, then try again here."
-		writeJSON(w, http.StatusOK, resp)
-		return
-	}
-	s, err := c.a.pairWith(c.ctx, &term{out: &out}, opts, client, pairOrigin{background: c.background, shellEnv: st.Env})
+	s, err := c.a.pairWith(c.ctx, &term{out: &out}, opts, client, pairOrigin{background: c.background, service: true})
 	resp.Output = out.String()
 	if s != nil && s.menu != nil {
 		resp.Menu = menuToJSON(*s.menu)
