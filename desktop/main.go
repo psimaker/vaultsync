@@ -582,9 +582,22 @@ func (a *app) pair(ctx context.Context, args []string) error {
 // after seeing that lock free, and a record written outside it could
 // bring the file back after the removal was reported done.
 func rememberShellEnv(statePath string, getenv func(string) string) error {
+	// Only a state that is there and set up takes the record: loadState
+	// reads a missing agent.json as a fresh one, and a record written then
+	// would make the file — after an uninstall --remove-data that finished
+	// between the pairing's first looks and its lock, that would bring
+	// VaultSync's folder back from the dead.
+	if _, err := os.Stat(statePath); errors.Is(err, fs.ErrNotExist) {
+		return refuse("VaultSync is not set up on this computer (anymore). Run vaultsync setup.")
+	} else if err != nil {
+		return fmt.Errorf("VaultSync's settings could not be read (%w) — nothing was changed", err)
+	}
 	st, err := loadState(statePath)
 	if err != nil {
 		return fmt.Errorf("VaultSync's settings could not be read (%w) — nothing was changed", err)
+	}
+	if st.GUIPort == 0 {
+		return refuse("VaultSync is not set up on this computer yet. Run vaultsync setup.")
 	}
 	recorded := recordGuardEnv(getenv)
 	if st.Env != nil && maps.Equal(recorded, st.Env) {

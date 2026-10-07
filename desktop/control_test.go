@@ -1278,6 +1278,32 @@ func TestIssue176_TheShellIsRecordedOnlyUnderThePairingLock(t *testing.T) {
 	if st, _ := loadState(a.lay.State); st.Env["XDG_CONFIG_HOME"] != "/data/config" {
 		t.Fatalf("the shell is recorded under the lock: %v", st.Env)
 	}
+	// uninstall --remove-data finished between the pairing's first looks
+	// and its lock: nothing is there to record into, and nothing is made.
+	gone := agentApp(t, eng)
+	gone.getenv = a.getenv
+	if err := os.Remove(gone.lay.State); err != nil {
+		t.Fatal(err)
+	}
+	_, err = gone.pairWith(ctx, &term{out: io.Discard}, pairOptions{}, eng.client, pairOrigin{})
+	if !isRefusal(err) || !strings.Contains(refusalText(err), "not set up") {
+		t.Fatalf("a pairing after the removal: %v", err)
+	}
+	if _, err := os.Stat(gone.lay.State); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("agent.json was brought back by the record")
+	}
+	// A state file that is there but never set up takes no record either.
+	if err := saveState(gone.lay.State, agentState{}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = gone.pairWith(ctx, &term{out: io.Discard}, pairOptions{}, eng.client, pairOrigin{})
+	if !isRefusal(err) || !strings.Contains(refusalText(err), "not set up") {
+		t.Fatalf("a pairing on a state never set up: %v", err)
+	}
+	if st, _ := loadState(gone.lay.State); st.Env != nil {
+		t.Fatalf("a record on a state never set up: %v", st.Env)
+	}
+
 	// The service's pairing records nothing: the record is the shell's.
 	st, _ := loadState(a.lay.State)
 	st.Env = map[string]string{"XDG_STATE_HOME": "/from/the/shell"}
