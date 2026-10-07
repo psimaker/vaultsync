@@ -792,6 +792,12 @@ func TestIssue228_SetupAgainWithTheSameFlags(t *testing.T) {
 		if hub.provisionCount(id) != 0 || eng.folderCount() != 1 {
 			t.Fatalf("the Hub was asked (%d) or a folder was added (%d)", hub.provisionCount(id), eng.folderCount())
 		}
+		eng.mu.Lock()
+		devices := len(eng.devices)
+		eng.mu.Unlock()
+		if devices != 1 {
+			t.Fatalf("the engine's devices changed: %d", devices)
+		}
 		assertUntouched(t, filepath.Join(s.env.home, "Vaults", "Hub-Test-neu"))
 	})
 	t.Run("another folder: one folder per vault", func(t *testing.T) {

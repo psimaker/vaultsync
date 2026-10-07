@@ -171,12 +171,16 @@ func (s *pairSession) run(ctx context.Context) error {
 		// its own vaults; nothing may be decided on that.
 		return refuse("Your Hub could not list its vaults just now. Run vaultsync pair again in a moment.")
 	}
-	if err := s.addHubDevice(ctx); err != nil {
-		return err
-	}
 	p, err := s.choose(ctx)
 	if err != nil {
 		return s.unlessAlreadySyncing(err)
+	}
+	// The Hub becomes a device of this engine only once a plan stands: a
+	// refusal, and a setup that finds its vault already set up (#228),
+	// leave the engine's configuration as it was. The share the Hub sends
+	// in finish needs the device known, so this comes right before.
+	if err := s.addHubDevice(ctx); err != nil {
+		return err
 	}
 	return s.finish(ctx, p)
 }
