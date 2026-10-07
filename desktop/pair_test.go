@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/psimaker/vaultsync/hub/pairing"
+	"github.com/psimaker/vaultsync/hub/syncthing"
 )
 
 // mkVault creates a folder that already holds notes.
@@ -791,4 +793,161 @@ func TestIssue175_MenuAnswersBelongToTheFolder(t *testing.T) {
 	if hub.provisionCount("Notes") != 0 || eng.folderCount() != 0 {
 		t.Fatal("the Hub was asked or a folder was added")
 	}
+}
+
+// Setup run again with the same flags — as a script would — meets the vault
+// it already set up (#228): at the same folder there is nothing to do and
+// the setup succeeds; at another folder it says where the vault syncs. Both
+// before the Hub is asked. Another vault into a folder inside the synced one
+// is still an overlap.
+func TestIssue228_SetupAgainWithTheSameFlags(t *testing.T) {
+	ctx := context.Background()
+	const id = "vs-aaaaaaaaaaaa"
+	configured := func(t *testing.T, vault, path string) (*fakeEngine, *fakeHub, *pairSession, *bytes.Buffer) {
+		eng := newFakeEngine(t)
+		hub := newFakeHub(t, eng,
+			pairing.VaultInfo{ID: id, Label: "Hub-Test", Files: 3, SharedWith: []string{testMyID}},
+			pairing.VaultInfo{ID: "vs-bbbbbbbbbbbb", Label: "Work", Files: 5})
+		s, out := testSession(t, eng, hub, pairOptions{vault: vault})
+		s.opts.code = hub.code
+		local := filepath.Join(s.env.home, "Vaults", "Hub-Test-neu")
+		mkVault(t, local)
+		eng.mu.Lock()
+		eng.folders = append(eng.folders, syncthing.FolderConfig{ID: id, Label: "Hub-Test", Path: local})
+		eng.mu.Unlock()
+		s.opts.path = path
+		return eng, hub, s, out
+	}
+	t.Run("the same folder: nothing to do", func(t *testing.T) {
+		eng, hub, s, out := configured(t, "Hub-Test", "~/Vaults/Hub-Test-neu")
+		if err := s.run(ctx); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if !strings.Contains(out.String(), "✓ “Hub-Test” is already set up to sync at ~/Vaults/Hub-Test-neu.") || strings.Contains(out.String(), "overlaps") {
+			t.Fatalf("output:\n%s", out)
+		}
+		if hub.provisionCount(id) != 0 || eng.folderCount() != 1 {
+			t.Fatalf("the Hub was asked (%d) or a folder was added (%d)", hub.provisionCount(id), eng.folderCount())
+		}
+		eng.mu.Lock()
+		devices := len(eng.devices)
+		eng.mu.Unlock()
+		if devices != 1 {
+			t.Fatalf("the engine's devices changed: %d", devices)
+		}
+		assertUntouched(t, filepath.Join(s.env.home, "Vaults", "Hub-Test-neu"))
+	})
+	t.Run("another folder: one folder per vault", func(t *testing.T) {
+		eng, hub, s, _ := configured(t, "Hub-Test", "~/Vaults/Elsewhere")
+		err := s.run(ctx)
+		if !strings.Contains(refusalText(err), "“Hub-Test” is already set up to sync at ~/Vaults/Hub-Test-neu on this computer") || strings.Contains(refusalText(err), "overlaps") {
+			t.Fatalf("got %v", err)
+		}
+		if hub.provisionCount(id) != 0 || eng.folderCount() != 1 {
+			t.Fatalf("the Hub was asked (%d) or a folder was added (%d)", hub.provisionCount(id), eng.folderCount())
+		}
+		if _, err := os.Stat(filepath.Join(s.env.home, "Vaults", "Elsewhere")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("a folder was created")
+		}
+	})
+	t.Run("the same folder through a link", func(t *testing.T) {
+		eng, hub, s, out := configured(t, "Hub-Test", "~/Links/notes")
+		if err := os.MkdirAll(filepath.Join(s.env.home, "Links"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(s.env.home, "Vaults", "Hub-Test-neu"), filepath.Join(s.env.home, "Links", "notes")); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.run(ctx); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if !strings.Contains(out.String(), "✓ “Hub-Test” is already set up to sync at ~/Vaults/Hub-Test-neu.") || hub.provisionCount(id) != 0 || eng.folderCount() != 1 {
+			t.Fatalf("output:\n%s", out)
+		}
+	})
+	t.Run("a name that differs only in case is another folder on a case-sensitive volume", func(t *testing.T) {
+		eng, hub, s, out := configured(t, "Hub-Test", "~/Vaults/hub-test-neu")
+		other := filepath.Join(s.env.home, "Vaults", "hub-test-neu")
+		if err := os.MkdirAll(other, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		a, _ := os.Stat(other)
+		b, _ := os.Stat(filepath.Join(s.env.home, "Vaults", "Hub-Test-neu"))
+		if os.SameFile(a, b) {
+			t.Skip("a case-insensitive volume: both names are one folder")
+		}
+		s.env.goos = "darwin" // where case used to be folded by OS, not by the volume
+		if err := s.run(ctx); err == nil || strings.Contains(out.String(), "is already set up to sync") {
+			t.Fatalf("two folders were taken for one: %v\n%s", err, out)
+		}
+		if hub.provisionCount(id) != 0 || eng.folderCount() != 1 {
+			t.Fatalf("the Hub was asked (%d) or a folder was added (%d)", hub.provisionCount(id), eng.folderCount())
+		}
+	})
+	t.Run("the same folder under another spelling of its case", func(t *testing.T) {
+		eng, hub, s, out := configured(t, "Hub-Test", "~/Vaults/hub-test-neu")
+		a, errA := os.Stat(filepath.Join(s.env.home, "Vaults", "hub-test-neu"))
+		b, errB := os.Stat(filepath.Join(s.env.home, "Vaults", "Hub-Test-neu"))
+		if errA != nil || errB != nil || !os.SameFile(a, b) {
+			t.Skip("a case-sensitive volume: another spelling is another folder")
+		}
+		// Two spellings, one directory: only its identity says so.
+		if err := s.run(ctx); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if !strings.Contains(out.String(), "✓ “Hub-Test” is already set up to sync at ~/Vaults/Hub-Test-neu.") || hub.provisionCount(id) != 0 || eng.folderCount() != 1 {
+			t.Fatalf("output:\n%s", out)
+		}
+	})
+	t.Run("a file at the chosen path is not the folder", func(t *testing.T) {
+		eng, hub, s, out := configured(t, "Hub-Test", "~/Vaults/note.md")
+		writeFile(t, filepath.Join(s.env.home, "Vaults", "note.md"), "# a note\n")
+		err := s.run(ctx)
+		if err == nil || strings.Contains(out.String(), "is already set up to sync") {
+			t.Fatalf("a file was taken for the folder: %v\n%s", err, out)
+		}
+		if hub.provisionCount(id) != 0 || eng.folderCount() != 1 {
+			t.Fatalf("the Hub was asked (%d) or a folder was added (%d)", hub.provisionCount(id), eng.folderCount())
+		}
+	})
+	t.Run("a pending share resumed onto its own folder", func(t *testing.T) {
+		eng := newFakeEngine(t)
+		hub := newFakeHub(t, eng)
+		s, out := testSession(t, eng, hub, pairOptions{}, "y", "~/Vaults/Hub-Test-neu")
+		local := filepath.Join(s.env.home, "Vaults", "Hub-Test-neu")
+		mkVault(t, local)
+		eng.mu.Lock()
+		eng.devices = append(eng.devices, syncthing.DeviceConfig{DeviceID: testHubID, Name: "Test Hub"})
+		eng.folders = append(eng.folders, syncthing.FolderConfig{ID: id, Label: "Hub-Test", Path: local})
+		eng.pending[id] = map[string]string{testHubID: "Hub-Test"}
+		eng.mu.Unlock()
+		if err := s.run(ctx); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if !strings.Contains(out.String(), "✓ “Hub-Test” is already set up to sync at ~/Vaults/Hub-Test-neu.") || strings.Contains(out.String(), "error") || eng.folderCount() != 1 {
+			t.Fatalf("output:\n%s", out)
+		}
+	})
+	t.Run("another folder that holds files: the merge guard speaks first", func(t *testing.T) {
+		eng, hub, s, _ := configured(t, "Hub-Test", "~/Vaults/Full")
+		mkVault(t, filepath.Join(s.env.home, "Vaults", "Full"))
+		err := s.run(ctx)
+		if !strings.Contains(refusalText(err), "only into a new or empty folder") {
+			t.Fatalf("got %v", err)
+		}
+		if hub.provisionCount(id) != 0 || eng.folderCount() != 1 {
+			t.Fatalf("the Hub was asked (%d) or a folder was added (%d)", hub.provisionCount(id), eng.folderCount())
+		}
+		assertUntouched(t, filepath.Join(s.env.home, "Vaults", "Full"))
+	})
+	t.Run("another vault into a folder inside the synced one is still an overlap", func(t *testing.T) {
+		eng, hub, s, _ := configured(t, "Work", "~/Vaults/Hub-Test-neu/Notes")
+		err := s.run(ctx)
+		if !strings.Contains(refusalText(err), "overlaps ~/Vaults/Hub-Test-neu, which VaultSync already syncs") {
+			t.Fatalf("got %v", err)
+		}
+		if hub.provisionCount("vs-bbbbbbbbbbbb") != 0 || eng.folderCount() != 1 {
+			t.Fatalf("the Hub was asked (%d) or a folder was added (%d)", hub.provisionCount(id), eng.folderCount())
+		}
+	})
 }
