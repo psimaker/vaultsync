@@ -175,10 +175,24 @@ func (s *pairSession) run(ctx context.Context) error {
 		return err
 	}
 	p, err := s.choose(ctx)
+	var already *alreadySyncing
+	if errors.As(err, &already) {
+		// A repeated setup with the same flags: nothing to do, nothing wrong.
+		s.t.say("✓ %s already syncs at %s.", quoted(already.label), already.path)
+		return nil
+	}
 	if err != nil {
 		return err
 	}
 	return s.finish(ctx, p)
+}
+
+// alreadySyncing: the chosen Hub vault already syncs at the chosen folder on
+// this computer (#228). Not a refusal — the setup ends as succeeded.
+type alreadySyncing struct{ label, path string }
+
+func (e *alreadySyncing) Error() string {
+	return fmt.Sprintf("%s already syncs at %s.", quoted(e.label), e.path)
 }
 
 // --- the Hub ----------------------------------------------------------------
@@ -893,11 +907,28 @@ func (s *pairSession) planForHub(ctx context.Context, v pairing.VaultInfo) (plan
 // below an existing folder (VaultSync creates ~/Vaults, nothing else — a
 // missing parent can be a disk that is not connected).
 func (s *pairSession) downloadPlan(ctx context.Context, v pairing.VaultInfo, path string) (plan, error) {
-	enginePaths, err := s.enginePaths(ctx)
+	folders, err := s.env.engine.Folders(ctx)
 	if err != nil {
-		return plan{}, err
+		return plan{}, fmt.Errorf("the sync engine does not answer: %w", err)
 	}
 	path = resolveExistingPrefix(path)
+	// This vault may already sync on this computer — the overlap check below
+	// would otherwise report the folder as overlapping itself (#228). At
+	// this very folder there is nothing to do; elsewhere, a vault has one
+	// folder per computer. Neither asks the Hub.
+	for _, f := range folders {
+		if f.ID != v.ID {
+			continue
+		}
+		if _, same := sameConfigured(path, []syncthing.FolderConfig{f}, s.env.goos); same {
+			return plan{}, &alreadySyncing{label: v.Label, path: tildePath(s.env.home, f.Path)}
+		}
+		return plan{}, refuse("%s already syncs at %s on this computer. A vault has one folder here — nothing was changed.", quoted(v.Label), tildePath(s.env.home, f.Path))
+	}
+	enginePaths := make([]string, 0, len(folders))
+	for _, f := range folders {
+		enginePaths = append(enginePaths, f.Path)
+	}
 	if err := s.checkTarget(ctx, path, v.Label, enginePaths); err != nil {
 		return plan{}, err
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/psimaker/vaultsync/hub/pairing"
+	"github.com/psimaker/vaultsync/hub/syncthing"
 )
 
 // mkVault creates a folder that already holds notes.
@@ -754,4 +756,65 @@ func TestIssue175_MenuAnswersBelongToTheFolder(t *testing.T) {
 	if hub.provisionCount("Notes") != 0 || eng.folderCount() != 0 {
 		t.Fatal("the Hub was asked or a folder was added")
 	}
+}
+
+// Setup run again with the same flags — as a script would — meets the vault
+// it already set up (#228): at the same folder there is nothing to do and
+// the setup succeeds; at another folder it says where the vault syncs. Both
+// before the Hub is asked. Another vault into a folder inside the synced one
+// is still an overlap.
+func TestIssue228_SetupAgainWithTheSameFlags(t *testing.T) {
+	ctx := context.Background()
+	const id = "vs-aaaaaaaaaaaa"
+	configured := func(t *testing.T, vault, path string) (*fakeEngine, *fakeHub, *pairSession, *bytes.Buffer) {
+		eng := newFakeEngine(t)
+		hub := newFakeHub(t, eng,
+			pairing.VaultInfo{ID: id, Label: "Hub-Test", Files: 3, SharedWith: []string{testMyID}},
+			pairing.VaultInfo{ID: "vs-bbbbbbbbbbbb", Label: "Work", Files: 5})
+		s, out := testSession(t, eng, hub, pairOptions{vault: vault})
+		s.opts.code = hub.code
+		local := filepath.Join(s.env.home, "Vaults", "Hub-Test-neu")
+		mkVault(t, local)
+		eng.mu.Lock()
+		eng.folders = append(eng.folders, syncthing.FolderConfig{ID: id, Label: "Hub-Test", Path: local})
+		eng.mu.Unlock()
+		s.opts.path = path
+		return eng, hub, s, out
+	}
+	t.Run("the same folder: nothing to do", func(t *testing.T) {
+		eng, hub, s, out := configured(t, "Hub-Test", "~/Vaults/Hub-Test-neu")
+		if err := s.run(ctx); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if !strings.Contains(out.String(), "“Hub-Test” already syncs at ~/Vaults/Hub-Test-neu.") || strings.Contains(out.String(), "overlaps") {
+			t.Fatalf("output:\n%s", out)
+		}
+		if hub.provisionCount(id) != 0 || eng.folderCount() != 1 {
+			t.Fatalf("the Hub was asked (%d) or a folder was added (%d)", hub.provisionCount(id), eng.folderCount())
+		}
+		assertUntouched(t, filepath.Join(s.env.home, "Vaults", "Hub-Test-neu"))
+	})
+	t.Run("another folder: one folder per vault", func(t *testing.T) {
+		eng, hub, s, _ := configured(t, "Hub-Test", "~/Vaults/Elsewhere")
+		err := s.run(ctx)
+		if !strings.Contains(refusalText(err), "“Hub-Test” already syncs at ~/Vaults/Hub-Test-neu on this computer") || strings.Contains(refusalText(err), "overlaps") {
+			t.Fatalf("got %v", err)
+		}
+		if hub.provisionCount(id) != 0 || eng.folderCount() != 1 {
+			t.Fatalf("the Hub was asked (%d) or a folder was added (%d)", hub.provisionCount(id), eng.folderCount())
+		}
+		if _, err := os.Stat(filepath.Join(s.env.home, "Vaults", "Elsewhere")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("a folder was created")
+		}
+	})
+	t.Run("another vault into a folder inside the synced one is still an overlap", func(t *testing.T) {
+		eng, hub, s, _ := configured(t, "Work", "~/Vaults/Hub-Test-neu/Notes")
+		err := s.run(ctx)
+		if !strings.Contains(refusalText(err), "overlaps ~/Vaults/Hub-Test-neu, which VaultSync already syncs") {
+			t.Fatalf("got %v", err)
+		}
+		if hub.provisionCount("vs-bbbbbbbbbbbb") != 0 || eng.folderCount() != 1 {
+			t.Fatalf("the Hub was asked (%d) or a folder was added (%d)", hub.provisionCount(id), eng.folderCount())
+		}
+	})
 }
