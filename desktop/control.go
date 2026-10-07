@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/psimaker/vaultsync/hub/syncthing"
@@ -507,24 +508,34 @@ func logSocketError(logf func(string, ...any), base string, err error) {
 // noAgentForPause: no agent answers on the socket — which does not prove
 // that the engine is stopped. An agent without a control socket (an older
 // VaultSync, or a socket that could not be made) runs it all the same, so
-// the refusal says what is known: the engine runs and was not paused.
+// the engine is asked, and the refusal says what is known: it runs and was
+// not paused; nobody listens on its port, so nothing syncs; or neither
+// could be told, so syncing may continue.
 func (a *app) noAgentForPause(ctx context.Context, st agentState, pause bool) error {
-	if client, err := a.engine().client(st); err == nil {
+	client, err := a.engine().client(st)
+	if err == nil {
 		pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-		up := client.Ping(pctx) == nil
+		err = client.Ping(pctx)
 		cancel()
-		if up {
-			why := "The sync engine runs, but the VaultSync agent that controls it does not answer (an older VaultSync, or no control socket — see control-socket-error.txt in VaultSync's folder)"
-			if pause {
-				return refuse("%s: syncing could not be paused and continues. vaultsync stop stops the background service.", why)
-			}
-			return refuse("%s: VaultSync cannot tell whether syncing is paused, and could not resume it.", why)
+	}
+	switch {
+	case err == nil:
+		why := "The sync engine runs, but the VaultSync agent that controls it does not answer (an older VaultSync, or no control socket — see control-socket-error.txt in VaultSync's folder)"
+		if pause {
+			return refuse("%s: syncing could not be paused and continues. vaultsync stop stops the background service.", why)
 		}
+		return refuse("%s: VaultSync cannot tell whether syncing is paused, and could not resume it.", why)
+	case errors.Is(err, syscall.ECONNREFUSED):
+		// Nobody listens on the engine's port: the one positive sign that
+		// nothing syncs.
+		if pause {
+			return refuse("%s — nothing syncs while it is not running, so there is nothing to pause. See vaultsync status.", errNoAgent)
+		}
+		return refuse("%s. vaultsync start resumes the background service.", errNoAgent)
 	}
-	if pause {
-		return refuse("%s — nothing syncs while it is not running, so there is nothing to pause. See vaultsync status.", errNoAgent)
-	}
-	return refuse("%s. vaultsync start resumes the background service.", errNoAgent)
+	// Refused, timed out, or the engine's config could not be read: not
+	// known either way.
+	return refuse("VaultSync could not confirm whether the sync engine runs (%s), and no agent answers on the control socket: syncing may continue, and nothing was changed. See vaultsync status; vaultsync stop stops the background service.", redactPaths(err.Error()))
 }
 
 // --- pause / resume from the terminal ----------------------------------------

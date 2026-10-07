@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -69,13 +70,31 @@ func serveControl(t *testing.T, a *app) *controlClient {
 	return c
 }
 
-func serveControlLogged(t *testing.T, a *app) (*controlClient, *controlServer, *[]string) {
+// logLines collects what the agent logged, from any goroutine.
+type logLines struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (l *logLines) add(line string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.lines = append(l.lines, line)
+}
+
+func (l *logLines) all() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.lines...)
+}
+
+func serveControlLogged(t *testing.T, a *app) (*controlClient, *controlServer, *logLines) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	logged := &[]string{}
+	logged := &logLines{}
 	ctl := &controlServer{a: a, eng: a.engine(), logf: func(format string, args ...any) {
 		line := fmt.Sprintf(format, args...)
-		*logged = append(*logged, line)
+		logged.add(line)
 		t.Log(line)
 	}}
 	path, stop, err := ctl.serve(ctx)
@@ -117,8 +136,7 @@ func TestIssue176_StatusOverTheSocketIsWhatTheTerminalPrints(t *testing.T) {
 	eng := newFakeEngine(t)
 	hubDevice(eng)
 	a := agentApp(t, eng)
-	client, ctl, loggedPtr := serveControlLogged(t, a)
-	logged := *loggedPtr
+	client, ctl, logged := serveControlLogged(t, a)
 
 	cs, err := client.status(context.Background())
 	if err != nil {
@@ -163,9 +181,10 @@ func TestIssue176_StatusOverTheSocketIsWhatTheTerminalPrints(t *testing.T) {
 	if fi, _ := os.Stat(diag); fi.Mode().Perm() != 0o600 {
 		t.Fatalf("diagnostics mode %v", fi.Mode())
 	}
-	for _, line := range logged {
-		if strings.Contains(line, a.lay.Socket) {
-			t.Fatalf("the socket's path reached the log: %q", line)
+	// Read after the write: nothing of it reaches the agent's log.
+	for _, line := range logged.all() {
+		if strings.Contains(line, a.lay.Socket) || strings.Contains(line, "too many open files") {
+			t.Fatalf("the server's diagnostics reached the log: %q", line)
 		}
 	}
 	// Anything else is not this API.
@@ -284,6 +303,40 @@ func TestIssue176_PauseAndResumeTouchEveryHubAndNothingElse(t *testing.T) {
 	}
 	if err := b.pauseSync(ctx, false); !strings.Contains(refusalText(err), "cannot tell whether syncing is paused") {
 		t.Fatalf("resume without an agent but with a running engine: %v", err)
+	}
+	// An engine that refuses the probe (another API key), one that does not
+	// answer in time, and a config that cannot be read are no evidence that
+	// nothing syncs: the refusal says it could not confirm.
+	writeFile(t, filepath.Join(b.lay.Home, "config.xml"), "<configuration><gui><address>"+eng.addr+"</address><apikey>another-key</apikey></gui></configuration>\n")
+	if err := b.pauseSync(ctx, true); !strings.Contains(refusalText(err), "could not confirm") || !strings.Contains(refusalText(err), "syncing may continue") {
+		t.Fatalf("pause with the engine refusing the probe: %v", err)
+	}
+	silent, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		for {
+			if c, err := silent.Accept(); err == nil {
+				defer c.Close()
+			} else {
+				return
+			}
+		}
+	}()
+	t.Cleanup(func() { silent.Close() })
+	if err := saveState(b.lay.State, agentState{GUIPort: silent.Addr().(*net.TCPAddr).Port}); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.pauseSync(ctx, true); !strings.Contains(refusalText(err), "could not confirm") {
+		t.Fatalf("pause with the engine not answering in time: %v", err)
+	}
+	if err := os.Remove(filepath.Join(b.lay.Home, "config.xml")); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(b.lay.Home, "config.xml"), "<configuration><gui><address>"+eng.addr+"</address></gui></configuration>\n")
+	if err := b.pauseSync(ctx, false); !strings.Contains(refusalText(err), "could not confirm") || !strings.Contains(refusalText(err), "no API key") {
+		t.Fatalf("resume with an unreadable engine config: %v", err)
 	}
 
 	// The terminal's words, through the same socket.
