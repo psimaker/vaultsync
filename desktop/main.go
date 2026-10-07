@@ -584,7 +584,7 @@ func (a *app) pair(ctx context.Context, args []string) error {
 func rememberShellEnv(statePath string, getenv func(string) string) error {
 	st, err := loadState(statePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("VaultSync's settings could not be read (%w) — nothing was changed", err)
 	}
 	recorded := recordGuardEnv(getenv)
 	if st.Env != nil && maps.Equal(recorded, st.Env) {

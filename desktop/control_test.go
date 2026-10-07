@@ -1415,9 +1415,17 @@ func TestIssue176_UnreadableStateStopsAPairingBeforeAnyCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(a.lay.State, 0o600) })
+	// A pairing from the terminal stops at its first look into agent.json
+	// (the shell's record, under the lock); the socket's pairing, which
+	// records nothing, stops at the reserved places. Both say so, and
+	// neither goes on.
 	_, err := a.pairWith(context.Background(), &term{out: io.Discard}, pairOptions{code: hub.code, hub: hub.addr, vault: "Fresh", create: true, path: fresh}, eng.client, pairOrigin{})
+	if err == nil || isRefusal(err) || !strings.Contains(err.Error(), "could not be read") || !strings.Contains(err.Error(), "nothing was changed") {
+		t.Fatalf("a terminal pairing with agent.json unreadable: %v", err)
+	}
+	_, err = a.pairWith(context.Background(), &term{out: io.Discard}, pairOptions{code: hub.code, hub: hub.addr, vault: "Fresh", create: true, path: fresh}, eng.client, pairOrigin{background: true, shellEnv: map[string]string{}})
 	if err == nil || isRefusal(err) || !strings.Contains(err.Error(), "VaultSync's own places are not known") || !strings.Contains(err.Error(), "nothing was changed") {
-		t.Fatalf("a pairing with agent.json unreadable: %v", err)
+		t.Fatalf("a service pairing with agent.json unreadable: %v", err)
 	}
 	if eng.folderCount() != 0 {
 		t.Fatal("a folder was added without the reserved places known")
