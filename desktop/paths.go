@@ -18,6 +18,7 @@ type layout struct {
 	Home      string // Base/syncthing — the engine's identity, config and database
 	State     string // Base/agent.json
 	Lock      string // Base/agent.lock — held by the one running engine owner
+	Socket    string // Base/agent.sock — the running agent's control socket (control.go)
 	Logs      string // where the service's own output goes (empty: the journal)
 }
 
@@ -55,6 +56,7 @@ func (l layout) at(base string) layout {
 	l.Home = filepath.Join(l.Base, "syncthing")
 	l.State = filepath.Join(l.Base, "agent.json")
 	l.Lock = filepath.Join(l.Base, "agent.lock")
+	l.Socket = filepath.Join(l.Base, "agent.sock")
 	return l
 }
 
@@ -67,6 +69,9 @@ type agentState struct {
 		Version      string `json:"version"`
 		BinarySHA256 string `json:"binarySHA256"`
 	} `json:"syncthing"`
+	// ControlSocket is where the running agent listens (control.go) when
+	// that is not the layout's usual place; empty otherwise.
+	ControlSocket string `json:"controlSocket,omitempty"`
 }
 
 const agentStateVersion = 1

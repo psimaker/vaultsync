@@ -7,7 +7,8 @@
 //	                          service, pair with your Hub, choose a vault
 //	vaultsync pair            sync another vault (or another Hub)
 //	vaultsync status          what syncs where
-//	vaultsync stop | start    pause or resume the background service
+//	vaultsync pause | resume  pause or resume syncing (the service keeps running)
+//	vaultsync stop | start    stop or start the background service
 //	vaultsync uninstall       remove the background service (vaults stay)
 //	vaultsync run             the background service itself
 package main
@@ -124,8 +125,10 @@ func usage(w io.Writer) {
                          pair with your Hub and choose a vault
   vaultsync pair         sync another vault, or pair with another Hub
   vaultsync status       what syncs where, and whether your Hub is connected
-  vaultsync stop         pause the background service (until vaultsync start)
-  vaultsync start        resume it
+  vaultsync pause        pause syncing on this computer (until vaultsync resume)
+  vaultsync resume       resume it
+  vaultsync stop         stop the background service (until vaultsync start)
+  vaultsync start        start it again
   vaultsync uninstall    stop and remove the background service; your vaults stay
          [--remove-data] also remove VaultSync's settings, pairing identity and
                          sync database on this computer. Never removes vault files.
@@ -170,6 +173,10 @@ func runCLI(args []string) error {
 		return app.pair(ctx, args)
 	case "status":
 		return app.status(ctx)
+	case "pause":
+		return app.pauseSync(ctx, true)
+	case "resume":
+		return app.pauseSync(ctx, false)
 	case "stop":
 		return app.stopService()
 	case "start":
@@ -310,7 +317,7 @@ func (a *app) setup(ctx context.Context, args []string) error {
 		return fmt.Errorf("the sync engine did not start: %w — see %s", err, a.logHint())
 	}
 	command := a.installCommand(t)
-	err = a.pairWith(ctx, t, opts, client)
+	_, err = a.pairWith(ctx, t, opts, client)
 	if *noService {
 		t.blank()
 		t.say("VaultSync has no background service on this computer: run %s run to keep syncing.", command)
@@ -535,7 +542,7 @@ func (a *app) pair(ctx context.Context, args []string) error {
 	}
 	t, closeTerm := openTerm(a.out)
 	defer closeTerm()
-	err = a.pairWith(ctx, t, opts, client)
+	_, err = a.pairWith(ctx, t, opts, client)
 	if errors.Is(err, errCancelled) {
 		t.blank()
 		t.say("Nothing was paired.")
@@ -544,7 +551,9 @@ func (a *app) pair(ctx context.Context, args []string) error {
 	return err
 }
 
-func (a *app) pairWith(ctx context.Context, t *term, opts pairOptions, client *syncthing.Client) error {
+// pairWith runs the pairing flow on t and returns the session for what it
+// kept (the menu for a caller without a terminal).
+func (a *app) pairWith(ctx context.Context, t *term, opts pairOptions, client *syncthing.Client) (*pairSession, error) {
 	unitPath, _ := a.svc.unitPath()
 	s := &pairSession{
 		t:    t,
@@ -565,7 +574,7 @@ func (a *app) pairWith(ctx context.Context, t *term, opts pairOptions, client *s
 			now:            time.Now,
 		},
 	}
-	return s.run(ctx)
+	return s, s.run(ctx)
 }
 
 // --- run (the background service) -------------------------------------------
@@ -634,12 +643,35 @@ func (a *app) run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	logf("vaultsync %s: running the sync engine", version)
-	err = eng.supervise(ctx, st, logf)
+	// The engine lock makes this process the engine's only owner — and the
+	// control socket's: a socket file found now belongs to an agent that is
+	// gone. The socket is a convenience for status and the menu-bar app;
+	// an engine that cannot have one still runs.
+	unlock, err := lockFile(eng.lay.Lock)
 	if errors.Is(err, ErrEngineRunning) {
 		return refuse("VaultSync is already running on this computer (the background service). See vaultsync status.")
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	ctl := &controlServer{a: a, eng: eng, logf: logf}
+	if socket, stop, err := ctl.serve(ctx); err != nil {
+		logf("no control socket (%v): vaultsync status reads the engine directly", err)
+	} else {
+		defer stop()
+		if socket == a.lay.Socket {
+			socket = ""
+		}
+		if st.ControlSocket != socket {
+			st.ControlSocket = socket
+			if err := saveState(a.lay.State, st); err != nil {
+				return err
+			}
+		}
+	}
+	logf("vaultsync %s: running the sync engine", version)
+	return eng.superviseLocked(ctx, st, logf)
 }
 
 // --- stop / start -----------------------------------------------------------

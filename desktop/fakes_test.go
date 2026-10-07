@@ -30,6 +30,7 @@ const (
 // fakeEngine is the REST subset of the agent's own Syncthing.
 type fakeEngine struct {
 	mu        sync.Mutex
+	addr      string // host:port of the fake's API
 	myID      string
 	startTime string
 	devices   []syncthing.DeviceConfig
@@ -72,6 +73,7 @@ func newFakeEngine(t *testing.T) *fakeEngine {
 	}
 	srv := httptest.NewServer(http.HandlerFunc(e.serve))
 	t.Cleanup(srv.Close)
+	e.addr = strings.TrimPrefix(srv.URL, "http://")
 	e.client = syncthing.NewClient(srv.URL, "engine-key")
 	return e
 }
@@ -125,6 +127,18 @@ func (e *fakeEngine) serve(w http.ResponseWriter, r *http.Request) {
 		var m map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&m)
 		e.patches = append(e.patches, m)
+		if paused, ok := m["paused"].(bool); ok {
+			id := strings.TrimPrefix(p, "/rest/config/devices/")
+			for i := range e.devices {
+				if e.devices[i].DeviceID == id {
+					e.devices[i].Paused = paused
+				}
+			}
+		}
+	case p == "/rest/db/status":
+		write(map[string]any{"state": "idle"})
+	case p == "/rest/db/completion":
+		write(map[string]any{"completion": 100, "remoteState": "valid"})
 	case p == "/rest/config/folders" && r.Method == http.MethodGet:
 		if hook := e.onNextFolders; hook != nil {
 			e.onNextFolders = nil

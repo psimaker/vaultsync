@@ -89,12 +89,15 @@ type pairSession struct {
 
 	myID        string
 	engineStart string
-	hub         pairing.DiscoveredHub
-	client      *pairing.Client
-	code        string
-	hello       pairing.HubPayload
-	pairedAt    time.Time
-	seq         uint64
+	// menu is the vault menu kept for a caller without a terminal (the
+	// control socket) when the flags left a choice open.
+	menu     *vaultMenu
+	hub      pairing.DiscoveredHub
+	client   *pairing.Client
+	code     string
+	hello    pairing.HubPayload
+	pairedAt time.Time
+	seq      uint64
 }
 
 type planKind int
@@ -980,6 +983,7 @@ func (s *pairSession) downloadPlan(ctx context.Context, v pairing.VaultInfo, pat
 
 func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 	if s.opts.vault == "" || s.opts.path == "" {
+		s.keepMenu(ctx)
 		return plan{}, refuse("Pass --vault NAME and --path FOLDER (with --create for a new vault on your Hub) — there is no terminal to ask on.")
 	}
 	path, err := expandPath(s.env.home, s.opts.path)
@@ -997,6 +1001,7 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 		}
 	}
 	if !s.opts.create {
+		s.keepMenu(ctx)
 		return plan{}, refuse("Your Hub has no vault named %s. Add --create to start it as a new vault.", quoted(s.opts.vault))
 	}
 	name := pairing.SanitizeName(s.opts.vault)
@@ -1033,6 +1038,17 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 		}
 	}
 	return p, nil
+}
+
+// keepMenu builds the vault menu for a caller that has no terminal to read
+// it on (the control socket), so the refusal can carry the choices.
+func (s *pairSession) keepMenu(ctx context.Context) {
+	if s.t.interactive() {
+		return
+	}
+	if m, err := s.buildMenu(ctx); err == nil {
+		s.menu = &m
+	}
 }
 
 // --- the checks -------------------------------------------------------------

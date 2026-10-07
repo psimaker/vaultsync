@@ -257,14 +257,20 @@ const exitRestart = 3
 // and returns an error when the engine stops on its own — the service
 // manager then restarts the agent after its throttle interval.
 func (e engine) supervise(ctx context.Context, st agentState, logf func(string, ...any)) error {
-	if st.GUIPort <= 0 {
-		return errors.New("the sync engine is not set up yet — run vaultsync setup")
-	}
 	unlock, err := lockFile(e.lay.Lock)
 	if err != nil {
 		return err
 	}
 	defer unlock()
+	return e.superviseLocked(ctx, st, logf)
+}
+
+// superviseLocked is supervise for a caller that holds the engine lock
+// already (run, which serves the control socket under the same lock).
+func (e engine) superviseLocked(ctx context.Context, st agentState, logf func(string, ...any)) error {
+	if st.GUIPort <= 0 {
+		return errors.New("the sync engine is not set up yet — run vaultsync setup")
+	}
 	for {
 		if !portFree(st.GUIPort) {
 			// Someone else took the API port while the engine was down: move.
