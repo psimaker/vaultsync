@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/psimaker/vaultsync/hub/pairing"
 )
@@ -17,40 +16,53 @@ func catalogued(vaults []pairing.VaultInfo, id string) int64 {
 	return -99
 }
 
-// The Hub reports a vault's file count only once it knows it (#214):
-// unknownFiles — which every consumer fails closed on — while the folder
-// scans, syncs or has never completed a scan, and the global count, what the
-// vault holds or still expects, once it has settled.
-func TestIssue214_CountIsReportedOnlyForASettledVault(t *testing.T) {
+// Zero — the one count that lets a device make its files a vault's first
+// copy — is proven, not assumed (#214): the index knows of nothing, the
+// directory on the Hub is empty right now, the folder is running. Positive
+// counts are what the index knows locally or globally.
+func TestIssue214_ZeroIsProvenNotAssumed(t *testing.T) {
 	ctx := context.Background()
+	const (
+		dirEmpty = iota
+		dirFiles
+		dirMissing
+	)
 	cases := []struct {
 		name          string
 		state         string
 		local, global int64
-		neverScanned  bool
+		dir           int
 		want          int64
 	}{
-		{"settled and empty", "idle", 0, 0, false, 0},
-		{"settled with files", "idle", 5, 5, false, 5},
-		{"announced by a device, not downloaded yet", "idle", 0, 7, false, 7},
-		{"first scan still running", "scanning", 0, 0, true, unknownFiles},
-		{"never scanned", "idle", 0, 0, true, unknownFiles},
-		{"rescan running", "scanning", 5, 5, false, unknownFiles},
-		{"syncing", "syncing", 3, 9, false, unknownFiles},
-		{"error", "error", 5, 5, false, unknownFiles},
+		{"empty and idle", "idle", 0, 0, dirEmpty, 0},
+		{"empty, first scan running", "scanning", 0, 0, dirEmpty, 0},
+		{"empty, waiting for its scan", "scan-waiting", 0, 0, dirEmpty, 0},
+		{"files on the Hub", "idle", 5, 5, dirFiles, 5},
+		{"announced by a device, not downloaded yet", "idle", 0, 7, dirEmpty, 7},
+		{"local content the global index does not show", "idle", 1, 0, dirFiles, 1},
+		{"copied onto the Hub, not scanned yet", "scanning", 0, 0, dirFiles, unknownFiles},
+		{"copied onto the Hub after the last scan", "idle", 0, 0, dirFiles, unknownFiles},
+		{"paused or not running", "", 0, 0, dirEmpty, unknownFiles},
+		{"error", "error", 0, 0, dirEmpty, unknownFiles},
+		{"syncing with nothing known", "syncing", 0, 0, dirEmpty, unknownFiles},
+		{"directory gone", "idle", 0, 0, dirMissing, unknownFiles},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			fake, st := newFakeSyncthing(t, fakeHubID)
 			prov := newTestProvisioner(t, fake, fake.client(st))
-			// Adopted: the Hub knows nothing about the directory's content.
-			f, err := prov.createVault(ctx, "Old Notes", true)
+			f, err := prov.createVault(ctx, "Notes", false)
 			if err != nil {
 				t.Fatal(err)
 			}
+			switch c.dir {
+			case dirFiles:
+				testDirs[prov][f.Path] = true
+			case dirMissing:
+				delete(testDirs[prov], f.Path)
+			}
 			fake.mu.Lock()
-			fake.dbFiles[f.ID], fake.dbGlobal[f.ID] = c.local, c.global
-			fake.dbState[f.ID], fake.neverScanned[f.ID] = c.state, c.neverScanned
+			fake.dbFiles[f.ID], fake.dbGlobal[f.ID], fake.dbState[f.ID] = c.local, c.global, c.state
 			fake.mu.Unlock()
 			vaults, err := prov.listVaults(ctx)
 			if err != nil {
@@ -58,9 +70,6 @@ func TestIssue214_CountIsReportedOnlyForASettledVault(t *testing.T) {
 			}
 			if len(vaults) != 1 || vaults[0].ID != f.ID || vaults[0].Files != c.want {
 				t.Fatalf("got %+v, want files=%d", vaults, c.want)
-			}
-			if n := prov.settledFiles(ctx, f.ID); n != c.want {
-				t.Fatalf("provision reply would say %d, want %d", n, c.want)
 			}
 		})
 	}
@@ -86,21 +95,36 @@ func TestIssue214_UnreadableStatusIsUnknownNotEmpty(t *testing.T) {
 	if catalogued(vaults, f.ID) != unknownFiles {
 		t.Fatalf("catalogue: %+v", vaults)
 	}
-	if n := prov.settledFiles(ctx, f.ID); n != unknownFiles {
-		t.Fatalf("provision reply would say %d", n)
+}
+
+// A folder outside the vaults root cannot be looked at: its emptiness is
+// never certified.
+func TestIssue214_AVaultOutsideTheVaultsRootIsUnknown(t *testing.T) {
+	ctx := context.Background()
+	fake, st := newFakeSyncthing(t, fakeHubID)
+	prov := newTestProvisioner(t, fake, fake.client(st))
+	fake.mu.Lock()
+	fake.folders = append(fake.folders, folderConfig{ID: "vs-elsewhere00", Label: "Elsewhere", Path: "/srv/other/elsewhere"})
+	fake.mu.Unlock()
+	testDirs[prov]["/srv/other/elsewhere"] = false
+	vaults, err := prov.listVaults(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if catalogued(vaults, "vs-elsewhere00") != unknownFiles {
+		t.Fatalf("catalogue: %+v", vaults)
 	}
 }
 
-// A vault the Hub just created holds nothing of its own, so until its first
-// scan completes it counts what other devices announced: 0 right after the
-// create — which keeps the agent's new-vault evidence (decision 046) working
-// — and a device's files as soon as they are announced. After the first
-// scan the general rule applies: a rescan reads as unknown again.
-func TestIssue214_AVaultTheHubJustCreatedCountsWhatDevicesAnnounced(t *testing.T) {
+// The vault a pairing creates is empty on disk from the first moment, so it
+// counts 0 while its first scan runs — the agent's new-vault evidence
+// (decision 046) asks right after the create — and a device's files as soon
+// as they are announced; files copied onto the Hub make it unknown until
+// a scan has reported them.
+func TestIssue214_AVaultTheHubJustCreatedCountsZeroWhileItScans(t *testing.T) {
 	fx := newPairingFixture(t)
 	fx.fake.mu.Lock()
 	fx.fake.defaultState = "scanning"
-	fx.fake.defaultUnscanned = true
 	fx.fake.mu.Unlock()
 	ctx := context.Background()
 	c := fx.client()
@@ -115,7 +139,6 @@ func TestIssue214_AVaultTheHubJustCreatedCountsWhatDevicesAnnounced(t *testing.T
 	if reply.Provisioned.Files != 0 || catalogued(reply.Vaults, id) != 0 {
 		t.Fatalf("a vault created in this request must count 0 while its first scan runs: %+v %+v", reply.Provisioned, reply.Vaults)
 	}
-	// Another device's index arrives before the scan is through.
 	fx.fake.mu.Lock()
 	fx.fake.dbGlobal[id] = 3
 	fx.fake.mu.Unlock()
@@ -125,99 +148,19 @@ func TestIssue214_AVaultTheHubJustCreatedCountsWhatDevicesAnnounced(t *testing.T
 	if catalogued(reply.Vaults, id) != 3 {
 		t.Fatalf("announced files must count: %+v", reply.Vaults)
 	}
-	// The first scan completes: the general rule takes over …
 	fx.fake.mu.Lock()
-	fx.fake.defaultState, fx.fake.defaultUnscanned = "", false
 	fx.fake.dbGlobal[id] = 0
 	fx.fake.mu.Unlock()
+	var path string
+	for p := range testDirs[fx.server.prov] {
+		path = p
+	}
+	testDirs[fx.server.prov][path] = true // copied onto the Hub, not scanned yet
 	if reply, err = c.Provision(ctx, 3, fakeDeviceID, "Laptop", "", false); err != nil {
 		t.Fatal(err)
 	}
-	if catalogued(reply.Vaults, id) != 0 {
-		t.Fatalf("settled and empty: %+v", reply.Vaults)
-	}
-	// … and a rescan after it is unknown, created here or not.
-	fx.fake.mu.Lock()
-	fx.fake.dbState[id] = "scanning"
-	fx.fake.mu.Unlock()
-	if reply, err = c.Provision(ctx, 4, fakeDeviceID, "Laptop", "", false); err != nil {
-		t.Fatal(err)
-	}
 	if catalogued(reply.Vaults, id) != unknownFiles {
-		t.Fatalf("rescan must read as unknown: %+v", reply.Vaults)
-	}
-}
-
-// The created-vault exception is bounded: an adopted directory is never
-// trusted, and a created vault is not trusted forever without a scan.
-func TestIssue214_OnlyAFreshCreateIsTrustedWithoutAScan(t *testing.T) {
-	ctx := context.Background()
-	fake, st := newFakeSyncthing(t, fakeHubID)
-	prov := newTestProvisioner(t, fake, fake.client(st))
-	fake.mu.Lock()
-	fake.defaultUnscanned = true
-	fake.mu.Unlock()
-	adopted, err := prov.createVault(ctx, "Adopted", true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	created, err := prov.createVault(ctx, "Created", false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	vaults, err := prov.listVaults(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if catalogued(vaults, adopted.ID) != unknownFiles || catalogued(vaults, created.ID) != 0 {
-		t.Fatalf("got %+v", vaults)
-	}
-	prov.mu.Lock()
-	prov.createdEmpty[created.ID] = time.Now().Add(-createdEmptyFor - time.Minute)
-	prov.mu.Unlock()
-	if vaults, err = prov.listVaults(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if catalogued(vaults, created.ID) != unknownFiles {
-		t.Fatalf("an old create without a scan must read as unknown: %+v", vaults)
-	}
-}
-
-// Sharing a vault restarts its folder, which rescans: the provision reply
-// waits for the folder to settle instead of answering "unknown" to a device
-// that could have joined; without the wait that moment reads as unknown.
-func TestIssue214_ProvisionWaitsForTheSharedFolderToSettle(t *testing.T) {
-	fx := newPairingFixture(t)
-	ctx := context.Background()
-	c := fx.client()
-	if _, err := c.Handshake(ctx, fx.code); err != nil {
-		t.Fatal(err)
-	}
-	reply, err := c.Provision(ctx, 1, fakeDeviceID, "Laptop", "Notes", true)
-	if err != nil || reply.Provisioned == nil {
-		t.Fatalf("%+v %v", reply, err)
-	}
-	id := reply.Provisioned.ID
-	fx.server.prov.settleWait = 2 * time.Second
-	fx.fake.mu.Lock()
-	fx.fake.dbFiles[id] = 4
-	fx.fake.scanningFirst[id] = 3
-	fx.fake.mu.Unlock()
-	if reply, err = c.Provision(ctx, 2, fakeDeviceID, "Laptop", "Notes", false); err != nil || reply.Provisioned == nil {
-		t.Fatalf("%+v %v", reply, err)
-	}
-	if reply.Provisioned.Files != 4 {
-		t.Fatalf("must wait for the folder to settle, got %d", reply.Provisioned.Files)
-	}
-	fx.server.prov.settleWait = 0
-	fx.fake.mu.Lock()
-	fx.fake.scanningFirst[id] = 1
-	fx.fake.mu.Unlock()
-	if reply, err = c.Provision(ctx, 3, fakeDeviceID, "Laptop", "Notes", false); err != nil || reply.Provisioned == nil {
-		t.Fatalf("%+v %v", reply, err)
-	}
-	if reply.Provisioned.Files != unknownFiles {
-		t.Fatalf("without the wait a scanning folder is unknown, got %d", reply.Provisioned.Files)
+		t.Fatalf("files on disk the index has not seen must read as unknown: %+v", reply.Vaults)
 	}
 }
 

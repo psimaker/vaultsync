@@ -1,0 +1,11 @@
+# 047 — The Hub proves a vault empty before it says so; unknown is -1
+
+**Context.** Devices decide from the Hub's file count whether a folder that already holds files may join a vault (`join.AcceptShare`: 0 = the local content becomes the first copy, > 0 = refused, < 0 = refused as unknown); the desktop agent's new-vault evidence (046) requires 0 right after the create and again before the add. Syncthing's local count is 0 for an empty folder *and* for one whose first scan has not finished, it omits files other devices announced but the Hub has not downloaded, and the catalogue left 0 when the status could not be read (#214).
+
+**Decision.** `vaultFiles` reports max(local, global) when that is positive — files the Hub holds or expects; a positive count is safe either way. Zero is proven, never assumed: the index knows of nothing anywhere, the vault's directory on the Hub's disk is empty right now (`dirState`, which ignores Syncthing's marker and version store), and the folder is running — idle, scanning or waiting to scan; paused and stopped folders answer with empty counters. Everything else, a status that cannot be read and a vault outside the vaults root report -1. CLIs print "counting…" for -1; the iPhone shows a count only when positive and asks merge consent on its own (007).
+
+**Why.** 0 is the one value that lets a device merge; it must never stand for "not known yet". A directory listing is the truth about local content at this instant — a scan only reports it later — and the index adds what other devices announced. No timestamp, memory or waiting period says as much: the vault the desktop agent creates is empty on disk from the first millisecond, so its evidence needs no timing.
+
+**Rejected alternatives.** Trusting a completed scan (`/rest/stats/folder` lastScan) plus a record of the vaults this process created (a timestamp cannot prove emptiness, the record dies with the process, a copy made on the Hub during the first scan slips through). The local count with a "scanning" flag on the wire (a protocol change old agents and the iPhone would not understand; -1 already means unknown to every consumer). Waiting for the first scan inside create or in the provision reply (timing, and no stronger than looking at the directory).
+
+**Links.** #214, #223, #206, #175; decisions 007, 046.

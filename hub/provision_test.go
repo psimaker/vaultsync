@@ -67,7 +67,6 @@ func TestPathsOverlap(t *testing.T) {
 func newTestProvisioner(t *testing.T, f *fakeSyncthing, client *SyncthingClient) *provisioner {
 	t.Helper()
 	p := newProvisioner(client, "/var/syncthing/vaults", "/var/syncthing/vaults")
-	p.settleWait = 0          // the fake settles by count, not by time (scanningFirst)
 	dirs := map[string]bool{} // path → non-empty
 	p.dirState = func(path string) (bool, bool, error) {
 		nonEmpty, ok := dirs[path]

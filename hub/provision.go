@@ -9,8 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
-	"time"
 	"unicode"
 
 	"github.com/psimaker/vaultsync/hub/join"
@@ -64,27 +62,15 @@ type provisioner struct {
 	// package var so tests run without a filesystem.
 	dirState func(path string) (exists, empty bool, err error)
 	mkdir    func(path string) error
-
-	// createdEmpty holds the vaults this process created as fresh, empty
-	// directories — never adopted — and when. Until its first scan has
-	// completed, such a vault counts what other devices announced instead
-	// of "unknown" (vaultFiles): nothing local can be in it.
-	mu           sync.Mutex
-	createdEmpty map[string]time.Time
-	// settleWait bounds how long a provision reply waits for the folder
-	// that sharing just restarted to settle (settledFiles).
-	settleWait time.Duration
 }
 
 func newProvisioner(client *SyncthingClient, vaultsRoot, localRoot string) *provisioner {
 	return &provisioner{
-		client:       client,
-		vaultsRoot:   filepath.Clean(vaultsRoot),
-		localRoot:    filepath.Clean(localRoot),
-		dirState:     dirStateFS,
-		mkdir:        func(p string) error { return os.MkdirAll(p, 0o755) },
-		createdEmpty: map[string]time.Time{},
-		settleWait:   provisionSettleWait,
+		client:     client,
+		vaultsRoot: filepath.Clean(vaultsRoot),
+		localRoot:  filepath.Clean(localRoot),
+		dirState:   dirStateFS,
+		mkdir:      func(p string) error { return os.MkdirAll(p, 0o755) },
 	}
 }
 
@@ -156,6 +142,55 @@ func newFolderID() (string, error) {
 	return folderIDPrefix + hex.EncodeToString(b[:]), nil
 }
 
+// unknownFiles is what a vault reports while the Hub does not know what it
+// holds. The desktop agent and `vaultsync-hub pair` fail closed on it — a
+// folder that holds files is never combined with such a vault — and the
+// CLIs show no number; the iPhone shows a count only when it is positive.
+const unknownFiles int64 = -1
+
+// vaultFiles reports what a vault holds, or unknownFiles (#214). A positive
+// count is what Syncthing's index knows locally or globally — files on the
+// Hub, or announced by another device and not downloaded yet — and is safe
+// either way: a device never combines its files with them. Zero is the one
+// count that lets a device make its files the vault's first copy, so it is
+// proven, not assumed: the index knows of nothing anywhere, the vault's
+// directory is empty on disk right now (the index lags a copy made on the
+// Hub itself by a scan), and the folder is running — paused and stopped
+// folders answer with empty counters. Decision 047.
+func (p *provisioner) vaultFiles(ctx context.Context, f folderConfig) int64 {
+	st, err := p.client.DBStatus(ctx, f.ID)
+	if err != nil {
+		return unknownFiles
+	}
+	if n := max(st.LocalFiles, st.GlobalFiles); n > 0 {
+		return n
+	}
+	local, ok := p.localPath(f.Path)
+	if !ok {
+		return unknownFiles
+	}
+	exists, empty, err := p.dirState(local)
+	if err != nil || !exists || !empty {
+		return unknownFiles
+	}
+	switch st.State {
+	case "idle", "scanning", "scan-waiting":
+		return 0
+	}
+	return unknownFiles
+}
+
+// localPath is a vault's directory as this process sees it: the vaults root
+// is one directory, mounted at vaultsRoot for Syncthing and at localRoot
+// here. A folder elsewhere cannot be looked at.
+func (p *provisioner) localPath(syncthingPath string) (string, bool) {
+	rel, err := filepath.Rel(p.vaultsRoot, filepath.Clean(syncthingPath))
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return filepath.Join(p.localRoot, rel), true
+}
+
 // listVaults returns every configured folder with its file count (or
 // unknownFiles) and peers.
 func (p *provisioner) listVaults(ctx context.Context) ([]vaultInfo, error) {
@@ -167,13 +202,9 @@ func (p *provisioner) listVaults(ctx context.Context) ([]vaultInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	stats, err := p.client.FolderStats(ctx)
-	if err != nil {
-		stats = nil // no scan is proven for any folder
-	}
 	out := make([]vaultInfo, 0, len(folders))
 	for _, f := range folders {
-		info := vaultInfo{ID: f.ID, Label: f.Label, Files: p.vaultFiles(ctx, f.ID, stats)}
+		info := vaultInfo{ID: f.ID, Label: f.Label, Files: p.vaultFiles(ctx, f)}
 		if info.Label == "" {
 			info.Label = f.ID
 		}
@@ -258,92 +289,7 @@ func (p *provisioner) createVault(ctx context.Context, name string, adopt bool) 
 	if err := p.client.AddFolder(ctx, f); err != nil {
 		return folderConfig{}, err
 	}
-	if !adopt {
-		p.mu.Lock()
-		p.createdEmpty[f.ID] = time.Now()
-		p.mu.Unlock()
-	}
 	return f, nil
-}
-
-// unknownFiles is what a vault reports while the Hub does not know what it
-// holds. Every consumer treats it as "not empty": the device-side guard
-// (join.AcceptShare) refuses to combine a folder that holds files with such
-// a vault, the agent's new-vault evidence fails, the CLIs show no number.
-const unknownFiles int64 = -1
-
-// provisionSettleWait bounds the wait in a provision reply for the folder
-// that sharing just restarted.
-const provisionSettleWait = 2 * time.Second
-
-// createdEmptyFor is how long a created vault is trusted to hold nothing
-// local when no scan has reported yet — a safety net only; an empty
-// directory scans in milliseconds.
-const createdEmptyFor = time.Hour
-
-// vaultFiles reports what a vault holds, or unknownFiles while that is not
-// known (#214). Syncthing's local count is 0 for an empty folder and for a
-// folder whose first scan is still running — an adopted directory, a Hub
-// that just started — and it leaves out files other devices announced but
-// the Hub has not downloaded yet. So a number is reported only for a
-// settled folder, idle with a completed scan behind it, and it is the
-// global count: everything the vault holds or still expects. The one
-// exception is a vault this process created as a fresh, empty directory:
-// until its first scan completes, nothing local can be in it, so what other
-// devices announced is the whole truth — the agent's new-vault evidence
-// (decision 046) asks right after the create. Decision 047.
-func (p *provisioner) vaultFiles(ctx context.Context, folderID string, stats map[string]folderStats) int64 {
-	st, err := p.client.DBStatus(ctx, folderID)
-	if err != nil {
-		return unknownFiles
-	}
-	if stats != nil && !stats[folderID].LastScan.IsZero() {
-		// A scan has completed: from here on only a settled folder counts —
-		// a rescan may be finding what someone put there on the Hub itself.
-		p.forgetCreated(folderID)
-		if st.State == "idle" {
-			return st.GlobalFiles
-		}
-		return unknownFiles
-	}
-	if p.createdEmptyRecently(folderID) {
-		return st.GlobalFiles
-	}
-	return unknownFiles
-}
-
-func (p *provisioner) createdEmptyRecently(folderID string) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	at, ok := p.createdEmpty[folderID]
-	return ok && time.Since(at) < createdEmptyFor
-}
-
-func (p *provisioner) forgetCreated(folderID string) {
-	p.mu.Lock()
-	delete(p.createdEmpty, folderID)
-	p.mu.Unlock()
-}
-
-// settledFiles is vaultFiles with a bounded wait while the folder is
-// unsettled: sharing a vault restarts its folder, and a restart rescans.
-func (p *provisioner) settledFiles(ctx context.Context, folderID string) int64 {
-	deadline := time.Now().Add(p.settleWait)
-	for {
-		stats, err := p.client.FolderStats(ctx)
-		if err != nil {
-			stats = nil
-		}
-		n := p.vaultFiles(ctx, folderID, stats)
-		if n != unknownFiles || !time.Now().Before(deadline) {
-			return n
-		}
-		select {
-		case <-ctx.Done():
-			return unknownFiles
-		case <-time.After(100 * time.Millisecond):
-		}
-	}
 }
 
 func hubVersioning() versioningConfig {

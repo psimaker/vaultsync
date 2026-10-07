@@ -24,19 +24,14 @@ type fakeSyncthing struct {
 	folderDefaults map[string]any
 	dbFiles        map[string]int64
 	dbGlobal       map[string]int64  // folder → globalFiles; absent: the local count
-	dbState        map[string]string // folder → db/status state; "": defaultState, then idle
-	neverScanned   map[string]bool   // folder → stats/folder reports no completed scan
+	dbState        map[string]string // folder → db/status state; absent: defaultState, then idle
 	dbStatusFail   map[string]bool   // folder → db/status answers 500
-	scanningFirst  map[string]int    // folder → that many db/status calls say "scanning"
-	// defaultState and defaultUnscanned apply to folders without an entry —
-	// also to folders a test creates through the API.
-	defaultState     string
-	defaultUnscanned bool
-	connected        map[string]bool
-	pending          map[string][]string // folder → offered by
-	devicePatches    []map[string]any
-	optionPatches    []map[string]any
-	failDeviceAdd    bool // POST /rest/config/devices answers 500
+	defaultState   string            // the state of folders without an entry — also those a test creates
+	connected      map[string]bool
+	pending        map[string][]string // folder → offered by
+	devicePatches  []map[string]any
+	optionPatches  []map[string]any
+	failDeviceAdd  bool // POST /rest/config/devices answers 500
 }
 
 const (
@@ -56,9 +51,7 @@ func newFakeSyncthing(t *testing.T, myID string) (*fakeSyncthing, *httptest.Serv
 		dbFiles:        map[string]int64{},
 		dbGlobal:       map[string]int64{},
 		dbState:        map[string]string{},
-		neverScanned:   map[string]bool{},
 		dbStatusFail:   map[string]bool{},
-		scanningFirst:  map[string]int{},
 		connected:      map[string]bool{},
 		pending:        map[string][]string{},
 	}
@@ -219,32 +212,18 @@ func (f *fakeSyncthing) serve(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "database unavailable", http.StatusInternalServerError)
 			return
 		}
-		state := f.dbState[id]
-		if state == "" {
+		state, ok := f.dbState[id]
+		if !ok {
 			state = f.defaultState
-		}
-		if state == "" {
-			state = "idle"
-		}
-		if n := f.scanningFirst[id]; n > 0 {
-			f.scanningFirst[id] = n - 1
-			state = "scanning"
+			if state == "" {
+				state = "idle"
+			}
 		}
 		global, ok := f.dbGlobal[id]
 		if !ok {
 			global = f.dbFiles[id]
 		}
 		write(map[string]any{"localFiles": f.dbFiles[id], "globalFiles": global, "state": state})
-	case path == "/rest/stats/folder":
-		out := map[string]any{}
-		for _, fc := range f.folders {
-			last := "2026-10-07T08:00:00Z"
-			if f.neverScanned[fc.ID] || f.defaultUnscanned {
-				last = "0001-01-01T00:00:00Z"
-			}
-			out[fc.ID] = map[string]any{"lastScan": last}
-		}
-		write(out)
 	case path == "/rest/cluster/pending/folders":
 		out := map[string]any{}
 		for id, devs := range f.pending {
