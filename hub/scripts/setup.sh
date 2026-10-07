@@ -83,6 +83,52 @@ ask() {
 	return 1
 }
 
+# is_release VERSION: a plain x.y.z, as the official image tags are.
+is_release() {
+	printf '%s' "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
+}
+
+# version_newer A B: true when A is a higher x.y.z than B.
+version_newer() {
+	[ "$1" != "$2" ] || return 1
+	[ "$(printf '%s\n%s\n' "$1" "$2" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)" = "$1" ]
+}
+
+# An existing Hub stays on the image its .env names — re-running the setup
+# never moves it by itself. When that is an older official release than the
+# one this setup ships, the move is offered: only on a terminal, only with
+# consent, never for a custom image, never a downgrade (#216). Declined or
+# without a terminal, the manual step is named instead.
+offer_newer_hub_image() {
+	current="$1"
+	official="ghcr.io/psimaker/vaultsync-hub:"
+	case "$current" in
+		"" | "$HUB_IMAGE") return 0 ;;
+		"$official"*) ;;
+		*) info "Your Hub runs a custom image ($current); setup leaves it as it is."; return 0 ;;
+	esac
+	cur_ver=${current#"$official"}
+	new_ver=${HUB_IMAGE#"$official"}
+	is_release "$cur_ver" && is_release "$new_ver" || return 0
+	version_newer "$new_ver" "$cur_ver" || return 0
+	info "Your Hub runs vaultsync-hub $cur_ver; this setup ships $new_ver."
+	if [ "$DRY_RUN" = 1 ]; then
+		info "[dry-run] would offer to set VAULTSYNC_HUB_IMAGE=$HUB_IMAGE in $HUB_DIR/.env"
+		return 0
+	fi
+	if answer=$(ask "  Move it to $new_ver now? Vaults, devices and codes carry over. [y/N] " "n"); then
+		case "$answer" in
+			[yY]*)
+				sed -i "s|^VAULTSYNC_HUB_IMAGE=.*|VAULTSYNC_HUB_IMAGE=$HUB_IMAGE|" "$HUB_DIR/.env"
+				info "  .env now names $HUB_IMAGE; the stack restarts on it below."
+				return 0
+				;;
+		esac
+	fi
+	info "  Kept $cur_ver. To move later: set VAULTSYNC_HUB_IMAGE=$HUB_IMAGE in $HUB_DIR/.env,"
+	info "  then run docker compose pull && docker compose up -d there (docs/hub.md → Update the Hub)."
+}
+
 # --- Menu --------------------------------------------------------------------
 
 info ""
@@ -351,6 +397,7 @@ setup_hub() {
 		existing_gui=$(sed -n 's/^GUI_PORT=//p' "$HUB_DIR/.env" | tail -1)
 		[ -z "$existing_sync" ] || SYNC_PORT="$existing_sync"
 		[ -z "$existing_gui" ] || GUI_PORT="$existing_gui"
+		offer_newer_hub_image "$(sed -n 's/^VAULTSYNC_HUB_IMAGE=//p' "$HUB_DIR/.env" | tail -1)"
 	else
 		if port_in_use 22000; then
 			warn "Port 22000 is already in use (another Syncthing?). The Hub will use 22001."

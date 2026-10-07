@@ -146,6 +146,49 @@ printf '%s\n' "$out" | grep -q "would run: docker compose --project-directory $H
 $out"
 pass "hub dry-run plans compose up, init and pairing code with the right owner"
 
+# An existing Hub keeps its .env; setup offers only a newer official image —
+# never a custom one, never a downgrade — and in a dry run only on paper (#216).
+# shellcheck disable=SC2016 # the braces are literal text in setup.sh
+SHIPPED=$(sed -n 's/^HUB_IMAGE="${VAULTSYNC_HUB_IMAGE:-\(.*\)}"$/\1/p' "$SETUP_SH")
+[ -n "$SHIPPED" ] || fail "cannot read the shipped Hub image from setup.sh"
+EXISTING="$SANDBOX/existing-hub"
+existing_hub_dry_run() {
+	rm -rf "$EXISTING"
+	mkdir -p "$EXISTING"
+	printf 'PUID=1000\nPGID=1000\nSYNC_PORT=22001\nGUI_PORT=8385\nVAULTSYNC_HUB_IMAGE=%s\n' "$1" >"$EXISTING/.env"
+	VAULTSYNC_HUB_DIR="$EXISTING" sh "$SETUP_SH" --hub --dry-run 2>&1
+}
+out=$(existing_hub_dry_run "ghcr.io/psimaker/vaultsync-hub:0.1.0") || fail "existing-hub dry-run exited non-zero:
+$out"
+printf '%s\n' "$out" | grep -q "would offer to set VAULTSYNC_HUB_IMAGE=$SHIPPED in $EXISTING/.env" ||
+	fail "an older official image is not offered the shipped one:
+$out"
+printf '%s\n' "$out" | grep -q "SYNC_PORT=22001 GUI_PORT=8385" ||
+	fail "the existing Hub's ports are not kept:
+$out"
+grep -q "^VAULTSYNC_HUB_IMAGE=ghcr.io/psimaker/vaultsync-hub:0.1.0$" "$EXISTING/.env" || fail "a dry run changed .env"
+out=$(existing_hub_dry_run "ghcr.io/psimaker/vaultsync-hub:9.9.9") || fail "existing-hub dry-run exited non-zero:
+$out"
+if printf '%s\n' "$out" | grep -q "would offer"; then
+	fail "a newer official image must not be offered a downgrade:
+$out"
+fi
+out=$(existing_hub_dry_run "registry.example/me/hub:dev") || fail "existing-hub dry-run exited non-zero:
+$out"
+printf '%s\n' "$out" | grep -q "custom image" || fail "a custom image is not left alone:
+$out"
+if printf '%s\n' "$out" | grep -q "would offer"; then
+	fail "a custom image must not be offered anything:
+$out"
+fi
+out=$(existing_hub_dry_run "$SHIPPED") || fail "existing-hub dry-run exited non-zero:
+$out"
+if printf '%s\n' "$out" | grep -q -e "would offer" -e "custom image"; then
+	fail "the shipped image needs no word:
+$out"
+fi
+pass "an existing Hub is offered only a newer official image, on paper in a dry run"
+
 # --- 3. Device path ----------------------------------------------------------
 
 release="https://github.com/psimaker/vaultsync/releases/download/desktop-v0.10.0"

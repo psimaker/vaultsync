@@ -269,6 +269,10 @@ docker compose pull && docker compose up -d
 ```
 
 Vaults, paired devices and an open pairing code carry over unchanged.
+Running the setup link again on the Hub (**2) Hub**) offers this move when
+it ships a newer release than your `.env` names — it asks first, keeps
+your ports and names, and never touches a custom image or moves a Hub
+backwards. Without a terminal it names the step above instead.
 
 ## Troubleshooting
 
