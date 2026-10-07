@@ -1311,8 +1311,11 @@ func TestIssue176_ARefusedOrResetConnectIsNobodyListening(t *testing.T) {
 		}
 	}
 
-	// An engine that accepts and then resets the connection is an engine
-	// that failed, not one on its way up: the agent's status says so.
+	// An engine that accepts, takes the request and then resets the
+	// connection is an engine that failed, not one on its way up: the
+	// agent's status says so. (It reads the request first, so the reset
+	// lands after the connect — a reset racing the connect itself would be
+	// the supervisor's port check, which is nobody listening.)
 	eng := newFakeEngine(t)
 	a := agentApp(t, eng)
 	resetting, err := net.Listen("tcp", "127.0.0.1:0")
@@ -1325,6 +1328,8 @@ func TestIssue176_ARefusedOrResetConnectIsNobodyListening(t *testing.T) {
 			if err != nil {
 				return
 			}
+			_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+			_, _ = c.Read(make([]byte, 1))
 			_ = c.(*net.TCPConn).SetLinger(0)
 			c.Close()
 		}
