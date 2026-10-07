@@ -146,7 +146,12 @@ func TestIssue175_ReadRefusalNamesFilesAndFolders(t *testing.T) {
 	home := "/Users/vstest"
 	path := filepath.Join(home, "Documents", "Testvault")
 	tcc := &fs.PathError{Op: "open", Path: path, Err: syscall.EPERM}
-	got := refusalText(cannotRead("darwin", home, path, tcc))
+	got := refusalText(cannotRead("darwin", home, path, tcc, false))
+	// Inside the background service (the control socket's pairing) it is
+	// "vaultsync" that macOS has to allow, not the terminal app.
+	if bg := refusalText(cannotRead("darwin", home, path, tcc, true)); !strings.Contains(bg, "Allow “vaultsync”") || strings.Contains(bg, "Terminal") {
+		t.Fatalf("background wording: %s", bg)
+	}
 	if !strings.Contains(got, "Files & Folders") || !strings.Contains(got, "~/Documents/Testvault") {
 		t.Fatalf("darwin, operation not permitted: %q", got)
 	}
@@ -157,7 +162,7 @@ func TestIssue175_ReadRefusalNamesFilesAndFolders(t *testing.T) {
 		{"linux", tcc},
 		{"darwin", &fs.PathError{Op: "open", Path: path, Err: syscall.EACCES}},
 	} {
-		if got := refusalText(cannotRead(c.goos, home, path, c.err)); strings.Contains(got, "Files & Folders") || !strings.Contains(got, "Check its permissions") {
+		if got := refusalText(cannotRead(c.goos, home, path, c.err, false)); strings.Contains(got, "Files & Folders") || !strings.Contains(got, "Check its permissions") {
 			t.Fatalf("%s %v: %q", c.goos, c.err, got)
 		}
 	}

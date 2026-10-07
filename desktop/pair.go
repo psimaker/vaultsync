@@ -80,6 +80,9 @@ type pairEnv struct {
 	hubSyncAddress string
 	deviceName     string
 	now            func() time.Time
+	// background: the pairing runs inside the background service, so a
+	// folder macOS refuses is "vaultsync" to allow — not the terminal app.
+	background bool
 }
 
 type pairSession struct {
@@ -436,8 +439,11 @@ func macLocalNetworkNote(goos string) string {
 // "operation not permitted" on a folder in Documents, Desktop or Downloads is
 // macOS privacy protection, not the folder's permissions: the app vaultsync
 // runs in needs access under Files & Folders.
-func cannotRead(goos, home, path string, err error) error {
+func cannotRead(goos, home, path string, err error, background bool) error {
 	if goos == "darwin" && errors.Is(err, syscall.EPERM) {
+		if background {
+			return refuse("macOS did not let VaultSync read %s. Allow “vaultsync” to access this folder in System Settings → Privacy & Security → Files & Folders, then try again.", tildePath(home, path))
+		}
 		return refuse("macOS did not let VaultSync read %s. Allow the app you run vaultsync in (Terminal, for example) to access this folder in System Settings → Privacy & Security → Files & Folders, then try again.", tildePath(home, path))
 	}
 	return refuse("VaultSync cannot read %s. Check its permissions or reconnect its disk, then try again.", tildePath(home, path))
@@ -806,7 +812,7 @@ func (s *pairSession) planForLocal(ctx context.Context, path string) (plan, erro
 	}
 	_, empty, err := join.DirState(path)
 	if err != nil {
-		return plan{}, cannotRead(s.env.goos, s.env.home, path, err)
+		return plan{}, cannotRead(s.env.goos, s.env.home, path, err, s.env.background)
 	}
 	p.hadFiles = !empty
 	if p.name, err = s.askHubName(filepath.Base(path), p.hadFiles); err != nil {
@@ -972,7 +978,7 @@ func (s *pairSession) downloadPlan(ctx context.Context, v pairing.VaultInfo, pat
 	}
 	exists, empty, err := join.DirState(path)
 	if err != nil {
-		return plan{}, cannotRead(s.env.goos, s.env.home, path, err)
+		return plan{}, cannotRead(s.env.goos, s.env.home, path, err, s.env.background)
 	}
 	if exists && !empty {
 		return plan{}, refuse("%s already holds files. VaultSync downloads a vault from your Hub only into a new or empty folder — choose another one.", tildePath(s.env.home, path))
@@ -1029,7 +1035,7 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 	}
 	exists, empty, err := join.DirState(path)
 	if err != nil {
-		return plan{}, cannotRead(s.env.goos, s.env.home, path, err)
+		return plan{}, cannotRead(s.env.goos, s.env.home, path, err, s.env.background)
 	}
 	if !exists {
 		if st, err := os.Stat(filepath.Dir(path)); err != nil || !st.IsDir() {
@@ -1316,7 +1322,7 @@ func (s *pairSession) finalGate(ctx context.Context, p plan, v pairing.VaultInfo
 	}
 	_, empty, err := join.DirState(abs)
 	if err != nil {
-		return cannotRead(s.env.goos, s.env.home, abs, err)
+		return cannotRead(s.env.goos, s.env.home, abs, err, s.env.background)
 	}
 	if empty == p.hadFiles {
 		return refuse("%s changed while VaultSync was waiting for your Hub. Nothing was connected — run vaultsync pair again.", tildePath(s.env.home, abs))

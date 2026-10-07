@@ -142,6 +142,10 @@ func (e *fakeEngine) serve(w http.ResponseWriter, r *http.Request) {
 		}
 	case p == "/rest/db/status":
 		if st, ok := e.folderState[r.URL.Query().Get("folder")]; ok {
+			if st == nil {
+				http.Error(w, "no such folder", http.StatusNotFound)
+				return
+			}
 			write(st)
 			break
 		}

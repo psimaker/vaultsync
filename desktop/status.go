@@ -244,9 +244,9 @@ func (a *app) report(ctx context.Context, c *syncthing.Client, background bool) 
 			state = describeFolder(f, sum, conns, remote, sys.MyID, background)
 		}
 		// Paused here: the connection is, so the rest of the state would be
-		// "waiting for your Hub" — but a folder's own error, or its own
-		// pause, stays visible with its remedy.
-		if r.Paused && state != "paused" && !strings.HasPrefix(state, "error:") {
+		// "waiting for your Hub" — but what a pause does not change stays
+		// visible, with its remedy.
+		if r.Paused && !keepsWhilePaused(state) {
 			state = "paused on this computer"
 		}
 		r.Vaults = append(r.Vaults, vaultStatus{ID: f.ID, Label: f.Label, Path: f.Path, State: state})
@@ -267,6 +267,13 @@ func (a *app) report(ctx context.Context, c *syncthing.Client, background bool) 
 	r.Attempts = append(r.Attempts, a.printAttempts(w, configured)...)
 	r.Text = text.String()
 	return r, nil
+}
+
+// keepsWhilePaused: a folder state that a pause of the connection does not
+// change — an error, the folder's own pause, files that could not sync, or
+// no answer from the engine — stays as it is while syncing is paused here.
+func keepsWhilePaused(state string) bool {
+	return state == "paused" || state == "unknown" || strings.HasPrefix(state, "error:") || strings.Contains(state, "could not sync")
 }
 
 // emptyReport is a report with every list present (never null in JSON).

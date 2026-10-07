@@ -317,7 +317,7 @@ func (a *app) setup(ctx context.Context, args []string) error {
 		return fmt.Errorf("the sync engine did not start: %w — see %s", err, a.logHint())
 	}
 	command := a.installCommand(t)
-	_, err = a.pairWith(ctx, t, opts, client)
+	_, err = a.pairWith(ctx, t, opts, client, false)
 	if *noService {
 		t.blank()
 		t.say("VaultSync has no background service on this computer: run %s run to keep syncing.", command)
@@ -542,7 +542,7 @@ func (a *app) pair(ctx context.Context, args []string) error {
 	}
 	t, closeTerm := openTerm(a.out)
 	defer closeTerm()
-	_, err = a.pairWith(ctx, t, opts, client)
+	_, err = a.pairWith(ctx, t, opts, client, false)
 	if errors.Is(err, errCancelled) {
 		t.blank()
 		t.say("Nothing was paired.")
@@ -552,8 +552,10 @@ func (a *app) pair(ctx context.Context, args []string) error {
 }
 
 // pairWith runs the pairing flow on t and returns the session for what it
-// kept (the menu for a caller without a terminal).
-func (a *app) pairWith(ctx context.Context, t *term, opts pairOptions, client *syncthing.Client) (*pairSession, error) {
+// kept (the menu for a caller without a terminal). background says the
+// flow runs inside the background service (the control socket), whose
+// permissions macOS grants to "vaultsync", not to a terminal app.
+func (a *app) pairWith(ctx context.Context, t *term, opts pairOptions, client *syncthing.Client, background bool) (*pairSession, error) {
 	unitPath, _ := a.svc.unitPath()
 	s := &pairSession{
 		t:    t,
@@ -572,6 +574,7 @@ func (a *app) pairWith(ctx context.Context, t *term, opts pairOptions, client *s
 			pendingTimeout: join.DefaultPendingTimeout,
 			deviceName:     computerName(a.goos),
 			now:            time.Now,
+			background:     background,
 		},
 	}
 	return s, s.run(ctx)

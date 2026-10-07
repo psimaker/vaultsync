@@ -61,11 +61,23 @@ func agentApp(t *testing.T, eng *fakeEngine) *app {
 		svc: service{goos: "linux", home: home, getenv: envOf(nil), lay: lay, run: &fakeRunner{}}}
 }
 
-// serveControl starts the agent's side on a.lay.Socket and returns a client.
+// serveControl starts the agent's side on a.lay.Socket and returns a client,
+// the server, and what the agent logged.
 func serveControl(t *testing.T, a *app) *controlClient {
 	t.Helper()
+	c, _, _ := serveControlLogged(t, a)
+	return c
+}
+
+func serveControlLogged(t *testing.T, a *app) (*controlClient, *controlServer, *[]string) {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	ctl := &controlServer{a: a, eng: a.engine(), logf: t.Logf}
+	logged := &[]string{}
+	ctl := &controlServer{a: a, eng: a.engine(), logf: func(format string, args ...any) {
+		line := fmt.Sprintf(format, args...)
+		*logged = append(*logged, line)
+		t.Log(line)
+	}}
 	path, stop, err := ctl.serve(ctx)
 	if err != nil {
 		cancel()
@@ -75,7 +87,7 @@ func serveControl(t *testing.T, a *app) *controlClient {
 	if path != a.lay.Socket {
 		t.Fatalf("listened on %s, wanted %s", path, a.lay.Socket)
 	}
-	return newControlClient(path)
+	return newControlClient(path), ctl, logged
 }
 
 func hubDevice(eng *fakeEngine) {
@@ -105,7 +117,8 @@ func TestIssue176_StatusOverTheSocketIsWhatTheTerminalPrints(t *testing.T) {
 	eng := newFakeEngine(t)
 	hubDevice(eng)
 	a := agentApp(t, eng)
-	client := serveControl(t, a)
+	client, ctl, loggedPtr := serveControlLogged(t, a)
+	logged := *loggedPtr
 
 	cs, err := client.status(context.Background())
 	if err != nil {
@@ -141,6 +154,20 @@ func TestIssue176_StatusOverTheSocketIsWhatTheTerminalPrints(t *testing.T) {
 	if fi, err := os.Stat(a.lay.Socket); err != nil || fi.Mode()&os.ModeSocket == 0 || fi.Mode().Perm() != 0o600 {
 		t.Fatalf("socket: %v %v", fi, err)
 	}
+	// The server's own diagnostics go to a private file, not to the log.
+	ctl.srv.ErrorLog.Printf("http: Accept error: accept unix %s: too many open files", a.lay.Socket)
+	diag := filepath.Join(a.lay.Base, "control-socket.log")
+	if data, err := os.ReadFile(diag); err != nil || !strings.Contains(string(data), "too many open files") {
+		t.Fatalf("diagnostics: %q %v", data, err)
+	}
+	if fi, _ := os.Stat(diag); fi.Mode().Perm() != 0o600 {
+		t.Fatalf("diagnostics mode %v", fi.Mode())
+	}
+	for _, line := range logged {
+		if strings.Contains(line, a.lay.Socket) {
+			t.Fatalf("the socket's path reached the log: %q", line)
+		}
+	}
 	// Anything else is not this API.
 	if err := client.do(context.Background(), http.MethodGet, "/v2/status", nil, nil); !errors.Is(err, errNoAgent) {
 		t.Fatalf("an unknown path reads as no agent, got %v", err)
@@ -167,7 +194,12 @@ func TestIssue176_PauseAndResumeTouchEveryHubAndNothingElse(t *testing.T) {
 	eng.devices = append(eng.devices, syncthing.DeviceConfig{DeviceID: otherID, Name: "Second Hub"})
 	eng.folders = append(eng.folders, syncthingFolder("vs-bbbbbbbbbbbb", "Work", "/home/me/Work"))
 	eng.folders[1].Devices = []syncthing.FolderDevice{folderDeviceOf(testMyID), folderDeviceOf(otherID)}
-	eng.folderState = map[string]map[string]any{"vs-bbbbbbbbbbbb": {"state": "error", "error": "permission denied"}}
+	eng.folders = append(eng.folders, syncthingFolder("vs-cccccccccccc", "Mail", "/home/me/Mail"), syncthingFolder("vs-dddddddddddd", "Old", "/home/me/Old"))
+	eng.folderState = map[string]map[string]any{
+		"vs-bbbbbbbbbbbb": {"state": "error", "error": "permission denied"},
+		"vs-cccccccccccc": {"state": "idle", "errors": 3},
+		"vs-dddddddddddd": nil, // the engine does not answer for it
+	}
 	eng.mu.Unlock()
 	res, err = client.setPaused(ctx, true)
 	if err != nil || !res.Paused || res.Hubs != 2 {
@@ -183,12 +215,27 @@ func TestIssue176_PauseAndResumeTouchEveryHubAndNothingElse(t *testing.T) {
 	if err != nil || !cs.Paused {
 		t.Fatalf("status after pause: %+v %v", cs, err)
 	}
-	if cs.Hubs[0].State != "paused on this computer — vaultsync resume starts syncing again" || cs.Hubs[1].State != cs.Hubs[0].State || cs.Vaults[0].State != "paused on this computer" {
-		t.Fatalf("paused states: %+v %+v", cs.Hubs, cs.Vaults)
+	if cs.Hubs[0].State != "paused on this computer — vaultsync resume starts syncing again" || cs.Hubs[1].State != cs.Hubs[0].State {
+		t.Fatalf("paused states: %+v", cs.Hubs)
 	}
-	// A folder's own error stays visible, with its remedy, while paused.
-	if cs.Vaults[1].Label != "Work" || !strings.HasPrefix(cs.Vaults[1].State, "error: permission denied") || !strings.Contains(cs.Vaults[1].State, "allow access to this folder") {
-		t.Fatalf("a folder error while paused: %+v", cs.Vaults[1])
+	// What a pause does not change stays visible: a folder's own error with
+	// its remedy, files that could not sync, an engine that does not answer
+	// for a folder.
+	byLabel := map[string]string{}
+	for _, v := range cs.Vaults {
+		byLabel[v.Label] = v.State
+	}
+	if st := byLabel["Work"]; !strings.HasPrefix(st, "error: permission denied") || !strings.Contains(st, "allow access to this folder") {
+		t.Fatalf("a folder error while paused: %q", st)
+	}
+	if st := byLabel["Mail"]; st != "3 files could not sync — see the engine's log" {
+		t.Fatalf("files that could not sync, while paused: %q", st)
+	}
+	if st := byLabel["Old"]; st != "unknown" {
+		t.Fatalf("a folder the engine does not answer for, while paused: %q", st)
+	}
+	if st := byLabel["Notes"]; st != "paused on this computer" {
+		t.Fatalf("a healthy folder while paused: %q", st)
 	}
 	// Pausing again changes nothing; a pairing is refused while paused —
 	// over the socket and in the terminal alike.
@@ -198,7 +245,7 @@ func TestIssue176_PauseAndResumeTouchEveryHubAndNothingElse(t *testing.T) {
 	if pr, err := client.pair(ctx, pairRequest{Code: "x"}); err != nil || pr.OK || !strings.Contains(pr.Refusal, "paused on this computer — run vaultsync resume first") {
 		t.Fatalf("pair while paused: %+v %v", pr, err)
 	}
-	if _, err := a.pairWith(ctx, &term{out: io.Discard}, pairOptions{code: "x"}, eng.client); !strings.Contains(refusalText(err), "paused on this computer — run vaultsync resume first") {
+	if _, err := a.pairWith(ctx, &term{out: io.Discard}, pairOptions{code: "x"}, eng.client, false); !strings.Contains(refusalText(err), "paused on this computer — run vaultsync resume first") {
 		t.Fatalf("terminal pair while paused: %v", err)
 	}
 	// A pairing in flight holds the pairing lock; a pause waits for it.
@@ -218,8 +265,25 @@ func TestIssue176_PauseAndResumeTouchEveryHubAndNothingElse(t *testing.T) {
 	if p, _ := pausedDevices(eng); p != 0 {
 		t.Fatalf("%d Hubs still paused", p)
 	}
-	if cs, err := client.status(ctx); err != nil || cs.Paused || cs.Hubs[0].State != "not connected" || cs.Vaults[0].State != "waiting for your Hub" {
+	cs, err = client.status(ctx)
+	if err != nil || cs.Paused || cs.Hubs[0].State != "not connected" {
 		t.Fatalf("status after resume: %+v %v", cs, err)
+	}
+	for _, v := range cs.Vaults {
+		if v.Label == "Notes" && v.State != "waiting for your Hub" {
+			t.Fatalf("a healthy folder after resume: %q", v.State)
+		}
+	}
+
+	// No agent on the socket while the engine runs on (an older agent, a
+	// socket that could not be made): pause says so instead of "nothing
+	// syncs".
+	b := agentApp(t, eng)
+	if err := b.pauseSync(ctx, true); !strings.Contains(refusalText(err), "could not be paused and continues") || !strings.Contains(refusalText(err), "vaultsync stop") {
+		t.Fatalf("pause without an agent but with a running engine: %v", err)
+	}
+	if err := b.pauseSync(ctx, false); !strings.Contains(refusalText(err), "cannot tell whether syncing is paused") {
+		t.Fatalf("resume without an agent but with a running engine: %v", err)
 	}
 
 	// The terminal's words, through the same socket.

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -108,6 +109,7 @@ type controlServer struct {
 	// that asked for it, so a caller that goes away mid-way does not abort
 	// an accept.
 	ctx context.Context
+	srv *http.Server
 }
 
 // controlRequestLimit bounds a request body; the flags of a pairing are a
@@ -132,6 +134,16 @@ func (c *controlServer) serve(ctx context.Context) (path string, stop func(), er
 		return "", nil, err
 	}
 	c.ctx = ctx
+	// The server's own diagnostics — an accept that failed, a request it
+	// could not read — name the socket's path: they go to a private file in
+	// VaultSync's folder (0600, started over past 1 MiB), never to the
+	// service log.
+	diag, err := openStderrLog(filepath.Join(c.a.lay.Base, "control-socket.log"))
+	if err != nil {
+		l.Close()
+		cleanup()
+		return "", nil, err
+	}
 	// A pairing takes minutes (discovery, the Hub, the wait for its share),
 	// so the response may take that long; reading a request and holding an
 	// idle connection may not.
@@ -141,10 +153,17 @@ func (c *controlServer) serve(ctx context.Context) (path string, stop func(), er
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      15 * time.Minute,
 		IdleTimeout:       2 * time.Minute,
+		ErrorLog:          log.New(diag, "", log.LstdFlags),
 	}
+	c.srv = srv
 	done := make(chan struct{})
 	go func() {
-		_ = srv.Serve(l)
+		if err := srv.Serve(l); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			// The engine goes on; status and the menu-bar app lose their
+			// socket until the next start. The words stay in the folder.
+			c.logf("the control socket stopped serving — %s; vaultsync status reads the engine directly (details in control-socket.log)", serviceSummary(err))
+			fmt.Fprintf(diag, "%s serve: %v\n", time.Now().Format(time.RFC3339), err)
+		}
 		close(done)
 	}()
 	stop = func() {
@@ -154,6 +173,7 @@ func (c *controlServer) serve(ctx context.Context) (path string, stop func(), er
 		_ = srv.Close()
 		<-done
 		cleanup()
+		diag.Close()
 	}
 	return path, stop, nil
 }
@@ -308,7 +328,7 @@ func (c *controlServer) pair(w http.ResponseWriter, r *http.Request) {
 	resp := pairResponse{}
 	var out bytes.Buffer
 	opts := pairOptions{code: req.Code, hub: req.Hub, vault: req.Vault, create: req.Create, path: req.Path, yes: req.Yes, name: req.Name}
-	s, err := c.a.pairWith(c.ctx, &term{out: &out}, opts, client)
+	s, err := c.a.pairWith(c.ctx, &term{out: &out}, opts, client, c.background)
 	resp.Output = out.String()
 	if s != nil && s.menu != nil {
 		resp.Menu = menuToJSON(*s.menu)
@@ -484,6 +504,29 @@ func logSocketError(logf func(string, ...any), base string, err error) {
 	_ = writeFileAtomic(filepath.Join(base, "control-socket-error.txt"), []byte(err.Error()+"\n"), 0o600)
 }
 
+// noAgentForPause: no agent answers on the socket — which does not prove
+// that the engine is stopped. An agent without a control socket (an older
+// VaultSync, or a socket that could not be made) runs it all the same, so
+// the refusal says what is known: the engine runs and was not paused.
+func (a *app) noAgentForPause(ctx context.Context, st agentState, pause bool) error {
+	if client, err := a.engine().client(st); err == nil {
+		pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		up := client.Ping(pctx) == nil
+		cancel()
+		if up {
+			why := "The sync engine runs, but the VaultSync agent that controls it does not answer (an older VaultSync, or no control socket — see control-socket-error.txt in VaultSync's folder)"
+			if pause {
+				return refuse("%s: syncing could not be paused and continues. vaultsync stop stops the background service.", why)
+			}
+			return refuse("%s: VaultSync cannot tell whether syncing is paused, and could not resume it.", why)
+		}
+	}
+	if pause {
+		return refuse("%s — nothing syncs while it is not running, so there is nothing to pause. See vaultsync status.", errNoAgent)
+	}
+	return refuse("%s. vaultsync start resumes the background service.", errNoAgent)
+}
+
 // --- pause / resume from the terminal ----------------------------------------
 
 func (a *app) pauseSync(ctx context.Context, pause bool) error {
@@ -498,10 +541,8 @@ func (a *app) pauseSync(ctx context.Context, pause bool) error {
 	defer cancel()
 	res, err := a.controlClient(st).setPaused(ctx, pause)
 	switch {
-	case errors.Is(err, errNoAgent) && pause:
-		return refuse("%s — nothing syncs while it is not running, so there is nothing to pause. See vaultsync status.", errNoAgent)
 	case errors.Is(err, errNoAgent):
-		return refuse("%s. vaultsync start resumes the background service.", errNoAgent)
+		return a.noAgentForPause(ctx, st, pause)
 	case err != nil:
 		return err
 	case res.Hubs == 0:
