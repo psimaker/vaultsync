@@ -1,0 +1,30 @@
+//go:build linux
+
+package main
+
+import (
+	"net"
+
+	"golang.org/x/sys/unix"
+)
+
+// peerUID is the user id of the account at the other end of a unix socket
+// connection, as the kernel knows it.
+func peerUID(conn *net.UnixConn) (int, error) {
+	raw, err := conn.SyscallConn()
+	if err != nil {
+		return -1, err
+	}
+	uid, cerr := -1, error(nil)
+	if err := raw.Control(func(fd uintptr) {
+		cred, err := unix.GetsockoptUcred(int(fd), unix.SOL_SOCKET, unix.SO_PEERCRED)
+		if err != nil {
+			cerr = err
+			return
+		}
+		uid = int(cred.Uid)
+	}); err != nil {
+		return -1, err
+	}
+	return uid, cerr
+}

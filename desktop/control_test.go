@@ -294,12 +294,13 @@ func TestIssue176_PauseAndResumeTouchEveryHubAndNothingElse(t *testing.T) {
 	eng.devices = append(eng.devices, syncthing.DeviceConfig{DeviceID: otherID, Name: "Second Hub"})
 	eng.folders = append(eng.folders, syncthingFolder("vs-bbbbbbbbbbbb", "Work", "/home/me/Work"))
 	eng.folders[1].Devices = []syncthing.FolderDevice{folderDeviceOf(testMyID), folderDeviceOf(otherID)}
-	eng.folders = append(eng.folders, syncthingFolder("vs-cccccccccccc", "Mail", "/home/me/Mail"), syncthingFolder("vs-dddddddddddd", "Old", "/home/me/Old"), syncthingFolder("vs-eeeeeeeeeeee", "Busy", "/home/me/Busy"))
+	eng.folders = append(eng.folders, syncthingFolder("vs-cccccccccccc", "Mail", "/home/me/Mail"), syncthingFolder("vs-dddddddddddd", "Old", "/home/me/Old"), syncthingFolder("vs-eeeeeeeeeeee", "Busy", "/home/me/Busy"), syncthingFolder("vs-ffffffffffff", "Queue", "/home/me/Queue"))
 	eng.folderState = map[string]map[string]any{
 		"vs-bbbbbbbbbbbb": {"state": "error", "error": "permission denied"},
 		"vs-cccccccccccc": {"state": "idle", "errors": 3},
 		"vs-dddddddddddd": nil, // the engine does not answer for it
 		"vs-eeeeeeeeeeee": {"state": "syncing", "globalBytes": 100, "inSyncBytes": 42},
+		"vs-ffffffffffff": {"state": "idle", "needTotalItems": 3},
 	}
 	eng.mu.Unlock()
 	res, err = client.setPaused(ctx, true)
@@ -339,6 +340,9 @@ func TestIssue176_PauseAndResumeTouchEveryHubAndNothingElse(t *testing.T) {
 	// a pause stops the connections, not the folder workers.
 	if st := byLabel["Busy"]; st != "syncing — 42 %" {
 		t.Fatalf("a folder still syncing, while paused: %q", st)
+	}
+	if st := byLabel["Queue"]; st != "3 items left to sync" {
+		t.Fatalf("items still to pull, while paused: %q", st)
 	}
 	if st := byLabel["Notes"]; st != "paused on this computer" {
 		t.Fatalf("a healthy folder while paused: %q", st)
@@ -764,16 +768,21 @@ func TestIssue176_SocketIsFreshOwnerOnlyAndGoneAfterwards(t *testing.T) {
 		t.Fatal("the file was touched")
 	}
 
-	// A folder too deep for a socket address: a place of our own instead.
+	// A folder too deep for a socket address: a place of our own instead —
+	// inside the folder named as the user's own, and nowhere without one.
 	deep := filepath.Join(dir, strings.Repeat("d", 120), "agent.sock")
 	if err := os.MkdirAll(filepath.Dir(deep), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	l3, at, cleanup, err := listenControl(deep)
+	if _, _, _, err := listenControl(deep, ""); err == nil {
+		t.Fatal("too deep and no fallback folder must fail")
+	}
+	own := shortDir(t)
+	l3, at, cleanup, err := listenControl(deep, own)
 	if err != nil {
 		t.Fatalf("no fallback: %v", err)
 	}
-	if at == deep || !strings.HasPrefix(at, os.TempDir()) || !strings.HasSuffix(at, "/agent.sock") {
+	if at == deep || !strings.HasPrefix(at, own+string(filepath.Separator)) || !strings.HasSuffix(at, "/agent.sock") {
 		t.Fatalf("fallback at %s", at)
 	}
 	if fi, _ := os.Stat(filepath.Dir(at)); fi.Mode().Perm() != 0o700 {
@@ -787,7 +796,7 @@ func TestIssue176_SocketIsFreshOwnerOnlyAndGoneAfterwards(t *testing.T) {
 
 	// Whatever someone put next to the socket is not VaultSync's to remove:
 	// the cleanup takes the socket and leaves a folder that is not empty.
-	l4, at, cleanup, err := listenControl(deep)
+	l4, at, cleanup, err := listenControl(deep, own)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -832,9 +841,12 @@ func TestIssue176_RunServesTheSocketWhileTheEngineRuns(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(lay.Home, "config.xml"), "<configuration><folder id=\"vs-aaaaaaaaaaaa\" label=\"Notes\" path=\""+filepath.Join(home, "Notes")+"\"></folder><gui><address>127.0.0.1:"+strconv.Itoa(port)+"</address><apikey>k</apikey></gui></configuration>\n")
 	// The layout's socket lies too deep here (a test's temporary folder):
-	// run falls back and records the place.
-	a := &app{goos: "linux", home: home, getenv: envOf(nil), lay: lay, out: io.Discard,
-		svc: service{goos: "linux", home: home, getenv: envOf(nil), lay: lay, run: &fakeRunner{}}}
+	// run falls back into the session's runtime directory — a folder of
+	// the user's own — and records the place.
+	runtimeDir := shortDir(t)
+	env := envOf(map[string]string{"XDG_RUNTIME_DIR": runtimeDir})
+	a := &app{goos: "linux", home: home, getenv: env, lay: lay, out: io.Discard,
+		svc: service{goos: "linux", home: home, getenv: env, lay: lay, run: &fakeRunner{}}}
 	// At the moment run records the socket's place, it still holds the
 	// setup lock: a second run cannot load agent.json in between and save
 	// an older copy over the place (a lost update).
@@ -871,6 +883,9 @@ func TestIssue176_RunServesTheSocketWhileTheEngineRuns(t *testing.T) {
 		_, err = os.Stat(socket)
 		return err == nil
 	})
+	if !strings.HasPrefix(socket, runtimeDir+string(filepath.Separator)) {
+		t.Fatalf("the fallback lies outside the user's runtime directory: %s", socket)
+	}
 	cs, err := newControlClient(socket).status(ctx)
 	if err != nil {
 		t.Fatalf("status over the socket at %s: %v", socket, err)
@@ -899,6 +914,10 @@ func TestIssue176_RunServesTheSocketWhileTheEngineRuns(t *testing.T) {
 	}
 	if _, err := os.Stat(socket); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the socket stays behind at %s", socket)
+	}
+	// And the place is out of agent.json again: nobody serves it now.
+	if st, err := loadState(lay.State); err != nil || st.ControlSocket != "" {
+		t.Fatalf("the place stays recorded: %q %v", st.ControlSocket, err)
 	}
 }
 
@@ -1107,6 +1126,114 @@ func TestIssue176_TheShellsEnvironmentIsRecorded(t *testing.T) {
 	}
 	if after, _ := os.Stat(a.lay.State); !after.ModTime().Equal(before.ModTime()) {
 		t.Fatal("an unchanged shell rewrote agent.json")
+	}
+}
+
+// fakeDirInfo is a directory as Lstat would describe it: mode, owner, link.
+type fakeDirInfo struct {
+	mode os.FileMode
+	uid  uint32
+}
+
+func (f fakeDirInfo) Name() string       { return "d" }
+func (f fakeDirInfo) Size() int64        { return 0 }
+func (f fakeDirInfo) Mode() os.FileMode  { return f.mode }
+func (f fakeDirInfo) ModTime() time.Time { return time.Time{} }
+func (f fakeDirInfo) IsDir() bool        { return f.mode.IsDir() }
+func (f fakeDirInfo) Sys() any           { return &syscall.Stat_t{Uid: f.uid} }
+
+// The fallback folder for the socket is the user's own — the session's
+// runtime directory on Linux, the per-user temporary directory on macOS —
+// and only when it is theirs alone: owned by them, 0700, no link. Never a
+// shared /tmp, which another account could prepare or take over.
+func TestIssue176_FallbackFolderIsTheUsersOwnOrNone(t *testing.T) {
+	uid := 501
+	dirs := map[string]os.FileInfo{
+		"/run/user/501":  fakeDirInfo{mode: os.ModeDir | 0o700, uid: 501},
+		"/rt/own":        fakeDirInfo{mode: os.ModeDir | 0o700, uid: 501},
+		"/rt/open":       fakeDirInfo{mode: os.ModeDir | 0o755, uid: 501},
+		"/rt/theirs":     fakeDirInfo{mode: os.ModeDir | 0o700, uid: 502},
+		"/rt/link":       fakeDirInfo{mode: os.ModeSymlink | 0o700, uid: 501},
+		"/tmp":           fakeDirInfo{mode: os.ModeDir | os.ModeSticky | 0o777, uid: 0},
+		"/var/folders/T": fakeDirInfo{mode: os.ModeDir | 0o700, uid: 501},
+	}
+	lstat := func(p string) (os.FileInfo, error) {
+		if fi, ok := dirs[p]; ok {
+			return fi, nil
+		}
+		return nil, os.ErrNotExist
+	}
+	cases := []struct {
+		goos string
+		env  map[string]string
+		want string
+	}{
+		{"linux", map[string]string{"XDG_RUNTIME_DIR": "/rt/own"}, "/rt/own"},
+		{"linux", map[string]string{"XDG_RUNTIME_DIR": "/rt/open"}, "/run/user/501"},
+		{"linux", map[string]string{"XDG_RUNTIME_DIR": "/rt/theirs"}, "/run/user/501"},
+		{"linux", map[string]string{"XDG_RUNTIME_DIR": "/rt/link"}, "/run/user/501"},
+		{"linux", map[string]string{"XDG_RUNTIME_DIR": "/tmp"}, "/run/user/501"},
+		{"linux", nil, "/run/user/501"},
+		{"darwin", map[string]string{"TMPDIR": "/var/folders/T"}, "/var/folders/T"},
+		{"darwin", map[string]string{"TMPDIR": "/tmp"}, ""},
+		{"darwin", nil, ""},
+	}
+	for _, c := range cases {
+		if got := socketFallbackDir(c.goos, envOf(c.env), uid, lstat); got != c.want {
+			t.Errorf("%s %v: got %q, want %q", c.goos, c.env, got, c.want)
+		}
+	}
+	// Without a runtime directory of the user's own on Linux: none.
+	if got := socketFallbackDir("linux", envOf(nil), 777, lstat); got != "" {
+		t.Errorf("no folder of uid 777's own, got %q", got)
+	}
+}
+
+// Only the user's own account talks to the user's own agent: the kernel
+// says whose a connection is, before a byte is sent or read.
+func TestIssue176_OnlyTheOwnerTalksToTheAgent(t *testing.T) {
+	eng := newFakeEngine(t)
+	a := agentApp(t, eng)
+	client := serveControl(t, a)
+	if _, err := client.status(context.Background()); err != nil {
+		t.Fatalf("the owner's own connection: %v", err)
+	}
+	foreign := peerFunc(func(*net.UnixConn) (int, error) { return os.Getuid() + 1, nil })
+	peerUIDHook.Store(&foreign)
+	defer peerUIDHook.Store(nil)
+	// The terminal does not send to a socket served by another account
+	// (a fresh client: a connection once verified is kept and reused).
+	err := newControlClient(a.lay.Socket).do(context.Background(), http.MethodGet, "/v1/status", nil, nil)
+	if err == nil || errors.Is(err, errNoAgent) || !errors.Is(err, errForeignSocket) {
+		t.Fatalf("a socket served by another account: %v", err)
+	}
+	st, _ := loadState(a.lay.State)
+	st.ControlSocket = a.lay.Socket
+	if err := saveState(a.lay.State, st); err != nil {
+		t.Fatal(err)
+	}
+	a.out = &bytes.Buffer{}
+	if err := a.status(context.Background()); err == nil || !strings.Contains(err.Error(), "another account") {
+		t.Fatalf("status must not read past a foreign socket: %v", err)
+	}
+	if err := a.pauseSync(context.Background(), true); err == nil || !strings.Contains(err.Error(), "another account") {
+		t.Fatalf("pause must not send to a foreign socket: %v", err)
+	}
+	// The agent closes a connection from another account unread.
+	raw, err := net.Dial("unix", a.lay.Socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	_ = raw.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := raw.Write([]byte("GET /v1/status HTTP/1.1\r\nHost: vaultsync\r\n\r\n")); err == nil {
+		buf := make([]byte, 64)
+		if n, err := raw.Read(buf); err == nil && n > 0 {
+			t.Fatalf("the agent answered another account: %q", buf[:n])
+		}
+	}
+	if data, _ := os.ReadFile(filepath.Join(a.lay.Base, "control-socket.log")); !strings.Contains(string(data), "another account") {
+		t.Fatalf("the closed connection is noted in the private log: %q", data)
 	}
 }
 

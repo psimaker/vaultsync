@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -129,9 +130,11 @@ func (c *controlServer) handler() http.Handler {
 
 // serve listens on the control socket and serves until stop is called. The
 // engine lock must be held: a socket file found at the place belongs to an
-// agent that is gone. It returns the path listened on.
+// agent that is gone. It returns the path listened on. Only the user's
+// own account is served: a connection from any other is closed unread.
 func (c *controlServer) serve(ctx context.Context) (path string, stop func(), err error) {
-	l, path, cleanup, err := listenControl(c.a.lay.Socket)
+	fallback := socketFallbackDir(c.a.goos, c.a.getenv, os.Getuid(), os.Lstat)
+	l, path, cleanup, err := listenControl(c.a.lay.Socket, fallback)
 	if err != nil {
 		return "", nil, err
 	}
@@ -160,7 +163,7 @@ func (c *controlServer) serve(ctx context.Context) (path string, stop func(), er
 	c.srv = srv
 	done := make(chan struct{})
 	go func() {
-		if err := srv.Serve(l); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := srv.Serve(ownerOnly{Listener: l, diag: srv.ErrorLog}); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			// The engine goes on; status and the menu-bar app lose their
 			// socket until the next start. The words stay in the folder.
 			c.logf("the control socket stopped serving — %s; vaultsync status reads the engine directly (details in control-socket.log)", serviceSummary(err))
@@ -181,17 +184,20 @@ func (c *controlServer) serve(ctx context.Context) (path string, stop func(), er
 }
 
 // listenControl listens at path — or, when VaultSync's folder lies too deep
-// for a socket address, in a folder of our own under the temporary
-// directory. cleanup removes what was made: the socket, and the folder
-// only when nothing else is in it — never anything inside it (a vault
-// placed there by hand would be a vault; pairing refuses the folder, see
-// pairSession.reserved).
-func listenControl(path string) (l net.Listener, at string, cleanup func(), err error) {
+// for a socket address, in a folder of our own under fallbackDir (the
+// user's own place, see socketFallbackDir; empty: no fallback). cleanup
+// removes what was made: the socket, and the folder only when nothing
+// else is in it — never anything inside it (a vault placed there by hand
+// would be a vault; pairing refuses the folder, see pairSession.reserved).
+func listenControl(path, fallbackDir string) (l net.Listener, at string, cleanup func(), err error) {
 	l, err = listenUnix(path)
 	if err == nil {
 		return l, path, func() { _ = os.Remove(path) }, nil
 	}
-	dir, derr := os.MkdirTemp("", "vaultsync-")
+	if fallbackDir == "" {
+		return nil, "", nil, err
+	}
+	dir, derr := os.MkdirTemp(fallbackDir, "vaultsync-")
 	if derr != nil {
 		return nil, "", nil, err
 	}
@@ -227,6 +233,51 @@ func listenUnix(path string) (net.Listener, error) {
 	}
 	return l, nil
 }
+
+// ownerOnly is a listener that hands on only connections from the user's
+// own account; the kernel says whose a connection is. Any other is closed
+// before a byte of it is read.
+type ownerOnly struct {
+	net.Listener
+	diag *log.Logger
+}
+
+func (o ownerOnly) Accept() (net.Conn, error) {
+	for {
+		conn, err := o.Listener.Accept()
+		if err != nil {
+			return nil, err
+		}
+		uc, ok := conn.(*net.UnixConn)
+		if !ok {
+			conn.Close()
+			continue
+		}
+		uid, err := peerUIDOf(uc)
+		if err != nil || uid != os.Getuid() {
+			if o.diag != nil {
+				o.diag.Printf("control socket: a connection from another account (uid %d, %v) was closed", uid, err)
+			}
+			conn.Close()
+			continue
+		}
+		return conn, nil
+	}
+}
+
+// peerUIDOf tells whose a unix socket connection is; a test can pretend
+// another account through peerUIDHook (set from the test, read by the
+// server's own goroutine — hence atomic).
+func peerUIDOf(c *net.UnixConn) (int, error) {
+	if f := peerUIDHook.Load(); f != nil {
+		return (*f)(c)
+	}
+	return peerUID(c)
+}
+
+type peerFunc func(*net.UnixConn) (int, error)
+
+var peerUIDHook atomic.Pointer[peerFunc]
 
 func (c *controlServer) client() (*syncthing.Client, error) {
 	st, err := loadState(c.a.lay.State)
@@ -448,11 +499,35 @@ type controlClient struct {
 	http *http.Client
 }
 
+// errForeignSocket: the socket is served by another account.
+var errForeignSocket = errors.New("the control socket is served by another account; VaultSync does not use it")
+
 func newControlClient(path string) *controlClient {
 	return &controlClient{http: &http.Client{Transport: &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			var d net.Dialer
-			return d.DialContext(ctx, "unix", path)
+			conn, err := d.DialContext(ctx, "unix", path)
+			if err != nil {
+				return nil, err
+			}
+			// Nothing is sent before the kernel has said whose socket this
+			// is: a place another account could have taken over must not
+			// see a request, a pairing code least of all.
+			uc, ok := conn.(*net.UnixConn)
+			if !ok {
+				conn.Close()
+				return nil, errForeignSocket
+			}
+			uid, err := peerUIDOf(uc)
+			if err != nil {
+				conn.Close()
+				return nil, fmt.Errorf("could not tell whose the control socket is: %w", err)
+			}
+			if uid != os.Getuid() {
+				conn.Close()
+				return nil, fmt.Errorf("%w (uid %d)", errForeignSocket, uid)
+			}
+			return conn, nil
 		},
 	}}}
 }
@@ -508,11 +583,15 @@ func (c *controlClient) do(ctx context.Context, method, path string, in, out any
 	resp, err := c.http.Do(req)
 	if err != nil {
 		// No socket file, or nobody listening on it: no agent. Any other
-		// failure — a socket this account may not open, no file descriptors
-		// left, a connection made and then dropped — is reported as it is.
+		// failure — a socket this account may not open, one served by
+		// another account, no file descriptors left, a connection made and
+		// then dropped — is reported as it is.
 		var ne *net.OpError
 		if errors.As(err, &ne) && ne.Op == "dial" && (errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED)) {
 			return errNoAgent
+		}
+		if errors.Is(err, errForeignSocket) {
+			return err
 		}
 		return err
 	}

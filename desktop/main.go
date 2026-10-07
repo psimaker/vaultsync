@@ -722,7 +722,12 @@ func (a *app) run(ctx context.Context, args []string) error {
 	if socket, stop, err := ctl.serve(ctx); err != nil {
 		logSocketError(logf, a.lay.Base, err)
 	} else {
-		defer stop()
+		// On the way out the place is taken out of agent.json again: a
+		// recorded place nobody serves is one another account could take.
+		defer func() {
+			stop()
+			_ = updateState(a.lay.State, func(s *agentState) { s.ControlSocket = "" })
+		}()
 		if socket == a.lay.Socket {
 			socket = ""
 		}

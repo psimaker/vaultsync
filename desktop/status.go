@@ -350,11 +350,14 @@ func describeFolder(f syncthing.FolderConfig, s folderSummary, conns connections
 		// outstanding leaves it at 100.
 		outstanding += rc.NeedItems + rc.NeedDeletes
 	}
-	if connected == 0 {
-		return "waiting for your Hub"
-	}
+	// What is still to pull is said before the connection's state: it is
+	// this computer's work, and it stays in sight while the connection is
+	// paused.
 	if s.NeedTotal > 0 {
 		return fmt.Sprintf("%d items left to sync", s.NeedTotal)
+	}
+	if connected == 0 {
+		return "waiting for your Hub"
 	}
 	if lowest < 100 {
 		return fmt.Sprintf("uploading to your Hub — %d %%", int(lowest))
