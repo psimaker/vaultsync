@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -45,9 +46,9 @@ type service struct {
 	run    runner
 	// pause waits between two looks at the service manager (nil: sleep).
 	pause func(time.Duration)
-	// exists says whether a path is there (nil: os.Stat); session's look at
-	// the user manager's runtime directory goes through it.
-	exists func(string) bool
+	// stat looks at a path (nil: os.Stat); session's look at the user
+	// manager's runtime directory goes through it.
+	stat func(string) error
 }
 
 func (s service) wait(d time.Duration) {
@@ -375,11 +376,12 @@ const (
 // user's gui domain only while they are logged in at the screen, and the
 // systemd user manager runs only while the user has a session, unless
 // lingering is on: without one the service is neither running nor startable,
-// but it was not stopped either (#232). Absent is claimed only on evidence —
-// launchd's own "no domain" answers, or on Linux the user manager's runtime
-// directory /run/user/<uid> missing (it goes with the last session). Any
-// other failure, such as a shell without the session's environment or a
-// permission, is unknown, with the manager's words kept.
+// but it was not stopped either (#232). Absent is claimed only on evidence
+// from a manager that answered — launchd's own "no domain" answers, or on
+// Linux the user manager's runtime directory /run/user/<uid> missing (it
+// goes with the last session). Anything else is unknown, with the words
+// kept: a command that did not run at all, a shell without the session's
+// environment, a permission.
 func (s service) session() (sessionState, string) {
 	switch s.goos {
 	case "darwin":
@@ -387,29 +389,43 @@ func (s service) session() (sessionState, string) {
 		switch {
 		case err == nil:
 			return sessionPresent, ""
-		case strings.Contains(out, "Could not find domain") || strings.Contains(out, "Domain does not support specified action"):
+		case exited(err) && (strings.Contains(out, "Could not find domain") || strings.Contains(out, "Domain does not support specified action")):
 			return sessionAbsent, ""
 		}
 		return sessionUnknown, firstLine(out, err)
 	case "linux":
 		out, err := s.run.run("systemctl", "--user", "show-environment")
-		switch {
-		case err == nil:
+		if err == nil {
 			return sessionPresent, ""
-		case !s.pathExists(filepath.Join("/run", "user", strconv.Itoa(s.uid))):
+		}
+		if !exited(err) {
+			return sessionUnknown, firstLine(out, err)
+		}
+		switch serr := s.statPath(filepath.Join("/run", "user", strconv.Itoa(s.uid))); {
+		case errors.Is(serr, fs.ErrNotExist):
 			return sessionAbsent, ""
+		case serr != nil:
+			return sessionUnknown, serr.Error()
 		}
 		return sessionUnknown, firstLine(out, err)
 	}
 	return sessionPresent, ""
 }
 
-func (s service) pathExists(path string) bool {
-	if s.exists != nil {
-		return s.exists(path)
+func (s service) statPath(path string) error {
+	if s.stat != nil {
+		return s.stat(path)
 	}
 	_, err := os.Stat(path)
-	return err == nil
+	return err
+}
+
+// exited reports whether a service manager command ran and ended with an
+// exit status — as opposed to never running (not found, not executable),
+// which says nothing about the session.
+func exited(err error) bool {
+	var ee interface{ ExitCode() int }
+	return errors.As(err, &ee)
 }
 
 // firstLine is the manager's first line of output, else the error.

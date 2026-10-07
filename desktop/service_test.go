@@ -3,8 +3,11 @@ package main
 import (
 	"encoding/xml"
 	"errors"
+	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -33,6 +36,30 @@ type fakeRunner struct {
 	// show-environment) answers while failing for another reason than a
 	// missing session.
 	probeFails string
+	// noDomainText is launchd's answer for a missing gui domain when
+	// noSession is set ("Could not find domain for user gui: <uid>" when
+	// empty; macOS 27 over SSH says "Could not print domain: 125: Domain
+	// does not support specified action").
+	noDomainText string
+	// notFound: the service manager's binary is not on PATH — nothing runs.
+	notFound bool
+	// probes records the session probes (the domain print, show-environment)
+	// apart from the actions in calls.
+	probes []string
+}
+
+// exitErr is how a command that ran and failed reports, like *exec.ExitError.
+type exitErr int
+
+func (e exitErr) Error() string { return "exit status " + strconv.Itoa(int(e)) }
+func (e exitErr) ExitCode() int { return int(e) }
+
+// noDomain is launchd's answer without a gui domain for the user.
+func (f *fakeRunner) noDomain(args []string) string {
+	if f.noDomainText != "" {
+		return f.noDomainText
+	}
+	return "Bad request.\nCould not find domain for user gui: " + launchdUID(args)
 }
 
 // launchdUID reads the uid out of a gui/<uid>[/label] target.
@@ -48,23 +75,32 @@ func launchdUID(args []string) string {
 
 func (f *fakeRunner) run(name string, args ...string) (string, error) {
 	call := name + " " + strings.Join(args, " ")
+	if f.notFound {
+		return "", &exec.Error{Name: name, Err: exec.ErrNotFound}
+	}
 	domainProbe := strings.HasPrefix(call, "launchctl print gui/") && strings.Count(call, "/") == 1
-	if call == "systemctl --user show-environment" {
-		// Asked for the manager's environment; not an action worth asserting.
+	if call == "systemctl --user show-environment" || domainProbe {
+		// A look at the session, not an action: recorded apart.
+		f.probes = append(f.probes, call)
 		switch {
+		case f.noSession && name == "launchctl":
+			return f.noDomain(args), exitErr(112)
 		case f.noSession:
-			return "Failed to connect to bus: No medium found", errors.New("exit status 1")
+			return "Failed to connect to bus: No medium found", exitErr(1)
 		case f.probeFails != "":
-			return f.probeFails, errors.New("exit status 1")
+			return f.probeFails, exitErr(1)
+		case domainProbe:
+			// The domain itself: there as long as the user has a desktop session.
+			return "gui/" + launchdUID(args) + " = {\n", nil
 		}
 		return f.answers[call], nil
 	}
 	f.calls = append(f.calls, call)
 	if f.noSession {
 		if name == "launchctl" {
-			return "Bad request.\nCould not find domain for user gui: " + launchdUID(args), errors.New("exit status 112")
+			return f.noDomain(args), exitErr(112)
 		}
-		return "Failed to connect to bus: No medium found", errors.New("exit status 1")
+		return "Failed to connect to bus: No medium found", exitErr(1)
 	}
 	for prefix, err := range f.fail {
 		if strings.HasPrefix(call, prefix) {
@@ -72,11 +108,6 @@ func (f *fakeRunner) run(name string, args ...string) (string, error) {
 		}
 	}
 	switch {
-	case domainProbe && f.probeFails != "":
-		return f.probeFails, errors.New("exit status 1")
-	case domainProbe:
-		// The domain itself: there as long as the user has a desktop session.
-		return "gui/" + launchdUID(args) + " = {\n", nil
 	case strings.HasPrefix(call, "launchctl print"):
 		if f.lingering > 0 {
 			f.lingering--
@@ -130,7 +161,12 @@ func testService(t *testing.T, goos string, run runner) (service, string) {
 	if f, ok := run.(*fakeRunner); ok {
 		// The user manager's runtime directory is there exactly while the
 		// manager runs.
-		svc.exists = func(string) bool { return !f.noSession }
+		svc.stat = func(string) error {
+			if f.noSession {
+				return fs.ErrNotExist
+			}
+			return nil
+		}
 	}
 	return svc, home
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io/fs"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -61,8 +62,9 @@ func TestIssue232_StatusSaysTheServiceWaitsForLogin(t *testing.T) {
 			if !strings.Contains(out, "Sync engine: not running") {
 				t.Fatalf("the engine is not running without the service:\n%s", out)
 			}
-			if goos == "darwin" && !contains(run.calls, "launchctl print gui/501") {
-				t.Fatalf("the probe asks launchd for the domain itself: %v", run.calls)
+			wantProbe := map[string]string{"darwin": "launchctl print gui/501", "linux": "systemctl --user show-environment"}[goos]
+			if !contains(run.probes, wantProbe) {
+				t.Fatalf("the probe asks the manager for the session itself: %v", run.probes)
 			}
 
 			run.noSession = false
@@ -75,12 +77,16 @@ func TestIssue232_StatusSaysTheServiceWaitsForLogin(t *testing.T) {
 				t.Fatal(err)
 			}
 			run.answers = map[string]string{"systemctl --user is-active vaultsync.service": "active"}
-			run.calls = nil
+			run.calls, run.probes = nil, nil
 			if out := statusText(t, a); !strings.Contains(out, "Background service: running") {
 				t.Fatalf("status with a running service:\n%s", out)
 			}
-			if contains(run.calls, "launchctl print gui/501") {
-				t.Fatalf("a running service needs no session probe: %v", run.calls)
+			// unitPath's look at the manager's environment is the only probe
+			// a running service gets.
+			for _, p := range run.probes {
+				if p != "systemctl --user show-environment" {
+					t.Fatalf("a running service needs no session probe: %v", run.probes)
+				}
 			}
 		})
 	}
@@ -114,7 +120,7 @@ func TestIssue232_StartSaysTheServiceWaitsForLogin(t *testing.T) {
 			}
 
 			run.noSession = false
-			run.fail = map[string]error{"launchctl enable": errors.New("exit status 1"), "systemctl --user enable": errors.New("exit status 1")}
+			run.fail = map[string]error{"launchctl enable": exitErr(1), "systemctl --user enable": exitErr(1)}
 			err = a.startService()
 			if err == nil || errors.As(err, &r) || !strings.Contains(err.Error(), "enable") || !strings.Contains(err.Error(), "boom") {
 				t.Fatalf("start with a session and a failing service manager keeps its words: %v", err)
@@ -123,9 +129,26 @@ func TestIssue232_StartSaysTheServiceWaitsForLogin(t *testing.T) {
 	}
 }
 
+// Both ways macOS says the gui domain is missing count as evidence: the
+// answer for a user without a session, and the one macOS 27 gives over SSH
+// as that user before the login.
+func TestIssue232_BothLaunchdAnswersForAMissingDomain(t *testing.T) {
+	for _, text := range []string{
+		"Bad request.\nCould not find domain for user gui: 501",
+		"Could not print domain: 125: Domain does not support specified action",
+	} {
+		run := &fakeRunner{noSession: true, noDomainText: text}
+		a := installedApp(t, "darwin", run)
+		if out := statusText(t, a); !strings.Contains(out, "waits for your login") {
+			t.Fatalf("%q is launchd without a domain:\n%s", text, out)
+		}
+	}
+}
+
 // A probe that fails for another reason — a shell without the session's
-// environment, a permission — is no evidence of a logout: status says the
-// manager could not be asked and keeps its words, start keeps its error.
+// environment, a permission, a service manager that is not even on PATH —
+// is no evidence of a logout: status says the manager could not be asked
+// and keeps its words, start keeps its error.
 func TestIssue232_ProbeFailureIsNotALogout(t *testing.T) {
 	for goos, words := range map[string]string{
 		"darwin": "Could not print domain: 1: Operation not permitted",
@@ -141,13 +164,42 @@ func TestIssue232_ProbeFailureIsNotALogout(t *testing.T) {
 			if strings.Contains(out, "waits for your login") || strings.Contains(out, "stopped —") {
 				t.Fatalf("a failing probe is neither a logout nor a stop:\n%s", out)
 			}
-			run.fail = map[string]error{"launchctl enable": errors.New("exit status 1"), "systemctl --user enable": errors.New("exit status 1")}
+			run.fail = map[string]error{"launchctl enable": exitErr(1), "systemctl --user enable": exitErr(1)}
 			err := a.startService()
 			var r *refusal
 			if err == nil || errors.As(err, &r) || !strings.Contains(err.Error(), "enable") || !strings.Contains(err.Error(), "boom") {
 				t.Fatalf("start with a failing probe keeps the manager's error: %v", err)
 			}
+
+			// The manager's binary missing, and on Linux the runtime
+			// directory missing as well: nothing ran, nothing is known.
+			run = &fakeRunner{notFound: true}
+			a = installedApp(t, goos, run)
+			a.svc.stat = func(string) error { return fs.ErrNotExist }
+			if out := statusText(t, a); !strings.Contains(out, "Background service: unknown") || !strings.Contains(out, "executable file not found") || strings.Contains(out, "waits for your login") {
+				t.Fatalf("status with the manager missing:\n%s", out)
+			}
+			err = a.startService()
+			if err == nil || errors.As(err, &r) || !strings.Contains(err.Error(), "executable file not found") {
+				t.Fatalf("start with the manager missing keeps its error: %v", err)
+			}
 		})
+	}
+}
+
+// On Linux only a runtime directory that is not there is evidence; a stat
+// that fails otherwise (a permission) leaves the session unknown.
+func TestIssue232_RuntimeDirectoryPermissionIsNotALogout(t *testing.T) {
+	run := &fakeRunner{noSession: true}
+	a := installedApp(t, "linux", run)
+	a.svc.stat = func(string) error { return fs.ErrPermission }
+	if out := statusText(t, a); !strings.Contains(out, "Background service: unknown") || !strings.Contains(out, "permission denied") || strings.Contains(out, "waits for your login") {
+		t.Fatalf("status with the runtime directory unreadable:\n%s", out)
+	}
+	err := a.startService()
+	var r *refusal
+	if err == nil || errors.As(err, &r) || !strings.Contains(err.Error(), "connect to bus") {
+		t.Fatalf("start keeps the manager's error: %v", err)
 	}
 }
 
@@ -157,22 +209,22 @@ func TestIssue232_ProbeAsksAboutThisUser(t *testing.T) {
 	run := &fakeRunner{noSession: true}
 	a := installedApp(t, "darwin", run)
 	a.svc.uid = 502
-	if out := statusText(t, a); !strings.Contains(out, "waits for your login") || !contains(run.calls, "launchctl print gui/502") {
-		t.Fatalf("darwin probe for uid 502: %v\n%s", run.calls, out)
+	if out := statusText(t, a); !strings.Contains(out, "waits for your login") || !contains(run.probes, "launchctl print gui/502") {
+		t.Fatalf("darwin probe for uid 502: %v\n%s", run.probes, out)
 	}
 
 	run = &fakeRunner{noSession: true}
 	a = installedApp(t, "linux", run)
 	a.svc.uid = 502
 	var asked []string
-	a.svc.exists = func(p string) bool { asked = append(asked, p); return false }
+	a.svc.stat = func(p string) error { asked = append(asked, p); return fs.ErrNotExist }
 	if out := statusText(t, a); !strings.Contains(out, "waits for your login") || !contains(asked, filepath.Join("/run", "user", "502")) {
 		t.Fatalf("linux probe for uid 502: asked %v\n%s", asked, out)
 	}
 	// The directory there while systemctl cannot connect: the shell lacks
 	// the environment, the manager may well be running.
-	a.svc.exists = func(string) bool { return true }
-	if out := statusText(t, a); !strings.Contains(out, "Background service: unknown") {
+	a.svc.stat = func(string) error { return nil }
+	if out := statusText(t, a); !strings.Contains(out, "Background service: unknown") || !strings.Contains(out, "No medium found") {
 		t.Fatalf("runtime directory present, bus unreachable:\n%s", out)
 	}
 }
