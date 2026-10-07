@@ -807,6 +807,18 @@ func TestIssue228_SetupAgainWithTheSameFlags(t *testing.T) {
 			t.Fatal("a folder was created")
 		}
 	})
+	t.Run("another folder that holds files: the merge guard speaks first", func(t *testing.T) {
+		eng, hub, s, _ := configured(t, "Hub-Test", "~/Vaults/Full")
+		mkVault(t, filepath.Join(s.env.home, "Vaults", "Full"))
+		err := s.run(ctx)
+		if !strings.Contains(refusalText(err), "only into a new or empty folder") {
+			t.Fatalf("got %v", err)
+		}
+		if hub.provisionCount(id) != 0 || eng.folderCount() != 1 {
+			t.Fatalf("the Hub was asked (%d) or a folder was added (%d)", hub.provisionCount(id), eng.folderCount())
+		}
+		assertUntouched(t, filepath.Join(s.env.home, "Vaults", "Full"))
+	})
 	t.Run("another vault into a folder inside the synced one is still an overlap", func(t *testing.T) {
 		eng, hub, s, _ := configured(t, "Work", "~/Vaults/Hub-Test-neu/Notes")
 		err := s.run(ctx)

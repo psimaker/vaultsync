@@ -912,22 +912,22 @@ func (s *pairSession) downloadPlan(ctx context.Context, v pairing.VaultInfo, pat
 		return plan{}, fmt.Errorf("the sync engine does not answer: %w", err)
 	}
 	path = resolveExistingPrefix(path)
-	// This vault may already sync on this computer — the overlap check below
-	// would otherwise report the folder as overlapping itself (#228). At
-	// this very folder there is nothing to do; elsewhere, a vault has one
-	// folder per computer. Neither asks the Hub.
-	for _, f := range folders {
-		if f.ID != v.ID {
-			continue
-		}
-		if _, same := sameConfigured(path, []syncthing.FolderConfig{f}, s.env.goos); same {
-			return plan{}, &alreadySyncing{label: v.Label, path: tildePath(s.env.home, f.Path)}
-		}
-		return plan{}, refuse("%s already syncs at %s on this computer. A vault has one folder here — nothing was changed.", quoted(v.Label), tildePath(s.env.home, f.Path))
-	}
+	// This vault may already sync on this computer (#228): at this very
+	// folder there is nothing to do — the overlap check below would report
+	// the folder as overlapping itself. Elsewhere, a vault has one folder
+	// per computer, said after the folder's own rules. Neither asks the Hub.
+	var configured *syncthing.FolderConfig
 	enginePaths := make([]string, 0, len(folders))
-	for _, f := range folders {
-		enginePaths = append(enginePaths, f.Path)
+	for i := range folders {
+		enginePaths = append(enginePaths, folders[i].Path)
+		if folders[i].ID == v.ID {
+			configured = &folders[i]
+		}
+	}
+	if configured != nil {
+		if _, same := sameConfigured(path, []syncthing.FolderConfig{*configured}, s.env.goos); same {
+			return plan{}, &alreadySyncing{label: v.Label, path: tildePath(s.env.home, configured.Path)}
+		}
 	}
 	if err := s.checkTarget(ctx, path, v.Label, enginePaths); err != nil {
 		return plan{}, err
@@ -938,6 +938,9 @@ func (s *pairSession) downloadPlan(ctx context.Context, v pairing.VaultInfo, pat
 	}
 	if exists && !empty {
 		return plan{}, refuse("%s already holds files. VaultSync downloads a vault from your Hub only into a new or empty folder — choose another one.", tildePath(s.env.home, path))
+	}
+	if configured != nil {
+		return plan{}, refuse("%s already syncs at %s on this computer. A vault has one folder here — nothing was changed.", quoted(v.Label), tildePath(s.env.home, configured.Path))
 	}
 	parent := filepath.Dir(path)
 	vaults := resolveExistingPrefix(filepath.Join(s.env.home, "Vaults"))
