@@ -275,7 +275,23 @@ sed -i 's|^VAULTSYNC_HUB_IMAGE=.*|VAULTSYNC_HUB_IMAGE=ghcr.io/psimaker/vaultsync
 docker compose pull && docker compose up -d
 ```
 
+The one-liner is for the `.env` setup wrote (one `NAME=value` per line, no
+quotes). If you reshaped `.env` by hand, change the `VAULTSYNC_HUB_IMAGE`
+line in an editor instead — a blind substitution would also hit a matching
+line inside a quoted value.
+
 Vaults, paired devices and an open pairing code carry over unchanged.
+Running the setup link again on the Hub (**2) Hub**) offers this move when
+it ships a newer release than your `.env` names — it asks first, changes
+only that one line of an `.env` in the plain shape it writes itself (no
+quoted values), reads the line again after your yes and writes the file
+in one piece, so `.env` is never half-written and never moved backwards
+by setup (another program editing `.env` at that very moment is outside
+its control); it keeps your ports and names and never touches a custom
+image.
+Without a terminal, or on an `.env` you reshaped by hand, it tells you to
+change the line yourself instead. As on every run, it prints a new
+pairing code at the end.
 
 ## Troubleshooting
 

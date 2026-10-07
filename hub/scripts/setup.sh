@@ -26,6 +26,10 @@ REPO="psimaker/vaultsync"
 HUB_DIR="${VAULTSYNC_HUB_DIR:-/srv/vaultsync}"
 HUB_NAME="${VAULTSYNC_HUB_NAME:-VaultSync Hub}"
 HUB_IMAGE="${VAULTSYNC_HUB_IMAGE:-ghcr.io/psimaker/vaultsync-hub:0.3.0}"
+# Captured: an exported value outranks .env in Compose, so left in the
+# environment it would decide the image of an existing Hub over its .env —
+# and over a "no" to the offer below (#216).
+unset VAULTSYNC_HUB_IMAGE
 RELAY_URL="${RELAY_URL:-https://relay.vaultsync.eu}"
 DRY_RUN=0
 CHOICE=""
@@ -81,6 +85,181 @@ ask() {
 		return 0
 	fi
 	return 1
+}
+
+# is_release VERSION: a plain x.y.z in canonical numbers (no leading zeros,
+# at most nine digits each), as the official image tags are.
+is_release() {
+	case "$1" in "" | *[!0-9.]*) return 1 ;; esac # one line of digits and dots, nothing else
+	printf '%s' "$1" | grep -Eq '^(0|[1-9][0-9]{0,8})(\.(0|[1-9][0-9]{0,8})){2}$'
+}
+
+# version_newer A B: true when A is a higher x.y.z than B — compared as
+# three integers, never as text or floating point.
+version_newer() {
+	a1=${1%%.*}; rest=${1#*.}; a2=${rest%%.*}; a3=${rest#*.}
+	b1=${2%%.*}; rest=${2#*.}; b2=${rest%%.*}; b3=${rest#*.}
+	[ "$a1" -gt "$b1" ] && return 0
+	[ "$a1" -lt "$b1" ] && return 1
+	[ "$a2" -gt "$b2" ] && return 0
+	[ "$a2" -lt "$b2" ] && return 1
+	[ "$a3" -gt "$b3" ]
+}
+
+# plain_env_file FILE: a regular file of blank lines, comments and
+# NAME=value lines without quotes — the shape setup writes — with
+# VAULTSYNC_HUB_IMAGE exactly once. Anything else (a quoted value may span
+# lines, a link may lead elsewhere) is not edited.
+plain_env_file() {
+	[ -f "$1" ] && [ ! -L "$1" ] &&
+		! grep -Eqv '^([[:space:]]*(#.*)?|[A-Za-z_][A-Za-z0-9_]*=[^"'"'"']*)$' "$1" &&
+		[ "$(grep -c '^VAULTSYNC_HUB_IMAGE=' "$1")" = 1 ]
+}
+
+# The edit of .env holds a lock from the first read to the rename, so two
+# setups cannot read the same old line and write in turns. release_env_edit
+# removes the lock and the temporary files; the traps run it on exit and on
+# an interruption, which then ends the setup (129/130/143).
+ENV_EDIT_LOCK=""
+ENV_EDIT_TMP=""
+ENV_EDIT_OUT=""
+release_env_edit() {
+	for f in "$ENV_EDIT_TMP" "$ENV_EDIT_OUT"; do
+		[ -z "$f" ] || rm -f "$f" 2>/dev/null || true
+		[ -z "$f" ] || [ ! -e "$f" ] || warn "Could not remove the temporary file $f."
+	done
+	[ -z "$ENV_EDIT_LOCK" ] || rmdir "$ENV_EDIT_LOCK" 2>/dev/null || true
+	[ -z "$ENV_EDIT_LOCK" ] || [ ! -d "$ENV_EDIT_LOCK" ] || warn "Could not remove the lock $ENV_EDIT_LOCK."
+	ENV_EDIT_TMP=""
+	ENV_EDIT_OUT=""
+	ENV_EDIT_LOCK=""
+}
+
+env_image_line() {
+	sed -n 's/^VAULTSYNC_HUB_IMAGE=//p' "$1"
+}
+
+# replace_env_image FILE EXPECTED: the VAULTSYNC_HUB_IMAGE line becomes
+# $HUB_IMAGE. A snapshot of FILE (mktemp reserves the names; cp -p keeps the
+# mode) is checked as a whole — plain shape, the image line still EXPECTED —
+# and transformed into a second file whose image line is checked in turn;
+# that file takes FILE's place in one rename, so FILE is whole at every
+# instant. Returns 2 when the snapshot is not what was offered, 1 when a
+# step fails; what it created is removed by release_env_edit, which reports
+# anything it could not remove.
+replace_env_image() {
+	file="$1"
+	expected="$2"
+	ENV_EDIT_TMP=$(mktemp "$file.setup.XXXXXX") || return 1
+	ENV_EDIT_OUT=$(mktemp "$file.setup.XXXXXX") || return 1
+	cp -p "$file" "$ENV_EDIT_TMP" || return 1
+	plain_env_file "$ENV_EDIT_TMP" || return 2
+	[ "$(env_image_line "$ENV_EDIT_TMP")" = "$expected" ] || return 2
+	# EXPECTED is an official image name (checked above): only its dots are
+	# special in a pattern.
+	literal=$(printf '%s' "$expected" | sed 's/\./\\./g')
+	cp -p "$ENV_EDIT_TMP" "$ENV_EDIT_OUT" || return 1
+	sed "s|^VAULTSYNC_HUB_IMAGE=$literal\$|VAULTSYNC_HUB_IMAGE=$HUB_IMAGE|" "$ENV_EDIT_TMP" >"$ENV_EDIT_OUT" || return 1
+	[ "$(env_image_line "$ENV_EDIT_OUT")" = "$HUB_IMAGE" ] || return 1
+	mv -f "$ENV_EDIT_OUT" "$file" || return 1
+	ENV_EDIT_OUT=""
+	# The snapshot stays tracked: release_env_edit removes it and reports
+	# a removal that fails.
+	return 0
+}
+
+# The hint names the shipped release as a target only on condition — the
+# callers that could not read .env do not know what it names today.
+manual_image_hint() {
+	info "  To move by hand: if $HUB_DIR/.env names an older vaultsync-hub release than $new_ver,"
+	info "  change its VAULTSYNC_HUB_IMAGE line to VAULTSYNC_HUB_IMAGE=$HUB_IMAGE (that one line),"
+	info "  then run docker compose pull && docker compose up -d there (docs/hub.md → Update the Hub)."
+}
+
+# An existing Hub stays on the image its .env names — re-running the setup
+# never moves it by itself. When that is an older official release than the
+# one this setup ships, the move is offered: only on a terminal, only with
+# consent, never for a custom image, never a downgrade, and only on an .env
+# in the plain shape setup writes, so the one line changed is the one that
+# was read — the whole file checked again after the answer (#216). Declined,
+# without a terminal or on any other .env, the manual step is named instead.
+offer_newer_hub_image() {
+	env_file="$1"
+	official="ghcr.io/psimaker/vaultsync-hub:"
+	case "$HUB_IMAGE" in
+		"$official"*) ;;
+		*) return 0 ;; # this setup ships a custom image: nothing to offer
+	esac
+	new_ver=${HUB_IMAGE#"$official"}
+	is_release "$new_ver" || return 0
+	if [ "$DRY_RUN" = 1 ]; then
+		offer_newer_hub_image_locked "$env_file"
+		return 0
+	fi
+	lock="$env_file.setup-lock"
+	if ! mkdir "$lock" 2>/dev/null; then
+		if [ -d "$lock" ]; then
+			info "Another setup may be editing $env_file: the lock $lock exists. This one leaves .env as it is."
+			info "  If no other setup is running, remove that directory and run the setup again."
+			manual_image_hint
+			return 0
+		fi
+		fail "Could not create the lock $lock next to $env_file; nothing was changed."
+	fi
+	ENV_EDIT_LOCK="$lock"
+	trap 'release_env_edit' EXIT
+	trap 'release_env_edit; exit 129' HUP
+	trap 'release_env_edit; exit 130' INT
+	trap 'release_env_edit; exit 143' TERM
+	offer_newer_hub_image_locked "$env_file"
+	release_env_edit
+	trap - EXIT HUP INT TERM
+	return 0
+}
+
+offer_newer_hub_image_locked() {
+	env_file="$1"
+	if ! plain_env_file "$env_file"; then
+		info "Your Hub's .env has a shape setup does not edit (a quoted value, a symbolic link, or VAULTSYNC_HUB_IMAGE more than once)."
+		manual_image_hint
+		return 0
+	fi
+	current=$(env_image_line "$env_file")
+	case "$current" in
+		"" | "$HUB_IMAGE") return 0 ;;
+		"$official"*) ;;
+		*) info "Your Hub runs a custom image ($current); setup leaves it as it is."; return 0 ;;
+	esac
+	cur_ver=${current#"$official"}
+	if ! is_release "$cur_ver"; then
+		info "Your Hub's VAULTSYNC_HUB_IMAGE line has a shape setup does not read (a comment, spaces or Windows line endings after the image?); setup leaves it as it is."
+		manual_image_hint
+		return 0
+	fi
+	version_newer "$new_ver" "$cur_ver" || return 0
+	info "Your Hub runs vaultsync-hub $cur_ver; this setup ships $new_ver."
+	if [ "$DRY_RUN" = 1 ]; then
+		info "[dry-run] would offer to set VAULTSYNC_HUB_IMAGE=$HUB_IMAGE in $env_file"
+		return 0
+	fi
+	if answer=$(ask "  Move it to $new_ver now? Vaults, devices, ports and names carry over; a new pairing code is printed at the end, as always. [y/N] " "n"); then
+		case "$answer" in
+			[yY]*)
+				# As a condition, so that set -e does not end the script on a
+				# failed step before it is reported.
+				if replace_env_image "$env_file" "$current"; then
+					info "  .env now names $HUB_IMAGE; the stack restarts on it below."
+					return 0
+				elif [ $? -eq 2 ]; then
+					info "  $env_file changed while setup was asking; nothing was changed. Check its VAULTSYNC_HUB_IMAGE line, then run the setup again."
+					return 0
+				fi
+				fail "Could not update $env_file; nothing was changed. Change its VAULTSYNC_HUB_IMAGE line by hand, then run docker compose pull && docker compose up -d."
+				;;
+		esac
+	fi
+	info "  Kept $cur_ver."
+	manual_image_hint
 }
 
 # --- Menu --------------------------------------------------------------------
@@ -351,6 +530,7 @@ setup_hub() {
 		existing_gui=$(sed -n 's/^GUI_PORT=//p' "$HUB_DIR/.env" | tail -1)
 		[ -z "$existing_sync" ] || SYNC_PORT="$existing_sync"
 		[ -z "$existing_gui" ] || GUI_PORT="$existing_gui"
+		offer_newer_hub_image "$HUB_DIR/.env"
 	else
 		if port_in_use 22000; then
 			warn "Port 22000 is already in use (another Syncthing?). The Hub will use 22001."
