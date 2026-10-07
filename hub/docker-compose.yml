@@ -38,7 +38,7 @@ services:
     restart: unless-stopped
 
   hub:
-    image: ${VAULTSYNC_HUB_IMAGE:-ghcr.io/psimaker/vaultsync-hub:0.2.0}
+    image: ${VAULTSYNC_HUB_IMAGE:-ghcr.io/psimaker/vaultsync-hub:0.3.0}
     container_name: vaultsync-hub
     # Host networking: LAN discovery answers UDP broadcasts, which never cross a
     # Docker bridge. The pairing port (8390) is LAN-only by design — do not

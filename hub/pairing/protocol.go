@@ -93,8 +93,10 @@ type ProvisionPayload struct {
 }
 
 // VaultInfo is what pairing and `status` report about one folder on the Hub.
-// Files is the Hub's local file count; -1 means unknown, and a device must
-// treat unknown as "not empty" (fail closed).
+// Files is what the vault holds or expects; -1 means unknown, and a device
+// must treat unknown as "not empty" (fail closed). A Hub reports 0 only
+// once it has proved the vault empty (decision 047); Hubs before 0.3.0
+// reported their local count and 0 when they could not read it.
 type VaultInfo struct {
 	ID         string   `json:"id"`
 	Label      string   `json:"label"`
