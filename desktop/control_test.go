@@ -462,6 +462,26 @@ func TestIssue176_PairOverTheSocketIsTheFlagFlow(t *testing.T) {
 		t.Fatalf("the engine failing during the menu: %v", err)
 	}
 
+	// The socket's own folder, when it lives outside VaultSync's, is
+	// VaultSync's too: no vault may be paired into it.
+	st, err := loadState(a.lay.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fallback := shortDir(t)
+	st.ControlSocket = filepath.Join(fallback, "agent.sock")
+	if err := saveState(a.lay.State, st); err != nil {
+		t.Fatal(err)
+	}
+	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Notes", Path: filepath.Join(fallback, "Notes")})
+	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "VaultSync keeps its own files in") || eng.folderCount() != 0 {
+		t.Fatalf("a vault inside the socket's folder: %+v %v (folders %d)", pr, err, eng.folderCount())
+	}
+	st.ControlSocket = ""
+	if err := saveState(a.lay.State, st); err != nil {
+		t.Fatal(err)
+	}
+
 	notes := filepath.Join(a.home, "Notes")
 	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Notes", Path: notes})
 	if err != nil || !pr.OK || pr.Refusal != "" {
@@ -716,7 +736,25 @@ func TestIssue176_SocketIsFreshOwnerOnlyAndGoneAfterwards(t *testing.T) {
 	l3.Close()
 	cleanup()
 	if _, err := os.Stat(filepath.Dir(at)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("the fallback folder stays behind")
+		t.Fatal("the empty fallback folder stays behind")
+	}
+
+	// Whatever someone put next to the socket is not VaultSync's to remove:
+	// the cleanup takes the socket and leaves a folder that is not empty.
+	l4, at, cleanup, err := listenControl(deep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	note := filepath.Join(filepath.Dir(at), "Notes", "note.md")
+	writeFile(t, note, "a vault someone keeps here\n")
+	t.Cleanup(func() { _ = os.RemoveAll(filepath.Dir(at)) })
+	l4.Close()
+	cleanup()
+	if _, err := os.Lstat(at); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("the socket stays behind")
+	}
+	if data, err := os.ReadFile(note); err != nil || string(data) != "a vault someone keeps here\n" {
+		t.Fatalf("the cleanup touched what is not its own: %q %v", data, err)
 	}
 }
 

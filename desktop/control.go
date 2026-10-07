@@ -181,7 +181,10 @@ func (c *controlServer) serve(ctx context.Context) (path string, stop func(), er
 
 // listenControl listens at path — or, when VaultSync's folder lies too deep
 // for a socket address, in a folder of our own under the temporary
-// directory. cleanup removes what was made.
+// directory. cleanup removes what was made: the socket, and the folder
+// only when nothing else is in it — never anything inside it (a vault
+// placed there by hand would be a vault; pairing refuses the folder, see
+// pairSession.reserved).
 func listenControl(path string) (l net.Listener, at string, cleanup func(), err error) {
 	l, err = listenUnix(path)
 	if err == nil {
@@ -194,10 +197,13 @@ func listenControl(path string) (l net.Listener, at string, cleanup func(), err 
 	at = filepath.Join(dir, "agent.sock")
 	l, lerr := listenUnix(at)
 	if lerr != nil {
-		_ = os.RemoveAll(dir)
+		_ = os.Remove(dir)
 		return nil, "", nil, err // the first error names the real place
 	}
-	return l, at, func() { _ = os.RemoveAll(dir) }, nil
+	return l, at, func() {
+		_ = os.Remove(at)
+		_ = os.Remove(dir)
+	}, nil
 }
 
 // listenUnix listens on a fresh socket at path, owner-only.

@@ -1097,6 +1097,11 @@ func (s *pairSession) reserved() []string {
 	if s.env.unitDir != "" {
 		out = append(out, s.env.unitDir)
 	}
+	// The control socket's own folder when it lives outside VaultSync's
+	// (control.go): the agent makes it and takes it away again.
+	if st, err := loadState(s.env.lay.State); err == nil && st.ControlSocket != "" {
+		out = append(out, filepath.Dir(st.ControlSocket))
+	}
 	return out
 }
 
