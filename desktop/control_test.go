@@ -840,9 +840,11 @@ func TestIssue176_RunServesTheSocketWhileTheEngineRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(lay.Home, "config.xml"), "<configuration><folder id=\"vs-aaaaaaaaaaaa\" label=\"Notes\" path=\""+filepath.Join(home, "Notes")+"\"></folder><gui><address>127.0.0.1:"+strconv.Itoa(port)+"</address><apikey>k</apikey></gui></configuration>\n")
-	// The layout's socket lies too deep here (a test's temporary folder):
-	// run falls back into the session's runtime directory — a folder of
-	// the user's own — and records the place.
+	// The layout's socket lies too deep for a socket address (made so here,
+	// whatever the temporary folder's length on this system): run falls
+	// back into the session's runtime directory — a folder of the user's
+	// own — and records the place.
+	lay.Socket = filepath.Join(lay.Base, strings.Repeat("d", 120), "agent.sock")
 	runtimeDir := shortDir(t)
 	env := envOf(map[string]string{"XDG_RUNTIME_DIR": runtimeDir})
 	a := &app{goos: "linux", home: home, getenv: env, lay: lay, out: io.Discard,
