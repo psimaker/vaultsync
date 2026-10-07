@@ -32,11 +32,17 @@ type cloudEnv struct {
 }
 
 func liveCloudEnv(goos, home string) cloudEnv {
-	runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
+	return cloudEnvFor(goos, home, os.Getenv)
+}
+
+// cloudEnvFor is the cloud clients' places as one environment names them
+// — the runtime directory included, with its default when unset.
+func cloudEnvFor(goos, home string, getenv func(string) string) cloudEnv {
+	runtimeDir := getenv("XDG_RUNTIME_DIR")
 	if runtimeDir == "" && goos == "linux" {
 		runtimeDir = "/run/user/" + strconv.Itoa(os.Getuid())
 	}
-	return cloudEnv{goos: goos, home: home, getenv: os.Getenv, volumes: "/Volumes", runtimeDir: runtimeDir}
+	return cloudEnv{goos: goos, home: home, getenv: getenv, volumes: "/Volumes", runtimeDir: runtimeDir}
 }
 
 // homePrefixes are folder names a cloud client creates in the home folder

@@ -98,51 +98,57 @@ func findUserSyncthing(goos, home string, getenv func(string) string) (userSynct
 
 // findUserSyncthingIn is findUserSyncthing looking through the places every
 // one of the environments names — the shell's as setup recorded it, and the
-// process's own — in that order.
+// process's own. Every config that exists is read and its folders count: a
+// stale one in one place must not hide the one in use in another. One that
+// cannot be read keeps Unreadable set (fail closed); ConfigPath names the
+// first existing one, or the unreadable one.
 func findUserSyncthingIn(goos, home string, envs ...func(string) string) (userSyncthing, bool) {
 	var candidates []string
 	for _, env := range envs {
 		candidates = append(candidates, userSyncthingConfigs(goos, home, env)...)
 	}
+	var us userSyncthing
+	found := false
 	for _, p := range uniqStrings(candidates) {
 		_, err := os.Stat(p)
 		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
 			continue
 		}
-		us := userSyncthing{ConfigPath: p}
-		if err != nil {
-			// Not "absent" — unreachable (permissions, I/O): fail closed.
-			us.Unreadable = err
-			return us, true
+		if !found {
+			us.ConfigPath = p
+			found = true
 		}
-		f, err := os.Open(p)
-		if err != nil {
-			us.Unreadable = err
-			return us, true
-		}
-		var cfg struct {
-			Folders []struct {
-				Path string `xml:"path,attr"`
-			} `xml:"folder"`
-		}
-		err = xml.NewDecoder(io.LimitReader(f, 16<<20)).Decode(&cfg)
-		f.Close()
-		if err != nil {
-			us.Unreadable = err
-		} else {
-			for _, fo := range cfg.Folders {
-				path := strings.TrimSpace(fo.Path)
-				if path == "~" || strings.HasPrefix(path, "~/") {
-					path = filepath.Join(home, strings.TrimPrefix(path, "~"))
+		if err == nil {
+			var f *os.File
+			if f, err = os.Open(p); err == nil {
+				var cfg struct {
+					Folders []struct {
+						Path string `xml:"path,attr"`
+					} `xml:"folder"`
 				}
-				if path != "" {
-					us.Folders = append(us.Folders, path)
+				err = xml.NewDecoder(io.LimitReader(f, 16<<20)).Decode(&cfg)
+				f.Close()
+				if err == nil {
+					for _, fo := range cfg.Folders {
+						path := strings.TrimSpace(fo.Path)
+						if path == "~" || strings.HasPrefix(path, "~/") {
+							path = filepath.Join(home, strings.TrimPrefix(path, "~"))
+						}
+						if path != "" {
+							us.Folders = append(us.Folders, path)
+						}
+					}
 				}
 			}
 		}
-		return us, true
+		if err != nil && us.Unreadable == nil {
+			// Not "absent" — unreachable (permissions, I/O) or not parsable:
+			// fail closed.
+			us.Unreadable = err
+			us.ConfigPath = p
+		}
 	}
-	return userSyncthing{}, false
+	return us, found
 }
 
 // uniqStrings keeps the first of each value, in order.

@@ -280,7 +280,7 @@ func (e engine) superviseLocked(ctx context.Context, st agentState, logf func(st
 			}
 			logf("the engine's API port was taken; moving it to %d", port)
 			st.GUIPort = port
-			if err := saveState(e.lay.State, st); err != nil {
+			if err := updateState(e.lay.State, func(s *agentState) { s.GUIPort = port }); err != nil {
 				return err
 			}
 		}

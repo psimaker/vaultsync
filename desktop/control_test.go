@@ -910,9 +910,9 @@ func TestIssue176_SocketPairingLooksWhereTheShellLooks(t *testing.T) {
 		t.Fatalf("a folder the shell's Syncthing syncs is not on offer: %v", localPaths(pr.Menu))
 	}
 
-	// Without the record — an agent.json from before, or a setup that saw
-	// no such variables — the service's own environment is all there is:
-	// the registry's vault is unknown, and ~/Notes looks free.
+	// Without any record — an agent.json from before — the service's own
+	// environment is all there is: the registry's vault is unknown, and
+	// ~/Notes looks free.
 	st.Env = nil
 	if err := saveState(a.lay.State, st); err != nil {
 		t.Fatal(err)
@@ -920,6 +920,110 @@ func TestIssue176_SocketPairingLooksWhereTheShellLooks(t *testing.T) {
 	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr})
 	if err != nil || contains(localPaths(pr.Menu), work) || !contains(localPaths(pr.Menu), notes) {
 		t.Fatalf("without the record: %v %v", localPaths(pr.Menu), err)
+	}
+
+	// The other way round: the shell had none of the variables set — its
+	// defaults under the home folder apply — while the service has its own
+	// XDG folders elsewhere. The shell's default places still count.
+	svcState, svcConfig := filepath.Join(t.TempDir(), "svc-state"), filepath.Join(t.TempDir(), "svc-config")
+	a.getenv = envOf(map[string]string{"XDG_STATE_HOME": svcState, "XDG_CONFIG_HOME": svcConfig})
+	work2 := filepath.Join(t.TempDir(), "elsewhere2", "Work2")
+	mkVault(t, work2)
+	writeFile(t, filepath.Join(a.home, ".config", "obsidian", "obsidian.json"), `{"vaults":{"def":{"path":"`+work2+`","ts":1}}}`)
+	writeFile(t, filepath.Join(a.home, ".local", "state", "syncthing", "config.xml"), "<configuration><folder id=\"y\" label=\"Notes\" path=\""+notes+"\"></folder></configuration>\n")
+	st.Env = map[string]string{}
+	if err := saveState(a.lay.State, st); err != nil {
+		t.Fatal(err)
+	}
+	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr})
+	if err != nil || !contains(localPaths(pr.Menu), work2) || contains(localPaths(pr.Menu), notes) {
+		t.Fatalf("the shell's defaults with an empty record: %v %v", localPaths(pr.Menu), err)
+	}
+	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Notes", Create: true, Path: notes})
+	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "already synced by the Syncthing on this computer") || eng.folderCount() != 0 {
+		t.Fatalf("a folder the shell's default Syncthing syncs: %+v %v", pr, err)
+	}
+
+	// Every config that exists counts, not only the first found: here the
+	// shell's names nothing of interest, the service's syncs ~/Notes2.
+	notes2 := filepath.Join(a.home, "Notes2")
+	mkVault(t, notes2)
+	writeFile(t, filepath.Join(shellState, "syncthing", "config.xml"), "<configuration><folder id=\"z\" label=\"Other\" path=\""+filepath.Join(a.home, "Other")+"\"></folder></configuration>\n")
+	writeFile(t, filepath.Join(svcState, "syncthing", "config.xml"), "<configuration><folder id=\"w\" label=\"Notes2\" path=\""+notes2+"\"></folder></configuration>\n")
+	st.Env = map[string]string{"XDG_STATE_HOME": shellState}
+	if err := saveState(a.lay.State, st); err != nil {
+		t.Fatal(err)
+	}
+	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Notes2", Create: true, Path: notes2})
+	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "already synced by the Syncthing on this computer") || eng.folderCount() != 0 {
+		t.Fatalf("a folder the second config syncs: %+v %v", pr, err)
+	}
+
+	// The shell's runtime directory, where GNOME mounts online accounts: a
+	// vault below it is a cloud folder for the socket's pairing too.
+	shellRuntime := filepath.Join(t.TempDir(), "rt")
+	cloudVault := filepath.Join(shellRuntime, "gvfs", "google-drive:host=example.com", "Vault")
+	mkVault(t, cloudVault)
+	st.Env = map[string]string{"XDG_RUNTIME_DIR": shellRuntime}
+	if err := saveState(a.lay.State, st); err != nil {
+		t.Fatal(err)
+	}
+	a.getenv = envOf(nil)
+	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Vault", Create: true, Path: cloudVault})
+	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "cannot sync with VaultSync there") || eng.folderCount() != 0 {
+		t.Fatalf("a vault under the shell's runtime directory: %+v %v", pr, err)
+	}
+	if ce := cloudEnvFor("linux", a.home, envOf(map[string]string{"XDG_RUNTIME_DIR": "/rt"})); ce.runtimeDir != "/rt" {
+		t.Fatalf("runtime directory from the environment: %q", ce.runtimeDir)
+	}
+	if ce := cloudEnvFor("linux", a.home, envOf(nil)); !strings.HasPrefix(ce.runtimeDir, "/run/user/") {
+		t.Fatalf("runtime directory default: %q", ce.runtimeDir)
+	}
+}
+
+// agent.json has several writers — setup, run, the supervisor moving the
+// engine's port, pair recording the shell: each update is one locked step
+// that keeps the others' fields.
+func TestIssue176_StateUpdatesNeverLoseEachOthersFields(t *testing.T) {
+	eng := newFakeEngine(t)
+	a := agentApp(t, eng)
+	if err := saveState(a.lay.State, agentState{GUIPort: 0, ControlSocket: "/tmp/x/agent.sock", Env: map[string]string{"XDG_STATE_HOME": "/data/state"}}); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := updateState(a.lay.State, func(s *agentState) { s.GUIPort++ }); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	st, err := loadState(a.lay.State)
+	if err != nil || st.GUIPort != 20 {
+		t.Fatalf("twenty updates: port %d %v", st.GUIPort, err)
+	}
+	// The supervisor moving the port keeps the socket and the record.
+	if st.ControlSocket != "/tmp/x/agent.sock" || st.Env["XDG_STATE_HOME"] != "/data/state" {
+		t.Fatalf("fields lost: %+v", st)
+	}
+	// pair recording the shell from a copy it loaded before run published
+	// the socket keeps the socket.
+	stale := st
+	if err := updateState(a.lay.State, func(s *agentState) { s.ControlSocket = "/tmp/y/agent.sock" }); err != nil {
+		t.Fatal(err)
+	}
+	a.getenv = envOf(map[string]string{"XDG_CONFIG_HOME": "/data/config"})
+	if err := a.rememberShellEnv(&stale); err != nil {
+		t.Fatal(err)
+	}
+	if st, err = loadState(a.lay.State); err != nil || st.ControlSocket != "/tmp/y/agent.sock" || st.Env["XDG_CONFIG_HOME"] != "/data/config" || st.GUIPort != 20 {
+		t.Fatalf("after the interleaving: %+v %v", st, err)
+	}
+	if fi, err := os.Stat(filepath.Join(a.lay.Base, "state.lock")); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("state lock: %v %v", fi, err)
 	}
 }
 
@@ -930,8 +1034,10 @@ func TestIssue176_TheShellsEnvironmentIsRecorded(t *testing.T) {
 	if len(got) != 1 || got["XDG_STATE_HOME"] != "/data/state" {
 		t.Fatalf("recorded %v", got)
 	}
-	if recordGuardEnv(envOf(nil)) != nil {
-		t.Fatal("nothing set records nothing")
+	// A shell with none set is a record too — its defaults apply — and not
+	// the same as no record (nil, an agent.json from before).
+	if none := recordGuardEnv(envOf(nil)); none == nil || len(none) != 0 {
+		t.Fatalf("nothing set records an empty environment, got %v", none)
 	}
 	// pair in a terminal refreshes the record when the shell changed, and
 	// leaves agent.json alone when it did not.

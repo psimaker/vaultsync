@@ -284,7 +284,7 @@ func (a *app) setup(ctx context.Context, args []string) error {
 	// The shell's view of where the user's Syncthing, Obsidian and the
 	// cloud clients keep their settings — for a pairing run by the service.
 	st.Env = recordGuardEnv(a.getenv)
-	if err := saveState(a.lay.State, st); err != nil {
+	if err := updateState(a.lay.State, func(s *agentState) { s.GUIPort, s.Env = st.GUIPort, st.Env }); err != nil {
 		unlockSetup()
 		return err
 	}
@@ -478,7 +478,7 @@ func (a *app) ensureEngine(ctx context.Context, t *term) (agentState, bool, erro
 	t.say("done")
 	st.Syncthing.Version = syncthingVersion
 	st.Syncthing.BinarySHA256 = got.SHA256
-	if err := saveState(a.lay.State, st); err != nil {
+	if err := updateState(a.lay.State, func(s *agentState) { s.Syncthing = st.Syncthing }); err != nil {
 		return st, false, err
 	}
 	t.say("✓ Sync engine installed (Syncthing %s, checksum verified)", strings.TrimPrefix(syncthingVersion, "v"))
@@ -565,11 +565,14 @@ func (a *app) pair(ctx context.Context, args []string) error {
 // where this terminal looks.
 func (a *app) rememberShellEnv(st *agentState) error {
 	recorded := recordGuardEnv(a.getenv)
-	if maps.Equal(recorded, st.Env) {
+	if st.Env != nil && maps.Equal(recorded, st.Env) {
 		return nil
 	}
+	if err := updateState(a.lay.State, func(s *agentState) { s.Env = recorded }); err != nil {
+		return err
+	}
 	st.Env = recorded
-	return saveState(a.lay.State, *st)
+	return nil
 }
 
 // pairOrigin says where a pairing runs. background: inside the background
@@ -608,9 +611,7 @@ func (a *app) pairWith(ctx context.Context, t *term, opts pairOptions, client *s
 			cloud: func() []cloudRoot {
 				var roots []cloudRoot
 				for _, env := range envs {
-					ce := liveCloudEnv(a.goos, a.home)
-					ce.getenv = env
-					roots = append(roots, cloudRoots(ce)...)
+					roots = append(roots, cloudRoots(cloudEnvFor(a.goos, a.home, env))...)
 				}
 				return uniqRoots(roots)
 			},
@@ -690,7 +691,7 @@ func (a *app) run(ctx context.Context, args []string) error {
 			return err
 		}
 		st.Syncthing.Version, st.Syncthing.BinarySHA256 = syncthingVersion, got.SHA256
-		if err := saveState(a.lay.State, st); err != nil {
+		if err := updateState(a.lay.State, func(s *agentState) { s.Syncthing = st.Syncthing }); err != nil {
 			unlockSetup()
 			return err
 		}
@@ -699,7 +700,7 @@ func (a *app) run(ctx context.Context, args []string) error {
 		unlockSetup()
 		return err
 	}
-	if err := saveState(a.lay.State, st); err != nil {
+	if err := updateState(a.lay.State, func(s *agentState) { s.GUIPort = st.GUIPort }); err != nil {
 		unlockSetup()
 		return err
 	}
@@ -731,12 +732,10 @@ func (a *app) run(ctx context.Context, args []string) error {
 		if beforeSocketPublish != nil {
 			beforeSocketPublish()
 		}
-		if st.ControlSocket != socket {
-			st.ControlSocket = socket
-			if err := saveState(a.lay.State, st); err != nil {
-				unlockSetup()
-				return err
-			}
+		st.ControlSocket = socket
+		if err := updateState(a.lay.State, func(s *agentState) { s.ControlSocket = socket }); err != nil {
+			unlockSetup()
+			return err
 		}
 	}
 	unlockSetup()

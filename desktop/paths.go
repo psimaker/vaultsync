@@ -77,25 +77,42 @@ type agentState struct {
 	// pairing run by the background service (the control socket) has the
 	// service's environment, not the shell's, and must look where the
 	// terminal looks — for the user's own Syncthing, Obsidian's registry
-	// and the cloud clients' settings (#176).
-	Env map[string]string `json:"env,omitempty"`
+	// and the cloud clients' settings (#176). An empty record is a shell
+	// with none of them set (its defaults apply); nil is no record yet.
+	Env map[string]string `json:"env"`
 }
 
 // guardEnvVars are the variables the pairing guards read.
-var guardEnvVars = []string{"XDG_STATE_HOME", "XDG_CONFIG_HOME", "APPDATA"}
+var guardEnvVars = []string{"XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_RUNTIME_DIR", "APPDATA"}
 
-// recordGuardEnv is the shell's values of guardEnvVars, set ones only.
+// recordGuardEnv is the shell's values of guardEnvVars, set ones only —
+// never nil, so that a shell with none set is a record too.
 func recordGuardEnv(getenv func(string) string) map[string]string {
-	var out map[string]string
+	out := map[string]string{}
 	for _, k := range guardEnvVars {
 		if v := getenv(k); v != "" {
-			if out == nil {
-				out = map[string]string{}
-			}
 			out[k] = v
 		}
 	}
 	return out
+}
+
+// updateState applies fn to agent.json as one step under its own lock —
+// loaded, changed and written — so the writers (setup, run, the supervisor
+// moving the engine's port, pair recording the shell) never write an older
+// copy over each other's fields.
+func updateState(path string, fn func(*agentState)) error {
+	unlock, err := lockFileWait(filepath.Join(filepath.Dir(path), "state.lock"))
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	st, err := loadState(path)
+	if err != nil {
+		return err
+	}
+	fn(&st)
+	return saveState(path, st)
 }
 
 const agentStateVersion = 1
