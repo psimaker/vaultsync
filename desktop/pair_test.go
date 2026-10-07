@@ -17,8 +17,24 @@ import (
 // mkVault creates a folder that already holds notes.
 func mkVault(t *testing.T, path string) {
 	t.Helper()
-	writeFile(t, filepath.Join(path, ".obsidian", "app.json"), "{}")
-	writeFile(t, filepath.Join(path, "Welcome.md"), "# hello\n")
+	if err := populate(path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// populate writes a small vault. A hook that runs off the test goroutine
+// uses it directly and reports through t.Error.
+func populate(path string) error {
+	for name, content := range map[string]string{filepath.Join(".obsidian", "app.json"): "{}", "Welcome.md": "# hello\n"} {
+		p := filepath.Join(path, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func refusalText(err error) string {
@@ -180,7 +196,7 @@ func TestIssue175_UnknownOutcomeIsNeverRetried(t *testing.T) {
 	eng := newFakeEngine(t)
 	hub := newFakeHub(t, eng, pairing.VaultInfo{ID: "vs-aaaaaaaaaaaa", Label: "Recipes", Files: 12})
 	hub.provisionStatus = http.StatusInternalServerError
-	hub.offerDelay = -1
+	hub.noOffer = true
 	s, _ := testSession(t, eng, hub, pairOptions{vault: "Recipes"})
 	s.opts.code = hub.code
 	s.opts.path = filepath.Join(s.env.home, "Vaults", "Recipes")
@@ -337,17 +353,22 @@ func TestIssue175_FinalGateRunsAfterTheWait(t *testing.T) {
 	ctx := context.Background()
 	t.Run("the empty destination gained files", func(t *testing.T) {
 		eng := newFakeEngine(t)
-		hub := newFakeHub(t, eng, pairing.VaultInfo{ID: "vs-aaaaaaaaaaaa", Label: "Recipes", Files: 12})
-		hub.offerDelay = 300 * time.Millisecond
+		// An empty Hub vault: the shared guard would let a folder with
+		// files become its first copy, so only the final gate can notice
+		// that this is not the empty folder the person decided on.
+		hub := newFakeHub(t, eng, pairing.VaultInfo{ID: "vs-aaaaaaaaaaaa", Label: "Recipes"})
+		hub.offerOnQuery = true
 		s, _ := testSession(t, eng, hub, pairOptions{vault: "Recipes"})
 		s.opts.code = hub.code
 		dest := filepath.Join(s.env.home, "Vaults", "Recipes")
 		s.opts.path = dest
-		time.AfterFunc(100*time.Millisecond, func() { mkVault(t, dest) })
-		// Whichever check sees the files first — the shared guard or the
-		// agent's final gate — nothing is added and the files stay.
+		hub.beforeOffer = func() {
+			if err := populate(dest); err != nil {
+				t.Error(err)
+			}
+		}
 		err := s.run(ctx)
-		if err == nil || eng.folderCount() != 0 {
+		if !strings.Contains(refusalText(err), "changed while VaultSync was waiting for your Hub") || eng.folderCount() != 0 {
 			t.Fatalf("got %v, folders=%d", err, eng.folderCount())
 		}
 		assertUntouched(t, dest)
@@ -355,15 +376,15 @@ func TestIssue175_FinalGateRunsAfterTheWait(t *testing.T) {
 	t.Run("the engine restarted", func(t *testing.T) {
 		eng := newFakeEngine(t)
 		hub := newFakeHub(t, eng, pairing.VaultInfo{ID: "vs-aaaaaaaaaaaa", Label: "Recipes", Files: 12})
-		hub.offerDelay = 300 * time.Millisecond
+		hub.offerOnQuery = true
 		s, _ := testSession(t, eng, hub, pairOptions{vault: "Recipes"})
 		s.opts.code = hub.code
 		s.opts.path = filepath.Join(s.env.home, "Vaults", "Recipes")
-		time.AfterFunc(100*time.Millisecond, func() {
+		hub.beforeOffer = func() {
 			eng.mu.Lock()
 			eng.startTime = "2026-10-06T10:05:00Z"
 			eng.mu.Unlock()
-		})
+		}
 		err := s.run(ctx)
 		if !strings.Contains(refusalText(err), "restarted") || eng.folderCount() != 0 {
 			t.Fatalf("got %v, folders=%d", err, eng.folderCount())
@@ -372,7 +393,7 @@ func TestIssue175_FinalGateRunsAfterTheWait(t *testing.T) {
 	t.Run("the share never arrives", func(t *testing.T) {
 		eng := newFakeEngine(t)
 		hub := newFakeHub(t, eng, pairing.VaultInfo{ID: "vs-aaaaaaaaaaaa", Label: "Recipes", Files: 12})
-		hub.offerDelay = -1
+		hub.noOffer = true
 		s, _ := testSession(t, eng, hub, pairOptions{vault: "Recipes"})
 		s.opts.code = hub.code
 		s.opts.path = filepath.Join(s.env.home, "Vaults", "Recipes")
@@ -506,12 +527,15 @@ func TestIssue175_ConsentIsBoundToTheFolder(t *testing.T) {
 	}
 	t.Run("replaced during the last wait", func(t *testing.T) {
 		eng, _, s, local := upload(t)
-		eng.flap = &offerFlap{back: 2500 * time.Millisecond, during: func() {
-			time.Sleep(500 * time.Millisecond) // inside AcceptShare's own wait
+		// Inside AcceptShare's own wait, the folder is swapped for another
+		// one with the same files.
+		eng.flap = &offerFlap{during: func() {
 			if err := os.Rename(local, local+"-moved"); err != nil {
 				t.Error(err)
 			}
-			mkVault(t, local)
+			if err := populate(local); err != nil {
+				t.Error(err)
+			}
 		}}
 		err := s.run(ctx)
 		if !strings.Contains(refusalText(err), "was replaced") || eng.folderCount() != 0 {
@@ -520,12 +544,12 @@ func TestIssue175_ConsentIsBoundToTheFolder(t *testing.T) {
 	})
 	t.Run("vanished during the wait is never recreated", func(t *testing.T) {
 		eng, hub, s, local := upload(t)
-		hub.offerDelay = 300 * time.Millisecond
-		time.AfterFunc(100*time.Millisecond, func() {
+		hub.offerOnQuery = true
+		hub.beforeOffer = func() {
 			if err := os.Rename(local, local+"-moved"); err != nil {
 				t.Error(err)
 			}
-		})
+		}
 		err := s.run(ctx)
 		if !strings.Contains(refusalText(err), "disappeared") || eng.folderCount() != 0 {
 			t.Fatalf("got %v; folders=%d", err, eng.folderCount())
@@ -537,7 +561,7 @@ func TestIssue175_ConsentIsBoundToTheFolder(t *testing.T) {
 	t.Run("the place above a new folder changed", func(t *testing.T) {
 		eng := newFakeEngine(t)
 		hub := newFakeHub(t, eng, pairing.VaultInfo{ID: "vs-aaaaaaaaaaaa", Label: "Recipes", Files: 12})
-		hub.offerDelay = 300 * time.Millisecond
+		hub.offerOnQuery = true
 		s, _ := testSession(t, eng, hub, pairOptions{vault: "Recipes"})
 		s.opts.code = hub.code
 		disk := filepath.Join(s.env.home, "Disk")
@@ -546,17 +570,21 @@ func TestIssue175_ConsentIsBoundToTheFolder(t *testing.T) {
 		}
 		s.opts.path = filepath.Join(disk, "Recipes")
 		// The "disk" goes away and another folder takes its name.
-		time.AfterFunc(100*time.Millisecond, func() {
+		hub.beforeOffer = func() {
 			if err := os.Rename(disk, disk+"-gone"); err != nil {
 				t.Error(err)
 			}
 			if err := os.Mkdir(disk, 0o755); err != nil {
 				t.Error(err)
 			}
-		})
+		}
 		err := s.run(ctx)
 		if !strings.Contains(refusalText(err), "changed while VaultSync was waiting") || eng.folderCount() != 0 {
 			t.Fatalf("got %v; folders=%d", err, eng.folderCount())
+		}
+		// Not created on whatever took the disk's place either.
+		if _, err := os.Stat(s.opts.path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("a folder was created on the replacement disk")
 		}
 	})
 }
@@ -566,19 +594,22 @@ func TestIssue175_ConsentIsBoundToTheFolder(t *testing.T) {
 func TestIssue175_HubEvidenceIsRefreshedBeforeAdding(t *testing.T) {
 	eng := newFakeEngine(t)
 	hub := newFakeHub(t, eng)
-	hub.offerDelay = 300 * time.Millisecond
+	hub.offerOnQuery = true
 	s, _ := testSession(t, eng, hub, pairOptions{vault: "Notes", create: true, yes: true})
 	s.opts.code = hub.code
 	local := filepath.Join(s.env.home, "Notes")
 	mkVault(t, local)
 	s.opts.path = local
-	time.AfterFunc(150*time.Millisecond, func() {
+	// Another device joins the vault the agent was told is its alone while
+	// the agent waits for the share: after the proof it took right after
+	// the create, before the one it takes right before the add.
+	hub.beforeOffer = func() {
 		hub.mu.Lock()
 		defer hub.mu.Unlock()
 		for i := range hub.vaults {
 			hub.vaults[i].SharedWith = append(hub.vaults[i].SharedWith, otherID)
 		}
-	})
+	}
 	err := s.run(context.Background())
 	if !strings.Contains(refusalText(err), "still a new, empty vault") || eng.folderCount() != 0 {
 		t.Fatalf("got %v; folders=%d", err, eng.folderCount())
@@ -648,12 +679,16 @@ func TestIssue175_PairingJournal(t *testing.T) {
 // not to one swapped in while the agent asked the Hub one last time.
 func TestIssue175_ConsentWindowsAreClosed(t *testing.T) {
 	ctx := context.Background()
+	// swap runs off the test goroutine (a reader hook, a Hub request) and
+	// so reports through t.Error.
 	swap := func(t *testing.T, path string) {
-		t.Helper()
 		if err := os.Rename(path, path+"-other"); err != nil {
-			t.Fatal(err)
+			t.Error(err)
+			return
 		}
-		mkVault(t, path)
+		if err := populate(path); err != nil {
+			t.Error(err)
+		}
 	}
 
 	t.Run("replaced while the consent question was open", func(t *testing.T) {
@@ -716,7 +751,9 @@ func TestIssue175_NoRequestBetweenTheLastChecksAndTheAdd(t *testing.T) {
 				if err := os.Rename(local, local+"-other"); err != nil {
 					t.Error(err)
 				}
-				mkVault(t, local)
+				if err := populate(local); err != nil {
+					t.Error(err)
+				}
 			}
 			eng.mu.Unlock()
 		}
