@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -1106,6 +1107,22 @@ func TestIssue176_TheShellsEnvironmentIsRecorded(t *testing.T) {
 	}
 	if after, _ := os.Stat(a.lay.State); !after.ModTime().Equal(before.ModTime()) {
 		t.Fatal("an unchanged shell rewrote agent.json")
+	}
+}
+
+// A port nobody serves answers with a refusal — or with a reset, when a
+// listener closed before accepting, as the supervisor's own port check
+// does for a moment; both say the same.
+func TestIssue176_ARefusedOrResetConnectIsNobodyListening(t *testing.T) {
+	for _, err := range []error{syscall.ECONNREFUSED, syscall.ECONNRESET, &net.OpError{Op: "dial", Err: &os.SyscallError{Syscall: "connect", Err: syscall.ECONNRESET}}} {
+		if !nobodyListens(err) {
+			t.Fatalf("%v is nobody listening", err)
+		}
+	}
+	for _, err := range []error{syscall.EACCES, context.DeadlineExceeded, errors.New("403 Forbidden")} {
+		if nobodyListens(err) {
+			t.Fatalf("%v says nothing about a listener", err)
+		}
 	}
 }
 

@@ -256,7 +256,7 @@ func (c *controlServer) currentStatus(ctx context.Context) (controlStatus, error
 	cancel()
 	switch {
 	case err == nil:
-	case errors.Is(err, syscall.ECONNREFUSED):
+	case nobodyListens(err):
 		// Nobody listens on the engine's port: it is on its way up, or the
 		// supervisor is starting it again. Anything else — a refused probe,
 		// no answer in time — says nothing about syncing and is reported.
@@ -377,6 +377,15 @@ func (c *controlServer) pair(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// nobodyListens: a connection to the engine's loopback port found no
+// server — refused, or reset during the connect, which is what a listener
+// that closes before accepting leaves behind (the supervisor's own port
+// check is such a listener for a moment). A server that answers never
+// does either.
+func nobodyListens(err error) bool {
+	return errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET)
 }
 
 // pausedHere: every Hub this engine knows is paused (and there is one).
@@ -563,7 +572,7 @@ func (a *app) noAgentForPause(ctx context.Context, st agentState, pause bool) er
 			return refuse("%s: syncing could not be paused and continues. vaultsync stop stops the background service.", why)
 		}
 		return refuse("%s: VaultSync cannot tell whether syncing is paused, and could not resume it.", why)
-	case errors.Is(err, syscall.ECONNREFUSED):
+	case nobodyListens(err):
 		// Nobody listens on the engine's port: the one positive sign that
 		// nothing syncs.
 		if pause {
