@@ -66,11 +66,17 @@ func (a *app) status(ctx context.Context) error {
 		fmt.Fprintln(w, "Background service: not installed (vaultsync setup installs it; vaultsync run runs the engine in this terminal)")
 	case background:
 		fmt.Fprintln(w, "Background service: running")
-	case a.svc.noSession():
-		// Not stopped: there is no session for it yet (#232).
-		fmt.Fprintln(w, "Background service: "+a.svc.sessionNote())
 	default:
-		fmt.Fprintln(w, "Background service: stopped — vaultsync start resumes it")
+		// Not running: stopped, or no session to run in yet (#232) — only
+		// the service manager can tell the two apart.
+		switch state, why := a.svc.session(); state {
+		case sessionAbsent:
+			fmt.Fprintln(w, "Background service: "+a.svc.waitsForLoginNote())
+		case sessionUnknown:
+			fmt.Fprintln(w, "Background service: unknown — the service manager could not be asked from here ("+why+"); try vaultsync status from a login shell")
+		default:
+			fmt.Fprintln(w, "Background service: stopped — vaultsync start resumes it")
+		}
 	}
 	st, err := loadState(a.lay.State)
 	if err != nil {

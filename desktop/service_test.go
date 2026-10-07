@@ -29,21 +29,40 @@ type fakeRunner struct {
 	// has no gui domain for them, the systemd user manager is not running
 	// (#232). Every launchctl / systemctl call fails the way the real ones do.
 	noSession bool
+	// probeFails, when set, is what the session probe (the domain print,
+	// show-environment) answers while failing for another reason than a
+	// missing session.
+	probeFails string
+}
+
+// launchdUID reads the uid out of a gui/<uid>[/label] target.
+func launchdUID(args []string) string {
+	for _, a := range args {
+		if strings.HasPrefix(a, "gui/") {
+			uid, _, _ := strings.Cut(strings.TrimPrefix(a, "gui/"), "/")
+			return uid
+		}
+	}
+	return "?"
 }
 
 func (f *fakeRunner) run(name string, args ...string) (string, error) {
 	call := name + " " + strings.Join(args, " ")
+	domainProbe := strings.HasPrefix(call, "launchctl print gui/") && strings.Count(call, "/") == 1
 	if call == "systemctl --user show-environment" {
 		// Asked for the manager's environment; not an action worth asserting.
-		if f.noSession {
+		switch {
+		case f.noSession:
 			return "Failed to connect to bus: No medium found", errors.New("exit status 1")
+		case f.probeFails != "":
+			return f.probeFails, errors.New("exit status 1")
 		}
 		return f.answers[call], nil
 	}
 	f.calls = append(f.calls, call)
 	if f.noSession {
 		if name == "launchctl" {
-			return "Bad request.\nCould not find domain for user gui: 501", errors.New("exit status 112")
+			return "Bad request.\nCould not find domain for user gui: " + launchdUID(args), errors.New("exit status 112")
 		}
 		return "Failed to connect to bus: No medium found", errors.New("exit status 1")
 	}
@@ -53,9 +72,11 @@ func (f *fakeRunner) run(name string, args ...string) (string, error) {
 		}
 	}
 	switch {
-	case call == "launchctl print gui/501":
+	case domainProbe && f.probeFails != "":
+		return f.probeFails, errors.New("exit status 1")
+	case domainProbe:
 		// The domain itself: there as long as the user has a desktop session.
-		return "gui/501 = {\n", nil
+		return "gui/" + launchdUID(args) + " = {\n", nil
 	case strings.HasPrefix(call, "launchctl print"):
 		if f.lingering > 0 {
 			f.lingering--
@@ -93,7 +114,9 @@ func (f *fakeRunner) run(name string, args ...string) (string, error) {
 		}
 		f.idle = false
 	}
-	return "", nil
+	// A configured answer (systemctl is-active, for one) stands for the
+	// rest; anything else succeeds silently.
+	return f.answers[call], nil
 }
 
 func testService(t *testing.T, goos string, run runner) (service, string) {
@@ -103,7 +126,13 @@ func testService(t *testing.T, goos string, run runner) (service, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return service{goos: goos, home: home, uid: 501, getenv: envOf(nil), lay: lay, run: run, pause: func(time.Duration) {}}, home
+	svc := service{goos: goos, home: home, uid: 501, getenv: envOf(nil), lay: lay, run: run, pause: func(time.Duration) {}}
+	if f, ok := run.(*fakeRunner); ok {
+		// The user manager's runtime directory is there exactly while the
+		// manager runs.
+		svc.exists = func(string) bool { return !f.noSession }
+	}
+	return svc, home
 }
 
 func TestIssue175_LaunchAgentFile(t *testing.T) {
