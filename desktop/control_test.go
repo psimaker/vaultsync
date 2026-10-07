@@ -1427,6 +1427,37 @@ func TestIssue176_StartupRollbackFailuresAreReported(t *testing.T) {
 	}
 	removeEntry = os.Remove
 	_ = os.Remove(a.lay.Socket)
+
+	// A socket that could not be made owner-only is taken down again; when
+	// that fails, the socket left behind is said with the chmod error — and
+	// no fallback, however able, hides it.
+	usual := filepath.Join(shortDir(t), "agent.sock")
+	defer func(real func(string, os.FileMode) error) { chmodEntry = real }(chmodEntry)
+	chmodEntry = func(p string, m os.FileMode) error {
+		if p == usual {
+			return &os.PathError{Op: "chmod", Path: "x", Err: syscall.EPERM}
+		}
+		return os.Chmod(p, m)
+	}
+	removeEntry = func(string) error { return &os.PathError{Op: "remove", Path: "x", Err: syscall.EACCES} }
+	_, _, _, err = listenControl(usual, shortDir(t))
+	if err == nil || !strings.Contains(err.Error(), "could not be made owner-only") || !errors.Is(err, errSocketLeftBehind) {
+		t.Fatalf("chmod and removal failing: %v", err)
+	}
+	removeEntry = os.Remove
+	_ = os.Remove(usual)
+	// A chmod that fails with a removal that works: the fallback may serve.
+	fb := shortDir(t)
+	l, at, cleanup, err := listenControl(usual, fb)
+	if err != nil || !strings.HasPrefix(at, fb+string(filepath.Separator)) {
+		t.Fatalf("chmod failing at the usual place, fallback serving: %v at %s", err, at)
+	}
+	if _, serr := os.Lstat(usual); !errors.Is(serr, os.ErrNotExist) {
+		t.Fatal("the socket at the usual place stays behind")
+	}
+	chmodEntry = os.Chmod
+	l.Close()
+	_ = cleanup()
 }
 
 // The diagnostic file keeps the first write that failed, and its close
@@ -1442,8 +1473,20 @@ func TestIssue176_DiagnosticsThatCouldNotBeWrittenAreReported(t *testing.T) {
 	logger.Printf("accept: %s", path)
 	logger.Printf("second")
 	err = d.close()
-	if err == nil || !strings.Contains(err.Error(), "could not all be written") || strings.Contains(err.Error(), path) {
-		t.Fatalf("close: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "could not all be kept") || !strings.Contains(err.Error(), "writing:") || strings.Contains(err.Error(), "closing:") || strings.Contains(err.Error(), path) {
+		t.Fatalf("close after failed writes: %v", err)
+	}
+	// Both a write and the close failing are said, each on its own.
+	h, err := os.Create(filepath.Join(t.TempDir(), "closed.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.Close() // every write and the close fail from here on
+	both := &diagLog{f: h}
+	log.New(both, "", 0).Printf("gone: %s", path)
+	err = both.close()
+	if err == nil || !strings.Contains(err.Error(), "writing:") || !strings.Contains(err.Error(), "closing:") || strings.Contains(err.Error(), path) {
+		t.Fatalf("close after failed write and close: %v", err)
 	}
 	// A file that takes every write closes without a word.
 	g, err := os.Create(filepath.Join(t.TempDir(), "ok.log"))

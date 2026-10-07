@@ -210,15 +210,22 @@ func (d *diagLog) Write(p []byte) (int, error) {
 
 func (d *diagLog) close() error {
 	d.mu.Lock()
-	err := d.err
+	werr := d.err
 	d.mu.Unlock()
-	if cerr := d.f.Close(); cerr != nil {
-		err = errors.Join(err, cerr)
+	cerr := d.f.Close()
+	if werr == nil && cerr == nil {
+		return nil
 	}
-	if err != nil {
-		return fmt.Errorf("the control socket's diagnostics could not all be written to control-socket.log — %s", serviceSummary(err))
+	// Each failure summarized on its own: a summary of both together would
+	// name only the first.
+	var said []string
+	if werr != nil {
+		said = append(said, "writing: "+serviceSummary(werr))
 	}
-	return nil
+	if cerr != nil {
+		said = append(said, "closing: "+serviceSummary(cerr))
+	}
+	return fmt.Errorf("the control socket's diagnostics could not all be kept in control-socket.log — %s", strings.Join(said, "; "))
 }
 
 // listenControl listens at path — or, when VaultSync's folder lies too deep
@@ -233,6 +240,12 @@ func listenControl(path, fallbackDir string) (l net.Listener, at string, cleanup
 	l, err = listenUnix(path)
 	if err == nil {
 		return l, path, func() error { return removeSocket(path) }, nil
+	}
+	if errors.Is(err, errSocketLeftBehind) {
+		// A socket that stays behind at the usual place is not to be hidden
+		// by a fallback that works: it is reported, and the agent runs
+		// without a socket.
+		return nil, "", nil, err
 	}
 	if fallbackDir == "" {
 		return nil, "", nil, fmt.Errorf("%w (and no folder of the user's own to fall back into)", err)
@@ -262,7 +275,7 @@ var removeEntry = os.Remove
 // no failure.
 func removeSocket(path string) error {
 	if err := removeEntry(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("the control socket could not be removed: %w", err)
+		return fmt.Errorf("%w: %w", errSocketLeftBehind, err)
 	}
 	return nil
 }
@@ -277,13 +290,16 @@ func removeSocketDir(dir string) error {
 	return nil
 }
 
-// listenUnix listens on a fresh socket at path, owner-only.
+// listenUnix listens on a fresh socket at path, owner-only. A socket that
+// could not be made owner-only is taken down again; one that then stays
+// behind is reported as such (errSocketLeftBehind), so that no fallback
+// hides it.
 func listenUnix(path string) (net.Listener, error) {
 	if fi, err := os.Lstat(path); err == nil {
 		if fi.Mode()&os.ModeSocket == 0 {
 			return nil, fmt.Errorf("%s exists and is not a socket", path)
 		}
-		if err := os.Remove(path); err != nil {
+		if err := removeEntry(path); err != nil {
 			return nil, err
 		}
 	}
@@ -291,12 +307,23 @@ func listenUnix(path string) (net.Listener, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.Chmod(path, 0o600); err != nil {
+	if err := chmodEntry(path, 0o600); err != nil {
+		// Close would unlink the socket and say nothing when it could not;
+		// the removal is done and checked here.
+		if ul, ok := l.(*net.UnixListener); ok {
+			ul.SetUnlinkOnClose(false)
+		}
 		l.Close()
-		return nil, err
+		return nil, errors.Join(fmt.Errorf("the control socket could not be made owner-only: %w", err), removeSocket(path))
 	}
 	return l, nil
 }
+
+// chmodEntry sets a file's mode; a variable so a test can make it fail.
+var chmodEntry = os.Chmod
+
+// errSocketLeftBehind: a socket that should have been removed stays.
+var errSocketLeftBehind = errors.New("the control socket could not be removed")
 
 // ownerOnly is a listener that hands on only connections from the user's
 // own account; the kernel says whose a connection is. Any other is closed
