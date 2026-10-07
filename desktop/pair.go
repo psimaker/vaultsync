@@ -68,7 +68,7 @@ type pairEnv struct {
 	engine     *syncthing.Client
 	discover   func(context.Context) ([]pairing.DiscoveredHub, error)
 	dial       func(addr string) *pairing.Client
-	registries []string
+	registries func() []string
 	scanRoots  []string
 	cloud      func() []cloudRoot
 	userST     func() (userSyncthing, bool)
@@ -80,6 +80,18 @@ type pairEnv struct {
 	hubSyncAddress string
 	deviceName     string
 	now            func() time.Time
+	// background: the pairing runs inside the background service, so a
+	// folder macOS refuses is "vaultsync" to allow — not the terminal app.
+	background bool
+	// rememberShell: this pairing runs in the shell, and records the
+	// shell's guard variables in agent.json under the pairing lock.
+	rememberShell bool
+	// shellRecord, for a pairing run by the service, loads the shell's
+	// record — under the pairing lock, so that a terminal's pairing or a
+	// setup that changes it cannot slip in between the load and the
+	// checks; what it loads lands in shellSlot, which the lookups read.
+	shellRecord func() (map[string]string, error)
+	shellSlot   *map[string]string
 }
 
 type pairSession struct {
@@ -89,12 +101,15 @@ type pairSession struct {
 
 	myID        string
 	engineStart string
-	hub         pairing.DiscoveredHub
-	client      *pairing.Client
-	code        string
-	hello       pairing.HubPayload
-	pairedAt    time.Time
-	seq         uint64
+	// menu is the vault menu kept for a caller without a terminal (the
+	// control socket) when the flags left a choice open.
+	menu     *vaultMenu
+	hub      pairing.DiscoveredHub
+	client   *pairing.Client
+	code     string
+	hello    pairing.HubPayload
+	pairedAt time.Time
+	seq      uint64
 }
 
 type planKind int
@@ -142,7 +157,14 @@ func (p plan) label() string {
 	return p.name
 }
 
+// beforePairingLock runs right before a pairing takes its lock; a test
+// uses it to change what the pairing must then read under the lock.
+var beforePairingLock func()
+
 func (s *pairSession) run(ctx context.Context) error {
+	if beforePairingLock != nil {
+		beforePairingLock()
+	}
 	unlock, err := lockFile(filepath.Join(s.env.lay.Base, "pair.lock"))
 	if errors.Is(err, ErrEngineRunning) {
 		return errPairingBusy
@@ -151,11 +173,34 @@ func (s *pairSession) run(ctx context.Context) error {
 		return err
 	}
 	defer unlock()
+	if s.env.rememberShell {
+		// Under the lock that uninstall --remove-data waits on: a record
+		// written outside it could bring agent.json back after the removal.
+		if err := rememberShellEnv(s.env.lay.State, s.env.getenv); err != nil {
+			return err
+		}
+	}
+	if s.env.shellRecord != nil {
+		// Under the lock every writer of the record takes: the places the
+		// guards look at are the ones recorded now, not a moment ago.
+		rec, err := s.env.shellRecord()
+		if err != nil {
+			return err
+		}
+		*s.env.shellSlot = rec
+	}
 	if s.myID, err = s.env.engine.MyID(ctx); err != nil {
 		return fmt.Errorf("the sync engine does not answer: %w", err)
 	}
 	if s.engineStart, err = engineStartTime(ctx, s.env.engine); err != nil {
 		return fmt.Errorf("the sync engine does not answer: %w", err)
+	}
+	// Under the lock, so a pause cannot slip in between this look and the
+	// Hub this pairing adds (a pause takes the same lock).
+	if paused, err := pausedHere(ctx, s.env.engine); err != nil {
+		return fmt.Errorf("the sync engine does not answer: %w", err)
+	} else if paused {
+		return refuse("Syncing is paused on this computer — run vaultsync resume first.")
 	}
 	if done, err := s.resumePending(ctx); done || err != nil {
 		return s.unlessAlreadySyncing(err)
@@ -426,8 +471,11 @@ func macLocalNetworkNote(goos string) string {
 // "operation not permitted" on a folder in Documents, Desktop or Downloads is
 // macOS privacy protection, not the folder's permissions: the app vaultsync
 // runs in needs access under Files & Folders.
-func cannotRead(goos, home, path string, err error) error {
+func cannotRead(goos, home, path string, err error, background bool) error {
 	if goos == "darwin" && errors.Is(err, syscall.EPERM) {
+		if background {
+			return refuse("macOS did not let VaultSync read %s. Allow “vaultsync” to access this folder in System Settings → Privacy & Security → Files & Folders, then try again.", tildePath(home, path))
+		}
 		return refuse("macOS did not let VaultSync read %s. Allow the app you run vaultsync in (Terminal, for example) to access this folder in System Settings → Privacy & Security → Files & Folders, then try again.", tildePath(home, path))
 	}
 	return refuse("VaultSync cannot read %s. Check its permissions or reconnect its disk, then try again.", tildePath(home, path))
@@ -556,7 +604,11 @@ func (s *pairSession) buildMenu(ctx context.Context) (vaultMenu, error) {
 		configured[f.ID] = f
 		enginePaths = append(enginePaths, f.Path)
 	}
-	vaults, errs := knownVaults(s.env.registries)
+	var regs []string
+	if s.env.registries != nil {
+		regs = s.env.registries()
+	}
+	vaults, errs := knownVaults(regs)
 	if len(errs) > 0 {
 		m.registryNote = "Obsidian’s list of vaults could not be read; vaults it lists may be missing here."
 	}
@@ -637,7 +689,11 @@ func shortReason(s *pairSession, path string, enginePaths []string) string {
 	if r, ok := cloudBlock(path, s.env.cloud(), s.env.goos); ok {
 		return r.Provider + " — make a local copy first (A shows how)"
 	}
-	if _, ok := onDiskOverlap(path, s.reserved(), s.env.goos); ok {
+	reserved, err := s.reserved()
+	if err != nil {
+		return "VaultSync’s own places could not be read"
+	}
+	if _, ok := onDiskOverlap(path, reserved, s.env.goos); ok {
 		return "inside VaultSync’s own folder"
 	}
 	if us, ok := s.env.userST(); ok {
@@ -796,7 +852,7 @@ func (s *pairSession) planForLocal(ctx context.Context, path string) (plan, erro
 	}
 	_, empty, err := join.DirState(path)
 	if err != nil {
-		return plan{}, cannotRead(s.env.goos, s.env.home, path, err)
+		return plan{}, cannotRead(s.env.goos, s.env.home, path, err, s.env.background)
 	}
 	p.hadFiles = !empty
 	if p.name, err = s.askHubName(filepath.Base(path), p.hadFiles); err != nil {
@@ -962,7 +1018,7 @@ func (s *pairSession) downloadPlan(ctx context.Context, v pairing.VaultInfo, pat
 	}
 	exists, empty, err := join.DirState(path)
 	if err != nil {
-		return plan{}, cannotRead(s.env.goos, s.env.home, path, err)
+		return plan{}, cannotRead(s.env.goos, s.env.home, path, err, s.env.background)
 	}
 	if exists && !empty {
 		return plan{}, refuse("%s already holds files. VaultSync downloads a vault from your Hub only into a new or empty folder — choose another one.", tildePath(s.env.home, path))
@@ -980,6 +1036,9 @@ func (s *pairSession) downloadPlan(ctx context.Context, v pairing.VaultInfo, pat
 
 func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 	if s.opts.vault == "" || s.opts.path == "" {
+		if err := s.keepMenu(ctx); err != nil {
+			return plan{}, err
+		}
 		return plan{}, refuse("Pass --vault NAME and --path FOLDER (with --create for a new vault on your Hub) — there is no terminal to ask on.")
 	}
 	path, err := expandPath(s.env.home, s.opts.path)
@@ -997,6 +1056,9 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 		}
 	}
 	if !s.opts.create {
+		if err := s.keepMenu(ctx); err != nil {
+			return plan{}, err
+		}
 		return plan{}, refuse("Your Hub has no vault named %s. Add --create to start it as a new vault.", quoted(s.opts.vault))
 	}
 	name := pairing.SanitizeName(s.opts.vault)
@@ -1013,7 +1075,7 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 	}
 	exists, empty, err := join.DirState(path)
 	if err != nil {
-		return plan{}, cannotRead(s.env.goos, s.env.home, path, err)
+		return plan{}, cannotRead(s.env.goos, s.env.home, path, err, s.env.background)
 	}
 	if !exists {
 		if st, err := os.Stat(filepath.Dir(path)); err != nil || !st.IsDir() {
@@ -1035,6 +1097,21 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 	return p, nil
 }
 
+// keepMenu builds the vault menu for a caller that has no terminal to read
+// it on (the control socket), so the refusal can carry the choices. An
+// engine that stops meanwhile is reported, not hidden behind the refusal.
+func (s *pairSession) keepMenu(ctx context.Context) error {
+	if s.t.interactive() {
+		return nil
+	}
+	m, err := s.buildMenu(ctx)
+	if err != nil {
+		return err
+	}
+	s.menu = &m
+	return nil
+}
+
 // --- the checks -------------------------------------------------------------
 
 func (s *pairSession) enginePaths(ctx context.Context) ([]string, error) {
@@ -1052,7 +1129,12 @@ func (s *pairSession) enginePaths(ctx context.Context) ([]string, error) {
 // reserved are VaultSync's own places: a vault may be neither inside one nor
 // around one — `uninstall --remove-data` deletes some of them, and the
 // engine's keys must never sync.
-func (s *pairSession) reserved() []string {
+// reserved is every place of VaultSync's own that no vault may be inside
+// or around. One of them is read from agent.json — the control socket's
+// own folder when it lives outside VaultSync's (control.go) — so an
+// agent.json that cannot be read means the list is not known, and the
+// caller refuses rather than guesses.
+func (s *pairSession) reserved() ([]string, error) {
 	out := []string{s.env.lay.Base}
 	if s.env.lay.Logs != "" {
 		out = append(out, s.env.lay.Logs)
@@ -1060,14 +1142,25 @@ func (s *pairSession) reserved() []string {
 	if s.env.unitDir != "" {
 		out = append(out, s.env.unitDir)
 	}
-	return out
+	st, err := loadState(s.env.lay.State)
+	if err != nil {
+		return nil, fmt.Errorf("VaultSync's own places are not known (%w) — nothing was changed", err)
+	}
+	if st.ControlSocket != "" {
+		out = append(out, filepath.Dir(st.ControlSocket))
+	}
+	return out, nil
 }
 
 // checkTarget runs every rule a folder must pass before it may sync, and
 // again right before it is added.
 func (s *pairSession) checkTarget(ctx context.Context, path, name string, enginePaths []string) error {
 	home := s.env.home
-	if r, ok := onDiskOverlap(path, s.reserved(), s.env.goos); ok {
+	reserved, err := s.reserved()
+	if err != nil {
+		return err
+	}
+	if r, ok := onDiskOverlap(path, reserved, s.env.goos); ok {
 		return refuse("VaultSync keeps its own files in %s. A vault can be neither inside that folder nor around it — choose another one.", tildePath(home, r))
 	}
 	if r, ok := cloudBlock(path, s.env.cloud(), s.env.goos); ok {
@@ -1285,7 +1378,7 @@ func (s *pairSession) finalGate(ctx context.Context, p plan, v pairing.VaultInfo
 	}
 	_, empty, err := join.DirState(abs)
 	if err != nil {
-		return cannotRead(s.env.goos, s.env.home, abs, err)
+		return cannotRead(s.env.goos, s.env.home, abs, err, s.env.background)
 	}
 	if empty == p.hadFiles {
 		return refuse("%s changed while VaultSync was waiting for your Hub. Nothing was connected — run vaultsync pair again.", tildePath(s.env.home, abs))

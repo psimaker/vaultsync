@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -73,6 +74,26 @@ func (a *app) status(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// The running agent answers first (control.go): one truth for the
+	// terminal and the menu-bar app. Without one — an older agent, no agent
+	// — the engine is asked directly.
+	actx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	cs, aerr := a.controlClient(st).status(actx)
+	cancel()
+	switch {
+	case aerr == nil && cs.Engine != "running":
+		fmt.Fprintln(w, "Sync engine: starting — VaultSync is bringing it up")
+		_, err := io.WriteString(w, cs.Text)
+		return err
+	case aerr == nil:
+		fmt.Fprintln(w, "Sync engine: running")
+		_, err := io.WriteString(w, cs.Text)
+		return err
+	case !errors.Is(aerr, errNoAgent):
+		// An agent answered and failed: that is the news, not whatever a
+		// look at the engine would say.
+		return fmt.Errorf("the running VaultSync agent could not report: %w", aerr)
+	}
 	client, err := eng.client(st)
 	if err != nil {
 		return err
@@ -82,8 +103,8 @@ func (a *app) status(ctx context.Context) error {
 	cancel()
 	if !up {
 		fmt.Fprintln(w, "Sync engine: not running — nothing syncs right now")
-		a.printAttempts(w, a.offlineFolders(w, eng))
-		return nil
+		_, err := io.WriteString(w, a.offlineReport().Text)
+		return err
 	}
 	fmt.Fprintln(w, "Sync engine: running")
 	return a.onlineStatus(ctx, w, client, background)
@@ -98,52 +119,107 @@ func (a *app) backgroundEngine() bool {
 	return a.svc.installed() && a.svc.running()
 }
 
+// statusReport is what is known about syncing right now: the lines
+// vaultsync status prints below the engine line, and the facts behind them
+// for the menu-bar app (#176).
+type statusReport struct {
+	// Paused: syncing is paused on this computer — every Hub this engine
+	// knows is paused in it (vaultsync pause).
+	Paused   bool            `json:"paused"`
+	Hubs     []hubStatus     `json:"hubs"`
+	Vaults   []vaultStatus   `json:"vaults"`
+	Waiting  []waitingStatus `json:"waiting"`
+	Attempts []attemptStatus `json:"attempts"`
+	// Text is the report as vaultsync status prints it.
+	Text string `json:"text"`
+}
+
+type hubStatus struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	State string `json:"state"`
+}
+
+type vaultStatus struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Path  string `json:"path"`
+	State string `json:"state"`
+}
+
+type waitingStatus struct {
+	Label string `json:"label"`
+	Hub   string `json:"hub"`
+}
+
+type attemptStatus struct {
+	Vault string `json:"vault"`
+	What  string `json:"what"`
+	At    string `json:"at"`
+}
+
 func (a *app) onlineStatus(ctx context.Context, w io.Writer, c *syncthing.Client, background bool) error {
-	var sys systemStatusView
-	if err := c.Get(ctx, "/rest/system/status", &sys); err != nil {
-		return err
-	}
-	devices, err := c.Devices(ctx)
+	r, err := a.report(ctx, c, background)
 	if err != nil {
 		return err
 	}
+	_, err = io.WriteString(w, r.Text)
+	return err
+}
+
+// report gathers the status from the engine and renders it.
+func (a *app) report(ctx context.Context, c *syncthing.Client, background bool) (statusReport, error) {
+	r := emptyReport()
+	var sys systemStatusView
+	if err := c.Get(ctx, "/rest/system/status", &sys); err != nil {
+		return r, err
+	}
+	devices, err := c.Devices(ctx)
+	if err != nil {
+		return r, err
+	}
 	var conns connectionsView
 	_ = c.Get(ctx, "/rest/system/connections", &conns)
-	hubNames := map[string]string{}
+	var text strings.Builder
+	w := &text
 	anyConnected := false
+	pausedHubs := 0
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Hub")
-	hubs := 0
 	for _, d := range devices {
 		if d.DeviceID == sys.MyID {
 			continue
 		}
-		hubs++
 		name := d.Name
 		if name == "" {
 			name = "(unnamed Hub)"
 		}
-		hubNames[d.DeviceID] = name
 		state := "not connected"
-		if cn, ok := conns.Connections[d.DeviceID]; ok && cn.Connected {
+		switch cn, ok := conns.Connections[d.DeviceID]; {
+		case d.Paused:
+			pausedHubs++
+			state = "paused on this computer — vaultsync resume starts syncing again"
+		case ok && cn.Connected:
 			anyConnected = true
 			state = "connected"
 			if strings.HasPrefix(cn.Type, "relay") {
 				state = "connected through a relay (slower; a direct connection is not possible right now)"
 			}
 		}
+		r.Hubs = append(r.Hubs, hubStatus{ID: d.DeviceID, Name: name, State: state})
 		fmt.Fprintf(w, "  %-22s %s\n", name, state)
 	}
-	if hubs == 0 {
+	if len(r.Hubs) == 0 {
 		fmt.Fprintln(w, "  none yet — run vaultsync pair")
 	}
-	if hubs > 0 && !anyConnected && a.goos == "darwin" && localNetworkRefused(sys) {
+	r.Paused = len(r.Hubs) > 0 && pausedHubs == len(r.Hubs)
+	if len(r.Hubs) > 0 && !anyConnected && !r.Paused && a.goos == "darwin" && localNetworkRefused(sys) {
 		fmt.Fprintln(w, "  "+localNetworkHint(background))
 	}
 
 	folders, err := c.Folders(ctx)
 	if err != nil {
-		return err
+		return r, err
 	}
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Vaults")
@@ -152,8 +228,8 @@ func (a *app) onlineStatus(ctx context.Context, w io.Writer, c *syncthing.Client
 	}
 	sort.Slice(folders, func(i, j int) bool { return strings.ToLower(folders[i].Label) < strings.ToLower(folders[j].Label) })
 	for _, f := range folders {
-		var sum folderSummary
 		state := "unknown"
+		var sum folderSummary
 		if err := c.Get(ctx, "/rest/db/status?folder="+url.QueryEscape(f.ID), &sum); err == nil {
 			remote := map[string]remoteCompletion{}
 			for _, d := range f.Devices {
@@ -167,12 +243,22 @@ func (a *app) onlineStatus(ctx context.Context, w io.Writer, c *syncthing.Client
 			}
 			state = describeFolder(f, sum, conns, remote, sys.MyID, background)
 		}
+		// Paused here: the connections are, so a state that only says what
+		// the connection would say reads "paused on this computer" — while
+		// everything else stays as it is: an error with its remedy, the
+		// folder's own pause, files that could not sync, work the engine is
+		// still doing on what it had already taken in.
+		if r.Paused && connectionState(state) {
+			state = "paused on this computer"
+		}
+		r.Vaults = append(r.Vaults, vaultStatus{ID: f.ID, Label: f.Label, Path: f.Path, State: state})
 		fmt.Fprintf(w, "  %-14s %-28s %s\n", f.Label, tildePath(a.home, f.Path), state)
 	}
 	if waiting, err := pendingFromHubs(ctx, c, sys.MyID); err == nil && len(waiting) > 0 {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "Waiting to be set up")
 		for _, p := range waiting {
+			r.Waiting = append(r.Waiting, waitingStatus{Label: p.label, Hub: p.hub})
 			fmt.Fprintf(w, "  %-14s shared by %s — run vaultsync pair to finish setup\n", p.label, p.hub)
 		}
 	}
@@ -180,8 +266,23 @@ func (a *app) onlineStatus(ctx context.Context, w io.Writer, c *syncthing.Client
 	for _, f := range folders {
 		configured[f.ID] = true
 	}
-	a.printAttempts(w, configured)
-	return nil
+	r.Attempts = append(r.Attempts, a.printAttempts(w, configured)...)
+	r.Text = text.String()
+	return r, nil
+}
+
+// connectionState: a folder state that says nothing but what the
+// connection to the Hub is doing — the ones a pause of that connection
+// replaces. Anything else (an error, the folder's own pause, files that
+// could not sync, scanning, syncing or items still to sync, no answer)
+// stays visible while paused.
+func connectionState(state string) bool {
+	return state == "up to date" || state == "paused on your Hub" || strings.HasPrefix(state, "waiting for your Hub") || strings.HasPrefix(state, "uploading to your Hub")
+}
+
+// emptyReport is a report with every list present (never null in JSON).
+func emptyReport() statusReport {
+	return statusReport{Hubs: []hubStatus{}, Vaults: []vaultStatus{}, Waiting: []waitingStatus{}, Attempts: []attemptStatus{}}
 }
 
 // describeFolder says where a vault stands. "Up to date" needs both sides:
@@ -249,11 +350,14 @@ func describeFolder(f syncthing.FolderConfig, s folderSummary, conns connections
 		// outstanding leaves it at 100.
 		outstanding += rc.NeedItems + rc.NeedDeletes
 	}
-	if connected == 0 {
-		return "waiting for your Hub"
-	}
+	// What is still to pull is said before the connection's state: it is
+	// this computer's work, and it stays in sight while the connection is
+	// paused.
 	if s.NeedTotal > 0 {
 		return fmt.Sprintf("%d items left to sync", s.NeedTotal)
+	}
+	if connected == 0 {
+		return "waiting for your Hub"
 	}
 	if lowest < 100 {
 		return fmt.Sprintf("uploading to your Hub — %d %%", int(lowest))
@@ -304,47 +408,50 @@ func localNetworkRefused(sys systemStatusView) bool {
 	return false
 }
 
-// offlineFolders lists the vaults from the engine's config file and returns
-// their IDs.
-func (a *app) offlineFolders(w io.Writer, eng engine) map[string]bool {
-	ids := map[string]bool{}
-	f, err := os.Open(eng.configPath())
-	if err != nil {
-		return ids
+// offlineReport is the status while the engine does not answer: the vaults
+// from the engine's config file, and the pairings that did not finish —
+// the same for the terminal and the control socket.
+func (a *app) offlineReport() statusReport {
+	r := emptyReport()
+	var text strings.Builder
+	w := &text
+	configured := map[string]bool{}
+	if f, err := os.Open(a.engine().configPath()); err == nil {
+		defer f.Close()
+		var cfg struct {
+			Folders []struct {
+				ID    string `xml:"id,attr"`
+				Label string `xml:"label,attr"`
+				Path  string `xml:"path,attr"`
+			} `xml:"folder"`
+		}
+		if xml.NewDecoder(io.LimitReader(f, 16<<20)).Decode(&cfg) == nil {
+			fmt.Fprintln(w)
+			fmt.Fprintln(w, "Vaults (not syncing while the engine is stopped)")
+			if len(cfg.Folders) == 0 {
+				fmt.Fprintln(w, "  none yet")
+			}
+			for _, fo := range cfg.Folders {
+				configured[fo.ID] = true
+				r.Vaults = append(r.Vaults, vaultStatus{ID: fo.ID, Label: fo.Label, Path: fo.Path, State: "not syncing — the engine is stopped"})
+				fmt.Fprintf(w, "  %-14s %s\n", fo.Label, tildePath(a.home, fo.Path))
+			}
+		}
 	}
-	defer f.Close()
-	var cfg struct {
-		Folders []struct {
-			ID    string `xml:"id,attr"`
-			Label string `xml:"label,attr"`
-			Path  string `xml:"path,attr"`
-		} `xml:"folder"`
-	}
-	if xml.NewDecoder(io.LimitReader(f, 16<<20)).Decode(&cfg) != nil {
-		return ids
-	}
-	for _, fo := range cfg.Folders {
-		ids[fo.ID] = true
-	}
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Vaults (not syncing while the engine is stopped)")
-	if len(cfg.Folders) == 0 {
-		fmt.Fprintln(w, "  none yet")
-	}
-	for _, fo := range cfg.Folders {
-		fmt.Fprintf(w, "  %-14s %s\n", fo.Label, tildePath(a.home, fo.Path))
-	}
-	return ids
+	r.Attempts = append(r.Attempts, a.printAttempts(w, configured)...)
+	r.Text = text.String()
+	return r
 }
 
 // printAttempts shows pairings that did not finish, unless the vault was set
-// up after all (configured, or a later attempt was accepted).
-func (a *app) printAttempts(w io.Writer, configured map[string]bool) {
+// up after all (configured, or a later attempt was accepted), and returns
+// them.
+func (a *app) printAttempts(w io.Writer, configured map[string]bool) []attemptStatus {
 	all, err := loadAttempts(a.lay)
 	if err != nil {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, err)
-		return
+		return nil
 	}
 	done := map[string]bool{}
 	for _, at := range all {
@@ -363,15 +470,19 @@ func (a *app) printAttempts(w io.Writer, configured map[string]bool) {
 		open = append(open, at)
 	}
 	if len(open) == 0 {
-		return
+		return nil
 	}
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Unfinished pairings")
+	var out []attemptStatus
 	for _, at := range open {
 		what := "your Hub is sharing it; run vaultsync pair to finish setup"
 		if at.State != "shared" {
 			what = "VaultSync couldn’t confirm whether your Hub shared it; check on the Hub with vaultsync-hub status before pairing again"
 		}
-		fmt.Fprintf(w, "  %-14s %s (%s)\n", at.Vault, what, at.At.Local().Format("Jan 2 15:04"))
+		when := at.At.Local().Format("Jan 2 15:04")
+		out = append(out, attemptStatus{Vault: at.Vault, What: what, At: when})
+		fmt.Fprintf(w, "  %-14s %s (%s)\n", at.Vault, what, when)
 	}
+	return out
 }

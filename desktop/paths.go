@@ -18,6 +18,7 @@ type layout struct {
 	Home      string // Base/syncthing — the engine's identity, config and database
 	State     string // Base/agent.json
 	Lock      string // Base/agent.lock — held by the one running engine owner
+	Socket    string // Base/agent.sock — the running agent's control socket (control.go)
 	Logs      string // where the service's own output goes (empty: the journal)
 }
 
@@ -55,6 +56,7 @@ func (l layout) at(base string) layout {
 	l.Home = filepath.Join(l.Base, "syncthing")
 	l.State = filepath.Join(l.Base, "agent.json")
 	l.Lock = filepath.Join(l.Base, "agent.lock")
+	l.Socket = filepath.Join(l.Base, "agent.sock")
 	return l
 }
 
@@ -67,6 +69,50 @@ type agentState struct {
 		Version      string `json:"version"`
 		BinarySHA256 string `json:"binarySHA256"`
 	} `json:"syncthing"`
+	// ControlSocket is where the running agent listens (control.go) when
+	// that is not the layout's usual place; empty otherwise.
+	ControlSocket string `json:"controlSocket,omitempty"`
+	// Env holds the shell's values of the variables the pairing guards
+	// read (guardEnvVars), recorded by setup and by pair in a terminal: a
+	// pairing run by the background service (the control socket) has the
+	// service's environment, not the shell's, and must look where the
+	// terminal looks — for the user's own Syncthing, Obsidian's registry
+	// and the cloud clients' settings (#176). An empty record is a shell
+	// with none of them set (its defaults apply); nil is no record yet.
+	Env map[string]string `json:"env"`
+}
+
+// guardEnvVars are the variables the pairing guards read.
+var guardEnvVars = []string{"XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_RUNTIME_DIR", "APPDATA"}
+
+// recordGuardEnv is the shell's values of guardEnvVars, set ones only —
+// never nil, so that a shell with none set is a record too.
+func recordGuardEnv(getenv func(string) string) map[string]string {
+	out := map[string]string{}
+	for _, k := range guardEnvVars {
+		if v := getenv(k); v != "" {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// updateState applies fn to agent.json as one step under its own lock —
+// loaded, changed and written — so the writers (setup, run, the supervisor
+// moving the engine's port, pair recording the shell) never write an older
+// copy over each other's fields.
+func updateState(path string, fn func(*agentState)) error {
+	unlock, err := lockFileWait(filepath.Join(filepath.Dir(path), "state.lock"))
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	st, err := loadState(path)
+	if err != nil {
+		return err
+	}
+	fn(&st)
+	return saveState(path, st)
 }
 
 const agentStateVersion = 1
