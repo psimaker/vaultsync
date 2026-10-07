@@ -265,7 +265,7 @@ func listenControl(path, fallbackDir string) (l net.Listener, at string, cleanup
 		return nil, "", nil, err
 	}
 	if fallbackDir == "" {
-		return nil, "", nil, fmt.Errorf("%w (and no folder of the user's own to fall back into)", err)
+		return nil, "", nil, &noFallbackDirError{cause: err}
 	}
 	dir, derr := os.MkdirTemp(fallbackDir, "vaultsync-")
 	if derr != nil {
@@ -292,7 +292,7 @@ var removeEntry = os.Remove
 // no failure.
 func removeSocket(path string) error {
 	if err := removeEntry(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("%w: %w", errSocketLeftBehind, err)
+		return &socketLeftBehindError{cause: err}
 	}
 	return nil
 }
@@ -314,7 +314,7 @@ func removeSocketDir(dir string) error {
 func listenUnix(path string) (net.Listener, error) {
 	if fi, err := os.Lstat(path); err == nil {
 		if fi.Mode()&os.ModeSocket == 0 {
-			return nil, fmt.Errorf("%s exists and is not a socket", path)
+			return nil, &notASocketError{path: path}
 		}
 		if err := removeEntry(path); err != nil {
 			return nil, err
@@ -339,8 +339,40 @@ func listenUnix(path string) (net.Listener, error) {
 // chmodEntry sets a file's mode; a variable so a test can make it fail.
 var chmodEntry = os.Chmod
 
-// errSocketLeftBehind: a socket that should have been removed stays.
+// errSocketLeftBehind: a socket that should have been removed stays; the
+// error carrying it is a socketLeftBehindError (errors.Is matches both).
 var errSocketLeftBehind = errors.New("the control socket could not be removed")
+
+type socketLeftBehindError struct{ cause error }
+
+func (e *socketLeftBehindError) Error() string {
+	return errSocketLeftBehind.Error() + ": " + e.cause.Error()
+}
+func (e *socketLeftBehindError) Unwrap() error        { return e.cause }
+func (e *socketLeftBehindError) Is(target error) bool { return target == errSocketLeftBehind }
+func (e *socketLeftBehindError) Summary() string {
+	return "the control socket could not be removed — " + serviceSummary(e.cause)
+}
+
+// notASocketError: something else sits at the socket's place.
+type notASocketError struct{ path string }
+
+func (e *notASocketError) Error() string { return e.path + " exists and is not a socket" }
+func (e *notASocketError) Summary() string {
+	return "something that is not a socket sits at the control socket's place"
+}
+
+// noFallbackDirError: the usual place is too deep for a socket address and
+// there is no folder of the user's own to fall back into.
+type noFallbackDirError struct{ cause error }
+
+func (e *noFallbackDirError) Error() string {
+	return e.cause.Error() + " (and no folder of the user's own to fall back into)"
+}
+func (e *noFallbackDirError) Unwrap() error { return e.cause }
+func (e *noFallbackDirError) Summary() string {
+	return serviceSummary(e.cause) + ", and there is no folder of the user's own to fall back into"
+}
 
 // ownerOnly is a listener that hands on only connections from the user's
 // own account; the kernel says whose a connection is. Any other is closed
@@ -739,11 +771,33 @@ func (c *controlClient) do(ctx context.Context, method, path string, in, out any
 // — without the error's words, which name paths (the log is read by
 // others; the folder is not) — and keeps the words in VaultSync's folder.
 func logSocketError(logf func(string, ...any), base string, err error) {
+	// Every cause on its own line: a summary of several at once names only
+	// the first, and the file with the full words may be unwritable.
+	causes := eachCause(err)
+	logf("no control socket — %s; vaultsync status reads the engine directly", serviceSummary(causes[0]))
+	for _, c := range causes[1:] {
+		logf("no control socket — also: %s", serviceSummary(c))
+	}
 	if werr := writeFileAtomic(filepath.Join(base, "control-socket-error.txt"), []byte(err.Error()+"\n"), 0o600); werr != nil {
-		logf("no control socket — %s; vaultsync status reads the engine directly (the details could not be written to control-socket-error.txt: %s)", serviceSummary(err), serviceSummary(werr))
+		logf("no control socket — the details could not be written to control-socket-error.txt: %s", serviceSummary(werr))
 		return
 	}
-	logf("no control socket — %s; vaultsync status reads the engine directly (details in control-socket-error.txt)", serviceSummary(err))
+	logf("no control socket — details in control-socket-error.txt")
+}
+
+// eachCause lists the errors an errors.Join put together, in order; any
+// other error is its own single cause.
+func eachCause(err error) []error {
+	if j, ok := err.(interface{ Unwrap() []error }); ok {
+		var out []error
+		for _, e := range j.Unwrap() {
+			out = append(out, eachCause(e)...)
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	return []error{err}
 }
 
 // noAgentForPause: no agent answers on the socket — which does not prove
@@ -805,8 +859,10 @@ func (a *app) pauseSync(ctx context.Context, pause bool) error {
 		return a.noAgentForPause(ctx, st, pause)
 	case err != nil:
 		return err
-	case res.Hubs == 0:
+	case res.Hubs == 0 && pause:
 		return refuse("No Hub is paired with this computer yet, so there is nothing to pause. Run vaultsync pair.")
+	case res.Hubs == 0:
+		return refuse("No Hub is paired with this computer yet, so there is nothing to resume. Run vaultsync pair.")
 	case pause:
 		fmt.Fprintln(a.out, "✓ Syncing is paused on this computer: the connections to your Hub are off until you run vaultsync resume. Changes the engine had already received may still be applied for a moment; vaultsync status shows what is still in progress.")
 	default:

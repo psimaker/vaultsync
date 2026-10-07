@@ -77,7 +77,10 @@ func serviceSummary(err error) string {
 	var le *os.LinkError
 	var se *os.SyscallError
 	var ee *exec.ExitError
+	var sm summarized
 	switch {
+	case errors.As(err, &sm):
+		return sm.Summary()
 	case errors.Is(err, ErrChecksumMismatch):
 		return ErrChecksumMismatch.Error() + " — nothing was installed"
 	case errors.Is(err, ErrEngineRunning):
@@ -96,6 +99,13 @@ func serviceSummary(err error) string {
 		return "a system call failed (" + se.Syscall + ": " + se.Err.Error() + ")"
 	}
 	return "the background service could not run the sync engine"
+}
+
+// summarized is an error that says what it is without any path, for the
+// service log.
+type summarized interface {
+	error
+	Summary() string
 }
 
 // redactPaths shortens the paths in what is printed: under the background

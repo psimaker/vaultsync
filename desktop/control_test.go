@@ -281,13 +281,16 @@ func TestIssue176_PauseAndResumeTouchEveryHubAndNothingElse(t *testing.T) {
 	client := serveControl(t, a)
 	ctx := context.Background()
 
-	// No Hub yet: nothing to pause, and the terminal says so.
+	// No Hub yet: nothing to pause or resume, and the terminal says which.
 	res, err := client.setPaused(ctx, true)
 	if err != nil || res.Hubs != 0 {
 		t.Fatalf("pause without a Hub: %+v %v", res, err)
 	}
-	if err := a.pauseSync(ctx, true); !strings.Contains(refusalText(err), "No Hub is paired") {
+	if err := a.pauseSync(ctx, true); !strings.Contains(refusalText(err), "No Hub is paired") || !strings.Contains(refusalText(err), "nothing to pause") {
 		t.Fatalf("terminal pause without a Hub: %v", err)
+	}
+	if err := a.pauseSync(ctx, false); !strings.Contains(refusalText(err), "nothing to resume") {
+		t.Fatalf("terminal resume without a Hub: %v", err)
 	}
 
 	hubDevice(eng)
@@ -1397,11 +1400,67 @@ func TestIssue176_SocketErrorLogSaysWhenTheDetailsCouldNotBeWritten(t *testing.T
 	var logged []string
 	err := &os.PathError{Op: "listen", Path: filepath.Join(base, "agent.sock"), Err: errors.New("invalid argument")}
 	logSocketError(func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }, base, err)
-	if len(logged) != 1 || !strings.Contains(logged[0], "could not be written") || strings.Contains(logged[0], "details in control-socket-error.txt") || strings.Contains(logged[0], base) {
+	all := strings.Join(logged, "\n")
+	if !strings.Contains(all, "could not be written") || strings.Contains(all, "details in control-socket-error.txt") || strings.Contains(all, base) {
 		t.Fatalf("log: %v", logged)
 	}
 	if _, serr := os.Stat(filepath.Join(base, "control-socket-error.txt")); !errors.Is(serr, os.ErrNotExist) {
 		t.Fatal("the details file exists after all")
+	}
+
+	// Several causes at once — the diagnostic file that could not be
+	// opened and the socket that then could not be removed — each reach
+	// the log on their own, in fixed words with the kind of the cause,
+	// even though the file with the full words cannot be written either.
+	defer func(real func(string) error) { removeEntry = real }(removeEntry)
+	removeEntry = func(p string) error { return &os.PathError{Op: "remove", Path: p, Err: syscall.EACCES} }
+	eng := newFakeEngine(t)
+	a := agentApp(t, eng)
+	if err := os.Chmod(a.lay.Base, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(a.lay.Base, 0o700) })
+	ctl := &controlServer{a: a, eng: a.engine(), logf: t.Logf}
+	_, _, serr := ctl.serve(context.Background())
+	removeEntry = os.Remove
+	_ = os.Remove(a.lay.Socket)
+	if serr == nil {
+		t.Fatal("serve must fail")
+	}
+	logged = nil
+	logSocketError(func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }, a.lay.Base, serr)
+	all = strings.Join(logged, "\n")
+	if !strings.Contains(all, "the control socket could not be removed — a file operation failed (remove: permission denied)") || !strings.Contains(all, "open: permission denied") || !strings.Contains(all, "could not be written") {
+		t.Fatalf("every startup cause in the log: %v", logged)
+	}
+	if strings.Contains(all, a.lay.Base) || strings.Contains(all, a.lay.Socket) {
+		t.Fatalf("a path in the log: %v", logged)
+	}
+}
+
+// Errors of the socket's own say what they are without a path, and the
+// causes of an errors.Join are listed one by one.
+func TestIssue176_SocketErrorsSummarizeThemselves(t *testing.T) {
+	left := &socketLeftBehindError{cause: &os.PathError{Op: "remove", Path: "/secret/place/agent.sock", Err: syscall.EACCES}}
+	if sm := serviceSummary(left); strings.Contains(sm, "/secret") || !strings.Contains(sm, "could not be removed") || !strings.Contains(sm, "remove: permission denied") {
+		t.Fatalf("left behind: %q", sm)
+	}
+	if !errors.Is(left, errSocketLeftBehind) {
+		t.Fatal("the typed error is errSocketLeftBehind")
+	}
+	if sm := serviceSummary(&notASocketError{path: "/secret/place/agent.sock"}); strings.Contains(sm, "/secret") || !strings.Contains(sm, "not a socket") {
+		t.Fatalf("not a socket: %q", sm)
+	}
+	nf := &noFallbackDirError{cause: &os.PathError{Op: "listen", Path: "/secret/deep/agent.sock", Err: syscall.EINVAL}}
+	if sm := serviceSummary(nf); strings.Contains(sm, "/secret") || !strings.Contains(sm, "no folder of the user's own") || !strings.Contains(sm, "listen: invalid argument") {
+		t.Fatalf("no fallback folder: %q", sm)
+	}
+	joined := errors.Join(nf, left, errors.Join(&notASocketError{path: "x"}))
+	if causes := eachCause(joined); len(causes) != 3 {
+		t.Fatalf("causes of a join: %d", len(causes))
+	}
+	if causes := eachCause(left); len(causes) != 1 || causes[0] != left {
+		t.Fatalf("a single error is its own cause: %v", causes)
 	}
 }
 
@@ -1683,7 +1742,8 @@ func TestIssue176_SocketErrorStaysOutOfTheLog(t *testing.T) {
 	var logged []string
 	err := &os.PathError{Op: "listen", Path: filepath.Join(base, "agent.sock"), Err: errors.New("invalid argument")}
 	logSocketError(func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }, base, err)
-	if len(logged) != 1 || strings.Contains(logged[0], base) || !strings.Contains(logged[0], "no control socket") || !strings.Contains(logged[0], "vaultsync status reads the engine directly") {
+	all := strings.Join(logged, "\n")
+	if len(logged) != 2 || strings.Contains(all, base) || !strings.Contains(all, "no control socket") || !strings.Contains(all, "vaultsync status reads the engine directly") || !strings.Contains(all, "details in control-socket-error.txt") {
 		t.Fatalf("log: %v", logged)
 	}
 	data, serr := os.ReadFile(filepath.Join(base, "control-socket-error.txt"))
