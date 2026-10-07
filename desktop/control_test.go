@@ -343,7 +343,7 @@ func TestIssue176_PauseAndResumeTouchEveryHubAndNothingElse(t *testing.T) {
 	if pr, err := client.pair(ctx, pairRequest{Code: "x"}); err != nil || pr.OK || !strings.Contains(pr.Refusal, "paused on this computer — run vaultsync resume first") {
 		t.Fatalf("pair while paused: %+v %v", pr, err)
 	}
-	if _, err := a.pairWith(ctx, &term{out: io.Discard}, pairOptions{code: "x"}, eng.client, false); !strings.Contains(refusalText(err), "paused on this computer — run vaultsync resume first") {
+	if _, err := a.pairWith(ctx, &term{out: io.Discard}, pairOptions{code: "x"}, eng.client, pairOrigin{}); !strings.Contains(refusalText(err), "paused on this computer — run vaultsync resume first") {
 		t.Fatalf("terminal pair while paused: %v", err)
 	}
 	// A pairing in flight holds the pairing lock; a pause waits for it.
@@ -516,10 +516,10 @@ func TestIssue176_PairOverTheSocketIsTheFlagFlow(t *testing.T) {
 
 	// The pairing knows whose process it runs in: the socket hands the
 	// service's ownership on, so a folder macOS refuses names "vaultsync".
-	if s, _ := a.pairWith(ctx, &term{out: io.Discard}, pairOptions{}, eng.client, true); s == nil || !s.env.background {
+	if s, _ := a.pairWith(ctx, &term{out: io.Discard}, pairOptions{}, eng.client, pairOrigin{background: true}); s == nil || !s.env.background {
 		t.Fatal("pairWith drops the background flag")
 	}
-	if s, _ := a.pairWith(ctx, &term{out: io.Discard}, pairOptions{}, eng.client, false); s == nil || s.env.background {
+	if s, _ := a.pairWith(ctx, &term{out: io.Discard}, pairOptions{}, eng.client, pairOrigin{}); s == nil || s.env.background {
 		t.Fatal("a terminal pairing is not a background one")
 	}
 
@@ -853,6 +853,107 @@ func TestIssue176_RunServesTheSocketWhileTheEngineRuns(t *testing.T) {
 	}
 	if _, err := os.Stat(socket); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the socket stays behind at %s", socket)
+	}
+}
+
+// A pairing run by the service has the service's environment, not the
+// shell's: the guards look where the terminal looks as well — the user's
+// own Syncthing and Obsidian's registry under the shell's XDG folders, as
+// setup and pair recorded them — so the socket refuses what the terminal
+// refuses, and offers what the terminal offers.
+func TestIssue176_SocketPairingLooksWhereTheShellLooks(t *testing.T) {
+	eng := newFakeEngine(t)
+	hub := newFakeHub(t, eng)
+	a := agentApp(t, eng)
+	client := serveControl(t, a)
+	ctx := context.Background()
+
+	// The shell's XDG_STATE_HOME holds the user's own Syncthing, which
+	// syncs ~/Notes; its XDG_CONFIG_HOME holds Obsidian's registry naming
+	// a vault outside the home folder, where only the registry leads. The
+	// service's environment (the app's getenv) has neither variable.
+	shellState, shellConfig := filepath.Join(t.TempDir(), "state"), filepath.Join(t.TempDir(), "config")
+	notes := filepath.Join(a.home, "Notes")
+	work := filepath.Join(t.TempDir(), "elsewhere", "Work")
+	mkVault(t, notes)
+	mkVault(t, work)
+	writeFile(t, filepath.Join(shellState, "syncthing", "config.xml"), "<configuration><folder id=\"x\" label=\"Notes\" path=\""+notes+"\"></folder></configuration>\n")
+	writeFile(t, filepath.Join(shellConfig, "obsidian", "obsidian.json"), `{"vaults":{"abc":{"path":"`+work+`","ts":1}}}`)
+	st, err := loadState(a.lay.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Env = map[string]string{"XDG_STATE_HOME": shellState, "XDG_CONFIG_HOME": shellConfig}
+	if err := saveState(a.lay.State, st); err != nil {
+		t.Fatal(err)
+	}
+
+	pr, err := client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Notes", Create: true, Path: notes, Yes: true})
+	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "already synced by the Syncthing on this computer") || eng.folderCount() != 0 {
+		t.Fatalf("a folder the shell's Syncthing syncs: %+v %v (folders %d)", pr, err, eng.folderCount())
+	}
+	assertUntouched(t, notes)
+	localPaths := func(m *menuJSON) []string {
+		var out []string
+		if m != nil {
+			for _, e := range m.Local {
+				out = append(out, e.Path)
+			}
+		}
+		return out
+	}
+	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr})
+	if err != nil || !contains(localPaths(pr.Menu), work) {
+		t.Fatalf("the shell's Obsidian registry in the menu: %v %v", localPaths(pr.Menu), err)
+	}
+	if contains(localPaths(pr.Menu), notes) {
+		t.Fatalf("a folder the shell's Syncthing syncs is not on offer: %v", localPaths(pr.Menu))
+	}
+
+	// Without the record — an agent.json from before, or a setup that saw
+	// no such variables — the service's own environment is all there is:
+	// the registry's vault is unknown, and ~/Notes looks free.
+	st.Env = nil
+	if err := saveState(a.lay.State, st); err != nil {
+		t.Fatal(err)
+	}
+	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr})
+	if err != nil || contains(localPaths(pr.Menu), work) || !contains(localPaths(pr.Menu), notes) {
+		t.Fatalf("without the record: %v %v", localPaths(pr.Menu), err)
+	}
+}
+
+// setup and pair record the shell's guard variables — set ones only — so
+// the service's pairings can look where the shell looks.
+func TestIssue176_TheShellsEnvironmentIsRecorded(t *testing.T) {
+	got := recordGuardEnv(envOf(map[string]string{"XDG_STATE_HOME": "/data/state", "HOME": "/h", "APPDATA": ""}))
+	if len(got) != 1 || got["XDG_STATE_HOME"] != "/data/state" {
+		t.Fatalf("recorded %v", got)
+	}
+	if recordGuardEnv(envOf(nil)) != nil {
+		t.Fatal("nothing set records nothing")
+	}
+	// pair in a terminal refreshes the record when the shell changed, and
+	// leaves agent.json alone when it did not.
+	eng := newFakeEngine(t)
+	a := agentApp(t, eng)
+	a.getenv = envOf(map[string]string{"XDG_CONFIG_HOME": "/data/config"})
+	st, err := loadState(a.lay.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.rememberShellEnv(&st); err != nil {
+		t.Fatal(err)
+	}
+	if st, err = loadState(a.lay.State); err != nil || st.Env["XDG_CONFIG_HOME"] != "/data/config" || len(st.Env) != 1 {
+		t.Fatalf("recorded: %v %v", st.Env, err)
+	}
+	before, _ := os.Stat(a.lay.State)
+	if err := a.rememberShellEnv(&st); err != nil {
+		t.Fatal(err)
+	}
+	if after, _ := os.Stat(a.lay.State); !after.ModTime().Equal(before.ModTime()) {
+		t.Fatal("an unchanged shell rewrote agent.json")
 	}
 }
 

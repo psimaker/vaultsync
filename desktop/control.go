@@ -342,7 +342,12 @@ func (c *controlServer) pair(w http.ResponseWriter, r *http.Request) {
 	resp := pairResponse{}
 	var out bytes.Buffer
 	opts := pairOptions{code: req.Code, hub: req.Hub, vault: req.Vault, create: req.Create, path: req.Path, yes: req.Yes, name: req.Name}
-	s, err := c.a.pairWith(c.ctx, &term{out: &out}, opts, client, c.background)
+	st, err := loadState(c.a.lay.State)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, err)
+		return
+	}
+	s, err := c.a.pairWith(c.ctx, &term{out: &out}, opts, client, pairOrigin{background: c.background, shellEnv: st.Env})
 	resp.Output = out.String()
 	if s != nil && s.menu != nil {
 		resp.Menu = menuToJSON(*s.menu)

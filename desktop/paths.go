@@ -72,6 +72,30 @@ type agentState struct {
 	// ControlSocket is where the running agent listens (control.go) when
 	// that is not the layout's usual place; empty otherwise.
 	ControlSocket string `json:"controlSocket,omitempty"`
+	// Env holds the shell's values of the variables the pairing guards
+	// read (guardEnvVars), recorded by setup and by pair in a terminal: a
+	// pairing run by the background service (the control socket) has the
+	// service's environment, not the shell's, and must look where the
+	// terminal looks — for the user's own Syncthing, Obsidian's registry
+	// and the cloud clients' settings (#176).
+	Env map[string]string `json:"env,omitempty"`
+}
+
+// guardEnvVars are the variables the pairing guards read.
+var guardEnvVars = []string{"XDG_STATE_HOME", "XDG_CONFIG_HOME", "APPDATA"}
+
+// recordGuardEnv is the shell's values of guardEnvVars, set ones only.
+func recordGuardEnv(getenv func(string) string) map[string]string {
+	var out map[string]string
+	for _, k := range guardEnvVars {
+		if v := getenv(k); v != "" {
+			if out == nil {
+				out = map[string]string{}
+			}
+			out[k] = v
+		}
+	}
+	return out
 }
 
 const agentStateVersion = 1

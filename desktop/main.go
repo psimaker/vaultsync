@@ -21,6 +21,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"maps"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -280,6 +281,9 @@ func (a *app) setup(ctx context.Context, args []string) error {
 		unlockSetup()
 		return fmt.Errorf("could not set up the sync engine: %w", err)
 	}
+	// The shell's view of where the user's Syncthing, Obsidian and the
+	// cloud clients keep their settings — for a pairing run by the service.
+	st.Env = recordGuardEnv(a.getenv)
 	if err := saveState(a.lay.State, st); err != nil {
 		unlockSetup()
 		return err
@@ -317,7 +321,7 @@ func (a *app) setup(ctx context.Context, args []string) error {
 		return fmt.Errorf("the sync engine did not start: %w — see %s", err, a.logHint())
 	}
 	command := a.installCommand(t)
-	_, err = a.pairWith(ctx, t, opts, client, false)
+	_, err = a.pairWith(ctx, t, opts, client, pairOrigin{})
 	if *noService {
 		t.blank()
 		t.say("VaultSync has no background service on this computer: run %s run to keep syncing.", command)
@@ -533,6 +537,11 @@ func (a *app) pair(ctx context.Context, args []string) error {
 	if !eng.prepared() || st.GUIPort == 0 {
 		return refuse("VaultSync is not set up on this computer yet. Run vaultsync setup.")
 	}
+	// The shell's environment may have changed since setup: the service's
+	// pairings look where this terminal looks.
+	if err := a.rememberShellEnv(&st); err != nil {
+		return err
+	}
 	client, err := eng.client(st)
 	if err != nil {
 		return err
@@ -542,7 +551,7 @@ func (a *app) pair(ctx context.Context, args []string) error {
 	}
 	t, closeTerm := openTerm(a.out)
 	defer closeTerm()
-	_, err = a.pairWith(ctx, t, opts, client, false)
+	_, err = a.pairWith(ctx, t, opts, client, pairOrigin{})
 	if errors.Is(err, errCancelled) {
 		t.blank()
 		t.say("Nothing was paired.")
@@ -551,12 +560,40 @@ func (a *app) pair(ctx context.Context, args []string) error {
 	return err
 }
 
+// rememberShellEnv records the shell's guard variables in agent.json when
+// they differ from what is recorded, so a pairing run by the service looks
+// where this terminal looks.
+func (a *app) rememberShellEnv(st *agentState) error {
+	recorded := recordGuardEnv(a.getenv)
+	if maps.Equal(recorded, st.Env) {
+		return nil
+	}
+	st.Env = recorded
+	return saveState(a.lay.State, *st)
+}
+
+// pairOrigin says where a pairing runs. background: inside the background
+// service (the control socket), whose permissions macOS grants to
+// "vaultsync", not to a terminal app. shellEnv: the shell's variables as
+// setup recorded them, for a process whose own environment is not the
+// shell's — the guards then look in both.
+type pairOrigin struct {
+	background bool
+	shellEnv   map[string]string
+}
+
 // pairWith runs the pairing flow on t and returns the session for what it
-// kept (the menu for a caller without a terminal). background says the
-// flow runs inside the background service (the control socket), whose
-// permissions macOS grants to "vaultsync", not to a terminal app.
-func (a *app) pairWith(ctx context.Context, t *term, opts pairOptions, client *syncthing.Client, background bool) (*pairSession, error) {
+// kept (the menu for a caller without a terminal).
+func (a *app) pairWith(ctx context.Context, t *term, opts pairOptions, client *syncthing.Client, origin pairOrigin) (*pairSession, error) {
 	unitPath, _ := a.svc.unitPath()
+	envs := []func(string) string{a.getenv}
+	if origin.shellEnv != nil {
+		envs = append([]func(string) string{func(k string) string { return origin.shellEnv[k] }}, envs...)
+	}
+	var registries []string
+	for _, env := range envs {
+		registries = append(registries, obsidianRegistries(a.goos, a.home, env)...)
+	}
 	s := &pairSession{
 		t:    t,
 		opts: opts,
@@ -565,19 +602,40 @@ func (a *app) pairWith(ctx context.Context, t *term, opts pairOptions, client *s
 			discover: func(ctx context.Context) ([]pairing.DiscoveredHub, error) {
 				return pairing.DiscoverHubs(ctx, pairing.DefaultPort, hubDiscoveryWait)
 			},
-			dial:           pairing.NewLocalClient,
-			registries:     obsidianRegistries(a.goos, a.home, a.getenv),
-			scanRoots:      []string{a.home},
-			cloud:          func() []cloudRoot { return cloudRoots(liveCloudEnv(a.goos, a.home)) },
-			userST:         a.userSyncthing,
+			dial:       pairing.NewLocalClient,
+			registries: uniqStrings(registries),
+			scanRoots:  []string{a.home},
+			cloud: func() []cloudRoot {
+				var roots []cloudRoot
+				for _, env := range envs {
+					ce := liveCloudEnv(a.goos, a.home)
+					ce.getenv = env
+					roots = append(roots, cloudRoots(ce)...)
+				}
+				return uniqRoots(roots)
+			},
+			userST:         func() (userSyncthing, bool) { return findUserSyncthingIn(a.goos, a.home, envs...) },
 			unitDir:        filepath.Dir(unitPath),
 			pendingTimeout: join.DefaultPendingTimeout,
 			deviceName:     computerName(a.goos),
 			now:            time.Now,
-			background:     background,
+			background:     origin.background,
 		},
 	}
 	return s, s.run(ctx)
+}
+
+// uniqRoots keeps the first of each cloud root, by path.
+func uniqRoots(in []cloudRoot) []cloudRoot {
+	seen := map[string]bool{}
+	var out []cloudRoot
+	for _, r := range in {
+		if !seen[r.Path] {
+			seen[r.Path] = true
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // --- run (the background service) -------------------------------------------

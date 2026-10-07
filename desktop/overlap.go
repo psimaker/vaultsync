@@ -93,7 +93,18 @@ func userSyncthingConfigs(goos, home string, getenv func(string) string) []strin
 // Syncthing. A config it cannot read or parse still counts as "Syncthing is
 // here", with Unreadable set.
 func findUserSyncthing(goos, home string, getenv func(string) string) (userSyncthing, bool) {
-	for _, p := range userSyncthingConfigs(goos, home, getenv) {
+	return findUserSyncthingIn(goos, home, getenv)
+}
+
+// findUserSyncthingIn is findUserSyncthing looking through the places every
+// one of the environments names — the shell's as setup recorded it, and the
+// process's own — in that order.
+func findUserSyncthingIn(goos, home string, envs ...func(string) string) (userSyncthing, bool) {
+	var candidates []string
+	for _, env := range envs {
+		candidates = append(candidates, userSyncthingConfigs(goos, home, env)...)
+	}
+	for _, p := range uniqStrings(candidates) {
 		_, err := os.Stat(p)
 		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
 			continue
@@ -132,4 +143,17 @@ func findUserSyncthing(goos, home string, getenv func(string) string) (userSynct
 		return us, true
 	}
 	return userSyncthing{}, false
+}
+
+// uniqStrings keeps the first of each value, in order.
+func uniqStrings(in []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, v := range in {
+		if !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	return out
 }
