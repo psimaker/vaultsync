@@ -834,7 +834,7 @@ func TestIssue228_SetupAgainWithTheSameFlags(t *testing.T) {
 			t.Skip("a case-insensitive volume: both names are one folder")
 		}
 		s.env.goos = "darwin" // where case used to be folded by OS, not by the volume
-		if err := s.run(ctx); err == nil || strings.Contains(out.String(), "✓") {
+		if err := s.run(ctx); err == nil || strings.Contains(out.String(), "is already set up to sync") {
 			t.Fatalf("two folders were taken for one: %v\n%s", err, out)
 		}
 		if hub.provisionCount(id) != 0 || eng.folderCount() != 1 {
