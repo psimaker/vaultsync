@@ -292,7 +292,18 @@ func (f *hubFakeSyncthing) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		http.NotFound(w, r)
 	case path == "/rest/db/status":
-		write(map[string]any{"localFiles": f.files[r.URL.Query().Get("folder")], "state": "idle"})
+		id := r.URL.Query().Get("folder")
+		write(map[string]any{"localFiles": f.files[id], "globalFiles": f.files[id], "state": "idle"})
+	case path == "/rest/stats/folder":
+		// Every folder has a completed scan behind it: the Hub reports a
+		// count only for a settled folder (decision 047).
+		out := map[string]any{}
+		for _, folder := range f.folders {
+			if id, _ := folder["id"].(string); id != "" {
+				out[id] = map[string]any{"lastScan": "2026-10-07T08:00:00Z"}
+			}
+		}
+		write(out)
 	default:
 		http.NotFound(w, r)
 	}
