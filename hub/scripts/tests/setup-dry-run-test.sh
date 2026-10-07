@@ -82,6 +82,8 @@ while True:
         break
     out += data
     if not sent and b"[y/N]" in out:
+        if os.environ.get("MUTATE_BEFORE_ANSWER"):
+            os.system(os.environ["MUTATE_BEFORE_ANSWER"])
         os.write(fd, answer + b"\n")
         sent = True
 _, status = os.waitpid(pid, 0)
@@ -162,6 +164,26 @@ exit 1
 SHIM
 done
 chmod +x "$SANDBOX/bin/"*
+# sed and mv pass through to the real ones — unless a test asks for the
+# write of .env to fail midway (FAIL_SED_WRITE: partial output, then
+# failure) or the rename to fail (FAIL_MV).
+REAL_SED=$(command -v sed)
+REAL_MV=$(command -v mv)
+cat >"$SANDBOX/bin/sed" <<SHIM
+#!/usr/bin/env sh
+if [ -n "\${FAIL_SED_WRITE:-}" ]; then
+	case "\$*" in
+		*"s|^VAULTSYNC_HUB_IMAGE="*) printf 'PUID=1000\\n'; exit 1 ;;
+	esac
+fi
+exec "$REAL_SED" "\$@"
+SHIM
+cat >"$SANDBOX/bin/mv" <<SHIM
+#!/usr/bin/env sh
+[ -z "\${FAIL_MV:-}" ] || exit 1
+exec "$REAL_MV" "\$@"
+SHIM
+chmod +x "$SANDBOX/bin/sed" "$SANDBOX/bin/mv"
 export VIOLATIONS
 export PATH="$SANDBOX/bin:$PATH"
 export HOME="$SANDBOX/home"
@@ -314,6 +336,9 @@ VAULTSYNC_HUB_IMAGE=ghcr.io/psimaker/vaultsync-hub:0.1.0
 	never_edited "an .env whose image line ends in a comment" "PUID=1000
 VAULTSYNC_HUB_IMAGE=ghcr.io/psimaker/vaultsync-hub:0.1.0 # pinned
 " "shape setup does not read"
+	never_edited "an .env whose image line ends in a space" "PUID=1000
+VAULTSYNC_HUB_IMAGE=ghcr.io/psimaker/vaultsync-hub:0.1.0 
+" "shape setup does not read"
 	never_edited "an .env with Windows line endings" "$(printf 'PUID=1000\r\nVAULTSYNC_HUB_IMAGE=ghcr.io/psimaker/vaultsync-hub:0.1.0\r\n')" "shape setup does not read"
 	never_edited "an .env naming a version with a leading zero" "VAULTSYNC_HUB_IMAGE=ghcr.io/psimaker/vaultsync-hub:0.01.0
 " "shape setup does not read"
@@ -358,6 +383,58 @@ $out"
 		[ ! -e "$leftover" ] || fail "a failed write left a temporary file: $leftover"
 	done
 	pass "a write that fails stops the setup and leaves .env whole"
+
+	# A failure midway — sed with partial output, or the rename — stops the
+	# setup the same way: original bytes, no success line, no Compose, no
+	# temporary file.
+	failed_midway() { # NAME ENV-VAR
+		plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
+		cp "$EXISTING/.env" "$SANDBOX/results/env-before"
+		if out=$(export "$2=1"; existing_hub_run y); then
+			fail "$1 must stop the setup:
+$out"
+		fi
+		printf '%s\n' "$out" | grep -q "Could not update" || fail "$1 is not reported:
+$out"
+		if printf '%s\n' "$out" | grep -q "now names"; then
+			fail "$1 was reported as success:
+$out"
+		fi
+		cmp -s "$EXISTING/.env" "$SANDBOX/results/env-before" || fail "$1 changed .env"
+		[ ! -s "$COMPOSE_LOG" ] || fail "$1 still restarted the stack:
+$(cat "$COMPOSE_LOG")"
+		for leftover in "$EXISTING"/.env.setup.*; do
+			[ ! -e "$leftover" ] || fail "$1 left a temporary file: $leftover"
+		done
+		[ ! -d "$EXISTING/.env.setup-lock" ] || fail "$1 left the lock behind"
+		pass "$1 stops the setup and leaves .env whole"
+	}
+	failed_midway "a sed that fails with partial output" FAIL_SED_WRITE
+	failed_midway "a rename that fails" FAIL_MV
+
+	# The line is read again after the answer: changed meanwhile, nothing
+	# is written — the newer pin stays.
+	plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
+	plain_env "ghcr.io/psimaker/vaultsync-hub:9.9.9" >"$SANDBOX/results/env-newer"
+	out=$(MUTATE_BEFORE_ANSWER="cp '$SANDBOX/results/env-newer' '$EXISTING/.env'" existing_hub_run y) || fail "existing-hub setup (changed meanwhile) exited non-zero:
+$out"
+	printf '%s\n' "$out" | grep -q "changed while setup was asking" || fail "a change during the question is not reported:
+$out"
+	cmp -s "$EXISTING/.env" "$SANDBOX/results/env-newer" || fail "a change during the question was overwritten:
+$(cat "$EXISTING/.env")"
+	pass "a line changed while setup was asking is not overwritten"
+
+	# A lock another setup holds: nothing is read or written.
+	plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
+	cp "$EXISTING/.env" "$SANDBOX/results/env-before"
+	mkdir "$EXISTING/.env.setup-lock"
+	out=$(existing_hub_run y) || { rmdir "$EXISTING/.env.setup-lock"; fail "existing-hub setup (locked) exited non-zero:
+$out"; }
+	rmdir "$EXISTING/.env.setup-lock"
+	printf '%s\n' "$out" | grep -q "Another setup is editing" || fail "a held lock is not reported:
+$out"
+	cmp -s "$EXISTING/.env" "$SANDBOX/results/env-before" || fail "a held lock did not stop the edit"
+	pass "a lock another setup holds leaves .env alone"
 
 	# An exported override is captured and then unset: Compose sees .env.
 	plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"

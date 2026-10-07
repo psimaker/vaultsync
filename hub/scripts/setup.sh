@@ -116,19 +116,40 @@ plain_env_file() {
 		[ "$(grep -c '^VAULTSYNC_HUB_IMAGE=' "$1")" = 1 ]
 }
 
-# replace_env_image FILE: VAULTSYNC_HUB_IMAGE=$HUB_IMAGE in FILE, written to
-# a sibling temporary file that takes FILE's place in one rename — FILE is
-# whole at every instant and keeps its mode (cp -p). Fails without a trace
-# when any step fails.
+# The edit of .env holds a lock from the first read to the rename, so two
+# setups cannot read the same old line and write in turns; the trap releases
+# it, and a temporary file, on exit or interruption.
+ENV_EDIT_LOCK=""
+ENV_EDIT_TMP=""
+release_env_edit() {
+	[ -z "$ENV_EDIT_TMP" ] || rm -f "$ENV_EDIT_TMP"
+	[ -z "$ENV_EDIT_LOCK" ] || rmdir "$ENV_EDIT_LOCK" 2>/dev/null || true
+	ENV_EDIT_TMP=""
+	ENV_EDIT_LOCK=""
+}
+
+# replace_env_image FILE EXPECTED: the VAULTSYNC_HUB_IMAGE line, which must
+# still read EXPECTED, becomes $HUB_IMAGE — written to a sibling temporary
+# file (mktemp reserves the name; cp -p keeps FILE's mode) that takes FILE's
+# place in one rename, so FILE is whole at every instant. Returns 2 when the
+# line is not EXPECTED any more, 1 when a step fails; a failed step leaves
+# nothing behind, and the trap cleans up an interrupted one.
 replace_env_image() {
 	file="$1"
-	tmp="$file.setup.$$"
-	if cp -p "$file" "$tmp" &&
-		sed "s|^VAULTSYNC_HUB_IMAGE=.*|VAULTSYNC_HUB_IMAGE=$HUB_IMAGE|" "$file" >"$tmp" &&
-		mv -f "$tmp" "$file"; then
+	expected="$2"
+	[ "$(sed -n 's/^VAULTSYNC_HUB_IMAGE=//p' "$file")" = "$expected" ] || return 2
+	ENV_EDIT_TMP=$(mktemp "$file.setup.XXXXXX") || return 1
+	# EXPECTED is an official image name (checked above): only its dots are
+	# special in a pattern.
+	literal=$(printf '%s' "$expected" | sed 's/\./\\./g')
+	if cp -p "$file" "$ENV_EDIT_TMP" &&
+		sed "s|^VAULTSYNC_HUB_IMAGE=$literal\$|VAULTSYNC_HUB_IMAGE=$HUB_IMAGE|" "$file" >"$ENV_EDIT_TMP" &&
+		mv -f "$ENV_EDIT_TMP" "$file"; then
+		ENV_EDIT_TMP=""
 		return 0
 	fi
-	rm -f "$tmp"
+	rm -f "$ENV_EDIT_TMP"
+	ENV_EDIT_TMP=""
 	return 1
 }
 
@@ -143,8 +164,8 @@ manual_image_hint() {
 # one this setup ships, the move is offered: only on a terminal, only with
 # consent, never for a custom image, never a downgrade, and only on an .env
 # in the plain shape setup writes, so the one line changed is the one that
-# was read (#216). Declined, without a terminal or on any other .env, the
-# manual step is named instead.
+# was read — checked again after the answer (#216). Declined, without a
+# terminal or on any other .env, the manual step is named instead.
 offer_newer_hub_image() {
 	env_file="$1"
 	official="ghcr.io/psimaker/vaultsync-hub:"
@@ -154,8 +175,30 @@ offer_newer_hub_image() {
 	esac
 	new_ver=${HUB_IMAGE#"$official"}
 	is_release "$new_ver" || return 0
+	if [ "$DRY_RUN" = 1 ]; then
+		offer_newer_hub_image_locked "$env_file"
+		return 0
+	fi
+	if ! mkdir "$env_file.setup-lock" 2>/dev/null; then
+		if [ -d "$env_file.setup-lock" ]; then
+			info "Another setup is editing $env_file right now; this one leaves it as it is."
+			manual_image_hint
+			return 0
+		fi
+		fail "Could not update $env_file: its directory cannot be written; nothing was changed."
+	fi
+	ENV_EDIT_LOCK="$env_file.setup-lock"
+	trap 'release_env_edit' EXIT HUP INT TERM
+	offer_newer_hub_image_locked "$env_file"
+	release_env_edit
+	trap - EXIT HUP INT TERM
+	return 0
+}
+
+offer_newer_hub_image_locked() {
+	env_file="$1"
 	if ! plain_env_file "$env_file"; then
-		info "Your Hub's .env has a shape setup does not edit (a quoted value, or VAULTSYNC_HUB_IMAGE more than once)."
+		info "Your Hub's .env has a shape setup does not edit (a quoted value, a link, or VAULTSYNC_HUB_IMAGE more than once)."
 		manual_image_hint
 		return 0
 	fi
@@ -180,10 +223,17 @@ offer_newer_hub_image() {
 	if answer=$(ask "  Move it to $new_ver now? Vaults, devices, ports and names carry over; a new pairing code is printed at the end, as always. [y/N] " "n"); then
 		case "$answer" in
 			[yY]*)
-				replace_env_image "$env_file" ||
-					fail "Could not update $env_file; nothing was changed. Change its VAULTSYNC_HUB_IMAGE line by hand, then run docker compose pull && docker compose up -d."
-				info "  .env now names $HUB_IMAGE; the stack restarts on it below."
-				return 0
+				# As a condition, so that set -e does not end the script on a
+				# failed step before it is reported.
+				if replace_env_image "$env_file" "$current"; then
+					info "  .env now names $HUB_IMAGE; the stack restarts on it below."
+					return 0
+				elif [ $? -eq 2 ]; then
+					info "  The VAULTSYNC_HUB_IMAGE line changed while setup was asking; nothing was changed."
+					manual_image_hint
+					return 0
+				fi
+				fail "Could not update $env_file; nothing was changed. Change its VAULTSYNC_HUB_IMAGE line by hand, then run docker compose pull && docker compose up -d."
 				;;
 		esac
 	fi

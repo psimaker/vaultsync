@@ -277,11 +277,12 @@ Vaults, paired devices and an open pairing code carry over unchanged.
 Running the setup link again on the Hub (**2) Hub**) offers this move when
 it ships a newer release than your `.env` names — it asks first, changes
 only that one line of an `.env` in the plain shape it writes itself (no
-quoted values), writes it in one piece so `.env` is never half-written,
-keeps your ports and names, and never touches a custom image or moves a
-Hub backwards. Without a terminal, or on an `.env` you reshaped by hand,
-it tells you to change the line yourself instead. As on every run, it
-prints a new pairing code at the end.
+quoted values), reads the line again after your yes and writes the file
+in one piece, so `.env` is never half-written and never moved backwards
+by setup; it keeps your ports and names and never touches a custom image.
+Without a terminal, or on an `.env` you reshaped by hand, it tells you to
+change the line yourself instead. As on every run, it prints a new
+pairing code at the end.
 
 ## Troubleshooting
 
