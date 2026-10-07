@@ -23,11 +23,20 @@ type fakeSyncthing struct {
 	options        map[string]any
 	folderDefaults map[string]any
 	dbFiles        map[string]int64
-	connected      map[string]bool
-	pending        map[string][]string // folder → offered by
-	devicePatches  []map[string]any
-	optionPatches  []map[string]any
-	failDeviceAdd  bool // POST /rest/config/devices answers 500
+	dbGlobal       map[string]int64  // folder → globalFiles; absent: the local count
+	dbState        map[string]string // folder → db/status state; "": defaultState, then idle
+	neverScanned   map[string]bool   // folder → stats/folder reports no completed scan
+	dbStatusFail   map[string]bool   // folder → db/status answers 500
+	scanningFirst  map[string]int    // folder → that many db/status calls say "scanning"
+	// defaultState and defaultUnscanned apply to folders without an entry —
+	// also to folders a test creates through the API.
+	defaultState     string
+	defaultUnscanned bool
+	connected        map[string]bool
+	pending          map[string][]string // folder → offered by
+	devicePatches    []map[string]any
+	optionPatches    []map[string]any
+	failDeviceAdd    bool // POST /rest/config/devices answers 500
 }
 
 const (
@@ -45,6 +54,11 @@ func newFakeSyncthing(t *testing.T, myID string) (*fakeSyncthing, *httptest.Serv
 		options:        map[string]any{"urAccepted": float64(0), "startBrowser": true},
 		folderDefaults: map[string]any{},
 		dbFiles:        map[string]int64{},
+		dbGlobal:       map[string]int64{},
+		dbState:        map[string]string{},
+		neverScanned:   map[string]bool{},
+		dbStatusFail:   map[string]bool{},
+		scanningFirst:  map[string]int{},
 		connected:      map[string]bool{},
 		pending:        map[string][]string{},
 	}
@@ -201,7 +215,36 @@ func (f *fakeSyncthing) serve(w http.ResponseWriter, r *http.Request) {
 		}
 	case path == "/rest/db/status":
 		id := r.URL.Query().Get("folder")
-		write(map[string]any{"localFiles": f.dbFiles[id], "state": "idle"})
+		if f.dbStatusFail[id] {
+			http.Error(w, "database unavailable", http.StatusInternalServerError)
+			return
+		}
+		state := f.dbState[id]
+		if state == "" {
+			state = f.defaultState
+		}
+		if state == "" {
+			state = "idle"
+		}
+		if n := f.scanningFirst[id]; n > 0 {
+			f.scanningFirst[id] = n - 1
+			state = "scanning"
+		}
+		global, ok := f.dbGlobal[id]
+		if !ok {
+			global = f.dbFiles[id]
+		}
+		write(map[string]any{"localFiles": f.dbFiles[id], "globalFiles": global, "state": state})
+	case path == "/rest/stats/folder":
+		out := map[string]any{}
+		for _, fc := range f.folders {
+			last := "2026-10-07T08:00:00Z"
+			if f.neverScanned[fc.ID] || f.defaultUnscanned {
+				last = "0001-01-01T00:00:00Z"
+			}
+			out[fc.ID] = map[string]any{"lastScan": last}
+		}
+		write(out)
 	case path == "/rest/cluster/pending/folders":
 		out := map[string]any{}
 		for id, devs := range f.pending {

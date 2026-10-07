@@ -308,12 +308,9 @@ func (s *pairingServer) provision(ctx context.Context, sess *pairingSession, p p
 	}
 	s.logf("pairing: shared vault %s with a paired device", target.ID)
 	// The device decides whether it may accept into a non-empty directory
-	// from this count; unknown (-1) makes it fail closed.
-	files := int64(-1)
-	if st, err := s.prov.client.DBStatus(ctx, target.ID); err == nil {
-		files = st.LocalFiles
-	}
-	return &vaultInfo{ID: target.ID, Label: target.Label, Files: files}, ""
+	// from this count; unknown (-1) makes it fail closed. Sharing restarted
+	// the folder, so the count waits a moment for it to settle (#214).
+	return &vaultInfo{ID: target.ID, Label: target.Label, Files: s.prov.settledFiles(ctx, target.ID)}, ""
 }
 
 func (s *pairingServer) hubPayload(ctx context.Context, provisioned *vaultInfo, errMsg string) hubPayload {

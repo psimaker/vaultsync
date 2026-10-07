@@ -249,6 +249,22 @@ func (c *Client) DBStatus(ctx context.Context, folderID string) (DBStatus, error
 	return out, err
 }
 
+// FolderStats carries the per-folder statistics VaultSync reads.
+type FolderStats struct {
+	// LastScan is when the folder's last scan completed — zero for a folder
+	// that has never finished one.
+	LastScan time.Time `json:"lastScan"`
+}
+
+// FolderStats returns every folder's statistics, keyed by folder ID.
+func (c *Client) FolderStats(ctx context.Context) (map[string]FolderStats, error) {
+	var out map[string]FolderStats
+	if err := c.do(ctx, http.MethodGet, "/rest/stats/folder", nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ConnectedDevices returns the IDs of currently connected devices.
 func (c *Client) ConnectedDevices(ctx context.Context) (map[string]bool, error) {
 	var out connectionsResponse

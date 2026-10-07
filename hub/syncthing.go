@@ -25,6 +25,7 @@ type (
 	folderDevice     = syncthing.FolderDevice
 	versioningConfig = syncthing.VersioningConfig
 	folderConfig     = syncthing.FolderConfig
+	folderStats      = syncthing.FolderStats
 	apiError         = syncthing.APIError
 )
 

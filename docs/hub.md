@@ -187,10 +187,13 @@ that copy in Obsidian. A folder that overlaps one VaultSync — or the
 Syncthing you run yourself — already syncs. A folder with files for a vault
 your Hub already has: VaultSync does not combine two vaults on its own;
 download your Hub's vault into a new folder, or give this computer's vault a
-different name on your Hub. Decision 046 records the rules — and the one gap
-the Hub cannot close yet: it counts the files it holds, not files still
-arriving, so a vault it reports as new and empty could, in a narrow race,
-receive another device's files while this computer's are on their way.
+different name on your Hub. Decision 046 records the rules. Your Hub
+reports a vault's file count only once it has finished scanning the vault
+and is not syncing it — counting everything the vault holds or still
+expects from other devices — and says it does not know otherwise, which the
+agent treats as "not empty" (decision 047); a vault the Hub just created
+counts what devices have announced. The one gap left: a device whose files
+are on their way but not announced yet, which #206 closes.
 
 **One sync service per vault.** If Obsidian Sync or a sync plugin also syncs
 a vault, turn that off for the vault before VaultSync syncs it — two services
@@ -287,6 +290,10 @@ Vaults, paired devices and an open pairing code carry over unchanged.
 - **"the pairing code was locked"**: issue a new one with `vaultsync-hub code`.
 - **"directory already holds files"**: that is the merge guard. Use
   `vault adopt` on the Hub, or an empty directory on the device.
+- **"the Hub could not confirm that its vault is empty"** on a device: the
+  Hub is still scanning or syncing that vault, or could not read its
+  database, so it reports no file count (`vaultsync-hub status` shows
+  "counting…"). Wait a moment and retry, or use an empty directory.
 - **Existing Syncthing on the same machine**: the Hub runs its own instance side
   by side (port 22001). Adopting the existing instance is intentionally not
   automated; see the FAQ in the README.
