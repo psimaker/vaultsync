@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -1384,6 +1385,75 @@ func TestIssue176_SocketErrorLogSaysWhenTheDetailsCouldNotBeWritten(t *testing.T
 	}
 	if _, serr := os.Stat(filepath.Join(base, "control-socket-error.txt")); !errors.Is(serr, os.ErrNotExist) {
 		t.Fatal("the details file exists after all")
+	}
+}
+
+// A rollback that fails is reported next to what made it necessary: the
+// fallback's folder that could not be removed after its listen failed,
+// the socket that could not be removed after the diagnostic file could
+// not be opened.
+func TestIssue176_StartupRollbackFailuresAreReported(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root removes anything")
+	}
+	deep := filepath.Join(shortDir(t), strings.Repeat("d", 120), "agent.sock")
+	if err := os.MkdirAll(filepath.Dir(deep), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	defer func(real func(string) error) { removeEntry = real }(removeEntry)
+	removeEntry = func(string) error { return &os.PathError{Op: "remove", Path: "x", Err: syscall.EACCES} }
+	// The fallback folder lies too deep itself: its listen fails, and the
+	// folder's removal fails too — both are said with the first error.
+	tooDeep := filepath.Join(shortDir(t), strings.Repeat("f", 90))
+	if err := os.MkdirAll(tooDeep, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, err := listenControl(deep, tooDeep)
+	if err == nil || !strings.Contains(err.Error(), "fallback:") || !strings.Contains(err.Error(), "the socket's folder could not be removed") {
+		t.Fatalf("fallback listen and rollback: %v", err)
+	}
+	// The diagnostic file cannot be opened: the socket is taken down, and
+	// a removal that fails is said next to the open that failed.
+	eng := newFakeEngine(t)
+	a := agentApp(t, eng)
+	if err := os.Chmod(a.lay.Base, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(a.lay.Base, 0o700) })
+	ctl := &controlServer{a: a, eng: a.engine(), logf: t.Logf}
+	_, _, err = ctl.serve(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "control-socket.log") || !strings.Contains(err.Error(), "the control socket could not be removed") {
+		t.Fatalf("diagnostic open and rollback: %v", err)
+	}
+	removeEntry = os.Remove
+	_ = os.Remove(a.lay.Socket)
+}
+
+// The diagnostic file keeps the first write that failed, and its close
+// reports it — without a path.
+func TestIssue176_DiagnosticsThatCouldNotBeWrittenAreReported(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "control-socket.log")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDONLY, 0o600) // open read-only: every write fails
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &diagLog{f: f}
+	logger := log.New(d, "", 0)
+	logger.Printf("accept: %s", path)
+	logger.Printf("second")
+	err = d.close()
+	if err == nil || !strings.Contains(err.Error(), "could not all be written") || strings.Contains(err.Error(), path) {
+		t.Fatalf("close: %v", err)
+	}
+	// A file that takes every write closes without a word.
+	g, err := os.Create(filepath.Join(t.TempDir(), "ok.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ok := &diagLog{f: g}
+	log.New(ok, "", 0).Printf("fine")
+	if err := ok.close(); err != nil {
+		t.Fatalf("a healthy file: %v", err)
 	}
 }
 

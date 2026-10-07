@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -143,12 +144,12 @@ func (c *controlServer) serve(ctx context.Context) (path string, stop func() err
 	// could not read — name the socket's path: they go to a private file in
 	// VaultSync's folder (0600, started over past 1 MiB), never to the
 	// service log.
-	diag, err := openStderrLog(filepath.Join(c.a.lay.Base, "control-socket.log"))
+	f, err := openStderrLog(filepath.Join(c.a.lay.Base, "control-socket.log"))
 	if err != nil {
 		l.Close()
-		_ = cleanup()
-		return "", nil, err
+		return "", nil, errors.Join(err, cleanup())
 	}
+	diag := &diagLog{f: f}
 	// A pairing takes minutes (discovery, the Hub, the wait for its share),
 	// so the response may take that long; reading a request and holding an
 	// idle connection may not.
@@ -172,18 +173,52 @@ func (c *controlServer) serve(ctx context.Context) (path string, stop func() err
 		close(done)
 	}()
 	// stop takes the socket down and says when it could not: a socket left
-	// behind is a place that stays recorded as served.
+	// behind is a place that stays recorded as served — and diagnostics
+	// that could not be written are said too.
 	stop = func() error {
 		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(sctx)
 		_ = srv.Close()
 		<-done
-		err := cleanup()
-		diag.Close()
-		return err
+		return errors.Join(cleanup(), diag.close())
 	}
 	return path, stop, nil
+}
+
+// diagLog is the socket's private diagnostic file. A log.Logger says
+// nothing about a write that failed, so the file keeps the first failure
+// itself, and close reports it — without a path, as the service log is
+// read by others.
+type diagLog struct {
+	f   *os.File
+	mu  sync.Mutex
+	err error
+}
+
+func (d *diagLog) Write(p []byte) (int, error) {
+	n, err := d.f.Write(p)
+	if err != nil {
+		d.mu.Lock()
+		if d.err == nil {
+			d.err = err
+		}
+		d.mu.Unlock()
+	}
+	return n, err
+}
+
+func (d *diagLog) close() error {
+	d.mu.Lock()
+	err := d.err
+	d.mu.Unlock()
+	if cerr := d.f.Close(); cerr != nil {
+		err = errors.Join(err, cerr)
+	}
+	if err != nil {
+		return fmt.Errorf("the control socket's diagnostics could not all be written to control-socket.log — %s", serviceSummary(err))
+	}
+	return nil
 }
 
 // listenControl listens at path — or, when VaultSync's folder lies too deep
@@ -209,27 +244,35 @@ func listenControl(path, fallbackDir string) (l net.Listener, at string, cleanup
 	at = filepath.Join(dir, "agent.sock")
 	l, lerr := listenUnix(at)
 	if lerr != nil {
-		_ = os.Remove(dir)
-		return nil, "", nil, errors.Join(err, fmt.Errorf("fallback: %w", lerr))
+		return nil, "", nil, errors.Join(err, fmt.Errorf("fallback: %w", lerr), removeSocketDir(dir))
 	}
 	return l, at, func() error {
 		if err := removeSocket(at); err != nil {
 			return err
 		}
-		// The folder goes only when it is empty; one that holds something
-		// else is left as it is, on purpose.
-		if err := os.Remove(dir); err != nil && !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTEMPTY) && !errors.Is(err, syscall.EEXIST) {
-			return fmt.Errorf("the socket's folder could not be removed: %w", err)
-		}
-		return nil
+		return removeSocketDir(dir)
 	}, nil
 }
+
+// removeEntry removes one file or empty folder; a variable so a test can
+// make a removal fail.
+var removeEntry = os.Remove
 
 // removeSocket takes the socket file away; one that is already gone is
 // no failure.
 func removeSocket(path string) error {
-	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if err := removeEntry(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("the control socket could not be removed: %w", err)
+	}
+	return nil
+}
+
+// removeSocketDir takes the socket's own folder away — only when it is
+// empty: one that holds something else is left as it is, on purpose, and
+// one already gone is no failure.
+func removeSocketDir(dir string) error {
+	if err := removeEntry(dir); err != nil && !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTEMPTY) && !errors.Is(err, syscall.EEXIST) {
+		return fmt.Errorf("the socket's folder could not be removed: %w", err)
 	}
 	return nil
 }
