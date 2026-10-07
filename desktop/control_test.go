@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -85,6 +86,21 @@ func hubDevice(eng *fakeEngine) {
 	eng.folders[0].Devices = []syncthing.FolderDevice{folderDeviceOf(testMyID), folderDeviceOf(testHubID)}
 }
 
+func pausedDevices(eng *fakeEngine) (paused, hubs int) {
+	eng.mu.Lock()
+	defer eng.mu.Unlock()
+	for _, d := range eng.devices {
+		if d.DeviceID == testMyID {
+			continue
+		}
+		hubs++
+		if d.Paused {
+			paused++
+		}
+	}
+	return paused, hubs
+}
+
 func TestIssue176_StatusOverTheSocketIsWhatTheTerminalPrints(t *testing.T) {
 	eng := newFakeEngine(t)
 	hubDevice(eng)
@@ -147,33 +163,62 @@ func TestIssue176_PauseAndResumeTouchEveryHubAndNothingElse(t *testing.T) {
 	}
 
 	hubDevice(eng)
+	eng.mu.Lock()
+	eng.devices = append(eng.devices, syncthing.DeviceConfig{DeviceID: otherID, Name: "Second Hub"})
+	eng.folders = append(eng.folders, syncthingFolder("vs-bbbbbbbbbbbb", "Work", "/home/me/Work"))
+	eng.folders[1].Devices = []syncthing.FolderDevice{folderDeviceOf(testMyID), folderDeviceOf(otherID)}
+	eng.folderState = map[string]map[string]any{"vs-bbbbbbbbbbbb": {"state": "error", "error": "permission denied"}}
+	eng.mu.Unlock()
 	res, err = client.setPaused(ctx, true)
-	if err != nil || !res.Paused || res.Hubs != 1 {
+	if err != nil || !res.Paused || res.Hubs != 2 {
 		t.Fatalf("pause: %+v %v", res, err)
 	}
-	if len(eng.patches) != 1 || eng.patches[0]["paused"] != true || len(eng.patches[0]) != 1 {
-		t.Fatalf("pause patches exactly the paused flag of the Hub: %v", eng.patches)
+	if p, h := pausedDevices(eng); p != 2 || h != 2 {
+		t.Fatalf("every Hub is paused: %d of %d", p, h)
+	}
+	if len(eng.patches) != 2 || eng.patches[0]["paused"] != true || len(eng.patches[0]) != 1 || eng.patches[1]["paused"] != true || len(eng.patches[1]) != 1 {
+		t.Fatalf("pause patches exactly the paused flag of each Hub: %v", eng.patches)
 	}
 	cs, err := client.status(ctx)
 	if err != nil || !cs.Paused {
 		t.Fatalf("status after pause: %+v %v", cs, err)
 	}
-	if cs.Hubs[0].State != "paused on this computer — vaultsync resume starts syncing again" || cs.Vaults[0].State != "paused on this computer" {
+	if cs.Hubs[0].State != "paused on this computer — vaultsync resume starts syncing again" || cs.Hubs[1].State != cs.Hubs[0].State || cs.Vaults[0].State != "paused on this computer" {
 		t.Fatalf("paused states: %+v %+v", cs.Hubs, cs.Vaults)
 	}
-	// Pausing again changes nothing; a pairing is refused while paused.
-	if _, err := client.setPaused(ctx, true); err != nil || len(eng.patches) != 1 {
+	// A folder's own error stays visible, with its remedy, while paused.
+	if cs.Vaults[1].Label != "Work" || !strings.HasPrefix(cs.Vaults[1].State, "error: permission denied") || !strings.Contains(cs.Vaults[1].State, "allow access to this folder") {
+		t.Fatalf("a folder error while paused: %+v", cs.Vaults[1])
+	}
+	// Pausing again changes nothing; a pairing is refused while paused —
+	// over the socket and in the terminal alike.
+	if _, err := client.setPaused(ctx, true); err != nil || len(eng.patches) != 2 {
 		t.Fatalf("second pause: %v %v", err, eng.patches)
 	}
-	if pr, err := client.pair(ctx, pairRequest{Code: "x"}); err != nil || pr.OK || !strings.Contains(pr.Refusal, "paused") {
+	if pr, err := client.pair(ctx, pairRequest{Code: "x"}); err != nil || pr.OK || !strings.Contains(pr.Refusal, "paused on this computer — run vaultsync resume first") {
 		t.Fatalf("pair while paused: %+v %v", pr, err)
 	}
+	if _, err := a.pairWith(ctx, &term{out: io.Discard}, pairOptions{code: "x"}, eng.client); !strings.Contains(refusalText(err), "paused on this computer — run vaultsync resume first") {
+		t.Fatalf("terminal pair while paused: %v", err)
+	}
+	// A pairing in flight holds the pairing lock; a pause waits for it.
+	hold, err := lockFile(filepath.Join(a.lay.Base, "pair.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.setPaused(ctx, false); err == nil || !strings.Contains(err.Error(), "a pairing is running") {
+		t.Fatalf("resume during a pairing: %v", err)
+	}
+	hold()
 
 	res, err = client.setPaused(ctx, false)
-	if err != nil || res.Paused || res.Hubs != 1 || len(eng.patches) != 2 || eng.patches[1]["paused"] != false {
+	if err != nil || res.Paused || res.Hubs != 2 || len(eng.patches) != 4 || eng.patches[2]["paused"] != false || eng.patches[3]["paused"] != false {
 		t.Fatalf("resume: %+v %v %v", res, err, eng.patches)
 	}
-	if cs, err := client.status(ctx); err != nil || cs.Paused || cs.Hubs[0].State != "not connected" {
+	if p, _ := pausedDevices(eng); p != 0 {
+		t.Fatalf("%d Hubs still paused", p)
+	}
+	if cs, err := client.status(ctx); err != nil || cs.Paused || cs.Hubs[0].State != "not connected" || cs.Vaults[0].State != "waiting for your Hub" {
 		t.Fatalf("status after resume: %+v %v", cs, err)
 	}
 
@@ -212,6 +257,14 @@ func TestIssue176_PairOverTheSocketIsTheFlagFlow(t *testing.T) {
 	if !strings.Contains(pr.Output, "✓ Connected to") || eng.folderCount() != 0 {
 		t.Fatalf("output:\n%s\nfolders: %d", pr.Output, eng.folderCount())
 	}
+	// An engine that stops while the menu is built is reported — not hidden
+	// behind the refusal that names the flags.
+	eng.mu.Lock()
+	eng.failFolders = true
+	eng.mu.Unlock()
+	if _, err := client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr}); err == nil || !strings.Contains(err.Error(), "the sync engine does not answer") {
+		t.Fatalf("the engine failing during the menu: %v", err)
+	}
 
 	notes := filepath.Join(a.home, "Notes")
 	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Notes", Path: notes})
@@ -223,6 +276,26 @@ func TestIssue176_PairOverTheSocketIsTheFlagFlow(t *testing.T) {
 	}
 	if !strings.Contains(pr.Output, "is set up to sync at") {
 		t.Fatalf("output:\n%s", pr.Output)
+	}
+
+	// A folder with files becomes a new vault only with the consent the
+	// terminal would ask for: yes, passed by the caller — never assumed.
+	work := filepath.Join(a.home, "Work")
+	mkVault(t, work)
+	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Work", Create: true, Path: work})
+	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "already contains files") || !strings.Contains(pr.Refusal, "--yes") {
+		t.Fatalf("a folder with files without consent: %+v %v", pr, err)
+	}
+	if eng.folderCount() != 1 {
+		t.Fatalf("a refusal added a folder: %+v", eng.folders)
+	}
+	assertUntouched(t, work)
+	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Work", Create: true, Path: work, Yes: true})
+	if err != nil || !pr.OK {
+		t.Fatalf("with consent: %+v %v", pr, err)
+	}
+	if eng.folderCount() != 2 || eng.folders[1].Path != work || eng.folders[1].Label != "Work" {
+		t.Fatalf("folders: %+v", eng.folders)
 	}
 
 	// One pairing at a time — the terminal's lock is the socket's too.
@@ -244,13 +317,21 @@ type fakeAgent struct {
 	hubs   int
 	calls  []string
 	srv    *http.Server
+	// broken: the agent answers status with an error.
+	broken bool
 }
 
 func newFakeAgent(t *testing.T) *fakeAgent {
 	t.Helper()
 	f := &fakeAgent{path: filepath.Join(shortDir(t), "agent.sock")}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, f.status) })
+	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
+		if f.broken {
+			fail(w, http.StatusInternalServerError, errors.New("the sync engine does not answer: boom"))
+			return
+		}
+		writeJSON(w, 200, f.status)
+	})
 	mux.HandleFunc("POST /v1/{verb}", func(w http.ResponseWriter, r *http.Request) {
 		f.calls = append(f.calls, r.PathValue("verb"))
 		writeJSON(w, 200, pauseResponse{Paused: r.PathValue("verb") == "pause", Hubs: f.hubs})
@@ -295,14 +376,46 @@ func TestIssue176_StatusReadsTheAgentFirst(t *testing.T) {
 		t.Fatalf("status from the agent:\n%s", out)
 	}
 
-	// The agent is up, the engine not yet.
+	// The agent is up, the engine not yet: its offline report is printed.
 	agent.status.Engine = "starting"
+	agent.status.Text = "\nVaults (not syncing while the engine is stopped)\n  Notes          ~/Notes\n"
 	a.out = &bytes.Buffer{}
 	if err := a.status(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if out := a.out.(*bytes.Buffer).String(); !strings.Contains(out, "Sync engine: starting — VaultSync is bringing it up") || strings.Contains(out, "up to date") {
+	if out := a.out.(*bytes.Buffer).String(); !strings.Contains(out, "Sync engine: starting — VaultSync is bringing it up\n\nVaults (not syncing while the engine is stopped)\n  Notes") || strings.Contains(out, "up to date") {
 		t.Fatalf("status while the engine starts:\n%s", out)
+	}
+
+	// An agent that answers and fails is the news — not a look past it.
+	agent.broken = true
+	a.out = &bytes.Buffer{}
+	if err := a.status(context.Background()); err == nil || !strings.Contains(err.Error(), "could not report") || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("status with a failing agent: %v", err)
+	}
+	if out := a.out.(*bytes.Buffer).String(); strings.Contains(out, "Sync engine") {
+		t.Fatalf("a failing agent must not be read past:\n%s", out)
+	}
+	agent.broken = false
+
+	// A connection that is made and dropped is not "no agent" either.
+	dropping := filepath.Join(shortDir(t), "agent.sock")
+	l, err := net.Listen("unix", dropping)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+	t.Cleanup(func() { l.Close() })
+	if err := newControlClient(dropping).do(context.Background(), http.MethodGet, "/v1/status", nil, nil); err == nil || errors.Is(err, errNoAgent) {
+		t.Fatalf("a dropped connection: %v", err)
 	}
 
 	// No agent: the engine is asked directly — and does not answer here.
@@ -428,7 +541,7 @@ func TestIssue176_RunServesTheSocketWhileTheEngineRuns(t *testing.T) {
 	if err := saveState(lay.State, st); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, filepath.Join(lay.Home, "config.xml"), "<configuration><gui><address>127.0.0.1:"+strconv.Itoa(port)+"</address><apikey>k</apikey></gui></configuration>\n")
+	writeFile(t, filepath.Join(lay.Home, "config.xml"), "<configuration><folder id=\"vs-aaaaaaaaaaaa\" label=\"Notes\" path=\""+filepath.Join(home, "Notes")+"\"></folder><gui><address>127.0.0.1:"+strconv.Itoa(port)+"</address><apikey>k</apikey></gui></configuration>\n")
 	// The layout's socket lies too deep here (a test's temporary folder):
 	// run falls back and records the place.
 	a := &app{goos: "linux", home: home, getenv: envOf(nil), lay: lay, out: io.Discard,
@@ -456,9 +569,14 @@ func TestIssue176_RunServesTheSocketWhileTheEngineRuns(t *testing.T) {
 	if cs.Engine != "starting" || cs.Version != version {
 		t.Fatalf("status: %+v", cs)
 	}
+	// Until the engine answers, the report is the config file's: the same
+	// vaults the terminal lists while the engine is stopped.
+	if len(cs.Vaults) != 1 || cs.Vaults[0].Label != "Notes" || cs.Vaults[0].State != "not syncing — the engine is stopped" || !strings.Contains(cs.Text, "\nVaults (not syncing while the engine is stopped)\n  Notes          ~/Notes\n") {
+		t.Fatalf("starting report: %+v\n%s", cs.Vaults, cs.Text)
+	}
 	// The terminal finds it through agent.json.
 	a.out = &bytes.Buffer{}
-	if err := a.status(ctx); err != nil || !strings.Contains(a.out.(*bytes.Buffer).String(), "Sync engine: starting") {
+	if err := a.status(ctx); err != nil || !strings.Contains(a.out.(*bytes.Buffer).String(), "Sync engine: starting — VaultSync is bringing it up\n\nVaults (not syncing while the engine is stopped)\n  Notes") {
 		t.Fatalf("terminal status: %v\n%s", err, a.out)
 	}
 	cancel()
@@ -485,8 +603,51 @@ func TestIssue176_StatusJSONHasNoNulls(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, k := range []string{"hubs", "vaults", "waiting", "attempts"} {
-		if string(raw[k]) == "null" {
-			t.Fatalf("%s is null: %s", k, raw[k])
+		v, ok := raw[k]
+		if !ok || !strings.HasPrefix(strings.TrimSpace(string(v)), "[") {
+			t.Fatalf("%s is not a list: %s", k, v)
 		}
+	}
+	for _, k := range []string{"version", "syncthing", "engine", "paused", "text"} {
+		if _, ok := raw[k]; !ok {
+			t.Fatalf("%s is missing", k)
+		}
+	}
+}
+
+// A request is one JSON document of bounded size — nothing after it, and
+// nothing bigger, reaches a handler.
+func TestIssue176_RequestsAreOneBoundedDocument(t *testing.T) {
+	var req pairRequest
+	if err := readJSON(strings.NewReader(`{"code":"TULIP-ANCHOR-42"}`), &req); err != nil || req.Code != "TULIP-ANCHOR-42" {
+		t.Fatalf("one document: %v %+v", err, req)
+	}
+	if err := readJSON(strings.NewReader(`{"code":"a"} {"yes":true}`), &req); err == nil || !strings.Contains(err.Error(), "more than one") {
+		t.Fatalf("two documents: %v", err)
+	}
+	if err := readJSON(strings.NewReader(`{"code":"a"}`+strings.Repeat(" ", controlRequestLimit)), &req); err == nil || !strings.Contains(err.Error(), "larger than") {
+		t.Fatalf("oversized: %v", err)
+	}
+	if err := readJSON(strings.NewReader(`{"code":`), &req); err == nil {
+		t.Fatal("a broken document")
+	}
+}
+
+// Without a socket the service's log says so without the error's words —
+// they name paths — and keeps them in VaultSync's folder.
+func TestIssue176_SocketErrorStaysOutOfTheLog(t *testing.T) {
+	base := t.TempDir()
+	var logged []string
+	err := &os.PathError{Op: "listen", Path: filepath.Join(base, "agent.sock"), Err: errors.New("invalid argument")}
+	logSocketError(func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }, base, err)
+	if len(logged) != 1 || strings.Contains(logged[0], base) || !strings.Contains(logged[0], "no control socket") || !strings.Contains(logged[0], "vaultsync status reads the engine directly") {
+		t.Fatalf("log: %v", logged)
+	}
+	data, serr := os.ReadFile(filepath.Join(base, "control-socket-error.txt"))
+	if serr != nil || !strings.Contains(string(data), err.Error()) {
+		t.Fatalf("details: %q %v", data, serr)
+	}
+	if fi, _ := os.Stat(filepath.Join(base, "control-socket-error.txt")); fi.Mode().Perm() != 0o600 {
+		t.Fatalf("details mode %v", fi.Mode())
 	}
 }

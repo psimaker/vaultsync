@@ -48,6 +48,11 @@ type fakeEngine struct {
 	onPendingQuery func()
 	// onNextFolders runs inside the next GET of the folder list.
 	onNextFolders func()
+	// folderState answers /rest/db/status for a folder (idle when unset).
+	folderState map[string]map[string]any
+	// failFolders makes the next GET of the folder list fail, like an
+	// engine that stopped.
+	failFolders bool
 }
 
 type offerFlap struct {
@@ -136,10 +141,19 @@ func (e *fakeEngine) serve(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	case p == "/rest/db/status":
+		if st, ok := e.folderState[r.URL.Query().Get("folder")]; ok {
+			write(st)
+			break
+		}
 		write(map[string]any{"state": "idle"})
 	case p == "/rest/db/completion":
 		write(map[string]any{"completion": 100, "remoteState": "valid"})
 	case p == "/rest/config/folders" && r.Method == http.MethodGet:
+		if e.failFolders {
+			e.failFolders = false
+			http.Error(w, "the engine is gone", http.StatusServiceUnavailable)
+			return
+		}
 		if hook := e.onNextFolders; hook != nil {
 			e.onNextFolders = nil
 			hook()

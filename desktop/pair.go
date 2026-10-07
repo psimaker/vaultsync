@@ -160,6 +160,13 @@ func (s *pairSession) run(ctx context.Context) error {
 	if s.engineStart, err = engineStartTime(ctx, s.env.engine); err != nil {
 		return fmt.Errorf("the sync engine does not answer: %w", err)
 	}
+	// Under the lock, so a pause cannot slip in between this look and the
+	// Hub this pairing adds (a pause takes the same lock).
+	if paused, err := pausedHere(ctx, s.env.engine); err != nil {
+		return fmt.Errorf("the sync engine does not answer: %w", err)
+	} else if paused {
+		return refuse("Syncing is paused on this computer — run vaultsync resume first.")
+	}
 	if done, err := s.resumePending(ctx); done || err != nil {
 		return s.unlessAlreadySyncing(err)
 	}
@@ -983,7 +990,9 @@ func (s *pairSession) downloadPlan(ctx context.Context, v pairing.VaultInfo, pat
 
 func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 	if s.opts.vault == "" || s.opts.path == "" {
-		s.keepMenu(ctx)
+		if err := s.keepMenu(ctx); err != nil {
+			return plan{}, err
+		}
 		return plan{}, refuse("Pass --vault NAME and --path FOLDER (with --create for a new vault on your Hub) — there is no terminal to ask on.")
 	}
 	path, err := expandPath(s.env.home, s.opts.path)
@@ -1001,7 +1010,9 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 		}
 	}
 	if !s.opts.create {
-		s.keepMenu(ctx)
+		if err := s.keepMenu(ctx); err != nil {
+			return plan{}, err
+		}
 		return plan{}, refuse("Your Hub has no vault named %s. Add --create to start it as a new vault.", quoted(s.opts.vault))
 	}
 	name := pairing.SanitizeName(s.opts.vault)
@@ -1041,14 +1052,18 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 }
 
 // keepMenu builds the vault menu for a caller that has no terminal to read
-// it on (the control socket), so the refusal can carry the choices.
-func (s *pairSession) keepMenu(ctx context.Context) {
+// it on (the control socket), so the refusal can carry the choices. An
+// engine that stops meanwhile is reported, not hidden behind the refusal.
+func (s *pairSession) keepMenu(ctx context.Context) error {
 	if s.t.interactive() {
-		return
+		return nil
 	}
-	if m, err := s.buildMenu(ctx); err == nil {
-		s.menu = &m
+	m, err := s.buildMenu(ctx)
+	if err != nil {
+		return err
 	}
+	s.menu = &m
+	return nil
 }
 
 // --- the checks -------------------------------------------------------------

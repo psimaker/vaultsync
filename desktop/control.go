@@ -100,11 +100,19 @@ type controlServer struct {
 	a    *app
 	eng  engine
 	logf func(string, ...any)
+	// background: the engine belongs to the background service (run as the
+	// service) rather than to a vaultsync run in a terminal; the remedies
+	// status names differ. Fixed for the agent's lifetime.
+	background bool
 	// ctx is the agent's lifetime: a pairing runs on it, not on the request
 	// that asked for it, so a caller that goes away mid-way does not abort
 	// an accept.
 	ctx context.Context
 }
+
+// controlRequestLimit bounds a request body; the flags of a pairing are a
+// few hundred bytes.
+const controlRequestLimit = 64 << 10
 
 func (c *controlServer) handler() http.Handler {
 	mux := http.NewServeMux()
@@ -124,7 +132,16 @@ func (c *controlServer) serve(ctx context.Context) (path string, stop func(), er
 		return "", nil, err
 	}
 	c.ctx = ctx
-	srv := &http.Server{Handler: c.handler(), ReadHeaderTimeout: 10 * time.Second}
+	// A pairing takes minutes (discovery, the Hub, the wait for its share),
+	// so the response may take that long; reading a request and holding an
+	// idle connection may not.
+	srv := &http.Server{
+		Handler:           c.handler(),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      15 * time.Minute,
+		IdleTimeout:       2 * time.Minute,
+	}
 	done := make(chan struct{})
 	go func() {
 		_ = srv.Serve(l)
@@ -210,9 +227,10 @@ func (c *controlServer) currentStatus(ctx context.Context) (controlStatus, error
 	up := client.Ping(pctx) == nil
 	cancel()
 	if !up {
+		cs.statusReport = c.a.offlineReport()
 		return cs, nil
 	}
-	rep, err := c.a.report(ctx, client, serviceMode)
+	rep, err := c.a.report(ctx, client, c.background)
 	if err != nil {
 		return cs, err
 	}
@@ -221,10 +239,22 @@ func (c *controlServer) currentStatus(ctx context.Context) (controlStatus, error
 	return cs, nil
 }
 
-// setPaused pauses or resumes every Hub this engine knows. A paused device
-// stays paused across restarts, like a vaultsync stop; the folders and
-// their settings are untouched.
+// setPaused pauses or resumes every Hub this engine knows. The engine keeps
+// a paused device paused across its restarts; the folders and their
+// settings are untouched. It takes the pairing lock: a pairing adds a Hub,
+// and the two must not interleave — a pairing sees the pause, or the pause
+// waits for the pairing.
 func (c *controlServer) setPaused(w http.ResponseWriter, r *http.Request, paused bool) {
+	unlock, err := lockFile(filepath.Join(c.a.lay.Base, "pair.lock"))
+	if errors.Is(err, ErrEngineRunning) {
+		fail(w, http.StatusConflict, errors.New("a pairing is running on this computer — wait for it to finish, then try again"))
+		return
+	}
+	if err != nil {
+		fail(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer unlock()
 	client, err := c.client()
 	if err != nil {
 		fail(w, http.StatusInternalServerError, err)
@@ -261,10 +291,12 @@ func (c *controlServer) setPaused(w http.ResponseWriter, r *http.Request, paused
 // pair runs vaultsync pair's flag flow in the agent: no terminal, so every
 // decision the flags did not make is refused with the flag to pass — and
 // with the menu, so the caller can choose and ask again (the code stays
-// valid until the Hub expires it; only wrong codes lock it).
+// valid until the Hub expires it; only wrong codes lock it). The flow
+// itself refuses while syncing is paused, for the terminal and the socket
+// alike.
 func (c *controlServer) pair(w http.ResponseWriter, r *http.Request) {
 	var req pairRequest
-	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&req); err != nil {
+	if err := readJSON(r.Body, &req); err != nil {
 		fail(w, http.StatusBadRequest, fmt.Errorf("bad request: %w", err))
 		return
 	}
@@ -273,17 +305,7 @@ func (c *controlServer) pair(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, err)
 		return
 	}
-	paused, err := pausedHere(c.ctx, client)
-	if err != nil {
-		fail(w, http.StatusServiceUnavailable, fmt.Errorf("the sync engine does not answer: %w", err))
-		return
-	}
 	resp := pairResponse{}
-	if paused {
-		resp.Refusal = "Syncing is paused on this computer — run vaultsync resume first."
-		writeJSON(w, http.StatusOK, resp)
-		return
-	}
 	var out bytes.Buffer
 	opts := pairOptions{code: req.Code, hub: req.Hub, vault: req.Vault, create: req.Create, path: req.Path, yes: req.Yes, name: req.Name}
 	s, err := c.a.pairWith(c.ctx, &term{out: &out}, opts, client)
@@ -328,6 +350,27 @@ func pausedHere(ctx context.Context, c *syncthing.Client) (bool, error) {
 		}
 	}
 	return hubs > 0 && paused == hubs, nil
+}
+
+// readJSON reads one JSON document of at most controlRequestLimit bytes:
+// anything longer, and anything after the document, is refused before a
+// handler acts on it.
+func readJSON(body io.Reader, v any) error {
+	data, err := io.ReadAll(io.LimitReader(body, controlRequestLimit+1))
+	if err != nil {
+		return err
+	}
+	if len(data) > controlRequestLimit {
+		return fmt.Errorf("the request is larger than %d bytes", controlRequestLimit)
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return errors.New("the request holds more than one JSON document")
+	}
+	return nil
 }
 
 func fail(w http.ResponseWriter, code int, err error) {
@@ -405,9 +448,10 @@ func (c *controlClient) do(ctx context.Context, method, path string, in, out any
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		// No socket, or nobody listening on it: no agent.
+		// No socket, or nobody listening on it: no agent. A connection that
+		// was made and then failed is an agent that did not answer.
 		var ne *net.OpError
-		if errors.As(err, &ne) {
+		if errors.As(err, &ne) && ne.Op == "dial" {
 			return errNoAgent
 		}
 		return err
@@ -430,6 +474,14 @@ func (c *controlClient) do(ctx context.Context, method, path string, in, out any
 		return nil
 	}
 	return json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(out)
+}
+
+// logSocketError says in the service's log that there is no control socket
+// — without the error's words, which name paths (the log is read by
+// others; the folder is not) — and keeps the words in VaultSync's folder.
+func logSocketError(logf func(string, ...any), base string, err error) {
+	logf("no control socket — %s; vaultsync status reads the engine directly (details in control-socket-error.txt)", serviceSummary(err))
+	_ = writeFileAtomic(filepath.Join(base, "control-socket-error.txt"), []byte(err.Error()+"\n"), 0o600)
 }
 
 // --- pause / resume from the terminal ----------------------------------------

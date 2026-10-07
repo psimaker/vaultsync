@@ -655,9 +655,9 @@ func (a *app) run(ctx context.Context, args []string) error {
 		return err
 	}
 	defer unlock()
-	ctl := &controlServer{a: a, eng: eng, logf: logf}
+	ctl := &controlServer{a: a, eng: eng, logf: logf, background: a.backgroundEngine()}
 	if socket, stop, err := ctl.serve(ctx); err != nil {
-		logf("no control socket (%v): vaultsync status reads the engine directly", err)
+		logSocketError(logf, a.lay.Base, err)
 	} else {
 		defer stop()
 		if socket == a.lay.Socket {

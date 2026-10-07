@@ -181,7 +181,8 @@ alone); the menu-bar app will read the same socket, so both show one truth.
 `vaultsync pause` pauses every connection to your Hub — the engine keeps
 running, your vaults and their settings stay as they are, and `status` says
 `paused on this computer` until `vaultsync resume`. Without a running agent,
-`status` reads the engine's own files and says so.
+`status` asks the engine's own API, and reads its config file when the
+engine does not answer either.
 
 `--yes` is consent to sync a `--path` that already holds files with the new
 vault named by `--vault`; it never chooses a Hub and never overrides a
