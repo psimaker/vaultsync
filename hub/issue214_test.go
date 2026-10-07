@@ -32,20 +32,27 @@ func TestIssue214_ZeroIsProvenNotAssumed(t *testing.T) {
 		state         string
 		local, global int64
 		dir           int
+		dirs, links   int64 // announced directories / symlinks (global)
+		localDirs     int64
+		linked        bool // the vault's directory is reached through a link
 		want          int64
 	}{
-		{"empty and idle", "idle", 0, 0, dirEmpty, 0},
-		{"empty, first scan running", "scanning", 0, 0, dirEmpty, 0},
-		{"empty, waiting for its scan", "scan-waiting", 0, 0, dirEmpty, 0},
-		{"files on the Hub", "idle", 5, 5, dirFiles, 5},
-		{"announced by a device, not downloaded yet", "idle", 0, 7, dirEmpty, 7},
-		{"local content the global index does not show", "idle", 1, 0, dirFiles, 1},
-		{"copied onto the Hub, not scanned yet", "scanning", 0, 0, dirFiles, unknownFiles},
-		{"copied onto the Hub after the last scan", "idle", 0, 0, dirFiles, unknownFiles},
-		{"paused or not running", "", 0, 0, dirEmpty, unknownFiles},
-		{"error", "error", 0, 0, dirEmpty, unknownFiles},
-		{"syncing with nothing known", "syncing", 0, 0, dirEmpty, unknownFiles},
-		{"directory gone", "idle", 0, 0, dirMissing, unknownFiles},
+		{"empty and idle", "idle", 0, 0, dirEmpty, 0, 0, 0, false, 0},
+		{"empty, first scan running", "scanning", 0, 0, dirEmpty, 0, 0, 0, false, 0},
+		{"empty, waiting for its scan", "scan-waiting", 0, 0, dirEmpty, 0, 0, 0, false, 0},
+		{"files on the Hub", "idle", 5, 5, dirFiles, 0, 0, 0, false, 5},
+		{"announced by a device, not downloaded yet", "idle", 0, 7, dirEmpty, 0, 0, 0, false, 7},
+		{"local content the global index does not show", "idle", 1, 0, dirFiles, 0, 0, 0, false, 1},
+		{"an announced directory, no files", "idle", 0, 0, dirEmpty, 1, 0, 0, false, unknownFiles},
+		{"an announced link, no files", "idle", 0, 0, dirEmpty, 0, 1, 0, false, unknownFiles},
+		{"a local directory only", "idle", 0, 0, dirEmpty, 0, 0, 1, false, unknownFiles},
+		{"copied onto the Hub, not scanned yet", "scanning", 0, 0, dirFiles, 0, 0, 0, false, unknownFiles},
+		{"copied onto the Hub after the last scan", "idle", 0, 0, dirFiles, 0, 0, 0, false, unknownFiles},
+		{"the vault's directory is a link", "idle", 0, 0, dirEmpty, 0, 0, 0, true, unknownFiles},
+		{"paused or not running", "", 0, 0, dirEmpty, 0, 0, 0, false, unknownFiles},
+		{"error", "error", 0, 0, dirEmpty, 0, 0, 0, false, unknownFiles},
+		{"syncing with nothing known", "syncing", 0, 0, dirEmpty, 0, 0, 0, false, unknownFiles},
+		{"directory gone", "idle", 0, 0, dirMissing, 0, 0, 0, false, unknownFiles},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -61,8 +68,12 @@ func TestIssue214_ZeroIsProvenNotAssumed(t *testing.T) {
 			case dirMissing:
 				delete(testDirs[prov], f.Path)
 			}
+			if c.linked {
+				testLinks[prov][f.Path] = true
+			}
 			fake.mu.Lock()
 			fake.dbFiles[f.ID], fake.dbGlobal[f.ID], fake.dbState[f.ID] = c.local, c.global, c.state
+			fake.dbDirs[f.ID], fake.dbSymlinks[f.ID], fake.dbLocalDirs[f.ID] = c.dirs, c.links, c.localDirs
 			fake.mu.Unlock()
 			vaults, err := prov.listVaults(ctx)
 			if err != nil {
@@ -164,9 +175,56 @@ func TestIssue214_AVaultTheHubJustCreatedCountsZeroWhileItScans(t *testing.T) {
 	}
 }
 
+// The provision reply — what `vaultsync-hub pair --path` decides on — follows
+// the same rule as the catalogue: an existing vault asked for by its ID.
+func TestIssue214_ProvisionReplyFollowsTheSameRule(t *testing.T) {
+	fx := newPairingFixture(t)
+	ctx := context.Background()
+	c := fx.client()
+	if _, err := c.Handshake(ctx, fx.code); err != nil {
+		t.Fatal(err)
+	}
+	reply, err := c.Provision(ctx, 1, fakeDeviceID, "Laptop", "Notes", true)
+	if err != nil || reply.Provisioned == nil || reply.Provisioned.Files != 0 {
+		t.Fatalf("%+v %v", reply, err)
+	}
+	id, path := reply.Provisioned.ID, ""
+	for p := range testDirs[fx.server.prov] {
+		path = p
+	}
+	ask := func(seq uint64) int64 {
+		t.Helper()
+		reply, err := c.Provision(ctx, seq, fakeDeviceID, "Laptop", id, false)
+		if err != nil || reply.Provisioned == nil || reply.Provisioned.ID != id {
+			t.Fatalf("%+v %v", reply, err)
+		}
+		return reply.Provisioned.Files
+	}
+	fx.fake.mu.Lock()
+	fx.fake.dbGlobal[id] = 7 // announced by a device, not downloaded yet
+	fx.fake.mu.Unlock()
+	if n := ask(2); n != 7 {
+		t.Fatalf("announced files: got %d", n)
+	}
+	fx.fake.mu.Lock()
+	fx.fake.dbGlobal[id] = 0
+	fx.fake.mu.Unlock()
+	testDirs[fx.server.prov][path] = true // copied onto the Hub, not scanned yet
+	if n := ask(3); n != unknownFiles {
+		t.Fatalf("files on disk the index has not seen: got %d", n)
+	}
+	testDirs[fx.server.prov][path] = false
+	fx.fake.mu.Lock()
+	fx.fake.dbStatusFail[id] = true
+	fx.fake.mu.Unlock()
+	if n := ask(4); n != unknownFiles {
+		t.Fatalf("an unreadable status: got %d", n)
+	}
+}
+
 // "1 file", not "1 files" (#223); no number while the Hub does not know.
 func TestIssue223_FileCountWording(t *testing.T) {
-	for n, want := range map[int64]string{unknownFiles: "counting…", 0: "0 files", 1: "1 file", 2: "2 files"} {
+	for n, want := range map[int64]string{unknownFiles: "unknown", 0: "0 files", 1: "1 file", 2: "2 files"} {
 		if got := fileCount(n); got != want {
 			t.Errorf("fileCount(%d) = %q, want %q", n, got, want)
 		}

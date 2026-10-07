@@ -62,6 +62,9 @@ type provisioner struct {
 	// package var so tests run without a filesystem.
 	dirState func(path string) (exists, empty bool, err error)
 	mkdir    func(path string) error
+	// isLink reports whether path itself is a symbolic link (os.Lstat); a
+	// package var so tests run without a filesystem.
+	isLink func(path string) (bool, error)
 }
 
 func newProvisioner(client *SyncthingClient, vaultsRoot, localRoot string) *provisioner {
@@ -71,7 +74,16 @@ func newProvisioner(client *SyncthingClient, vaultsRoot, localRoot string) *prov
 		localRoot:  filepath.Clean(localRoot),
 		dirState:   dirStateFS,
 		mkdir:      func(p string) error { return os.MkdirAll(p, 0o755) },
+		isLink:     isLinkFS,
 	}
+}
+
+func isLinkFS(path string) (bool, error) {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return false, err
+	}
+	return fi.Mode()&os.ModeSymlink != 0, nil
 }
 
 // dirStateFS is the shared emptiness rule (join.DirState): Syncthing's own
@@ -153,10 +165,12 @@ const unknownFiles int64 = -1
 // Hub, or announced by another device and not downloaded yet — and is safe
 // either way: a device never combines its files with them. Zero is the one
 // count that lets a device make its files the vault's first copy, so it is
-// proven, not assumed: the index knows of nothing anywhere, the vault's
-// directory is empty on disk right now (the index lags a copy made on the
-// Hub itself by a scan), and the folder is running — paused and stopped
-// folders answer with empty counters. Decision 047.
+// proven, not assumed: the index knows of no file, directory or link
+// anywhere; the vault's directory, reached without a link, is empty on
+// disk right now (the index lags a copy made on the Hub itself by a scan);
+// and the folder is running — paused and stopped folders answer with empty
+// counters. An observation at that instant, not a reservation: the device's
+// own last checks cover what happens after. Decision 047.
 func (p *provisioner) vaultFiles(ctx context.Context, f folderConfig) int64 {
 	st, err := p.client.DBStatus(ctx, f.ID)
 	if err != nil {
@@ -165,8 +179,19 @@ func (p *provisioner) vaultFiles(ctx context.Context, f folderConfig) int64 {
 	if n := max(st.LocalFiles, st.GlobalFiles); n > 0 {
 		return n
 	}
+	// No file anywhere — but directories and links, here or announced, are
+	// content too, and a count of files cannot say so.
+	if max(st.LocalDirectories, st.GlobalDirectories, st.LocalSymlinks, st.GlobalSymlinks) > 0 {
+		return unknownFiles
+	}
 	local, ok := p.localPath(f.Path)
 	if !ok {
+		return unknownFiles
+	}
+	// A link below the vaults root may lead Syncthing one way and this
+	// process another when the two mount the root differently (localRoot,
+	// vaultsRoot): what is looked at must be the directory itself.
+	if linked, err := p.reachedThroughLink(local); err != nil || linked {
 		return unknownFiles
 	}
 	exists, empty, err := p.dirState(local)
@@ -189,6 +214,27 @@ func (p *provisioner) localPath(syncthingPath string) (string, bool) {
 		return "", false
 	}
 	return filepath.Join(p.localRoot, rel), true
+}
+
+// reachedThroughLink: whether any path component between the local vaults
+// root (exclusive) and local (inclusive) is a symbolic link.
+func (p *provisioner) reachedThroughLink(local string) (bool, error) {
+	rel, err := filepath.Rel(p.localRoot, local)
+	if err != nil {
+		return false, err
+	}
+	at := p.localRoot
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		if part == "." || part == "" {
+			continue
+		}
+		at = filepath.Join(at, part)
+		linked, err := p.isLink(at)
+		if err != nil || linked {
+			return linked, err
+		}
+	}
+	return false, nil
 }
 
 // listVaults returns every configured folder with its file count (or

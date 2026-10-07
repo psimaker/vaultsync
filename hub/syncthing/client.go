@@ -142,10 +142,14 @@ type systemStatus struct {
 
 // DBStatus carries the per-folder database counters VaultSync reads.
 type DBStatus struct {
-	LocalFiles  int64  `json:"localFiles"`
-	LocalBytes  int64  `json:"localBytes"`
-	GlobalFiles int64  `json:"globalFiles"`
-	State       string `json:"state"`
+	LocalFiles        int64  `json:"localFiles"`
+	LocalDirectories  int64  `json:"localDirectories"`
+	LocalSymlinks     int64  `json:"localSymlinks"`
+	LocalBytes        int64  `json:"localBytes"`
+	GlobalFiles       int64  `json:"globalFiles"`
+	GlobalDirectories int64  `json:"globalDirectories"`
+	GlobalSymlinks    int64  `json:"globalSymlinks"`
+	State             string `json:"state"`
 }
 
 type connectionsResponse struct {

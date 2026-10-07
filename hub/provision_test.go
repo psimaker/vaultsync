@@ -73,13 +73,19 @@ func newTestProvisioner(t *testing.T, f *fakeSyncthing, client *SyncthingClient)
 		return ok, !nonEmpty, nil
 	}
 	p.mkdir = func(path string) error { dirs[path] = false; return nil }
+	links := map[string]bool{} // path → is a symbolic link
+	p.isLink = func(path string) (bool, error) { return links[path], nil }
 	t.Cleanup(func() { _ = f })
-	// expose for tests that need to pre-populate a directory
+	// expose for tests that need to pre-populate a directory or plant a link
 	testDirs[p] = dirs
+	testLinks[p] = links
 	return p
 }
 
-var testDirs = map[*provisioner]map[string]bool{}
+var (
+	testDirs  = map[*provisioner]map[string]bool{}
+	testLinks = map[*provisioner]map[string]bool{}
+)
 
 func TestCreateVaultHappyPath(t *testing.T) {
 	f, srv := newFakeSyncthing(t, fakeHubID)

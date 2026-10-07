@@ -395,13 +395,13 @@ func defaultRouteIPv4() net.IP {
 	return nil
 }
 
-// fileCount words a vault's count: the Hub reports unknownFiles while it
-// does not know (vaultFiles — a scan still running, a paused folder, a
-// status it could not read), and one file is "1 file" (#223).
+// fileCount words a vault's count: the Hub reports unknownFiles when it
+// does not know (vaultFiles — content its index has not seen, a paused
+// folder, a status it could not read), and one file is "1 file" (#223).
 func fileCount(n int64) string {
 	switch {
 	case n < 0:
-		return "counting…"
+		return "unknown"
 	case n == 1:
 		return "1 file"
 	default:
