@@ -343,7 +343,7 @@ func TestIssue175_FinalGateRunsAfterTheWait(t *testing.T) {
 		s.opts.code = hub.code
 		dest := filepath.Join(s.env.home, "Vaults", "Recipes")
 		s.opts.path = dest
-		time.AfterFunc(100*time.Millisecond, func() { mkVault(t, dest) })
+		hub.beforeOffer = func() { mkVault(t, dest) }
 		// Whichever check sees the files first — the shared guard or the
 		// agent's final gate — nothing is added and the files stay.
 		err := s.run(ctx)
@@ -359,11 +359,11 @@ func TestIssue175_FinalGateRunsAfterTheWait(t *testing.T) {
 		s, _ := testSession(t, eng, hub, pairOptions{vault: "Recipes"})
 		s.opts.code = hub.code
 		s.opts.path = filepath.Join(s.env.home, "Vaults", "Recipes")
-		time.AfterFunc(100*time.Millisecond, func() {
+		hub.beforeOffer = func() {
 			eng.mu.Lock()
 			eng.startTime = "2026-10-06T10:05:00Z"
 			eng.mu.Unlock()
-		})
+		}
 		err := s.run(ctx)
 		if !strings.Contains(refusalText(err), "restarted") || eng.folderCount() != 0 {
 			t.Fatalf("got %v, folders=%d", err, eng.folderCount())
@@ -521,11 +521,11 @@ func TestIssue175_ConsentIsBoundToTheFolder(t *testing.T) {
 	t.Run("vanished during the wait is never recreated", func(t *testing.T) {
 		eng, hub, s, local := upload(t)
 		hub.offerDelay = 300 * time.Millisecond
-		time.AfterFunc(100*time.Millisecond, func() {
+		hub.beforeOffer = func() {
 			if err := os.Rename(local, local+"-moved"); err != nil {
 				t.Error(err)
 			}
-		})
+		}
 		err := s.run(ctx)
 		if !strings.Contains(refusalText(err), "disappeared") || eng.folderCount() != 0 {
 			t.Fatalf("got %v; folders=%d", err, eng.folderCount())
@@ -546,14 +546,14 @@ func TestIssue175_ConsentIsBoundToTheFolder(t *testing.T) {
 		}
 		s.opts.path = filepath.Join(disk, "Recipes")
 		// The "disk" goes away and another folder takes its name.
-		time.AfterFunc(100*time.Millisecond, func() {
+		hub.beforeOffer = func() {
 			if err := os.Rename(disk, disk+"-gone"); err != nil {
 				t.Error(err)
 			}
 			if err := os.Mkdir(disk, 0o755); err != nil {
 				t.Error(err)
 			}
-		})
+		}
 		err := s.run(ctx)
 		if !strings.Contains(refusalText(err), "changed while VaultSync was waiting") || eng.folderCount() != 0 {
 			t.Fatalf("got %v; folders=%d", err, eng.folderCount())
@@ -572,13 +572,15 @@ func TestIssue175_HubEvidenceIsRefreshedBeforeAdding(t *testing.T) {
 	local := filepath.Join(s.env.home, "Notes")
 	mkVault(t, local)
 	s.opts.path = local
-	time.AfterFunc(150*time.Millisecond, func() {
+	// Another device joins the vault the agent was told is its alone — after
+	// the reply the agent decided on, before the share it waits for.
+	hub.beforeOffer = func() {
 		hub.mu.Lock()
 		defer hub.mu.Unlock()
 		for i := range hub.vaults {
 			hub.vaults[i].SharedWith = append(hub.vaults[i].SharedWith, otherID)
 		}
-	})
+	}
 	err := s.run(context.Background())
 	if !strings.Contains(refusalText(err), "still a new, empty vault") || eng.folderCount() != 0 {
 		t.Fatalf("got %v; folders=%d", err, eng.folderCount())

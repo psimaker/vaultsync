@@ -175,6 +175,11 @@ type fakeHub struct {
 	// onProvision runs inside the n-th provision request (1-based), before
 	// it is answered.
 	onProvision func(n int, p pairing.ProvisionPayload)
+	// beforeOffer runs right before the engine gets the pending offer, after
+	// the provision reply was composed, without h.mu held: what it changes —
+	// on the Hub or on this computer — is what the agent meets after it
+	// decided on that reply, however long the handshake took.
+	beforeOffer func()
 }
 
 type fakeHubSession struct {
@@ -309,7 +314,6 @@ func (h *fakeHub) provision(w http.ResponseWriter, r *http.Request) {
 			}
 			c := *v
 			shared = &c
-			h.sendOffer(c)
 		}
 	}
 	reply := h.payloadLocked(shared, errMsg)
@@ -318,6 +322,10 @@ func (h *fakeHub) provision(w http.ResponseWriter, r *http.Request) {
 	}
 	status := h.provisionStatus
 	h.mu.Unlock()
+	if shared != nil {
+		// Outside the lock: beforeOffer may take it.
+		h.sendOffer(*shared)
+	}
 	if status != 0 {
 		h.fail(w, status, "encryption failed")
 		return
@@ -330,11 +338,17 @@ func (h *fakeHub) sendOffer(v pairing.VaultInfo) {
 	if h.engine == nil || h.offerDelay < 0 {
 		return
 	}
-	if h.offerDelay == 0 {
+	deliver := func() {
+		if h.beforeOffer != nil {
+			h.beforeOffer()
+		}
 		h.engine.offer(v.ID, h.id, v.Label)
+	}
+	if h.offerDelay == 0 {
+		deliver()
 		return
 	}
-	time.AfterFunc(h.offerDelay, func() { h.engine.offer(v.ID, h.id, v.Label) })
+	time.AfterFunc(h.offerDelay, deliver)
 }
 
 func (h *fakeHub) provisionCount(vault string) int {
