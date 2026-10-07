@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/psimaker/vaultsync/hub/pairing"
@@ -34,25 +36,29 @@ func TestIssue214_ZeroIsProvenNotAssumed(t *testing.T) {
 		dir           int
 		dirs, links   int64 // announced directories / symlinks (global)
 		localDirs     int64
-		linked        bool // the vault's directory is reached through a link
+		localLinks    int64
+		deleted       int64 // tombstones, local and global — not content
+		linked        bool  // the vault's directory is reached through a link
 		want          int64
 	}{
-		{"empty and idle", "idle", 0, 0, dirEmpty, 0, 0, 0, false, 0},
-		{"empty, first scan running", "scanning", 0, 0, dirEmpty, 0, 0, 0, false, 0},
-		{"empty, waiting for its scan", "scan-waiting", 0, 0, dirEmpty, 0, 0, 0, false, 0},
-		{"files on the Hub", "idle", 5, 5, dirFiles, 0, 0, 0, false, 5},
-		{"announced by a device, not downloaded yet", "idle", 0, 7, dirEmpty, 0, 0, 0, false, 7},
-		{"local content the global index does not show", "idle", 1, 0, dirFiles, 0, 0, 0, false, 1},
-		{"an announced directory, no files", "idle", 0, 0, dirEmpty, 1, 0, 0, false, unknownFiles},
-		{"an announced link, no files", "idle", 0, 0, dirEmpty, 0, 1, 0, false, unknownFiles},
-		{"a local directory only", "idle", 0, 0, dirEmpty, 0, 0, 1, false, unknownFiles},
-		{"copied onto the Hub, not scanned yet", "scanning", 0, 0, dirFiles, 0, 0, 0, false, unknownFiles},
-		{"copied onto the Hub after the last scan", "idle", 0, 0, dirFiles, 0, 0, 0, false, unknownFiles},
-		{"the vault's directory is a link", "idle", 0, 0, dirEmpty, 0, 0, 0, true, unknownFiles},
-		{"paused or not running", "", 0, 0, dirEmpty, 0, 0, 0, false, unknownFiles},
-		{"error", "error", 0, 0, dirEmpty, 0, 0, 0, false, unknownFiles},
-		{"syncing with nothing known", "syncing", 0, 0, dirEmpty, 0, 0, 0, false, unknownFiles},
-		{"directory gone", "idle", 0, 0, dirMissing, 0, 0, 0, false, unknownFiles},
+		{"empty and idle", "idle", 0, 0, dirEmpty, 0, 0, 0, 0, 0, false, 0},
+		{"empty, first scan running", "scanning", 0, 0, dirEmpty, 0, 0, 0, 0, 0, false, 0},
+		{"empty, waiting for its scan", "scan-waiting", 0, 0, dirEmpty, 0, 0, 0, 0, 0, false, 0},
+		{"only tombstones of what was deleted everywhere", "idle", 0, 0, dirEmpty, 0, 0, 0, 0, 4, false, 0},
+		{"files on the Hub", "idle", 5, 5, dirFiles, 0, 0, 0, 0, 0, false, 5},
+		{"announced by a device, not downloaded yet", "idle", 0, 7, dirEmpty, 0, 0, 0, 0, 0, false, 7},
+		{"local content the global index does not show", "idle", 1, 0, dirFiles, 0, 0, 0, 0, 0, false, 1},
+		{"an announced directory, no files", "idle", 0, 0, dirEmpty, 1, 0, 0, 0, 0, false, unknownFiles},
+		{"an announced link, no files", "idle", 0, 0, dirEmpty, 0, 1, 0, 0, 0, false, unknownFiles},
+		{"a local directory only", "idle", 0, 0, dirEmpty, 0, 0, 1, 0, 0, false, unknownFiles},
+		{"a local link only", "idle", 0, 0, dirEmpty, 0, 0, 0, 1, 0, false, unknownFiles},
+		{"copied onto the Hub, not scanned yet", "scanning", 0, 0, dirFiles, 0, 0, 0, 0, 0, false, unknownFiles},
+		{"copied onto the Hub after the last scan", "idle", 0, 0, dirFiles, 0, 0, 0, 0, 0, false, unknownFiles},
+		{"the vault's directory is a link", "idle", 0, 0, dirEmpty, 0, 0, 0, 0, 0, true, unknownFiles},
+		{"paused or not running", "", 0, 0, dirEmpty, 0, 0, 0, 0, 0, false, unknownFiles},
+		{"error", "error", 0, 0, dirEmpty, 0, 0, 0, 0, 0, false, unknownFiles},
+		{"syncing with nothing known", "syncing", 0, 0, dirEmpty, 0, 0, 0, 0, 0, false, unknownFiles},
+		{"directory gone", "idle", 0, 0, dirMissing, 0, 0, 0, 0, 0, false, unknownFiles},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -74,6 +80,7 @@ func TestIssue214_ZeroIsProvenNotAssumed(t *testing.T) {
 			fake.mu.Lock()
 			fake.dbFiles[f.ID], fake.dbGlobal[f.ID], fake.dbState[f.ID] = c.local, c.global, c.state
 			fake.dbDirs[f.ID], fake.dbSymlinks[f.ID], fake.dbLocalDirs[f.ID] = c.dirs, c.links, c.localDirs
+			fake.dbLocalLinks[f.ID], fake.dbDeleted[f.ID] = c.localLinks, c.deleted
 			fake.mu.Unlock()
 			vaults, err := prov.listVaults(ctx)
 			if err != nil {
@@ -106,6 +113,85 @@ func TestIssue214_UnreadableStatusIsUnknownNotEmpty(t *testing.T) {
 	if catalogued(vaults, f.ID) != unknownFiles {
 		t.Fatalf("catalogue: %+v", vaults)
 	}
+}
+
+// The look at the directory follows the vaults root as this process sees
+// it — named apart from Syncthing's view, or with one a prefix of the
+// other — and every component below the root is asked whether it is a
+// link, stopping at the first; an Lstat that fails certifies nothing.
+func TestIssue214_TheDirectoryIsReachedFromTheLocalRootWithoutLinks(t *testing.T) {
+	ctx := context.Background()
+	t.Run("roots named apart", func(t *testing.T) {
+		fake, st := newFakeSyncthing(t, fakeHubID)
+		prov := newTestProvisionerRoots(t, fake, fake.client(st), "/var/syncthing/vaults", "/srv/hub/vaults")
+		f, err := prov.createVault(ctx, "Notes", false)
+		if err != nil || f.Path != "/var/syncthing/vaults/notes" {
+			t.Fatalf("%+v %v", f, err)
+		}
+		vaults, err := prov.listVaults(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if catalogued(vaults, f.ID) != 0 || strings.Join(*testInspected[prov], " ") != "/srv/hub/vaults/notes" {
+			t.Fatalf("got %+v, looked at %v", vaults, *testInspected[prov])
+		}
+	})
+	t.Run("one root a prefix of the other", func(t *testing.T) {
+		fake, st := newFakeSyncthing(t, fakeHubID)
+		prov := newTestProvisionerRoots(t, fake, fake.client(st), "/data/vaults", "/data/vaults-local")
+		f, err := prov.createVault(ctx, "Notes", false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		vaults, err := prov.listVaults(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if catalogued(vaults, f.ID) != 0 || strings.Join(*testInspected[prov], " ") != "/data/vaults-local/notes" {
+			t.Fatalf("got %+v, looked at %v", vaults, *testInspected[prov])
+		}
+	})
+	nested := func(t *testing.T) (*fakeSyncthing, *provisioner) {
+		fake, st := newFakeSyncthing(t, fakeHubID)
+		prov := newTestProvisioner(t, fake, fake.client(st))
+		fake.mu.Lock()
+		fake.folders = append(fake.folders, folderConfig{ID: "vs-nested000000", Label: "Nested", Path: "/var/syncthing/vaults/team/notes"})
+		fake.mu.Unlock()
+		testDirs[prov]["/var/syncthing/vaults/team/notes"] = false
+		return fake, prov
+	}
+	t.Run("every component below the root is asked", func(t *testing.T) {
+		_, prov := nested(t)
+		vaults, err := prov.listVaults(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if catalogued(vaults, "vs-nested000000") != 0 || strings.Join(*testInspected[prov], " ") != "/var/syncthing/vaults/team /var/syncthing/vaults/team/notes" {
+			t.Fatalf("got %+v, looked at %v", vaults, *testInspected[prov])
+		}
+	})
+	t.Run("a link in between", func(t *testing.T) {
+		_, prov := nested(t)
+		testLinks[prov]["/var/syncthing/vaults/team"] = true
+		vaults, err := prov.listVaults(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if catalogued(vaults, "vs-nested000000") != unknownFiles || strings.Join(*testInspected[prov], " ") != "/var/syncthing/vaults/team" {
+			t.Fatalf("got %+v, looked at %v", vaults, *testInspected[prov])
+		}
+	})
+	t.Run("an Lstat that fails", func(t *testing.T) {
+		_, prov := nested(t)
+		testLinkErrs[prov]["/var/syncthing/vaults/team/notes"] = errors.New("permission denied")
+		vaults, err := prov.listVaults(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if catalogued(vaults, "vs-nested000000") != unknownFiles {
+			t.Fatalf("got %+v", vaults)
+		}
+	})
 }
 
 // A folder outside the vaults root cannot be looked at: its emptiness is

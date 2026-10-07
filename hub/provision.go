@@ -169,8 +169,8 @@ const unknownFiles int64 = -1
 // anywhere; the vault's directory, reached without a link, is empty on
 // disk right now (the index lags a copy made on the Hub itself by a scan);
 // and the folder is running — paused and stopped folders answer with empty
-// counters. An observation at that instant, not a reservation: the device's
-// own last checks cover what happens after. Decision 047.
+// counters. An observation at that instant, not a reservation: what arrives
+// after the device's last look is the residual #206 closes. Decision 047.
 func (p *provisioner) vaultFiles(ctx context.Context, f folderConfig) int64 {
 	st, err := p.client.DBStatus(ctx, f.ID)
 	if err != nil {

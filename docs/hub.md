@@ -191,10 +191,10 @@ different name on your Hub. Decision 046 records the rules. Your Hub
 reports a vault as empty only when its index knows of no file, folder or
 link anywhere, the vault's directory on the Hub is empty at that moment
 (reached without a link) and the folder is running; otherwise it reports
-no count, which the agent treats as "not empty" (decision 047). That is an
-observation at that instant, not a reservation: what lands on the Hub or
-is announced afterwards is caught by the agent's own last checks, and
-#206 closes the gap for good.
+the content it knows of, or no count at all, and the agent treats both as
+"not empty" (decision 047). That is an observation at that instant, not a
+reservation: what lands on the Hub or is announced after the agent's last
+look is the gap that remains, and #206 closes it.
 
 **One sync service per vault.** If Obsidian Sync or a sync plugin also syncs
 a vault, turn that off for the vault before VaultSync syncs it — two services
