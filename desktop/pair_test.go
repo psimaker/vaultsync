@@ -679,12 +679,16 @@ func TestIssue175_PairingJournal(t *testing.T) {
 // not to one swapped in while the agent asked the Hub one last time.
 func TestIssue175_ConsentWindowsAreClosed(t *testing.T) {
 	ctx := context.Background()
+	// swap runs off the test goroutine (a reader hook, a Hub request) and
+	// so reports through t.Error.
 	swap := func(t *testing.T, path string) {
-		t.Helper()
 		if err := os.Rename(path, path+"-other"); err != nil {
-			t.Fatal(err)
+			t.Error(err)
+			return
 		}
-		mkVault(t, path)
+		if err := populate(path); err != nil {
+			t.Error(err)
+		}
 	}
 
 	t.Run("replaced while the consent question was open", func(t *testing.T) {
@@ -747,7 +751,9 @@ func TestIssue175_NoRequestBetweenTheLastChecksAndTheAdd(t *testing.T) {
 				if err := os.Rename(local, local+"-other"); err != nil {
 					t.Error(err)
 				}
-				mkVault(t, local)
+				if err := populate(local); err != nil {
+					t.Error(err)
+				}
 			}
 			eng.mu.Unlock()
 		}

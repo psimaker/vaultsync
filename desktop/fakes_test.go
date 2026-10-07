@@ -37,9 +37,9 @@ type fakeEngine struct {
 	pending   map[string]map[string]string // folder → device → label
 	patches   []map[string]any
 	client    *syncthing.Client
-	// flap, when set, withdraws the pending offer right after the agent
-	// first saw it, so the agent's next wait is a real one; at the query
-	// after that — inside that wait — during runs and the offer is back.
+	// flap, when set, withdraws the pending offer right after the query that
+	// first showed it to the agent; the next query — inside AcceptShare's
+	// own wait — runs during and restores the offer before it is answered.
 	flap *offerFlap
 	// onPendingQuery runs once, right before the next query for pending
 	// offers is answered, outside the lock: the Hub delivers an offer this
