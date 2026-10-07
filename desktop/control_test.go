@@ -1462,6 +1462,24 @@ func TestIssue176_SocketErrorsSummarizeThemselves(t *testing.T) {
 	if causes := eachCause(left); len(causes) != 1 || causes[0] != left {
 		t.Fatalf("a single error is its own cause: %v", causes)
 	}
+	// A join behind a wrapper that adds words is still listed cause by cause.
+	wrapped := fmt.Errorf("fallback: %w", errors.Join(errors.New("one"), errors.New("two")))
+	if causes := eachCause(wrapped); len(causes) != 2 {
+		t.Fatalf("causes behind a wrapper: %v", causes)
+	}
+
+	// The service boundary says every cause of a run that ended badly —
+	// the engine's failure and the cleanup that failed — not the first.
+	var out bytes.Buffer
+	reportServiceError(&out, errors.Join(errEngineStoppedOnItsOwn, &socketLeftBehindError{cause: &os.PathError{Op: "remove", Path: "/secret/agent.sock", Err: syscall.EACCES}}))
+	if lines := strings.Split(strings.TrimSpace(out.String()), "\n"); len(lines) != 2 || !strings.Contains(lines[0], "the sync engine stopped on its own") || !strings.Contains(lines[1], "could not be removed") || strings.Contains(out.String(), "/secret") {
+		t.Fatalf("service boundary:\n%s", out.String())
+	}
+	out.Reset()
+	reportServiceError(&out, errEngineStoppedOnItsOwn)
+	if strings.Count(out.String(), "error:") != 1 {
+		t.Fatalf("one cause, one line:\n%s", out.String())
+	}
 }
 
 // A rollback that fails is reported next to what made it necessary: the
@@ -1522,7 +1540,44 @@ func TestIssue176_StartupRollbackFailuresAreReported(t *testing.T) {
 	}
 	removeEntry = os.Remove
 	_ = os.Remove(usual)
+	// Both failing at the fallback's place: the fallback's causes are
+	// listed one by one in the service log, none behind the other.
+	fb0 := shortDir(t)
+	chmodEntry = func(p string, m os.FileMode) error {
+		if strings.HasPrefix(p, fb0) {
+			return &os.PathError{Op: "chmod", Path: "x", Err: syscall.EPERM}
+		}
+		return os.Chmod(p, m)
+	}
+	removeEntry = func(p string) error {
+		if strings.HasPrefix(p, fb0) && strings.HasSuffix(p, "agent.sock") {
+			return &os.PathError{Op: "remove", Path: "x", Err: syscall.EACCES}
+		}
+		return os.Remove(p)
+	}
+	_, _, _, err = listenControl(deep, fb0)
+	removeEntry = os.Remove
+	if err == nil {
+		t.Fatal("the fallback must fail")
+	}
+	var lines []string
+	logSocketError(func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) }, shortDir(t), err)
+	all := strings.Join(lines, "\n")
+	if !strings.Contains(all, "chmod: operation not permitted") || !strings.Contains(all, "could not be removed — a file operation failed (remove: permission denied)") {
+		t.Fatalf("the fallback's causes, each on its own: %v", lines)
+	}
+	if strings.Contains(all, fb0) {
+		t.Fatalf("a path in the log: %v", lines)
+	}
+	chmodEntry = os.Chmod
+
 	// A chmod that fails with a removal that works: the fallback may serve.
+	chmodEntry = func(p string, m os.FileMode) error {
+		if p == usual {
+			return &os.PathError{Op: "chmod", Path: "x", Err: syscall.EPERM}
+		}
+		return os.Chmod(p, m)
+	}
 	fb := shortDir(t)
 	l, at, cleanup, err := listenControl(usual, fb)
 	if err != nil || !strings.HasPrefix(at, fb+string(filepath.Separator)) {

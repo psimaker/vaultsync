@@ -274,7 +274,13 @@ func listenControl(path, fallbackDir string) (l net.Listener, at string, cleanup
 	at = filepath.Join(dir, "agent.sock")
 	l, lerr := listenUnix(at)
 	if lerr != nil {
-		return nil, "", nil, errors.Join(err, fmt.Errorf("fallback: %w", lerr), removeSocketDir(dir))
+		// Each of the fallback's causes wrapped on its own, so that none
+		// hides behind another when they are listed.
+		all := []error{err}
+		for _, c := range eachCause(lerr) {
+			all = append(all, fmt.Errorf("fallback: %w", c))
+		}
+		return nil, "", nil, errors.Join(append(all, removeSocketDir(dir))...)
 	}
 	return l, at, func() error {
 		if err := removeSocket(at); err != nil {
@@ -785,8 +791,9 @@ func logSocketError(logf func(string, ...any), base string, err error) {
 	logf("no control socket — details in control-socket-error.txt")
 }
 
-// eachCause lists the errors an errors.Join put together, in order; any
-// other error is its own single cause.
+// eachCause lists the errors an errors.Join put together, in order, also
+// when the join sits behind a wrapper that adds words; any other error is
+// its own single cause.
 func eachCause(err error) []error {
 	if j, ok := err.(interface{ Unwrap() []error }); ok {
 		var out []error
@@ -795,6 +802,11 @@ func eachCause(err error) []error {
 		}
 		if len(out) > 0 {
 			return out
+		}
+	}
+	if inner := errors.Unwrap(err); inner != nil {
+		if _, multi := inner.(interface{ Unwrap() []error }); multi {
+			return eachCause(inner)
 		}
 	}
 	return []error{err}

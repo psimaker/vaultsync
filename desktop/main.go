@@ -46,9 +46,10 @@ func main() {
 		case errors.Is(err, errCancelled):
 			os.Exit(2)
 		case serviceMode:
-			// A log or the journal: a fixed summary that carries no path or
-			// name; the whole message stays in VaultSync's own folder.
-			fmt.Fprintln(os.Stderr, "error:", serviceSummary(err))
+			// A log or the journal: a fixed summary per cause that carries
+			// no path or name; the whole message stays in VaultSync's own
+			// folder.
+			reportServiceError(os.Stderr, err)
 			if stateDirShown != "" {
 				_ = writeFileAtomic(filepath.Join(stateDirShown, "last-error.txt"), []byte(redactPaths(err.Error())+"\n"), 0o600)
 			}
@@ -69,6 +70,15 @@ var stateDirShown string
 // serviceMode is set by `run` when its output goes to a log or the journal
 // (stderr is no terminal): it then prints no free text at all.
 var serviceMode bool
+
+// reportServiceError writes one summary line per cause of err — a run
+// that ended with the engine's failure and a cleanup that failed says
+// both, where one summary of the join would name only the first.
+func reportServiceError(w io.Writer, err error) {
+	for _, c := range eachCause(err) {
+		fmt.Fprintln(w, "error:", serviceSummary(c))
+	}
+}
 
 // serviceSummary describes a failure of the background service from the
 // error's kind alone — never from text that could hold a path or a name.
