@@ -90,6 +90,7 @@ ask() {
 # is_release VERSION: a plain x.y.z in canonical numbers (no leading zeros,
 # at most nine digits each), as the official image tags are.
 is_release() {
+	case "$1" in "" | *[!0-9.]*) return 1 ;; esac # one line of digits and dots, nothing else
 	printf '%s' "$1" | grep -Eq '^(0|[1-9][0-9]{0,8})(\.(0|[1-9][0-9]{0,8})){2}$'
 }
 
@@ -105,17 +106,36 @@ version_newer() {
 	[ "$a3" -gt "$b3" ]
 }
 
-# plain_env_file FILE: only blank lines, comments and NAME=value lines
-# without quotes — the shape setup writes — and VAULTSYNC_HUB_IMAGE exactly
-# once. Anything else (a quoted value may span lines) is not edited.
+# plain_env_file FILE: a regular file of blank lines, comments and
+# NAME=value lines without quotes — the shape setup writes — with
+# VAULTSYNC_HUB_IMAGE exactly once. Anything else (a quoted value may span
+# lines, a link may lead elsewhere) is not edited.
 plain_env_file() {
-	! grep -Eqv '^([[:space:]]*(#.*)?|[A-Za-z_][A-Za-z0-9_]*=[^"'"'"']*)$' "$1" &&
+	[ -f "$1" ] && [ ! -L "$1" ] &&
+		! grep -Eqv '^([[:space:]]*(#.*)?|[A-Za-z_][A-Za-z0-9_]*=[^"'"'"']*)$' "$1" &&
 		[ "$(grep -c '^VAULTSYNC_HUB_IMAGE=' "$1")" = 1 ]
 }
 
+# replace_env_image FILE: VAULTSYNC_HUB_IMAGE=$HUB_IMAGE in FILE, written to
+# a sibling temporary file that takes FILE's place in one rename — FILE is
+# whole at every instant and keeps its mode (cp -p). Fails without a trace
+# when any step fails.
+replace_env_image() {
+	file="$1"
+	tmp="$file.setup.$$"
+	if cp -p "$file" "$tmp" &&
+		sed "s|^VAULTSYNC_HUB_IMAGE=.*|VAULTSYNC_HUB_IMAGE=$HUB_IMAGE|" "$file" >"$tmp" &&
+		mv -f "$tmp" "$file"; then
+		return 0
+	fi
+	rm -f "$tmp"
+	return 1
+}
+
 manual_image_hint() {
-	info "  To move later: set VAULTSYNC_HUB_IMAGE=$HUB_IMAGE in $HUB_DIR/.env,"
-	info "  then run docker compose pull && docker compose up -d there (docs/hub.md → Update the Hub)."
+	info "  To move later: in $HUB_DIR/.env change the VAULTSYNC_HUB_IMAGE line to"
+	info "  VAULTSYNC_HUB_IMAGE=$HUB_IMAGE (that one line, by hand), then run"
+	info "  docker compose pull && docker compose up -d there (docs/hub.md → Update the Hub)."
 }
 
 # An existing Hub stays on the image its .env names — re-running the setup
@@ -146,7 +166,11 @@ offer_newer_hub_image() {
 		*) info "Your Hub runs a custom image ($current); setup leaves it as it is."; return 0 ;;
 	esac
 	cur_ver=${current#"$official"}
-	is_release "$cur_ver" || return 0
+	if ! is_release "$cur_ver"; then
+		info "Your Hub's VAULTSYNC_HUB_IMAGE line has a shape setup does not read (a comment, spaces or Windows line endings after the image?); setup leaves it as it is."
+		manual_image_hint
+		return 0
+	fi
 	version_newer "$new_ver" "$cur_ver" || return 0
 	info "Your Hub runs vaultsync-hub $cur_ver; this setup ships $new_ver."
 	if [ "$DRY_RUN" = 1 ]; then
@@ -156,11 +180,8 @@ offer_newer_hub_image() {
 	if answer=$(ask "  Move it to $new_ver now? Vaults, devices, ports and names carry over; a new pairing code is printed at the end, as always. [y/N] " "n"); then
 		case "$answer" in
 			[yY]*)
-				# Through a copy, back into the same file: .env keeps its
-				# owner and mode, and nothing depends on a GNU sed.
-				sed "s|^VAULTSYNC_HUB_IMAGE=.*|VAULTSYNC_HUB_IMAGE=$HUB_IMAGE|" "$env_file" >"$env_file.setup-tmp" &&
-					cat "$env_file.setup-tmp" >"$env_file"
-				rm -f "$env_file.setup-tmp"
+				replace_env_image "$env_file" ||
+					fail "Could not update $env_file; nothing was changed. Change its VAULTSYNC_HUB_IMAGE line by hand, then run docker compose pull && docker compose up -d."
 				info "  .env now names $HUB_IMAGE; the stack restarts on it below."
 				return 0
 				;;

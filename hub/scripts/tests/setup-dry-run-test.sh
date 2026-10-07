@@ -62,13 +62,18 @@ SHIM
 # when the "[y/N]" prompt appears — the only way `ask` (which reads /dev/tty)
 # can be answered from a test.
 cat >"$SANDBOX/bin/with-tty.py" <<'PY'
-import os, pty, sys
+import os, pty, select, signal, sys
 answer, cmd = sys.argv[1].encode(), sys.argv[2:]
 pid, fd = pty.fork()
 if pid == 0:
     os.execvp(cmd[0], cmd)
 out, sent = b"", False
 while True:
+    ready, _, _ = select.select([fd], [], [], 60)
+    if not ready:
+        os.kill(pid, signal.SIGKILL)
+        sys.stdout.buffer.write(out + b"\n[with-tty: no output for 60 s, killed]\n")
+        sys.exit(124)
     try:
         data = os.read(fd, 4096)
     except OSError:
@@ -223,6 +228,15 @@ if printf '%s\n' "$out" | grep -q -e "would offer" -e "custom image"; then
 	fail "the shipped image needs no word:
 $out"
 fi
+# A shipped image whose tag is not one line of x.y.z is never offered —
+# whatever an exported override smuggles in.
+out=$(VAULTSYNC_HUB_IMAGE="ghcr.io/psimaker/vaultsync-hub:0.9.0
+bad" existing_hub_dry_run "ghcr.io/psimaker/vaultsync-hub:0.1.0") || fail "existing-hub dry-run (multi-line override) exited non-zero:
+$out"
+if printf '%s\n' "$out" | grep -q "would offer"; then
+	fail "a multi-line shipped image was offered:
+$out"
+fi
 pass "an existing Hub is offered only a newer official image, on paper in a dry run"
 
 # The real thing, with Docker stubbed: the move is one line of .env, on a
@@ -268,17 +282,82 @@ $out"
 	cmp -s "$EXISTING/.env" "$SANDBOX/results/env-before" || fail "a no changed .env"
 	pass "a no keeps .env and names the manual step"
 
-	# A quoted value may span lines: such an .env is never edited.
-	printf 'PUID=1000\nVAULTSYNC_HUB_IMAGE=ghcr.io/psimaker/vaultsync-hub:0.1.0\nNOTES=%s\n' "'before:
+	# A quoted value may span lines, a key may repeat, a link may lead
+	# elsewhere: such an .env is never edited — each shape on its own.
+	never_edited() { # NAME FIXTURE-CONTENT [WORD]: a yes changes nothing
+		printf '%s' "$2" >"$EXISTING/.env"
+		cp "$EXISTING/.env" "$SANDBOX/results/env-before"
+		out=$(existing_hub_run y) || fail "existing-hub setup ($1) exited non-zero:
+$out"
+		printf '%s\n' "$out" | grep -q "${3:-shape setup does not edit}" || fail "$1: not left alone with a word:
+$out"
+		if printf '%s\n' "$out" | grep -q "Move it to"; then
+			fail "$1: the move was offered:
+$out"
+		fi
+		cmp -s "$EXISTING/.env" "$SANDBOX/results/env-before" || fail "$1: .env was edited"
+		pass "$1 is never edited"
+	}
+	never_edited "an .env with a multi-line quoted value" "PUID=1000
+VAULTSYNC_HUB_IMAGE=ghcr.io/psimaker/vaultsync-hub:0.1.0
+NOTES='before:
 VAULTSYNC_HUB_IMAGE=ghcr.io/psimaker/vaultsync-hub:0.0.1
-'" >"$EXISTING/.env"
+'
+"
+	never_edited "an .env with a single-line quoted value" "PUID=1000
+VAULTSYNC_HUB_IMAGE=ghcr.io/psimaker/vaultsync-hub:0.1.0
+VAULTSYNC_HUB_NAME=\"My Hub\"
+"
+	never_edited "an .env naming the image twice" "VAULTSYNC_HUB_IMAGE=ghcr.io/psimaker/vaultsync-hub:0.1.0
+VAULTSYNC_HUB_IMAGE=ghcr.io/psimaker/vaultsync-hub:0.1.0
+"
+	never_edited "an .env whose image line ends in a comment" "PUID=1000
+VAULTSYNC_HUB_IMAGE=ghcr.io/psimaker/vaultsync-hub:0.1.0 # pinned
+" "shape setup does not read"
+	never_edited "an .env with Windows line endings" "$(printf 'PUID=1000\r\nVAULTSYNC_HUB_IMAGE=ghcr.io/psimaker/vaultsync-hub:0.1.0\r\n')" "shape setup does not read"
+	never_edited "an .env naming a version with a leading zero" "VAULTSYNC_HUB_IMAGE=ghcr.io/psimaker/vaultsync-hub:0.01.0
+" "shape setup does not read"
+	rm -f "$EXISTING/.env.real"
+	plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env.real"
+	rm -f "$EXISTING/.env"; ln -s "$EXISTING/.env.real" "$EXISTING/.env"
+	cp "$EXISTING/.env.real" "$SANDBOX/results/env-before"
+	out=$(existing_hub_run y) || fail "existing-hub setup (linked .env) exited non-zero:
+$out"
+	printf '%s\n' "$out" | grep -q "shape setup does not edit" || fail "a linked .env is not left alone with a word:
+$out"
+	cmp -s "$EXISTING/.env.real" "$SANDBOX/results/env-before" || fail "a linked .env was edited through the link"
+	rm -f "$EXISTING/.env"
+	pass "an .env that is a link is never edited"
+
+	# A setup that ships a custom or malformed image offers nothing.
+	plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
 	cp "$EXISTING/.env" "$SANDBOX/results/env-before"
-	out=$(existing_hub_run y) || fail "existing-hub setup (quoted .env) exited non-zero:
+	out=$(VAULTSYNC_HUB_IMAGE="registry.example/me/hub:dev" existing_hub_run y) || fail "existing-hub setup (custom shipped image) exited non-zero:
 $out"
-	printf '%s\n' "$out" | grep -q "shape setup does not edit" || fail "a quoted .env is not left alone with a word:
+	if printf '%s\n' "$out" | grep -q "Move it to"; then
+		fail "a custom shipped image was offered:
 $out"
-	cmp -s "$EXISTING/.env" "$SANDBOX/results/env-before" || fail "a quoted .env was edited"
-	pass "an .env with a quoted value is never edited"
+	fi
+	cmp -s "$EXISTING/.env" "$SANDBOX/results/env-before" || fail "a custom shipped image edited .env"
+	pass "a custom shipped image offers nothing"
+
+	# A write that fails stops the setup with .env untouched.
+	plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
+	cp "$EXISTING/.env" "$SANDBOX/results/env-before"
+	chmod a-w "$EXISTING"
+	if out=$(existing_hub_run y); then
+		chmod u+w "$EXISTING"
+		fail "a write that cannot happen must stop the setup:
+$out"
+	fi
+	chmod u+w "$EXISTING"
+	printf '%s\n' "$out" | grep -q "Could not update" || fail "a failed write is not reported:
+$out"
+	cmp -s "$EXISTING/.env" "$SANDBOX/results/env-before" || fail "a failed write changed .env"
+	for leftover in "$EXISTING"/.env.setup.*; do
+		[ ! -e "$leftover" ] || fail "a failed write left a temporary file: $leftover"
+	done
+	pass "a write that fails stops the setup and leaves .env whole"
 
 	# An exported override is captured and then unset: Compose sees .env.
 	plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
