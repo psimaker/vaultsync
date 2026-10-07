@@ -66,20 +66,46 @@ func TestPathsOverlap(t *testing.T) {
 
 func newTestProvisioner(t *testing.T, f *fakeSyncthing, client *SyncthingClient) *provisioner {
 	t.Helper()
-	p := newProvisioner(client, "/var/syncthing/vaults", "/var/syncthing/vaults")
+	return newTestProvisionerRoots(t, f, client, "/var/syncthing/vaults", "/var/syncthing/vaults")
+}
+
+// newTestProvisionerRoots is newTestProvisioner with the vaults root as
+// Syncthing sees it and as the Hub process sees it named apart.
+func newTestProvisionerRoots(t *testing.T, f *fakeSyncthing, client *SyncthingClient, vaultsRoot, localRoot string) *provisioner {
+	t.Helper()
+	p := newProvisioner(client, vaultsRoot, localRoot)
 	dirs := map[string]bool{} // path → non-empty
 	p.dirState = func(path string) (bool, bool, error) {
 		nonEmpty, ok := dirs[path]
 		return ok, !nonEmpty, nil
 	}
 	p.mkdir = func(path string) error { dirs[path] = false; return nil }
+	links := map[string]bool{}     // path → is a symbolic link
+	linkErrs := map[string]error{} // path → Lstat fails
+	inspected := &[]string{}       // every path asked about, in order
+	p.isLink = func(path string) (bool, error) {
+		*inspected = append(*inspected, path)
+		if err, ok := linkErrs[path]; ok {
+			return false, err
+		}
+		return links[path], nil
+	}
 	t.Cleanup(func() { _ = f })
-	// expose for tests that need to pre-populate a directory
+	// expose for tests that pre-populate a directory, plant a link or an
+	// Lstat failure, or assert which paths were looked at
 	testDirs[p] = dirs
+	testLinks[p] = links
+	testLinkErrs[p] = linkErrs
+	testInspected[p] = inspected
 	return p
 }
 
-var testDirs = map[*provisioner]map[string]bool{}
+var (
+	testDirs      = map[*provisioner]map[string]bool{}
+	testLinks     = map[*provisioner]map[string]bool{}
+	testLinkErrs  = map[*provisioner]map[string]error{}
+	testInspected = map[*provisioner]*[]string{}
+)
 
 func TestCreateVaultHappyPath(t *testing.T) {
 	f, srv := newFakeSyncthing(t, fakeHubID)

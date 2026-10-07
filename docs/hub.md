@@ -189,10 +189,14 @@ that copy in Obsidian. A folder that overlaps one VaultSync — or the
 Syncthing you run yourself — already syncs. A folder with files for a vault
 your Hub already has: VaultSync does not combine two vaults on its own;
 download your Hub's vault into a new folder, or give this computer's vault a
-different name on your Hub. Decision 046 records the rules — and the one gap
-the Hub cannot close yet: it counts the files it holds, not files still
-arriving, so a vault it reports as new and empty could, in a narrow race,
-receive another device's files while this computer's are on their way.
+different name on your Hub. Decision 046 records the rules. Your Hub
+reports a vault as empty only when its index knows of no file, folder or
+link anywhere, the vault's directory on the Hub is empty at that moment
+(reached without a link) and the folder is running; otherwise it reports
+the content it knows of, or no count at all, and the agent treats both as
+"not empty" (decision 047). That is an observation at that instant, not a
+reservation: what lands on the Hub or is announced after the agent's last
+look is the gap that remains, and #206 closes it.
 
 **One sync service per vault.** If Obsidian Sync or a sync plugin also syncs
 a vault, turn that off for the vault before VaultSync syncs it — two services
@@ -265,11 +269,12 @@ docker compose pull && docker compose up -d           # refresh the images .env 
 `docker compose pull` fetches the images at the tags the stack names: the
 Hub's Syncthing follows its 1.x line, but the Hub itself stays on the version
 in `.env` (`VAULTSYNC_HUB_IMAGE`) — re-running the setup keeps `.env` too. To
-move a Hub to 0.2.0 (the release that prints the QR code):
+move a Hub to 0.3.0 (the release that proves a vault empty before a device
+may join it with files; 0.2.0 brought the QR code):
 
 ```sh
 cd /srv/vaultsync
-sed -i 's|^VAULTSYNC_HUB_IMAGE=.*|VAULTSYNC_HUB_IMAGE=ghcr.io/psimaker/vaultsync-hub:0.2.0|' .env
+sed -i 's|^VAULTSYNC_HUB_IMAGE=.*|VAULTSYNC_HUB_IMAGE=ghcr.io/psimaker/vaultsync-hub:0.3.0|' .env
 docker compose pull && docker compose up -d
 ```
 
@@ -292,6 +297,11 @@ Vaults, paired devices and an open pairing code carry over unchanged.
 - **"the pairing code was locked"**: issue a new one with `vaultsync-hub code`.
 - **"directory already holds files"**: that is the merge guard. Use
   `vault adopt` on the Hub, or an empty directory on the device.
+- **"the Hub could not confirm that its vault is empty"** on a device: the
+  Hub's vault is paused or stopped, holds content its index has not seen
+  yet, sits behind a link, or its status could not be read —
+  `vaultsync-hub status` shows "unknown" for it. Check the vault on the
+  Hub, then retry, or use an empty directory.
 - **Existing Syncthing on the same machine**: the Hub runs its own instance side
   by side (port 22001). Adopting the existing instance is intentionally not
   automated; see the FAQ in the README.
