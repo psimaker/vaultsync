@@ -193,6 +193,85 @@ func TestIssue176_StatusOverTheSocketIsWhatTheTerminalPrints(t *testing.T) {
 	}
 }
 
+// An engine that refuses the agent's probe, or does not answer it in time,
+// is not "stopped": the socket reports the failure, and the terminal
+// shows it instead of reading past the agent.
+func TestIssue176_StatusReportsAnEngineThatDoesNotAnswer(t *testing.T) {
+	eng := newFakeEngine(t)
+	a := agentApp(t, eng)
+	writeFile(t, filepath.Join(a.lay.Home, "config.xml"), "<configuration><gui><address>"+eng.addr+"</address><apikey>another-key</apikey></gui></configuration>\n")
+	client := serveControl(t, a)
+	if _, err := client.status(context.Background()); err == nil || !strings.Contains(err.Error(), "the sync engine does not answer") || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("status with the engine refusing the probe: %v", err)
+	}
+	// The terminal, through agent.json's socket, shows the agent's error.
+	st, err := loadState(a.lay.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.ControlSocket = a.lay.Socket
+	if err := saveState(a.lay.State, st); err != nil {
+		t.Fatal(err)
+	}
+	a.out = &bytes.Buffer{}
+	if err := a.status(context.Background()); err == nil || !strings.Contains(err.Error(), "could not report") || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("terminal status with the agent's engine refusing: %v", err)
+	}
+
+	// An engine that accepts and never answers.
+	silent, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		for {
+			if c, err := silent.Accept(); err == nil {
+				defer c.Close()
+			} else {
+				return
+			}
+		}
+	}()
+	t.Cleanup(func() { silent.Close() })
+	writeFile(t, filepath.Join(a.lay.Home, "config.xml"), "<configuration><gui><address>"+silent.Addr().String()+"</address><apikey>engine-key</apikey></gui></configuration>\n")
+	st.GUIPort = silent.Addr().(*net.TCPAddr).Port
+	if err := saveState(a.lay.State, st); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.status(context.Background()); err == nil || !strings.Contains(err.Error(), "the sync engine does not answer") {
+		t.Fatalf("status with the engine not answering in time: %v", err)
+	}
+}
+
+// Only a missing socket file or nobody listening on it means "no agent":
+// a socket this account may not open is reported as that, and the
+// terminal neither reads past it nor calls the agent absent.
+func TestIssue176_ASocketThatCannotBeOpenedIsNotNoAgent(t *testing.T) {
+	path := filepath.Join(shortDir(t), "agent.sock")
+	l, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	if os.Getuid() == 0 {
+		t.Skip("root opens any socket")
+	}
+	err = newControlClient(path).do(context.Background(), http.MethodGet, "/v1/status", nil, nil)
+	if err == nil || errors.Is(err, errNoAgent) || !strings.Contains(err.Error(), "permission denied") {
+		t.Fatalf("a socket that cannot be opened: %v", err)
+	}
+	a := terminalApp(t, path)
+	if err := a.status(context.Background()); err == nil || !strings.Contains(err.Error(), "could not report") || !strings.Contains(err.Error(), "permission denied") {
+		t.Fatalf("terminal status: %v", err)
+	}
+	if err := a.pauseSync(context.Background(), true); err == nil || isRefusal(err) || !strings.Contains(err.Error(), "permission denied") {
+		t.Fatalf("pause: %v", err)
+	}
+}
+
 func TestIssue176_PauseAndResumeTouchEveryHubAndNothingElse(t *testing.T) {
 	eng := newFakeEngine(t)
 	a := agentApp(t, eng)
@@ -672,9 +751,29 @@ func TestIssue176_RunServesTheSocketWhileTheEngineRuns(t *testing.T) {
 	// run falls back and records the place.
 	a := &app{goos: "linux", home: home, getenv: envOf(nil), lay: lay, out: io.Discard,
 		svc: service{goos: "linux", home: home, getenv: envOf(nil), lay: lay, run: &fakeRunner{}}}
+	// At the moment run records the socket's place, it still holds the
+	// setup lock: a second run cannot load agent.json in between and save
+	// an older copy over the place (a lost update).
+	held := make(chan error, 1)
+	beforeSocketPublish = func() {
+		unlock, err := lockFile(filepath.Join(lay.Base, "setup.lock"))
+		if err == nil {
+			unlock()
+		}
+		held <- err
+	}
+	t.Cleanup(func() { beforeSocketPublish = nil })
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- a.run(ctx, nil) }()
+	select {
+	case err := <-held:
+		if !errors.Is(err, ErrEngineRunning) {
+			t.Fatalf("the setup lock must be held while the socket is published, got %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("run did not reach the socket's publication")
+	}
 	var socket string
 	e2eWait(t, "the control socket", 15*time.Second, func() bool {
 		st, err := loadState(lay.State)

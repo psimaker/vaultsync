@@ -245,11 +245,18 @@ func (c *controlServer) currentStatus(ctx context.Context) (controlStatus, error
 		return cs, err
 	}
 	pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	up := client.Ping(pctx) == nil
+	err = client.Ping(pctx)
 	cancel()
-	if !up {
+	switch {
+	case err == nil:
+	case errors.Is(err, syscall.ECONNREFUSED):
+		// Nobody listens on the engine's port: it is on its way up, or the
+		// supervisor is starting it again. Anything else — a refused probe,
+		// no answer in time — says nothing about syncing and is reported.
 		cs.statusReport = c.a.offlineReport()
 		return cs, nil
+	default:
+		return cs, fmt.Errorf("the sync engine does not answer: %w", err)
 	}
 	rep, err := c.a.report(ctx, client, c.background)
 	if err != nil {
@@ -469,10 +476,11 @@ func (c *controlClient) do(ctx context.Context, method, path string, in, out any
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		// No socket, or nobody listening on it: no agent. A connection that
-		// was made and then failed is an agent that did not answer.
+		// No socket file, or nobody listening on it: no agent. Any other
+		// failure — a socket this account may not open, no file descriptors
+		// left, a connection made and then dropped — is reported as it is.
 		var ne *net.OpError
-		if errors.As(err, &ne) && ne.Op == "dial" {
+		if errors.As(err, &ne) && ne.Op == "dial" && (errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED)) {
 			return errNoAgent
 		}
 		return err

@@ -641,9 +641,8 @@ func (a *app) run(ctx context.Context, args []string) error {
 		unlockSetup()
 		return err
 	}
-	err = saveState(a.lay.State, st)
-	unlockSetup()
-	if err != nil {
+	if err := saveState(a.lay.State, st); err != nil {
+		unlockSetup()
 		return err
 	}
 	// The engine lock makes this process the engine's only owner — and the
@@ -652,9 +651,11 @@ func (a *app) run(ctx context.Context, args []string) error {
 	// an engine that cannot have one still runs.
 	unlock, err := lockFile(eng.lay.Lock)
 	if errors.Is(err, ErrEngineRunning) {
+		unlockSetup()
 		return refuse("VaultSync is already running on this computer (the background service). See vaultsync status.")
 	}
 	if err != nil {
+		unlockSetup()
 		return err
 	}
 	defer unlock()
@@ -666,16 +667,28 @@ func (a *app) run(ctx context.Context, args []string) error {
 		if socket == a.lay.Socket {
 			socket = ""
 		}
+		// Published while the setup lock is still held: a second run that
+		// waits on it loads agent.json only afterwards and saves the place
+		// back as it found it, instead of writing an older copy over it.
+		if beforeSocketPublish != nil {
+			beforeSocketPublish()
+		}
 		if st.ControlSocket != socket {
 			st.ControlSocket = socket
 			if err := saveState(a.lay.State, st); err != nil {
+				unlockSetup()
 				return err
 			}
 		}
 	}
+	unlockSetup()
 	logf("vaultsync %s: running the sync engine", version)
 	return eng.superviseLocked(ctx, st, logf)
 }
+
+// beforeSocketPublish runs right before run records the control socket's
+// place in agent.json; a test uses it to look at the locks held then.
+var beforeSocketPublish func()
 
 // --- stop / start -----------------------------------------------------------
 
