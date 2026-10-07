@@ -841,6 +841,32 @@ func TestIssue228_SetupAgainWithTheSameFlags(t *testing.T) {
 			t.Fatalf("the Hub was asked (%d) or a folder was added (%d)", hub.provisionCount(id), eng.folderCount())
 		}
 	})
+	t.Run("the same folder under another spelling of its case", func(t *testing.T) {
+		eng, hub, s, out := configured(t, "Hub-Test", "~/Vaults/hub-test-neu")
+		a, errA := os.Stat(filepath.Join(s.env.home, "Vaults", "hub-test-neu"))
+		b, errB := os.Stat(filepath.Join(s.env.home, "Vaults", "Hub-Test-neu"))
+		if errA != nil || errB != nil || !os.SameFile(a, b) {
+			t.Skip("a case-sensitive volume: another spelling is another folder")
+		}
+		// Two spellings, one directory: only its identity says so.
+		if err := s.run(ctx); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if !strings.Contains(out.String(), "✓ “Hub-Test” is already set up to sync at ~/Vaults/Hub-Test-neu.") || hub.provisionCount(id) != 0 || eng.folderCount() != 1 {
+			t.Fatalf("output:\n%s", out)
+		}
+	})
+	t.Run("a file at the chosen path is not the folder", func(t *testing.T) {
+		eng, hub, s, out := configured(t, "Hub-Test", "~/Vaults/note.md")
+		writeFile(t, filepath.Join(s.env.home, "Vaults", "note.md"), "# a note\n")
+		err := s.run(ctx)
+		if err == nil || strings.Contains(out.String(), "is already set up to sync") {
+			t.Fatalf("a file was taken for the folder: %v\n%s", err, out)
+		}
+		if hub.provisionCount(id) != 0 || eng.folderCount() != 1 {
+			t.Fatalf("the Hub was asked (%d) or a folder was added (%d)", hub.provisionCount(id), eng.folderCount())
+		}
+	})
 	t.Run("a pending share resumed onto its own folder", func(t *testing.T) {
 		eng := newFakeEngine(t)
 		hub := newFakeHub(t, eng)
