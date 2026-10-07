@@ -38,15 +38,51 @@ VIOLATIONS="$SANDBOX/results/violations.log"
 
 # --- PATH shims --------------------------------------------------------------
 
+# With ALLOW_COMPOSE set (the existing-Hub cases), the compose calls succeed
+# and are logged with the image variable they would see — Compose reads the
+# shell environment before .env.
 cat >"$SANDBOX/bin/docker" <<'SHIM'
 #!/usr/bin/env sh
 case "$*" in
 	"info") exit 0 ;;
 	"compose version") echo "Docker Compose version v2.0.0"; exit 0 ;;
 esac
+if [ -n "${ALLOW_COMPOSE:-}" ]; then
+	printf 'docker %s (VAULTSYNC_HUB_IMAGE=%s)\n' "$*" "${VAULTSYNC_HUB_IMAGE-unset}" >>"$COMPOSE_LOG"
+	case "$*" in
+		"compose --project-directory "*" pull --quiet" | "compose --project-directory "*" up -d") exit 0 ;;
+		"compose --project-directory "*" exec -T hub vaultsync-hub status") printf 'VaultSync Hub test\nDevice ID:   TEST\n'; exit 0 ;;
+		"compose --project-directory "*" exec -T hub vaultsync-hub code") printf 'Pairing code: TULIP-ANCHOR-42\n'; exit 0 ;;
+	esac
+fi
 printf 'docker %s\n' "$*" >>"$VIOLATIONS"
 exit 1
 SHIM
+# with-tty.py ANSWER CMD…: runs CMD on a pseudo-terminal and types ANSWER
+# when the "[y/N]" prompt appears — the only way `ask` (which reads /dev/tty)
+# can be answered from a test.
+cat >"$SANDBOX/bin/with-tty.py" <<'PY'
+import os, pty, sys
+answer, cmd = sys.argv[1].encode(), sys.argv[2:]
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp(cmd[0], cmd)
+out, sent = b"", False
+while True:
+    try:
+        data = os.read(fd, 4096)
+    except OSError:
+        break
+    if not data:
+        break
+    out += data
+    if not sent and b"[y/N]" in out:
+        os.write(fd, answer + b"\n")
+        sent = True
+_, status = os.waitpid(pid, 0)
+sys.stdout.buffer.write(out)
+sys.exit(os.waitstatus_to_exitcode(status))
+PY
 # The release list as GitHub sends it: pretty-printed, 100 per page, ordered
 # by commit date (not by version), "draft" and "prerelease" after "tag_name".
 # The newest stable desktop release is desktop-v0.10.0 and sits on page two:
@@ -188,6 +224,92 @@ if printf '%s\n' "$out" | grep -q -e "would offer" -e "custom image"; then
 $out"
 fi
 pass "an existing Hub is offered only a newer official image, on paper in a dry run"
+
+# The real thing, with Docker stubbed: the move is one line of .env, on a
+# yes only; a no, no terminal, or an .env with a quoted value changes
+# nothing; and an exported image override never reaches Compose.
+COMPOSE_LOG="$SANDBOX/results/compose.log"
+export COMPOSE_LOG
+plain_env() {
+	printf '# Written by setup.sh\nPUID=1000\nPGID=1000\nSYNC_PORT=22001\nGUI_PORT=8385\nHUB_PORT=8390\nVAULTSYNC_HUB_NAME=My Hub\nVAULTSYNC_HUB_IMAGE=%s\nRELAY_URL=https://relay.example\n' "$1"
+}
+existing_hub_run() { # ANSWER|none: a non-dry-run Hub setup on the existing Hub
+	: >"$COMPOSE_LOG"
+	if [ "$1" = none ]; then
+		VAULTSYNC_HUB_DIR="$EXISTING" VIOLATIONS="$SANDBOX/results/violations-existing.log" ALLOW_COMPOSE=1 sh "$SETUP_SH" --hub </dev/null 2>&1
+	else
+		VAULTSYNC_HUB_DIR="$EXISTING" VIOLATIONS="$SANDBOX/results/violations-existing.log" ALLOW_COMPOSE=1 python3 -I "$SANDBOX/bin/with-tty.py" "$1" sh "$SETUP_SH" --hub 2>&1
+	fi
+}
+if command -v python3 >/dev/null 2>&1; then
+	rm -rf "$EXISTING"; mkdir -p "$EXISTING"
+	plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
+	plain_env "$SHIPPED" >"$SANDBOX/results/env-expected"
+	out=$(existing_hub_run y) || fail "existing-hub setup (yes) exited non-zero:
+$out"
+	printf '%s\n' "$out" | grep -q ".env now names $SHIPPED" || fail "a yes is not reported:
+$out"
+	cmp -s "$EXISTING/.env" "$SANDBOX/results/env-expected" || fail "a yes changed more than the image line:
+$(diff -u "$SANDBOX/results/env-expected" "$EXISTING/.env" || true)"
+	if ! grep -q "pull --quiet" "$COMPOSE_LOG" || ! grep -q " up -d" "$COMPOSE_LOG"; then
+		fail "the stack was not pulled and restarted after a yes:
+$(cat "$COMPOSE_LOG")"
+	fi
+	pass "a yes moves exactly the image line of .env and restarts the stack"
+
+	plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
+	cp "$EXISTING/.env" "$SANDBOX/results/env-before"
+	out=$(existing_hub_run n) || fail "existing-hub setup (no) exited non-zero:
+$out"
+	if ! printf '%s\n' "$out" | grep -q "Kept 0.1.0" || ! printf '%s\n' "$out" | grep -q "To move later"; then
+		fail "a no is not reported with the manual step:
+$out"
+	fi
+	cmp -s "$EXISTING/.env" "$SANDBOX/results/env-before" || fail "a no changed .env"
+	pass "a no keeps .env and names the manual step"
+
+	# A quoted value may span lines: such an .env is never edited.
+	printf 'PUID=1000\nVAULTSYNC_HUB_IMAGE=ghcr.io/psimaker/vaultsync-hub:0.1.0\nNOTES=%s\n' "'before:
+VAULTSYNC_HUB_IMAGE=ghcr.io/psimaker/vaultsync-hub:0.0.1
+'" >"$EXISTING/.env"
+	cp "$EXISTING/.env" "$SANDBOX/results/env-before"
+	out=$(existing_hub_run y) || fail "existing-hub setup (quoted .env) exited non-zero:
+$out"
+	printf '%s\n' "$out" | grep -q "shape setup does not edit" || fail "a quoted .env is not left alone with a word:
+$out"
+	cmp -s "$EXISTING/.env" "$SANDBOX/results/env-before" || fail "a quoted .env was edited"
+	pass "an .env with a quoted value is never edited"
+
+	# An exported override is captured and then unset: Compose sees .env.
+	plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
+	out=$(VAULTSYNC_HUB_IMAGE="$SHIPPED" existing_hub_run n) || fail "existing-hub setup (override) exited non-zero:
+$out"
+	grep -q "(VAULTSYNC_HUB_IMAGE=unset)" "$COMPOSE_LOG" || fail "Compose would see the exported override over .env:
+$(cat "$COMPOSE_LOG")"
+	if grep -v "(VAULTSYNC_HUB_IMAGE=unset)" "$COMPOSE_LOG" | grep -q .; then
+		fail "a Compose call saw the override:
+$(cat "$COMPOSE_LOG")"
+	fi
+	grep -q "^VAULTSYNC_HUB_IMAGE=ghcr.io/psimaker/vaultsync-hub:0.1.0$" "$EXISTING/.env" || fail "the override edited .env"
+	pass "an exported image override never reaches Compose for an existing Hub"
+
+	grep -v '^chown ' "$SANDBOX/results/violations-existing.log" | grep -q . && fail "an existing-Hub setup ran a privileged or network-changing command:
+$(cat "$SANDBOX/results/violations-existing.log")"
+else
+	pass "existing-Hub yes/no cases skipped (no python3 for a pseudo-terminal)"
+fi
+if command -v setsid >/dev/null 2>&1; then
+	plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
+	cp "$EXISTING/.env" "$SANDBOX/results/env-before"
+	out=$(VAULTSYNC_HUB_DIR="$EXISTING" VIOLATIONS="$SANDBOX/results/violations-existing.log" ALLOW_COMPOSE=1 setsid sh "$SETUP_SH" --hub </dev/null 2>&1) || fail "existing-hub setup without a terminal exited non-zero:
+$out"
+	printf '%s\n' "$out" | grep -q "To move later" || fail "without a terminal the manual step is not named:
+$out"
+	cmp -s "$EXISTING/.env" "$SANDBOX/results/env-before" || fail "without a terminal .env was changed"
+	pass "without a terminal .env is kept and the manual step named"
+else
+	pass "existing-Hub no-terminal case skipped (no setsid on this platform)"
+fi
 
 # --- 3. Device path ----------------------------------------------------------
 
