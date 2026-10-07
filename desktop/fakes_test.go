@@ -53,6 +53,9 @@ type fakeEngine struct {
 	// failFolders makes the next GET of the folder list fail, like an
 	// engine that stopped.
 	failFolders bool
+	// failPatchSave makes the next device PATCH apply in memory and then
+	// fail, like an engine whose config save failed.
+	failPatchSave bool
 }
 
 type offerFlap struct {
@@ -139,6 +142,11 @@ func (e *fakeEngine) serve(w http.ResponseWriter, r *http.Request) {
 					e.devices[i].Paused = paused
 				}
 			}
+		}
+		if e.failPatchSave {
+			e.failPatchSave = false
+			http.Error(w, "saving the configuration failed", http.StatusInternalServerError)
+			return
 		}
 	case p == "/rest/db/status":
 		if st, ok := e.folderState[r.URL.Query().Get("folder")]; ok {

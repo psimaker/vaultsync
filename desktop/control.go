@@ -274,11 +274,16 @@ func (c *controlServer) currentStatus(ctx context.Context) (controlStatus, error
 	return cs, nil
 }
 
-// setPaused pauses or resumes every Hub this engine knows. The engine keeps
-// a paused device paused across its restarts; the folders and their
-// settings are untouched. It takes the pairing lock: a pairing adds a Hub,
-// and the two must not interleave — a pairing sees the pause, or the pause
-// waits for the pairing.
+// setPaused pauses or resumes every Hub this engine knows: the connections
+// stop, nothing new arrives or leaves — the folders and their settings are
+// untouched, and work the engine had already taken in (an index it holds,
+// a change received before the pause) may still be applied, which status
+// shows. The engine keeps a paused device paused across its restarts. The
+// PATCH goes out even for a device that already reads as paused: the
+// engine applies a change before it saves it, so a save that failed leaves
+// the device paused in memory only — a retry must persist it. It takes the
+// pairing lock: a pairing adds a Hub, and the two must not interleave — a
+// pairing sees the pause, or the pause waits for the pairing.
 func (c *controlServer) setPaused(w http.ResponseWriter, r *http.Request, paused bool) {
 	unlock, err := lockFile(filepath.Join(c.a.lay.Base, "pair.lock"))
 	if errors.Is(err, ErrEngineRunning) {
@@ -312,9 +317,6 @@ func (c *controlServer) setPaused(w http.ResponseWriter, r *http.Request, paused
 			continue
 		}
 		res.Hubs++
-		if d.Paused == paused {
-			continue
-		}
 		if err := client.PatchDevice(ctx, d.DeviceID, map[string]any{"paused": paused}); err != nil {
 			fail(w, http.StatusServiceUnavailable, fmt.Errorf("the sync engine did not take the change: %w", err))
 			return
@@ -595,7 +597,7 @@ func (a *app) pauseSync(ctx context.Context, pause bool) error {
 	case res.Hubs == 0:
 		return refuse("No Hub is paired with this computer yet, so there is nothing to pause. Run vaultsync pair.")
 	case pause:
-		fmt.Fprintln(a.out, "✓ Syncing is paused on this computer. Nothing syncs until you run vaultsync resume.")
+		fmt.Fprintln(a.out, "✓ Syncing is paused on this computer: the connections to your Hub are off until you run vaultsync resume. Changes the engine had already received may still be applied for a moment; vaultsync status shows what is still in progress.")
 	default:
 		fmt.Fprintln(a.out, "✓ Syncing resumed on this computer.")
 	}

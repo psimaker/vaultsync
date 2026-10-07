@@ -178,9 +178,12 @@ vaultsync setup --code TULIP-ANCHOR-42 --hub 192.168.1.20 \
 While it runs, the agent answers `vaultsync status`, `pause` and `resume`
 over a socket in VaultSync's folder (`agent.sock`, readable by your account
 alone); the menu-bar app will read the same socket, so both show one truth.
-`vaultsync pause` pauses every connection to your Hub — the engine keeps
-running, your vaults and their settings stay as they are, and `status` says
-`paused on this computer` until `vaultsync resume`. Without a running agent,
+`vaultsync pause` pauses every connection to your Hub: nothing new arrives
+or leaves, the engine keeps running, and your vaults and their settings
+stay as they are. Changes the engine had already received before the pause
+may still be applied for a moment; `status` shows what is still in
+progress, and says `paused on this computer` for the rest until
+`vaultsync resume`. Without a running agent,
 `status` asks the engine's own API, and reads its config file when the
 engine does not answer either.
 

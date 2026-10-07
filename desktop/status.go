@@ -243,10 +243,12 @@ func (a *app) report(ctx context.Context, c *syncthing.Client, background bool) 
 			}
 			state = describeFolder(f, sum, conns, remote, sys.MyID, background)
 		}
-		// Paused here: the connection is, so the rest of the state would be
-		// "waiting for your Hub" — but what a pause does not change stays
-		// visible, with its remedy.
-		if r.Paused && !keepsWhilePaused(state) {
+		// Paused here: the connections are, so a state that only says what
+		// the connection would say reads "paused on this computer" — while
+		// everything else stays as it is: an error with its remedy, the
+		// folder's own pause, files that could not sync, work the engine is
+		// still doing on what it had already taken in.
+		if r.Paused && connectionState(state) {
 			state = "paused on this computer"
 		}
 		r.Vaults = append(r.Vaults, vaultStatus{ID: f.ID, Label: f.Label, Path: f.Path, State: state})
@@ -269,11 +271,13 @@ func (a *app) report(ctx context.Context, c *syncthing.Client, background bool) 
 	return r, nil
 }
 
-// keepsWhilePaused: a folder state that a pause of the connection does not
-// change — an error, the folder's own pause, files that could not sync, or
-// no answer from the engine — stays as it is while syncing is paused here.
-func keepsWhilePaused(state string) bool {
-	return state == "paused" || state == "unknown" || strings.HasPrefix(state, "error:") || strings.Contains(state, "could not sync")
+// connectionState: a folder state that says nothing but what the
+// connection to the Hub is doing — the ones a pause of that connection
+// replaces. Anything else (an error, the folder's own pause, files that
+// could not sync, scanning, syncing or items still to sync, no answer)
+// stays visible while paused.
+func connectionState(state string) bool {
+	return state == "up to date" || state == "paused on your Hub" || strings.HasPrefix(state, "waiting for your Hub") || strings.HasPrefix(state, "uploading to your Hub")
 }
 
 // emptyReport is a report with every list present (never null in JSON).

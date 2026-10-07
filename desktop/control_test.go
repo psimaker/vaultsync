@@ -293,11 +293,12 @@ func TestIssue176_PauseAndResumeTouchEveryHubAndNothingElse(t *testing.T) {
 	eng.devices = append(eng.devices, syncthing.DeviceConfig{DeviceID: otherID, Name: "Second Hub"})
 	eng.folders = append(eng.folders, syncthingFolder("vs-bbbbbbbbbbbb", "Work", "/home/me/Work"))
 	eng.folders[1].Devices = []syncthing.FolderDevice{folderDeviceOf(testMyID), folderDeviceOf(otherID)}
-	eng.folders = append(eng.folders, syncthingFolder("vs-cccccccccccc", "Mail", "/home/me/Mail"), syncthingFolder("vs-dddddddddddd", "Old", "/home/me/Old"))
+	eng.folders = append(eng.folders, syncthingFolder("vs-cccccccccccc", "Mail", "/home/me/Mail"), syncthingFolder("vs-dddddddddddd", "Old", "/home/me/Old"), syncthingFolder("vs-eeeeeeeeeeee", "Busy", "/home/me/Busy"))
 	eng.folderState = map[string]map[string]any{
 		"vs-bbbbbbbbbbbb": {"state": "error", "error": "permission denied"},
 		"vs-cccccccccccc": {"state": "idle", "errors": 3},
 		"vs-dddddddddddd": nil, // the engine does not answer for it
+		"vs-eeeeeeeeeeee": {"state": "syncing", "globalBytes": 100, "inSyncBytes": 42},
 	}
 	eng.mu.Unlock()
 	res, err = client.setPaused(ctx, true)
@@ -333,13 +334,34 @@ func TestIssue176_PauseAndResumeTouchEveryHubAndNothingElse(t *testing.T) {
 	if st := byLabel["Old"]; st != "unknown" {
 		t.Fatalf("a folder the engine does not answer for, while paused: %q", st)
 	}
+	// Work the engine is still doing on what it had taken in stays visible:
+	// a pause stops the connections, not the folder workers.
+	if st := byLabel["Busy"]; st != "syncing — 42 %" {
+		t.Fatalf("a folder still syncing, while paused: %q", st)
+	}
 	if st := byLabel["Notes"]; st != "paused on this computer" {
 		t.Fatalf("a healthy folder while paused: %q", st)
 	}
-	// Pausing again changes nothing; a pairing is refused while paused —
-	// over the socket and in the terminal alike.
-	if _, err := client.setPaused(ctx, true); err != nil || len(eng.patches) != 2 {
+	// Pausing again sends the PATCH again — the engine applies a change
+	// before saving it, so a device that reads as paused may not have it
+	// persisted — and changes nothing else. A pairing is refused while
+	// paused, over the socket and in the terminal alike.
+	if _, err := client.setPaused(ctx, true); err != nil || len(eng.patches) != 4 || eng.patches[2]["paused"] != true || eng.patches[3]["paused"] != true {
 		t.Fatalf("second pause: %v %v", err, eng.patches)
+	}
+	// A PATCH the engine applied but could not save is a failure, and the
+	// retry sends it again until it is saved.
+	eng.mu.Lock()
+	eng.failPatchSave = true
+	eng.mu.Unlock()
+	if _, err := client.setPaused(ctx, true); err == nil || !strings.Contains(err.Error(), "did not take the change") {
+		t.Fatalf("a pause the engine could not save: %v", err)
+	}
+	if p, _ := pausedDevices(eng); p != 2 {
+		t.Fatalf("the engine applied the change in memory: %d paused", p)
+	}
+	if _, err := client.setPaused(ctx, true); err != nil || len(eng.patches) != 7 {
+		t.Fatalf("the retry sends the PATCH again: %v (%d patches)", err, len(eng.patches))
 	}
 	if pr, err := client.pair(ctx, pairRequest{Code: "x"}); err != nil || pr.OK || !strings.Contains(pr.Refusal, "paused on this computer — run vaultsync resume first") {
 		t.Fatalf("pair while paused: %+v %v", pr, err)
@@ -358,7 +380,7 @@ func TestIssue176_PauseAndResumeTouchEveryHubAndNothingElse(t *testing.T) {
 	hold()
 
 	res, err = client.setPaused(ctx, false)
-	if err != nil || res.Paused || res.Hubs != 2 || len(eng.patches) != 4 || eng.patches[2]["paused"] != false || eng.patches[3]["paused"] != false {
+	if err != nil || res.Paused || res.Hubs != 2 || len(eng.patches) != 9 || eng.patches[7]["paused"] != false || eng.patches[8]["paused"] != false {
 		t.Fatalf("resume: %+v %v %v", res, err, eng.patches)
 	}
 	if p, _ := pausedDevices(eng); p != 0 {
@@ -421,7 +443,7 @@ func TestIssue176_PauseAndResumeTouchEveryHubAndNothingElse(t *testing.T) {
 
 	// The terminal's words, through the same socket.
 	a.out = &bytes.Buffer{}
-	if err := a.pauseSync(ctx, true); err != nil || !strings.Contains(a.out.(*bytes.Buffer).String(), "✓ Syncing is paused on this computer") {
+	if err := a.pauseSync(ctx, true); err != nil || !strings.Contains(a.out.(*bytes.Buffer).String(), "✓ Syncing is paused on this computer: the connections to your Hub are off") || strings.Contains(a.out.(*bytes.Buffer).String(), "Nothing syncs") {
 		t.Fatalf("terminal pause: %v %s", err, a.out)
 	}
 	a.out = &bytes.Buffer{}
@@ -660,7 +682,7 @@ func TestIssue176_PauseFromTheTerminal(t *testing.T) {
 	agent.hubs = 1
 	a := terminalApp(t, agent.path)
 	ctx := context.Background()
-	if err := a.pauseSync(ctx, true); err != nil || !strings.Contains(a.out.(*bytes.Buffer).String(), "✓ Syncing is paused on this computer. Nothing syncs until you run vaultsync resume.") {
+	if err := a.pauseSync(ctx, true); err != nil || !strings.Contains(a.out.(*bytes.Buffer).String(), "✓ Syncing is paused on this computer: the connections to your Hub are off until you run vaultsync resume. Changes the engine had already received may still be applied for a moment") {
 		t.Fatalf("pause: %v %s", err, a.out)
 	}
 	a.out = &bytes.Buffer{}
