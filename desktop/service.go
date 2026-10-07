@@ -389,7 +389,7 @@ func (s service) session() (sessionState, string) {
 		switch {
 		case err == nil:
 			return sessionPresent, ""
-		case exited(err) && (strings.Contains(out, "Could not find domain") || strings.Contains(out, "Domain does not support specified action")):
+		case strings.Contains(out, "Could not find domain") || strings.Contains(out, "Domain does not support specified action"):
 			return sessionAbsent, ""
 		}
 		return sessionUnknown, firstLine(out, err)
@@ -422,7 +422,8 @@ func (s service) statPath(path string) error {
 
 // exited reports whether a service manager command ran and ended with an
 // exit status — as opposed to never running (not found, not executable),
-// which says nothing about the session.
+// which says nothing about the session. launchd needs no such check: its
+// words are the evidence, and a command that never ran has none.
 func exited(err error) bool {
 	var ee interface{ ExitCode() int }
 	return errors.As(err, &ee)
