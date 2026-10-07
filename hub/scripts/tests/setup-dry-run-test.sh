@@ -83,8 +83,12 @@ while True:
     out += data
     if not sent and b"[y/N]" in out:
         if os.environ.get("MUTATE_BEFORE_ANSWER"):
+            os.environ["CHILD_PID"] = str(pid)
             os.system(os.environ["MUTATE_BEFORE_ANSWER"])
-        os.write(fd, answer + b"\n")
+        try:
+            os.write(fd, answer + b"\n")
+        except OSError:
+            pass
         sent = True
 _, status = os.waitpid(pid, 0)
 sys.stdout.buffer.write(out)
@@ -183,7 +187,13 @@ cat >"$SANDBOX/bin/mv" <<SHIM
 [ -z "\${FAIL_MV:-}" ] || exit 1
 exec "$REAL_MV" "\$@"
 SHIM
-chmod +x "$SANDBOX/bin/sed" "$SANDBOX/bin/mv"
+REAL_MKTEMP=$(command -v mktemp)
+cat >"$SANDBOX/bin/mktemp" <<SHIM
+#!/usr/bin/env sh
+[ -z "\${FAIL_MKTEMP:-}" ] || exit 1
+exec "$REAL_MKTEMP" "\$@"
+SHIM
+chmod +x "$SANDBOX/bin/sed" "$SANDBOX/bin/mv" "$SANDBOX/bin/mktemp"
 export VIOLATIONS
 export PATH="$SANDBOX/bin:$PATH"
 export HOME="$SANDBOX/home"
@@ -376,7 +386,7 @@ $out"
 $out"
 	fi
 	chmod u+w "$EXISTING"
-	printf '%s\n' "$out" | grep -q "Could not update" || fail "a failed write is not reported:
+	printf '%s\n' "$out" | grep -q -e "Could not update" -e "Could not create the lock" || fail "a failed write is not reported:
 $out"
 	cmp -s "$EXISTING/.env" "$SANDBOX/results/env-before" || fail "a failed write changed .env"
 	for leftover in "$EXISTING"/.env.setup.*; do
@@ -411,6 +421,50 @@ $(cat "$COMPOSE_LOG")"
 	}
 	failed_midway "a sed that fails with partial output" FAIL_SED_WRITE
 	failed_midway "a rename that fails" FAIL_MV
+	failed_midway "a temporary file that cannot be reserved" FAIL_MKTEMP
+
+	# The temporary names are reserved: a link planted under the name a
+	# predictable scheme would use (.env.setup.<pid of the setup>) catches
+	# nothing.
+	plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
+	printf 'untouched\n' >"$SANDBOX/results/sentinel"
+	out=$(MUTATE_BEFORE_ANSWER="ln -s '$SANDBOX/results/sentinel' '$EXISTING/.env.setup.'\$CHILD_PID" existing_hub_run y) || fail "existing-hub setup (planted link) exited non-zero:
+$out"
+	[ "$(cat "$SANDBOX/results/sentinel")" = "untouched" ] || fail "a planted link under a predictable temporary name was written through:
+$(cat "$SANDBOX/results/sentinel")"
+	cmp -s "$EXISTING/.env" "$SANDBOX/results/env-expected" || fail "the move did not happen beside a planted link"
+	rm -f "$EXISTING"/.env.setup.*
+	pass "a link planted under a predictable temporary name catches nothing"
+
+	# The whole file is checked again after the answer, not just the line:
+	# a quoted value grown around it while setup was asking stops the edit.
+	plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
+	printf 'PUID=1000\nVAULTSYNC_HUB_IMAGE=ghcr.io/psimaker/vaultsync-hub:0.1.0\nNOTES=%s\n' "'before:
+VAULTSYNC_HUB_IMAGE=ghcr.io/psimaker/vaultsync-hub:0.0.1
+'" >"$SANDBOX/results/env-reshaped"
+	out=$(MUTATE_BEFORE_ANSWER="cp '$SANDBOX/results/env-reshaped' '$EXISTING/.env'" existing_hub_run y) || fail "existing-hub setup (reshaped meanwhile) exited non-zero:
+$out"
+	printf '%s\n' "$out" | grep -q "changed while setup was asking" || fail "a reshape during the question is not reported:
+$out"
+	cmp -s "$EXISTING/.env" "$SANDBOX/results/env-reshaped" || fail "a reshape during the question was edited:
+$(cat "$EXISTING/.env")"
+	pass "a file reshaped while setup was asking is not edited"
+
+	# An interruption while setup is asking ends it — lock and temporary
+	# files gone, .env untouched.
+	plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
+	cp "$EXISTING/.env" "$SANDBOX/results/env-before"
+	# shellcheck disable=SC2016 # the driver's shell expands CHILD_PID
+	if out=$(MUTATE_BEFORE_ANSWER='kill -TERM $CHILD_PID' existing_hub_run y); then
+		fail "a TERM while setup was asking did not end it:
+$out"
+	fi
+	cmp -s "$EXISTING/.env" "$SANDBOX/results/env-before" || fail "a TERM while setup was asking changed .env"
+	[ ! -d "$EXISTING/.env.setup-lock" ] || fail "a TERM while setup was asking left the lock behind"
+	for leftover in "$EXISTING"/.env.setup.*; do
+		[ ! -e "$leftover" ] || fail "a TERM while setup was asking left a temporary file: $leftover"
+	done
+	pass "an interruption while setup is asking ends it and leaves nothing behind"
 
 	# The line is read again after the answer: changed meanwhile, nothing
 	# is written — the newer pin stays.
@@ -428,10 +482,11 @@ $(cat "$EXISTING/.env")"
 	plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
 	cp "$EXISTING/.env" "$SANDBOX/results/env-before"
 	mkdir "$EXISTING/.env.setup-lock"
-	out=$(existing_hub_run y) || { rmdir "$EXISTING/.env.setup-lock"; fail "existing-hub setup (locked) exited non-zero:
+	out=$(existing_hub_run y) || { rmdir "$EXISTING/.env.setup-lock" 2>/dev/null || true; fail "existing-hub setup (locked) exited non-zero:
 $out"; }
+	[ -d "$EXISTING/.env.setup-lock" ] || fail "a lock another setup holds was removed"
 	rmdir "$EXISTING/.env.setup-lock"
-	printf '%s\n' "$out" | grep -q "Another setup is editing" || fail "a held lock is not reported:
+	printf '%s\n' "$out" | grep -q "Another setup may be editing" || fail "a held lock is not reported:
 $out"
 	cmp -s "$EXISTING/.env" "$SANDBOX/results/env-before" || fail "a held lock did not stop the edit"
 	pass "a lock another setup holds leaves .env alone"

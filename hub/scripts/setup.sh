@@ -117,40 +117,55 @@ plain_env_file() {
 }
 
 # The edit of .env holds a lock from the first read to the rename, so two
-# setups cannot read the same old line and write in turns; the trap releases
-# it, and a temporary file, on exit or interruption.
+# setups cannot read the same old line and write in turns. release_env_edit
+# removes the lock and the temporary files; the traps run it on exit and on
+# an interruption, which then ends the setup (129/130/143).
 ENV_EDIT_LOCK=""
 ENV_EDIT_TMP=""
+ENV_EDIT_OUT=""
 release_env_edit() {
-	[ -z "$ENV_EDIT_TMP" ] || rm -f "$ENV_EDIT_TMP"
+	for f in "$ENV_EDIT_TMP" "$ENV_EDIT_OUT"; do
+		[ -z "$f" ] || rm -f "$f" 2>/dev/null || true
+		[ -z "$f" ] || [ ! -e "$f" ] || warn "Could not remove the temporary file $f."
+	done
 	[ -z "$ENV_EDIT_LOCK" ] || rmdir "$ENV_EDIT_LOCK" 2>/dev/null || true
+	[ -z "$ENV_EDIT_LOCK" ] || [ ! -d "$ENV_EDIT_LOCK" ] || warn "Could not remove the lock $ENV_EDIT_LOCK."
 	ENV_EDIT_TMP=""
+	ENV_EDIT_OUT=""
 	ENV_EDIT_LOCK=""
 }
 
-# replace_env_image FILE EXPECTED: the VAULTSYNC_HUB_IMAGE line, which must
-# still read EXPECTED, becomes $HUB_IMAGE — written to a sibling temporary
-# file (mktemp reserves the name; cp -p keeps FILE's mode) that takes FILE's
-# place in one rename, so FILE is whole at every instant. Returns 2 when the
-# line is not EXPECTED any more, 1 when a step fails; a failed step leaves
-# nothing behind, and the trap cleans up an interrupted one.
+env_image_line() {
+	sed -n 's/^VAULTSYNC_HUB_IMAGE=//p' "$1"
+}
+
+# replace_env_image FILE EXPECTED: the VAULTSYNC_HUB_IMAGE line becomes
+# $HUB_IMAGE. A snapshot of FILE (mktemp reserves the names; cp -p keeps the
+# mode) is checked as a whole — plain shape, the image line still EXPECTED —
+# and transformed into a second file whose image line is checked in turn;
+# that file takes FILE's place in one rename, so FILE is whole at every
+# instant. Returns 2 when the snapshot is not what was offered, 1 when a
+# step fails; what it created is removed by release_env_edit, which reports
+# anything it could not remove.
 replace_env_image() {
 	file="$1"
 	expected="$2"
-	[ "$(sed -n 's/^VAULTSYNC_HUB_IMAGE=//p' "$file")" = "$expected" ] || return 2
 	ENV_EDIT_TMP=$(mktemp "$file.setup.XXXXXX") || return 1
+	ENV_EDIT_OUT=$(mktemp "$file.setup.XXXXXX") || return 1
+	cp -p "$file" "$ENV_EDIT_TMP" || return 1
+	plain_env_file "$ENV_EDIT_TMP" || return 2
+	[ "$(env_image_line "$ENV_EDIT_TMP")" = "$expected" ] || return 2
 	# EXPECTED is an official image name (checked above): only its dots are
 	# special in a pattern.
 	literal=$(printf '%s' "$expected" | sed 's/\./\\./g')
-	if cp -p "$file" "$ENV_EDIT_TMP" &&
-		sed "s|^VAULTSYNC_HUB_IMAGE=$literal\$|VAULTSYNC_HUB_IMAGE=$HUB_IMAGE|" "$file" >"$ENV_EDIT_TMP" &&
-		mv -f "$ENV_EDIT_TMP" "$file"; then
-		ENV_EDIT_TMP=""
-		return 0
-	fi
-	rm -f "$ENV_EDIT_TMP"
+	cp -p "$ENV_EDIT_TMP" "$ENV_EDIT_OUT" || return 1
+	sed "s|^VAULTSYNC_HUB_IMAGE=$literal\$|VAULTSYNC_HUB_IMAGE=$HUB_IMAGE|" "$ENV_EDIT_TMP" >"$ENV_EDIT_OUT" || return 1
+	[ "$(env_image_line "$ENV_EDIT_OUT")" = "$HUB_IMAGE" ] || return 1
+	mv -f "$ENV_EDIT_OUT" "$file" || return 1
+	ENV_EDIT_OUT=""
+	rm -f "$ENV_EDIT_TMP" 2>/dev/null || true
 	ENV_EDIT_TMP=""
-	return 1
+	return 0
 }
 
 manual_image_hint() {
@@ -164,8 +179,8 @@ manual_image_hint() {
 # one this setup ships, the move is offered: only on a terminal, only with
 # consent, never for a custom image, never a downgrade, and only on an .env
 # in the plain shape setup writes, so the one line changed is the one that
-# was read — checked again after the answer (#216). Declined, without a
-# terminal or on any other .env, the manual step is named instead.
+# was read — the whole file checked again after the answer (#216). Declined,
+# without a terminal or on any other .env, the manual step is named instead.
 offer_newer_hub_image() {
 	env_file="$1"
 	official="ghcr.io/psimaker/vaultsync-hub:"
@@ -179,16 +194,21 @@ offer_newer_hub_image() {
 		offer_newer_hub_image_locked "$env_file"
 		return 0
 	fi
-	if ! mkdir "$env_file.setup-lock" 2>/dev/null; then
-		if [ -d "$env_file.setup-lock" ]; then
-			info "Another setup is editing $env_file right now; this one leaves it as it is."
+	lock="$env_file.setup-lock"
+	if ! mkdir "$lock" 2>/dev/null; then
+		if [ -d "$lock" ]; then
+			info "Another setup may be editing $env_file: the lock $lock exists. This one leaves .env as it is."
+			info "  If no other setup is running, remove that directory and run the setup again."
 			manual_image_hint
 			return 0
 		fi
-		fail "Could not update $env_file: its directory cannot be written; nothing was changed."
+		fail "Could not create the lock $lock next to $env_file; nothing was changed."
 	fi
-	ENV_EDIT_LOCK="$env_file.setup-lock"
-	trap 'release_env_edit' EXIT HUP INT TERM
+	ENV_EDIT_LOCK="$lock"
+	trap 'release_env_edit' EXIT
+	trap 'release_env_edit; exit 129' HUP
+	trap 'release_env_edit; exit 130' INT
+	trap 'release_env_edit; exit 143' TERM
 	offer_newer_hub_image_locked "$env_file"
 	release_env_edit
 	trap - EXIT HUP INT TERM
@@ -198,11 +218,11 @@ offer_newer_hub_image() {
 offer_newer_hub_image_locked() {
 	env_file="$1"
 	if ! plain_env_file "$env_file"; then
-		info "Your Hub's .env has a shape setup does not edit (a quoted value, a link, or VAULTSYNC_HUB_IMAGE more than once)."
+		info "Your Hub's .env has a shape setup does not edit (a quoted value, a symbolic link, or VAULTSYNC_HUB_IMAGE more than once)."
 		manual_image_hint
 		return 0
 	fi
-	current=$(sed -n 's/^VAULTSYNC_HUB_IMAGE=//p' "$env_file")
+	current=$(env_image_line "$env_file")
 	case "$current" in
 		"" | "$HUB_IMAGE") return 0 ;;
 		"$official"*) ;;
@@ -229,8 +249,7 @@ offer_newer_hub_image_locked() {
 					info "  .env now names $HUB_IMAGE; the stack restarts on it below."
 					return 0
 				elif [ $? -eq 2 ]; then
-					info "  The VAULTSYNC_HUB_IMAGE line changed while setup was asking; nothing was changed."
-					manual_image_hint
+					info "  $env_file changed while setup was asking; nothing was changed. Check its VAULTSYNC_HUB_IMAGE line, then run the setup again."
 					return 0
 				fi
 				fail "Could not update $env_file; nothing was changed. Change its VAULTSYNC_HUB_IMAGE line by hand, then run docker compose pull && docker compose up -d."
