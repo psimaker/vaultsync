@@ -786,7 +786,7 @@ func TestIssue228_SetupAgainWithTheSameFlags(t *testing.T) {
 		if err := s.run(ctx); err != nil {
 			t.Fatalf("%v\n%s", err, out)
 		}
-		if !strings.Contains(out.String(), "“Hub-Test” already syncs at ~/Vaults/Hub-Test-neu.") || strings.Contains(out.String(), "overlaps") {
+		if !strings.Contains(out.String(), "✓ “Hub-Test” is already set up to sync at ~/Vaults/Hub-Test-neu.") || strings.Contains(out.String(), "overlaps") {
 			t.Fatalf("output:\n%s", out)
 		}
 		if hub.provisionCount(id) != 0 || eng.folderCount() != 1 {
@@ -797,7 +797,7 @@ func TestIssue228_SetupAgainWithTheSameFlags(t *testing.T) {
 	t.Run("another folder: one folder per vault", func(t *testing.T) {
 		eng, hub, s, _ := configured(t, "Hub-Test", "~/Vaults/Elsewhere")
 		err := s.run(ctx)
-		if !strings.Contains(refusalText(err), "“Hub-Test” already syncs at ~/Vaults/Hub-Test-neu on this computer") || strings.Contains(refusalText(err), "overlaps") {
+		if !strings.Contains(refusalText(err), "“Hub-Test” is already set up to sync at ~/Vaults/Hub-Test-neu on this computer") || strings.Contains(refusalText(err), "overlaps") {
 			t.Fatalf("got %v", err)
 		}
 		if hub.provisionCount(id) != 0 || eng.folderCount() != 1 {
@@ -805,6 +805,58 @@ func TestIssue228_SetupAgainWithTheSameFlags(t *testing.T) {
 		}
 		if _, err := os.Stat(filepath.Join(s.env.home, "Vaults", "Elsewhere")); !errors.Is(err, os.ErrNotExist) {
 			t.Fatal("a folder was created")
+		}
+	})
+	t.Run("the same folder through a link", func(t *testing.T) {
+		eng, hub, s, out := configured(t, "Hub-Test", "~/Links/notes")
+		if err := os.MkdirAll(filepath.Join(s.env.home, "Links"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(s.env.home, "Vaults", "Hub-Test-neu"), filepath.Join(s.env.home, "Links", "notes")); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.run(ctx); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if !strings.Contains(out.String(), "✓ “Hub-Test” is already set up to sync at ~/Vaults/Hub-Test-neu.") || hub.provisionCount(id) != 0 || eng.folderCount() != 1 {
+			t.Fatalf("output:\n%s", out)
+		}
+	})
+	t.Run("a name that differs only in case is another folder on a case-sensitive volume", func(t *testing.T) {
+		eng, hub, s, out := configured(t, "Hub-Test", "~/Vaults/hub-test-neu")
+		other := filepath.Join(s.env.home, "Vaults", "hub-test-neu")
+		if err := os.MkdirAll(other, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		a, _ := os.Stat(other)
+		b, _ := os.Stat(filepath.Join(s.env.home, "Vaults", "Hub-Test-neu"))
+		if os.SameFile(a, b) {
+			t.Skip("a case-insensitive volume: both names are one folder")
+		}
+		s.env.goos = "darwin" // where case used to be folded by OS, not by the volume
+		if err := s.run(ctx); err == nil || strings.Contains(out.String(), "✓") {
+			t.Fatalf("two folders were taken for one: %v\n%s", err, out)
+		}
+		if hub.provisionCount(id) != 0 || eng.folderCount() != 1 {
+			t.Fatalf("the Hub was asked (%d) or a folder was added (%d)", hub.provisionCount(id), eng.folderCount())
+		}
+	})
+	t.Run("a pending share resumed onto its own folder", func(t *testing.T) {
+		eng := newFakeEngine(t)
+		hub := newFakeHub(t, eng)
+		s, out := testSession(t, eng, hub, pairOptions{}, "y", "~/Vaults/Hub-Test-neu")
+		local := filepath.Join(s.env.home, "Vaults", "Hub-Test-neu")
+		mkVault(t, local)
+		eng.mu.Lock()
+		eng.devices = append(eng.devices, syncthing.DeviceConfig{DeviceID: testHubID, Name: "Test Hub"})
+		eng.folders = append(eng.folders, syncthing.FolderConfig{ID: id, Label: "Hub-Test", Path: local})
+		eng.pending[id] = map[string]string{testHubID: "Hub-Test"}
+		eng.mu.Unlock()
+		if err := s.run(ctx); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if !strings.Contains(out.String(), "✓ “Hub-Test” is already set up to sync at ~/Vaults/Hub-Test-neu.") || strings.Contains(out.String(), "error") || eng.folderCount() != 1 {
+			t.Fatalf("output:\n%s", out)
 		}
 	})
 	t.Run("another folder that holds files: the merge guard speaks first", func(t *testing.T) {

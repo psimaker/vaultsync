@@ -158,7 +158,7 @@ func (s *pairSession) run(ctx context.Context) error {
 		return fmt.Errorf("the sync engine does not answer: %w", err)
 	}
 	if done, err := s.resumePending(ctx); done || err != nil {
-		return err
+		return s.unlessAlreadySyncing(err)
 	}
 	if err := s.findHub(ctx); err != nil {
 		return err
@@ -175,24 +175,50 @@ func (s *pairSession) run(ctx context.Context) error {
 		return err
 	}
 	p, err := s.choose(ctx)
-	var already *alreadySyncing
-	if errors.As(err, &already) {
-		// A repeated setup with the same flags: nothing to do, nothing wrong.
-		s.t.say("✓ %s already syncs at %s.", quoted(already.label), already.path)
-		return nil
-	}
 	if err != nil {
-		return err
+		return s.unlessAlreadySyncing(err)
 	}
 	return s.finish(ctx, p)
 }
 
-// alreadySyncing: the chosen Hub vault already syncs at the chosen folder on
-// this computer (#228). Not a refusal — the setup ends as succeeded.
+// alreadySyncing: the chosen Hub vault is already set up at the chosen folder
+// on this computer (#228). Not a refusal — the setup ends as succeeded.
 type alreadySyncing struct{ label, path string }
 
 func (e *alreadySyncing) Error() string {
-	return fmt.Sprintf("%s already syncs at %s.", quoted(e.label), e.path)
+	return fmt.Sprintf("%s is already set up to sync at %s.", quoted(e.label), e.path)
+}
+
+// unlessAlreadySyncing turns the alreadySyncing sentinel — from the flags
+// path or from a pending share resumed onto its own folder — into a success
+// line and no error; any other error passes through.
+func (s *pairSession) unlessAlreadySyncing(err error) error {
+	var already *alreadySyncing
+	if errors.As(err, &already) {
+		s.t.say("✓ %s is already set up to sync at %s.", quoted(already.label), already.path)
+		return nil
+	}
+	return err
+}
+
+// sameFolder: the chosen path is the configured folder itself — by directory
+// identity when both exist (a case-insensitive volume answers for itself),
+// by the exact resolved path when the folder is away. Folding case by OS
+// would call two distinct folders on a case-sensitive volume the same.
+func sameFolder(path, configured string) bool {
+	a, errA := os.Stat(path)
+	b, errB := os.Stat(configured)
+	if errA == nil || errB == nil {
+		return errA == nil && errB == nil && a.IsDir() && os.SameFile(a, b)
+	}
+	for _, x := range resolvedForms(path) {
+		for _, y := range resolvedForms(configured) {
+			if x == y {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // --- the Hub ----------------------------------------------------------------
@@ -924,10 +950,8 @@ func (s *pairSession) downloadPlan(ctx context.Context, v pairing.VaultInfo, pat
 			configured = &folders[i]
 		}
 	}
-	if configured != nil {
-		if _, same := sameConfigured(path, []syncthing.FolderConfig{*configured}, s.env.goos); same {
-			return plan{}, &alreadySyncing{label: v.Label, path: tildePath(s.env.home, configured.Path)}
-		}
+	if configured != nil && sameFolder(path, configured.Path) {
+		return plan{}, &alreadySyncing{label: v.Label, path: tildePath(s.env.home, configured.Path)}
 	}
 	if err := s.checkTarget(ctx, path, v.Label, enginePaths); err != nil {
 		return plan{}, err
@@ -940,7 +964,7 @@ func (s *pairSession) downloadPlan(ctx context.Context, v pairing.VaultInfo, pat
 		return plan{}, refuse("%s already holds files. VaultSync downloads a vault from your Hub only into a new or empty folder — choose another one.", tildePath(s.env.home, path))
 	}
 	if configured != nil {
-		return plan{}, refuse("%s already syncs at %s on this computer. A vault has one folder here — nothing was changed.", quoted(v.Label), tildePath(s.env.home, configured.Path))
+		return plan{}, refuse("%s is already set up to sync at %s on this computer. A vault has one folder here — nothing was changed.", quoted(v.Label), tildePath(s.env.home, configured.Path))
 	}
 	parent := filepath.Dir(path)
 	vaults := resolveExistingPrefix(filepath.Join(s.env.home, "Vaults"))
