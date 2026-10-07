@@ -53,9 +53,12 @@ type engine struct {
 func (e engine) configPath() string { return filepath.Join(e.lay.Home, "config.xml") }
 
 // prepared reports whether the engine already has its identity and config.
+// Only a config that is not there means "not prepared": one that cannot be
+// looked at (a permission, an I/O error) is treated as there, so nothing
+// is generated over it and the read that follows reports the error.
 func (e engine) prepared() bool {
 	_, err := os.Stat(e.configPath())
-	return err == nil
+	return !errors.Is(err, fs.ErrNotExist)
 }
 
 // prepare gives a fresh engine its identity and config, adjusted before its
@@ -64,7 +67,10 @@ func (e engine) prepared() bool {
 // never leaves an engine that looks ready but runs on stock settings. An
 // existing config is never regenerated: it holds the identity the Hub knows.
 func (e engine) prepare(ctx context.Context, st *agentState) error {
-	if e.prepared() {
+	// A config that is there and can be looked at is kept; one that is not
+	// there is made below; one that cannot be looked at is reported by the
+	// read of the folder below — nothing is made over it either way.
+	if _, err := os.Stat(e.configPath()); err == nil {
 		if st.GUIPort == 0 {
 			// agent.json was lost or never written; the port is in the config.
 			port, err := e.guiPortFromConfig()

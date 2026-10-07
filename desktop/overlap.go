@@ -89,9 +89,10 @@ func userSyncthingConfigs(goos, home string, getenv func(string) string) []strin
 	return nil
 }
 
-// findUserSyncthing reads the first existing config.xml of the user's own
-// Syncthing. A config it cannot read or parse still counts as "Syncthing is
-// here", with Unreadable set.
+// findUserSyncthing reads every existing config.xml of the user's own
+// Syncthing in the places this environment names, their folders together.
+// A config it cannot read or parse still counts as "Syncthing is here",
+// with Unreadable set.
 func findUserSyncthing(goos, home string, getenv func(string) string) (userSyncthing, bool) {
 	return findUserSyncthingIn(goos, home, getenv)
 }

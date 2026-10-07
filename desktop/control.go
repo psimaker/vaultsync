@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -347,6 +348,14 @@ func (c *controlServer) pair(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, err)
 		return
 	}
+	if st.Env == nil {
+		// An agent.json from before the record: the guards would look only
+		// where the service looks, which may not be where the user's own
+		// Syncthing or cloud settings are — the terminal records that once.
+		resp.Refusal = "VaultSync has not recorded where this computer keeps its settings yet. Run vaultsync pair in a terminal once, then try again here."
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
 	s, err := c.a.pairWith(c.ctx, &term{out: &out}, opts, client, pairOrigin{background: c.background, shellEnv: st.Env})
 	resp.Output = out.String()
 	if s != nil && s.menu != nil {
@@ -531,7 +540,15 @@ func logSocketError(logf func(string, ...any), base string, err error) {
 // not paused; nobody listens on its port, so nothing syncs; or neither
 // could be told, so syncing may continue.
 func (a *app) noAgentForPause(ctx context.Context, st agentState, pause bool) error {
+	if st.GUIPort == 0 {
+		return refuse("VaultSync is not set up on this computer yet. Run vaultsync setup.")
+	}
 	client, err := a.engine().client(st)
+	if errors.Is(err, fs.ErrNotExist) {
+		// No config.xml: nothing was ever set up. Any other failure to
+		// read it is not that, and is reported below.
+		return refuse("VaultSync is not set up on this computer yet. Run vaultsync setup.")
+	}
 	if err == nil {
 		pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		err = client.Ping(pctx)
@@ -560,12 +577,12 @@ func (a *app) noAgentForPause(ctx context.Context, st agentState, pause bool) er
 // --- pause / resume from the terminal ----------------------------------------
 
 func (a *app) pauseSync(ctx context.Context, pause bool) error {
-	if !a.engine().prepared() {
-		return refuse("VaultSync is not set up on this computer yet. Run vaultsync setup.")
-	}
 	st, err := loadState(a.lay.State)
 	if err != nil {
 		return err
+	}
+	if st.GUIPort == 0 {
+		return refuse("VaultSync is not set up on this computer yet. Run vaultsync setup.")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()

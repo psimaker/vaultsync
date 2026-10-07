@@ -54,7 +54,8 @@ func agentApp(t *testing.T, eng *fakeEngine) *app {
 	_, port, _ := net.SplitHostPort(eng.addr)
 	n, _ := strconv.Atoi(port)
 	writeFile(t, filepath.Join(lay.Home, "config.xml"), "<configuration><gui><address>"+eng.addr+"</address><apikey>engine-key</apikey></gui></configuration>\n")
-	if err := saveState(lay.State, agentState{GUIPort: n}); err != nil {
+	// A recorded shell with none of the guard variables set.
+	if err := saveState(lay.State, agentState{GUIPort: n, Env: map[string]string{}}); err != nil {
 		t.Fatal(err)
 	}
 	lay.Socket = filepath.Join(shortDir(t), "agent.sock")
@@ -684,6 +685,28 @@ func TestIssue176_PauseFromTheTerminal(t *testing.T) {
 	if err := b.pauseSync(ctx, true); !strings.Contains(refusalText(err), "not set up") {
 		t.Fatalf("pause before setup: %v", err)
 	}
+	// Set up, but the engine's folder cannot be looked into: that is not
+	// "not set up" — the agent may be syncing — and the error is said.
+	if os.Getuid() == 0 {
+		t.Skip("root looks into any folder")
+	}
+	c := &app{goos: "linux", home: t.TempDir(), getenv: envOf(nil), out: io.Discard}
+	c.lay, _ = layoutFor("linux", c.home, envOf(nil))
+	c.lay.Socket = filepath.Join(shortDir(t), "agent.sock")
+	writeFile(t, filepath.Join(c.lay.Home, "config.xml"), "<configuration><gui><address>127.0.0.1:1</address><apikey>k</apikey></gui></configuration>\n")
+	if err := saveState(c.lay.State, agentState{GUIPort: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(c.lay.Home, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(c.lay.Home, 0o700) })
+	if !c.engine().prepared() {
+		t.Fatal("a folder that cannot be looked into is not \"not prepared\"")
+	}
+	if err := c.pauseSync(ctx, true); !strings.Contains(refusalText(err), "could not confirm") || !strings.Contains(refusalText(err), "permission denied") || strings.Contains(refusalText(err), "not set up") {
+		t.Fatalf("pause with the engine's folder inaccessible: %v", err)
+	}
 }
 
 func TestIssue176_SocketIsFreshOwnerOnlyAndGoneAfterwards(t *testing.T) {
@@ -911,15 +934,16 @@ func TestIssue176_SocketPairingLooksWhereTheShellLooks(t *testing.T) {
 	}
 
 	// Without any record — an agent.json from before — the service's own
-	// environment is all there is: the registry's vault is unknown, and
-	// ~/Notes looks free.
+	// environment is all there is, which may not be where the user's own
+	// Syncthing is: the socket refuses to pair until a terminal recorded
+	// the shell, and offers nothing.
 	st.Env = nil
 	if err := saveState(a.lay.State, st); err != nil {
 		t.Fatal(err)
 	}
-	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr})
-	if err != nil || contains(localPaths(pr.Menu), work) || !contains(localPaths(pr.Menu), notes) {
-		t.Fatalf("without the record: %v %v", localPaths(pr.Menu), err)
+	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Notes", Create: true, Path: notes})
+	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "not recorded where this computer keeps its settings") || !strings.Contains(pr.Refusal, "vaultsync pair in a terminal") || pr.Menu != nil || eng.folderCount() != 0 {
+		t.Fatalf("without the record: %+v %v", pr, err)
 	}
 
 	// The other way round: the shell had none of the variables set — its
