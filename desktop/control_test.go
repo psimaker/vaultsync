@@ -362,6 +362,15 @@ func TestIssue176_PairOverTheSocketIsTheFlagFlow(t *testing.T) {
 		t.Fatalf("folders: %+v", eng.folders)
 	}
 
+	// The pairing knows whose process it runs in: the socket hands the
+	// service's ownership on, so a folder macOS refuses names "vaultsync".
+	if s, _ := a.pairWith(ctx, &term{out: io.Discard}, pairOptions{}, eng.client, true); s == nil || !s.env.background {
+		t.Fatal("pairWith drops the background flag")
+	}
+	if s, _ := a.pairWith(ctx, &term{out: io.Discard}, pairOptions{}, eng.client, false); s == nil || s.env.background {
+		t.Fatal("a terminal pairing is not a background one")
+	}
+
 	// One pairing at a time — the terminal's lock is the socket's too.
 	hold, err := lockFile(filepath.Join(a.lay.Base, "pair.lock"))
 	if err != nil {
