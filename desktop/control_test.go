@@ -996,6 +996,14 @@ func TestIssue176_RunReportsAFailedCleanup(t *testing.T) {
 		t.Skip("root writes anywhere")
 	}
 	a, _ := runFixture(t)
+	// run logs to the process's stderr — the service log: read it.
+	stderrR, stderrW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStderr := os.Stderr
+	os.Stderr = stderrW
+	t.Cleanup(func() { os.Stderr = oldStderr })
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- a.run(ctx, nil) }()
@@ -1020,6 +1028,15 @@ func TestIssue176_RunReportsAFailedCleanup(t *testing.T) {
 		}
 	case <-time.After(30 * time.Second):
 		t.Fatal("run did not stop")
+	}
+	_ = stderrW.Close()
+	os.Stderr = oldStderr
+	logged, _ := io.ReadAll(stderrR)
+	if !strings.Contains(string(logged), "its place could not be taken out of agent.json — a file operation failed") {
+		t.Fatalf("the service log lacks the failed cleanup in its own words:\n%s", logged)
+	}
+	if strings.Contains(string(logged), a.lay.Base) {
+		t.Fatalf("a path in the service log:\n%s", logged)
 	}
 }
 
@@ -1517,21 +1534,31 @@ func TestIssue176_StopSaysInTheServiceLogWhatItCouldNotDo(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctl.srv.ErrorLog.Printf("http: Accept error: accept unix %s: too many open files", a.lay.Socket)
+	// The socket cannot be taken down either: both are said, each in fixed
+	// words with the kind of its cause — the socket's path may lie where
+	// no redaction reaches.
+	defer func(real func(string) error) { removeEntry = real }(removeEntry)
+	removeEntry = func(p string) error { return &os.PathError{Op: "remove", Path: p, Err: syscall.EACCES} }
 	err = stop()
-	if err == nil || !strings.Contains(err.Error(), "writing:") {
+	removeEntry = os.Remove
+	_ = os.Remove(a.lay.Socket)
+	if err == nil || !strings.Contains(err.Error(), "writing:") || !errors.Is(err, errSocketLeftBehind) {
 		t.Fatalf("stop: %v", err)
 	}
-	var said bool
+	var saidDiag, saidSocket bool
 	for _, line := range logged.all() {
 		if strings.Contains(line, "could not all be kept") && strings.Contains(line, "writing:") {
-			said = true
+			saidDiag = true
 		}
-		if strings.Contains(line, a.lay.Socket) || strings.Contains(line, a.lay.Base) {
+		if strings.Contains(line, "could not be taken down on the way out") && strings.Contains(line, "remove: permission denied") {
+			saidSocket = true
+		}
+		if strings.Contains(line, a.lay.Socket) || strings.Contains(line, filepath.Dir(a.lay.Socket)) || strings.Contains(line, a.lay.Base) {
 			t.Fatalf("a path in the service log: %q", line)
 		}
 	}
-	if !said {
-		t.Fatalf("the service log lacks the stop's words: %v", logged.all())
+	if !saidDiag || !saidSocket {
+		t.Fatalf("the service log lacks the stop's words (diagnostics %v, socket %v): %v", saidDiag, saidSocket, logged.all())
 	}
 }
 

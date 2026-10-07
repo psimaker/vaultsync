@@ -730,6 +730,10 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 				retErr = errors.Join(retErr, err)
 			}
 			if err := updateState(a.lay.State, func(s *agentState) { s.ControlSocket = "" }); err != nil {
+				// Said here in its own words (the kind of the cause, no path):
+				// the error returned is summarized at the service boundary,
+				// and the file that keeps full details may be unwritable too.
+				logf("control socket: its place could not be taken out of agent.json — %s", serviceSummary(err))
 				retErr = errors.Join(retErr, fmt.Errorf("the control socket's place could not be taken out of agent.json: %w", err))
 			}
 		}()

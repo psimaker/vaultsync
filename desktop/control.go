@@ -184,11 +184,17 @@ func (c *controlServer) serve(ctx context.Context) (path string, stop func() err
 		_ = srv.Shutdown(sctx)
 		_ = srv.Close()
 		<-done
-		err := errors.Join(cleanup(), diag.close())
-		if err != nil {
-			c.logf("control socket: %s", redactPaths(err.Error()))
+		cerr := cleanup()
+		if cerr != nil {
+			// Fixed words and the cause's kind only: the socket's path may lie
+			// outside the places redactPaths knows (a runtime directory).
+			c.logf("control socket: it could not be taken down on the way out — %s", serviceSummary(cerr))
 		}
-		return err
+		derr := diag.close()
+		if derr != nil {
+			c.logf("control socket: %s", derr) // path-free by construction
+		}
+		return errors.Join(cerr, derr)
 	}
 	return path, stop, nil
 }
