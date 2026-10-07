@@ -266,11 +266,12 @@ docker compose pull && docker compose up -d           # refresh the images .env 
 `docker compose pull` fetches the images at the tags the stack names: the
 Hub's Syncthing follows its 1.x line, but the Hub itself stays on the version
 in `.env` (`VAULTSYNC_HUB_IMAGE`) — re-running the setup keeps `.env` too. To
-move a Hub to 0.2.0 (the release that prints the QR code):
+move a Hub to 0.3.0 (the release that proves a vault empty before a device
+may join it with files; 0.2.0 brought the QR code):
 
 ```sh
 cd /srv/vaultsync
-sed -i 's|^VAULTSYNC_HUB_IMAGE=.*|VAULTSYNC_HUB_IMAGE=ghcr.io/psimaker/vaultsync-hub:0.2.0|' .env
+sed -i 's|^VAULTSYNC_HUB_IMAGE=.*|VAULTSYNC_HUB_IMAGE=ghcr.io/psimaker/vaultsync-hub:0.3.0|' .env
 docker compose pull && docker compose up -d
 ```
 

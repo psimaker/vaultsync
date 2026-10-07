@@ -25,7 +25,7 @@ set -eu
 REPO="psimaker/vaultsync"
 HUB_DIR="${VAULTSYNC_HUB_DIR:-/srv/vaultsync}"
 HUB_NAME="${VAULTSYNC_HUB_NAME:-VaultSync Hub}"
-HUB_IMAGE="${VAULTSYNC_HUB_IMAGE:-ghcr.io/psimaker/vaultsync-hub:0.2.0}"
+HUB_IMAGE="${VAULTSYNC_HUB_IMAGE:-ghcr.io/psimaker/vaultsync-hub:0.3.0}"
 RELAY_URL="${RELAY_URL:-https://relay.vaultsync.eu}"
 DRY_RUN=0
 CHOICE=""
@@ -268,7 +268,7 @@ services:
     restart: unless-stopped
 
   hub:
-    image: ${VAULTSYNC_HUB_IMAGE:-ghcr.io/psimaker/vaultsync-hub:0.2.0}
+    image: ${VAULTSYNC_HUB_IMAGE:-ghcr.io/psimaker/vaultsync-hub:0.3.0}
     container_name: vaultsync-hub
     # Host networking: LAN discovery answers UDP broadcasts, which never cross a
     # Docker bridge. The pairing port (8390) is LAN-only by design — do not
