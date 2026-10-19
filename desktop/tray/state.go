@@ -49,9 +49,9 @@ func LogPath(goos, home string) string {
 // without the socket; the terminal's status can tell, the menu cannot.
 var ErrNoSocket = errors.New("VaultSync does not answer on its control socket: it is stopped, or it runs without the socket (control-socket-error.txt is in VaultSync's folder) — vaultsync status in a terminal tells which")
 
-// SocketErrorRecorded: the agent wrote control-socket-error.txt (it could
-// not serve the socket at some start; the file stays until the folder is
-// removed, so it says "maybe", never "now").
+// SocketErrorRecorded: the agent wrote control-socket-error.txt — its last
+// start could not serve the socket (a start that serves one removes the
+// file), so nobody answering may well be an agent running without it.
 func SocketErrorRecorded(stateDir string) bool {
 	_, err := os.Stat(filepath.Join(stateDir, "control-socket-error.txt"))
 	return err == nil

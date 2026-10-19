@@ -67,7 +67,17 @@ func (m *menu) build() {
 	m.waiting = m.pool(waitingSlots, nil)
 	m.attempts = m.pool(attemptSlots, nil)
 	systray.AddSeparator()
-	m.pause = m.action("Pause Syncing", tray.EventPause)
+	m.pause = systray.AddMenuItem("Pause Syncing", "")
+	go func() {
+		for range m.pause.ClickedCh {
+			// What the menu showed at the click: pause when it offered to
+			// pause, resume when it offered to resume.
+			m.mu.Lock()
+			pause := !m.last.Paused
+			m.mu.Unlock()
+			m.send(tray.Event{Kind: tray.EventPause, Pause: pause})
+		}
+	}()
 	m.pair = m.action("Pair a Vault…", tray.EventPair)
 	m.log = m.action("Open Log", tray.EventOpenLog)
 	systray.AddSeparator()

@@ -1080,13 +1080,18 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 				// is not turned into a download of that vault — the caller
 				// (a script, the menu-bar app) did not ask for one, and an
 				// empty folder would receive a vault it did not choose. The
-				// one exception is the vault already set up on this
-				// computer: a setup run again with the same flags finds it
+				// one exception is the vault already set up at this very
+				// folder: a setup run again with the same flags finds it
 				// (#228), which downloadPlan tells.
-				if configured, err := s.configuredHere(ctx, v.ID); err != nil {
+				configured, err := s.configuredVault(ctx, v.ID)
+				if err != nil {
 					return plan{}, err
-				} else if !configured {
+				}
+				switch {
+				case configured == nil:
 					return plan{}, refuse("Your Hub already has a vault named %s. Leave out --create to download it, or choose another name for a new vault.", quoted(pairing.SanitizeName(v.Label)))
+				case !sameFolder(resolveExistingPrefix(path), configured.Path):
+					return plan{}, refuse("Your Hub already has a vault named %s, and it is set up to sync at %s on this computer. Choose another name for a new vault.", quoted(pairing.SanitizeName(v.Label)), tildePath(s.env.home, configured.Path))
 				}
 			}
 			return s.downloadPlan(ctx, v, path)
@@ -1134,18 +1139,19 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 	return p, nil
 }
 
-// configuredHere: the engine already has this vault.
-func (s *pairSession) configuredHere(ctx context.Context, vaultID string) (bool, error) {
+// configuredVault is the engine's folder for this vault, nil when the
+// engine does not have it.
+func (s *pairSession) configuredVault(ctx context.Context, vaultID string) (*syncthing.FolderConfig, error) {
 	folders, err := s.env.engine.Folders(ctx)
 	if err != nil {
-		return false, fmt.Errorf("the sync engine does not answer: %w", err)
+		return nil, fmt.Errorf("the sync engine does not answer: %w", err)
 	}
-	for _, f := range folders {
-		if f.ID == vaultID {
-			return true, nil
+	for i := range folders {
+		if folders[i].ID == vaultID {
+			return &folders[i], nil
 		}
 	}
-	return false, nil
+	return nil, nil
 }
 
 // keepMenu builds the vault menu for a caller that has no terminal to read

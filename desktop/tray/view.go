@@ -67,6 +67,9 @@ type View struct {
 	Headline string // the first line, VaultSync's state in a few words
 	Detail   string // a second line under it (""): the remedy, or the problem
 	Notice   string // what the last action said (""), until the next one
+	// Paused: syncing is paused on this computer, and the Pause item
+	// offers to resume.
+	Paused bool
 	// NoVaultLine stands where the vaults would be when there are none
 	// and the agent answered (""): "No vault yet".
 	NoVaultLine string
@@ -155,13 +158,16 @@ func Render(st Status, err error, o Options) View {
 	default:
 		v.Pair.Enabled = true
 	}
-	if st.Paused {
-		v.Glyph = GlyphPaused
-		v.Headline = "Paused on this computer"
-		v.Pause.Title = "Resume Syncing"
-		return v
-	}
 	v.Glyph, v.Headline, v.Detail = summarize(st)
+	if st.Paused {
+		v.Paused = true
+		v.Pause.Title = "Resume Syncing"
+		// A problem outranks the pause, as in the agent's own status, which
+		// keeps a vault's error visible while syncing is paused.
+		if v.Glyph != GlyphAttention {
+			v.Glyph, v.Headline, v.Detail = GlyphPaused, "Paused on this computer", ""
+		}
+	}
 	return v
 }
 

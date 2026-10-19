@@ -63,7 +63,7 @@ func Pair(ctx context.Context, c *Client, ask Asker, home string) (string, error
 			return "", err
 		}
 		if res.OK {
-			line := lastLine(res.Output)
+			line := resultLine(res.Output)
 			if line == "" {
 				line = "The vault is set up."
 			}
@@ -156,15 +156,25 @@ func consentText(refusal string) string {
 	return t + "\n\nIf Obsidian Sync or another service also syncs this folder, turn that off for it first."
 }
 
-// lastLine is the last non-empty line of the agent's output.
-func lastLine(out string) string {
+// resultLine is the line the agent's output ends on: its last "✓" line —
+// the agent's own mark for what was done, which may be followed by a hint
+// (where to open the vault) — else the last non-empty line.
+func resultLine(out string) string {
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	last := ""
 	for i := len(lines) - 1; i >= 0; i-- {
-		if l := strings.TrimSpace(lines[i]); l != "" {
+		l := strings.TrimSpace(lines[i])
+		if l == "" {
+			continue
+		}
+		if strings.HasPrefix(l, "✓") {
 			return l
 		}
+		if last == "" {
+			last = l
+		}
 	}
-	return ""
+	return last
 }
 
 // TildePath shows a path below the home folder as ~/…, as the agent does;

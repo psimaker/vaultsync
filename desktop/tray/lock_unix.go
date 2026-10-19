@@ -6,17 +6,16 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"syscall"
+
+	"github.com/psimaker/vaultsync/desktop/internal/lock"
 )
 
 // ErrAlreadyRunning: another menu-bar app of this user holds the lock.
 var ErrAlreadyRunning = errors.New("the VaultSync menu-bar app is already running")
 
-// Lock is the one-instance lock: tray.lock in VaultSync's folder, held
-// through an exclusive flock the kernel drops when the process ends.
+// Lock is the one-instance lock: tray.lock in VaultSync's folder.
 type Lock struct {
-	f    *os.File
-	path string
+	*lock.Handle
 }
 
 // TakeLock makes this the one menu-bar app for this user. A folder that
@@ -31,36 +30,12 @@ func TakeLock(stateDir string) (*Lock, error) {
 		}
 		return nil, err
 	}
-	path := filepath.Join(stateDir, "tray.lock")
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	h, err := lock.Take(filepath.Join(stateDir, "tray.lock"))
+	if errors.Is(err, lock.ErrHeld) {
+		return nil, ErrAlreadyRunning
+	}
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		f.Close()
-		if errors.Is(err, syscall.EWOULDBLOCK) {
-			return nil, ErrAlreadyRunning
-		}
-		return nil, err
-	}
-	return &Lock{f: f, path: path}, nil
+	return &Lock{h}, nil
 }
-
-// Valid: the file this lock holds is still the one at its place. An
-// uninstall --remove-data takes the file away while the lock is held (the
-// lock then guards an orphan nobody else can see), so a lock that is no
-// longer valid is released and taken again.
-func (l *Lock) Valid() bool {
-	held, err := l.f.Stat()
-	if err != nil {
-		return false
-	}
-	at, err := os.Stat(l.path)
-	if err != nil {
-		return false
-	}
-	return os.SameFile(held, at)
-}
-
-// Release lets the lock go.
-func (l *Lock) Release() { _ = l.f.Close() }

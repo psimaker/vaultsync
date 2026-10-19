@@ -29,6 +29,10 @@ const (
 type Event struct {
 	Kind  EventKind
 	Index int
+	// Pause is what an EventPause asked for — true to pause, false to
+	// resume — as the menu showed it at the click, so a click queued
+	// behind a slow request never undoes what it asked for.
+	Pause bool
 }
 
 // UI is the menu bar: it shows a View and reports what was clicked.
@@ -80,7 +84,10 @@ type LockHandle interface {
 }
 
 const (
-	defaultPoll    = 10 * time.Second
+	// defaultPoll is how often the agent is asked while nobody looks: a
+	// full report costs the engine a request per vault and Hub, so the
+	// icon may lag by half a minute; opening the menu asks at once.
+	defaultPoll    = 30 * time.Second
 	defaultTimeout = 10 * time.Second
 	pauseTimeout   = 15 * time.Second
 	// pairTimeout is as long as the agent itself allows a pairing to take.
@@ -133,7 +140,7 @@ func (c *Controller) Run(ctx context.Context) error {
 			case EventOpenLog:
 				c.openLog(ctx)
 			case EventPause:
-				err = c.togglePause(ctx)
+				err = c.setPaused(ctx, ev.Pause)
 			case EventPair:
 				c.startPairing(ctx, pairDone)
 			}
@@ -145,8 +152,9 @@ func (c *Controller) Run(ctx context.Context) error {
 }
 
 // takeLock tries the one-instance lock when none is held, or when the
-// held one no longer guards the file at its place; a second instance is
-// the error that ends Run.
+// held one no longer guards the file at its place. A second instance is
+// the error that ends Run; any other failure to take it is said in the
+// menu and tried again at the next refresh.
 func (c *Controller) takeLock() error {
 	if c.Lock == nil {
 		return nil
@@ -159,8 +167,13 @@ func (c *Controller) takeLock() error {
 		return nil
 	}
 	held, err := c.Lock(c.StateDir)
-	if err != nil {
+	if errors.Is(err, ErrAlreadyRunning) {
 		return err
+	}
+	if err != nil {
+		c.notice = "VaultSync's folder could not be locked for this menu-bar app (" + err.Error() + "); trying again"
+		c.logf("one-instance lock: %v", err)
+		return nil
 	}
 	if held != nil {
 		c.Held = held
@@ -257,13 +270,13 @@ func (c *Controller) openPath(ctx context.Context, path string) {
 	}
 }
 
-// togglePause pauses when syncing runs, resumes when it is paused — as
-// the view last showed it; the agent is the one that pauses.
-func (c *Controller) togglePause(ctx context.Context) error {
-	if !c.known || !c.view.Pause.Enabled {
+// setPaused pauses or resumes as the click asked; a click that asks for
+// the state already in place (one queued behind a slow request, or
+// made on a stale menu) does nothing. The agent is the one that pauses.
+func (c *Controller) setPaused(ctx context.Context, pause bool) error {
+	if !c.known || !c.view.Pause.Enabled || pause == c.status.Paused {
 		return nil
 	}
-	pause := !c.status.Paused
 	cl, err := c.client()
 	var res PauseResult
 	if err == nil {
@@ -313,7 +326,9 @@ func (c *Controller) startPairing(ctx context.Context, done chan<- string) {
 			c.logf("pairing: %v", err)
 		}
 		line = pairingOutcome(line, err)
-		if err != nil && line != "" {
+		// The time limit is the one end no dialog told the person about;
+		// every other failure was shown as it happened.
+		if errors.Is(err, context.DeadlineExceeded) {
 			c.notify(ctx, line)
 		}
 		done <- line

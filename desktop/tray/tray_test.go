@@ -40,6 +40,7 @@ func TestIssue176_TrayShowsWhatTheAgentReports(t *testing.T) {
 		{"connected through a relay", withVaults(Status{Engine: "running", Hubs: []Hub{{Name: "Office Hub", State: "connected through a relay (slower; a direct connection is not possible right now)"}}}, "up to date"), GlyphSynced, "Up to date", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"connected, no vault", base, GlyphSynced, "Connected — no vault yet", "Pair a Vault… adds one", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"paused", paused(withVaults(base, "paused on this computer", "2 items left to sync")), GlyphPaused, "Paused on this computer", "", Action{"Resume Syncing", true}, Action{"Pair a Vault… (resume syncing first)", false}},
+		{"paused with an error: the error shows", paused(withVaults(base, "error: boom", "paused on this computer")), GlyphAttention, "Attention needed", "Vault 1: error: boom", Action{"Resume Syncing", true}, Action{"Pair a Vault… (resume syncing first)", false}},
 		{"engine starting", Status{Engine: "starting", Vaults: []Vault{{Label: "Notes", Path: "/home/me/Notes", State: "not syncing — the engine is stopped"}}}, GlyphSyncing, "Starting the sync engine…", "", Action{"Pause Syncing", false}, Action{"Pair a Vault…", false}},
 	}
 	for _, c := range cases {
@@ -305,12 +306,17 @@ func TestIssue176_TrayPauseAndResumeAskOnlyTheAgent(t *testing.T) {
 	controllerFor(t, agent, ui, &Controller{Notify: func(_ context.Context, s string) { mu.Lock(); notes = append(notes, s); mu.Unlock() }})
 	ui.view(t, "up to date", func(v View) bool { return v.Headline == "Up to date" })
 
-	ui.click(EventPause, 0)
+	ui.events <- Event{Kind: EventPause, Pause: true}
 	v := ui.view(t, "paused", func(v View) bool { return v.Glyph == GlyphPaused })
 	if v.Pause.Title != "Resume Syncing" || v.Notice != "" {
 		t.Fatalf("after pause: %+v", v)
 	}
-	ui.click(EventPause, 0)
+	// A click queued behind the first (still asking to pause) must not
+	// undo it: asking for the state already in place does nothing.
+	ui.events <- Event{Kind: EventPause, Pause: true}
+	ui.click(EventOpened, 0)
+	ui.view(t, "still paused", func(v View) bool { return v.Glyph == GlyphPaused })
+	ui.events <- Event{Kind: EventPause, Pause: false}
 	ui.view(t, "resumed", func(v View) bool { return v.Glyph == GlyphSynced && v.Pause.Title == "Pause Syncing" })
 	agent.set(func(f *fakeAgent) {
 		if !reflect.DeepEqual(f.calls, []string{"pause", "resume"}) {
@@ -322,7 +328,7 @@ func TestIssue176_TrayPauseAndResumeAskOnlyTheAgent(t *testing.T) {
 	agent.set(func(f *fakeAgent) { f.hubs = 0; f.status.Hubs = []Hub{} })
 	ui.click(EventOpened, 0)
 	ui.view(t, "no Hub", func(v View) bool { return v.Headline == "No Hub paired yet" })
-	ui.click(EventPause, 0)
+	ui.events <- Event{Kind: EventPause, Pause: true}
 	v = ui.view(t, "the notice", func(v View) bool { return v.Notice != "" })
 	if v.Notice != "No Hub is paired with this computer yet, so there is nothing to pause." {
 		t.Fatalf("notice: %q", v.Notice)
@@ -340,7 +346,7 @@ func TestIssue176_TrayPauseAndResumeAskOnlyTheAgent(t *testing.T) {
 	if v.Pause.Enabled || v.Pair.Enabled {
 		t.Fatalf("actions without an agent: %+v", v)
 	}
-	ui.click(EventPause, 0)
+	ui.events <- Event{Kind: EventPause, Pause: true}
 	ui.click(EventOpened, 0)
 	ui.view(t, "still not running", func(v View) bool { return v.Headline == "VaultSync is not running" })
 	agent.set(func(f *fakeAgent) {
@@ -1108,7 +1114,10 @@ func TestIssue176_TrayOneInstancePerUser(t *testing.T) {
 }
 
 func TestIssue176_TrayTextHelpers(t *testing.T) {
-	if got := lastLine("a\n\n  b  \n\n"); got != "b" {
+	if got := resultLine("✓ “Notes” is set up to sync at ~/Vaults/Notes.\n  Open it in Obsidian after the first sync: Open folder as vault → ~/Vaults/Notes\n"); got != "✓ “Notes” is set up to sync at ~/Vaults/Notes." {
+		t.Fatalf("the ✓ line, not the hint after it: %q", got)
+	}
+	if got := resultLine("a\n\n  b  \n\n"); got != "b" {
 		t.Fatalf("lastLine: %q", got)
 	}
 	if got := consentText("X already contains files. Pass --yes to agree."); !strings.HasPrefix(got, "X already contains files.\n\nIf Obsidian Sync") {

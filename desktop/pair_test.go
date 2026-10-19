@@ -872,6 +872,18 @@ func TestIssue228_SetupAgainWithTheSameFlags(t *testing.T) {
 		}
 		assertUntouched(t, filepath.Join(s.env.home, "Vaults", "Hub-Test-neu"))
 	})
+	t.Run("another folder with --create: the name is taken, and where", func(t *testing.T) {
+		eng, hub, s, _ := configured(t, "Hub-Test", "~/Vaults/Elsewhere")
+		s.opts.create = true
+		mkVault(t, filepath.Join(s.env.home, "Vaults", "Elsewhere"))
+		err := s.run(ctx)
+		if !strings.Contains(refusalText(err), "Your Hub already has a vault named “Hub-Test”, and it is set up to sync at ~/Vaults/Hub-Test-neu on this computer. Choose another name") || strings.Contains(refusalText(err), "only into a new or empty folder") {
+			t.Fatalf("a create for a vault set up elsewhere: %v", err)
+		}
+		if hub.provisionCount(id) != 0 || eng.folderCount() != 1 {
+			t.Fatal("the Hub was asked, or a folder was added")
+		}
+	})
 	t.Run("another folder: one folder per vault", func(t *testing.T) {
 		eng, hub, s, _ := configured(t, "Hub-Test", "~/Vaults/Elsewhere")
 		err := s.run(ctx)
