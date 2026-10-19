@@ -53,10 +53,12 @@ func Pair(ctx context.Context, c *Client, ask Asker, home string) (string, error
 	asked := map[string]bool{}
 	for {
 		res, err := c.Pair(ctx, req)
+		if ctx.Err() != nil {
+			// Out of time, or quit: no dialog is opened on a context that
+			// is done, whatever the agent answered.
+			return "", ctx.Err()
+		}
 		if err != nil {
-			if ctx.Err() != nil {
-				return "", ctx.Err()
-			}
 			_ = ask.Inform(ctx, err.Error())
 			return "", err
 		}
@@ -125,12 +127,8 @@ func Pair(ctx context.Context, c *Client, ask Asker, home string) (string, error
 	}
 }
 
-// refused shows the refusal and ends the conversation with it — unless
-// the conversation's time is up, when no dialog is opened any more.
+// refused shows the refusal and ends the conversation with it.
 func refused(ctx context.Context, ask Asker, refusal string) (string, error) {
-	if ctx.Err() != nil {
-		return "", ctx.Err()
-	}
 	if refusal == "" {
 		refusal = "VaultSync refused the pairing without saying why. Run vaultsync pair in a terminal."
 	}
