@@ -92,6 +92,15 @@ func Pair(ctx context.Context, c *Client, ask Asker, home string) (string, error
 			if err != nil || !ok {
 				return "", err
 			}
+			if taken := sameNameOnHub(choice, *res.Menu); taken != "" {
+				// The terminal asks for another name here; the menu has no
+				// name to offer, and --create with a name the Hub already
+				// has would resolve to the Hub's vault instead of starting
+				// a new one (that is how a repeated setup finds its own
+				// vault, #228) — an empty folder would then receive the
+				// Hub's vault the person did not choose.
+				return refused(ctx, ask, "Your Hub already has a vault named "+taken+". To download it, choose it under On your Hub; to start a new vault from this folder under another name, run vaultsync pair in a terminal.")
+			}
 			req.Vault, req.Create, req.Path = requestFor(choice, home)
 		case "yes":
 			// The consent is the agent's own words; yes goes out only after
@@ -123,6 +132,22 @@ func refused(ctx context.Context, ask Asker, refusal string) (string, error) {
 	}
 	_ = ask.Inform(ctx, refusal)
 	return refusal, nil
+}
+
+// sameNameOnHub is the Hub vault's name when a vault chosen on this
+// computer bears a name the Hub already lists (as the agent matches names:
+// without regard to case), else "".
+func sameNameOnHub(c Choice, m Menu) string {
+	if !c.Local {
+		return ""
+	}
+	name := strings.TrimSpace(c.Entry.Label)
+	for _, h := range m.Hub {
+		if strings.EqualFold(strings.TrimSpace(h.Label), name) {
+			return "“" + h.Label + "”"
+		}
+	}
+	return ""
 }
 
 // requestFor turns a choice into the flags the terminal would take: a

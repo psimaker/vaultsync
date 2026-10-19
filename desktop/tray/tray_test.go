@@ -472,6 +472,32 @@ func TestIssue176_TrayPairingAsksOnlyWhatTheAgentNeeds(t *testing.T) {
 		}
 	})
 
+	// A vault on this computer whose name the Hub already has is not sent
+	// as --create: the agent would resolve the Hub's vault (#228), and an
+	// empty folder would receive a vault the person did not choose. The
+	// terminal's words, and no second request.
+	agent = newFakeAgent(t)
+	agent.set(func(f *fakeAgent) {
+		inner := pairingScript(t, "TULIP-ANCHOR-42")
+		f.pair = func(req PairRequest) (PairResult, int) {
+			res, code := inner(req)
+			if res.Menu != nil {
+				res.Menu.Local = append(res.Menu.Local, MenuEntry{Label: "notes", Path: "/home/me/notes"})
+			}
+			return res, code
+		}
+	})
+	ask = &fakeAsker{code: "TULIP-ANCHOR-42", choose: func(m Menu) (Choice, bool) { return Choice{Local: true, Entry: m.Local[1]}, true }, agree: true}
+	line, err = Pair(ctx, NewClient(agent.socket), ask, home)
+	if err != nil || !strings.HasPrefix(line, "Your Hub already has a vault named “Notes”. To download it, choose it under On your Hub") || !reflect.DeepEqual(ask.sequence(), []string{"code", "vault", "inform"}) {
+		t.Fatalf("a taken name: %q %v %v", line, err, ask.sequence())
+	}
+	agent.set(func(f *fakeAgent) {
+		if len(f.pairs) != 1 {
+			t.Fatalf("requests after a taken name: %+v", f.pairs)
+		}
+	})
+
 	// Cancelled at the code: the agent is never asked. Cancelled at the
 	// menu: asked once, nothing more.
 	agent = newFakeAgent(t)
@@ -855,6 +881,22 @@ func TestIssue176_TrayOneInstancePerUser(t *testing.T) {
 	}
 	if _, err := os.Stat(missing); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("the lock made VaultSync's folder")
+	}
+	// A folder that cannot be looked at is an error — not a lock skipped,
+	// which would let a second instance run unnoticed.
+	if os.Getuid() == 0 {
+		t.Skip("root can look at anything")
+	}
+	parent := filepath.Join(dir, "closed")
+	if err := os.MkdirAll(filepath.Join(parent, "VaultSync"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(parent, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(parent, 0o700) })
+	if _, err := Lock(filepath.Join(parent, "VaultSync")); err == nil || errors.Is(err, ErrAlreadyRunning) {
+		t.Fatalf("an unreadable folder: %v", err)
 	}
 }
 

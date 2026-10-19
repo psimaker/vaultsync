@@ -102,14 +102,19 @@ func run(args []string) error {
 		Notify:   tray.Notify(runtime.GOOS, exec.LookPath),
 		Logf:     logger.Printf,
 	}
-	var runErr error
+	// The controller ends the tray (Quit after Run returns), and the tray
+	// ends the controller: when the native loop stops on its own — the
+	// system ending the app — its exit callback cancels ctx, and the result
+	// is waited for, so nothing touches the menu after it is gone.
+	done := make(chan error, 1)
 	systray.Run(func() {
 		ui.build()
 		go func() {
-			runErr = c.Run(ctx)
+			done <- c.Run(ctx)
 			systray.Quit()
 		}()
-	}, nil)
+	}, stop)
+	runErr := <-done
 	if errors.Is(runErr, context.Canceled) {
 		return nil
 	}

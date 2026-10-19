@@ -44,9 +44,13 @@ jobs:
         with:
           persist-credentials: false
 
+      # No build cache on a tag: what ships in a release is built from the
+      # module cache alone, never from a cache another run could have
+      # written to.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: desktop/go.mod
+          cache: ${{ github.ref_type != 'tag' }}
           cache-dependency-path: desktop/go.sum
 
       # Asset names are a contract with setup.sh: vaultsync_<goos>_<goarch>.
@@ -90,9 +94,13 @@ jobs:
         with:
           persist-credentials: false
 
+      # No build cache on a tag: what ships in a release is built from the
+      # module cache alone, never from a cache another run could have
+      # written to.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: desktop/go.mod
+          cache: ${{ github.ref_type != 'tag' }}
           cache-dependency-path: desktop/go.sum
 
       # Cocoa through cgo: both architectures from the one runner (clang
