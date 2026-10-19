@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/psimaker/vaultsync/desktop/internal/layout"
 )
 
 // shortDir is a temporary directory short enough for a socket address
@@ -31,6 +33,7 @@ func shortDir(t *testing.T) string {
 type fakeAgent struct {
 	t        *testing.T
 	stateDir string
+	layout   layout.Layout // rooted at stateDir, no log folder
 	socket   string
 	srv      *http.Server
 
@@ -53,6 +56,7 @@ func newFakeAgent(t *testing.T) *fakeAgent {
 	f.socket = filepath.Join(f.stateDir, "agent.sock")
 	f.status = Status{Version: "9.9.9", Syncthing: "2.1.6", Engine: "running", Hubs: []Hub{}, Vaults: []Vault{}, Waiting: []Waiting{}, Attempts: []Attempt{}}
 	f.writeState("")
+	f.layout = layout.Layout{}.At(f.stateDir)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
@@ -139,17 +143,30 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 // fakeUI records every view and lets the test click.
 type fakeUI struct {
+	t      *testing.T
 	events chan Event
 	views  chan View
 }
 
-func newFakeUI() *fakeUI {
-	return &fakeUI{events: make(chan Event), views: make(chan View, 64)}
+func newFakeUI(t *testing.T) *fakeUI {
+	return &fakeUI{t: t, events: make(chan Event), views: make(chan View, 64)}
 }
 
-func (u *fakeUI) Render(v View)            { u.views <- v }
-func (u *fakeUI) Events() <-chan Event     { return u.events }
-func (u *fakeUI) click(k EventKind, i int) { u.events <- Event{Kind: k, Index: i} }
+func (u *fakeUI) Render(v View)        { u.views <- v }
+func (u *fakeUI) Events() <-chan Event { return u.events }
+
+// send hands an event to the controller, or fails the test when nobody
+// takes it — a controller that ended early must not hang the test.
+func (u *fakeUI) send(ev Event) {
+	u.t.Helper()
+	select {
+	case u.events <- ev:
+	case <-time.After(10 * time.Second):
+		u.t.Fatalf("nobody took the event %+v: did the controller end?", ev)
+	}
+}
+
+func (u *fakeUI) click(k EventKind, i int) { u.send(Event{Kind: k, Index: i}) }
 
 // view waits for the next view that satisfies want.
 func (u *fakeUI) view(t *testing.T, what string, want func(View) bool) View {

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -115,7 +114,7 @@ func TestIssue176_TheTrayAndTheAgentShareEveryField(t *testing.T) {
 	same("pause", pauseResponse{}, tray.PauseResult{})
 	same("pair request", pairRequest{}, tray.PairRequest{})
 	// The agent omits empty optional fields; compare with them filled.
-	same("pair result", pairResponse{Refusal: "r", Needs: "n", Menu: &menuJSON{}}, tray.PairResult{Refusal: "r", Needs: "n", Menu: &tray.Menu{}})
+	same("pair result", pairResponse{Refusal: "r", Needs: "n", Consent: "c", Menu: &menuJSON{}}, tray.PairResult{Refusal: "r", Needs: "n", Consent: "c", Menu: &tray.Menu{}})
 	same("menu", menuJSON{Note: "n"}, tray.Menu{Note: "n"})
 	same("menu entry", menuEntryJSON{Path: "p", Vault: "v", Note: "n", Default: "d"}, tray.MenuEntry{Path: "p", Vault: "v", Note: "n", Default: "d"})
 }
@@ -132,29 +131,9 @@ func roundTrip(t *testing.T, from, to any) {
 }
 
 func TestIssue176_TheTrayLooksWhereTheAgentIs(t *testing.T) {
-	for _, c := range []struct{ goos, home, xdg string }{
-		{"darwin", "/Users/me", ""},
-		{"linux", "/home/me", ""},
-		{"linux", "/home/me", "/var/lib/me-state"},
-	} {
-		env := envOf(map[string]string{"XDG_STATE_HOME": c.xdg})
-		lay, err := layoutFor(c.goos, c.home, env)
-		if err != nil {
-			t.Fatal(err)
-		}
-		dir, err := tray.StateDir(c.goos, c.home, env)
-		if err != nil || dir != lay.Base {
-			t.Fatalf("%s: %q vs %q (%v)", c.goos, dir, lay.Base, err)
-		}
-		if c.goos == "darwin" {
-			if got := tray.LogPath(c.goos, c.home); got != filepath.Join(lay.Logs, "vaultsync.log") {
-				t.Fatalf("log: %q", got)
-			}
-		}
-	}
-
 	// The socket: the usual place, or the one agent.json records — the
-	// same the terminal's own client dials.
+	// same the terminal's own client dials. (Where VaultSync's folder and
+	// the log are is the shared layout's word, internal/layout.)
 	lay, err := layoutFor("linux", t.TempDir(), envOf(nil))
 	if err != nil {
 		t.Fatal(err)
@@ -165,7 +144,7 @@ func TestIssue176_TheTrayLooksWhereTheAgentIs(t *testing.T) {
 		if err := saveState(lay.State, st); err != nil {
 			t.Fatal(err)
 		}
-		got, err := tray.SocketPath(lay.Base)
+		got, err := tray.SocketPath(lay)
 		if err != nil || got != a.controlClient(st).Path() {
 			t.Fatalf("recorded %q: %q vs %q (%v)", recorded, got, a.controlClient(st).Path(), err)
 		}

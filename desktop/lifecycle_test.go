@@ -93,7 +93,7 @@ func TestIssue175_RunTakesTheStateDirSetupResolved(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 	lay, _ := layoutFor("linux", "/home/me", envOf(nil))
-	moved := lay.at("/srv/state/vaultsync")
+	moved := lay.At("/srv/state/vaultsync")
 	if moved.Agent != "/srv/state/vaultsync/bin/vaultsync" || moved.Home != "/srv/state/vaultsync/syncthing" || moved.Lock != "/srv/state/vaultsync/agent.lock" {
 		t.Fatalf("layout at: %+v", moved)
 	}

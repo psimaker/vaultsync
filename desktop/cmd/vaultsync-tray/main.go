@@ -24,6 +24,7 @@ import (
 	"syscall"
 
 	"fyne.io/systray"
+	"github.com/psimaker/vaultsync/desktop/internal/layout"
 	"github.com/psimaker/vaultsync/desktop/tray"
 )
 
@@ -81,15 +82,17 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	dir := *stateDir
-	if dir == "" {
-		if dir, err = tray.StateDir(runtime.GOOS, home, os.Getenv); err != nil {
-			return err
-		}
-	} else if !filepath.IsAbs(dir) {
-		return errors.New("--state-dir must be an absolute path")
+	lay, err := layout.For(runtime.GOOS, home, os.Getenv)
+	if err != nil {
+		return err
 	}
-	held, err := tray.TakeLock(dir)
+	if *stateDir != "" {
+		if !filepath.IsAbs(*stateDir) {
+			return errors.New("--state-dir must be an absolute path")
+		}
+		lay = lay.At(filepath.Clean(*stateDir))
+	}
+	held, err := tray.TakeLock(lay.Base)
 	if err != nil {
 		return err
 	}
@@ -103,15 +106,15 @@ func run(args []string) error {
 	ui := newMenu()
 	ui.onQuit = stop
 	c := &tray.Controller{
-		GOOS:     runtime.GOOS,
-		Home:     home,
-		StateDir: dir,
-		UI:       ui,
-		Asker:    tray.NewAsker(runtime.GOOS, exec.LookPath),
-		Open:     tray.Open(runtime.GOOS),
-		Notify:   tray.Notify(runtime.GOOS, exec.LookPath),
-		Logf:     logger.Printf,
-		Lock:     takeLock,
+		GOOS:   runtime.GOOS,
+		Home:   home,
+		Layout: lay,
+		UI:     ui,
+		Asker:  tray.NewAsker(runtime.GOOS, exec.LookPath),
+		Open:   tray.Open(runtime.GOOS),
+		Notify: tray.Notify(runtime.GOOS, exec.LookPath),
+		Logf:   logger.Printf,
+		Lock:   takeLock,
 	}
 	if held != nil {
 		c.Held = held

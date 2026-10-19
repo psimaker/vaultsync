@@ -54,6 +54,10 @@ var (
 type refusal struct {
 	msg   string
 	needs string
+	// consent is the question the terminal would ask when needs is yes —
+	// the sync-plugin warnings and the consent lines — for a caller that
+	// asks it in a dialog of its own.
+	consent string
 }
 
 func (r *refusal) Error() string { return r.msg }
@@ -907,15 +911,27 @@ func (s *pairSession) stillTheSame(p plan) error {
 
 // askConsent is rule 7's explicit consent for a folder that holds files,
 // naming the consequence; the default is No.
+// consentLines is the consent as the terminal asks it: the sync-plugin
+// warnings for the folder, then what syncing it means — the same lines a
+// caller without a terminal shows in its dialog (refusal.consent).
+func (s *pairSession) consentLines(name, path string) []string {
+	lines := syncPluginWarnings(path)
+	lines = append(lines,
+		fmt.Sprintf("%s at %s already contains files. VaultSync will sync this folder with %s.", quoted(name), tildePath(s.env.home, path), quoted(s.hubLabel())),
+		"Edits and deletions on connected devices will also change this folder.",
+		// Obsidian Sync cannot be detected from the vault (see syncPluginWarnings).
+		"If Obsidian Sync or another service also syncs this folder, turn that off for it first.")
+	return lines
+}
+
 func (s *pairSession) askConsent(name, path string) error {
-	for _, w := range syncPluginWarnings(path) {
-		s.t.say("  %s", w)
+	lines := s.consentLines(name, path)
+	for i, l := range lines {
+		if i == len(lines)-3 {
+			s.t.blank()
+		}
+		s.t.say("  %s", l)
 	}
-	s.t.blank()
-	s.t.say("  %s at %s already contains files. VaultSync will sync this folder with %s.", quoted(name), tildePath(s.env.home, path), quoted(s.hubLabel()))
-	s.t.say("  Edits and deletions on connected devices will also change this folder.")
-	// Obsidian Sync cannot be detected from the vault (see syncPluginWarnings).
-	s.t.say("  If Obsidian Sync or another service also syncs this folder, turn that off for it first.")
 	ok, err := s.t.confirm("  Start syncing?")
 	if err != nil {
 		return err
@@ -1019,6 +1035,11 @@ func (s *pairSession) downloadPlan(ctx context.Context, v pairing.VaultInfo, pat
 	if err != nil {
 		return plan{}, fmt.Errorf("the sync engine does not answer: %w", err)
 	}
+	return s.downloadPlanIn(ctx, v, path, folders)
+}
+
+// downloadPlanIn is downloadPlan against a folder list already fetched.
+func (s *pairSession) downloadPlanIn(ctx context.Context, v pairing.VaultInfo, path string, folders []syncthing.FolderConfig) (plan, error) {
 	path = resolveExistingPrefix(path)
 	// This vault may already sync on this computer (#228): at this very
 	// folder there is nothing to do — the overlap check below would report
@@ -1083,16 +1104,18 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 				// one exception is the vault already set up at this very
 				// folder: a setup run again with the same flags finds it
 				// (#228), which downloadPlan tells.
-				configured, err := s.configuredVault(ctx, v.ID)
+				folders, err := s.env.engine.Folders(ctx)
 				if err != nil {
-					return plan{}, err
+					return plan{}, fmt.Errorf("the sync engine does not answer: %w", err)
 				}
+				configured := folderByID(folders, v.ID)
 				switch {
 				case configured == nil:
-					return plan{}, refuse("Your Hub already has a vault named %s. Leave out --create to download it, or choose another name for a new vault.", quoted(pairing.SanitizeName(v.Label)))
+					return plan{}, refuse("Your Hub already has a vault named %s. Download it as the vault on your Hub (in a terminal: without --create), or choose another name for a new vault.", quoted(pairing.SanitizeName(v.Label)))
 				case !sameFolder(resolveExistingPrefix(path), configured.Path):
 					return plan{}, refuse("Your Hub already has a vault named %s, and it is set up to sync at %s on this computer. Choose another name for a new vault.", quoted(pairing.SanitizeName(v.Label)), tildePath(s.env.home, configured.Path))
 				}
+				return s.downloadPlanIn(ctx, v, path, folders)
 			}
 			return s.downloadPlan(ctx, v, path)
 		}
@@ -1127,7 +1150,9 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 	p := plan{kind: planNew, name: name, path: path, hadFiles: exists && !empty}.withIdentity()
 	if p.hadFiles && !s.opts.yes {
 		if !s.t.interactive() {
-			return plan{}, refuseNeeding("yes", "%s already contains files. VaultSync would sync it with your Hub as the new vault %s, and edits and deletions on connected devices would also change this folder. Pass --yes to agree.", tildePath(s.env.home, path), quoted(name))
+			r := refuseNeeding("yes", "%s already contains files. VaultSync would sync it with your Hub as the new vault %s, and edits and deletions on connected devices would also change this folder. Pass --yes to agree.", tildePath(s.env.home, path), quoted(name))
+			r.(*refusal).consent = strings.Join(s.consentLines(name, path), "\n")
+			return plan{}, r
 		}
 		if err := s.askConsent(name, path); err != nil {
 			return plan{}, err
@@ -1139,19 +1164,15 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 	return p, nil
 }
 
-// configuredVault is the engine's folder for this vault, nil when the
-// engine does not have it.
-func (s *pairSession) configuredVault(ctx context.Context, vaultID string) (*syncthing.FolderConfig, error) {
-	folders, err := s.env.engine.Folders(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("the sync engine does not answer: %w", err)
-	}
+// folderByID is the engine's folder for this vault, nil when the engine
+// does not have it.
+func folderByID(folders []syncthing.FolderConfig, vaultID string) *syncthing.FolderConfig {
 	for i := range folders {
 		if folders[i].ID == vaultID {
-			return &folders[i], nil
+			return &folders[i]
 		}
 	}
-	return nil, nil
+	return nil
 }
 
 // keepMenu builds the vault menu for a caller that has no terminal to read

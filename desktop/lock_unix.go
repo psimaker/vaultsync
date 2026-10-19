@@ -5,6 +5,7 @@ package main
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"syscall"
 
 	"github.com/psimaker/vaultsync/desktop/internal/lock"
@@ -15,6 +16,9 @@ import (
 // by another process is ErrEngineRunning — the one word every caller
 // checks, whichever lock it is.
 func lockFile(path string) (func(), error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, err
+	}
 	h, err := lock.Take(path)
 	if errors.Is(err, lock.ErrHeld) {
 		return nil, ErrEngineRunning
@@ -35,6 +39,9 @@ func sameDevice(a, b os.FileInfo) bool {
 // lockFileWait takes the lock like lockFile, but waits for it instead of
 // refusing: for the short, serialized updates of agent.json (updateState).
 func lockFileWait(path string) (func(), error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, err
+	}
 	h, err := lock.Wait(path)
 	if err != nil {
 		return nil, err

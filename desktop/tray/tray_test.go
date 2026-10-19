@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/psimaker/vaultsync/desktop/internal/control"
+	"github.com/psimaker/vaultsync/desktop/internal/layout"
 )
 
 func TestIssue176_TrayShowsWhatTheAgentReports(t *testing.T) {
@@ -141,55 +142,33 @@ func paused(st Status) Status {
 
 func TestIssue176_TrayFindsTheAgentWhereTheAgentSaysItIs(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := SocketPath(dir); !errors.Is(err, ErrNotSetUp) {
+	lay := layout.Layout{}.At(dir)
+	if _, err := SocketPath(lay); !errors.Is(err, ErrNotSetUp) {
 		t.Fatalf("no agent.json: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "agent.json"), []byte(`{"version":1,"guiPort":0}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := SocketPath(dir); !errors.Is(err, ErrNotSetUp) {
+	if _, err := SocketPath(lay); !errors.Is(err, ErrNotSetUp) {
 		t.Fatalf("no port yet: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "agent.json"), []byte(`{"version":1,"guiPort":8384}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if p, err := SocketPath(dir); err != nil || p != filepath.Join(dir, "agent.sock") {
+	if p, err := SocketPath(lay); err != nil || p != filepath.Join(dir, "agent.sock") {
 		t.Fatalf("the usual place: %q %v", p, err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "agent.json"), []byte(`{"version":1,"guiPort":8384,"controlSocket":"/run/user/1000/vaultsync-x/agent.sock"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if p, err := SocketPath(dir); err != nil || p != "/run/user/1000/vaultsync-x/agent.sock" {
+	if p, err := SocketPath(lay); err != nil || p != "/run/user/1000/vaultsync-x/agent.sock" {
 		t.Fatalf("the recorded place: %q %v", p, err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "agent.json"), []byte(`{"version":1,`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := SocketPath(dir); err == nil || errors.Is(err, ErrNotSetUp) || !strings.Contains(err.Error(), "damaged") {
+	if _, err := SocketPath(lay); err == nil || errors.Is(err, ErrNotSetUp) || !strings.Contains(err.Error(), "damaged") {
 		t.Fatalf("a damaged agent.json is reported, not read as unset: %v", err)
-	}
-
-	for _, c := range []struct{ goos, home, xdg, want string }{
-		{"darwin", "/Users/me", "", "/Users/me/Library/Application Support/VaultSync"},
-		{"linux", "/home/me", "", "/home/me/.local/state/vaultsync"},
-		{"linux", "/home/me", "/var/state", "/var/state/vaultsync"},
-		{"linux", "/home/me", "relative", "/home/me/.local/state/vaultsync"},
-	} {
-		got, err := StateDir(c.goos, c.home, func(k string) string {
-			if k == "XDG_STATE_HOME" {
-				return c.xdg
-			}
-			return ""
-		})
-		if err != nil || got != c.want {
-			t.Fatalf("%s %s %q: %q %v", c.goos, c.home, c.xdg, got, err)
-		}
-	}
-	if _, err := StateDir("windows", `C:\Users\me`, func(string) string { return "" }); err == nil {
-		t.Fatal("windows comes later")
-	}
-	if LogPath("darwin", "/Users/me") != "/Users/me/Library/Logs/VaultSync/vaultsync.log" || LogPath("linux", "/home/me") != "" {
-		t.Fatal("log paths")
 	}
 }
 
@@ -277,7 +256,10 @@ func controllerFor(t *testing.T, agent *fakeAgent, ui *fakeUI, c *Controller) {
 		c.GOOS = "darwin"
 	}
 	c.Home = "/home/me"
-	c.StateDir = agent.stateDir
+	c.Layout = agent.layout
+	if c.GOOS == "darwin" {
+		c.Layout.Logs = "/home/me/Library/Logs/VaultSync"
+	}
 	c.UI = ui
 	c.Poll = time.Hour
 	c.StatusTimeout = 5 * time.Second
@@ -300,23 +282,23 @@ func TestIssue176_TrayPauseAndResumeAskOnlyTheAgent(t *testing.T) {
 		f.status.Hubs = []Hub{{Name: "Office Hub", State: "connected"}}
 		f.status.Vaults = []Vault{{Label: "Notes", Path: "/home/me/Notes", State: "up to date"}}
 	})
-	ui := newFakeUI()
+	ui := newFakeUI(t)
 	var notes []string
 	var mu sync.Mutex
 	controllerFor(t, agent, ui, &Controller{Notify: func(_ context.Context, s string) { mu.Lock(); notes = append(notes, s); mu.Unlock() }})
 	ui.view(t, "up to date", func(v View) bool { return v.Headline == "Up to date" })
 
-	ui.events <- Event{Kind: EventPause, Pause: true}
+	ui.send(Event{Kind: EventPause, Pause: true})
 	v := ui.view(t, "paused", func(v View) bool { return v.Glyph == GlyphPaused })
 	if v.Pause.Title != "Resume Syncing" || v.Notice != "" {
 		t.Fatalf("after pause: %+v", v)
 	}
 	// A click queued behind the first (still asking to pause) must not
 	// undo it: asking for the state already in place does nothing.
-	ui.events <- Event{Kind: EventPause, Pause: true}
+	ui.send(Event{Kind: EventPause, Pause: true})
 	ui.click(EventOpened, 0)
 	ui.view(t, "still paused", func(v View) bool { return v.Glyph == GlyphPaused })
-	ui.events <- Event{Kind: EventPause, Pause: false}
+	ui.send(Event{Kind: EventPause, Pause: false})
 	ui.view(t, "resumed", func(v View) bool { return v.Glyph == GlyphSynced && v.Pause.Title == "Pause Syncing" })
 	agent.set(func(f *fakeAgent) {
 		if !reflect.DeepEqual(f.calls, []string{"pause", "resume"}) {
@@ -328,7 +310,7 @@ func TestIssue176_TrayPauseAndResumeAskOnlyTheAgent(t *testing.T) {
 	agent.set(func(f *fakeAgent) { f.hubs = 0; f.status.Hubs = []Hub{} })
 	ui.click(EventOpened, 0)
 	ui.view(t, "no Hub", func(v View) bool { return v.Headline == "No Hub paired yet" })
-	ui.events <- Event{Kind: EventPause, Pause: true}
+	ui.send(Event{Kind: EventPause, Pause: true})
 	v = ui.view(t, "the notice", func(v View) bool { return v.Notice != "" })
 	if v.Notice != "No Hub is paired with this computer yet, so there is nothing to pause." {
 		t.Fatalf("notice: %q", v.Notice)
@@ -346,7 +328,7 @@ func TestIssue176_TrayPauseAndResumeAskOnlyTheAgent(t *testing.T) {
 	if v.Pause.Enabled || v.Pair.Enabled {
 		t.Fatalf("actions without an agent: %+v", v)
 	}
-	ui.events <- Event{Kind: EventPause, Pause: true}
+	ui.send(Event{Kind: EventPause, Pause: true})
 	ui.click(EventOpened, 0)
 	ui.view(t, "still not running", func(v View) bool { return v.Headline == "VaultSync is not running" })
 	agent.set(func(f *fakeAgent) {
@@ -379,7 +361,7 @@ func (l *fakeLock) Release()    { l.mu.Lock(); defer l.mu.Unlock(); l.released =
 
 func TestIssue176_TrayTakesTheLockOnceTheFolderIsThere(t *testing.T) {
 	agent := newFakeAgent(t)
-	ui := newFakeUI()
+	ui := newFakeUI(t)
 	var mu sync.Mutex
 	var tries int
 	var handles []*fakeLock
@@ -429,16 +411,37 @@ func TestIssue176_TrayTakesTheLockOnceTheFolderIsThere(t *testing.T) {
 	}
 	mu.Unlock()
 
+	// Any other failure to take the lock is said in the menu and tried
+	// again — the app stays.
+	ui4 := newFakeUI(t)
+	var fails int
+	c4 := &Controller{Lock: func(string) (LockHandle, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		fails++
+		if fails == 1 {
+			return nil, errors.New("open tray.lock: permission denied")
+		}
+		return &fakeLock{valid: true}, nil
+	}}
+	controllerFor(t, agent, ui4, c4)
+	v := ui4.view(t, "the lock notice", func(v View) bool { return strings.Contains(v.Notice, "could not be locked") })
+	if v.Headline == "" {
+		t.Fatalf("the menu goes on: %+v", v)
+	}
+	ui4.click(EventOpened, 0)
+	ui4.view(t, "held after all", func(v View) bool { return c4.Held != nil })
+
 	// A second instance found running ends the loop with its error.
-	ui2 := newFakeUI()
-	c2 := &Controller{GOOS: "darwin", Home: "/home/me", StateDir: agent.stateDir, UI: ui2, Poll: time.Hour, Lock: func(string) (LockHandle, error) { return nil, ErrAlreadyRunning }}
+	ui2 := newFakeUI(t)
+	c2 := &Controller{GOOS: "darwin", Home: "/home/me", Layout: agent.layout, UI: ui2, Poll: time.Hour, Lock: func(string) (LockHandle, error) { return nil, ErrAlreadyRunning }}
 	if err := c2.Run(context.Background()); !errors.Is(err, ErrAlreadyRunning) {
 		t.Fatalf("a second instance: %v", err)
 	}
 	// One already held at start is never asked for again while it is
 	// valid, and released on the way out.
 	start := &fakeLock{valid: true}
-	c3 := &Controller{GOOS: "darwin", Home: "/home/me", StateDir: agent.stateDir, UI: newFakeUI(), Poll: time.Hour, Held: start, Lock: func(string) (LockHandle, error) { t.Error("asked again"); return nil, nil }}
+	c3 := &Controller{GOOS: "darwin", Home: "/home/me", Layout: agent.layout, UI: newFakeUI(t), Poll: time.Hour, Held: start, Lock: func(string) (LockHandle, error) { t.Error("asked again"); return nil, nil }}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := c3.Run(ctx); !errors.Is(err, context.Canceled) || !start.released {
@@ -454,7 +457,7 @@ func TestIssue176_TrayShowsTheLastOutcomeAfterAnAction(t *testing.T) {
 	if err := os.Remove(filepath.Join(agent.stateDir, "agent.json")); err != nil {
 		t.Fatal(err)
 	}
-	ui := newFakeUI()
+	ui := newFakeUI(t)
 	controllerFor(t, agent, ui, &Controller{Open: func(context.Context, string) error { return errors.New("no such file") }})
 	ui.view(t, "not set up", func(v View) bool { return v.Headline == "VaultSync is not set up on this computer yet" })
 	ui.click(EventOpenLog, 0)
@@ -471,7 +474,7 @@ func TestIssue176_TrayOpensOnlyWhatTheAgentListed(t *testing.T) {
 		f.status.Hubs = []Hub{{Name: "Office Hub", State: "connected"}}
 		f.status.Vaults = []Vault{{Label: "Notes", Path: "/home/me/Notes", State: "up to date"}, {Label: "Odd", Path: "relative/path", State: "up to date"}}
 	})
-	ui := newFakeUI()
+	ui := newFakeUI(t)
 	var mu sync.Mutex
 	var opened []string
 	open := func(_ context.Context, p string) error {
@@ -537,7 +540,7 @@ func pairingScript(t *testing.T, code string) func(PairRequest) (PairResult, int
 		case req.Vault == "" || req.Path == "":
 			return PairResult{Output: "✓ Connected to “Office Hub”\n", Refusal: "Pass --vault NAME and --path FOLDER (with --create for a new vault on your Hub) — there is no terminal to ask on.", Needs: "vault", Menu: menu}, 200
 		case req.Create && !req.Yes:
-			return PairResult{Refusal: "~/Work already contains files. VaultSync would sync it with your Hub as the new vault “Work”, and edits and deletions on connected devices would also change this folder. Pass --yes to agree.", Needs: "yes"}, 200
+			return PairResult{Refusal: "~/Work already contains files. VaultSync would sync it with your Hub as the new vault “Work”, and edits and deletions on connected devices would also change this folder. Pass --yes to agree.", Needs: "yes", Consent: "Remotely Save is enabled in “Work”; two services syncing one folder work against each other.\n“Work” at ~/Work already contains files. VaultSync will sync this folder with “Office Hub”.\nEdits and deletions on connected devices will also change this folder.\nIf Obsidian Sync or another service also syncs this folder, turn that off for it first."}, 200
 		}
 		return PairResult{OK: true, Output: "✓ Connected to “Office Hub”\n\n✓ “" + req.Vault + "” is set up to sync at " + req.Path + ". First sync is starting; check vaultsync status.\n"}, 200
 	}
@@ -545,7 +548,6 @@ func pairingScript(t *testing.T, code string) func(PairRequest) (PairResult, int
 
 func TestIssue176_TrayPairingAsksOnlyWhatTheAgentNeeds(t *testing.T) {
 	ctx := context.Background()
-	home := "/home/me"
 	chooseLocal := func(m Menu) (Choice, bool) { return Choice{Local: true, Entry: m.Local[0]}, true }
 	chooseHub := func(m Menu) (Choice, bool) { return Choice{Entry: m.Hub[0]}, true }
 
@@ -553,7 +555,7 @@ func TestIssue176_TrayPairingAsksOnlyWhatTheAgentNeeds(t *testing.T) {
 	agent := newFakeAgent(t)
 	agent.set(func(f *fakeAgent) { f.pair = pairingScript(t, "TULIP-ANCHOR-42") })
 	ask := &fakeAsker{code: "TULIP-ANCHOR-42", choose: chooseLocal, agree: true}
-	line, err := Pair(ctx, NewClient(agent.socket), ask, home)
+	line, err := Pair(ctx, NewClient(agent.socket), ask)
 	if err != nil || !strings.HasPrefix(line, "✓ “Work” is set up to sync at /home/me/Work") {
 		t.Fatalf("pairing: %q %v", line, err)
 	}
@@ -570,7 +572,9 @@ func TestIssue176_TrayPairingAsksOnlyWhatTheAgentNeeds(t *testing.T) {
 			t.Fatalf("requests:\n%+v\nwant\n%+v", f.pairs, want)
 		}
 	})
-	if len(ask.texts) != 1 || !strings.Contains(ask.texts[0], "~/Work already contains files") || strings.Contains(ask.texts[0], "--yes") || !strings.Contains(ask.texts[0], "Obsidian Sync") {
+	// The dialog shows the agent's consent — the terminal's lines, the
+	// plugin warning first — never the refusal with its flag.
+	if len(ask.texts) != 1 || !strings.HasPrefix(ask.texts[0], "Remotely Save is enabled") || !strings.Contains(ask.texts[0], "“Work” at ~/Work already contains files") || strings.Contains(ask.texts[0], "--yes") || !strings.Contains(ask.texts[0], "Obsidian Sync") {
 		t.Fatalf("the consent text: %q", ask.texts)
 	}
 	if len(ask.menus) != 1 || ask.menus[0].Hub[0].Vault != "vs-aaaaaaaaaaaa" || len(ask.menus[0].Unavailable) != 1 {
@@ -584,7 +588,7 @@ func TestIssue176_TrayPairingAsksOnlyWhatTheAgentNeeds(t *testing.T) {
 	agent = newFakeAgent(t)
 	agent.set(func(f *fakeAgent) { f.pair = pairingScript(t, "TULIP-ANCHOR-42") })
 	ask = &fakeAsker{code: "TULIP-ANCHOR-42", choose: chooseLocal, agree: false}
-	if line, err := Pair(ctx, NewClient(agent.socket), ask, home); err != nil || line != "" {
+	if line, err := Pair(ctx, NewClient(agent.socket), ask); err != nil || line != "" {
 		t.Fatalf("declined consent: %q %v", line, err)
 	}
 	agent.set(func(f *fakeAgent) {
@@ -601,7 +605,7 @@ func TestIssue176_TrayPairingAsksOnlyWhatTheAgentNeeds(t *testing.T) {
 	agent = newFakeAgent(t)
 	agent.set(func(f *fakeAgent) { f.pair = pairingScript(t, "TULIP-ANCHOR-42") })
 	ask = &fakeAsker{code: "TULIP-ANCHOR-42", choose: chooseHub}
-	if line, err := Pair(ctx, NewClient(agent.socket), ask, home); err != nil || !strings.Contains(line, "“vs-aaaaaaaaaaaa” is set up to sync at /home/me/Vaults/Notes") {
+	if line, err := Pair(ctx, NewClient(agent.socket), ask); err != nil || !strings.Contains(line, "“vs-aaaaaaaaaaaa” is set up to sync at /home/me/Vaults/Notes") {
 		t.Fatalf("a Hub vault: %q %v", line, err)
 	}
 	agent.set(func(f *fakeAgent) {
@@ -621,7 +625,7 @@ func TestIssue176_TrayPairingAsksOnlyWhatTheAgentNeeds(t *testing.T) {
 		}
 	})
 	ask = &fakeAsker{code: "TULIP-ANCHOR-42", choose: chooseHub}
-	if line, err := Pair(ctx, NewClient(agent.socket), ask, home); err != nil || !strings.Contains(line, "did not say where to put Notes") || !reflect.DeepEqual(ask.sequence(), []string{"code", "vault", "inform"}) {
+	if line, err := Pair(ctx, NewClient(agent.socket), ask); err != nil || !strings.Contains(line, "did not say where to put Notes") || !reflect.DeepEqual(ask.sequence(), []string{"code", "vault", "inform"}) {
 		t.Fatalf("no default folder: %q %v %v", line, err, ask.sequence())
 	}
 	agent.set(func(f *fakeAgent) {
@@ -648,7 +652,7 @@ func TestIssue176_TrayPairingAsksOnlyWhatTheAgentNeeds(t *testing.T) {
 		}
 	})
 	ask = &fakeAsker{code: "TULIP-ANCHOR-42", choose: func(m Menu) (Choice, bool) { return Choice{Local: true, Entry: m.Local[1]}, true }, agree: true}
-	line, err = Pair(ctx, NewClient(agent.socket), ask, home)
+	line, err = Pair(ctx, NewClient(agent.socket), ask)
 	if err != nil || !strings.HasPrefix(line, "Your Hub already has a vault named “Notes”.") || !reflect.DeepEqual(ask.sequence(), []string{"code", "vault", "inform"}) {
 		t.Fatalf("a taken name: %q %v %v", line, err, ask.sequence())
 	}
@@ -663,15 +667,15 @@ func TestIssue176_TrayPairingAsksOnlyWhatTheAgentNeeds(t *testing.T) {
 	agent = newFakeAgent(t)
 	agent.set(func(f *fakeAgent) { f.pair = pairingScript(t, "TULIP-ANCHOR-42") })
 	ask = &fakeAsker{code: "TULIP-ANCHOR-42", cancel: "code"}
-	if line, err := Pair(ctx, NewClient(agent.socket), ask, home); err != nil || line != "" {
+	if line, err := Pair(ctx, NewClient(agent.socket), ask); err != nil || line != "" {
 		t.Fatalf("cancelled: %q %v", line, err)
 	}
 	ask = &fakeAsker{code: "  ", cancel: ""}
-	if line, err := Pair(ctx, NewClient(agent.socket), ask, home); err != nil || !strings.HasPrefix(line, "Enter the code your Hub printed") || len(ask.told) != 1 {
+	if line, err := Pair(ctx, NewClient(agent.socket), ask); err != nil || !strings.HasPrefix(line, "Enter the code your Hub printed") || len(ask.told) != 1 {
 		t.Fatalf("an empty code is said, not swallowed: %q %v %v", line, err, ask.told)
 	}
 	ask = &fakeAsker{code: "TULIP-ANCHOR-42", cancel: "vault"}
-	if line, err := Pair(ctx, NewClient(agent.socket), ask, home); err != nil || line != "" {
+	if line, err := Pair(ctx, NewClient(agent.socket), ask); err != nil || line != "" {
 		t.Fatalf("cancelled at the menu: %q %v", line, err)
 	}
 	agent.set(func(f *fakeAgent) {
@@ -682,7 +686,7 @@ func TestIssue176_TrayPairingAsksOnlyWhatTheAgentNeeds(t *testing.T) {
 
 	// A wrong code: the agent's refusal, shown, and the conversation ends.
 	ask = &fakeAsker{code: "WRONG-CODE-00", choose: chooseLocal, agree: true}
-	line, err = Pair(ctx, NewClient(agent.socket), ask, home)
+	line, err = Pair(ctx, NewClient(agent.socket), ask)
 	if err != nil || !strings.Contains(line, "did not accept this code") || !reflect.DeepEqual(ask.sequence(), []string{"code", "inform"}) {
 		t.Fatalf("a wrong code: %q %v %v", line, err, ask.sequence())
 	}
@@ -699,7 +703,7 @@ func TestIssue176_TrayPairingAsksOnlyWhatTheAgentNeeds(t *testing.T) {
 		}
 	})
 	ask = &fakeAsker{code: "TULIP-ANCHOR-42", hub: "192.168.1.20", choose: chooseHub}
-	if line, err := Pair(ctx, NewClient(agent.socket), ask, home); err != nil || !strings.Contains(line, "is set up") {
+	if line, err := Pair(ctx, NewClient(agent.socket), ask); err != nil || !strings.Contains(line, "is set up") {
 		t.Fatalf("several Hubs: %q %v", line, err)
 	}
 	if got := ask.sequence(); len(got) != 4 || !strings.HasPrefix(got[1], "hub:2 Hubs answered") {
@@ -722,7 +726,7 @@ func TestIssue176_TrayPairingAsksOnlyWhatTheAgentNeeds(t *testing.T) {
 		}
 	})
 	ask = &fakeAsker{code: "TULIP-ANCHOR-42", choose: chooseLocal}
-	if line, err := Pair(ctx, NewClient(agent.socket), ask, home); err != nil || !strings.HasPrefix(line, "VaultSync asked for the same answer again; run vaultsync pair in a terminal. It said: Pass --vault") || !reflect.DeepEqual(ask.sequence(), []string{"code", "vault", "inform"}) {
+	if line, err := Pair(ctx, NewClient(agent.socket), ask); err != nil || !strings.HasPrefix(line, "VaultSync asked for the same answer again; run vaultsync pair in a terminal. It said: Pass --vault") || !reflect.DeepEqual(ask.sequence(), []string{"code", "vault", "inform"}) {
 		t.Fatalf("asked twice: %q %v %v", line, err, ask.sequence())
 	}
 	agent.set(func(f *fakeAgent) {
@@ -741,7 +745,7 @@ func TestIssue176_TrayPairingAsksOnlyWhatTheAgentNeeds(t *testing.T) {
 		}
 	})
 	ask = &fakeAsker{code: "TULIP-ANCHOR-42"}
-	if line, err := Pair(ctx, NewClient(agent.socket), ask, home); err != nil || !strings.Contains(line, "Add --create") || ask.told[0] != line {
+	if line, err := Pair(ctx, NewClient(agent.socket), ask); err != nil || !strings.Contains(line, "Add --create") || ask.told[0] != line {
 		t.Fatalf("create: %q %v", line, err)
 	}
 	agent.set(func(f *fakeAgent) {
@@ -750,12 +754,12 @@ func TestIssue176_TrayPairingAsksOnlyWhatTheAgentNeeds(t *testing.T) {
 		}
 	})
 	ask = &fakeAsker{code: "TULIP-ANCHOR-42"}
-	if line, err := Pair(ctx, NewClient(agent.socket), ask, home); err == nil || line != "" || !strings.Contains(err.Error(), "wait for it to finish") || ask.told[0] != err.Error() {
+	if line, err := Pair(ctx, NewClient(agent.socket), ask); err == nil || line != "" || !strings.Contains(err.Error(), "wait for it to finish") || ask.told[0] != err.Error() {
 		t.Fatalf("busy: %q %v %v", line, err, ask.told)
 	}
 	agent.stop()
 	ask = &fakeAsker{code: "TULIP-ANCHOR-42"}
-	if _, err := Pair(ctx, NewClient(agent.socket), ask, home); !errors.Is(err, ErrNoAgent) || len(ask.told) != 1 {
+	if _, err := Pair(ctx, NewClient(agent.socket), ask); !errors.Is(err, ErrNoAgent) || len(ask.told) != 1 {
 		t.Fatalf("no agent: %v %v", err, ask.told)
 	}
 
@@ -764,7 +768,7 @@ func TestIssue176_TrayPairingAsksOnlyWhatTheAgentNeeds(t *testing.T) {
 	expired, cancel := context.WithCancel(context.Background())
 	cancel()
 	ask = &fakeAsker{code: "TULIP-ANCHOR-42"}
-	if _, err := Pair(expired, NewClient(agent.socket), ask, home); !errors.Is(err, context.Canceled) || len(ask.told) != 0 {
+	if _, err := Pair(expired, NewClient(agent.socket), ask); !errors.Is(err, context.Canceled) || len(ask.told) != 0 {
 		t.Fatalf("a context that is done: %v told %v", err, ask.told)
 	}
 	if got := pairingOutcome("", context.DeadlineExceeded); got != pairingTimeoutNotice {
@@ -788,7 +792,7 @@ func TestIssue176_TrayRunsAPairingWhileTheMenuGoesOn(t *testing.T) {
 		f.status.Hubs = []Hub{{Name: "Office Hub", State: "connected"}}
 		f.pair = pairingScript(t, "TULIP-ANCHOR-42")
 	})
-	ui := newFakeUI()
+	ui := newFakeUI(t)
 	ask := &fakeAsker{code: "TULIP-ANCHOR-42", agree: true, release: make(chan struct{}), choose: func(m Menu) (Choice, bool) { return Choice{Local: true, Entry: m.Local[0]}, true }}
 	var mu sync.Mutex
 	var notes []string
@@ -817,7 +821,7 @@ func TestIssue176_TrayRunsAPairingWhileTheMenuGoesOn(t *testing.T) {
 
 	// Without dialogs there is no pairing from the menu, and a click does
 	// not reach the agent.
-	ui2 := newFakeUI()
+	ui2 := newFakeUI(t)
 	agent2 := newFakeAgent(t)
 	agent2.set(func(f *fakeAgent) {
 		f.hubs = 1

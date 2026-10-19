@@ -15,6 +15,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"sync/atomic"
 	"syscall"
@@ -117,6 +118,12 @@ func (c *Client) Do(ctx context.Context, method, path string, in, out any) error
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
+		// The request's URL is an internal name, not something to show
+		// a person: the cause is handed on by itself.
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			err = ue.Err
+		}
 		var ne *net.OpError
 		if errors.As(err, &ne) && ne.Op == "dial" && (errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED)) {
 			return ErrNoAgent

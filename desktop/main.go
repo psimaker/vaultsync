@@ -554,7 +554,7 @@ func installAgentCopy(dst string) (bool, error) {
 
 func (a *app) logHint() string {
 	if a.goos == "darwin" {
-		return tildePath(a.home, filepath.Join(a.lay.Logs, "vaultsync.log"))
+		return tildePath(a.home, a.lay.LogFile())
 	}
 	return "journalctl --user -u vaultsync"
 }
@@ -736,7 +736,7 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 		if !filepath.IsAbs(*stateDir) {
 			return errors.New("--state-dir must be an absolute path")
 		}
-		a.lay = a.lay.at(filepath.Clean(*stateDir))
+		a.lay = a.lay.At(filepath.Clean(*stateDir))
 		a.svc.lay = a.lay
 	}
 	stateDirShown = a.lay.Base

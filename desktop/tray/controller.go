@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/psimaker/vaultsync/desktop/internal/layout"
 )
 
 // The loop that keeps the menu and the agent together: it asks the agent
@@ -45,8 +47,9 @@ type UI interface {
 // the loop runs; tests give it fakes.
 type Controller struct {
 	GOOS, Home string
-	StateDir   string
-	UI         UI
+	// Layout is where the agent keeps its files on this computer.
+	Layout layout.Layout
+	UI     UI
 	// Asker shows the pairing dialogs; nil when this computer cannot
 	// (the Pair item then says to use a terminal).
 	Asker Asker
@@ -54,14 +57,14 @@ type Controller struct {
 	Open func(ctx context.Context, path string) error
 	// Notify shows a short notification, or nothing (nil).
 	Notify func(ctx context.Context, text string)
-	// Poll is how often the agent is asked between opens; 0 is 10 s.
+	// Poll is how often the agent is asked between opens; 0 is 30 s.
 	Poll time.Duration
 	// Logf writes a line to the log (stderr); nil discards.
 	Logf func(string, ...any)
 	// StatusTimeout bounds one status request; 0 is 10 s.
 	StatusTimeout time.Duration
-	// Lock takes the one-instance lock (TakeLock); Held is one the caller
-	// already holds. Not held — VaultSync's folder was not there at start
+	// Lock takes the one-instance lock (TakeLock, with the layout's Base);
+	// Held is one the caller already holds. Not held — VaultSync's folder was not there at start
 	// — it is tried again at every refresh, so a second instance started
 	// before setup ends once setup made the folder; one that stopped
 	// being valid (the file taken away) is released and taken again.
@@ -166,13 +169,15 @@ func (c *Controller) takeLock() error {
 	if c.Held != nil {
 		return nil
 	}
-	held, err := c.Lock(c.StateDir)
+	held, err := c.Lock(c.Layout.Base)
 	if errors.Is(err, ErrAlreadyRunning) {
 		return err
 	}
 	if err != nil {
+		// The words for the menu; the log gets the fact alone (the error
+		// names VaultSync's folder).
 		c.notice = "VaultSync's folder could not be locked for this menu-bar app (" + err.Error() + "); trying again"
-		c.logf("one-instance lock: %v", err)
+		c.logf("one-instance lock: could not be taken; trying again at the next refresh")
 		return nil
 	}
 	if held != nil {
@@ -209,8 +214,11 @@ func (c *Controller) refresh(ctx context.Context) error {
 		st, err = cl.Status(sctx)
 		cancel()
 	}
-	if errors.Is(err, ErrNoAgent) && SocketErrorRecorded(c.StateDir) {
+	if errors.Is(err, ErrNoAgent) && SocketErrorRecorded(c.Layout) {
 		err = ErrNoSocket
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		err = errNoAnswer
 	}
 	c.status, c.known, c.lastErr = st, err == nil, err
 	c.render()
@@ -222,7 +230,7 @@ func (c *Controller) refresh(ctx context.Context) error {
 func (c *Controller) render() {
 	c.view = Render(c.status, c.lastErr, Options{
 		Home:    c.Home,
-		LogPath: LogPath(c.GOOS, c.Home),
+		LogPath: c.Layout.LogFile(),
 		Pairing: c.pairing,
 		CanAsk:  c.Asker != nil,
 		Notice:  c.notice,
@@ -233,7 +241,7 @@ func (c *Controller) render() {
 // client is the agent as agent.json names it right now: one client, and
 // its one connection, for as long as the socket's place stays the same.
 func (c *Controller) client() (*Client, error) {
-	path, err := SocketPath(c.StateDir)
+	path, err := SocketPath(c.Layout)
 	if err != nil {
 		return nil, err
 	}
@@ -254,7 +262,7 @@ func (c *Controller) openVault(ctx context.Context, i int) {
 }
 
 func (c *Controller) openLog(ctx context.Context) {
-	if path := LogPath(c.GOOS, c.Home); path != "" {
+	if path := c.Layout.LogFile(); path != "" {
 		c.openPath(ctx, path)
 	}
 }
@@ -285,6 +293,9 @@ func (c *Controller) setPaused(ctx context.Context, pause bool) error {
 		cancel()
 	}
 	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		c.notice = errNoAnswer.Error()
+		c.notify(ctx, c.notice)
 	case err != nil:
 		c.notice = err.Error()
 		c.notify(ctx, c.notice)
@@ -321,9 +332,11 @@ func (c *Controller) startPairing(ctx context.Context, done chan<- string) {
 	go func() {
 		pctx, cancel := context.WithTimeout(ctx, pairTimeout)
 		defer cancel()
-		line, err := Pair(pctx, cl, c.Asker, c.Home)
+		line, err := Pair(pctx, cl, c.Asker)
 		if err != nil {
-			c.logf("pairing: %v", err)
+			// The fact for the log; the words — which may name a vault or
+			// a folder — go to the menu's notice and the dialog.
+			c.logf("pairing: ended with an error; the menu says which")
 		}
 		line = pairingOutcome(line, err)
 		// The time limit is the one end no dialog told the person about;
@@ -334,6 +347,10 @@ func (c *Controller) startPairing(ctx context.Context, done chan<- string) {
 		done <- line
 	}()
 }
+
+// errNoAnswer: the agent took longer than the request's limit — busy, or
+// stuck; the next refresh asks again.
+var errNoAnswer = errors.New("VaultSync did not answer in time; it may be busy, and is asked again")
 
 // pairingTimeoutNotice says what a pairing that ran out of time leaves
 // behind: the agent may still finish what it had taken on.

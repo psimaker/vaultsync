@@ -73,8 +73,12 @@ type pairResponse struct {
 	// Needs is the flag the refusal asks for — code, hub, vault, create or
 	// yes — when it asks for one (refuseNeeding), so a caller asks the
 	// person for exactly that and never reads the refusal's words for it.
-	Needs string    `json:"needs,omitempty"`
-	Menu  *menuJSON `json:"menu,omitempty"`
+	Needs string `json:"needs,omitempty"`
+	// Consent, with needs yes, is the question the terminal would ask —
+	// the folder's sync-plugin warnings and what syncing it means, line by
+	// line — for the caller's own dialog.
+	Consent string    `json:"consent,omitempty"`
+	Menu    *menuJSON `json:"menu,omitempty"`
 }
 
 type menuJSON struct {
@@ -561,6 +565,7 @@ func (c *controlServer) pair(w http.ResponseWriter, r *http.Request) {
 	case errors.As(err, &ref):
 		resp.Refusal = redactPaths(ref.msg)
 		resp.Needs = ref.needs
+		resp.Consent = redactPaths(ref.consent)
 	default:
 		fail(w, http.StatusInternalServerError, errors.New(redactPaths(err.Error())))
 		return

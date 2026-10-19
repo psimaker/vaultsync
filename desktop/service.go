@@ -110,7 +110,7 @@ func (s service) unitFile(exe string) ([]byte, error) {
 	}
 	switch s.goos {
 	case "darwin":
-		return launchdPlist(exe, s.lay.Base, filepath.Join(s.lay.Logs, "vaultsync.log")), nil
+		return launchdPlist(exe, s.lay.Base, s.lay.LogFile()), nil
 	case "linux":
 		return systemdUnitFile(exe, s.lay.Base), nil
 	}

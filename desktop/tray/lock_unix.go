@@ -34,6 +34,11 @@ func TakeLock(stateDir string) (*Lock, error) {
 	if errors.Is(err, lock.ErrHeld) {
 		return nil, ErrAlreadyRunning
 	}
+	if errors.Is(err, os.ErrNotExist) {
+		// Gone between the look and the lock (an uninstall): nothing to
+		// lock, and nothing is made in its place.
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -73,6 +73,8 @@ type PairResult struct {
 	Output  string `json:"output"`
 	Refusal string `json:"refusal"`
 	Needs   string `json:"needs"`
+	// Consent, with Needs yes, is the question the terminal would ask.
+	Consent string `json:"consent"`
 	Menu    *Menu  `json:"menu"`
 }
 

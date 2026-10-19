@@ -538,9 +538,15 @@ func TestIssue176_PairOverTheSocketIsTheFlagFlow(t *testing.T) {
 	// terminal would ask for: yes, passed by the caller — never assumed.
 	work := filepath.Join(a.home, "Work")
 	mkVault(t, work)
+	writeFile(t, filepath.Join(work, ".obsidian", "community-plugins.json"), `["remotely-save"]`)
 	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Work", Create: true, Path: work})
 	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "already contains files") || !strings.Contains(pr.Refusal, "--yes") || pr.Needs != "yes" {
 		t.Fatalf("a folder with files without consent: %+v %v", pr, err)
+	}
+	// The consent for a dialog is the terminal's: the plugin warning, the
+	// lines askConsent prints, and no flag.
+	if !strings.Contains(pr.Consent, "Remotely Save") || !strings.Contains(pr.Consent, "“Work” at ~/Work already contains files. VaultSync will sync this folder with") || !strings.Contains(pr.Consent, "turn that off for it first.") || strings.Contains(pr.Consent, "--yes") {
+		t.Fatalf("the consent text:\n%s", pr.Consent)
 	}
 	if eng.folderCount() != 1 {
 		t.Fatalf("a refusal added a folder: %+v", eng.folders)

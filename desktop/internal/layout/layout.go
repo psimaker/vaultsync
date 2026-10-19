@@ -1,0 +1,70 @@
+// Package layout is everything VaultSync keeps on this computer, for the
+// agent that keeps it and the menu-bar app that reads it: one answer to
+// where VaultSync's folder, the control socket and the service's log are.
+// Vaults are never in here: they stay where the user keeps them.
+package layout
+
+import (
+	"errors"
+	"fmt"
+	"path/filepath"
+)
+
+type Layout struct {
+	Base      string // one directory, 0700
+	Bin       string // Base/bin
+	Agent     string // Base/bin/vaultsync — the copy the background service runs
+	Syncthing string // Base/bin/syncthing — the pinned engine
+	Home      string // Base/syncthing — the engine's identity, config and database
+	State     string // Base/agent.json
+	Lock      string // Base/agent.lock — held by the one running engine owner
+	Socket    string // Base/agent.sock — the running agent's control socket
+	Logs      string // where the service's own output goes (empty: the journal)
+}
+
+// For derives the layout from the user's home directory and the XDG
+// variables, so a test can point it at a fresh directory.
+func For(goos, home string, getenv func(string) string) (Layout, error) {
+	if home == "" || !filepath.IsAbs(home) {
+		return Layout{}, errors.New("no home directory to keep VaultSync's files in")
+	}
+	var l Layout
+	switch goos {
+	case "darwin":
+		l.Base = filepath.Join(home, "Library", "Application Support", "VaultSync")
+		l.Logs = filepath.Join(home, "Library", "Logs", "VaultSync")
+	case "linux":
+		state := getenv("XDG_STATE_HOME")
+		if state == "" || !filepath.IsAbs(state) { // the spec ignores relative values
+			state = filepath.Join(home, ".local", "state")
+		}
+		l.Base = filepath.Join(state, "vaultsync")
+	default:
+		return Layout{}, fmt.Errorf("VaultSync's desktop agent runs on macOS and Linux; %s comes later", goos)
+	}
+	return l.At(l.Base), nil
+}
+
+// At roots the layout at base. The background service is started with the
+// base setup resolved (`run --state-dir`), so it never depends on the
+// service manager's own environment (XDG_STATE_HOME may differ there).
+func (l Layout) At(base string) Layout {
+	l.Base = base
+	l.Bin = filepath.Join(l.Base, "bin")
+	l.Agent = filepath.Join(l.Bin, "vaultsync")
+	l.Syncthing = filepath.Join(l.Bin, "syncthing")
+	l.Home = filepath.Join(l.Base, "syncthing")
+	l.State = filepath.Join(l.Base, "agent.json")
+	l.Lock = filepath.Join(l.Base, "agent.lock")
+	l.Socket = filepath.Join(l.Base, "agent.sock")
+	return l
+}
+
+// LogFile is the background service's own log on a Mac; "" where the
+// service logs to the journal.
+func (l Layout) LogFile() string {
+	if l.Logs == "" {
+		return ""
+	}
+	return filepath.Join(l.Logs, "vaultsync.log")
+}

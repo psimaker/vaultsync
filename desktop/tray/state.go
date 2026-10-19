@@ -7,42 +7,16 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"github.com/psimaker/vaultsync/desktop/internal/layout"
 )
 
-// Where the agent keeps its files, as the menu-bar app needs it: VaultSync's
-// folder (for agent.json and the socket's usual place) and the service's
-// log. It mirrors the agent's layout (paths.go); the agent's own test keeps
-// the two the same.
+// Where the agent keeps its files is the shared layout's word
+// (internal/layout); what the menu-bar app adds is reading agent.json for
+// the socket's place.
 
 // ErrNotSetUp: no agent.json — vaultsync setup never ran on this computer.
 var ErrNotSetUp = errors.New("VaultSync is not set up on this computer yet — run vaultsync setup in a terminal")
-
-// StateDir is VaultSync's folder for this user.
-func StateDir(goos, home string, getenv func(string) string) (string, error) {
-	if home == "" || !filepath.IsAbs(home) {
-		return "", errors.New("no home directory to find VaultSync's files in")
-	}
-	switch goos {
-	case "darwin":
-		return filepath.Join(home, "Library", "Application Support", "VaultSync"), nil
-	case "linux":
-		state := getenv("XDG_STATE_HOME")
-		if state == "" || !filepath.IsAbs(state) {
-			state = filepath.Join(home, ".local", "state")
-		}
-		return filepath.Join(state, "vaultsync"), nil
-	}
-	return "", fmt.Errorf("the menu-bar app runs on macOS and Linux; %s comes later", goos)
-}
-
-// LogPath is the background service's own log file on a Mac; empty on
-// Linux, where the service logs to the journal.
-func LogPath(goos, home string) string {
-	if goos == "darwin" {
-		return filepath.Join(home, "Library", "Logs", "VaultSync", "vaultsync.log")
-	}
-	return ""
-}
 
 // ErrNoSocket: nobody answers on the socket, and the agent has recorded
 // that it could not make one — so VaultSync may well be running, only
@@ -52,8 +26,8 @@ var ErrNoSocket = errors.New("VaultSync does not answer on its control socket: i
 // SocketErrorRecorded: the agent wrote control-socket-error.txt — its last
 // start could not serve the socket (a start that serves one removes the
 // file), so nobody answering may well be an agent running without it.
-func SocketErrorRecorded(stateDir string) bool {
-	_, err := os.Stat(filepath.Join(stateDir, "control-socket-error.txt"))
+func SocketErrorRecorded(lay layout.Layout) bool {
+	_, err := os.Stat(filepath.Join(lay.Base, "control-socket-error.txt"))
 	return err == nil
 }
 
@@ -65,11 +39,11 @@ type agentState struct {
 }
 
 // SocketPath is where the running agent listens: the place agent.json
-// records when the agent had to fall back elsewhere, else agent.sock in
-// VaultSync's folder. Without an agent.json VaultSync is not set up
-// (ErrNotSetUp); one that cannot be read is reported as it is.
-func SocketPath(stateDir string) (string, error) {
-	data, err := os.ReadFile(filepath.Join(stateDir, "agent.json"))
+// records when the agent had to fall back elsewhere, else the layout's
+// agent.sock. Without an agent.json VaultSync is not set up (ErrNotSetUp);
+// one that cannot be read is reported as it is.
+func SocketPath(lay layout.Layout) (string, error) {
+	data, err := os.ReadFile(lay.State)
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", ErrNotSetUp
 	}
@@ -86,5 +60,5 @@ func SocketPath(stateDir string) (string, error) {
 	if st.ControlSocket != "" {
 		return st.ControlSocket, nil
 	}
-	return filepath.Join(stateDir, "agent.sock"), nil
+	return lay.Socket, nil
 }

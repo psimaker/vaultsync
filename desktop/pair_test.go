@@ -117,7 +117,7 @@ func TestIssue175_FolderWithFilesNeedsConsent(t *testing.T) {
 			}
 			s.opts.path = local
 			err := s.run(ctx)
-			if !strings.Contains(refusalText(err), "Your Hub already has a vault named “Notes”. Leave out --create to download it") {
+			if !strings.Contains(refusalText(err), "Your Hub already has a vault named “Notes”. Download it as the vault on your Hub") {
 				t.Fatalf("with files %v: expected the name refusal, got %v", withFiles, err)
 			}
 			if hub.provisionCount("vs-aaaaaaaaaaaa")+hub.provisionCount("Notes")+hub.provisionCount("notes") != 0 || eng.folderCount() != 0 {

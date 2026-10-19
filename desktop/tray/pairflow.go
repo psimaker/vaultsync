@@ -39,7 +39,7 @@ type Choice struct {
 // menu's notice: the agent's last line when a vault was set up, the
 // refusal otherwise, "" when the person cancelled. A dialog that could
 // not be shown, or an agent that could not be asked, is the error.
-func Pair(ctx context.Context, c *Client, ask Asker, home string) (string, error) {
+func Pair(ctx context.Context, c *Client, ask Asker) (string, error) {
 	code, ok, err := ask.AskCode(ctx)
 	if err != nil || !ok {
 		return "", err
@@ -106,10 +106,15 @@ func Pair(ctx context.Context, c *Client, ask Asker, home string) (string, error
 			}
 			req.Vault, req.Create, req.Path = requestFor(choice)
 		case "yes":
-			// The consent is the agent's own words; yes goes out only after
+			// The consent is the agent's own words — the terminal's lines,
+			// its sync-plugin warnings included; yes goes out only after
 			// the person agreed to them, for the very vault and folder the
 			// refusal was about (the request is unchanged otherwise).
-			ok, err := ask.Confirm(ctx, consentText(res.Refusal))
+			text := res.Consent
+			if text == "" {
+				text = consentText(res.Refusal)
+			}
+			ok, err := ask.Confirm(ctx, text)
 			if err != nil {
 				return "", err
 			}
@@ -148,9 +153,9 @@ func requestFor(c Choice) (vault string, create bool, path string) {
 	return c.Entry.Vault, false, c.Entry.Default
 }
 
-// consentText is the agent's refusal as the question to agree to: without
-// the flag it names (the button is the answer here), and with the note
-// the terminal's own consent gives.
+// consentText is the fallback for an agent that sends no consent text:
+// its refusal without the flag it names (the button is the answer here),
+// and with the note the terminal's own consent gives.
 func consentText(refusal string) string {
 	t := strings.TrimSuffix(refusal, " Pass --yes to agree.")
 	return t + "\n\nIf Obsidian Sync or another service also syncs this folder, turn that off for it first."

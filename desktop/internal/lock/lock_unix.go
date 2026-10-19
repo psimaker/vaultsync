@@ -5,7 +5,6 @@ package lock
 import (
 	"errors"
 	"os"
-	"path/filepath"
 	"syscall"
 )
 
@@ -19,10 +18,10 @@ type Handle struct {
 	path string
 }
 
+// open makes the lock file, never its folder: a caller that wants the
+// folder made says so itself, and one that must not (the menu-bar app,
+// which never creates VaultSync's folder) gets an error when it is gone.
 func open(path string) (*os.File, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, err
-	}
 	return os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 }
 
