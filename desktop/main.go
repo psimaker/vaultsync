@@ -802,14 +802,19 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 	}
 	defer unlock()
 	ctl := &controlServer{a: a, eng: eng, logf: logf, background: a.backgroundEngine()}
-	// On the way out, the record of a socket that could not be made or
-	// kept goes too: after a clean stop, nobody answering means not
-	// running — which is what the menu-bar app reads without the record.
-	defer func() {
+	// The record of a socket that could not be made or kept at an earlier
+	// start no longer holds — and it goes before this start's own attempt,
+	// so a fresh record that attempt may write (a socket that stops
+	// serving right away) is never the one removed. On the way out it
+	// goes too: after a clean stop, nobody answering means not running,
+	// which is what the menu-bar app reads without the record.
+	removeSocketRecord := func(when string) {
 		if err := os.Remove(a.lay.SocketErrorFile()); err != nil && !errors.Is(err, os.ErrNotExist) {
-			logf("control socket: control-socket-error.txt could not be removed on the way out — %s", serviceSummary(err))
+			logf("control socket: control-socket-error.txt could not be removed %s — %s", when, serviceSummary(err))
 		}
-	}()
+	}
+	removeSocketRecord("before the socket is made")
+	defer removeSocketRecord("on the way out")
 	if socket, stop, err := ctl.serve(ctx); err != nil {
 		logSocketError(logf, a.lay, err)
 	} else {
@@ -830,12 +835,6 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 		}()
 		if socket == a.lay.Socket {
 			socket = ""
-		}
-		// A record of a socket that could not be made, from an earlier
-		// start, no longer holds: without this, "no agent answers" could
-		// never again mean "not running" to the menu-bar app.
-		if err := os.Remove(a.lay.SocketErrorFile()); err != nil && !errors.Is(err, os.ErrNotExist) {
-			logf("control socket: an old control-socket-error.txt could not be removed — %s", serviceSummary(err))
 		}
 		// Published while the setup lock is still held: a second run that
 		// waits on it loads agent.json only afterwards and saves the place

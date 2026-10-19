@@ -58,6 +58,9 @@ type refusal struct {
 	// the sync-plugin warnings and the consent lines — for a caller that
 	// asks it in a dialog of its own.
 	consent string
+	// folder is the identity of the folder the consent is about, for the
+	// caller to send back with yes (folderToken).
+	folder string
 }
 
 func (r *refusal) Error() string { return r.msg }
@@ -73,6 +76,11 @@ func refuseNeeding(needs, format string, a ...any) error {
 type pairOptions struct {
 	code, hub, vault, path, name string
 	create, yes                  bool
+	// folder, with yes, is the folder the consent was given for, as the
+	// refusal named it (folderToken): a caller without a terminal gives
+	// its yes in a second request, and the folder must still be the one
+	// shown.
+	folder string
 }
 
 // pairEnv is everything the flow touches outside its own logic; tests and the
@@ -604,6 +612,10 @@ type menuEntry struct {
 	// terminal proposes (planForHub) — carried to a caller without a
 	// terminal, so it downloads to the same place.
 	defaultPath string
+	// hubName: what a vault on this computer would be called on the Hub,
+	// the name the terminal proposes (askHubName's default) — carried the
+	// same way, so it starts under the same name.
+	hubName string
 }
 
 type vaultMenu struct {
@@ -640,7 +652,7 @@ func (s *pairSession) buildMenu(ctx context.Context) (vaultMenu, error) {
 		}, scanLimits{depth: 3, maxDirs: 4000, deadline: time.Now().Add(3 * time.Second)})
 	}
 	for _, v := range vaults {
-		e := menuEntry{label: filepath.Base(v.Path), path: v.Path, note: tildePath(s.env.home, v.Path)}
+		e := menuEntry{label: filepath.Base(v.Path), path: v.Path, note: tildePath(s.env.home, v.Path), hubName: safeVaultName(filepath.Base(v.Path))}
 		if !v.Opened.IsZero() {
 			e.note += "  " + openedAgo(s.env.now(), v.Opened)
 		}
@@ -1154,6 +1166,7 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 				msg:     fmt.Sprintf("%s already contains files. VaultSync would sync it with your Hub as the new vault %s, and edits and deletions on connected devices would also change this folder. Pass --yes to agree.", tildePath(s.env.home, path), quoted(name)),
 				needs:   "yes",
 				consent: strings.Join(s.consentLines(name, path), "\n"),
+				folder:  folderToken(p.dir),
 			}
 		}
 		if err := s.askConsent(name, path); err != nil {
@@ -1162,6 +1175,12 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 		if err := s.stillTheSame(p); err != nil {
 			return plan{}, err
 		}
+	}
+	if p.hadFiles && s.opts.yes && s.opts.folder != "" && folderToken(p.dir) != s.opts.folder {
+		// A yes given in a second request, for the folder the first one
+		// showed: a folder replaced in between is not the one consented
+		// to — the terminal's own check after its question (stillTheSame).
+		return plan{}, refuse("%s changed while you were answering. Nothing was changed — choose it again.", tildePath(s.env.home, path))
 	}
 	return p, nil
 }

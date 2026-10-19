@@ -552,7 +552,26 @@ func TestIssue176_PairOverTheSocketIsTheFlagFlow(t *testing.T) {
 		t.Fatalf("a refusal added a folder: %+v", eng.folders)
 	}
 	assertUntouched(t, work)
-	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Work", Create: true, Path: work, Yes: true})
+	// The refusal names the folder by its identity; a yes for that folder
+	// is refused once another sits at the path (the terminal's own check
+	// after its question), and taken for the folder shown.
+	if pr.Folder == "" {
+		t.Fatalf("the consent names no folder: %+v", pr)
+	}
+	shown := pr.Folder
+	if err := os.Rename(work, work+".old"); err != nil {
+		t.Fatal(err)
+	}
+	mkVault(t, work)
+	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Work", Create: true, Path: work, Yes: true, Folder: shown})
+	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "changed while you were answering") || eng.folderCount() != 1 {
+		t.Fatalf("a yes for a folder that was replaced: %+v %v (folders %d)", pr, err, eng.folderCount())
+	}
+	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Work", Create: true, Path: work})
+	if err != nil || pr.OK || pr.Needs != "yes" || pr.Folder == "" || pr.Folder == shown {
+		t.Fatalf("the question for the folder now there: %+v %v", pr, err)
+	}
+	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Work", Create: true, Path: work, Yes: true, Folder: pr.Folder})
 	if err != nil || !pr.OK {
 		t.Fatalf("with consent: %+v %v", pr, err)
 	}

@@ -21,6 +21,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 
 	"fyne.io/systray"
@@ -33,9 +34,24 @@ var version = "dev"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
+		fmt.Fprintln(os.Stderr, "error:", redact(err.Error()))
 		os.Exit(1)
 	}
+}
+
+// shown are the places a printed error names shortened, as the agent
+// shortens them: VaultSync's folder and the home folder (stderr may be a
+// log others read).
+var shown struct{ folder, home string }
+
+func redact(msg string) string {
+	if shown.folder != "" {
+		msg = strings.ReplaceAll(msg, shown.folder, "<VaultSync folder>")
+	}
+	if shown.home != "" {
+		msg = strings.ReplaceAll(msg, shown.home, "~")
+	}
+	return msg
 }
 
 func usage(w io.Writer) {
@@ -72,6 +88,7 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
+	shown.home = home
 	lay, err := layout.For(runtime.GOOS, home, os.Getenv)
 	if err != nil {
 		return err
@@ -82,6 +99,7 @@ func run(args []string) error {
 		}
 		lay = lay.At(filepath.Clean(*stateDir))
 	}
+	shown.folder = lay.Base
 	held, err := tray.TakeLock(lay.Base)
 	if err != nil {
 		return err
@@ -103,7 +121,6 @@ func run(args []string) error {
 	ui := newMenu()
 	ui.onQuit = stop
 	c := &tray.Controller{
-		GOOS:   runtime.GOOS,
 		Home:   home,
 		Layout: lay,
 		UI:     ui,

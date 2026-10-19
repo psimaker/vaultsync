@@ -75,7 +75,15 @@ func openWith(goos string, run runner) func(ctx context.Context, path string) er
 		if err != nil {
 			return err
 		}
-		_, stderr, status, err := run(context.Background(), name, args, "")
+		// An opener that stays for as long as what it opened (a file
+		// manager that does not go to the background) is left after half
+		// a minute — the window it opened is its own process and stays.
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_, stderr, status, err := run(ctx, name, args, "")
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}

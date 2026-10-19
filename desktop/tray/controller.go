@@ -3,6 +3,7 @@ package tray
 import (
 	"context"
 	"errors"
+	"os"
 	"time"
 
 	"github.com/psimaker/vaultsync/desktop/internal/control"
@@ -47,7 +48,7 @@ type UI interface {
 // Controller runs the loop. The fields are the computer and the programs
 // the loop runs; tests give it fakes.
 type Controller struct {
-	GOOS, Home string
+	Home string
 	// Layout is where the agent keeps its files on this computer.
 	Layout layout.Layout
 	UI     UI
@@ -258,7 +259,7 @@ func (c *Controller) render() {
 	}
 	c.view = Render(c.status, c.lastErr, Options{
 		Home:    c.Home,
-		LogPath: c.Layout.LogFile(),
+		LogPath: c.logFile(),
 		Pairing: c.pairing,
 		CanAsk:  c.Asker != nil,
 		Notice:  notice,
@@ -290,9 +291,22 @@ func (c *Controller) openVault(i int, failed chan<- string) {
 }
 
 func (c *Controller) openLog(failed chan<- string) {
-	if path := c.Layout.LogFile(); path != "" {
+	if path := c.logFile(); path != "" {
 		c.openPath(path, failed)
 	}
+}
+
+// logFile is the service's log when there is one to open: an agent run
+// from a terminal, or one never installed, has none.
+func (c *Controller) logFile() string {
+	path := c.Layout.LogFile()
+	if path == "" {
+		return ""
+	}
+	if _, err := os.Stat(path); err != nil {
+		return ""
+	}
+	return path
 }
 
 // openPath opens path off the loop: the desktop's program may not return

@@ -6,11 +6,75 @@ import (
 
 	"github.com/psimaker/vaultsync/desktop/internal/control"
 	"github.com/psimaker/vaultsync/desktop/tray"
+	"github.com/psimaker/vaultsync/hub/syncthing"
 )
 
 // The menu-bar app reads the agent's answers through the shared types
 // (internal/control) and finds the agent where the shared layout puts it;
 // what is left to keep in step is the socket's place and the socket itself.
+
+// The icon and the headline are read off the words the agent's status
+// uses; this holds the tray's reading to the agent's actual words, as
+// describeFolder and report make them.
+func TestIssue176_TheTrayReadsTheAgentsWords(t *testing.T) {
+	folder := syncthingFolder("vs-aaaaaaaaaaaa", "Notes", "/home/me/Notes")
+	folder.Devices = []syncthing.FolderDevice{folderDeviceOf(testMyID), folderDeviceOf(testHubID)}
+	connected := connectionsView{}
+	connected.Connections = map[string]struct {
+		Connected bool   `json:"connected"`
+		Type      string `json:"type"`
+	}{testHubID: {Connected: true, Type: "tcp-client"}}
+	complete := map[string]remoteCompletion{testHubID: {Completion: 100, RemoteState: "valid"}}
+	hub := []tray.Hub{{ID: testHubID, Name: "Test Hub", State: "connected"}}
+	for _, c := range []struct {
+		name  string
+		sum   folderSummary
+		conns connectionsView
+		glyph tray.Glyph
+	}{
+		{"an error", folderSummary{State: "error", Error: "permission denied"}, connected, tray.GlyphAttention},
+		{"files that could not sync", folderSummary{State: "idle", Errors: 3}, connected, tray.GlyphAttention},
+		{"syncing", folderSummary{State: "syncing", GlobalBytes: 100, InSyncBytes: 42}, connected, tray.GlyphSyncing},
+		{"scanning", folderSummary{State: "scanning"}, connected, tray.GlyphSyncing},
+		{"items left", folderSummary{State: "idle", NeedTotal: 2}, connected, tray.GlyphSyncing},
+		{"up to date", folderSummary{State: "idle"}, connected, tray.GlyphSynced},
+		{"waiting for the Hub", folderSummary{State: "idle"}, connectionsView{}, tray.GlyphOffline},
+	} {
+		state := describeFolder(folder, c.sum, c.conns, complete, testMyID, false)
+		hubs := hub
+		if c.conns.Connections == nil {
+			hubs = []tray.Hub{{ID: testHubID, Name: "Test Hub", State: "not connected"}}
+		}
+		v := tray.Render(tray.Status{Engine: "running", Report: tray.Report{Hubs: hubs, Vaults: []tray.Vault{{Label: "Notes", Path: "/home/me/Notes", State: state}}}}, nil, tray.Options{Home: "/home/me", CanAsk: true})
+		if v.Glyph != c.glyph {
+			t.Fatalf("%s: the agent says %q, the tray shows %s (want %s)", c.name, state, v.Glyph, c.glyph)
+		}
+	}
+	if state := describeFolder(folder, folderSummary{State: "idle"}, connected, complete, testMyID, false); state != "up to date" {
+		t.Fatalf("up to date reads %q", state)
+	}
+
+	// The Hub's words, from a real report: paused, with the terminal's
+	// remedy, which the menu cuts off because it has the item for it.
+	eng := newFakeEngine(t)
+	hubDevice(eng)
+	eng.mu.Lock()
+	for i := range eng.devices {
+		if eng.devices[i].DeviceID == testHubID {
+			eng.devices[i].Paused = true
+		}
+	}
+	eng.mu.Unlock()
+	a := agentApp(t, eng)
+	rep, err := a.report(context.Background(), eng.client, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := tray.Render(tray.Status{Engine: "running", Report: rep}, nil, tray.Options{Home: a.home, CanAsk: true})
+	if !rep.Paused || v.Glyph != tray.GlyphPaused || len(v.Hubs) != 1 || v.Hubs[0].Text != "Test Hub — paused on this computer" || v.Hubs[0].Tooltip != rep.Hubs[0].State {
+		t.Fatalf("paused, as the agent says it: %+v / %+v", rep.Hubs, v)
+	}
+}
 
 func TestIssue176_TheTrayLooksWhereTheAgentIs(t *testing.T) {
 	// The socket: the usual place, or the one agent.json records — the
@@ -63,5 +127,11 @@ func TestIssue176_TheTrayLooksWhereTheAgentIs(t *testing.T) {
 	// asks for is the code.
 	if pr, err := c.Pair(ctx, tray.PairRequest{Hub: "127.0.0.1:1"}); err != nil || pr.OK || pr.Needs != "code" {
 		t.Fatalf("pair without a code through the real socket: %+v %v", pr, err)
+	}
+	// A vault on this computer carries the name the terminal would propose
+	// for it on the Hub.
+	m := menuToJSON(vaultMenu{local: []menuEntry{{label: "Work: 2026", path: "/home/me/Work: 2026", hubName: safeVaultName("Work: 2026")}}})
+	if len(m.Local) != 1 || m.Local[0].Name != "Work 2026" {
+		t.Fatalf("the proposed name: %+v", m.Local)
 	}
 }

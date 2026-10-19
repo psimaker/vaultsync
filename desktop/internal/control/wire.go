@@ -68,6 +68,10 @@ type PairRequest struct {
 	Path   string `json:"path"`
 	Yes    bool   `json:"yes"`
 	Name   string `json:"name"`
+	// Folder, with Yes, is the folder the consent was given for, as the
+	// answer that asked for it named it (PairResult.Folder): a folder
+	// replaced in between is refused, as the terminal refuses it.
+	Folder string `json:"folder,omitempty"`
 }
 
 // PairResult: what vaultsync pair printed, its refusal when it needs a
@@ -85,7 +89,10 @@ type PairResult struct {
 	// the folder's sync-plugin warnings and what syncing it means, line by
 	// line — for the caller's own dialog.
 	Consent string `json:"consent,omitempty"`
-	Menu    *Menu  `json:"menu,omitempty"`
+	// Folder, with needs yes, names the folder the question is about by
+	// its identity; the caller sends it back with yes.
+	Folder string `json:"folder,omitempty"`
+	Menu   *Menu  `json:"menu,omitempty"`
 }
 
 type Menu struct {
@@ -105,4 +112,8 @@ type MenuEntry struct {
 	// folder the terminal proposes — so a caller downloads it to the same
 	// place the terminal would.
 	Default string `json:"default,omitempty"`
+	// Name is what a vault on this computer would be called on the Hub —
+	// the name the terminal proposes — so a caller starts it under the
+	// same name the terminal would.
+	Name string `json:"name,omitempty"`
 }

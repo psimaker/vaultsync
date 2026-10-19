@@ -34,6 +34,7 @@ type fakeAgent struct {
 	t        *testing.T
 	stateDir string
 	layout   layout.Layout // rooted at stateDir, no log folder
+	logs     string        // a log folder with a vaultsync.log, for a Mac-like controller
 	socket   string
 	srv      *http.Server
 
@@ -55,7 +56,13 @@ type fakeAgent struct {
 
 func newFakeAgent(t *testing.T) *fakeAgent {
 	t.Helper()
-	f := &fakeAgent{t: t, stateDir: shortDir(t)}
+	f := &fakeAgent{t: t, stateDir: shortDir(t), logs: filepath.Join(t.TempDir(), "Logs")}
+	if err := os.MkdirAll(f.logs, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.logs, "vaultsync.log"), []byte("log\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	f.socket = filepath.Join(f.stateDir, "agent.sock")
 	f.status = Status{Version: "9.9.9", Syncthing: "2.1.6", Engine: "running", Report: Report{Hubs: []Hub{}, Vaults: []Vault{}, Waiting: []Waiting{}, Attempts: []Attempt{}}}
 	f.writeState("")

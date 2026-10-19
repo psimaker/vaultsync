@@ -124,8 +124,10 @@ func appleScriptList(items []string) string {
 // failure.
 func (a *scriptAsker) osascript(ctx context.Context, what, script string) (out string, ok bool, err error) {
 	// A background process's dialog opens behind the active app, without
-	// focus; shown by System Events, activated, it comes to the front.
-	script = "tell application \"System Events\"\nactivate\n" + script + "\nend tell"
+	// focus; activated first, the script's own process comes to the front
+	// with it — and no Apple event goes to another app, so no Automation
+	// consent is asked for.
+	script = "activate\n" + script
 	stdout, stderr, status, err := a.run(ctx, "osascript", nil, script)
 	if err != nil {
 		return "", false, dialogError(what, err)

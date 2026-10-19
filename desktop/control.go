@@ -57,7 +57,7 @@ func menuToJSON(m vaultMenu) *menuJSON {
 	conv := func(in []menuEntry) []menuEntryJSON {
 		out := make([]menuEntryJSON, 0, len(in))
 		for _, e := range in {
-			j := menuEntryJSON{Label: e.label, Path: e.path, Note: e.note, Default: e.defaultPath}
+			j := menuEntryJSON{Label: e.label, Path: e.path, Note: e.note, Default: e.defaultPath, Name: e.hubName}
 			if e.vault != nil {
 				j.Vault = e.vault.ID
 			}
@@ -512,7 +512,7 @@ func (c *controlServer) pair(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := pairResponse{}
 	var out bytes.Buffer
-	opts := pairOptions{code: req.Code, hub: req.Hub, vault: req.Vault, create: req.Create, path: req.Path, yes: req.Yes, name: req.Name}
+	opts := pairOptions{code: req.Code, hub: req.Hub, vault: req.Vault, create: req.Create, path: req.Path, yes: req.Yes, name: req.Name, folder: req.Folder}
 	s, err := c.a.pairWith(c.ctx, &term{out: &out}, opts, client, pairOrigin{background: c.background, service: true})
 	resp.Output = out.String()
 	if s != nil && s.menu != nil {
@@ -529,6 +529,7 @@ func (c *controlServer) pair(w http.ResponseWriter, r *http.Request) {
 		resp.Refusal = redactPaths(ref.msg)
 		resp.Needs = ref.needs
 		resp.Consent = redactPaths(ref.consent)
+		resp.Folder = ref.folder
 	default:
 		fail(w, http.StatusInternalServerError, errors.New(redactPaths(err.Error())))
 		return

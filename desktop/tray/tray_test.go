@@ -254,13 +254,12 @@ func controllerFor(t *testing.T, agent *fakeAgent, ui *fakeUI, c *Controller) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	if c.GOOS == "" {
-		c.GOOS = "darwin"
-	}
 	c.Home = "/home/me"
-	c.Layout = agent.layout
-	if c.GOOS == "darwin" {
-		c.Layout.Logs = "/home/me/Library/Logs/VaultSync"
+	if c.Layout.Base == "" {
+		// Like a Mac: a service log to open. A test that wants none (the
+		// journal) sets Layout itself.
+		c.Layout = agent.layout
+		c.Layout.Logs = agent.logs
 	}
 	c.UI = ui
 	c.Poll = time.Hour
@@ -446,14 +445,14 @@ func TestIssue176_TrayTakesTheLockOnceTheFolderIsThere(t *testing.T) {
 
 	// A second instance found running ends the loop with its error.
 	ui2 := newFakeUI(t)
-	c2 := &Controller{GOOS: "darwin", Home: "/home/me", Layout: agent.layout, UI: ui2, Poll: time.Hour, Lock: func(string) (LockHandle, error) { return nil, ErrAlreadyRunning }}
+	c2 := &Controller{Home: "/home/me", Layout: agent.layout, UI: ui2, Poll: time.Hour, Lock: func(string) (LockHandle, error) { return nil, ErrAlreadyRunning }}
 	if err := c2.Run(context.Background()); !errors.Is(err, ErrAlreadyRunning) {
 		t.Fatalf("a second instance: %v", err)
 	}
 	// One already held at start is never asked for again while it is
 	// valid, and released on the way out.
 	start := &fakeLock{valid: true}
-	c3 := &Controller{GOOS: "darwin", Home: "/home/me", Layout: agent.layout, UI: newFakeUI(t), Poll: time.Hour, Held: start, Lock: func(string) (LockHandle, error) { t.Error("asked again"); return nil, nil }}
+	c3 := &Controller{Home: "/home/me", Layout: agent.layout, UI: newFakeUI(t), Poll: time.Hour, Held: start, Lock: func(string) (LockHandle, error) { t.Error("asked again"); return nil, nil }}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := c3.Run(ctx); !errors.Is(err, context.Canceled) || !start.released {
@@ -469,7 +468,7 @@ func TestIssue176_TrayShowsNothingOnTheWayOut(t *testing.T) {
 	agent.set(func(f *fakeAgent) { f.statusHold = hold })
 	ui := newFakeUI(t)
 	ctx, cancel := context.WithCancel(context.Background())
-	c := &Controller{GOOS: "darwin", Home: "/home/me", Layout: agent.layout, UI: ui, Poll: time.Hour, StatusTimeout: 20 * time.Second}
+	c := &Controller{Home: "/home/me", Layout: agent.layout, UI: ui, Poll: time.Hour, StatusTimeout: 20 * time.Second}
 	done := make(chan error, 1)
 	go func() { done <- c.Run(ctx) }()
 	time.Sleep(200 * time.Millisecond) // the request is on its way
@@ -537,7 +536,8 @@ func TestIssue176_TrayOpensOnlyWhatTheAgentListed(t *testing.T) {
 	// The opens run off the loop: all three have been handed to the
 	// opener once the last one's refusal is in the menu, but not
 	// necessarily in that order, nor before this line.
-	want := []string{"/home/me/Library/Logs/VaultSync/vaultsync.log", "/home/me/Notes", "relative/path"}
+	want := []string{filepath.Join(agent.logs, "vaultsync.log"), "/home/me/Notes", "relative/path"}
+	sort.Strings(want)
 	var got []string
 	for deadline := time.Now().Add(10 * time.Second); ; {
 		mu.Lock()
@@ -606,7 +606,7 @@ func pairingScript(t *testing.T, code string) func(PairRequest) (PairResult, int
 		case req.Vault == "" || req.Path == "":
 			return PairResult{Output: "✓ Connected to “Office Hub”\n", Refusal: "Pass --vault NAME and --path FOLDER (with --create for a new vault on your Hub) — there is no terminal to ask on.", Needs: "vault", Menu: menu}, 200
 		case req.Create && !req.Yes:
-			return PairResult{Refusal: "~/Work already contains files. VaultSync would sync it with your Hub as the new vault “Work”, and edits and deletions on connected devices would also change this folder. Pass --yes to agree.", Needs: "yes", Consent: "Remotely Save is enabled in “Work”; two services syncing one folder work against each other.\n“Work” at ~/Work already contains files. VaultSync will sync this folder with “Office Hub”.\nEdits and deletions on connected devices will also change this folder.\nIf Obsidian Sync or another service also syncs this folder, turn that off for it first."}, 200
+			return PairResult{Folder: "1:2", Refusal: "~/Work already contains files. VaultSync would sync it with your Hub as the new vault “Work”, and edits and deletions on connected devices would also change this folder. Pass --yes to agree.", Needs: "yes", Consent: "Remotely Save is enabled in “Work”; two services syncing one folder work against each other.\n“Work” at ~/Work already contains files. VaultSync will sync this folder with “Office Hub”.\nEdits and deletions on connected devices will also change this folder.\nIf Obsidian Sync or another service also syncs this folder, turn that off for it first."}, 200
 		}
 		return PairResult{OK: true, Output: "✓ Connected to “Office Hub”\n\n✓ “" + req.Vault + "” is set up to sync at " + req.Path + ". First sync is starting; check vaultsync status.\n"}, 200
 	}
@@ -632,7 +632,7 @@ func TestIssue176_TrayPairingAsksOnlyWhatTheAgentNeeds(t *testing.T) {
 		want := []PairRequest{
 			{Code: "TULIP-ANCHOR-42"},
 			{Code: "TULIP-ANCHOR-42", Vault: "Work", Create: true, Path: "/home/me/Work"},
-			{Code: "TULIP-ANCHOR-42", Vault: "Work", Create: true, Path: "/home/me/Work", Yes: true},
+			{Code: "TULIP-ANCHOR-42", Vault: "Work", Create: true, Path: "/home/me/Work", Yes: true, Folder: "1:2"},
 		}
 		if !reflect.DeepEqual(f.pairs, want) {
 			t.Fatalf("requests:\n%+v\nwant\n%+v", f.pairs, want)
@@ -912,10 +912,19 @@ func TestIssue176_TrayRunsAPairingWhileTheMenuGoesOn(t *testing.T) {
 		f.status.Hubs = []Hub{{Name: "Office Hub", State: "connected"}}
 		f.pair = pairingScript(t, "x")
 	})
-	controllerFor(t, agent2, ui2, &Controller{GOOS: "linux"})
+	controllerFor(t, agent2, ui2, &Controller{Layout: agent2.layout}) // the journal: no log to open
 	v = ui2.view(t, "no dialogs", func(v View) bool { return v.Headline == "Connected — no vault yet" })
 	if v.Pair.Enabled || !strings.Contains(v.Pair.Title, "terminal") || v.Log.Title != "" {
 		t.Fatalf("linux without zenity: %+v", v)
+	}
+	// A log folder without the file (an agent run from a terminal, the
+	// service never installed): nothing to open either.
+	ui3 := newFakeUI(t)
+	noFile := agent2.layout
+	noFile.Logs = t.TempDir()
+	controllerFor(t, agent2, ui3, &Controller{Layout: noFile})
+	if v := ui3.view(t, "no log file", func(v View) bool { return v.Headline == "Connected — no vault yet" }); v.Log.Title != "" {
+		t.Fatalf("a log item without a file: %+v", v)
 	}
 	ui2.click(EventPair, 0)
 	ui2.click(EventOpened, 0)
@@ -981,10 +990,10 @@ func TestIssue176_TrayDialogsCarryTextAsData(t *testing.T) {
 	if c := calls[len(calls)-1]; c.name != "osascript" || len(c.args) != 0 || !strings.Contains(c.stdin, appleScriptString(codePrompt)) || !strings.Contains(c.stdin, "return text returned of r") {
 		t.Fatalf("the code script: %+v", c)
 	}
-	// Shown by System Events, activated: a background process's own dialog
-	// would open behind the active app.
-	if c := calls[len(calls)-1]; !strings.HasPrefix(c.stdin, "tell application \"System Events\"\nactivate\n") || !strings.HasSuffix(c.stdin, "\nend tell") {
-		t.Fatalf("the dialog is not brought to the front:\n%s", c.stdin)
+	// Activated first, so the dialog comes to the front — without an Apple
+	// event to another app, which would need the Automation consent.
+	if c := calls[len(calls)-1]; !strings.HasPrefix(c.stdin, "activate\n") || strings.Contains(c.stdin, "System Events") {
+		t.Fatalf("the dialog is not brought to the front on its own:\n%s", c.stdin)
 	}
 	a = &scriptAsker{run: script("", "execution error: User canceled. (-128)\n", 1)}
 	if _, ok, err := a.AskCode(ctx); ok || err != nil {
@@ -1248,6 +1257,14 @@ func TestIssue176_TrayOneInstancePerUser(t *testing.T) {
 func TestIssue176_TrayTextHelpers(t *testing.T) {
 	if got := resultLine("✓ “Notes” is set up to sync at ~/Vaults/Notes.\n  Open it in Obsidian after the first sync: Open folder as vault → ~/Vaults/Notes\n"); got != "✓ “Notes” is set up to sync at ~/Vaults/Notes." {
 		t.Fatalf("the ✓ line, not the hint after it: %q", got)
+	}
+	// A vault on this computer goes out under the name the agent proposed
+	// for it, its folder's name only when none was proposed.
+	if v, create, path := requestFor(Choice{Local: true, Entry: MenuEntry{Label: "Work: 2026", Path: "/w", Name: "Work 2026"}}); v != "Work 2026" || !create || path != "/w" {
+		t.Fatalf("a proposed name: %q %v %q", v, create, path)
+	}
+	if v, _, _ := requestFor(Choice{Local: true, Entry: MenuEntry{Label: "Work", Path: "/w"}}); v != "Work" {
+		t.Fatalf("no proposed name: %q", v)
 	}
 	if got := resultLine("a\n\n  b  \n\n"); got != "b" {
 		t.Fatalf("lastLine: %q", got)

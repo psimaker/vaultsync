@@ -127,7 +127,9 @@ func Pair(ctx context.Context, c *Client, ask Asker) (string, error) {
 				_ = ask.Inform(ctx, "Nothing was changed.")
 				return "", nil
 			}
-			req.Yes = true
+			// The yes names the folder the question was about, so a folder
+			// replaced meanwhile is refused by the agent.
+			req.Yes, req.Folder = true, res.Folder
 		default:
 			// code (the agent did not take the one given), create (the
 			// Hub has no such vault), or a flag this app does not know:
@@ -147,13 +149,17 @@ func refused(ctx context.Context, ask Asker, refusal string) (string, error) {
 }
 
 // requestFor turns a choice into the flags the terminal would take: a
-// vault on this computer starts as a new vault on the Hub under its
-// folder's name (--vault NAME --create --path FOLDER); a vault on the
-// Hub is downloaded into the folder the agent named as the terminal's
-// default.
+// vault on this computer starts as a new vault on the Hub under the name
+// the agent proposed for it (--vault NAME --create --path FOLDER); a
+// vault on the Hub is downloaded into the folder the agent named as the
+// terminal's default.
 func requestFor(c Choice) (vault string, create bool, path string) {
 	if c.Local {
-		return c.Entry.Label, true, c.Entry.Path
+		name := c.Entry.Name
+		if name == "" {
+			name = c.Entry.Label
+		}
+		return name, true, c.Entry.Path
 	}
 	return c.Entry.Vault, false, c.Entry.Default
 }

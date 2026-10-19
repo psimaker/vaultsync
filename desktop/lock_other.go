@@ -16,3 +16,5 @@ func lockFileWait(string) (func(), error) {
 }
 
 func sameDevice(os.FileInfo, os.FileInfo) bool { return false }
+
+func folderToken(os.FileInfo) string { return "" }

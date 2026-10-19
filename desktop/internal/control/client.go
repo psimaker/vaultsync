@@ -19,6 +19,7 @@ import (
 	"os"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/psimaker/vaultsync/desktop/internal/peer"
 )
@@ -55,6 +56,9 @@ type Client struct {
 // something answering, but not this API — is to the caller.
 func New(path string, notFound error) *Client {
 	return &Client{path: path, notFound: notFound, http: &http.Client{Transport: &http.Transport{
+		// Below the agent's idle timeout (two minutes): a connection the
+		// agent is about to close is not the one a request goes out on.
+		IdleConnTimeout: 90 * time.Second,
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			var d net.Dialer
 			conn, err := d.DialContext(ctx, "unix", path)
