@@ -27,23 +27,31 @@ func execRunner(ctx context.Context, name string, args []string, stdin string) (
 	// the program itself is gone, its output is taken as it is.
 	cmd.WaitDelay = 2 * time.Second
 	err := cmd.Run()
-	if err != nil && ctx.Err() != nil && (cmd.ProcessState == nil || cmd.ProcessState.ExitCode() == -1) {
-		// Killed by the context (a time limit, a quit): that is the news,
-		// not the exit status the kill left. A program that ended on its
-		// own, with whatever status, just before the limit is what it did.
-		return out.String(), errb.String(), 0, ctx.Err()
+	exit := -1
+	if cmd.ProcessState != nil {
+		exit = cmd.ProcessState.ExitCode()
 	}
-	if errors.Is(err, exec.ErrWaitDelay) {
-		// The program is done; a child it left behind still holds its
-		// pipes (xdg-open's file manager). What the program itself did is
-		// its exit status.
-		return out.String(), errb.String(), cmd.ProcessState.ExitCode(), nil
+	status, err := outcome(err, ctx.Err(), exit)
+	return out.String(), errb.String(), status, err
+}
+
+// outcome reads what a program's run came to: its exit status when it
+// ended on its own — also when a child it left behind still held its
+// pipes (xdg-open's file manager; exec.ErrWaitDelay) — the context's
+// error when the context killed it (a time limit, a quit; the exit code
+// is -1 then), and the run's own error when it could not run at all.
+func outcome(runErr, ctxErr error, exitCode int) (status int, err error) {
+	if runErr != nil && ctxErr != nil && exitCode == -1 {
+		return 0, ctxErr
+	}
+	if errors.Is(runErr, exec.ErrWaitDelay) {
+		return exitCode, nil
 	}
 	var ee *exec.ExitError
-	if errors.As(err, &ee) {
-		return out.String(), errb.String(), ee.ExitCode(), nil
+	if errors.As(runErr, &ee) {
+		return ee.ExitCode(), nil
 	}
-	return out.String(), errb.String(), 0, err
+	return 0, runErr
 }
 
 // openCommand is the program that opens path with the desktop: open on a

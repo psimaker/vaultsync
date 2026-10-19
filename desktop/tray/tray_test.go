@@ -7,6 +7,7 @@ import (
 	"image/png"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -1123,11 +1124,25 @@ func TestIssue176_TrayDialogsCarryTextAsData(t *testing.T) {
 		t.Fatalf("its exit status still counts: %v %d", err, status)
 	}
 	// A program that failed on its own is its failure, also with a limit
-	// that is near.
+	// that is near — and even when the limit passed as it ended: only a
+	// kill (exit code -1) is the context's doing.
 	near, cancelNear := context.WithTimeout(ctx, 5*time.Second)
 	defer cancelNear()
 	if _, _, status, err := execRunner(near, "sh", []string{"-c", "exit 3"}, ""); err != nil || status != 3 {
 		t.Fatalf("a program that failed on its own: %v %d", err, status)
+	}
+	exited3 := exec.Command("sh", "-c", "exit 3").Run()
+	if status, err := outcome(exited3, context.DeadlineExceeded, 3); err != nil || status != 3 {
+		t.Fatalf("failed on its own as the limit passed: %v %d", err, status)
+	}
+	if _, err := outcome(errors.New("signal: killed"), context.DeadlineExceeded, -1); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("killed by the limit: %v", err)
+	}
+	if status, err := outcome(exec.ErrWaitDelay, nil, 0); err != nil || status != 0 {
+		t.Fatalf("pipes left to a child: %v %d", err, status)
+	}
+	if _, err := outcome(errors.New("fork: no such file"), nil, -1); err == nil {
+		t.Fatal("a program that could not run")
 	}
 	silent := func(_ context.Context, name string, args []string, stdin string) (string, string, int, error) {
 		return "", "", 3, nil
