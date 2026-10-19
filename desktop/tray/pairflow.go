@@ -2,7 +2,6 @@ package tray
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 )
@@ -184,9 +183,6 @@ func resultLine(out string) string {
 	}
 	return last
 }
-
-// errNoDialogs: this computer has no way to show the dialogs.
-var errNoDialogs = errors.New("no dialog program found")
 
 // dialogError says which dialog could not be shown.
 func dialogError(what string, err error) error {

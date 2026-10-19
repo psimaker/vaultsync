@@ -1101,6 +1101,8 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 		return plan{}, refuse("%s is not a folder path.", s.opts.path)
 	}
 	switch n := s.catalogueMatches(s.opts.vault); {
+	case n > 1 && s.opts.create:
+		return plan{}, refuse("Your Hub already has more than one vault named like %s. Choose another name for a new vault.", quoted(s.opts.vault))
 	case n > 1:
 		return plan{}, refuse("Your Hub has more than one vault matching %s. Name it by its ID instead (vaultsync-hub vault list shows the IDs).", quoted(s.opts.vault))
 	case n == 1:

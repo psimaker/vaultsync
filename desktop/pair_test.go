@@ -99,6 +99,22 @@ func TestIssue175_FolderWithFilesNeedsConsent(t *testing.T) {
 		assertUntouched(t, local)
 	})
 
+	// --create with a name two Hub vaults bear is told to choose another
+	// name — an ID names no new vault.
+	t.Run("create with a name two Hub vaults bear", func(t *testing.T) {
+		eng := newFakeEngine(t)
+		hub := newFakeHub(t, eng, pairing.VaultInfo{ID: "vs-aaaaaaaaaaaa", Label: "Notes"}, pairing.VaultInfo{ID: "vs-bbbbbbbbbbbb", Label: "NOTES"})
+		s, _ := testSession(t, eng, hub, pairOptions{vault: "notes", create: true, yes: true})
+		s.opts.code = hub.code
+		local := filepath.Join(s.env.home, "notes")
+		mkVault(t, local)
+		s.opts.path = local
+		err := s.run(ctx)
+		if !strings.Contains(refusalText(err), "more than one vault named like “notes”. Choose another name") || strings.Contains(refusalText(err), "ID") || eng.folderCount() != 0 {
+			t.Fatalf("two matches with --create: %v", err)
+		}
+	})
+
 	// --create with a name the Hub already has is refused as that, not
 	// turned into a download: a folder with files stays untouched, and an
 	// empty one does not receive a vault nobody chose (#176, the menu-bar

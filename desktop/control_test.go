@@ -1003,6 +1003,19 @@ func TestIssue176_RunServesTheSocketWhileTheEngineRuns(t *testing.T) {
 // A socket that cannot be taken down on the way out is reported, with
 // whatever ended the run — a place that stays recorded as served must not
 // pass in silence.
+func TestIssue176_AFolderTokenNeedsAFolder(t *testing.T) {
+	if folderToken(nil) != "" {
+		t.Fatal("no folder, no token")
+	}
+	fi, err := os.Stat(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok := folderToken(fi); tok == "" || tok != folderToken(fi) {
+		t.Fatalf("a folder's token: %q", tok)
+	}
+}
+
 func TestIssue176_ASocketThatStopsServingLeavesTheMarker(t *testing.T) {
 	eng := newFakeEngine(t)
 	a := agentApp(t, eng)

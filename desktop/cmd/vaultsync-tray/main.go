@@ -100,12 +100,11 @@ func run(args []string) error {
 		lay = lay.At(filepath.Clean(*stateDir))
 	}
 	shown.folder = lay.Base
+	// The lock is the controller's from here: it releases it on its way
+	// out, or earlier when the file is gone and it takes a fresh one.
 	held, err := tray.TakeLock(lay.Base)
 	if err != nil {
 		return err
-	}
-	if held != nil {
-		defer held.Release()
 	}
 	logger := log.New(os.Stderr, "", log.LstdFlags)
 	hint, err := missingWatcherHint()

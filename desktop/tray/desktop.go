@@ -27,10 +27,10 @@ func execRunner(ctx context.Context, name string, args []string, stdin string) (
 	// the program itself is gone, its output is taken as it is.
 	cmd.WaitDelay = 2 * time.Second
 	err := cmd.Run()
-	if err != nil && ctx.Err() != nil {
+	if err != nil && ctx.Err() != nil && (cmd.ProcessState == nil || cmd.ProcessState.ExitCode() == -1) {
 		// Killed by the context (a time limit, a quit): that is the news,
-		// not the exit status the kill left. A program that finished on
-		// its own just before the limit is what it did.
+		// not the exit status the kill left. A program that ended on its
+		// own, with whatever status, just before the limit is what it did.
 		return out.String(), errb.String(), 0, ctx.Err()
 	}
 	if errors.Is(err, exec.ErrWaitDelay) {

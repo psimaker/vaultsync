@@ -33,6 +33,10 @@ const (
 type Event struct {
 	Kind  EventKind
 	Index int
+	// Path, for EventOpenVault, is the folder the clicked line showed: a
+	// refresh between the click and its handling must not open another
+	// vault's folder that moved into the slot.
+	Path string
 	// Pause is what an EventPause asked for — true to pause, false to
 	// resume — as the menu showed it at the click, so a click queued
 	// behind a slow request never undoes what it asked for.
@@ -150,7 +154,7 @@ func (c *Controller) Run(ctx context.Context) error {
 			case EventOpened:
 				err = c.refresh(ctx)
 			case EventOpenVault:
-				c.openVault(ev.Index, openFailed)
+				c.openVault(ev.Path, openFailed)
 			case EventOpenLog:
 				c.openLog(openFailed)
 			case EventPause:
@@ -283,11 +287,18 @@ func (c *Controller) client() (*Client, error) {
 	return c.cl, nil
 }
 
-func (c *Controller) openVault(i int, failed chan<- string) {
-	if i < 0 || i >= len(c.view.Vaults) || c.view.Vaults[i].Path == "" {
+// openVault opens the folder the clicked line showed — one the agent
+// listed, now or at the click: a path that is no vault's is not opened.
+func (c *Controller) openVault(path string, failed chan<- string) {
+	if path == "" {
 		return
 	}
-	c.openPath(c.view.Vaults[i].Path, failed)
+	for _, vt := range c.view.Vaults {
+		if vt.Path == path {
+			c.openPath(path, failed)
+			return
+		}
+	}
 }
 
 func (c *Controller) openLog(failed chan<- string) {

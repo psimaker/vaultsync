@@ -528,10 +528,10 @@ func TestIssue176_TrayOpensOnlyWhatTheAgentListed(t *testing.T) {
 	}
 	controllerFor(t, agent, ui, &Controller{Open: open})
 	ui.view(t, "up to date", func(v View) bool { return v.Headline == "Up to date" })
-	ui.click(EventOpenVault, 0)
+	ui.send(Event{Kind: EventOpenVault, Path: "/home/me/Notes"})
 	ui.click(EventOpenLog, 0)
-	ui.click(EventOpenVault, 7) // no such line
-	ui.click(EventOpenVault, 1) // the opener refuses it
+	ui.send(Event{Kind: EventOpenVault, Path: "/home/me/Elsewhere"}) // no vault's folder: not opened
+	ui.send(Event{Kind: EventOpenVault, Path: "relative/path"})      // the opener refuses it
 	v := ui.view(t, "the refusal", func(v View) bool { return strings.HasPrefix(v.Notice, "Could not open it") })
 	// The opens run off the loop: all three have been handed to the
 	// opener once the last one's refusal is in the menu, but not
@@ -563,7 +563,7 @@ func TestIssue176_TrayOpensOnlyWhatTheAgentListed(t *testing.T) {
 	slow := newFakeUI(t)
 	controllerFor(t, agent, slow, &Controller{Open: func(context.Context, string) error { <-release; return nil }})
 	slow.view(t, "up to date", func(v View) bool { return v.Headline == "Up to date" })
-	slow.click(EventOpenVault, 0)
+	slow.send(Event{Kind: EventOpenVault, Path: "/home/me/Notes"})
 	slow.click(EventOpened, 0)
 	slow.view(t, "a refresh while the open runs", func(v View) bool { return v.Headline == "Up to date" })
 	close(release)
@@ -1121,6 +1121,13 @@ func TestIssue176_TrayDialogsCarryTextAsData(t *testing.T) {
 	}
 	if _, _, status, err := execRunner(ctx, "sh", []string{"-c", "sleep 3 & exit 4"}, ""); err != nil || status != 4 {
 		t.Fatalf("its exit status still counts: %v %d", err, status)
+	}
+	// A program that failed on its own is its failure, also with a limit
+	// that is near.
+	near, cancelNear := context.WithTimeout(ctx, 5*time.Second)
+	defer cancelNear()
+	if _, _, status, err := execRunner(near, "sh", []string{"-c", "exit 3"}, ""); err != nil || status != 3 {
+		t.Fatalf("a program that failed on its own: %v %d", err, status)
 	}
 	silent := func(_ context.Context, name string, args []string, stdin string) (string, string, int, error) {
 		return "", "", 3, nil

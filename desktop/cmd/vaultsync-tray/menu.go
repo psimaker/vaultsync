@@ -71,7 +71,16 @@ func (m *menu) build() {
 	m.hubs = m.pool(hubSlots, nil)
 	systray.AddSeparator()
 	m.noVault = disabledItem("")
-	m.vaults = m.pool(vaultSlots, func(i int) tray.Event { return tray.Event{Kind: tray.EventOpenVault, Index: i} })
+	m.vaults = m.pool(vaultSlots, func(i int) tray.Event {
+		// The folder the slot shows at the click, not the slot number.
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		ev := tray.Event{Kind: tray.EventOpenVault, Index: i}
+		if i < len(m.last.Vaults) {
+			ev.Path = m.last.Vaults[i].Path
+		}
+		return ev
+	})
 	m.waiting = m.pool(waitingSlots, nil)
 	m.attempts = m.pool(attemptSlots, nil)
 	systray.AddSeparator()

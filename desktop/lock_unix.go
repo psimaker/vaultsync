@@ -34,8 +34,11 @@ func lockFile(path string) (func(), error) {
 // consent given in a second request (control.go): the same token means
 // the same folder, as os.SameFile would say.
 func folderToken(fi os.FileInfo) string {
+	if fi == nil {
+		return ""
+	}
 	st, ok := fi.Sys().(*syscall.Stat_t)
-	if fi == nil || !ok {
+	if !ok {
 		return ""
 	}
 	return fmt.Sprintf("%d:%d", st.Dev, st.Ino)
