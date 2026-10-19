@@ -187,6 +187,31 @@ progress, and says `paused on this computer` for the rest until
 `status` asks the engine's own API, and reads its config file when the
 engine does not answer either.
 
+**Menu-bar icon.** `vaultsync-tray` puts VaultSync in the menu bar (macOS)
+or the system tray (Linux). It is a second program from the same release
+(`vaultsync-tray_darwin_arm64`, `vaultsync-tray_linux_amd64`, …; check it
+against `SHA256SUMS` like the agent) that you start yourself for now — from
+Terminal, or a login item of your own; the app bundle and the autostart come
+with the next step. The icon is a summary of `vaultsync status`: a check mark
+when every vault is up to date, a ring while syncing, two bars while paused,
+an exclamation mark when a vault needs attention, a crossed ring when nothing
+syncs (not running, no Hub connected). The menu shows the Hub and each vault
+with the same words `vaultsync status` prints (click a vault to open its
+folder), **Pause Syncing** / **Resume Syncing** (the same as `vaultsync pause`
+and `resume`), **Pair a Vault…**, **Open Log** (on a Mac) and **Quit**, which
+quits the icon only — syncing continues in the background. The menu asks the
+running agent for everything over the same socket as the terminal and
+decides nothing itself; without a running agent it says so and offers
+nothing but Quit. **Pair a Vault…** asks for the code, then which vault, then
+— for a folder on this computer that already holds files — the same consent
+`vaultsync pair` asks for, through the desktop's own dialogs (on Linux this
+needs `zenity`; without it the item says to use `vaultsync pair` in a
+terminal). A vault from your Hub goes into `~/Vaults/<name>`; to put it
+elsewhere, or to name this computer's vault differently on your Hub, use
+`vaultsync pair` in a terminal. On GNOME, tray icons need the “AppIndicator
+and KStatusNotifierItem Support” extension; `vaultsync-tray` says so when it
+starts without one and shows the icon as soon as the extension is there.
+
 `--yes` is consent to sync a `--path` that already holds files with the new
 vault named by `--vault`; it never chooses a Hub and never overrides a
 refusal. Run the same command again and it changes nothing: the vault is

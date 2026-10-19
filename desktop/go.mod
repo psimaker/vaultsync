@@ -7,6 +7,8 @@ go 1.26.6
 replace github.com/psimaker/vaultsync/hub => ../hub
 
 require (
+	fyne.io/systray v1.12.2
+	github.com/godbus/dbus/v5 v5.1.0
 	github.com/psimaker/vaultsync/hub v0.0.0-00010101000000-000000000000
 	golang.org/x/sys v0.48.0
 )

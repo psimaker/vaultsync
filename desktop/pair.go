@@ -48,11 +48,23 @@ var (
 )
 
 // refusal is a decision the person reads; it carries its own wording.
-type refusal struct{ msg string }
+// needs names the flag a caller without a terminal must pass to get past
+// it — code, hub, vault, create or yes — so the menu-bar app can ask for
+// exactly that instead of reading the words; empty for every other refusal.
+type refusal struct {
+	msg   string
+	needs string
+}
 
 func (r *refusal) Error() string { return r.msg }
 
-func refuse(format string, a ...any) error { return &refusal{fmt.Sprintf(format, a...)} }
+func refuse(format string, a ...any) error { return &refusal{msg: fmt.Sprintf(format, a...)} }
+
+// refuseNeeding is refuse for a decision the flags did not make: the
+// refusal names the flag in its words and carries it as needs.
+func refuseNeeding(needs, format string, a ...any) error {
+	return &refusal{msg: fmt.Sprintf(format, a...), needs: needs}
+}
 
 type pairOptions struct {
 	code, hub, vault, path, name string
@@ -314,7 +326,7 @@ func (s *pairSession) findHub(ctx context.Context) error {
 	hub, err := join.PickHub(hubs, choose)
 	var several *join.SeveralHubsError
 	if errors.As(err, &several) {
-		return refuse("%s. VaultSync sends a code only to the Hub you choose.", several.Error())
+		return refuseNeeding("hub", "%s. VaultSync sends a code only to the Hub you choose.", several.Error())
 	}
 	if err != nil {
 		return err
@@ -362,7 +374,7 @@ func (s *pairSession) connect(ctx context.Context) error {
 		if code == "" {
 			a, err := s.t.ask("  The code your Hub printed (like TULIP-ANCHOR-42): ")
 			if errors.Is(err, errNoTerminal) {
-				return refuse("Pass the code your Hub printed: --code WORD-WORD-NN — there is no terminal to ask on.")
+				return refuseNeeding("code", "Pass the code your Hub printed: --code WORD-WORD-NN — there is no terminal to ask on.")
 			}
 			if err != nil {
 				return err
@@ -1039,7 +1051,7 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 		if err := s.keepMenu(ctx); err != nil {
 			return plan{}, err
 		}
-		return plan{}, refuse("Pass --vault NAME and --path FOLDER (with --create for a new vault on your Hub) — there is no terminal to ask on.")
+		return plan{}, refuseNeeding("vault", "Pass --vault NAME and --path FOLDER (with --create for a new vault on your Hub) — there is no terminal to ask on.")
 	}
 	path, err := expandPath(s.env.home, s.opts.path)
 	if err != nil {
@@ -1059,7 +1071,7 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 		if err := s.keepMenu(ctx); err != nil {
 			return plan{}, err
 		}
-		return plan{}, refuse("Your Hub has no vault named %s. Add --create to start it as a new vault.", quoted(s.opts.vault))
+		return plan{}, refuseNeeding("create", "Your Hub has no vault named %s. Add --create to start it as a new vault.", quoted(s.opts.vault))
 	}
 	name := pairing.SanitizeName(s.opts.vault)
 	if name == "" || utf8.RuneCountInString(name) > maxHubNameRunes {
@@ -1085,7 +1097,7 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 	p := plan{kind: planNew, name: name, path: path, hadFiles: exists && !empty}.withIdentity()
 	if p.hadFiles && !s.opts.yes {
 		if !s.t.interactive() {
-			return plan{}, refuse("%s already contains files. VaultSync would sync it with your Hub as the new vault %s, and edits and deletions on connected devices would also change this folder. Pass --yes to agree.", tildePath(s.env.home, path), quoted(name))
+			return plan{}, refuseNeeding("yes", "%s already contains files. VaultSync would sync it with your Hub as the new vault %s, and edits and deletions on connected devices would also change this folder. Pass --yes to agree.", tildePath(s.env.home, path), quoted(name))
 		}
 		if err := s.askConsent(name, path); err != nil {
 			return plan{}, err

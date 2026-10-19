@@ -471,12 +471,14 @@ func TestIssue176_PairOverTheSocketIsTheFlagFlow(t *testing.T) {
 	client := serveControl(t, a)
 	ctx := context.Background()
 
+	// Each refusal that asks for a flag names it as needs too: the menu-bar
+	// app asks the person for exactly that, without reading the words.
 	pr, err := client.pair(ctx, pairRequest{Hub: hub.addr})
-	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "--code") {
+	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "--code") || pr.Needs != "code" {
 		t.Fatalf("without a code: %+v %v", pr, err)
 	}
 	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr})
-	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "--vault NAME and --path FOLDER") {
+	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "--vault NAME and --path FOLDER") || pr.Needs != "vault" {
 		t.Fatalf("without a vault: %+v %v", pr, err)
 	}
 	if pr.Menu == nil || len(pr.Menu.Hub) != 1 || pr.Menu.Hub[0].Label != "Notes" || pr.Menu.Hub[0].Vault != "vs-aaaaaaaaaaaa" || pr.Menu.Local == nil || pr.Menu.Already == nil {
@@ -506,7 +508,7 @@ func TestIssue176_PairOverTheSocketIsTheFlagFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Notes", Path: filepath.Join(fallback, "Notes")})
-	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "VaultSync keeps its own files in") || eng.folderCount() != 0 {
+	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "VaultSync keeps its own files in") || pr.Needs != "" || eng.folderCount() != 0 {
 		t.Fatalf("a vault inside the socket's folder: %+v %v (folders %d)", pr, err, eng.folderCount())
 	}
 	st.ControlSocket = ""
@@ -516,7 +518,7 @@ func TestIssue176_PairOverTheSocketIsTheFlagFlow(t *testing.T) {
 
 	notes := filepath.Join(a.home, "Notes")
 	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Notes", Path: notes})
-	if err != nil || !pr.OK || pr.Refusal != "" {
+	if err != nil || !pr.OK || pr.Refusal != "" || pr.Needs != "" {
 		t.Fatalf("with vault and path: %+v %v", pr, err)
 	}
 	if eng.folderCount() != 1 || eng.folders[0].Path != notes || eng.folders[0].Label != "Notes" {
@@ -531,7 +533,7 @@ func TestIssue176_PairOverTheSocketIsTheFlagFlow(t *testing.T) {
 	work := filepath.Join(a.home, "Work")
 	mkVault(t, work)
 	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Work", Create: true, Path: work})
-	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "already contains files") || !strings.Contains(pr.Refusal, "--yes") {
+	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "already contains files") || !strings.Contains(pr.Refusal, "--yes") || pr.Needs != "yes" {
 		t.Fatalf("a folder with files without consent: %+v %v", pr, err)
 	}
 	if eng.folderCount() != 1 {

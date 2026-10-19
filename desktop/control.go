@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/psimaker/vaultsync/desktop/internal/peer"
 	"github.com/psimaker/vaultsync/hub/syncthing"
 )
 
@@ -63,10 +64,14 @@ type pairRequest struct {
 // decision the flags did not make, and — once the Hub was reached — the
 // menu the terminal would show, so the caller can choose and ask again.
 type pairResponse struct {
-	OK      bool      `json:"ok"`
-	Output  string    `json:"output"`
-	Refusal string    `json:"refusal,omitempty"`
-	Menu    *menuJSON `json:"menu,omitempty"`
+	OK      bool   `json:"ok"`
+	Output  string `json:"output"`
+	Refusal string `json:"refusal,omitempty"`
+	// Needs is the flag the refusal asks for — code, hub, vault, create or
+	// yes — when it asks for one (refuseNeeding), so a caller asks the
+	// person for exactly that and never reads the refusal's words for it.
+	Needs string    `json:"needs,omitempty"`
+	Menu  *menuJSON `json:"menu,omitempty"`
 }
 
 type menuJSON struct {
@@ -418,7 +423,7 @@ func peerUIDOf(c *net.UnixConn) (int, error) {
 	if f := peerUIDHook.Load(); f != nil {
 		return (*f)(c)
 	}
-	return peerUID(c)
+	return peer.UID(c)
 }
 
 type peerFunc func(*net.UnixConn) (int, error)
@@ -556,6 +561,7 @@ func (c *controlServer) pair(w http.ResponseWriter, r *http.Request) {
 		return
 	case errors.As(err, &ref):
 		resp.Refusal = redactPaths(ref.msg)
+		resp.Needs = ref.needs
 	default:
 		fail(w, http.StatusInternalServerError, errors.New(redactPaths(err.Error())))
 		return
@@ -707,7 +713,7 @@ func (c *controlClient) do(ctx context.Context, method, path string, in, out any
 	// A socket address too long for this system cannot be served by anyone
 	// — the agent fell back elsewhere, or runs without a socket — so it is
 	// no agent, not an error of its own.
-	if len(c.path) >= sunPathMax {
+	if len(c.path) >= peer.SunPathMax {
 		return errNoAgent
 	}
 	var body io.Reader

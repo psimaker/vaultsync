@@ -1,6 +1,6 @@
-//go:build linux
+//go:build darwin
 
-package main
+package peer
 
 import (
 	"net"
@@ -8,16 +8,16 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// peerUID is the user id of the account at the other end of a unix socket
+// UID is the user id of the account at the other end of a unix socket
 // connection, as the kernel knows it.
-func peerUID(conn *net.UnixConn) (int, error) {
+func UID(conn *net.UnixConn) (int, error) {
 	raw, err := conn.SyscallConn()
 	if err != nil {
 		return -1, err
 	}
 	uid, cerr := -1, error(nil)
 	if err := raw.Control(func(fd uintptr) {
-		cred, err := unix.GetsockoptUcred(int(fd), unix.SOL_SOCKET, unix.SO_PEERCRED)
+		cred, err := unix.GetsockoptXucred(int(fd), unix.SOL_LOCAL, unix.LOCAL_PEERCRED)
 		if err != nil {
 			cerr = err
 			return
@@ -29,7 +29,7 @@ func peerUID(conn *net.UnixConn) (int, error) {
 	return uid, cerr
 }
 
-// sunPathMax is the size of a unix socket address's path on this system,
+// SunPathMax is the size of a unix socket address's path on this system,
 // its terminating byte included: a path that long or longer cannot be
 // listened on or dialed.
-const sunPathMax = 108
+const SunPathMax = 104

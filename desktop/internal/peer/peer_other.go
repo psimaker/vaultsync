@@ -1,14 +1,14 @@
 //go:build !linux && !darwin
 
-package main
+package peer
 
 import (
 	"errors"
 	"net"
 )
 
-func peerUID(*net.UnixConn) (int, error) {
+func UID(*net.UnixConn) (int, error) {
 	return -1, errors.New("the control socket runs on macOS and Linux only for now")
 }
 
-const sunPathMax = 108
+const SunPathMax = 108

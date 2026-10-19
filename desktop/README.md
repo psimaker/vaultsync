@@ -2,10 +2,15 @@
 
 One program that turns a Mac or a Linux computer into a VaultSync device: it
 installs its own pinned Syncthing, pairs with a VaultSync Hub by code and
-keeps Obsidian vaults in sync as a background service.
+keeps Obsidian vaults in sync as a background service. A second program,
+`vaultsync-tray`, is its menu-bar icon.
 
 User documentation: [`docs/hub.md`](../docs/hub.md#desktop-agent-macos-and-linux).
-Design record: [046](../docs/decisions/046-desktop-agent-pinned-syncthing-child.md).
+Design records: [046](../docs/decisions/046-desktop-agent-pinned-syncthing-child.md)
+(the agent), [048](../docs/decisions/048-tray-separate-process-fyne-systray.md)
+and [050](../docs/decisions/050-tray-asks-through-the-desktops-dialogs.md)
+(the tray), [049](../docs/decisions/049-desktop-control-socket.md) (the
+socket between them).
 
 ## What is in here
 
@@ -24,6 +29,9 @@ Design record: [046](../docs/decisions/046-desktop-agent-pinned-syncthing-child.
 | `control.go` | the control socket (`agent.sock`, decision 049): the running agent answers status, pause, resume and pair for the terminal and the menu-bar app |
 | `attempts.go` | the pairing journal (`pairing.json`): recorded before the Hub is asked |
 | `uninstall.go`, `mount_*.go` | `uninstall`; `--remove-data` anchored to VaultSync's own folder, stopping at links and mounts |
+| `internal/peer/` | whose a unix socket connection is — the one check both ends of the control socket make |
+| `tray/` | the menu-bar app without the menu bar: the socket client, what the icon and the menu show (`view.go`), the loop (`controller.go`), the pairing conversation (`pairflow.go`) and the dialogs it uses (`ask.go`: osascript, zenity) — pure Go, tested on Linux |
+| `cmd/vaultsync-tray/` | the `vaultsync-tray` binary: `fyne.io/systray` glue (Cocoa through cgo on macOS, StatusNotifierItem over DBus on Linux) and the GNOME hint |
 
 The pairing protocol, the Syncthing REST client and the device-side accept
 guard come from the Hub's module (`hub/pairing`, `hub/syncthing`, `hub/join`)
@@ -49,8 +57,17 @@ On a Mac, use `syncthing-macos-arm64-$v.zip` (or `-amd64`).
 ## Release
 
 Tag `desktop-vX.Y.Z` on `main`. `desktop-release.yml` publishes a GitHub
-release with `vaultsync_<os>_<arch>` binaries and `SHA256SUMS` (not marked
-Latest — that stays the iOS app's release).
+release with `vaultsync_<os>_<arch>` and `vaultsync-tray_<os>_<arch>`
+binaries and one `SHA256SUMS` (not marked Latest — that stays the iOS app's
+release). The agent is cross-compiled on Linux with `CGO_ENABLED=0` as
+before; the tray's Linux binaries too, while its macOS binaries are built on
+a macOS runner (cgo). Locally:
+
+```sh
+cd desktop
+go build ./cmd/vaultsync-tray && ./vaultsync-tray            # this computer
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ./cmd/vaultsync-tray
+```
 
 ## Bumping Syncthing
 
