@@ -391,9 +391,10 @@ func (c *Controller) startPairing(ctx context.Context, done chan<- string) {
 	c.render()
 	go func() {
 		line, err := Pair(ctx, cl, c.Asker)
-		if err != nil {
+		if err != nil && !errors.Is(err, context.Canceled) {
 			// The fact for the log; the words — which may name a vault or
-			// a folder — go to the menu's notice and the dialog.
+			// a folder — go to the menu's notice and the dialog. A quit is
+			// no error.
 			c.logf("pairing: ended with an error; the menu says which")
 		}
 		line = pairingOutcome(line, err)

@@ -76,6 +76,19 @@ func (l Layout) LogFile() string {
 	return filepath.Join(l.Logs, "vaultsync.log")
 }
 
+// AtStateDir is the layout rooted at a --state-dir flag's value: the folder
+// setup used, as the service names it (run --state-dir) and the menu-bar
+// app may be told it. "" keeps the layout; anything else must be absolute.
+func (l Layout) AtStateDir(dir string) (Layout, error) {
+	if dir == "" {
+		return l, nil
+	}
+	if !filepath.IsAbs(dir) {
+		return l, errors.New("--state-dir must be an absolute path")
+	}
+	return l.At(filepath.Clean(dir)), nil
+}
+
 // TrayLock is the menu-bar app's one-instance lock, in VaultSync's folder.
 func (l Layout) TrayLock() string {
 	return filepath.Join(l.Base, "tray.lock")

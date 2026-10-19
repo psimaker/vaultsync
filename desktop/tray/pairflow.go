@@ -143,10 +143,14 @@ func Pair(ctx context.Context, c *Client, ask Asker) (string, error) {
 			// The yes names the folder the question was about, so a folder
 			// replaced meanwhile is refused by the agent.
 			req.Yes, req.Folder = true, res.Folder
+		case "create":
+			// The menu never asks to create what the Hub has, so this is
+			// a Hub vault chosen from the list and gone from the Hub since:
+			// said so, not as the flag the terminal would take.
+			return refused(ctx, ask, "Your Hub no longer has the vault you chose. Open Pair a Vault… again and choose anew.")
 		default:
-			// code (the agent did not take the one given), create (the
-			// Hub has no such vault), or a flag this app does not know:
-			// the terminal is the place for it.
+			// code (the agent did not take the one given), or a flag this
+			// app does not know: the terminal is the place for it.
 			return refused(ctx, ask, res.Refusal)
 		}
 	}

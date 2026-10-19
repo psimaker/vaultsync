@@ -179,7 +179,7 @@ func Render(st Status, err error, o Options) View {
 // "up to date".
 func summarize(st Status) (Glyph, string, string) {
 	var problem *Vault
-	syncing, paused := 0, 0
+	syncing, paused, waiting := 0, 0, 0
 	allUpToDate := len(st.Vaults) > 0
 	for i := range st.Vaults {
 		vt := &st.Vaults[i]
@@ -192,6 +192,8 @@ func summarize(st Status) (Glyph, string, string) {
 			syncing++
 		case control.KindPaused:
 			paused++
+		case control.KindWaiting:
+			waiting++
 		}
 		if vt.Kind != control.KindOK {
 			allUpToDate = false
@@ -226,8 +228,9 @@ func summarize(st Status) (Glyph, string, string) {
 	}
 	if !connected && pausedHubs > 0 {
 		// Some Hubs paused, the rest not connected (every Hub paused is
-		// st.Paused, said before this): the pause is the news.
-		return GlyphPaused, fmt.Sprintf("%d of %d Hubs paused", pausedHubs, len(st.Hubs)), "vaultsync resume in a terminal resumes it; Resume Syncing here resumes every Hub"
+		// st.Paused, said before this): the pause is the news. The menu's
+		// own item would pause the rest, so the remedy is the terminal's.
+		return GlyphPaused, fmt.Sprintf("%d of %d Hubs paused", pausedHubs, len(st.Hubs)), "vaultsync resume in a terminal resumes it"
 	}
 	if !connected {
 		return GlyphOffline, "Waiting for your Hub", "Not connected right now; syncing resumes when it is"
@@ -238,7 +241,16 @@ func summarize(st Status) (Glyph, string, string) {
 	if allUpToDate {
 		return GlyphSynced, "Up to date", ""
 	}
-	return GlyphSynced, "Connected", ""
+	// Connected, nothing busy or paused, and still not everything up to
+	// date: vaults the Hub has yet to take, or to connect — work ahead,
+	// not a check mark.
+	if waiting == 1 {
+		return GlyphSyncing, "1 vault waiting for your Hub", ""
+	}
+	if waiting > 1 {
+		return GlyphSyncing, fmt.Sprintf("%d vaults waiting for your Hub", waiting), ""
+	}
+	return GlyphSyncing, "Connected — not everything is up to date yet", ""
 }
 
 func hubLines(hubs []Hub) []Line {

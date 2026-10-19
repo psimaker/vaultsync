@@ -33,7 +33,8 @@ func TestIssue176_TrayShowsWhatTheAgentReports(t *testing.T) {
 		pair     Action
 	}{
 		{"up to date", withVaults(base, "up to date"), GlyphSynced, "Up to date", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
-		{"connected, a vault waiting", withVaults(base, "up to date", "waiting for your Hub to take it"), GlyphSynced, "Connected", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
+		{"connected, a vault waiting", withVaults(base, "up to date", "waiting for your Hub to take it"), GlyphSyncing, "1 vault waiting for your Hub", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
+		{"connected, two vaults waiting", withVaults(base, "waiting for your Hub to take it", "waiting for your Hub"), GlyphSyncing, "2 vaults waiting for your Hub", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"syncing", withVaults(base, "syncing — 42 %", "up to date"), GlyphSyncing, "Syncing 1 vault", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"scanning and uploading", withVaults(base, "scanning the folder", "uploading to your Hub — 3 items left"), GlyphSyncing, "Syncing 2 vaults", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"an error outranks syncing", withVaults(base, "syncing", "error: permission denied — allow access to this folder (on a Mac: allow “vaultsync” in System Settings → Privacy & Security → Files & Folders), then run vaultsync stop and vaultsync start"), GlyphAttention, "Attention needed", "Vault 2: error: permission denied — allow access to this folder (on a Mac: allow “vaultsync” in System Settings → Privacy & Security → Files & Folders), then run vaultsync stop and vaultsync start", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
@@ -47,7 +48,7 @@ func TestIssue176_TrayShowsWhatTheAgentReports(t *testing.T) {
 		{"paused with an error: the error shows", paused(withVaults(base, "error: boom", "paused on this computer")), GlyphAttention, "Attention needed", "Vault 1: error: boom", Action{"Resume Syncing", true}, Action{"Pair a Vault… (resume syncing first)", false}},
 		{"one vault paused on its own", withVaults(base, "up to date", "paused"), GlyphPaused, "1 vault paused", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"two vaults paused on the Hub's side", withVaults(base, "paused on your Hub", "paused on your Hub"), GlyphPaused, "2 vaults paused", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
-		{"one of two Hubs paused, the other away", withVaults(Status{Engine: "running", Report: Report{Hubs: []Hub{{Name: "Office", State: "paused on this computer — vaultsync resume starts syncing again", Kind: control.KindPaused}, {Name: "Home", State: "not connected", Kind: control.KindWaiting}}}}, "waiting for your Hub"), GlyphPaused, "1 of 2 Hubs paused", "vaultsync resume in a terminal resumes it; Resume Syncing here resumes every Hub", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
+		{"one of two Hubs paused, the other away", withVaults(Status{Engine: "running", Report: Report{Hubs: []Hub{{Name: "Office", State: "paused on this computer — vaultsync resume starts syncing again", Kind: control.KindPaused}, {Name: "Home", State: "not connected", Kind: control.KindWaiting}}}}, "waiting for your Hub"), GlyphPaused, "1 of 2 Hubs paused", "vaultsync resume in a terminal resumes it", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"engine starting", Status{Engine: "starting", Report: Report{Vaults: []Vault{{Label: "Notes", Path: "/home/me/Notes", State: "not syncing — the engine is stopped", Kind: control.KindOffline}}}}, GlyphSyncing, "Starting the sync engine…", "", Action{"Pause Syncing", false}, Action{"Pair a Vault…", false}},
 	}
 	for _, c := range cases {
@@ -861,7 +862,7 @@ func TestIssue176_TrayPairingAsksOnlyWhatTheAgentNeeds(t *testing.T) {
 		}
 	})
 	ask = &fakeAsker{code: "TULIP-ANCHOR-42"}
-	if line, err := Pair(ctx, NewClient(agent.socket), ask); err != nil || !strings.Contains(line, "Add --create") || ask.told[0] != line {
+	if line, err := Pair(ctx, NewClient(agent.socket), ask); err != nil || !strings.HasPrefix(line, "Your Hub no longer has the vault you chose.") || strings.Contains(line, "--create") || ask.told[0] != line {
 		t.Fatalf("create: %q %v", line, err)
 	}
 	agent.set(func(f *fakeAgent) {

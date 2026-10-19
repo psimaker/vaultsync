@@ -721,12 +721,12 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 		return err
 	}
 	if *stateDir != "" {
-		// The service names the folder setup used (see layout.at).
-		if !filepath.IsAbs(*stateDir) {
-			return errors.New("--state-dir must be an absolute path")
+		// The service names the folder setup used (layout.AtStateDir).
+		lay, err := a.lay.AtStateDir(*stateDir)
+		if err != nil {
+			return err
 		}
-		a.lay = a.lay.At(filepath.Clean(*stateDir))
-		a.svc.lay = a.lay
+		a.lay, a.svc.lay = lay, lay
 	}
 	stateDirShown = a.lay.Base
 	if st, err := os.Stderr.Stat(); err == nil && st.Mode()&os.ModeCharDevice == 0 {

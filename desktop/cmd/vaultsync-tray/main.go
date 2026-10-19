@@ -19,7 +19,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"runtime"
 	"syscall"
 
@@ -83,11 +82,8 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	if *stateDir != "" {
-		if !filepath.IsAbs(*stateDir) {
-			return errors.New("--state-dir must be an absolute path")
-		}
-		lay = lay.At(filepath.Clean(*stateDir))
+	if lay, err = lay.AtStateDir(*stateDir); err != nil {
+		return err
 	}
 	shown.folder = lay.Base
 	// The lock is the controller's from here: it releases it on its way
@@ -102,7 +98,10 @@ func run(args []string) error {
 		return err
 	}
 	if hint != "" {
+		// A login item has no stderr anyone reads: the hint goes to the
+		// desktop's notifications as well, where there are any.
 		logger.Print(hint)
+		tray.Notify(runtime.GOOS, exec.LookPath)(context.Background(), hint)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
