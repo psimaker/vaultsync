@@ -27,10 +27,23 @@ type Report struct {
 	Text string `json:"text"`
 }
 
+// Kind is what a state comes to, for a caller that shows a state without
+// reading its words: the words are for people and may change, the kind
+// is the contract.
+const (
+	KindOK      = "ok"      // up to date; a Hub: connected
+	KindBusy    = "busy"    // scanning, syncing, uploading, items left to sync
+	KindWaiting = "waiting" // waiting for the Hub to connect or to take the vault; a Hub: not connected
+	KindPaused  = "paused"  // paused — on this computer, the folder itself, or on the Hub's side
+	KindProblem = "problem" // an error, files that could not sync, or no report at all
+	KindOffline = "offline" // the engine is stopped
+)
+
 type Hub struct {
 	ID    string `json:"id"`
 	Name  string `json:"name"`
 	State string `json:"state"`
+	Kind  string `json:"kind"`
 }
 
 type Vault struct {
@@ -38,6 +51,7 @@ type Vault struct {
 	Label string `json:"label"`
 	Path  string `json:"path"`
 	State string `json:"state"`
+	Kind  string `json:"kind"`
 }
 
 // Waiting is a vault the Hub shares that is not set up here yet.

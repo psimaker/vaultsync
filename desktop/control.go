@@ -607,47 +607,21 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 // --- the terminal's side ----------------------------------------------------
 
-// controlClient is the terminal's side of the socket: the shared client,
-// for which a 404 — something answering, but not this API — is an agent
-// too old to ask, so the engine is asked instead (errNoAgent).
-type controlClient struct {
-	*control.Client
-}
-
-func newControlClient(path string) *controlClient {
-	return &controlClient{control.New(path, errNoAgent)}
+// newControlClient is the terminal's side of the socket: the shared
+// client, for which a 404 — something answering, but not this API — is
+// an agent too old to ask, so the engine is asked instead (errNoAgent).
+func newControlClient(path string) *control.Client {
+	return control.New(path, errNoAgent)
 }
 
 // controlClient reaches the running agent: on the socket agent.json
 // records, else at the socket's usual place.
-func (a *app) controlClient(st agentState) *controlClient {
+func (a *app) controlClient(st agentState) *control.Client {
 	path := st.ControlSocket
 	if path == "" {
 		path = a.lay.Socket
 	}
 	return newControlClient(path)
-}
-
-func (c *controlClient) status(ctx context.Context) (controlStatus, error) {
-	var cs controlStatus
-	err := c.Do(ctx, http.MethodGet, "/v1/status", nil, &cs)
-	return cs, err
-}
-
-func (c *controlClient) setPaused(ctx context.Context, paused bool) (pauseResponse, error) {
-	var res pauseResponse
-	path := "/v1/resume"
-	if paused {
-		path = "/v1/pause"
-	}
-	err := c.Do(ctx, http.MethodPost, path, nil, &res)
-	return res, err
-}
-
-func (c *controlClient) pair(ctx context.Context, req pairRequest) (pairResponse, error) {
-	var res pairResponse
-	err := c.Do(ctx, http.MethodPost, "/v1/pair", req, &res)
-	return res, err
 }
 
 // logSocketError says in the service's log that there is no control socket
@@ -742,7 +716,7 @@ func (a *app) pauseSync(ctx context.Context, pause bool) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	res, err := a.controlClient(st).setPaused(ctx, pause)
+	res, err := a.controlClient(st).SetPaused(ctx, pause)
 	switch {
 	case errors.Is(err, errNoAgent):
 		return a.noAgentForPause(ctx, st, pause)

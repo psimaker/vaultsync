@@ -2,8 +2,10 @@ package tray
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // The pairing conversation: the person gives the code, the agent runs
@@ -12,6 +14,10 @@ import (
 // that already holds files — and the menu-bar app asks for exactly that
 // and asks the agent again with the same code. The agent decides
 // everything; here nothing is checked, only asked and passed on.
+
+// pairRequestTimeout is as long as the agent itself allows one pairing
+// request to take (its socket's write timeout).
+const pairRequestTimeout = 15 * time.Minute
 
 // Asker shows the dialogs a pairing needs. ok is false when the person
 // cancelled; an error is a dialog that could not be shown.
@@ -48,14 +54,22 @@ func Pair(ctx context.Context, c *Client, ask Asker) (string, error) {
 		return refused(ctx, ask, "Enter the code your Hub printed to pair a vault — Pair a Vault… asks for it again.")
 	}
 	// Each flag is asked for once, so the conversation is bounded by the
-	// kinds of flags there are.
+	// kinds of flags there are. Each request has the agent's own limit; the
+	// time the person takes over a dialog is not counted against it.
 	asked := map[string]bool{}
 	for {
-		res, err := c.Pair(ctx, req)
+		rctx, cancel := context.WithTimeout(ctx, pairRequestTimeout)
+		res, err := c.Pair(rctx, req)
+		cancel()
 		if ctx.Err() != nil {
-			// Out of time, or quit: no dialog is opened on a context that
-			// is done, whatever the agent answered.
+			// Quit, or the system ending the app: no dialog is opened on a
+			// context that is done, whatever the agent answered.
 			return "", ctx.Err()
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			// The agent did not answer this request in its time; the
+			// controller says so in the menu.
+			return "", err
 		}
 		if err != nil {
 			_ = ask.Inform(ctx, err.Error())

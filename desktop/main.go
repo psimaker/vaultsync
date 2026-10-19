@@ -31,6 +31,7 @@ import (
 	"syscall"
 	"time"
 
+	layoutpkg "github.com/psimaker/vaultsync/desktop/internal/layout"
 	"github.com/psimaker/vaultsync/hub/join"
 	"github.com/psimaker/vaultsync/hub/pairing"
 	"github.com/psimaker/vaultsync/hub/syncthing"
@@ -123,20 +124,8 @@ type summarized interface {
 // neither the account's home folder nor where VaultSync keeps its files.
 // VaultSync's folder becomes <VaultSync folder>, the home folder ~.
 func redactPaths(msg string) string {
-	replace := func(path, with string) {
-		if path == "" || path == "/" {
-			return
-		}
-		if resolved, err := filepath.EvalSymlinks(path); err == nil && resolved != path {
-			msg = strings.ReplaceAll(msg, resolved, with)
-		}
-		msg = strings.ReplaceAll(msg, path, with)
-	}
-	replace(stateDirShown, "<VaultSync folder>")
-	if home, err := os.UserHomeDir(); err == nil {
-		replace(home, "~")
-	}
-	return msg
+	home, _ := os.UserHomeDir()
+	return layoutpkg.Shorten(msg, stateDirShown, home)
 }
 
 func usage(w io.Writer) {

@@ -93,6 +93,31 @@ func (c *Client) Path() string { return c.path }
 // CloseIdleConnections drops the connection kept open between requests.
 func (c *Client) CloseIdleConnections() { c.http.CloseIdleConnections() }
 
+// Status is GET /v1/status.
+func (c *Client) Status(ctx context.Context) (Status, error) {
+	var s Status
+	err := c.Do(ctx, http.MethodGet, "/v1/status", nil, &s)
+	return s, err
+}
+
+// SetPaused is POST /v1/pause or /v1/resume.
+func (c *Client) SetPaused(ctx context.Context, paused bool) (PauseResult, error) {
+	var r PauseResult
+	path := "/v1/resume"
+	if paused {
+		path = "/v1/pause"
+	}
+	err := c.Do(ctx, http.MethodPost, path, nil, &r)
+	return r, err
+}
+
+// Pair is POST /v1/pair.
+func (c *Client) Pair(ctx context.Context, req PairRequest) (PairResult, error) {
+	var r PairResult
+	err := c.Do(ctx, http.MethodPost, "/v1/pair", req, &r)
+	return r, err
+}
+
 // Do sends one request and decodes the answer into out (nil: none
 // expected). No socket file, or nobody listening on it, is ErrNoAgent; a
 // 404 is notFound; an error the agent answered with is returned in its

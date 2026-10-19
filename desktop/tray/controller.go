@@ -69,12 +69,12 @@ type Controller struct {
 	Logf func(string, ...any)
 	// StatusTimeout bounds one status request; 0 is 10 s.
 	StatusTimeout time.Duration
-	// Lock takes the one-instance lock (TakeLock, with the layout's Base);
-	// Held is one the caller already holds. Not held — VaultSync's folder was not there at start
+	// Lock takes the one-instance lock (TakeLock); Held is one the caller
+	// already holds. Not held — VaultSync's folder was not there at start
 	// — it is tried again at every refresh, so a second instance started
 	// before setup ends once setup made the folder; one that stopped
 	// being valid (the file taken away) is released and taken again.
-	Lock func(stateDir string) (LockHandle, error)
+	Lock func(lay layout.Layout) (LockHandle, error)
 	Held LockHandle
 
 	status  Status
@@ -103,8 +103,6 @@ const (
 	defaultPoll    = 30 * time.Second
 	defaultTimeout = 10 * time.Second
 	pauseTimeout   = 15 * time.Second
-	// pairTimeout is as long as the agent itself allows a pairing to take.
-	pairTimeout = 15 * time.Minute
 )
 
 // Run serves the menu until the person quits or ctx ends. It ends with
@@ -184,7 +182,7 @@ func (c *Controller) takeLock() error {
 	if c.Held != nil {
 		return nil
 	}
-	held, err := c.Lock(c.Layout.Base)
+	held, err := c.Lock(c.Layout)
 	if errors.Is(err, ErrAlreadyRunning) {
 		return err
 	}
@@ -389,9 +387,7 @@ func (c *Controller) startPairing(ctx context.Context, done chan<- string) {
 	c.notice = ""
 	c.render()
 	go func() {
-		pctx, cancel := context.WithTimeout(ctx, pairTimeout)
-		defer cancel()
-		line, err := Pair(pctx, cl, c.Asker)
+		line, err := Pair(ctx, cl, c.Asker)
 		if err != nil {
 			// The fact for the log; the words — which may name a vault or
 			// a folder — go to the menu's notice and the dialog.
@@ -411,9 +407,9 @@ func (c *Controller) startPairing(ctx context.Context, done chan<- string) {
 // stuck; the next refresh asks again.
 var errNoAnswer = errors.New("VaultSync did not answer in time; it may be busy, and is asked again")
 
-// pairingTimeoutNotice says what a pairing that ran out of time leaves
-// behind: the agent may still finish what it had taken on.
-const pairingTimeoutNotice = "The pairing was stopped after 15 minutes without an answer; vaultsync status shows what came of it, and Pair a Vault… starts over"
+// pairingTimeoutNotice says what a pairing request that ran out of time
+// leaves behind: the agent may still finish what it had taken on.
+const pairingTimeoutNotice = "VaultSync did not answer a pairing request within 15 minutes; vaultsync status shows what came of it, and Pair a Vault… starts over"
 
 // pairingOutcome is the notice a pairing ends with: what it said, or why
 // it ended — nothing for a quit, the time limit in its own words.

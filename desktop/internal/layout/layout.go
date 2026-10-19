@@ -76,6 +76,30 @@ func (l Layout) LogFile() string {
 	return filepath.Join(l.Logs, "vaultsync.log")
 }
 
+// TrayLock is the menu-bar app's one-instance lock, in VaultSync's folder.
+func (l Layout) TrayLock() string {
+	return filepath.Join(l.Base, "tray.lock")
+}
+
+// Shorten takes VaultSync's folder and the home folder out of a message
+// meant for a log others read: the folder becomes <VaultSync folder>, the
+// home folder ~ — in the form given and in the resolved one (a folder
+// reached through a link appears in both).
+func Shorten(msg, folder, home string) string {
+	replace := func(path, with string) {
+		if path == "" || path == "/" {
+			return
+		}
+		if resolved, err := filepath.EvalSymlinks(path); err == nil && resolved != path {
+			msg = strings.ReplaceAll(msg, resolved, with)
+		}
+		msg = strings.ReplaceAll(msg, path, with)
+	}
+	replace(folder, "<VaultSync folder>")
+	replace(home, "~")
+	return msg
+}
+
 // TildePath shows a path below the home folder as ~/…, the way people know
 // it.
 func TildePath(home, p string) string {

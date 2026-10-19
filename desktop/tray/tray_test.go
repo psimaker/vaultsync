@@ -22,7 +22,7 @@ import (
 
 func TestIssue176_TrayShowsWhatTheAgentReports(t *testing.T) {
 	home := "/home/me"
-	base := Status{Engine: "running", Report: Report{Hubs: []Hub{{Name: "Office Hub", State: "connected"}}}}
+	base := Status{Engine: "running", Report: Report{Hubs: []Hub{{Name: "Office Hub", State: "connected", Kind: control.KindOK}}}}
 	cases := []struct {
 		name     string
 		st       Status
@@ -40,12 +40,14 @@ func TestIssue176_TrayShowsWhatTheAgentReports(t *testing.T) {
 		{"files that could not sync", withVaults(base, "3 files could not sync — see the engine's log"), GlyphAttention, "Attention needed", "Vault 1: 3 files could not sync — see the engine's log", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"a vault the engine could not report on", withVaults(base, "up to date", "unknown"), GlyphAttention, "Attention needed", "Vault 2: unknown", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"no Hub paired", withVaults(Status{Engine: "running", Report: Report{Hubs: []Hub{}}}), GlyphOffline, "No Hub paired yet", "Pair a Vault… pairs this computer with your Hub", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
-		{"Hub not connected", withVaults(Status{Engine: "running", Report: Report{Hubs: []Hub{{Name: "Office Hub", State: "not connected"}}}}, "waiting for your Hub"), GlyphOffline, "Waiting for your Hub", "Not connected right now; syncing resumes when it is", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
-		{"connected through a relay", withVaults(Status{Engine: "running", Report: Report{Hubs: []Hub{{Name: "Office Hub", State: "connected through a relay (slower; a direct connection is not possible right now)"}}}}, "up to date"), GlyphSynced, "Up to date", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
+		{"Hub not connected", withVaults(Status{Engine: "running", Report: Report{Hubs: []Hub{{Name: "Office Hub", State: "not connected", Kind: control.KindWaiting}}}}, "waiting for your Hub"), GlyphOffline, "Waiting for your Hub", "Not connected right now; syncing resumes when it is", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
+		{"connected through a relay", withVaults(Status{Engine: "running", Report: Report{Hubs: []Hub{{Name: "Office Hub", State: "connected through a relay (slower; a direct connection is not possible right now)", Kind: control.KindOK}}}}, "up to date"), GlyphSynced, "Up to date", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"connected, no vault", base, GlyphSynced, "Connected — no vault yet", "Pair a Vault… adds one", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"paused", paused(withVaults(base, "paused on this computer", "2 items left to sync")), GlyphPaused, "Paused on this computer", "", Action{"Resume Syncing", true}, Action{"Pair a Vault… (resume syncing first)", false}},
 		{"paused with an error: the error shows", paused(withVaults(base, "error: boom", "paused on this computer")), GlyphAttention, "Attention needed", "Vault 1: error: boom", Action{"Resume Syncing", true}, Action{"Pair a Vault… (resume syncing first)", false}},
-		{"engine starting", Status{Engine: "starting", Report: Report{Vaults: []Vault{{Label: "Notes", Path: "/home/me/Notes", State: "not syncing — the engine is stopped"}}}}, GlyphSyncing, "Starting the sync engine…", "", Action{"Pause Syncing", false}, Action{"Pair a Vault…", false}},
+		{"one vault paused on its own", withVaults(base, "up to date", "paused"), GlyphPaused, "1 vault paused", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
+		{"two vaults paused on the Hub's side", withVaults(base, "paused on your Hub", "paused on your Hub"), GlyphPaused, "2 vaults paused", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
+		{"engine starting", Status{Engine: "starting", Report: Report{Vaults: []Vault{{Label: "Notes", Path: "/home/me/Notes", State: "not syncing — the engine is stopped", Kind: control.KindOffline}}}}, GlyphSyncing, "Starting the sync engine…", "", Action{"Pause Syncing", false}, Action{"Pair a Vault…", false}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -68,7 +70,7 @@ func TestIssue176_TrayShowsWhatTheAgentReports(t *testing.T) {
 	// The lines: the agent's words, with a terminal remedy cut off the
 	// line and kept in the tooltip; the path a click opens is the agent's.
 	st := paused(withVaults(base, "paused on this computer", "syncing — 42 %"))
-	st.Hubs[0].State = "paused on this computer — vaultsync resume starts syncing again"
+	st.Hubs[0].State, st.Hubs[0].Kind = "paused on this computer — vaultsync resume starts syncing again", control.KindPaused
 	st.Waiting = []Waiting{{Label: "Journal", Hub: "Office Hub"}}
 	st.Attempts = []Attempt{{Vault: "Old", What: "your Hub is sharing it; run vaultsync pair to finish setup", At: "Oct 7 15:04"}}
 	v := Render(st, nil, Options{Home: home, CanAsk: true})
@@ -133,9 +135,27 @@ func withVaults(st Status, states ...string) Status {
 	st.Vaults = []Vault{}
 	for i, s := range states {
 		label := "Vault " + string(rune('1'+i))
-		st.Vaults = append(st.Vaults, Vault{ID: "id" + label, Label: label, Path: "/home/me/" + label, State: s})
+		st.Vaults = append(st.Vaults, Vault{ID: "id" + label, Label: label, Path: "/home/me/" + label, State: s, Kind: kindOf(s)})
 	}
 	return st
+}
+
+// kindOf gives a test's state words the kind the agent would give them
+// (the agent's own test holds the two together on the agent's words).
+func kindOf(state string) string {
+	switch {
+	case strings.HasPrefix(state, "error"), strings.Contains(state, "could not sync"), state == "unknown":
+		return control.KindProblem
+	case strings.HasPrefix(state, "syncing"), strings.HasPrefix(state, "scanning"), strings.HasPrefix(state, "uploading"), strings.Contains(state, "left to sync"):
+		return control.KindBusy
+	case strings.HasPrefix(state, "paused"):
+		return control.KindPaused
+	case strings.HasPrefix(state, "waiting"):
+		return control.KindWaiting
+	case strings.HasPrefix(state, "not syncing"):
+		return control.KindOffline
+	}
+	return control.KindOK
 }
 
 func paused(st Status) Status {
@@ -178,8 +198,8 @@ func TestIssue176_TrayFindsTheAgentWhereTheAgentSaysItIs(t *testing.T) {
 func TestIssue176_TrayClientTalksToTheAgentAlone(t *testing.T) {
 	agent := newFakeAgent(t)
 	agent.set(func(f *fakeAgent) {
-		f.status.Hubs = []Hub{{ID: "h", Name: "Office Hub", State: "connected"}}
-		f.status.Vaults = []Vault{{ID: "v", Label: "Notes", Path: "/home/me/Notes", State: "up to date"}}
+		f.status.Hubs = []Hub{{ID: "h", Name: "Office Hub", State: "connected", Kind: control.KindOK}}
+		f.status.Vaults = []Vault{{ID: "v", Label: "Notes", Path: "/home/me/Notes", State: "up to date", Kind: control.KindOK}}
 		f.status.Text = "\nHub\n  Office Hub             connected\n"
 	})
 	ctx := context.Background()
@@ -281,8 +301,8 @@ func TestIssue176_TrayPauseAndResumeAskOnlyTheAgent(t *testing.T) {
 	agent := newFakeAgent(t)
 	agent.set(func(f *fakeAgent) {
 		f.hubs = 1
-		f.status.Hubs = []Hub{{Name: "Office Hub", State: "connected"}}
-		f.status.Vaults = []Vault{{Label: "Notes", Path: "/home/me/Notes", State: "up to date"}}
+		f.status.Hubs = []Hub{{Name: "Office Hub", State: "connected", Kind: control.KindOK}}
+		f.status.Vaults = []Vault{{Label: "Notes", Path: "/home/me/Notes", State: "up to date", Kind: control.KindOK}}
 	})
 	ui := newFakeUI(t)
 	var notes []string
@@ -368,12 +388,12 @@ func TestIssue176_TrayTakesTheLockOnceTheFolderIsThere(t *testing.T) {
 	var tries int
 	var handles []*fakeLock
 	folderThere := false
-	lock := func(dir string) (LockHandle, error) {
+	lock := func(lay layout.Layout) (LockHandle, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		tries++
-		if dir != agent.stateDir {
-			t.Errorf("locking %q", dir)
+		if lay.Base != agent.stateDir {
+			t.Errorf("locking %q", lay.Base)
 		}
 		if !folderThere {
 			return nil, nil
@@ -417,7 +437,7 @@ func TestIssue176_TrayTakesTheLockOnceTheFolderIsThere(t *testing.T) {
 	// again — the app stays.
 	ui4 := newFakeUI(t)
 	var fails int
-	c4 := &Controller{Lock: func(string) (LockHandle, error) {
+	c4 := &Controller{Lock: func(layout.Layout) (LockHandle, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		fails++
@@ -436,7 +456,9 @@ func TestIssue176_TrayTakesTheLockOnceTheFolderIsThere(t *testing.T) {
 	// While the lock fails, what an action said is not overwritten by it:
 	// both stand in the menu.
 	ui5 := newFakeUI(t)
-	c5 := &Controller{Lock: func(string) (LockHandle, error) { return nil, errors.New("open tray.lock: read-only file system") }, Open: func(context.Context, string) error { return errors.New("no such file") }}
+	c5 := &Controller{Lock: func(layout.Layout) (LockHandle, error) {
+		return nil, errors.New("open tray.lock: read-only file system")
+	}, Open: func(context.Context, string) error { return errors.New("no such file") }}
 	controllerFor(t, agent, ui5, c5)
 	ui5.view(t, "the lock notice alone", func(v View) bool { return strings.Contains(v.Notice, "could not be locked") })
 	ui5.click(EventOpenLog, 0)
@@ -446,14 +468,14 @@ func TestIssue176_TrayTakesTheLockOnceTheFolderIsThere(t *testing.T) {
 
 	// A second instance found running ends the loop with its error.
 	ui2 := newFakeUI(t)
-	c2 := &Controller{Home: "/home/me", Layout: agent.layout, UI: ui2, Poll: time.Hour, Lock: func(string) (LockHandle, error) { return nil, ErrAlreadyRunning }}
+	c2 := &Controller{Home: "/home/me", Layout: agent.layout, UI: ui2, Poll: time.Hour, Lock: func(layout.Layout) (LockHandle, error) { return nil, ErrAlreadyRunning }}
 	if err := c2.Run(context.Background()); !errors.Is(err, ErrAlreadyRunning) {
 		t.Fatalf("a second instance: %v", err)
 	}
 	// One already held at start is never asked for again while it is
 	// valid, and released on the way out.
 	start := &fakeLock{valid: true}
-	c3 := &Controller{Home: "/home/me", Layout: agent.layout, UI: newFakeUI(t), Poll: time.Hour, Held: start, Lock: func(string) (LockHandle, error) { t.Error("asked again"); return nil, nil }}
+	c3 := &Controller{Home: "/home/me", Layout: agent.layout, UI: newFakeUI(t), Poll: time.Hour, Held: start, Lock: func(layout.Layout) (LockHandle, error) { t.Error("asked again"); return nil, nil }}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := c3.Run(ctx); !errors.Is(err, context.Canceled) || !start.released {
@@ -512,8 +534,8 @@ func TestIssue176_TrayOpensOnlyWhatTheAgentListed(t *testing.T) {
 	agent := newFakeAgent(t)
 	agent.set(func(f *fakeAgent) {
 		f.hubs = 1
-		f.status.Hubs = []Hub{{Name: "Office Hub", State: "connected"}}
-		f.status.Vaults = []Vault{{Label: "Notes", Path: "/home/me/Notes", State: "up to date"}, {Label: "Odd", Path: "relative/path", State: "up to date"}}
+		f.status.Hubs = []Hub{{Name: "Office Hub", State: "connected", Kind: control.KindOK}}
+		f.status.Vaults = []Vault{{Label: "Notes", Path: "/home/me/Notes", State: "up to date", Kind: control.KindOK}, {Label: "Odd", Path: "relative/path", State: "up to date", Kind: control.KindOK}}
 	})
 	ui := newFakeUI(t)
 	var mu sync.Mutex
@@ -874,7 +896,7 @@ func TestIssue176_TrayRunsAPairingWhileTheMenuGoesOn(t *testing.T) {
 	agent := newFakeAgent(t)
 	agent.set(func(f *fakeAgent) {
 		f.hubs = 1
-		f.status.Hubs = []Hub{{Name: "Office Hub", State: "connected"}}
+		f.status.Hubs = []Hub{{Name: "Office Hub", State: "connected", Kind: control.KindOK}}
 		f.pair = pairingScript(t, "TULIP-ANCHOR-42")
 	})
 	ui := newFakeUI(t)
@@ -893,7 +915,7 @@ func TestIssue176_TrayRunsAPairingWhileTheMenuGoesOn(t *testing.T) {
 	ui.click(EventOpened, 0)
 	ui.view(t, "still pairing", func(v View) bool { return v.Pair.Title == "Pairing…" })
 	agent.set(func(f *fakeAgent) {
-		f.status.Vaults = []Vault{{Label: "Work", Path: "/home/me/Work", State: "syncing"}}
+		f.status.Vaults = []Vault{{Label: "Work", Path: "/home/me/Work", State: "syncing", Kind: control.KindBusy}}
 	})
 	close(ask.release)
 	v = ui.view(t, "done", func(v View) bool { return v.Pair.Enabled && v.Notice != "" })
@@ -910,7 +932,7 @@ func TestIssue176_TrayRunsAPairingWhileTheMenuGoesOn(t *testing.T) {
 	agent2 := newFakeAgent(t)
 	agent2.set(func(f *fakeAgent) {
 		f.hubs = 1
-		f.status.Hubs = []Hub{{Name: "Office Hub", State: "connected"}}
+		f.status.Hubs = []Hub{{Name: "Office Hub", State: "connected", Kind: control.KindOK}}
 		f.pair = pairingScript(t, "x")
 	})
 	controllerFor(t, agent2, ui2, &Controller{Layout: agent2.layout}) // the journal: no log to open
@@ -1204,8 +1226,9 @@ func TestIssue176_TrayIconsAreFiveDistinctShapes(t *testing.T) {
 
 func TestIssue176_TrayOneInstancePerUser(t *testing.T) {
 	dir := t.TempDir()
+	lay := layout.Layout{}.At(dir)
 	// Not set up (no agent.json): nothing to lock, nothing made.
-	if l, err := TakeLock(dir); err != nil || l != nil {
+	if l, err := TakeLock(lay); err != nil || l != nil {
 		t.Fatalf("before setup: %v %v", err, l)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "tray.lock")); !errors.Is(err, os.ErrNotExist) {
@@ -1214,15 +1237,15 @@ func TestIssue176_TrayOneInstancePerUser(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "agent.json"), []byte(`{"version":1,"guiPort":8384}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	l, err := TakeLock(dir)
+	l, err := TakeLock(lay)
 	if err != nil || l == nil || !l.Valid() {
 		t.Fatal(err, l)
 	}
-	if _, err := TakeLock(dir); !errors.Is(err, ErrAlreadyRunning) {
+	if _, err := TakeLock(lay); !errors.Is(err, ErrAlreadyRunning) {
 		t.Fatalf("a second one: %v", err)
 	}
 	l.Release()
-	l, err = TakeLock(dir)
+	l, err = TakeLock(lay)
 	if err != nil || l == nil {
 		t.Fatalf("after release: %v %v", err, l)
 	}
@@ -1234,14 +1257,14 @@ func TestIssue176_TrayOneInstancePerUser(t *testing.T) {
 	if l.Valid() {
 		t.Fatal("a lock on a file that is gone reads as valid")
 	}
-	l2, err := TakeLock(dir)
+	l2, err := TakeLock(lay)
 	if err != nil || l2 == nil || !l2.Valid() {
 		t.Fatalf("a fresh lock after the file was taken away: %v", err)
 	}
 	l.Release()
 	l2.Release()
 	missing := filepath.Join(dir, "nothing-set-up")
-	if l, err := TakeLock(missing); err != nil || l != nil {
+	if l, err := TakeLock(layout.Layout{}.At(missing)); err != nil || l != nil {
 		t.Fatalf("no folder yet: %v %v", err, l)
 	}
 	// Being taken apart (agent.json gone, the folder still there): nothing
@@ -1249,7 +1272,7 @@ func TestIssue176_TrayOneInstancePerUser(t *testing.T) {
 	if err := os.Remove(filepath.Join(dir, "agent.json")); err != nil {
 		t.Fatal(err)
 	}
-	if l, err := TakeLock(dir); err != nil || l != nil {
+	if l, err := TakeLock(lay); err != nil || l != nil {
 		t.Fatalf("during an uninstall: %v %v", err, l)
 	}
 	if _, err := os.Stat(missing); !errors.Is(err, os.ErrNotExist) {
@@ -1271,7 +1294,7 @@ func TestIssue176_TrayOneInstancePerUser(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(parent, 0o700) })
-	if _, err := TakeLock(filepath.Join(parent, "VaultSync")); err == nil || errors.Is(err, ErrAlreadyRunning) {
+	if _, err := TakeLock(layout.Layout{}.At(filepath.Join(parent, "VaultSync"))); err == nil || errors.Is(err, ErrAlreadyRunning) {
 		t.Fatalf("an unreadable folder: %v", err)
 	}
 }

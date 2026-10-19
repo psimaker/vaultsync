@@ -168,9 +168,12 @@ func (m *menu) action(title string, kind tray.EventKind) *systray.MenuItem {
 // differs from the view last rendered. Safe to call from any goroutine
 // (systray's items are).
 func (m *menu) Render(v tray.View) {
-	m.paused.Store(v.Paused)
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// The offered intent is stored once the item reads it: a click in
+	// between sends what the item still shows, which the controller then
+	// drops as already in place — never the opposite of what was shown.
+	defer m.paused.Store(v.Paused)
 	if m.rendered && reflect.DeepEqual(v, m.last) {
 		return
 	}

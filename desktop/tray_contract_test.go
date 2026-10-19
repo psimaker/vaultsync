@@ -25,33 +25,40 @@ func TestIssue176_TheTrayReadsTheAgentsWords(t *testing.T) {
 		Type      string `json:"type"`
 	}{testHubID: {Connected: true, Type: "tcp-client"}}
 	complete := map[string]remoteCompletion{testHubID: {Completion: 100, RemoteState: "valid"}}
-	hub := []tray.Hub{{ID: testHubID, Name: "Test Hub", State: "connected"}}
+	hub := []tray.Hub{{ID: testHubID, Name: "Test Hub", State: "connected", Kind: control.KindOK}}
+	pausedFolder := folder
+	pausedFolder.Paused = true
+	pausedOnHub := map[string]remoteCompletion{testHubID: {RemoteState: "paused"}}
 	for _, c := range []struct {
-		name  string
-		sum   folderSummary
-		conns connectionsView
-		glyph tray.Glyph
+		name   string
+		folder syncthing.FolderConfig
+		sum    folderSummary
+		conns  connectionsView
+		remote map[string]remoteCompletion
+		glyph  tray.Glyph
 	}{
-		{"an error", folderSummary{State: "error", Error: "permission denied"}, connected, tray.GlyphAttention},
-		{"files that could not sync", folderSummary{State: "idle", Errors: 3}, connected, tray.GlyphAttention},
-		{"syncing", folderSummary{State: "syncing", GlobalBytes: 100, InSyncBytes: 42}, connected, tray.GlyphSyncing},
-		{"scanning", folderSummary{State: "scanning"}, connected, tray.GlyphSyncing},
-		{"items left", folderSummary{State: "idle", NeedTotal: 2}, connected, tray.GlyphSyncing},
-		{"up to date", folderSummary{State: "idle"}, connected, tray.GlyphSynced},
-		{"waiting for the Hub", folderSummary{State: "idle"}, connectionsView{}, tray.GlyphOffline},
+		{"an error", folder, folderSummary{State: "error", Error: "permission denied"}, connected, complete, tray.GlyphAttention},
+		{"files that could not sync", folder, folderSummary{State: "idle", Errors: 3}, connected, complete, tray.GlyphAttention},
+		{"syncing", folder, folderSummary{State: "syncing", GlobalBytes: 100, InSyncBytes: 42}, connected, complete, tray.GlyphSyncing},
+		{"scanning", folder, folderSummary{State: "scanning"}, connected, complete, tray.GlyphSyncing},
+		{"items left", folder, folderSummary{State: "idle", NeedTotal: 2}, connected, complete, tray.GlyphSyncing},
+		{"up to date", folder, folderSummary{State: "idle"}, connected, complete, tray.GlyphSynced},
+		{"waiting for the Hub", folder, folderSummary{State: "idle"}, connectionsView{}, complete, tray.GlyphOffline},
+		{"the folder paused", pausedFolder, folderSummary{State: "idle"}, connected, complete, tray.GlyphPaused},
+		{"paused on the Hub", folder, folderSummary{State: "idle"}, connected, pausedOnHub, tray.GlyphPaused},
 	} {
-		state := describeFolder(folder, c.sum, c.conns, complete, testMyID, false)
+		state, kind := describeFolder(c.folder, c.sum, c.conns, c.remote, testMyID, false)
 		hubs := hub
 		if c.conns.Connections == nil {
-			hubs = []tray.Hub{{ID: testHubID, Name: "Test Hub", State: "not connected"}}
+			hubs = []tray.Hub{{ID: testHubID, Name: "Test Hub", State: "not connected", Kind: control.KindWaiting}}
 		}
-		v := tray.Render(tray.Status{Engine: "running", Report: tray.Report{Hubs: hubs, Vaults: []tray.Vault{{Label: "Notes", Path: "/home/me/Notes", State: state}}}}, nil, tray.Options{Home: "/home/me", CanAsk: true})
+		v := tray.Render(tray.Status{Engine: "running", Report: tray.Report{Hubs: hubs, Vaults: []tray.Vault{{Label: "Notes", Path: "/home/me/Notes", State: state, Kind: kind}}}}, nil, tray.Options{Home: "/home/me", CanAsk: true})
 		if v.Glyph != c.glyph {
-			t.Fatalf("%s: the agent says %q, the tray shows %s (want %s)", c.name, state, v.Glyph, c.glyph)
+			t.Fatalf("%s: the agent says %q (%s), the tray shows %s (want %s)", c.name, state, kind, v.Glyph, c.glyph)
 		}
 	}
-	if state := describeFolder(folder, folderSummary{State: "idle"}, connected, complete, testMyID, false); state != "up to date" {
-		t.Fatalf("up to date reads %q", state)
+	if state, kind := describeFolder(folder, folderSummary{State: "idle"}, connected, complete, testMyID, false); state != "up to date" || kind != control.KindOK {
+		t.Fatalf("up to date reads %q %s", state, kind)
 	}
 
 	// The Hub's words, from a real report: paused, with the terminal's
@@ -71,7 +78,7 @@ func TestIssue176_TheTrayReadsTheAgentsWords(t *testing.T) {
 		t.Fatal(err)
 	}
 	v := tray.Render(tray.Status{Engine: "running", Report: rep}, nil, tray.Options{Home: a.home, CanAsk: true})
-	if !rep.Paused || v.Glyph != tray.GlyphPaused || len(v.Hubs) != 1 || v.Hubs[0].Text != "Test Hub — paused on this computer" || v.Hubs[0].Tooltip != rep.Hubs[0].State {
+	if !rep.Paused || rep.Hubs[0].Kind != control.KindPaused || v.Glyph != tray.GlyphPaused || len(v.Hubs) != 1 || v.Hubs[0].Text != "Test Hub — paused on this computer" || v.Hubs[0].Tooltip != rep.Hubs[0].State {
 		t.Fatalf("paused, as the agent says it: %+v / %+v", rep.Hubs, v)
 	}
 }

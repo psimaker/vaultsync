@@ -21,7 +21,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"syscall"
 
 	"fyne.io/systray"
@@ -39,20 +38,11 @@ func main() {
 	}
 }
 
-// shown are the places a printed error names shortened, as the agent
-// shortens them: VaultSync's folder and the home folder (stderr may be a
-// log others read).
+// shown are the places a printed error names, shortened as the agent
+// shortens them (stderr may be a log others read).
 var shown struct{ folder, home string }
 
-func redact(msg string) string {
-	if shown.folder != "" {
-		msg = strings.ReplaceAll(msg, shown.folder, "<VaultSync folder>")
-	}
-	if shown.home != "" {
-		msg = strings.ReplaceAll(msg, shown.home, "~")
-	}
-	return msg
-}
+func redact(msg string) string { return layout.Shorten(msg, shown.folder, shown.home) }
 
 func usage(w io.Writer) {
 	fmt.Fprint(w, `vaultsync-tray — VaultSync's menu-bar icon
@@ -102,7 +92,7 @@ func run(args []string) error {
 	shown.folder = lay.Base
 	// The lock is the controller's from here: it releases it on its way
 	// out, or earlier when the file is gone and it takes a fresh one.
-	held, err := tray.TakeLock(lay.Base)
+	held, err := tray.TakeLock(lay)
 	if err != nil {
 		return err
 	}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/psimaker/vaultsync/desktop/internal/control"
 	"github.com/psimaker/vaultsync/desktop/internal/layout"
 )
 
@@ -172,24 +173,27 @@ func Render(st Status, err error, o Options) View {
 	return v
 }
 
-// summarize is the glyph and the headline for a running, unpaused engine:
-// a problem first, then work in progress, then the Hub's absence, then
+// summarize is the glyph and the headline for a running engine, from the
+// kinds the agent gives its states: a problem first, then work in
+// progress, then a vault paused on its own, then the Hub's absence, then
 // "up to date".
 func summarize(st Status) (Glyph, string, string) {
 	var problem *Vault
-	syncing := 0
+	syncing, paused := 0, 0
 	allUpToDate := len(st.Vaults) > 0
 	for i := range st.Vaults {
 		vt := &st.Vaults[i]
-		switch {
-		case vaultProblem(vt.State):
+		switch vt.Kind {
+		case control.KindProblem:
 			if problem == nil {
 				problem = vt
 			}
-		case vaultBusy(vt.State):
+		case control.KindBusy:
 			syncing++
+		case control.KindPaused:
+			paused++
 		}
-		if vt.State != "up to date" {
+		if vt.Kind != control.KindOK {
 			allUpToDate = false
 		}
 	}
@@ -202,12 +206,18 @@ func summarize(st Status) (Glyph, string, string) {
 	if syncing > 1 {
 		return GlyphSyncing, fmt.Sprintf("Syncing %d vaults", syncing), ""
 	}
+	if paused == 1 {
+		return GlyphPaused, "1 vault paused", ""
+	}
+	if paused > 1 {
+		return GlyphPaused, fmt.Sprintf("%d vaults paused", paused), ""
+	}
 	if len(st.Hubs) == 0 {
 		return GlyphOffline, "No Hub paired yet", "Pair a Vault… pairs this computer with your Hub"
 	}
 	connected := false
 	for _, h := range st.Hubs {
-		if strings.HasPrefix(h.State, "connected") {
+		if h.Kind == control.KindOK {
 			connected = true
 		}
 	}
@@ -221,17 +231,6 @@ func summarize(st Status) (Glyph, string, string) {
 		return GlyphSynced, "Up to date", ""
 	}
 	return GlyphSynced, "Connected", ""
-}
-
-// vaultProblem: a state the person must act on, or one the engine could
-// not report on at all (status.go's words).
-func vaultProblem(state string) bool {
-	return strings.HasPrefix(state, "error") || strings.Contains(state, "could not sync") || state == "unknown"
-}
-
-// vaultBusy: the engine is working on this vault.
-func vaultBusy(state string) bool {
-	return strings.HasPrefix(state, "syncing") || strings.HasPrefix(state, "scanning") || strings.HasPrefix(state, "uploading") || strings.Contains(state, "left to sync")
 }
 
 func hubLines(hubs []Hub) []Line {
