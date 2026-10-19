@@ -1,4 +1,4 @@
-FROM golang:1.26-alpine@sha256:70b46548e42db77e0966aaf3619fd068734dc6c77584d526b91126504fd95816 AS builder
+FROM golang:1.26-alpine@sha256:3082400e369fa24d5fc60bca20edab3f6d604e0c5a690ec66b295eff4dd87ade AS builder
 # Stamped by docker.yml (release tag or dev-<sha>); --version prints it and the
 # installer shows old -> new on upgrades (#87).
 ARG VERSION=dev
