@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/psimaker/vaultsync/desktop/internal/control"
 	"github.com/psimaker/vaultsync/desktop/tray"
 )
 
@@ -25,7 +26,7 @@ func TestIssue176_TheTrayLooksWhereTheAgentIs(t *testing.T) {
 		if err := saveState(lay.State, st); err != nil {
 			t.Fatal(err)
 		}
-		got, err := tray.SocketPath(lay)
+		got, err := control.SocketPath(lay)
 		if err != nil || got != a.controlClient(st).Path() {
 			t.Fatalf("recorded %q: %q vs %q (%v)", recorded, got, a.controlClient(st).Path(), err)
 		}

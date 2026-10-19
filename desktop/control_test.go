@@ -951,6 +951,9 @@ func TestIssue176_RunServesTheSocketWhileTheEngineRuns(t *testing.T) {
 	if err := a.status(ctx); err != nil || !strings.Contains(a.out.(*bytes.Buffer).String(), "Sync engine: starting — VaultSync is bringing it up\n\nVaults (not syncing while the engine is stopped)\n  Notes") {
 		t.Fatalf("terminal status: %v\n%s", err, a.out)
 	}
+	// A record left while running (a socket that stopped serving) goes
+	// with a clean stop: nobody answering is then "not running".
+	writeFile(t, a.lay.SocketErrorFile(), "stopped serving\n")
 	cancel()
 	select {
 	case err := <-done:
@@ -962,6 +965,9 @@ func TestIssue176_RunServesTheSocketWhileTheEngineRuns(t *testing.T) {
 	}
 	if _, err := os.Stat(socket); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the socket stays behind at %s", socket)
+	}
+	if _, err := os.Stat(a.lay.SocketErrorFile()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the socket-error record stays after a clean stop: %v", err)
 	}
 	// And the place is out of agent.json again: nobody serves it now — and
 	// the terminal, dialing the layout's overlong address, reads the engine
@@ -988,7 +994,7 @@ func TestIssue176_ASocketThatStopsServingLeavesTheMarker(t *testing.T) {
 	if _, err := client.status(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	marker := filepath.Join(a.lay.Base, "control-socket-error.txt")
+	marker := a.lay.SocketErrorFile()
 	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("a marker while the socket serves: %v", err)
 	}
@@ -1527,7 +1533,7 @@ func TestIssue176_SocketErrorLogSaysWhenTheDetailsCouldNotBeWritten(t *testing.T
 	t.Cleanup(func() { _ = os.Chmod(base, 0o700) })
 	var logged []string
 	err := &os.PathError{Op: "listen", Path: filepath.Join(base, "agent.sock"), Err: errors.New("invalid argument")}
-	logSocketError(func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }, base, err)
+	logSocketError(func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }, layout{}.At(base), err)
 	all := strings.Join(logged, "\n")
 	if !strings.Contains(all, "could not be written") || strings.Contains(all, "details in control-socket-error.txt") || strings.Contains(all, base) {
 		t.Fatalf("log: %v", logged)
@@ -1556,7 +1562,7 @@ func TestIssue176_SocketErrorLogSaysWhenTheDetailsCouldNotBeWritten(t *testing.T
 		t.Fatal("serve must fail")
 	}
 	logged = nil
-	logSocketError(func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }, a.lay.Base, serr)
+	logSocketError(func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }, a.lay, serr)
 	all = strings.Join(logged, "\n")
 	if !strings.Contains(all, "the control socket could not be removed — a file operation failed (remove: permission denied)") || !strings.Contains(all, "open: permission denied") || !strings.Contains(all, "could not be written") {
 		t.Fatalf("every startup cause in the log: %v", logged)
@@ -1689,7 +1695,7 @@ func TestIssue176_StartupRollbackFailuresAreReported(t *testing.T) {
 		t.Fatal("the fallback must fail")
 	}
 	var lines []string
-	logSocketError(func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) }, shortDir(t), err)
+	logSocketError(func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) }, layout{}.At(shortDir(t)), err)
 	all := strings.Join(lines, "\n")
 	if !strings.Contains(all, "chmod: operation not permitted") || !strings.Contains(all, "could not be removed — a file operation failed (remove: permission denied)") {
 		t.Fatalf("the fallback's causes, each on its own: %v", lines)
@@ -1959,7 +1965,7 @@ func TestIssue176_SocketErrorStaysOutOfTheLog(t *testing.T) {
 	base := t.TempDir()
 	var logged []string
 	err := &os.PathError{Op: "listen", Path: filepath.Join(base, "agent.sock"), Err: errors.New("invalid argument")}
-	logSocketError(func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }, base, err)
+	logSocketError(func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }, layout{}.At(base), err)
 	all := strings.Join(logged, "\n")
 	if len(logged) != 2 || strings.Contains(all, base) || !strings.Contains(all, "no control socket") || !strings.Contains(all, "vaultsync status reads the engine directly") || !strings.Contains(all, "details in control-socket-error.txt") {
 		t.Fatalf("log: %v", logged)

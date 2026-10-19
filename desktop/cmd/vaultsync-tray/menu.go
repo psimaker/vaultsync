@@ -3,6 +3,7 @@ package main
 import (
 	"reflect"
 	"sync"
+	"sync/atomic"
 
 	"fyne.io/systray"
 	"github.com/psimaker/vaultsync/desktop/tray"
@@ -44,6 +45,10 @@ type menu struct {
 	// poll that found nothing new should send none).
 	last     tray.View
 	rendered bool
+	// paused is what the Pause item offers right now, readable by its
+	// click without the mutex: systray drops a click whose receiver is
+	// busy, and Render holds the mutex while it touches every item.
+	paused atomic.Bool
 }
 
 func newMenu() *menu {
@@ -75,10 +80,7 @@ func (m *menu) build() {
 		for range m.pause.ClickedCh {
 			// What the menu showed at the click: pause when it offered to
 			// pause, resume when it offered to resume.
-			m.mu.Lock()
-			pause := !m.last.Paused
-			m.mu.Unlock()
-			m.send(tray.Event{Kind: tray.EventPause, Pause: pause})
+			m.send(tray.Event{Kind: tray.EventPause, Pause: !m.paused.Load()})
 		}
 	}()
 	m.pair = m.action("Pair a Vault…", tray.EventPair)
@@ -157,6 +159,7 @@ func (m *menu) action(title string, kind tray.EventKind) *systray.MenuItem {
 // differs from the view last rendered. Safe to call from any goroutine
 // (systray's items are).
 func (m *menu) Render(v tray.View) {
+	m.paused.Store(v.Paused)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.rendered && reflect.DeepEqual(v, m.last) {

@@ -61,6 +61,12 @@ func (l Layout) At(base string) Layout {
 	return l
 }
 
+// SocketErrorFile is the agent's record that it could not make or keep
+// its control socket (control.go), in VaultSync's folder.
+func (l Layout) SocketErrorFile() string {
+	return filepath.Join(l.Base, "control-socket-error.txt")
+}
+
 // LogFile is the background service's own log on a Mac; "" where the
 // service logs to the journal.
 func (l Layout) LogFile() string {

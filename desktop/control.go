@@ -142,7 +142,7 @@ func (c *controlServer) serve(ctx context.Context) (path string, stop func() err
 			// The same record a start that could not make the socket
 			// leaves: without it, the menu-bar app would read "nobody
 			// answers" as "not running" while the engine syncs on.
-			logSocketError(c.logf, c.a.lay.Base, fmt.Errorf("the control socket stopped serving: %w", err))
+			logSocketError(c.logf, c.a.lay, fmt.Errorf("the control socket stopped serving: %w", err))
 			fmt.Fprintf(diag, "%s serve: %v\n", time.Now().Format(time.RFC3339), err)
 		}
 		close(done)
@@ -652,7 +652,7 @@ func (c *controlClient) pair(ctx context.Context, req pairRequest) (pairResponse
 // logSocketError says in the service's log that there is no control socket
 // — without the error's words, which name paths (the log is read by
 // others; the folder is not) — and keeps the words in VaultSync's folder.
-func logSocketError(logf func(string, ...any), base string, err error) {
+func logSocketError(logf func(string, ...any), lay layout, err error) {
 	// Every cause on its own line: a summary of several at once names only
 	// the first, and the file with the full words may be unwritable.
 	causes := eachCause(err)
@@ -660,7 +660,7 @@ func logSocketError(logf func(string, ...any), base string, err error) {
 	for _, c := range causes[1:] {
 		logf("no control socket — also: %s", serviceSummary(c))
 	}
-	if werr := writeFileAtomic(filepath.Join(base, "control-socket-error.txt"), []byte(err.Error()+"\n"), 0o600); werr != nil {
+	if werr := writeFileAtomic(lay.SocketErrorFile(), []byte(err.Error()+"\n"), 0o600); werr != nil {
 		logf("no control socket — the details could not be written to control-socket-error.txt: %s", serviceSummary(werr))
 		return
 	}

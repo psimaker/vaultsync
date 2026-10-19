@@ -144,31 +144,31 @@ func paused(st Status) Status {
 func TestIssue176_TrayFindsTheAgentWhereTheAgentSaysItIs(t *testing.T) {
 	dir := t.TempDir()
 	lay := layout.Layout{}.At(dir)
-	if _, err := SocketPath(lay); !errors.Is(err, ErrNotSetUp) {
+	if _, err := control.SocketPath(lay); !errors.Is(err, ErrNotSetUp) {
 		t.Fatalf("no agent.json: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "agent.json"), []byte(`{"version":1,"guiPort":0}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := SocketPath(lay); !errors.Is(err, ErrNotSetUp) {
+	if _, err := control.SocketPath(lay); !errors.Is(err, ErrNotSetUp) {
 		t.Fatalf("no port yet: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "agent.json"), []byte(`{"version":1,"guiPort":8384}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if p, err := SocketPath(lay); err != nil || p != filepath.Join(dir, "agent.sock") {
+	if p, err := control.SocketPath(lay); err != nil || p != filepath.Join(dir, "agent.sock") {
 		t.Fatalf("the usual place: %q %v", p, err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "agent.json"), []byte(`{"version":1,"guiPort":8384,"controlSocket":"/run/user/1000/vaultsync-x/agent.sock"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if p, err := SocketPath(lay); err != nil || p != "/run/user/1000/vaultsync-x/agent.sock" {
+	if p, err := control.SocketPath(lay); err != nil || p != "/run/user/1000/vaultsync-x/agent.sock" {
 		t.Fatalf("the recorded place: %q %v", p, err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "agent.json"), []byte(`{"version":1,`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := SocketPath(lay); err == nil || errors.Is(err, ErrNotSetUp) || !strings.Contains(err.Error(), "damaged") {
+	if _, err := control.SocketPath(lay); err == nil || errors.Is(err, ErrNotSetUp) || !strings.Contains(err.Error(), "damaged") {
 		t.Fatalf("a damaged agent.json is reported, not read as unset: %v", err)
 	}
 }
@@ -447,6 +447,35 @@ func TestIssue176_TrayTakesTheLockOnceTheFolderIsThere(t *testing.T) {
 	cancel()
 	if err := c3.Run(ctx); !errors.Is(err, context.Canceled) || !start.released {
 		t.Fatalf("held at start: %v released %v", err, start.released)
+	}
+}
+
+func TestIssue176_TrayShowsNothingOnTheWayOut(t *testing.T) {
+	// Quit while a status request is in flight: the cut-short request is
+	// not rendered as "could not report" — the loop ends with the context.
+	agent := newFakeAgent(t)
+	hold := make(chan struct{})
+	agent.set(func(f *fakeAgent) { f.statusHold = hold })
+	ui := newFakeUI(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	c := &Controller{GOOS: "darwin", Home: "/home/me", Layout: agent.layout, UI: ui, Poll: time.Hour, StatusTimeout: 20 * time.Second}
+	done := make(chan error, 1)
+	go func() { done <- c.Run(ctx) }()
+	time.Sleep(200 * time.Millisecond) // the request is on its way
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("run ended with %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("run did not end")
+	}
+	close(hold)
+	select {
+	case v := <-ui.views:
+		t.Fatalf("a view on the way out: %+v", v)
+	default:
 	}
 }
 
@@ -1031,6 +1060,11 @@ func TestIssue176_TrayDialogsCarryTextAsData(t *testing.T) {
 	if _, _, _, err := execRunner(short, "sleep", []string{"5"}, ""); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("a killed program: %v", err)
 	}
+	inTime, cancelInTime := context.WithTimeout(ctx, 5*time.Second)
+	defer cancelInTime()
+	if _, _, status, err := execRunner(inTime, "true", nil, ""); err != nil || status != 0 {
+		t.Fatalf("a program that finished in time: %v %d", err, status)
+	}
 	silent := func(_ context.Context, name string, args []string, stdin string) (string, string, int, error) {
 		return "", "", 3, nil
 	}
@@ -1091,6 +1125,16 @@ func TestIssue176_TrayIconsAreFiveDistinctShapes(t *testing.T) {
 
 func TestIssue176_TrayOneInstancePerUser(t *testing.T) {
 	dir := t.TempDir()
+	// Not set up (no agent.json): nothing to lock, nothing made.
+	if l, err := TakeLock(dir); err != nil || l != nil {
+		t.Fatalf("before setup: %v %v", err, l)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "tray.lock")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("a lock file before setup")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "agent.json"), []byte(`{"version":1,"guiPort":8384}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	l, err := TakeLock(dir)
 	if err != nil || l == nil || !l.Valid() {
 		t.Fatal(err, l)
@@ -1121,6 +1165,14 @@ func TestIssue176_TrayOneInstancePerUser(t *testing.T) {
 	if l, err := TakeLock(missing); err != nil || l != nil {
 		t.Fatalf("no folder yet: %v %v", err, l)
 	}
+	// Being taken apart (agent.json gone, the folder still there): nothing
+	// is made in it any more.
+	if err := os.Remove(filepath.Join(dir, "agent.json")); err != nil {
+		t.Fatal(err)
+	}
+	if l, err := TakeLock(dir); err != nil || l != nil {
+		t.Fatalf("during an uninstall: %v %v", err, l)
+	}
 	if _, err := os.Stat(missing); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("the lock made VaultSync's folder")
 	}
@@ -1131,6 +1183,9 @@ func TestIssue176_TrayOneInstancePerUser(t *testing.T) {
 	}
 	parent := filepath.Join(dir, "closed")
 	if err := os.MkdirAll(filepath.Join(parent, "VaultSync"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(parent, "VaultSync", "agent.json"), []byte(`{"version":1,"guiPort":8384}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chmod(parent, 0); err != nil {

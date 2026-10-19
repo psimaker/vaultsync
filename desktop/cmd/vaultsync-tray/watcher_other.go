@@ -2,4 +2,4 @@
 
 package main
 
-func missingWatcherHint() string { return "" }
+func missingWatcherHint() (string, error) { return "", nil }

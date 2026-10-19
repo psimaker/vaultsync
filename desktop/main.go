@@ -802,8 +802,16 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 	}
 	defer unlock()
 	ctl := &controlServer{a: a, eng: eng, logf: logf, background: a.backgroundEngine()}
+	// On the way out, the record of a socket that could not be made or
+	// kept goes too: after a clean stop, nobody answering means not
+	// running — which is what the menu-bar app reads without the record.
+	defer func() {
+		if err := os.Remove(a.lay.SocketErrorFile()); err != nil && !errors.Is(err, os.ErrNotExist) {
+			logf("control socket: control-socket-error.txt could not be removed on the way out — %s", serviceSummary(err))
+		}
+	}()
 	if socket, stop, err := ctl.serve(ctx); err != nil {
-		logSocketError(logf, a.lay.Base, err)
+		logSocketError(logf, a.lay, err)
 	} else {
 		// On the way out the place is taken out of agent.json again: a
 		// recorded place nobody serves is one another account could take.
@@ -826,7 +834,7 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 		// A record of a socket that could not be made, from an earlier
 		// start, no longer holds: without this, "no agent answers" could
 		// never again mean "not running" to the menu-bar app.
-		if err := os.Remove(filepath.Join(a.lay.Base, "control-socket-error.txt")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := os.Remove(a.lay.SocketErrorFile()); err != nil && !errors.Is(err, os.ErrNotExist) {
 			logf("control socket: an old control-socket-error.txt could not be removed — %s", serviceSummary(err))
 		}
 		// Published while the setup lock is still held: a second run that

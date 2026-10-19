@@ -48,6 +48,9 @@ type fakeAgent struct {
 	pair func(PairRequest) (PairResult, int)
 	// old: an agent without this API (404 on everything).
 	old bool
+	// statusHold, when set, keeps every status request waiting until it
+	// is closed.
+	statusHold chan struct{}
 }
 
 func newFakeAgent(t *testing.T) *fakeAgent {
@@ -59,6 +62,16 @@ func newFakeAgent(t *testing.T) *fakeAgent {
 	f.layout = layout.Layout{}.At(f.stateDir)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		hold := f.statusHold
+		f.mu.Unlock()
+		if hold != nil {
+			select {
+			case <-hold:
+			case <-r.Context().Done():
+				return
+			}
+		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		if f.old {

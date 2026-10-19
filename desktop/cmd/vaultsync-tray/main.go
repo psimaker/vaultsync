@@ -90,7 +90,11 @@ func run(args []string) error {
 		defer held.Release()
 	}
 	logger := log.New(os.Stderr, "", log.LstdFlags)
-	if hint := missingWatcherHint(); hint != "" {
+	hint, err := missingWatcherHint()
+	if err != nil {
+		return err
+	}
+	if hint != "" {
 		logger.Print(hint)
 	}
 

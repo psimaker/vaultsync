@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/psimaker/vaultsync/desktop/internal/control"
 	"github.com/psimaker/vaultsync/desktop/internal/layout"
 )
 
@@ -228,7 +229,12 @@ func (c *Controller) refresh(ctx context.Context) error {
 		st, err = cl.Status(sctx)
 		cancel()
 	}
-	if errors.Is(err, ErrNoAgent) && SocketErrorRecorded(c.Layout) {
+	if ctx.Err() != nil {
+		// Quit, or the system ending the app: a request cut short is not
+		// a state to show on the way out.
+		return ctx.Err()
+	}
+	if errors.Is(err, ErrNoAgent) && control.SocketErrorRecorded(c.Layout) {
 		err = ErrNoSocket
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
@@ -255,7 +261,7 @@ func (c *Controller) render() {
 // client is the agent as agent.json names it right now: one client, and
 // its one connection, for as long as the socket's place stays the same.
 func (c *Controller) client() (*Client, error) {
-	path, err := SocketPath(c.Layout)
+	path, err := control.SocketPath(c.Layout)
 	if err != nil {
 		return nil, err
 	}
