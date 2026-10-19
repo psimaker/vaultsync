@@ -6,6 +6,9 @@ go 1.26.6
 // guard come from the Hub's module (decision 045's pattern, like go/).
 replace github.com/psimaker/vaultsync/hub => ../hub
 
-require github.com/psimaker/vaultsync/hub v0.0.0-00010101000000-000000000000
+require (
+	github.com/psimaker/vaultsync/hub v0.0.0-00010101000000-000000000000
+	golang.org/x/sys v0.48.0
+)
 
 require filippo.io/edwards25519 v1.2.0 // indirect

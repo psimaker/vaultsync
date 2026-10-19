@@ -53,9 +53,12 @@ type engine struct {
 func (e engine) configPath() string { return filepath.Join(e.lay.Home, "config.xml") }
 
 // prepared reports whether the engine already has its identity and config.
+// Only a config that is not there means "not prepared": one that cannot be
+// looked at (a permission, an I/O error) is treated as there, so nothing
+// is generated over it and the read that follows reports the error.
 func (e engine) prepared() bool {
 	_, err := os.Stat(e.configPath())
-	return err == nil
+	return !errors.Is(err, fs.ErrNotExist)
 }
 
 // prepare gives a fresh engine its identity and config, adjusted before its
@@ -64,7 +67,10 @@ func (e engine) prepared() bool {
 // never leaves an engine that looks ready but runs on stock settings. An
 // existing config is never regenerated: it holds the identity the Hub knows.
 func (e engine) prepare(ctx context.Context, st *agentState) error {
-	if e.prepared() {
+	// A config that is there and can be looked at is kept; one that is not
+	// there is made below; one that cannot be looked at is reported by the
+	// read of the folder below — nothing is made over it either way.
+	if _, err := os.Stat(e.configPath()); err == nil {
 		if st.GUIPort == 0 {
 			// agent.json was lost or never written; the port is in the config.
 			port, err := e.guiPortFromConfig()
@@ -257,14 +263,20 @@ const exitRestart = 3
 // and returns an error when the engine stops on its own — the service
 // manager then restarts the agent after its throttle interval.
 func (e engine) supervise(ctx context.Context, st agentState, logf func(string, ...any)) error {
-	if st.GUIPort <= 0 {
-		return errors.New("the sync engine is not set up yet — run vaultsync setup")
-	}
 	unlock, err := lockFile(e.lay.Lock)
 	if err != nil {
 		return err
 	}
 	defer unlock()
+	return e.superviseLocked(ctx, st, logf)
+}
+
+// superviseLocked is supervise for a caller that holds the engine lock
+// already (run, which serves the control socket under the same lock).
+func (e engine) superviseLocked(ctx context.Context, st agentState, logf func(string, ...any)) error {
+	if st.GUIPort <= 0 {
+		return errors.New("the sync engine is not set up yet — run vaultsync setup")
+	}
 	for {
 		if !portFree(st.GUIPort) {
 			// Someone else took the API port while the engine was down: move.
@@ -274,7 +286,7 @@ func (e engine) supervise(ctx context.Context, st agentState, logf func(string, 
 			}
 			logf("the engine's API port was taken; moving it to %d", port)
 			st.GUIPort = port
-			if err := saveState(e.lay.State, st); err != nil {
+			if err := updateState(e.lay.State, func(s *agentState) { s.GUIPort = port }); err != nil {
 				return err
 			}
 		}

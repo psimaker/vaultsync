@@ -182,6 +182,7 @@ func TestIssue175_StatusWording(t *testing.T) {
 		{folderSummary{State: "idle", Error: "open /v: operation not permitted"}, true, complete, "then run vaultsync stop and vaultsync start"},
 		// Never Full Disk Access for a vault: Files & Folders is enough.
 		{folderSummary{State: "idle", NeedTotal: 3}, true, complete, "3 items left to sync"},
+		{folderSummary{State: "idle", NeedTotal: 3}, false, complete, "3 items left to sync"},
 		// Idle here does not mean the Hub has everything.
 		{folderSummary{State: "idle"}, true, map[string]remoteCompletion{hub: {Completion: 60, NeedItems: 40, RemoteState: "valid"}}, "uploading to your Hub — 60 %"},
 		{folderSummary{State: "idle"}, true, map[string]remoteCompletion{hub: {Completion: 100, RemoteState: "notSharing"}}, "waiting for your Hub to take it"},

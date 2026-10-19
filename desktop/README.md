@@ -11,7 +11,7 @@ Design record: [046](../docs/decisions/046-desktop-agent-pinned-syncthing-child.
 
 | Path | Purpose |
 |---|---|
-| `main.go` | CLI: `setup`, `pair`, `status`, `stop`/`start`, `uninstall`, `run` (the service) |
+| `main.go` | CLI: `setup`, `pair`, `status`, `pause`/`resume`, `stop`/`start`, `uninstall`, `run` (the service) |
 | `pins.go` | the one Syncthing release the agent installs, with each archive's SHA-256 |
 | `install.go` | download → checksum against the pin → unpack the one binary → one rename |
 | `engine.go` | the engine's private home, its first-start config, the supervisor (`run`) |
@@ -20,7 +20,8 @@ Design record: [046](../docs/decisions/046-desktop-agent-pinned-syncthing-child.
 | `cloud.go` | the cloud-folder block (iCloud Drive, OneDrive, Dropbox, Google Drive, Nextcloud) |
 | `overlap.go` | overlap on disk (symlinks, case, file identity) and the read-only look at the user's own Syncthing |
 | `service.go` | LaunchAgent / systemd user unit, install, stop/start, uninstall |
-| `status.go` | `status`: service, engine, Hub connection, each vault's state on both sides |
+| `status.go` | `status`: service, engine, Hub connection, each vault's state on both sides — as text and as the report the socket serves |
+| `control.go` | the control socket (`agent.sock`, decision 049): the running agent answers status, pause, resume and pair for the terminal and the menu-bar app |
 | `attempts.go` | the pairing journal (`pairing.json`): recorded before the Hub is asked |
 | `uninstall.go`, `mount_*.go` | `uninstall`; `--remove-data` anchored to VaultSync's own folder, stopping at links and mounts |
 

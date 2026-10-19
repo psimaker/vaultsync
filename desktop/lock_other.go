@@ -11,4 +11,8 @@ func lockFile(string) (func(), error) {
 	return nil, errors.New("the background engine runs on macOS and Linux only for now")
 }
 
+func lockFileWait(string) (func(), error) {
+	return nil, errors.New("the background engine runs on macOS and Linux only for now")
+}
+
 func sameDevice(os.FileInfo, os.FileInfo) bool { return false }

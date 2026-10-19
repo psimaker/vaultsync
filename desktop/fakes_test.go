@@ -30,6 +30,7 @@ const (
 // fakeEngine is the REST subset of the agent's own Syncthing.
 type fakeEngine struct {
 	mu        sync.Mutex
+	addr      string // host:port of the fake's API
 	myID      string
 	startTime string
 	devices   []syncthing.DeviceConfig
@@ -47,6 +48,16 @@ type fakeEngine struct {
 	onPendingQuery func()
 	// onNextFolders runs inside the next GET of the folder list.
 	onNextFolders func()
+	// onNextDevices runs inside the next GET of the device list.
+	onNextDevices func()
+	// folderState answers /rest/db/status for a folder (idle when unset).
+	folderState map[string]map[string]any
+	// failFolders makes the next GET of the folder list fail, like an
+	// engine that stopped.
+	failFolders bool
+	// failPatchSave makes the next device PATCH apply in memory and then
+	// fail, like an engine whose config save failed.
+	failPatchSave bool
 }
 
 type offerFlap struct {
@@ -72,6 +83,7 @@ func newFakeEngine(t *testing.T) *fakeEngine {
 	}
 	srv := httptest.NewServer(http.HandlerFunc(e.serve))
 	t.Cleanup(srv.Close)
+	e.addr = strings.TrimPrefix(srv.URL, "http://")
 	e.client = syncthing.NewClient(srv.URL, "engine-key")
 	return e
 }
@@ -116,6 +128,10 @@ func (e *fakeEngine) serve(w http.ResponseWriter, r *http.Request) {
 	case p == "/rest/system/connections":
 		write(map[string]any{"connections": map[string]any{}})
 	case p == "/rest/config/devices" && r.Method == http.MethodGet:
+		if hook := e.onNextDevices; hook != nil {
+			e.onNextDevices = nil
+			hook()
+		}
 		write(e.devices)
 	case p == "/rest/config/devices" && r.Method == http.MethodPost:
 		var d syncthing.DeviceConfig
@@ -125,7 +141,37 @@ func (e *fakeEngine) serve(w http.ResponseWriter, r *http.Request) {
 		var m map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&m)
 		e.patches = append(e.patches, m)
+		if paused, ok := m["paused"].(bool); ok {
+			id := strings.TrimPrefix(p, "/rest/config/devices/")
+			for i := range e.devices {
+				if e.devices[i].DeviceID == id {
+					e.devices[i].Paused = paused
+				}
+			}
+		}
+		if e.failPatchSave {
+			e.failPatchSave = false
+			http.Error(w, "saving the configuration failed", http.StatusInternalServerError)
+			return
+		}
+	case p == "/rest/db/status":
+		if st, ok := e.folderState[r.URL.Query().Get("folder")]; ok {
+			if st == nil {
+				http.Error(w, "no such folder", http.StatusNotFound)
+				return
+			}
+			write(st)
+			break
+		}
+		write(map[string]any{"state": "idle"})
+	case p == "/rest/db/completion":
+		write(map[string]any{"completion": 100, "remoteState": "valid"})
 	case p == "/rest/config/folders" && r.Method == http.MethodGet:
+		if e.failFolders {
+			e.failFolders = false
+			http.Error(w, "the engine is gone", http.StatusServiceUnavailable)
+			return
+		}
 		if hook := e.onNextFolders; hook != nil {
 			e.onNextFolders = nil
 			hook()

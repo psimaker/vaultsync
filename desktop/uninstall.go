@@ -22,7 +22,7 @@ import (
 // every engine owner has stopped.
 
 // ownedEntries are the names VaultSync creates in its directory.
-var ownedEntries = []string{"bin", "syncthing", "agent.json", "pairing.json", "last-error.txt", "agent.lock", "pair.lock", "setup.lock"}
+var ownedEntries = []string{"bin", "syncthing", "agent.json", "pairing.json", "last-error.txt", "agent.lock", "pair.lock", "setup.lock", "agent.sock", "control-socket.log", "control-socket-error.txt", "state.lock"}
 
 func (a *app) uninstall(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("uninstall", flag.ContinueOnError)

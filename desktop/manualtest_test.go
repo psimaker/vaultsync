@@ -92,7 +92,7 @@ func TestIssue175_MenuListsASyncingVaultOnce(t *testing.T) {
 	eng.folders = append(eng.folders, syncthingFolder("vs-1", "Testvault", local))
 	registry := filepath.Join(s.env.home, "obsidian.json")
 	writeFile(t, registry, fmt.Sprintf(`{"vaults":{"9f561515d74acab7":{"path":%q,"ts":%d,"open":true}}}`, local, time.Now().UnixMilli()))
-	s.env.registries = []string{registry}
+	s.env.registries = func() []string { return []string{registry} }
 	s.hello.Vaults = []pairing.VaultInfo{
 		{ID: "vs-1", Label: "Testvault", Files: 6},
 		{ID: "vs-2", Label: "Hub-Test", Files: 1},
@@ -146,7 +146,12 @@ func TestIssue175_ReadRefusalNamesFilesAndFolders(t *testing.T) {
 	home := "/Users/vstest"
 	path := filepath.Join(home, "Documents", "Testvault")
 	tcc := &fs.PathError{Op: "open", Path: path, Err: syscall.EPERM}
-	got := refusalText(cannotRead("darwin", home, path, tcc))
+	got := refusalText(cannotRead("darwin", home, path, tcc, false))
+	// Inside the background service (the control socket's pairing) it is
+	// "vaultsync" that macOS has to allow, not the terminal app.
+	if bg := refusalText(cannotRead("darwin", home, path, tcc, true)); !strings.Contains(bg, "Allow “vaultsync”") || strings.Contains(bg, "Terminal") {
+		t.Fatalf("background wording: %s", bg)
+	}
 	if !strings.Contains(got, "Files & Folders") || !strings.Contains(got, "~/Documents/Testvault") {
 		t.Fatalf("darwin, operation not permitted: %q", got)
 	}
@@ -157,7 +162,7 @@ func TestIssue175_ReadRefusalNamesFilesAndFolders(t *testing.T) {
 		{"linux", tcc},
 		{"darwin", &fs.PathError{Op: "open", Path: path, Err: syscall.EACCES}},
 	} {
-		if got := refusalText(cannotRead(c.goos, home, path, c.err)); strings.Contains(got, "Files & Folders") || !strings.Contains(got, "Check its permissions") {
+		if got := refusalText(cannotRead(c.goos, home, path, c.err, false)); strings.Contains(got, "Files & Folders") || !strings.Contains(got, "Check its permissions") {
 			t.Fatalf("%s %v: %q", c.goos, c.err, got)
 		}
 	}

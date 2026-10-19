@@ -159,7 +159,8 @@ it if that folder is not on your `PATH`.
 ```sh
 vaultsync status       # what syncs where, and whether your Hub is connected
 vaultsync pair         # another vault, or another Hub
-vaultsync stop         # pause until vaultsync start
+vaultsync pause        # pause syncing until vaultsync resume (the service keeps running)
+vaultsync stop         # stop the background service until vaultsync start
 vaultsync uninstall    # remove the background service; vaults stay
                        # (--remove-data also removes the settings, the pairing
                        #  identity, the sync database and the command link —
@@ -173,6 +174,18 @@ a decision is refused with the flag to add:
 vaultsync setup --code TULIP-ANCHOR-42 --hub 192.168.1.20 \
   --vault Notes --create --path ~/Vaults/Notes --yes
 ```
+
+While it runs, the agent answers `vaultsync status`, `pause` and `resume`
+over a socket in VaultSync's folder (`agent.sock`, readable by your account
+alone); the menu-bar app will read the same socket, so both show one truth.
+`vaultsync pause` pauses every connection to your Hub: nothing new arrives
+or leaves, the engine keeps running, and your vaults and their settings
+stay as they are. Changes the engine had already received before the pause
+may still be applied for a moment; `status` shows what is still in
+progress, and says `paused on this computer` for the rest until
+`vaultsync resume`. Without a running agent,
+`status` asks the engine's own API, and reads its config file when the
+engine does not answer either.
 
 `--yes` is consent to sync a `--path` that already holds files with the new
 vault named by `--vault`; it never chooses a Hub and never overrides a

@@ -7,7 +7,8 @@
 //	                          service, pair with your Hub, choose a vault
 //	vaultsync pair            sync another vault (or another Hub)
 //	vaultsync status          what syncs where
-//	vaultsync stop | start    pause or resume the background service
+//	vaultsync pause | resume  pause or resume syncing (the service keeps running)
+//	vaultsync stop | start    stop or start the background service
 //	vaultsync uninstall       remove the background service (vaults stay)
 //	vaultsync run             the background service itself
 package main
@@ -20,6 +21,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"maps"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -44,9 +46,10 @@ func main() {
 		case errors.Is(err, errCancelled):
 			os.Exit(2)
 		case serviceMode:
-			// A log or the journal: a fixed summary that carries no path or
-			// name; the whole message stays in VaultSync's own folder.
-			fmt.Fprintln(os.Stderr, "error:", serviceSummary(err))
+			// A log or the journal: a fixed summary per cause that carries
+			// no path or name; the whole message stays in VaultSync's own
+			// folder.
+			reportServiceError(os.Stderr, err)
 			if stateDirShown != "" {
 				_ = writeFileAtomic(filepath.Join(stateDirShown, "last-error.txt"), []byte(redactPaths(err.Error())+"\n"), 0o600)
 			}
@@ -68,6 +71,15 @@ var stateDirShown string
 // (stderr is no terminal): it then prints no free text at all.
 var serviceMode bool
 
+// reportServiceError writes one summary line per cause of err — a run
+// that ended with the engine's failure and a cleanup that failed says
+// both, where one summary of the join would name only the first.
+func reportServiceError(w io.Writer, err error) {
+	for _, c := range eachCause(err) {
+		fmt.Fprintln(w, "error:", serviceSummary(c))
+	}
+}
+
 // serviceSummary describes a failure of the background service from the
 // error's kind alone — never from text that could hold a path or a name.
 func serviceSummary(err error) string {
@@ -75,7 +87,10 @@ func serviceSummary(err error) string {
 	var le *os.LinkError
 	var se *os.SyscallError
 	var ee *exec.ExitError
+	var sm summarized
 	switch {
+	case errors.As(err, &sm):
+		return sm.Summary()
 	case errors.Is(err, ErrChecksumMismatch):
 		return ErrChecksumMismatch.Error() + " — nothing was installed"
 	case errors.Is(err, ErrEngineRunning):
@@ -94,6 +109,13 @@ func serviceSummary(err error) string {
 		return "a system call failed (" + se.Syscall + ": " + se.Err.Error() + ")"
 	}
 	return "the background service could not run the sync engine"
+}
+
+// summarized is an error that says what it is without any path, for the
+// service log.
+type summarized interface {
+	error
+	Summary() string
 }
 
 // redactPaths shortens the paths in what is printed: under the background
@@ -124,8 +146,10 @@ func usage(w io.Writer) {
                          pair with your Hub and choose a vault
   vaultsync pair         sync another vault, or pair with another Hub
   vaultsync status       what syncs where, and whether your Hub is connected
-  vaultsync stop         pause the background service (until vaultsync start)
-  vaultsync start        resume it
+  vaultsync pause        pause syncing on this computer (until vaultsync resume)
+  vaultsync resume       resume it
+  vaultsync stop         stop the background service (until vaultsync start)
+  vaultsync start        start it again
   vaultsync uninstall    stop and remove the background service; your vaults stay
          [--remove-data] also remove VaultSync's settings, pairing identity and
                          sync database on this computer. Never removes vault files.
@@ -170,6 +194,10 @@ func runCLI(args []string) error {
 		return app.pair(ctx, args)
 	case "status":
 		return app.status(ctx)
+	case "pause":
+		return app.pauseSync(ctx, true)
+	case "resume":
+		return app.pauseSync(ctx, false)
 	case "stop":
 		return app.stopService()
 	case "start":
@@ -273,7 +301,26 @@ func (a *app) setup(ctx context.Context, args []string) error {
 		unlockSetup()
 		return fmt.Errorf("could not set up the sync engine: %w", err)
 	}
-	if err := saveState(a.lay.State, st); err != nil {
+	if err := updateState(a.lay.State, func(s *agentState) { s.GUIPort = st.GUIPort }); err != nil {
+		unlockSetup()
+		return err
+	}
+	// The shell's view of where the user's Syncthing, Obsidian and the
+	// cloud clients keep their settings — for a pairing run by the service.
+	// Written under the pairing lock, which every reader of the record
+	// takes: a pairing in flight keeps the places it loaded.
+	st.Env = recordGuardEnv(a.getenv)
+	unlockPair, err := waitForLock(ctx, filepath.Join(a.lay.Base, "pair.lock"), 2*time.Minute)
+	if err != nil {
+		unlockSetup()
+		if errors.Is(err, ErrEngineRunning) {
+			return refuse("Another vaultsync pair is running on this computer — wait for it to finish, then run the setup again.")
+		}
+		return err
+	}
+	err = updateState(a.lay.State, func(s *agentState) { s.Env = st.Env })
+	unlockPair()
+	if err != nil {
 		unlockSetup()
 		return err
 	}
@@ -310,7 +357,7 @@ func (a *app) setup(ctx context.Context, args []string) error {
 		return fmt.Errorf("the sync engine did not start: %w — see %s", err, a.logHint())
 	}
 	command := a.installCommand(t)
-	err = a.pairWith(ctx, t, opts, client)
+	_, err = a.pairWith(ctx, t, opts, client, pairOrigin{})
 	if *noService {
 		t.blank()
 		t.say("VaultSync has no background service on this computer: run %s run to keep syncing.", command)
@@ -467,7 +514,7 @@ func (a *app) ensureEngine(ctx context.Context, t *term) (agentState, bool, erro
 	t.say("done")
 	st.Syncthing.Version = syncthingVersion
 	st.Syncthing.BinarySHA256 = got.SHA256
-	if err := saveState(a.lay.State, st); err != nil {
+	if err := updateState(a.lay.State, func(s *agentState) { s.Syncthing = st.Syncthing }); err != nil {
 		return st, false, err
 	}
 	t.say("✓ Sync engine installed (Syncthing %s, checksum verified)", strings.TrimPrefix(syncthingVersion, "v"))
@@ -535,7 +582,7 @@ func (a *app) pair(ctx context.Context, args []string) error {
 	}
 	t, closeTerm := openTerm(a.out)
 	defer closeTerm()
-	err = a.pairWith(ctx, t, opts, client)
+	_, err = a.pairWith(ctx, t, opts, client, pairOrigin{})
 	if errors.Is(err, errCancelled) {
 		t.blank()
 		t.say("Nothing was paired.")
@@ -544,8 +591,85 @@ func (a *app) pair(ctx context.Context, args []string) error {
 	return err
 }
 
-func (a *app) pairWith(ctx context.Context, t *term, opts pairOptions, client *syncthing.Client) error {
+// rememberShellEnv records the shell's guard variables in agent.json when
+// they differ from what is recorded, so a pairing run by the service looks
+// where this terminal looks. Called under the pairing lock only (the
+// pairing flow does it): uninstall --remove-data takes agent.json away
+// after seeing that lock free, and a record written outside it could
+// bring the file back after the removal was reported done.
+func rememberShellEnv(statePath string, getenv func(string) string) error {
+	// Only a state that is there and set up takes the record: loadState
+	// reads a missing agent.json as a fresh one, and a record written then
+	// would make the file — after an uninstall --remove-data that finished
+	// between the pairing's first looks and its lock, that would bring
+	// VaultSync's folder back from the dead.
+	if _, err := os.Stat(statePath); errors.Is(err, fs.ErrNotExist) {
+		return refuse("VaultSync is not set up on this computer (anymore). Run vaultsync setup.")
+	} else if err != nil {
+		return fmt.Errorf("VaultSync's settings could not be read (%w) — nothing was changed", err)
+	}
+	st, err := loadState(statePath)
+	if err != nil {
+		return fmt.Errorf("VaultSync's settings could not be read (%w) — nothing was changed", err)
+	}
+	if st.GUIPort == 0 {
+		return refuse("VaultSync is not set up on this computer yet. Run vaultsync setup.")
+	}
+	recorded := recordGuardEnv(getenv)
+	if st.Env != nil && maps.Equal(recorded, st.Env) {
+		return nil
+	}
+	return updateState(statePath, func(s *agentState) { s.Env = recorded })
+}
+
+// pairOrigin says where a pairing runs. background: inside the background
+// service (the control socket), whose permissions macOS grants to
+// "vaultsync", not to a terminal app. service: a process whose own
+// environment is not the shell's — the guards then look where the shell's
+// record (loaded under the pairing lock) says, and where the process
+// looks. A pairing from a terminal (neither) records the shell's
+// variables itself, under the pairing lock.
+type pairOrigin struct {
+	background bool
+	service    bool
+}
+
+// pairWith runs the pairing flow on t and returns the session for what it
+// kept (the menu for a caller without a terminal).
+func (a *app) pairWith(ctx context.Context, t *term, opts pairOptions, client *syncthing.Client, origin pairOrigin) (*pairSession, error) {
 	unitPath, _ := a.svc.unitPath()
+	// The environments the guards look in: the shell's record when this is
+	// the service's pairing (loaded under the pairing lock into the slot,
+	// so read at use), and the process's own.
+	shell := new(map[string]string)
+	envs := func() []func(string) string {
+		e := []func(string) string{a.getenv}
+		if *shell != nil {
+			rec := *shell
+			e = append([]func(string) string{func(k string) string { return rec[k] }}, e...)
+		}
+		return e
+	}
+	var shellRecord func() (map[string]string, error)
+	if origin.service {
+		shellRecord = func() (map[string]string, error) {
+			st, err := loadState(a.lay.State)
+			if err != nil {
+				return nil, fmt.Errorf("VaultSync's settings could not be read (%w) — nothing was changed", err)
+			}
+			if st.Env == nil {
+				// An agent.json from before the record: the guards would look
+				// only where the service looks, which may not be where the
+				// user's own Syncthing or cloud settings are — the terminal
+				// records that once.
+				return nil, refuse("VaultSync has not recorded where this computer keeps its settings yet. Run vaultsync pair in a terminal once, then try again here.")
+			}
+			return st.Env, nil
+		}
+	}
+	// A terminal's pairing is the shell: it records where it looks, so
+	// the service's pairings can look there too.
+	rememberShell := !origin.background && !origin.service
 	s := &pairSession{
 		t:    t,
 		opts: opts,
@@ -554,23 +678,52 @@ func (a *app) pairWith(ctx context.Context, t *term, opts pairOptions, client *s
 			discover: func(ctx context.Context) ([]pairing.DiscoveredHub, error) {
 				return pairing.DiscoverHubs(ctx, pairing.DefaultPort, hubDiscoveryWait)
 			},
-			dial:           pairing.NewLocalClient,
-			registries:     obsidianRegistries(a.goos, a.home, a.getenv),
-			scanRoots:      []string{a.home},
-			cloud:          func() []cloudRoot { return cloudRoots(liveCloudEnv(a.goos, a.home)) },
-			userST:         a.userSyncthing,
+			dial: pairing.NewLocalClient,
+			registries: func() []string {
+				var out []string
+				for _, env := range envs() {
+					out = append(out, obsidianRegistries(a.goos, a.home, env)...)
+				}
+				return uniqStrings(out)
+			},
+			scanRoots: []string{a.home},
+			cloud: func() []cloudRoot {
+				var roots []cloudRoot
+				for _, env := range envs() {
+					roots = append(roots, cloudRoots(cloudEnvFor(a.goos, a.home, env))...)
+				}
+				return uniqRoots(roots)
+			},
+			userST:         func() (userSyncthing, bool) { return findUserSyncthingIn(a.goos, a.home, envs()...) },
 			unitDir:        filepath.Dir(unitPath),
 			pendingTimeout: join.DefaultPendingTimeout,
 			deviceName:     computerName(a.goos),
 			now:            time.Now,
+			background:     origin.background,
+			rememberShell:  rememberShell,
+			shellRecord:    shellRecord,
+			shellSlot:      shell,
 		},
 	}
-	return s.run(ctx)
+	return s, s.run(ctx)
+}
+
+// uniqRoots keeps the first of each cloud root, by path.
+func uniqRoots(in []cloudRoot) []cloudRoot {
+	seen := map[string]bool{}
+	var out []cloudRoot
+	for _, r := range in {
+		if !seen[r.Path] {
+			seen[r.Path] = true
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // --- run (the background service) -------------------------------------------
 
-func (a *app) run(ctx context.Context, args []string) error {
+func (a *app) run(ctx context.Context, args []string) (retErr error) {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	stateDir := fs.String("state-dir", "", "")
@@ -620,7 +773,7 @@ func (a *app) run(ctx context.Context, args []string) error {
 			return err
 		}
 		st.Syncthing.Version, st.Syncthing.BinarySHA256 = syncthingVersion, got.SHA256
-		if err := saveState(a.lay.State, st); err != nil {
+		if err := updateState(a.lay.State, func(s *agentState) { s.Syncthing = st.Syncthing }); err != nil {
 			unlockSetup()
 			return err
 		}
@@ -629,18 +782,66 @@ func (a *app) run(ctx context.Context, args []string) error {
 		unlockSetup()
 		return err
 	}
-	err = saveState(a.lay.State, st)
-	unlockSetup()
-	if err != nil {
+	if err := updateState(a.lay.State, func(s *agentState) { s.GUIPort = st.GUIPort }); err != nil {
+		unlockSetup()
 		return err
 	}
-	logf("vaultsync %s: running the sync engine", version)
-	err = eng.supervise(ctx, st, logf)
+	// The engine lock makes this process the engine's only owner — and the
+	// control socket's: a socket file found now belongs to an agent that is
+	// gone. The socket is a convenience for status and the menu-bar app;
+	// an engine that cannot have one still runs.
+	unlock, err := lockFile(eng.lay.Lock)
 	if errors.Is(err, ErrEngineRunning) {
+		unlockSetup()
 		return refuse("VaultSync is already running on this computer (the background service). See vaultsync status.")
 	}
-	return err
+	if err != nil {
+		unlockSetup()
+		return err
+	}
+	defer unlock()
+	ctl := &controlServer{a: a, eng: eng, logf: logf, background: a.backgroundEngine()}
+	if socket, stop, err := ctl.serve(ctx); err != nil {
+		logSocketError(logf, a.lay.Base, err)
+	} else {
+		// On the way out the place is taken out of agent.json again: a
+		// recorded place nobody serves is one another account could take.
+		// A write that fails is reported with whatever ended the run.
+		defer func() {
+			if err := stop(); err != nil {
+				retErr = errors.Join(retErr, err)
+			}
+			if err := updateState(a.lay.State, func(s *agentState) { s.ControlSocket = "" }); err != nil {
+				// Said here in its own words (the kind of the cause, no path):
+				// the error returned is summarized at the service boundary,
+				// and the file that keeps full details may be unwritable too.
+				logf("control socket: its place could not be taken out of agent.json — %s", serviceSummary(err))
+				retErr = errors.Join(retErr, fmt.Errorf("the control socket's place could not be taken out of agent.json: %w", err))
+			}
+		}()
+		if socket == a.lay.Socket {
+			socket = ""
+		}
+		// Published while the setup lock is still held: a second run that
+		// waits on it loads agent.json only afterwards and saves the place
+		// back as it found it, instead of writing an older copy over it.
+		if beforeSocketPublish != nil {
+			beforeSocketPublish()
+		}
+		st.ControlSocket = socket
+		if err := updateState(a.lay.State, func(s *agentState) { s.ControlSocket = socket }); err != nil {
+			unlockSetup()
+			return err
+		}
+	}
+	unlockSetup()
+	logf("vaultsync %s: running the sync engine", version)
+	return eng.superviseLocked(ctx, st, logf)
 }
+
+// beforeSocketPublish runs right before run records the control socket's
+// place in agent.json; a test uses it to look at the locks held then.
+var beforeSocketPublish func()
 
 // --- stop / start -----------------------------------------------------------
 

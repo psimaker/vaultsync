@@ -35,3 +35,20 @@ func sameDevice(a, b os.FileInfo) bool {
 	sb, ok2 := b.Sys().(*syscall.Stat_t)
 	return ok1 && ok2 && sa.Dev == sb.Dev
 }
+
+// lockFileWait takes the lock like lockFile, but waits for it instead of
+// refusing: for the short, serialized updates of agent.json (updateState).
+func lockFileWait(path string) (func(), error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return func() { f.Close() }, nil
+}
