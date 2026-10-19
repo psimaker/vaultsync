@@ -39,7 +39,7 @@ func TestIssue176_TrayShowsWhatTheAgentReports(t *testing.T) {
 		{"scanning and uploading", withVaults(base, "scanning the folder", "uploading to your Hub — 3 items left"), GlyphSyncing, "Syncing 2 vaults", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"an error outranks syncing", withVaults(base, "syncing", "error: permission denied — allow access to this folder (on a Mac: allow “vaultsync” in System Settings → Privacy & Security → Files & Folders), then run vaultsync stop and vaultsync start"), GlyphAttention, "Attention needed", "Vault 2: error: permission denied — allow access to this folder (on a Mac: allow “vaultsync” in System Settings → Privacy & Security → Files & Folders), then run vaultsync stop and vaultsync start", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"files that could not sync", withVaults(base, "3 files could not sync — see the engine's log"), GlyphAttention, "Attention needed", "Vault 1: 3 files could not sync — see the engine's log", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
-		{"a vault the engine could not report on", withVaults(base, "up to date", "unknown"), GlyphAttention, "Attention needed", "Vault 2: unknown", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
+		{"a vault the engine gave no report on this time", withVaults(base, "up to date", "unknown"), GlyphSyncing, "1 vault without a status right now", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"no Hub paired", withVaults(Status{Engine: "running", Report: Report{Hubs: []Hub{}}}), GlyphOffline, "No Hub paired yet", "Pair a Vault… pairs this computer with your Hub", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"Hub not connected", withVaults(Status{Engine: "running", Report: Report{Hubs: []Hub{{Name: "Office Hub", State: "not connected", Kind: control.KindWaiting}}}}, "waiting for your Hub"), GlyphOffline, "Waiting for your Hub", "Not connected right now; syncing resumes when it is", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"connected through a relay", withVaults(Status{Engine: "running", Report: Report{Hubs: []Hub{{Name: "Office Hub", State: "connected through a relay (slower; a direct connection is not possible right now)", Kind: control.KindOK}}}}, "up to date"), GlyphSynced, "Up to date", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
@@ -116,7 +116,7 @@ func TestIssue176_TrayShowsWhatTheAgentReports(t *testing.T) {
 	}{
 		{ErrNotSetUp, GlyphOffline, "VaultSync is not set up on this computer yet"},
 		{ErrNoAgent, GlyphOffline, "VaultSync is not running"},
-		{ErrNoSocket, GlyphOffline, "VaultSync does not answer"},
+		{ErrNoSocket, GlyphAttention, "VaultSync does not answer"},
 		{ErrOldAgent, GlyphAttention, "VaultSync needs an update on this computer"},
 		{errors.New("the sync engine does not answer: boom"), GlyphAttention, "VaultSync could not report"},
 	} {
@@ -146,7 +146,9 @@ func withVaults(st Status, states ...string) Status {
 // (the agent's own test holds the two together on the agent's words).
 func kindOf(state string) string {
 	switch {
-	case strings.HasPrefix(state, "error"), strings.Contains(state, "could not sync"), state == "unknown":
+	case state == "unknown":
+		return control.KindUnknown
+	case strings.HasPrefix(state, "error"), strings.Contains(state, "could not sync"):
 		return control.KindProblem
 	case strings.HasPrefix(state, "syncing"), strings.HasPrefix(state, "scanning"), strings.HasPrefix(state, "uploading"), strings.Contains(state, "left to sync"):
 		return control.KindBusy
@@ -368,7 +370,7 @@ func TestIssue176_TrayPauseAndResumeAskOnlyTheAgent(t *testing.T) {
 	}
 	ui.click(EventOpened, 0)
 	v = ui.view(t, "no socket", func(v View) bool { return v.Headline == "VaultSync does not answer" })
-	if !strings.Contains(v.Detail, "control-socket-error.txt") || v.Glyph != GlyphOffline {
+	if !strings.Contains(v.Detail, "control-socket-error.txt") || v.Glyph != GlyphAttention {
 		t.Fatalf("without a socket: %+v", v)
 	}
 }
@@ -593,6 +595,7 @@ func TestIssue176_TrayOpensOnlyWhatTheAgentListed(t *testing.T) {
 	slow.view(t, "a refresh while the open runs", func(v View) bool { return v.Headline == "Up to date" })
 	close(release)
 
+	dirs := func(path string) bool { return !strings.HasSuffix(path, ".log") }
 	for _, c := range []struct {
 		goos, path, name string
 		args             []string
@@ -600,15 +603,16 @@ func TestIssue176_TrayOpensOnlyWhatTheAgentListed(t *testing.T) {
 		{"darwin", "/home/me/Notes", "open", []string{"/home/me/Notes"}},
 		{"linux", "/home/me/Notes", "xdg-open", []string{"/home/me/Notes"}},
 		// A folder named like a bundle would be launched by open; it is
-		// revealed in its parent instead.
+		// revealed in its parent instead. A file is a file.
 		{"darwin", "/home/me/Journal.app", "open", []string{"-R", "/home/me/Journal.app"}},
 		{"darwin", "/home/me/notes.v2", "open", []string{"-R", "/home/me/notes.v2"}},
 		{"darwin", "/home/me/.hidden", "open", []string{"/home/me/.hidden"}},
+		{"darwin", "/home/me/Library/Logs/VaultSync/vaultsync.log", "open", []string{"/home/me/Library/Logs/VaultSync/vaultsync.log"}},
 		{"darwin", "Notes", "", nil},
 		{"darwin", "", "", nil},
 		{"windows", `C:\Notes`, "", nil},
 	} {
-		name, args, err := openCommand(c.goos, c.path)
+		name, args, err := openCommand(c.goos, c.path, dirs)
 		if c.name == "" {
 			if err == nil {
 				t.Fatalf("%s %q opened", c.goos, c.path)
@@ -679,21 +683,36 @@ func TestIssue176_TrayPairingAsksOnlyWhatTheAgentNeeds(t *testing.T) {
 	if len(ask.menus) != 1 || ask.menus[0].Hub[0].Vault != "vs-aaaaaaaaaaaa" || len(ask.menus[0].Unavailable) != 1 {
 		t.Fatalf("the menu shown: %+v", ask.menus)
 	}
-	// needs yes without the question to agree to: the refusal is shown,
-	// no consent dialog is made of a sentence that names a flag.
-	agent = newFakeAgent(t)
-	agent.set(func(f *fakeAgent) {
-		inner := pairingScript(t, "TULIP-ANCHOR-42")
-		f.pair = func(req PairRequest) (PairResult, int) {
-			res, code := inner(req)
-			res.Consent = ""
-			return res, code
+	// needs yes without the question to agree to, or without the folder it
+	// is about: the refusal is shown, no consent dialog is made of a
+	// sentence that names a flag, and no yes goes out for a folder not
+	// named.
+	for _, strip := range []string{"consent", "folder"} {
+		agent = newFakeAgent(t)
+		agent.set(func(f *fakeAgent) {
+			inner := pairingScript(t, "TULIP-ANCHOR-42")
+			f.pair = func(req PairRequest) (PairResult, int) {
+				res, code := inner(req)
+				if strip == "consent" {
+					res.Consent = ""
+				} else {
+					res.Folder = ""
+				}
+				return res, code
+			}
+		})
+		ask = &fakeAsker{code: "TULIP-ANCHOR-42", choose: chooseLocal, agree: true}
+		line, err = Pair(ctx, NewClient(agent.socket), ask)
+		if err != nil || !strings.Contains(line, "Pass --yes to agree.") || !reflect.DeepEqual(ask.sequence(), []string{"code", "vault", "inform"}) || ask.told[0] != line {
+			t.Fatalf("needs yes without %s: %q %v %v %v", strip, line, err, ask.sequence(), ask.told)
 		}
-	})
-	ask = &fakeAsker{code: "TULIP-ANCHOR-42", choose: chooseLocal, agree: true}
-	line, err = Pair(ctx, NewClient(agent.socket), ask)
-	if err != nil || !strings.Contains(line, "Pass --yes to agree.") || !reflect.DeepEqual(ask.sequence(), []string{"code", "vault", "inform"}) || ask.told[0] != line {
-		t.Fatalf("needs yes without consent: %q %v %v %v", line, err, ask.sequence(), ask.told)
+		agent.set(func(f *fakeAgent) {
+			for _, r := range f.pairs {
+				if r.Yes {
+					t.Fatalf("a yes went out without %s: %+v", strip, f.pairs)
+				}
+			}
+		})
 	}
 
 	// Consent refused: yes is never sent, nothing changed.

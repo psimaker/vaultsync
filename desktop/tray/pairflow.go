@@ -126,10 +126,11 @@ func Pair(ctx context.Context, c *Client, ask Asker) (string, error) {
 			// its sync-plugin warnings included; yes goes out only after
 			// the person agreed to them, for the very vault and folder the
 			// refusal was about (the request is unchanged otherwise).
-			if res.Consent == "" {
+			if res.Consent == "" || res.Folder == "" {
 				// A refusal that asks for consent without the question to
-				// agree to is shown as it is — no dialog puts a flag's
-				// sentence to a button.
+				// agree to, or without naming the folder it is about, is
+				// shown as it is — no dialog puts a flag's sentence to a
+				// button, and no yes goes out for a folder not named.
 				return refused(ctx, ask, res.Refusal)
 			}
 			ok, err := ask.Confirm(ctx, res.Consent)

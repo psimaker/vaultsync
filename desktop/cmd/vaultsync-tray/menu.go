@@ -49,6 +49,8 @@ type menu struct {
 	// click without the mutex: systray drops a click whose receiver is
 	// busy, and Render holds the mutex while it touches every item.
 	paused atomic.Bool
+	// paths is the folder each vault slot shows, readable the same way.
+	paths atomic.Pointer[[]string]
 }
 
 func newMenu() *menu {
@@ -72,12 +74,11 @@ func (m *menu) build() {
 	systray.AddSeparator()
 	m.noVault = disabledItem("")
 	m.vaults = m.pool(vaultSlots, func(i int) tray.Event {
-		// The folder the slot shows at the click, not the slot number.
-		m.mu.Lock()
-		defer m.mu.Unlock()
+		// The folder the slot shows at the click, not the slot number —
+		// read without the mutex, which a render may hold for a while.
 		ev := tray.Event{Kind: tray.EventOpenVault}
-		if i < len(m.last.Vaults) {
-			ev.Path = m.last.Vaults[i].Path
+		if paths := m.paths.Load(); paths != nil && i < len(*paths) {
+			ev.Path = (*paths)[i]
 		}
 		return ev
 	})
@@ -170,9 +171,15 @@ func (m *menu) action(title string, kind tray.EventKind) *systray.MenuItem {
 func (m *menu) Render(v tray.View) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// The offered intent is stored once the item reads it: a click in
-	// between sends what the item still shows, which the controller then
-	// drops as already in place — never the opposite of what was shown.
+	// The offered intent and the slots' paths are stored once the items
+	// read them: a click in between sends what the item still shows, which
+	// the controller then drops (a pause already in place) or opens (the
+	// folder it showed) — never something the item did not show.
+	paths := make([]string, len(v.Vaults))
+	for i, vt := range v.Vaults {
+		paths[i] = vt.Path
+	}
+	defer m.paths.Store(&paths)
 	defer m.paused.Store(v.Paused)
 	if m.rendered && reflect.DeepEqual(v, m.last) {
 		return

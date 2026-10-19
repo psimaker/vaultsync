@@ -115,6 +115,9 @@ func Render(st Status, err error, o Options) View {
 		v.Detail = "Run vaultsync setup in a terminal"
 		return v
 	case errors.Is(err, ErrNoSocket):
+		// The agent may well run and sync on without its socket: not the
+		// crossed ring that says nothing syncs.
+		v.Glyph = GlyphAttention
 		v.Headline = "VaultSync does not answer"
 		v.Detail = "Stopped, or running without its control socket (see control-socket-error.txt in VaultSync's folder); vaultsync status in a terminal tells which"
 		return v
@@ -179,7 +182,7 @@ func Render(st Status, err error, o Options) View {
 // "up to date".
 func summarize(st Status) (Glyph, string, string) {
 	var problem *Vault
-	syncing, paused, waiting := 0, 0, 0
+	syncing, paused, waiting, unknown := 0, 0, 0, 0
 	allUpToDate := len(st.Vaults) > 0
 	for i := range st.Vaults {
 		vt := &st.Vaults[i]
@@ -194,6 +197,8 @@ func summarize(st Status) (Glyph, string, string) {
 			paused++
 		case control.KindWaiting:
 			waiting++
+		case control.KindUnknown:
+			unknown++
 		}
 		if vt.Kind != control.KindOK {
 			allUpToDate = false
@@ -249,6 +254,14 @@ func summarize(st Status) (Glyph, string, string) {
 	}
 	if waiting > 1 {
 		return GlyphSyncing, fmt.Sprintf("%d vaults waiting for your Hub", waiting), ""
+	}
+	// No report on a vault this time (the engine did not answer for it):
+	// a passing state, not a problem to flip the icon over.
+	if unknown == 1 {
+		return GlyphSyncing, "1 vault without a status right now", ""
+	}
+	if unknown > 1 {
+		return GlyphSyncing, fmt.Sprintf("%d vaults without a status right now", unknown), ""
 	}
 	return GlyphSyncing, "Connected — not everything is up to date yet", ""
 }

@@ -126,6 +126,18 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		if _, err := removeOwnData(lay, nil, "darwin"); !strings.Contains(refusalText(err), "still running") {
 			t.Fatalf("got %v", err)
 		}
+		unlock()
+	})
+	t.Run("the menu-bar app runs", func(t *testing.T) {
+		lay, _ := ownedFixture(t)
+		unlock, err := lockFile(lay.TrayLock())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := removeOwnData(lay, nil, "darwin"); !strings.Contains(refusalText(err), "menu-bar app is running") {
+			t.Fatalf("got %v", err)
+		}
+		unlock()
 	})
 	t.Run("nothing installed", func(t *testing.T) {
 		lay, err := layoutFor("linux", t.TempDir(), envOf(nil))

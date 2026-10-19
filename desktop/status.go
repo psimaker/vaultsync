@@ -204,7 +204,7 @@ func (a *app) report(ctx context.Context, c *syncthing.Client, background bool) 
 	}
 	sort.Slice(folders, func(i, j int) bool { return strings.ToLower(folders[i].Label) < strings.ToLower(folders[j].Label) })
 	for _, f := range folders {
-		state, kind := "unknown", control.KindProblem
+		state, kind := "unknown", control.KindUnknown
 		var sum folderSummary
 		if err := c.Get(ctx, "/rest/db/status?folder="+url.QueryEscape(f.ID), &sum); err == nil {
 			remote := map[string]remoteCompletion{}

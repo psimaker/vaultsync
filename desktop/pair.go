@@ -994,11 +994,18 @@ func (s *pairSession) catalogueMatches(selector string) int {
 func catalogueMatchesIn(vaults []pairing.VaultInfo, selector string) int {
 	n := 0
 	for _, v := range vaults {
-		if v.ID == selector || strings.EqualFold(strings.TrimSpace(v.Label), strings.TrimSpace(selector)) {
+		if matchesSelector(v, selector) {
 			n++
 		}
 	}
 	return n
+}
+
+// matchesSelector: the vault is the one a selector names — by ID, or by
+// label without regard to case. The one rule for counting matches and
+// for picking the match.
+func matchesSelector(v pairing.VaultInfo, selector string) bool {
+	return v.ID == selector || strings.EqualFold(strings.TrimSpace(v.Label), strings.TrimSpace(selector))
 }
 
 // planForHub: an existing Hub vault comes to a new or empty folder here.
@@ -1107,7 +1114,7 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 		return plan{}, refuse("Your Hub has more than one vault matching %s. Name it by its ID instead (vaultsync-hub vault list shows the IDs).", quoted(s.opts.vault))
 	case n == 1:
 		for _, v := range s.hello.Vaults {
-			if v.ID != s.opts.vault && !strings.EqualFold(strings.TrimSpace(v.Label), strings.TrimSpace(s.opts.vault)) {
+			if !matchesSelector(v, s.opts.vault) {
 				continue
 			}
 			if s.opts.create {

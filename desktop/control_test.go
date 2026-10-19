@@ -554,9 +554,13 @@ func TestIssue176_PairOverTheSocketIsTheFlagFlow(t *testing.T) {
 	assertUntouched(t, work)
 	// The refusal names the folder by its identity; a yes for that folder
 	// is refused once another sits at the path (the terminal's own check
-	// after its question), and taken for the folder shown.
+	// after its question), and taken for the folder shown. A yes that
+	// names no folder is no answer at all.
 	if pr.Folder == "" {
 		t.Fatalf("the consent names no folder: %+v", pr)
+	}
+	if _, err := client.Pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Work", Create: true, Path: work, Yes: true}); err == nil || !strings.Contains(err.Error(), "names the folder") || eng.folderCount() != 1 {
+		t.Fatalf("a yes without its folder: %v (folders %d)", err, eng.folderCount())
 	}
 	shown := pr.Folder
 	if err := os.Rename(work, work+".old"); err != nil {
@@ -1191,7 +1195,9 @@ func TestIssue176_SocketPairingLooksWhereTheShellLooks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pr, err := client.Pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Notes", Create: true, Path: notes, Yes: true})
+	// The refusal under test comes before any consent, so no yes (which
+	// the socket takes only with the folder the question named).
+	pr, err := client.Pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Notes", Create: true, Path: notes})
 	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "already synced by the Syncthing on this computer") || eng.folderCount() != 0 {
 		t.Fatalf("a folder the shell's Syncthing syncs: %+v %v (folders %d)", pr, err, eng.folderCount())
 	}
@@ -1895,7 +1901,7 @@ func TestIssue176_TheRecordIsLoadedUnderThePairingLock(t *testing.T) {
 		}
 	}
 	t.Cleanup(func() { beforePairingLock = nil })
-	pr, err := client.Pair(context.Background(), pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Notes", Create: true, Path: notes, Yes: true})
+	pr, err := client.Pair(context.Background(), pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Notes", Create: true, Path: notes})
 	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "already synced by the Syncthing on this computer") || eng.folderCount() != 0 {
 		t.Fatalf("the record made just before the lock must be the one checked: %+v %v", pr, err)
 	}

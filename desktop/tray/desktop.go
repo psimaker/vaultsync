@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -57,8 +58,9 @@ func outcome(runErr, ctxErr error, exitCode int) (status int, err error) {
 // openCommand is the program that opens path with the desktop: open on a
 // Mac, xdg-open on Linux. Only an absolute path is opened — the paths
 // come from the agent's report, and a relative one would be resolved
-// against wherever this process happens to run.
-func openCommand(goos, path string) (name string, args []string, err error) {
+// against wherever this process happens to run. isDir says whether the
+// path is a folder.
+func openCommand(goos, path string, isDir func(string) bool) (name string, args []string, err error) {
 	if path == "" || !filepath.IsAbs(path) {
 		return "", nil, errors.New("not an absolute path")
 	}
@@ -67,8 +69,9 @@ func openCommand(goos, path string) (name string, args []string, err error) {
 		// A folder whose name has an extension can be a bundle to
 		// LaunchServices (Journal.app), which `open` would launch — with
 		// synced content that carries no quarantine. Such a folder is
-		// revealed in its parent instead, which launches nothing.
-		if strings.Contains(strings.TrimPrefix(filepath.Base(path), "."), ".") {
+		// revealed in its parent instead, which launches nothing. A file
+		// (the log) is opened as a file.
+		if isDir(path) && strings.Contains(strings.TrimPrefix(filepath.Base(path), "."), ".") {
 			return "open", []string{"-R", path}, nil
 		}
 		return "open", []string{path}, nil
@@ -86,7 +89,7 @@ func Open(goos string) func(ctx context.Context, path string) error {
 
 func openWith(goos string, run runner) func(ctx context.Context, path string) error {
 	return func(_ context.Context, path string) error {
-		name, args, err := openCommand(goos, path)
+		name, args, err := openCommand(goos, path, isDir)
 		if err != nil {
 			return err
 		}
@@ -110,6 +113,13 @@ func openWith(goos string, run runner) func(ctx context.Context, path string) er
 		}
 		return nil
 	}
+}
+
+// isDir says whether path is a folder; a path that cannot be looked at
+// is not one.
+func isDir(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.IsDir()
 }
 
 // notifyCommand is the program that shows a notification: osascript on a

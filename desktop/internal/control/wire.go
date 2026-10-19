@@ -35,8 +35,9 @@ const (
 	KindBusy    = "busy"    // scanning, syncing, uploading, items left to sync
 	KindWaiting = "waiting" // waiting for the Hub to connect or to take the vault; a Hub: not connected
 	KindPaused  = "paused"  // paused — on this computer, the folder itself, or on the Hub's side
-	KindProblem = "problem" // an error, files that could not sync, or no report at all
+	KindProblem = "problem" // an error, files that could not sync
 	KindOffline = "offline" // the engine is stopped
+	KindUnknown = "unknown" // the engine gave no report on it this time
 )
 
 type Hub struct {

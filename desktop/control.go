@@ -505,6 +505,13 @@ func (c *controlServer) pair(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, fmt.Errorf("bad request: %w", err))
 		return
 	}
+	if req.Yes && req.Folder == "" {
+		// A yes on the socket answers a question about one folder, which
+		// the question named by its identity; without it, the yes could
+		// be taken for whatever folder stands at the path now.
+		fail(w, http.StatusBadRequest, errors.New("bad request: a yes names the folder it was given for (folder)"))
+		return
+	}
 	client, err := c.client()
 	if err != nil {
 		fail(w, http.StatusInternalServerError, err)
