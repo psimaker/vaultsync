@@ -37,6 +37,7 @@ func TestIssue176_TrayShowsWhatTheAgentReports(t *testing.T) {
 		{"scanning and uploading", withVaults(base, "scanning the folder", "uploading to your Hub — 3 items left"), GlyphSyncing, "Syncing 2 vaults", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"an error outranks syncing", withVaults(base, "syncing", "error: permission denied — allow access to this folder (on a Mac: allow “vaultsync” in System Settings → Privacy & Security → Files & Folders), then run vaultsync stop and vaultsync start"), GlyphAttention, "Attention needed", "Vault 2: error: permission denied — allow access to this folder (on a Mac: allow “vaultsync” in System Settings → Privacy & Security → Files & Folders), then run vaultsync stop and vaultsync start", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"files that could not sync", withVaults(base, "3 files could not sync — see the engine's log"), GlyphAttention, "Attention needed", "Vault 1: 3 files could not sync — see the engine's log", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
+		{"a vault the engine could not report on", withVaults(base, "up to date", "unknown"), GlyphAttention, "Attention needed", "Vault 2: unknown", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"no Hub paired", withVaults(Status{Engine: "running", Report: Report{Hubs: []Hub{}}}), GlyphOffline, "No Hub paired yet", "Pair a Vault… pairs this computer with your Hub", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"Hub not connected", withVaults(Status{Engine: "running", Report: Report{Hubs: []Hub{{Name: "Office Hub", State: "not connected"}}}}, "waiting for your Hub"), GlyphOffline, "Waiting for your Hub", "Not connected right now; syncing resumes when it is", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"connected through a relay", withVaults(Status{Engine: "running", Report: Report{Hubs: []Hub{{Name: "Office Hub", State: "connected through a relay (slower; a direct connection is not possible right now)"}}}}, "up to date"), GlyphSynced, "Up to date", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
@@ -432,6 +433,16 @@ func TestIssue176_TrayTakesTheLockOnceTheFolderIsThere(t *testing.T) {
 	}
 	ui4.click(EventOpened, 0)
 	ui4.view(t, "held after all, the notice gone", func(v View) bool { return c4.Held != nil && v.Notice == "" })
+	// While the lock fails, what an action said is not overwritten by it:
+	// both stand in the menu.
+	ui5 := newFakeUI(t)
+	c5 := &Controller{Lock: func(string) (LockHandle, error) { return nil, errors.New("open tray.lock: read-only file system") }, Open: func(context.Context, string) error { return errors.New("no such file") }}
+	controllerFor(t, agent, ui5, c5)
+	ui5.view(t, "the lock notice alone", func(v View) bool { return strings.Contains(v.Notice, "could not be locked") })
+	ui5.click(EventOpenLog, 0)
+	ui5.view(t, "both", func(v View) bool {
+		return strings.Contains(v.Notice, "Could not open it") && strings.Contains(v.Notice, "could not be locked")
+	})
 
 	// A second instance found running ends the loop with its error.
 	ui2 := newFakeUI(t)
@@ -523,11 +534,22 @@ func TestIssue176_TrayOpensOnlyWhatTheAgentListed(t *testing.T) {
 	ui.click(EventOpenVault, 7) // no such line
 	ui.click(EventOpenVault, 1) // the opener refuses it
 	v := ui.view(t, "the refusal", func(v View) bool { return strings.HasPrefix(v.Notice, "Could not open it") })
-	mu.Lock()
-	got := append([]string(nil), opened...)
-	mu.Unlock()
-	sort.Strings(got)
-	if want := []string{"/home/me/Library/Logs/VaultSync/vaultsync.log", "/home/me/Notes", "relative/path"}; !reflect.DeepEqual(got, want) {
+	// The opens run off the loop: all three have been handed to the
+	// opener once the last one's refusal is in the menu, but not
+	// necessarily in that order, nor before this line.
+	want := []string{"/home/me/Library/Logs/VaultSync/vaultsync.log", "/home/me/Notes", "relative/path"}
+	var got []string
+	for deadline := time.Now().Add(10 * time.Second); ; {
+		mu.Lock()
+		got = append([]string(nil), opened...)
+		mu.Unlock()
+		sort.Strings(got)
+		if reflect.DeepEqual(got, want) || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("opened %v, want %v", got, want)
 	}
 	if !strings.Contains(v.Notice, "not an absolute path") {
@@ -624,8 +646,21 @@ func TestIssue176_TrayPairingAsksOnlyWhatTheAgentNeeds(t *testing.T) {
 	if len(ask.menus) != 1 || ask.menus[0].Hub[0].Vault != "vs-aaaaaaaaaaaa" || len(ask.menus[0].Unavailable) != 1 {
 		t.Fatalf("the menu shown: %+v", ask.menus)
 	}
-	if ask.told[0] != line {
-		t.Fatalf("told: %v", ask.told)
+	// needs yes without the question to agree to: the refusal is shown,
+	// no consent dialog is made of a sentence that names a flag.
+	agent = newFakeAgent(t)
+	agent.set(func(f *fakeAgent) {
+		inner := pairingScript(t, "TULIP-ANCHOR-42")
+		f.pair = func(req PairRequest) (PairResult, int) {
+			res, code := inner(req)
+			res.Consent = ""
+			return res, code
+		}
+	})
+	ask = &fakeAsker{code: "TULIP-ANCHOR-42", choose: chooseLocal, agree: true}
+	line, err = Pair(ctx, NewClient(agent.socket), ask)
+	if err != nil || !strings.Contains(line, "Pass --yes to agree.") || !reflect.DeepEqual(ask.sequence(), []string{"code", "vault", "inform"}) || ask.told[0] != line {
+		t.Fatalf("needs yes without consent: %q %v %v %v", line, err, ask.sequence(), ask.told)
 	}
 
 	// Consent refused: yes is never sent, nothing changed.
@@ -962,6 +997,11 @@ func TestIssue176_TrayDialogsCarryTextAsData(t *testing.T) {
 	if _, _, err := a.AskCode(ctx); err == nil || !strings.Contains(err.Error(), "code dialog could not be shown") {
 		t.Fatalf("a failing script: %v", err)
 	}
+	// A number that merely contains -128 is not a cancel.
+	a = &scriptAsker{run: script("", "execution error: System Events got an error: item -1280 not found", 1)}
+	if _, ok, err := a.AskCode(ctx); ok || err == nil {
+		t.Fatalf("a failure with -1280 in it read as a cancel: %v %v", ok, err)
+	}
 	a = &scriptAsker{run: script("", "", 0)}
 	if ok, err := a.Confirm(ctx, "Folder X already contains files."); !ok || err != nil {
 		t.Fatalf("consent: %v %v", ok, err)
@@ -1064,6 +1104,14 @@ func TestIssue176_TrayDialogsCarryTextAsData(t *testing.T) {
 	defer cancelInTime()
 	if _, _, status, err := execRunner(inTime, "true", nil, ""); err != nil || status != 0 {
 		t.Fatalf("a program that finished in time: %v %d", err, status)
+	}
+	// A program that is done but left a child holding its pipes (xdg-open
+	// and the file manager it started) is what it did, not a failure.
+	if _, _, status, err := execRunner(ctx, "sh", []string{"-c", "sleep 3 & exit 0"}, ""); err != nil || status != 0 {
+		t.Fatalf("a program whose child keeps the pipes: %v %d", err, status)
+	}
+	if _, _, status, err := execRunner(ctx, "sh", []string{"-c", "sleep 3 & exit 4"}, ""); err != nil || status != 4 {
+		t.Fatalf("its exit status still counts: %v %d", err, status)
 	}
 	silent := func(_ context.Context, name string, args []string, stdin string) (string, string, int, error) {
 		return "", "", 3, nil
@@ -1203,8 +1251,5 @@ func TestIssue176_TrayTextHelpers(t *testing.T) {
 	}
 	if got := resultLine("a\n\n  b  \n\n"); got != "b" {
 		t.Fatalf("lastLine: %q", got)
-	}
-	if got := consentText("X already contains files. Pass --yes to agree."); !strings.HasPrefix(got, "X already contains files.\n\nIf Obsidian Sync") {
-		t.Fatalf("consentText: %q", got)
 	}
 }

@@ -113,11 +113,13 @@ func Pair(ctx context.Context, c *Client, ask Asker) (string, error) {
 			// its sync-plugin warnings included; yes goes out only after
 			// the person agreed to them, for the very vault and folder the
 			// refusal was about (the request is unchanged otherwise).
-			text := res.Consent
-			if text == "" {
-				text = consentText(res.Refusal)
+			if res.Consent == "" {
+				// A refusal that asks for consent without the question to
+				// agree to is shown as it is — no dialog puts a flag's
+				// sentence to a button.
+				return refused(ctx, ask, res.Refusal)
 			}
-			ok, err := ask.Confirm(ctx, text)
+			ok, err := ask.Confirm(ctx, res.Consent)
 			if err != nil {
 				return "", err
 			}
@@ -154,14 +156,6 @@ func requestFor(c Choice) (vault string, create bool, path string) {
 		return c.Entry.Label, true, c.Entry.Path
 	}
 	return c.Entry.Vault, false, c.Entry.Default
-}
-
-// consentText is the fallback for an agent that sends no consent text:
-// its refusal without the flag it names (the button is the answer here),
-// and with the note the terminal's own consent gives.
-func consentText(refusal string) string {
-	t := strings.TrimSuffix(refusal, " Pass --yes to agree.")
-	return t + "\n\nIf Obsidian Sync or another service also syncs this folder, turn that off for it first."
 }
 
 // resultLine is the line the agent's output ends on: its last "✓" line —

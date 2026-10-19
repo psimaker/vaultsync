@@ -78,10 +78,11 @@ type Controller struct {
 	view    View
 	pairing bool
 	notice  string
-	// lockNotice: the notice is the lock's, to be cleared once it holds;
-	// lockSaid: the failure is in the log already.
-	lockNotice, lockSaid bool
-	cl                   *Client
+	// lockWords: why the one-instance lock could not be taken, shown next
+	// to the notice until it holds; lockSaid: the failure is in the log.
+	lockWords string
+	lockSaid  bool
+	cl        *Client
 }
 
 // LockHandle is a held one-instance lock (*Lock).
@@ -185,16 +186,14 @@ func (c *Controller) takeLock() error {
 	if err != nil {
 		// The words for the menu; the log gets the fact alone (the error
 		// names VaultSync's folder), once per failure.
-		c.notice, c.lockNotice = "VaultSync's folder could not be locked for this menu-bar app ("+err.Error()+"); trying again", true
+		c.lockWords = "VaultSync's folder could not be locked for this menu-bar app (" + err.Error() + "); trying again"
 		if !c.lockSaid {
 			c.logf("one-instance lock: could not be taken; trying again at every refresh")
 			c.lockSaid = true
 		}
 		return nil
 	}
-	if c.lockNotice {
-		c.notice, c.lockNotice, c.lockSaid = "", false, false
-	}
+	c.lockWords, c.lockSaid = "", false
 	if held != nil {
 		c.Held = held
 	}
@@ -248,12 +247,21 @@ func (c *Controller) refresh(ctx context.Context) error {
 // render shows the last refresh's outcome again, with whatever changed
 // since (a notice, a pairing under way).
 func (c *Controller) render() {
+	notice := c.notice
+	if c.lockWords != "" {
+		// The lock's trouble stands beside what the last action said,
+		// never in its place.
+		if notice != "" {
+			notice += " · "
+		}
+		notice += c.lockWords
+	}
 	c.view = Render(c.status, c.lastErr, Options{
 		Home:    c.Home,
 		LogPath: c.Layout.LogFile(),
 		Pairing: c.pairing,
 		CanAsk:  c.Asker != nil,
-		Notice:  c.notice,
+		Notice:  notice,
 	})
 	c.UI.Render(c.view)
 }

@@ -909,8 +909,6 @@ func (s *pairSession) stillTheSame(p plan) error {
 	return nil
 }
 
-// askConsent is rule 7's explicit consent for a folder that holds files,
-// naming the consequence; the default is No.
 // consentLines is the consent as the terminal asks it: the sync-plugin
 // warnings for the folder, then what syncing it means — the same lines a
 // caller without a terminal shows in its dialog (refusal.consent).
@@ -924,6 +922,8 @@ func (s *pairSession) consentLines(name, path string) []string {
 	return lines
 }
 
+// askConsent is rule 7's explicit consent for a folder that holds files,
+// naming the consequence; the default is No.
 func (s *pairSession) askConsent(name, path string) error {
 	lines := s.consentLines(name, path)
 	for i, l := range lines {
@@ -1150,9 +1150,11 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 	p := plan{kind: planNew, name: name, path: path, hadFiles: exists && !empty}.withIdentity()
 	if p.hadFiles && !s.opts.yes {
 		if !s.t.interactive() {
-			r := refuseNeeding("yes", "%s already contains files. VaultSync would sync it with your Hub as the new vault %s, and edits and deletions on connected devices would also change this folder. Pass --yes to agree.", tildePath(s.env.home, path), quoted(name))
-			r.(*refusal).consent = strings.Join(s.consentLines(name, path), "\n")
-			return plan{}, r
+			return plan{}, &refusal{
+				msg:     fmt.Sprintf("%s already contains files. VaultSync would sync it with your Hub as the new vault %s, and edits and deletions on connected devices would also change this folder. Pass --yes to agree.", tildePath(s.env.home, path), quoted(name)),
+				needs:   "yes",
+				consent: strings.Join(s.consentLines(name, path), "\n"),
+			}
 		}
 		if err := s.askConsent(name, path); err != nil {
 			return plan{}, err

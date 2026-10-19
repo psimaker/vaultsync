@@ -131,7 +131,9 @@ func (a *scriptAsker) osascript(ctx context.Context, what, script string) (out s
 		return "", false, dialogError(what, err)
 	}
 	if status != 0 {
-		if strings.Contains(stderr, "-128") {
+		// AppleScript's "User canceled. (-128)" — the token in brackets,
+		// not any number that happens to contain it.
+		if strings.Contains(stderr, "(-128)") {
 			return "", false, nil
 		}
 		return "", false, dialogError(what, fmt.Errorf("osascript exited with status %d: %s", status, strings.TrimSpace(stderr)))

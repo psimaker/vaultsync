@@ -223,9 +223,10 @@ func summarize(st Status) (Glyph, string, string) {
 	return GlyphSynced, "Connected", ""
 }
 
-// vaultProblem: a state the person must act on (status.go's words).
+// vaultProblem: a state the person must act on, or one the engine could
+// not report on at all (status.go's words).
 func vaultProblem(state string) bool {
-	return strings.HasPrefix(state, "error") || strings.Contains(state, "could not sync")
+	return strings.HasPrefix(state, "error") || strings.Contains(state, "could not sync") || state == "unknown"
 }
 
 // vaultBusy: the engine is working on this vault.
@@ -245,7 +246,7 @@ func vaultLines(vaults []Vault, home string) []VaultLine {
 	var out []VaultLine
 	for _, vt := range vaults {
 		l := shortened(vt.Label+" — ", vt.State)
-		where := tildePath(home, vt.Path)
+		where := layout.TildePath(home, vt.Path)
 		if l.Tooltip == "" {
 			l.Tooltip = where
 		} else {
@@ -276,12 +277,4 @@ const resumeRemedy = " — vaultsync resume starts syncing again"
 // has no item in the menu, and a tooltip is not shown on every desktop.
 func cutRemedy(state string) string {
 	return strings.TrimSuffix(state, resumeRemedy)
-}
-
-// tildePath shows a path below the home folder as ~/…, as the agent does.
-func tildePath(home, p string) string {
-	if p == "" {
-		return p
-	}
-	return layout.TildePath(home, p)
 }

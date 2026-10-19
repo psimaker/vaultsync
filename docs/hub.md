@@ -69,8 +69,12 @@ Syncthing you already run is never touched. Scripts pass everything after
 `--` to the agent:
 
 ```sh
+# the first computer: start Notes as a new vault on the Hub from this folder
 curl -fsSL https://vaultsync.eu/setup.sh | sh -s -- --device --code TULIP-ANCHOR-42 \
   -- --vault Notes --create --path ~/Vaults/Notes --yes
+# another computer: download the Hub's Notes (no --create, into a new folder)
+curl -fsSL https://vaultsync.eu/setup.sh | sh -s -- --device --code TULIP-ANCHOR-42 \
+  -- --vault Notes --path ~/Vaults/Notes
 ```
 
 **Your own Syncthing instead** — to pair a Syncthing you already run with the
@@ -171,8 +175,12 @@ Scripts and remote shells pass everything as flags; anything that would need
 a decision is refused with the flag to add:
 
 ```sh
+# the first computer: Notes starts as a new vault on the Hub from this folder
 vaultsync setup --code TULIP-ANCHOR-42 --hub 192.168.1.20 \
   --vault Notes --create --path ~/Vaults/Notes --yes
+# another computer: the Hub's Notes is downloaded (no --create)
+vaultsync setup --code TULIP-ANCHOR-42 --hub 192.168.1.20 \
+  --vault Notes --path ~/Vaults/Notes
 ```
 
 While it runs, the agent answers `vaultsync status`, `pause` and `resume`

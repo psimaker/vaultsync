@@ -33,6 +33,12 @@ func execRunner(ctx context.Context, name string, args []string, stdin string) (
 		// its own just before the limit is what it did.
 		return out.String(), errb.String(), 0, ctx.Err()
 	}
+	if errors.Is(err, exec.ErrWaitDelay) {
+		// The program is done; a child it left behind still holds its
+		// pipes (xdg-open's file manager). What the program itself did is
+		// its exit status.
+		return out.String(), errb.String(), cmd.ProcessState.ExitCode(), nil
+	}
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
 		return out.String(), errb.String(), ee.ExitCode(), nil
@@ -98,13 +104,20 @@ func notifyCommand(goos string, lookPath func(string) (string, error), text stri
 }
 
 // Notify shows a notification, or does nothing where none can be shown;
-// what it shows is also in the menu, so a failure is not reported.
+// what it shows is also in the menu, so a failure is not reported. It
+// never holds the caller: the program runs off the loop, for ten seconds
+// at most (a notification service that does not answer must not stall
+// the menu).
 func Notify(goos string, lookPath func(string) (string, error)) func(ctx context.Context, text string) {
-	return func(ctx context.Context, text string) {
+	return func(_ context.Context, text string) {
 		name, args, stdin, ok := notifyCommand(goos, lookPath, text)
 		if !ok {
 			return
 		}
-		_, _, _, _ = execRunner(ctx, name, args, stdin)
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_, _, _, _ = execRunner(ctx, name, args, stdin)
+		}()
 	}
 }
