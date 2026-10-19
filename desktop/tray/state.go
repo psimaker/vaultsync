@@ -44,6 +44,19 @@ func LogPath(goos, home string) string {
 	return ""
 }
 
+// ErrNoSocket: nobody answers on the socket, and the agent has recorded
+// that it could not make one — so VaultSync may well be running, only
+// without the socket; the terminal's status can tell, the menu cannot.
+var ErrNoSocket = errors.New("VaultSync does not answer on its control socket: it is stopped, or it runs without the socket (control-socket-error.txt is in VaultSync's folder) — vaultsync status in a terminal tells which")
+
+// SocketErrorRecorded: the agent wrote control-socket-error.txt (it could
+// not serve the socket at some start; the file stays until the folder is
+// removed, so it says "maybe", never "now").
+func SocketErrorRecorded(stateDir string) bool {
+	_, err := os.Stat(filepath.Join(stateDir, "control-socket-error.txt"))
+	return err == nil
+}
+
 // agentState is the part of agent.json the menu-bar app reads.
 type agentState struct {
 	Version       int    `json:"version"`

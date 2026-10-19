@@ -79,7 +79,7 @@ func run(args []string) error {
 	} else if !filepath.IsAbs(dir) {
 		return errors.New("--state-dir must be an absolute path")
 	}
-	release, err := tray.Lock(dir)
+	release, held, err := tray.Lock(dir)
 	if err != nil {
 		return err
 	}
@@ -92,6 +92,7 @@ func run(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	ui := newMenu()
+	ui.onQuit = stop
 	c := &tray.Controller{
 		GOOS:     runtime.GOOS,
 		Home:     home,
@@ -101,6 +102,8 @@ func run(args []string) error {
 		Open:     tray.Open(runtime.GOOS),
 		Notify:   tray.Notify(runtime.GOOS, exec.LookPath),
 		Logf:     logger.Printf,
+		Lock:     tray.Lock,
+		LockHeld: held,
 	}
 	// The controller ends the tray (Quit after Run returns), and the tray
 	// ends the controller: when the native loop stops on its own — the

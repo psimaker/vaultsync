@@ -159,7 +159,8 @@ Flags for setup and pair:
   --code WORD-WORD-NN   the code your Hub printed (asked when missing)
   --hub IP[:PORT]       skip the search and use the Hub at this address
   --vault NAME          the vault on your Hub (with --create: the new vault's name)
-  --create              start --vault on your Hub when it does not exist yet
+  --create              start --vault as a new vault on your Hub (refused when
+                        your Hub already has one of that name)
   --path FOLDER         this computer's folder for the vault
   --yes                 agree to sync a --path that already holds files with a
                         new vault on your Hub

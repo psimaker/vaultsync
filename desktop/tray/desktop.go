@@ -71,7 +71,7 @@ func notifyCommand(goos string, lookPath func(string) (string, error), text stri
 		return "osascript", nil, `display notification ` + appleScriptString(text) + ` with title ` + appleScriptString(dialogTitle), true
 	case "linux":
 		if _, err := lookPath("notify-send"); err == nil {
-			return "notify-send", []string{dialogTitle, text}, "", true
+			return "notify-send", []string{"--", dialogTitle, text}, "", true
 		}
 	}
 	return "", nil, "", false

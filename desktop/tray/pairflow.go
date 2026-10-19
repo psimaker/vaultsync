@@ -38,10 +38,6 @@ type Choice struct {
 	Entry MenuEntry
 }
 
-// maxPairRounds bounds the conversation: the agent asks for each flag at
-// most once, so more rounds than kinds of flags means something is off.
-const maxPairRounds = 6
-
 // Pair runs the conversation and returns what it ended with for the
 // menu's notice: the agent's last line when a vault was set up, the
 // refusal otherwise, "" when the person cancelled. A dialog that could
@@ -55,8 +51,10 @@ func Pair(ctx context.Context, c *Client, ask Asker, home string) (string, error
 	if req.Code == "" {
 		return "", nil
 	}
+	// Each flag is asked for once, so the conversation is bounded by the
+	// kinds of flags there are.
 	asked := map[string]bool{}
-	for round := 0; round < maxPairRounds; round++ {
+	for {
 		res, err := c.Pair(ctx, req)
 		if err != nil {
 			_ = ask.Inform(ctx, err.Error())
@@ -92,15 +90,9 @@ func Pair(ctx context.Context, c *Client, ask Asker, home string) (string, error
 			if err != nil || !ok {
 				return "", err
 			}
-			if taken := sameNameOnHub(choice, *res.Menu); taken != "" {
-				// The terminal asks for another name here; the menu has no
-				// name to offer, and --create with a name the Hub already
-				// has would resolve to the Hub's vault instead of starting
-				// a new one (that is how a repeated setup finds its own
-				// vault, #228) — an empty folder would then receive the
-				// Hub's vault the person did not choose.
-				return refused(ctx, ask, "Your Hub already has a vault named "+taken+". To download it, choose it under On your Hub; to start a new vault from this folder under another name, run vaultsync pair in a terminal.")
-			}
+			// A vault from this computer goes out as --create; a name the
+			// Hub already has is the agent's refusal (it never turns
+			// --create into a download), shown like any other.
 			req.Vault, req.Create, req.Path = requestFor(choice, home)
 		case "yes":
 			// The consent is the agent's own words; yes goes out only after
@@ -122,7 +114,6 @@ func Pair(ctx context.Context, c *Client, ask Asker, home string) (string, error
 			return refused(ctx, ask, res.Refusal)
 		}
 	}
-	return refused(ctx, ask, "The pairing did not finish: VaultSync kept asking for more. Run vaultsync pair in a terminal.")
 }
 
 // refused shows the agent's refusal and ends the conversation with it.
@@ -134,22 +125,6 @@ func refused(ctx context.Context, ask Asker, refusal string) (string, error) {
 	return refusal, nil
 }
 
-// sameNameOnHub is the Hub vault's name when a vault chosen on this
-// computer bears a name the Hub already lists (as the agent matches names:
-// without regard to case), else "".
-func sameNameOnHub(c Choice, m Menu) string {
-	if !c.Local {
-		return ""
-	}
-	name := strings.TrimSpace(c.Entry.Label)
-	for _, h := range m.Hub {
-		if strings.EqualFold(strings.TrimSpace(h.Label), name) {
-			return "“" + h.Label + "”"
-		}
-	}
-	return ""
-}
-
 // requestFor turns a choice into the flags the terminal would take: a
 // vault on this computer starts as a new vault on the Hub under its
 // folder's name (--vault NAME --create --path FOLDER); a vault on the
@@ -158,7 +133,7 @@ func requestFor(c Choice, home string) (vault string, create bool, path string) 
 	if c.Local {
 		return c.Entry.Label, true, c.Entry.Path
 	}
-	return c.Entry.Vault, false, filepath.Join(home, "Vaults", folderName(c.Entry.Label))
+	return c.Entry.Vault, false, filepath.Join(home, "Vaults", FolderName(c.Entry.Label))
 }
 
 // consentText is the agent's refusal as the question to agree to: without
@@ -183,10 +158,11 @@ func lastLine(out string) string {
 // maxFolderNameRunes mirrors the agent's limit on a vault's name.
 const maxFolderNameRunes = 64
 
-// folderName turns a vault label into one folder name the way the agent
+// FolderName turns a vault label into one folder name the way the agent
 // does for the terminal's default (safeVaultName): no separators, control
-// characters or leading dots, at most 64 characters.
-func folderName(label string) string {
+// characters or leading dots, at most 64 characters. Exported for the
+// agent's own test, which holds the two together.
+func FolderName(label string) string {
 	var b strings.Builder
 	for _, r := range strings.TrimSpace(label) {
 		switch {
@@ -207,6 +183,10 @@ func folderName(label string) string {
 	}
 	return name
 }
+
+// TildePath shows a path below the home folder as ~/…, as the agent does;
+// exported for the agent's own test.
+func TildePath(home, p string) string { return tildePath(home, p) }
 
 // errNoDialogs: this computer has no way to show the dialogs.
 var errNoDialogs = errors.New("no dialog program found")

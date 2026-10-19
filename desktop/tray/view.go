@@ -15,8 +15,9 @@ import (
 type Glyph int
 
 const (
-	// GlyphOffline: nothing syncs right now — no agent, not set up, no Hub
-	// connected, or the engine still starting.
+	// GlyphOffline: nothing syncs right now — no agent answers, not set
+	// up, or no Hub connected. (An engine still starting shows the
+	// syncing ring: the agent is at work on it.)
 	GlyphOffline Glyph = iota
 	GlyphSynced
 	GlyphSyncing
@@ -66,14 +67,17 @@ type View struct {
 	Headline string // the first line, VaultSync's state in a few words
 	Detail   string // a second line under it (""): the remedy, or the problem
 	Notice   string // what the last action said (""), until the next one
-	Hubs     []Line
-	Vaults   []VaultLine
-	Waiting  []Line
-	Attempts []Line
-	Pause    Action // "Pause Syncing" or "Resume Syncing"
-	Pair     Action
-	Log      Action // Title "" on Linux: the journal has no file to open
-	Quit     Action
+	// NoVaultLine stands where the vaults would be when there are none
+	// and the agent answered (""): "No vault yet".
+	NoVaultLine string
+	Hubs        []Line
+	Vaults      []VaultLine
+	Waiting     []Line
+	Attempts    []Line
+	Pause       Action // "Pause Syncing" or "Resume Syncing"
+	Pair        Action
+	Log         Action // Title "" on Linux: the journal has no file to open
+	Quit        Action
 }
 
 // Options are the facts the view needs besides the agent's report.
@@ -105,9 +109,18 @@ func Render(st Status, err error, o Options) View {
 		v.Headline = "VaultSync is not set up on this computer yet"
 		v.Detail = "Run vaultsync setup in a terminal"
 		return v
+	case errors.Is(err, ErrNoSocket):
+		v.Headline = "VaultSync does not answer"
+		v.Detail = "Stopped, or running without its control socket (see control-socket-error.txt in VaultSync's folder); vaultsync status in a terminal tells which"
+		return v
 	case errors.Is(err, ErrNoAgent):
 		v.Headline = "VaultSync is not running"
 		v.Detail = "Run vaultsync start in a terminal"
+		return v
+	case errors.Is(err, ErrOldAgent):
+		v.Glyph = GlyphAttention
+		v.Headline = "VaultSync needs an update on this computer"
+		v.Detail = "The agent is older than this menu-bar app; run the setup link or vaultsync setup again"
 		return v
 	case err != nil:
 		v.Glyph = GlyphAttention
@@ -117,6 +130,9 @@ func Render(st Status, err error, o Options) View {
 	}
 	v.Hubs = hubLines(st.Hubs)
 	v.Vaults = vaultLines(st.Vaults, o.Home)
+	if len(v.Vaults) == 0 {
+		v.NoVaultLine = "No vault yet"
+	}
 	for _, w := range st.Waiting {
 		v.Waiting = append(v.Waiting, Line{Text: w.Label + " — shared by " + w.Hub + "; Pair a Vault… sets it up"})
 	}

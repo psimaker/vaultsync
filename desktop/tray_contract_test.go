@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/psimaker/vaultsync/desktop/tray"
@@ -69,6 +70,59 @@ func TestIssue176_TheTrayReadsTheAgentsJSON(t *testing.T) {
 	if req != (pairRequest{Code: "TULIP-ANCHOR-42", Hub: "192.168.1.20", Vault: "Work", Create: true, Path: "/home/me/Work", Yes: true, Name: "Laptop"}) {
 		t.Fatalf("request: %+v", req)
 	}
+}
+
+// The tray's helpers that mirror the agent's: a folder name for a Hub
+// vault and the ~ shortening are the agent's own, input for input.
+func TestIssue176_TheTrayNamesFoldersLikeTheAgent(t *testing.T) {
+	for _, in := range []string{"Notes", "  my / notes : v2  ", "..hidden", "", "a\x00b", strings.Repeat("x", 70), "Résumé: 2026", "  ", "trailing dot."} {
+		if got, want := tray.FolderName(in), safeVaultName(in); got != want {
+			t.Fatalf("%q: tray %q, agent %q", in, got, want)
+		}
+	}
+	for _, p := range []string{"/home/me/Notes", "/home/me", "/home/me/", "/other/Notes", "", "/home/meister/Notes"} {
+		if got, want := tray.TildePath("/home/me", p), tildePath("/home/me", p); got != want {
+			t.Fatalf("%q: tray %q, agent %q", p, got, want)
+		}
+	}
+}
+
+// Every field the tray reads exists on the agent's side, and every field
+// the tray sends is one the agent reads — by JSON key, so a field added
+// on one side alone fails here.
+func TestIssue176_TheTrayAndTheAgentShareEveryField(t *testing.T) {
+	keys := func(v any) map[string]bool {
+		data, err := json.Marshal(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]json.RawMessage
+		if err := json.Unmarshal(data, &m); err != nil {
+			t.Fatalf("%s: %v", data, err)
+		}
+		out := map[string]bool{}
+		for k := range m {
+			out[k] = true
+		}
+		return out
+	}
+	same := func(what string, a, b any) {
+		t.Helper()
+		if ka, kb := keys(a), keys(b); !reflect.DeepEqual(ka, kb) {
+			t.Fatalf("%s: agent %v, tray %v", what, ka, kb)
+		}
+	}
+	same("status", controlStatus{statusReport: emptyReport()}, tray.Status{})
+	same("hub", hubStatus{}, tray.Hub{})
+	same("vault", vaultStatus{}, tray.Vault{})
+	same("waiting", waitingStatus{}, tray.Waiting{})
+	same("attempt", attemptStatus{}, tray.Attempt{})
+	same("pause", pauseResponse{}, tray.PauseResult{})
+	same("pair request", pairRequest{}, tray.PairRequest{})
+	// The agent omits empty optional fields; compare with them filled.
+	same("pair result", pairResponse{Refusal: "r", Needs: "n", Menu: &menuJSON{}}, tray.PairResult{Refusal: "r", Needs: "n", Menu: &tray.Menu{}})
+	same("menu", menuJSON{Note: "n"}, tray.Menu{Note: "n"})
+	same("menu entry", menuEntryJSON{Path: "p", Vault: "v", Note: "n"}, tray.MenuEntry{Path: "p", Vault: "v", Note: "n"})
 }
 
 func roundTrip(t *testing.T, from, to any) {

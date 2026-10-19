@@ -1062,9 +1062,24 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 		return plan{}, refuse("Your Hub has more than one vault matching %s. Name it by its ID instead (vaultsync-hub vault list shows the IDs).", quoted(s.opts.vault))
 	case n == 1:
 		for _, v := range s.hello.Vaults {
-			if v.ID == s.opts.vault || strings.EqualFold(strings.TrimSpace(v.Label), strings.TrimSpace(s.opts.vault)) {
-				return s.downloadPlan(ctx, v, path)
+			if v.ID != s.opts.vault && !strings.EqualFold(strings.TrimSpace(v.Label), strings.TrimSpace(s.opts.vault)) {
+				continue
 			}
+			if s.opts.create {
+				// --create asks for a new vault; a name the Hub already has
+				// is not turned into a download of that vault — the caller
+				// (a script, the menu-bar app) did not ask for one, and an
+				// empty folder would receive a vault it did not choose. The
+				// one exception is the vault already set up on this
+				// computer: a setup run again with the same flags finds it
+				// (#228), which downloadPlan tells.
+				if configured, err := s.configuredHere(ctx, v.ID); err != nil {
+					return plan{}, err
+				} else if !configured {
+					return plan{}, refuse("Your Hub already has a vault named %s. Leave out --create to download it, or choose another name for a new vault.", quoted(pairing.SanitizeName(v.Label)))
+				}
+			}
+			return s.downloadPlan(ctx, v, path)
 		}
 	}
 	if !s.opts.create {
@@ -1107,6 +1122,20 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 		}
 	}
 	return p, nil
+}
+
+// configuredHere: the engine already has this vault.
+func (s *pairSession) configuredHere(ctx context.Context, vaultID string) (bool, error) {
+	folders, err := s.env.engine.Folders(ctx)
+	if err != nil {
+		return false, fmt.Errorf("the sync engine does not answer: %w", err)
+	}
+	for _, f := range folders {
+		if f.ID == vaultID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // keepMenu builds the vault menu for a caller that has no terminal to read

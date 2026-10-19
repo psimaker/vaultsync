@@ -19,7 +19,7 @@ const iconSize = 32
 
 var (
 	iconMu    sync.Mutex
-	iconCache = map[[2]bool]map[Glyph][]byte{}
+	iconCache = map[bool]map[Glyph][]byte{} // template → glyph → PNG
 )
 
 // Icon is the PNG for g: the template variant for a Mac's menu bar, else
@@ -27,15 +27,14 @@ var (
 func Icon(g Glyph, template bool) []byte {
 	iconMu.Lock()
 	defer iconMu.Unlock()
-	key := [2]bool{template, false}
-	if iconCache[key] == nil {
-		iconCache[key] = map[Glyph][]byte{}
+	if iconCache[template] == nil {
+		iconCache[template] = map[Glyph][]byte{}
 	}
-	if b, ok := iconCache[key][g]; ok {
+	if b, ok := iconCache[template][g]; ok {
 		return b
 	}
 	b := drawIcon(g, template)
-	iconCache[key][g] = b
+	iconCache[template][g] = b
 	return b
 }
 

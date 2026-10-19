@@ -43,6 +43,8 @@ type fakeAgent struct {
 	pairs     []PairRequest
 	// pair scripts the answer to each pair request.
 	pair func(PairRequest) (PairResult, int)
+	// old: an agent without this API (404 on everything).
+	old bool
 }
 
 func newFakeAgent(t *testing.T) *fakeAgent {
@@ -55,6 +57,10 @@ func newFakeAgent(t *testing.T) *fakeAgent {
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
+		if f.old {
+			http.NotFound(w, r)
+			return
+		}
 		if f.statusErr != "" {
 			writeJSON(w, 500, map[string]string{"error": f.statusErr})
 			return

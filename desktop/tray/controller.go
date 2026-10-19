@@ -56,12 +56,20 @@ type Controller struct {
 	Logf func(string, ...any)
 	// StatusTimeout bounds one status request; 0 is 10 s.
 	StatusTimeout time.Duration
+	// Lock takes the one-instance lock (tray.Lock); LockHeld says whether
+	// the caller already holds it. Not held — VaultSync's folder was not
+	// there at start — it is tried again at every refresh, so a second
+	// instance started before setup ends once setup made the folder.
+	Lock     func(stateDir string) (release func(), held bool, err error)
+	LockHeld bool
 
 	status  Status
 	known   bool // status came from the agent
 	view    View
 	pairing bool
 	notice  string
+	release func()
+	cl      *Client
 }
 
 const (
@@ -72,7 +80,8 @@ const (
 	pairTimeout = 15 * time.Minute
 )
 
-// Run serves the menu until the person quits or ctx ends.
+// Run serves the menu until the person quits or ctx ends. It ends with
+// an error when a second instance is found running (the lock).
 func (c *Controller) Run(ctx context.Context) error {
 	poll := c.Poll
 	if poll <= 0 {
@@ -80,18 +89,29 @@ func (c *Controller) Run(ctx context.Context) error {
 	}
 	ticker := time.NewTicker(poll)
 	defer ticker.Stop()
+	defer func() {
+		if c.release != nil {
+			c.release()
+		}
+		if c.cl != nil {
+			c.cl.http.CloseIdleConnections()
+		}
+	}()
 	pairDone := make(chan string, 1)
-	c.refresh(ctx)
+	if err := c.refresh(ctx); err != nil {
+		return err
+	}
 	for {
+		var err error
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			c.refresh(ctx)
+			err = c.refresh(ctx)
 		case line := <-pairDone:
 			c.pairing = false
 			c.notice = line
-			c.refresh(ctx)
+			err = c.refresh(ctx)
 		case ev, ok := <-c.UI.Events():
 			if !ok {
 				return nil
@@ -100,18 +120,37 @@ func (c *Controller) Run(ctx context.Context) error {
 			case EventQuit:
 				return nil
 			case EventOpened:
-				c.refresh(ctx)
+				err = c.refresh(ctx)
 			case EventOpenVault:
 				c.openVault(ctx, ev.Index)
 			case EventOpenLog:
 				c.openLog(ctx)
 			case EventPause:
-				c.togglePause(ctx)
+				err = c.togglePause(ctx)
 			case EventPair:
 				c.startPairing(ctx, pairDone)
 			}
 		}
+		if err != nil {
+			return err
+		}
 	}
+}
+
+// takeLock tries the one-instance lock when it is not held yet; a second
+// instance is the error that ends Run.
+func (c *Controller) takeLock() error {
+	if c.LockHeld || c.Lock == nil {
+		return nil
+	}
+	release, held, err := c.Lock(c.StateDir)
+	if err != nil {
+		return err
+	}
+	if held {
+		c.release, c.LockHeld = release, true
+	}
+	return nil
 }
 
 func (c *Controller) logf(format string, args ...any) {
@@ -127,20 +166,27 @@ func (c *Controller) notify(ctx context.Context, text string) {
 }
 
 // refresh asks the agent and renders the answer, or why there is none.
-func (c *Controller) refresh(ctx context.Context) {
+func (c *Controller) refresh(ctx context.Context) error {
+	if err := c.takeLock(); err != nil {
+		return err
+	}
 	timeout := c.StatusTimeout
 	if timeout <= 0 {
 		timeout = defaultTimeout
 	}
 	var st Status
-	path, err := SocketPath(c.StateDir)
+	cl, err := c.client()
 	if err == nil {
 		sctx, cancel := context.WithTimeout(ctx, timeout)
-		st, err = NewClient(path).Status(sctx)
+		st, err = cl.Status(sctx)
 		cancel()
+	}
+	if errors.Is(err, ErrNoAgent) && SocketErrorRecorded(c.StateDir) {
+		err = ErrNoSocket
 	}
 	c.status, c.known = st, err == nil
 	c.render(err)
+	return nil
 }
 
 func (c *Controller) render(err error) {
@@ -154,13 +200,20 @@ func (c *Controller) render(err error) {
 	c.UI.Render(c.view)
 }
 
-// client is the agent as agent.json names it right now.
+// client is the agent as agent.json names it right now: one client, and
+// its one connection, for as long as the socket's place stays the same.
 func (c *Controller) client() (*Client, error) {
 	path, err := SocketPath(c.StateDir)
 	if err != nil {
 		return nil, err
 	}
-	return NewClient(path), nil
+	if c.cl == nil || c.cl.path != path {
+		if c.cl != nil {
+			c.cl.http.CloseIdleConnections()
+		}
+		c.cl = NewClient(path)
+	}
+	return c.cl, nil
 }
 
 func (c *Controller) openVault(ctx context.Context, i int) {
@@ -189,9 +242,9 @@ func (c *Controller) openPath(ctx context.Context, path string) {
 
 // togglePause pauses when syncing runs, resumes when it is paused — as
 // the view last showed it; the agent is the one that pauses.
-func (c *Controller) togglePause(ctx context.Context) {
+func (c *Controller) togglePause(ctx context.Context) error {
 	if !c.known || !c.view.Pause.Enabled {
-		return
+		return nil
 	}
 	pause := !c.status.Paused
 	cl, err := c.client()
@@ -214,7 +267,7 @@ func (c *Controller) togglePause(ctx context.Context) {
 	default:
 		c.notice = ""
 	}
-	c.refresh(ctx)
+	return c.refresh(ctx)
 }
 
 // startPairing runs the conversation in the background: a pairing takes

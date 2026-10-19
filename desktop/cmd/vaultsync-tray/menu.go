@@ -20,6 +20,10 @@ const (
 
 type menu struct {
 	events chan tray.Event
+	// onQuit runs on a Quit click before the event is sent — it cancels
+	// the controller directly, so a Quit is never lost in a full buffer
+	// while the controller waits on the agent.
+	onQuit func()
 
 	mu       sync.Mutex
 	headline *systray.MenuItem
@@ -63,7 +67,15 @@ func (m *menu) build() {
 	m.pair = m.action("Pair a Vault…", tray.EventPair)
 	m.log = m.action("Open Log", tray.EventOpenLog)
 	systray.AddSeparator()
-	m.quit = m.action("Quit", tray.EventQuit)
+	m.quit = systray.AddMenuItem("Quit", "")
+	go func() {
+		for range m.quit.ClickedCh {
+			if m.onQuit != nil {
+				m.onQuit()
+			}
+			m.send(tray.Event{Kind: tray.EventQuit})
+		}
+	}()
 	go func() {
 		for range systray.TrayOpenedCh {
 			m.send(tray.Event{Kind: tray.EventOpened})
@@ -133,19 +145,15 @@ func (m *menu) Render(v tray.View) {
 	m.headline.SetTitle(v.Headline)
 	setLine(m.detail, v.Detail, "")
 	setLine(m.notice, v.Notice, "")
-	fillPool(m.hubs, v.Hubs)
-	if len(v.Vaults) == 0 {
-		m.noVault.Show()
-	} else {
-		m.noVault.Hide()
-	}
+	fillPool(m.hubs, v.Hubs, false)
+	setLine(m.noVault, v.NoVaultLine, "")
 	lines := make([]tray.Line, len(v.Vaults))
 	for i, vt := range v.Vaults {
 		lines[i] = vt.Line
 	}
-	fillPool(m.vaults, lines)
-	fillPool(m.waiting, v.Waiting)
-	fillPool(m.attempts, v.Attempts)
+	fillPool(m.vaults, lines, true)
+	fillPool(m.waiting, v.Waiting, false)
+	fillPool(m.attempts, v.Attempts, false)
 	setAction(m.pause, v.Pause)
 	setAction(m.pair, v.Pair)
 	setAction(m.log, v.Log)
@@ -164,8 +172,10 @@ func setLine(it *systray.MenuItem, text, tooltip string) {
 }
 
 // fillPool shows the lines in the pool's slots and hides the rest; more
-// lines than slots end in a last slot that says how many are not shown.
-func fillPool(pool []*systray.MenuItem, lines []tray.Line) {
+// lines than slots end in a last slot that says there are more. clickable
+// pools get their lines enabled again — the "more" slot is disabled, and
+// the slot keeps that until it is filled again.
+func fillPool(pool []*systray.MenuItem, lines []tray.Line, clickable bool) {
 	for i, it := range pool {
 		switch {
 		case i == len(pool)-1 && len(lines) > len(pool):
@@ -173,6 +183,9 @@ func fillPool(pool []*systray.MenuItem, lines []tray.Line) {
 			it.Disable()
 		case i < len(lines):
 			setLine(it, lines[i].Text, lines[i].Tooltip)
+			if clickable {
+				it.Enable()
+			}
 		default:
 			it.Hide()
 		}

@@ -25,6 +25,11 @@ var ErrNoAgent = errors.New("VaultSync is not running on this computer: neither 
 // ErrForeignSocket: the socket is served by another account.
 var ErrForeignSocket = errors.New("the control socket is served by another account; VaultSync does not use it")
 
+// ErrOldAgent: something answers on the socket, but not this API — an
+// agent older than this app. The terminal falls back to the engine in
+// that case; the menu-bar app never touches the engine, so it says so.
+var ErrOldAgent = errors.New("the VaultSync agent on this computer is older than this menu-bar app and does not answer its requests: update VaultSync here")
+
 // peerUID is the kernel's word on whose a connection is; a variable so a
 // test can pretend another account.
 var peerUID = peerUIDDefault
@@ -128,7 +133,7 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return ErrNoAgent // an agent without this API
+		return ErrOldAgent
 	}
 	if resp.StatusCode >= 400 {
 		var e struct {

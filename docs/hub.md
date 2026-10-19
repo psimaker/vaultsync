@@ -202,7 +202,7 @@ and `resume`), **Pair a Vault…**, **Open Log** (on a Mac) and **Quit**, which
 quits the icon only — syncing continues in the background. The menu asks the
 running agent for everything over the same socket as the terminal and
 decides nothing itself; without a running agent it says so and offers
-nothing but Quit. **Pair a Vault…** asks for the code, then which vault, then
+only Open Log and Quit. **Pair a Vault…** asks for the code, then which vault, then
 — for a folder on this computer that already holds files — the same consent
 `vaultsync pair` asks for, through the desktop's own dialogs (on Linux this
 needs `zenity`; without it the item says to use `vaultsync pair` in a
@@ -214,7 +214,10 @@ starts without one and shows the icon as soon as the extension is there.
 
 `--yes` is consent to sync a `--path` that already holds files with the new
 vault named by `--vault`; it never chooses a Hub and never overrides a
-refusal. Run the same command again and it changes nothing: the vault is
+refusal. `--create` asks for a new vault on your Hub: a name your Hub already
+has is refused (leave out `--create` to download that vault, or choose
+another name) unless it is the vault already set up on this computer, which
+a setup run again with the same flags simply finds. Run the same command again and it changes nothing: the vault is
 already set up to sync there, setup says so and succeeds — no second share
 request reaches your Hub.
 
