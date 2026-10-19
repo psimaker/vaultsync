@@ -149,9 +149,9 @@ jobs:
           name: vaultsync-desktop-tray-macos
           path: dist
 
-      # One SHA256SUMS over the agent and the tray: setup.sh checks the
-      # agent against it with --ignore-missing, so more lines do not
-      # trouble it.
+      # One SHA256SUMS over the agent and the tray: setup.sh takes exactly
+      # the one line whose name is the asset it downloads (an awk filter),
+      # so the tray's lines are passed over.
       - name: Sum the assets
         working-directory: dist
         run: |

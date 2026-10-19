@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/psimaker/vaultsync/desktop/tray"
@@ -45,7 +44,7 @@ func TestIssue176_TheTrayReadsTheAgentsJSON(t *testing.T) {
 
 	resp := pairResponse{OK: false, Output: "✓ Connected\n", Refusal: "Pass --vault", Needs: "vault", Menu: &menuJSON{
 		Local:       []menuEntryJSON{{Label: "Work", Path: "/home/me/Work", Note: "~/Work"}},
-		Hub:         []menuEntryJSON{{Label: "Notes", Vault: "vs-1", Note: "1 file on your Hub"}},
+		Hub:         []menuEntryJSON{{Label: "Notes", Vault: "vs-1", Note: "1 file on your Hub", Default: "/home/me/Vaults/Notes"}},
 		Already:     []menuEntryJSON{{Label: "Journal", Note: "~/Journal"}},
 		Unavailable: []menuEntryJSON{},
 		Note:        "a note",
@@ -54,7 +53,7 @@ func TestIssue176_TheTrayReadsTheAgentsJSON(t *testing.T) {
 	roundTrip(t, resp, &tr)
 	wantPair := tray.PairResult{Output: "✓ Connected\n", Refusal: "Pass --vault", Needs: "vault", Menu: &tray.Menu{
 		Local:       []tray.MenuEntry{{Label: "Work", Path: "/home/me/Work", Note: "~/Work"}},
-		Hub:         []tray.MenuEntry{{Label: "Notes", Vault: "vs-1", Note: "1 file on your Hub"}},
+		Hub:         []tray.MenuEntry{{Label: "Notes", Vault: "vs-1", Note: "1 file on your Hub", Default: "/home/me/Vaults/Notes"}},
 		Already:     []tray.MenuEntry{{Label: "Journal", Note: "~/Journal"}},
 		Unavailable: []tray.MenuEntry{},
 		Note:        "a note",
@@ -72,14 +71,10 @@ func TestIssue176_TheTrayReadsTheAgentsJSON(t *testing.T) {
 	}
 }
 
-// The tray's helpers that mirror the agent's: a folder name for a Hub
-// vault and the ~ shortening are the agent's own, input for input.
-func TestIssue176_TheTrayNamesFoldersLikeTheAgent(t *testing.T) {
-	for _, in := range []string{"Notes", "  my / notes : v2  ", "..hidden", "", "a\x00b", strings.Repeat("x", 70), "Résumé: 2026", "  ", "trailing dot."} {
-		if got, want := tray.FolderName(in), safeVaultName(in); got != want {
-			t.Fatalf("%q: tray %q, agent %q", in, got, want)
-		}
-	}
+// The tray's one helper that mirrors the agent's — the ~ shortening — is
+// the agent's own, path for path. (Where a Hub vault goes is the agent's
+// word in the menu, menuEntryJSON.Default, not a copy of safeVaultName.)
+func TestIssue176_TheTrayShortensPathsLikeTheAgent(t *testing.T) {
 	for _, p := range []string{"/home/me/Notes", "/home/me", "/home/me/", "/other/Notes", "", "/home/meister/Notes"} {
 		if got, want := tray.TildePath("/home/me", p), tildePath("/home/me", p); got != want {
 			t.Fatalf("%q: tray %q, agent %q", p, got, want)
@@ -122,7 +117,7 @@ func TestIssue176_TheTrayAndTheAgentShareEveryField(t *testing.T) {
 	// The agent omits empty optional fields; compare with them filled.
 	same("pair result", pairResponse{Refusal: "r", Needs: "n", Menu: &menuJSON{}}, tray.PairResult{Refusal: "r", Needs: "n", Menu: &tray.Menu{}})
 	same("menu", menuJSON{Note: "n"}, tray.Menu{Note: "n"})
-	same("menu entry", menuEntryJSON{Path: "p", Vault: "v", Note: "n"}, tray.MenuEntry{Path: "p", Vault: "v", Note: "n"})
+	same("menu entry", menuEntryJSON{Path: "p", Vault: "v", Note: "n", Default: "d"}, tray.MenuEntry{Path: "p", Vault: "v", Note: "n", Default: "d"})
 }
 
 func roundTrip(t *testing.T, from, to any) {
@@ -171,8 +166,8 @@ func TestIssue176_TheTrayLooksWhereTheAgentIs(t *testing.T) {
 			t.Fatal(err)
 		}
 		got, err := tray.SocketPath(lay.Base)
-		if err != nil || got != a.controlClient(st).path {
-			t.Fatalf("recorded %q: %q vs %q (%v)", recorded, got, a.controlClient(st).path, err)
+		if err != nil || got != a.controlClient(st).Path() {
+			t.Fatalf("recorded %q: %q vs %q (%v)", recorded, got, a.controlClient(st).Path(), err)
 		}
 	}
 

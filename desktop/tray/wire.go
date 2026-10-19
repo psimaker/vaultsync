@@ -89,4 +89,7 @@ type MenuEntry struct {
 	Path  string `json:"path"`  // a folder on this computer
 	Vault string `json:"vault"` // a vault on the Hub, by its ID
 	Note  string `json:"note"`
+	// Default is where a vault on the Hub goes on this computer: the
+	// folder the terminal proposes, the agent's word.
+	Default string `json:"default"`
 }

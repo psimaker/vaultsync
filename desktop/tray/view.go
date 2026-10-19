@@ -249,9 +249,8 @@ func vaultLines(vaults []Vault, home string) []VaultLine {
 	return out
 }
 
-// shortened is prefix + the state, with a remedy meant for the terminal
-// cut off the line and kept in the tooltip: the menu has its own item for
-// it (Resume Syncing), or the tooltip keeps the words.
+// shortened is prefix + the state, with the one remedy the menu has its
+// own item for cut off the line (Resume Syncing) and kept in the tooltip.
 func shortened(prefix, state string) Line {
 	short := cutRemedy(state)
 	l := Line{Text: prefix + short}
@@ -261,15 +260,15 @@ func shortened(prefix, state string) Line {
 	return l
 }
 
-// cutRemedy drops the " — …" tail of a state when that tail names a
-// terminal command: "paused on this computer — vaultsync resume starts
-// syncing again" becomes "paused on this computer"; "syncing — 42 %" and
-// "3 files could not sync — see the engine's log" stay as they are.
+// resumeRemedy is the tail the agent puts on a paused state for the
+// terminal; the menu's Resume Syncing item is that remedy.
+const resumeRemedy = " — vaultsync resume starts syncing again"
+
+// cutRemedy drops the resume remedy off a state and nothing else: every
+// other remedy — a folder to allow in System Settings, a log to read —
+// has no item in the menu, and a tooltip is not shown on every desktop.
 func cutRemedy(state string) string {
-	if i := strings.Index(state, " — "); i >= 0 && strings.Contains(state[i:], "vaultsync ") {
-		return state[:i]
-	}
-	return state
+	return strings.TrimSuffix(state, resumeRemedy)
 }
 
 // tildePath shows a path below the home folder as ~/…

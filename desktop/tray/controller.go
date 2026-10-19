@@ -56,20 +56,27 @@ type Controller struct {
 	Logf func(string, ...any)
 	// StatusTimeout bounds one status request; 0 is 10 s.
 	StatusTimeout time.Duration
-	// Lock takes the one-instance lock (tray.Lock); LockHeld says whether
-	// the caller already holds it. Not held — VaultSync's folder was not
-	// there at start — it is tried again at every refresh, so a second
-	// instance started before setup ends once setup made the folder.
-	Lock     func(stateDir string) (release func(), held bool, err error)
-	LockHeld bool
+	// Lock takes the one-instance lock (TakeLock); Held is one the caller
+	// already holds. Not held — VaultSync's folder was not there at start
+	// — it is tried again at every refresh, so a second instance started
+	// before setup ends once setup made the folder; one that stopped
+	// being valid (the file taken away) is released and taken again.
+	Lock func(stateDir string) (LockHandle, error)
+	Held LockHandle
 
 	status  Status
-	known   bool // status came from the agent
+	known   bool  // status came from the agent
+	lastErr error // why there is no status, for every render until the next refresh
 	view    View
 	pairing bool
 	notice  string
-	release func()
 	cl      *Client
+}
+
+// LockHandle is a held one-instance lock (*Lock).
+type LockHandle interface {
+	Valid() bool
+	Release()
 }
 
 const (
@@ -90,11 +97,11 @@ func (c *Controller) Run(ctx context.Context) error {
 	ticker := time.NewTicker(poll)
 	defer ticker.Stop()
 	defer func() {
-		if c.release != nil {
-			c.release()
+		if c.Held != nil {
+			c.Held.Release()
 		}
 		if c.cl != nil {
-			c.cl.http.CloseIdleConnections()
+			c.cl.CloseIdleConnections()
 		}
 	}()
 	pairDone := make(chan string, 1)
@@ -137,18 +144,26 @@ func (c *Controller) Run(ctx context.Context) error {
 	}
 }
 
-// takeLock tries the one-instance lock when it is not held yet; a second
-// instance is the error that ends Run.
+// takeLock tries the one-instance lock when none is held, or when the
+// held one no longer guards the file at its place; a second instance is
+// the error that ends Run.
 func (c *Controller) takeLock() error {
-	if c.LockHeld || c.Lock == nil {
+	if c.Lock == nil {
 		return nil
 	}
-	release, held, err := c.Lock(c.StateDir)
+	if c.Held != nil && !c.Held.Valid() {
+		c.Held.Release()
+		c.Held = nil
+	}
+	if c.Held != nil {
+		return nil
+	}
+	held, err := c.Lock(c.StateDir)
 	if err != nil {
 		return err
 	}
-	if held {
-		c.release, c.LockHeld = release, true
+	if held != nil {
+		c.Held = held
 	}
 	return nil
 }
@@ -184,13 +199,15 @@ func (c *Controller) refresh(ctx context.Context) error {
 	if errors.Is(err, ErrNoAgent) && SocketErrorRecorded(c.StateDir) {
 		err = ErrNoSocket
 	}
-	c.status, c.known = st, err == nil
-	c.render(err)
+	c.status, c.known, c.lastErr = st, err == nil, err
+	c.render()
 	return nil
 }
 
-func (c *Controller) render(err error) {
-	c.view = Render(c.status, err, Options{
+// render shows the last refresh's outcome again, with whatever changed
+// since (a notice, a pairing under way).
+func (c *Controller) render() {
+	c.view = Render(c.status, c.lastErr, Options{
 		Home:    c.Home,
 		LogPath: LogPath(c.GOOS, c.Home),
 		Pairing: c.pairing,
@@ -207,9 +224,9 @@ func (c *Controller) client() (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	if c.cl == nil || c.cl.path != path {
+	if c.cl == nil || c.cl.Path() != path {
 		if c.cl != nil {
-			c.cl.http.CloseIdleConnections()
+			c.cl.CloseIdleConnections()
 		}
 		c.cl = NewClient(path)
 	}
@@ -236,7 +253,7 @@ func (c *Controller) openPath(ctx context.Context, path string) {
 	if err := c.Open(ctx, path); err != nil {
 		c.notice = "Could not open it: " + err.Error()
 		c.notify(ctx, c.notice)
-		c.render(nil)
+		c.render()
 	}
 }
 
@@ -282,24 +299,41 @@ func (c *Controller) startPairing(ctx context.Context, done chan<- string) {
 	if err != nil {
 		c.notice = err.Error()
 		c.notify(ctx, c.notice)
-		c.render(nil)
+		c.render()
 		return
 	}
 	c.pairing = true
 	c.notice = ""
-	c.render(nil)
+	c.render()
 	go func() {
 		pctx, cancel := context.WithTimeout(ctx, pairTimeout)
 		defer cancel()
 		line, err := Pair(pctx, cl, c.Asker, c.Home)
 		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				line = ""
-			} else {
-				c.logf("pairing: %v", err)
-				line = err.Error()
-			}
+			c.logf("pairing: %v", err)
+		}
+		line = pairingOutcome(line, err)
+		if err != nil && line != "" {
+			c.notify(ctx, line)
 		}
 		done <- line
 	}()
+}
+
+// pairingTimeoutNotice says what a pairing that ran out of time leaves
+// behind: the agent may still finish what it had taken on.
+const pairingTimeoutNotice = "The pairing was stopped after 15 minutes without an answer; vaultsync status shows what came of it, and Pair a Vault… starts over"
+
+// pairingOutcome is the notice a pairing ends with: what it said, or why
+// it ended — nothing for a quit, the time limit in its own words.
+func pairingOutcome(line string, err error) string {
+	switch {
+	case err == nil:
+		return line
+	case errors.Is(err, context.Canceled):
+		return ""
+	case errors.Is(err, context.DeadlineExceeded):
+		return pairingTimeoutNotice
+	}
+	return err.Error()
 }

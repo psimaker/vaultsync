@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/psimaker/vaultsync/desktop/internal/control"
 	"github.com/psimaker/vaultsync/hub/pairing"
 	"github.com/psimaker/vaultsync/hub/syncthing"
 )
@@ -191,7 +192,7 @@ func TestIssue176_StatusOverTheSocketIsWhatTheTerminalPrints(t *testing.T) {
 		}
 	}
 	// Anything else is not this API.
-	if err := client.do(context.Background(), http.MethodGet, "/v2/status", nil, nil); !errors.Is(err, errNoAgent) {
+	if err := client.Do(context.Background(), http.MethodGet, "/v2/status", nil, nil); !errors.Is(err, errNoAgent) {
 		t.Fatalf("an unknown path reads as no agent, got %v", err)
 	}
 }
@@ -262,7 +263,7 @@ func TestIssue176_ASocketThatCannotBeOpenedIsNotNoAgent(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("root opens any socket")
 	}
-	err = newControlClient(path).do(context.Background(), http.MethodGet, "/v1/status", nil, nil)
+	err = newControlClient(path).Do(context.Background(), http.MethodGet, "/v1/status", nil, nil)
 	if err == nil || errors.Is(err, errNoAgent) || !strings.Contains(err.Error(), "permission denied") {
 		t.Fatalf("a socket that cannot be opened: %v", err)
 	}
@@ -484,6 +485,11 @@ func TestIssue176_PairOverTheSocketIsTheFlagFlow(t *testing.T) {
 	if pr.Menu == nil || len(pr.Menu.Hub) != 1 || pr.Menu.Hub[0].Label != "Notes" || pr.Menu.Hub[0].Vault != "vs-aaaaaaaaaaaa" || pr.Menu.Local == nil || pr.Menu.Already == nil {
 		t.Fatalf("the refusal carries the menu: %+v", pr.Menu)
 	}
+	// And where the terminal would put the Hub's vault, so a caller
+	// without a terminal downloads it to the same place.
+	if pr.Menu.Hub[0].Default != filepath.Join(a.home, "Vaults", "Notes") {
+		t.Fatalf("the default folder: %q", pr.Menu.Hub[0].Default)
+	}
 	if !strings.Contains(pr.Output, "✓ Connected to") || eng.folderCount() != 0 {
 		t.Fatalf("output:\n%s\nfolders: %d", pr.Output, eng.folderCount())
 	}
@@ -673,7 +679,7 @@ func TestIssue176_StatusReadsTheAgentFirst(t *testing.T) {
 		}
 	}()
 	t.Cleanup(func() { l.Close() })
-	if err := newControlClient(dropping).do(context.Background(), http.MethodGet, "/v1/status", nil, nil); err == nil || errors.Is(err, errNoAgent) {
+	if err := newControlClient(dropping).Do(context.Background(), http.MethodGet, "/v1/status", nil, nil); err == nil || errors.Is(err, errNoAgent) {
 		t.Fatalf("a dropped connection: %v", err)
 	}
 
@@ -889,6 +895,9 @@ func TestIssue176_RunServesTheSocketWhileTheEngineRuns(t *testing.T) {
 		held <- err
 	}
 	t.Cleanup(func() { beforeSocketPublish = nil })
+	// A record of a socket that could not be made, left by an earlier
+	// start, goes once this start serves one.
+	writeFile(t, filepath.Join(lay.Base, "control-socket-error.txt"), "an earlier start could not make it\n")
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- a.run(ctx, nil) }()
@@ -919,6 +928,9 @@ func TestIssue176_RunServesTheSocketWhileTheEngineRuns(t *testing.T) {
 	cs, err := newControlClient(socket).status(ctx)
 	if err != nil {
 		t.Fatalf("status over the socket at %s: %v", socket, err)
+	}
+	if _, err := os.Stat(filepath.Join(lay.Base, "control-socket-error.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the old control-socket-error.txt stays: %v", err)
 	}
 	if cs.Engine != "starting" || cs.Version != version {
 		t.Fatalf("status: %+v", cs)
@@ -1389,12 +1401,12 @@ func TestIssue176_OnlyTheOwnerTalksToTheAgent(t *testing.T) {
 	if _, err := client.status(context.Background()); err != nil {
 		t.Fatalf("the owner's own connection: %v", err)
 	}
-	foreign := peerFunc(func(*net.UnixConn) (int, error) { return os.Getuid() + 1, nil })
-	peerUIDHook.Store(&foreign)
-	defer peerUIDHook.Store(nil)
+	foreign := control.PeerFunc(func(*net.UnixConn) (int, error) { return os.Getuid() + 1, nil })
+	control.PeerUIDHook.Store(&foreign)
+	defer control.PeerUIDHook.Store(nil)
 	// The terminal does not send to a socket served by another account
 	// (a fresh client: a connection once verified is kept and reused).
-	err := newControlClient(a.lay.Socket).do(context.Background(), http.MethodGet, "/v1/status", nil, nil)
+	err := newControlClient(a.lay.Socket).Do(context.Background(), http.MethodGet, "/v1/status", nil, nil)
 	if err == nil || errors.Is(err, errNoAgent) || !errors.Is(err, errForeignSocket) {
 		t.Fatalf("a socket served by another account: %v", err)
 	}
@@ -1853,7 +1865,7 @@ func TestIssue176_ARefusedOrResetConnectIsNobodyListening(t *testing.T) {
 // the user's own to fall back into.
 func TestIssue176_AnOverlongSocketAddressIsNoAgent(t *testing.T) {
 	deep := filepath.Join(shortDir(t), strings.Repeat("d", 120), "agent.sock")
-	if err := newControlClient(deep).do(context.Background(), http.MethodGet, "/v1/status", nil, nil); !errors.Is(err, errNoAgent) {
+	if err := newControlClient(deep).Do(context.Background(), http.MethodGet, "/v1/status", nil, nil); !errors.Is(err, errNoAgent) {
 		t.Fatalf("an overlong address: %v", err)
 	}
 	a := terminalApp(t, deep)
@@ -1868,7 +1880,7 @@ func TestIssue176_StatusJSONHasNoNulls(t *testing.T) {
 	a := agentApp(t, eng)
 	client := serveControl(t, a)
 	var raw map[string]json.RawMessage
-	if err := client.do(context.Background(), http.MethodGet, "/v1/status", nil, &raw); err != nil {
+	if err := client.Do(context.Background(), http.MethodGet, "/v1/status", nil, &raw); err != nil {
 		t.Fatal(err)
 	}
 	for _, k := range []string{"hubs", "vaults", "waiting", "attempts"} {

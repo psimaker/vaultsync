@@ -1,6 +1,7 @@
 package main
 
 import (
+	"reflect"
 	"sync"
 
 	"fyne.io/systray"
@@ -38,8 +39,11 @@ type menu struct {
 	pair     *systray.MenuItem
 	log      *systray.MenuItem
 	quit     *systray.MenuItem
-	glyph    tray.Glyph
-	hasIcon  bool
+	// last is the view as rendered; only what differs from it is touched
+	// again (each change is a signal to the desktop's menu host, and a
+	// poll that found nothing new should send none).
+	last     tray.View
+	rendered bool
 }
 
 func newMenu() *menu {
@@ -133,73 +137,111 @@ func (m *menu) action(title string, kind tray.EventKind) *systray.MenuItem {
 	return it
 }
 
-// Render shows v. Safe to call from any goroutine (systray's items are).
+// Render shows v: on the first call everything, afterwards only what
+// differs from the view last rendered. Safe to call from any goroutine
+// (systray's items are).
 func (m *menu) Render(v tray.View) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if !m.hasIcon || m.glyph != v.Glyph {
+	if m.rendered && reflect.DeepEqual(v, m.last) {
+		return
+	}
+	first := !m.rendered
+	last := m.last
+	if first || v.Glyph != last.Glyph {
 		systray.SetTemplateIcon(tray.Icon(v.Glyph, true), tray.Icon(v.Glyph, false))
-		m.glyph, m.hasIcon = v.Glyph, true
 	}
-	systray.SetTooltip("VaultSync — " + v.Headline)
-	m.headline.SetTitle(v.Headline)
-	setLine(m.detail, v.Detail, "")
-	setLine(m.notice, v.Notice, "")
-	fillPool(m.hubs, v.Hubs, false)
-	setLine(m.noVault, v.NoVaultLine, "")
-	lines := make([]tray.Line, len(v.Vaults))
-	for i, vt := range v.Vaults {
-		lines[i] = vt.Line
+	if first || v.Headline != last.Headline {
+		systray.SetTooltip("VaultSync — " + v.Headline)
+		m.headline.SetTitle(v.Headline)
 	}
-	fillPool(m.vaults, lines, true)
-	fillPool(m.waiting, v.Waiting, false)
-	fillPool(m.attempts, v.Attempts, false)
-	setAction(m.pause, v.Pause)
-	setAction(m.pair, v.Pair)
-	setAction(m.log, v.Log)
-	setAction(m.quit, v.Quit)
+	setLine(m.detail, first, tray.Line{Text: last.Detail}, tray.Line{Text: v.Detail})
+	setLine(m.notice, first, tray.Line{Text: last.Notice}, tray.Line{Text: v.Notice})
+	fillPool(m.hubs, first, last.Hubs, v.Hubs, false)
+	setLine(m.noVault, first, tray.Line{Text: last.NoVaultLine}, tray.Line{Text: v.NoVaultLine})
+	fillPool(m.vaults, first, vaultLines(last.Vaults), vaultLines(v.Vaults), true)
+	fillPool(m.waiting, first, last.Waiting, v.Waiting, false)
+	fillPool(m.attempts, first, last.Attempts, v.Attempts, false)
+	setAction(m.pause, first, last.Pause, v.Pause)
+	setAction(m.pair, first, last.Pair, v.Pair)
+	setAction(m.log, first, last.Log, v.Log)
+	setAction(m.quit, first, last.Quit, v.Quit)
+	m.last, m.rendered = v, true
 }
 
-// setLine shows text on it, or hides it when there is none.
-func setLine(it *systray.MenuItem, text, tooltip string) {
-	if text == "" {
+func vaultLines(vs []tray.VaultLine) []tray.Line {
+	lines := make([]tray.Line, len(vs))
+	for i, vt := range vs {
+		lines[i] = vt.Line
+	}
+	return lines
+}
+
+// setLine shows the line on it, or hides it when there is none — only
+// when it differs from what the item shows.
+func setLine(it *systray.MenuItem, force bool, was, now tray.Line) {
+	if !force && was == now {
+		return
+	}
+	if now.Text == "" {
 		it.Hide()
 		return
 	}
-	it.SetTitle(text)
-	it.SetTooltip(tooltip)
+	it.SetTitle(now.Text)
+	it.SetTooltip(now.Tooltip)
 	it.Show()
 }
 
+// moreLine stands in the last slot when there are more lines than slots.
+var moreLine = tray.Line{Text: "… and more; vaultsync status lists them all"}
+
+// slotLine is what slot i of a pool shows for lines: the line, the
+// "more" line in the last slot, or nothing.
+func slotLine(pool []*systray.MenuItem, lines []tray.Line, i int) (line tray.Line, more bool) {
+	switch {
+	case i == len(pool)-1 && len(lines) > len(pool):
+		return moreLine, true
+	case i < len(lines):
+		return lines[i], false
+	}
+	return tray.Line{}, false
+}
+
 // fillPool shows the lines in the pool's slots and hides the rest; more
-// lines than slots end in a last slot that says there are more. clickable
-// pools get their lines enabled again — the "more" slot is disabled, and
-// the slot keeps that until it is filled again.
-func fillPool(pool []*systray.MenuItem, lines []tray.Line, clickable bool) {
+// lines than slots end in a last slot that says there are more. Clickable
+// pools get their lines enabled again after the "more" slot, which is
+// disabled. Only slots whose line changed are touched.
+func fillPool(pool []*systray.MenuItem, force bool, was, now []tray.Line, clickable bool) {
 	for i, it := range pool {
+		before, wasMore := slotLine(pool, was, i)
+		line, more := slotLine(pool, now, i)
+		if !force && before == line && wasMore == more {
+			continue
+		}
+		setLine(it, true, before, line)
+		if line.Text == "" {
+			continue
+		}
 		switch {
-		case i == len(pool)-1 && len(lines) > len(pool):
-			setLine(it, "… and more; vaultsync status lists them all", "")
+		case more:
 			it.Disable()
-		case i < len(lines):
-			setLine(it, lines[i].Text, lines[i].Tooltip)
-			if clickable {
-				it.Enable()
-			}
-		default:
-			it.Hide()
+		case clickable:
+			it.Enable()
 		}
 	}
 }
 
-func setAction(it *systray.MenuItem, a tray.Action) {
-	if a.Title == "" {
+func setAction(it *systray.MenuItem, force bool, was, now tray.Action) {
+	if !force && was == now {
+		return
+	}
+	if now.Title == "" {
 		it.Hide()
 		return
 	}
-	it.SetTitle(a.Title)
+	it.SetTitle(now.Title)
 	it.Show()
-	if a.Enabled {
+	if now.Enabled {
 		it.Enable()
 	} else {
 		it.Disable()

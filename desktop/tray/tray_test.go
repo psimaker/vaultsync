@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/psimaker/vaultsync/desktop/internal/control"
 )
 
 func TestIssue176_TrayShowsWhatTheAgentReports(t *testing.T) {
@@ -31,7 +33,7 @@ func TestIssue176_TrayShowsWhatTheAgentReports(t *testing.T) {
 		{"connected, a vault waiting", withVaults(base, "up to date", "waiting for your Hub to take it"), GlyphSynced, "Connected", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"syncing", withVaults(base, "syncing — 42 %", "up to date"), GlyphSyncing, "Syncing 1 vault", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"scanning and uploading", withVaults(base, "scanning the folder", "uploading to your Hub — 3 items left"), GlyphSyncing, "Syncing 2 vaults", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
-		{"an error outranks syncing", withVaults(base, "syncing", "error: permission denied — allow access to this folder (on a Mac: allow “vaultsync” in System Settings → Privacy & Security → Files & Folders), then run vaultsync stop and vaultsync start"), GlyphAttention, "Attention needed", "Vault 2: error: permission denied", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
+		{"an error outranks syncing", withVaults(base, "syncing", "error: permission denied — allow access to this folder (on a Mac: allow “vaultsync” in System Settings → Privacy & Security → Files & Folders), then run vaultsync stop and vaultsync start"), GlyphAttention, "Attention needed", "Vault 2: error: permission denied — allow access to this folder (on a Mac: allow “vaultsync” in System Settings → Privacy & Security → Files & Folders), then run vaultsync stop and vaultsync start", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"files that could not sync", withVaults(base, "3 files could not sync — see the engine's log"), GlyphAttention, "Attention needed", "Vault 1: 3 files could not sync — see the engine's log", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"no Hub paired", withVaults(Status{Engine: "running", Hubs: []Hub{}}), GlyphOffline, "No Hub paired yet", "Pair a Vault… pairs this computer with your Hub", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"Hub not connected", withVaults(Status{Engine: "running", Hubs: []Hub{{Name: "Office Hub", State: "not connected"}}}, "waiting for your Hub"), GlyphOffline, "Waiting for your Hub", "Not connected right now; syncing resumes when it is", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
@@ -73,6 +75,11 @@ func TestIssue176_TrayShowsWhatTheAgentReports(t *testing.T) {
 	}
 	if got := v.Vaults[1]; got.Text != "Vault 2 — syncing — 42 %" {
 		t.Fatalf("a percentage is not a remedy: %+v", got)
+	}
+	// A remedy the menu has no item for stays on the line: the tooltip is
+	// not shown on every desktop.
+	if got := shortened("Notes — ", "error: permission denied — allow access to this folder, then run vaultsync stop and vaultsync start"); got.Text != "Notes — error: permission denied — allow access to this folder, then run vaultsync stop and vaultsync start" || got.Tooltip != "" {
+		t.Fatalf("a remedy without an item: %+v", got)
 	}
 	if v.Waiting[0].Text != "Journal — shared by Office Hub; Pair a Vault… sets it up" {
 		t.Fatalf("waiting: %+v", v.Waiting)
@@ -246,16 +253,15 @@ func TestIssue176_TrayClientTalksToTheAgentAlone(t *testing.T) {
 
 func TestIssue176_TrayNeverTalksToAnotherAccountsSocket(t *testing.T) {
 	agent := newFakeAgent(t)
-	peerUID = func(*net.UnixConn) (int, error) { return os.Getuid() + 1, nil }
-	defer func() { peerUID = peerUIDDefault }()
+	foreign := control.PeerFunc(func(*net.UnixConn) (int, error) { return os.Getuid() + 1, nil })
+	control.PeerUIDHook.Store(&foreign)
+	defer control.PeerUIDHook.Store(nil)
 	_, err := NewClient(agent.socket).Status(context.Background())
 	if !errors.Is(err, ErrForeignSocket) {
 		t.Fatalf("a foreign socket: %v", err)
 	}
-	if agent.srv == nil {
-		t.Fatal("unreachable")
-	}
-	peerUID = func(*net.UnixConn) (int, error) { return -1, errors.New("no credentials") }
+	unknown := control.PeerFunc(func(*net.UnixConn) (int, error) { return -1, errors.New("no credentials") })
+	control.PeerUIDHook.Store(&unknown)
 	if _, err := NewClient(agent.socket).Status(context.Background()); err == nil || errors.Is(err, ErrNoAgent) || !strings.Contains(err.Error(), "could not tell whose") {
 		t.Fatalf("unknown owner: %v", err)
 	}
@@ -355,20 +361,36 @@ func TestIssue176_TrayPauseAndResumeAskOnlyTheAgent(t *testing.T) {
 	}
 }
 
+// fakeLock is a held one-instance lock a test can invalidate.
+type fakeLock struct {
+	mu       sync.Mutex
+	valid    bool
+	released bool
+}
+
+func (l *fakeLock) Valid() bool { l.mu.Lock(); defer l.mu.Unlock(); return l.valid }
+func (l *fakeLock) Release()    { l.mu.Lock(); defer l.mu.Unlock(); l.released = true }
+
 func TestIssue176_TrayTakesTheLockOnceTheFolderIsThere(t *testing.T) {
 	agent := newFakeAgent(t)
 	ui := newFakeUI()
 	var mu sync.Mutex
 	var tries int
-	held := false
-	lock := func(dir string) (func(), bool, error) {
+	var handles []*fakeLock
+	folderThere := false
+	lock := func(dir string) (LockHandle, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		tries++
 		if dir != agent.stateDir {
 			t.Errorf("locking %q", dir)
 		}
-		return func() { held = false }, held, nil
+		if !folderThere {
+			return nil, nil
+		}
+		l := &fakeLock{valid: true}
+		handles = append(handles, l)
+		return l, nil
 	}
 	c := &Controller{Lock: lock}
 	controllerFor(t, agent, ui, c)
@@ -376,33 +398,63 @@ func TestIssue176_TrayTakesTheLockOnceTheFolderIsThere(t *testing.T) {
 	ui.click(EventOpened, 0)
 	ui.view(t, "second", func(v View) bool { return v.Headline != "" })
 	mu.Lock()
-	if tries != 2 || c.LockHeld {
-		t.Fatalf("not held yet: tries %d held %v", tries, c.LockHeld)
+	if tries != 2 || c.Held != nil {
+		t.Fatalf("not held yet: tries %d held %v", tries, c.Held)
 	}
-	held = true
+	folderThere = true
 	mu.Unlock()
 	ui.click(EventOpened, 0)
 	ui.view(t, "third", func(v View) bool { return v.Headline != "" })
 	ui.click(EventOpened, 0)
 	ui.view(t, "fourth", func(v View) bool { return v.Headline != "" })
 	mu.Lock()
-	if tries != 3 || !c.LockHeld {
-		t.Fatalf("once held, no more tries: tries %d held %v", tries, c.LockHeld)
+	if tries != 3 || c.Held == nil || len(handles) != 1 {
+		t.Fatalf("once held, no more tries: tries %d held %v", tries, c.Held)
+	}
+	// The file taken away (uninstall --remove-data): the lock guards an
+	// orphan — released, and taken again at the next refresh.
+	handles[0].valid = false
+	mu.Unlock()
+	ui.click(EventOpened, 0)
+	ui.view(t, "fifth", func(v View) bool { return v.Headline != "" })
+	mu.Lock()
+	if tries != 4 || len(handles) != 2 || !handles[0].released || handles[0] == c.Held {
+		t.Fatalf("an invalid lock is released and taken again: tries %d handles %d released %v", tries, len(handles), handles[0].released)
 	}
 	mu.Unlock()
 
 	// A second instance found running ends the loop with its error.
 	ui2 := newFakeUI()
-	c2 := &Controller{GOOS: "darwin", Home: "/home/me", StateDir: agent.stateDir, UI: ui2, Poll: time.Hour, Lock: func(string) (func(), bool, error) { return nil, false, ErrAlreadyRunning }}
+	c2 := &Controller{GOOS: "darwin", Home: "/home/me", StateDir: agent.stateDir, UI: ui2, Poll: time.Hour, Lock: func(string) (LockHandle, error) { return nil, ErrAlreadyRunning }}
 	if err := c2.Run(context.Background()); !errors.Is(err, ErrAlreadyRunning) {
 		t.Fatalf("a second instance: %v", err)
 	}
-	// One already held at start is never asked for again.
-	c3 := &Controller{GOOS: "darwin", Home: "/home/me", StateDir: agent.stateDir, UI: newFakeUI(), Poll: time.Hour, LockHeld: true, Lock: func(string) (func(), bool, error) { t.Error("asked again"); return nil, false, nil }}
+	// One already held at start is never asked for again while it is
+	// valid, and released on the way out.
+	start := &fakeLock{valid: true}
+	c3 := &Controller{GOOS: "darwin", Home: "/home/me", StateDir: agent.stateDir, UI: newFakeUI(), Poll: time.Hour, Held: start, Lock: func(string) (LockHandle, error) { t.Error("asked again"); return nil, nil }}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := c3.Run(ctx); !errors.Is(err, context.Canceled) {
-		t.Fatalf("held at start: %v", err)
+	if err := c3.Run(ctx); !errors.Is(err, context.Canceled) || !start.released {
+		t.Fatalf("held at start: %v released %v", err, start.released)
+	}
+}
+
+func TestIssue176_TrayShowsTheLastOutcomeAfterAnAction(t *testing.T) {
+	// Not set up (no agent.json): a failed Open Log must not turn the
+	// menu into "Starting the sync engine…" — the last refresh's outcome
+	// stays until the next refresh.
+	agent := newFakeAgent(t)
+	if err := os.Remove(filepath.Join(agent.stateDir, "agent.json")); err != nil {
+		t.Fatal(err)
+	}
+	ui := newFakeUI()
+	controllerFor(t, agent, ui, &Controller{Open: func(context.Context, string) error { return errors.New("no such file") }})
+	ui.view(t, "not set up", func(v View) bool { return v.Headline == "VaultSync is not set up on this computer yet" })
+	ui.click(EventOpenLog, 0)
+	v := ui.view(t, "the notice", func(v View) bool { return v.Notice != "" })
+	if v.Headline != "VaultSync is not set up on this computer yet" || v.Glyph != GlyphOffline || !strings.Contains(v.Notice, "no such file") {
+		t.Fatalf("after a failed open: %+v", v)
 	}
 }
 
@@ -466,7 +518,7 @@ func TestIssue176_TrayOpensOnlyWhatTheAgentListed(t *testing.T) {
 func pairingScript(t *testing.T, code string) func(PairRequest) (PairResult, int) {
 	menu := &Menu{
 		Local:       []MenuEntry{{Label: "Work", Path: "/home/me/Work", Note: "~/Work  opened today"}},
-		Hub:         []MenuEntry{{Label: "Notes", Vault: "vs-aaaaaaaaaaaa", Note: "12 files on your Hub"}},
+		Hub:         []MenuEntry{{Label: "Notes", Vault: "vs-aaaaaaaaaaaa", Note: "12 files on your Hub", Default: "/home/me/Vaults/Notes"}},
 		Already:     []MenuEntry{{Label: "Journal", Note: "~/Journal"}},
 		Unavailable: []MenuEntry{{Label: "Cloudy", Note: "~/iCloud/Cloudy — iCloud Drive — make a local copy first (A shows how)"}},
 	}
@@ -538,7 +590,8 @@ func TestIssue176_TrayPairingAsksOnlyWhatTheAgentNeeds(t *testing.T) {
 		t.Fatalf("asked: %v told %v", got, ask.told)
 	}
 
-	// A vault from the Hub goes to ~/Vaults/<name>, the terminal's default.
+	// A vault from the Hub goes where the agent says the terminal would
+	// put it; an agent that names no place gets no request for it.
 	agent = newFakeAgent(t)
 	agent.set(func(f *fakeAgent) { f.pair = pairingScript(t, "TULIP-ANCHOR-42") })
 	ask = &fakeAsker{code: "TULIP-ANCHOR-42", choose: chooseHub}
@@ -548,6 +601,26 @@ func TestIssue176_TrayPairingAsksOnlyWhatTheAgentNeeds(t *testing.T) {
 	agent.set(func(f *fakeAgent) {
 		if len(f.pairs) != 2 || f.pairs[1] != (PairRequest{Code: "TULIP-ANCHOR-42", Vault: "vs-aaaaaaaaaaaa", Path: "/home/me/Vaults/Notes"}) {
 			t.Fatalf("requests: %+v", f.pairs)
+		}
+	})
+	agent = newFakeAgent(t)
+	agent.set(func(f *fakeAgent) {
+		inner := pairingScript(t, "TULIP-ANCHOR-42")
+		f.pair = func(req PairRequest) (PairResult, int) {
+			res, code := inner(req)
+			if res.Menu != nil {
+				res.Menu.Hub[0].Default = ""
+			}
+			return res, code
+		}
+	})
+	ask = &fakeAsker{code: "TULIP-ANCHOR-42", choose: chooseHub}
+	if line, err := Pair(ctx, NewClient(agent.socket), ask, home); err != nil || !strings.Contains(line, "did not say where to put Notes") || !reflect.DeepEqual(ask.sequence(), []string{"code", "vault", "inform"}) {
+		t.Fatalf("no default folder: %q %v %v", line, err, ask.sequence())
+	}
+	agent.set(func(f *fakeAgent) {
+		if len(f.pairs) != 1 {
+			t.Fatalf("requests without a default: %+v", f.pairs)
 		}
 	})
 
@@ -588,8 +661,8 @@ func TestIssue176_TrayPairingAsksOnlyWhatTheAgentNeeds(t *testing.T) {
 		t.Fatalf("cancelled: %q %v", line, err)
 	}
 	ask = &fakeAsker{code: "  ", cancel: ""}
-	if line, err := Pair(ctx, NewClient(agent.socket), ask, home); err != nil || line != "" {
-		t.Fatalf("an empty code: %q %v", line, err)
+	if line, err := Pair(ctx, NewClient(agent.socket), ask, home); err != nil || !strings.HasPrefix(line, "Enter the code your Hub printed") || len(ask.told) != 1 {
+		t.Fatalf("an empty code is said, not swallowed: %q %v %v", line, err, ask.told)
 	}
 	ask = &fakeAsker{code: "TULIP-ANCHOR-42", cancel: "vault"}
 	if line, err := Pair(ctx, NewClient(agent.socket), ask, home); err != nil || line != "" {
@@ -643,7 +716,7 @@ func TestIssue176_TrayPairingAsksOnlyWhatTheAgentNeeds(t *testing.T) {
 		}
 	})
 	ask = &fakeAsker{code: "TULIP-ANCHOR-42", choose: chooseLocal}
-	if line, err := Pair(ctx, NewClient(agent.socket), ask, home); err != nil || !strings.Contains(line, "--vault") || !reflect.DeepEqual(ask.sequence(), []string{"code", "vault", "inform"}) {
+	if line, err := Pair(ctx, NewClient(agent.socket), ask, home); err != nil || !strings.HasPrefix(line, "VaultSync asked for the same answer again; run vaultsync pair in a terminal. It said: Pass --vault") || !reflect.DeepEqual(ask.sequence(), []string{"code", "vault", "inform"}) {
 		t.Fatalf("asked twice: %q %v %v", line, err, ask.sequence())
 	}
 	agent.set(func(f *fakeAgent) {
@@ -678,6 +751,27 @@ func TestIssue176_TrayPairingAsksOnlyWhatTheAgentNeeds(t *testing.T) {
 	ask = &fakeAsker{code: "TULIP-ANCHOR-42"}
 	if _, err := Pair(ctx, NewClient(agent.socket), ask, home); !errors.Is(err, ErrNoAgent) || len(ask.told) != 1 {
 		t.Fatalf("no agent: %v %v", err, ask.told)
+	}
+
+	// Out of time: no dialog is opened on a context that is done, and the
+	// menu's notice says what happened in its own words.
+	expired, cancel := context.WithCancel(context.Background())
+	cancel()
+	ask = &fakeAsker{code: "TULIP-ANCHOR-42"}
+	if _, err := Pair(expired, NewClient(agent.socket), ask, home); !errors.Is(err, context.Canceled) || len(ask.told) != 0 {
+		t.Fatalf("a context that is done: %v told %v", err, ask.told)
+	}
+	if got := pairingOutcome("", context.DeadlineExceeded); got != pairingTimeoutNotice {
+		t.Fatalf("the time limit: %q", got)
+	}
+	if got := pairingOutcome("", context.Canceled); got != "" {
+		t.Fatalf("a quit: %q", got)
+	}
+	if got := pairingOutcome("", errors.New("boom")); got != "boom" {
+		t.Fatalf("a failure: %q", got)
+	}
+	if got := pairingOutcome("✓ done", nil); got != "✓ done" {
+		t.Fatalf("success: %q", got)
 	}
 }
 
@@ -893,6 +987,27 @@ func TestIssue176_TrayDialogsCarryTextAsData(t *testing.T) {
 	if _, _, _, ok := notifyCommand("linux", has(), "Paused"); ok {
 		t.Fatal("no notify-send, no notification")
 	}
+
+	// A program the context kills reports the context, not an exit status
+	// the kill left; a program that fails without a word is named with
+	// its status.
+	short, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer cancel()
+	if _, _, _, err := execRunner(short, "sleep", []string{"5"}, ""); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("a killed program: %v", err)
+	}
+	silent := func(_ context.Context, name string, args []string, stdin string) (string, string, int, error) {
+		return "", "", 3, nil
+	}
+	if err := openWith("linux", silent)(ctx, "/home/me/Notes"); err == nil || err.Error() != "xdg-open exited with status 3" {
+		t.Fatalf("a silent failure: %v", err)
+	}
+	loud := func(_ context.Context, name string, args []string, stdin string) (string, string, int, error) {
+		return "", "no application to open it\n", 4, nil
+	}
+	if err := openWith("linux", loud)(ctx, "/home/me/Notes"); err == nil || err.Error() != "no application to open it" {
+		t.Fatalf("a failure with words: %v", err)
+	}
 }
 
 func TestIssue176_TrayIconsAreFiveDistinctShapes(t *testing.T) {
@@ -941,24 +1056,35 @@ func TestIssue176_TrayIconsAreFiveDistinctShapes(t *testing.T) {
 
 func TestIssue176_TrayOneInstancePerUser(t *testing.T) {
 	dir := t.TempDir()
-	release, held, err := Lock(dir)
-	if err != nil || !held {
-		t.Fatal(err, held)
+	l, err := TakeLock(dir)
+	if err != nil || l == nil || !l.Valid() {
+		t.Fatal(err, l)
 	}
-	if _, _, err := Lock(dir); !errors.Is(err, ErrAlreadyRunning) {
+	if _, err := TakeLock(dir); !errors.Is(err, ErrAlreadyRunning) {
 		t.Fatalf("a second one: %v", err)
 	}
-	release()
-	release, held, err = Lock(dir)
-	if err != nil || !held {
-		t.Fatalf("after release: %v %v", err, held)
+	l.Release()
+	l, err = TakeLock(dir)
+	if err != nil || l == nil {
+		t.Fatalf("after release: %v %v", err, l)
 	}
-	release()
+	// The file taken away while held: the lock no longer guards the place,
+	// and a fresh one can be taken next to it.
+	if err := os.Remove(filepath.Join(dir, "tray.lock")); err != nil {
+		t.Fatal(err)
+	}
+	if l.Valid() {
+		t.Fatal("a lock on a file that is gone reads as valid")
+	}
+	l2, err := TakeLock(dir)
+	if err != nil || l2 == nil || !l2.Valid() {
+		t.Fatalf("a fresh lock after the file was taken away: %v", err)
+	}
+	l.Release()
+	l2.Release()
 	missing := filepath.Join(dir, "nothing-set-up")
-	if release, held, err := Lock(missing); err != nil || held {
-		t.Fatalf("no folder yet: %v %v", err, held)
-	} else {
-		release()
+	if l, err := TakeLock(missing); err != nil || l != nil {
+		t.Fatalf("no folder yet: %v %v", err, l)
 	}
 	if _, err := os.Stat(missing); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("the lock made VaultSync's folder")
@@ -976,23 +1102,12 @@ func TestIssue176_TrayOneInstancePerUser(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(parent, 0o700) })
-	if _, _, err := Lock(filepath.Join(parent, "VaultSync")); err == nil || errors.Is(err, ErrAlreadyRunning) {
+	if _, err := TakeLock(filepath.Join(parent, "VaultSync")); err == nil || errors.Is(err, ErrAlreadyRunning) {
 		t.Fatalf("an unreadable folder: %v", err)
 	}
 }
 
-func TestIssue176_TrayFolderNamesMatchTheAgents(t *testing.T) {
-	for _, c := range []struct{ in, want string }{
-		{"Notes", "Notes"},
-		{"  my / notes : v2  ", "my notes v2"},
-		{"..hidden", "hidden"},
-		{"", "Vault"},
-		{strings.Repeat("x", 70), strings.Repeat("x", 64)},
-	} {
-		if got := FolderName(c.in); got != c.want {
-			t.Fatalf("%q: %q, want %q", c.in, got, c.want)
-		}
-	}
+func TestIssue176_TrayTextHelpers(t *testing.T) {
 	if got := lastLine("a\n\n  b  \n\n"); got != "b" {
 		t.Fatalf("lastLine: %q", got)
 	}

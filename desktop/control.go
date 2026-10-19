@@ -15,11 +15,10 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
-	"github.com/psimaker/vaultsync/desktop/internal/peer"
+	"github.com/psimaker/vaultsync/desktop/internal/control"
 	"github.com/psimaker/vaultsync/hub/syncthing"
 )
 
@@ -30,8 +29,12 @@ import (
 // The agent decides nothing here that it would not decide for the terminal:
 // a pairing over the socket is the flag flow, consent included.
 
-// errNoAgent: no running agent answers on the control socket.
-var errNoAgent = errors.New("VaultSync is not running on this computer: neither the background service nor a vaultsync run answers")
+// errNoAgent: no running agent answers on the control socket (the shared
+// client's word, so the terminal and the menu-bar app read it alike).
+var errNoAgent = control.ErrNoAgent
+
+// errForeignSocket: the socket is served by another account.
+var errForeignSocket = control.ErrForeignSocket
 
 // controlStatus is the agent's answer to GET /v1/status.
 type controlStatus struct {
@@ -87,13 +90,17 @@ type menuEntryJSON struct {
 	Path  string `json:"path,omitempty"`  // a folder on this computer
 	Vault string `json:"vault,omitempty"` // a vault on the Hub, by its ID
 	Note  string `json:"note,omitempty"`
+	// Default is where a vault on the Hub would go on this computer — the
+	// folder the terminal proposes — so a caller downloads it to the same
+	// place the terminal would.
+	Default string `json:"default,omitempty"`
 }
 
 func menuToJSON(m vaultMenu) *menuJSON {
 	conv := func(in []menuEntry) []menuEntryJSON {
 		out := make([]menuEntryJSON, 0, len(in))
 		for _, e := range in {
-			j := menuEntryJSON{Label: e.label, Path: e.path, Note: e.note}
+			j := menuEntryJSON{Label: e.label, Path: e.path, Note: e.note, Default: e.defaultPath}
 			if e.vault != nil {
 				j.Vault = e.vault.ID
 			}
@@ -416,19 +423,11 @@ func (o ownerOnly) Accept() (net.Conn, error) {
 	}
 }
 
-// peerUIDOf tells whose a unix socket connection is; a test can pretend
-// another account through peerUIDHook (set from the test, read by the
-// server's own goroutine — hence atomic).
+// peerUIDOf tells whose a unix socket connection is — the shared client's
+// reading, so a test's pretence (control.PeerUIDHook) holds on both ends.
 func peerUIDOf(c *net.UnixConn) (int, error) {
-	if f := peerUIDHook.Load(); f != nil {
-		return (*f)(c)
-	}
-	return peer.UID(c)
+	return control.PeerUID(c)
 }
-
-type peerFunc func(*net.UnixConn) (int, error)
-
-var peerUIDHook atomic.Pointer[peerFunc]
 
 func (c *controlServer) client() (*syncthing.Client, error) {
 	st, err := loadState(c.a.lay.State)
@@ -639,42 +638,15 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 // --- the terminal's side ----------------------------------------------------
 
+// controlClient is the terminal's side of the socket: the shared client,
+// for which a 404 — something answering, but not this API — is an agent
+// too old to ask, so the engine is asked instead (errNoAgent).
 type controlClient struct {
-	http *http.Client
-	path string
+	*control.Client
 }
 
-// errForeignSocket: the socket is served by another account.
-var errForeignSocket = errors.New("the control socket is served by another account; VaultSync does not use it")
-
 func newControlClient(path string) *controlClient {
-	return &controlClient{path: path, http: &http.Client{Transport: &http.Transport{
-		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			var d net.Dialer
-			conn, err := d.DialContext(ctx, "unix", path)
-			if err != nil {
-				return nil, err
-			}
-			// Nothing is sent before the kernel has said whose socket this
-			// is: a place another account could have taken over must not
-			// see a request, a pairing code least of all.
-			uc, ok := conn.(*net.UnixConn)
-			if !ok {
-				conn.Close()
-				return nil, errForeignSocket
-			}
-			uid, err := peerUIDOf(uc)
-			if err != nil {
-				conn.Close()
-				return nil, fmt.Errorf("could not tell whose the control socket is: %w", err)
-			}
-			if uid != os.Getuid() {
-				conn.Close()
-				return nil, fmt.Errorf("%w (uid %d)", errForeignSocket, uid)
-			}
-			return conn, nil
-		},
-	}}}
+	return &controlClient{control.New(path, errNoAgent)}
 }
 
 // controlClient reaches the running agent: on the socket agent.json
@@ -689,7 +661,7 @@ func (a *app) controlClient(st agentState) *controlClient {
 
 func (c *controlClient) status(ctx context.Context) (controlStatus, error) {
 	var cs controlStatus
-	err := c.do(ctx, http.MethodGet, "/v1/status", nil, &cs)
+	err := c.Do(ctx, http.MethodGet, "/v1/status", nil, &cs)
 	return cs, err
 }
 
@@ -699,71 +671,14 @@ func (c *controlClient) setPaused(ctx context.Context, paused bool) (pauseRespon
 	if paused {
 		path = "/v1/pause"
 	}
-	err := c.do(ctx, http.MethodPost, path, nil, &res)
+	err := c.Do(ctx, http.MethodPost, path, nil, &res)
 	return res, err
 }
 
 func (c *controlClient) pair(ctx context.Context, req pairRequest) (pairResponse, error) {
 	var res pairResponse
-	err := c.do(ctx, http.MethodPost, "/v1/pair", req, &res)
+	err := c.Do(ctx, http.MethodPost, "/v1/pair", req, &res)
 	return res, err
-}
-
-func (c *controlClient) do(ctx context.Context, method, path string, in, out any) error {
-	// A socket address too long for this system cannot be served by anyone
-	// — the agent fell back elsewhere, or runs without a socket — so it is
-	// no agent, not an error of its own.
-	if len(c.path) >= peer.SunPathMax {
-		return errNoAgent
-	}
-	var body io.Reader
-	if in != nil {
-		b, err := json.Marshal(in)
-		if err != nil {
-			return err
-		}
-		body = bytes.NewReader(b)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, "http://vaultsync"+path, body)
-	if err != nil {
-		return err
-	}
-	if in != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		// No socket file, or nobody listening on it: no agent. Any other
-		// failure — a socket this account may not open, one served by
-		// another account, no file descriptors left, a connection made and
-		// then dropped — is reported as it is.
-		var ne *net.OpError
-		if errors.As(err, &ne) && ne.Op == "dial" && (errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED)) {
-			return errNoAgent
-		}
-		if errors.Is(err, errForeignSocket) {
-			return err
-		}
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
-		return errNoAgent // an agent without this API
-	}
-	if resp.StatusCode >= 400 {
-		var e struct {
-			Error string `json:"error"`
-		}
-		_ = json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&e)
-		if e.Error == "" {
-			e.Error = resp.Status
-		}
-		return errors.New(e.Error)
-	}
-	if out == nil {
-		return nil
-	}
-	return json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(out)
 }
 
 // logSocketError says in the service's log that there is no control socket

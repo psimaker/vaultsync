@@ -823,6 +823,12 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 		if socket == a.lay.Socket {
 			socket = ""
 		}
+		// A record of a socket that could not be made, from an earlier
+		// start, no longer holds: without this, "no agent answers" could
+		// never again mean "not running" to the menu-bar app.
+		if err := os.Remove(filepath.Join(a.lay.Base, "control-socket-error.txt")); err != nil && !errors.Is(err, os.ErrNotExist) {
+			logf("control socket: an old control-socket-error.txt could not be removed — %s", serviceSummary(err))
+		}
 		// Published while the setup lock is still held: a second run that
 		// waits on it loads agent.json only afterwards and saves the place
 		// back as it found it, instead of writing an older copy over it.

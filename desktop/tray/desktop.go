@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -21,6 +22,11 @@ func execRunner(ctx context.Context, name string, args []string, stdin string) (
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	err := cmd.Run()
+	if ctx.Err() != nil {
+		// Killed by the context (a time limit, a quit): that is the news,
+		// not the exit status the kill left.
+		return out.String(), errb.String(), 0, ctx.Err()
+	}
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
 		return out.String(), errb.String(), ee.ExitCode(), nil
@@ -47,17 +53,24 @@ func openCommand(goos, path string) (name string, args []string, err error) {
 
 // Open opens a folder or a file with the desktop's own program.
 func Open(goos string) func(ctx context.Context, path string) error {
+	return openWith(goos, execRunner)
+}
+
+func openWith(goos string, run runner) func(ctx context.Context, path string) error {
 	return func(ctx context.Context, path string) error {
 		name, args, err := openCommand(goos, path)
 		if err != nil {
 			return err
 		}
-		_, stderr, status, err := execRunner(ctx, name, args, "")
+		_, stderr, status, err := run(ctx, name, args, "")
 		if err != nil {
 			return err
 		}
 		if status != 0 {
-			return errors.New(strings.TrimSpace(stderr))
+			if why := strings.TrimSpace(stderr); why != "" {
+				return errors.New(why)
+			}
+			return fmt.Errorf("%s exited with status %d", name, status)
 		}
 		return nil
 	}

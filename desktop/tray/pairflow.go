@@ -4,10 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
-	"unicode"
-	"unicode/utf8"
 )
 
 // The pairing conversation: the person gives the code, the agent runs
@@ -49,7 +46,7 @@ func Pair(ctx context.Context, c *Client, ask Asker, home string) (string, error
 	}
 	req := PairRequest{Code: strings.TrimSpace(code)}
 	if req.Code == "" {
-		return "", nil
+		return refused(ctx, ask, "Enter the code your Hub printed to pair a vault — Pair a Vault… asks for it again.")
 	}
 	// Each flag is asked for once, so the conversation is bounded by the
 	// kinds of flags there are.
@@ -57,6 +54,9 @@ func Pair(ctx context.Context, c *Client, ask Asker, home string) (string, error
 	for {
 		res, err := c.Pair(ctx, req)
 		if err != nil {
+			if ctx.Err() != nil {
+				return "", ctx.Err()
+			}
 			_ = ask.Inform(ctx, err.Error())
 			return "", err
 		}
@@ -70,8 +70,12 @@ func Pair(ctx context.Context, c *Client, ask Asker, home string) (string, error
 		}
 		// Each flag is asked for once: the agent asking for it again means
 		// the answer did not get through, and asking the person again
-		// would not change that.
-		if res.Needs == "" || asked[res.Needs] {
+		// would not change that — said in the menu's words, since the
+		// refusal's name a flag no dialog has.
+		if asked[res.Needs] {
+			return refused(ctx, ask, "VaultSync asked for the same answer again; run vaultsync pair in a terminal. It said: "+res.Refusal)
+		}
+		if res.Needs == "" {
 			return refused(ctx, ask, res.Refusal)
 		}
 		asked[res.Needs] = true
@@ -92,8 +96,13 @@ func Pair(ctx context.Context, c *Client, ask Asker, home string) (string, error
 			}
 			// A vault from this computer goes out as --create; a name the
 			// Hub already has is the agent's refusal (it never turns
-			// --create into a download), shown like any other.
-			req.Vault, req.Create, req.Path = requestFor(choice, home)
+			// --create into a download), shown like any other. A vault
+			// from the Hub goes where the agent says the terminal would
+			// put it.
+			if !choice.Local && choice.Entry.Default == "" {
+				return refused(ctx, ask, "VaultSync did not say where to put "+choice.Entry.Label+" on this computer; run vaultsync pair in a terminal.")
+			}
+			req.Vault, req.Create, req.Path = requestFor(choice)
 		case "yes":
 			// The consent is the agent's own words; yes goes out only after
 			// the person agreed to them, for the very vault and folder the
@@ -116,8 +125,12 @@ func Pair(ctx context.Context, c *Client, ask Asker, home string) (string, error
 	}
 }
 
-// refused shows the agent's refusal and ends the conversation with it.
+// refused shows the refusal and ends the conversation with it — unless
+// the conversation's time is up, when no dialog is opened any more.
 func refused(ctx context.Context, ask Asker, refusal string) (string, error) {
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
 	if refusal == "" {
 		refusal = "VaultSync refused the pairing without saying why. Run vaultsync pair in a terminal."
 	}
@@ -128,12 +141,13 @@ func refused(ctx context.Context, ask Asker, refusal string) (string, error) {
 // requestFor turns a choice into the flags the terminal would take: a
 // vault on this computer starts as a new vault on the Hub under its
 // folder's name (--vault NAME --create --path FOLDER); a vault on the
-// Hub is downloaded into ~/Vaults/<name>, the terminal's default.
-func requestFor(c Choice, home string) (vault string, create bool, path string) {
+// Hub is downloaded into the folder the agent named as the terminal's
+// default.
+func requestFor(c Choice) (vault string, create bool, path string) {
 	if c.Local {
 		return c.Entry.Label, true, c.Entry.Path
 	}
-	return c.Entry.Vault, false, filepath.Join(home, "Vaults", FolderName(c.Entry.Label))
+	return c.Entry.Vault, false, c.Entry.Default
 }
 
 // consentText is the agent's refusal as the question to agree to: without
@@ -153,35 +167,6 @@ func lastLine(out string) string {
 		}
 	}
 	return ""
-}
-
-// maxFolderNameRunes mirrors the agent's limit on a vault's name.
-const maxFolderNameRunes = 64
-
-// FolderName turns a vault label into one folder name the way the agent
-// does for the terminal's default (safeVaultName): no separators, control
-// characters or leading dots, at most 64 characters. Exported for the
-// agent's own test, which holds the two together.
-func FolderName(label string) string {
-	var b strings.Builder
-	for _, r := range strings.TrimSpace(label) {
-		switch {
-		case r == '/' || r == '\\' || r == ':' || unicode.IsControl(r):
-			b.WriteRune(' ')
-		default:
-			b.WriteRune(r)
-		}
-	}
-	name := strings.Join(strings.Fields(b.String()), " ")
-	name = strings.TrimLeft(name, ". ")
-	for utf8.RuneCountInString(name) > maxFolderNameRunes {
-		_, size := utf8.DecodeLastRuneInString(name)
-		name = name[:len(name)-size]
-	}
-	if name == "" {
-		return "Vault"
-	}
-	return name
 }
 
 // TildePath shows a path below the home folder as ~/…, as the agent does;

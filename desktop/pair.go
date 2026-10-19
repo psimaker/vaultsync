@@ -596,6 +596,10 @@ type menuEntry struct {
 	path  string             // a folder on this computer
 	vault *pairing.VaultInfo // a vault on the Hub
 	note  string
+	// defaultPath: where a vault on the Hub would go, the folder the
+	// terminal proposes (planForHub) — carried to a caller without a
+	// terminal, so it downloads to the same place.
+	defaultPath string
 }
 
 type vaultMenu struct {
@@ -660,7 +664,7 @@ func (s *pairSession) buildMenu(ctx context.Context) (vaultMenu, error) {
 	}
 	for i := range s.hello.Vaults {
 		v := s.hello.Vaults[i]
-		e := menuEntry{label: pairing.SanitizeName(v.Label), vault: &v}
+		e := menuEntry{label: pairing.SanitizeName(v.Label), vault: &v, defaultPath: s.defaultFolder(v)}
 		switch {
 		case v.Files == 1:
 			e.note = "1 file on your Hub"
@@ -974,7 +978,7 @@ func (s *pairSession) planForHub(ctx context.Context, v pairing.VaultInfo) (plan
 	if catalogueMatchesIn(s.hello.Vaults, v.ID) != 1 {
 		return plan{}, refuse("Your Hub has two vaults VaultSync cannot tell apart (%s). Rename one on your Hub, then pair again.", quoted(v.Label))
 	}
-	def := filepath.Join(s.env.home, "Vaults", safeVaultName(v.Label))
+	def := s.defaultFolder(v)
 	for {
 		a, err := s.t.ask(fmt.Sprintf("  Where should %s go on this computer? [%s]: ", quoted(pairing.SanitizeName(v.Label)), tildePath(s.env.home, def)))
 		if err != nil {
@@ -999,6 +1003,12 @@ func (s *pairSession) planForHub(ctx context.Context, v pairing.VaultInfo) (plan
 		}
 		return p, err
 	}
+}
+
+// defaultFolder is where a vault from the Hub goes unless the person
+// names another place: ~/Vaults/<its name>.
+func (s *pairSession) defaultFolder(v pairing.VaultInfo) string {
+	return filepath.Join(s.env.home, "Vaults", safeVaultName(v.Label))
 }
 
 // downloadPlan checks a destination for an existing Hub vault: new or empty,
