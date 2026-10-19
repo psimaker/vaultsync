@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 )
 
 type Layout struct {
@@ -67,4 +68,19 @@ func (l Layout) LogFile() string {
 		return ""
 	}
 	return filepath.Join(l.Logs, "vaultsync.log")
+}
+
+// TildePath shows a path below the home folder as ~/…, the way people know
+// it.
+func TildePath(home, p string) string {
+	if home == "" {
+		return p
+	}
+	if p == home {
+		return "~"
+	}
+	if rel, err := filepath.Rel(home, p); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+		return "~" + string(filepath.Separator) + rel
+	}
+	return p
 }

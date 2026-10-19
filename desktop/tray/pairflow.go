@@ -88,6 +88,9 @@ func Pair(ctx context.Context, c *Client, ask Asker) (string, error) {
 				return "", err
 			}
 			req.Hub = strings.TrimSpace(addr)
+			if req.Hub == "" {
+				return refused(ctx, ask, "Enter your Hub's address to pair with it — Pair a Vault… asks for it again.")
+			}
 		case "vault":
 			if res.Menu == nil {
 				return refused(ctx, ask, res.Refusal)
@@ -181,10 +184,6 @@ func resultLine(out string) string {
 	}
 	return last
 }
-
-// TildePath shows a path below the home folder as ~/…, as the agent does;
-// exported for the agent's own test.
-func TildePath(home, p string) string { return tildePath(home, p) }
 
 // errNoDialogs: this computer has no way to show the dialogs.
 var errNoDialogs = errors.New("no dialog program found")

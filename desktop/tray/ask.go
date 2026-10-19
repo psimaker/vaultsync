@@ -123,6 +123,9 @@ func appleScriptList(items []string) string {
 // osascript runs script and tells a cancel (AppleScript's -128) from a
 // failure.
 func (a *scriptAsker) osascript(ctx context.Context, what, script string) (out string, ok bool, err error) {
+	// A background process's dialog opens behind the active app, without
+	// focus; shown by System Events, activated, it comes to the front.
+	script = "tell application \"System Events\"\nactivate\n" + script + "\nend tell"
 	stdout, stderr, status, err := a.run(ctx, "osascript", nil, script)
 	if err != nil {
 		return "", false, dialogError(what, err)

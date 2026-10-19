@@ -77,7 +77,10 @@ type Controller struct {
 	view    View
 	pairing bool
 	notice  string
-	cl      *Client
+	// lockNotice: the notice is the lock's, to be cleared once it holds;
+	// lockSaid: the failure is in the log already.
+	lockNotice, lockSaid bool
+	cl                   *Client
 }
 
 // LockHandle is a held one-instance lock (*Lock).
@@ -115,6 +118,7 @@ func (c *Controller) Run(ctx context.Context) error {
 		}
 	}()
 	pairDone := make(chan string, 1)
+	openFailed := make(chan string, 8)
 	if err := c.refresh(ctx); err != nil {
 		return err
 	}
@@ -129,6 +133,10 @@ func (c *Controller) Run(ctx context.Context) error {
 			c.pairing = false
 			c.notice = line
 			err = c.refresh(ctx)
+		case notice := <-openFailed:
+			c.notice = notice
+			c.notify(ctx, notice)
+			c.render()
 		case ev, ok := <-c.UI.Events():
 			if !ok {
 				return nil
@@ -139,9 +147,9 @@ func (c *Controller) Run(ctx context.Context) error {
 			case EventOpened:
 				err = c.refresh(ctx)
 			case EventOpenVault:
-				c.openVault(ctx, ev.Index)
+				c.openVault(ev.Index, openFailed)
 			case EventOpenLog:
-				c.openLog(ctx)
+				c.openLog(openFailed)
 			case EventPause:
 				err = c.setPaused(ctx, ev.Pause)
 			case EventPair:
@@ -175,10 +183,16 @@ func (c *Controller) takeLock() error {
 	}
 	if err != nil {
 		// The words for the menu; the log gets the fact alone (the error
-		// names VaultSync's folder).
-		c.notice = "VaultSync's folder could not be locked for this menu-bar app (" + err.Error() + "); trying again"
-		c.logf("one-instance lock: could not be taken; trying again at the next refresh")
+		// names VaultSync's folder), once per failure.
+		c.notice, c.lockNotice = "VaultSync's folder could not be locked for this menu-bar app ("+err.Error()+"); trying again", true
+		if !c.lockSaid {
+			c.logf("one-instance lock: could not be taken; trying again at every refresh")
+			c.lockSaid = true
+		}
 		return nil
+	}
+	if c.lockNotice {
+		c.notice, c.lockNotice, c.lockSaid = "", false, false
 	}
 	if held != nil {
 		c.Held = held
@@ -254,28 +268,34 @@ func (c *Controller) client() (*Client, error) {
 	return c.cl, nil
 }
 
-func (c *Controller) openVault(ctx context.Context, i int) {
+func (c *Controller) openVault(i int, failed chan<- string) {
 	if i < 0 || i >= len(c.view.Vaults) || c.view.Vaults[i].Path == "" {
 		return
 	}
-	c.openPath(ctx, c.view.Vaults[i].Path)
+	c.openPath(c.view.Vaults[i].Path, failed)
 }
 
-func (c *Controller) openLog(ctx context.Context) {
+func (c *Controller) openLog(failed chan<- string) {
 	if path := c.Layout.LogFile(); path != "" {
-		c.openPath(ctx, path)
+		c.openPath(path, failed)
 	}
 }
 
-func (c *Controller) openPath(ctx context.Context, path string) {
+// openPath opens path off the loop: the desktop's program may not return
+// before what it opened is closed, and the menu must not wait for that.
+// A failure comes back as a notice.
+func (c *Controller) openPath(path string, failed chan<- string) {
 	if c.Open == nil {
 		return
 	}
-	if err := c.Open(ctx, path); err != nil {
-		c.notice = "Could not open it: " + err.Error()
-		c.notify(ctx, c.notice)
-		c.render()
-	}
+	go func() {
+		if err := c.Open(context.Background(), path); err != nil {
+			select {
+			case failed <- "Could not open it: " + err.Error():
+			default:
+			}
+		}
+	}()
 }
 
 // setPaused pauses or resumes as the click asked; a click that asks for

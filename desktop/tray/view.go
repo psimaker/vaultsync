@@ -3,8 +3,9 @@ package tray
 import (
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
+
+	"github.com/psimaker/vaultsync/desktop/internal/layout"
 )
 
 // The view: what the icon and the menu show for what the agent reports.
@@ -277,16 +278,10 @@ func cutRemedy(state string) string {
 	return strings.TrimSuffix(state, resumeRemedy)
 }
 
-// tildePath shows a path below the home folder as ~/…
+// tildePath shows a path below the home folder as ~/…, as the agent does.
 func tildePath(home, p string) string {
-	if home == "" || p == "" {
+	if p == "" {
 		return p
 	}
-	if p == home {
-		return "~"
-	}
-	if rel, err := filepath.Rel(home, p); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
-		return "~" + string(filepath.Separator) + rel
-	}
-	return p
+	return layout.TildePath(home, p)
 }

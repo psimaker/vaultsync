@@ -128,44 +128,10 @@ func (a *app) backgroundEngine() bool {
 	return a.svc.installed() && a.svc.running()
 }
 
-// statusReport is what is known about syncing right now: the lines
-// vaultsync status prints below the engine line, and the facts behind them
-// for the menu-bar app (#176).
-type statusReport struct {
-	// Paused: syncing is paused on this computer — every Hub this engine
-	// knows is paused in it (vaultsync pause).
-	Paused   bool            `json:"paused"`
-	Hubs     []hubStatus     `json:"hubs"`
-	Vaults   []vaultStatus   `json:"vaults"`
-	Waiting  []waitingStatus `json:"waiting"`
-	Attempts []attemptStatus `json:"attempts"`
-	// Text is the report as vaultsync status prints it.
-	Text string `json:"text"`
-}
-
-type hubStatus struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	State string `json:"state"`
-}
-
-type vaultStatus struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
-	Path  string `json:"path"`
-	State string `json:"state"`
-}
-
-type waitingStatus struct {
-	Label string `json:"label"`
-	Hub   string `json:"hub"`
-}
-
-type attemptStatus struct {
-	Vault string `json:"vault"`
-	What  string `json:"what"`
-	At    string `json:"at"`
-}
+// statusReport, hubStatus, vaultStatus, waitingStatus and attemptStatus
+// are the shared socket types (internal/control/wire.go; aliases in
+// control.go): the lines vaultsync status prints below the engine line,
+// and the facts behind them for the menu-bar app (#176).
 
 func (a *app) onlineStatus(ctx context.Context, w io.Writer, c *syncthing.Client, background bool) error {
 	r, err := a.report(ctx, c, background)

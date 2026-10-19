@@ -36,69 +36,22 @@ var errNoAgent = control.ErrNoAgent
 // errForeignSocket: the socket is served by another account.
 var errForeignSocket = control.ErrForeignSocket
 
-// controlStatus is the agent's answer to GET /v1/status.
-type controlStatus struct {
-	Version   string `json:"version"`   // the agent's
-	Syncthing string `json:"syncthing"` // the engine's, without the v
-	// Engine is "running" when the engine answers, else "starting": the
-	// agent is up and bringing it up.
-	Engine string `json:"engine"`
-	statusReport
-}
-
-// pauseResponse answers POST /v1/pause and /v1/resume.
-type pauseResponse struct {
-	Paused bool `json:"paused"`
-	Hubs   int  `json:"hubs"` // Hubs this engine knows; 0 leaves nothing to pause
-}
-
-// pairRequest is POST /v1/pair: the flags of vaultsync pair.
-type pairRequest struct {
-	Code   string `json:"code"`
-	Hub    string `json:"hub"`
-	Vault  string `json:"vault"`
-	Create bool   `json:"create"`
-	Path   string `json:"path"`
-	Yes    bool   `json:"yes"`
-	Name   string `json:"name"`
-}
-
-// pairResponse: what vaultsync pair printed, its refusal when it needs a
-// decision the flags did not make, and — once the Hub was reached — the
-// menu the terminal would show, so the caller can choose and ask again.
-type pairResponse struct {
-	OK      bool   `json:"ok"`
-	Output  string `json:"output"`
-	Refusal string `json:"refusal,omitempty"`
-	// Needs is the flag the refusal asks for — code, hub, vault, create or
-	// yes — when it asks for one (refuseNeeding), so a caller asks the
-	// person for exactly that and never reads the refusal's words for it.
-	Needs string `json:"needs,omitempty"`
-	// Consent, with needs yes, is the question the terminal would ask —
-	// the folder's sync-plugin warnings and what syncing it means, line by
-	// line — for the caller's own dialog.
-	Consent string    `json:"consent,omitempty"`
-	Menu    *menuJSON `json:"menu,omitempty"`
-}
-
-type menuJSON struct {
-	Local       []menuEntryJSON `json:"local"`
-	Hub         []menuEntryJSON `json:"hub"`
-	Already     []menuEntryJSON `json:"already"`
-	Unavailable []menuEntryJSON `json:"unavailable"`
-	Note        string          `json:"note,omitempty"`
-}
-
-type menuEntryJSON struct {
-	Label string `json:"label"`
-	Path  string `json:"path,omitempty"`  // a folder on this computer
-	Vault string `json:"vault,omitempty"` // a vault on the Hub, by its ID
-	Note  string `json:"note,omitempty"`
-	// Default is where a vault on the Hub would go on this computer — the
-	// folder the terminal proposes — so a caller downloads it to the same
-	// place the terminal would.
-	Default string `json:"default,omitempty"`
-}
+// The socket's answers are the shared package's types (internal/control/
+// wire.go): the agent encodes them, the terminal and the menu-bar app
+// decode them — one definition.
+type (
+	controlStatus = control.Status
+	statusReport  = control.Report
+	hubStatus     = control.Hub
+	vaultStatus   = control.Vault
+	waitingStatus = control.Waiting
+	attemptStatus = control.Attempt
+	pauseResponse = control.PauseResult
+	pairRequest   = control.PairRequest
+	pairResponse  = control.PairResult
+	menuJSON      = control.Menu
+	menuEntryJSON = control.MenuEntry
+)
 
 func menuToJSON(m vaultMenu) *menuJSON {
 	conv := func(in []menuEntry) []menuEntryJSON {
@@ -155,6 +108,9 @@ func (c *controlServer) serve(ctx context.Context) (path string, stop func() err
 	if err != nil {
 		return "", nil, err
 	}
+	if controlListenerHook != nil {
+		controlListenerHook(l)
+	}
 	c.ctx = ctx
 	// The server's own diagnostics — an accept that failed, a request it
 	// could not read — name the socket's path: they go to a private file in
@@ -183,7 +139,10 @@ func (c *controlServer) serve(ctx context.Context) (path string, stop func() err
 		if err := srv.Serve(ownerOnly{Listener: l, diag: srv.ErrorLog}); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			// The engine goes on; status and the menu-bar app lose their
 			// socket until the next start. The words stay in the folder.
-			c.logf("the control socket stopped serving — %s; vaultsync status reads the engine directly (details in control-socket.log)", serviceSummary(err))
+			// The same record a start that could not make the socket
+			// leaves: without it, the menu-bar app would read "nobody
+			// answers" as "not running" while the engine syncs on.
+			logSocketError(c.logf, c.a.lay.Base, fmt.Errorf("the control socket stopped serving: %w", err))
 			fmt.Fprintf(diag, "%s serve: %v\n", time.Now().Format(time.RFC3339), err)
 		}
 		close(done)
@@ -214,6 +173,10 @@ func (c *controlServer) serve(ctx context.Context) (path string, stop func() err
 	}
 	return path, stop, nil
 }
+
+// controlListenerHook sees the socket's listener once it listens; a test
+// closes it to end the serving from underneath.
+var controlListenerHook func(net.Listener)
 
 // openDiagLog opens the socket's private diagnostic file; a variable so a
 // test can hand out one that takes no write.
@@ -451,7 +414,7 @@ func (c *controlServer) status(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *controlServer) currentStatus(ctx context.Context) (controlStatus, error) {
-	cs := controlStatus{Version: version, Syncthing: strings.TrimPrefix(syncthingVersion, "v"), Engine: "starting", statusReport: emptyReport()}
+	cs := controlStatus{Version: version, Syncthing: strings.TrimPrefix(syncthingVersion, "v"), Engine: "starting", Report: emptyReport()}
 	client, err := c.client()
 	if err != nil {
 		return cs, err
@@ -465,7 +428,7 @@ func (c *controlServer) currentStatus(ctx context.Context) (controlStatus, error
 		// Nobody listens on the engine's port: it is on its way up, or the
 		// supervisor is starting it again. Anything else — a refused probe,
 		// no answer in time — says nothing about syncing and is reported.
-		cs.statusReport = c.a.offlineReport()
+		cs.Report = c.a.offlineReport()
 		return cs, nil
 	default:
 		return cs, fmt.Errorf("the sync engine does not answer: %w", err)
@@ -475,7 +438,7 @@ func (c *controlServer) currentStatus(ctx context.Context) (controlStatus, error
 		return cs, err
 	}
 	cs.Engine = "running"
-	cs.statusReport = rep
+	cs.Report = rep
 	return cs, nil
 }
 

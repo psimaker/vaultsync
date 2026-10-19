@@ -30,6 +30,9 @@ socket between them).
 | `attempts.go` | the pairing journal (`pairing.json`): recorded before the Hub is asked |
 | `uninstall.go`, `mount_*.go` | `uninstall`; `--remove-data` anchored to VaultSync's own folder, stopping at links and mounts |
 | `internal/peer/` | whose a unix socket connection is — the one check both ends of the control socket make |
+| `internal/control/` | the control socket's client and its answers' types (`wire.go`), used by the terminal's commands and the tray alike |
+| `internal/layout/` | where VaultSync keeps its files on this computer, the service's log and the `~` shortening — the agent's `layout` is an alias of it |
+| `internal/lock/` | the one flock behind the agent's `lockFile`/`lockFileWait` and the tray's one-instance lock |
 | `tray/` | the menu-bar app without the menu bar: the socket client, what the icon and the menu show (`view.go`), the loop (`controller.go`), the pairing conversation (`pairflow.go`) and the dialogs it uses (`ask.go`: osascript, zenity) — pure Go, tested on Linux |
 | `cmd/vaultsync-tray/` | the `vaultsync-tray` binary: `fyne.io/systray` glue (Cocoa through cgo on macOS, StatusNotifierItem over DBus on Linux) and the GNOME hint |
 

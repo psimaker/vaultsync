@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -20,7 +21,7 @@ import (
 
 func TestIssue176_TrayShowsWhatTheAgentReports(t *testing.T) {
 	home := "/home/me"
-	base := Status{Engine: "running", Hubs: []Hub{{Name: "Office Hub", State: "connected"}}}
+	base := Status{Engine: "running", Report: Report{Hubs: []Hub{{Name: "Office Hub", State: "connected"}}}}
 	cases := []struct {
 		name     string
 		st       Status
@@ -36,13 +37,13 @@ func TestIssue176_TrayShowsWhatTheAgentReports(t *testing.T) {
 		{"scanning and uploading", withVaults(base, "scanning the folder", "uploading to your Hub — 3 items left"), GlyphSyncing, "Syncing 2 vaults", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"an error outranks syncing", withVaults(base, "syncing", "error: permission denied — allow access to this folder (on a Mac: allow “vaultsync” in System Settings → Privacy & Security → Files & Folders), then run vaultsync stop and vaultsync start"), GlyphAttention, "Attention needed", "Vault 2: error: permission denied — allow access to this folder (on a Mac: allow “vaultsync” in System Settings → Privacy & Security → Files & Folders), then run vaultsync stop and vaultsync start", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"files that could not sync", withVaults(base, "3 files could not sync — see the engine's log"), GlyphAttention, "Attention needed", "Vault 1: 3 files could not sync — see the engine's log", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
-		{"no Hub paired", withVaults(Status{Engine: "running", Hubs: []Hub{}}), GlyphOffline, "No Hub paired yet", "Pair a Vault… pairs this computer with your Hub", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
-		{"Hub not connected", withVaults(Status{Engine: "running", Hubs: []Hub{{Name: "Office Hub", State: "not connected"}}}, "waiting for your Hub"), GlyphOffline, "Waiting for your Hub", "Not connected right now; syncing resumes when it is", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
-		{"connected through a relay", withVaults(Status{Engine: "running", Hubs: []Hub{{Name: "Office Hub", State: "connected through a relay (slower; a direct connection is not possible right now)"}}}, "up to date"), GlyphSynced, "Up to date", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
+		{"no Hub paired", withVaults(Status{Engine: "running", Report: Report{Hubs: []Hub{}}}), GlyphOffline, "No Hub paired yet", "Pair a Vault… pairs this computer with your Hub", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
+		{"Hub not connected", withVaults(Status{Engine: "running", Report: Report{Hubs: []Hub{{Name: "Office Hub", State: "not connected"}}}}, "waiting for your Hub"), GlyphOffline, "Waiting for your Hub", "Not connected right now; syncing resumes when it is", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
+		{"connected through a relay", withVaults(Status{Engine: "running", Report: Report{Hubs: []Hub{{Name: "Office Hub", State: "connected through a relay (slower; a direct connection is not possible right now)"}}}}, "up to date"), GlyphSynced, "Up to date", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"connected, no vault", base, GlyphSynced, "Connected — no vault yet", "Pair a Vault… adds one", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"paused", paused(withVaults(base, "paused on this computer", "2 items left to sync")), GlyphPaused, "Paused on this computer", "", Action{"Resume Syncing", true}, Action{"Pair a Vault… (resume syncing first)", false}},
 		{"paused with an error: the error shows", paused(withVaults(base, "error: boom", "paused on this computer")), GlyphAttention, "Attention needed", "Vault 1: error: boom", Action{"Resume Syncing", true}, Action{"Pair a Vault… (resume syncing first)", false}},
-		{"engine starting", Status{Engine: "starting", Vaults: []Vault{{Label: "Notes", Path: "/home/me/Notes", State: "not syncing — the engine is stopped"}}}, GlyphSyncing, "Starting the sync engine…", "", Action{"Pause Syncing", false}, Action{"Pair a Vault…", false}},
+		{"engine starting", Status{Engine: "starting", Report: Report{Vaults: []Vault{{Label: "Notes", Path: "/home/me/Notes", State: "not syncing — the engine is stopped"}}}}, GlyphSyncing, "Starting the sync engine…", "", Action{"Pause Syncing", false}, Action{"Pair a Vault…", false}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -430,7 +431,7 @@ func TestIssue176_TrayTakesTheLockOnceTheFolderIsThere(t *testing.T) {
 		t.Fatalf("the menu goes on: %+v", v)
 	}
 	ui4.click(EventOpened, 0)
-	ui4.view(t, "held after all", func(v View) bool { return c4.Held != nil })
+	ui4.view(t, "held after all, the notice gone", func(v View) bool { return c4.Held != nil && v.Notice == "" })
 
 	// A second instance found running ends the loop with its error.
 	ui2 := newFakeUI(t)
@@ -494,13 +495,27 @@ func TestIssue176_TrayOpensOnlyWhatTheAgentListed(t *testing.T) {
 	ui.click(EventOpenVault, 1) // the opener refuses it
 	v := ui.view(t, "the refusal", func(v View) bool { return strings.HasPrefix(v.Notice, "Could not open it") })
 	mu.Lock()
-	defer mu.Unlock()
-	if want := []string{"/home/me/Notes", "/home/me/Library/Logs/VaultSync/vaultsync.log", "relative/path"}; !reflect.DeepEqual(opened, want) {
-		t.Fatalf("opened %v, want %v", opened, want)
+	got := append([]string(nil), opened...)
+	mu.Unlock()
+	sort.Strings(got)
+	if want := []string{"/home/me/Library/Logs/VaultSync/vaultsync.log", "/home/me/Notes", "relative/path"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("opened %v, want %v", got, want)
 	}
 	if !strings.Contains(v.Notice, "not an absolute path") {
 		t.Fatalf("notice: %q", v.Notice)
 	}
+
+	// An open that takes its time (a file manager that keeps the program
+	// waiting) holds neither the menu nor Quit: the loop goes on while it
+	// runs.
+	release := make(chan struct{})
+	slow := newFakeUI(t)
+	controllerFor(t, agent, slow, &Controller{Open: func(context.Context, string) error { <-release; return nil }})
+	slow.view(t, "up to date", func(v View) bool { return v.Headline == "Up to date" })
+	slow.click(EventOpenVault, 0)
+	slow.click(EventOpened, 0)
+	slow.view(t, "a refresh while the open runs", func(v View) bool { return v.Headline == "Up to date" })
+	close(release)
 
 	for _, c := range []struct{ goos, path, name string }{
 		{"darwin", "/home/me/Notes", "open"},
@@ -716,6 +731,11 @@ func TestIssue176_TrayPairingAsksOnlyWhatTheAgentNeeds(t *testing.T) {
 			}
 		}
 	})
+	// An empty address is said, not sent as a Hub.
+	ask = &fakeAsker{code: "TULIP-ANCHOR-42", hub: "  ", choose: chooseHub}
+	if line, err := Pair(ctx, NewClient(agent.socket), ask); err != nil || !strings.HasPrefix(line, "Enter your Hub's address") || !reflect.DeepEqual(ask.sequence()[2:], []string{"inform"}) {
+		t.Fatalf("an empty address: %q %v %v", line, err, ask.sequence())
+	}
 
 	// The agent asking for the same flag twice ends the conversation
 	// instead of asking the person again and again.
@@ -896,6 +916,11 @@ func TestIssue176_TrayDialogsCarryTextAsData(t *testing.T) {
 	}
 	if c := calls[len(calls)-1]; c.name != "osascript" || len(c.args) != 0 || !strings.Contains(c.stdin, appleScriptString(codePrompt)) || !strings.Contains(c.stdin, "return text returned of r") {
 		t.Fatalf("the code script: %+v", c)
+	}
+	// Shown by System Events, activated: a background process's own dialog
+	// would open behind the active app.
+	if c := calls[len(calls)-1]; !strings.HasPrefix(c.stdin, "tell application \"System Events\"\nactivate\n") || !strings.HasSuffix(c.stdin, "\nend tell") {
+		t.Fatalf("the dialog is not brought to the front:\n%s", c.stdin)
 	}
 	a = &scriptAsker{run: script("", "execution error: User canceled. (-128)\n", 1)}
 	if _, ok, err := a.AskCode(ctx); ok || err != nil {

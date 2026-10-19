@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // What the desktop does for the menu-bar app: opening a folder or a file
@@ -21,6 +22,10 @@ func execRunner(ctx context.Context, name string, args []string, stdin string) (
 	cmd.Stdin = strings.NewReader(stdin)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
+	// A program that hands its pipes to a child (xdg-open to a file
+	// manager) would keep Run waiting until that child closes them; once
+	// the program itself is gone, its output is taken as it is.
+	cmd.WaitDelay = 2 * time.Second
 	err := cmd.Run()
 	if ctx.Err() != nil {
 		// Killed by the context (a time limit, a quit): that is the news,
@@ -51,18 +56,19 @@ func openCommand(goos, path string) (name string, args []string, err error) {
 	return "", nil, errors.New("no program to open it with on " + goos)
 }
 
-// Open opens a folder or a file with the desktop's own program.
+// Open opens a folder or a file with the desktop's own program. What it
+// opens outlives the menu-bar app: the program is not tied to ctx.
 func Open(goos string) func(ctx context.Context, path string) error {
 	return openWith(goos, execRunner)
 }
 
 func openWith(goos string, run runner) func(ctx context.Context, path string) error {
-	return func(ctx context.Context, path string) error {
+	return func(_ context.Context, path string) error {
 		name, args, err := openCommand(goos, path)
 		if err != nil {
 			return err
 		}
-		_, stderr, status, err := run(ctx, name, args, "")
+		_, stderr, status, err := run(context.Background(), name, args, "")
 		if err != nil {
 			return err
 		}

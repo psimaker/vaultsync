@@ -637,7 +637,7 @@ func terminalApp(t *testing.T, socket string) *app {
 
 func TestIssue176_StatusReadsTheAgentFirst(t *testing.T) {
 	agent := newFakeAgent(t)
-	agent.status = controlStatus{Version: "9.9.9", Engine: "running", statusReport: statusReport{Text: "\nHub\n  Test Hub               connected\n\nVaults\n  Notes          ~/Notes                      up to date\n"}}
+	agent.status = controlStatus{Version: "9.9.9", Engine: "running", Report: statusReport{Text: "\nHub\n  Test Hub               connected\n\nVaults\n  Notes          ~/Notes                      up to date\n"}}
 	a := terminalApp(t, agent.path)
 	if err := a.status(context.Background()); err != nil {
 		t.Fatal(err)
@@ -978,6 +978,39 @@ func TestIssue176_RunServesTheSocketWhileTheEngineRuns(t *testing.T) {
 // A socket that cannot be taken down on the way out is reported, with
 // whatever ended the run — a place that stays recorded as served must not
 // pass in silence.
+func TestIssue176_ASocketThatStopsServingLeavesTheMarker(t *testing.T) {
+	eng := newFakeEngine(t)
+	a := agentApp(t, eng)
+	var listener net.Listener
+	controlListenerHook = func(l net.Listener) { listener = l }
+	t.Cleanup(func() { controlListenerHook = nil })
+	client, _, logged := serveControlLogged(t, a)
+	if _, err := client.status(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(a.lay.Base, "control-socket-error.txt")
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a marker while the socket serves: %v", err)
+	}
+	// The listener goes from underneath (an accept error): serving ends,
+	// the engine goes on — and the marker says the socket is gone, as it
+	// would after a start that could not make one.
+	listener.Close()
+	e2eWait(t, "the marker", 10*time.Second, func() bool {
+		_, err := os.Stat(marker)
+		return err == nil
+	})
+	// A connection kept open from before still reaches its handler; a
+	// fresh one finds nobody listening.
+	client.CloseIdleConnections()
+	if _, err := client.status(context.Background()); !errors.Is(err, errNoAgent) {
+		t.Fatalf("after the listener closed: %v", err)
+	}
+	if lines := strings.Join(logged.all(), "\n"); !strings.Contains(lines, "no control socket") {
+		t.Fatalf("the log:\n%s", lines)
+	}
+}
+
 func TestIssue176_RunReportsASocketLeftBehind(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("root removes anything")

@@ -54,7 +54,7 @@ func newFakeAgent(t *testing.T) *fakeAgent {
 	t.Helper()
 	f := &fakeAgent{t: t, stateDir: shortDir(t)}
 	f.socket = filepath.Join(f.stateDir, "agent.sock")
-	f.status = Status{Version: "9.9.9", Syncthing: "2.1.6", Engine: "running", Hubs: []Hub{}, Vaults: []Vault{}, Waiting: []Waiting{}, Attempts: []Attempt{}}
+	f.status = Status{Version: "9.9.9", Syncthing: "2.1.6", Engine: "running", Report: Report{Hubs: []Hub{}, Vaults: []Vault{}, Waiting: []Waiting{}, Attempts: []Attempt{}}}
 	f.writeState("")
 	f.layout = layout.Layout{}.At(f.stateDir)
 	mux := http.NewServeMux()

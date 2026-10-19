@@ -6,8 +6,9 @@ import "errors"
 
 var ErrAlreadyRunning = errors.New("the VaultSync menu-bar app is already running")
 
-type Lock struct{}
+type noLock struct{}
 
-func TakeLock(string) (*Lock, error) { return &Lock{}, nil }
-func (*Lock) Valid() bool            { return true }
-func (*Lock) Release()               {}
+func (noLock) Valid() bool { return true }
+func (noLock) Release()    {}
+
+func TakeLock(string) (LockHandle, error) { return noLock{}, nil }

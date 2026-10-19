@@ -56,13 +56,16 @@ func (m *menu) Events() <-chan tray.Event { return m.events }
 func (m *menu) build() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// An icon from the first moment (an item without one has no width on
+	// a Mac), and nothing offered until the first report says what to.
+	systray.SetTemplateIcon(tray.Icon(tray.GlyphOffline, true), tray.Icon(tray.GlyphOffline, false))
 	systray.SetTooltip("VaultSync")
 	m.headline = disabledItem("VaultSync")
 	m.detail = disabledItem("")
 	m.notice = disabledItem("")
 	m.hubs = m.pool(hubSlots, nil)
 	systray.AddSeparator()
-	m.noVault = disabledItem("No vault yet")
+	m.noVault = disabledItem("")
 	m.vaults = m.pool(vaultSlots, func(i int) tray.Event { return tray.Event{Kind: tray.EventOpenVault, Index: i} })
 	m.waiting = m.pool(waitingSlots, nil)
 	m.attempts = m.pool(attemptSlots, nil)
@@ -80,6 +83,9 @@ func (m *menu) build() {
 	}()
 	m.pair = m.action("Pair a Vault…", tray.EventPair)
 	m.log = m.action("Open Log", tray.EventOpenLog)
+	m.pause.Disable()
+	m.pair.Disable()
+	m.log.Hide()
 	systray.AddSeparator()
 	m.quit = systray.AddMenuItem("Quit", "")
 	go func() {

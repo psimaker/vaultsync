@@ -31,16 +31,6 @@ import (
 // version is stamped by the release build.
 var version = "dev"
 
-// takeLock is tray.TakeLock as the controller takes it: a lock that is
-// not there is a nil handle, never a typed nil.
-func takeLock(dir string) (tray.LockHandle, error) {
-	l, err := tray.TakeLock(dir)
-	if err != nil || l == nil {
-		return nil, err
-	}
-	return l, nil
-}
-
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -96,6 +86,9 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
+	if held != nil {
+		defer held.Release()
+	}
 	logger := log.New(os.Stderr, "", log.LstdFlags)
 	if hint := missingWatcherHint(); hint != "" {
 		logger.Print(hint)
@@ -114,10 +107,8 @@ func run(args []string) error {
 		Open:   tray.Open(runtime.GOOS),
 		Notify: tray.Notify(runtime.GOOS, exec.LookPath),
 		Logf:   logger.Printf,
-		Lock:   takeLock,
-	}
-	if held != nil {
-		c.Held = held
+		Lock:   tray.TakeLock,
+		Held:   held,
 	}
 	// The controller ends the tray (Quit after Run returns), and the tray
 	// ends the controller: when the native loop stops on its own — the
