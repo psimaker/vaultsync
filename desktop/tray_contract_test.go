@@ -81,6 +81,23 @@ func TestIssue176_TheTrayReadsTheAgentsWords(t *testing.T) {
 	if !rep.Paused || rep.Hubs[0].Kind != control.KindPaused || v.Glyph != tray.GlyphPaused || len(v.Hubs) != 1 || v.Hubs[0].Text != "Test Hub — paused on this computer" || v.Hubs[0].Tooltip != rep.Hubs[0].State {
 		t.Fatalf("paused, as the agent says it: %+v / %+v", rep.Hubs, v)
 	}
+
+	// A folder the engine gives no report on this time ("unknown"): a
+	// passing state, not a problem to flip the icon over.
+	eng.mu.Lock()
+	for i := range eng.devices {
+		eng.devices[i].Paused = false
+	}
+	eng.folderState = map[string]map[string]any{"vs-aaaaaaaaaaaa": nil}
+	eng.mu.Unlock()
+	rep, err = a.report(context.Background(), eng.client, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v = tray.Render(tray.Status{Engine: "running", Report: rep}, nil, tray.Options{Home: a.home, CanAsk: true})
+	if len(rep.Vaults) != 1 || rep.Vaults[0].State != "unknown" || rep.Vaults[0].Kind != control.KindUnknown || v.Glyph != tray.GlyphSyncing || v.Headline != "1 vault without a status right now" {
+		t.Fatalf("no report this time: %+v / %s %q", rep.Vaults, v.Glyph, v.Headline)
+	}
 }
 
 func TestIssue176_TheTrayLooksWhereTheAgentIs(t *testing.T) {
