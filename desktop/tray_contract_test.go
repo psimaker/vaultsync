@@ -94,9 +94,14 @@ func TestIssue176_TheTrayReadsTheAgentsWords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	v = tray.Render(tray.Status{Engine: "running", Report: rep}, nil, tray.Options{Home: a.home, CanAsk: true})
-	if len(rep.Vaults) != 1 || rep.Vaults[0].State != "unknown" || rep.Vaults[0].Kind != control.KindUnknown || v.Glyph != tray.GlyphSyncing || v.Headline != "1 vault without a status right now" {
-		t.Fatalf("no report this time: %+v / %s %q", rep.Vaults, v.Glyph, v.Headline)
+	if len(rep.Vaults) != 1 || rep.Vaults[0].State != "unknown" || rep.Vaults[0].Kind != control.KindUnknown {
+		t.Fatalf("no report this time: %+v", rep.Vaults)
+	}
+	// With the Hub connected (the fake engine's is not), that vault is a
+	// passing state on the ring, never attention.
+	v = tray.Render(tray.Status{Engine: "running", Report: tray.Report{Hubs: hub, Vaults: rep.Vaults}}, nil, tray.Options{Home: a.home, CanAsk: true})
+	if v.Glyph != tray.GlyphSyncing || v.Headline != "1 vault without a status right now" {
+		t.Fatalf("no report this time, as the tray shows it: %s %q", v.Glyph, v.Headline)
 	}
 }
 
