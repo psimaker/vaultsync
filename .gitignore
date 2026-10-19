@@ -61,4 +61,5 @@ docs/superpowers/
 # Desktop agent build artifacts
 /desktop/desktop
 /desktop/vaultsync
+/desktop/vaultsync-tray
 /desktop/dist/

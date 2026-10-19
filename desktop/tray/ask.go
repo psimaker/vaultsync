@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/psimaker/vaultsync/desktop/internal/layout"
 )
 
 // The dialogs, through what the desktop already has: AppleScript's dialogs
@@ -22,13 +24,13 @@ type runner func(ctx context.Context, name string, args []string, stdin string) 
 // NewAsker is the dialogs this computer can show: osascript on a Mac,
 // zenity on Linux when it is installed — nil when there are none, and the
 // menu then says to pair in a terminal.
-func NewAsker(goos string, lookPath func(string) (string, error)) Asker {
+func NewAsker(goos, home string, lookPath func(string) (string, error)) Asker {
 	switch goos {
 	case "darwin":
-		return &scriptAsker{run: execRunner}
+		return &scriptAsker{run: execRunner, home: home}
 	case "linux":
 		if _, err := lookPath("zenity"); err == nil {
-			return &zenityAsker{run: execRunner}
+			return &zenityAsker{run: execRunner, home: home}
 		}
 	}
 	return nil
@@ -45,7 +47,7 @@ const (
 // menuPrompt is the text above the list of vaults.
 func menuPrompt(m Menu) string {
 	var b strings.Builder
-	b.WriteString("Choose a vault to sync.\n\nA vault from this computer becomes a new vault on your Hub. A vault from your Hub is downloaded into ~/Vaults.")
+	b.WriteString("Choose a vault to sync.\n\nA vault from this computer becomes a new vault on your Hub. A vault from your Hub is downloaded into the folder shown.")
 	if m.Note != "" {
 		b.WriteString("\n\n" + m.Note)
 	}
@@ -71,11 +73,16 @@ func joinEntries(es []MenuEntry) string {
 }
 
 // menuItems lists the choosable entries, numbered so the chosen line can
-// be told apart from one with the same label; choices maps the numbers.
-func menuItems(m Menu) (items []string, choices []Choice) {
+// be told apart from one with the same label; choices maps the numbers. A
+// vault from the Hub names the folder it would go to — the agent's
+// default, shortened with home.
+func menuItems(m Menu, home string) (items []string, choices []Choice) {
 	add := func(e MenuEntry, local bool, where string) {
 		n := len(items) + 1
 		text := fmt.Sprintf("%d) %s — %s", n, e.Label, where)
+		if !local && e.Default != "" {
+			text += " → " + layout.TildePath(home, e.Default)
+		}
 		if e.Note != "" {
 			text += ", " + e.Note
 		}
@@ -103,7 +110,10 @@ func chosen(line string, choices []Choice) (Choice, bool) {
 
 // --- macOS: osascript --------------------------------------------------------
 
-type scriptAsker struct{ run runner }
+type scriptAsker struct {
+	run  runner
+	home string
+}
 
 // appleScriptString quotes s as an AppleScript string literal.
 func appleScriptString(s string) string {
@@ -154,7 +164,7 @@ return text returned of r`)
 }
 
 func (a *scriptAsker) ChooseVault(ctx context.Context, m Menu) (Choice, bool, error) {
-	items, choices := menuItems(m)
+	items, choices := menuItems(m, a.home)
 	if len(items) == 0 {
 		err := a.Inform(ctx, "Nothing to choose: "+menuPrompt(m))
 		return Choice{}, false, err
@@ -185,7 +195,10 @@ func (a *scriptAsker) Inform(ctx context.Context, text string) error {
 
 // --- Linux: zenity -----------------------------------------------------------
 
-type zenityAsker struct{ run runner }
+type zenityAsker struct {
+	run  runner
+	home string
+}
 
 // pangoText escapes what zenity would read as markup.
 func pangoText(s string) string {
@@ -217,7 +230,7 @@ func (a *zenityAsker) AskHub(ctx context.Context, refusal string) (string, bool,
 }
 
 func (a *zenityAsker) ChooseVault(ctx context.Context, m Menu) (Choice, bool, error) {
-	items, choices := menuItems(m)
+	items, choices := menuItems(m, a.home)
 	if len(items) == 0 {
 		err := a.Inform(ctx, "Nothing to choose: "+menuPrompt(m))
 		return Choice{}, false, err
@@ -226,6 +239,10 @@ func (a *zenityAsker) ChooseVault(ctx context.Context, m Menu) (Choice, bool, er
 	line, ok, err := a.zenity(ctx, "vault", args...)
 	if err != nil || !ok {
 		return Choice{}, false, err
+	}
+	if strings.TrimSpace(line) == "" {
+		// Continue without a row: nothing chosen, as a cancel.
+		return Choice{}, false, nil
 	}
 	c, found := chosen(line, choices)
 	if !found {

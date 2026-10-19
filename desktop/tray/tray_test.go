@@ -47,6 +47,7 @@ func TestIssue176_TrayShowsWhatTheAgentReports(t *testing.T) {
 		{"paused with an error: the error shows", paused(withVaults(base, "error: boom", "paused on this computer")), GlyphAttention, "Attention needed", "Vault 1: error: boom", Action{"Resume Syncing", true}, Action{"Pair a Vault… (resume syncing first)", false}},
 		{"one vault paused on its own", withVaults(base, "up to date", "paused"), GlyphPaused, "1 vault paused", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"two vaults paused on the Hub's side", withVaults(base, "paused on your Hub", "paused on your Hub"), GlyphPaused, "2 vaults paused", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
+		{"one of two Hubs paused, the other away", withVaults(Status{Engine: "running", Report: Report{Hubs: []Hub{{Name: "Office", State: "paused on this computer — vaultsync resume starts syncing again", Kind: control.KindPaused}, {Name: "Home", State: "not connected", Kind: control.KindWaiting}}}}, "waiting for your Hub"), GlyphPaused, "1 of 2 Hubs paused", "vaultsync resume in a terminal resumes it; Resume Syncing here resumes every Hub", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"engine starting", Status{Engine: "starting", Report: Report{Vaults: []Vault{{Label: "Notes", Path: "/home/me/Notes", State: "not syncing — the engine is stopped", Kind: control.KindOffline}}}}, GlyphSyncing, "Starting the sync engine…", "", Action{"Pause Syncing", false}, Action{"Pair a Vault…", false}},
 	}
 	for _, c := range cases {
@@ -591,12 +592,20 @@ func TestIssue176_TrayOpensOnlyWhatTheAgentListed(t *testing.T) {
 	slow.view(t, "a refresh while the open runs", func(v View) bool { return v.Headline == "Up to date" })
 	close(release)
 
-	for _, c := range []struct{ goos, path, name string }{
-		{"darwin", "/home/me/Notes", "open"},
-		{"linux", "/home/me/Notes", "xdg-open"},
-		{"darwin", "Notes", ""},
-		{"darwin", "", ""},
-		{"windows", `C:\Notes`, ""},
+	for _, c := range []struct {
+		goos, path, name string
+		args             []string
+	}{
+		{"darwin", "/home/me/Notes", "open", []string{"/home/me/Notes"}},
+		{"linux", "/home/me/Notes", "xdg-open", []string{"/home/me/Notes"}},
+		// A folder named like a bundle would be launched by open; it is
+		// revealed in its parent instead.
+		{"darwin", "/home/me/Journal.app", "open", []string{"-R", "/home/me/Journal.app"}},
+		{"darwin", "/home/me/notes.v2", "open", []string{"-R", "/home/me/notes.v2"}},
+		{"darwin", "/home/me/.hidden", "open", []string{"/home/me/.hidden"}},
+		{"darwin", "Notes", "", nil},
+		{"darwin", "", "", nil},
+		{"windows", `C:\Notes`, "", nil},
 	} {
 		name, args, err := openCommand(c.goos, c.path)
 		if c.name == "" {
@@ -605,7 +614,7 @@ func TestIssue176_TrayOpensOnlyWhatTheAgentListed(t *testing.T) {
 			}
 			continue
 		}
-		if err != nil || name != c.name || !reflect.DeepEqual(args, []string{c.path}) {
+		if err != nil || name != c.name || !reflect.DeepEqual(args, c.args) {
 			t.Fatalf("%s %q: %s %v %v", c.goos, c.path, name, args, err)
 		}
 	}
@@ -972,15 +981,15 @@ func TestIssue176_TrayDialogsCarryTextAsData(t *testing.T) {
 		t.Fatalf("pangoText: %s", got)
 	}
 	// The menu's lines are numbered so a choice is found by number alone.
-	m := Menu{Local: []MenuEntry{{Label: "Work", Path: "/w", Note: "~/w"}, {Label: "Work", Path: "/w2"}}, Hub: []MenuEntry{{Label: "Notes", Vault: "vs-1", Note: "1 file on your Hub"}}}
-	items, choices := menuItems(m)
-	if !reflect.DeepEqual(items, []string{"1) Work — on this computer, ~/w", "2) Work — on this computer", "3) Notes — on your Hub, 1 file on your Hub"}) {
+	m := Menu{Local: []MenuEntry{{Label: "Work", Path: "/w", Note: "~/w"}, {Label: "Work", Path: "/w2"}}, Hub: []MenuEntry{{Label: "Notes", Vault: "vs-1", Note: "1 file on your Hub", Default: "/home/me/Vaults/Notes"}}}
+	items, choices := menuItems(m, "/home/me")
+	if !reflect.DeepEqual(items, []string{"1) Work — on this computer, ~/w", "2) Work — on this computer", "3) Notes — on your Hub → ~/Vaults/Notes, 1 file on your Hub"}) {
 		t.Fatalf("items: %q", items)
 	}
 	if c, ok := chosen("2) Work — on this computer", choices); !ok || !c.Local || c.Entry.Path != "/w2" {
 		t.Fatalf("chosen 2: %+v %v", c, ok)
 	}
-	if c, ok := chosen("3) Notes — on your Hub, 1 file on your Hub", choices); !ok || c.Local || c.Entry.Vault != "vs-1" {
+	if c, ok := chosen("3) Notes — on your Hub → ~/Vaults/Notes, 1 file on your Hub", choices); !ok || c.Local || c.Entry.Vault != "vs-1" {
 		t.Fatalf("chosen 3: %+v %v", c, ok)
 	}
 	for _, bad := range []string{"", "4) x", "x) y", "false"} {
@@ -1041,7 +1050,7 @@ func TestIssue176_TrayDialogsCarryTextAsData(t *testing.T) {
 	if c := calls[len(calls)-1]; !strings.Contains(c.stdin, `default button "Cancel"`) || !strings.Contains(c.stdin, `if button returned of r is not "Start syncing" then error number -128`) || !strings.Contains(c.stdin, appleScriptString("Folder X already contains files.")) {
 		t.Fatalf("the consent script: %s", c.stdin)
 	}
-	a = &scriptAsker{run: script("3) Notes — on your Hub, 1 file on your Hub\n", "", 0)}
+	a = &scriptAsker{run: script("3) Notes — on your Hub → ~/Vaults/Notes, 1 file on your Hub\n", "", 0), home: "/home/me"}
 	if c, ok, err := a.ChooseVault(ctx, m); err != nil || !ok || c.Entry.Vault != "vs-1" {
 		t.Fatalf("choose: %+v %v %v", c, ok, err)
 	}
@@ -1084,9 +1093,15 @@ func TestIssue176_TrayDialogsCarryTextAsData(t *testing.T) {
 	if _, err := z.Confirm(ctx, "x"); err == nil {
 		t.Fatal("zenity timeout is a failure")
 	}
-	z = &zenityAsker{run: script("3) Notes — on your Hub, 1 file on your Hub\n", "", 0)}
+	z = &zenityAsker{run: script("3) Notes — on your Hub → ~/Vaults/Notes, 1 file on your Hub\n", "", 0), home: "/home/me"}
 	if c, ok, err := z.ChooseVault(ctx, m); err != nil || !ok || c.Entry.Vault != "vs-1" {
 		t.Fatalf("zenity choose: %+v %v %v", c, ok, err)
+	}
+	// Continue without a row: nothing chosen, as a cancel — not a dialog
+	// that could not be shown.
+	z = &zenityAsker{run: script("\n", "", 0), home: "/home/me"}
+	if c, ok, err := z.ChooseVault(ctx, m); err != nil || ok || c != (Choice{}) {
+		t.Fatalf("zenity without a row: %+v %v %v", c, ok, err)
 	}
 	if c := calls[len(calls)-1]; !reflect.DeepEqual(c.args[len(c.args)-3:], items) || !strings.Contains(strings.Join(c.args, " "), "--column=Vault") {
 		t.Fatalf("zenity list args: %q", c.args)
@@ -1103,13 +1118,13 @@ func TestIssue176_TrayDialogsCarryTextAsData(t *testing.T) {
 			return "", errors.New("not found")
 		}
 	}
-	if _, ok := NewAsker("darwin", has()).(*scriptAsker); !ok {
+	if _, ok := NewAsker("darwin", "/home/me", has()).(*scriptAsker); !ok {
 		t.Fatal("a Mac asks through osascript")
 	}
-	if _, ok := NewAsker("linux", has("zenity")).(*zenityAsker); !ok {
+	if _, ok := NewAsker("linux", "/home/me", has("zenity")).(*zenityAsker); !ok {
 		t.Fatal("Linux with zenity asks through it")
 	}
-	if NewAsker("linux", has()) != nil || NewAsker("windows", has("zenity")) != nil {
+	if NewAsker("linux", "/home/me", has()) != nil || NewAsker("windows", "/home/me", has("zenity")) != nil {
 		t.Fatal("no dialogs elsewhere")
 	}
 	// Notifications: a Mac through osascript, Linux through notify-send

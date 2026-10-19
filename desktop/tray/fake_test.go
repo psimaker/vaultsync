@@ -186,7 +186,8 @@ func (u *fakeUI) send(ev Event) {
 	}
 }
 
-func (u *fakeUI) click(k EventKind, i int) { u.send(Event{Kind: k, Index: i}) }
+// click sends a plain event (the number is for the reader of the test).
+func (u *fakeUI) click(k EventKind, _ int) { u.send(Event{Kind: k}) }
 
 // view waits for the next view that satisfies want.
 func (u *fakeUI) view(t *testing.T, what string, want func(View) bool) View {

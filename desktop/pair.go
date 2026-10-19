@@ -1178,10 +1178,11 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 			return plan{}, err
 		}
 	}
-	if p.hadFiles && s.opts.yes && s.opts.folder != "" && folderToken(p.dir) != s.opts.folder {
+	if s.opts.yes && s.opts.folder != "" && (!p.hadFiles || folderToken(p.dir) != s.opts.folder) {
 		// A yes given in a second request, for the folder the first one
-		// showed: a folder replaced in between is not the one consented
-		// to — the terminal's own check after its question (stillTheSame).
+		// showed with its files: a folder replaced, emptied or gone in
+		// between is not the one consented to — the terminal's own check
+		// after its question (stillTheSame).
 		return plan{}, refuse("%s changed while you were answering. Nothing was changed — choose it again.", tildePath(s.env.home, path))
 	}
 	return p, nil

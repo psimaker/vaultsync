@@ -64,6 +64,13 @@ func openCommand(goos, path string) (name string, args []string, err error) {
 	}
 	switch goos {
 	case "darwin":
+		// A folder whose name has an extension can be a bundle to
+		// LaunchServices (Journal.app), which `open` would launch — with
+		// synced content that carries no quarantine. Such a folder is
+		// revealed in its parent instead, which launches nothing.
+		if strings.Contains(strings.TrimPrefix(filepath.Base(path), "."), ".") {
+			return "open", []string{"-R", path}, nil
+		}
 		return "open", []string{path}, nil
 	case "linux":
 		return "xdg-open", []string{path}, nil

@@ -571,6 +571,31 @@ func TestIssue176_PairOverTheSocketIsTheFlagFlow(t *testing.T) {
 	if err != nil || pr.OK || pr.Needs != "yes" || pr.Folder == "" || pr.Folder == shown {
 		t.Fatalf("the question for the folder now there: %+v %v", pr, err)
 	}
+	// The folder emptied between the question and the yes: the consent
+	// was for its files, and a new empty vault is not what was agreed to.
+	emptied := filepath.Join(a.home, "Emptied")
+	mkVault(t, emptied)
+	q, err := client.Pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Emptied", Create: true, Path: emptied})
+	if err != nil || q.Needs != "yes" || q.Folder == "" {
+		t.Fatalf("the question for Emptied: %+v %v", q, err)
+	}
+	// Emptied in place: the same folder (same identity), nothing in it.
+	entries, err := os.ReadDir(emptied)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if err := os.RemoveAll(filepath.Join(emptied, e.Name())); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if entries, _ := os.ReadDir(emptied); len(entries) != 0 {
+		t.Fatalf("Emptied still holds %v", entries)
+	}
+	q, err = client.Pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Emptied", Create: true, Path: emptied, Yes: true, Folder: q.Folder})
+	if err != nil || q.OK || !strings.Contains(q.Refusal, "changed while you were answering") || eng.folderCount() != 1 {
+		t.Fatalf("a yes for a folder emptied in between: %+v %v (folders %d)", q, err, eng.folderCount())
+	}
 	pr, err = client.Pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Work", Create: true, Path: work, Yes: true, Folder: pr.Folder})
 	if err != nil || !pr.OK {
 		t.Fatalf("with consent: %+v %v", pr, err)

@@ -31,8 +31,7 @@ const (
 )
 
 type Event struct {
-	Kind  EventKind
-	Index int
+	Kind EventKind
 	// Path, for EventOpenVault, is the folder the clicked line showed: a
 	// refresh between the click and its handling must not open another
 	// vault's folder that moved into the slot.
@@ -88,6 +87,9 @@ type Controller struct {
 	lockWords string
 	lockSaid  bool
 	cl        *Client
+	// logPath is the service's log when there is one to open, looked at
+	// once per refresh.
+	logPath string
 }
 
 // LockHandle is a held one-instance lock (*Lock).
@@ -243,6 +245,7 @@ func (c *Controller) refresh(ctx context.Context) error {
 		err = errNoAnswer
 	}
 	c.status, c.known, c.lastErr = st, err == nil, err
+	c.logPath = c.logFile()
 	c.render()
 	return nil
 }
@@ -261,7 +264,7 @@ func (c *Controller) render() {
 	}
 	c.view = Render(c.status, c.lastErr, Options{
 		Home:    c.Home,
-		LogPath: c.logFile(),
+		LogPath: c.logPath,
 		Pairing: c.pairing,
 		CanAsk:  c.Asker != nil,
 		Notice:  notice,
@@ -300,8 +303,8 @@ func (c *Controller) openVault(path string, failed chan<- string) {
 }
 
 func (c *Controller) openLog(failed chan<- string) {
-	if path := c.logFile(); path != "" {
-		c.openPath(path, failed)
+	if c.logPath != "" {
+		c.openPath(c.logPath, failed)
 	}
 }
 

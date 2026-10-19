@@ -75,7 +75,7 @@ func (m *menu) build() {
 		// The folder the slot shows at the click, not the slot number.
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		ev := tray.Event{Kind: tray.EventOpenVault, Index: i}
+		ev := tray.Event{Kind: tray.EventOpenVault}
 		if i < len(m.last.Vaults) {
 			ev.Path = m.last.Vaults[i].Path
 		}

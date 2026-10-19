@@ -113,7 +113,7 @@ func run(args []string) error {
 		Home:   home,
 		Layout: lay,
 		UI:     ui,
-		Asker:  tray.NewAsker(runtime.GOOS, exec.LookPath),
+		Asker:  tray.NewAsker(runtime.GOOS, home, exec.LookPath),
 		Open:   tray.Open(runtime.GOOS),
 		Notify: tray.Notify(runtime.GOOS, exec.LookPath),
 		Logf:   logger.Printf,

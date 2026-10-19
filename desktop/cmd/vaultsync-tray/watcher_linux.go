@@ -3,7 +3,9 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"time"
 
 	"github.com/godbus/dbus/v5"
 )
@@ -19,8 +21,13 @@ func missingWatcherHint() (string, error) {
 	if err != nil {
 		return "", errors.New("no session bus (" + err.Error() + "): start vaultsync-tray from your desktop session")
 	}
+	// A bus that does not answer in time is not a reason to wait with no
+	// icon and no signal handling: the hint is given, and the library
+	// registers when a host appears.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	var has bool
-	if err := conn.BusObject().Call("org.freedesktop.DBus.NameHasOwner", 0, "org.kde.StatusNotifierWatcher").Store(&has); err != nil || has {
+	if err := conn.BusObject().CallWithContext(ctx, "org.freedesktop.DBus.NameHasOwner", 0, "org.kde.StatusNotifierWatcher").Store(&has); err != nil || has {
 		return "", nil
 	}
 	return "no status icon host on this desktop: on GNOME install the “AppIndicator and KStatusNotifierItem Support” extension (https://extensions.gnome.org/extension/615/appindicator-support/) and log in again; the icon appears as soon as a host is there", nil

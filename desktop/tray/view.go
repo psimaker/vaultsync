@@ -215,11 +215,19 @@ func summarize(st Status) (Glyph, string, string) {
 	if len(st.Hubs) == 0 {
 		return GlyphOffline, "No Hub paired yet", "Pair a Vault… pairs this computer with your Hub"
 	}
-	connected := false
+	connected, pausedHubs := false, 0
 	for _, h := range st.Hubs {
-		if h.Kind == control.KindOK {
+		switch h.Kind {
+		case control.KindOK:
 			connected = true
+		case control.KindPaused:
+			pausedHubs++
 		}
+	}
+	if !connected && pausedHubs > 0 {
+		// Some Hubs paused, the rest not connected (every Hub paused is
+		// st.Paused, said before this): the pause is the news.
+		return GlyphPaused, fmt.Sprintf("%d of %d Hubs paused", pausedHubs, len(st.Hubs)), "vaultsync resume in a terminal resumes it; Resume Syncing here resumes every Hub"
 	}
 	if !connected {
 		return GlyphOffline, "Waiting for your Hub", "Not connected right now; syncing resumes when it is"
