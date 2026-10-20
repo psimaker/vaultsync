@@ -9,6 +9,17 @@ import (
 	"github.com/psimaker/vaultsync/desktop/tray"
 )
 
+// item is what the slot logic needs of a menu item; *systray.MenuItem is
+// one, and a test's recorder is another.
+type item interface {
+	SetTitle(string)
+	SetTooltip(string)
+	Show()
+	Hide()
+	Enable()
+	Disable()
+}
+
 // menu is the systray side of tray.UI: a fixed set of items made once
 // (systray appends, so the order is set at build), with pools of lines
 // that are shown, retitled or hidden as the view changes.
@@ -31,11 +42,11 @@ type menu struct {
 	headline *systray.MenuItem
 	detail   *systray.MenuItem
 	notice   *systray.MenuItem
-	hubs     []*systray.MenuItem
+	hubs     []item
 	noVault  *systray.MenuItem
-	vaults   []*systray.MenuItem
-	waiting  []*systray.MenuItem
-	attempts []*systray.MenuItem
+	vaults   []item
+	waiting  []item
+	attempts []item
 	pause    *systray.MenuItem
 	pair     *systray.MenuItem
 	log      *systray.MenuItem
@@ -136,8 +147,8 @@ func disabledItem(title string) *systray.MenuItem {
 
 // pool makes n hidden items; with an event maker each click sends the
 // event for its slot, else the items are plain lines.
-func (m *menu) pool(n int, event func(i int) tray.Event) []*systray.MenuItem {
-	items := make([]*systray.MenuItem, n)
+func (m *menu) pool(n int, event func(i int) tray.Event) []item {
+	items := make([]item, n)
 	for i := range items {
 		it := systray.AddMenuItem("", "")
 		it.Hide()
@@ -217,7 +228,7 @@ func vaultLines(vs []tray.VaultLine) []tray.Line {
 
 // setLine shows the line on it, or hides it when there is none — only
 // when it differs from what the item shows.
-func setLine(it *systray.MenuItem, force bool, was, now tray.Line) {
+func setLine(it item, force bool, was, now tray.Line) {
 	if !force && was == now {
 		return
 	}
@@ -235,7 +246,7 @@ var moreLine = tray.Line{Text: "… and more; vaultsync status lists them all"}
 
 // slotLine is what slot i of a pool shows for lines: the line, the
 // "more" line in the last slot, or nothing.
-func slotLine(pool []*systray.MenuItem, lines []tray.Line, i int) (line tray.Line, more bool) {
+func slotLine(pool []item, lines []tray.Line, i int) (line tray.Line, more bool) {
 	switch {
 	case i == len(pool)-1 && len(lines) > len(pool):
 		return moreLine, true
@@ -249,7 +260,7 @@ func slotLine(pool []*systray.MenuItem, lines []tray.Line, i int) (line tray.Lin
 // lines than slots end in a last slot that says there are more. Clickable
 // pools get their lines enabled again after the "more" slot, which is
 // disabled. Only slots whose line changed are touched.
-func fillPool(pool []*systray.MenuItem, force bool, was, now []tray.Line, clickable bool) {
+func fillPool(pool []item, force bool, was, now []tray.Line, clickable bool) {
 	for i, it := range pool {
 		before, wasMore := slotLine(pool, was, i)
 		line, more := slotLine(pool, now, i)
@@ -269,7 +280,7 @@ func fillPool(pool []*systray.MenuItem, force bool, was, now []tray.Line, clicka
 	}
 }
 
-func setAction(it *systray.MenuItem, force bool, was, now tray.Action) {
+func setAction(it item, force bool, was, now tray.Action) {
 	if !force && was == now {
 		return
 	}

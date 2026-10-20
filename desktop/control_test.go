@@ -322,7 +322,9 @@ func TestIssue176_PauseAndResumeTouchEveryHubAndNothingElse(t *testing.T) {
 	if err != nil || !cs.Paused {
 		t.Fatalf("status after pause: %+v %v", cs, err)
 	}
-	if cs.Hubs[0].State != "paused on this computer — vaultsync resume starts syncing again" || cs.Hubs[1].State != cs.Hubs[0].State {
+	// The state names the pause, the remedy names the command: a menu
+	// with an item for it shows the state alone.
+	if cs.Hubs[0].State != "paused on this computer" || cs.Hubs[0].Remedy != "vaultsync resume starts syncing again" || cs.Hubs[1].State != cs.Hubs[0].State || cs.Hubs[1].Remedy != cs.Hubs[0].Remedy {
 		t.Fatalf("paused states: %+v", cs.Hubs)
 	}
 	// What a pause does not change stays visible: a folder's own error with

@@ -3,7 +3,6 @@ package tray
 import (
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/psimaker/vaultsync/desktop/internal/control"
 	"github.com/psimaker/vaultsync/desktop/internal/layout"
@@ -205,7 +204,7 @@ func summarize(st Status) (Glyph, string, string) {
 		}
 	}
 	if problem != nil {
-		return GlyphAttention, "Attention needed", problem.Label + ": " + cutRemedy(problem.State)
+		return GlyphAttention, "Attention needed", problem.Label + ": " + problem.State
 	}
 	if syncing == 1 {
 		return GlyphSyncing, "Syncing 1 vault", ""
@@ -266,10 +265,17 @@ func summarize(st Status) (Glyph, string, string) {
 	return GlyphSyncing, "Connected — not everything is up to date yet", ""
 }
 
+// hubLines: the Hub's state as the agent words it; a remedy the agent
+// gives for the terminal goes to the tooltip — the menu has its own item
+// for the one remedy there is (Resume Syncing).
 func hubLines(hubs []Hub) []Line {
 	var out []Line
 	for _, h := range hubs {
-		out = append(out, shortened(h.Name+" — ", h.State))
+		l := Line{Text: h.Name + " — " + h.State}
+		if h.Remedy != "" {
+			l.Tooltip = h.State + " — " + h.Remedy
+		}
+		out = append(out, l)
 	}
 	return out
 }
@@ -277,36 +283,8 @@ func hubLines(hubs []Hub) []Line {
 func vaultLines(vaults []Vault, home string) []VaultLine {
 	var out []VaultLine
 	for _, vt := range vaults {
-		l := shortened(vt.Label+" — ", vt.State)
-		where := layout.TildePath(home, vt.Path)
-		if l.Tooltip == "" {
-			l.Tooltip = where
-		} else {
-			l.Tooltip = where + "\n" + l.Tooltip
-		}
+		l := Line{Text: vt.Label + " — " + vt.State, Tooltip: layout.TildePath(home, vt.Path)}
 		out = append(out, VaultLine{Line: l, Path: vt.Path})
 	}
 	return out
-}
-
-// shortened is prefix + the state, with the one remedy the menu has its
-// own item for cut off the line (Resume Syncing) and kept in the tooltip.
-func shortened(prefix, state string) Line {
-	short := cutRemedy(state)
-	l := Line{Text: prefix + short}
-	if short != state {
-		l.Tooltip = state
-	}
-	return l
-}
-
-// resumeRemedy is the tail the agent puts on a paused state for the
-// terminal; the menu's Resume Syncing item is that remedy.
-const resumeRemedy = " — vaultsync resume starts syncing again"
-
-// cutRemedy drops the resume remedy off a state and nothing else: every
-// other remedy — a folder to allow in System Settings, a log to read —
-// has no item in the menu, and a tooltip is not shown on every desktop.
-func cutRemedy(state string) string {
-	return strings.TrimSuffix(state, resumeRemedy)
 }

@@ -5,13 +5,14 @@ package main
 import (
 	"context"
 	"errors"
-	"github.com/psimaker/vaultsync/desktop/internal/control"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/psimaker/vaultsync/desktop/internal/control"
 )
 
 // fakeEngineBinary is a stand-in for syncthing: it records its arguments,

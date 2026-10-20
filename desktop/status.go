@@ -170,11 +170,11 @@ func (a *app) report(ctx context.Context, c *syncthing.Client, background bool) 
 		if name == "" {
 			name = "(unnamed Hub)"
 		}
-		state, kind := "not connected", control.KindWaiting
+		state, kind, remedy := "not connected", control.KindWaiting, ""
 		switch cn, ok := conns.Connections[d.DeviceID]; {
 		case d.Paused:
 			pausedHubs++
-			state, kind = "paused on this computer — vaultsync resume starts syncing again", control.KindPaused
+			state, kind, remedy = "paused on this computer", control.KindPaused, "vaultsync resume starts syncing again"
 		case ok && cn.Connected:
 			anyConnected = true
 			state, kind = "connected", control.KindOK
@@ -182,8 +182,12 @@ func (a *app) report(ctx context.Context, c *syncthing.Client, background bool) 
 				state = "connected through a relay (slower; a direct connection is not possible right now)"
 			}
 		}
-		r.Hubs = append(r.Hubs, hubStatus{ID: d.DeviceID, Name: name, State: state, Kind: kind})
-		fmt.Fprintf(w, "  %-22s %s\n", name, state)
+		r.Hubs = append(r.Hubs, hubStatus{ID: d.DeviceID, Name: name, State: state, Kind: kind, Remedy: remedy})
+		line := state
+		if remedy != "" {
+			line += " — " + remedy
+		}
+		fmt.Fprintf(w, "  %-22s %s\n", name, line)
 	}
 	if len(r.Hubs) == 0 {
 		fmt.Fprintln(w, "  none yet — run vaultsync pair")

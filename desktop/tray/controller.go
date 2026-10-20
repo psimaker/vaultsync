@@ -169,6 +169,22 @@ func (c *Controller) Run(ctx context.Context) error {
 	}
 }
 
+// kindsPresent: every vault and Hub in the report carries its kind — the
+// field this app reads the icon from.
+func kindsPresent(st Status) bool {
+	for _, vt := range st.Vaults {
+		if vt.Kind == "" {
+			return false
+		}
+	}
+	for _, h := range st.Hubs {
+		if h.Kind == "" {
+			return false
+		}
+	}
+	return true
+}
+
 // takeLock tries the one-instance lock when none is held, or when the
 // held one no longer guards the file at its place. A second instance is
 // the error that ends Run; any other failure to take it is said in the
@@ -243,6 +259,11 @@ func (c *Controller) refresh(ctx context.Context) error {
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		err = errNoAnswer
+	}
+	if err == nil && !kindsPresent(st) {
+		// An agent that names no kind for a state is older than this
+		// app's reading of the socket: nothing is summarized from words.
+		err = ErrOldAgent
 	}
 	c.status, c.known, c.lastErr = st, err == nil, err
 	c.logPath = c.logFile()
@@ -377,6 +398,11 @@ func (c *Controller) setPaused(ctx context.Context, pause bool) error {
 // app mid-way does not abort an accept (decision 049).
 func (c *Controller) startPairing(ctx context.Context, done chan<- string) {
 	if c.pairing || c.Asker == nil || !c.view.Pair.Enabled {
+		return
+	}
+	// The agent is asked for its status first: one gone since the last
+	// poll is said now, before the person types a code for nobody.
+	if err := c.refresh(ctx); err != nil || !c.known || !c.view.Pair.Enabled {
 		return
 	}
 	cl, err := c.client()

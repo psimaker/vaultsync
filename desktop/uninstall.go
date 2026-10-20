@@ -195,8 +195,11 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, error) {
 	// so it cannot make its lock file again between the entries' removal
 	// and the folder's (it takes it only while agent.json is there).
 	unlockTray, err := lockFile(lay.TrayLock())
-	if err != nil {
+	if errors.Is(err, ErrEngineRunning) {
 		return nil, refuse("The VaultSync menu-bar app is running on this computer. Quit it, then run vaultsync uninstall --remove-data again.")
+	}
+	if err != nil {
+		return nil, err
 	}
 	defer unlockTray()
 	root, base, err := openOwnedDir(lay.Base, vaults, goos)

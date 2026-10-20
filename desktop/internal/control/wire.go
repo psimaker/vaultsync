@@ -45,6 +45,10 @@ type Hub struct {
 	Name  string `json:"name"`
 	State string `json:"state"`
 	Kind  string `json:"kind"`
+	// Remedy is what the terminal says after the state, when it names a
+	// command of its own ("vaultsync resume starts syncing again"): a
+	// menu that has an item for it shows the state alone.
+	Remedy string `json:"remedy,omitempty"`
 }
 
 type Vault struct {

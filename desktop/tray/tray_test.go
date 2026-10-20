@@ -48,7 +48,7 @@ func TestIssue176_TrayShowsWhatTheAgentReports(t *testing.T) {
 		{"paused with an error: the error shows", paused(withVaults(base, "error: boom", "paused on this computer")), GlyphAttention, "Attention needed", "Vault 1: error: boom", Action{"Resume Syncing", true}, Action{"Pair a Vault… (resume syncing first)", false}},
 		{"one vault paused on its own", withVaults(base, "up to date", "paused"), GlyphPaused, "1 vault paused", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"two vaults paused on the Hub's side", withVaults(base, "paused on your Hub", "paused on your Hub"), GlyphPaused, "2 vaults paused", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
-		{"one of two Hubs paused, the other away", withVaults(Status{Engine: "running", Report: Report{Hubs: []Hub{{Name: "Office", State: "paused on this computer — vaultsync resume starts syncing again", Kind: control.KindPaused}, {Name: "Home", State: "not connected", Kind: control.KindWaiting}}}}, "waiting for your Hub"), GlyphPaused, "1 of 2 Hubs paused", "vaultsync resume in a terminal resumes it", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
+		{"one of two Hubs paused, the other away", withVaults(Status{Engine: "running", Report: Report{Hubs: []Hub{{Name: "Office", State: "paused on this computer", Kind: control.KindPaused, Remedy: "vaultsync resume starts syncing again"}, {Name: "Home", State: "not connected", Kind: control.KindWaiting}}}}, "waiting for your Hub"), GlyphPaused, "1 of 2 Hubs paused", "vaultsync resume in a terminal resumes it", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
 		{"engine starting", Status{Engine: "starting", Report: Report{Vaults: []Vault{{Label: "Notes", Path: "/home/me/Notes", State: "not syncing — the engine is stopped", Kind: control.KindOffline}}}}, GlyphSyncing, "Starting the sync engine…", "", Action{"Pause Syncing", false}, Action{"Pair a Vault…", false}},
 	}
 	for _, c := range cases {
@@ -72,11 +72,11 @@ func TestIssue176_TrayShowsWhatTheAgentReports(t *testing.T) {
 	// The lines: the agent's words, with a terminal remedy cut off the
 	// line and kept in the tooltip; the path a click opens is the agent's.
 	st := paused(withVaults(base, "paused on this computer", "syncing — 42 %"))
-	st.Hubs[0].State, st.Hubs[0].Kind = "paused on this computer — vaultsync resume starts syncing again", control.KindPaused
+	st.Hubs[0].State, st.Hubs[0].Kind, st.Hubs[0].Remedy = "paused on this computer", control.KindPaused, "vaultsync resume starts syncing again"
 	st.Waiting = []Waiting{{Label: "Journal", Hub: "Office Hub"}}
 	st.Attempts = []Attempt{{Vault: "Old", What: "your Hub is sharing it; run vaultsync pair to finish setup", At: "Oct 7 15:04"}}
 	v := Render(st, nil, Options{Home: home, CanAsk: true})
-	if got := v.Hubs[0]; got.Text != "Office Hub — paused on this computer" || got.Tooltip != st.Hubs[0].State {
+	if got := v.Hubs[0]; got.Text != "Office Hub — paused on this computer" || got.Tooltip != "paused on this computer — vaultsync resume starts syncing again" {
 		t.Fatalf("hub line: %+v", got)
 	}
 	if got := v.Vaults[0]; got.Text != "Vault 1 — paused on this computer" || got.Path != "/home/me/Vault 1" || got.Tooltip != "~/Vault 1" {
@@ -84,11 +84,6 @@ func TestIssue176_TrayShowsWhatTheAgentReports(t *testing.T) {
 	}
 	if got := v.Vaults[1]; got.Text != "Vault 2 — syncing — 42 %" {
 		t.Fatalf("a percentage is not a remedy: %+v", got)
-	}
-	// A remedy the menu has no item for stays on the line: the tooltip is
-	// not shown on every desktop.
-	if got := shortened("Notes — ", "error: permission denied — allow access to this folder, then run vaultsync stop and vaultsync start"); got.Text != "Notes — error: permission denied — allow access to this folder, then run vaultsync stop and vaultsync start" || got.Tooltip != "" {
-		t.Fatalf("a remedy without an item: %+v", got)
 	}
 	if v.Waiting[0].Text != "Journal — shared by Office Hub; Pair a Vault… sets it up" {
 		t.Fatalf("waiting: %+v", v.Waiting)
@@ -362,6 +357,19 @@ func TestIssue176_TrayPauseAndResumeAskOnlyTheAgent(t *testing.T) {
 			t.Fatalf("calls after the agent stopped: %v", f.calls)
 		}
 	})
+
+	// A report without kinds is an older agent's: nothing is read off its
+	// words, the menu says to update.
+	agent2 := newFakeAgent(t)
+	agent2.set(func(f *fakeAgent) {
+		f.status.Hubs = []Hub{{Name: "Office Hub", State: "connected"}}
+		f.status.Vaults = []Vault{{Label: "Notes", Path: "/home/me/Notes", State: "error: boom"}}
+	})
+	ui2 := newFakeUI(t)
+	controllerFor(t, agent2, ui2, &Controller{})
+	if v := ui2.view(t, "needs an update", func(v View) bool { return v.Headline == "VaultSync needs an update on this computer" }); v.Glyph != GlyphAttention {
+		t.Fatalf("a report without kinds: %+v", v)
+	}
 
 	// The agent recorded that it could not make its socket: nobody
 	// answering then does not mean nobody runs, and the menu says so.
@@ -953,6 +961,24 @@ func TestIssue176_TrayRunsAPairingWhileTheMenuGoesOn(t *testing.T) {
 	}
 	if got := ask.sequence(); !reflect.DeepEqual(got, []string{"code", "vault", "consent", "inform"}) {
 		t.Fatalf("asked: %v", got)
+	}
+
+	// An agent gone since the last poll is found before the code is asked
+	// for: no dialog opens for nobody.
+	gone := newFakeAgent(t)
+	gone.set(func(f *fakeAgent) {
+		f.hubs = 1
+		f.status.Hubs = []Hub{{Name: "Office Hub", State: "connected", Kind: control.KindOK}}
+	})
+	uiGone := newFakeUI(t)
+	askGone := &fakeAsker{code: "TULIP-ANCHOR-42"}
+	controllerFor(t, gone, uiGone, &Controller{Asker: askGone})
+	uiGone.view(t, "connected", func(v View) bool { return v.Pair.Enabled })
+	gone.stop()
+	uiGone.click(EventPair, 0)
+	uiGone.view(t, "not running", func(v View) bool { return v.Headline == "VaultSync is not running" })
+	if got := askGone.sequence(); len(got) != 0 {
+		t.Fatalf("a dialog for an agent that is gone: %v", got)
 	}
 
 	// Without dialogs there is no pairing from the menu, and a click does

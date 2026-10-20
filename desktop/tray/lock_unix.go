@@ -11,7 +11,7 @@ import (
 )
 
 // ErrAlreadyRunning: another menu-bar app of this user holds the lock.
-var ErrAlreadyRunning = errors.New("the VaultSync menu-bar app is already running")
+var ErrAlreadyRunning = errors.New("the VaultSync menu-bar app is already running (or VaultSync is being removed right now)")
 
 // TakeLock makes this the one menu-bar app for this user: tray.lock in
 // VaultSync's folder. It is taken only while VaultSync is set up there

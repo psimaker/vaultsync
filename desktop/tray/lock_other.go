@@ -8,7 +8,7 @@ import (
 	"github.com/psimaker/vaultsync/desktop/internal/layout"
 )
 
-var ErrAlreadyRunning = errors.New("the VaultSync menu-bar app is already running")
+var ErrAlreadyRunning = errors.New("the VaultSync menu-bar app is already running (or VaultSync is being removed right now)")
 
 type noLock struct{}
 

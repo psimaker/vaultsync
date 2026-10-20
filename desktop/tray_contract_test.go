@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/psimaker/vaultsync/desktop/internal/control"
@@ -78,7 +79,7 @@ func TestIssue176_TheTrayReadsTheAgentsWords(t *testing.T) {
 		t.Fatal(err)
 	}
 	v := tray.Render(tray.Status{Engine: "running", Report: rep}, nil, tray.Options{Home: a.home, CanAsk: true})
-	if !rep.Paused || rep.Hubs[0].Kind != control.KindPaused || v.Glyph != tray.GlyphPaused || len(v.Hubs) != 1 || v.Hubs[0].Text != "Test Hub — paused on this computer" || v.Hubs[0].Tooltip != rep.Hubs[0].State {
+	if !rep.Paused || rep.Hubs[0].Kind != control.KindPaused || rep.Hubs[0].Remedy == "" || !strings.Contains(rep.Text, "Test Hub               paused on this computer — "+rep.Hubs[0].Remedy) || v.Glyph != tray.GlyphPaused || len(v.Hubs) != 1 || v.Hubs[0].Text != "Test Hub — paused on this computer" || v.Hubs[0].Tooltip != rep.Hubs[0].State+" — "+rep.Hubs[0].Remedy {
 		t.Fatalf("paused, as the agent says it: %+v / %+v", rep.Hubs, v)
 	}
 
