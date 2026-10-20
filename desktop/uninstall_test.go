@@ -139,6 +139,25 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		}
 		unlock()
 	})
+	t.Run("the tray lock cannot be taken", func(t *testing.T) {
+		// A lock that fails for another reason than a holder is said as
+		// that failure, not as the menu-bar app running: a directory in
+		// the lock's place cannot be opened as a lock file.
+		lay, _ := ownedFixture(t)
+		if err := os.Remove(lay.TrayLock()); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(lay.TrayLock(), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		_, err := removeOwnData(lay, nil, "darwin")
+		if err == nil || errors.As(err, new(*refusal)) || strings.Contains(err.Error(), "menu-bar app") {
+			t.Fatalf("got %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(lay.Base, "bin", "syncthing")); err != nil {
+			t.Fatal("files were removed despite the error")
+		}
+	})
 	t.Run("nothing installed", func(t *testing.T) {
 		lay, err := layoutFor("linux", t.TempDir(), envOf(nil))
 		if err != nil {
