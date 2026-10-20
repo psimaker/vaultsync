@@ -103,7 +103,12 @@ func Render(st Status, err error, o Options) View {
 		Notice: o.Notice,
 		Pause:  Action{Title: "Pause Syncing"},
 		Pair:   Action{Title: "Pair a Vault…"},
-		Quit:   Action{Title: "Quit (syncing continues)", Enabled: true},
+		Quit:   Action{Title: "Quit", Enabled: true},
+	}
+	if err == nil && st.Engine == "running" && !st.Paused {
+		// Quitting the menu-bar app quits the icon alone — said where
+		// something does sync; not under "not running" or "paused".
+		v.Quit.Title = "Quit (syncing continues)"
 	}
 	if o.LogPath != "" {
 		v.Log = Action{Title: "Open Log", Enabled: true}

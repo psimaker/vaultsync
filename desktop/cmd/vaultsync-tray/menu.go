@@ -182,6 +182,10 @@ func (m *menu) action(title string, kind tray.EventKind) *systray.MenuItem {
 func (m *menu) Render(v tray.View) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.rendered && reflect.DeepEqual(v, m.last) {
+		// What is stored for the clicks is what this view holds already.
+		return
+	}
 	// The offered intent and the slots' paths are stored once the items
 	// read them: a click in between sends what the item still shows, which
 	// the controller then drops (a pause already in place) or opens (the
@@ -192,9 +196,6 @@ func (m *menu) Render(v tray.View) {
 	}
 	defer m.paths.Store(&paths)
 	defer m.paused.Store(v.Paused)
-	if m.rendered && reflect.DeepEqual(v, m.last) {
-		return
-	}
 	first := !m.rendered
 	last := m.last
 	if first || v.Glyph != last.Glyph {

@@ -60,7 +60,11 @@ func TestIssue176_TrayShowsWhatTheAgentReports(t *testing.T) {
 			if v.Pause != c.pause || v.Pair != c.pair {
 				t.Fatalf("actions: %+v %+v, want %+v %+v", v.Pause, v.Pair, c.pause, c.pair)
 			}
-			if v.Log != (Action{"Open Log", true}) || !v.Quit.Enabled {
+			wantQuit := "Quit"
+			if c.st.Engine == "running" && !c.st.Paused {
+				wantQuit = "Quit (syncing continues)"
+			}
+			if v.Log != (Action{"Open Log", true}) || v.Quit != (Action{wantQuit, true}) {
 				t.Fatalf("log/quit: %+v %+v", v.Log, v.Quit)
 			}
 			if len(v.Vaults) != len(c.st.Vaults) || len(v.Hubs) != len(c.st.Hubs) {
@@ -116,7 +120,7 @@ func TestIssue176_TrayShowsWhatTheAgentReports(t *testing.T) {
 		{errors.New("the sync engine does not answer: boom"), GlyphAttention, "VaultSync could not report"},
 	} {
 		v := Render(Status{}, c.err, Options{CanAsk: true, LogPath: "/l/vaultsync.log"})
-		if v.Glyph != c.glyph || v.Headline != c.headline || v.Detail == "" || v.Pause.Enabled || v.Pair.Enabled || !v.Quit.Enabled || !v.Log.Enabled || v.NoVaultLine != "" {
+		if v.Glyph != c.glyph || v.Headline != c.headline || v.Detail == "" || v.Pause.Enabled || v.Pair.Enabled || v.Quit != (Action{"Quit", true}) || !v.Log.Enabled || v.NoVaultLine != "" {
 			t.Fatalf("%v: %+v", c.err, v)
 		}
 	}
@@ -1282,6 +1286,55 @@ func TestIssue176_TrayIconsAreFiveDistinctShapes(t *testing.T) {
 				t.Fatalf("%s: drawn differently twice", g)
 			}
 		}
+	}
+}
+
+func TestIssue176_TrayPairClickFindsASecondInstance(t *testing.T) {
+	// A second instance found by the refresh a Pair click makes ends the
+	// app as a poll's refresh would — not at the next tick, and with no
+	// dialog opened beside the other instance.
+	agent := newFakeAgent(t)
+	agent.set(func(f *fakeAgent) {
+		f.hubs = 1
+		f.status.Hubs = []Hub{{Name: "Office Hub", State: "connected", Kind: control.KindOK}}
+	})
+	ui := newFakeUI(t)
+	ask := &fakeAsker{code: "TULIP-ANCHOR-42"}
+	var mu sync.Mutex
+	held := &fakeLock{valid: true}
+	other := false
+	c := &Controller{Home: "/home/me", Layout: agent.layout, UI: ui, Asker: ask, Poll: time.Hour, StatusTimeout: 5 * time.Second, Lock: func(layout.Layout) (LockHandle, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if other {
+			return nil, ErrAlreadyRunning
+		}
+		return held, nil
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- c.Run(ctx) }()
+	ui.view(t, "connected", func(v View) bool { return v.Pair.Enabled })
+	// The lock's file replaced under it, the other instance holding the
+	// new one: the next look lets go and finds it held.
+	mu.Lock()
+	held.mu.Lock()
+	held.valid = false
+	held.mu.Unlock()
+	other = true
+	mu.Unlock()
+	ui.click(EventPair, 0)
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrAlreadyRunning) {
+			t.Fatalf("run ended with %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the app went on beside the other instance")
+	}
+	if got := ask.sequence(); len(got) != 0 {
+		t.Fatalf("a dialog opened beside the other instance: %v", got)
 	}
 }
 

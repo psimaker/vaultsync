@@ -160,7 +160,7 @@ func (c *Controller) Run(ctx context.Context) error {
 			case EventPause:
 				err = c.setPaused(ctx, ev.Pause)
 			case EventPair:
-				c.startPairing(ctx, pairDone)
+				err = c.startPairing(ctx, pairDone)
 			}
 		}
 		if err != nil {
@@ -396,21 +396,25 @@ func (c *Controller) setPaused(ctx context.Context, pause bool) error {
 // minutes, and the menu keeps showing the agent's status meanwhile. The
 // agent runs the pairing on its own lifetime, so quitting the menu-bar
 // app mid-way does not abort an accept (decision 049).
-func (c *Controller) startPairing(ctx context.Context, done chan<- string) {
+func (c *Controller) startPairing(ctx context.Context, done chan<- string) error {
 	if c.pairing || c.Asker == nil || !c.view.Pair.Enabled {
-		return
+		return nil
 	}
 	// The agent is asked for its status first: one gone since the last
-	// poll is said now, before the person types a code for nobody.
-	if err := c.refresh(ctx); err != nil || !c.known || !c.view.Pair.Enabled {
-		return
+	// poll is said now, before the person types a code for nobody. What
+	// ends a poll's refresh — a second instance, a quit — ends this one.
+	if err := c.refresh(ctx); err != nil {
+		return err
+	}
+	if !c.known || !c.view.Pair.Enabled {
+		return nil
 	}
 	cl, err := c.client()
 	if err != nil {
 		c.notice = err.Error()
 		c.notify(ctx, c.notice)
 		c.render()
-		return
+		return nil
 	}
 	c.pairing = true
 	c.notice = ""
@@ -431,6 +435,7 @@ func (c *Controller) startPairing(ctx context.Context, done chan<- string) {
 		}
 		done <- line
 	}()
+	return nil
 }
 
 // errNoAnswer: the agent took longer than the request's limit — busy, or
