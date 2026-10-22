@@ -717,13 +717,11 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 	t.Run("a tray.lock nobody holds is VaultSync's own leftover, and goes", func(t *testing.T) {
 		// An app that made its file and crashed before removing it: the
 		// file is unheld, VaultSync's own entry, and goes with the folder
-		// — reported removed (the fixture's own tray.lock is taken away
-		// first, so the one reported is the leftover).
+		// — reported removed, beside the lock file the removal itself
+		// made and took away with the inventory (the path twice: two
+		// files, one after the other).
 		lay, foreign := ownedFixture(t)
 		if err := os.Remove(foreign); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Remove(lay.TrayLock()); err != nil {
 			t.Fatal(err)
 		}
 		ownEntriesRemovedHook = func(l layout) { writeFile(t, l.TrayLock(), "x") }
@@ -732,7 +730,13 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 		removeRetryWait = time.Millisecond
 		defer func() { removeRetryWait = orig }()
 		removed, kept, err := removeOwnData(lay, nil, "darwin")
-		if err != nil || kept != nil || !slices.Contains(removed, lay.Base) || !slices.Contains(removed, lay.TrayLock()) {
+		trayLocks := 0
+		for _, r := range removed {
+			if r == lay.TrayLock() {
+				trayLocks++
+			}
+		}
+		if err != nil || kept != nil || !slices.Contains(removed, lay.Base) || trayLocks != 2 {
 			t.Fatalf("got %v %v %v", removed, kept, err)
 		}
 		if _, err := os.Stat(lay.Base); !errors.Is(err, os.ErrNotExist) {
