@@ -445,7 +445,7 @@ func TestIssue176_RemoveDataGuards(t *testing.T) {
 		// Nor is the link removed in the folder's place and reported as
 		// the folder: what stands there is not the folder that was
 		// checked, and that is said.
-		if err != nil || kept == nil || !kept.failed || !strings.Contains(kept.why, "not the folder that was checked") || slices.Contains(removed, lay.Base) {
+		if err != nil || kept == nil || !kept.failed || !strings.Contains(kept.why, "something else now stands where VaultSync's folder was") || slices.Contains(removed, lay.Base) {
 			t.Fatalf("the link at the folder's place: %v %v %v", removed, kept, err)
 		}
 		if fi, err := os.Lstat(lay.Base); err != nil || fi.Mode()&os.ModeSymlink == 0 {
@@ -1008,6 +1008,24 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 			t.Fatalf("the folder stayed: %v", err)
 		}
 	})
+	t.Run("a set-up run's lock file left in the instant goes, the folder with it", func(t *testing.T) {
+		// A set-up run took setup.lock in the instant after the lock files
+		// went, refused and discarded its file (or crashed before): what is
+		// left is nobody's, and goes like the rest of the inventory.
+		lay, foreign := ownedFixture(t)
+		if err := os.Remove(foreign); err != nil {
+			t.Fatal(err)
+		}
+		lockFilesRemovedHook = func(l layout) { writeFile(t, filepath.Join(l.Base, "setup.lock"), "") }
+		defer func() { lockFilesRemovedHook = nil }()
+		orig := removeRetryWait
+		removeRetryWait = time.Millisecond
+		defer func() { removeRetryWait = orig }()
+		removed, kept, err := removeOwnData(lay, nil, "darwin")
+		if err != nil || kept != nil || !slices.Contains(removed, lay.Base) {
+			t.Fatalf("got %v %v %v", removed, kept, err)
+		}
+	})
 	t.Run("tray.lock that stays is said", func(t *testing.T) {
 		// Held by an app through the whole wait (one about to remove it,
 		// but not in time): the folder stays, as a failure.
@@ -1033,7 +1051,7 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 		removeRetryWait = time.Millisecond
 		defer func() { removeRetryWait = orig }()
 		removed, kept, err := removeOwnData(lay, nil, "darwin")
-		if err != nil || kept == nil || !kept.failed || !strings.Contains(kept.why, "a tray.lock the menu-bar app holds stayed") {
+		if err != nil || kept == nil || kept.failed || !strings.Contains(kept.why, "menu-bar app") {
 			t.Fatalf("got %v %v", kept, err)
 		}
 		for _, r := range removed {
@@ -1082,7 +1100,7 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 		removeRetryWait = time.Millisecond
 		defer func() { removeRetryWait = orig }()
 		_, kept, err := removeOwnData(lay, nil, "darwin")
-		if kept == nil || !strings.Contains(kept.why, "a tray.lock the menu-bar app holds stayed") || !strings.Contains(refusalText(err), "not a plain folder") {
+		if kept == nil || !strings.Contains(kept.why, "menu-bar app") || !strings.Contains(refusalText(err), "not a plain folder") {
 			t.Fatalf("got %v %v", kept, err)
 		}
 	})
@@ -1350,7 +1368,7 @@ func TestIssue176_UninstallRefusesBeforeTheServiceGoesWhileTheTrayRuns(t *testin
 	a2 := &app{goos: "linux", home: filepath.Dir(lay2.Base), getenv: envOf(nil), lay: lay2, out: &bytes.Buffer{},
 		svc: service{goos: "linux", home: filepath.Dir(lay2.Base), getenv: envOf(nil), lay: lay2, run: &fakeRunner{}}}
 	err = a2.uninstall(context.Background(), []string{"--remove-data", "--yes"})
-	if got := a2.out.(*bytes.Buffer).String(); !strings.Contains(refusalText(err), "not a plain folder") || !strings.Contains(got, "  kept ") || !strings.Contains(got, "holds stayed") {
+	if got := a2.out.(*bytes.Buffer).String(); !strings.Contains(refusalText(err), "not a plain folder") || !strings.Contains(got, "  kept ") || !strings.Contains(got, "menu-bar app") {
 		t.Fatalf("the kept folder beside the log's refusal: %v\n%s", err, got)
 	}
 }

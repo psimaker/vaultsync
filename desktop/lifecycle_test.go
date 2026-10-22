@@ -47,17 +47,17 @@ func TestIssue175_RunWaitsForSetupToFinishPreparing(t *testing.T) {
 	}
 	time.AfterFunc(1500*time.Millisecond, unlock)
 	start := time.Now()
-	got, err := waitForLock(context.Background(), path, 10*time.Second, lockFile)
+	got, err := waitForLock(context.Background(), path, 10*time.Second, lockHandle)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got()
+	got.Release()
 	if waited := time.Since(start); waited < time.Second {
 		t.Fatalf("took the lock while setup still held it (after %s)", waited)
 	}
 	hold, _ := lockFile(path)
 	defer hold()
-	if _, err := waitForLock(context.Background(), path, time.Second, lockFile); !errors.Is(err, ErrEngineRunning) {
+	if _, err := waitForLock(context.Background(), path, time.Second, lockHandle); !errors.Is(err, ErrEngineRunning) {
 		t.Fatalf("a lock held past the timeout must be refused, got %v", err)
 	}
 }

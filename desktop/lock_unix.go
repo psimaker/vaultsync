@@ -17,13 +17,7 @@ import (
 // by another process is ErrEngineRunning — the one word every caller
 // checks, whichever lock it is.
 func lockFile(path string) (func(), error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, err
-	}
-	h, err := lock.Take(path)
-	if errors.Is(err, lock.ErrHeld) {
-		return nil, ErrEngineRunning
-	}
+	h, err := lockHandle(path)
 	if err != nil {
 		return nil, err
 	}
@@ -51,13 +45,18 @@ func sameDevice(a, b os.FileInfo) bool {
 	return ok1 && ok2 && sa.Dev == sb.Dev
 }
 
-// lockFileWait takes the lock like lockFile, but waits for it instead of
-// refusing: for the short, serialized updates of agent.json (updateState).
-// lockFileNoCreate is lockFile without making the folder: for a wait on
-// a lock in a folder that must not come back should it go meanwhile (a
-// run that was set up, while an uninstall takes the folder apart). The
-// handle is returned so the caller can tell its own file from another's
-// before letting go.
+// lockHandle is lockFile with the handle: for a taker that may have to
+// discard its own file (lock.Handle.Discard).
+func lockHandle(path string) (*lock.Handle, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, err
+	}
+	return lockFileNoCreate(path)
+}
+
+// lockFileNoCreate is lockHandle without making the folder: for a wait
+// on a lock in a folder that must not come back should it go meanwhile
+// (a run that was set up, while an uninstall takes the folder apart).
 func lockFileNoCreate(path string) (*lock.Handle, error) {
 	h, err := lock.Take(path)
 	if errors.Is(err, lock.ErrHeld) {
@@ -66,6 +65,8 @@ func lockFileNoCreate(path string) (*lock.Handle, error) {
 	return h, err
 }
 
+// lockFileWait takes the lock like lockFile, but waits for it instead of
+// refusing: for the short, serialized updates of agent.json (updateState).
 func lockFileWait(path string) (func(), error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err

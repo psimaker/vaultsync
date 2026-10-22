@@ -53,12 +53,8 @@ func takeLock(lay layout.Layout, take func(string) (*lock.Handle, error)) (LockH
 	if _, err := os.Stat(lay.State); err != nil {
 		// agent.json went between the look and the lock: an uninstall is
 		// taking the folder apart, and the file this lock made would be
-		// left in it. While the flock is held nobody else has the file,
-		// so it is removed when it is still this one's, then let go.
-		if h.Valid() {
-			_ = os.Remove(path)
-		}
-		h.Release()
+		// left in it — discarded, nothing of this app stays.
+		h.Discard()
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
 		}

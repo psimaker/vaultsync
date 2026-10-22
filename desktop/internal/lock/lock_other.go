@@ -20,3 +20,4 @@ func ProbeIn(*os.Root, string) (bool, error)   { return false, errUnsupported }
 func Wait(string) (*Handle, error)             { return nil, errUnsupported }
 func (*Handle) Valid() bool                    { return false }
 func (*Handle) Release()                       {}
+func (*Handle) Discard()                       {}

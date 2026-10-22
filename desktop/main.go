@@ -301,7 +301,7 @@ func (a *app) setup(ctx context.Context, args []string) error {
 	// Written under the pairing lock, which every reader of the record
 	// takes: a pairing in flight keeps the places it loaded.
 	st.Env = recordGuardEnv(a.getenv)
-	unlockPair, err := waitForLock(ctx, filepath.Join(a.lay.Base, "pair.lock"), 2*time.Minute, lockFile)
+	pairLock, err := waitForLock(ctx, filepath.Join(a.lay.Base, "pair.lock"), 2*time.Minute, lockHandle)
 	if err != nil {
 		unlockSetup()
 		if errors.Is(err, ErrEngineRunning) {
@@ -309,6 +309,7 @@ func (a *app) setup(ctx context.Context, args []string) error {
 		}
 		return err
 	}
+	unlockPair := pairLock.Release
 	err = updateState(a.lay.State, func(s *agentState) { s.Env = st.Env })
 	unlockPair()
 	if err != nil {
@@ -423,12 +424,12 @@ func waitEngine(ctx context.Context, c *syncthing.Client, timeout time.Duration,
 // waitForLock takes a lock another VaultSync process may hold for a moment
 // (setup preparing the engine), waiting at most timeout, with the given
 // taking (lockFile, or one that makes no folder).
-func waitForLock(ctx context.Context, path string, timeout time.Duration, take func(string) (func(), error)) (func(), error) {
+func waitForLock(ctx context.Context, path string, timeout time.Duration, take func(string) (*lock.Handle, error)) (*lock.Handle, error) {
 	deadline := time.Now().Add(timeout)
 	for {
-		unlock, err := take(path)
+		h, err := take(path)
 		if !errors.Is(err, ErrEngineRunning) || time.Now().After(deadline) {
-			return unlock, err
+			return h, err
 		}
 		select {
 		case <-ctx.Done():
@@ -742,37 +743,27 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 	_, stErr := os.Stat(a.lay.State)
 	hadState := stErr == nil
 	setupLock := filepath.Join(a.lay.Base, "setup.lock")
-	take := lockFile
-	var ownSetupLock *lock.Handle
+	take := lockHandle
 	if hadState {
 		// Set up: the folder is there, and must not be made again should
 		// an uninstall take it apart while this run waits for the lock.
-		take = func(path string) (func(), error) {
-			h, err := lockFileNoCreate(path)
-			if err != nil {
-				return nil, err
-			}
-			ownSetupLock = h
-			return h.Release, nil
-		}
+		take = lockFileNoCreate
 	}
 	removedMeanwhile := refuse("VaultSync was removed from this computer while this run waited; run vaultsync setup to set it up again.")
-	unlockSetup, err := waitForLock(ctx, setupLock, 2*time.Minute, take)
+	setupHandle, err := waitForLock(ctx, setupLock, 2*time.Minute, take)
 	if err != nil {
 		if hadState && errors.Is(err, os.ErrNotExist) {
 			return removedMeanwhile
 		}
 		return err
 	}
+	unlockSetup := setupHandle.Release
 	if _, err := os.Stat(a.lay.State); hadState && errors.Is(err, os.ErrNotExist) {
 		// Set up when this run began, gone while it waited for the lock:
 		// an uninstall took VaultSync's folder apart (its lock held the
 		// wait). A run does not set VaultSync up afresh behind it, and
 		// the lock file its take may have made goes with it.
-		if ownSetupLock != nil && ownSetupLock.Valid() {
-			_ = os.Remove(setupLock)
-		}
-		unlockSetup()
+		setupHandle.Discard()
 		return removedMeanwhile
 	}
 	st, err := loadState(a.lay.State)

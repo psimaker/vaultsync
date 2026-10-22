@@ -33,10 +33,27 @@ func open(path string) (*os.File, error) {
 // so a link in the lock's place is refused here first, as open refuses
 // it: ELOOP, nothing opened, locked or made through it.
 func openIn(root *os.Root, name string, flag int) (*os.File, error) {
+	loop := &os.PathError{Op: "open", Path: filepath.Join(root.Name(), name), Err: syscall.ELOOP}
 	if fi, err := root.Lstat(name); err == nil && fi.Mode()&os.ModeSymlink != 0 {
-		return nil, &os.PathError{Op: "open", Path: filepath.Join(root.Name(), name), Err: syscall.ELOOP}
+		return nil, loop
 	}
-	return root.OpenFile(name, flag|syscall.O_NOFOLLOW, 0o600)
+	f, err := root.OpenFile(name, flag|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	// A link swapped in between the look and the open would have been
+	// followed: the opened file must be the one the name holds now.
+	opened, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	at, err := root.Lstat(name)
+	if err != nil || !os.SameFile(opened, at) {
+		f.Close()
+		return nil, loop
+	}
+	return f, nil
 }
 
 // takeOpened takes the lock on an opened file without waiting: ErrHeld
@@ -145,3 +162,14 @@ func (h *Handle) Valid() bool {
 
 // Release lets the lock go.
 func (h *Handle) Release() { _ = h.f.Close() }
+
+// Discard removes the lock file when it is still this handle's — while
+// the flock is held nobody else has that file — then lets the lock go.
+// For a lock taken in a folder that is being taken apart: nothing of the
+// taker is left in it.
+func (h *Handle) Discard() {
+	if h.Valid() {
+		_ = os.Remove(h.path)
+	}
+	h.Release()
+}
