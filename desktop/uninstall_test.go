@@ -177,6 +177,17 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		if err := probeOwnLocks(lay, true); err == nil || errors.As(err, new(*refusal)) {
 			t.Fatalf("a link at the engine's lock while the service runs: %v", err)
 		}
+		// A service at its start holds setup.lock and is about to take
+		// agent.lock: found by setup.lock first, agent.lock is not looked
+		// at — the link there would be an error otherwise.
+		holdSetup, err = lockFile(filepath.Join(lay.Base, "setup.lock"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := probeOwnLocks(lay, true); !strings.Contains(refusalText(err), "VaultSync is busy") {
+			t.Fatalf("setup.lock before agent.lock: %v", err)
+		}
+		holdSetup()
 		if err := os.Remove(lay.Lock); err != nil {
 			t.Fatal(err)
 		}
