@@ -99,8 +99,11 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		if _, err := removeOwnData(lay, nil, "darwin"); !strings.Contains(refusalText(err), "not a plain folder") {
 			t.Fatalf("got %v", err)
 		}
-		if err := trayQuit(lay); err != nil {
+		if err := probeOwnLocks(lay); !strings.Contains(refusalText(err), "not a plain folder") {
 			t.Fatalf("the probe through a link: %v", err)
+		}
+		if engineOwnerRunning(lay, 0) {
+			t.Fatal("a link counts as a running engine")
 		}
 		for _, name := range []string{"agent.lock", "pair.lock", "setup.lock", "tray.lock"} {
 			if _, err := os.Lstat(filepath.Join(target, name)); !errors.Is(err, os.ErrNotExist) {
@@ -529,6 +532,9 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 		// The folder's parent made unwritable: the removal fails for a
 		// reason no wait would change, and the folder is empty — no
 		// tray.lock to wait for, so no wait.
+		if os.Getuid() == 0 {
+			t.Skip("root removes through any mode")
+		}
 		lay, foreign := ownedFixture(t)
 		if err := os.Remove(foreign); err != nil {
 			t.Fatal(err)
@@ -554,6 +560,34 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 			t.Fatalf("the folder: %v", err)
 		}
 	})
+	t.Run("emptied between a try and the look: once more, now", func(t *testing.T) {
+		// The app removes its file right after a try failed on it: the
+		// look finds the folder empty, and the next try — without a wait
+		// — takes it.
+		lay, foreign := ownedFixture(t)
+		if err := os.Remove(foreign); err != nil {
+			t.Fatal(err)
+		}
+		ownEntriesRemovedHook = func(l layout) { writeFile(t, l.TrayLock(), "x") }
+		removeTryHook = func() { _ = os.Remove(lay.TrayLock()) }
+		defer func() { ownEntriesRemovedHook, removeTryHook = nil, nil }()
+		removeRetryWait = 10 * time.Second
+		defer func() { removeRetryWait = 50 * time.Millisecond }()
+		start := time.Now()
+		removed, err := removeOwnData(lay, nil, "darwin")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if took := time.Since(start); took > 3*time.Second {
+			t.Fatalf("waited %v for a folder emptied in between", took)
+		}
+		if _, err := os.Stat(lay.Base); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("the folder stayed: %v", err)
+		}
+		if removed[len(removed)-1] != filepath.Join(lay.Logs, "vaultsync.log") && removed[len(removed)-1] != lay.Logs && removed[len(removed)-1] != lay.Base {
+			t.Fatalf("removed: %v", removed)
+		}
+	})
 	t.Run("tray.lock that stays is said", func(t *testing.T) {
 		lay, foreign := ownedFixture(t)
 		if err := os.Remove(foreign); err != nil {
@@ -574,6 +608,11 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 		}
 		if _, err := os.Stat(lay.TrayLock()); err != nil {
 			t.Fatalf("the file: %v", err)
+		}
+		// The log goes all the same: a second run cannot (agent.json is
+		// gone), and the person is told to remove one folder, not two.
+		if _, err := os.Stat(filepath.Join(lay.Logs, "vaultsync.log")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("the log stayed: %v", err)
 		}
 	})
 }
@@ -601,9 +640,54 @@ func TestIssue176_UninstallRefusesBeforeTheServiceGoesWhileTheTrayRuns(t *testin
 	if _, err := os.Stat(filepath.Join(lay.Base, "bin", "syncthing")); err != nil {
 		t.Fatal("files were removed despite the refusal")
 	}
+	// Before any question, too: without --yes and without a terminal the
+	// answer would be "pass --yes" — the probe comes first.
+	if err := a.uninstall(context.Background(), []string{"--remove-data"}); !strings.Contains(refusalText(err), "menu-bar app is running") {
+		t.Fatalf("asked before the probe: %v", err)
+	}
+	unlock()
+
+	// A vaultsync pair or setup in progress is probed the same way.
+	holdSetup, err := lockFile(filepath.Join(lay.Base, "setup.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = a.uninstall(context.Background(), []string{"--remove-data", "--yes"})
+	if !strings.Contains(refusalText(err), "pair or setup") || len(run.calls) != 0 {
+		t.Fatalf("a setup in progress: %v %v", err, run.calls)
+	}
+	holdSetup()
+
+	// A link in the folder's place is refused before the service goes,
+	// and no lock file lands in its target.
+	target := lay.Base + "-real"
+	if err := os.Rename(lay.Base, target); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, lay.Base); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"agent.lock", "pair.lock", "setup.lock", "tray.lock"} {
+		_ = os.Remove(filepath.Join(target, name))
+	}
+	err = a.uninstall(context.Background(), []string{"--remove-data", "--yes"})
+	if !strings.Contains(refusalText(err), "not a plain folder") || len(run.calls) != 0 {
+		t.Fatalf("a link: %v %v", err, run.calls)
+	}
+	for _, name := range []string{"agent.lock", "pair.lock", "setup.lock", "tray.lock"} {
+		if _, err := os.Lstat(filepath.Join(target, name)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s was made through the link", name)
+		}
+	}
+	if err := os.Remove(lay.Base); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(target, lay.Base); err != nil {
+		t.Fatal(err)
+	}
+
 	// Without --remove-data the app may run on: the service goes, the
 	// folder stays, nothing is probed.
-	unlock()
 	hold, err := lockFile(lay.TrayLock())
 	if err != nil {
 		t.Fatal(err)

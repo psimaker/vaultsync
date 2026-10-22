@@ -45,16 +45,15 @@ func redact(msg string) string { return layout.Shorten(msg, shown.folder, shown.
 
 // lockAtStart takes the one-instance lock before the icon shows: a
 // second instance ends here. Any other failure (the folder unreadable
-// for a moment, something left at tray.lock) is logged and left to the
-// controller, which tries again at every refresh and says so in the
+// for a moment, something left at tray.lock) is left to the controller,
+// which tries again at every refresh, logs it once and says so in the
 // menu — as it does for the same failure later on.
-func lockAtStart(lay layout.Layout, logf func(string, ...any)) (tray.LockHandle, error) {
+func lockAtStart(lay layout.Layout) (tray.LockHandle, error) {
 	held, err := tray.TakeLock(lay)
 	if errors.Is(err, tray.ErrAlreadyRunning) {
 		return nil, err
 	}
 	if err != nil {
-		logf("one-instance lock: could not be taken at start; trying again at every refresh")
 		return nil, nil
 	}
 	return held, nil
@@ -106,7 +105,7 @@ func run(args []string) error {
 	logger := log.New(os.Stderr, "", log.LstdFlags)
 	// The lock is the controller's from here: it releases it on its way
 	// out, or earlier when the file is gone and it takes a fresh one.
-	held, err := lockAtStart(lay, logger.Printf)
+	held, err := lockAtStart(lay)
 	if err != nil {
 		return err
 	}

@@ -34,22 +34,37 @@ func plainFolder(dir string) (os.FileInfo, error) {
 	return info, nil
 }
 
-// trayRunningRefusal is the uninstall's word for a held tray.lock.
-const trayRunningRefusal = "The VaultSync menu-bar app is running on this computer. Quit it, then run vaultsync uninstall --remove-data again."
+// The uninstall's words for a held lock: the engine's owners, the
+// menu-bar app.
+const (
+	ownerRunningRefusal = "VaultSync is still running on this computer (a vaultsync run, pair or setup). Stop it, then run vaultsync uninstall --remove-data again."
+	trayRunningRefusal  = "The VaultSync menu-bar app is running on this computer. Quit it, then run vaultsync uninstall --remove-data again."
+)
 
-// trayQuit refuses while the menu-bar app holds its lock; probed before
-// the service goes, so the refusal costs nothing. Where VaultSync's
-// folder is missing or no plain folder there is nothing to probe — the
-// removal says so itself, and no lock file is made in a link's target.
-func trayQuit(lay layout) error {
+// probeOwnLocks refuses while a vaultsync pair or setup, or the menu-bar
+// app, holds its lock — probed before the service goes and before any
+// question, so the refusal costs nothing. The service's own lock is not
+// probed: the service holds it until it is removed. A missing folder is
+// nothing to probe; a link in its place is refused here, before any lock
+// file could be made in its target.
+func probeOwnLocks(lay layout) error {
 	if _, err := plainFolder(lay.Base); err != nil {
-		return nil
-	}
-	unlock, err := ownLock(lay.TrayLock(), trayRunningRefusal)
-	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
 		return err
 	}
-	unlock()
+	for _, l := range []struct{ path, held string }{
+		{filepath.Join(lay.Base, "pair.lock"), ownerRunningRefusal},
+		{filepath.Join(lay.Base, "setup.lock"), ownerRunningRefusal},
+		{lay.TrayLock(), trayRunningRefusal},
+	} {
+		unlock, err := ownLock(l.path, l.held)
+		if err != nil {
+			return err
+		}
+		unlock()
+	}
 	return nil
 }
 
@@ -72,11 +87,9 @@ var ownEntriesRemovedHook func(lay layout)
 // while the menu-bar app's tray.lock is the one thing in it.
 var removeRetryWait = 50 * time.Millisecond
 
-// holdsOnlyTrayLock: tray.lock is the one entry in the folder.
-func holdsOnlyTrayLock(root *os.Root) bool {
-	entries, err := fs.ReadDir(root.FS(), ".")
-	return err == nil && len(entries) == 1 && entries[0].Name() == "tray.lock"
-}
+// removeTryHook runs after a try at removing the folder failed; a test
+// takes the menu-bar app's file away there.
+var removeTryHook func()
 
 // ownedEntries are the names VaultSync creates in its directory.
 var ownedEntries = []string{"bin", "syncthing", "agent.json", "pairing.json", "last-error.txt", "agent.lock", "pair.lock", "setup.lock", "agent.sock", "control-socket.log", "control-socket-error.txt", "state.lock", "tray.lock"}
@@ -102,6 +115,14 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 		return ok, err
 	}
 	vaults := configuredVaultPaths(a.engine())
+	if *removeData {
+		// Whoever holds one of VaultSync's own locks — a pair or setup in
+		// progress, the menu-bar app — must be gone before anything is
+		// asked or changed: probed first, so the refusal costs nothing.
+		if err := probeOwnLocks(a.lay); err != nil {
+			return err
+		}
+	}
 	t.blank()
 	t.say("This stops VaultSync on this computer and removes its background service.")
 	if len(vaults) > 0 {
@@ -118,13 +139,6 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 	if !ok {
 		t.say("Nothing was changed.")
 		return nil
-	}
-	if *removeData {
-		// The menu-bar app must have quit before anything goes: its lock
-		// is probed first, so the refusal does not cost the service.
-		if err := trayQuit(a.lay); err != nil {
-			return err
-		}
 	}
 	if err := a.svc.uninstall(); err != nil {
 		return err
@@ -198,7 +212,9 @@ func (a *app) removeCommandLink() (string, bool) {
 // engineOwnerRunning reports whether some process still owns the engine once
 // the stopped service had time to let go of it.
 func engineOwnerRunning(lay layout, grace time.Duration) bool {
-	if _, err := os.Stat(lay.Base); err != nil {
+	// A plain folder only: the lock makes its file, which must not land in
+	// what a link points to.
+	if _, err := plainFolder(lay.Base); err != nil {
 		return false
 	}
 	deadline := time.Now().Add(grace)
@@ -254,7 +270,7 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, error) {
 	// No engine owner may run: the background service is gone, and the locks
 	// tell whether a `vaultsync run`, `pair` or `setup` still does.
 	for _, lock := range []string{lay.Lock, filepath.Join(lay.Base, "pair.lock"), filepath.Join(lay.Base, "setup.lock")} {
-		unlock, err := ownLock(lock, "VaultSync is still running on this computer (a vaultsync run, pair or setup). Stop it, then run vaultsync uninstall --remove-data again.")
+		unlock, err := ownLock(lock, ownerRunningRefusal)
 		if err != nil {
 			return nil, err
 		}
@@ -313,18 +329,28 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, error) {
 	// The menu-bar app may have made a fresh tray.lock just now (its look
 	// at agent.json came before the removal); it removes that file itself
 	// the moment it sees agent.json gone — so a folder holding that file
-	// and nothing else gets a moment. Anything else in it keeps the
-	// folder, as does a removal that fails for another reason.
-	for try := 0; ; try++ {
+	// and nothing else gets a moment, and one emptied in between gets
+	// another try at once. Anything else in it keeps the folder, as does
+	// a removal that fails for another reason.
+	var kept error
+	for try := 0; try <= 20; try++ {
 		if err := os.Remove(lay.Base); err == nil {
 			removed = append(removed, lay.Base)
 			break
 		}
-		if !holdsOnlyTrayLock(root) {
+		if removeTryHook != nil {
+			removeTryHook()
+		}
+		entries, err := fs.ReadDir(root.FS(), ".")
+		if err != nil || len(entries) > 1 || (len(entries) == 1 && entries[0].Name() != "tray.lock") {
 			break
 		}
+		if len(entries) == 0 {
+			continue
+		}
 		if try == 20 {
-			return removed, fmt.Errorf("%s was not removed: the menu-bar app's tray.lock is still in it — quit the app, then remove the folder by hand", lay.Base)
+			kept = fmt.Errorf("%s was not removed: the menu-bar app's tray.lock is still in it — quit the app, then remove the folder by hand", lay.Base)
+			break
 		}
 		time.Sleep(removeRetryWait)
 	}
@@ -343,7 +369,7 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, error) {
 			}
 		}
 	}
-	return removed, nil
+	return removed, kept
 }
 
 // openOwnedDir opens one of VaultSync's own folders for removal — only when

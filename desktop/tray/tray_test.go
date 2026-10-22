@@ -117,7 +117,13 @@ func TestIssue176_TrayShowsWhatTheAgentReports(t *testing.T) {
 		{errors.New("the sync engine does not answer: boom"), GlyphAttention, "VaultSync could not report"},
 	} {
 		v := Render(Status{}, c.err, Options{CanAsk: true, LogPath: "/l/vaultsync.log"})
-		if v.Glyph != c.glyph || v.Headline != c.headline || v.Detail == "" || v.Pause.Enabled || v.Pair.Enabled || v.Quit != (Action{"Quit", true}) || !v.Log.Enabled || v.NoVaultLine != "" {
+		// An agent that answered (too old) runs on without this app; one
+		// that did not answer may or may not — plain Quit there.
+		quit := "Quit"
+		if errors.Is(c.err, ErrOldAgent) {
+			quit = "Quit (syncing continues)"
+		}
+		if v.Glyph != c.glyph || v.Headline != c.headline || v.Detail == "" || v.Pause.Enabled || v.Pair.Enabled || v.Quit != (Action{quit, true}) || !v.Log.Enabled || v.NoVaultLine != "" {
 			t.Fatalf("%v: %+v", c.err, v)
 		}
 	}
