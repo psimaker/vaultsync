@@ -107,14 +107,9 @@ func allOwnEntries(entries []fs.DirEntry) bool {
 	return true
 }
 
-// isOwnLock: name is one of the lock files, which go last in the removal.
-func isOwnLock(lay layout, name string) bool {
-	for _, l := range ownLocks(lay) {
-		if filepath.Base(l.path) == name {
-			return true
-		}
-	}
-	return false
+// couldNotRemove: the folder stayed because a removal failed — an error.
+func couldNotRemove(path string, err error) *keptFolder {
+	return &keptFolder{path, fmt.Sprintf("it could not be removed (%v); remove the folder by hand", errnoOf(err)), true}
 }
 
 // ownFolder: whether VaultSync's folder is there, and whether it is its
@@ -163,11 +158,26 @@ func probeOwnLocks(lay layout, serviceRunning bool) error {
 	return nil
 }
 
+// takeOwnLock takes a lock for the removal without making the folder
+// (lock.Take, not lockFile): a folder gone in between is an honest
+// ENOENT, not a fresh folder with four lock files in it. A test injects
+// a take that fails in ways no filesystem here does.
+var takeOwnLock = func(path string) (func(), error) {
+	h, err := lock.Take(path)
+	if errors.Is(err, lock.ErrHeld) {
+		return nil, ErrEngineRunning
+	}
+	if err != nil {
+		return nil, err
+	}
+	return h.Release, nil
+}
+
 // ownLock takes one of VaultSync's locks for the removal: held, the
 // refusal names who holds it; any other failure to take it is said as
 // it is — a directory in the lock's place is not a running VaultSync.
 func ownLock(path, held string) (func(), error) {
-	unlock, err := lockFile(path)
+	unlock, err := takeOwnLock(path)
 	if errors.Is(err, ErrEngineRunning) {
 		return nil, refuse("%s", held)
 	}
@@ -450,9 +460,16 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 		}
 		unlock, err := ownLock(l.path, l.held)
 		if err != nil {
-			// A refusal or failure leaves no file the taking made — the
-			// failed take's own included: its open may have made it.
-			for _, t := range append(taken, l) {
+			// A refusal or failure leaves no file the taking made. The
+			// failed take's own file counts when the lock failed for
+			// another reason than a holder (its open may have made it);
+			// held, the file is the holder's — one that took it in the
+			// instant after the look — and stays.
+			cleanup := taken
+			if !errors.As(err, new(*refusal)) {
+				cleanup = append(cleanup, l)
+			}
+			for _, t := range cleanup {
 				if !preexisting[t.path] {
 					_ = root.Remove(filepath.Base(t.path))
 				}
@@ -462,9 +479,13 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 		defer unlock()
 		taken = append(taken, l)
 	}
+	lockNames := map[string]bool{}
+	for _, l := range ownLocks(lay) {
+		lockNames[filepath.Base(l.path)] = true
+	}
 	var removed []string
 	for _, name := range ownedEntries {
-		if isOwnLock(lay, name) {
+		if lockNames[name] {
 			continue
 		}
 		entry, err := root.Lstat(name)
@@ -534,7 +555,7 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 		}
 		if !errors.Is(err, syscall.ENOTEMPTY) && !errors.Is(err, syscall.EEXIST) {
 			// Not its content: a reason no wait changes, said as it is.
-			kept = &keptFolder{lay.Base, fmt.Sprintf("it could not be removed (%v); remove the folder by hand", errnoOf(err)), true}
+			kept = couldNotRemove(lay.Base, err)
 			break
 		}
 		entries, readErr := fs.ReadDir(root.FS(), ".")
@@ -559,7 +580,7 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 			if try <= 20 {
 				continue
 			}
-			kept = &keptFolder{lay.Base, fmt.Sprintf("it could not be removed (%v); remove the folder by hand", errnoOf(err)), true}
+			kept = couldNotRemove(lay.Base, err)
 			break
 		}
 		if try >= 20 {
@@ -584,7 +605,7 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 					removed = append(removed, trayLock)
 				}
 				if rerr := os.Remove(lay.Base); rerr != nil {
-					kept = &keptFolder{lay.Base, fmt.Sprintf("it could not be removed (%v); remove the folder by hand", errnoOf(rerr)), true}
+					kept = couldNotRemove(lay.Base, rerr)
 					break
 				}
 				removed = append(removed, lay.Base)

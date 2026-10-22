@@ -277,15 +277,29 @@ func (s service) uninstall() (found bool, err error) {
 			if out, err := s.run.run("launchctl", "bootout", s.launchdTarget()); err != nil {
 				return found, fmt.Errorf("launchctl bootout: %v: %s", err, out)
 			}
+		} else if state, why := s.session(); state == sessionUnknown {
+			// Not "no job" but "could not ask": removing the file now would
+			// leave a job running until the logout, with nothing to stop
+			// it by. No session at all is a job nothing runs.
+			return false, fmt.Errorf("the service manager could not be asked whether the service runs (%s); run vaultsync uninstall from your Mac's own session", why)
 		}
 	case "linux":
 		// A unit the manager runs without its file (removed by hand, no
-		// daemon-reload; a config home that moved) is stopped all the same.
-		if _, err := os.Stat(path); err == nil || s.running() {
+		// daemon-reload; a config home that moved) is stopped all the
+		// same — by stop, which needs no file; disable (the wants link)
+		// then as it may.
+		switch _, err := os.Stat(path); {
+		case err == nil:
 			found = true
 			if out, err := s.run.run("systemctl", "--user", "disable", "--now", systemdUnit); err != nil {
 				return found, fmt.Errorf("systemctl --user disable --now: %v: %s", err, out)
 			}
+		case s.running():
+			found = true
+			if out, err := s.run.run("systemctl", "--user", "stop", systemdUnit); err != nil {
+				return found, fmt.Errorf("systemctl --user stop: %v: %s", err, out)
+			}
+			_, _ = s.run.run("systemctl", "--user", "disable", systemdUnit)
 		}
 	}
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {

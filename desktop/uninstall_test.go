@@ -240,7 +240,7 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 			t.Fatalf("got %v", err)
 		}
 		// The refusal leaves no lock file the taking made: the ones
-		// taken before the held one, and the held one's own.
+		// taken before the held one (the held one is the holder's).
 		for _, name := range []string{"agent.lock", "pair.lock", "setup.lock"} {
 			if _, err := os.Lstat(filepath.Join(lay.Base, name)); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("%s was made before the refusal", name)
@@ -338,6 +338,75 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		_, kept, err := removeOwnData(lay, nil, "darwin")
 		if err == nil || errors.As(err, new(*refusal)) || kept != nil {
 			t.Fatalf("an own lock file that cannot go: %v %v", kept, err)
+		}
+	})
+	t.Run("a failed take's own file goes, a holder's stays", func(t *testing.T) {
+		// Through the injected take: a lock that fails for another reason
+		// than a holder after its open made the file leaves no file; one
+		// held by someone who took it in the instant after the look is
+		// the holder's and stays — removing it would orphan their lock.
+		lay, _ := ownedFixture(t)
+		origTake := takeOwnLock
+		defer func() { takeOwnLock = origTake }()
+		takeOwnLock = func(path string) (func(), error) {
+			if filepath.Base(path) == "pair.lock" {
+				writeFile(t, path, "")
+				return nil, errors.New("flock: no locks available")
+			}
+			return origTake(path)
+		}
+		if _, _, err := removeOwnData(lay, nil, "darwin"); err == nil || errors.As(err, new(*refusal)) {
+			t.Fatalf("a take failing for another reason: %v", err)
+		}
+		for _, name := range []string{"setup.lock", "pair.lock"} {
+			if _, err := os.Lstat(filepath.Join(lay.Base, name)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("%s was left by the failed take", name)
+			}
+		}
+		var held *lock.Handle
+		takeOwnLock = func(path string) (func(), error) {
+			if filepath.Base(path) == "pair.lock" {
+				h, err := lock.Take(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				held = h
+				return nil, ErrEngineRunning
+			}
+			return origTake(path)
+		}
+		defer func() {
+			if held != nil {
+				held.Release()
+			}
+		}()
+		if _, _, err := removeOwnData(lay, nil, "darwin"); !strings.Contains(refusalText(err), "still running") {
+			t.Fatalf("a holder that took it in the instant after the look: %v", err)
+		}
+		if _, err := os.Lstat(filepath.Join(lay.Base, "pair.lock")); err != nil {
+			t.Fatalf("the holder's lock file was removed: %v", err)
+		}
+		if _, err := os.Lstat(filepath.Join(lay.Base, "setup.lock")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("setup.lock, made by the taking before the held one, stayed")
+		}
+	})
+	t.Run("a folder gone before the locks is not made again", func(t *testing.T) {
+		// Another removal finished in between: the take meets no folder
+		// and says so, instead of making one with four lock files in it.
+		lay, _ := ownedFixture(t)
+		origTake := takeOwnLock
+		defer func() { takeOwnLock = origTake }()
+		takeOwnLock = func(path string) (func(), error) {
+			if err := os.RemoveAll(lay.Base); err != nil {
+				t.Fatal(err)
+			}
+			return origTake(path)
+		}
+		if _, _, err := removeOwnData(lay, nil, "darwin"); err == nil || errors.As(err, new(*refusal)) {
+			t.Fatalf("got %v", err)
+		}
+		if _, err := os.Lstat(lay.Base); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("the folder was made again: %v", err)
 		}
 	})
 	t.Run("an interrupted write's leftover of any own file goes", func(t *testing.T) {
