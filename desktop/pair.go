@@ -189,18 +189,23 @@ func (s *pairSession) run(ctx context.Context) error {
 	if beforePairingLock != nil {
 		beforePairingLock()
 	}
-	unlock, err := lockFile(filepath.Join(s.env.lay.Base, "pair.lock"))
+	h, err := lockHandle(filepath.Join(s.env.lay.Base, "pair.lock"))
 	if errors.Is(err, ErrEngineRunning) {
 		return errPairingBusy
 	}
 	if err != nil {
 		return err
 	}
-	defer unlock()
+	defer h.Release()
 	if s.env.rememberShell {
 		// Under the lock that uninstall --remove-data waits on: a record
 		// written outside it could bring agent.json back after the removal.
 		if err := rememberShellEnv(s.env.lay.State, s.env.getenv); err != nil {
+			// Not set up (anymore): the lock file this taking made, and
+			// the folder it made for it, do not bring VaultSync's folder
+			// back from the dead — the folder goes only if empty.
+			h.Discard()
+			_ = os.Remove(s.env.lay.Base)
 			return err
 		}
 	}

@@ -125,24 +125,6 @@ func allOwnEntries(entries []fs.DirEntry) bool {
 // folder that was checked and taken apart — a link put there meanwhile.
 var errNotTheFolderChecked = errors.New("what is at the folder's place is not the folder that was checked")
 
-// removeFolder removes VaultSync's folder, and only the folder that was
-// checked (the same file as the opened one, looked at through the
-// parent): a link put in its place after the check is not touched, nor
-// reported removed — rmdir takes a directory alone, never a link.
-func removeFolder(parent *os.Root, path string, checked os.FileInfo) error {
-	fi, err := parent.Lstat(filepath.Base(path))
-	if err != nil {
-		return err
-	}
-	if !os.SameFile(fi, checked) {
-		return &os.PathError{Op: "remove", Path: path, Err: errNotTheFolderChecked}
-	}
-	if err := syscall.Rmdir(path); err != nil {
-		return &os.PathError{Op: "remove", Path: path, Err: err}
-	}
-	return nil
-}
-
 // couldNotRemove: the folder stayed because a removal failed — an error.
 func couldNotRemove(path string, err error) *keptFolder {
 	return &keptFolder{path, fmt.Sprintf("it could not be removed (%v); remove the folder by hand", errnoOf(err)), true}
@@ -582,7 +564,7 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 	// and nothing else gets a moment, and one emptied in between gets
 	// another try at once. Anything else in it keeps the folder, as does
 	// a removal that fails for another reason.
-	parent, err := os.OpenRoot(filepath.Dir(lay.Base))
+	parent, err := os.Open(filepath.Dir(lay.Base))
 	if err != nil {
 		return removed, nil, err
 	}
@@ -590,7 +572,7 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 	var kept *keptFolder
 	leftovers := 0
 	for try := 0; ; try++ {
-		err := removeFolder(parent, lay.Base, base)
+		err := removeDirAt(parent, filepath.Base(lay.Base), base)
 		if err == nil {
 			removed = append(removed, lay.Base)
 			break
@@ -599,7 +581,7 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 			removeTryHook()
 		}
 		if errors.Is(err, errNotTheFolderChecked) {
-			kept = &keptFolder{lay.Base, "something else now stands where VaultSync's folder was; the folder itself was emptied, and nothing at that place was removed", true}
+			kept = &keptFolder{lay.Base, "something else now stands where VaultSync's folder was; VaultSync's own files in the folder were removed, the folder itself is wherever it was moved to, and nothing at that place was touched", true}
 			break
 		}
 		if !errors.Is(err, syscall.ENOTEMPTY) && !errors.Is(err, syscall.EEXIST) {
@@ -646,26 +628,41 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 			break
 		}
 		leftovers++
-		// Held: an owner at work in there — VaultSync's again. Unheld:
-		// leftovers of owners that did not get to remove their files —
-		// this removal held every lock, so they are nobody's — and go
-		// like the rest of the inventory; the folder is then tried and
-		// judged like any folder, with its wait.
-		held := false
+		// A held setup.lock, pair.lock or agent.lock: an owner at work in
+		// there — VaultSync's again. A held tray.lock: the menu-bar app,
+		// which discards it the moment it sees agent.json gone — another
+		// wait, then a failure that names it. Unheld: leftovers of owners
+		// that did not get to remove their files — this removal held
+		// every lock, so they are nobody's — and go like the rest of the
+		// inventory; the folder is then tried and judged like any folder,
+		// with its wait.
+		heldOwner, heldTray := false, false
 		for _, e := range entries {
 			isHeld, perr := lock.ProbeIn(root, e.Name())
 			if perr != nil {
 				kept = &keptFolder{lay.Base, fmt.Sprintf("its %s could not be looked at (%v); remove the folder by hand", e.Name(), errnoOf(perr)), true}
 				break
 			}
-			held = held || isHeld
+			if isHeld && e.Name() == "tray.lock" {
+				heldTray = true
+			} else if isHeld {
+				heldOwner = true
+			}
 		}
 		if kept != nil {
 			break
 		}
-		if held {
-			kept = &keptFolder{lay.Base, "VaultSync started again in it meanwhile (a vaultsync run, pair or setup, or the menu-bar app)", false}
+		if heldOwner {
+			kept = &keptFolder{lay.Base, "VaultSync started again in it meanwhile (a vaultsync run, pair or setup)", false}
 			break
+		}
+		if heldTray {
+			if leftovers >= 2 {
+				kept = &keptFolder{lay.Base, "a tray.lock the menu-bar app holds stayed; quit the app, then remove the folder by hand", true}
+				break
+			}
+			try = -1
+			continue
 		}
 		for _, e := range entries {
 			if rerr := root.Remove(e.Name()); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {

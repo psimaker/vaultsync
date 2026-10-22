@@ -1008,6 +1008,36 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 			t.Fatalf("the folder stayed: %v", err)
 		}
 	})
+	t.Run("a held tray.lock let go within the second wait: the folder goes", func(t *testing.T) {
+		// The menu-bar app holds its file a moment longer than the first
+		// wait and then discards it: the second wait sees it gone, and the
+		// folder goes — no restart reported, no failure.
+		lay, foreign := ownedFixture(t)
+		if err := os.Remove(foreign); err != nil {
+			t.Fatal(err)
+		}
+		var held *lock.Handle
+		lockFilesRemovedHook = func(l layout) {
+			h, err := lock.Take(l.TrayLock())
+			if err != nil {
+				t.Fatal(err)
+			}
+			held = h
+			go func() {
+				time.Sleep(60 * time.Millisecond)
+				h.Discard()
+			}()
+		}
+		defer func() { lockFilesRemovedHook = nil }()
+		orig := removeRetryWait
+		removeRetryWait = 2 * time.Millisecond
+		defer func() { removeRetryWait = orig }()
+		removed, kept, err := removeOwnData(lay, nil, "darwin")
+		if err != nil || kept != nil || !slices.Contains(removed, lay.Base) {
+			t.Fatalf("got %v %v %v", removed, kept, err)
+		}
+		_ = held
+	})
 	t.Run("a set-up run's lock file left in the instant goes, the folder with it", func(t *testing.T) {
 		// A set-up run took setup.lock in the instant after the lock files
 		// went, refused and discarded its file (or crashed before): what is
@@ -1027,8 +1057,9 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 		}
 	})
 	t.Run("tray.lock that stays is said", func(t *testing.T) {
-		// Held by an app through the whole wait (one about to remove it,
-		// but not in time): the folder stays, as a failure.
+		// Held by an app through two whole waits (one about to remove it,
+		// but not in time): the folder stays, as a failure that names the
+		// app — not as VaultSync started again, which the app never means.
 		lay, foreign := ownedFixture(t)
 		if err := os.Remove(foreign); err != nil {
 			t.Fatal(err)
@@ -1051,7 +1082,7 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 		removeRetryWait = time.Millisecond
 		defer func() { removeRetryWait = orig }()
 		removed, kept, err := removeOwnData(lay, nil, "darwin")
-		if err != nil || kept == nil || kept.failed || !strings.Contains(kept.why, "menu-bar app") {
+		if err != nil || kept == nil || !kept.failed || !strings.Contains(kept.why, "a tray.lock the menu-bar app holds stayed") {
 			t.Fatalf("got %v %v", kept, err)
 		}
 		for _, r := range removed {
@@ -1100,7 +1131,7 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 		removeRetryWait = time.Millisecond
 		defer func() { removeRetryWait = orig }()
 		_, kept, err := removeOwnData(lay, nil, "darwin")
-		if kept == nil || !strings.Contains(kept.why, "menu-bar app") || !strings.Contains(refusalText(err), "not a plain folder") {
+		if kept == nil || !kept.failed || !strings.Contains(kept.why, "a tray.lock the menu-bar app holds stayed") || !strings.Contains(refusalText(err), "not a plain folder") {
 			t.Fatalf("got %v %v", kept, err)
 		}
 	})
@@ -1368,7 +1399,7 @@ func TestIssue176_UninstallRefusesBeforeTheServiceGoesWhileTheTrayRuns(t *testin
 	a2 := &app{goos: "linux", home: filepath.Dir(lay2.Base), getenv: envOf(nil), lay: lay2, out: &bytes.Buffer{},
 		svc: service{goos: "linux", home: filepath.Dir(lay2.Base), getenv: envOf(nil), lay: lay2, run: &fakeRunner{}}}
 	err = a2.uninstall(context.Background(), []string{"--remove-data", "--yes"})
-	if got := a2.out.(*bytes.Buffer).String(); !strings.Contains(refusalText(err), "not a plain folder") || !strings.Contains(got, "  kept ") || !strings.Contains(got, "menu-bar app") {
+	if got := a2.out.(*bytes.Buffer).String(); !strings.Contains(refusalText(err), "not a plain folder") || !strings.Contains(got, "  kept ") || !strings.Contains(got, "a tray.lock the menu-bar app holds stayed") {
 		t.Fatalf("the kept folder beside the log's refusal: %v\n%s", err, got)
 	}
 }
@@ -1382,4 +1413,23 @@ func serviceTouched(calls []string) bool {
 		}
 	}
 	return false
+}
+
+// A pairing after a finished uninstall --remove-data does not bring
+// VaultSync's folder back: its lock is taken without making the folder,
+// and a folder gone is the not-set-up refusal.
+func TestIssue176_PairAfterRemovalMakesNoFolder(t *testing.T) {
+	home := t.TempDir()
+	lay, err := layoutFor("linux", home, envOf(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &pairSession{env: pairEnv{lay: lay, getenv: envOf(nil), rememberShell: true}}
+	err = s.run(context.Background())
+	if !strings.Contains(refusalText(err), "not set up on this computer") {
+		t.Fatalf("pair without VaultSync's folder: %v", err)
+	}
+	if _, err := os.Lstat(lay.Base); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the pairing made VaultSync's folder: %v", err)
+	}
 }

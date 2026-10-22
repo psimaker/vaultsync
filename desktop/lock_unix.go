@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/psimaker/vaultsync/desktop/internal/lock"
+	"golang.org/x/sys/unix"
 )
 
 // lockFile takes an exclusive, non-blocking lock that the kernel drops when
@@ -43,6 +44,26 @@ func sameDevice(a, b os.FileInfo) bool {
 	sa, ok1 := a.Sys().(*syscall.Stat_t)
 	sb, ok2 := b.Sys().(*syscall.Stat_t)
 	return ok1 && ok2 && sa.Dev == sb.Dev
+}
+
+// removeDirAt removes the directory named name in the opened parent, and
+// only when it is the one checked (same device and inode): the look and
+// the act go through the parent's handle, and unlinkat with AT_REMOVEDIR
+// takes a directory alone, never a link put in its place.
+func removeDirAt(parent *os.File, name string, checked os.FileInfo) error {
+	path := filepath.Join(parent.Name(), name)
+	var st unix.Stat_t
+	if err := unix.Fstatat(int(parent.Fd()), name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return &os.PathError{Op: "lstat", Path: path, Err: err}
+	}
+	cs, ok := checked.Sys().(*syscall.Stat_t)
+	if !ok || uint64(st.Dev) != uint64(cs.Dev) || st.Ino != cs.Ino {
+		return &os.PathError{Op: "remove", Path: path, Err: errNotTheFolderChecked}
+	}
+	if err := unix.Unlinkat(int(parent.Fd()), name, unix.AT_REMOVEDIR); err != nil {
+		return &os.PathError{Op: "remove", Path: path, Err: err}
+	}
+	return nil
 }
 
 // lockHandle is lockFile with the handle: for a taker that may have to

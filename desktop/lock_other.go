@@ -13,6 +13,10 @@ func lockFile(string) (func(), error) {
 	return nil, errors.New("the background engine runs on macOS and Linux only for now")
 }
 
+func removeDirAt(*os.File, string, os.FileInfo) error {
+	return errors.New("the background engine runs on macOS and Linux only for now")
+}
+
 func lockHandle(string) (*lock.Handle, error) {
 	return nil, errors.New("the background engine runs on macOS and Linux only for now")
 }
