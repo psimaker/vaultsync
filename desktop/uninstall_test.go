@@ -525,6 +525,35 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 			t.Fatalf("someone's file: %v", err)
 		}
 	})
+	t.Run("an empty folder that cannot go is not waited for", func(t *testing.T) {
+		// The folder's parent made unwritable: the removal fails for a
+		// reason no wait would change, and the folder is empty — no
+		// tray.lock to wait for, so no wait.
+		lay, foreign := ownedFixture(t)
+		if err := os.Remove(foreign); err != nil {
+			t.Fatal(err)
+		}
+		parent := filepath.Dir(lay.Base)
+		ownEntriesRemovedHook = func(l layout) {
+			if err := os.Chmod(parent, 0o500); err != nil {
+				t.Fatal(err)
+			}
+		}
+		defer func() { ownEntriesRemovedHook = nil }()
+		defer func() { _ = os.Chmod(parent, 0o700) }()
+		removeRetryWait = 10 * time.Second
+		defer func() { removeRetryWait = 50 * time.Millisecond }()
+		start := time.Now()
+		if _, err := removeOwnData(lay, nil, "darwin"); err != nil {
+			t.Fatal(err)
+		}
+		if took := time.Since(start); took > 3*time.Second {
+			t.Fatalf("waited %v for an empty folder nobody can remove", took)
+		}
+		if _, err := os.Stat(lay.Base); err != nil {
+			t.Fatalf("the folder: %v", err)
+		}
+	})
 	t.Run("tray.lock that stays is said", func(t *testing.T) {
 		lay, foreign := ownedFixture(t)
 		if err := os.Remove(foreign); err != nil {
