@@ -11,6 +11,7 @@ type Handle struct{}
 var errUnsupported = errors.New("file locks are for macOS and Linux only for now")
 
 func Take(string) (*Handle, error) { return nil, errUnsupported }
+func Probe(string) (bool, error)   { return false, errUnsupported }
 func Wait(string) (*Handle, error) { return nil, errUnsupported }
 func (*Handle) Valid() bool        { return false }
 func (*Handle) Release()           {}

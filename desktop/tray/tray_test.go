@@ -117,15 +117,18 @@ func TestIssue176_TrayShowsWhatTheAgentReports(t *testing.T) {
 		{errors.New("the sync engine does not answer: boom"), GlyphAttention, "VaultSync could not report"},
 	} {
 		v := Render(Status{}, c.err, Options{CanAsk: true, LogPath: "/l/vaultsync.log"})
-		// An agent that answered (too old) runs on without this app; one
-		// that did not answer may or may not — plain Quit there.
-		quit := "Quit"
-		if errors.Is(c.err, ErrOldAgent) {
-			quit = "Quit (syncing continues)"
-		}
-		if v.Glyph != c.glyph || v.Headline != c.headline || v.Detail == "" || v.Pause.Enabled || v.Pair.Enabled || v.Quit != (Action{quit, true}) || !v.Log.Enabled || v.NoVaultLine != "" {
+		if v.Glyph != c.glyph || v.Headline != c.headline || v.Detail == "" || v.Pause.Enabled || v.Pair.Enabled || v.Quit != (Action{"Quit", true}) || !v.Log.Enabled || v.NoVaultLine != "" {
 			t.Fatalf("%v: %+v", c.err, v)
 		}
+	}
+	// An older agent whose report says its engine runs unpaused runs on
+	// without this app; one that said nothing (404), or paused, gets a
+	// plain Quit.
+	if v := Render(Status{Engine: "running"}, ErrOldAgent, Options{CanAsk: true}); v.Quit.Title != "Quit (syncing continues)" {
+		t.Fatalf("an older agent running: %+v", v.Quit)
+	}
+	if v := Render(Status{Engine: "running", Report: Report{Paused: true}}, ErrOldAgent, Options{CanAsk: true}); v.Quit.Title != "Quit" {
+		t.Fatalf("an older agent paused: %+v", v.Quit)
 	}
 	if v := Render(base, nil, Options{CanAsk: true}); v.NoVaultLine != "No vault yet" {
 		t.Fatalf("no vault: %+v", v)
@@ -374,7 +377,7 @@ func TestIssue176_TrayPauseAndResumeAskOnlyTheAgent(t *testing.T) {
 	})
 	ui2 := newFakeUI(t)
 	controllerFor(t, agent2, ui2, &Controller{})
-	if v := ui2.view(t, "needs an update", func(v View) bool { return v.Headline == "VaultSync needs an update on this computer" }); v.Glyph != GlyphAttention {
+	if v := ui2.view(t, "needs an update", func(v View) bool { return v.Headline == "VaultSync needs an update on this computer" }); v.Glyph != GlyphAttention || v.Quit.Title != "Quit (syncing continues)" {
 		t.Fatalf("a report without kinds: %+v", v)
 	}
 

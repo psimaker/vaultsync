@@ -22,10 +22,13 @@ type term struct {
 	in  *bufio.Reader
 }
 
+// ttyPath is the controlling terminal; a test points it at nothing.
+var ttyPath = "/dev/tty"
+
 // openTerm reads answers from the controlling terminal, so `curl … | sh`
 // (stdin is the script) can still ask.
 func openTerm(out io.Writer) (*term, func()) {
-	f, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	f, err := os.OpenFile(ttyPath, os.O_RDWR, 0)
 	if err != nil {
 		return &term{out: out}, func() {}
 	}

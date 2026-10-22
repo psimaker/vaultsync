@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -99,33 +100,32 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		if _, err := removeOwnData(lay, nil, "darwin"); !strings.Contains(refusalText(err), "not a plain folder") {
 			t.Fatalf("got %v", err)
 		}
-		if err := probeOwnLocks(lay); !strings.Contains(refusalText(err), "not a plain folder") {
+		if _, err := os.Stat(filepath.Join(target, "bin", "syncthing")); err != nil {
+			t.Fatal("removal followed the link")
+		}
+		if err := probeOwnLocks(lay, true); !strings.Contains(refusalText(err), "not a plain folder") {
 			t.Fatalf("the probe through a link: %v", err)
 		}
+		// The look for a running engine reads through the link as it is,
+		// making nothing: a terminal's vaultsync run there is seen.
 		if engineOwnerRunning(lay, 0) {
-			t.Fatal("a link counts as a running engine")
+			t.Fatal("no lock file, yet a running engine")
+		}
+		hold, err := lockFile(filepath.Join(target, "agent.lock"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !engineOwnerRunning(lay, 0) {
+			t.Fatal("a run behind the link is not seen")
+		}
+		hold()
+		if err := os.Remove(filepath.Join(target, "agent.lock")); err != nil {
+			t.Fatal(err)
 		}
 		for _, name := range []string{"agent.lock", "pair.lock", "setup.lock", "tray.lock"} {
 			if _, err := os.Lstat(filepath.Join(target, name)); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("%s was made through the link", name)
 			}
-		}
-	})
-	t.Run("the folder is a link", func(t *testing.T) {
-		lay, _ := ownedFixture(t)
-		real := lay.Base + "-real"
-		if err := os.Rename(lay.Base, real); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Symlink(real, lay.Base); err != nil {
-			t.Fatal(err)
-		}
-		_, err := removeOwnData(lay, nil, "darwin")
-		if !strings.Contains(refusalText(err), "not a plain folder") {
-			t.Fatalf("got %v", err)
-		}
-		if _, err := os.Stat(filepath.Join(real, "bin", "syncthing")); err != nil {
-			t.Fatal("removal followed the link")
 		}
 	})
 	t.Run("no agent.json", func(t *testing.T) {
@@ -516,7 +516,7 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 		defer func() { ownEntriesRemovedHook = nil }()
 		// One wait would be ten seconds: a run well under that took none.
 		removeRetryWait = 10 * time.Second
-		defer func() { removeRetryWait = 50 * time.Millisecond }()
+		defer func(orig time.Duration) { removeRetryWait = orig }(removeRetryWait)
 		start := time.Now()
 		if _, err := removeOwnData(lay, nil, "darwin"); err != nil {
 			t.Fatal(err)
@@ -548,10 +548,11 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 		defer func() { ownEntriesRemovedHook = nil }()
 		defer func() { _ = os.Chmod(parent, 0o700) }()
 		removeRetryWait = 10 * time.Second
-		defer func() { removeRetryWait = 50 * time.Millisecond }()
+		defer func(orig time.Duration) { removeRetryWait = orig }(removeRetryWait)
 		start := time.Now()
-		if _, err := removeOwnData(lay, nil, "darwin"); err != nil {
-			t.Fatal(err)
+		_, err := removeOwnData(lay, nil, "darwin")
+		if err == nil || errors.As(err, new(*refusal)) || !strings.Contains(err.Error(), "was not removed (") {
+			t.Fatalf("an empty folder nobody can remove is said: %v", err)
 		}
 		if took := time.Since(start); took > 3*time.Second {
 			t.Fatalf("waited %v for an empty folder nobody can remove", took)
@@ -572,7 +573,7 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 		removeTryHook = func() { _ = os.Remove(lay.TrayLock()) }
 		defer func() { ownEntriesRemovedHook, removeTryHook = nil, nil }()
 		removeRetryWait = 10 * time.Second
-		defer func() { removeRetryWait = 50 * time.Millisecond }()
+		defer func(orig time.Duration) { removeRetryWait = orig }(removeRetryWait)
 		start := time.Now()
 		removed, err := removeOwnData(lay, nil, "darwin")
 		if err != nil {
@@ -584,8 +585,8 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 		if _, err := os.Stat(lay.Base); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("the folder stayed: %v", err)
 		}
-		if removed[len(removed)-1] != filepath.Join(lay.Logs, "vaultsync.log") && removed[len(removed)-1] != lay.Logs && removed[len(removed)-1] != lay.Base {
-			t.Fatalf("removed: %v", removed)
+		if !slices.Contains(removed, lay.Base) {
+			t.Fatalf("the folder is not reported as removed: %v", removed)
 		}
 	})
 	t.Run("tray.lock that stays is said", func(t *testing.T) {
@@ -596,9 +597,9 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 		ownEntriesRemovedHook = func(l layout) { writeFile(t, l.TrayLock(), "x") }
 		defer func() { ownEntriesRemovedHook = nil }()
 		removeRetryWait = time.Millisecond
-		defer func() { removeRetryWait = 50 * time.Millisecond }()
+		defer func(orig time.Duration) { removeRetryWait = orig }(removeRetryWait)
 		removed, err := removeOwnData(lay, nil, "darwin")
-		if err == nil || !strings.Contains(err.Error(), "tray.lock is still in it") || errors.As(err, new(*refusal)) {
+		if err == nil || !strings.Contains(err.Error(), "a tray.lock the menu-bar app left in it stayed") || errors.As(err, new(*refusal)) {
 			t.Fatalf("got %v", err)
 		}
 		for _, r := range removed {
@@ -641,11 +642,26 @@ func TestIssue176_UninstallRefusesBeforeTheServiceGoesWhileTheTrayRuns(t *testin
 		t.Fatal("files were removed despite the refusal")
 	}
 	// Before any question, too: without --yes and without a terminal the
-	// answer would be "pass --yes" — the probe comes first.
+	// answer would be "pass --yes" — the probe comes first. (The terminal
+	// is pointed at nothing, so a go test in a Terminal asks nobody.)
+	ttyPath = filepath.Join(t.TempDir(), "no-tty")
+	defer func() { ttyPath = "/dev/tty" }()
 	if err := a.uninstall(context.Background(), []string{"--remove-data"}); !strings.Contains(refusalText(err), "menu-bar app is running") {
 		t.Fatalf("asked before the probe: %v", err)
 	}
 	unlock()
+
+	// A vaultsync run in a terminal — no service is installed here, so a
+	// held engine lock is one — is probed before the service goes, too.
+	holdRun, err := lockFile(lay.Lock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = a.uninstall(context.Background(), []string{"--remove-data", "--yes"})
+	if !strings.Contains(refusalText(err), "run, pair or setup") || len(run.calls) != 0 {
+		t.Fatalf("a run in a terminal: %v %v", err, run.calls)
+	}
+	holdRun()
 
 	// A vaultsync pair or setup in progress is probed the same way.
 	holdSetup, err := lockFile(filepath.Join(lay.Base, "setup.lock"))

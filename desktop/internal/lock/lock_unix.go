@@ -42,6 +42,28 @@ func Take(path string) (*Handle, error) {
 	return &Handle{f: f, path: path}, nil
 }
 
+// Probe tells whether another process holds the lock at path, making
+// nothing: a missing file is a lock nobody holds. It takes the lock for
+// an instant to tell, so a holder-to-be racing it may see it held.
+func Probe(path string) (held bool, err error) {
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return true, nil
+		}
+		return false, err
+	}
+	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return false, nil
+}
+
 // Wait takes the lock at path, waiting for it: for short, serialized
 // updates.
 func Wait(path string) (*Handle, error) {
