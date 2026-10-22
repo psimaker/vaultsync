@@ -222,6 +222,12 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		if _, _, err := removeOwnData(lay, nil, "darwin"); !strings.Contains(refusalText(err), "still running") {
 			t.Fatalf("got %v", err)
 		}
+		// The refusal leaves no lock file the taking made.
+		for _, name := range []string{"pair.lock", "setup.lock"} {
+			if _, err := os.Lstat(filepath.Join(lay.Base, name)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("%s was made before the refusal", name)
+			}
+		}
 		unlock()
 	})
 	t.Run("the menu-bar app runs", func(t *testing.T) {
@@ -252,6 +258,10 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 			if _, err := lock.Take(l.TrayLock()); !errors.Is(err, lock.ErrHeld) {
 				t.Errorf("the menu-bar app starting mid-removal: %v", err)
 			}
+			// agent.json went first: the app's second look finds it gone.
+			if _, err := os.Stat(l.State); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("agent.json still there while the entries go: %v", err)
+			}
 		}
 		defer func() { ownEntriesRemovedHook = nil }()
 		removed, kept, err := removeOwnData(lay, nil, "darwin")
@@ -265,6 +275,54 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		}
 		if !slices.Contains(removed, lay.TrayLock()) {
 			t.Fatalf("the tray.lock that was there is not reported: %v", removed)
+		}
+	})
+	t.Run("an owner starting after the lock files went is said as VaultSync's", func(t *testing.T) {
+		// The instant between the lock files' removal and the folder's: a
+		// setup starting then takes a fresh lock and goes on — the folder
+		// is VaultSync's again, said as that, not as someone's files.
+		lay, foreign := ownedFixture(t)
+		if err := os.Remove(foreign); err != nil {
+			t.Fatal(err)
+		}
+		var release func()
+		lockFilesRemovedHook = func(l layout) {
+			unlock, err := lockFile(filepath.Join(l.Base, "setup.lock"))
+			if err != nil {
+				t.Errorf("a setup starting after the lock files went: %v", err)
+				return
+			}
+			release = unlock
+		}
+		defer func() {
+			lockFilesRemovedHook = nil
+			if release != nil {
+				release()
+			}
+		}()
+		_, kept, err := removeOwnData(lay, nil, "darwin")
+		if err != nil || kept == nil || kept.failed || !strings.Contains(kept.why, "started again") {
+			t.Fatalf("got %v %v", kept, err)
+		}
+	})
+	t.Run("a lock file that cannot go is an error", func(t *testing.T) {
+		if os.Getuid() == 0 {
+			t.Skip("root removes through any mode")
+		}
+		lay, foreign := ownedFixture(t)
+		if err := os.Remove(foreign); err != nil {
+			t.Fatal(err)
+		}
+		ownEntriesRemovedHook = func(l layout) {
+			if err := os.Chmod(l.Base, 0o500); err != nil {
+				t.Fatal(err)
+			}
+		}
+		defer func() { ownEntriesRemovedHook = nil }()
+		defer func() { _ = os.Chmod(lay.Base, 0o700) }()
+		_, kept, err := removeOwnData(lay, nil, "darwin")
+		if err == nil || errors.As(err, new(*refusal)) || kept != nil {
+			t.Fatalf("an own lock file that cannot go: %v %v", kept, err)
 		}
 	})
 	t.Run("an interrupted write's leftover of any own file goes", func(t *testing.T) {
@@ -673,11 +731,11 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 		if err := os.Remove(foreign); err != nil {
 			t.Fatal(err)
 		}
-		ownEntriesRemovedHook = func(l layout) {
+		lockFilesRemovedHook = func(l layout) {
 			writeFile(t, l.TrayLock(), "x")
 			writeFile(t, filepath.Join(l.Base, "notes.md"), "keep me")
 		}
-		defer func() { ownEntriesRemovedHook = nil }()
+		defer func() { lockFilesRemovedHook = nil }()
 		// One wait would be ten seconds: a run well under that took none.
 		orig := removeRetryWait
 		removeRetryWait = 10 * time.Second
@@ -953,10 +1011,10 @@ func TestIssue176_UninstallRefusesBeforeTheServiceGoesWhileTheTrayRuns(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	go func() {
+	go func(letGo func()) {
 		time.Sleep(200 * time.Millisecond)
-		holdRun()
-	}()
+		letGo()
+	}(holdRun)
 	out.Reset()
 	if err := a.uninstall(context.Background(), []string{"--yes"}); err != nil {
 		t.Fatalf("uninstall beside the service's own run letting go: %v", err)
@@ -1036,6 +1094,27 @@ func TestIssue176_UninstallRefusesBeforeTheServiceGoesWhileTheTrayRuns(t *testin
 	if _, err := os.Stat(unit); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the service's unit file stayed: %v", err)
 	}
+	// With --remove-data, a terminal run still holding the engine's lock
+	// after the service's removal is a refusal right there — no question
+	// for a removal that would stop at that lock. (The manager calls the
+	// service running, so the probe passed the lock over.)
+	writeFile(t, unit, "[Unit]\n")
+	run.answers = map[string]string{"systemctl --user is-active vaultsync.service": "active"}
+	engineOwnerGrace = 200 * time.Millisecond
+	holdRun, err = lockFile(lay.Lock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	err = a.uninstall(context.Background(), []string{"--remove-data", "--yes"})
+	if !strings.Contains(refusalText(err), "files stay while that run syncs") || strings.Contains(out.String(), "Remove them?") {
+		t.Fatalf("a run found after the service's removal: %v\n%s", err, out.String())
+	}
+	if _, err := os.Stat(filepath.Join(lay.Base, "bin", "syncthing")); err != nil {
+		t.Fatal("files were removed despite the refusal")
+	}
+	holdRun()
+	run.answers = nil
 	// A folder kept for someone's file in it is said, beside what went.
 	out.Reset()
 	if err := a.uninstall(context.Background(), []string{"--remove-data", "--yes"}); err != nil {

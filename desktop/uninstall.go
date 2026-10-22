@@ -95,6 +95,34 @@ func ownLocks(lay layout) []ownLockEntry {
 	}
 }
 
+// removalOrder puts the engine's lock first for the removal: with the
+// service gone it is the likeliest holder, and a refusal at the first
+// lock makes no file.
+func removalOrder(locks []ownLockEntry) []ownLockEntry {
+	out := make([]ownLockEntry, 0, len(locks))
+	for _, l := range locks {
+		if l.service {
+			out = append(out, l)
+		}
+	}
+	for _, l := range locks {
+		if !l.service {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// allOwnLocks: every entry is one of the lock files.
+func allOwnLocks(lay layout, entries []fs.DirEntry) bool {
+	for _, e := range entries {
+		if !isOwnLock(lay, e.Name()) {
+			return false
+		}
+	}
+	return true
+}
+
 // isOwnLock: name is one of the lock files, which go last in the removal.
 func isOwnLock(lay layout, name string) bool {
 	for _, l := range ownLocks(lay) {
@@ -180,7 +208,10 @@ var removeRetryWait = 50 * time.Millisecond
 var removeTryHook func()
 
 // ownedEntries are the names VaultSync creates in its directory.
-var ownedEntries = []string{"bin", "syncthing", "agent.json", "pairing.json", "last-error.txt", "agent.lock", "pair.lock", "setup.lock", "agent.sock", "control-socket.log", "control-socket-error.txt", "state.lock", "tray.lock"}
+// agent.json goes first: the menu-bar app keys its lock on it, so its
+// second look at a held lock finds it gone and holds nothing — before
+// the engine's database, which may take a while to remove.
+var ownedEntries = []string{"agent.json", "bin", "syncthing", "pairing.json", "last-error.txt", "agent.lock", "pair.lock", "setup.lock", "agent.sock", "control-socket.log", "control-socket-error.txt", "state.lock", "tray.lock"}
 
 func (a *app) uninstall(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("uninstall", flag.ContinueOnError)
@@ -231,26 +262,35 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 		t.say("Nothing was changed.")
 		return nil
 	}
-	// Read right before the removal, not minutes earlier at a prompt: a
-	// service that is installed, or that the manager calls running, may
-	// hold the engine's lock a moment after its removal (one restarting
-	// after a crash is "activating" one instant and holding it the next).
-	serviceWas := a.svc.installed() || a.svc.running()
-	if err := a.svc.uninstall(); err != nil {
+	// Read right before the removal, not minutes earlier at a prompt: the
+	// manager's word on the service, then what the removal found (a job
+	// or a unit — one restarting after a crash is "activating" one instant
+	// and holding the engine's lock the next). Either may hold the lock a
+	// moment after the removal.
+	wasRunning := a.svc.running()
+	found, err := a.svc.uninstall()
+	if err != nil {
 		return err
 	}
 	// The service's own run lets go of the lock a moment after the removal;
 	// a terminal run holds it for good, and without a service it is the
 	// one holder there can be — known at once.
 	grace := time.Duration(0)
-	if serviceWas {
+	if found || wasRunning {
 		grace = engineOwnerGrace
 	}
 	switch running, err := engineOwnerRunning(a.lay, grace); {
 	case err != nil:
 		t.say("✓ Background service removed. VaultSync could not tell whether a vaultsync run started in a terminal still syncs on this computer (its lock file: %v); vaultsync status in that terminal tells.", errnoOf(err))
+		if *removeData {
+			// The removal would stop at that lock: no question for it.
+			return refuse("VaultSync's files stay: whether a vaultsync run still syncs here could not be told. Stop any vaultsync run, then run vaultsync uninstall --remove-data again (the background service is removed).")
+		}
 	case running:
 		t.say("✓ Background service removed. A vaultsync run started in a terminal still syncs on this computer — stop it (Ctrl-C in that terminal) to stop syncing.")
+		if *removeData {
+			return refuse("VaultSync's files stay while that run syncs. Stop it, then run vaultsync uninstall --remove-data again (the background service is removed).")
+		}
 	default:
 		t.say("✓ Background service removed. VaultSync has stopped syncing on this computer. Your Hub keeps its copy and may still list this computer.")
 	}
@@ -423,15 +463,23 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 	// agent.json gone and holds nothing. The lock files the taking makes
 	// (none was there) are not reported as removed.
 	preexisting := map[string]bool{}
-	for _, l := range ownLocks(lay) {
+	var taken []ownLockEntry
+	for _, l := range removalOrder(ownLocks(lay)) {
 		if _, err := os.Lstat(l.path); err == nil {
 			preexisting[l.path] = true
 		}
 		unlock, err := ownLock(l.path, l.held)
 		if err != nil {
+			// A refusal leaves no file the taking made.
+			for _, t := range taken {
+				if !preexisting[t.path] {
+					_ = root.Remove(filepath.Base(t.path))
+				}
+			}
 			return nil, nil, err
 		}
 		defer unlock()
+		taken = append(taken, l)
 	}
 	var removed []string
 	for _, name := range ownedEntries {
@@ -473,9 +521,14 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 	if ownEntriesRemovedHook != nil {
 		ownEntriesRemovedHook(lay)
 	}
-	// The lock files last, still held.
+	// The lock files last, still held. One that cannot go is an error,
+	// like any own entry — not someone's file in the folder.
 	for _, l := range ownLocks(lay) {
-		if err := root.Remove(filepath.Base(l.path)); err == nil && preexisting[l.path] {
+		err := root.Remove(filepath.Base(l.path))
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return removed, nil, err
+		}
+		if err == nil && preexisting[l.path] {
 			removed = append(removed, l.path)
 		}
 	}
@@ -509,8 +562,14 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 			break
 		}
 		if len(entries) > 1 || (len(entries) == 1 && entries[0].Name() != "tray.lock") {
-			// Someone's file: the folder stays, as it always has — said now.
-			kept = &keptFolder{lay.Base, "it holds files VaultSync did not make", false}
+			// Someone's file: the folder stays, as it always has — said
+			// now. Or an owner that started in the instant after the lock
+			// files went and before the folder did: VaultSync's again.
+			why := "it holds files VaultSync did not make"
+			if allOwnLocks(lay, entries) {
+				why = "VaultSync started again in it meanwhile (a vaultsync run, pair or setup)"
+			}
+			kept = &keptFolder{lay.Base, why, false}
 			break
 		}
 		if len(entries) == 0 {

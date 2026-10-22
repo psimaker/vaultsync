@@ -296,7 +296,7 @@ func TestIssue175_LaunchAgentInstallIsIdempotent(t *testing.T) {
 
 	// Uninstall stops the job and removes exactly the plist; twice is fine.
 	run.calls = nil
-	if err := svc.uninstall(); err != nil {
+	if _, err := svc.uninstall(); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(mustUnitPath(t, svc)); !errors.Is(err, os.ErrNotExist) {
@@ -305,7 +305,7 @@ func TestIssue175_LaunchAgentInstallIsIdempotent(t *testing.T) {
 	if strings.Join(run.calls, "|") != "launchctl print gui/501/eu.vaultsync.agent|launchctl bootout gui/501/eu.vaultsync.agent" {
 		t.Fatalf("uninstall ran: %v", run.calls)
 	}
-	if err := svc.uninstall(); err != nil {
+	if _, err := svc.uninstall(); err != nil {
 		t.Fatalf("second uninstall: %v", err)
 	}
 }
@@ -335,7 +335,7 @@ func TestIssue175_SystemdInstallIsIdempotent(t *testing.T) {
 		t.Fatalf("start: %v %v", err, run.calls)
 	}
 	run.calls = nil
-	if err := svc.uninstall(); err != nil {
+	if _, err := svc.uninstall(); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Join(run.calls, "|") != "systemctl --user disable --now vaultsync.service|systemctl --user daemon-reload|systemctl --user reset-failed vaultsync.service" {

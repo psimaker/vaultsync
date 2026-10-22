@@ -262,33 +262,38 @@ func (s service) systemdStart(fileChanged, binaryChanged bool) error {
 }
 
 // uninstall stops the service and removes its file. Not installed is fine.
-func (s service) uninstall() error {
+// uninstall removes the service and says whether it found one — a loaded
+// job on a Mac, a unit file on Linux — whose own run may hold the
+// engine's lock a moment longer.
+func (s service) uninstall() (found bool, err error) {
 	path, err := s.unitPath()
 	if err != nil {
-		return err
+		return false, err
 	}
 	switch s.goos {
 	case "darwin":
 		if _, err := s.run.run("launchctl", "print", s.launchdTarget()); err == nil {
+			found = true
 			if out, err := s.run.run("launchctl", "bootout", s.launchdTarget()); err != nil {
-				return fmt.Errorf("launchctl bootout: %v: %s", err, out)
+				return found, fmt.Errorf("launchctl bootout: %v: %s", err, out)
 			}
 		}
 	case "linux":
 		if _, err := os.Stat(path); err == nil {
+			found = true
 			if out, err := s.run.run("systemctl", "--user", "disable", "--now", systemdUnit); err != nil {
-				return fmt.Errorf("systemctl --user disable --now: %v: %s", err, out)
+				return found, fmt.Errorf("systemctl --user disable --now: %v: %s", err, out)
 			}
 		}
 	}
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
+		return found, err
 	}
 	if s.goos == "linux" {
 		_, _ = s.run.run("systemctl", "--user", "daemon-reload")
 		_, _ = s.run.run("systemctl", "--user", "reset-failed", systemdUnit)
 	}
-	return nil
+	return found, nil
 }
 
 // stop pauses the service until start (or setup) — also across a restart of
