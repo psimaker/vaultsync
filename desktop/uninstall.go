@@ -48,7 +48,7 @@ const (
 	// serviceGone follows a held-lock refusal of the removal, which comes
 	// after the service's removal: the second run has no service to ask
 	// about.
-	serviceGone         = " (The background service is removed.)"
+	serviceGone         = " (The background service, if there was one, is already removed.)"
 	busyRefusal         = "VaultSync is busy on this computer — the background service (starting, pairing, on its way down, or one VaultSync could not ask about), or a vaultsync run, pair or setup in a terminal. Wait a moment, stop what runs in a terminal, or remove the service first with vaultsync uninstall; then run vaultsync uninstall --remove-data again."
 	notOwnFolderRefusal = "%s does not look like VaultSync's own folder (no agent.json), so VaultSync does not remove anything in it."
 	// serviceRemedy follows a refusal the probe raises before the service
@@ -111,6 +111,30 @@ func allOwnEntries(entries []fs.DirEntry) bool {
 	return true
 }
 
+// errNotTheFolderChecked: what stands at the folder's place is not the
+// folder that was checked and taken apart — a link put there meanwhile.
+var errNotTheFolderChecked = errors.New("what is at the folder's place is not the folder that was checked")
+
+// removeFolder removes VaultSync's folder through its parent, and only
+// the folder that was checked (the same file as the opened one): a link
+// put in its place after the check is not touched, nor reported removed.
+func removeFolder(path string, checked os.FileInfo) error {
+	parent, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	name := filepath.Base(path)
+	fi, err := parent.Lstat(name)
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(fi, checked) {
+		return &os.PathError{Op: "remove", Path: path, Err: errNotTheFolderChecked}
+	}
+	return parent.Remove(name)
+}
+
 // couldNotRemove: the folder stayed because a removal failed — an error.
 func couldNotRemove(path string, err error) *keptFolder {
 	return &keptFolder{path, fmt.Sprintf("it could not be removed (%v); remove the folder by hand", errnoOf(err)), true}
@@ -150,7 +174,9 @@ func probeOwnLocks(lay layout, serviceRunning bool) error {
 	for _, l := range ownLocks(lay) {
 		isHeld, err := lock.Probe(l.path)
 		if err != nil {
-			return err
+			// A link or a directory in the lock's place: named, with the
+			// way out — the raw error would carry the path and nothing else.
+			return refuse("VaultSync's lock file %s in %s could not be looked at (%v) — a link or a directory in its place. Put it right, then run vaultsync uninstall --remove-data again."+serviceRemedy, filepath.Base(l.path), lay.Base, errnoOf(err))
 		}
 		if isHeld && !(l.service && serviceRunning) {
 			return refuse("%s", l.probed)
@@ -551,7 +577,7 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 	var kept *keptFolder
 	leftoverTried := false
 	for try := 0; ; try++ {
-		err := os.Remove(lay.Base)
+		err := removeFolder(lay.Base, base)
 		if err == nil {
 			removed = append(removed, lay.Base)
 			break
@@ -620,6 +646,8 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 		} else if rerr == nil {
 			removed = append(removed, filepath.Join(lay.Base, "tray.lock"))
 		}
+		// The folder is tried and judged like any folder, with its wait.
+		try = -1
 	}
 	if lay.Logs != "" {
 		if _, err := os.Lstat(lay.Logs); err == nil {

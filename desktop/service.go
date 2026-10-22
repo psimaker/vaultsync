@@ -479,7 +479,6 @@ func (s service) waitsForLogin() error {
 	return refuse("The background service runs in your desktop session, and you are not logged in at the screen right now. Log in on this Mac, then run vaultsync start again.")
 }
 
-// running asks the service manager whether the service is up.
 // unitAlive: the Linux manager has the unit in any live state — active,
 // activating (an auto-restart on its way), deactivating, reloading —
 // as opposed to inactive, failed or unknown. Such a unit is stopped at
@@ -493,6 +492,7 @@ func (s service) unitAlive() bool {
 	return false
 }
 
+// running asks the service manager whether the service is up.
 func (s service) running() bool {
 	switch s.goos {
 	case "darwin":

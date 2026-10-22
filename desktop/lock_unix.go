@@ -53,6 +53,19 @@ func sameDevice(a, b os.FileInfo) bool {
 
 // lockFileWait takes the lock like lockFile, but waits for it instead of
 // refusing: for the short, serialized updates of agent.json (updateState).
+// lockFileNoCreate is lockFile without making the folder: for a wait on
+// a lock in a folder that must not come back should it go meanwhile (a
+// run that was set up, while an uninstall takes the folder apart). The
+// handle is returned so the caller can tell its own file from another's
+// before letting go.
+func lockFileNoCreate(path string) (*lock.Handle, error) {
+	h, err := lock.Take(path)
+	if errors.Is(err, lock.ErrHeld) {
+		return nil, ErrEngineRunning
+	}
+	return h, err
+}
+
 func lockFileWait(path string) (func(), error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err

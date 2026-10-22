@@ -47,7 +47,7 @@ func TestIssue175_RunWaitsForSetupToFinishPreparing(t *testing.T) {
 	}
 	time.AfterFunc(1500*time.Millisecond, unlock)
 	start := time.Now()
-	got, err := waitForLock(context.Background(), path, 10*time.Second)
+	got, err := waitForLock(context.Background(), path, 10*time.Second, lockFile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestIssue175_RunWaitsForSetupToFinishPreparing(t *testing.T) {
 	}
 	hold, _ := lockFile(path)
 	defer hold()
-	if _, err := waitForLock(context.Background(), path, time.Second); !errors.Is(err, ErrEngineRunning) {
+	if _, err := waitForLock(context.Background(), path, time.Second, lockFile); !errors.Is(err, ErrEngineRunning) {
 		t.Fatalf("a lock held past the timeout must be refused, got %v", err)
 	}
 }
@@ -193,8 +193,11 @@ func TestIssue176_RunRefusesWhenVaultSyncWasRemovedWhileItWaited(t *testing.T) {
 	a := &app{goos: "linux", home: home, getenv: envOf(nil), lay: lay,
 		svc: service{goos: "linux", home: home, getenv: envOf(nil), lay: lay, run: &fakeRunner{}}}
 	go func() {
+		// As the removal does: the entries, the lock files, the folder.
 		time.Sleep(300 * time.Millisecond)
 		_ = os.Remove(lay.State)
+		_ = os.Remove(filepath.Join(lay.Base, "setup.lock"))
+		_ = os.Remove(lay.Base)
 		hold()
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -202,7 +205,48 @@ func TestIssue176_RunRefusesWhenVaultSyncWasRemovedWhileItWaited(t *testing.T) {
 	if err := a.run(ctx, nil); !strings.Contains(refusalText(err), "removed from this computer while this run waited") {
 		t.Fatalf("run after the removal: %v", err)
 	}
-	if _, err := os.Stat(lay.Bin); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("run set VaultSync up afresh: %v", err)
+	// Nothing made again: not the folder, not a lock file in it.
+	if _, err := os.Lstat(lay.Base); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("run made VaultSync's folder again: %v", err)
+	}
+}
+
+// A run that was set up and whose wait ends with the folder still there but
+// its agent.json gone (the removal is still at it) refuses too, and takes the
+// lock file its take made away again.
+func TestIssue176_RunLeavesNoLockFileInAFolderBeingRemoved(t *testing.T) {
+	home := t.TempDir()
+	lay, err := layoutFor("linux", home, envOf(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(lay.Base, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveState(lay.State, agentState{GUIPort: 1}); err != nil {
+		t.Fatal(err)
+	}
+	hold, err := lockFile(filepath.Join(lay.Base, "setup.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &app{goos: "linux", home: home, getenv: envOf(nil), lay: lay,
+		svc: service{goos: "linux", home: home, getenv: envOf(nil), lay: lay, run: &fakeRunner{}}}
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		_ = os.Remove(lay.State)
+		_ = os.Remove(filepath.Join(lay.Base, "setup.lock"))
+		hold()
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := a.run(ctx, nil); !strings.Contains(refusalText(err), "removed from this computer while this run waited") {
+		t.Fatalf("run after the removal: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(lay.Base, "setup.lock")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("run left its lock file in the folder: %v", err)
+	}
+	if err := os.Remove(lay.Base); err != nil {
+		t.Errorf("the folder is not empty after the run's refusal: %v", err)
 	}
 }

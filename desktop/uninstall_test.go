@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -174,7 +175,7 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		if err := os.Symlink(filepath.Join(lay.Base, "elsewhere"), lay.Lock); err != nil {
 			t.Fatal(err)
 		}
-		if err := probeOwnLocks(lay, true); err == nil || errors.As(err, new(*refusal)) {
+		if err := probeOwnLocks(lay, true); !strings.Contains(refusalText(err), "agent.lock") || !strings.Contains(refusalText(err), "could not be looked at") {
 			t.Fatalf("a link at the engine's lock while the service runs: %v", err)
 		}
 		// A service at its start holds setup.lock and is about to take
@@ -257,7 +258,7 @@ func TestIssue176_RemoveDataGuards(t *testing.T) {
 		}
 		// The removal comes after the service's removal: its refusal says
 		// so, and the second run is not asked about a service that is gone.
-		if _, _, err := removeOwnData(lay, nil, "darwin"); !strings.Contains(refusalText(err), "menu-bar app is running") || !strings.Contains(refusalText(err), "The background service is removed.") {
+		if _, _, err := removeOwnData(lay, nil, "darwin"); !strings.Contains(refusalText(err), "menu-bar app is running") || !strings.Contains(refusalText(err), "is already removed.") {
 			t.Fatalf("got %v", err)
 		}
 		// The refusal leaves no lock file the taking made: the ones
@@ -436,10 +437,47 @@ func TestIssue176_RemoveDataGuards(t *testing.T) {
 			}
 			return origTake(root, name)
 		}
-		_, _, _ = removeOwnData(lay, nil, "darwin")
-		entries, err := os.ReadDir(elsewhere)
-		if err != nil || len(entries) != 0 {
-			t.Fatalf("made through the link: %v %v", entries, err)
+		removed, kept, err := removeOwnData(lay, nil, "darwin")
+		entries, rerr := os.ReadDir(elsewhere)
+		if rerr != nil || len(entries) != 0 {
+			t.Fatalf("made through the link: %v %v", entries, rerr)
+		}
+		// Nor is the link removed in the folder's place and reported as
+		// the folder: what stands there is not the folder that was
+		// checked, and that is said.
+		if err != nil || kept == nil || !kept.failed || !strings.Contains(kept.why, "not the folder that was checked") || slices.Contains(removed, lay.Base) {
+			t.Fatalf("the link at the folder's place: %v %v %v", removed, kept, err)
+		}
+		if fi, err := os.Lstat(lay.Base); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("the link at the folder's place was removed: %v", err)
+		}
+		if _, err := os.Stat(real); err != nil {
+			t.Fatalf("the checked folder: %v", err)
+		}
+	})
+	t.Run("a link inside the folder at a lock's name is refused, not followed", func(t *testing.T) {
+		// os.Root follows a link that stays inside the root even with
+		// O_NOFOLLOW; the lock package refuses it first. Nothing is locked
+		// or made through it, by the probe or the removal.
+		lay, _ := ownedFixture(t)
+		if err := os.Symlink("agent.json", filepath.Join(lay.Base, "pair.lock")); err != nil {
+			t.Fatal(err)
+		}
+		before, err := os.ReadFile(lay.State)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := probeOwnLocks(lay, false); !strings.Contains(refusalText(err), "pair.lock") || !strings.Contains(refusalText(err), "could not be looked at") || !strings.Contains(refusalText(err), "without --remove-data") {
+			t.Fatalf("the probe: %v", err)
+		}
+		if _, _, err := removeOwnData(lay, nil, "darwin"); err == nil || errors.As(err, new(*refusal)) || !errors.Is(err, syscall.ELOOP) {
+			t.Fatalf("the removal: %v", err)
+		}
+		if after, err := os.ReadFile(lay.State); err != nil || string(after) != string(before) {
+			t.Fatalf("agent.json touched through the link: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(lay.Base, "bin", "syncthing")); err != nil {
+			t.Fatal("files were removed despite the error")
 		}
 	})
 	t.Run("a folder gone before the locks is not made again", func(t *testing.T) {
@@ -506,7 +544,7 @@ func TestIssue176_RemoveDataGuards(t *testing.T) {
 		if _, _, err := removeOwnData(lay, nil, "darwin"); err == nil || errors.As(err, new(*refusal)) {
 			t.Fatalf("got %v", err)
 		}
-		if err := probeOwnLocks(lay, false); err == nil || errors.As(err, new(*refusal)) {
+		if err := probeOwnLocks(lay, false); !strings.Contains(refusalText(err), "pair.lock") || !strings.Contains(refusalText(err), "could not be looked at") {
 			t.Fatalf("the probe: %v", err)
 		}
 		// A link at the engine's lock (the removal above made the file;
