@@ -171,6 +171,13 @@ vaultsync uninstall    # remove the background service; vaults stay
                        #  never vault files)
 ```
 
+`vaultsync uninstall --remove-data` refuses, before it changes anything, while
+the menu-bar app runs or a `vaultsync run`, `pair` or `setup` is in progress —
+quit or stop them first. On a Mac, run it from your own session: it must be
+able to ask the service manager. Afterwards it lists what it removed; a folder
+it could not remove is an error (exit status 1, for scripts), a folder that
+holds files VaultSync did not make stays and is named.
+
 Scripts and remote shells pass everything as flags; anything that would need
 a decision is refused with the flag to add:
 

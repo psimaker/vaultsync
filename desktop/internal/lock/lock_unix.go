@@ -5,6 +5,7 @@ package lock
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"syscall"
 )
 
@@ -42,6 +43,44 @@ func Take(path string) (*Handle, error) {
 		return nil, err
 	}
 	return &Handle{f: f, path: path}, nil
+}
+
+// TakeIn takes the lock named name inside root, without waiting: the file
+// is opened through the root (never through a link swapped in above it),
+// and made there if missing. ErrHeld when another process has it.
+func TakeIn(root *os.Root, name string) (*Handle, error) {
+	f, err := root.OpenFile(name, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return nil, ErrHeld
+		}
+		return nil, err
+	}
+	return &Handle{f: f, path: filepath.Join(root.Name(), name)}, nil
+}
+
+// ProbeIn is Probe for a lock named name inside root.
+func ProbeIn(root *os.Root, name string) (held bool, err error) {
+	f, err := root.OpenFile(name, os.O_RDWR|syscall.O_NOFOLLOW, 0)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return true, nil
+		}
+		return false, err
+	}
+	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return false, nil
 }
 
 // Probe tells whether another process holds the lock at path, making

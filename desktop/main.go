@@ -737,9 +737,17 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 	// Installing and preparing the engine happens under the same lock setup
 	// takes: two preparations at once would generate identities over each
 	// other.
+	_, hadState := os.Stat(a.lay.State)
 	unlockSetup, err := waitForLock(ctx, filepath.Join(a.lay.Base, "setup.lock"), 2*time.Minute)
 	if err != nil {
 		return err
+	}
+	if _, err := os.Stat(a.lay.State); hadState == nil && errors.Is(err, os.ErrNotExist) {
+		// Set up when this run began, gone while it waited for the lock:
+		// an uninstall took VaultSync's folder apart (its lock held the
+		// wait). A run does not set VaultSync up afresh behind it.
+		unlockSetup()
+		return refuse("VaultSync was removed from this computer while this run waited; run vaultsync setup to set it up again.")
 	}
 	st, err := loadState(a.lay.State)
 	if err != nil {

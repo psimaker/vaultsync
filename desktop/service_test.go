@@ -309,24 +309,6 @@ func TestIssue175_LaunchAgentInstallIsIdempotent(t *testing.T) {
 	if found, err := svc.uninstall(); err != nil || found {
 		t.Fatalf("second uninstall: found=%v err=%v", found, err)
 	}
-	// A manager that could not be asked (not "no session", which is a
-	// job nothing runs) is an error, not "no job": the file would go
-	// while the job ran on until the logout.
-	writeFile(t, mustUnitPath(t, svc), "plist")
-	run.probeFails = "Bootstrap failed: 5: Input/output error"
-	if _, err := svc.uninstall(); err == nil || !strings.Contains(err.Error(), "could not be asked") {
-		t.Fatalf("a manager that could not be asked: %v", err)
-	}
-	if _, err := os.Stat(mustUnitPath(t, svc)); err != nil {
-		t.Fatalf("the plist went although the manager could not be asked: %v", err)
-	}
-	run.probeFails = ""
-	// No session at all is a job nothing runs: the file goes.
-	run.noSession = true
-	if found, err := svc.uninstall(); err != nil || found {
-		t.Fatalf("no session: found=%v err=%v", found, err)
-	}
-	run.noSession = false
 }
 
 func TestIssue175_SystemdInstallIsIdempotent(t *testing.T) {
@@ -371,6 +353,12 @@ func TestIssue175_SystemdInstallIsIdempotent(t *testing.T) {
 	if found, err := svc.uninstall(); err != nil || !found || !strings.Contains(strings.Join(run.calls, "|"), "systemctl --user stop vaultsync.service|") {
 		t.Fatalf("a unit running without its file is stopped by stop, which needs no file: found=%v err=%v calls=%v", found, err, run.calls)
 	}
+	// Any live state counts — an auto-restart on its way included.
+	run.answers = map[string]string{"systemctl --user is-active vaultsync.service": "activating"}
+	run.calls = nil
+	if found, err := svc.uninstall(); err != nil || !found || !strings.Contains(strings.Join(run.calls, "|"), "systemctl --user stop vaultsync.service|") {
+		t.Fatalf("a unit in activating without its file: found=%v err=%v calls=%v", found, err, run.calls)
+	}
 	run.answers = nil
 	if svc.installed() {
 		t.Fatal("unit still installed")
@@ -411,4 +399,28 @@ func TestIssue175_ManagerEnvironmentIsUnquoted(t *testing.T) {
 	if p, _ := svc.unitPath(); p != filepath.Join("/srv", "my config", "systemd", "user", "vaultsync.service") {
 		t.Fatalf("unit path: %s", p)
 	}
+}
+
+// A Mac's service manager that could not be asked is not "no job": the
+// removal refuses rather than take the file and leave the job running
+// until the logout with nothing to stop it by. No session at all is a job
+// nothing runs, and the file goes.
+func TestIssue176_UninstallWhenTheManagerCannotBeAsked(t *testing.T) {
+	run := &fakeRunner{}
+	svc, _ := testService(t, "darwin", run)
+	writeFile(t, mustUnitPath(t, svc), "plist")
+	run.probeFails = "Bootstrap failed: 5: Input/output error"
+	if _, err := svc.uninstall(); err == nil || !strings.Contains(err.Error(), "could not be asked") {
+		t.Fatalf("a manager that could not be asked: %v", err)
+	}
+	if _, err := os.Stat(mustUnitPath(t, svc)); err != nil {
+		t.Fatalf("the plist went although the manager could not be asked: %v", err)
+	}
+	run.probeFails = ""
+	// No session at all is a job nothing runs: the file goes.
+	run.noSession = true
+	if found, err := svc.uninstall(); err != nil || found {
+		t.Fatalf("no session: found=%v err=%v", found, err)
+	}
+	run.noSession = false
 }

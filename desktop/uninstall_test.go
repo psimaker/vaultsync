@@ -230,6 +230,25 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		}
 		unlock()
 	})
+	t.Run("nothing installed", func(t *testing.T) {
+		lay, err := layoutFor("linux", t.TempDir(), envOf(nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if removed, _, err := removeOwnData(lay, nil, "linux"); err != nil || len(removed) != 0 {
+			t.Fatalf("got %v %v", removed, err)
+		}
+		if _, err := os.Stat(lay.Base); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("removing nothing created the folder")
+		}
+	})
+}
+
+// The guards the menu-bar app's lock and the lock doctrine (decision 051)
+// added to the removal: no owner starting meanwhile lands in the half-removed
+// folder, no file is made through a link or before a refusal, a holder's
+// lock file is never removed, and every failure of the removal is said.
+func TestIssue176_RemoveDataGuards(t *testing.T) {
 	t.Run("the menu-bar app runs", func(t *testing.T) {
 		lay, _ := ownedFixture(t)
 		unlock, err := lockFile(lay.TrayLock())
@@ -348,12 +367,12 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		lay, _ := ownedFixture(t)
 		origTake := takeOwnLock
 		defer func() { takeOwnLock = origTake }()
-		takeOwnLock = func(path string) (func(), error) {
-			if filepath.Base(path) == "pair.lock" {
-				writeFile(t, path, "")
+		takeOwnLock = func(root *os.Root, name string) (func(), error) {
+			if name == "pair.lock" {
+				writeFile(t, filepath.Join(root.Name(), name), "")
 				return nil, errors.New("flock: no locks available")
 			}
-			return origTake(path)
+			return origTake(root, name)
 		}
 		if _, _, err := removeOwnData(lay, nil, "darwin"); err == nil || errors.As(err, new(*refusal)) {
 			t.Fatalf("a take failing for another reason: %v", err)
@@ -364,16 +383,16 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 			}
 		}
 		var held *lock.Handle
-		takeOwnLock = func(path string) (func(), error) {
-			if filepath.Base(path) == "pair.lock" {
-				h, err := lock.Take(path)
+		takeOwnLock = func(root *os.Root, name string) (func(), error) {
+			if name == "pair.lock" {
+				h, err := lock.TakeIn(root, name)
 				if err != nil {
 					t.Fatal(err)
 				}
 				held = h
 				return nil, ErrEngineRunning
 			}
-			return origTake(path)
+			return origTake(root, name)
 		}
 		defer func() {
 			if held != nil {
@@ -396,11 +415,11 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		lay, _ := ownedFixture(t)
 		origTake := takeOwnLock
 		defer func() { takeOwnLock = origTake }()
-		takeOwnLock = func(path string) (func(), error) {
+		takeOwnLock = func(root *os.Root, name string) (func(), error) {
 			if err := os.RemoveAll(lay.Base); err != nil {
 				t.Fatal(err)
 			}
-			return origTake(path)
+			return origTake(root, name)
 		}
 		if _, _, err := removeOwnData(lay, nil, "darwin"); err == nil || errors.As(err, new(*refusal)) {
 			t.Fatalf("got %v", err)
@@ -508,18 +527,6 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		}
 		if _, err := os.Stat(filepath.Join(lay.Base, "bin", "syncthing")); err != nil {
 			t.Fatal("files were removed despite the error")
-		}
-	})
-	t.Run("nothing installed", func(t *testing.T) {
-		lay, err := layoutFor("linux", t.TempDir(), envOf(nil))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if removed, _, err := removeOwnData(lay, nil, "linux"); err != nil || len(removed) != 0 {
-			t.Fatalf("got %v %v", removed, err)
-		}
-		if _, err := os.Stat(lay.Base); !errors.Is(err, os.ErrNotExist) {
-			t.Fatal("removing nothing created the folder")
 		}
 	})
 }

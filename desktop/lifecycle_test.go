@@ -170,3 +170,39 @@ func TestIssue175_RunDoesNotPrepareWhileSetupHoldsTheLock(t *testing.T) {
 		}
 	}
 }
+
+// A run that was set up when it began and finds VaultSync gone after its
+// wait for the lock — an uninstall took the folder apart meanwhile — refuses
+// instead of setting VaultSync up afresh behind the removal.
+func TestIssue176_RunRefusesWhenVaultSyncWasRemovedWhileItWaited(t *testing.T) {
+	home := t.TempDir()
+	lay, err := layoutFor("linux", home, envOf(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(lay.Base, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveState(lay.State, agentState{GUIPort: 1}); err != nil {
+		t.Fatal(err)
+	}
+	hold, err := lockFile(filepath.Join(lay.Base, "setup.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &app{goos: "linux", home: home, getenv: envOf(nil), lay: lay,
+		svc: service{goos: "linux", home: home, getenv: envOf(nil), lay: lay, run: &fakeRunner{}}}
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		_ = os.Remove(lay.State)
+		hold()
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := a.run(ctx, nil); !strings.Contains(refusalText(err), "removed from this computer while this run waited") {
+		t.Fatalf("run after the removal: %v", err)
+	}
+	if _, err := os.Stat(lay.Bin); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("run set VaultSync up afresh: %v", err)
+	}
+}

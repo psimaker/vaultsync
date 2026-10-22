@@ -6,6 +6,6 @@
 
 **Why.** (1) The locks are taken before the removal's own link check runs, and a lock's open makes its file. (2) A refusal after the service is gone costs the person their service and a second run with both questions; a probe that took the locks made lock files in a folder the command then refused to touch, so "Nothing was changed." was false. (3) A menu-bar app starting, or re-taking its lock at a refresh, in the probe's instant would otherwise quit as "already running" while nothing runs or is removed.
 
-**Rejected alternatives.** Judging the engine's lock by the unit file (an installed but stopped service hid a terminal run; a loaded job without its file was read as one). A non-holding probe with fcntl `F_GETLK` (does not see flock holders). Retrying at the next poll instead of after a moment (the app would run unlocked beside a real second instance meanwhile).
+**Rejected alternatives.** Judging the engine's lock by the unit file (an installed but stopped service hid a terminal run; a loaded job without its file was read as one). A non-holding probe with fcntl `F_GETLK` (does not see flock holders). Retrying at the next poll instead of after a moment (the app would run unlocked beside a real second instance meanwhile). Renaming the folder away before taking it apart, so that nobody finds it by name meanwhile (files the person kept in it, which the removal must leave, would travel into a renamed folder; the folder is where they look for them).
 
 **Links.** #176, PR #246; decisions 046, 050.

@@ -294,7 +294,7 @@ func (s service) uninstall() (found bool, err error) {
 			if out, err := s.run.run("systemctl", "--user", "disable", "--now", systemdUnit); err != nil {
 				return found, fmt.Errorf("systemctl --user disable --now: %v: %s", err, out)
 			}
-		case s.running():
+		case s.unitAlive():
 			found = true
 			if out, err := s.run.run("systemctl", "--user", "stop", systemdUnit); err != nil {
 				return found, fmt.Errorf("systemctl --user stop: %v: %s", err, out)
@@ -480,6 +480,19 @@ func (s service) waitsForLogin() error {
 }
 
 // running asks the service manager whether the service is up.
+// unitAlive: the Linux manager has the unit in any live state — active,
+// activating (an auto-restart on its way), deactivating, reloading —
+// as opposed to inactive, failed or unknown. Such a unit is stopped at
+// the removal whether or not its file is there.
+func (s service) unitAlive() bool {
+	out, _ := s.run.run("systemctl", "--user", "is-active", systemdUnit)
+	switch strings.TrimSpace(out) {
+	case "active", "activating", "deactivating", "reloading", "refreshing":
+		return true
+	}
+	return false
+}
+
 func (s service) running() bool {
 	switch s.goos {
 	case "darwin":
