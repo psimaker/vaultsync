@@ -941,6 +941,29 @@ func TestIssue176_UninstallRefusesBeforeTheServiceGoesWhileTheTrayRuns(t *testin
 		t.Fatalf("a terminal run beside no service: %v\n%s", took, out.String())
 	}
 	holdRun()
+	// With a service installed — even one the manager does not call
+	// running at that instant — its own run may let go of the lock a
+	// moment after the removal: that moment is waited for, and a lock
+	// released within it is no terminal run.
+	writeFile(t, unit, "[Unit]\n")
+	origGrace := engineOwnerGrace
+	engineOwnerGrace = 2 * time.Second
+	defer func() { engineOwnerGrace = origGrace }()
+	holdRun, err = lockFile(lay.Lock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		holdRun()
+	}()
+	out.Reset()
+	if err := a.uninstall(context.Background(), []string{"--yes"}); err != nil {
+		t.Fatalf("uninstall beside the service's own run letting go: %v", err)
+	}
+	if got := out.String(); !strings.Contains(got, "has stopped syncing") || strings.Contains(got, "still syncs") {
+		t.Fatalf("the service's own run taken for a terminal run:\n%s", got)
+	}
 	// The service went with that; it is back for the cases to come.
 	writeFile(t, unit, "[Unit]\n")
 	run.calls = nil

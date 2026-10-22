@@ -244,7 +244,7 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 	// one holder there can be — known at once.
 	grace := time.Duration(0)
 	if serviceWas {
-		grace = 25 * time.Second
+		grace = engineOwnerGrace
 	}
 	switch running, err := engineOwnerRunning(a.lay, grace); {
 	case err != nil:
@@ -375,6 +375,11 @@ func configuredVaultPaths(eng engine) []string {
 
 // removeOwnData removes VaultSync's own entries from lay.Base (and its log
 // file), refusing whenever ownership or the boundary is in doubt.
+// engineOwnerGrace is how long the service's own run may hold the
+// engine's lock after the service's removal before a holder counts as a
+// terminal run.
+var engineOwnerGrace = 25 * time.Second
+
 // ownTempFile: the name an interrupted writeFileAtomic of one of the
 // files VaultSync writes in its folder leaves behind — ".<name>.<digits>"
 // (os.CreateTemp), for exactly those names. Anything else that merely
