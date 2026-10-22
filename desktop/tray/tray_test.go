@@ -1341,6 +1341,9 @@ func TestIssue176_TrayPairClickFindsASecondInstance(t *testing.T) {
 }
 
 func TestIssue176_TrayOneInstancePerUser(t *testing.T) {
+	origDelay := LockRetryDelay
+	LockRetryDelay = time.Millisecond
+	defer func() { LockRetryDelay = origDelay }()
 	dir := t.TempDir()
 	lay := layout.Layout{}.At(dir)
 	// Not set up (no agent.json): nothing to lock, nothing made.

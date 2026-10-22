@@ -28,8 +28,9 @@ func TestIssue176_TrayStartLocksLikeARefresh(t *testing.T) {
 	held.Release()
 
 	// Held by another instance: the app ends with that error, as before.
-	lockRetryDelay = 300 * time.Millisecond
-	defer func(orig time.Duration) { lockRetryDelay = orig }(lockRetryDelay)
+	origDelay := tray.LockRetryDelay
+	tray.LockRetryDelay = 300 * time.Millisecond
+	defer func() { tray.LockRetryDelay = origDelay }()
 	other, err := lock.Take(lay.TrayLock())
 	if err != nil {
 		t.Fatal(err)

@@ -69,19 +69,19 @@ func TestIssue175_UninstallSeesAForegroundEngine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if engineOwnerRunning(lay, 0) {
-		t.Fatal("nothing installed, nothing running")
+	if running, err := engineOwnerRunning(lay, 0); running || err != nil {
+		t.Fatalf("nothing installed, nothing running: %v %v", running, err)
 	}
 	unlock, err := lockFile(lay.Lock)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !engineOwnerRunning(lay, 600*time.Millisecond) {
-		t.Fatal("a held engine lock must count as a running engine")
+	if running, err := engineOwnerRunning(lay, 600*time.Millisecond); !running || err != nil {
+		t.Fatalf("a held engine lock must count as a running engine: %v %v", running, err)
 	}
 	unlock()
-	if engineOwnerRunning(lay, 0) {
-		t.Fatal("a released lock is no running engine")
+	if running, err := engineOwnerRunning(lay, 0); running || err != nil {
+		t.Fatalf("a released lock is no running engine: %v %v", running, err)
 	}
 }
 

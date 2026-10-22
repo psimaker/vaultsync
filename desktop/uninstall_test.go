@@ -103,20 +103,20 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(target, "bin", "syncthing")); err != nil {
 			t.Fatal("removal followed the link")
 		}
-		if err := probeOwnLocks(lay, true); !strings.Contains(refusalText(err), "not a plain folder") {
+		if err := probeOwnLocks(lay, func() bool { return true }); !strings.Contains(refusalText(err), "not a plain folder") {
 			t.Fatalf("the probe through a link: %v", err)
 		}
 		// The look for a running engine reads through the link as it is,
 		// making nothing: a terminal's vaultsync run there is seen.
-		if engineOwnerRunning(lay, 0) {
-			t.Fatal("no lock file, yet a running engine")
+		if running, err := engineOwnerRunning(lay, 0); running || err != nil {
+			t.Fatalf("no lock file, yet a running engine: %v %v", running, err)
 		}
 		hold, err := lockFile(filepath.Join(target, "agent.lock"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !engineOwnerRunning(lay, 0) {
-			t.Fatal("a run behind the link is not seen")
+		if running, err := engineOwnerRunning(lay, 0); !running || err != nil {
+			t.Fatalf("a run behind the link is not seen: %v %v", running, err)
 		}
 		hold()
 		if err := os.Remove(filepath.Join(target, "agent.lock")); err != nil {
@@ -133,14 +133,14 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		if err := os.Remove(lay.State); err != nil {
 			t.Fatal(err)
 		}
-		// The probe before the service goes has nothing to say about a
-		// folder that is not VaultSync's, even with a lock held in it:
-		// the removal's own refusal is the one that names the folder.
+		// The probe before the service goes refuses a folder that is not
+		// VaultSync's with the removal's own words, before any lock in it
+		// is looked at: the refusal costs nothing there either.
 		hold, err := lockFile(lay.TrayLock())
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := probeOwnLocks(lay, true); err != nil {
+		if err := probeOwnLocks(lay, func() bool { return true }); !strings.Contains(refusalText(err), "does not look like VaultSync's own folder") {
 			t.Fatalf("the probe on a folder without agent.json: %v", err)
 		}
 		hold()
@@ -181,6 +181,22 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		}
 		unlock()
 	})
+	t.Run("an interrupted write's leftover of any own file goes", func(t *testing.T) {
+		lay, foreign := ownedFixture(t)
+		if err := os.Remove(foreign); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{".last-error.txt.123", ".control-socket-error.txt.456", ".agent.json.789"} {
+			writeFile(t, filepath.Join(lay.Base, name), "x")
+		}
+		_, kept, err := removeOwnData(lay, nil, "darwin")
+		if err != nil || kept != nil {
+			t.Fatalf("got %v %v", kept, err)
+		}
+		if _, err := os.Stat(lay.Base); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("the folder stayed: %v", err)
+		}
+	})
 	t.Run("a lock file is a link", func(t *testing.T) {
 		// A link in a lock's place is not followed: nothing outside the
 		// folder is opened, locked or made — by the removal or the probe.
@@ -192,8 +208,20 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		if _, _, err := removeOwnData(lay, nil, "darwin"); err == nil || errors.As(err, new(*refusal)) {
 			t.Fatalf("got %v", err)
 		}
-		if err := probeOwnLocks(lay, true); err == nil || errors.As(err, new(*refusal)) {
+		if err := probeOwnLocks(lay, func() bool { return true }); err == nil || errors.As(err, new(*refusal)) {
 			t.Fatalf("the probe: %v", err)
+		}
+		// A link at the engine's lock (the removal above made the file;
+		// gone again): whether a run still syncs cannot be told — an
+		// error, not "not running".
+		if err := os.Remove(lay.Lock); err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, lay.Lock); err != nil {
+			t.Fatal(err)
+		}
+		if running, err := engineOwnerRunning(lay, 0); err == nil || running {
+			t.Fatalf("a lock that cannot be looked at: %v %v", running, err)
 		}
 		if _, err := os.Lstat(outside); !errors.Is(err, os.ErrNotExist) {
 			t.Fatal("the link's target was made")
@@ -547,8 +575,9 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 		}
 		defer func() { ownEntriesRemovedHook = nil }()
 		// One wait would be ten seconds: a run well under that took none.
+		orig := removeRetryWait
 		removeRetryWait = 10 * time.Second
-		defer func(orig time.Duration) { removeRetryWait = orig }(removeRetryWait)
+		defer func() { removeRetryWait = orig }()
 		start := time.Now()
 		_, kept, err := removeOwnData(lay, nil, "darwin")
 		if err != nil || kept == nil || !strings.Contains(kept.why, "did not make") {
@@ -580,8 +609,9 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 		}
 		defer func() { ownEntriesRemovedHook = nil }()
 		defer func() { _ = os.Chmod(parent, 0o700) }()
+		orig := removeRetryWait
 		removeRetryWait = 10 * time.Second
-		defer func(orig time.Duration) { removeRetryWait = orig }(removeRetryWait)
+		defer func() { removeRetryWait = orig }()
 		start := time.Now()
 		_, kept, err := removeOwnData(lay, nil, "darwin")
 		if err != nil || kept == nil || !strings.Contains(kept.why, "could not be removed (") {
@@ -605,8 +635,9 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 		ownEntriesRemovedHook = func(l layout) { writeFile(t, l.TrayLock(), "x") }
 		removeTryHook = func() { _ = os.Remove(lay.TrayLock()) }
 		defer func() { ownEntriesRemovedHook, removeTryHook = nil, nil }()
+		orig := removeRetryWait
 		removeRetryWait = 10 * time.Second
-		defer func(orig time.Duration) { removeRetryWait = orig }(removeRetryWait)
+		defer func() { removeRetryWait = orig }()
 		start := time.Now()
 		removed, _, err := removeOwnData(lay, nil, "darwin")
 		if err != nil {
@@ -629,8 +660,9 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 		}
 		ownEntriesRemovedHook = func(l layout) { writeFile(t, l.TrayLock(), "x") }
 		defer func() { ownEntriesRemovedHook = nil }()
+		orig := removeRetryWait
 		removeRetryWait = time.Millisecond
-		defer func(orig time.Duration) { removeRetryWait = orig }(removeRetryWait)
+		defer func() { removeRetryWait = orig }()
 		removed, kept, err := removeOwnData(lay, nil, "darwin")
 		if err != nil || kept == nil || !strings.Contains(kept.why, "a tray.lock the menu-bar app left in it stayed") {
 			t.Fatalf("got %v %v", kept, err)
@@ -665,8 +697,9 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 		}
 		ownEntriesRemovedHook = func(l layout) { writeFile(t, l.TrayLock(), "x") }
 		defer func() { ownEntriesRemovedHook = nil }()
+		orig := removeRetryWait
 		removeRetryWait = time.Millisecond
-		defer func(orig time.Duration) { removeRetryWait = orig }(removeRetryWait)
+		defer func() { removeRetryWait = orig }()
 		_, kept, err := removeOwnData(lay, nil, "darwin")
 		if kept == nil || !strings.Contains(kept.why, "a tray.lock the menu-bar app left in it stayed") || !strings.Contains(refusalText(err), "not a plain folder") {
 			t.Fatalf("got %v %v", kept, err)
@@ -700,8 +733,9 @@ func TestIssue176_UninstallRefusesBeforeTheServiceGoesWhileTheTrayRuns(t *testin
 	// Before any question, too: without --yes and without a terminal the
 	// answer would be "pass --yes" — the probe comes first. (The terminal
 	// is pointed at nothing, so a go test in a Terminal asks nobody.)
+	origTTY := ttyPath
 	ttyPath = filepath.Join(t.TempDir(), "no-tty")
-	defer func(orig string) { ttyPath = orig }(ttyPath)
+	defer func() { ttyPath = origTTY }()
 	if err := a.uninstall(context.Background(), []string{"--remove-data"}); !strings.Contains(refusalText(err), "menu-bar app is running") {
 		t.Fatalf("asked before the probe: %v", err)
 	}
@@ -714,7 +748,7 @@ func TestIssue176_UninstallRefusesBeforeTheServiceGoesWhileTheTrayRuns(t *testin
 		t.Fatal(err)
 	}
 	err = a.uninstall(context.Background(), []string{"--remove-data", "--yes"})
-	if !strings.Contains(refusalText(err), "run, pair or setup") || serviceTouched(run.calls) {
+	if !strings.Contains(refusalText(err), "sync engine is still running") || serviceTouched(run.calls) {
 		t.Fatalf("a run in a terminal: %v %v", err, run.calls)
 	}
 	holdRun()

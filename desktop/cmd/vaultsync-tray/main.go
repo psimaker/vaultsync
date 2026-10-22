@@ -21,7 +21,6 @@ import (
 	"os/signal"
 	"runtime"
 	"syscall"
-	"time"
 
 	"fyne.io/systray"
 	"github.com/psimaker/vaultsync/desktop/internal/layout"
@@ -44,22 +43,14 @@ var shown struct{ folder, home string }
 
 func redact(msg string) string { return layout.Shorten(msg, shown.folder, shown.home) }
 
-// lockRetryDelay is the moment before a second look at a held lock.
-var lockRetryDelay = 500 * time.Millisecond
-
 // lockAtStart takes the one-instance lock before the icon shows: a
-// second instance ends here. An uninstall probes the lock for an instant
-// before it asks anything, so a held lock gets one more look after a
-// moment; a holder still there is another instance. Any other failure
-// (the folder unreadable for a moment, something left at tray.lock) is
-// left to the controller, which tries again at every refresh, logs it
-// once and says so in the menu — as it does for the same failure later.
+// second instance ends here (TakeLock has looked twice). Any other
+// failure (the folder unreadable for a moment, something left at
+// tray.lock) is left to the controller, which tries again at every
+// refresh, logs it once and says so in the menu — as it does for the
+// same failure later on.
 func lockAtStart(lay layout.Layout) (tray.LockHandle, error) {
 	held, err := tray.TakeLock(lay)
-	if errors.Is(err, tray.ErrAlreadyRunning) {
-		time.Sleep(lockRetryDelay)
-		held, err = tray.TakeLock(lay)
-	}
 	if errors.Is(err, tray.ErrAlreadyRunning) {
 		return nil, err
 	}

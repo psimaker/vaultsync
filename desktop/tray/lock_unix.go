@@ -5,6 +5,7 @@ package tray
 import (
 	"errors"
 	"os"
+	"time"
 
 	"github.com/psimaker/vaultsync/desktop/internal/layout"
 	"github.com/psimaker/vaultsync/desktop/internal/lock"
@@ -17,7 +18,14 @@ import (
 // tries again later (the controller does, at every refresh); a folder
 // that cannot be looked at is an error, not a second instance.
 func TakeLock(lay layout.Layout) (LockHandle, error) {
-	return takeLock(lay, lock.Take)
+	h, err := takeLock(lay, lock.Take)
+	if errors.Is(err, ErrAlreadyRunning) {
+		// Held for an instant by an uninstall's probe, or for good by
+		// another instance: one more look after a moment tells which.
+		time.Sleep(LockRetryDelay)
+		h, err = takeLock(lay, lock.Take)
+	}
+	return h, err
 }
 
 // takeLock is TakeLock with the lock's taking injected: a test removes

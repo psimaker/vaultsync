@@ -2,6 +2,7 @@ package tray
 
 import (
 	"errors"
+	"time"
 
 	"github.com/psimaker/vaultsync/desktop/internal/control"
 )
@@ -16,6 +17,11 @@ var ErrNotSetUp = control.ErrNotSetUp
 // ErrAlreadyRunning: another menu-bar app of this user holds the lock —
 // or an uninstall, which takes it while it removes VaultSync's folder.
 var ErrAlreadyRunning = errors.New("the VaultSync menu-bar app is already running (or VaultSync is being removed right now)")
+
+// LockRetryDelay is the moment before TakeLock's second look at a held
+// lock: an uninstall probes the lock for an instant before it asks
+// anything (decision 051), a second instance holds it for good.
+var LockRetryDelay = 500 * time.Millisecond
 
 // ErrNoSocket: nobody answers on the socket, and the agent has recorded
 // that it could not make or keep one — so VaultSync may well be running,

@@ -1,0 +1,11 @@
+# 051 — Locks in VaultSync's folder: never through a link, probed without making a file, one more look before giving up to a holder
+
+**Context.** The desktop agent, `vaultsync pair`/`setup` and the menu-bar app each hold a flock file in VaultSync's folder (`agent.lock`, `pair.lock`, `setup.lock`, `tray.lock`; `desktop/internal/lock`). `uninstall --remove-data` must refuse while any is held, and the review of #246 found three ways the locks themselves did harm.
+
+**Decision.** (1) A lock file is opened with `O_NOFOLLOW`: a link in its place is an error, never followed — nothing outside the folder is opened, locked or made (a lock's open creates its file). (2) Before the uninstall asks anything or removes the service it probes every own lock with `lock.Probe`, which makes no file (a missing lock file is a lock nobody holds), and only on a folder that is VaultSync's; a refusal then costs nothing. The engine's lock is probed only while the service does not run — a running service holds it until it is removed — and a holder found then is named as either the service on its way down or a terminal run. (3) flock has no non-taking test, so the probe holds each lock for an instant; `tray.TakeLock` gives a held lock one more look after a moment before calling it another instance.
+
+**Why.** (1) The locks are taken before the removal's own link check runs, and a lock's open makes its file. (2) A refusal after the service is gone costs the person their service and a second run with both questions; a probe that took the locks made lock files in a folder the command then refused to touch, so "Nothing was changed." was false. (3) A menu-bar app starting, or re-taking its lock at a refresh, in the probe's instant would otherwise quit as "already running" while nothing runs or is removed.
+
+**Rejected alternatives.** Judging the engine's lock by the unit file (an installed but stopped service hid a terminal run; a loaded job without its file was read as one). A non-holding probe with fcntl `F_GETLK` (does not see flock holders). Retrying at the next poll instead of after a moment (the app would run unlocked beside a real second instance meanwhile).
+
+**Links.** #176, PR #246; decisions 046, 050.
