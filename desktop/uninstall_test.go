@@ -133,6 +133,17 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		if err := os.Remove(lay.State); err != nil {
 			t.Fatal(err)
 		}
+		// The probe before the service goes has nothing to say about a
+		// folder that is not VaultSync's, even with a lock held in it:
+		// the removal's own refusal is the one that names the folder.
+		hold, err := lockFile(lay.TrayLock())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := probeOwnLocks(lay, true); err != nil {
+			t.Fatalf("the probe on a folder without agent.json: %v", err)
+		}
+		hold()
 		if _, err := removeOwnData(lay, nil, "darwin"); !strings.Contains(refusalText(err), "does not look like VaultSync's own folder") {
 			t.Fatalf("got %v", err)
 		}
@@ -616,6 +627,29 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 			t.Fatalf("the log stayed: %v", err)
 		}
 	})
+	t.Run("tray.lock that stays is said beside a log folder that is refused", func(t *testing.T) {
+		// Both are said: the kept folder and the log folder that is a
+		// link — neither message swallows the other.
+		lay, foreign := ownedFixture(t)
+		if err := os.Remove(foreign); err != nil {
+			t.Fatal(err)
+		}
+		real := lay.Logs + "-real"
+		if err := os.Rename(lay.Logs, real); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(real, lay.Logs); err != nil {
+			t.Fatal(err)
+		}
+		ownEntriesRemovedHook = func(l layout) { writeFile(t, l.TrayLock(), "x") }
+		defer func() { ownEntriesRemovedHook = nil }()
+		removeRetryWait = time.Millisecond
+		defer func(orig time.Duration) { removeRetryWait = orig }(removeRetryWait)
+		_, err := removeOwnData(lay, nil, "darwin")
+		if err == nil || !strings.Contains(err.Error(), "a tray.lock the menu-bar app left in it stayed") || !strings.Contains(err.Error(), "not a plain folder") {
+			t.Fatalf("got %v", err)
+		}
+	})
 }
 
 // With the menu-bar app running, uninstall --remove-data refuses before
@@ -663,7 +697,14 @@ func TestIssue176_UninstallRefusesBeforeTheServiceGoesWhileTheTrayRuns(t *testin
 	}
 	holdRun()
 
-	// A vaultsync pair or setup in progress is probed the same way.
+	// A vaultsync pair or setup in progress is probed the same way — and
+	// the probe makes no file: the lock files that were not there before
+	// are not there after the refusal.
+	for _, name := range []string{"agent.lock", "pair.lock", "tray.lock"} {
+		if err := os.Remove(filepath.Join(lay.Base, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+	}
 	holdSetup, err := lockFile(filepath.Join(lay.Base, "setup.lock"))
 	if err != nil {
 		t.Fatal(err)
@@ -673,6 +714,11 @@ func TestIssue176_UninstallRefusesBeforeTheServiceGoesWhileTheTrayRuns(t *testin
 		t.Fatalf("a setup in progress: %v %v", err, run.calls)
 	}
 	holdSetup()
+	for _, name := range []string{"agent.lock", "pair.lock", "tray.lock"} {
+		if _, err := os.Lstat(filepath.Join(lay.Base, name)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("the probe made %s", name)
+		}
+	}
 
 	// A link in the folder's place is refused before the service goes,
 	// and no lock file lands in its target.
