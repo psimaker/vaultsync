@@ -173,10 +173,11 @@ func Render(st Status, err error, o Options) View {
 			v.Glyph, v.Headline, v.Detail = GlyphPaused, "Paused on this computer", ""
 		}
 	}
-	if !st.Paused && v.Glyph != GlyphOffline {
+	if !st.Paused && (v.Glyph == GlyphSynced || v.Glyph == GlyphSyncing || v.Glyph == GlyphAttention) {
 		// Quitting the menu-bar app quits the icon alone — said where the
-		// headline does not say that nothing syncs (not running, starting,
-		// no Hub, no connection, paused).
+		// icon says something syncs or may; never under a headline that
+		// says nothing does (not running, starting, no Hub, no
+		// connection, a pause of any kind).
 		v.Quit.Title = "Quit (syncing continues)"
 	}
 	return v

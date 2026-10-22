@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -81,6 +82,32 @@ func TestIssue175_RemoveDataNeverFollowsLinks(t *testing.T) {
 }
 
 func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
+	t.Run("the folder is a link: nothing is made through it", func(t *testing.T) {
+		// Nothing is made through the link either: no lock file lands in
+		// what it points to.
+		lay, _ := ownedFixture(t)
+		target := lay.Base + "-real"
+		if err := os.Rename(lay.Base, target); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, lay.Base); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"agent.lock", "pair.lock", "setup.lock", "tray.lock"} {
+			_ = os.Remove(filepath.Join(target, name))
+		}
+		if _, err := removeOwnData(lay, nil, "darwin"); !strings.Contains(refusalText(err), "not a plain folder") {
+			t.Fatalf("got %v", err)
+		}
+		if err := trayQuit(lay); err != nil {
+			t.Fatalf("the probe through a link: %v", err)
+		}
+		for _, name := range []string{"agent.lock", "pair.lock", "setup.lock", "tray.lock"} {
+			if _, err := os.Lstat(filepath.Join(target, name)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("%s was made through the link", name)
+			}
+		}
+	})
 	t.Run("the folder is a link", func(t *testing.T) {
 		lay, _ := ownedFixture(t)
 		real := lay.Base + "-real"
@@ -479,17 +506,81 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 		if err := os.Remove(foreign); err != nil {
 			t.Fatal(err)
 		}
-		ownEntriesRemovedHook = func(l layout) { writeFile(t, filepath.Join(l.Base, "notes.md"), "keep me") }
+		ownEntriesRemovedHook = func(l layout) {
+			writeFile(t, l.TrayLock(), "x")
+			writeFile(t, filepath.Join(l.Base, "notes.md"), "keep me")
+		}
 		defer func() { ownEntriesRemovedHook = nil }()
+		// One wait would be ten seconds: a run well under that took none.
+		removeRetryWait = 10 * time.Second
+		defer func() { removeRetryWait = 50 * time.Millisecond }()
 		start := time.Now()
 		if _, err := removeOwnData(lay, nil, "darwin"); err != nil {
 			t.Fatal(err)
 		}
-		if took := time.Since(start); took > 500*time.Millisecond {
+		if took := time.Since(start); took > 3*time.Second {
 			t.Fatalf("waited %v for a folder that is not VaultSync's alone", took)
 		}
 		if _, err := os.Stat(filepath.Join(lay.Base, "notes.md")); err != nil {
 			t.Fatalf("someone's file: %v", err)
 		}
 	})
+	t.Run("tray.lock that stays is said", func(t *testing.T) {
+		lay, foreign := ownedFixture(t)
+		if err := os.Remove(foreign); err != nil {
+			t.Fatal(err)
+		}
+		ownEntriesRemovedHook = func(l layout) { writeFile(t, l.TrayLock(), "x") }
+		defer func() { ownEntriesRemovedHook = nil }()
+		removeRetryWait = time.Millisecond
+		defer func() { removeRetryWait = 50 * time.Millisecond }()
+		removed, err := removeOwnData(lay, nil, "darwin")
+		if err == nil || !strings.Contains(err.Error(), "tray.lock is still in it") || errors.As(err, new(*refusal)) {
+			t.Fatalf("got %v", err)
+		}
+		for _, r := range removed {
+			if r == lay.Base {
+				t.Fatal("the folder reported as removed")
+			}
+		}
+		if _, err := os.Stat(lay.TrayLock()); err != nil {
+			t.Fatalf("the file: %v", err)
+		}
+	})
+}
+
+// With the menu-bar app running, uninstall --remove-data refuses before
+// the background service goes: the refusal costs nothing, and the second
+// run after quitting the app is the first one that changes anything.
+func TestIssue176_UninstallRefusesBeforeTheServiceGoesWhileTheTrayRuns(t *testing.T) {
+	lay, _ := ownedFixture(t)
+	unlock, err := lockFile(lay.TrayLock())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	run := &fakeRunner{}
+	a := &app{goos: "linux", home: filepath.Dir(lay.Base), getenv: envOf(nil), lay: lay, out: &bytes.Buffer{},
+		svc: service{goos: "linux", home: filepath.Dir(lay.Base), getenv: envOf(nil), lay: lay, run: run}}
+	err = a.uninstall(context.Background(), []string{"--remove-data", "--yes"})
+	if !strings.Contains(refusalText(err), "menu-bar app is running") {
+		t.Fatalf("got %v", err)
+	}
+	if len(run.calls) != 0 {
+		t.Fatalf("the service was touched before the refusal: %v", run.calls)
+	}
+	if _, err := os.Stat(filepath.Join(lay.Base, "bin", "syncthing")); err != nil {
+		t.Fatal("files were removed despite the refusal")
+	}
+	// Without --remove-data the app may run on: the service goes, the
+	// folder stays, nothing is probed.
+	unlock()
+	hold, err := lockFile(lay.TrayLock())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hold()
+	if err := a.uninstall(context.Background(), []string{"--yes"}); err != nil {
+		t.Fatalf("uninstall without --remove-data: %v", err)
+	}
 }
