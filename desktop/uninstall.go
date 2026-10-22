@@ -81,14 +81,28 @@ type ownLockEntry struct {
 }
 
 // ownLocks is the one list of VaultSync's own locks, for the probe before
-// the service goes and for the removal after it.
+// the service goes and for the removal after it. The engine's lock comes
+// last: a service at its start holds setup.lock and takes agent.lock
+// once, without waiting — the probe's instant hold on agent.lock in that
+// moment would make it exit as "already running"; found by setup.lock
+// first, agent.lock is never touched then.
 func ownLocks(lay layout) []ownLockEntry {
 	return []ownLockEntry{
-		{lay.Lock, ownerRunningRefusal, busyRefusal, true},
-		{filepath.Join(lay.Base, "pair.lock"), ownerRunningRefusal, busyRefusal, false},
 		{filepath.Join(lay.Base, "setup.lock"), ownerRunningRefusal, busyRefusal, false},
+		{filepath.Join(lay.Base, "pair.lock"), ownerRunningRefusal, busyRefusal, false},
 		{lay.TrayLock(), trayRunningRefusal, trayRunningRefusal, false},
+		{lay.Lock, ownerRunningRefusal, busyRefusal, true},
 	}
+}
+
+// isOwnLock: name is one of the lock files, which go last in the removal.
+func isOwnLock(lay layout, name string) bool {
+	for _, l := range ownLocks(lay) {
+		if filepath.Base(l.path) == name {
+			return true
+		}
+	}
+	return false
 }
 
 // ownFolder: whether VaultSync's folder is there, and whether it is its
@@ -149,8 +163,13 @@ func ownLock(path, held string) (func(), error) {
 }
 
 // ownEntriesRemovedHook runs once VaultSync's entries are removed and
-// before its folder is; a test puts something in the folder there.
-var ownEntriesRemovedHook func(lay layout)
+// before its lock files are; lockFilesRemovedHook once those are gone
+// too, before the folder is. A test puts something in the folder there,
+// or tries a lock.
+var (
+	ownEntriesRemovedHook func(lay layout)
+	lockFilesRemovedHook  func(lay layout)
+)
 
 // removeRetryWait is the pause between tries at removing the folder
 // while the menu-bar app's tray.lock is the one thing in it.
@@ -184,16 +203,14 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 		return ok, err
 	}
 	vaults := configuredVaultPaths(a.engine())
-	// Whether the service runs, asked once (a read of the service manager):
-	// it decides whose the engine's lock is at the probe, and whether a
-	// terminal run is worth waiting for after the service's removal.
-	serviceRunning := a.svc.running()
 	if *removeData {
 		// Whoever holds one of VaultSync's own locks — a pair or setup in
 		// progress, the menu-bar app, a vaultsync run in a terminal while
 		// the service does not run — must be gone before anything is asked
-		// or changed: probed first, so the refusal costs nothing.
-		if err := probeOwnLocks(a.lay, serviceRunning); err != nil {
+		// or changed: probed first, so the refusal costs nothing. Whether
+		// the service runs (a read of the service manager) decides whose
+		// the engine's lock is.
+		if err := probeOwnLocks(a.lay, a.svc.running()); err != nil {
 			return err
 		}
 	}
@@ -214,6 +231,11 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 		t.say("Nothing was changed.")
 		return nil
 	}
+	// Read right before the removal, not minutes earlier at a prompt: a
+	// service that is installed, or that the manager calls running, may
+	// hold the engine's lock a moment after its removal (one restarting
+	// after a crash is "activating" one instant and holding it the next).
+	serviceWas := a.svc.installed() || a.svc.running()
 	if err := a.svc.uninstall(); err != nil {
 		return err
 	}
@@ -221,7 +243,7 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 	// a terminal run holds it for good, and without a service it is the
 	// one holder there can be — known at once.
 	grace := time.Duration(0)
-	if serviceRunning {
+	if serviceWas {
 		grace = 25 * time.Second
 	}
 	switch running, err := engineOwnerRunning(a.lay, grace); {
@@ -390,10 +412,16 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 	defer root.Close()
 	// No owner may run: the background service is gone, and the locks tell
 	// whether a `vaultsync run`, `pair` or `setup` still does — or the
-	// menu-bar app. Each is held through the removal; an app that takes
-	// its lock after agent.json is gone finds nothing to lock and removes
-	// the file it made (the tray's TakeLock), so the folder ends up empty.
+	// menu-bar app. Each is held through the whole removal and its file
+	// goes last, so a run, pair, setup or menu-bar app starting meanwhile
+	// meets a held lock and stops; the app's second look then finds
+	// agent.json gone and holds nothing. The lock files the taking makes
+	// (none was there) are not reported as removed.
+	preexisting := map[string]bool{}
 	for _, l := range ownLocks(lay) {
+		if _, err := os.Lstat(l.path); err == nil {
+			preexisting[l.path] = true
+		}
 		unlock, err := ownLock(l.path, l.held)
 		if err != nil {
 			return nil, nil, err
@@ -402,6 +430,9 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 	}
 	var removed []string
 	for _, name := range ownedEntries {
+		if isOwnLock(lay, name) {
+			continue
+		}
 		entry, err := root.Lstat(name)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
@@ -436,6 +467,15 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 	}
 	if ownEntriesRemovedHook != nil {
 		ownEntriesRemovedHook(lay)
+	}
+	// The lock files last, still held.
+	for _, l := range ownLocks(lay) {
+		if err := root.Remove(filepath.Base(l.path)); err == nil && preexisting[l.path] {
+			removed = append(removed, l.path)
+		}
+	}
+	if lockFilesRemovedHook != nil {
+		lockFilesRemovedHook(lay)
 	}
 	// The menu-bar app may have made a fresh tray.lock just now (its look
 	// at agent.json came before the removal); it removes that file itself
@@ -490,11 +530,14 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 			case held:
 				kept = &keptFolder{lay.Base, "a tray.lock the menu-bar app holds stayed; quit the app, then remove the folder by hand", true}
 			default:
-				if rerr := root.Remove("tray.lock"); rerr != nil {
+				// Gone in between (the app removed it after all): the
+				// folder is tried as it is.
+				if rerr := root.Remove("tray.lock"); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
 					kept = &keptFolder{lay.Base, fmt.Sprintf("its tray.lock could not be removed (%v); remove the folder by hand", errnoOf(rerr)), true}
 					break
+				} else if rerr == nil {
+					removed = append(removed, trayLock)
 				}
-				removed = append(removed, trayLock)
 				if rerr := os.Remove(lay.Base); rerr != nil {
 					kept = &keptFolder{lay.Base, fmt.Sprintf("it could not be removed (%v); remove the folder by hand", errnoOf(rerr)), true}
 					break

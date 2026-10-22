@@ -224,6 +224,38 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		}
 		unlock()
 	})
+	t.Run("an owner starting mid-removal meets a held lock", func(t *testing.T) {
+		// The lock files go last, still held: a vaultsync setup or pair,
+		// or the menu-bar app, that starts while the folder is taken apart
+		// finds its lock held and stops — nothing of it lands in the
+		// half-removed folder. And lock files the removal itself made
+		// (only tray.lock was there) are not reported as removed.
+		lay, foreign := ownedFixture(t)
+		if err := os.Remove(foreign); err != nil {
+			t.Fatal(err)
+		}
+		ownEntriesRemovedHook = func(l layout) {
+			if _, err := lockFile(filepath.Join(l.Base, "setup.lock")); !errors.Is(err, ErrEngineRunning) {
+				t.Errorf("a setup starting mid-removal: %v", err)
+			}
+			if _, err := lock.Take(l.TrayLock()); !errors.Is(err, lock.ErrHeld) {
+				t.Errorf("the menu-bar app starting mid-removal: %v", err)
+			}
+		}
+		defer func() { ownEntriesRemovedHook = nil }()
+		removed, kept, err := removeOwnData(lay, nil, "darwin")
+		if err != nil || kept != nil || !slices.Contains(removed, lay.Base) {
+			t.Fatalf("got %v %v %v", removed, kept, err)
+		}
+		for _, name := range []string{"agent.lock", "pair.lock", "setup.lock"} {
+			if slices.Contains(removed, filepath.Join(lay.Base, name)) {
+				t.Fatalf("%s, made by the removal itself, reported removed", name)
+			}
+		}
+		if !slices.Contains(removed, lay.TrayLock()) {
+			t.Fatalf("the tray.lock that was there is not reported: %v", removed)
+		}
+	})
 	t.Run("an interrupted write's leftover of any own file goes", func(t *testing.T) {
 		lay, foreign := ownedFixture(t)
 		if err := os.Remove(foreign); err != nil {
@@ -597,7 +629,7 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 		if err := os.Remove(foreign); err != nil {
 			t.Fatal(err)
 		}
-		ownEntriesRemovedHook = func(l layout) {
+		lockFilesRemovedHook = func(l layout) {
 			if l.Base != lay.Base {
 				t.Errorf("hook for %q", l.Base)
 			}
@@ -607,7 +639,7 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 				_ = os.Remove(l.TrayLock())
 			}()
 		}
-		defer func() { ownEntriesRemovedHook = nil }()
+		defer func() { lockFilesRemovedHook = nil }()
 		removed, _, err := removeOwnData(lay, nil, "darwin")
 		if err != nil {
 			t.Fatal(err)
@@ -693,9 +725,9 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 		if err := os.Remove(foreign); err != nil {
 			t.Fatal(err)
 		}
-		ownEntriesRemovedHook = func(l layout) { writeFile(t, l.TrayLock(), "x") }
+		lockFilesRemovedHook = func(l layout) { writeFile(t, l.TrayLock(), "x") }
 		removeTryHook = func() { _ = os.Remove(lay.TrayLock()) }
-		defer func() { ownEntriesRemovedHook, removeTryHook = nil, nil }()
+		defer func() { lockFilesRemovedHook, removeTryHook = nil, nil }()
 		orig := removeRetryWait
 		removeRetryWait = 10 * time.Second
 		defer func() { removeRetryWait = orig }()
@@ -717,15 +749,17 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 	t.Run("a tray.lock nobody holds is VaultSync's own leftover, and goes", func(t *testing.T) {
 		// An app that made its file and crashed before removing it: the
 		// file is unheld, VaultSync's own entry, and goes with the folder
-		// — reported removed, beside the lock file the removal itself
-		// made and took away with the inventory (the path twice: two
-		// files, one after the other).
+		// — reported removed; the lock file the removal itself made is
+		// not (the fixture's own tray.lock is taken away first).
 		lay, foreign := ownedFixture(t)
 		if err := os.Remove(foreign); err != nil {
 			t.Fatal(err)
 		}
-		ownEntriesRemovedHook = func(l layout) { writeFile(t, l.TrayLock(), "x") }
-		defer func() { ownEntriesRemovedHook = nil }()
+		if err := os.Remove(lay.TrayLock()); err != nil {
+			t.Fatal(err)
+		}
+		lockFilesRemovedHook = func(l layout) { writeFile(t, l.TrayLock(), "x") }
+		defer func() { lockFilesRemovedHook = nil }()
 		orig := removeRetryWait
 		removeRetryWait = time.Millisecond
 		defer func() { removeRetryWait = orig }()
@@ -736,7 +770,7 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 				trayLocks++
 			}
 		}
-		if err != nil || kept != nil || !slices.Contains(removed, lay.Base) || trayLocks != 2 {
+		if err != nil || kept != nil || !slices.Contains(removed, lay.Base) || trayLocks != 1 {
 			t.Fatalf("got %v %v %v", removed, kept, err)
 		}
 		if _, err := os.Stat(lay.Base); !errors.Is(err, os.ErrNotExist) {
@@ -751,7 +785,7 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 			t.Fatal(err)
 		}
 		var held *lock.Handle
-		ownEntriesRemovedHook = func(l layout) {
+		lockFilesRemovedHook = func(l layout) {
 			h, err := lock.Take(l.TrayLock())
 			if err != nil {
 				t.Fatal(err)
@@ -759,7 +793,7 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 			held = h
 		}
 		defer func() {
-			ownEntriesRemovedHook = nil
+			lockFilesRemovedHook = nil
 			if held != nil {
 				held.Release()
 			}
@@ -800,7 +834,7 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 			t.Fatal(err)
 		}
 		var held *lock.Handle
-		ownEntriesRemovedHook = func(l layout) {
+		lockFilesRemovedHook = func(l layout) {
 			h, err := lock.Take(l.TrayLock())
 			if err != nil {
 				t.Fatal(err)
@@ -808,7 +842,7 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 			held = h
 		}
 		defer func() {
-			ownEntriesRemovedHook = nil
+			lockFilesRemovedHook = nil
 			if held != nil {
 				held.Release()
 			}
@@ -881,8 +915,11 @@ func TestIssue176_UninstallRefusesBeforeTheServiceGoesWhileTheTrayRuns(t *testin
 		t.Fatalf("a run in a terminal: %v", err)
 	}
 	serviceStayed("a run in a terminal")
-	// Without --remove-data the run is found at once, not after a wait
-	// meant for a service that was never running.
+	// Without --remove-data, and with no service installed, the run is
+	// found at once, not after a wait meant for a service's own run.
+	if err := os.Remove(unit); err != nil {
+		t.Fatal(err)
+	}
 	out := a.out.(*bytes.Buffer)
 	out.Reset()
 	start := time.Now()
@@ -1019,7 +1056,7 @@ func TestIssue176_UninstallRefusesBeforeTheServiceGoesWhileTheTrayRuns(t *testin
 		t.Fatal(err)
 	}
 	var held *lock.Handle
-	ownEntriesRemovedHook = func(l layout) {
+	lockFilesRemovedHook = func(l layout) {
 		h, err := lock.Take(l.TrayLock())
 		if err != nil {
 			t.Fatal(err)
@@ -1027,7 +1064,7 @@ func TestIssue176_UninstallRefusesBeforeTheServiceGoesWhileTheTrayRuns(t *testin
 		held = h
 	}
 	defer func() {
-		ownEntriesRemovedHook = nil
+		lockFilesRemovedHook = nil
 		if held != nil {
 			held.Release()
 		}
