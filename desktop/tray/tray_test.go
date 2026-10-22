@@ -121,14 +121,10 @@ func TestIssue176_TrayShowsWhatTheAgentReports(t *testing.T) {
 			t.Fatalf("%v: %+v", c.err, v)
 		}
 	}
-	// An older agent whose report says its engine runs unpaused runs on
-	// without this app; one that said nothing (404), or paused, gets a
-	// plain Quit.
-	if v := Render(Status{Engine: "running"}, ErrOldAgent, Options{CanAsk: true}); v.Quit.Title != "Quit (syncing continues)" {
+	// An older agent's report cannot be read for what syncs: plain Quit,
+	// whatever it says about its engine.
+	if v := Render(Status{Engine: "running"}, ErrOldAgent, Options{CanAsk: true}); v.Quit.Title != "Quit" {
 		t.Fatalf("an older agent running: %+v", v.Quit)
-	}
-	if v := Render(Status{Engine: "running", Report: Report{Paused: true}}, ErrOldAgent, Options{CanAsk: true}); v.Quit.Title != "Quit" {
-		t.Fatalf("an older agent paused: %+v", v.Quit)
 	}
 	if v := Render(base, nil, Options{CanAsk: true}); v.NoVaultLine != "No vault yet" {
 		t.Fatalf("no vault: %+v", v)
@@ -377,7 +373,7 @@ func TestIssue176_TrayPauseAndResumeAskOnlyTheAgent(t *testing.T) {
 	})
 	ui2 := newFakeUI(t)
 	controllerFor(t, agent2, ui2, &Controller{})
-	if v := ui2.view(t, "needs an update", func(v View) bool { return v.Headline == "VaultSync needs an update on this computer" }); v.Glyph != GlyphAttention || v.Quit.Title != "Quit (syncing continues)" {
+	if v := ui2.view(t, "needs an update", func(v View) bool { return v.Headline == "VaultSync needs an update on this computer" }); v.Glyph != GlyphAttention || v.Quit.Title != "Quit" {
 		t.Fatalf("a report without kinds: %+v", v)
 	}
 

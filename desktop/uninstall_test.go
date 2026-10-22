@@ -41,7 +41,7 @@ func ownedFixture(t *testing.T) (layout, string) {
 
 func TestIssue175_RemoveDataRemovesOnlyOwnEntries(t *testing.T) {
 	lay, foreign := ownedFixture(t)
-	removed, err := removeOwnData(lay, nil, "darwin")
+	removed, _, err := removeOwnData(lay, nil, "darwin")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestIssue175_RemoveDataNeverFollowsLinks(t *testing.T) {
 	if err := os.Symlink(vault, filepath.Join(lay.Base, "syncthing")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := removeOwnData(lay, nil, "darwin"); err != nil {
+	if _, _, err := removeOwnData(lay, nil, "darwin"); err != nil {
 		t.Fatal(err)
 	}
 	assertUntouched(t, vault)
@@ -97,7 +97,7 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		for _, name := range []string{"agent.lock", "pair.lock", "setup.lock", "tray.lock"} {
 			_ = os.Remove(filepath.Join(target, name))
 		}
-		if _, err := removeOwnData(lay, nil, "darwin"); !strings.Contains(refusalText(err), "not a plain folder") {
+		if _, _, err := removeOwnData(lay, nil, "darwin"); !strings.Contains(refusalText(err), "not a plain folder") {
 			t.Fatalf("got %v", err)
 		}
 		if _, err := os.Stat(filepath.Join(target, "bin", "syncthing")); err != nil {
@@ -144,13 +144,13 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 			t.Fatalf("the probe on a folder without agent.json: %v", err)
 		}
 		hold()
-		if _, err := removeOwnData(lay, nil, "darwin"); !strings.Contains(refusalText(err), "does not look like VaultSync's own folder") {
+		if _, _, err := removeOwnData(lay, nil, "darwin"); !strings.Contains(refusalText(err), "does not look like VaultSync's own folder") {
 			t.Fatalf("got %v", err)
 		}
 	})
 	t.Run("a vault overlaps it", func(t *testing.T) {
 		lay, _ := ownedFixture(t)
-		_, err := removeOwnData(lay, []string{filepath.Dir(lay.Base)}, "darwin")
+		_, _, err := removeOwnData(lay, []string{filepath.Dir(lay.Base)}, "darwin")
 		if !strings.Contains(refusalText(err), "overlaps the vault") {
 			t.Fatalf("got %v", err)
 		}
@@ -165,7 +165,7 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer unlock()
-		if _, err := removeOwnData(lay, nil, "darwin"); !strings.Contains(refusalText(err), "still running") {
+		if _, _, err := removeOwnData(lay, nil, "darwin"); !strings.Contains(refusalText(err), "still running") {
 			t.Fatalf("got %v", err)
 		}
 		unlock()
@@ -176,10 +176,31 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := removeOwnData(lay, nil, "darwin"); !strings.Contains(refusalText(err), "menu-bar app is running") {
+		if _, _, err := removeOwnData(lay, nil, "darwin"); !strings.Contains(refusalText(err), "menu-bar app is running") {
 			t.Fatalf("got %v", err)
 		}
 		unlock()
+	})
+	t.Run("a lock file is a link", func(t *testing.T) {
+		// A link in a lock's place is not followed: nothing outside the
+		// folder is opened, locked or made — by the removal or the probe.
+		lay, _ := ownedFixture(t)
+		outside := filepath.Join(filepath.Dir(lay.Base), "notes.md")
+		if err := os.Symlink(outside, filepath.Join(lay.Base, "pair.lock")); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := removeOwnData(lay, nil, "darwin"); err == nil || errors.As(err, new(*refusal)) {
+			t.Fatalf("got %v", err)
+		}
+		if err := probeOwnLocks(lay, true); err == nil || errors.As(err, new(*refusal)) {
+			t.Fatalf("the probe: %v", err)
+		}
+		if _, err := os.Lstat(outside); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("the link's target was made")
+		}
+		if _, err := os.Stat(filepath.Join(lay.Base, "bin", "syncthing")); err != nil {
+			t.Fatal("files were removed despite the error")
+		}
 	})
 	t.Run("an engine lock cannot be taken", func(t *testing.T) {
 		// The same for the engine's locks: a directory at pair.lock is
@@ -188,7 +209,7 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		if err := os.Mkdir(filepath.Join(lay.Base, "pair.lock"), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		_, err := removeOwnData(lay, nil, "darwin")
+		_, _, err := removeOwnData(lay, nil, "darwin")
 		if err == nil || errors.As(err, new(*refusal)) || strings.Contains(err.Error(), "still running") {
 			t.Fatalf("got %v", err)
 		}
@@ -207,7 +228,7 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		if err := os.Mkdir(lay.TrayLock(), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		_, err := removeOwnData(lay, nil, "darwin")
+		_, _, err := removeOwnData(lay, nil, "darwin")
 		if err == nil || errors.As(err, new(*refusal)) || strings.Contains(err.Error(), "menu-bar app") {
 			t.Fatalf("got %v", err)
 		}
@@ -220,7 +241,7 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if removed, err := removeOwnData(lay, nil, "linux"); err != nil || len(removed) != 0 {
+		if removed, _, err := removeOwnData(lay, nil, "linux"); err != nil || len(removed) != 0 {
 			t.Fatalf("got %v %v", removed, err)
 		}
 		if _, err := os.Stat(lay.Base); !errors.Is(err, os.ErrNotExist) {
@@ -408,7 +429,7 @@ func TestIssue175_RemoveDataNeverFollowsTheLogFolder(t *testing.T) {
 	if err := os.Symlink(vault, lay.Logs); err != nil {
 		t.Fatal(err)
 	}
-	_, err := removeOwnData(lay, nil, "darwin")
+	_, _, err := removeOwnData(lay, nil, "darwin")
 	if !strings.Contains(refusalText(err), "not a plain folder") {
 		t.Fatalf("got %v", err)
 	}
@@ -426,7 +447,7 @@ func TestIssue175_RemoveDataStopsAtMounts(t *testing.T) {
 	mountPoints = func() ([]string, error) {
 		return []string{"/", filepath.Join(lay.Base, "syncthing", "index-v2")}, nil
 	}
-	_, err := removeOwnData(lay, nil, "darwin")
+	_, _, err := removeOwnData(lay, nil, "darwin")
 	if !strings.Contains(refusalText(err), "mounted at or inside") {
 		t.Fatalf("got %v", err)
 	}
@@ -434,7 +455,7 @@ func TestIssue175_RemoveDataStopsAtMounts(t *testing.T) {
 		t.Fatal("files were removed around a mount")
 	}
 	mountPoints = func() ([]string, error) { return nil, errors.New("no /proc") }
-	if _, err := removeOwnData(lay, nil, "darwin"); !strings.Contains(refusalText(err), "could not list this computer's mounts") {
+	if _, _, err := removeOwnData(lay, nil, "darwin"); !strings.Contains(refusalText(err), "could not list this computer's mounts") {
 		t.Fatalf("an unknown mount table must stop the removal, got %v", err)
 	}
 }
@@ -468,7 +489,7 @@ func TestIssue175_RemoveDataSeesMountsBehindALinkedParent(t *testing.T) {
 	mountPoints = func() ([]string, error) {
 		return []string{"/", filepath.Join(realState, "vaultsync", "syncthing", "data")}, nil
 	}
-	_, err = removeOwnData(lay, nil, "linux")
+	_, _, err = removeOwnData(lay, nil, "linux")
 	if !strings.Contains(refusalText(err), "mounted at or inside") {
 		t.Fatalf("got %v", err)
 	}
@@ -498,7 +519,7 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 			}()
 		}
 		defer func() { ownEntriesRemovedHook = nil }()
-		removed, err := removeOwnData(lay, nil, "darwin")
+		removed, _, err := removeOwnData(lay, nil, "darwin")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -529,8 +550,9 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 		removeRetryWait = 10 * time.Second
 		defer func(orig time.Duration) { removeRetryWait = orig }(removeRetryWait)
 		start := time.Now()
-		if _, err := removeOwnData(lay, nil, "darwin"); err != nil {
-			t.Fatal(err)
+		_, kept, err := removeOwnData(lay, nil, "darwin")
+		if err != nil || kept == nil || !strings.Contains(kept.why, "did not make") {
+			t.Fatalf("someone's file keeps the folder, and is said: %v %v", kept, err)
 		}
 		if took := time.Since(start); took > 3*time.Second {
 			t.Fatalf("waited %v for a folder that is not VaultSync's alone", took)
@@ -561,9 +583,9 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 		removeRetryWait = 10 * time.Second
 		defer func(orig time.Duration) { removeRetryWait = orig }(removeRetryWait)
 		start := time.Now()
-		_, err := removeOwnData(lay, nil, "darwin")
-		if err == nil || errors.As(err, new(*refusal)) || !strings.Contains(err.Error(), "was not removed (") {
-			t.Fatalf("an empty folder nobody can remove is said: %v", err)
+		_, kept, err := removeOwnData(lay, nil, "darwin")
+		if err != nil || kept == nil || !strings.Contains(kept.why, "could not be removed (") {
+			t.Fatalf("an empty folder nobody can remove is said: %v %v", kept, err)
 		}
 		if took := time.Since(start); took > 3*time.Second {
 			t.Fatalf("waited %v for an empty folder nobody can remove", took)
@@ -586,7 +608,7 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 		removeRetryWait = 10 * time.Second
 		defer func(orig time.Duration) { removeRetryWait = orig }(removeRetryWait)
 		start := time.Now()
-		removed, err := removeOwnData(lay, nil, "darwin")
+		removed, _, err := removeOwnData(lay, nil, "darwin")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -609,9 +631,9 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 		defer func() { ownEntriesRemovedHook = nil }()
 		removeRetryWait = time.Millisecond
 		defer func(orig time.Duration) { removeRetryWait = orig }(removeRetryWait)
-		removed, err := removeOwnData(lay, nil, "darwin")
-		if err == nil || !strings.Contains(err.Error(), "a tray.lock the menu-bar app left in it stayed") || errors.As(err, new(*refusal)) {
-			t.Fatalf("got %v", err)
+		removed, kept, err := removeOwnData(lay, nil, "darwin")
+		if err != nil || kept == nil || !strings.Contains(kept.why, "a tray.lock the menu-bar app left in it stayed") {
+			t.Fatalf("got %v %v", kept, err)
 		}
 		for _, r := range removed {
 			if r == lay.Base {
@@ -645,9 +667,9 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 		defer func() { ownEntriesRemovedHook = nil }()
 		removeRetryWait = time.Millisecond
 		defer func(orig time.Duration) { removeRetryWait = orig }(removeRetryWait)
-		_, err := removeOwnData(lay, nil, "darwin")
-		if err == nil || !strings.Contains(err.Error(), "a tray.lock the menu-bar app left in it stayed") || !strings.Contains(err.Error(), "not a plain folder") {
-			t.Fatalf("got %v", err)
+		_, kept, err := removeOwnData(lay, nil, "darwin")
+		if kept == nil || !strings.Contains(kept.why, "a tray.lock the menu-bar app left in it stayed") || !strings.Contains(refusalText(err), "not a plain folder") {
+			t.Fatalf("got %v %v", kept, err)
 		}
 	})
 }
@@ -656,7 +678,7 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 // the background service goes: the refusal costs nothing, and the second
 // run after quitting the app is the first one that changes anything.
 func TestIssue176_UninstallRefusesBeforeTheServiceGoesWhileTheTrayRuns(t *testing.T) {
-	lay, _ := ownedFixture(t)
+	lay, foreign := ownedFixture(t)
 	unlock, err := lockFile(lay.TrayLock())
 	if err != nil {
 		t.Fatal(err)
@@ -669,7 +691,7 @@ func TestIssue176_UninstallRefusesBeforeTheServiceGoesWhileTheTrayRuns(t *testin
 	if !strings.Contains(refusalText(err), "menu-bar app is running") {
 		t.Fatalf("got %v", err)
 	}
-	if len(run.calls) != 0 {
+	if serviceTouched(run.calls) {
 		t.Fatalf("the service was touched before the refusal: %v", run.calls)
 	}
 	if _, err := os.Stat(filepath.Join(lay.Base, "bin", "syncthing")); err != nil {
@@ -679,7 +701,7 @@ func TestIssue176_UninstallRefusesBeforeTheServiceGoesWhileTheTrayRuns(t *testin
 	// answer would be "pass --yes" — the probe comes first. (The terminal
 	// is pointed at nothing, so a go test in a Terminal asks nobody.)
 	ttyPath = filepath.Join(t.TempDir(), "no-tty")
-	defer func() { ttyPath = "/dev/tty" }()
+	defer func(orig string) { ttyPath = orig }(ttyPath)
 	if err := a.uninstall(context.Background(), []string{"--remove-data"}); !strings.Contains(refusalText(err), "menu-bar app is running") {
 		t.Fatalf("asked before the probe: %v", err)
 	}
@@ -692,7 +714,7 @@ func TestIssue176_UninstallRefusesBeforeTheServiceGoesWhileTheTrayRuns(t *testin
 		t.Fatal(err)
 	}
 	err = a.uninstall(context.Background(), []string{"--remove-data", "--yes"})
-	if !strings.Contains(refusalText(err), "run, pair or setup") || len(run.calls) != 0 {
+	if !strings.Contains(refusalText(err), "run, pair or setup") || serviceTouched(run.calls) {
 		t.Fatalf("a run in a terminal: %v %v", err, run.calls)
 	}
 	holdRun()
@@ -710,7 +732,7 @@ func TestIssue176_UninstallRefusesBeforeTheServiceGoesWhileTheTrayRuns(t *testin
 		t.Fatal(err)
 	}
 	err = a.uninstall(context.Background(), []string{"--remove-data", "--yes"})
-	if !strings.Contains(refusalText(err), "pair or setup") || len(run.calls) != 0 {
+	if !strings.Contains(refusalText(err), "pair or setup") || serviceTouched(run.calls) {
 		t.Fatalf("a setup in progress: %v %v", err, run.calls)
 	}
 	holdSetup()
@@ -733,7 +755,7 @@ func TestIssue176_UninstallRefusesBeforeTheServiceGoesWhileTheTrayRuns(t *testin
 		_ = os.Remove(filepath.Join(target, name))
 	}
 	err = a.uninstall(context.Background(), []string{"--remove-data", "--yes"})
-	if !strings.Contains(refusalText(err), "not a plain folder") || len(run.calls) != 0 {
+	if !strings.Contains(refusalText(err), "not a plain folder") || serviceTouched(run.calls) {
 		t.Fatalf("a link: %v %v", err, run.calls)
 	}
 	for _, name := range []string{"agent.lock", "pair.lock", "setup.lock", "tray.lock"} {
@@ -754,8 +776,32 @@ func TestIssue176_UninstallRefusesBeforeTheServiceGoesWhileTheTrayRuns(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer hold()
 	if err := a.uninstall(context.Background(), []string{"--yes"}); err != nil {
 		t.Fatalf("uninstall without --remove-data: %v", err)
 	}
+	hold()
+
+	// A folder kept for someone's file in it is said, beside what went.
+	out := a.out.(*bytes.Buffer)
+	out.Reset()
+	if err := a.uninstall(context.Background(), []string{"--remove-data", "--yes"}); err != nil {
+		t.Fatalf("uninstall --remove-data: %v", err)
+	}
+	if got := out.String(); !strings.Contains(got, "  kept ") || !strings.Contains(got, "did not make") || !strings.Contains(got, "its folder stays") {
+		t.Fatalf("the kept folder is not said:\n%s", got)
+	}
+	if _, err := os.Stat(foreign); err != nil {
+		t.Fatalf("someone's file: %v", err)
+	}
+}
+
+// serviceTouched: a call that changes the service — reading its state
+// (is-active, launchctl print) is none.
+func serviceTouched(calls []string) bool {
+	for _, c := range calls {
+		if !strings.Contains(c, "is-active") && !strings.Contains(c, "launchctl print") {
+			return true
+		}
+	}
+	return false
 }

@@ -21,8 +21,10 @@ type Handle struct {
 // open makes the lock file, never its folder: a caller that wants the
 // folder made says so itself, and one that must not (the menu-bar app,
 // which never creates VaultSync's folder) gets an error when it is gone.
+// A link in the lock's place is not followed (nothing outside the folder
+// is opened, locked or made): the error comes back as it is.
 func open(path string) (*os.File, error) {
-	return os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	return os.OpenFile(path, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
 }
 
 // Take takes the lock at path without waiting: ErrHeld when another
@@ -46,7 +48,7 @@ func Take(path string) (*Handle, error) {
 // nothing: a missing file is a lock nobody holds. It takes the lock for
 // an instant to tell, so a holder-to-be racing it may see it held.
 func Probe(path string) (held bool, err error) {
-	f, err := os.OpenFile(path, os.O_RDWR, 0)
+	f, err := os.OpenFile(path, os.O_RDWR|syscall.O_NOFOLLOW, 0)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}

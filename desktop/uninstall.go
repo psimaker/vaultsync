@@ -62,22 +62,32 @@ func ownLocks(lay layout) []ownLockEntry {
 	}
 }
 
+// ownFolder: whether VaultSync's folder is there, and whether it is its
+// own — a plain folder with a regular agent.json in it. A link or a file
+// in the folder's place is the error. The probe before the service goes
+// and the removal after it read this one gate.
+func ownFolder(lay layout) (exists, own bool, err error) {
+	if _, err := plainFolder(lay.Base); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, false, nil
+		}
+		return true, false, err
+	}
+	st, err := os.Lstat(lay.State)
+	return true, err == nil && st.Mode().IsRegular(), nil
+}
+
 // probeOwnLocks refuses while one of VaultSync's own locks is held —
 // probed before the service goes and before any question, so the refusal
 // costs nothing, and making no file (lock.Probe). The engine's lock is
-// probed only without an installed service: with one, the service holds
-// it until it is removed; without, a holder is a vaultsync run in a
-// terminal. A missing folder, a link in its place or a folder without
-// agent.json is nothing to probe — the removal says so itself.
+// probed only while the service does not run: a running service holds
+// it until it is removed; otherwise a holder is a vaultsync run in a
+// terminal. A missing folder or one without agent.json is nothing to
+// probe — the removal says so itself; a link in the folder's place is
+// refused here.
 func probeOwnLocks(lay layout, engineToo bool) error {
-	if _, err := plainFolder(lay.Base); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
+	if _, own, err := ownFolder(lay); err != nil || !own {
 		return err
-	}
-	if st, err := os.Lstat(lay.State); err != nil || !st.Mode().IsRegular() {
-		return nil
 	}
 	for _, l := range ownLocks(lay) {
 		if l.service && !engineToo {
@@ -143,10 +153,10 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 	vaults := configuredVaultPaths(a.engine())
 	if *removeData {
 		// Whoever holds one of VaultSync's own locks — a pair or setup in
-		// progress, the menu-bar app, a vaultsync run in a terminal where
-		// no service is installed — must be gone before anything is asked
+		// progress, the menu-bar app, a vaultsync run in a terminal while
+		// the service does not run — must be gone before anything is asked
 		// or changed: probed first, so the refusal costs nothing.
-		if err := probeOwnLocks(a.lay, !a.svc.installed()); err != nil {
+		if err := probeOwnLocks(a.lay, !a.svc.running()); err != nil {
 			return err
 		}
 	}
@@ -205,15 +215,22 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 		}
 		vaults = append(vaults, us.Folders...)
 	}
-	removed, err := removeOwnData(a.lay, vaults, a.goos)
+	removed, kept, err := removeOwnData(a.lay, vaults, a.goos)
 	if link, ok := a.removeCommandLink(); ok {
 		removed = append(removed, link)
 	}
 	for _, r := range removed {
 		t.say("  removed %s", tildePath(a.home, r))
 	}
+	if kept != nil {
+		t.say("  kept %s — %s", tildePath(a.home, kept.path), kept.why)
+	}
 	if err != nil {
 		return err
+	}
+	if kept != nil {
+		t.say("✓ VaultSync's own files are removed, but its folder stays (see above). Your vault files were not touched.")
+		return nil
 	}
 	t.say("✓ VaultSync's own files are removed. Your vault files were not touched.")
 	return nil
@@ -279,17 +296,24 @@ func configuredVaultPaths(eng engine) []string {
 
 // removeOwnData removes VaultSync's own entries from lay.Base (and its log
 // file), refusing whenever ownership or the boundary is in doubt.
-func removeOwnData(lay layout, vaults []string, goos string) ([]string, error) {
+// keptFolder: VaultSync's folder stayed after its own entries went, and
+// why — said to the person, beside what was removed.
+type keptFolder struct {
+	path, why string
+}
+
+func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFolder, error) {
 	// A plain folder before anything is made in it: the locks below create
 	// their files, which must not land in whatever a link points to.
-	if _, err := plainFolder(lay.Base); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
-		}
-		return nil, err
+	exists, own, err := ownFolder(lay)
+	if err != nil {
+		return nil, nil, err
 	}
-	if st, err := os.Lstat(lay.State); err != nil || !st.Mode().IsRegular() {
-		return nil, refuse("%s does not look like VaultSync's own folder (no agent.json), so VaultSync does not remove anything in it.", lay.Base)
+	if !exists {
+		return nil, nil, nil
+	}
+	if !own {
+		return nil, nil, refuse("%s does not look like VaultSync's own folder (no agent.json), so VaultSync does not remove anything in it.", lay.Base)
 	}
 	// No owner may run: the background service is gone, and the locks tell
 	// whether a `vaultsync run`, `pair` or `setup` still does — or the
@@ -299,13 +323,13 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, error) {
 	for _, l := range ownLocks(lay) {
 		unlock, err := ownLock(l.path, l.held)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		defer unlock()
 	}
 	root, base, err := openOwnedDir(lay.Base, vaults, goos)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer root.Close()
 	var removed []string
@@ -315,21 +339,21 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, error) {
 			continue
 		}
 		if err != nil {
-			return removed, err
+			return removed, nil, err
 		}
 		if entry.Mode()&os.ModeSymlink != 0 {
 			// A link is removed as a link; what it points to stays.
 			if err := root.Remove(name); err != nil {
-				return removed, err
+				return removed, nil, err
 			}
 			removed = append(removed, filepath.Join(lay.Base, name))
 			continue
 		}
 		if err := sameFileSystem(root, name, base); err != nil {
-			return removed, refuse("%s holds something from another disk (%v), so VaultSync stopped removing its files there.", filepath.Join(lay.Base, name), err)
+			return removed, nil, refuse("%s holds something from another disk (%v), so VaultSync stopped removing its files there.", filepath.Join(lay.Base, name), err)
 		}
 		if err := root.RemoveAll(name); err != nil {
-			return removed, err
+			return removed, nil, err
 		}
 		removed = append(removed, filepath.Join(lay.Base, name))
 	}
@@ -350,7 +374,7 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, error) {
 	// and nothing else gets a moment, and one emptied in between gets
 	// another try at once. Anything else in it keeps the folder, as does
 	// a removal that fails for another reason.
-	var kept error
+	var kept *keptFolder
 	for try := 0; try <= 20; try++ {
 		err := os.Remove(lay.Base)
 		if err == nil {
@@ -361,9 +385,13 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, error) {
 			removeTryHook()
 		}
 		entries, readErr := fs.ReadDir(root.FS(), ".")
-		if readErr != nil || len(entries) > 1 || (len(entries) == 1 && entries[0].Name() != "tray.lock") {
-			// Someone's file, or a folder that cannot be read: it stays, as
-			// it always has.
+		if readErr != nil {
+			kept = &keptFolder{lay.Base, fmt.Sprintf("it could not be read (%v)", readErr)}
+			break
+		}
+		if len(entries) > 1 || (len(entries) == 1 && entries[0].Name() != "tray.lock") {
+			// Someone's file: the folder stays, as it always has — said now.
+			kept = &keptFolder{lay.Base, "it holds files VaultSync did not make"}
 			break
 		}
 		if try == 20 {
@@ -374,9 +402,9 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, error) {
 				if errors.As(err, &pe) {
 					err = pe.Err
 				}
-				kept = fmt.Errorf("%s was not removed (%v); remove the folder by hand", lay.Base, err)
+				kept = &keptFolder{lay.Base, fmt.Sprintf("it could not be removed (%v); remove the folder by hand", err)}
 			} else {
-				kept = fmt.Errorf("%s was not removed: a tray.lock the menu-bar app left in it stayed; remove the folder by hand", lay.Base)
+				kept = &keptFolder{lay.Base, "a tray.lock the menu-bar app left in it stayed; remove the folder by hand"}
 			}
 			break
 		}
@@ -389,7 +417,7 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, error) {
 		if _, err := os.Lstat(lay.Logs); err == nil {
 			logs, _, err := openOwnedDir(lay.Logs, vaults, goos)
 			if err != nil {
-				return removed, errors.Join(kept, err)
+				return removed, kept, err
 			}
 			if logs.Remove("vaultsync.log") == nil {
 				removed = append(removed, filepath.Join(lay.Logs, "vaultsync.log"))
@@ -400,7 +428,7 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, error) {
 			}
 		}
 	}
-	return removed, kept
+	return removed, kept, nil
 }
 
 // openOwnedDir opens one of VaultSync's own folders for removal — only when

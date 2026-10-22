@@ -129,11 +129,8 @@ func Render(st Status, err error, o Options) View {
 		v.Glyph = GlyphAttention
 		v.Headline = "VaultSync needs an update on this computer"
 		v.Detail = "The agent is older than this menu-bar app; run the setup link or vaultsync setup again"
-		if st.Engine == "running" && !st.Paused {
-			// Its report said its engine runs unpaused: quitting this app
-			// changes nothing. An agent that only answered 404 said nothing.
-			v.Quit.Title = "Quit (syncing continues)"
-		}
+		// Its report cannot be read for what syncs (no kinds), so Quit
+		// claims nothing — plain Quit is never wrong.
 		return v
 	case err != nil:
 		v.Glyph = GlyphAttention
