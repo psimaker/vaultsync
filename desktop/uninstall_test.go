@@ -716,9 +716,14 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 	})
 	t.Run("a tray.lock nobody holds is VaultSync's own leftover, and goes", func(t *testing.T) {
 		// An app that made its file and crashed before removing it: the
-		// file is unheld, VaultSync's own entry, and goes with the folder.
+		// file is unheld, VaultSync's own entry, and goes with the folder
+		// — reported removed (the fixture's own tray.lock is taken away
+		// first, so the one reported is the leftover).
 		lay, foreign := ownedFixture(t)
 		if err := os.Remove(foreign); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(lay.TrayLock()); err != nil {
 			t.Fatal(err)
 		}
 		ownEntriesRemovedHook = func(l layout) { writeFile(t, l.TrayLock(), "x") }
