@@ -21,6 +21,35 @@ import (
 // one file system (never into something mounted inside), and only after
 // every engine owner has stopped.
 
+// ownLock takes one of VaultSync's locks for the removal: held, the
+// refusal names who holds it; any other failure to take it is said as
+// it is — a directory in the lock's place is not a running VaultSync.
+func ownLock(path, held string) (func(), error) {
+	unlock, err := lockFile(path)
+	if errors.Is(err, ErrEngineRunning) {
+		return nil, refuse("%s", held)
+	}
+	return unlock, err
+}
+
+// ownEntriesRemovedHook runs once VaultSync's entries are removed and
+// before its folder is; a test puts something in the folder there.
+var ownEntriesRemovedHook func(lay layout)
+
+// onlyTrayLock: the folder holds nothing but tray.lock (or nothing).
+func onlyTrayLock(root *os.Root) bool {
+	entries, err := fs.ReadDir(root.FS(), ".")
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.Name() != "tray.lock" {
+			return false
+		}
+	}
+	return true
+}
+
 // ownedEntries are the names VaultSync creates in its directory.
 var ownedEntries = []string{"bin", "syncthing", "agent.json", "pairing.json", "last-error.txt", "agent.lock", "pair.lock", "setup.lock", "agent.sock", "control-socket.log", "control-socket-error.txt", "state.lock", "tray.lock"}
 
@@ -185,9 +214,9 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, error) {
 	// No engine owner may run: the background service is gone, and the locks
 	// tell whether a `vaultsync run`, `pair` or `setup` still does.
 	for _, lock := range []string{lay.Lock, filepath.Join(lay.Base, "pair.lock"), filepath.Join(lay.Base, "setup.lock")} {
-		unlock, err := lockFile(lock)
+		unlock, err := ownLock(lock, "VaultSync is still running on this computer (a vaultsync run, pair or setup). Stop it, then run vaultsync uninstall --remove-data again.")
 		if err != nil {
-			return nil, refuse("VaultSync is still running on this computer (a vaultsync run, pair or setup). Stop it, then run vaultsync uninstall --remove-data again.")
+			return nil, err
 		}
 		defer unlock()
 	}
@@ -195,10 +224,7 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, error) {
 	// kept through the removal; an app that takes the lock after agent.json
 	// is gone finds nothing to lock and removes the file it made (the
 	// tray's TakeLock), so the folder ends up empty.
-	unlockTray, err := lockFile(lay.TrayLock())
-	if errors.Is(err, ErrEngineRunning) {
-		return nil, refuse("The VaultSync menu-bar app is running on this computer. Quit it, then run vaultsync uninstall --remove-data again.")
-	}
+	unlockTray, err := ownLock(lay.TrayLock(), "The VaultSync menu-bar app is running on this computer. Quit it, then run vaultsync uninstall --remove-data again.")
 	if err != nil {
 		return nil, err
 	}
@@ -241,8 +267,22 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, error) {
 			}
 		}
 	}
-	if err := os.Remove(lay.Base); err == nil {
-		removed = append(removed, lay.Base)
+	if ownEntriesRemovedHook != nil {
+		ownEntriesRemovedHook(lay)
+	}
+	// The menu-bar app may have made a fresh tray.lock just now (its look
+	// at agent.json came before the removal); it removes that file itself
+	// the moment it sees agent.json gone — so a folder holding nothing
+	// but tray.lock gets a moment. Anything else in it keeps the folder.
+	for try := 0; ; try++ {
+		if err := os.Remove(lay.Base); err == nil {
+			removed = append(removed, lay.Base)
+			break
+		}
+		if try == 20 || !onlyTrayLock(root) {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 	if lay.Logs != "" {
 		if _, err := os.Lstat(lay.Logs); err == nil {

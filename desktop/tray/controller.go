@@ -406,14 +406,9 @@ func (c *Controller) startPairing(ctx context.Context, done chan<- string) error
 	if err := c.refresh(ctx); err != nil {
 		return err
 	}
-	if !c.known || !c.view.Pair.Enabled {
-		return nil
-	}
-	cl, err := c.client()
-	if err != nil {
-		c.notice = err.Error()
-		c.notify(ctx, c.notice)
-		c.render()
+	// Known means the refresh reached the agent through c.cl.
+	cl := c.cl
+	if !c.known || !c.view.Pair.Enabled || cl == nil {
 		return nil
 	}
 	c.pairing = true

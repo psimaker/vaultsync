@@ -31,25 +31,26 @@ func TestIssue176_TrayShowsWhatTheAgentReports(t *testing.T) {
 		detail   string
 		pause    Action
 		pair     Action
+		quit     string
 	}{
-		{"up to date", withVaults(base, "up to date"), GlyphSynced, "Up to date", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
-		{"connected, a vault waiting", withVaults(base, "up to date", "waiting for your Hub to take it"), GlyphSyncing, "1 vault waiting for your Hub", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
-		{"connected, two vaults waiting", withVaults(base, "waiting for your Hub to take it", "waiting for your Hub"), GlyphSyncing, "2 vaults waiting for your Hub", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
-		{"syncing", withVaults(base, "syncing — 42 %", "up to date"), GlyphSyncing, "Syncing 1 vault", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
-		{"scanning and uploading", withVaults(base, "scanning the folder", "uploading to your Hub — 3 items left"), GlyphSyncing, "Syncing 2 vaults", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
-		{"an error outranks syncing", withVaults(base, "syncing", "error: permission denied — allow access to this folder (on a Mac: allow “vaultsync” in System Settings → Privacy & Security → Files & Folders), then run vaultsync stop and vaultsync start"), GlyphAttention, "Attention needed", "Vault 2: error: permission denied — allow access to this folder (on a Mac: allow “vaultsync” in System Settings → Privacy & Security → Files & Folders), then run vaultsync stop and vaultsync start", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
-		{"files that could not sync", withVaults(base, "3 files could not sync — see the engine's log"), GlyphAttention, "Attention needed", "Vault 1: 3 files could not sync — see the engine's log", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
-		{"a vault the engine gave no report on this time", withVaults(base, "up to date", "unknown"), GlyphSyncing, "1 vault without a status right now", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
-		{"no Hub paired", withVaults(Status{Engine: "running", Report: Report{Hubs: []Hub{}}}), GlyphOffline, "No Hub paired yet", "Pair a Vault… pairs this computer with your Hub", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
-		{"Hub not connected", withVaults(Status{Engine: "running", Report: Report{Hubs: []Hub{{Name: "Office Hub", State: "not connected", Kind: control.KindWaiting}}}}, "waiting for your Hub"), GlyphOffline, "Waiting for your Hub", "Not connected right now; syncing resumes when it is", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
-		{"connected through a relay", withVaults(Status{Engine: "running", Report: Report{Hubs: []Hub{{Name: "Office Hub", State: "connected through a relay (slower; a direct connection is not possible right now)", Kind: control.KindOK}}}}, "up to date"), GlyphSynced, "Up to date", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
-		{"connected, no vault", base, GlyphSynced, "Connected — no vault yet", "Pair a Vault… adds one", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
-		{"paused", paused(withVaults(base, "paused on this computer", "2 items left to sync")), GlyphPaused, "Paused on this computer", "", Action{"Resume Syncing", true}, Action{"Pair a Vault… (resume syncing first)", false}},
-		{"paused with an error: the error shows", paused(withVaults(base, "error: boom", "paused on this computer")), GlyphAttention, "Attention needed", "Vault 1: error: boom", Action{"Resume Syncing", true}, Action{"Pair a Vault… (resume syncing first)", false}},
-		{"one vault paused on its own", withVaults(base, "up to date", "paused"), GlyphPaused, "1 vault paused", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
-		{"two vaults paused on the Hub's side", withVaults(base, "paused on your Hub", "paused on your Hub"), GlyphPaused, "2 vaults paused", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
-		{"one of two Hubs paused, the other away", withVaults(Status{Engine: "running", Report: Report{Hubs: []Hub{{Name: "Office", State: "paused on this computer", Kind: control.KindPaused, Remedy: "vaultsync resume starts syncing again"}, {Name: "Home", State: "not connected", Kind: control.KindWaiting}}}}, "waiting for your Hub"), GlyphPaused, "1 of 2 Hubs paused", "vaultsync resume in a terminal resumes it", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}},
-		{"engine starting", Status{Engine: "starting", Report: Report{Vaults: []Vault{{Label: "Notes", Path: "/home/me/Notes", State: "not syncing — the engine is stopped", Kind: control.KindOffline}}}}, GlyphSyncing, "Starting the sync engine…", "", Action{"Pause Syncing", false}, Action{"Pair a Vault…", false}},
+		{"up to date", withVaults(base, "up to date"), GlyphSynced, "Up to date", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}, "Quit (syncing continues)"},
+		{"connected, a vault waiting", withVaults(base, "up to date", "waiting for your Hub to take it"), GlyphSyncing, "1 vault waiting for your Hub", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}, "Quit (syncing continues)"},
+		{"connected, two vaults waiting", withVaults(base, "waiting for your Hub to take it", "waiting for your Hub"), GlyphSyncing, "2 vaults waiting for your Hub", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}, "Quit (syncing continues)"},
+		{"syncing", withVaults(base, "syncing — 42 %", "up to date"), GlyphSyncing, "Syncing 1 vault", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}, "Quit (syncing continues)"},
+		{"scanning and uploading", withVaults(base, "scanning the folder", "uploading to your Hub — 3 items left"), GlyphSyncing, "Syncing 2 vaults", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}, "Quit (syncing continues)"},
+		{"an error outranks syncing", withVaults(base, "syncing", "error: permission denied — allow access to this folder (on a Mac: allow “vaultsync” in System Settings → Privacy & Security → Files & Folders), then run vaultsync stop and vaultsync start"), GlyphAttention, "Attention needed", "Vault 2: error: permission denied — allow access to this folder (on a Mac: allow “vaultsync” in System Settings → Privacy & Security → Files & Folders), then run vaultsync stop and vaultsync start", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}, "Quit (syncing continues)"},
+		{"files that could not sync", withVaults(base, "3 files could not sync — see the engine's log"), GlyphAttention, "Attention needed", "Vault 1: 3 files could not sync — see the engine's log", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}, "Quit (syncing continues)"},
+		{"a vault the engine gave no report on this time", withVaults(base, "up to date", "unknown"), GlyphSyncing, "1 vault without a status right now", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}, "Quit (syncing continues)"},
+		{"no Hub paired", withVaults(Status{Engine: "running", Report: Report{Hubs: []Hub{}}}), GlyphOffline, "No Hub paired yet", "Pair a Vault… pairs this computer with your Hub", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}, "Quit"},
+		{"Hub not connected", withVaults(Status{Engine: "running", Report: Report{Hubs: []Hub{{Name: "Office Hub", State: "not connected", Kind: control.KindWaiting}}}}, "waiting for your Hub"), GlyphOffline, "Waiting for your Hub", "Not connected right now; syncing resumes when it is", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}, "Quit"},
+		{"connected through a relay", withVaults(Status{Engine: "running", Report: Report{Hubs: []Hub{{Name: "Office Hub", State: "connected through a relay (slower; a direct connection is not possible right now)", Kind: control.KindOK}}}}, "up to date"), GlyphSynced, "Up to date", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}, "Quit (syncing continues)"},
+		{"connected, no vault", base, GlyphSynced, "Connected — no vault yet", "Pair a Vault… adds one", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}, "Quit (syncing continues)"},
+		{"paused", paused(withVaults(base, "paused on this computer", "2 items left to sync")), GlyphPaused, "Paused on this computer", "", Action{"Resume Syncing", true}, Action{"Pair a Vault… (resume syncing first)", false}, "Quit"},
+		{"paused with an error: the error shows", paused(withVaults(base, "error: boom", "paused on this computer")), GlyphAttention, "Attention needed", "Vault 1: error: boom", Action{"Resume Syncing", true}, Action{"Pair a Vault… (resume syncing first)", false}, "Quit"},
+		{"one vault paused on its own", withVaults(base, "up to date", "paused"), GlyphPaused, "1 vault paused", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}, "Quit (syncing continues)"},
+		{"two vaults paused on the Hub's side", withVaults(base, "paused on your Hub", "paused on your Hub"), GlyphPaused, "2 vaults paused", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}, "Quit (syncing continues)"},
+		{"one of two Hubs paused, the other away", withVaults(Status{Engine: "running", Report: Report{Hubs: []Hub{{Name: "Office", State: "paused on this computer", Kind: control.KindPaused, Remedy: "vaultsync resume starts syncing again"}, {Name: "Home", State: "not connected", Kind: control.KindWaiting}}}}, "waiting for your Hub"), GlyphPaused, "1 of 2 Hubs paused", "vaultsync resume in a terminal resumes it", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}, "Quit (syncing continues)"},
+		{"engine starting", Status{Engine: "starting", Report: Report{Vaults: []Vault{{Label: "Notes", Path: "/home/me/Notes", State: "not syncing — the engine is stopped", Kind: control.KindOffline}}}}, GlyphSyncing, "Starting the sync engine…", "", Action{"Pause Syncing", false}, Action{"Pair a Vault…", false}, "Quit"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -60,11 +61,7 @@ func TestIssue176_TrayShowsWhatTheAgentReports(t *testing.T) {
 			if v.Pause != c.pause || v.Pair != c.pair {
 				t.Fatalf("actions: %+v %+v, want %+v %+v", v.Pause, v.Pair, c.pause, c.pair)
 			}
-			wantQuit := "Quit"
-			if c.st.Engine == "running" && !c.st.Paused {
-				wantQuit = "Quit (syncing continues)"
-			}
-			if v.Log != (Action{"Open Log", true}) || v.Quit != (Action{wantQuit, true}) {
+			if v.Log != (Action{"Open Log", true}) || v.Quit != (Action{c.quit, true}) {
 				t.Fatalf("log/quit: %+v %+v", v.Log, v.Quit)
 			}
 			if len(v.Vaults) != len(c.st.Vaults) || len(v.Hubs) != len(c.st.Hubs) {

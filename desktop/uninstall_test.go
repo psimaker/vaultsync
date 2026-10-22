@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ownedFixture is VaultSync's own folder as setup leaves it, plus a file
@@ -138,6 +139,21 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 			t.Fatalf("got %v", err)
 		}
 		unlock()
+	})
+	t.Run("an engine lock cannot be taken", func(t *testing.T) {
+		// The same for the engine's locks: a directory at pair.lock is
+		// not a running vaultsync pair, the error comes through.
+		lay, _ := ownedFixture(t)
+		if err := os.Mkdir(filepath.Join(lay.Base, "pair.lock"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		_, err := removeOwnData(lay, nil, "darwin")
+		if err == nil || errors.As(err, new(*refusal)) || strings.Contains(err.Error(), "still running") {
+			t.Fatalf("got %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(lay.Base, "bin", "syncthing")); err != nil {
+			t.Fatal("files were removed despite the error")
+		}
 	})
 	t.Run("the tray lock cannot be taken", func(t *testing.T) {
 		// A lock that fails for another reason than a holder is said as
@@ -418,4 +434,62 @@ func TestIssue175_RemoveDataSeesMountsBehindALinkedParent(t *testing.T) {
 	if data, err := os.ReadFile(filepath.Join(lay.Base, "syncthing", "data", "note.md")); err != nil || string(data) != "mounted vault content" {
 		t.Fatal("content behind the mount was removed")
 	}
+}
+
+// The menu-bar app may make a fresh tray.lock between the entries' removal
+// and the folder's (its look at agent.json came first); it removes that
+// file itself as soon as it sees agent.json gone, and the uninstall waits
+// that moment for the folder. Anything else keeps the folder, at once.
+func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
+	t.Run("tray.lock made and removed in between", func(t *testing.T) {
+		lay, foreign := ownedFixture(t)
+		if err := os.Remove(foreign); err != nil {
+			t.Fatal(err)
+		}
+		ownEntriesRemovedHook = func(l layout) {
+			if l.Base != lay.Base {
+				t.Errorf("hook for %q", l.Base)
+			}
+			writeFile(t, l.TrayLock(), "x")
+			go func() {
+				time.Sleep(150 * time.Millisecond)
+				_ = os.Remove(l.TrayLock())
+			}()
+		}
+		defer func() { ownEntriesRemovedHook = nil }()
+		removed, err := removeOwnData(lay, nil, "darwin")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(lay.Base); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("the folder stayed: %v", err)
+		}
+		found := false
+		for _, r := range removed {
+			if r == lay.Base {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("the folder is not reported as removed: %v", removed)
+		}
+	})
+	t.Run("something else in the folder keeps it, without a wait", func(t *testing.T) {
+		lay, foreign := ownedFixture(t)
+		if err := os.Remove(foreign); err != nil {
+			t.Fatal(err)
+		}
+		ownEntriesRemovedHook = func(l layout) { writeFile(t, filepath.Join(l.Base, "notes.md"), "keep me") }
+		defer func() { ownEntriesRemovedHook = nil }()
+		start := time.Now()
+		if _, err := removeOwnData(lay, nil, "darwin"); err != nil {
+			t.Fatal(err)
+		}
+		if took := time.Since(start); took > 500*time.Millisecond {
+			t.Fatalf("waited %v for a folder that is not VaultSync's alone", took)
+		}
+		if _, err := os.Stat(filepath.Join(lay.Base, "notes.md")); err != nil {
+			t.Fatalf("someone's file: %v", err)
+		}
+	})
 }

@@ -48,8 +48,9 @@ type Action struct {
 	Enabled bool
 }
 
-// Line is one line of the menu: Text, and the longer Tooltip when the
-// agent's words were cut for the line (Tooltip is "" otherwise).
+// Line is one line of the menu: Text, and a Tooltip where there is more
+// to say — a vault's folder (~/…), a Hub's state with the remedy the
+// terminal names; "" otherwise.
 type Line struct {
 	Text    string
 	Tooltip string
@@ -104,11 +105,6 @@ func Render(st Status, err error, o Options) View {
 		Pause:  Action{Title: "Pause Syncing"},
 		Pair:   Action{Title: "Pair a Vault…"},
 		Quit:   Action{Title: "Quit", Enabled: true},
-	}
-	if err == nil && st.Engine == "running" && !st.Paused {
-		// Quitting the menu-bar app quits the icon alone — said where
-		// something does sync; not under "not running" or "paused".
-		v.Quit.Title = "Quit (syncing continues)"
 	}
 	if o.LogPath != "" {
 		v.Log = Action{Title: "Open Log", Enabled: true}
@@ -176,6 +172,12 @@ func Render(st Status, err error, o Options) View {
 		if v.Glyph != GlyphAttention {
 			v.Glyph, v.Headline, v.Detail = GlyphPaused, "Paused on this computer", ""
 		}
+	}
+	if !st.Paused && v.Glyph != GlyphOffline {
+		// Quitting the menu-bar app quits the icon alone — said where the
+		// headline does not say that nothing syncs (not running, starting,
+		// no Hub, no connection, paused).
+		v.Quit.Title = "Quit (syncing continues)"
 	}
 	return v
 }
