@@ -268,6 +268,11 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		if err != nil || kept != nil || !slices.Contains(removed, lay.Base) {
 			t.Fatalf("got %v %v %v", removed, kept, err)
 		}
+		// agent.json is the first entry to go — before the engine's
+		// database, which may take a while.
+		if len(removed) == 0 || removed[0] != lay.State {
+			t.Fatalf("agent.json is not the first to go: %v", removed)
+		}
 		for _, name := range []string{"agent.lock", "pair.lock", "setup.lock"} {
 			if slices.Contains(removed, filepath.Join(lay.Base, name)) {
 				t.Fatalf("%s, made by the removal itself, reported removed", name)
