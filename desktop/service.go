@@ -261,10 +261,10 @@ func (s service) systemdStart(fileChanged, binaryChanged bool) error {
 	return nil
 }
 
-// uninstall stops the service and removes its file. Not installed is fine.
-// uninstall removes the service and says whether it found one — a loaded
-// job on a Mac, a unit file on Linux — whose own run may hold the
-// engine's lock a moment longer.
+// uninstall stops the service and removes its file, and says whether it
+// found one — a loaded job on a Mac; on Linux a unit file, or a unit the
+// manager still runs without its file — whose own run may hold the
+// engine's lock a moment longer. Not installed is fine.
 func (s service) uninstall() (found bool, err error) {
 	path, err := s.unitPath()
 	if err != nil {
@@ -279,7 +279,9 @@ func (s service) uninstall() (found bool, err error) {
 			}
 		}
 	case "linux":
-		if _, err := os.Stat(path); err == nil {
+		// A unit the manager runs without its file (removed by hand, no
+		// daemon-reload; a config home that moved) is stopped all the same.
+		if _, err := os.Stat(path); err == nil || s.running() {
 			found = true
 			if out, err := s.run.run("systemctl", "--user", "disable", "--now", systemdUnit); err != nil {
 				return found, fmt.Errorf("systemctl --user disable --now: %v: %s", err, out)

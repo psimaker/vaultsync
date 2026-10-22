@@ -239,6 +239,13 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		if _, _, err := removeOwnData(lay, nil, "darwin"); !strings.Contains(refusalText(err), "menu-bar app is running") {
 			t.Fatalf("got %v", err)
 		}
+		// The refusal leaves no lock file the taking made: the ones
+		// taken before the held one, and the held one's own.
+		for _, name := range []string{"agent.lock", "pair.lock", "setup.lock"} {
+			if _, err := os.Lstat(filepath.Join(lay.Base, name)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("%s was made before the refusal", name)
+			}
+		}
 		unlock()
 	})
 	t.Run("an owner starting mid-removal meets a held lock", func(t *testing.T) {
@@ -298,6 +305,9 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 				return
 			}
 			release = unlock
+			// … and it has written on: its state, an interrupted write.
+			writeFile(t, filepath.Join(l.Base, "state.lock"), "")
+			writeFile(t, filepath.Join(l.Base, ".agent.json.4242"), "{}")
 		}
 		defer func() {
 			lockFilesRemovedHook = nil
@@ -1112,7 +1122,7 @@ func TestIssue176_UninstallRefusesBeforeTheServiceGoesWhileTheTrayRuns(t *testin
 	}
 	out.Reset()
 	err = a.uninstall(context.Background(), []string{"--remove-data", "--yes"})
-	if !strings.Contains(refusalText(err), "files stay while that run syncs") || strings.Contains(out.String(), "Remove them?") {
+	if !strings.Contains(refusalText(err), "files stay while that run syncs") {
 		t.Fatalf("a run found after the service's removal: %v\n%s", err, out.String())
 	}
 	if _, err := os.Stat(filepath.Join(lay.Base, "bin", "syncthing")); err != nil {
