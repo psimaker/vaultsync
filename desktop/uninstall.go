@@ -44,7 +44,7 @@ func plainFolder(dir string) (os.FileInfo, error) {
 const (
 	ownerRunningRefusal = "VaultSync is still running on this computer (a vaultsync run, pair or setup). Stop it, then run vaultsync uninstall --remove-data again."
 	trayRunningRefusal  = "The VaultSync menu-bar app is running on this computer. Quit it, then run vaultsync uninstall --remove-data again."
-	engineHeldRefusal   = "VaultSync's sync engine is still running on this computer — the background service (on its way down, or one VaultSync could not ask about), or a vaultsync run in a terminal. Stop the run (Ctrl-C in its terminal), or remove the service first with vaultsync uninstall, then run vaultsync uninstall --remove-data again."
+	busyRefusal         = "VaultSync is busy on this computer — the background service (starting, pairing, on its way down, or one VaultSync could not ask about), or a vaultsync run, pair or setup in a terminal. Wait a moment, stop what runs in a terminal, or remove the service first with vaultsync uninstall; then run vaultsync uninstall --remove-data again."
 	notOwnFolderRefusal = "%s does not look like VaultSync's own folder (no agent.json), so VaultSync does not remove anything in it."
 	// serviceRemedy follows a refusal the probe raises before the service
 	// is touched: the way to the service's removal, and the folder's.
@@ -71,21 +71,23 @@ func errnoOf(err error) error {
 }
 
 // ownLockEntry is one of VaultSync's own locks: where it is, what the
-// uninstall says when it is held, and whether the background service is
-// its holder while it runs.
+// removal says when it is held (the service is gone by then), what the
+// probe before the service goes says (the service may hold it: at its
+// start it holds setup.lock, during a socket pairing pair.lock), and
+// whether a running service holds it for as long as it runs.
 type ownLockEntry struct {
-	path, held string
-	service    bool
+	path, held, probed string
+	service            bool
 }
 
 // ownLocks is the one list of VaultSync's own locks, for the probe before
 // the service goes and for the removal after it.
 func ownLocks(lay layout) []ownLockEntry {
 	return []ownLockEntry{
-		{lay.Lock, ownerRunningRefusal, true},
-		{filepath.Join(lay.Base, "pair.lock"), ownerRunningRefusal, false},
-		{filepath.Join(lay.Base, "setup.lock"), ownerRunningRefusal, false},
-		{lay.TrayLock(), trayRunningRefusal, false},
+		{lay.Lock, ownerRunningRefusal, busyRefusal, true},
+		{filepath.Join(lay.Base, "pair.lock"), ownerRunningRefusal, busyRefusal, false},
+		{filepath.Join(lay.Base, "setup.lock"), ownerRunningRefusal, busyRefusal, false},
+		{lay.TrayLock(), trayRunningRefusal, trayRunningRefusal, false},
 	}
 }
 
@@ -106,36 +108,31 @@ func ownFolder(lay layout) (exists, own bool, err error) {
 
 // probeOwnLocks refuses while one of VaultSync's own locks is held —
 // probed before the service goes and before any question, so the refusal
-// costs nothing, and making no file (lock.Probe). The engine's lock is
-// probed only while the service does not run (asked only then: it is a
-// call to the service manager); a running service holds it until it is
-// removed, and a holder found now may be the service on its way down or
-// a vaultsync run in a terminal, so the words name both. A missing
-// folder is nothing to probe; a link in the folder's place, or a folder
-// that is not VaultSync's, is refused here with the removal's words.
-func probeOwnLocks(lay layout, engineToo func() bool) error {
+// costs nothing, and making no file (lock.Probe). The locks are looked
+// at before the folder is judged VaultSync's own: a setup in progress
+// holds setup.lock before it writes agent.json, and is named as such
+// rather than the folder handed to the person to remove. A running
+// service holds the engine's lock for as long as it runs, so that one's
+// held verdict is passed over then; its error (a link, a directory in
+// the lock's place) is not. A missing folder is nothing to probe; a link
+// in the folder's place, or a folder that is not VaultSync's, is refused
+// with the removal's words.
+func probeOwnLocks(lay layout, serviceRunning bool) error {
 	exists, own, err := ownFolder(lay)
 	if err != nil || !exists {
 		return withServiceRemedy(err)
 	}
-	if !own {
-		return refuse(notOwnFolderRefusal+serviceRemedy, lay.Base)
-	}
 	for _, l := range ownLocks(lay) {
-		held := l.held
-		if l.service {
-			if !engineToo() {
-				continue
-			}
-			held = engineHeldRefusal
-		}
 		isHeld, err := lock.Probe(l.path)
 		if err != nil {
 			return err
 		}
-		if isHeld {
-			return refuse("%s", held)
+		if isHeld && !(l.service && serviceRunning) {
+			return refuse("%s", l.probed)
 		}
+	}
+	if !own {
+		return refuse(notOwnFolderRefusal+serviceRemedy, lay.Base)
 	}
 	return nil
 }
@@ -187,12 +184,16 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 		return ok, err
 	}
 	vaults := configuredVaultPaths(a.engine())
+	// Whether the service runs, asked once (a read of the service manager):
+	// it decides whose the engine's lock is at the probe, and whether a
+	// terminal run is worth waiting for after the service's removal.
+	serviceRunning := a.svc.running()
 	if *removeData {
 		// Whoever holds one of VaultSync's own locks — a pair or setup in
 		// progress, the menu-bar app, a vaultsync run in a terminal while
 		// the service does not run — must be gone before anything is asked
 		// or changed: probed first, so the refusal costs nothing.
-		if err := probeOwnLocks(a.lay, func() bool { return !a.svc.running() }); err != nil {
+		if err := probeOwnLocks(a.lay, serviceRunning); err != nil {
 			return err
 		}
 	}
@@ -216,7 +217,14 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 	if err := a.svc.uninstall(); err != nil {
 		return err
 	}
-	switch running, err := engineOwnerRunning(a.lay, 25*time.Second); {
+	// The service's own run lets go of the lock a moment after the removal;
+	// a terminal run holds it for good, and without a service it is the
+	// one holder there can be — known at once.
+	grace := time.Duration(0)
+	if serviceRunning {
+		grace = 25 * time.Second
+	}
+	switch running, err := engineOwnerRunning(a.lay, grace); {
 	case err != nil:
 		t.say("✓ Background service removed. VaultSync could not tell whether a vaultsync run started in a terminal still syncs on this computer (its lock file: %v); vaultsync status in that terminal tells.", errnoOf(err))
 	case running:
@@ -261,7 +269,8 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 	for _, r := range removed {
 		t.say("  removed %s", tildePath(a.home, r))
 	}
-	if kept != nil && !kept.failed {
+	if kept != nil && (!kept.failed || err != nil) {
+		// A note; or a failure the error returned below would hide.
 		t.say("  kept %s — %s", tildePath(a.home, kept.path), kept.why)
 	}
 	if err != nil {
@@ -372,6 +381,13 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 	if !own {
 		return nil, nil, refuse(notOwnFolderRefusal, lay.Base)
 	}
+	// The folder is checked and opened before any lock file is made in it:
+	// a refusal that says nothing was removed leaves nothing behind.
+	root, base, err := openOwnedDir(lay.Base, vaults, goos)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer root.Close()
 	// No owner may run: the background service is gone, and the locks tell
 	// whether a `vaultsync run`, `pair` or `setup` still does — or the
 	// menu-bar app. Each is held through the removal; an app that takes
@@ -384,11 +400,6 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 		}
 		defer unlock()
 	}
-	root, base, err := openOwnedDir(lay.Base, vaults, goos)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer root.Close()
 	var removed []string
 	for _, name := range ownedEntries {
 		entry, err := root.Lstat(name)
@@ -471,11 +482,25 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 			// held every lock, so no app is about to remove it — it is a
 			// leftover of an app that did not get to, and goes like the
 			// rest of the inventory; held, an app is about to remove it.
-			if held, perr := lock.Probe(filepath.Join(lay.Base, "tray.lock")); perr == nil && !held && root.Remove("tray.lock") == nil && os.Remove(lay.Base) == nil {
+			trayLock := filepath.Join(lay.Base, "tray.lock")
+			held, perr := lock.Probe(trayLock)
+			switch {
+			case perr != nil:
+				kept = &keptFolder{lay.Base, fmt.Sprintf("its tray.lock could not be looked at (%v); remove the folder by hand", errnoOf(perr)), true}
+			case held:
+				kept = &keptFolder{lay.Base, "a tray.lock the menu-bar app holds stayed; quit the app, then remove the folder by hand", true}
+			default:
+				if rerr := root.Remove("tray.lock"); rerr != nil {
+					kept = &keptFolder{lay.Base, fmt.Sprintf("its tray.lock could not be removed (%v); remove the folder by hand", errnoOf(rerr)), true}
+					break
+				}
+				removed = append(removed, trayLock)
+				if rerr := os.Remove(lay.Base); rerr != nil {
+					kept = &keptFolder{lay.Base, fmt.Sprintf("it could not be removed (%v); remove the folder by hand", errnoOf(rerr)), true}
+					break
+				}
 				removed = append(removed, lay.Base)
-				break
 			}
-			kept = &keptFolder{lay.Base, "a tray.lock the menu-bar app left in it stayed; remove the folder by hand", true}
 			break
 		}
 		time.Sleep(removeRetryWait)

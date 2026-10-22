@@ -105,7 +105,7 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(target, "bin", "syncthing")); err != nil {
 			t.Fatal("removal followed the link")
 		}
-		if err := probeOwnLocks(lay, func() bool { return true }); !strings.Contains(refusalText(err), "not a plain folder") || !strings.Contains(refusalText(err), "without --remove-data still removes the background service") {
+		if err := probeOwnLocks(lay, false); !strings.Contains(refusalText(err), "not a plain folder") || !strings.Contains(refusalText(err), "without --remove-data still removes the background service") {
 			t.Fatalf("the probe through a link: %v", err)
 		}
 		// The look for a running engine reads through the link as it is,
@@ -135,17 +135,51 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		if err := os.Remove(lay.State); err != nil {
 			t.Fatal(err)
 		}
-		// The probe before the service goes refuses a folder that is not
-		// VaultSync's with the removal's own words, before any lock in it
-		// is looked at: the refusal costs nothing there either.
+		// The probe before the service goes names a holder first — a
+		// setup in progress holds setup.lock before it writes agent.json,
+		// and must not be handed the folder to remove — and only then
+		// refuses a folder that is not VaultSync's, with the removal's
+		// words and the way out.
+		holdSetup, err := lockFile(filepath.Join(lay.Base, "setup.lock"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := probeOwnLocks(lay, false); !strings.Contains(refusalText(err), "VaultSync is busy") || strings.Contains(refusalText(err), "remove by hand") {
+			t.Fatalf("the probe during a setup: %v", err)
+		}
+		holdSetup()
 		hold, err := lockFile(lay.TrayLock())
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := probeOwnLocks(lay, func() bool { return true }); !strings.Contains(refusalText(err), "does not look like VaultSync's own folder") || !strings.Contains(refusalText(err), "without --remove-data still removes the background service") {
-			t.Fatalf("the probe on a folder without agent.json: %v", err)
+		if err := probeOwnLocks(lay, false); !strings.Contains(refusalText(err), "menu-bar app is running") {
+			t.Fatalf("the probe with the app running: %v", err)
 		}
 		hold()
+		if err := probeOwnLocks(lay, false); !strings.Contains(refusalText(err), "does not look like VaultSync's own folder") || !strings.Contains(refusalText(err), "without --remove-data still removes the background service") {
+			t.Fatalf("the probe on a folder without agent.json: %v", err)
+		}
+		// With the service running, a held setup.lock may be its own
+		// start: the words name the service and the way out, not "Stop
+		// it". A link at the engine's lock is an error now, not after
+		// the service is gone.
+		holdSetup, err = lockFile(filepath.Join(lay.Base, "setup.lock"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := probeOwnLocks(lay, true); !strings.Contains(refusalText(err), "background service") || !strings.Contains(refusalText(err), "vaultsync uninstall;") {
+			t.Fatalf("the probe during the service's start: %v", err)
+		}
+		holdSetup()
+		if err := os.Symlink(filepath.Join(lay.Base, "elsewhere"), lay.Lock); err != nil {
+			t.Fatal(err)
+		}
+		if err := probeOwnLocks(lay, true); err == nil || errors.As(err, new(*refusal)) {
+			t.Fatalf("a link at the engine's lock while the service runs: %v", err)
+		}
+		if err := os.Remove(lay.Lock); err != nil {
+			t.Fatal(err)
+		}
 		if _, _, err := removeOwnData(lay, nil, "darwin"); !strings.Contains(refusalText(err), "does not look like VaultSync's own folder") {
 			t.Fatalf("got %v", err)
 		}
@@ -153,6 +187,13 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 	t.Run("a vault overlaps it", func(t *testing.T) {
 		lay, _ := ownedFixture(t)
 		_, _, err := removeOwnData(lay, []string{filepath.Dir(lay.Base)}, "darwin")
+		// A refusal that says nothing was removed leaves nothing behind:
+		// the locks are taken after the folder is checked.
+		for _, name := range []string{"agent.lock", "pair.lock", "setup.lock"} {
+			if _, err := os.Lstat(filepath.Join(lay.Base, name)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("%s was made before the refusal", name)
+			}
+		}
 		if !strings.Contains(refusalText(err), "overlaps the vault") {
 			t.Fatalf("got %v", err)
 		}
@@ -228,7 +269,7 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		if _, _, err := removeOwnData(lay, nil, "darwin"); err == nil || errors.As(err, new(*refusal)) {
 			t.Fatalf("got %v", err)
 		}
-		if err := probeOwnLocks(lay, func() bool { return true }); err == nil || errors.As(err, new(*refusal)) {
+		if err := probeOwnLocks(lay, false); err == nil || errors.As(err, new(*refusal)) {
 			t.Fatalf("the probe: %v", err)
 		}
 		// A link at the engine's lock (the removal above made the file;
@@ -686,7 +727,7 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 		removeRetryWait = time.Millisecond
 		defer func() { removeRetryWait = orig }()
 		removed, kept, err := removeOwnData(lay, nil, "darwin")
-		if err != nil || kept != nil || !slices.Contains(removed, lay.Base) {
+		if err != nil || kept != nil || !slices.Contains(removed, lay.Base) || !slices.Contains(removed, lay.TrayLock()) {
 			t.Fatalf("got %v %v %v", removed, kept, err)
 		}
 		if _, err := os.Stat(lay.Base); !errors.Is(err, os.ErrNotExist) {
@@ -718,7 +759,7 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 		removeRetryWait = time.Millisecond
 		defer func() { removeRetryWait = orig }()
 		removed, kept, err := removeOwnData(lay, nil, "darwin")
-		if err != nil || kept == nil || !kept.failed || !strings.Contains(kept.why, "a tray.lock the menu-bar app left in it stayed") {
+		if err != nil || kept == nil || !kept.failed || !strings.Contains(kept.why, "a tray.lock the menu-bar app holds stayed") {
 			t.Fatalf("got %v %v", kept, err)
 		}
 		for _, r := range removed {
@@ -767,7 +808,7 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 		removeRetryWait = time.Millisecond
 		defer func() { removeRetryWait = orig }()
 		_, kept, err := removeOwnData(lay, nil, "darwin")
-		if kept == nil || !strings.Contains(kept.why, "a tray.lock the menu-bar app left in it stayed") || !strings.Contains(refusalText(err), "not a plain folder") {
+		if kept == nil || !strings.Contains(kept.why, "a tray.lock the menu-bar app holds stayed") || !strings.Contains(refusalText(err), "not a plain folder") {
 			t.Fatalf("got %v %v", kept, err)
 		}
 	})
@@ -786,13 +827,26 @@ func TestIssue176_UninstallRefusesBeforeTheServiceGoesWhileTheTrayRuns(t *testin
 	run := &fakeRunner{}
 	a := &app{goos: "linux", home: filepath.Dir(lay.Base), getenv: envOf(nil), lay: lay, out: &bytes.Buffer{},
 		svc: service{goos: "linux", home: filepath.Dir(lay.Base), getenv: envOf(nil), lay: lay, run: run}}
+	// The service's unit file is the witness that the service stayed.
+	unit, err := a.svc.unitPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, unit, "[Unit]\n")
+	serviceStayed := func(what string) {
+		t.Helper()
+		if serviceTouched(run.calls) {
+			t.Fatalf("%s: the service was touched before the refusal: %v", what, run.calls)
+		}
+		if _, err := os.Stat(unit); err != nil {
+			t.Fatalf("%s: the service's unit file went: %v", what, err)
+		}
+	}
 	err = a.uninstall(context.Background(), []string{"--remove-data", "--yes"})
 	if !strings.Contains(refusalText(err), "menu-bar app is running") {
 		t.Fatalf("got %v", err)
 	}
-	if serviceTouched(run.calls) {
-		t.Fatalf("the service was touched before the refusal: %v", run.calls)
-	}
+	serviceStayed("the app running")
 	if _, err := os.Stat(filepath.Join(lay.Base, "bin", "syncthing")); err != nil {
 		t.Fatal("files were removed despite the refusal")
 	}
@@ -814,10 +868,25 @@ func TestIssue176_UninstallRefusesBeforeTheServiceGoesWhileTheTrayRuns(t *testin
 		t.Fatal(err)
 	}
 	err = a.uninstall(context.Background(), []string{"--remove-data", "--yes"})
-	if !strings.Contains(refusalText(err), "sync engine is still running") || serviceTouched(run.calls) {
-		t.Fatalf("a run in a terminal: %v %v", err, run.calls)
+	if !strings.Contains(refusalText(err), "VaultSync is busy") {
+		t.Fatalf("a run in a terminal: %v", err)
+	}
+	serviceStayed("a run in a terminal")
+	// Without --remove-data the run is found at once, not after a wait
+	// meant for a service that was never running.
+	out := a.out.(*bytes.Buffer)
+	out.Reset()
+	start := time.Now()
+	if err := a.uninstall(context.Background(), []string{"--yes"}); err != nil {
+		t.Fatalf("uninstall beside a terminal run: %v", err)
+	}
+	if took := time.Since(start); took > 5*time.Second || !strings.Contains(out.String(), "still syncs") {
+		t.Fatalf("a terminal run beside no service: %v\n%s", took, out.String())
 	}
 	holdRun()
+	// The service went with that; it is back for the cases to come.
+	writeFile(t, unit, "[Unit]\n")
+	run.calls = nil
 
 	// A vaultsync pair or setup in progress is probed the same way — and
 	// the probe makes no file: the lock files that were not there before
@@ -832,9 +901,10 @@ func TestIssue176_UninstallRefusesBeforeTheServiceGoesWhileTheTrayRuns(t *testin
 		t.Fatal(err)
 	}
 	err = a.uninstall(context.Background(), []string{"--remove-data", "--yes"})
-	if !strings.Contains(refusalText(err), "pair or setup") || serviceTouched(run.calls) {
-		t.Fatalf("a setup in progress: %v %v", err, run.calls)
+	if !strings.Contains(refusalText(err), "VaultSync is busy") {
+		t.Fatalf("a setup in progress: %v", err)
 	}
+	serviceStayed("a setup in progress")
 	holdSetup()
 	for _, name := range []string{"agent.lock", "pair.lock", "tray.lock"} {
 		if _, err := os.Lstat(filepath.Join(lay.Base, name)); !errors.Is(err, os.ErrNotExist) {
@@ -855,9 +925,10 @@ func TestIssue176_UninstallRefusesBeforeTheServiceGoesWhileTheTrayRuns(t *testin
 		_ = os.Remove(filepath.Join(target, name))
 	}
 	err = a.uninstall(context.Background(), []string{"--remove-data", "--yes"})
-	if !strings.Contains(refusalText(err), "not a plain folder") || serviceTouched(run.calls) {
-		t.Fatalf("a link: %v %v", err, run.calls)
+	if !strings.Contains(refusalText(err), "not a plain folder") {
+		t.Fatalf("a link: %v", err)
 	}
+	serviceStayed("a link")
 	for _, name := range []string{"agent.lock", "pair.lock", "setup.lock", "tray.lock"} {
 		if _, err := os.Lstat(filepath.Join(target, name)); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("%s was made through the link", name)
@@ -881,8 +952,11 @@ func TestIssue176_UninstallRefusesBeforeTheServiceGoesWhileTheTrayRuns(t *testin
 	}
 	hold()
 
+	// The service went with that plain uninstall.
+	if _, err := os.Stat(unit); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the service's unit file stayed: %v", err)
+	}
 	// A folder kept for someone's file in it is said, beside what went.
-	out := a.out.(*bytes.Buffer)
 	out.Reset()
 	if err := a.uninstall(context.Background(), []string{"--remove-data", "--yes"}); err != nil {
 		t.Fatalf("uninstall --remove-data: %v", err)
@@ -916,6 +990,47 @@ func TestIssue176_UninstallRefusesBeforeTheServiceGoesWhileTheTrayRuns(t *testin
 		if err == nil || errors.As(err, new(*refusal)) || !strings.Contains(err.Error(), "was not removed") || strings.Contains(out.String(), "✓ VaultSync's own files are removed") {
 			t.Fatalf("a failed removal as an error: %v\n%s", err, out.String())
 		}
+		if err := os.Chmod(parent, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		ownEntriesRemovedHook = nil
+	}
+
+	// A kept folder beside a log folder that is refused: the failure is
+	// said as a line, so the log's refusal does not hide it.
+	lay2, foreign2 := ownedFixture(t)
+	if err := os.Remove(foreign2); err != nil {
+		t.Fatal(err)
+	}
+	real := lay2.Logs + "-real"
+	if err := os.Rename(lay2.Logs, real); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, lay2.Logs); err != nil {
+		t.Fatal(err)
+	}
+	var held *lock.Handle
+	ownEntriesRemovedHook = func(l layout) {
+		h, err := lock.Take(l.TrayLock())
+		if err != nil {
+			t.Fatal(err)
+		}
+		held = h
+	}
+	defer func() {
+		ownEntriesRemovedHook = nil
+		if held != nil {
+			held.Release()
+		}
+	}()
+	orig := removeRetryWait
+	removeRetryWait = time.Millisecond
+	defer func() { removeRetryWait = orig }()
+	a2 := &app{goos: "linux", home: filepath.Dir(lay2.Base), getenv: envOf(nil), lay: lay2, out: &bytes.Buffer{},
+		svc: service{goos: "linux", home: filepath.Dir(lay2.Base), getenv: envOf(nil), lay: lay2, run: &fakeRunner{}}}
+	err = a2.uninstall(context.Background(), []string{"--remove-data", "--yes"})
+	if got := a2.out.(*bytes.Buffer).String(); !strings.Contains(refusalText(err), "not a plain folder") || !strings.Contains(got, "  kept ") || !strings.Contains(got, "holds stayed") {
+		t.Fatalf("the kept folder beside the log's refusal: %v\n%s", err, got)
 	}
 }
 
