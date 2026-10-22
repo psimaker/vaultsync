@@ -255,7 +255,9 @@ func TestIssue176_RemoveDataGuards(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := removeOwnData(lay, nil, "darwin"); !strings.Contains(refusalText(err), "menu-bar app is running") {
+		// The removal comes after the service's removal: its refusal says
+		// so, and the second run is not asked about a service that is gone.
+		if _, _, err := removeOwnData(lay, nil, "darwin"); !strings.Contains(refusalText(err), "menu-bar app is running") || !strings.Contains(refusalText(err), "The background service is removed.") {
 			t.Fatalf("got %v", err)
 		}
 		// The refusal leaves no lock file the taking made: the ones
@@ -407,6 +409,37 @@ func TestIssue176_RemoveDataGuards(t *testing.T) {
 		}
 		if _, err := os.Lstat(filepath.Join(lay.Base, "setup.lock")); !errors.Is(err, os.ErrNotExist) {
 			t.Fatal("setup.lock, made by the taking before the held one, stayed")
+		}
+	})
+	t.Run("a folder swapped for a link after the check gets nothing through it", func(t *testing.T) {
+		// The lock files are made through the folder the removal holds
+		// open: a link put in the folder's place after the check leads
+		// nowhere for them.
+		lay, _ := ownedFixture(t)
+		elsewhere := filepath.Join(filepath.Dir(lay.Base), "elsewhere")
+		if err := os.Mkdir(elsewhere, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		real := lay.Base + "-real"
+		origTake := takeOwnLock
+		defer func() { takeOwnLock = origTake }()
+		swapped := false
+		takeOwnLock = func(root *os.Root, name string) (func(), error) {
+			if !swapped {
+				swapped = true
+				if err := os.Rename(lay.Base, real); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(elsewhere, lay.Base); err != nil {
+					t.Fatal(err)
+				}
+			}
+			return origTake(root, name)
+		}
+		_, _, _ = removeOwnData(lay, nil, "darwin")
+		entries, err := os.ReadDir(elsewhere)
+		if err != nil || len(entries) != 0 {
+			t.Fatalf("made through the link: %v %v", entries, err)
 		}
 	})
 	t.Run("a folder gone before the locks is not made again", func(t *testing.T) {
