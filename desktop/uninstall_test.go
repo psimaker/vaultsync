@@ -1024,13 +1024,13 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 			}
 			held = h
 			go func() {
-				time.Sleep(60 * time.Millisecond)
+				time.Sleep(300 * time.Millisecond)
 				h.Discard()
 			}()
 		}
 		defer func() { lockFilesRemovedHook = nil }()
 		orig := removeRetryWait
-		removeRetryWait = 2 * time.Millisecond
+		removeRetryWait = 10 * time.Millisecond
 		defer func() { removeRetryWait = orig }()
 		removed, kept, err := removeOwnData(lay, nil, "darwin")
 		if err != nil || kept != nil || !slices.Contains(removed, lay.Base) {
@@ -1473,6 +1473,11 @@ func TestIssue176_PairAfterRemovalMakesNoFolder(t *testing.T) {
 	if _, err := os.Stat(lay.Base); err != nil {
 		t.Fatalf("the folder went on a settings error: %v", err)
 	}
+	// "Nothing was changed" includes the lock file: it stays, as on any
+	// pairing that stops.
+	if _, err := os.Stat(filepath.Join(lay.Base, "pair.lock")); err != nil {
+		t.Fatalf("the lock file went on a settings error: %v", err)
+	}
 }
 
 // A folder that an owner took away itself in the last instant — a pair
@@ -1505,19 +1510,22 @@ func TestIssue176_RemoveDataWaitsForAnOwnersLockToo(t *testing.T) {
 	if err := os.Remove(foreign); err != nil {
 		t.Fatal(err)
 	}
+	// Twenty waits of ten milliseconds: the first look comes at about
+	// two hundred, the pair lets go at three hundred, the second look at
+	// about four hundred sees it gone.
 	lockFilesRemovedHook = func(l layout) {
 		h, err := lock.Take(filepath.Join(l.Base, "pair.lock"))
 		if err != nil {
 			t.Fatal(err)
 		}
 		go func() {
-			time.Sleep(60 * time.Millisecond)
+			time.Sleep(300 * time.Millisecond)
 			h.Discard()
 		}()
 	}
 	defer func() { lockFilesRemovedHook = nil }()
 	orig := removeRetryWait
-	removeRetryWait = 2 * time.Millisecond
+	removeRetryWait = 10 * time.Millisecond
 	defer func() { removeRetryWait = orig }()
 	removed, kept, err := removeOwnData(lay, nil, "darwin")
 	if err != nil || kept != nil || !slices.Contains(removed, lay.Base) {
