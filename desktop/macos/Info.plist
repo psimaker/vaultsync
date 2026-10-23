@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  VaultSync.app (decision 052): the menu-bar app is the bundle's executable,
+  the agent sits beside it in Contents/MacOS. make-app.sh fills in
+  @VERSION@. LSUIElement: a menu-bar icon, no Dock icon, no main menu.
+  LSMinimumSystemVersion matches the binaries' minos (Go's floor, and the
+  tray's cgo build pins it with -mmacosx-version-min).
+  NSLocalNetworkUsageDescription is for the agent: it finds the Hub on the
+  local network once it runs from the bundle; the tray uses no network.
+-->
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>VaultSync</string>
+	<key>CFBundleExecutable</key>
+	<string>vaultsync-tray</string>
+	<key>CFBundleIdentifier</key>
+	<string>eu.vaultsync.desktop</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>VaultSync</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>@VERSION@</string>
+	<key>CFBundleVersion</key>
+	<string>@VERSION@</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.productivity</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>12.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>VaultSync looks for your VaultSync Hub on your local network to pair with it, and syncs your vaults with it there.</string>
+</dict>
+</plist>

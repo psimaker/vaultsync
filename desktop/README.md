@@ -35,6 +35,7 @@ socket between them).
 | `internal/lock/` | the one flock behind the agent's `lockFile`/`lockFileWait` and the tray's one-instance lock |
 | `tray/` | the menu-bar app without the menu bar: the socket client, what the icon and the menu show (`view.go`), the loop (`controller.go`), the pairing conversation (`pairflow.go`) and the dialogs it uses (`ask.go`: osascript, zenity) — pure Go, tested on Linux |
 | `cmd/vaultsync-tray/` | the `vaultsync-tray` binary: `fyne.io/systray` glue (Cocoa through cgo on macOS, StatusNotifierItem over DBus on Linux) and the GNOME hint |
+| `macos/` | VaultSync for Mac (decision 052): `Info.plist` and `make-app.sh` (the tray as the bundle's executable, the agent beside it), `sign.sh` (Developer ID and notarization on a tag, ad hoc on a pull request), `verify.sh` (Apple's checks of the result), `install-rcodesign.sh` (the pinned signer) |
 
 The pairing protocol, the Syncthing REST client and the device-side accept
 guard come from the Hub's module (`hub/pairing`, `hub/syncthing`, `hub/join`)
@@ -60,16 +61,61 @@ On a Mac, use `syncthing-macos-arm64-$v.zip` (or `-amd64`).
 ## Release
 
 Tag `desktop-vX.Y.Z` on `main`. `desktop-release.yml` publishes a GitHub
-release with `vaultsync_<os>_<arch>` and `vaultsync-tray_<os>_<arch>`
-binaries and one `SHA256SUMS` (not marked Latest — that stays the iOS app's
-release). The agent is cross-compiled on Linux with `CGO_ENABLED=0` as
-before; the tray's Linux binaries too, while its macOS binaries are built on
-a macOS runner (cgo). Locally:
+release (not marked Latest — that stays the iOS app's release) with
+
+- `vaultsync_<os>_<arch>` — the agent, the asset `setup.sh` downloads,
+- `VaultSync_darwin_<arch>.zip` — `VaultSync.app`: the menu-bar app with the
+  agent inside,
+- `vaultsync-tray_linux_<arch>` — the tray for Linux,
+- one `SHA256SUMS` over all of them.
+
+The agent is cross-compiled on Linux with `CGO_ENABLED=0`, the tray's Linux
+binaries too; the tray for macOS is built on a macOS runner (cgo, minimum
+macOS pinned to `LSMinimumSystemVersion`), which also puts `VaultSync.app`
+together (`macos/make-app.sh`). Everything for macOS is signed with the
+owner's Developer ID (hardened runtime, no entitlements, the agent as
+`eu.vaultsync.agent` alone and in the bundle) by `macos/sign.sh` with
+`rcodesign` on a Linux runner (pinned in `macos/install-rcodesign.sh`; bump
+version and SHA-256 together); Apple notarizes the bundles, whose ticket is
+stapled and also covers the bare agent (the same code directory). Only a
+`desktop-v*` tag reaches the secrets, in environment `desktop-signing`:
+`MACOS_DEVELOPER_ID_P12` (base64 of a `.p12` in the legacy format rcodesign
+reads — a Keychain Access export, or `openssl pkcs12 -export -legacy`),
+`MACOS_DEVELOPER_ID_P12_PASSWORD`, `APP_STORE_CONNECT_API_KEY_P8`,
+`APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`. `macos/verify.sh`
+then checks the result on a Mac with `codesign`, `stapler` and `spctl` before
+anything is published — on a tag against the team in the repository variable
+`MACOS_TEAM_ID`, down to the designated requirement (decision 052). The
+release is all or nothing: when the Apple side fails (an expired
+certificate, a key, the notary service), the Linux binaries wait too. A
+failure outside the repository (a secret, Apple's service): fix it, then
+**Re-run failed jobs** on the tag's run while its artifacts last (7 days).
+A fix in the repository: delete the tag (and a draft it made), merge the
+fix, tag the new commit — pushing an unchanged tag again starts nothing.
+
+A pull request runs `macos/sign.sh` ad hoc, its release path against a
+stand-in for Apple with every flag checked against the pinned rcodesign
+(`macos/tests/sign-release-test.sh`) and `macos/verify.sh` without a team —
+which starts both architectures' agent and menu-bar app, the Intel ones
+under Rosetta. The real Developer ID, Apple's verdict, the secrets step and
+the release job first run on a tag: before a release, push
+`desktop-vX.Y.Z-rc.1` — it runs all of it into a draft that `setup.sh` never
+sees (delete the draft afterwards). A tag that is neither `desktop-vX.Y.Z`
+nor `desktop-vX.Y.Z-<suffix>` stops the run, and a tag moved to another
+commit while its run waited is not published.
+
+Locally:
 
 ```sh
 cd desktop
 go build ./cmd/vaultsync-tray && ./vaultsync-tray            # this computer
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ./cmd/vaultsync-tray
+
+# VaultSync.app for this Mac (unsigned):
+CGO_CFLAGS="-O2 -g -mmacosx-version-min=12.0" CGO_LDFLAGS="-mmacosx-version-min=12.0" \
+  go build -o /tmp/vaultsync-tray ./cmd/vaultsync-tray
+CGO_ENABLED=0 go build -o /tmp/vaultsync . && mkdir /tmp/app
+macos/make-app.sh dev /tmp/vaultsync /tmp/vaultsync-tray /tmp/app
 ```
 
 ## Bumping Syncthing
