@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/psimaker/vaultsync/desktop/internal/control"
 	"github.com/psimaker/vaultsync/hub/syncthing"
 )
 
@@ -87,7 +88,7 @@ func (a *app) status(ctx context.Context) error {
 	// terminal and the menu-bar app. Without one — an older agent, no agent
 	// — the engine is asked directly.
 	actx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	cs, aerr := a.controlClient(st).status(actx)
+	cs, aerr := a.controlClient(st).Status(actx)
 	cancel()
 	switch {
 	case aerr == nil && cs.Engine != "running":
@@ -128,44 +129,10 @@ func (a *app) backgroundEngine() bool {
 	return a.svc.installed() && a.svc.running()
 }
 
-// statusReport is what is known about syncing right now: the lines
-// vaultsync status prints below the engine line, and the facts behind them
-// for the menu-bar app (#176).
-type statusReport struct {
-	// Paused: syncing is paused on this computer — every Hub this engine
-	// knows is paused in it (vaultsync pause).
-	Paused   bool            `json:"paused"`
-	Hubs     []hubStatus     `json:"hubs"`
-	Vaults   []vaultStatus   `json:"vaults"`
-	Waiting  []waitingStatus `json:"waiting"`
-	Attempts []attemptStatus `json:"attempts"`
-	// Text is the report as vaultsync status prints it.
-	Text string `json:"text"`
-}
-
-type hubStatus struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	State string `json:"state"`
-}
-
-type vaultStatus struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
-	Path  string `json:"path"`
-	State string `json:"state"`
-}
-
-type waitingStatus struct {
-	Label string `json:"label"`
-	Hub   string `json:"hub"`
-}
-
-type attemptStatus struct {
-	Vault string `json:"vault"`
-	What  string `json:"what"`
-	At    string `json:"at"`
-}
+// statusReport, hubStatus, vaultStatus, waitingStatus and attemptStatus
+// are the shared socket types (internal/control/wire.go; aliases in
+// control.go): the lines vaultsync status prints below the engine line,
+// and the facts behind them for the menu-bar app (#176).
 
 func (a *app) onlineStatus(ctx context.Context, w io.Writer, c *syncthing.Client, background bool) error {
 	r, err := a.report(ctx, c, background)
@@ -203,20 +170,24 @@ func (a *app) report(ctx context.Context, c *syncthing.Client, background bool) 
 		if name == "" {
 			name = "(unnamed Hub)"
 		}
-		state := "not connected"
+		state, kind, remedy := "not connected", control.KindWaiting, ""
 		switch cn, ok := conns.Connections[d.DeviceID]; {
 		case d.Paused:
 			pausedHubs++
-			state = "paused on this computer — vaultsync resume starts syncing again"
+			state, kind, remedy = "paused on this computer", control.KindPaused, "vaultsync resume starts syncing again"
 		case ok && cn.Connected:
 			anyConnected = true
-			state = "connected"
+			state, kind = "connected", control.KindOK
 			if strings.HasPrefix(cn.Type, "relay") {
 				state = "connected through a relay (slower; a direct connection is not possible right now)"
 			}
 		}
-		r.Hubs = append(r.Hubs, hubStatus{ID: d.DeviceID, Name: name, State: state})
-		fmt.Fprintf(w, "  %-22s %s\n", name, state)
+		r.Hubs = append(r.Hubs, hubStatus{ID: d.DeviceID, Name: name, State: state, Kind: kind, Remedy: remedy})
+		line := state
+		if remedy != "" {
+			line += " — " + remedy
+		}
+		fmt.Fprintf(w, "  %-22s %s\n", name, line)
 	}
 	if len(r.Hubs) == 0 {
 		fmt.Fprintln(w, "  none yet — run vaultsync pair")
@@ -237,7 +208,7 @@ func (a *app) report(ctx context.Context, c *syncthing.Client, background bool) 
 	}
 	sort.Slice(folders, func(i, j int) bool { return strings.ToLower(folders[i].Label) < strings.ToLower(folders[j].Label) })
 	for _, f := range folders {
-		state := "unknown"
+		state, kind := "unknown", control.KindUnknown
 		var sum folderSummary
 		if err := c.Get(ctx, "/rest/db/status?folder="+url.QueryEscape(f.ID), &sum); err == nil {
 			remote := map[string]remoteCompletion{}
@@ -250,7 +221,7 @@ func (a *app) report(ctx context.Context, c *syncthing.Client, background bool) 
 					remote[d.DeviceID] = rc
 				}
 			}
-			state = describeFolder(f, sum, conns, remote, sys.MyID, background)
+			state, kind = describeFolder(f, sum, conns, remote, sys.MyID, background)
 		}
 		// Paused here: the connections are, so a state that only says what
 		// the connection would say reads "paused on this computer" — while
@@ -258,9 +229,9 @@ func (a *app) report(ctx context.Context, c *syncthing.Client, background bool) 
 		// folder's own pause, files that could not sync, work the engine is
 		// still doing on what it had already taken in.
 		if r.Paused && connectionState(state) {
-			state = "paused on this computer"
+			state, kind = "paused on this computer", control.KindPaused
 		}
-		r.Vaults = append(r.Vaults, vaultStatus{ID: f.ID, Label: f.Label, Path: f.Path, State: state})
+		r.Vaults = append(r.Vaults, vaultStatus{ID: f.ID, Label: f.Label, Path: f.Path, State: state, Kind: kind})
 		fmt.Fprintf(w, "  %-14s %-28s %s\n", f.Label, tildePath(a.home, f.Path), state)
 	}
 	if waiting, err := pendingFromHubs(ctx, c, sys.MyID); err == nil && len(waiting) > 0 {
@@ -300,9 +271,9 @@ func emptyReport() statusReport {
 // is "uploading".
 // background says whether the engine runs as the background service (the
 // remedies differ from a `vaultsync run` in a terminal).
-func describeFolder(f syncthing.FolderConfig, s folderSummary, conns connectionsView, remote map[string]remoteCompletion, myID string, background bool) string {
+func describeFolder(f syncthing.FolderConfig, s folderSummary, conns connectionsView, remote map[string]remoteCompletion, myID string, background bool) (state, kind string) {
 	if f.Paused {
-		return "paused"
+		return "paused", control.KindPaused
 	}
 	if s.State == "error" || s.Error != "" {
 		msg := s.Error
@@ -318,19 +289,19 @@ func describeFolder(f syncthing.FolderConfig, s folderSummary, conns connections
 				msg += " — allow access to this folder (on a Mac: allow the app you run vaultsync in, Terminal for example, in System Settings → Privacy & Security → Files & Folders), then restart vaultsync run"
 			}
 		}
-		return "error: " + msg
+		return "error: " + msg, control.KindProblem
 	}
 	switch s.State {
 	case "scanning", "scan-waiting":
-		return "scanning the folder"
+		return "scanning the folder", control.KindBusy
 	case "syncing", "sync-preparing", "sync-waiting":
 		if s.GlobalBytes > 0 {
-			return fmt.Sprintf("syncing — %d %%", s.InSyncBytes*100/s.GlobalBytes)
+			return fmt.Sprintf("syncing — %d %%", s.InSyncBytes*100/s.GlobalBytes), control.KindBusy
 		}
-		return "syncing"
+		return "syncing", control.KindBusy
 	}
 	if s.Errors > 0 {
-		return fmt.Sprintf("%d files could not sync — see the engine's log", s.Errors)
+		return fmt.Sprintf("%d files could not sync — see the engine's log", s.Errors), control.KindProblem
 	}
 	connected := 0
 	lowest := 100.0
@@ -346,11 +317,11 @@ func describeFolder(f syncthing.FolderConfig, s folderSummary, conns connections
 		rc, ok := remote[d.DeviceID]
 		switch {
 		case !ok || rc.RemoteState == "unknown" || rc.RemoteState == "notSharing":
-			return "waiting for your Hub to take it"
+			return "waiting for your Hub to take it", control.KindWaiting
 		case rc.RemoteState == "paused":
-			return "paused on your Hub"
+			return "paused on your Hub", control.KindPaused
 		case rc.RemoteState != "valid":
-			return "waiting for your Hub to take it"
+			return "waiting for your Hub to take it", control.KindWaiting
 		}
 		if rc.Completion < lowest {
 			lowest = rc.Completion
@@ -363,21 +334,21 @@ func describeFolder(f syncthing.FolderConfig, s folderSummary, conns connections
 	// this computer's work, and it stays in sight while the connection is
 	// paused.
 	if s.NeedTotal > 0 {
-		return fmt.Sprintf("%d items left to sync", s.NeedTotal)
+		return fmt.Sprintf("%d items left to sync", s.NeedTotal), control.KindBusy
 	}
 	if connected == 0 {
-		return "waiting for your Hub"
+		return "waiting for your Hub", control.KindWaiting
 	}
 	if lowest < 100 {
-		return fmt.Sprintf("uploading to your Hub — %d %%", int(lowest))
+		return fmt.Sprintf("uploading to your Hub — %d %%", int(lowest)), control.KindBusy
 	}
 	if outstanding == 1 {
-		return "uploading to your Hub — 1 item left"
+		return "uploading to your Hub — 1 item left", control.KindBusy
 	}
 	if outstanding > 1 {
-		return fmt.Sprintf("uploading to your Hub — %d items left", outstanding)
+		return fmt.Sprintf("uploading to your Hub — %d items left", outstanding), control.KindBusy
 	}
-	return "up to date"
+	return "up to date", control.KindOK
 }
 
 // localNetworkSetting is where macOS lists the programs that may use the
@@ -442,7 +413,7 @@ func (a *app) offlineReport() statusReport {
 			}
 			for _, fo := range cfg.Folders {
 				configured[fo.ID] = true
-				r.Vaults = append(r.Vaults, vaultStatus{ID: fo.ID, Label: fo.Label, Path: fo.Path, State: "not syncing — the engine is stopped"})
+				r.Vaults = append(r.Vaults, vaultStatus{ID: fo.ID, Label: fo.Label, Path: fo.Path, State: "not syncing — the engine is stopped", Kind: control.KindOffline})
 				fmt.Fprintf(w, "  %-14s %s\n", fo.Label, tildePath(a.home, fo.Path))
 			}
 		}

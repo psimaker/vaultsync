@@ -69,8 +69,12 @@ Syncthing you already run is never touched. Scripts pass everything after
 `--` to the agent:
 
 ```sh
+# the first computer: start Notes as a new vault on the Hub from this folder
 curl -fsSL https://vaultsync.eu/setup.sh | sh -s -- --device --code TULIP-ANCHOR-42 \
   -- --vault Notes --create --path ~/Vaults/Notes --yes
+# another computer: download the Hub's Notes (no --create, into a new folder)
+curl -fsSL https://vaultsync.eu/setup.sh | sh -s -- --device --code TULIP-ANCHOR-42 \
+  -- --vault Notes --path ~/Vaults/Notes
 ```
 
 **Your own Syncthing instead** — to pair a Syncthing you already run with the
@@ -167,17 +171,31 @@ vaultsync uninstall    # remove the background service; vaults stay
                        #  never vault files)
 ```
 
+`vaultsync uninstall --remove-data` refuses, before it changes anything, while
+the menu-bar app runs or a `vaultsync run`, `pair` or `setup` is in progress —
+quit or stop them first. On a Mac, run it from your own session: it must be
+able to ask the service manager. Afterwards it lists what it removed; a folder
+it could not remove is an error (exit status 1, for scripts); a folder that
+holds files VaultSync did not make, or in which VaultSync started again
+meanwhile, stays and is named; a folder that something other than
+VaultSync moved or removed meanwhile is said as gone, so you know to look
+for it if you kept files in it.
+
 Scripts and remote shells pass everything as flags; anything that would need
 a decision is refused with the flag to add:
 
 ```sh
+# the first computer: Notes starts as a new vault on the Hub from this folder
 vaultsync setup --code TULIP-ANCHOR-42 --hub 192.168.1.20 \
   --vault Notes --create --path ~/Vaults/Notes --yes
+# another computer: the Hub's Notes is downloaded (no --create)
+vaultsync setup --code TULIP-ANCHOR-42 --hub 192.168.1.20 \
+  --vault Notes --path ~/Vaults/Notes
 ```
 
 While it runs, the agent answers `vaultsync status`, `pause` and `resume`
 over a socket in VaultSync's folder (`agent.sock`, readable by your account
-alone); the menu-bar app will read the same socket, so both show one truth.
+alone); the menu-bar app reads the same socket, so both show one truth.
 `vaultsync pause` pauses every connection to your Hub: nothing new arrives
 or leaves, the engine keeps running, and your vaults and their settings
 stay as they are. Changes the engine had already received before the pause
@@ -187,9 +205,37 @@ progress, and says `paused on this computer` for the rest until
 `status` asks the engine's own API, and reads its config file when the
 engine does not answer either.
 
+**Menu-bar icon.** `vaultsync-tray` puts VaultSync in the menu bar (macOS)
+or the system tray (Linux). It is a second program from the same release
+(`vaultsync-tray_darwin_arm64`, `vaultsync-tray_linux_amd64`, …; check it
+against `SHA256SUMS` like the agent) that you start yourself for now — from
+Terminal, or a login item of your own; the app bundle and the autostart come
+with the next step. The icon is a summary of `vaultsync status`: a check mark
+when every vault is up to date, a ring while syncing, two bars while paused,
+an exclamation mark when a vault needs attention, a crossed ring when nothing
+syncs (not running, no Hub connected). The menu shows the Hub and each vault
+with the same words `vaultsync status` prints (click a vault to open its
+folder), **Pause Syncing** / **Resume Syncing** (the same as `vaultsync pause`
+and `resume`), **Pair a Vault…**, **Open Log** (on a Mac) and **Quit**, which
+quits the icon only — syncing continues in the background. The menu asks the
+running agent for everything over the same socket as the terminal and
+decides nothing itself; without a running agent it says so and offers
+only Open Log and Quit. **Pair a Vault…** asks for the code, then which vault, then
+— for a folder on this computer that already holds files — the same consent
+`vaultsync pair` asks for, through the desktop's own dialogs (on Linux this
+needs `zenity`; without it the item says to use `vaultsync pair` in a
+terminal). A vault from your Hub goes into `~/Vaults/<name>`; to put it
+elsewhere, or to name this computer's vault differently on your Hub, use
+`vaultsync pair` in a terminal. On GNOME, tray icons need the “AppIndicator
+and KStatusNotifierItem Support” extension; `vaultsync-tray` says so when it
+starts without one and shows the icon as soon as the extension is there.
+
 `--yes` is consent to sync a `--path` that already holds files with the new
 vault named by `--vault`; it never chooses a Hub and never overrides a
-refusal. Run the same command again and it changes nothing: the vault is
+refusal. `--create` asks for a new vault on your Hub: a name your Hub already
+has is refused (leave out `--create` to download that vault, or choose
+another name) unless it is the vault already set up on this computer, which
+a setup run again with the same flags simply finds. Run the same command again and it changes nothing: the vault is
 already set up to sync there, setup says so and succeeds — no second share
 request reaches your Hub.
 

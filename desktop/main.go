@@ -31,6 +31,8 @@ import (
 	"syscall"
 	"time"
 
+	layoutpkg "github.com/psimaker/vaultsync/desktop/internal/layout"
+	"github.com/psimaker/vaultsync/desktop/internal/lock"
 	"github.com/psimaker/vaultsync/hub/join"
 	"github.com/psimaker/vaultsync/hub/pairing"
 	"github.com/psimaker/vaultsync/hub/syncthing"
@@ -123,20 +125,8 @@ type summarized interface {
 // neither the account's home folder nor where VaultSync keeps its files.
 // VaultSync's folder becomes <VaultSync folder>, the home folder ~.
 func redactPaths(msg string) string {
-	replace := func(path, with string) {
-		if path == "" || path == "/" {
-			return
-		}
-		if resolved, err := filepath.EvalSymlinks(path); err == nil && resolved != path {
-			msg = strings.ReplaceAll(msg, resolved, with)
-		}
-		msg = strings.ReplaceAll(msg, path, with)
-	}
-	replace(stateDirShown, "<VaultSync folder>")
-	if home, err := os.UserHomeDir(); err == nil {
-		replace(home, "~")
-	}
-	return msg
+	home, _ := os.UserHomeDir()
+	return layoutpkg.Shorten(msg, stateDirShown, home)
 }
 
 func usage(w io.Writer) {
@@ -159,7 +149,8 @@ Flags for setup and pair:
   --code WORD-WORD-NN   the code your Hub printed (asked when missing)
   --hub IP[:PORT]       skip the search and use the Hub at this address
   --vault NAME          the vault on your Hub (with --create: the new vault's name)
-  --create              start --vault on your Hub when it does not exist yet
+  --create              start --vault as a new vault on your Hub (refused when
+                        your Hub already has one of that name)
   --path FOLDER         this computer's folder for the vault
   --yes                 agree to sync a --path that already holds files with a
                         new vault on your Hub
@@ -310,7 +301,7 @@ func (a *app) setup(ctx context.Context, args []string) error {
 	// Written under the pairing lock, which every reader of the record
 	// takes: a pairing in flight keeps the places it loaded.
 	st.Env = recordGuardEnv(a.getenv)
-	unlockPair, err := waitForLock(ctx, filepath.Join(a.lay.Base, "pair.lock"), 2*time.Minute)
+	pairLock, err := waitForLock(ctx, filepath.Join(a.lay.Base, "pair.lock"), 2*time.Minute, lockHandle)
 	if err != nil {
 		unlockSetup()
 		if errors.Is(err, ErrEngineRunning) {
@@ -318,6 +309,7 @@ func (a *app) setup(ctx context.Context, args []string) error {
 		}
 		return err
 	}
+	unlockPair := pairLock.Release
 	err = updateState(a.lay.State, func(s *agentState) { s.Env = st.Env })
 	unlockPair()
 	if err != nil {
@@ -430,13 +422,14 @@ func waitEngine(ctx context.Context, c *syncthing.Client, timeout time.Duration,
 }
 
 // waitForLock takes a lock another VaultSync process may hold for a moment
-// (setup preparing the engine), waiting at most timeout.
-func waitForLock(ctx context.Context, path string, timeout time.Duration) (func(), error) {
+// (setup preparing the engine), waiting at most timeout, with the given
+// taking (lockFile, or one that makes no folder).
+func waitForLock(ctx context.Context, path string, timeout time.Duration, take func(string) (*lock.Handle, error)) (*lock.Handle, error) {
 	deadline := time.Now().Add(timeout)
 	for {
-		unlock, err := lockFile(path)
+		h, err := take(path)
 		if !errors.Is(err, ErrEngineRunning) || time.Now().After(deadline) {
-			return unlock, err
+			return h, err
 		}
 		select {
 		case <-ctx.Done():
@@ -553,7 +546,7 @@ func installAgentCopy(dst string) (bool, error) {
 
 func (a *app) logHint() string {
 	if a.goos == "darwin" {
-		return tildePath(a.home, filepath.Join(a.lay.Logs, "vaultsync.log"))
+		return tildePath(a.home, a.lay.LogFile())
 	}
 	return "journalctl --user -u vaultsync"
 }
@@ -591,6 +584,9 @@ func (a *app) pair(ctx context.Context, args []string) error {
 	return err
 }
 
+// errNotSetUpAnymore: no agent.json — never set up, or removed since.
+var errNotSetUpAnymore = refuse("VaultSync is not set up on this computer (anymore). Run vaultsync setup.")
+
 // rememberShellEnv records the shell's guard variables in agent.json when
 // they differ from what is recorded, so a pairing run by the service looks
 // where this terminal looks. Called under the pairing lock only (the
@@ -604,7 +600,7 @@ func rememberShellEnv(statePath string, getenv func(string) string) error {
 	// between the pairing's first looks and its lock, that would bring
 	// VaultSync's folder back from the dead.
 	if _, err := os.Stat(statePath); errors.Is(err, fs.ErrNotExist) {
-		return refuse("VaultSync is not set up on this computer (anymore). Run vaultsync setup.")
+		return errNotSetUpAnymore
 	} else if err != nil {
 		return fmt.Errorf("VaultSync's settings could not be read (%w) — nothing was changed", err)
 	}
@@ -731,12 +727,12 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 		return err
 	}
 	if *stateDir != "" {
-		// The service names the folder setup used (see layout.at).
-		if !filepath.IsAbs(*stateDir) {
-			return errors.New("--state-dir must be an absolute path")
+		// The service names the folder setup used (layout.AtStateDir).
+		lay, err := a.lay.AtStateDir(*stateDir)
+		if err != nil {
+			return err
 		}
-		a.lay = a.lay.at(filepath.Clean(*stateDir))
-		a.svc.lay = a.lay
+		a.lay, a.svc.lay = lay, lay
 	}
 	stateDirShown = a.lay.Base
 	if st, err := os.Stderr.Stat(); err == nil && st.Mode()&os.ModeCharDevice == 0 {
@@ -747,9 +743,31 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 	// Installing and preparing the engine happens under the same lock setup
 	// takes: two preparations at once would generate identities over each
 	// other.
-	unlockSetup, err := waitForLock(ctx, filepath.Join(a.lay.Base, "setup.lock"), 2*time.Minute)
+	_, stErr := os.Stat(a.lay.State)
+	hadState := stErr == nil
+	setupLock := filepath.Join(a.lay.Base, "setup.lock")
+	take := lockHandle
+	if hadState {
+		// Set up: the folder is there, and must not be made again should
+		// an uninstall take it apart while this run waits for the lock.
+		take = lockFileNoCreate
+	}
+	removedMeanwhile := refuse("VaultSync was removed from this computer while this run waited; run vaultsync setup to set it up again.")
+	setupHandle, err := waitForLock(ctx, setupLock, 2*time.Minute, take)
 	if err != nil {
+		if hadState && errors.Is(err, os.ErrNotExist) {
+			return removedMeanwhile
+		}
 		return err
+	}
+	unlockSetup := setupHandle.Release
+	if _, err := os.Stat(a.lay.State); hadState && errors.Is(err, os.ErrNotExist) {
+		// Set up when this run began, gone while it waited for the lock:
+		// an uninstall took VaultSync's folder apart (its lock held the
+		// wait). A run does not set VaultSync up afresh behind it, and
+		// the lock file its take may have made goes with it.
+		_, _ = setupHandle.Discard()
+		return removedMeanwhile
 	}
 	st, err := loadState(a.lay.State)
 	if err != nil {
@@ -801,8 +819,21 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 	}
 	defer unlock()
 	ctl := &controlServer{a: a, eng: eng, logf: logf, background: a.backgroundEngine()}
+	// The record of a socket that could not be made or kept at an earlier
+	// start no longer holds — and it goes before this start's own attempt,
+	// so a fresh record that attempt may write (a socket that stops
+	// serving right away) is never the one removed. On the way out it
+	// goes too: after a clean stop, nobody answering means not running,
+	// which is what the menu-bar app reads without the record.
+	removeSocketRecord := func(when string) {
+		if err := os.Remove(a.lay.SocketErrorFile()); err != nil && !errors.Is(err, os.ErrNotExist) {
+			logf("control socket: control-socket-error.txt could not be removed %s — %s", when, serviceSummary(err))
+		}
+	}
+	removeSocketRecord("before the socket is made")
+	defer removeSocketRecord("on the way out")
 	if socket, stop, err := ctl.serve(ctx); err != nil {
-		logSocketError(logf, a.lay.Base, err)
+		logSocketError(logf, a.lay, err)
 	} else {
 		// On the way out the place is taken out of agent.json again: a
 		// recorded place nobody serves is one another account could take.

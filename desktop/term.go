@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	layoutpkg "github.com/psimaker/vaultsync/desktop/internal/layout"
 )
 
 // errNoTerminal means a question needs an answer and nobody can give one.
@@ -20,10 +22,13 @@ type term struct {
 	in  *bufio.Reader
 }
 
+// ttyPath is the controlling terminal; a test points it at nothing.
+var ttyPath = "/dev/tty"
+
 // openTerm reads answers from the controlling terminal, so `curl … | sh`
 // (stdin is the script) can still ask.
 func openTerm(out io.Writer) (*term, func()) {
-	f, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	f, err := os.OpenFile(ttyPath, os.O_RDWR, 0)
 	if err != nil {
 		return &term{out: out}, func() {}
 	}
@@ -59,19 +64,9 @@ func (t *term) confirm(prompt string) (bool, error) {
 	return a == "y" || a == "yes", nil
 }
 
-// tildePath shows a path below the home folder as ~/…, the way people know it.
-func tildePath(home, p string) string {
-	if home == "" {
-		return p
-	}
-	if p == home {
-		return "~"
-	}
-	if rel, err := filepath.Rel(home, p); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
-		return "~" + string(filepath.Separator) + rel
-	}
-	return p
-}
+// tildePath shows a path below the home folder as ~/…, the way people know
+// it — the shared layout's, so the menu-bar app shows paths the same way.
+func tildePath(home, p string) string { return layoutpkg.TildePath(home, p) }
 
 // expandPath turns what a person typed into an absolute, clean path.
 func expandPath(home, p string) (string, error) {

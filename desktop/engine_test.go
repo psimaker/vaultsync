@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/psimaker/vaultsync/desktop/internal/control"
 )
 
 // fakeEngineBinary is a stand-in for syncthing: it records its arguments,
@@ -194,24 +196,24 @@ func TestIssue175_StatusWording(t *testing.T) {
 		{folderSummary{State: "idle"}, true, map[string]remoteCompletion{hub: {Completion: 100, RemoteState: ""}}, "waiting for your Hub to take it"},
 	}
 	for _, c := range cases {
-		if got := describeFolder(f, c.sum, conns(c.connected), c.remote, "ME", true); !strings.Contains(got, c.want) {
+		if got, _ := describeFolder(f, c.sum, conns(c.connected), c.remote, "ME", true); !strings.Contains(got, c.want) {
 			t.Errorf("%+v connected=%v remote=%v: %q, want %q", c.sum, c.connected, c.remote, got, c.want)
 		}
 	}
 	denied := folderSummary{State: "idle", Error: "open /v: operation not permitted"}
-	if got := describeFolder(f, denied, conns(true), complete, "ME", true); strings.Contains(got, "Full Disk Access") {
+	if got, _ := describeFolder(f, denied, conns(true), complete, "ME", true); strings.Contains(got, "Full Disk Access") {
 		t.Errorf("more access than a vault needs: %q", got)
 	}
 	// Without the background service the engine runs in a terminal: the
 	// terminal app needs the access, and `vaultsync run` the restart.
-	if got := describeFolder(f, denied, conns(true), complete, "ME", false); !strings.Contains(got, "the app you run vaultsync in") || !strings.Contains(got, "restart vaultsync run") || strings.Contains(got, "vaultsync stop") {
+	if got, _ := describeFolder(f, denied, conns(true), complete, "ME", false); !strings.Contains(got, "the app you run vaultsync in") || !strings.Contains(got, "restart vaultsync run") || strings.Contains(got, "vaultsync stop") {
 		t.Errorf("foreground engine: %q", got)
 	}
 	if !strings.Contains(localNetworkHint(true), "vaultsync stop and vaultsync start") || !strings.Contains(localNetworkHint(false), "restart vaultsync run") {
 		t.Errorf("local network hints: %q / %q", localNetworkHint(true), localNetworkHint(false))
 	}
 	f.Paused = true
-	if got := describeFolder(f, folderSummary{State: "idle"}, conns(true), complete, "ME", true); got != "paused" {
+	if got, kind := describeFolder(f, folderSummary{State: "idle"}, conns(true), complete, "ME", true); got != "paused" || kind != control.KindPaused {
 		t.Errorf("paused: %q", got)
 	}
 

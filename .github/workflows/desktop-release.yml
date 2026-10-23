@@ -1,11 +1,18 @@
 name: Desktop Release
 
-# Builds the `vaultsync` desktop agent (desktop/).
+# Builds the `vaultsync` desktop agent and the `vaultsync-tray` menu-bar app
+# (desktop/).
 #   pull_request  → cross-builds every release target (proves they compile),
 #                   publishes nothing
-#   desktop-v* tag → a GitHub release with vaultsync_<os>_<arch> binaries and
-#                   SHA256SUMS — the asset names setup.sh will download once
-#                   its device path switches to the agent (separate change).
+#   desktop-v* tag → a GitHub release with vaultsync_<os>_<arch> and
+#                   vaultsync-tray_<os>_<arch> binaries and one SHA256SUMS —
+#                   the asset names setup.sh downloads.
+#
+# The agent is pure Go and cross-compiled on Linux for every target, exactly
+# as before. The tray is pure Go on Linux too (StatusNotifierItem over
+# DBus), but on macOS it is Cocoa through cgo, so its two macOS binaries are
+# built on a macOS runner (decision 048). The sums are made in the release
+# job over everything.
 #
 # macOS and Linux only for now; Windows follows its own service model (#175).
 
@@ -37,12 +44,17 @@ jobs:
         with:
           persist-credentials: false
 
+      # No build cache on a tag: what ships in a release is built from the
+      # module cache alone, never from a cache another run could have
+      # written to.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: desktop/go.mod
+          cache: ${{ github.ref_type != 'tag' }}
           cache-dependency-path: desktop/go.sum
 
       # Asset names are a contract with setup.sh: vaultsync_<goos>_<goarch>.
+      # The tray's Linux binaries follow the same shape.
       - name: Build binaries
         working-directory: desktop
         env:
@@ -59,7 +71,11 @@ jobs:
             GOOS="$goos" GOARCH="$goarch" go build -trimpath -buildvcs=false \
               -ldflags="-s -w -X main.version=${version}" -o "dist/vaultsync_${goos}_${goarch}" .
           done
-          (cd dist && sha256sum vaultsync_* > SHA256SUMS)
+          for target in linux/amd64 linux/arm64; do
+            goos="${target%/*}"; goarch="${target#*/}"
+            GOOS="$goos" GOARCH="$goarch" go build -trimpath -buildvcs=false \
+              -ldflags="-s -w -X main.version=${version}" -o "dist/vaultsync-tray_${goos}_${goarch}" ./cmd/vaultsync-tray
+          done
           ls -l dist
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -69,9 +85,54 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+  build-tray-macos:
+    name: Build tray (macOS)
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+
+      # No build cache on a tag: what ships in a release is built from the
+      # module cache alone, never from a cache another run could have
+      # written to.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: desktop/go.mod
+          cache: ${{ github.ref_type != 'tag' }}
+          cache-dependency-path: desktop/go.sum
+
+      # Cocoa through cgo: both architectures from the one runner (clang
+      # takes -arch from Go). Unsigned until #222 puts the certificate in.
+      - name: Build the tray
+        working-directory: desktop
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            version="${GITHUB_REF_NAME#desktop-v}"
+          else
+            version="dev-${GITHUB_SHA::7}"
+          fi
+          mkdir -p dist
+          for goarch in arm64 amd64; do
+            GOOS=darwin GOARCH="$goarch" go build -trimpath -buildvcs=false \
+              -ldflags="-s -w -X main.version=${version}" -o "dist/vaultsync-tray_darwin_${goarch}" ./cmd/vaultsync-tray
+          done
+          file dist/*
+          ls -l dist
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: vaultsync-desktop-tray-macos
+          path: desktop/dist/
+          retention-days: 7
+          if-no-files-found: error
+
   release:
     name: GitHub release
-    needs: build
+    needs: [build, build-tray-macos]
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -83,6 +144,20 @@ jobs:
           name: vaultsync-desktop-binaries
           path: dist
 
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: vaultsync-desktop-tray-macos
+          path: dist
+
+      # One SHA256SUMS over the agent and the tray: setup.sh takes exactly
+      # the one line whose name is the asset it downloads (an awk filter),
+      # so the tray's lines are passed over.
+      - name: Sum the assets
+        working-directory: dist
+        run: |
+          sha256sum vaultsync_* vaultsync-tray_* > SHA256SUMS
+          cat SHA256SUMS
+
       # --latest=false: "Latest" on the repository is the iOS app's release.
       - name: Create GitHub release
         env:
@@ -90,5 +165,5 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --latest=false \
             --title "VaultSync for Mac and Linux ${GITHUB_REF_NAME#desktop-v}" \
-            --notes "The desktop agent \`vaultsync\` for macOS and Linux: it installs its own pinned Syncthing, pairs with your VaultSync Hub by code and keeps your Obsidian vaults in sync. Check downloads against SHA256SUMS. On a Mac, download with curl — the binaries are not notarized yet, so a browser download is blocked. Setup: docs/hub.md." \
+            --notes "The desktop agent \`vaultsync\` for macOS and Linux: it installs its own pinned Syncthing, pairs with your VaultSync Hub by code and keeps your Obsidian vaults in sync. \`vaultsync-tray\` is the menu-bar icon for it. Check downloads against SHA256SUMS. On a Mac, download with curl — the binaries are not notarized yet, so a browser download is blocked. Setup: docs/hub.md." \
             dist/*

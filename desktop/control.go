@@ -15,10 +15,10 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/psimaker/vaultsync/desktop/internal/control"
 	"github.com/psimaker/vaultsync/hub/syncthing"
 )
 
@@ -29,66 +29,35 @@ import (
 // The agent decides nothing here that it would not decide for the terminal:
 // a pairing over the socket is the flag flow, consent included.
 
-// errNoAgent: no running agent answers on the control socket.
-var errNoAgent = errors.New("VaultSync is not running on this computer: neither the background service nor a vaultsync run answers")
+// errNoAgent: no running agent answers on the control socket (the shared
+// client's word, so the terminal and the menu-bar app read it alike).
+var errNoAgent = control.ErrNoAgent
 
-// controlStatus is the agent's answer to GET /v1/status.
-type controlStatus struct {
-	Version   string `json:"version"`   // the agent's
-	Syncthing string `json:"syncthing"` // the engine's, without the v
-	// Engine is "running" when the engine answers, else "starting": the
-	// agent is up and bringing it up.
-	Engine string `json:"engine"`
-	statusReport
-}
+// errForeignSocket: the socket is served by another account.
+var errForeignSocket = control.ErrForeignSocket
 
-// pauseResponse answers POST /v1/pause and /v1/resume.
-type pauseResponse struct {
-	Paused bool `json:"paused"`
-	Hubs   int  `json:"hubs"` // Hubs this engine knows; 0 leaves nothing to pause
-}
-
-// pairRequest is POST /v1/pair: the flags of vaultsync pair.
-type pairRequest struct {
-	Code   string `json:"code"`
-	Hub    string `json:"hub"`
-	Vault  string `json:"vault"`
-	Create bool   `json:"create"`
-	Path   string `json:"path"`
-	Yes    bool   `json:"yes"`
-	Name   string `json:"name"`
-}
-
-// pairResponse: what vaultsync pair printed, its refusal when it needs a
-// decision the flags did not make, and — once the Hub was reached — the
-// menu the terminal would show, so the caller can choose and ask again.
-type pairResponse struct {
-	OK      bool      `json:"ok"`
-	Output  string    `json:"output"`
-	Refusal string    `json:"refusal,omitempty"`
-	Menu    *menuJSON `json:"menu,omitempty"`
-}
-
-type menuJSON struct {
-	Local       []menuEntryJSON `json:"local"`
-	Hub         []menuEntryJSON `json:"hub"`
-	Already     []menuEntryJSON `json:"already"`
-	Unavailable []menuEntryJSON `json:"unavailable"`
-	Note        string          `json:"note,omitempty"`
-}
-
-type menuEntryJSON struct {
-	Label string `json:"label"`
-	Path  string `json:"path,omitempty"`  // a folder on this computer
-	Vault string `json:"vault,omitempty"` // a vault on the Hub, by its ID
-	Note  string `json:"note,omitempty"`
-}
+// The socket's answers are the shared package's types (internal/control/
+// wire.go): the agent encodes them, the terminal and the menu-bar app
+// decode them — one definition.
+type (
+	controlStatus = control.Status
+	statusReport  = control.Report
+	hubStatus     = control.Hub
+	vaultStatus   = control.Vault
+	waitingStatus = control.Waiting
+	attemptStatus = control.Attempt
+	pauseResponse = control.PauseResult
+	pairRequest   = control.PairRequest
+	pairResponse  = control.PairResult
+	menuJSON      = control.Menu
+	menuEntryJSON = control.MenuEntry
+)
 
 func menuToJSON(m vaultMenu) *menuJSON {
 	conv := func(in []menuEntry) []menuEntryJSON {
 		out := make([]menuEntryJSON, 0, len(in))
 		for _, e := range in {
-			j := menuEntryJSON{Label: e.label, Path: e.path, Note: e.note}
+			j := menuEntryJSON{Label: e.label, Path: e.path, Note: e.note, Default: e.defaultPath, Name: e.hubName}
 			if e.vault != nil {
 				j.Vault = e.vault.ID
 			}
@@ -139,6 +108,9 @@ func (c *controlServer) serve(ctx context.Context) (path string, stop func() err
 	if err != nil {
 		return "", nil, err
 	}
+	if controlListenerHook != nil {
+		controlListenerHook(l)
+	}
 	c.ctx = ctx
 	// The server's own diagnostics — an accept that failed, a request it
 	// could not read — name the socket's path: they go to a private file in
@@ -167,7 +139,10 @@ func (c *controlServer) serve(ctx context.Context) (path string, stop func() err
 		if err := srv.Serve(ownerOnly{Listener: l, diag: srv.ErrorLog}); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			// The engine goes on; status and the menu-bar app lose their
 			// socket until the next start. The words stay in the folder.
-			c.logf("the control socket stopped serving — %s; vaultsync status reads the engine directly (details in control-socket.log)", serviceSummary(err))
+			// The same record a start that could not make the socket
+			// leaves: without it, the menu-bar app would read "nobody
+			// answers" as "not running" while the engine syncs on.
+			logSocketError(c.logf, c.a.lay, fmt.Errorf("the control socket stopped serving: %w", err))
 			fmt.Fprintf(diag, "%s serve: %v\n", time.Now().Format(time.RFC3339), err)
 		}
 		close(done)
@@ -198,6 +173,10 @@ func (c *controlServer) serve(ctx context.Context) (path string, stop func() err
 	}
 	return path, stop, nil
 }
+
+// controlListenerHook sees the socket's listener once it listens; a test
+// closes it to end the serving from underneath.
+var controlListenerHook func(net.Listener)
 
 // openDiagLog opens the socket's private diagnostic file; a variable so a
 // test can hand out one that takes no write.
@@ -411,19 +390,11 @@ func (o ownerOnly) Accept() (net.Conn, error) {
 	}
 }
 
-// peerUIDOf tells whose a unix socket connection is; a test can pretend
-// another account through peerUIDHook (set from the test, read by the
-// server's own goroutine — hence atomic).
+// peerUIDOf tells whose a unix socket connection is — the shared client's
+// reading, so a test's pretence (control.PeerUIDHook) holds on both ends.
 func peerUIDOf(c *net.UnixConn) (int, error) {
-	if f := peerUIDHook.Load(); f != nil {
-		return (*f)(c)
-	}
-	return peerUID(c)
+	return control.PeerUID(c)
 }
-
-type peerFunc func(*net.UnixConn) (int, error)
-
-var peerUIDHook atomic.Pointer[peerFunc]
 
 func (c *controlServer) client() (*syncthing.Client, error) {
 	st, err := loadState(c.a.lay.State)
@@ -443,7 +414,7 @@ func (c *controlServer) status(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *controlServer) currentStatus(ctx context.Context) (controlStatus, error) {
-	cs := controlStatus{Version: version, Syncthing: strings.TrimPrefix(syncthingVersion, "v"), Engine: "starting", statusReport: emptyReport()}
+	cs := controlStatus{Version: version, Syncthing: strings.TrimPrefix(syncthingVersion, "v"), Engine: "starting", Report: emptyReport()}
 	client, err := c.client()
 	if err != nil {
 		return cs, err
@@ -457,7 +428,7 @@ func (c *controlServer) currentStatus(ctx context.Context) (controlStatus, error
 		// Nobody listens on the engine's port: it is on its way up, or the
 		// supervisor is starting it again. Anything else — a refused probe,
 		// no answer in time — says nothing about syncing and is reported.
-		cs.statusReport = c.a.offlineReport()
+		cs.Report = c.a.offlineReport()
 		return cs, nil
 	default:
 		return cs, fmt.Errorf("the sync engine does not answer: %w", err)
@@ -467,7 +438,7 @@ func (c *controlServer) currentStatus(ctx context.Context) (controlStatus, error
 		return cs, err
 	}
 	cs.Engine = "running"
-	cs.statusReport = rep
+	cs.Report = rep
 	return cs, nil
 }
 
@@ -534,6 +505,13 @@ func (c *controlServer) pair(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, fmt.Errorf("bad request: %w", err))
 		return
 	}
+	if req.Yes && req.Folder == "" {
+		// A yes on the socket answers a question about one folder, which
+		// the question named by its identity; without it, the yes could
+		// be taken for whatever folder stands at the path now.
+		fail(w, http.StatusBadRequest, errors.New("bad request: a yes names the folder it was given for (folder)"))
+		return
+	}
 	client, err := c.client()
 	if err != nil {
 		fail(w, http.StatusInternalServerError, err)
@@ -541,7 +519,7 @@ func (c *controlServer) pair(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := pairResponse{}
 	var out bytes.Buffer
-	opts := pairOptions{code: req.Code, hub: req.Hub, vault: req.Vault, create: req.Create, path: req.Path, yes: req.Yes, name: req.Name}
+	opts := pairOptions{code: req.Code, hub: req.Hub, vault: req.Vault, create: req.Create, path: req.Path, yes: req.Yes, name: req.Name, folder: req.Folder}
 	s, err := c.a.pairWith(c.ctx, &term{out: &out}, opts, client, pairOrigin{background: c.background, service: true})
 	resp.Output = out.String()
 	if s != nil && s.menu != nil {
@@ -556,6 +534,9 @@ func (c *controlServer) pair(w http.ResponseWriter, r *http.Request) {
 		return
 	case errors.As(err, &ref):
 		resp.Refusal = redactPaths(ref.msg)
+		resp.Needs = ref.needs
+		resp.Consent = redactPaths(ref.consent)
+		resp.Folder = ref.folder
 	default:
 		fail(w, http.StatusInternalServerError, errors.New(redactPaths(err.Error())))
 		return
@@ -633,47 +614,16 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 // --- the terminal's side ----------------------------------------------------
 
-type controlClient struct {
-	http *http.Client
-	path string
-}
-
-// errForeignSocket: the socket is served by another account.
-var errForeignSocket = errors.New("the control socket is served by another account; VaultSync does not use it")
-
-func newControlClient(path string) *controlClient {
-	return &controlClient{path: path, http: &http.Client{Transport: &http.Transport{
-		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			var d net.Dialer
-			conn, err := d.DialContext(ctx, "unix", path)
-			if err != nil {
-				return nil, err
-			}
-			// Nothing is sent before the kernel has said whose socket this
-			// is: a place another account could have taken over must not
-			// see a request, a pairing code least of all.
-			uc, ok := conn.(*net.UnixConn)
-			if !ok {
-				conn.Close()
-				return nil, errForeignSocket
-			}
-			uid, err := peerUIDOf(uc)
-			if err != nil {
-				conn.Close()
-				return nil, fmt.Errorf("could not tell whose the control socket is: %w", err)
-			}
-			if uid != os.Getuid() {
-				conn.Close()
-				return nil, fmt.Errorf("%w (uid %d)", errForeignSocket, uid)
-			}
-			return conn, nil
-		},
-	}}}
+// newControlClient is the terminal's side of the socket: the shared
+// client, for which a 404 — something answering, but not this API — is
+// an agent too old to ask, so the engine is asked instead (errNoAgent).
+func newControlClient(path string) *control.Client {
+	return control.New(path, errNoAgent)
 }
 
 // controlClient reaches the running agent: on the socket agent.json
 // records, else at the socket's usual place.
-func (a *app) controlClient(st agentState) *controlClient {
+func (a *app) controlClient(st agentState) *control.Client {
 	path := st.ControlSocket
 	if path == "" {
 		path = a.lay.Socket
@@ -681,89 +631,10 @@ func (a *app) controlClient(st agentState) *controlClient {
 	return newControlClient(path)
 }
 
-func (c *controlClient) status(ctx context.Context) (controlStatus, error) {
-	var cs controlStatus
-	err := c.do(ctx, http.MethodGet, "/v1/status", nil, &cs)
-	return cs, err
-}
-
-func (c *controlClient) setPaused(ctx context.Context, paused bool) (pauseResponse, error) {
-	var res pauseResponse
-	path := "/v1/resume"
-	if paused {
-		path = "/v1/pause"
-	}
-	err := c.do(ctx, http.MethodPost, path, nil, &res)
-	return res, err
-}
-
-func (c *controlClient) pair(ctx context.Context, req pairRequest) (pairResponse, error) {
-	var res pairResponse
-	err := c.do(ctx, http.MethodPost, "/v1/pair", req, &res)
-	return res, err
-}
-
-func (c *controlClient) do(ctx context.Context, method, path string, in, out any) error {
-	// A socket address too long for this system cannot be served by anyone
-	// — the agent fell back elsewhere, or runs without a socket — so it is
-	// no agent, not an error of its own.
-	if len(c.path) >= sunPathMax {
-		return errNoAgent
-	}
-	var body io.Reader
-	if in != nil {
-		b, err := json.Marshal(in)
-		if err != nil {
-			return err
-		}
-		body = bytes.NewReader(b)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, "http://vaultsync"+path, body)
-	if err != nil {
-		return err
-	}
-	if in != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		// No socket file, or nobody listening on it: no agent. Any other
-		// failure — a socket this account may not open, one served by
-		// another account, no file descriptors left, a connection made and
-		// then dropped — is reported as it is.
-		var ne *net.OpError
-		if errors.As(err, &ne) && ne.Op == "dial" && (errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED)) {
-			return errNoAgent
-		}
-		if errors.Is(err, errForeignSocket) {
-			return err
-		}
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
-		return errNoAgent // an agent without this API
-	}
-	if resp.StatusCode >= 400 {
-		var e struct {
-			Error string `json:"error"`
-		}
-		_ = json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&e)
-		if e.Error == "" {
-			e.Error = resp.Status
-		}
-		return errors.New(e.Error)
-	}
-	if out == nil {
-		return nil
-	}
-	return json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(out)
-}
-
 // logSocketError says in the service's log that there is no control socket
 // — without the error's words, which name paths (the log is read by
 // others; the folder is not) — and keeps the words in VaultSync's folder.
-func logSocketError(logf func(string, ...any), base string, err error) {
+func logSocketError(logf func(string, ...any), lay layout, err error) {
 	// Every cause on its own line: a summary of several at once names only
 	// the first, and the file with the full words may be unwritable.
 	causes := eachCause(err)
@@ -771,7 +642,7 @@ func logSocketError(logf func(string, ...any), base string, err error) {
 	for _, c := range causes[1:] {
 		logf("no control socket — also: %s", serviceSummary(c))
 	}
-	if werr := writeFileAtomic(filepath.Join(base, "control-socket-error.txt"), []byte(err.Error()+"\n"), 0o600); werr != nil {
+	if werr := writeFileAtomic(lay.SocketErrorFile(), []byte(err.Error()+"\n"), 0o600); werr != nil {
 		logf("no control socket — the details could not be written to control-socket-error.txt: %s", serviceSummary(werr))
 		return
 	}
@@ -852,7 +723,7 @@ func (a *app) pauseSync(ctx context.Context, pause bool) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	res, err := a.controlClient(st).setPaused(ctx, pause)
+	res, err := a.controlClient(st).SetPaused(ctx, pause)
 	switch {
 	case errors.Is(err, errNoAgent):
 		return a.noAgentForPause(ctx, st, pause)

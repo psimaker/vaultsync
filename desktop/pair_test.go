@@ -84,7 +84,7 @@ func TestIssue175_FolderWithFilesNeedsConsent(t *testing.T) {
 	t.Run("an existing Hub vault never takes a folder with files", func(t *testing.T) {
 		eng := newFakeEngine(t)
 		hub := newFakeHub(t, eng, pairing.VaultInfo{ID: "vs-aaaaaaaaaaaa", Label: "Notes", Files: 0})
-		s, _ := testSession(t, eng, hub, pairOptions{vault: "Notes", create: true, yes: true})
+		s, _ := testSession(t, eng, hub, pairOptions{vault: "Notes", yes: true})
 		s.opts.code = hub.code
 		local := filepath.Join(s.env.home, "Notes")
 		mkVault(t, local)
@@ -97,6 +97,54 @@ func TestIssue175_FolderWithFilesNeedsConsent(t *testing.T) {
 			t.Fatal("the Hub was asked to share, or a folder was added")
 		}
 		assertUntouched(t, local)
+	})
+
+	// --create with a name two Hub vaults bear is told to choose another
+	// name — an ID names no new vault.
+	t.Run("create with a name two Hub vaults bear", func(t *testing.T) {
+		eng := newFakeEngine(t)
+		hub := newFakeHub(t, eng, pairing.VaultInfo{ID: "vs-aaaaaaaaaaaa", Label: "Notes"}, pairing.VaultInfo{ID: "vs-bbbbbbbbbbbb", Label: "NOTES"})
+		s, _ := testSession(t, eng, hub, pairOptions{vault: "notes", create: true, yes: true})
+		s.opts.code = hub.code
+		local := filepath.Join(s.env.home, "notes")
+		mkVault(t, local)
+		s.opts.path = local
+		err := s.run(ctx)
+		if !strings.Contains(refusalText(err), "more than one vault named like “notes”. Choose another name") || strings.Contains(refusalText(err), "ID") || eng.folderCount() != 0 {
+			t.Fatalf("two matches with --create: %v", err)
+		}
+	})
+
+	// --create with a name the Hub already has is refused as that, not
+	// turned into a download: a folder with files stays untouched, and an
+	// empty one does not receive a vault nobody chose (#176, the menu-bar
+	// app sends every vault from this computer as --create).
+	t.Run("create with a name the Hub has is refused, never a download", func(t *testing.T) {
+		for _, withFiles := range []bool{true, false} {
+			eng := newFakeEngine(t)
+			hub := newFakeHub(t, eng, pairing.VaultInfo{ID: "vs-aaaaaaaaaaaa", Label: "Notes", Files: 0})
+			s, _ := testSession(t, eng, hub, pairOptions{vault: "notes", create: true, yes: true})
+			s.opts.code = hub.code
+			local := filepath.Join(s.env.home, "Notes")
+			if withFiles {
+				mkVault(t, local)
+			} else if err := os.MkdirAll(local, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			s.opts.path = local
+			err := s.run(ctx)
+			if !strings.Contains(refusalText(err), "Your Hub already has a vault named “Notes”. Download it as the vault on your Hub") {
+				t.Fatalf("with files %v: expected the name refusal, got %v", withFiles, err)
+			}
+			if hub.provisionCount("vs-aaaaaaaaaaaa")+hub.provisionCount("Notes")+hub.provisionCount("notes") != 0 || eng.folderCount() != 0 {
+				t.Fatalf("with files %v: the Hub was asked to share, or a folder was added", withFiles)
+			}
+			if withFiles {
+				assertUntouched(t, local)
+			} else if entries, err := os.ReadDir(local); err != nil || len(entries) != 0 {
+				t.Fatalf("the empty folder changed: %v %v", entries, err)
+			}
+		}
 	})
 
 	t.Run("consent: the new vault takes the folder's files as its first copy", func(t *testing.T) {
@@ -820,6 +868,9 @@ func TestIssue228_SetupAgainWithTheSameFlags(t *testing.T) {
 	}
 	t.Run("the same folder: nothing to do", func(t *testing.T) {
 		eng, hub, s, out := configured(t, "Hub-Test", "~/Vaults/Hub-Test-neu")
+		// With --create too: a script's first run created the vault, its
+		// second run names it again — set up here, so --create finds it.
+		s.opts.create = true
 		if err := s.run(ctx); err != nil {
 			t.Fatalf("%v\n%s", err, out)
 		}
@@ -836,6 +887,18 @@ func TestIssue228_SetupAgainWithTheSameFlags(t *testing.T) {
 			t.Fatalf("the engine's devices changed: %d", devices)
 		}
 		assertUntouched(t, filepath.Join(s.env.home, "Vaults", "Hub-Test-neu"))
+	})
+	t.Run("another folder with --create: the name is taken, and where", func(t *testing.T) {
+		eng, hub, s, _ := configured(t, "Hub-Test", "~/Vaults/Elsewhere")
+		s.opts.create = true
+		mkVault(t, filepath.Join(s.env.home, "Vaults", "Elsewhere"))
+		err := s.run(ctx)
+		if !strings.Contains(refusalText(err), "Your Hub already has a vault named “Hub-Test”, and it is set up to sync at ~/Vaults/Hub-Test-neu on this computer. Choose another name") || strings.Contains(refusalText(err), "only into a new or empty folder") {
+			t.Fatalf("a create for a vault set up elsewhere: %v", err)
+		}
+		if hub.provisionCount(id) != 0 || eng.folderCount() != 1 {
+			t.Fatal("the Hub was asked, or a folder was added")
+		}
 	})
 	t.Run("another folder: one folder per vault", func(t *testing.T) {
 		eng, hub, s, _ := configured(t, "Hub-Test", "~/Vaults/Elsewhere")

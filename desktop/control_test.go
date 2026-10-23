@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/psimaker/vaultsync/desktop/internal/control"
 	"github.com/psimaker/vaultsync/hub/pairing"
 	"github.com/psimaker/vaultsync/hub/syncthing"
 )
@@ -67,7 +68,7 @@ func agentApp(t *testing.T, eng *fakeEngine) *app {
 
 // serveControl starts the agent's side on a.lay.Socket and returns a client,
 // the server, and what the agent logged.
-func serveControl(t *testing.T, a *app) *controlClient {
+func serveControl(t *testing.T, a *app) *control.Client {
 	t.Helper()
 	c, _, _ := serveControlLogged(t, a)
 	return c
@@ -91,7 +92,7 @@ func (l *logLines) all() []string {
 	return append([]string(nil), l.lines...)
 }
 
-func serveControlLogged(t *testing.T, a *app) (*controlClient, *controlServer, *logLines) {
+func serveControlLogged(t *testing.T, a *app) (*control.Client, *controlServer, *logLines) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	logged := &logLines{}
@@ -141,7 +142,7 @@ func TestIssue176_StatusOverTheSocketIsWhatTheTerminalPrints(t *testing.T) {
 	a := agentApp(t, eng)
 	client, ctl, logged := serveControlLogged(t, a)
 
-	cs, err := client.status(context.Background())
+	cs, err := client.Status(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +192,7 @@ func TestIssue176_StatusOverTheSocketIsWhatTheTerminalPrints(t *testing.T) {
 		}
 	}
 	// Anything else is not this API.
-	if err := client.do(context.Background(), http.MethodGet, "/v2/status", nil, nil); !errors.Is(err, errNoAgent) {
+	if err := client.Do(context.Background(), http.MethodGet, "/v2/status", nil, nil); !errors.Is(err, errNoAgent) {
 		t.Fatalf("an unknown path reads as no agent, got %v", err)
 	}
 }
@@ -204,7 +205,7 @@ func TestIssue176_StatusReportsAnEngineThatDoesNotAnswer(t *testing.T) {
 	a := agentApp(t, eng)
 	writeFile(t, filepath.Join(a.lay.Home, "config.xml"), "<configuration><gui><address>"+eng.addr+"</address><apikey>another-key</apikey></gui></configuration>\n")
 	client := serveControl(t, a)
-	if _, err := client.status(context.Background()); err == nil || !strings.Contains(err.Error(), "the sync engine does not answer") || !strings.Contains(err.Error(), "403") {
+	if _, err := client.Status(context.Background()); err == nil || !strings.Contains(err.Error(), "the sync engine does not answer") || !strings.Contains(err.Error(), "403") {
 		t.Fatalf("status with the engine refusing the probe: %v", err)
 	}
 	// The terminal, through agent.json's socket, shows the agent's error.
@@ -241,7 +242,7 @@ func TestIssue176_StatusReportsAnEngineThatDoesNotAnswer(t *testing.T) {
 	if err := saveState(a.lay.State, st); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.status(context.Background()); err == nil || !strings.Contains(err.Error(), "the sync engine does not answer") {
+	if _, err := client.Status(context.Background()); err == nil || !strings.Contains(err.Error(), "the sync engine does not answer") {
 		t.Fatalf("status with the engine not answering in time: %v", err)
 	}
 }
@@ -262,7 +263,7 @@ func TestIssue176_ASocketThatCannotBeOpenedIsNotNoAgent(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("root opens any socket")
 	}
-	err = newControlClient(path).do(context.Background(), http.MethodGet, "/v1/status", nil, nil)
+	err = newControlClient(path).Do(context.Background(), http.MethodGet, "/v1/status", nil, nil)
 	if err == nil || errors.Is(err, errNoAgent) || !strings.Contains(err.Error(), "permission denied") {
 		t.Fatalf("a socket that cannot be opened: %v", err)
 	}
@@ -282,7 +283,7 @@ func TestIssue176_PauseAndResumeTouchEveryHubAndNothingElse(t *testing.T) {
 	ctx := context.Background()
 
 	// No Hub yet: nothing to pause or resume, and the terminal says which.
-	res, err := client.setPaused(ctx, true)
+	res, err := client.SetPaused(ctx, true)
 	if err != nil || res.Hubs != 0 {
 		t.Fatalf("pause without a Hub: %+v %v", res, err)
 	}
@@ -307,7 +308,7 @@ func TestIssue176_PauseAndResumeTouchEveryHubAndNothingElse(t *testing.T) {
 		"vs-ffffffffffff": {"state": "idle", "needTotalItems": 3},
 	}
 	eng.mu.Unlock()
-	res, err = client.setPaused(ctx, true)
+	res, err = client.SetPaused(ctx, true)
 	if err != nil || !res.Paused || res.Hubs != 2 {
 		t.Fatalf("pause: %+v %v", res, err)
 	}
@@ -317,11 +318,13 @@ func TestIssue176_PauseAndResumeTouchEveryHubAndNothingElse(t *testing.T) {
 	if len(eng.patches) != 2 || eng.patches[0]["paused"] != true || len(eng.patches[0]) != 1 || eng.patches[1]["paused"] != true || len(eng.patches[1]) != 1 {
 		t.Fatalf("pause patches exactly the paused flag of each Hub: %v", eng.patches)
 	}
-	cs, err := client.status(ctx)
+	cs, err := client.Status(ctx)
 	if err != nil || !cs.Paused {
 		t.Fatalf("status after pause: %+v %v", cs, err)
 	}
-	if cs.Hubs[0].State != "paused on this computer — vaultsync resume starts syncing again" || cs.Hubs[1].State != cs.Hubs[0].State {
+	// The state names the pause, the remedy names the command: a menu
+	// with an item for it shows the state alone.
+	if cs.Hubs[0].State != "paused on this computer" || cs.Hubs[0].Remedy != "vaultsync resume starts syncing again" || cs.Hubs[1].State != cs.Hubs[0].State || cs.Hubs[1].Remedy != cs.Hubs[0].Remedy {
 		t.Fatalf("paused states: %+v", cs.Hubs)
 	}
 	// What a pause does not change stays visible: a folder's own error with
@@ -355,7 +358,7 @@ func TestIssue176_PauseAndResumeTouchEveryHubAndNothingElse(t *testing.T) {
 	// before saving it, so a device that reads as paused may not have it
 	// persisted — and changes nothing else. A pairing is refused while
 	// paused, over the socket and in the terminal alike.
-	if _, err := client.setPaused(ctx, true); err != nil || len(eng.patches) != 4 || eng.patches[2]["paused"] != true || eng.patches[3]["paused"] != true {
+	if _, err := client.SetPaused(ctx, true); err != nil || len(eng.patches) != 4 || eng.patches[2]["paused"] != true || eng.patches[3]["paused"] != true {
 		t.Fatalf("second pause: %v %v", err, eng.patches)
 	}
 	// A PATCH the engine applied but could not save is a failure, and the
@@ -363,16 +366,16 @@ func TestIssue176_PauseAndResumeTouchEveryHubAndNothingElse(t *testing.T) {
 	eng.mu.Lock()
 	eng.failPatchSave = true
 	eng.mu.Unlock()
-	if _, err := client.setPaused(ctx, true); err == nil || !strings.Contains(err.Error(), "did not take the change") {
+	if _, err := client.SetPaused(ctx, true); err == nil || !strings.Contains(err.Error(), "did not take the change") {
 		t.Fatalf("a pause the engine could not save: %v", err)
 	}
 	if p, _ := pausedDevices(eng); p != 2 {
 		t.Fatalf("the engine applied the change in memory: %d paused", p)
 	}
-	if _, err := client.setPaused(ctx, true); err != nil || len(eng.patches) != 7 {
+	if _, err := client.SetPaused(ctx, true); err != nil || len(eng.patches) != 7 {
 		t.Fatalf("the retry sends the PATCH again: %v (%d patches)", err, len(eng.patches))
 	}
-	if pr, err := client.pair(ctx, pairRequest{Code: "x"}); err != nil || pr.OK || !strings.Contains(pr.Refusal, "paused on this computer — run vaultsync resume first") {
+	if pr, err := client.Pair(ctx, pairRequest{Code: "x"}); err != nil || pr.OK || !strings.Contains(pr.Refusal, "paused on this computer — run vaultsync resume first") {
 		t.Fatalf("pair while paused: %+v %v", pr, err)
 	}
 	if _, err := a.pairWith(ctx, &term{out: io.Discard}, pairOptions{code: "x"}, eng.client, pairOrigin{}); !strings.Contains(refusalText(err), "paused on this computer — run vaultsync resume first") {
@@ -383,19 +386,19 @@ func TestIssue176_PauseAndResumeTouchEveryHubAndNothingElse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.setPaused(ctx, false); err == nil || !strings.Contains(err.Error(), "a pairing is running") {
+	if _, err := client.SetPaused(ctx, false); err == nil || !strings.Contains(err.Error(), "a pairing is running") {
 		t.Fatalf("resume during a pairing: %v", err)
 	}
 	hold()
 
-	res, err = client.setPaused(ctx, false)
+	res, err = client.SetPaused(ctx, false)
 	if err != nil || res.Paused || res.Hubs != 2 || len(eng.patches) != 9 || eng.patches[7]["paused"] != false || eng.patches[8]["paused"] != false {
 		t.Fatalf("resume: %+v %v %v", res, err, eng.patches)
 	}
 	if p, _ := pausedDevices(eng); p != 0 {
 		t.Fatalf("%d Hubs still paused", p)
 	}
-	cs, err = client.status(ctx)
+	cs, err = client.Status(ctx)
 	if err != nil || cs.Paused || cs.Hubs[0].State != "not connected" {
 		t.Fatalf("status after resume: %+v %v", cs, err)
 	}
@@ -471,16 +474,23 @@ func TestIssue176_PairOverTheSocketIsTheFlagFlow(t *testing.T) {
 	client := serveControl(t, a)
 	ctx := context.Background()
 
-	pr, err := client.pair(ctx, pairRequest{Hub: hub.addr})
-	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "--code") {
+	// Each refusal that asks for a flag names it as needs too: the menu-bar
+	// app asks the person for exactly that, without reading the words.
+	pr, err := client.Pair(ctx, pairRequest{Hub: hub.addr})
+	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "--code") || pr.Needs != "code" {
 		t.Fatalf("without a code: %+v %v", pr, err)
 	}
-	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr})
-	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "--vault NAME and --path FOLDER") {
+	pr, err = client.Pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr})
+	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "--vault NAME and --path FOLDER") || pr.Needs != "vault" {
 		t.Fatalf("without a vault: %+v %v", pr, err)
 	}
 	if pr.Menu == nil || len(pr.Menu.Hub) != 1 || pr.Menu.Hub[0].Label != "Notes" || pr.Menu.Hub[0].Vault != "vs-aaaaaaaaaaaa" || pr.Menu.Local == nil || pr.Menu.Already == nil {
 		t.Fatalf("the refusal carries the menu: %+v", pr.Menu)
+	}
+	// And where the terminal would put the Hub's vault, so a caller
+	// without a terminal downloads it to the same place.
+	if pr.Menu.Hub[0].Default != filepath.Join(a.home, "Vaults", "Notes") {
+		t.Fatalf("the default folder: %q", pr.Menu.Hub[0].Default)
 	}
 	if !strings.Contains(pr.Output, "✓ Connected to") || eng.folderCount() != 0 {
 		t.Fatalf("output:\n%s\nfolders: %d", pr.Output, eng.folderCount())
@@ -490,7 +500,7 @@ func TestIssue176_PairOverTheSocketIsTheFlagFlow(t *testing.T) {
 	eng.mu.Lock()
 	eng.failFolders = true
 	eng.mu.Unlock()
-	if _, err := client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr}); err == nil || !strings.Contains(err.Error(), "the sync engine does not answer") {
+	if _, err := client.Pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr}); err == nil || !strings.Contains(err.Error(), "the sync engine does not answer") {
 		t.Fatalf("the engine failing during the menu: %v", err)
 	}
 
@@ -505,8 +515,8 @@ func TestIssue176_PairOverTheSocketIsTheFlagFlow(t *testing.T) {
 	if err := saveState(a.lay.State, st); err != nil {
 		t.Fatal(err)
 	}
-	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Notes", Path: filepath.Join(fallback, "Notes")})
-	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "VaultSync keeps its own files in") || eng.folderCount() != 0 {
+	pr, err = client.Pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Notes", Path: filepath.Join(fallback, "Notes")})
+	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "VaultSync keeps its own files in") || pr.Needs != "" || eng.folderCount() != 0 {
 		t.Fatalf("a vault inside the socket's folder: %+v %v (folders %d)", pr, err, eng.folderCount())
 	}
 	st.ControlSocket = ""
@@ -515,8 +525,8 @@ func TestIssue176_PairOverTheSocketIsTheFlagFlow(t *testing.T) {
 	}
 
 	notes := filepath.Join(a.home, "Notes")
-	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Notes", Path: notes})
-	if err != nil || !pr.OK || pr.Refusal != "" {
+	pr, err = client.Pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Notes", Path: notes})
+	if err != nil || !pr.OK || pr.Refusal != "" || pr.Needs != "" {
 		t.Fatalf("with vault and path: %+v %v", pr, err)
 	}
 	if eng.folderCount() != 1 || eng.folders[0].Path != notes || eng.folders[0].Label != "Notes" {
@@ -530,15 +540,69 @@ func TestIssue176_PairOverTheSocketIsTheFlagFlow(t *testing.T) {
 	// terminal would ask for: yes, passed by the caller — never assumed.
 	work := filepath.Join(a.home, "Work")
 	mkVault(t, work)
-	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Work", Create: true, Path: work})
-	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "already contains files") || !strings.Contains(pr.Refusal, "--yes") {
+	writeFile(t, filepath.Join(work, ".obsidian", "community-plugins.json"), `["remotely-save"]`)
+	pr, err = client.Pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Work", Create: true, Path: work})
+	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "already contains files") || !strings.Contains(pr.Refusal, "--yes") || pr.Needs != "yes" {
 		t.Fatalf("a folder with files without consent: %+v %v", pr, err)
+	}
+	// The consent for a dialog is the terminal's: the plugin warning, the
+	// lines askConsent prints, and no flag.
+	if !strings.Contains(pr.Consent, "Remotely Save") || !strings.Contains(pr.Consent, "“Work” at ~/Work already contains files. VaultSync will sync this folder with") || !strings.Contains(pr.Consent, "turn that off for it first.") || strings.Contains(pr.Consent, "--yes") {
+		t.Fatalf("the consent text:\n%s", pr.Consent)
 	}
 	if eng.folderCount() != 1 {
 		t.Fatalf("a refusal added a folder: %+v", eng.folders)
 	}
 	assertUntouched(t, work)
-	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Work", Create: true, Path: work, Yes: true})
+	// The refusal names the folder by its identity; a yes for that folder
+	// is refused once another sits at the path (the terminal's own check
+	// after its question), and taken for the folder shown. A yes that
+	// names no folder is no answer at all.
+	if pr.Folder == "" {
+		t.Fatalf("the consent names no folder: %+v", pr)
+	}
+	if _, err := client.Pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Work", Create: true, Path: work, Yes: true}); err == nil || !strings.Contains(err.Error(), "names the folder") || eng.folderCount() != 1 {
+		t.Fatalf("a yes without its folder: %v (folders %d)", err, eng.folderCount())
+	}
+	shown := pr.Folder
+	if err := os.Rename(work, work+".old"); err != nil {
+		t.Fatal(err)
+	}
+	mkVault(t, work)
+	pr, err = client.Pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Work", Create: true, Path: work, Yes: true, Folder: shown})
+	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "changed while you were answering") || eng.folderCount() != 1 {
+		t.Fatalf("a yes for a folder that was replaced: %+v %v (folders %d)", pr, err, eng.folderCount())
+	}
+	pr, err = client.Pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Work", Create: true, Path: work})
+	if err != nil || pr.OK || pr.Needs != "yes" || pr.Folder == "" || pr.Folder == shown {
+		t.Fatalf("the question for the folder now there: %+v %v", pr, err)
+	}
+	// The folder emptied between the question and the yes: the consent
+	// was for its files, and a new empty vault is not what was agreed to.
+	emptied := filepath.Join(a.home, "Emptied")
+	mkVault(t, emptied)
+	q, err := client.Pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Emptied", Create: true, Path: emptied})
+	if err != nil || q.Needs != "yes" || q.Folder == "" {
+		t.Fatalf("the question for Emptied: %+v %v", q, err)
+	}
+	// Emptied in place: the same folder (same identity), nothing in it.
+	entries, err := os.ReadDir(emptied)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if err := os.RemoveAll(filepath.Join(emptied, e.Name())); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if entries, _ := os.ReadDir(emptied); len(entries) != 0 {
+		t.Fatalf("Emptied still holds %v", entries)
+	}
+	q, err = client.Pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Emptied", Create: true, Path: emptied, Yes: true, Folder: q.Folder})
+	if err != nil || q.OK || !strings.Contains(q.Refusal, "changed while you were answering") || eng.folderCount() != 1 {
+		t.Fatalf("a yes for a folder emptied in between: %+v %v (folders %d)", q, err, eng.folderCount())
+	}
+	pr, err = client.Pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Work", Create: true, Path: work, Yes: true, Folder: pr.Folder})
 	if err != nil || !pr.OK {
 		t.Fatalf("with consent: %+v %v", pr, err)
 	}
@@ -561,7 +625,7 @@ func TestIssue176_PairOverTheSocketIsTheFlagFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer hold()
-	if _, err := client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr}); err == nil || !strings.Contains(err.Error(), "another vaultsync pair is running") {
+	if _, err := client.Pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr}); err == nil || !strings.Contains(err.Error(), "another vaultsync pair is running") {
 		t.Fatalf("busy: %v", err)
 	}
 }
@@ -623,7 +687,7 @@ func terminalApp(t *testing.T, socket string) *app {
 
 func TestIssue176_StatusReadsTheAgentFirst(t *testing.T) {
 	agent := newFakeAgent(t)
-	agent.status = controlStatus{Version: "9.9.9", Engine: "running", statusReport: statusReport{Text: "\nHub\n  Test Hub               connected\n\nVaults\n  Notes          ~/Notes                      up to date\n"}}
+	agent.status = controlStatus{Version: "9.9.9", Engine: "running", Report: statusReport{Text: "\nHub\n  Test Hub               connected\n\nVaults\n  Notes          ~/Notes                      up to date\n"}}
 	a := terminalApp(t, agent.path)
 	if err := a.status(context.Background()); err != nil {
 		t.Fatal(err)
@@ -671,7 +735,7 @@ func TestIssue176_StatusReadsTheAgentFirst(t *testing.T) {
 		}
 	}()
 	t.Cleanup(func() { l.Close() })
-	if err := newControlClient(dropping).do(context.Background(), http.MethodGet, "/v1/status", nil, nil); err == nil || errors.Is(err, errNoAgent) {
+	if err := newControlClient(dropping).Do(context.Background(), http.MethodGet, "/v1/status", nil, nil); err == nil || errors.Is(err, errNoAgent) {
 		t.Fatalf("a dropped connection: %v", err)
 	}
 
@@ -887,6 +951,9 @@ func TestIssue176_RunServesTheSocketWhileTheEngineRuns(t *testing.T) {
 		held <- err
 	}
 	t.Cleanup(func() { beforeSocketPublish = nil })
+	// A record of a socket that could not be made, left by an earlier
+	// start, goes once this start serves one.
+	writeFile(t, filepath.Join(lay.Base, "control-socket-error.txt"), "an earlier start could not make it\n")
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- a.run(ctx, nil) }()
@@ -914,9 +981,12 @@ func TestIssue176_RunServesTheSocketWhileTheEngineRuns(t *testing.T) {
 	if !strings.HasPrefix(socket, runtimeDir+string(filepath.Separator)) {
 		t.Fatalf("the fallback lies outside the user's runtime directory: %s", socket)
 	}
-	cs, err := newControlClient(socket).status(ctx)
+	cs, err := newControlClient(socket).Status(ctx)
 	if err != nil {
 		t.Fatalf("status over the socket at %s: %v", socket, err)
+	}
+	if _, err := os.Stat(filepath.Join(lay.Base, "control-socket-error.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the old control-socket-error.txt stays: %v", err)
 	}
 	if cs.Engine != "starting" || cs.Version != version {
 		t.Fatalf("status: %+v", cs)
@@ -931,6 +1001,9 @@ func TestIssue176_RunServesTheSocketWhileTheEngineRuns(t *testing.T) {
 	if err := a.status(ctx); err != nil || !strings.Contains(a.out.(*bytes.Buffer).String(), "Sync engine: starting — VaultSync is bringing it up\n\nVaults (not syncing while the engine is stopped)\n  Notes") {
 		t.Fatalf("terminal status: %v\n%s", err, a.out)
 	}
+	// A record left while running (a socket that stopped serving) goes
+	// with a clean stop: nobody answering is then "not running".
+	writeFile(t, a.lay.SocketErrorFile(), "stopped serving\n")
 	cancel()
 	select {
 	case err := <-done:
@@ -942,6 +1015,9 @@ func TestIssue176_RunServesTheSocketWhileTheEngineRuns(t *testing.T) {
 	}
 	if _, err := os.Stat(socket); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the socket stays behind at %s", socket)
+	}
+	if _, err := os.Stat(a.lay.SocketErrorFile()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the socket-error record stays after a clean stop: %v", err)
 	}
 	// And the place is out of agent.json again: nobody serves it now — and
 	// the terminal, dialing the layout's overlong address, reads the engine
@@ -958,6 +1034,52 @@ func TestIssue176_RunServesTheSocketWhileTheEngineRuns(t *testing.T) {
 // A socket that cannot be taken down on the way out is reported, with
 // whatever ended the run — a place that stays recorded as served must not
 // pass in silence.
+func TestIssue176_AFolderTokenNeedsAFolder(t *testing.T) {
+	if folderToken(nil) != "" {
+		t.Fatal("no folder, no token")
+	}
+	fi, err := os.Stat(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok := folderToken(fi); tok == "" || tok != folderToken(fi) {
+		t.Fatalf("a folder's token: %q", tok)
+	}
+}
+
+func TestIssue176_ASocketThatStopsServingLeavesTheMarker(t *testing.T) {
+	eng := newFakeEngine(t)
+	a := agentApp(t, eng)
+	var listener net.Listener
+	controlListenerHook = func(l net.Listener) { listener = l }
+	t.Cleanup(func() { controlListenerHook = nil })
+	client, _, logged := serveControlLogged(t, a)
+	if _, err := client.Status(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	marker := a.lay.SocketErrorFile()
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a marker while the socket serves: %v", err)
+	}
+	// The listener goes from underneath (an accept error): serving ends,
+	// the engine goes on — and the marker says the socket is gone, as it
+	// would after a start that could not make one.
+	listener.Close()
+	e2eWait(t, "the marker", 10*time.Second, func() bool {
+		_, err := os.Stat(marker)
+		return err == nil
+	})
+	// A connection kept open from before still reaches its handler; a
+	// fresh one finds nobody listening.
+	client.CloseIdleConnections()
+	if _, err := client.Status(context.Background()); !errors.Is(err, errNoAgent) {
+		t.Fatalf("after the listener closed: %v", err)
+	}
+	if lines := strings.Join(logged.all(), "\n"); !strings.Contains(lines, "no control socket") {
+		t.Fatalf("the log:\n%s", lines)
+	}
+}
+
 func TestIssue176_RunReportsASocketLeftBehind(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("root removes anything")
@@ -1075,7 +1197,9 @@ func TestIssue176_SocketPairingLooksWhereTheShellLooks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pr, err := client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Notes", Create: true, Path: notes, Yes: true})
+	// The refusal under test comes before any consent, so no yes (which
+	// the socket takes only with the folder the question named).
+	pr, err := client.Pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Notes", Create: true, Path: notes})
 	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "already synced by the Syncthing on this computer") || eng.folderCount() != 0 {
 		t.Fatalf("a folder the shell's Syncthing syncs: %+v %v (folders %d)", pr, err, eng.folderCount())
 	}
@@ -1089,7 +1213,7 @@ func TestIssue176_SocketPairingLooksWhereTheShellLooks(t *testing.T) {
 		}
 		return out
 	}
-	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr})
+	pr, err = client.Pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr})
 	if err != nil || !contains(localPaths(pr.Menu), work) {
 		t.Fatalf("the shell's Obsidian registry in the menu: %v %v", localPaths(pr.Menu), err)
 	}
@@ -1105,7 +1229,7 @@ func TestIssue176_SocketPairingLooksWhereTheShellLooks(t *testing.T) {
 	if err := saveState(a.lay.State, st); err != nil {
 		t.Fatal(err)
 	}
-	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Notes", Create: true, Path: notes})
+	pr, err = client.Pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Notes", Create: true, Path: notes})
 	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "not recorded where this computer keeps its settings") || !strings.Contains(pr.Refusal, "vaultsync pair in a terminal") || pr.Menu != nil || eng.folderCount() != 0 {
 		t.Fatalf("without the record: %+v %v", pr, err)
 	}
@@ -1123,11 +1247,11 @@ func TestIssue176_SocketPairingLooksWhereTheShellLooks(t *testing.T) {
 	if err := saveState(a.lay.State, st); err != nil {
 		t.Fatal(err)
 	}
-	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr})
+	pr, err = client.Pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr})
 	if err != nil || !contains(localPaths(pr.Menu), work2) || contains(localPaths(pr.Menu), notes) {
 		t.Fatalf("the shell's defaults with an empty record: %v %v", localPaths(pr.Menu), err)
 	}
-	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Notes", Create: true, Path: notes})
+	pr, err = client.Pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Notes", Create: true, Path: notes})
 	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "already synced by the Syncthing on this computer") || eng.folderCount() != 0 {
 		t.Fatalf("a folder the shell's default Syncthing syncs: %+v %v", pr, err)
 	}
@@ -1142,7 +1266,7 @@ func TestIssue176_SocketPairingLooksWhereTheShellLooks(t *testing.T) {
 	if err := saveState(a.lay.State, st); err != nil {
 		t.Fatal(err)
 	}
-	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Notes2", Create: true, Path: notes2})
+	pr, err = client.Pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Notes2", Create: true, Path: notes2})
 	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "already synced by the Syncthing on this computer") || eng.folderCount() != 0 {
 		t.Fatalf("a folder the second config syncs: %+v %v", pr, err)
 	}
@@ -1157,7 +1281,7 @@ func TestIssue176_SocketPairingLooksWhereTheShellLooks(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.getenv = envOf(nil)
-	pr, err = client.pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Vault", Create: true, Path: cloudVault})
+	pr, err = client.Pair(ctx, pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Vault", Create: true, Path: cloudVault})
 	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "cannot sync with VaultSync there") || eng.folderCount() != 0 {
 		t.Fatalf("a vault under the shell's runtime directory: %+v %v", pr, err)
 	}
@@ -1384,15 +1508,15 @@ func TestIssue176_OnlyTheOwnerTalksToTheAgent(t *testing.T) {
 	eng := newFakeEngine(t)
 	a := agentApp(t, eng)
 	client := serveControl(t, a)
-	if _, err := client.status(context.Background()); err != nil {
+	if _, err := client.Status(context.Background()); err != nil {
 		t.Fatalf("the owner's own connection: %v", err)
 	}
-	foreign := peerFunc(func(*net.UnixConn) (int, error) { return os.Getuid() + 1, nil })
-	peerUIDHook.Store(&foreign)
-	defer peerUIDHook.Store(nil)
+	foreign := control.PeerFunc(func(*net.UnixConn) (int, error) { return os.Getuid() + 1, nil })
+	control.PeerUIDHook.Store(&foreign)
+	defer control.PeerUIDHook.Store(nil)
 	// The terminal does not send to a socket served by another account
 	// (a fresh client: a connection once verified is kept and reused).
-	err := newControlClient(a.lay.Socket).do(context.Background(), http.MethodGet, "/v1/status", nil, nil)
+	err := newControlClient(a.lay.Socket).Do(context.Background(), http.MethodGet, "/v1/status", nil, nil)
 	if err == nil || errors.Is(err, errNoAgent) || !errors.Is(err, errForeignSocket) {
 		t.Fatalf("a socket served by another account: %v", err)
 	}
@@ -1474,7 +1598,7 @@ func TestIssue176_SocketErrorLogSaysWhenTheDetailsCouldNotBeWritten(t *testing.T
 	t.Cleanup(func() { _ = os.Chmod(base, 0o700) })
 	var logged []string
 	err := &os.PathError{Op: "listen", Path: filepath.Join(base, "agent.sock"), Err: errors.New("invalid argument")}
-	logSocketError(func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }, base, err)
+	logSocketError(func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }, layout{}.At(base), err)
 	all := strings.Join(logged, "\n")
 	if !strings.Contains(all, "could not be written") || strings.Contains(all, "details in control-socket-error.txt") || strings.Contains(all, base) {
 		t.Fatalf("log: %v", logged)
@@ -1503,7 +1627,7 @@ func TestIssue176_SocketErrorLogSaysWhenTheDetailsCouldNotBeWritten(t *testing.T
 		t.Fatal("serve must fail")
 	}
 	logged = nil
-	logSocketError(func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }, a.lay.Base, serr)
+	logSocketError(func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }, a.lay, serr)
 	all = strings.Join(logged, "\n")
 	if !strings.Contains(all, "the control socket could not be removed — a file operation failed (remove: permission denied)") || !strings.Contains(all, "open: permission denied") || !strings.Contains(all, "could not be written") {
 		t.Fatalf("every startup cause in the log: %v", logged)
@@ -1636,7 +1760,7 @@ func TestIssue176_StartupRollbackFailuresAreReported(t *testing.T) {
 		t.Fatal("the fallback must fail")
 	}
 	var lines []string
-	logSocketError(func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) }, shortDir(t), err)
+	logSocketError(func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) }, layout{}.At(shortDir(t)), err)
 	all := strings.Join(lines, "\n")
 	if !strings.Contains(all, "chmod: operation not permitted") || !strings.Contains(all, "could not be removed — a file operation failed (remove: permission denied)") {
 		t.Fatalf("the fallback's causes, each on its own: %v", lines)
@@ -1779,7 +1903,7 @@ func TestIssue176_TheRecordIsLoadedUnderThePairingLock(t *testing.T) {
 		}
 	}
 	t.Cleanup(func() { beforePairingLock = nil })
-	pr, err := client.pair(context.Background(), pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Notes", Create: true, Path: notes, Yes: true})
+	pr, err := client.Pair(context.Background(), pairRequest{Code: hub.code, Hub: hub.addr, Vault: "Notes", Create: true, Path: notes})
 	if err != nil || pr.OK || !strings.Contains(pr.Refusal, "already synced by the Syncthing on this computer") || eng.folderCount() != 0 {
 		t.Fatalf("the record made just before the lock must be the one checked: %+v %v", pr, err)
 	}
@@ -1840,7 +1964,7 @@ func TestIssue176_ARefusedOrResetConnectIsNobodyListening(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := serveControl(t, a)
-	if _, err := client.status(context.Background()); err == nil || !strings.Contains(err.Error(), "the sync engine does not answer") {
+	if _, err := client.Status(context.Background()); err == nil || !strings.Contains(err.Error(), "the sync engine does not answer") {
 		t.Fatalf("an engine that accepts and resets: %v", err)
 	}
 }
@@ -1851,7 +1975,7 @@ func TestIssue176_ARefusedOrResetConnectIsNobodyListening(t *testing.T) {
 // the user's own to fall back into.
 func TestIssue176_AnOverlongSocketAddressIsNoAgent(t *testing.T) {
 	deep := filepath.Join(shortDir(t), strings.Repeat("d", 120), "agent.sock")
-	if err := newControlClient(deep).do(context.Background(), http.MethodGet, "/v1/status", nil, nil); !errors.Is(err, errNoAgent) {
+	if err := newControlClient(deep).Do(context.Background(), http.MethodGet, "/v1/status", nil, nil); !errors.Is(err, errNoAgent) {
 		t.Fatalf("an overlong address: %v", err)
 	}
 	a := terminalApp(t, deep)
@@ -1866,7 +1990,7 @@ func TestIssue176_StatusJSONHasNoNulls(t *testing.T) {
 	a := agentApp(t, eng)
 	client := serveControl(t, a)
 	var raw map[string]json.RawMessage
-	if err := client.do(context.Background(), http.MethodGet, "/v1/status", nil, &raw); err != nil {
+	if err := client.Do(context.Background(), http.MethodGet, "/v1/status", nil, &raw); err != nil {
 		t.Fatal(err)
 	}
 	for _, k := range []string{"hubs", "vaults", "waiting", "attempts"} {
@@ -1906,7 +2030,7 @@ func TestIssue176_SocketErrorStaysOutOfTheLog(t *testing.T) {
 	base := t.TempDir()
 	var logged []string
 	err := &os.PathError{Op: "listen", Path: filepath.Join(base, "agent.sock"), Err: errors.New("invalid argument")}
-	logSocketError(func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }, base, err)
+	logSocketError(func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }, layout{}.At(base), err)
 	all := strings.Join(logged, "\n")
 	if len(logged) != 2 || strings.Contains(all, base) || !strings.Contains(all, "no control socket") || !strings.Contains(all, "vaultsync status reads the engine directly") || !strings.Contains(all, "details in control-socket-error.txt") {
 		t.Fatalf("log: %v", logged)

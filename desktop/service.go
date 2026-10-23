@@ -110,7 +110,7 @@ func (s service) unitFile(exe string) ([]byte, error) {
 	}
 	switch s.goos {
 	case "darwin":
-		return launchdPlist(exe, s.lay.Base, filepath.Join(s.lay.Logs, "vaultsync.log")), nil
+		return launchdPlist(exe, s.lay.Base, s.lay.LogFile()), nil
 	case "linux":
 		return systemdUnitFile(exe, s.lay.Base), nil
 	}
@@ -261,34 +261,55 @@ func (s service) systemdStart(fileChanged, binaryChanged bool) error {
 	return nil
 }
 
-// uninstall stops the service and removes its file. Not installed is fine.
-func (s service) uninstall() error {
+// uninstall stops the service and removes its file, and says whether it
+// found one — a loaded job on a Mac; on Linux a unit file, or a unit the
+// manager still runs without its file — whose own run may hold the
+// engine's lock a moment longer. Not installed is fine.
+func (s service) uninstall() (found bool, err error) {
 	path, err := s.unitPath()
 	if err != nil {
-		return err
+		return false, err
 	}
 	switch s.goos {
 	case "darwin":
 		if _, err := s.run.run("launchctl", "print", s.launchdTarget()); err == nil {
+			found = true
 			if out, err := s.run.run("launchctl", "bootout", s.launchdTarget()); err != nil {
-				return fmt.Errorf("launchctl bootout: %v: %s", err, out)
+				return found, fmt.Errorf("launchctl bootout: %v: %s", err, out)
 			}
+		} else if state, why := s.session(); state == sessionUnknown {
+			// Not "no job" but "could not ask": removing the file now would
+			// leave a job running until the logout, with nothing to stop
+			// it by. No session at all is a job nothing runs.
+			return false, fmt.Errorf("the service manager could not be asked whether the service runs (%s); run vaultsync uninstall from your Mac's own session", why)
 		}
 	case "linux":
-		if _, err := os.Stat(path); err == nil {
+		// A unit the manager runs without its file (removed by hand, no
+		// daemon-reload; a config home that moved) is stopped all the
+		// same — by stop, which needs no file; disable (the wants link)
+		// then as it may.
+		switch _, err := os.Stat(path); {
+		case err == nil:
+			found = true
 			if out, err := s.run.run("systemctl", "--user", "disable", "--now", systemdUnit); err != nil {
-				return fmt.Errorf("systemctl --user disable --now: %v: %s", err, out)
+				return found, fmt.Errorf("systemctl --user disable --now: %v: %s", err, out)
 			}
+		case s.unitAlive():
+			found = true
+			if out, err := s.run.run("systemctl", "--user", "stop", systemdUnit); err != nil {
+				return found, fmt.Errorf("systemctl --user stop: %v: %s", err, out)
+			}
+			_, _ = s.run.run("systemctl", "--user", "disable", systemdUnit)
 		}
 	}
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
+		return found, err
 	}
 	if s.goos == "linux" {
 		_, _ = s.run.run("systemctl", "--user", "daemon-reload")
 		_, _ = s.run.run("systemctl", "--user", "reset-failed", systemdUnit)
 	}
-	return nil
+	return found, nil
 }
 
 // stop pauses the service until start (or setup) — also across a restart of
@@ -456,6 +477,19 @@ func (s service) waitsForLogin() error {
 		return refuse("The background service runs while you are logged in, and no session of yours is running right now. Log in, then run vaultsync start again — and run loginctl enable-linger once to keep it running after you log out.")
 	}
 	return refuse("The background service runs in your desktop session, and you are not logged in at the screen right now. Log in on this Mac, then run vaultsync start again.")
+}
+
+// unitAlive: the Linux manager has the unit in any live state — active,
+// activating (an auto-restart on its way), deactivating, reloading —
+// as opposed to inactive, failed or unknown. Such a unit is stopped at
+// the removal whether or not its file is there.
+func (s service) unitAlive() bool {
+	out, _ := s.run.run("systemctl", "--user", "is-active", systemdUnit)
+	switch strings.TrimSpace(out) {
+	case "active", "activating", "deactivating", "reloading", "refreshing":
+		return true
+	}
+	return false
 }
 
 // running asks the service manager whether the service is up.
