@@ -177,7 +177,9 @@ quit or stop them first. On a Mac, run it from your own session: it must be
 able to ask the service manager. Afterwards it lists what it removed; a folder
 it could not remove is an error (exit status 1, for scripts); a folder that
 holds files VaultSync did not make, or in which VaultSync started again
-meanwhile, stays and is named.
+meanwhile, stays and is named; a folder that went meanwhile — moved aside,
+or taken away by a VaultSync command that found it empty — is said as gone,
+so you know where to look if you kept files in it.
 
 Scripts and remote shells pass everything as flags; anything that would need
 a decision is refused with the flag to add:

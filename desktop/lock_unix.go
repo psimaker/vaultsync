@@ -74,30 +74,63 @@ func lockHandle(path string) (*lock.Handle, error) {
 	return h, err
 }
 
-// lockHandleMaking is lockHandle that says whether it made the folder
-// (made) — for a taker that undoes its taking on a refusal and must know
-// what was its own.
-func lockHandleMaking(path string) (h *lock.Handle, made bool, err error) {
+// lockHandleMaking is lockHandle that says what it made — the topmost
+// directory it had to create, "" when the folder was there — for a taker
+// that undoes its taking on a refusal and must know what was its own.
+func lockHandleMaking(path string) (h *lock.Handle, madeFrom string, err error) {
 	dir := filepath.Dir(path)
-	switch err := os.Mkdir(dir, 0o700); {
-	case err == nil:
-		made = true
-	case errors.Is(err, fs.ErrExist):
-	default:
-		// The parents too: made, then.
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return nil, false, err
-		}
-		made = true
+	madeFrom, err = mkdirAllFrom(dir)
+	if err != nil {
+		return nil, "", err
 	}
 	h, err = lockFileNoCreate(path)
-	if err != nil && made {
-		// What this taking made and cannot use goes again: rmdir takes
-		// the empty directory alone.
-		_ = syscall.Rmdir(dir)
+	if err != nil && madeFrom != "" {
+		// What this taking made and cannot use goes again.
+		undoMadeDirs(dir, madeFrom)
 	}
-	return h, made, err
+	return h, madeFrom, err
 }
+
+// mkdirAllFrom makes dir with its missing parents and says which was the
+// topmost it made ("" when dir was there): what an undo takes away again.
+func mkdirAllFrom(dir string) (madeFrom string, err error) {
+	top := dir
+	for {
+		parent := filepath.Dir(top)
+		if parent == top {
+			break
+		}
+		if _, err := os.Lstat(parent); err == nil {
+			break
+		}
+		top = parent
+	}
+	switch err := os.Mkdir(dir, 0o700); {
+	case err == nil:
+		return top, nil
+	case errors.Is(err, fs.ErrExist):
+		return "", nil
+	default:
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return "", err
+		}
+		return top, nil
+	}
+}
+
+// undoMadeDirs removes dir and its parents up to top, each with rmdir —
+// a directory alone, and only while it is empty.
+func undoMadeDirs(dir, top string) {
+	for p := dir; ; p = filepath.Dir(p) {
+		if syscall.Rmdir(p) != nil || p == top {
+			return
+		}
+	}
+}
+
+// takeLockFile is the one take behind the agent's locks; a test injects
+// one whose file is gone again the moment it is taken.
+var takeLockFile = lock.Take
 
 // lockFileNoCreate is lockHandle without making the folder: for a wait
 // on a lock in a folder that must not come back should it go meanwhile
@@ -107,7 +140,7 @@ func lockFileNoCreate(path string) (*lock.Handle, error) {
 	// a removal discarded in the instant between this open and this
 	// flock — guards nothing: taken again, at most a few times.
 	for attempt := 0; ; attempt++ {
-		h, err := lock.Take(path)
+		h, err := takeLockFile(path)
 		if errors.Is(err, lock.ErrHeld) {
 			return nil, ErrEngineRunning
 		}

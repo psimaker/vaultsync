@@ -72,19 +72,21 @@ func openIn(root *os.Root, name string, flag int) (*os.File, error) {
 			}
 			return nil, err
 		}
-		f, err = checkOpened(root, name, f, loop)
-		if err != nil && create && errors.Is(err, os.ErrNotExist) && attempt < 3 {
+		f, err = checkOpened(root, name, f)
+		if err != nil && create && (errors.Is(err, os.ErrNotExist) || errors.Is(err, ErrChanged)) && attempt < 3 {
+			// Emptied or re-filled again in between: made new after all,
+			// or opened as what is there now.
 			continue
 		}
 		return f, err
 	}
 }
 
-// checkOpened: the opened file is the one the name holds now — a link
-// swapped in between the look and the open would have been followed, and
-// any other file swapped in is ErrChanged. A name that holds nothing any
-// more is a file gone, not a link.
-func checkOpened(root *os.Root, name string, f *os.File, loop error) (*os.File, error) {
+// checkOpened: the opened file is the one the name holds now — any file
+// swapped in between the look and the open, a link that was followed
+// included, is ErrChanged. A name that holds nothing any more is a file
+// gone, not a link.
+func checkOpened(root *os.Root, name string, f *os.File) (*os.File, error) {
 	opened, err := f.Stat()
 	if err != nil {
 		f.Close()
@@ -97,7 +99,7 @@ func checkOpened(root *os.Root, name string, f *os.File, loop error) (*os.File, 
 	}
 	if !os.SameFile(opened, at) {
 		f.Close()
-		return nil, &os.PathError{Op: "open", Path: filepath.Join(root.Name(), name), Err: ErrChanged}
+		return nil, &os.PathError{Op: "check", Path: filepath.Join(root.Name(), name), Err: ErrChanged}
 	}
 	return f, nil
 }

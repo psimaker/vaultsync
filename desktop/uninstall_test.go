@@ -1595,3 +1595,86 @@ func TestIssue176_RemoveDataWaitsForAnOwnersLockToo(t *testing.T) {
 		t.Fatalf("a setup still at it after the wait: %v %v", kept, err)
 	}
 }
+
+// The discard of a lock file says whether it unlinked the file: a name that
+// no longer holds the taken file — its owner unlinked it an instant
+// earlier — is nothing removed here, and the removal reports it as such.
+func TestIssue176_DiscardSaysWhetherItUnlinked(t *testing.T) {
+	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	h, err := lock.TakeIn(root, "pair.lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := root.Remove("pair.lock"); err != nil {
+		t.Fatal(err)
+	}
+	if removed, err := h.DiscardIn(root, "pair.lock"); removed || err != nil {
+		t.Fatalf("a file its owner unlinked: removed=%v err=%v", removed, err)
+	}
+	h, err = lock.TakeIn(root, "pair.lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed, err := h.DiscardIn(root, "pair.lock"); !removed || err != nil {
+		t.Fatalf("a file still at its name: removed=%v err=%v", removed, err)
+	}
+	h, err = lock.Take(filepath.Join(dir, "setup.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "setup.lock")); err != nil {
+		t.Fatal(err)
+	}
+	if removed, err := h.Discard(); removed || err != nil {
+		t.Fatalf("a file its owner unlinked (by path): removed=%v err=%v", removed, err)
+	}
+}
+
+// A lock whose file is gone again the moment it is taken guards nothing:
+// the take tries again a few times, then says so instead of handing out a
+// lock on an unlinked file.
+func TestIssue176_ALockThatKeepsLosingItsFileIsAnError(t *testing.T) {
+	dir := t.TempDir()
+	orig := takeLockFile
+	defer func() { takeLockFile = orig }()
+	takes := 0
+	takeLockFile = func(path string) (*lock.Handle, error) {
+		takes++
+		h, err := lock.Take(path)
+		if err == nil {
+			_ = os.Remove(path)
+		}
+		return h, err
+	}
+	_, err := lockFileNoCreate(filepath.Join(dir, "agent.lock"))
+	if err == nil || !strings.Contains(err.Error(), "keeps changing") || takes != 4 {
+		t.Fatalf("got %v after %d takes", err, takes)
+	}
+}
+
+// What a pairing's taking made for its lock file goes again on the
+// not-set-up refusal — the folder and the parents it made, each while
+// empty — so a fresh account is left as it was.
+func TestIssue176_PairUndoesTheParentsItMade(t *testing.T) {
+	home := t.TempDir()
+	lay, err := layoutFor("linux", home, envOf(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ~/.local/state is not there either on this fresh account.
+	if _, err := os.Lstat(filepath.Dir(lay.Base)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the parent is there already: %v", err)
+	}
+	s := &pairSession{env: pairEnv{lay: lay, getenv: envOf(nil), rememberShell: true}}
+	if err := s.run(context.Background()); !strings.Contains(refusalText(err), "not set up on this computer") {
+		t.Fatalf("pair on a fresh account: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Dir(lay.Base)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the parent the taking made stayed: %v", err)
+	}
+}

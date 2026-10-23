@@ -587,7 +587,7 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 			// Not there any more: an owner that found agent.json gone took
 			// the empty folder away itself — or it was moved aside whole,
 			// with whatever it held. Said as that, not as removed here.
-			kept = &keptFolder{path: lay.Base, why: "it went while the removal waited on it — taken away by an owner that found it empty, or moved aside with whatever it held; look for it there if you kept files in it", gone: true}
+			kept = &keptFolder{path: lay.Base, why: "it went before this removal could take it away — taken away by an owner that found it empty, or moved aside with whatever it held; look for it there if you kept files in it", gone: true}
 			break
 		}
 		if removeTryHook != nil {
