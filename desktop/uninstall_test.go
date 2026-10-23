@@ -1041,6 +1041,33 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 		}
 		_ = held
 	})
+	t.Run("a leftover that cannot go is named, not reported removed", func(t *testing.T) {
+		if os.Getuid() == 0 {
+			t.Skip("root removes through any mode")
+		}
+		// A leftover whose unlink fails (the folder unwritable by then)
+		// is a failure that names it — not a file reported removed and a
+		// folder then blamed for lock files that keep appearing.
+		lay, foreign := ownedFixture(t)
+		if err := os.Remove(foreign); err != nil {
+			t.Fatal(err)
+		}
+		lockFilesRemovedHook = func(l layout) {
+			writeFile(t, filepath.Join(l.Base, "setup.lock"), "")
+			if err := os.Chmod(l.Base, 0o500); err != nil {
+				t.Fatal(err)
+			}
+		}
+		defer func() { lockFilesRemovedHook = nil }()
+		defer func() { _ = os.Chmod(lay.Base, 0o700) }()
+		orig := removeRetryWait
+		removeRetryWait = time.Millisecond
+		defer func() { removeRetryWait = orig }()
+		removed, kept, err := removeOwnData(lay, nil, "darwin")
+		if err != nil || kept == nil || !kept.failed || !strings.Contains(kept.why, "its setup.lock could not be removed") || slices.Contains(removed, filepath.Join(lay.Base, "setup.lock")) {
+			t.Fatalf("got %v %v %v", removed, kept, err)
+		}
+	})
 	t.Run("a set-up run's lock file left in the instant goes, the folder with it", func(t *testing.T) {
 		// A set-up run took setup.lock in the instant after the lock files
 		// went, refused and discarded its file (or crashed before): what is
