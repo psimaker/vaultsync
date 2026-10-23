@@ -5,6 +5,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -69,21 +70,50 @@ func removeDirAt(parent *os.File, name string, checked os.FileInfo) error {
 // lockHandle is lockFile with the handle: for a taker that may have to
 // discard its own file (lock.Handle.Discard).
 func lockHandle(path string) (*lock.Handle, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, err
+	h, _, err := lockHandleMaking(path)
+	return h, err
+}
+
+// lockHandleMaking is lockHandle that says whether it made the folder
+// (made) — for a taker that undoes its taking on a refusal and must know
+// what was its own.
+func lockHandleMaking(path string) (h *lock.Handle, made bool, err error) {
+	dir := filepath.Dir(path)
+	switch err := os.Mkdir(dir, 0o700); {
+	case err == nil:
+		made = true
+	case errors.Is(err, fs.ErrExist):
+	default:
+		// The parents too: made, then.
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return nil, false, err
+		}
+		made = true
 	}
-	return lockFileNoCreate(path)
+	h, err = lockFileNoCreate(path)
+	return h, made, err
 }
 
 // lockFileNoCreate is lockHandle without making the folder: for a wait
 // on a lock in a folder that must not come back should it go meanwhile
 // (a run that was set up, while an uninstall takes the folder apart).
 func lockFileNoCreate(path string) (*lock.Handle, error) {
-	h, err := lock.Take(path)
-	if errors.Is(err, lock.ErrHeld) {
-		return nil, ErrEngineRunning
+	// A lock taken on a file that is no longer the one at its name — one
+	// a removal discarded in the instant between this open and this
+	// flock — guards nothing: taken again, at most a few times.
+	for attempt := 0; ; attempt++ {
+		h, err := lock.Take(path)
+		if errors.Is(err, lock.ErrHeld) {
+			return nil, ErrEngineRunning
+		}
+		if err != nil {
+			return nil, err
+		}
+		if h.Valid() || attempt >= 3 {
+			return h, nil
+		}
+		h.Release()
 	}
-	return h, err
 }
 
 // lockFileWait takes the lock like lockFile, but waits for it instead of

@@ -17,6 +17,10 @@ func removeDirAt(*os.File, string, os.FileInfo) error {
 	return errors.New("the background engine runs on macOS and Linux only for now")
 }
 
+func lockHandleMaking(string) (*lock.Handle, bool, error) {
+	return nil, false, errors.New("the background engine runs on macOS and Linux only for now")
+}
+
 func lockHandle(string) (*lock.Handle, error) {
 	return nil, errors.New("the background engine runs on macOS and Linux only for now")
 }

@@ -584,15 +584,15 @@ func (a *app) pair(ctx context.Context, args []string) error {
 	return err
 }
 
+// errNotSetUpAnymore: no agent.json — never set up, or removed since.
+var errNotSetUpAnymore = refuse("VaultSync is not set up on this computer (anymore). Run vaultsync setup.")
+
 // rememberShellEnv records the shell's guard variables in agent.json when
 // they differ from what is recorded, so a pairing run by the service looks
 // where this terminal looks. Called under the pairing lock only (the
 // pairing flow does it): uninstall --remove-data takes agent.json away
 // after seeing that lock free, and a record written outside it could
 // bring the file back after the removal was reported done.
-// errNotSetUpAnymore: no agent.json — never set up, or removed since.
-var errNotSetUpAnymore = refuse("VaultSync is not set up on this computer (anymore). Run vaultsync setup.")
-
 func rememberShellEnv(statePath string, getenv func(string) string) error {
 	// Only a state that is there and set up takes the record: loadState
 	// reads a missing agent.json as a fresh one, and a record written then
@@ -766,7 +766,7 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 		// an uninstall took VaultSync's folder apart (its lock held the
 		// wait). A run does not set VaultSync up afresh behind it, and
 		// the lock file its take may have made goes with it.
-		setupHandle.Discard()
+		_ = setupHandle.Discard()
 		return removedMeanwhile
 	}
 	st, err := loadState(a.lay.State)

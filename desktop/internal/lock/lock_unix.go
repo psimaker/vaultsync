@@ -67,7 +67,11 @@ func openIn(root *os.Root, name string, flag int) (*os.File, error) {
 			}
 			return nil, err
 		}
-		return checkOpened(root, name, f, loop)
+		f, err = checkOpened(root, name, f, loop)
+		if err != nil && create && errors.Is(err, os.ErrNotExist) && attempt < 3 {
+			continue
+		}
+		return f, err
 	}
 }
 
@@ -154,6 +158,16 @@ func Probe(path string) (held bool, err error) {
 	return probeOpened(f)
 }
 
+// TakeExistingIn is TakeIn for a file that is there: nothing is made,
+// a missing file is os.ErrNotExist.
+func TakeExistingIn(root *os.Root, name string) (*Handle, error) {
+	f, err := openIn(root, name, os.O_RDWR)
+	if err != nil {
+		return nil, err
+	}
+	return takeOpened(f, filepath.Join(root.Name(), name))
+}
+
 // ProbeIn is Probe for a lock named name inside root.
 func ProbeIn(root *os.Root, name string) (held bool, err error) {
 	f, err := openIn(root, name, os.O_RDWR)
@@ -203,9 +217,29 @@ func (h *Handle) Release() { _ = h.f.Close() }
 // the flock is held nobody else has that file — then lets the lock go.
 // For a lock taken in a folder that is being taken apart: nothing of the
 // taker is left in it.
-func (h *Handle) Discard() {
+func (h *Handle) Discard() error {
+	var err error
 	if h.Valid() {
-		_ = os.Remove(h.path)
+		if err = os.Remove(h.path); errors.Is(err, os.ErrNotExist) {
+			err = nil
+		}
 	}
 	h.Release()
+	return err
+}
+
+// DiscardIn is Discard for a lock taken inside root (TakeIn,
+// TakeExistingIn): the look and the unlink go through the root, never by
+// a path something else may stand at by now.
+func (h *Handle) DiscardIn(root *os.Root, name string) error {
+	var err error
+	held, serr := h.f.Stat()
+	at, aerr := root.Lstat(name)
+	if serr == nil && aerr == nil && os.SameFile(held, at) {
+		if err = root.Remove(name); errors.Is(err, os.ErrNotExist) {
+			err = nil
+		}
+	}
+	h.Release()
+	return err
 }

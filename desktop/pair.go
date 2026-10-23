@@ -192,9 +192,7 @@ func (s *pairSession) run(ctx context.Context) error {
 	// Whether the take is about to make VaultSync's folder: then a refusal
 	// for no agent.json takes the folder away again, so a pairing after a
 	// finished uninstall --remove-data brings nothing back.
-	_, baseErr := os.Lstat(s.env.lay.Base)
-	madeFolder := errors.Is(baseErr, os.ErrNotExist)
-	h, err := lockHandle(filepath.Join(s.env.lay.Base, "pair.lock"))
+	h, madeFolder, err := lockHandleMaking(filepath.Join(s.env.lay.Base, "pair.lock"))
 	if errors.Is(err, ErrEngineRunning) {
 		return errPairingBusy
 	}
@@ -206,13 +204,13 @@ func (s *pairSession) run(ctx context.Context) error {
 		// Under the lock that uninstall --remove-data waits on: a record
 		// written outside it could bring agent.json back after the removal.
 		if err := rememberShellEnv(s.env.lay.State, s.env.getenv); err != nil {
-			if err == errNotSetUpAnymore {
+			if errors.Is(err, errNotSetUpAnymore) {
 				// The lock file this taking made goes; the folder too when
-				// the taking made it and it is empty — a directory alone,
-				// never a link standing at the folder's place.
-				h.Discard()
-				if fi, err := os.Lstat(s.env.lay.Base); madeFolder && err == nil && fi.IsDir() {
-					_ = os.Remove(s.env.lay.Base)
+				// the taking made it and it is empty — rmdir takes a
+				// directory alone, never a link standing at its place.
+				_ = h.Discard()
+				if madeFolder {
+					_ = syscall.Rmdir(s.env.lay.Base)
 				}
 			}
 			return err

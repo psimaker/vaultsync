@@ -1024,17 +1024,20 @@ func TestIssue176_RemoveDataWaitsForTheTraysOwnFile(t *testing.T) {
 			}
 			held = h
 			go func() {
-				time.Sleep(300 * time.Millisecond)
-				h.Discard()
+				time.Sleep(600 * time.Millisecond)
+				_ = h.Discard()
 			}()
 		}
 		defer func() { lockFilesRemovedHook = nil }()
+		tries := 0
+		removeTryHook = func() { tries++ }
+		defer func() { removeTryHook = nil }()
 		orig := removeRetryWait
-		removeRetryWait = 10 * time.Millisecond
+		removeRetryWait = 20 * time.Millisecond
 		defer func() { removeRetryWait = orig }()
 		removed, kept, err := removeOwnData(lay, nil, "darwin")
-		if err != nil || kept != nil || !slices.Contains(removed, lay.Base) {
-			t.Fatalf("got %v %v %v", removed, kept, err)
+		if err != nil || kept != nil || !slices.Contains(removed, lay.Base) || tries < 22 {
+			t.Fatalf("got %v %v %v (tries %d)", removed, kept, err, tries)
 		}
 		_ = held
 	})
@@ -1482,8 +1485,8 @@ func TestIssue176_PairAfterRemovalMakesNoFolder(t *testing.T) {
 
 // A folder that an owner took away itself in the last instant — a pair
 // that found agent.json gone, discarded its file and removed the empty
-// folder — is gone, which is what the removal wanted: reported removed,
-// not as a failure.
+// folder — or moved aside whole is gone when the removal reaches it:
+// said as that, neither removed here nor a failure.
 func TestIssue176_RemoveDataTakesAFolderGoneInBetweenAsRemoved(t *testing.T) {
 	lay, foreign := ownedFixture(t)
 	if err := os.Remove(foreign); err != nil {
@@ -1496,7 +1499,7 @@ func TestIssue176_RemoveDataTakesAFolderGoneInBetweenAsRemoved(t *testing.T) {
 	}
 	defer func() { lockFilesRemovedHook = nil }()
 	removed, kept, err := removeOwnData(lay, nil, "darwin")
-	if err != nil || kept != nil || !slices.Contains(removed, lay.Base) {
+	if err != nil || kept == nil || !kept.gone || kept.failed || slices.Contains(removed, lay.Base) {
 		t.Fatalf("got %v %v %v", removed, kept, err)
 	}
 }
@@ -1510,27 +1513,33 @@ func TestIssue176_RemoveDataWaitsForAnOwnersLockToo(t *testing.T) {
 	if err := os.Remove(foreign); err != nil {
 		t.Fatal(err)
 	}
-	// Twenty waits of ten milliseconds: the first look comes at about
-	// two hundred, the pair lets go at three hundred, the second look at
-	// about four hundred sees it gone.
+	// Twenty waits of twenty milliseconds: the first look comes at about
+	// four hundred and finds the lock held, the pair lets go at six
+	// hundred, and a try of the second wait finds the folder empty. More
+	// than twenty-one tries show the first look happened and the removal
+	// went on after it.
 	lockFilesRemovedHook = func(l layout) {
 		h, err := lock.Take(filepath.Join(l.Base, "pair.lock"))
 		if err != nil {
 			t.Fatal(err)
 		}
 		go func() {
-			time.Sleep(300 * time.Millisecond)
-			h.Discard()
+			time.Sleep(600 * time.Millisecond)
+			_ = h.Discard()
 		}()
 	}
 	defer func() { lockFilesRemovedHook = nil }()
+	tries := 0
+	removeTryHook = func() { tries++ }
+	defer func() { removeTryHook = nil }()
 	orig := removeRetryWait
-	removeRetryWait = 10 * time.Millisecond
+	removeRetryWait = 20 * time.Millisecond
 	defer func() { removeRetryWait = orig }()
 	removed, kept, err := removeOwnData(lay, nil, "darwin")
-	if err != nil || kept != nil || !slices.Contains(removed, lay.Base) {
-		t.Fatalf("a pair about to refuse: %v %v %v", removed, kept, err)
+	if err != nil || kept != nil || !slices.Contains(removed, lay.Base) || tries < 22 {
+		t.Fatalf("a pair about to refuse: %v %v %v (tries %d)", removed, kept, err, tries)
 	}
+	removeTryHook = nil
 
 	lay, foreign = ownedFixture(t)
 	if err := os.Remove(foreign); err != nil {

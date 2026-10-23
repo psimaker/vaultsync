@@ -127,7 +127,7 @@ var errNotTheFolderChecked = errors.New("what is at the folder's place is not th
 
 // couldNotRemove: the folder stayed because a removal failed — an error.
 func couldNotRemove(path string, err error) *keptFolder {
-	return &keptFolder{path, fmt.Sprintf("it could not be removed (%v); remove the folder by hand", errnoOf(err)), true}
+	return &keptFolder{path: path, why: fmt.Sprintf("it could not be removed (%v); remove the folder by hand", errnoOf(err)), failed: true}
 }
 
 // ownFolder: whether VaultSync's folder is there, and whether it is its
@@ -342,7 +342,9 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 	for _, r := range removed {
 		t.say("  removed %s", tildePath(a.home, r))
 	}
-	if kept != nil && (!kept.failed || err != nil) {
+	if kept != nil && kept.gone {
+		t.say("  gone meanwhile: %s — %s", tildePath(a.home, kept.path), kept.why)
+	} else if kept != nil && (!kept.failed || err != nil) {
 		// A note; or a failure the error returned below would hide.
 		t.say("  kept %s — %s", tildePath(a.home, kept.path), kept.why)
 	}
@@ -353,7 +355,7 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 		// The folder could not be removed: an error, so a script sees it.
 		return fmt.Errorf("%s was not removed: %s", tildePath(a.home, kept.path), kept.why)
 	}
-	if kept != nil {
+	if kept != nil && !kept.gone {
 		t.say("✓ VaultSync's own files are removed, but its folder stays (see above). Your vault files were not touched.")
 		return nil
 	}
@@ -442,6 +444,10 @@ var ownTempFile = regexp.MustCompile(`^\.(agent\.json|pairing\.json|last-error\.
 type keptFolder struct {
 	path, why string
 	failed    bool
+	// gone: the folder was not there any more when the removal reached
+	// it — taken away by an owner that found it empty, or moved aside
+	// with whatever it held. Not kept, not removed by this removal.
+	gone bool
 }
 
 // removeOwnData removes VaultSync's own entries from lay.Base (and its log
@@ -573,17 +579,22 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 	leftovers, heldWaits := 0, 0
 	for try := 0; ; try++ {
 		err := removeDirAt(parent, filepath.Base(lay.Base), base)
-		if err == nil || errors.Is(err, fs.ErrNotExist) {
-			// Gone — by this removal, or by an owner that found agent.json
-			// gone and took the empty folder away itself.
+		if err == nil {
 			removed = append(removed, lay.Base)
+			break
+		}
+		if errors.Is(err, fs.ErrNotExist) {
+			// Not there any more: an owner that found agent.json gone took
+			// the empty folder away itself — or it was moved aside whole,
+			// with whatever it held. Said as that, not as removed here.
+			kept = &keptFolder{path: lay.Base, why: "it was gone before the removal reached it — taken away by an owner that found it empty, or moved aside with whatever it held; look for it there if you kept files in it", gone: true}
 			break
 		}
 		if removeTryHook != nil {
 			removeTryHook()
 		}
 		if errors.Is(err, errNotTheFolderChecked) {
-			kept = &keptFolder{lay.Base, "something else now stands where VaultSync's folder was; VaultSync's own files in the folder were removed, the folder itself is wherever it was moved to, and nothing at that place was touched", true}
+			kept = &keptFolder{path: lay.Base, why: "something else now stands where VaultSync's folder was; VaultSync's own files in the folder were removed, the folder itself is wherever it was moved to, and nothing at that place was touched", failed: true}
 			break
 		}
 		if !errors.Is(err, syscall.ENOTEMPTY) && !errors.Is(err, syscall.EEXIST) {
@@ -593,7 +604,7 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 		}
 		entries, readErr := fs.ReadDir(root.FS(), ".")
 		if readErr != nil {
-			kept = &keptFolder{lay.Base, fmt.Sprintf("it could not be read (%v)", errnoOf(readErr)), true}
+			kept = &keptFolder{path: lay.Base, why: fmt.Sprintf("it could not be read (%v)", errnoOf(readErr)), failed: true}
 			break
 		}
 		if len(entries) == 0 {
@@ -602,7 +613,7 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 			if try <= 20 {
 				continue
 			}
-			kept = &keptFolder{lay.Base, fmt.Sprintf("it reads as empty, yet it could not be removed (%v); remove the folder by hand", errnoOf(err)), true}
+			kept = &keptFolder{path: lay.Base, why: fmt.Sprintf("it reads as empty, yet it could not be removed (%v); remove the folder by hand", errnoOf(err)), failed: true}
 			break
 		}
 		if !allLockFiles(lockNames, entries) {
@@ -614,7 +625,7 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 			if allOwnEntries(entries) {
 				why = "VaultSync started again in it meanwhile (a vaultsync run, pair or setup)"
 			}
-			kept = &keptFolder{lay.Base, why, false}
+			kept = &keptFolder{path: lay.Base, why: why}
 			break
 		}
 		// Lock files alone: an owner that took one in the instant after
@@ -625,20 +636,19 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 			time.Sleep(removeRetryWait)
 			continue
 		}
-		// Each lock file is taken, not looked at: taken, it is nobody's —
-		// a leftover of an owner that did not get to remove it — and goes
-		// under this process's own flock (lock.Handle.Discard), so no
-		// owner that opens it in between is left with a lock on nothing.
-		// Held, an owner is at work with it: the menu-bar app, which
-		// discards its tray.lock the moment it sees agent.json gone; a
-		// pair or set-up run about to refuse and discard its file; or a
-		// run or setup that began without agent.json and is VaultSync's
-		// again. One more wait tells them apart: still held then, a
-		// tray.lock is the app that stayed (a failure that names it),
-		// any other lock is VaultSync started again (a note).
+		// Each lock file is taken, not looked at — a file that is there,
+		// never one made for it: taken, it is a leftover of an owner that
+		// did not get to remove it, and goes under this process's flock,
+		// through the folder's handle. Held, an owner is at work with it:
+		// the menu-bar app, which discards its tray.lock the moment it sees
+		// agent.json gone; a pair or set-up run about to refuse and discard
+		// its file; or a run or setup that began without agent.json and is
+		// VaultSync's again. One more wait tells them apart: still held
+		// then, a tray.lock is the app that stayed (a failure that names
+		// it), any other lock is VaultSync started again (a note).
 		heldOwner, heldTray := false, false
 		for _, e := range entries {
-			h, terr := lock.TakeIn(root, e.Name())
+			h, terr := lock.TakeExistingIn(root, e.Name())
 			if errors.Is(terr, lock.ErrHeld) {
 				if e.Name() == "tray.lock" {
 					heldTray = true
@@ -647,38 +657,42 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 				}
 				continue
 			}
+			if errors.Is(terr, os.ErrNotExist) {
+				// Gone in between: its owner removed it after all.
+				continue
+			}
 			if terr != nil {
-				kept = &keptFolder{lay.Base, fmt.Sprintf("its %s could not be looked at (%v); remove the folder by hand", e.Name(), errnoOf(terr)), true}
+				kept = &keptFolder{path: lay.Base, why: fmt.Sprintf("its %s could not be looked at (%v); remove the folder by hand", e.Name(), errnoOf(terr)), failed: true}
 				break
 			}
-			h.Discard()
+			if derr := h.DiscardIn(root, e.Name()); derr != nil {
+				kept = &keptFolder{path: lay.Base, why: fmt.Sprintf("its %s could not be removed (%v); remove the folder by hand", e.Name(), errnoOf(derr)), failed: true}
+				break
+			}
 			removed = append(removed, filepath.Join(lay.Base, e.Name()))
 		}
 		if kept != nil {
 			break
 		}
-		switch {
-		case heldOwner || heldTray:
+		if heldOwner || heldTray {
 			if heldWaits < 1 {
 				heldWaits++
 				try = -1
 				continue
 			}
 			if heldOwner {
-				kept = &keptFolder{lay.Base, "VaultSync started again in it meanwhile (a vaultsync run, pair or setup)", false}
+				kept = &keptFolder{path: lay.Base, why: "VaultSync started again in it meanwhile (a vaultsync run, pair or setup)"}
 			} else {
-				kept = &keptFolder{lay.Base, "a tray.lock the menu-bar app holds stayed; quit the app, then remove the folder by hand", true}
+				kept = &keptFolder{path: lay.Base, why: "a tray.lock the menu-bar app holds stayed; quit the app, then remove the folder by hand", failed: true}
 			}
-		default:
-			if leftovers >= 2 {
-				kept = &keptFolder{lay.Base, "lock files keep appearing in it; remove the folder by hand once nothing of VaultSync runs", true}
-				break
-			}
-			leftovers++
-			try = -1
-			continue
+			break
 		}
-		break
+		if leftovers >= 2 {
+			kept = &keptFolder{path: lay.Base, why: "lock files keep appearing in it; remove the folder by hand once nothing of VaultSync runs", failed: true}
+			break
+		}
+		leftovers++
+		try = -1
 	}
 	if lay.Logs != "" {
 		if _, err := os.Lstat(lay.Logs); err == nil {
