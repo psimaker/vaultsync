@@ -1416,8 +1416,10 @@ func serviceTouched(calls []string) bool {
 }
 
 // A pairing after a finished uninstall --remove-data does not bring
-// VaultSync's folder back: its lock is taken without making the folder,
-// and a folder gone is the not-set-up refusal.
+// VaultSync's folder back: its lock's taking makes the folder for the
+// lock file, and the not-set-up refusal takes both away again — the
+// folder only when the taking made it and it is empty, and never a link
+// standing at the folder's place.
 func TestIssue176_PairAfterRemovalMakesNoFolder(t *testing.T) {
 	home := t.TempDir()
 	lay, err := layoutFor("linux", home, envOf(nil))
@@ -1431,5 +1433,116 @@ func TestIssue176_PairAfterRemovalMakesNoFolder(t *testing.T) {
 	}
 	if _, err := os.Lstat(lay.Base); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the pairing made VaultSync's folder: %v", err)
+	}
+
+	// A link at the folder's place, pointing at a folder that holds
+	// VaultSync's files but no agent.json: the refusal removes neither
+	// the link nor anything behind it.
+	real := filepath.Join(home, "real-vaultsync")
+	writeFile(t, filepath.Join(real, "bin", "syncthing"), "x")
+	if err := os.MkdirAll(filepath.Dir(lay.Base), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, lay.Base); err != nil {
+		t.Fatal(err)
+	}
+	err = s.run(context.Background())
+	if !strings.Contains(refusalText(err), "not set up on this computer") {
+		t.Fatalf("pair behind a link without agent.json: %v", err)
+	}
+	if fi, err := os.Lstat(lay.Base); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("the link at the folder's place went: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(real, "bin", "syncthing")); err != nil {
+		t.Fatalf("the files behind the link went: %v", err)
+	}
+
+	// A folder that is there with damaged settings: nothing is removed on
+	// that error.
+	if err := os.Remove(lay.Base); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(lay.Base, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, lay.State, "not json")
+	err = s.run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "nothing was changed") {
+		t.Fatalf("damaged settings: %v", err)
+	}
+	if _, err := os.Stat(lay.Base); err != nil {
+		t.Fatalf("the folder went on a settings error: %v", err)
+	}
+}
+
+// A folder that an owner took away itself in the last instant — a pair
+// that found agent.json gone, discarded its file and removed the empty
+// folder — is gone, which is what the removal wanted: reported removed,
+// not as a failure.
+func TestIssue176_RemoveDataTakesAFolderGoneInBetweenAsRemoved(t *testing.T) {
+	lay, foreign := ownedFixture(t)
+	if err := os.Remove(foreign); err != nil {
+		t.Fatal(err)
+	}
+	lockFilesRemovedHook = func(l layout) {
+		if err := os.Remove(l.Base); err != nil {
+			t.Errorf("the folder is not empty after the lock files went: %v", err)
+		}
+	}
+	defer func() { lockFilesRemovedHook = nil }()
+	removed, kept, err := removeOwnData(lay, nil, "darwin")
+	if err != nil || kept != nil || !slices.Contains(removed, lay.Base) {
+		t.Fatalf("got %v %v %v", removed, kept, err)
+	}
+}
+
+// A held pair.lock in the last instant is a pair about to refuse and
+// discard its file: one more wait sees it gone and the folder goes — no
+// restart reported. One still held after the wait is VaultSync started
+// again.
+func TestIssue176_RemoveDataWaitsForAnOwnersLockToo(t *testing.T) {
+	lay, foreign := ownedFixture(t)
+	if err := os.Remove(foreign); err != nil {
+		t.Fatal(err)
+	}
+	lockFilesRemovedHook = func(l layout) {
+		h, err := lock.Take(filepath.Join(l.Base, "pair.lock"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		go func() {
+			time.Sleep(60 * time.Millisecond)
+			h.Discard()
+		}()
+	}
+	defer func() { lockFilesRemovedHook = nil }()
+	orig := removeRetryWait
+	removeRetryWait = 2 * time.Millisecond
+	defer func() { removeRetryWait = orig }()
+	removed, kept, err := removeOwnData(lay, nil, "darwin")
+	if err != nil || kept != nil || !slices.Contains(removed, lay.Base) {
+		t.Fatalf("a pair about to refuse: %v %v %v", removed, kept, err)
+	}
+
+	lay, foreign = ownedFixture(t)
+	if err := os.Remove(foreign); err != nil {
+		t.Fatal(err)
+	}
+	var held *lock.Handle
+	lockFilesRemovedHook = func(l layout) {
+		h, err := lock.Take(filepath.Join(l.Base, "setup.lock"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		held = h
+	}
+	defer func() {
+		if held != nil {
+			held.Release()
+		}
+	}()
+	_, kept, err = removeOwnData(lay, nil, "darwin")
+	if err != nil || kept == nil || kept.failed || !strings.Contains(kept.why, "started again") {
+		t.Fatalf("a setup still at it after the wait: %v %v", kept, err)
 	}
 }

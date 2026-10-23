@@ -34,31 +34,47 @@ func open(path string) (*os.File, error) {
 // it: ELOOP, nothing opened, locked or made through it.
 func openIn(root *os.Root, name string, flag int) (*os.File, error) {
 	loop := &os.PathError{Op: "open", Path: filepath.Join(root.Name(), name), Err: syscall.ELOOP}
-	if flag&os.O_CREATE != 0 {
-		// Made new, never through a link: with O_EXCL no link is followed
-		// and nothing is made at its target. A file that is there is
-		// opened below, as what it is.
-		f, err := root.OpenFile(name, flag|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
-		if err == nil {
-			return f, nil
+	create := flag&os.O_CREATE != 0
+	flag &^= os.O_CREATE
+	for attempt := 0; ; attempt++ {
+		if create {
+			// Made new, never through a link: with O_EXCL no link is
+			// followed and nothing is made at its target. A file that is
+			// there is opened below, as what it is.
+			f, err := root.OpenFile(name, flag|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
+			if err == nil {
+				return f, nil
+			}
+			if !errors.Is(err, os.ErrExist) {
+				return nil, err
+			}
 		}
-		if !errors.Is(err, os.ErrExist) {
+		fi, err := root.Lstat(name)
+		if err != nil {
+			if create && errors.Is(err, os.ErrNotExist) && attempt < 3 {
+				// There a moment ago, gone again: made new after all.
+				continue
+			}
 			return nil, err
 		}
-		flag &^= os.O_CREATE
+		if fi.Mode()&os.ModeSymlink != 0 {
+			return nil, loop
+		}
+		f, err := root.OpenFile(name, flag|syscall.O_NOFOLLOW, 0o600)
+		if err != nil {
+			if create && errors.Is(err, os.ErrNotExist) && attempt < 3 {
+				continue
+			}
+			return nil, err
+		}
+		return checkOpened(root, name, f, loop)
 	}
-	if fi, err := root.Lstat(name); err != nil {
-		return nil, err
-	} else if fi.Mode()&os.ModeSymlink != 0 {
-		return nil, loop
-	}
-	f, err := root.OpenFile(name, flag|syscall.O_NOFOLLOW, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	// A link swapped in between the look and the open would have been
-	// followed: the opened file must be the one the name holds now. A
-	// name that holds nothing any more is a file gone, not a link.
+}
+
+// checkOpened: the opened file is the one the name holds now — a link
+// swapped in between the look and the open would have been followed. A
+// name that holds nothing any more is a file gone, not a link.
+func checkOpened(root *os.Root, name string, f *os.File, loop error) (*os.File, error) {
 	opened, err := f.Stat()
 	if err != nil {
 		f.Close()

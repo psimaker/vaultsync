@@ -189,6 +189,11 @@ func (s *pairSession) run(ctx context.Context) error {
 	if beforePairingLock != nil {
 		beforePairingLock()
 	}
+	// Whether the take is about to make VaultSync's folder: then a refusal
+	// for no agent.json takes the folder away again, so a pairing after a
+	// finished uninstall --remove-data brings nothing back.
+	_, baseErr := os.Lstat(s.env.lay.Base)
+	madeFolder := errors.Is(baseErr, os.ErrNotExist)
 	h, err := lockHandle(filepath.Join(s.env.lay.Base, "pair.lock"))
 	if errors.Is(err, ErrEngineRunning) {
 		return errPairingBusy
@@ -201,11 +206,15 @@ func (s *pairSession) run(ctx context.Context) error {
 		// Under the lock that uninstall --remove-data waits on: a record
 		// written outside it could bring agent.json back after the removal.
 		if err := rememberShellEnv(s.env.lay.State, s.env.getenv); err != nil {
-			// Not set up (anymore): the lock file this taking made, and
-			// the folder it made for it, do not bring VaultSync's folder
-			// back from the dead — the folder goes only if empty.
-			h.Discard()
-			_ = os.Remove(s.env.lay.Base)
+			if err == errNotSetUpAnymore {
+				// The lock file this taking made goes; the folder too when
+				// the taking made it and it is empty — a directory alone,
+				// never a link standing at the folder's place.
+				h.Discard()
+				if fi, err := os.Lstat(s.env.lay.Base); madeFolder && err == nil && fi.IsDir() {
+					_ = os.Remove(s.env.lay.Base)
+				}
+			}
 			return err
 		}
 	}

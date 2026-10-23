@@ -570,10 +570,12 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 	}
 	defer parent.Close()
 	var kept *keptFolder
-	leftovers := 0
+	leftovers, heldWaits := 0, 0
 	for try := 0; ; try++ {
 		err := removeDirAt(parent, filepath.Base(lay.Base), base)
-		if err == nil {
+		if err == nil || errors.Is(err, fs.ErrNotExist) {
+			// Gone — by this removal, or by an owner that found agent.json
+			// gone and took the empty folder away itself.
 			removed = append(removed, lay.Base)
 			break
 		}
@@ -623,59 +625,60 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 			time.Sleep(removeRetryWait)
 			continue
 		}
-		if leftovers >= 2 {
-			kept = &keptFolder{lay.Base, "lock files keep appearing in it; remove the folder by hand once nothing of VaultSync runs", true}
-			break
-		}
-		leftovers++
-		// A held setup.lock, pair.lock or agent.lock: an owner at work in
-		// there — VaultSync's again. A held tray.lock: the menu-bar app,
-		// which discards it the moment it sees agent.json gone — another
-		// wait, then a failure that names it. Unheld: leftovers of owners
-		// that did not get to remove their files — this removal held
-		// every lock, so they are nobody's — and go like the rest of the
-		// inventory; the folder is then tried and judged like any folder,
-		// with its wait.
+		// Each lock file is taken, not looked at: taken, it is nobody's —
+		// a leftover of an owner that did not get to remove it — and goes
+		// under this process's own flock (lock.Handle.Discard), so no
+		// owner that opens it in between is left with a lock on nothing.
+		// Held, an owner is at work with it: the menu-bar app, which
+		// discards its tray.lock the moment it sees agent.json gone; a
+		// pair or set-up run about to refuse and discard its file; or a
+		// run or setup that began without agent.json and is VaultSync's
+		// again. One more wait tells them apart: still held then, a
+		// tray.lock is the app that stayed (a failure that names it),
+		// any other lock is VaultSync started again (a note).
 		heldOwner, heldTray := false, false
 		for _, e := range entries {
-			isHeld, perr := lock.ProbeIn(root, e.Name())
-			if perr != nil {
-				kept = &keptFolder{lay.Base, fmt.Sprintf("its %s could not be looked at (%v); remove the folder by hand", e.Name(), errnoOf(perr)), true}
+			h, terr := lock.TakeIn(root, e.Name())
+			if errors.Is(terr, lock.ErrHeld) {
+				if e.Name() == "tray.lock" {
+					heldTray = true
+				} else {
+					heldOwner = true
+				}
+				continue
+			}
+			if terr != nil {
+				kept = &keptFolder{lay.Base, fmt.Sprintf("its %s could not be looked at (%v); remove the folder by hand", e.Name(), errnoOf(terr)), true}
 				break
 			}
-			if isHeld && e.Name() == "tray.lock" {
-				heldTray = true
-			} else if isHeld {
-				heldOwner = true
-			}
+			h.Discard()
+			removed = append(removed, filepath.Join(lay.Base, e.Name()))
 		}
 		if kept != nil {
 			break
 		}
-		if heldOwner {
-			kept = &keptFolder{lay.Base, "VaultSync started again in it meanwhile (a vaultsync run, pair or setup)", false}
-			break
-		}
-		if heldTray {
-			if leftovers >= 2 {
+		switch {
+		case heldOwner || heldTray:
+			if heldWaits < 1 {
+				heldWaits++
+				try = -1
+				continue
+			}
+			if heldOwner {
+				kept = &keptFolder{lay.Base, "VaultSync started again in it meanwhile (a vaultsync run, pair or setup)", false}
+			} else {
 				kept = &keptFolder{lay.Base, "a tray.lock the menu-bar app holds stayed; quit the app, then remove the folder by hand", true}
+			}
+		default:
+			if leftovers >= 2 {
+				kept = &keptFolder{lay.Base, "lock files keep appearing in it; remove the folder by hand once nothing of VaultSync runs", true}
 				break
 			}
+			leftovers++
 			try = -1
 			continue
 		}
-		for _, e := range entries {
-			if rerr := root.Remove(e.Name()); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
-				kept = &keptFolder{lay.Base, fmt.Sprintf("its %s could not be removed (%v); remove the folder by hand", e.Name(), errnoOf(rerr)), true}
-				break
-			} else if rerr == nil {
-				removed = append(removed, filepath.Join(lay.Base, e.Name()))
-			}
-		}
-		if kept != nil {
-			break
-		}
-		try = -1
+		break
 	}
 	if lay.Logs != "" {
 		if _, err := os.Lstat(lay.Logs); err == nil {

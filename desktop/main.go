@@ -590,6 +590,9 @@ func (a *app) pair(ctx context.Context, args []string) error {
 // pairing flow does it): uninstall --remove-data takes agent.json away
 // after seeing that lock free, and a record written outside it could
 // bring the file back after the removal was reported done.
+// errNotSetUpAnymore: no agent.json — never set up, or removed since.
+var errNotSetUpAnymore = refuse("VaultSync is not set up on this computer (anymore). Run vaultsync setup.")
+
 func rememberShellEnv(statePath string, getenv func(string) string) error {
 	// Only a state that is there and set up takes the record: loadState
 	// reads a missing agent.json as a fresh one, and a record written then
@@ -597,7 +600,7 @@ func rememberShellEnv(statePath string, getenv func(string) string) error {
 	// between the pairing's first looks and its lock, that would bring
 	// VaultSync's folder back from the dead.
 	if _, err := os.Stat(statePath); errors.Is(err, fs.ErrNotExist) {
-		return refuse("VaultSync is not set up on this computer (anymore). Run vaultsync setup.")
+		return errNotSetUpAnymore
 	} else if err != nil {
 		return fmt.Errorf("VaultSync's settings could not be read (%w) — nothing was changed", err)
 	}
