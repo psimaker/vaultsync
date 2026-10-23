@@ -6,6 +6,8 @@
   @VERSION@. LSUIElement: a menu-bar icon, no Dock icon, no main menu.
   LSMinimumSystemVersion matches the binaries' minos (Go's floor, and the
   tray's cgo build pins it with -mmacosx-version-min).
+  NSLocalNetworkUsageDescription is for the agent: it finds the Hub on the
+  local network once it runs from the bundle; the tray uses no network.
 -->
 <plist version="1.0">
 <dict>

@@ -215,9 +215,12 @@ or the system tray (Linux). On a Mac it is **VaultSync.app**, from
 (Intel) in the same release: unzip it, move it to Applications and open it —
 no Dock icon, just the one in the menu bar. On Linux it is a second program,
 `vaultsync-tray_linux_amd64` (or `_arm64`; check it against `SHA256SUMS`
-like the agent). You start it yourself for now — on a Mac, add VaultSync
-under System Settings → General → Login Items to have it at every login;
-the autostart comes with the next step. The icon is a summary of `vaultsync status`: a check mark
+like the agent). It shows what the agent does, so set VaultSync up with the
+setup link first. You start the icon yourself for now — to have it at every
+login on a Mac, add VaultSync.app under System Settings → General → Login
+Items (macOS 13 and 14), General → Login Items & Extensions (macOS 15 and
+later) or System Preferences → Users & Groups → Login Items (macOS 12); the
+autostart comes with the next step. The icon is a summary of `vaultsync status`: a check mark
 when every vault is up to date, a ring while syncing, two bars while paused,
 an exclamation mark when a vault needs attention, a crossed ring when nothing
 syncs (not running, no Hub connected). The menu shows the Hub and each vault
@@ -272,8 +275,11 @@ cannot tell from the vault whether Obsidian Sync is connected, because
 Obsidian keeps that outside the vault.
 
 **On a Mac.** When the background service starts, macOS asks whether
-“vaultsync” may find devices on your local network, and notes that “vaultsync”
-can run in the background. For a vault in Documents, Desktop or Downloads it
+“vaultsync” may find devices on your local network, and notes that it can
+run in the background — under Login Items as “vaultsync”, or, from
+`desktop-v0.2.0` on, under the name on VaultSync's signing certificate, its
+developer “Umut Erdem”. Keep that item on: switched off, the background
+service no longer starts and your vaults stop syncing. For a vault in Documents, Desktop or Downloads it
 also asks twice for that folder: once for Terminal (where `setup` reads it),
 once for “vaultsync” (the background service). Allow all of them. Without
 local network access, `vaultsync setup` and `pair` cannot reach your Hub —
@@ -282,10 +288,11 @@ folder access the vault does not sync. Chose “Don’t Allow”? Turn it on und
 System Settings → Privacy & Security → Local Network or Files & Folders, then
 run `vaultsync stop` and `vaultsync start`; `vaultsync status` and `pair`
 name the setting when they see macOS refusing. Keeping vaults in `~/Vaults`
-avoids the folder prompts. After an update macOS may ask again: VaultSync is
-not signed with a developer certificate yet, so to macOS every version is a
-different program, and a folder permission belongs to the version it was
-given to. The service runs in your desktop session: over SSH before you
+avoids the folder prompts. From `desktop-v0.2.0` on, VaultSync is signed
+with a Developer ID, and macOS keeps a permission across updates — it asks
+once more only when you move from an older, unsigned release, where every
+version was a different program to macOS. Asked again after an update
+between two signed releases? Please report it. The service runs in your desktop session: over SSH before you
 log in at the screen, `vaultsync status` says it waits for your login; it
 starts with the login unless you stopped it with `vaultsync stop`.
 

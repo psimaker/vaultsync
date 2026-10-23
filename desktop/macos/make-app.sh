@@ -16,7 +16,7 @@ version=$1
 agent=$2
 tray=$3
 out=$4
-here=$(cd -- "$(dirname -- "$0")" && pwd)
+here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 
 short=${version%%-*}
 printf '%s\n' "$short" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || short=0.0.0

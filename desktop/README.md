@@ -35,7 +35,7 @@ socket between them).
 | `internal/lock/` | the one flock behind the agent's `lockFile`/`lockFileWait` and the tray's one-instance lock |
 | `tray/` | the menu-bar app without the menu bar: the socket client, what the icon and the menu show (`view.go`), the loop (`controller.go`), the pairing conversation (`pairflow.go`) and the dialogs it uses (`ask.go`: osascript, zenity) — pure Go, tested on Linux |
 | `cmd/vaultsync-tray/` | the `vaultsync-tray` binary: `fyne.io/systray` glue (Cocoa through cgo on macOS, StatusNotifierItem over DBus on Linux) and the GNOME hint |
-| `macos/` | `VaultSync.app` for a Mac: its `Info.plist` and `make-app.sh`, which puts the tray (the bundle's executable) and the agent together into one bundle (decision 052) |
+| `macos/` | VaultSync for Mac (decision 052): `Info.plist` and `make-app.sh` (the tray as the bundle's executable, the agent beside it), `sign.sh` (Developer ID and notarization on a tag, ad hoc on a pull request), `verify.sh` (Apple's checks of the result), `install-rcodesign.sh` (the pinned signer) |
 
 The pairing protocol, the Syncthing REST client and the device-side accept
 guard come from the Hub's module (`hub/pairing`, `hub/syncthing`, `hub/join`)
@@ -74,15 +74,21 @@ binaries too; the tray for macOS is built on a macOS runner (cgo, minimum
 macOS pinned to `LSMinimumSystemVersion`), which also puts `VaultSync.app`
 together (`macos/make-app.sh`). Everything for macOS is signed with the
 owner's Developer ID (hardened runtime, the agent as `eu.vaultsync.agent`
-alone and in the bundle) and notarized, the bundle stapled — by `rcodesign`
-on a Linux runner, in a job that only `desktop-v*` tags reach (environment
-`desktop-signing`: `MACOS_DEVELOPER_ID_P12` base64, `…_P12_PASSWORD`,
-`APP_STORE_CONNECT_API_KEY_P8`, `…_KEY_ID`, `…_ISSUER_ID`); a macOS job
-checks the result with `codesign`, `stapler` and `spctl` before anything is
-published (decision 052). A tag with a suffix (`desktop-v0.2.0-rc.1`) runs
-all of it and makes a draft release — a test of the signing that `setup.sh`
-never sees; delete the draft afterwards. `rcodesign` is pinned
-by version and SHA-256 in the workflow; bump both together.
+alone and in the bundle) and notarized, the bundle stapled, by
+`macos/sign.sh` with `rcodesign` on a Linux runner (pinned in
+`macos/install-rcodesign.sh`; bump version and SHA-256 together). Only a
+`desktop-v*` tag reaches the secrets, in environment `desktop-signing`:
+`MACOS_DEVELOPER_ID_P12` (base64 of a `.p12` in the legacy format rcodesign
+reads — a Keychain Access export, or `openssl pkcs12 -export -legacy`),
+`MACOS_DEVELOPER_ID_P12_PASSWORD`, `APP_STORE_CONNECT_API_KEY_P8`,
+`APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`. `macos/verify.sh`
+then checks the result on a Mac with `codesign`, `stapler` and `spctl` before
+anything is published — on a tag against the team in the repository variable
+`MACOS_TEAM_ID`, down to the designated requirement (decision 052). A pull
+request runs the same two scripts ad hoc, without secrets. A tag with a
+suffix (`desktop-v0.2.0-rc.1`) runs all of it and makes a draft release — a
+test of the signing that `setup.sh` never sees; delete the draft afterwards;
+any other tag that is not `desktop-vX.Y.Z` stops the run.
 
 Locally:
 
