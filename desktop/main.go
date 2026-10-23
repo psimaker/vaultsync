@@ -766,7 +766,7 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 		// an uninstall took VaultSync's folder apart (its lock held the
 		// wait). A run does not set VaultSync up afresh behind it, and
 		// the lock file its take may have made goes with it.
-		_ = setupHandle.Discard()
+		_, _ = setupHandle.Discard()
 		return removedMeanwhile
 	}
 	st, err := loadState(a.lay.State)

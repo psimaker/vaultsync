@@ -91,6 +91,11 @@ func lockHandleMaking(path string) (h *lock.Handle, made bool, err error) {
 		made = true
 	}
 	h, err = lockFileNoCreate(path)
+	if err != nil && made {
+		// What this taking made and cannot use goes again: rmdir takes
+		// the empty directory alone.
+		_ = syscall.Rmdir(dir)
+	}
 	return h, made, err
 }
 
@@ -109,10 +114,13 @@ func lockFileNoCreate(path string) (*lock.Handle, error) {
 		if err != nil {
 			return nil, err
 		}
-		if h.Valid() || attempt >= 3 {
+		if h.Valid() {
 			return h, nil
 		}
 		h.Release()
+		if attempt >= 3 {
+			return nil, fmt.Errorf("the lock file %s keeps changing under this process", path)
+		}
 	}
 }
 

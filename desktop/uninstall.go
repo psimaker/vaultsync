@@ -587,7 +587,7 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 			// Not there any more: an owner that found agent.json gone took
 			// the empty folder away itself — or it was moved aside whole,
 			// with whatever it held. Said as that, not as removed here.
-			kept = &keptFolder{path: lay.Base, why: "it was gone before the removal reached it — taken away by an owner that found it empty, or moved aside with whatever it held; look for it there if you kept files in it", gone: true}
+			kept = &keptFolder{path: lay.Base, why: "it went while the removal waited on it — taken away by an owner that found it empty, or moved aside with whatever it held; look for it there if you kept files in it", gone: true}
 			break
 		}
 		if removeTryHook != nil {
@@ -665,11 +665,15 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 				kept = &keptFolder{path: lay.Base, why: fmt.Sprintf("its %s could not be looked at (%v); remove the folder by hand", e.Name(), errnoOf(terr)), failed: true}
 				break
 			}
-			if derr := h.DiscardIn(root, e.Name()); derr != nil {
+			gone, derr := h.DiscardIn(root, e.Name())
+			if derr != nil {
 				kept = &keptFolder{path: lay.Base, why: fmt.Sprintf("its %s could not be removed (%v); remove the folder by hand", e.Name(), errnoOf(derr)), failed: true}
 				break
 			}
-			removed = append(removed, filepath.Join(lay.Base, e.Name()))
+			if gone {
+				// Unlinked here — not by its owner an instant earlier.
+				removed = append(removed, filepath.Join(lay.Base, e.Name()))
+			}
 		}
 		if kept != nil {
 			break

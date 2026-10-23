@@ -12,6 +12,11 @@ import (
 // ErrHeld: another process holds the lock.
 var ErrHeld = errors.New("the lock is held by another process")
 
+// ErrChanged: the file at the lock's name changed while it was being
+// opened — swapped for another file in between — so what was opened is
+// not what the name holds.
+var ErrChanged = errors.New("the file at that name changed while it was being opened")
+
 // Handle is a held lock: a file under an exclusive flock, which the kernel
 // drops when the process ends, so a crash never leaves a stale lock.
 type Handle struct {
@@ -76,8 +81,9 @@ func openIn(root *os.Root, name string, flag int) (*os.File, error) {
 }
 
 // checkOpened: the opened file is the one the name holds now — a link
-// swapped in between the look and the open would have been followed. A
-// name that holds nothing any more is a file gone, not a link.
+// swapped in between the look and the open would have been followed, and
+// any other file swapped in is ErrChanged. A name that holds nothing any
+// more is a file gone, not a link.
 func checkOpened(root *os.Root, name string, f *os.File, loop error) (*os.File, error) {
 	opened, err := f.Stat()
 	if err != nil {
@@ -91,7 +97,7 @@ func checkOpened(root *os.Root, name string, f *os.File, loop error) (*os.File, 
 	}
 	if !os.SameFile(opened, at) {
 		f.Close()
-		return nil, loop
+		return nil, &os.PathError{Op: "open", Path: filepath.Join(root.Name(), name), Err: ErrChanged}
 	}
 	return f, nil
 }
@@ -168,18 +174,6 @@ func TakeExistingIn(root *os.Root, name string) (*Handle, error) {
 	return takeOpened(f, filepath.Join(root.Name(), name))
 }
 
-// ProbeIn is Probe for a lock named name inside root.
-func ProbeIn(root *os.Root, name string) (held bool, err error) {
-	f, err := openIn(root, name, os.O_RDWR)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return probeOpened(f)
-}
-
 // Wait takes the lock at path, waiting for it: for short, serialized
 // updates.
 func Wait(path string) (*Handle, error) {
@@ -203,7 +197,7 @@ func (h *Handle) Valid() bool {
 	if err != nil {
 		return false
 	}
-	at, err := os.Stat(h.path)
+	at, err := os.Lstat(h.path)
 	if err != nil {
 		return false
 	}
@@ -216,30 +210,33 @@ func (h *Handle) Release() { _ = h.f.Close() }
 // Discard removes the lock file when it is still this handle's — while
 // the flock is held nobody else has that file — then lets the lock go.
 // For a lock taken in a folder that is being taken apart: nothing of the
-// taker is left in it.
-func (h *Handle) Discard() error {
-	var err error
+// taker is left in it. removed says whether this call unlinked the file.
+func (h *Handle) Discard() (removed bool, err error) {
 	if h.Valid() {
-		if err = os.Remove(h.path); errors.Is(err, os.ErrNotExist) {
+		err = os.Remove(h.path)
+		removed = err == nil
+		if errors.Is(err, os.ErrNotExist) {
 			err = nil
 		}
 	}
 	h.Release()
-	return err
+	return removed, err
 }
 
 // DiscardIn is Discard for a lock taken inside root (TakeIn,
 // TakeExistingIn): the look and the unlink go through the root, never by
-// a path something else may stand at by now.
-func (h *Handle) DiscardIn(root *os.Root, name string) error {
-	var err error
+// a path something else may stand at by now. removed says whether this
+// call unlinked the file — false when the name no longer held it.
+func (h *Handle) DiscardIn(root *os.Root, name string) (removed bool, err error) {
 	held, serr := h.f.Stat()
 	at, aerr := root.Lstat(name)
 	if serr == nil && aerr == nil && os.SameFile(held, at) {
-		if err = root.Remove(name); errors.Is(err, os.ErrNotExist) {
+		err = root.Remove(name)
+		removed = err == nil
+		if errors.Is(err, os.ErrNotExist) {
 			err = nil
 		}
 	}
 	h.Release()
-	return err
+	return removed, err
 }

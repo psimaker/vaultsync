@@ -208,7 +208,7 @@ func (s *pairSession) run(ctx context.Context) error {
 				// The lock file this taking made goes; the folder too when
 				// the taking made it and it is empty — rmdir takes a
 				// directory alone, never a link standing at its place.
-				_ = h.Discard()
+				_, _ = h.Discard()
 				if madeFolder {
 					_ = syscall.Rmdir(s.env.lay.Base)
 				}
