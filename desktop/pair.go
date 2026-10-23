@@ -189,9 +189,10 @@ func (s *pairSession) run(ctx context.Context) error {
 	if beforePairingLock != nil {
 		beforePairingLock()
 	}
-	// Whether the take is about to make VaultSync's folder: then a refusal
-	// for no agent.json takes the folder away again, so a pairing after a
-	// finished uninstall --remove-data brings nothing back.
+	// The taking's undo takes away what it made — its lock file, and the
+	// folder with the parents it had to create, each while empty — for the
+	// not-set-up refusal below: a pairing after a finished uninstall
+	// --remove-data brings nothing back.
 	h, undo, err := lockHandleMaking(filepath.Join(s.env.lay.Base, "pair.lock"))
 	if errors.Is(err, ErrEngineRunning) {
 		return errPairingBusy
