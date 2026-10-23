@@ -91,9 +91,10 @@ func lockHandleMaking(path string) (h *lock.Handle, undo func(), err error) {
 	h, err = lockFileNoCreate(path)
 	if err != nil {
 		if madeFrom != "" {
-			// The folder is this taking's own: a lock file in it is one
-			// this taking's open made (a held one would be another
-			// taker's, which cannot be — the folder was not there).
+			// The folder is this taking's own. A held lock in it is
+			// another taker's that arrived after the mkdir — its file
+			// stays; any other failure leaves a lock file this taking's
+			// open made, which goes.
 			if !errors.Is(err, ErrEngineRunning) {
 				_ = os.Remove(path)
 			}

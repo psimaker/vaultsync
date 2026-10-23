@@ -445,9 +445,9 @@ type keptFolder struct {
 	path, why string
 	failed    bool
 	// gone: the folder was not there any more when the removal reached
-	// it — moved or removed by something other than VaultSync (no
-	// VaultSync command removes a folder it did not make itself). Not
-	// kept, not removed by this removal.
+	// it — moved or removed by something other than VaultSync: a pairing
+	// removes only a folder its own mkdir made, and a second removal stops
+	// at the missing agent.json. Not kept, not removed by this removal.
 	gone bool
 }
 
