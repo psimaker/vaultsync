@@ -1,6 +1,6 @@
 module github.com/psimaker/vaultsync/notify
 
-go 1.26.9
+go 1.26.10
 
 require github.com/gobwas/glob v0.2.3
 
