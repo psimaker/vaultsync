@@ -3,9 +3,12 @@ name: Desktop Release
 # Builds the `vaultsync` desktop agent and the `vaultsync-tray` menu-bar app
 # (desktop/).
 #   pull_request   → cross-builds every release target, assembles
-#                    VaultSync.app and signs it ad hoc with the release's own
-#                    script and checks (proves all of it works), publishes
-#                    nothing
+#                    VaultSync.app, signs it ad hoc with the release's own
+#                    script, runs that script's release path against a
+#                    stand-in for Apple's notary service and checks the
+#                    result on a Mac; publishes nothing. The first run with
+#                    the real Developer ID and Apple is a tag — a suffixed
+#                    one makes a draft for exactly that.
 #   desktop-v* tag → signs the macOS binaries and VaultSync.app with the
 #                    Developer ID, notarizes them and makes a GitHub release
 #                    with vaultsync_<os>_<arch>, vaultsync-tray_linux_<arch>,
@@ -60,7 +63,7 @@ jobs:
       - name: Check the tag
         if: github.ref_type == 'tag'
         run: |
-          if ! [[ "$GITHUB_REF_NAME" =~ ^desktop-v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+          if ! [[ "$GITHUB_REF_NAME" =~ ^desktop-v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
             echo "::error::${GITHUB_REF_NAME} is neither desktop-vX.Y.Z nor desktop-vX.Y.Z-<suffix>"
             exit 1
           fi
@@ -191,8 +194,9 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-  # A pull request signs with the same script, ad hoc: every change to the
-  # signing path runs here before it ever meets a tag.
+  # A pull request signs with the same script, ad hoc, and runs its release
+  # path against a stand-in for rcodesign's calls to Apple; the Developer ID
+  # and Apple's verdict themselves first meet a tag.
   sign-check:
     name: Sign ad hoc (macOS)
     needs: [build, build-macos]
@@ -220,6 +224,9 @@ jobs:
           desktop/macos/install-rcodesign.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
+      - name: Test the release path
+        run: desktop/macos/tests/sign-release-test.sh
+
       - name: Sign
         run: desktop/macos/sign.sh plain macos signed
 
@@ -235,11 +242,13 @@ jobs:
     needs: [build, build-macos]
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     # The environment holds the Developer ID certificate and the App Store
-    # Connect key and lets only desktop-v* tags use them. The secrets exist
-    # as files only between the step that writes them and the step that
-    # removes them, whatever happens in between.
+    # Connect key and lets only desktop-v* tags use them; the scripts that
+    # see them are the tagged commit's own, so whoever can push such a tag
+    # can sign (decision 052). The secrets exist as files only between the
+    # step that writes them and the step that removes them, whatever
+    # happens in between.
     environment: desktop-signing
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -278,7 +287,7 @@ jobs:
           printf '%s' "$P12" | base64 -d > "$keys/developer-id.p12"
           printf '%s' "$P12_PASSWORD" > "$keys/developer-id.password"
           printf '%s\n' "$API_KEY_P8" > "$keys/api-key.p8"
-          rcodesign encode-app-store-connect-api-key -o "$keys/api-key.json" \
+          rcodesign encode-app-store-connect-api-key -C /dev/null -o "$keys/api-key.json" \
             "$API_ISSUER_ID" "$API_KEY_ID" "$keys/api-key.p8"
           rm "$keys/api-key.p8"
 
@@ -334,10 +343,15 @@ jobs:
             desktop/macos/verify.sh signed
           fi
 
+  # Explicit results, not the implicit success(): on a tag sign-check is
+  # skipped, and a skipped job anywhere upstream (here through verify)
+  # makes GitHub skip a job whose condition has no status function — the
+  # run would end green without a release. Never always(): a failed verify
+  # must stop the release.
   release:
     name: GitHub release
     needs: [build, sign, verify]
-    if: github.ref_type == 'tag'
+    if: ${{ !cancelled() && github.ref_type == 'tag' && needs.build.result == 'success' && needs.sign.result == 'success' && needs.verify.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -374,6 +388,18 @@ jobs:
         run: |
           sha256sum vaultsync_* vaultsync-tray_* VaultSync_* > SHA256SUMS
           cat SHA256SUMS
+
+      # A tag moved to another commit while this run waited on Apple must
+      # not get this run's binaries under its name.
+      - name: Check the tag still names this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tagged=$(gh api "repos/${GITHUB_REPOSITORY}/commits/refs/tags/${GITHUB_REF_NAME}" --jq .sha)
+          if [ "$tagged" != "$GITHUB_SHA" ]; then
+            echo "::error::${GITHUB_REF_NAME} now names ${tagged}, this run built ${GITHUB_SHA}"
+            exit 1
+          fi
 
       # --latest=false: "Latest" on the repository is the iOS app's release.
       # A tag with a suffix is a test run of the signing: a draft, which

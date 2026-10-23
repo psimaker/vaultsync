@@ -1,9 +1,13 @@
 #!/bin/bash
 # verify.sh DIR [TEAM] — checks on a Mac, with Apple's own tools, what
 # sign.sh put in DIR (decision 052): every binary has a strict signature,
-# the hardened runtime and its identifier (eu.vaultsync.agent for the agent,
-# alone and in the bundle; eu.vaultsync.desktop for the bundle), the modes
-# survived, and the agent runs.
+# the hardened runtime, no entitlements and its identifier
+# (eu.vaultsync.agent for the agent, alone and in the bundle;
+# eu.vaultsync.desktop for the bundle); the bare agent and the bundle's
+# share one code directory (the bundle's notarization covers both); the
+# modes survived; the binaries link only the system's libraries — the
+# hardened runtime's library validation refuses anything else — and on an
+# Apple silicon Mac both the agent and the menu-bar app start.
 #
 # With TEAM (a release): every binary is signed with a Developer ID of that
 # team and carries exactly the designated requirement a granted permission
@@ -31,8 +35,9 @@ check() { # path identifier
 	codesign --verify --strict --verbose=2 "$1"
 	local info
 	info=$(codesign -dvv "$1" 2>&1)
-	grep -qx "Identifier=$2" <<<"$info" || fail "$1 is not signed as $2"
+	grep -qxF "Identifier=$2" <<<"$info" || fail "$1 is not signed as $2"
 	grep -Eq '^CodeDirectory .*flags=0x[0-9a-f]+\([^)]*runtime' <<<"$info" || fail "$1 lacks the hardened runtime"
+	[ -z "$(codesign -d --entitlements - --xml "$1" 2>/dev/null)" ] || fail "$1 carries entitlements"
 	[ -n "$team" ] || return 0
 	grep -q '^Authority=Developer ID Application: ' <<<"$info" || fail "$1 is not signed with a Developer ID"
 	[ "$(sed -n 's/^TeamIdentifier=//p' <<<"$info")" = "$team" ] || fail "$1 is not signed by team $team"
@@ -44,6 +49,10 @@ check() { # path identifier
 	if [ "$have" != "$want" ] && [ "$have" != "${want% = "$team"} = \"$team\"" ]; then
 		fail "$1 has the designated requirement '$have'"
 	fi
+}
+
+cdhash() {
+	codesign -dvvv "$1" 2>&1 | sed -n 's/^CDHash=//p'
 }
 
 retry() { # what command...
@@ -70,7 +79,11 @@ for arch in $archs; do
 	check "$app/Contents/MacOS/vaultsync" eu.vaultsync.agent
 	for bin in vaultsync vaultsync-tray; do
 		[ -x "$app/Contents/MacOS/$bin" ] || fail "$app/Contents/MacOS/$bin is not executable"
+		others=$(otool -L "$app/Contents/MacOS/$bin" | tail -n +2 | awk '{ print $1 }' | grep -Ev '^(/usr/lib/|/System/Library/)' || true)
+		[ -z "$others" ] || fail "$app/Contents/MacOS/$bin links $others"
 	done
+	[ "$(cdhash "$agent")" = "$(cdhash "$app/Contents/MacOS/vaultsync")" ] ||
+		fail "the bare and the bundled agent of $arch differ; the bundle's notarization would not cover the bare one"
 	if [ -n "$team" ]; then
 		retry "no notarization ticket for $agent" codesign --verify --check-notarization -R=notarized "$agent"
 		xcrun stapler validate "$app" || fail "no ticket stapled to VaultSync_darwin_$arch"
@@ -87,5 +100,6 @@ if [ "$(uname -m)" = arm64 ]; then
 	chmod 755 vaultsync_darwin_arm64
 	./vaultsync_darwin_arm64 version
 	x-arm64/VaultSync.app/Contents/MacOS/vaultsync version
+	x-arm64/VaultSync.app/Contents/MacOS/vaultsync-tray --version
 fi
 echo "verify.sh: all checks passed${team:+ (team $team)}"

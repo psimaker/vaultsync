@@ -127,8 +127,9 @@ chmod +x vaultsync_darwin_arm64 && ./vaultsync_darwin_arm64 setup
 From `desktop-v0.2.0` on, everything for macOS is signed with a Developer ID
 and notarized by Apple: a copy a web browser downloaded runs too, and a
 permission you give VaultSync (access to Documents, the local network)
-carries over to every later release — macOS asks once more only when you
-move from an older, unsigned release. `desktop-v0.1.0` is not notarized:
+carries over to later releases. macOS asks once more when you move from an
+older, unsigned release, and may ask once when the background service moves
+into VaultSync.app with the next step. `desktop-v0.1.0` is not notarized:
 download it in a terminal as above; if macOS blocked a browser download,
 allow it once under System Settings → Privacy & Security.
 
@@ -216,11 +217,12 @@ or the system tray (Linux). On a Mac it is **VaultSync.app**, from
 no Dock icon, just the one in the menu bar. On Linux it is a second program,
 `vaultsync-tray_linux_amd64` (or `_arm64`; check it against `SHA256SUMS`
 like the agent). It shows what the agent does, so set VaultSync up with the
-setup link first. You start the icon yourself for now — to have it at every
-login on a Mac, add VaultSync.app under System Settings → General → Login
-Items (macOS 13 and 14), General → Login Items & Extensions (macOS 15 and
-later) or System Preferences → Users & Groups → Login Items (macOS 12); the
-autostart comes with the next step. The icon is a summary of `vaultsync status`: a check mark
+setup link first. You start the icon yourself for now: on Linux from a
+terminal, or as an autostart entry of your desktop; on a Mac by opening
+VaultSync.app — to have it at every login, add it under System Settings →
+General → Login Items (macOS 13 and 14), General → Login Items & Extensions
+(macOS 15 and later) or System Preferences → Users & Groups → Login Items
+(macOS 12). The autostart comes with the next step. The icon is a summary of `vaultsync status`: a check mark
 when every vault is up to date, a ring while syncing, two bars while paused,
 an exclamation mark when a vault needs attention, a crossed ring when nothing
 syncs (not running, no Hub connected). The menu shows the Hub and each vault
@@ -290,9 +292,11 @@ run `vaultsync stop` and `vaultsync start`; `vaultsync status` and `pair`
 name the setting when they see macOS refusing. Keeping vaults in `~/Vaults`
 avoids the folder prompts. From `desktop-v0.2.0` on, VaultSync is signed
 with a Developer ID, and macOS keeps a permission across updates — it asks
-once more only when you move from an older, unsigned release, where every
-version was a different program to macOS. Asked again after an update
-between two signed releases? Please report it. The service runs in your desktop session: over SSH before you
+once more when you move from an older, unsigned release, where every
+version was a different program to macOS, and may ask once when the
+background service moves into VaultSync.app with the next step. Asked again
+after any other update between two signed releases? Please report it. The
+service runs in your desktop session: over SSH before you
 log in at the screen, `vaultsync status` says it waits for your login; it
 starts with the login unless you stopped it with `vaultsync stop`.
 

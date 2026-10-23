@@ -357,6 +357,8 @@ jobs:
           shellcheck -s sh notify/tests/runtime-packaging/run.sh
           shellcheck -s sh notify/tests/runtime-packaging/run-linux-host.sh
           shellcheck -s sh hub/scripts/setup.sh hub/scripts/tests/setup-dry-run-test.sh
+          shellcheck -s sh desktop/macos/make-app.sh desktop/macos/install-rcodesign.sh
+          shellcheck -s bash desktop/macos/sign.sh desktop/macos/verify.sh desktop/macos/tests/sign-release-test.sh
 
       - name: install.sh --dry-run smoke test
         # Hermetic: fixture config.xml + PATH shims; asserts dry-run changes

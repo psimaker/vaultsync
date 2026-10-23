@@ -73,10 +73,11 @@ The agent is cross-compiled on Linux with `CGO_ENABLED=0`, the tray's Linux
 binaries too; the tray for macOS is built on a macOS runner (cgo, minimum
 macOS pinned to `LSMinimumSystemVersion`), which also puts `VaultSync.app`
 together (`macos/make-app.sh`). Everything for macOS is signed with the
-owner's Developer ID (hardened runtime, the agent as `eu.vaultsync.agent`
-alone and in the bundle) and notarized, the bundle stapled, by
-`macos/sign.sh` with `rcodesign` on a Linux runner (pinned in
-`macos/install-rcodesign.sh`; bump version and SHA-256 together). Only a
+owner's Developer ID (hardened runtime, no entitlements, the agent as
+`eu.vaultsync.agent` alone and in the bundle) by `macos/sign.sh` with
+`rcodesign` on a Linux runner (pinned in `macos/install-rcodesign.sh`; bump
+version and SHA-256 together); Apple notarizes the bundles, whose ticket is
+stapled and also covers the bare agent (the same code directory). Only a
 `desktop-v*` tag reaches the secrets, in environment `desktop-signing`:
 `MACOS_DEVELOPER_ID_P12` (base64 of a `.p12` in the legacy format rcodesign
 reads — a Keychain Access export, or `openssl pkcs12 -export -legacy`),
@@ -84,11 +85,19 @@ reads — a Keychain Access export, or `openssl pkcs12 -export -legacy`),
 `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`. `macos/verify.sh`
 then checks the result on a Mac with `codesign`, `stapler` and `spctl` before
 anything is published — on a tag against the team in the repository variable
-`MACOS_TEAM_ID`, down to the designated requirement (decision 052). A pull
-request runs the same two scripts ad hoc, without secrets. A tag with a
-suffix (`desktop-v0.2.0-rc.1`) runs all of it and makes a draft release — a
-test of the signing that `setup.sh` never sees; delete the draft afterwards;
-any other tag that is not `desktop-vX.Y.Z` stops the run.
+`MACOS_TEAM_ID`, down to the designated requirement (decision 052). The
+release is all or nothing: when the Apple side fails (an expired
+certificate, a key, the notary service), the Linux binaries wait too — fix
+it and push the tag again.
+
+A pull request runs `macos/sign.sh` ad hoc, its release path against a
+stand-in for Apple (`macos/tests/sign-release-test.sh`) and `macos/verify.sh`
+without a team. The real Developer ID, Apple's verdict, the secrets step and
+the release job first run on a tag: before a release, push
+`desktop-vX.Y.Z-rc.1` — it runs all of it into a draft that `setup.sh` never
+sees (delete the draft afterwards). A tag that is neither `desktop-vX.Y.Z`
+nor `desktop-vX.Y.Z-<suffix>` stops the run, and a tag moved to another
+commit while its run waited is not published.
 
 Locally:
 
