@@ -1,6 +1,6 @@
 module github.com/psimaker/vaultsync/desktop
 
-go 1.26.9
+go 1.26.10
 
 // The pairing client, the Syncthing REST client and the device-side accept
 // guard come from the Hub's module (decision 045's pattern, like go/).
