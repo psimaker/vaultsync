@@ -7,7 +7,8 @@
 # share one code directory (the bundle's notarization covers both); the
 # modes survived; the binaries link only the system's libraries — the
 # hardened runtime's library validation refuses anything else — and on an
-# Apple silicon Mac both the agent and the menu-bar app start.
+# Apple silicon Mac the agent and the menu-bar app of both architectures
+# start (the Intel ones under Rosetta, required on a tag).
 #
 # With TEAM (a release): every binary is signed with a Developer ID of that
 # team and carries exactly the designated requirement a granted permission
@@ -52,7 +53,10 @@ check() { # path identifier
 }
 
 cdhash() {
-	codesign -dvvv "$1" 2>&1 | sed -n 's/^CDHash=//p'
+	local h
+	h=$(codesign -dvvv "$1" 2>&1 | sed -n 's/^CDHash=//p')
+	[ -n "$h" ] || fail "no code directory hash for $1"
+	printf '%s\n' "$h"
 }
 
 retry() { # what command...
@@ -79,14 +83,17 @@ for arch in $archs; do
 	check "$app/Contents/MacOS/vaultsync" eu.vaultsync.agent
 	for bin in vaultsync vaultsync-tray; do
 		[ -x "$app/Contents/MacOS/$bin" ] || fail "$app/Contents/MacOS/$bin is not executable"
-		others=$(otool -L "$app/Contents/MacOS/$bin" | tail -n +2 | awk '{ print $1 }' | grep -Ev '^(/usr/lib/|/System/Library/)' || true)
+		libs=$(otool -L "$app/Contents/MacOS/$bin") || fail "otool cannot read $app/Contents/MacOS/$bin"
+		others=$(tail -n +2 <<<"$libs" | awk '{ print $1 }' | grep -Ev '^(/usr/lib/|/System/Library/)' || true)
 		[ -z "$others" ] || fail "$app/Contents/MacOS/$bin links $others"
 	done
-	[ "$(cdhash "$agent")" = "$(cdhash "$app/Contents/MacOS/vaultsync")" ] ||
+	bare=$(cdhash "$agent")
+	bundled=$(cdhash "$app/Contents/MacOS/vaultsync")
+	[ "$bare" = "$bundled" ] ||
 		fail "the bare and the bundled agent of $arch differ; the bundle's notarization would not cover the bare one"
 	if [ -n "$team" ]; then
 		retry "no notarization ticket for $agent" codesign --verify --check-notarization -R=notarized "$agent"
-		xcrun stapler validate "$app" || fail "no ticket stapled to VaultSync_darwin_$arch"
+		retry "no ticket stapled to VaultSync_darwin_$arch" xcrun stapler validate "$app"
 		verdict=$(spctl --assess --type execute --verbose=4 "$app" 2>&1) || {
 			echo "$verdict"
 			fail "Gatekeeper rejects VaultSync_darwin_$arch"
@@ -97,9 +104,20 @@ for arch in $archs; do
 done
 
 if [ "$(uname -m)" = arm64 ]; then
-	chmod 755 vaultsync_darwin_arm64
-	./vaultsync_darwin_arm64 version
-	x-arm64/VaultSync.app/Contents/MacOS/vaultsync version
-	x-arm64/VaultSync.app/Contents/MacOS/vaultsync-tray --version
+	for arch in $archs; do
+		run=()
+		if [ "$arch" = amd64 ]; then
+			if ! arch -x86_64 /usr/bin/true 2>/dev/null; then
+				[ -z "$team" ] || fail "Rosetta is not installed: the Intel build cannot be started before the release"
+				echo "verify.sh: no Rosetta here; the Intel build is not started"
+				continue
+			fi
+			run=(arch -x86_64)
+		fi
+		chmod 755 "vaultsync_darwin_$arch"
+		${run[@]+"${run[@]}"} "./vaultsync_darwin_$arch" version
+		${run[@]+"${run[@]}"} "x-$arch/VaultSync.app/Contents/MacOS/vaultsync" version
+		${run[@]+"${run[@]}"} "x-$arch/VaultSync.app/Contents/MacOS/vaultsync-tray" --version
+	done
 fi
 echo "verify.sh: all checks passed${team:+ (team $team)}"

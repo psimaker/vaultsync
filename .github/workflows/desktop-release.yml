@@ -194,9 +194,27 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-  # A pull request signs with the same script, ad hoc, and runs its release
-  # path against a stand-in for rcodesign's calls to Apple; the Developer ID
-  # and Apple's verdict themselves first meet a tag.
+  # sign.sh's release path against a stand-in for rcodesign's calls to
+  # Apple, every flag checked against the pinned rcodesign: needs no build,
+  # so it reports at once on every pull request and tag.
+  sign-test:
+    name: Test the signing script
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+          sparse-checkout: desktop/macos
+
+      - name: Install rcodesign
+        run: desktop/macos/install-rcodesign.sh "$RUNNER_TEMP/bin"
+
+      - name: Test the release path
+        run: REAL_RCODESIGN="$RUNNER_TEMP/bin/rcodesign" desktop/macos/tests/sign-release-test.sh
+
+  # A pull request signs with the same script, ad hoc; the Developer ID and
+  # Apple's verdict themselves first meet a tag.
   sign-check:
     name: Sign ad hoc (macOS)
     needs: [build, build-macos]
@@ -224,9 +242,6 @@ jobs:
           desktop/macos/install-rcodesign.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
-      - name: Test the release path
-        run: desktop/macos/tests/sign-release-test.sh
-
       - name: Sign
         run: desktop/macos/sign.sh plain macos signed
 
@@ -251,6 +266,17 @@ jobs:
     # happens in between.
     environment: desktop-signing
     steps:
+      # sign.sh refuses a certificate of any other team before it signs;
+      # without the variable a release stops here, not after notarization.
+      - name: Check the team is set
+        env:
+          TEAM: ${{ vars.MACOS_TEAM_ID }}
+        run: |
+          if [ -z "$TEAM" ]; then
+            echo "::error::the repository variable MACOS_TEAM_ID (the Developer ID's team) is not set"
+            exit 1
+          fi
+
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           persist-credentials: false
@@ -287,7 +313,9 @@ jobs:
           printf '%s' "$P12" | base64 -d > "$keys/developer-id.p12"
           printf '%s' "$P12_PASSWORD" > "$keys/developer-id.password"
           printf '%s\n' "$API_KEY_P8" > "$keys/api-key.p8"
-          rcodesign encode-app-store-connect-api-key -C /dev/null -o "$keys/api-key.json" \
+          # As sign.sh runs it: no rcodesign_* variable, no config file.
+          env -i PATH="$PATH" HOME="$HOME" TMPDIR="$RUNNER_TEMP" \
+            rcodesign encode-app-store-connect-api-key -C /dev/null -o "$keys/api-key.json" \
             "$API_ISSUER_ID" "$API_KEY_ID" "$keys/api-key.p8"
           rm "$keys/api-key.p8"
 
@@ -296,6 +324,7 @@ jobs:
           VAULTSYNC_SIGN_P12: ${{ runner.temp }}/keys/developer-id.p12
           VAULTSYNC_SIGN_P12_PASSWORD_FILE: ${{ runner.temp }}/keys/developer-id.password
           VAULTSYNC_NOTARY_KEY: ${{ runner.temp }}/keys/api-key.json
+          VAULTSYNC_SIGN_TEAM: ${{ vars.MACOS_TEAM_ID }}
         run: desktop/macos/sign.sh plain macos signed
 
       - name: Remove the signing material
@@ -367,12 +396,13 @@ jobs:
           name: vaultsync-desktop-signed
           path: signed
 
-      # The Linux binaries as built, the macOS ones only as signed: an
-      # unsigned macOS build never reaches a release.
+      # Everything the build made except macOS as built, macOS only as
+      # signed: an unsigned macOS build never reaches a release, and a new
+      # target the build adds fails the list below instead of vanishing.
       - name: Collect the assets
         run: |
           mkdir dist
-          cp plain/vaultsync_linux_* plain/vaultsync-tray_linux_* dist/
+          find plain -mindepth 1 -maxdepth 1 -type f ! -name '*_darwin_*' -exec cp {} dist/ \;
           cp signed/vaultsync_darwin_* signed/VaultSync_darwin_*.zip dist/
           have=$(find dist -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort | tr '\n' ' ')
           want="VaultSync_darwin_amd64.zip VaultSync_darwin_arm64.zip vaultsync-tray_linux_amd64 vaultsync-tray_linux_arm64 vaultsync_darwin_amd64 vaultsync_darwin_arm64 vaultsync_linux_amd64 vaultsync_linux_arm64 "

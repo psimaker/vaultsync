@@ -87,12 +87,17 @@ then checks the result on a Mac with `codesign`, `stapler` and `spctl` before
 anything is published — on a tag against the team in the repository variable
 `MACOS_TEAM_ID`, down to the designated requirement (decision 052). The
 release is all or nothing: when the Apple side fails (an expired
-certificate, a key, the notary service), the Linux binaries wait too — fix
-it and push the tag again.
+certificate, a key, the notary service), the Linux binaries wait too. A
+failure outside the repository (a secret, Apple's service): fix it, then
+**Re-run failed jobs** on the tag's run while its artifacts last (7 days).
+A fix in the repository: delete the tag (and a draft it made), merge the
+fix, tag the new commit — pushing an unchanged tag again starts nothing.
 
 A pull request runs `macos/sign.sh` ad hoc, its release path against a
-stand-in for Apple (`macos/tests/sign-release-test.sh`) and `macos/verify.sh`
-without a team. The real Developer ID, Apple's verdict, the secrets step and
+stand-in for Apple with every flag checked against the pinned rcodesign
+(`macos/tests/sign-release-test.sh`) and `macos/verify.sh` without a team —
+which starts both architectures' agent and menu-bar app, the Intel ones
+under Rosetta. The real Developer ID, Apple's verdict, the secrets step and
 the release job first run on a tag: before a release, push
 `desktop-vX.Y.Z-rc.1` — it runs all of it into a draft that `setup.sh` never
 sees (delete the draft afterwards). A tag that is neither `desktop-vX.Y.Z`
