@@ -35,6 +35,7 @@ socket between them).
 | `internal/lock/` | the one flock behind the agent's `lockFile`/`lockFileWait` and the tray's one-instance lock |
 | `tray/` | the menu-bar app without the menu bar: the socket client, what the icon and the menu show (`view.go`), the loop (`controller.go`), the pairing conversation (`pairflow.go`) and the dialogs it uses (`ask.go`: osascript, zenity) — pure Go, tested on Linux |
 | `cmd/vaultsync-tray/` | the `vaultsync-tray` binary: `fyne.io/systray` glue (Cocoa through cgo on macOS, StatusNotifierItem over DBus on Linux) and the GNOME hint |
+| `macos/` | `VaultSync.app` for a Mac: its `Info.plist` and `make-app.sh`, which puts the tray (the bundle's executable) and the agent together into one bundle (decision 052) |
 
 The pairing protocol, the Syncthing REST client and the device-side accept
 guard come from the Hub's module (`hub/pairing`, `hub/syncthing`, `hub/join`)
@@ -60,16 +61,41 @@ On a Mac, use `syncthing-macos-arm64-$v.zip` (or `-amd64`).
 ## Release
 
 Tag `desktop-vX.Y.Z` on `main`. `desktop-release.yml` publishes a GitHub
-release with `vaultsync_<os>_<arch>` and `vaultsync-tray_<os>_<arch>`
-binaries and one `SHA256SUMS` (not marked Latest — that stays the iOS app's
-release). The agent is cross-compiled on Linux with `CGO_ENABLED=0` as
-before; the tray's Linux binaries too, while its macOS binaries are built on
-a macOS runner (cgo). Locally:
+release (not marked Latest — that stays the iOS app's release) with
+
+- `vaultsync_<os>_<arch>` — the agent, the asset `setup.sh` downloads,
+- `VaultSync_darwin_<arch>.zip` — `VaultSync.app`: the menu-bar app with the
+  agent inside,
+- `vaultsync-tray_linux_<arch>` — the tray for Linux,
+- one `SHA256SUMS` over all of them.
+
+The agent is cross-compiled on Linux with `CGO_ENABLED=0`, the tray's Linux
+binaries too; the tray for macOS is built on a macOS runner (cgo, minimum
+macOS pinned to `LSMinimumSystemVersion`), which also puts `VaultSync.app`
+together (`macos/make-app.sh`). Everything for macOS is signed with the
+owner's Developer ID (hardened runtime, the agent as `eu.vaultsync.agent`
+alone and in the bundle) and notarized, the bundle stapled — by `rcodesign`
+on a Linux runner, in a job that only `desktop-v*` tags reach (environment
+`desktop-signing`: `MACOS_DEVELOPER_ID_P12` base64, `…_P12_PASSWORD`,
+`APP_STORE_CONNECT_API_KEY_P8`, `…_KEY_ID`, `…_ISSUER_ID`); a macOS job
+checks the result with `codesign`, `stapler` and `spctl` before anything is
+published (decision 052). A tag with a suffix (`desktop-v0.2.0-rc.1`) runs
+all of it and makes a draft release — a test of the signing that `setup.sh`
+never sees; delete the draft afterwards. `rcodesign` is pinned
+by version and SHA-256 in the workflow; bump both together.
+
+Locally:
 
 ```sh
 cd desktop
 go build ./cmd/vaultsync-tray && ./vaultsync-tray            # this computer
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build ./cmd/vaultsync-tray
+
+# VaultSync.app for this Mac (unsigned):
+CGO_CFLAGS="-O2 -g -mmacosx-version-min=12.0" CGO_LDFLAGS="-mmacosx-version-min=12.0" \
+  go build -o /tmp/vaultsync-tray ./cmd/vaultsync-tray
+CGO_ENABLED=0 go build -o /tmp/vaultsync . && mkdir /tmp/app
+macos/make-app.sh dev /tmp/vaultsync /tmp/vaultsync-tray /tmp/app
 ```
 
 ## Bumping Syncthing

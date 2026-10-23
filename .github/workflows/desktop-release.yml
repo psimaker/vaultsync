@@ -2,17 +2,24 @@ name: Desktop Release
 
 # Builds the `vaultsync` desktop agent and the `vaultsync-tray` menu-bar app
 # (desktop/).
-#   pull_request  → cross-builds every release target (proves they compile),
-#                   publishes nothing
-#   desktop-v* tag → a GitHub release with vaultsync_<os>_<arch> and
-#                   vaultsync-tray_<os>_<arch> binaries and one SHA256SUMS —
-#                   the asset names setup.sh downloads.
+#   pull_request   → cross-builds every release target and assembles
+#                    VaultSync.app (proves they build), publishes nothing
+#   desktop-v* tag → signs and notarizes the macOS binaries and VaultSync.app
+#                    and makes a GitHub release with vaultsync_<os>_<arch>,
+#                    vaultsync-tray_linux_<arch>, VaultSync_darwin_<arch>.zip
+#                    and one SHA256SUMS — vaultsync_<os>_<arch> is the asset
+#                    setup.sh downloads. A tag with a suffix
+#                    (desktop-v0.2.0-rc.1) makes a draft release: a test run
+#                    of the signing that nobody downloads.
 #
-# The agent is pure Go and cross-compiled on Linux for every target, exactly
-# as before. The tray is pure Go on Linux too (StatusNotifierItem over
-# DBus), but on macOS it is Cocoa through cgo, so its two macOS binaries are
-# built on a macOS runner (decision 048). The sums are made in the release
-# job over everything.
+# The agent is pure Go and cross-compiled on Linux for every target. The tray
+# is pure Go on Linux too (StatusNotifierItem over DBus), but on macOS it is
+# Cocoa through cgo, so it is built on a macOS runner (decision 048), which
+# also puts VaultSync.app together around it and the agent. Signing and
+# notarization run with rcodesign on Linux, in the one job that sees the
+# signing secrets (environment desktop-signing, desktop-v* tags only), which
+# runs no code from the repository; a macOS job then checks what was signed
+# with Apple's own tools before anything is published (decision 052).
 #
 # macOS and Linux only for now; Windows follows its own service model (#175).
 
@@ -33,6 +40,11 @@ concurrency:
 
 permissions:
   contents: read
+
+# bash -eo pipefail: a failing command in a pipe fails the step.
+defaults:
+  run:
+    shell: bash
 
 jobs:
   build:
@@ -85,8 +97,9 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-  build-tray-macos:
-    name: Build tray (macOS)
+  build-macos:
+    name: Build app (macOS)
+    needs: build
     runs-on: macos-26
     timeout-minutes: 15
     steps:
@@ -103,36 +116,254 @@ jobs:
           cache: ${{ github.ref_type != 'tag' }}
           cache-dependency-path: desktop/go.sum
 
+      # The agent goes into the bundle exactly as the build job made it.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: vaultsync-desktop-binaries
+          path: agent
+
       # Cocoa through cgo: both architectures from the one runner (clang
-      # takes -arch from Go). Unsigned until #222 puts the certificate in.
-      - name: Build the tray
+      # takes -arch from Go). Without a minimum, clang targets the runner's
+      # own macOS and the tray would refuse to start on anything older; the
+      # minimum goes in through the cgo flags, which are part of Go's build
+      # cache key (MACOSX_DEPLOYMENT_TARGET is not). It must match the
+      # agent's and LSMinimumSystemVersion in desktop/macos/Info.plist.
+      - name: Build the tray and put VaultSync.app together
         working-directory: desktop
         env:
           CGO_ENABLED: "1"
+          CGO_CFLAGS: "-O2 -g -mmacosx-version-min=12.0"
+          CGO_LDFLAGS: "-mmacosx-version-min=12.0"
         run: |
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             version="${GITHUB_REF_NAME#desktop-v}"
           else
             version="dev-${GITHUB_SHA::7}"
           fi
+          want=$(plutil -extract LSMinimumSystemVersion raw macos/Info.plist)
           mkdir -p dist
           for goarch in arm64 amd64; do
             GOOS=darwin GOARCH="$goarch" go build -trimpath -buildvcs=false \
               -ldflags="-s -w -X main.version=${version}" -o "dist/vaultsync-tray_darwin_${goarch}" ./cmd/vaultsync-tray
+            mkdir "dist/${goarch}"
+            macos/make-app.sh "$version" "../agent/vaultsync_darwin_${goarch}" "dist/vaultsync-tray_darwin_${goarch}" "dist/${goarch}"
+            for bin in "dist/${goarch}/VaultSync.app/Contents/MacOS/"*; do
+              minos=$(vtool -show-build "$bin" | awk '$1 == "minos" { print $2 }')
+              if [ "$minos" != "$want" ]; then
+                echo "::error::${bin} needs macOS ${minos}, Info.plist says ${want}"
+                exit 1
+              fi
+            done
           done
-          file dist/*
-          ls -l dist
+          file dist/*/VaultSync.app/Contents/MacOS/*
+
+      # The bundle must take a strict signature the way the release signs it:
+      # inside-out, the hardened runtime on both binaries, checked the way
+      # Gatekeeper reads it. Ad-hoc, on a copy that is thrown away.
+      - name: Check the bundle takes a signature
+        working-directory: desktop/dist
+        run: |
+          for goarch in arm64 amd64; do
+            check="check-${goarch}/VaultSync.app"
+            mkdir "check-${goarch}"
+            cp -R "${goarch}/VaultSync.app" "$check"
+            codesign --force --sign - --options runtime --identifier eu.vaultsync.agent "$check/Contents/MacOS/vaultsync"
+            codesign --force --sign - --options runtime "$check"
+            codesign --verify --strict --deep --verbose=2 "$check"
+            rm -rf "check-${goarch}"
+          done
+
+      # upload-artifact drops file modes, so each bundle travels as a tar;
+      # COPYFILE_DISABLE and --no-mac-metadata keep macOS from adding ._
+      # files for extended attributes, which would land inside the bundle
+      # when the signing job unpacks it.
+      - name: Pack the bundles
+        working-directory: desktop/dist
+        env:
+          COPYFILE_DISABLE: "1"
+        run: |
+          for goarch in arm64 amd64; do
+            tar --no-mac-metadata -C "$goarch" -cf "VaultSync_darwin_${goarch}.app.tar" VaultSync.app
+          done
+          ls -l
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: vaultsync-desktop-tray-macos
-          path: desktop/dist/
+          name: vaultsync-desktop-macos
+          path: desktop/dist/VaultSync_darwin_*.app.tar
           retention-days: 7
           if-no-files-found: error
 
+  sign:
+    name: Sign and notarize (macOS)
+    needs: [build, build-macos]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # The environment holds the Developer ID certificate and the App Store
+    # Connect key and lets only desktop-v* tags use them. This job checks
+    # out nothing: it runs rcodesign (pinned, checksum-verified) over the
+    # artifacts of this run, and the secrets exist as files only between
+    # the step that writes them and the step that removes them.
+    environment: desktop-signing
+    env:
+      RCODESIGN_VERSION: "0.29.0"
+      RCODESIGN_SHA256: "dbe85cedd8ee4217b64e9a0e4c2aef92ab8bcaaa41f20bde99781ff02e600002"
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: vaultsync-desktop-binaries
+          path: plain
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: vaultsync-desktop-macos
+          path: macos
+
+      # Pinned like govulncheck (#85): a new rcodesign must not change what
+      # is signed without a change here.
+      - name: Install rcodesign
+        run: |
+          archive="apple-codesign-${RCODESIGN_VERSION}-x86_64-unknown-linux-musl"
+          curl -fsSL -o "$RUNNER_TEMP/${archive}.tar.gz" \
+            "https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F${RCODESIGN_VERSION}/${archive}.tar.gz"
+          echo "${RCODESIGN_SHA256}  $RUNNER_TEMP/${archive}.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/${archive}.tar.gz" -C "$RUNNER_TEMP"
+          mkdir -p "$RUNNER_TEMP/bin"
+          install -m 755 "$RUNNER_TEMP/${archive}/rcodesign" "$RUNNER_TEMP/bin/rcodesign"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/bin/rcodesign" --version
+
+      - name: Write the signing material
+        env:
+          P12: ${{ secrets.MACOS_DEVELOPER_ID_P12 }}
+          P12_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_P12_PASSWORD }}
+          API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
+          API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          umask 077
+          keys="$RUNNER_TEMP/keys"
+          mkdir "$keys"
+          printf '%s' "$P12" | base64 -d > "$keys/developer-id.p12"
+          printf '%s' "$P12_PASSWORD" > "$keys/developer-id.password"
+          printf '%s\n' "$API_KEY_P8" > "$keys/api-key.p8"
+          rcodesign encode-app-store-connect-api-key -o "$keys/api-key.json" \
+            "$API_ISSUER_ID" "$API_KEY_ID" "$keys/api-key.p8"
+          rm "$keys/api-key.p8"
+
+      # --for-notarization: a Developer ID certificate, a secure timestamp
+      # and the hardened runtime on every Mach-O, or the signing fails here
+      # instead of at Apple. The agent signs as eu.vaultsync.agent wherever
+      # it ships — alone (what setup.sh installs) and inside VaultSync.app:
+      # that identifier and the team are what macOS ties a granted
+      # permission to, so a grant carries over to every later release
+      # (#222). The bundle's own executable takes CFBundleIdentifier.
+      - name: Sign
+        run: |
+          keys="$RUNNER_TEMP/keys"
+          sign() {
+            rcodesign sign --for-notarization \
+              --p12-file "$keys/developer-id.p12" --p12-password-file "$keys/developer-id.password" "$@"
+          }
+          mkdir signed
+          for goarch in arm64 amd64; do
+            cp "plain/vaultsync_darwin_${goarch}" "signed/vaultsync_darwin_${goarch}"
+            sign --binary-identifier eu.vaultsync.agent "signed/vaultsync_darwin_${goarch}"
+            mkdir "app-${goarch}"
+            tar -C "app-${goarch}" -xf "macos/VaultSync_darwin_${goarch}.app.tar"
+            if find "app-${goarch}" -name '._*' | grep -q .; then
+              echo "::error::VaultSync_darwin_${goarch}.app.tar holds ._ files"
+              exit 1
+            fi
+            sign --binary-identifier "Contents/MacOS/vaultsync:eu.vaultsync.agent" "app-${goarch}/VaultSync.app"
+          done
+
+      # Apple's notary service scans every upload; --staple attaches the
+      # ticket to the bundle, so Gatekeeper accepts it offline too. A bare
+      # Mach-O cannot hold a ticket: the two agents go up in one zip, and
+      # Gatekeeper finds their ticket online.
+      - name: Notarize
+        run: |
+          key="$RUNNER_TEMP/keys/api-key.json"
+          for goarch in arm64 amd64; do
+            rcodesign notary-submit --api-key-file "$key" --staple --max-wait-seconds 1800 "app-${goarch}/VaultSync.app"
+            (cd "app-${goarch}" && zip -qry -X "../signed/VaultSync_darwin_${goarch}.zip" VaultSync.app)
+          done
+          (cd signed && zip -q -X ../agents.zip vaultsync_darwin_arm64 vaultsync_darwin_amd64)
+          rcodesign notary-submit --api-key-file "$key" --wait --max-wait-seconds 1800 agents.zip
+          ls -l signed
+
+      - name: Remove the signing material
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/keys"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: vaultsync-desktop-signed
+          path: signed/
+          retention-days: 7
+          if-no-files-found: error
+
+  verify:
+    name: Check signatures (macOS)
+    needs: sign
+    if: github.ref_type == 'tag'
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: vaultsync-desktop-signed
+          path: signed
+
+      # What ships is checked with Apple's tools, not with the tool that
+      # signed it: a strict signature, the hardened runtime, a Developer ID
+      # and one team on every binary, the agent's identifier, the ticket
+      # (stapled to the bundle, online for the bare agents) and Gatekeeper's
+      # verdict on the bundle.
+      - name: Check
+        working-directory: signed
+        run: |
+          team=""
+          check() { # path identifier
+            codesign --verify --strict --verbose=2 "$1"
+            info=$(codesign -dvv "$1" 2>&1)
+            if ! grep -qx "Identifier=$2" <<<"$info"; then
+              echo "::error::$1 is not signed as $2"; exit 1
+            fi
+            if ! grep -Eq '^CodeDirectory .*flags=0x[0-9a-f]+\([^)]*runtime' <<<"$info"; then
+              echo "::error::$1 lacks the hardened runtime"; exit 1
+            fi
+            if ! grep -q '^Authority=Developer ID Application: ' <<<"$info"; then
+              echo "::error::$1 is not signed with a Developer ID"; exit 1
+            fi
+            t=$(sed -n 's/^TeamIdentifier=//p' <<<"$info")
+            if [ -z "$t" ] || [ "$t" = "not set" ] || { [ -n "$team" ] && [ "$t" != "$team" ]; }; then
+              echo "::error::$1 has team '${t}', the others '${team}'"; exit 1
+            fi
+            team=$t
+          }
+          for goarch in arm64 amd64; do
+            check "vaultsync_darwin_${goarch}" eu.vaultsync.agent
+            codesign --verify --check-notarization -R=notarized --verbose=2 "vaultsync_darwin_${goarch}"
+            mkdir "x-${goarch}"
+            ditto -x -k "VaultSync_darwin_${goarch}.zip" "x-${goarch}"
+            app="x-${goarch}/VaultSync.app"
+            codesign --verify --strict --deep --verbose=2 "$app"
+            check "$app" eu.vaultsync.desktop
+            check "$app/Contents/MacOS/vaultsync" eu.vaultsync.agent
+            xcrun stapler validate "$app"
+            verdict=$(spctl --assess --type execute --verbose=4 "$app" 2>&1)
+            echo "$verdict"
+            grep -q 'source=Notarized Developer ID' <<<"$verdict"
+          done
+          chmod 755 vaultsync_darwin_arm64
+          ./vaultsync_darwin_arm64 version
+
   release:
     name: GitHub release
-    needs: [build, build-tray-macos]
+    needs: [build, sign, verify]
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -142,28 +373,47 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: vaultsync-desktop-binaries
-          path: dist
+          path: plain
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: vaultsync-desktop-tray-macos
-          path: dist
+          name: vaultsync-desktop-signed
+          path: signed
 
-      # One SHA256SUMS over the agent and the tray: setup.sh takes exactly
-      # the one line whose name is the asset it downloads (an awk filter),
-      # so the tray's lines are passed over.
+      # The Linux binaries as built, the macOS ones only as signed: an
+      # unsigned macOS build never reaches a release.
+      - name: Collect the assets
+        run: |
+          mkdir dist
+          cp plain/vaultsync_linux_* plain/vaultsync-tray_linux_* dist/
+          cp signed/vaultsync_darwin_* signed/VaultSync_darwin_*.zip dist/
+          have=$(find dist -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort | tr '\n' ' ')
+          want="VaultSync_darwin_amd64.zip VaultSync_darwin_arm64.zip vaultsync-tray_linux_amd64 vaultsync-tray_linux_arm64 vaultsync_darwin_amd64 vaultsync_darwin_arm64 vaultsync_linux_amd64 vaultsync_linux_arm64 "
+          if [ "$have" != "$want" ]; then
+            echo "::error::assets are: ${have}"; exit 1
+          fi
+
+      # One SHA256SUMS over everything: setup.sh takes exactly the one line
+      # whose name is the asset it downloads (an awk filter), so the other
+      # lines are passed over.
       - name: Sum the assets
         working-directory: dist
         run: |
-          sha256sum vaultsync_* vaultsync-tray_* > SHA256SUMS
+          sha256sum vaultsync_* vaultsync-tray_* VaultSync_* > SHA256SUMS
           cat SHA256SUMS
 
       # --latest=false: "Latest" on the repository is the iOS app's release.
+      # A tag with a suffix is a test run of the signing: a draft, which
+      # setup.sh never sees.
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --latest=false \
+          draft=()
+          case "${GITHUB_REF_NAME#desktop-v}" in
+            *-*) draft=(--draft --prerelease) ;;
+          esac
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --latest=false "${draft[@]}" \
             --title "VaultSync for Mac and Linux ${GITHUB_REF_NAME#desktop-v}" \
-            --notes "The desktop agent \`vaultsync\` for macOS and Linux: it installs its own pinned Syncthing, pairs with your VaultSync Hub by code and keeps your Obsidian vaults in sync. \`vaultsync-tray\` is the menu-bar icon for it. Check downloads against SHA256SUMS. On a Mac, download with curl — the binaries are not notarized yet, so a browser download is blocked. Setup: docs/hub.md." \
+            --notes "The desktop agent \`vaultsync\` for macOS and Linux: it installs its own pinned Syncthing, pairs with your VaultSync Hub by code and keeps your Obsidian vaults in sync. On a Mac, \`VaultSync_darwin_<arch>.zip\` is VaultSync.app — the menu-bar icon, with the agent inside; on Linux, \`vaultsync-tray_linux_<arch>\` is the tray icon. Everything for macOS is signed and notarized by Apple. Check downloads against SHA256SUMS. Setup: docs/hub.md." \
             dist/*

@@ -124,9 +124,13 @@ shasum -a 256 -c --ignore-missing SHA256SUMS
 chmod +x vaultsync_darwin_arm64 && ./vaultsync_darwin_arm64 setup
 ```
 
-Download it in a terminal as above: the agent is not notarized by Apple yet,
-so macOS refuses to run a copy that a web browser downloaded. If that
-happened, allow it once under System Settings → Privacy & Security.
+From `desktop-v0.2.0` on, everything for macOS is signed with a Developer ID
+and notarized by Apple: a copy a web browser downloaded runs too, and a
+permission you give VaultSync (access to Documents, the local network)
+carries over to every later release — macOS asks once more only when you
+move from an older, unsigned release. `desktop-v0.1.0` is not notarized:
+download it in a terminal as above; if macOS blocked a browser download,
+allow it once under System Settings → Privacy & Security.
 
 `setup`
 
@@ -206,11 +210,14 @@ progress, and says `paused on this computer` for the rest until
 engine does not answer either.
 
 **Menu-bar icon.** `vaultsync-tray` puts VaultSync in the menu bar (macOS)
-or the system tray (Linux). It is a second program from the same release
-(`vaultsync-tray_darwin_arm64`, `vaultsync-tray_linux_amd64`, …; check it
-against `SHA256SUMS` like the agent) that you start yourself for now — from
-Terminal, or a login item of your own; the app bundle and the autostart come
-with the next step. The icon is a summary of `vaultsync status`: a check mark
+or the system tray (Linux). On a Mac it is **VaultSync.app**, from
+`VaultSync_darwin_arm64.zip` (Apple silicon) or `VaultSync_darwin_amd64.zip`
+(Intel) in the same release: unzip it, move it to Applications and open it —
+no Dock icon, just the one in the menu bar. On Linux it is a second program,
+`vaultsync-tray_linux_amd64` (or `_arm64`; check it against `SHA256SUMS`
+like the agent). You start it yourself for now — on a Mac, add VaultSync
+under System Settings → General → Login Items to have it at every login;
+the autostart comes with the next step. The icon is a summary of `vaultsync status`: a check mark
 when every vault is up to date, a ring while syncing, two bars while paused,
 an exclamation mark when a vault needs attention, a crossed ring when nothing
 syncs (not running, no Hub connected). The menu shows the Hub and each vault
