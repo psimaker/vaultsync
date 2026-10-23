@@ -1513,10 +1513,9 @@ func TestIssue176_PairAfterRemovalMakesNoFolder(t *testing.T) {
 	}
 }
 
-// A folder that an owner took away itself in the last instant — a pair
-// that found agent.json gone, discarded its file and removed the empty
-// folder — or moved aside whole is gone when the removal reaches it:
-// said as that, neither removed here nor a failure.
+// A folder that something other than VaultSync moved or removed while the
+// removal was at work is gone when the removal reaches it: said as that,
+// neither removed here nor a failure.
 func TestIssue176_RemoveDataSaysAFolderGoneInBetween(t *testing.T) {
 	lay, foreign := ownedFixture(t)
 	if err := os.Remove(foreign); err != nil {
@@ -1666,15 +1665,40 @@ func TestIssue176_PairUndoesTheParentsItMade(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// ~/.local/state is not there either on this fresh account.
-	if _, err := os.Lstat(filepath.Dir(lay.Base)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("the parent is there already: %v", err)
+	// ~/.local is not there either on this fresh account: the taking makes
+	// ~/.local, ~/.local/state and the folder.
+	dotLocal := filepath.Dir(filepath.Dir(lay.Base))
+	if _, err := os.Lstat(dotLocal); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("~/.local is there already: %v", err)
 	}
 	s := &pairSession{env: pairEnv{lay: lay, getenv: envOf(nil), rememberShell: true}}
 	if err := s.run(context.Background()); !strings.Contains(refusalText(err), "not set up on this computer") {
 		t.Fatalf("pair on a fresh account: %v", err)
 	}
-	if _, err := os.Lstat(filepath.Dir(lay.Base)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("the parent the taking made stayed: %v", err)
+	if _, err := os.Lstat(dotLocal); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the topmost directory the taking made stayed: %v", err)
+	}
+	if _, err := os.Stat(home); err != nil {
+		t.Fatalf("the home itself went: %v", err)
+	}
+}
+
+// A taking that made VaultSync's folder and then fails to lock — flock
+// refused on a file system without locks — takes away what it made: the
+// lock file its open made, the folder and the parents.
+func TestIssue176_AFailedTakeLeavesNothingItMade(t *testing.T) {
+	home := t.TempDir()
+	base := filepath.Join(home, "a", "b", "vaultsync")
+	orig := takeLockFile
+	defer func() { takeLockFile = orig }()
+	takeLockFile = func(path string) (*lock.Handle, error) {
+		writeFile(t, path, "")
+		return nil, errors.New("flock: operation not supported")
+	}
+	if _, _, err := lockHandleMaking(filepath.Join(base, "pair.lock")); err == nil {
+		t.Fatal("a take that failed returned no error")
+	}
+	if _, err := os.Lstat(filepath.Join(home, "a")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("what the failed take made stayed: %v", err)
 	}
 }

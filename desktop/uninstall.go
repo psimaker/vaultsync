@@ -445,8 +445,9 @@ type keptFolder struct {
 	path, why string
 	failed    bool
 	// gone: the folder was not there any more when the removal reached
-	// it — taken away by an owner that found it empty, or moved aside
-	// with whatever it held. Not kept, not removed by this removal.
+	// it — moved or removed by something other than VaultSync (no
+	// VaultSync command removes a folder it did not make itself). Not
+	// kept, not removed by this removal.
 	gone bool
 }
 
@@ -584,10 +585,10 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 			break
 		}
 		if errors.Is(err, fs.ErrNotExist) {
-			// Not there any more: an owner that found agent.json gone took
-			// the empty folder away itself — or it was moved aside whole,
-			// with whatever it held. Said as that, not as removed here.
-			kept = &keptFolder{path: lay.Base, why: "it went before this removal could take it away — taken away by an owner that found it empty, or moved aside with whatever it held; look for it there if you kept files in it", gone: true}
+			// Not there any more: moved or removed by something other than
+			// VaultSync, with whatever it held. Said as that, not as
+			// removed here.
+			kept = &keptFolder{path: lay.Base, why: "it was moved or removed by something other than VaultSync while this removal was at work; look for it if you kept files in it", gone: true}
 			break
 		}
 		if removeTryHook != nil {

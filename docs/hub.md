@@ -177,9 +177,9 @@ quit or stop them first. On a Mac, run it from your own session: it must be
 able to ask the service manager. Afterwards it lists what it removed; a folder
 it could not remove is an error (exit status 1, for scripts); a folder that
 holds files VaultSync did not make, or in which VaultSync started again
-meanwhile, stays and is named; a folder that went meanwhile — moved aside,
-or taken away by a VaultSync command that found it empty — is said as gone,
-so you know where to look if you kept files in it.
+meanwhile, stays and is named; a folder that something other than
+VaultSync moved or removed meanwhile is said as gone, so you know to look
+for it if you kept files in it.
 
 Scripts and remote shells pass everything as flags; anything that would need
 a decision is refused with the flag to add:
@@ -195,7 +195,7 @@ vaultsync setup --code TULIP-ANCHOR-42 --hub 192.168.1.20 \
 
 While it runs, the agent answers `vaultsync status`, `pause` and `resume`
 over a socket in VaultSync's folder (`agent.sock`, readable by your account
-alone); the menu-bar app will read the same socket, so both show one truth.
+alone); the menu-bar app reads the same socket, so both show one truth.
 `vaultsync pause` pauses every connection to your Hub: nothing new arrives
 or leaves, the engine keeps running, and your vaults and their settings
 stay as they are. Changes the engine had already received before the pause

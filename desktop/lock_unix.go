@@ -74,26 +74,54 @@ func lockHandle(path string) (*lock.Handle, error) {
 	return h, err
 }
 
-// lockHandleMaking is lockHandle that says what it made — the topmost
-// directory it had to create, "" when the folder was there — for a taker
-// that undoes its taking on a refusal and must know what was its own.
-func lockHandleMaking(path string) (h *lock.Handle, madeFrom string, err error) {
+// noUndo is the undo of a taking that made nothing to take away.
+func noUndo() {}
+
+// lockHandleMaking is lockHandle with its undo, for a taker that may
+// refuse after taking: the undo discards the lock file and takes away the
+// directories this taking made, each while empty. When the taking itself
+// fails, what it made goes at once — the lock file its open may have made
+// in a folder that was not there, and that folder.
+func lockHandleMaking(path string) (h *lock.Handle, undo func(), err error) {
 	dir := filepath.Dir(path)
-	madeFrom, err = mkdirAllFrom(dir)
+	madeFrom, err := mkdirAllFrom(dir)
 	if err != nil {
-		return nil, "", err
+		return nil, noUndo, err
 	}
 	h, err = lockFileNoCreate(path)
-	if err != nil && madeFrom != "" {
-		// What this taking made and cannot use goes again.
-		undoMadeDirs(dir, madeFrom)
+	if err != nil {
+		if madeFrom != "" {
+			// The folder is this taking's own: a lock file in it is one
+			// this taking's open made (a held one would be another
+			// taker's, which cannot be — the folder was not there).
+			if !errors.Is(err, ErrEngineRunning) {
+				_ = os.Remove(path)
+			}
+			undoMadeDirs(dir, madeFrom)
+		}
+		return nil, noUndo, err
 	}
-	return h, madeFrom, err
+	return h, func() {
+		_, _ = h.Discard()
+		if madeFrom != "" {
+			undoMadeDirs(dir, madeFrom)
+		}
+	}, nil
 }
 
 // mkdirAllFrom makes dir with its missing parents and says which was the
 // topmost it made ("" when dir was there): what an undo takes away again.
 func mkdirAllFrom(dir string) (madeFrom string, err error) {
+	switch err := os.Mkdir(dir, 0o700); {
+	case err == nil:
+		return dir, nil
+	case errors.Is(err, fs.ErrExist):
+		return "", nil
+	case !errors.Is(err, fs.ErrNotExist):
+		return "", err
+	}
+	// A parent is missing too: the topmost missing one is what this
+	// call makes first.
 	top := dir
 	for {
 		parent := filepath.Dir(top)
@@ -105,17 +133,10 @@ func mkdirAllFrom(dir string) (madeFrom string, err error) {
 		}
 		top = parent
 	}
-	switch err := os.Mkdir(dir, 0o700); {
-	case err == nil:
-		return top, nil
-	case errors.Is(err, fs.ErrExist):
-		return "", nil
-	default:
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return "", err
-		}
-		return top, nil
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
 	}
+	return top, nil
 }
 
 // undoMadeDirs removes dir and its parents up to top, each with rmdir —
