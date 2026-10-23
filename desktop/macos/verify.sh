@@ -37,9 +37,13 @@ check() { # path identifier
 	grep -q '^Authority=Developer ID Application: ' <<<"$info" || fail "$1 is not signed with a Developer ID"
 	[ "$(sed -n 's/^TeamIdentifier=//p' <<<"$info")" = "$team" ] || fail "$1 is not signed by team $team"
 	local want have
-	want="designated => identifier \"$2\" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and certificate leaf[subject.OU] = \"$team\""
+	want="designated => identifier \"$2\" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and certificate leaf[subject.OU] = $team"
 	have=$(codesign -d -r- "$1" 2>&1 | grep '^designated => ' || true)
-	[ "$have" = "$want" ] || fail "$1 has the designated requirement '$have'"
+	# codesign prints the team quoted only where the requirement language
+	# needs it (a team starting with a digit); both spell the same rule.
+	if [ "$have" != "$want" ] && [ "$have" != "${want% = "$team"} = \"$team\"" ]; then
+		fail "$1 has the designated requirement '$have'"
+	fi
 }
 
 retry() { # what command...
