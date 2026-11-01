@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -58,9 +59,9 @@ func outcome(runErr, ctxErr error, exitCode int) (status int, err error) {
 // openCommand is the program that opens path with the desktop: open on a
 // Mac, xdg-open on Linux. Only an absolute path is opened — the paths
 // come from the agent's report, and a relative one would be resolved
-// against wherever this process happens to run. isDir says whether the
-// path is a folder.
-func openCommand(goos, path string, isDir func(string) bool) (name string, args []string, err error) {
+// against wherever this process happens to run. look says whether the
+// path is a folder, or why it could not tell.
+func openCommand(goos, path string, look func(string) (bool, error)) (name string, args []string, err error) {
 	if path == "" || !filepath.IsAbs(path) {
 		return "", nil, errors.New("not an absolute path")
 	}
@@ -69,10 +70,15 @@ func openCommand(goos, path string, isDir func(string) bool) (name string, args 
 		// A folder whose name has an extension can be a bundle to
 		// LaunchServices (Journal.app), which `open` would launch — with
 		// synced content that carries no quarantine. Such a folder is
-		// revealed in its parent instead, which launches nothing. A file
-		// (the log) is opened as a file.
-		if isDir(path) && strings.Contains(strings.TrimPrefix(filepath.Base(path), "."), ".") {
-			return "open", []string{"-R", path}, nil
+		// revealed in its parent instead, which launches nothing; so is
+		// one this app may not look at — macOS asks once, and may refuse,
+		// whether VaultSync for Mac may open folders in Documents, Desktop
+		// or Downloads (#255). Only a look that found a file (the log), or
+		// nothing at all, opens it.
+		if strings.Contains(strings.TrimPrefix(filepath.Base(path), "."), ".") {
+			if dir, err := look(path); dir || (err != nil && !errors.Is(err, fs.ErrNotExist)) {
+				return "open", []string{"-R", path}, nil
+			}
 		}
 		return "open", []string{path}, nil
 	case "linux":
@@ -81,15 +87,23 @@ func openCommand(goos, path string, isDir func(string) bool) (name string, args 
 	return "", nil, errors.New("no program to open it with on " + goos)
 }
 
+// What the menu says when macOS stands between it and a folder (#255): it
+// asks once whether VaultSync for Mac may open folders in Documents,
+// Desktop or Downloads, and may be told no.
+var (
+	errOpenWaited  = errors.New("macOS may be asking whether “VaultSync for Mac” may open folders in Documents, Desktop or Downloads — answer that question, then click it again")
+	errOpenRefused = errors.New("macOS has not allowed “VaultSync for Mac” to open it — allow it in System Settings → Privacy & Security → Files & Folders (“VaultSync for Mac”), then click it again")
+)
+
 // Open opens a folder or a file with the desktop's own program. What it
 // opens outlives the menu-bar app: the program is not tied to ctx.
 func Open(goos string) func(ctx context.Context, path string) error {
-	return openWith(goos, execRunner)
+	return openWith(goos, execRunner, lookAt)
 }
 
-func openWith(goos string, run runner) func(ctx context.Context, path string) error {
+func openWith(goos string, run runner, look func(string) (bool, error)) func(ctx context.Context, path string) error {
 	return func(_ context.Context, path string) error {
-		name, args, err := openCommand(goos, path, isDir)
+		name, args, err := openCommand(goos, path, look)
 		if err != nil {
 			return err
 		}
@@ -100,12 +114,23 @@ func openWith(goos string, run runner) func(ctx context.Context, path string) er
 		defer cancel()
 		_, stderr, status, err := run(ctx, name, args, "")
 		if errors.Is(err, context.DeadlineExceeded) {
+			if goos == "darwin" {
+				// open hands the folder to Finder and returns: one still
+				// running after half a minute waits for macOS's question,
+				// and the folder no longer opens when it is answered.
+				return errOpenWaited
+			}
 			return nil
 		}
 		if err != nil {
 			return err
 		}
 		if status != 0 {
+			if goos == "darwin" {
+				if _, lerr := look(path); errors.Is(lerr, fs.ErrPermission) {
+					return errOpenRefused
+				}
+			}
 			if why := strings.TrimSpace(stderr); why != "" {
 				return errors.New(why)
 			}
@@ -115,11 +140,14 @@ func openWith(goos string, run runner) func(ctx context.Context, path string) er
 	}
 }
 
-// isDir says whether path is a folder; a path that cannot be looked at
-// is not one.
-func isDir(path string) bool {
+// lookAt says whether path is a folder — or why it could not tell: a
+// path that is not there, or one macOS does not let this app look at.
+func lookAt(path string) (bool, error) {
 	fi, err := os.Stat(path)
-	return err == nil && fi.IsDir()
+	if err != nil {
+		return false, err
+	}
+	return fi.IsDir(), nil
 }
 
 // notifyCommand is the program that shows a notification: osascript on a
