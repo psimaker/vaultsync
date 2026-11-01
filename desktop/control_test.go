@@ -954,9 +954,8 @@ func TestIssue176_RunServesTheSocketWhileTheEngineRuns(t *testing.T) {
 	// A record of a socket that could not be made, left by an earlier
 	// start, goes once this start serves one.
 	writeFile(t, filepath.Join(lay.Base, "control-socket-error.txt"), "an earlier start could not make it\n")
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- a.run(ctx, nil) }()
+	stop := inBackground(t, func(ctx context.Context) error { return a.run(ctx, nil) })
+	ctx := context.Background()
 	select {
 	case err := <-held:
 		if !errors.Is(err, ErrEngineRunning) {
@@ -1004,14 +1003,8 @@ func TestIssue176_RunServesTheSocketWhileTheEngineRuns(t *testing.T) {
 	// A record left while running (a socket that stopped serving) goes
 	// with a clean stop: nobody answering is then "not running".
 	writeFile(t, a.lay.SocketErrorFile(), "stopped serving\n")
-	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("run: %v", err)
-		}
-	case <-time.After(30 * time.Second):
-		t.Fatal("run did not stop")
+	if err := stop(); err != nil {
+		t.Fatalf("run: %v", err)
 	}
 	if _, err := os.Stat(socket); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the socket stays behind at %s", socket)
@@ -1085,9 +1078,7 @@ func TestIssue176_RunReportsASocketLeftBehind(t *testing.T) {
 		t.Skip("root removes anything")
 	}
 	a, _ := runFixture(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- a.run(ctx, nil) }()
+	stop := inBackground(t, func(ctx context.Context) error { return a.run(ctx, nil) })
 	var socket string
 	e2eWait(t, "the control socket", 15*time.Second, func() bool {
 		st, err := loadState(a.lay.State)
@@ -1103,14 +1094,8 @@ func TestIssue176_RunReportsASocketLeftBehind(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(filepath.Dir(socket), 0o700) })
-	cancel()
-	select {
-	case err := <-done:
-		if err == nil || !strings.Contains(err.Error(), "the control socket could not be removed") {
-			t.Fatalf("run must report the socket left behind, got %v", err)
-		}
-	case <-time.After(30 * time.Second):
-		t.Fatal("run did not stop")
+	if err := stop(); err == nil || !strings.Contains(err.Error(), "the control socket could not be removed") {
+		t.Fatalf("run must report the socket left behind, got %v", err)
 	}
 }
 
@@ -1129,9 +1114,7 @@ func TestIssue176_RunReportsAFailedCleanup(t *testing.T) {
 	oldStderr := os.Stderr
 	os.Stderr = stderrW
 	t.Cleanup(func() { os.Stderr = oldStderr })
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- a.run(ctx, nil) }()
+	stop := inBackground(t, func(ctx context.Context) error { return a.run(ctx, nil) })
 	e2eWait(t, "the control socket", 15*time.Second, func() bool {
 		st, err := loadState(a.lay.State)
 		if err != nil || st.ControlSocket == "" {
@@ -1145,14 +1128,8 @@ func TestIssue176_RunReportsAFailedCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(a.lay.Base, 0o700) })
-	cancel()
-	select {
-	case err := <-done:
-		if err == nil || !strings.Contains(err.Error(), "could not be taken out of agent.json") {
-			t.Fatalf("run must report the failed cleanup, got %v", err)
-		}
-	case <-time.After(30 * time.Second):
-		t.Fatal("run did not stop")
+	if err := stop(); err == nil || !strings.Contains(err.Error(), "could not be taken out of agent.json") {
+		t.Fatalf("run must report the failed cleanup, got %v", err)
 	}
 	_ = stderrW.Close()
 	os.Stderr = oldStderr

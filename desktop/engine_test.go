@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,7 +18,7 @@ import (
 
 // fakeEngineBinary is a stand-in for syncthing: it records its arguments,
 // then exits with the codes listed in a file, one per start, and finally
-// runs until it is stopped.
+// runs until it is stopped — recording its process ID for fakeEnginePIDs.
 func fakeEngineBinary(t *testing.T, lay layout, codes ...string) string {
 	t.Helper()
 	calls := filepath.Join(t.TempDir(), "calls")
@@ -30,6 +31,7 @@ echo "$@" >> ` + calls + `
 code=$(head -n 1 ` + codesFile + `)
 tail -n +2 ` + codesFile + ` > ` + codesFile + `.next && mv ` + codesFile + `.next ` + codesFile + `
 if [ -n "$code" ]; then exit "$code"; fi
+echo $$ >> ` + fakeEnginePIDFile(lay) + `
 trap 'exit 0' TERM
 while :; do sleep 1; done
 `
@@ -38,6 +40,72 @@ while :; do sleep 1; done
 		t.Fatal(err)
 	}
 	return calls
+}
+
+func fakeEnginePIDFile(lay layout) string { return lay.Syncthing + ".pids" }
+
+// fakeEnginePIDs lists the process IDs of the fake engines that ran until
+// stopped under lay, in the order they started.
+func fakeEnginePIDs(t *testing.T, lay layout) []int {
+	t.Helper()
+	data, err := os.ReadFile(fakeEnginePIDFile(lay))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only whole lines: a start may be writing its own right now.
+	text := string(data)
+	text = text[:strings.LastIndexByte(text, '\n')+1]
+	var pids []int
+	for _, line := range strings.Fields(text) {
+		pid, err := strconv.Atoi(line)
+		if err != nil {
+			t.Fatalf("a fake engine's process ID: %q", line)
+		}
+		pids = append(pids, pid)
+	}
+	return pids
+}
+
+// errStillRunning: what inBackground's stop says when fn did not return.
+var errStillRunning = errors.New("still running 30 s after it was asked to stop")
+
+// inBackground runs fn in a goroutine of its own until the test calls the
+// returned stop — or until the test ends, however it ends: a t.Fatal on the
+// way leaves nothing running. fn's engine is a child process, and on macOS
+// nothing else stops it: there is no parent-death signal there
+// (child_other.go), so an engine a failed test forgot loops on long after
+// the tests and their folders are gone (#256). stop cancels fn's context,
+// waits for fn to return and returns what fn returned (errStillRunning after
+// 30 s); calling it again returns the same.
+func inBackground(t *testing.T, fn func(context.Context) error) (stop func() error) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- fn(ctx) }()
+	var once sync.Once
+	var err error
+	stop = func() error {
+		once.Do(func() {
+			cancel()
+			select {
+			case err = <-done:
+			case <-time.After(30 * time.Second):
+				err = errStillRunning
+			}
+		})
+		return err
+	}
+	// What fn returned is the test's to judge, when it stops fn itself;
+	// only a run that will not stop is this cleanup's to report.
+	t.Cleanup(func() {
+		if err := stop(); errors.Is(err, errStillRunning) {
+			t.Errorf("a run started in the background is %v", err)
+		}
+	})
+	return stop
 }
 
 func engineFixture(t *testing.T) (engine, agentState) {
@@ -56,9 +124,7 @@ func engineFixture(t *testing.T) (engine, agentState) {
 func TestIssue175_SupervisorRestartsOnRequestAndStopsCleanly(t *testing.T) {
 	eng, st := engineFixture(t)
 	calls := fakeEngineBinary(t, eng.lay, "3")
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- eng.supervise(ctx, st, t.Logf) }()
+	stop := inBackground(t, func(ctx context.Context) error { return eng.supervise(ctx, st, t.Logf) })
 	e2eWait(t, "two engine starts", 10*time.Second, func() bool {
 		data, _ := os.ReadFile(calls)
 		return strings.Count(string(data), "\n") >= 2
@@ -67,14 +133,8 @@ func TestIssue175_SupervisorRestartsOnRequestAndStopsCleanly(t *testing.T) {
 	if err := eng.supervise(context.Background(), st, t.Logf); !errors.Is(err, ErrEngineRunning) {
 		t.Fatalf("a second supervisor must be refused, got %v", err)
 	}
-	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("a requested stop is not an error: %v", err)
-		}
-	case <-time.After(25 * time.Second):
-		t.Fatal("the supervisor did not stop the engine")
+	if err := stop(); err != nil {
+		t.Fatalf("a requested stop is not an error: %v", err)
 	}
 	data, _ := os.ReadFile(calls)
 	first := strings.SplitN(string(data), "\n", 2)[0]
