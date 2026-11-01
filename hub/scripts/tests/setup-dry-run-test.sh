@@ -786,16 +786,18 @@ $(cat "$SANDBOX/results/run.log")"
 [ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "the update left temporary files: $(ls -A "$SANDBOX/tmp")"
 pass "a newer VaultSync for Mac replaces the installed one"
 
-# Never replaced: a bundle of that name with another identifier, or a link.
+# Never replaced: a bundle of that name with another identifier, or a link —
+# even one to a VaultSync for Mac kept elsewhere (another disk, say): the
+# link is the person's, and replacing it would delete it.
 for spoiler in foreign link; do
 	rm -rf "$installed"
 	if [ "$spoiler" = foreign ]; then
 		make_app "$APPS" com.example.other someone-elses
 	else
-		mkdir -p "$SANDBOX/elsewhere.app"
-		ln -s "$SANDBOX/elsewhere.app" "$installed"
+		make_app "$SANDBOX/elsewhere" eu.vaultsync.desktop linked
+		ln -s "$SANDBOX/elsewhere/VaultSync for Mac.app" "$installed"
 	fi
-	before=$(ls -lR "$APPS" "$SANDBOX/elsewhere.app" 2>/dev/null || true)
+	before=$(ls -lR "$APPS" "$SANDBOX/elsewhere" 2>/dev/null || true)
 	rm -f "$AGENT_ARGS" "$AGENT_MARK"
 	if out=$(mac_setup --dry-run 2>&1); then
 		fail "a dry run must stop at a $spoiler bundle in the app's place:
@@ -807,11 +809,11 @@ $(cat "$SANDBOX/results/run.log")"
 	fi
 	grep -q "it was not replaced" "$SANDBOX/results/run.log" || fail "the refusal does not say so:
 $(cat "$SANDBOX/results/run.log")"
-	[ "$before" = "$(ls -lR "$APPS" "$SANDBOX/elsewhere.app" 2>/dev/null || true)" ] || fail "the $spoiler bundle was touched"
+	[ "$before" = "$(ls -lR "$APPS" "$SANDBOX/elsewhere" 2>/dev/null || true)" ] || fail "the $spoiler bundle was touched"
 	[ ! -e "$AGENT_ARGS" ] || fail "an agent ran beside a $spoiler bundle"
 	[ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "a refused setup left temporary files: $(ls -A "$SANDBOX/tmp")"
 done
-rm -rf "$installed" "$SANDBOX/elsewhere.app"
+rm -rf "$installed" "$SANDBOX/elsewhere"
 pass "a bundle that is not VaultSync for Mac, or a link, is never replaced"
 
 # A download that does not hold VaultSync for Mac installs nothing.
