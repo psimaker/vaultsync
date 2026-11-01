@@ -10,7 +10,7 @@ require (
 	fyne.io/systray v1.12.2
 	github.com/godbus/dbus/v5 v5.2.4
 	github.com/psimaker/vaultsync/hub v0.0.0-00010101000000-000000000000
-	golang.org/x/sys v0.48.0
+	golang.org/x/sys v0.49.0
 )
 
 require filippo.io/edwards25519 v1.2.0 // indirect
