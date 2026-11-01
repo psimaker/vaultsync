@@ -66,3 +66,33 @@ func TestIssue176_TrayStartLocksLikeARefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A second menu-bar app ends without a failure (#254): its start at login
+// keeps it alive only after an unsuccessful exit, so a second instance —
+// beside a login item of the person's own — must not be started again
+// every ten seconds.
+func TestIssue254_ASecondMenuBarAppEndsWithoutAFailure(t *testing.T) {
+	dir := t.TempDir()
+	lay := layout.Layout{}.At(dir)
+	if err := os.WriteFile(lay.State, []byte(`{"version":1,"guiPort":8384}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	origDelay := tray.LockRetryDelay
+	tray.LockRetryDelay = 10 * time.Millisecond
+	defer func() { tray.LockRetryDelay = origDelay }()
+	first, err := lock.Take(lay.TrayLock())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Release()
+	done := make(chan error, 1)
+	go func() { done <- run([]string{"--state-dir", dir}) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("a second instance ended with %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("a second instance did not end")
+	}
+}

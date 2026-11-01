@@ -106,7 +106,7 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(target, "bin", "syncthing")); err != nil {
 			t.Fatal("removal followed the link")
 		}
-		if err := probeOwnLocks(lay, false); !strings.Contains(refusalText(err), "not a plain folder") || !strings.Contains(refusalText(err), "without --remove-data still removes the background service") {
+		if err := probeOwnLocks(lay, false, false); !strings.Contains(refusalText(err), "not a plain folder") || !strings.Contains(refusalText(err), "without --remove-data still removes the background service") {
 			t.Fatalf("the probe through a link: %v", err)
 		}
 		// The look for a running engine reads through the link as it is,
@@ -145,7 +145,7 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := probeOwnLocks(lay, false); !strings.Contains(refusalText(err), "VaultSync is busy") || strings.Contains(refusalText(err), "remove by hand") {
+		if err := probeOwnLocks(lay, false, false); !strings.Contains(refusalText(err), "VaultSync is busy") || strings.Contains(refusalText(err), "remove by hand") {
 			t.Fatalf("the probe during a setup: %v", err)
 		}
 		holdSetup()
@@ -153,11 +153,11 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := probeOwnLocks(lay, false); !strings.Contains(refusalText(err), "menu-bar app is running") {
+		if err := probeOwnLocks(lay, false, false); !strings.Contains(refusalText(err), "menu-bar app is running") {
 			t.Fatalf("the probe with the app running: %v", err)
 		}
 		hold()
-		if err := probeOwnLocks(lay, false); !strings.Contains(refusalText(err), "does not look like VaultSync's own folder") || !strings.Contains(refusalText(err), "without --remove-data still removes the background service") {
+		if err := probeOwnLocks(lay, false, false); !strings.Contains(refusalText(err), "does not look like VaultSync's own folder") || !strings.Contains(refusalText(err), "without --remove-data still removes the background service") {
 			t.Fatalf("the probe on a folder without agent.json: %v", err)
 		}
 		// With the service running, a held setup.lock may be its own
@@ -168,14 +168,14 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := probeOwnLocks(lay, true); !strings.Contains(refusalText(err), "background service") || !strings.Contains(refusalText(err), "vaultsync uninstall;") {
+		if err := probeOwnLocks(lay, true, false); !strings.Contains(refusalText(err), "background service") || !strings.Contains(refusalText(err), "vaultsync uninstall;") {
 			t.Fatalf("the probe during the service's start: %v", err)
 		}
 		holdSetup()
 		if err := os.Symlink(filepath.Join(lay.Base, "elsewhere"), lay.Lock); err != nil {
 			t.Fatal(err)
 		}
-		if err := probeOwnLocks(lay, true); !strings.Contains(refusalText(err), "agent.lock") || !strings.Contains(refusalText(err), "could not be looked at") {
+		if err := probeOwnLocks(lay, true, false); !strings.Contains(refusalText(err), "agent.lock") || !strings.Contains(refusalText(err), "could not be looked at") {
 			t.Fatalf("a link at the engine's lock while the service runs: %v", err)
 		}
 		// A service at its start holds setup.lock and is about to take
@@ -185,7 +185,7 @@ func TestIssue175_RemoveDataRefusesWhenOwnershipIsInDoubt(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := probeOwnLocks(lay, true); !strings.Contains(refusalText(err), "VaultSync is busy") {
+		if err := probeOwnLocks(lay, true, false); !strings.Contains(refusalText(err), "VaultSync is busy") {
 			t.Fatalf("setup.lock before agent.lock: %v", err)
 		}
 		holdSetup()
@@ -467,7 +467,7 @@ func TestIssue176_RemoveDataGuards(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := probeOwnLocks(lay, false); !strings.Contains(refusalText(err), "pair.lock") || !strings.Contains(refusalText(err), "could not be looked at") || !strings.Contains(refusalText(err), "without --remove-data") {
+		if err := probeOwnLocks(lay, false, false); !strings.Contains(refusalText(err), "pair.lock") || !strings.Contains(refusalText(err), "could not be looked at") || !strings.Contains(refusalText(err), "without --remove-data") {
 			t.Fatalf("the probe: %v", err)
 		}
 		if _, _, err := removeOwnData(lay, nil, "darwin"); err == nil || errors.As(err, new(*refusal)) || !errors.Is(err, syscall.ELOOP) {
@@ -544,7 +544,7 @@ func TestIssue176_RemoveDataGuards(t *testing.T) {
 		if _, _, err := removeOwnData(lay, nil, "darwin"); err == nil || errors.As(err, new(*refusal)) {
 			t.Fatalf("got %v", err)
 		}
-		if err := probeOwnLocks(lay, false); !strings.Contains(refusalText(err), "pair.lock") || !strings.Contains(refusalText(err), "could not be looked at") {
+		if err := probeOwnLocks(lay, false, false); !strings.Contains(refusalText(err), "pair.lock") || !strings.Contains(refusalText(err), "could not be looked at") {
 			t.Fatalf("the probe: %v", err)
 		}
 		// A link at the engine's lock (the removal above made the file;
@@ -677,7 +677,7 @@ func TestIssue175_RemoveDataRemovesTheCommandLink(t *testing.T) {
 		var out strings.Builder
 		a := &app{goos: "linux", home: home, getenv: envOf(nil), lay: lay, out: &out,
 			svc: service{goos: "linux", home: home, uid: 1000, getenv: envOf(nil), lay: lay, run: &fakeRunner{}}}
-		a.installCommand(&term{out: &out})
+		a.installCommand(&term{out: &out}, lay.Agent)
 		link := filepath.Join(home, ".local", "bin", "vaultsync")
 		if target, err := os.Readlink(link); err != nil || target != lay.Agent {
 			t.Fatalf("setup made no link: %q %v", target, err)

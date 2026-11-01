@@ -109,7 +109,7 @@ func TestIssue175_CommandLinkIsOursOrNothing(t *testing.T) {
 	link := filepath.Join(home, ".local", "bin", "vaultsync")
 
 	t.Setenv("PATH", "/usr/bin:/bin")
-	if got := a.installCommand(&term{out: os.Stdout}); got != "~/.local/bin/vaultsync" {
+	if got := a.installCommand(&term{out: os.Stdout}, lay.Agent); got != "~/.local/bin/vaultsync" {
 		t.Fatalf("not on PATH: %q", got)
 	}
 	if target, err := os.Readlink(link); err != nil || target != lay.Agent {
@@ -119,7 +119,7 @@ func TestIssue175_CommandLinkIsOursOrNothing(t *testing.T) {
 	if err := os.Chmod(lay.Agent, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if got := a.installCommand(&term{out: os.Stdout}); got != "vaultsync" {
+	if got := a.installCommand(&term{out: os.Stdout}, lay.Agent); got != "vaultsync" {
 		t.Fatalf("on PATH: %q", got)
 	}
 
@@ -135,7 +135,7 @@ func TestIssue175_CommandLinkIsOursOrNothing(t *testing.T) {
 	}
 	b := &app{goos: "linux", home: other, lay: lay2}
 	t.Setenv("PATH", filepath.Dir(foreign)+":/usr/bin:/bin")
-	if got := b.installCommand(&term{out: os.Stdout}); got != lay2.Agent {
+	if got := b.installCommand(&term{out: os.Stdout}, lay2.Agent); got != lay2.Agent {
 		t.Fatalf("recommended %q instead of VaultSync's own %q", got, lay2.Agent)
 	}
 	if data, _ := os.ReadFile(foreign); !strings.Contains(string(data), "a different program") {

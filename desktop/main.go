@@ -27,6 +27,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -209,6 +210,9 @@ type app struct {
 	lay        layout
 	svc        service
 	out        io.Writer
+	// appEnv is where setup looks for VaultSync for Mac around this
+	// program (appbundle.go); the zero value finds none.
+	appEnv appEnv
 }
 
 func newApp() (*app, error) {
@@ -220,7 +224,7 @@ func newApp() (*app, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &app{goos: runtime.GOOS, home: home, getenv: os.Getenv, lay: lay, out: os.Stdout}
+	a := &app{goos: runtime.GOOS, home: home, getenv: os.Getenv, lay: lay, out: os.Stdout, appEnv: liveAppEnv(runtime.GOOS, home)}
 	a.svc = service{goos: a.goos, home: home, uid: os.Getuid(), getenv: os.Getenv, lay: lay, run: execRunner{}}
 	return a, nil
 }
@@ -316,11 +320,19 @@ func (a *app) setup(ctx context.Context, args []string) error {
 		unlockSetup()
 		return err
 	}
+	// The copy stays current also when the service runs from the app: it
+	// records which agent the service was last set up with (a new one
+	// restarts the service below), and it is the way back should the app
+	// go — run from it, uninstall and setup work without the app.
 	agentChanged, err := installAgentCopy(a.lay.Agent)
 	unlockSetup()
 	if err != nil {
 		return fmt.Errorf("could not install VaultSync into %s: %w", tildePath(a.home, a.lay.Bin), err)
 	}
+	// An existing service moves into the app the first time setup runs
+	// from it: its file changes, so install loads it afresh. The command
+	// link follows.
+	exe, bundle, fromApp := a.serviceProgram()
 
 	var temporary *supervision
 	if *noService {
@@ -333,13 +345,23 @@ func (a *app) setup(ctx context.Context, args []string) error {
 		if err := a.svc.userManagerAvailable(); err != nil {
 			return refuse("This computer has no systemd user session (%v), so VaultSync cannot run in the background here. Run vaultsync setup --no-service, then keep vaultsync run running — for example from your desktop's autostart.", err)
 		}
-		if _, err := a.svc.install(a.lay.Agent, agentChanged || engineChanged); err != nil {
+		if _, err := a.svc.install(exe, agentChanged || engineChanged); err != nil {
 			if a.goos == "darwin" {
 				return refuse("Could not start the background service (%v). Run vaultsync setup in Terminal on this Mac while you are logged in — not over SSH — or use vaultsync setup --no-service and keep vaultsync run running yourself.", err)
 			}
 			return refuse("Could not start the background service (%v). Check `systemctl --user status vaultsync`, or use vaultsync setup --no-service and keep vaultsync run running yourself.", err)
 		}
 		t.say("✓ Background service running — it starts again when you log in")
+		if fromApp {
+			// The menu-bar app comes with the app; syncing does not depend
+			// on it, so a start at login that could not be set up is said,
+			// not fatal.
+			if err := a.svc.installTray(bundle.Tray, agentChanged); err != nil {
+				t.say("  The menu-bar icon could not be set to open at login (%v). Open VaultSync for Mac yourself to see it.", err)
+			} else {
+				t.say("✓ Menu-bar icon set up — it opens when you log in")
+			}
+		}
 	}
 	client, err := eng.client(st)
 	if err != nil {
@@ -348,7 +370,7 @@ func (a *app) setup(ctx context.Context, args []string) error {
 	if err := waitEngine(ctx, client, 60*time.Second, temporary); err != nil {
 		return fmt.Errorf("the sync engine did not start: %w — see %s", err, a.logHint())
 	}
-	command := a.installCommand(t)
+	command := a.installCommand(t, exe)
 	_, err = a.pairWith(ctx, t, opts, client, pairOrigin{})
 	if *noService {
 		t.blank()
@@ -369,6 +391,17 @@ func (a *app) setup(ctx context.Context, args []string) error {
 		t.say("  Next device: run the same setup link, or in VaultSync on iPhone tap Add Hub.")
 	}
 	return err
+}
+
+// serviceProgram is the program the background service runs: the agent in
+// VaultSync for Mac when setup runs from the app installed in Applications
+// — macOS then lists the service, and the permissions it asks for, under
+// the app — else VaultSync's own copy (decision 053).
+func (a *app) serviceProgram() (exe string, bundle macApp, fromApp bool) {
+	if bundle, ok := findInstalledApp(a.appEnv); ok {
+		return bundle.Agent, bundle, true
+	}
+	return a.lay.Agent, macApp{}, false
 }
 
 // supervision is an engine supervisor running in the background; done is
@@ -446,28 +479,70 @@ func commandLink(home string) string {
 }
 
 // installCommand puts `vaultsync` on the usual per-user command path
-// (~/.local/bin) as a link to the copy the service runs — unless something
-// else already has that name — and says how to call it.
-func (a *app) installCommand(t *term) string {
+// (~/.local/bin) as a link to exe, the program the service runs — unless
+// something else already has that name — and says how to call it. A link
+// setup made earlier to another of VaultSync's programs (the copy, or the
+// app's agent) follows to exe: the terminal then runs the program macOS
+// asked the local-network permission for.
+func (a *app) installCommand(t *term, exe string) string {
 	link := commandLink(a.home)
-	if target, err := os.Readlink(link); err == nil && target == a.lay.Agent {
+	if target, err := os.Readlink(link); err == nil && target == exe {
 		// already ours
+	} else if err == nil && a.ownCommandTarget(target) {
+		_ = replaceLink(link, exe)
 	} else if _, err := os.Lstat(link); errors.Is(err, fs.ErrNotExist) {
 		if err := os.MkdirAll(filepath.Dir(link), 0o755); err == nil {
-			_ = os.Symlink(a.lay.Agent, link)
+			_ = os.Symlink(exe, link)
 		}
 	}
 	// "vaultsync" alone only when it reaches this very program.
 	if found, err := exec.LookPath("vaultsync"); err == nil {
-		agent, aerr := filepath.EvalSymlinks(a.lay.Agent)
+		agent, aerr := filepath.EvalSymlinks(exe)
 		if r, err := filepath.EvalSymlinks(found); err == nil && aerr == nil && r == agent {
 			return "vaultsync"
 		}
 	}
-	if target, err := os.Readlink(link); err == nil && target == a.lay.Agent {
+	if target, err := os.Readlink(link); err == nil && target == exe {
 		return tildePath(a.home, link)
 	}
-	return shellQuote(a.lay.Agent)
+	return shellQuote(exe)
+}
+
+// ownCommandTarget: a command link pointing there is one setup made — to
+// the agent's copy, or to the agent in VaultSync for Mac in /Applications
+// or ~/Applications.
+func (a *app) ownCommandTarget(target string) bool {
+	if target == a.lay.Agent {
+		return true
+	}
+	for _, dir := range []string{"/Applications", filepath.Join(a.home, "Applications")} {
+		// Setup links the app's agent by its resolved path (appbundle.go).
+		resolved, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			resolved = dir
+		}
+		for _, d := range []string{dir, resolved} {
+			if target == filepath.Join(d, appBundleName, "Contents", "MacOS", "vaultsync") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// replaceLink points link at target in one step: a new link beside it,
+// renamed over it — never a moment without a link, never a half-made one.
+func replaceLink(link, target string) error {
+	tmp := filepath.Join(filepath.Dir(link), ".vaultsync-link-"+strconv.Itoa(os.Getpid()))
+	_ = os.Remove(tmp)
+	if err := os.Symlink(target, tmp); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, link); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // shellQuote quotes a path for copying into a shell when it needs it.

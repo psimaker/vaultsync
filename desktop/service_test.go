@@ -46,6 +46,49 @@ type fakeRunner struct {
 	// probes records the session probes (the domain print, show-environment)
 	// apart from the actions in calls.
 	probes []string
+	// The menu-bar app's start at login is a job of its own beside the
+	// agent's: loaded, disabled, and idle (loaded, its app not running —
+	// quit, or ended at once as a second instance). onTrayBootout runs as
+	// launchd stops the job's app: a test lets go of tray.lock there.
+	trayLoaded, trayDisabled, trayIdle bool
+	onTrayBootout                      func()
+}
+
+// trayJob is launchd for the menu-bar app's start at login.
+func (f *fakeRunner) trayJob(call string) (string, error) {
+	switch {
+	case strings.HasPrefix(call, "launchctl print"):
+		if !f.trayLoaded {
+			return "", errors.New("not loaded")
+		}
+		if f.trayIdle {
+			return "\tstate = not running\n", nil
+		}
+		return "\tstate = running\n", nil
+	case strings.HasPrefix(call, "launchctl bootstrap"):
+		if f.trayDisabled {
+			return "Bootstrap failed: 5: Input/output error", errors.New("exit status 5")
+		}
+		f.trayLoaded, f.trayIdle = true, false
+	case strings.HasPrefix(call, "launchctl bootout"):
+		if !f.trayLoaded {
+			return "Boot-out failed: 3: No such process", errors.New("exit status 3")
+		}
+		f.trayLoaded = false
+		if f.onTrayBootout != nil && !f.trayIdle {
+			f.onTrayBootout()
+		}
+	case strings.HasPrefix(call, "launchctl disable"):
+		f.trayDisabled = true
+	case strings.HasPrefix(call, "launchctl enable"):
+		f.trayDisabled = false
+	case strings.HasPrefix(call, "launchctl kickstart"):
+		if !f.trayLoaded || f.trayDisabled {
+			return "", errors.New("cannot kickstart")
+		}
+		f.trayIdle = false
+	}
+	return f.answers[call], nil
 }
 
 // exitErr is how a command that ran and failed reports, like *exec.ExitError.
@@ -106,6 +149,9 @@ func (f *fakeRunner) run(name string, args ...string) (string, error) {
 		if strings.HasPrefix(call, prefix) {
 			return "boom", err
 		}
+	}
+	if name == "launchctl" && strings.Contains(call, "/"+trayLabel) {
+		return f.trayJob(call)
 	}
 	switch {
 	case strings.HasPrefix(call, "launchctl print"):

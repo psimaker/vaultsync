@@ -107,6 +107,15 @@ func run(args []string) error {
 	// The lock is the controller's from here: it releases it on its way
 	// out, or earlier when the file is gone and it takes a fresh one.
 	held, err := lockAtStart(lay)
+	if errors.Is(err, tray.ErrAlreadyRunning) {
+		// Not a failure: the icon is up, or VaultSync is being removed. The
+		// start at login keeps the app alive only after an unsuccessful
+		// exit (decision 053), so a second start — a login item of the
+		// person's own beside it — ends with 0 rather than being started
+		// again every ten seconds.
+		logger.Print(redact(err.Error()))
+		return nil
+	}
 	if err != nil {
 		return err
 	}

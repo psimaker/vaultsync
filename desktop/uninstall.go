@@ -78,11 +78,12 @@ func errnoOf(err error) error {
 // ownLockEntry is one of VaultSync's own locks: where it is, what the
 // removal says when it is held (the service is gone by then), what the
 // probe before the service goes says (the service may hold it: at its
-// start it holds setup.lock, during a socket pairing pair.lock), and
-// whether a running service holds it for as long as it runs.
+// start it holds setup.lock, during a socket pairing pair.lock), whether
+// a running service holds it for as long as it runs, and whether the
+// menu-bar app's start at login does while it runs the app (tray.lock).
 type ownLockEntry struct {
 	path, held, probed string
-	service            bool
+	service, trayJob   bool
 }
 
 // ownLocks is the one list of VaultSync's own locks, for the probe before
@@ -93,10 +94,10 @@ type ownLockEntry struct {
 // first, agent.lock is never touched then.
 func ownLocks(lay layout) []ownLockEntry {
 	return []ownLockEntry{
-		{filepath.Join(lay.Base, "setup.lock"), ownerRunningRefusal + serviceGone, busyRefusal, false},
-		{filepath.Join(lay.Base, "pair.lock"), ownerRunningRefusal + serviceGone, busyRefusal, false},
-		{lay.TrayLock(), trayRunningRefusal + serviceGone, trayRunningRefusal, false},
-		{lay.Lock, ownerRunningRefusal + serviceGone, busyRefusal, true},
+		{filepath.Join(lay.Base, "setup.lock"), ownerRunningRefusal + serviceGone, busyRefusal, false, false},
+		{filepath.Join(lay.Base, "pair.lock"), ownerRunningRefusal + serviceGone, busyRefusal, false, false},
+		{lay.TrayLock(), trayRunningRefusal + serviceGone, trayRunningRefusal, false, true},
+		{lay.Lock, ownerRunningRefusal + serviceGone, busyRefusal, true, false},
 	}
 }
 
@@ -152,11 +153,14 @@ func ownFolder(lay layout) (exists, own bool, err error) {
 // holds setup.lock before it writes agent.json, and is named as such
 // rather than the folder handed to the person to remove. A running
 // service holds the engine's lock for as long as it runs, so that one's
-// held verdict is passed over then; its error (a link, a directory in
-// the lock's place) is not. A missing folder is nothing to probe; a link
-// in the folder's place, or a folder that is not VaultSync's, is refused
-// with the removal's words.
-func probeOwnLocks(lay layout, serviceRunning bool) error {
+// held verdict is passed over then; so is tray.lock's while launchd runs
+// the menu-bar app's start at login (trayJobRunning), which the removal
+// stops — a menu-bar app opened by hand beside it ends at once, so the
+// holder is that job's app. Their errors (a link, a directory in the
+// lock's place) are not passed over. A missing folder is nothing to
+// probe; a link in the folder's place, or a folder that is not
+// VaultSync's, is refused with the removal's words.
+func probeOwnLocks(lay layout, serviceRunning, trayJobRunning bool) error {
 	exists, own, err := ownFolder(lay)
 	if err != nil || !exists {
 		return withServiceRemedy(err)
@@ -168,7 +172,7 @@ func probeOwnLocks(lay layout, serviceRunning bool) error {
 			// way out — the raw error would carry the path and nothing else.
 			return refuse("VaultSync's lock file %s in %s could not be looked at (%v): something VaultSync cannot open stands in its place — a link, a directory, or a file it may not read. Put it right, then run vaultsync uninstall --remove-data again."+serviceRemedy, filepath.Base(l.path), lay.Base, errnoOf(err))
 		}
-		if isHeld && !(l.service && serviceRunning) {
+		if isHeld && !(l.service && serviceRunning) && !(l.trayJob && trayJobRunning) {
 			return refuse("%s", l.probed)
 		}
 	}
@@ -255,8 +259,9 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 		// the service does not run — must be gone before anything is asked
 		// or changed: probed first, so the refusal costs nothing. Whether
 		// the service runs (a read of the service manager) decides whose
-		// the engine's lock is.
-		if err := probeOwnLocks(a.lay, a.svc.running()); err != nil {
+		// the engine's lock is; whether the menu-bar app's start at login
+		// runs, whose tray.lock is.
+		if err := probeOwnLocks(a.lay, a.svc.running(), a.svc.trayRunning()); err != nil {
 			return err
 		}
 	}
@@ -276,6 +281,15 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 	if !ok {
 		t.say("Nothing was changed.")
 		return nil
+	}
+	// The menu-bar app's start at login goes first, and is waited for: the
+	// app it ran lets go of tray.lock as it ends.
+	trayFound, err := a.svc.uninstallTray()
+	if err != nil {
+		return err
+	}
+	if trayFound {
+		t.say("✓ The menu-bar icon no longer opens when you log in.")
 	}
 	// What the removal found — a job, a unit file, or a unit the manager
 	// still runs — may hold the engine's lock a moment after the removal:
@@ -363,12 +377,15 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 	return nil
 }
 
-// removeCommandLink removes the command link setup made, but only while it
-// still points at VaultSync's own copy and that copy is gone: a `vaultsync`
-// someone else put there, or a link that still works, stays.
+// removeCommandLink removes the command link setup made — to VaultSync's
+// own copy, or to the agent in VaultSync for Mac, which uninstall leaves for
+// the person to move to the Trash — once that copy is gone: the removal got
+// that far (setup keeps the copy also when the service runs from the app).
+// A `vaultsync` someone else put there stays.
 func (a *app) removeCommandLink() (string, bool) {
 	link := commandLink(a.home)
-	if target, err := os.Readlink(link); err != nil || target != a.lay.Agent {
+	target, err := os.Readlink(link)
+	if err != nil || !a.ownCommandTarget(target) {
 		return "", false
 	}
 	if _, err := os.Lstat(a.lay.Agent); !errors.Is(err, fs.ErrNotExist) {
@@ -705,8 +722,10 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 			if err != nil {
 				return removed, kept, err
 			}
-			if logs.Remove("vaultsync.log") == nil {
-				removed = append(removed, filepath.Join(lay.Logs, "vaultsync.log"))
+			for _, name := range []string{"vaultsync.log", "vaultsync-tray.log"} {
+				if logs.Remove(name) == nil {
+					removed = append(removed, filepath.Join(lay.Logs, name))
+				}
 			}
 			logs.Close()
 			if os.Remove(lay.Logs) == nil {
