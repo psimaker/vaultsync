@@ -14,6 +14,10 @@
 #      answers the release lookup).
 #   4. The embedded compose text in setup.sh is byte-identical to
 #      hub/docker-compose.yml — the one link must ship exactly the reviewed stack.
+#   5. On a Mac (uname pinned to Darwin) the device path installs VaultSync for
+#      Mac into Applications when the release has it and runs the setup from
+#      there, falls back to the bare agent when it has not, and never replaces
+#      a bundle that is not VaultSync for Mac.
 set -eu
 
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -140,20 +144,26 @@ if [ -n "${FAKE_RELEASE:-}" ]; then
 		esac
 		shift
 	done
-	[ -n "$out" ] && [ -f "$FAKE_RELEASE/${url##*/}" ] && cp "$FAKE_RELEASE/${url##*/}" "$out" && exit 0
+	[ -f "$FAKE_RELEASE/${url##*/}" ] || exit 22
+	if [ -n "$out" ]; then
+		cp "$FAKE_RELEASE/${url##*/}" "$out" && exit 0
+	else
+		cat "$FAKE_RELEASE/${url##*/}" && exit 0
+	fi
 	exit 22
 fi
 printf 'curl %s\n' "$*" >>"$VIOLATIONS"
 exit 1
 SHIM
 # The Hub path is Linux-only; pin uname so the test is the same on a macOS
-# developer machine and on the Linux CI runner.
+# developer machine and on the Linux CI runner. FAKE_OS / FAKE_ARCH make it
+# a Mac for the VaultSync for Mac cases.
 cat >"$SANDBOX/bin/uname" <<'SHIM'
 #!/usr/bin/env sh
 case "$*" in
-	-s) echo Linux ;;
-	-m) echo x86_64 ;;
-	*) echo Linux ;;
+	-s) echo "${FAKE_OS:-Linux}" ;;
+	-m) echo "${FAKE_ARCH:-x86_64}" ;;
+	*) echo "${FAKE_OS:-Linux}" ;;
 esac
 SHIM
 # Port probes are read-only: answer "nothing listening".
@@ -681,6 +691,190 @@ $(cat "$SANDBOX/results/run.log")"
 cp "$SANDBOX/results/sums" "$FAKE_RELEASE/SHA256SUMS"
 unset FAKE_RELEASE
 pass "a checksum mismatch runs nothing and leaves nothing behind"
+
+# --- 5. On a Mac: VaultSync for Mac ----------------------------------------
+
+# The release has VaultSync for Mac zipped the way the release job zips it
+# (zip -qry -X), beside the bare agent; the app's agent is a stand-in that
+# records its arguments, where it ran from and which build it is. APPS
+# stands in for /Applications.
+command -v zip >/dev/null 2>&1 || fail "the VaultSync for Mac cases need zip"
+MAC_RELEASE="$SANDBOX/mac-release"
+APPS="$SANDBOX/Applications"
+AGENT_MARK="$SANDBOX/results/agent-mark"
+export AGENT_MARK
+mkdir -p "$MAC_RELEASE" "$APPS" "$SANDBOX/zipwork"
+# make_app DIR ID MARK puts a VaultSync for Mac.app with bundle identifier ID
+# into DIR, its agent saying MARK.
+make_app() {
+	app="$1/VaultSync for Mac.app"
+	mkdir -p "$app/Contents/MacOS"
+	sed -e "s/@VERSION@/0.10.0/" -e "s/eu\.vaultsync\.desktop/$2/" "$REPO_ROOT/desktop/macos/Info.plist" >"$app/Contents/Info.plist"
+	cat >"$app/Contents/MacOS/vaultsync" <<AGENT
+#!/usr/bin/env sh
+: >"\$AGENT_ARGS"
+for a in "\$@"; do printf '[%s]\n' "\$a" >>"\$AGENT_ARGS"; done
+printf '%s\n' "\$0" >"\$AGENT_SELF"
+printf '%s\n' "$3" >"\$AGENT_MARK"
+AGENT
+	printf '#!/bin/sh\n' >"$app/Contents/MacOS/vaultsync-tray"
+	chmod 755 "$app/Contents/MacOS/vaultsync" "$app/Contents/MacOS/vaultsync-tray"
+}
+# release_with MARK [ID] zips an app into the release and lists it.
+release_with() {
+	rm -rf "$SANDBOX/zipwork/VaultSync for Mac.app" "$MAC_RELEASE/VaultSync_darwin_arm64.zip"
+	make_app "$SANDBOX/zipwork" "${2:-eu.vaultsync.desktop}" "$1"
+	(cd "$SANDBOX/zipwork" && zip -qry -X "$MAC_RELEASE/VaultSync_darwin_arm64.zip" "VaultSync for Mac.app")
+	cp "$FAKE_RELEASE_BARE" "$MAC_RELEASE/vaultsync_darwin_arm64"
+	if command -v sha256sum >/dev/null 2>&1; then
+		(cd "$MAC_RELEASE" && sha256sum VaultSync_darwin_arm64.zip vaultsync_darwin_arm64 >SHA256SUMS)
+	else
+		(cd "$MAC_RELEASE" && shasum -a 256 VaultSync_darwin_arm64.zip vaultsync_darwin_arm64 >SHA256SUMS)
+	fi
+}
+FAKE_RELEASE_BARE="$SANDBOX/release/vaultsync_linux_amd64"
+mac_setup() {
+	FAKE_OS=Darwin FAKE_ARCH=arm64 FAKE_RELEASE="$MAC_RELEASE" VAULTSYNC_APPLICATIONS_DIR="$APPS" TMPDIR="$SANDBOX/tmp" \
+		sh "$SETUP_SH" --device --code tulip-anchor-07 "$@"
+}
+installed="$APPS/VaultSync for Mac.app"
+release_with first
+
+# A dry run plans the app, the place and the setup from there — and makes
+# nothing.
+out=$(mac_setup --dry-run 2>&1) || fail "Mac dry-run exited non-zero:
+$out"
+printf '%s\n' "$out" | grep -q "would download: $release/VaultSync_darwin_arm64.zip " ||
+	fail "the Mac dry-run does not plan the app:
+$out"
+printf '%s\n' "$out" | grep -q "would install VaultSync for Mac into $APPS\$" ||
+	fail "the Mac dry-run does not plan the place:
+$out"
+printf '%s\n' "$out" | grep -q "would run: $installed/Contents/MacOS/vaultsync setup --code <code>\$" ||
+	fail "the Mac dry-run does not plan the setup from the app:
+$out"
+if printf '%s\n' "$out" | grep -qi "tulip-anchor-07"; then
+	fail "the Mac dry-run printed the pairing code:
+$out"
+fi
+[ -z "$(ls -A "$APPS")" ] || fail "the Mac dry-run installed something: $(ls -A "$APPS")"
+pass "on a Mac a dry run plans VaultSync for Mac in Applications and the setup from there"
+
+# For real: the app lands in Applications and the setup runs from it, with
+# exactly the given arguments; the app stays, nothing else does.
+rm -f "$AGENT_ARGS" "$AGENT_SELF" "$AGENT_MARK"
+mac_setup -- --vault "My Notes" >"$SANDBOX/results/run.log" 2>&1 ||
+	fail "the Mac setup failed:
+$(cat "$SANDBOX/results/run.log")"
+[ "$(cat "$AGENT_SELF")" = "$installed/Contents/MacOS/vaultsync" ] || fail "the setup did not run from the installed app: $(cat "$AGENT_SELF")"
+[ "$(cat "$AGENT_ARGS")" = '[setup]
+[--code]
+[tulip-anchor-07]
+[--vault]
+[My Notes]' ] || fail "the app's agent got other arguments:
+$(cat "$AGENT_ARGS")"
+[ -x "$installed/Contents/MacOS/vaultsync-tray" ] || fail "the menu-bar app is missing from the installed app"
+[ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "the Mac setup left temporary files: $(ls -A "$SANDBOX/tmp")"
+pass "on a Mac the setup installs VaultSync for Mac and runs from it"
+
+# A newer release replaces VaultSync for Mac in place.
+release_with second
+mac_setup >"$SANDBOX/results/run.log" 2>&1 || fail "the Mac update failed:
+$(cat "$SANDBOX/results/run.log")"
+[ "$(cat "$AGENT_MARK")" = second ] || fail "the update ran the old app: $(cat "$AGENT_MARK")"
+[ "$(ls -A "$APPS")" = "VaultSync for Mac.app" ] || fail "the update left more than the app: $(ls -A "$APPS")"
+[ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "the update left temporary files: $(ls -A "$SANDBOX/tmp")"
+pass "a newer VaultSync for Mac replaces the installed one"
+
+# Never replaced: a bundle of that name with another identifier, or a link.
+for spoiler in foreign link; do
+	rm -rf "$installed"
+	if [ "$spoiler" = foreign ]; then
+		make_app "$APPS" com.example.other someone-elses
+	else
+		mkdir -p "$SANDBOX/elsewhere.app"
+		ln -s "$SANDBOX/elsewhere.app" "$installed"
+	fi
+	before=$(ls -lR "$APPS" "$SANDBOX/elsewhere.app" 2>/dev/null || true)
+	rm -f "$AGENT_ARGS" "$AGENT_MARK"
+	if out=$(mac_setup --dry-run 2>&1); then
+		fail "a dry run must stop at a $spoiler bundle in the app's place:
+$out"
+	fi
+	if mac_setup >"$SANDBOX/results/run.log" 2>&1; then
+		fail "the setup must stop at a $spoiler bundle in the app's place:
+$(cat "$SANDBOX/results/run.log")"
+	fi
+	grep -q "it was not replaced" "$SANDBOX/results/run.log" || fail "the refusal does not say so:
+$(cat "$SANDBOX/results/run.log")"
+	[ "$before" = "$(ls -lR "$APPS" "$SANDBOX/elsewhere.app" 2>/dev/null || true)" ] || fail "the $spoiler bundle was touched"
+	[ ! -e "$AGENT_ARGS" ] || fail "an agent ran beside a $spoiler bundle"
+	[ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "a refused setup left temporary files: $(ls -A "$SANDBOX/tmp")"
+done
+rm -rf "$installed" "$SANDBOX/elsewhere.app"
+pass "a bundle that is not VaultSync for Mac, or a link, is never replaced"
+
+# A download that does not hold VaultSync for Mac installs nothing.
+release_with impostor com.example.impostor
+if mac_setup >"$SANDBOX/results/run.log" 2>&1; then
+	fail "an app with another identifier must not be installed"
+fi
+[ -z "$(ls -A "$APPS")" ] || fail "an impostor was installed: $(ls -A "$APPS")"
+# Nor does one whose checksum does not match.
+release_with third
+cp "$MAC_RELEASE/SHA256SUMS" "$SANDBOX/results/sums"
+sed 's/^./0/' "$SANDBOX/results/sums" >"$MAC_RELEASE/SHA256SUMS"
+if mac_setup >"$SANDBOX/results/run.log" 2>&1; then
+	fail "a checksum mismatch must stop the Mac setup"
+fi
+grep -q "Checksum mismatch" "$SANDBOX/results/run.log" || fail "the Mac checksum mismatch is not reported:
+$(cat "$SANDBOX/results/run.log")"
+[ -z "$(ls -A "$APPS")" ] || fail "a mismatching app was installed: $(ls -A "$APPS")"
+[ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "a failed Mac download left temporary files: $(ls -A "$SANDBOX/tmp")"
+pass "a download that is not VaultSync for Mac, or does not match, installs nothing"
+
+# Applications this account may not write to: ~/Applications. An app already
+# in ~/Applications is updated there even when Applications is writable.
+if [ "$(id -u)" != 0 ]; then
+	release_with fourth
+	chmod 555 "$APPS"
+	mac_setup >"$SANDBOX/results/run.log" 2>&1 || { chmod 755 "$APPS"; fail "the setup into ~/Applications failed:
+$(cat "$SANDBOX/results/run.log")"; }
+	chmod 755 "$APPS"
+	[ "$(cat "$AGENT_SELF")" = "$HOME/Applications/VaultSync for Mac.app/Contents/MacOS/vaultsync" ] || fail "not run from ~/Applications: $(cat "$AGENT_SELF")"
+	release_with fifth
+	mac_setup >"$SANDBOX/results/run.log" 2>&1 || fail "the update in ~/Applications failed:
+$(cat "$SANDBOX/results/run.log")"
+	[ "$(cat "$AGENT_MARK")" = fifth ] || fail "the app in ~/Applications was not updated: $(cat "$AGENT_MARK")"
+	[ -z "$(ls -A "$APPS")" ] || fail "the update went into Applications instead: $(ls -A "$APPS")"
+	rm -rf "$HOME/Applications"
+	pass "without write access to Applications the app goes into ~/Applications, and is updated there"
+else
+	pass "the ~/Applications case skipped (root writes anywhere)"
+fi
+
+# A release without the app (desktop-v0.1.0): the bare agent, as before.
+rm -f "$MAC_RELEASE/VaultSync_darwin_arm64.zip"
+if command -v sha256sum >/dev/null 2>&1; then
+	(cd "$MAC_RELEASE" && sha256sum vaultsync_darwin_arm64 >SHA256SUMS)
+else
+	(cd "$MAC_RELEASE" && shasum -a 256 vaultsync_darwin_arm64 >SHA256SUMS)
+fi
+out=$(mac_setup --dry-run 2>&1) || fail "Mac dry-run without the app exited non-zero:
+$out"
+printf '%s\n' "$out" | grep -q "would download: $release/vaultsync_darwin_arm64 " ||
+	fail "without the app the Mac dry-run does not plan the bare agent:
+$out"
+printf '%s\n' "$out" | grep -q "would run: <temporary folder>/vaultsync setup --code <code>\$" ||
+	fail "without the app the Mac dry-run does not plan the setup from the download:
+$out"
+rm -f "$AGENT_ARGS" "$AGENT_SELF"
+mac_setup >"$SANDBOX/results/run.log" 2>&1 || fail "the bare-agent Mac setup failed:
+$(cat "$SANDBOX/results/run.log")"
+[ ! -e "$(cat "$AGENT_SELF")" ] || fail "the bare installer is still there: $(cat "$AGENT_SELF")"
+[ -z "$(ls -A "$APPS")" ] || fail "an app appeared without one in the release: $(ls -A "$APPS")"
+[ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "the bare-agent Mac setup left temporary files: $(ls -A "$SANDBOX/tmp")"
+pass "a release without VaultSync for Mac sets up with the bare agent"
 
 # --- 4. Embedded compose = reviewed compose ----------------------------------
 

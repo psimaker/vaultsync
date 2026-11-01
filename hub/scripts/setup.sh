@@ -6,7 +6,8 @@
 # It asks one question:
 #   1) Obsidian device   this computer edits notes and syncs them with your Hub:
 #                        installs VaultSync for Mac and Linux (`vaultsync`, it
-#                        brings its own Syncthing) and runs its setup
+#                        brings its own Syncthing) and runs its setup — on a
+#                        Mac as the app VaultSync for Mac, in Applications
 #   2) Hub               a server or NAS that keeps every vault (set up once)
 #
 # Skeptical of curl|sh? Append `-s -- --dry-run` to see every action without
@@ -20,6 +21,7 @@
 # Environment:      VAULTSYNC_HUB_DIR  where the Hub stack lives (default /srv/vaultsync)
 #                   VAULTSYNC_HUB_NAME how the Hub introduces itself
 #                   VAULTSYNC_HUB_IMAGE / RELAY_URL   development overrides
+#                   VAULTSYNC_APPLICATIONS_DIR  the Mac's /Applications (tests)
 set -eu
 
 REPO="psimaker/vaultsync"
@@ -31,6 +33,12 @@ HUB_IMAGE="${VAULTSYNC_HUB_IMAGE:-ghcr.io/psimaker/vaultsync-hub:0.3.0}"
 # and over a "no" to the offer below (#216).
 unset VAULTSYNC_HUB_IMAGE
 RELAY_URL="${RELAY_URL:-https://relay.vaultsync.eu}"
+# VaultSync for Mac (decision 053): the app holds the agent and the menu-bar
+# app; the agent's setup, run from the app in Applications, makes the
+# background service run from it and the menu-bar app open at login.
+APP_NAME="VaultSync for Mac.app"
+APP_ID="eu.vaultsync.desktop"
+SYSTEM_APPLICATIONS="${VAULTSYNC_APPLICATIONS_DIR:-/Applications}"
 DRY_RUN=0
 CHOICE=""
 CODE=""
@@ -397,6 +405,79 @@ download_binary() {
 	mv "$tmpdir/$asset" "$dest"
 }
 
+# bundle_id APP prints the bundle identifier in APP's Info.plist — nothing
+# when there is none or it cannot be read (a binary plist without plutil):
+# such a bundle is never taken for VaultSync for Mac.
+bundle_id() {
+	plist="$1/Contents/Info.plist"
+	[ -f "$plist" ] || return 0
+	if command -v plutil >/dev/null 2>&1; then
+		xml=$(plutil -convert xml1 -o - "$plist" 2>/dev/null) || return 0
+	else
+		xml=$(cat "$plist")
+	fi
+	printf '%s\n' "$xml" | awk '
+		want { if (match($0, /<string>[^<]*<\/string>/)) print substr($0, RSTART + 8, RLENGTH - 17); exit }
+		/<key>CFBundleIdentifier<\/key>/ { want = 1 }
+	'
+}
+
+# app_dir prints the folder VaultSync for Mac goes into: the one it is
+# already in (Applications first), else Applications when this account may
+# write there, else ~/Applications.
+app_dir() {
+	for d in "$SYSTEM_APPLICATIONS" "$HOME/Applications"; do
+		if [ -e "$d/$APP_NAME" ] || [ -L "$d/$APP_NAME" ]; then
+			printf '%s\n' "$d"
+			return 0
+		fi
+	done
+	if [ -d "$SYSTEM_APPLICATIONS" ] && [ -w "$SYSTEM_APPLICATIONS" ]; then
+		printf '%s\n' "$SYSTEM_APPLICATIONS"
+	else
+		printf '%s\n' "$HOME/Applications"
+	fi
+}
+
+# check_app_place APP stops the setup unless APP is free or holds VaultSync
+# for Mac: a bundle there with another identifier (or none that can be
+# read), or a link, is someone else's and is never replaced (doctrine 002).
+check_app_place() {
+	if [ -L "$1" ]; then
+		fail "$1 is a link, not VaultSync for Mac — it was not replaced. Move it elsewhere, then run the setup again."
+	fi
+	[ -e "$1" ] || return 0
+	id=$(bundle_id "$1")
+	[ "$id" = "$APP_ID" ] ||
+		fail "$1 is not VaultSync for Mac (its bundle identifier is ${id:-not readable}) — it was not replaced. Move it elsewhere, then run the setup again."
+}
+
+# install_app ZIP DIR WORKDIR unpacks VaultSync for Mac from the verified
+# ZIP into WORKDIR and moves it into DIR, where it replaces VaultSync for
+# Mac only (check_app_place); the replaced one is moved into WORKDIR,
+# which the caller removes. Sets APP to the installed app.
+install_app() {
+	command -v unzip >/dev/null 2>&1 || fail "unzip is required to install VaultSync for Mac — nothing was installed."
+	mkdir "$3/unpacked"
+	unzip -q "$1" -d "$3/unpacked" || fail "Could not unpack $(basename -- "$1") — nothing was installed."
+	new="$3/unpacked/$APP_NAME"
+	if [ -L "$new" ] || [ ! -d "$new" ] || [ "$(bundle_id "$new")" != "$APP_ID" ] || [ ! -x "$new/Contents/MacOS/vaultsync" ]; then
+		fail "The download does not hold VaultSync for Mac — nothing was installed."
+	fi
+	APP="$2/$APP_NAME"
+	check_app_place "$APP"
+	old=""
+	if [ -e "$APP" ]; then
+		old="$3/replaced.app"
+		mv "$APP" "$old" || fail "Could not move the installed VaultSync for Mac aside — nothing was changed."
+	fi
+	mkdir -p "$2"
+	if ! mv "$new" "$APP"; then
+		[ -z "$old" ] || mv "$old" "$APP" || true
+		fail "Could not install VaultSync for Mac into $2 — the one installed before stays."
+	fi
+}
+
 # --- 2) Hub ------------------------------------------------------------------
 
 write_hub_files() {
@@ -600,14 +681,29 @@ find_syncthing_config() {
 # against that release's SHA256SUMS, and runs its setup: the agent asks for
 # the code and the vault on the terminal itself (it reads /dev/tty, so
 # curl|sh can ask), installs its background service and links itself as
-# ~/.local/bin/vaultsync. The downloaded copy is only the installer and is
-# removed afterwards. Arguments after -- go to `vaultsync setup`.
+# ~/.local/bin/vaultsync. On a Mac whose release has the app
+# (VaultSync_darwin_<arch>.zip, from desktop-v0.2.0 on), VaultSync for Mac
+# goes into Applications and the setup runs from there — the background
+# service then runs from the app, and its menu-bar app opens at login.
+# Otherwise the downloaded agent is only the installer and is removed
+# afterwards. Arguments after -- go to `vaultsync setup`.
 setup_device() {
 	command -v curl >/dev/null 2>&1 || fail "curl is required."
 	asset=$(detect_asset vaultsync)
 	tag=$(latest_stable_tag desktop-v) || tag=""
 	[ -n "$tag" ] || fail "Could not find a VaultSync release for Mac and Linux on GitHub ($REPO). Check your network."
-	info "VaultSync for Mac and Linux ${tag#desktop-v} ($asset)"
+	app_asset=""
+	case "$asset" in
+		vaultsync_darwin_*)
+			sums=$(curl -fsSL "https://github.com/$REPO/releases/download/$tag/SHA256SUMS") ||
+				fail "Could not fetch SHA256SUMS for $tag — nothing was installed."
+			candidate="VaultSync_darwin_${asset##*_}.zip"
+			if printf '%s\n' "$sums" | awk -v a="$candidate" '$2 == a { f = 1 } END { exit !f }'; then
+				app_asset="$candidate"
+			fi
+			;;
+	esac
+	info "VaultSync for Mac and Linux ${tag#desktop-v} (${app_asset:-$asset})"
 	if find_syncthing_config; then
 		info "  Syncthing is already set up on this computer. VaultSync runs its own and never"
 		info "  touches yours. To pair your own Syncthing with your Hub instead, see"
@@ -615,7 +711,20 @@ setup_device() {
 	fi
 	set -- setup ${CODE:+--code "$CODE"} "$@"
 	if [ "$DRY_RUN" = 1 ]; then
-		download_binary "$asset" "$tag" "<temporary folder>/vaultsync" ""
+		program="<temporary folder>/vaultsync"
+		if [ -n "$app_asset" ]; then
+			dir=$(app_dir)
+			check_app_place "$dir/$APP_NAME"
+			download_binary "$app_asset" "$tag" "<temporary folder>/$app_asset" ""
+			if [ -e "$dir/$APP_NAME" ]; then
+				info "[dry-run] would replace VaultSync for Mac in $dir"
+			else
+				info "[dry-run] would install VaultSync for Mac into $dir"
+			fi
+			program="$dir/$APP_NAME/Contents/MacOS/vaultsync"
+		else
+			download_binary "$asset" "$tag" "$program" ""
+		fi
 		# Never print the pairing code, in any spelling the agent accepts.
 		shown=""
 		hide=0
@@ -630,7 +739,7 @@ setup_device() {
 			esac
 			shown="$shown $a"
 		done
-		info "[dry-run] would run: <temporary folder>/vaultsync$shown"
+		info "[dry-run] would run: $program$shown"
 		return 0
 	fi
 	installer_dir=$(mktemp -d)
@@ -640,6 +749,14 @@ setup_device() {
 	trap 'rm -rf "$installer_dir"; exit 130' INT
 	trap 'rm -rf "$installer_dir"; exit 143' TERM
 	mkdir "$installer_dir/download"
+	if [ -n "$app_asset" ]; then
+		download_binary "$app_asset" "$tag" "$installer_dir/$app_asset" "$installer_dir/download"
+		install_app "$installer_dir/$app_asset" "$(app_dir)" "$installer_dir"
+		info "VaultSync for Mac is in ${APP%/*}."
+		info ""
+		"$APP/Contents/MacOS/vaultsync" "$@"
+		return
+	fi
 	download_binary "$asset" "$tag" "$installer_dir/vaultsync" "$installer_dir/download"
 	info ""
 	"$installer_dir/vaultsync" "$@"
