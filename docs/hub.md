@@ -64,11 +64,13 @@ device**. It installs VaultSync for Mac and Linux, the desktop agent
 `vaultsync` that brings its own Syncthing (see
 [Desktop agent](#desktop-agent-macos-and-linux) below), from its newest
 release — checked against the release's `SHA256SUMS` — and runs its setup,
-which asks for the code and the vault. On a Mac it installs the app
-**VaultSync for Mac** into Applications (into `~/Applications` when your
-account cannot write to Applications) and runs the setup from there; an app
-of that name that is not VaultSync for Mac is never replaced — the setup
-stops and says so. Nothing else needs to be installed; a Syncthing you
+which asks for the code and the vault. On a Mac — from `desktop-v0.2.0`
+on — it installs the app **VaultSync for Mac** into Applications (into
+`~/Applications` when your account cannot write to Applications or another
+account's copy is there) and runs the setup from there; an app of that name
+that is not VaultSync for Mac is never replaced — the setup stops and says
+so. With an older release (no app in it) it installs the bare agent, as
+before. Nothing else needs to be installed; a Syncthing you
 already run is never touched. Scripts pass everything after `--` to the
 agent:
 
@@ -183,10 +185,12 @@ vaultsync uninstall    # remove the background service; vaults stay
                        #  never vault files)
 ```
 
-`vaultsync uninstall --remove-data` refuses, before it changes anything, while
-a `vaultsync run`, `pair` or `setup` is in progress or a menu-bar app you
-opened yourself runs — stop or quit them first; the icon VaultSync opened at
-login it quits itself. On a Mac, run it from your own session: it must be
+`vaultsync uninstall --remove-data` refuses while a `vaultsync run`, `pair`
+or `setup` is in progress or a menu-bar app you opened yourself runs — stop
+or quit them first; the icon VaultSync opened at login it quits itself. It
+refuses before it touches the background service or VaultSync's files (only
+an app you opened in the very moment the one at login was starting is found
+after that one's start at login is removed). On a Mac, run it from your own session: it must be
 able to ask the service manager. `vaultsync uninstall` also quits the
 menu-bar icon VaultSync opened at login and stops it from opening at login;
 it leaves the app VaultSync for Mac itself alone — move it to the Trash
@@ -291,21 +295,27 @@ Obsidian keeps that outside the vault.
 **On a Mac.** The setup link puts VaultSync for Mac into Applications, and
 the background service runs from it: keep the app there while VaultSync is
 set up — moved or put in the Trash, the service and the menu-bar icon no
-longer start, and `vaultsync status` says so with the way back (put the app
-back, or run the setup link again). To remove VaultSync, run `vaultsync
-uninstall` first — the `vaultsync` command then runs VaultSync's own copy
-again — and move the app to the Trash afterwards. Trashed it first? Run
-`~/Library/Application\ Support/VaultSync/bin/vaultsync uninstall` (or
-`… setup` to go on without the app). Set up without the app — the bare
+longer start, and the `vaultsync` command goes with the app; VaultSync's own
+copy then says what happened and the way back (put the app back, or run the
+setup link again): `~/Library/Application\ Support/VaultSync/bin/vaultsync
+status` (`… uninstall` removes VaultSync, `… setup` goes on without the
+app). To remove VaultSync, run `vaultsync uninstall` first — the `vaultsync`
+command then runs VaultSync's own copy — and move the app to the Trash
+afterwards; a `vaultsync setup` before that, with the app still there, puts
+the service back into the app. Set up without the app — the bare
 `vaultsync` download — the service runs VaultSync's own copy instead, as
 before. When the background service starts, macOS asks whether VaultSync
-may find devices on your local network — naming “vaultsync” or “VaultSync
-for Mac” — and notes that VaultSync can run in the background — under Login
-Items (Allow in the Background) as “VaultSync for Mac”, or, without the app,
-under the name on VaultSync's signing certificate, its developer “Umut Erdem”
-(“vaultsync” for `desktop-v0.1.0`). Keep that item on: switched off, the
+may find devices on your local network, and notes that VaultSync can run in
+the background. The names macOS shows depend on its version and on how
+VaultSync was set up: “VaultSync for Mac” or “vaultsync” in the prompts and
+under Privacy & Security, and under Login Items (Allow in the Background)
+“VaultSync for Mac” — or, without the app, the name on VaultSync's signing
+certificate, its developer “Umut Erdem” (“vaultsync” for `desktop-v0.1.0`).
+Look for the name macOS shows. Keep that item on: switched off, the
 background service and the menu-bar icon no longer start and your vaults
-stop syncing. For a vault in Documents, Desktop or Downloads it
+stop syncing. To keep only the menu-bar icon from opening at login, run
+`launchctl disable gui/$(id -u)/eu.vaultsync.tray` once — the setup leaves
+that so (`launchctl enable …` undoes it). For a vault in Documents, Desktop or Downloads it
 also asks twice for that folder: once for Terminal (where `setup` reads it),
 once for the background service (“vaultsync” or “VaultSync for Mac”) — and
 once more for “VaultSync for Mac” the first time you open such a vault from
