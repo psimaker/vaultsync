@@ -26,12 +26,13 @@ func fakeEngineBinary(t *testing.T, lay layout, codes ...string) string {
 	if err := os.WriteFile(codesFile, []byte(strings.Join(codes, "\n")+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	next := codesFile + ".next"
 	script := `#!/bin/sh
-echo "$@" >> ` + calls + `
-code=$(head -n 1 ` + codesFile + `)
-tail -n +2 ` + codesFile + ` > ` + codesFile + `.next && mv ` + codesFile + `.next ` + codesFile + `
+echo "$@" >> ` + shWord(calls) + `
+code=$(head -n 1 ` + shWord(codesFile) + `)
+tail -n +2 ` + shWord(codesFile) + ` > ` + shWord(next) + ` && mv ` + shWord(next) + ` ` + shWord(codesFile) + `
 if [ -n "$code" ]; then exit "$code"; fi
-echo $$ >> ` + fakeEnginePIDFile(lay) + `
+echo $$ >> ` + shWord(fakeEnginePIDFile(lay)) + `
 trap 'exit 0' TERM
 while :; do sleep 1; done
 `
@@ -41,6 +42,9 @@ while :; do sleep 1; done
 	}
 	return calls
 }
+
+// shWord is p as one word of a shell script, whatever it holds.
+func shWord(p string) string { return "'" + strings.ReplaceAll(p, "'", `'\''`) + "'" }
 
 func fakeEnginePIDFile(lay layout) string { return lay.Syncthing + ".pids" }
 

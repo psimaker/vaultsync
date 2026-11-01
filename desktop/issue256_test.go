@@ -5,6 +5,9 @@ package main
 import (
 	"context"
 	"errors"
+	"os/exec"
+	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -27,9 +30,20 @@ func TestIssue256_ARunTestThatEndsEarlyLeavesNoEngineRunning(t *testing.T) {
 		t.Fatal("the engine never started")
 	}
 	for _, pid := range pids {
-		if err := syscall.Kill(pid, 0); !errors.Is(err, syscall.ESRCH) {
-			t.Errorf("the engine (pid %d) still runs after its test ended (kill -0: %v)", pid, err)
+		if runsFakeEngine(pid, a.lay) {
+			t.Errorf("the engine (pid %d) still runs after its test ended", pid)
 			_ = syscall.Kill(pid, syscall.SIGTERM) // and leaves nothing behind itself
 		}
 	}
+}
+
+// runsFakeEngine reports whether process pid is still this test's fake
+// engine: gone, or its ID already another process's (its command line no
+// longer names this test's engine), is no.
+func runsFakeEngine(pid int, lay layout) bool {
+	if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
+		return false
+	}
+	out, err := exec.Command("ps", "-ww", "-o", "command=", "-p", strconv.Itoa(pid)).Output()
+	return err == nil && strings.Contains(string(out), lay.Syncthing)
 }
