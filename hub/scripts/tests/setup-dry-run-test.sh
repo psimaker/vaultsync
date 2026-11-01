@@ -198,6 +198,9 @@ SHIM
 cat >"$SANDBOX/bin/mv" <<SHIM
 #!/usr/bin/env sh
 [ -z "\${FAIL_MV:-}" ] || exit 1
+if [ -n "\${FAIL_MV_UNPACKED:-}" ]; then
+	case "\$1" in */unpacked/*) exit 1 ;; esac
+fi
 exec "$REAL_MV" "\$@"
 SHIM
 REAL_MKTEMP=$(command -v mktemp)
@@ -712,6 +715,11 @@ make_app() {
 	sed -e "s/@VERSION@/0.10.0/" -e "s/eu\.vaultsync\.desktop/$2/" "$REPO_ROOT/desktop/macos/Info.plist" >"$app/Contents/Info.plist"
 	cat >"$app/Contents/MacOS/vaultsync" <<AGENT
 #!/usr/bin/env sh
+if [ "\$1" = version ]; then
+	[ -z "\${AGENT_CANNOT_RUN:-}" ] || exit 1
+	echo "vaultsync $3"
+	exit 0
+fi
 : >"\$AGENT_ARGS"
 for a in "\$@"; do printf '[%s]\n' "\$a" >>"\$AGENT_ARGS"; done
 printf '%s\n' "\$0" >"\$AGENT_SELF"
@@ -777,6 +785,16 @@ $(cat "$AGENT_ARGS")"
 [ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "the Mac setup left temporary files: $(ls -A "$SANDBOX/tmp")"
 pass "on a Mac the setup installs VaultSync for Mac and runs from it"
 
+# The same build again (another vault paired, say): the installed app is
+# not replaced — processes running from it keep their files — and the
+# setup runs from it.
+before=$(ls -ldi "$installed" "$installed/Contents/MacOS/vaultsync")
+mac_setup >"$SANDBOX/results/run.log" 2>&1 || fail "the same-build setup failed:
+$(cat "$SANDBOX/results/run.log")"
+[ "$before" = "$(ls -ldi "$installed" "$installed/Contents/MacOS/vaultsync")" ] || fail "the same build replaced the installed app"
+[ "$(cat "$AGENT_SELF")" = "$installed/Contents/MacOS/vaultsync" ] || fail "the same-build setup did not run from the installed app"
+pass "the same build leaves the installed VaultSync for Mac in place"
+
 # A newer release replaces VaultSync for Mac in place.
 release_with second
 mac_setup >"$SANDBOX/results/run.log" 2>&1 || fail "the Mac update failed:
@@ -786,13 +804,52 @@ $(cat "$SANDBOX/results/run.log")"
 [ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "the update left temporary files: $(ls -A "$SANDBOX/tmp")"
 pass "a newer VaultSync for Mac replaces the installed one"
 
+# A newer build that does not run on this Mac (a newer macOS needed, say)
+# never takes the place of the one that runs.
+release_with too-new
+# (A subshell: an assignment before a function call outlives the call.)
+if (AGENT_CANNOT_RUN=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+	fail "an app that cannot run here must not be installed"
+fi
+grep -q "does not run on this Mac" "$SANDBOX/results/run.log" || fail "the refusal does not say why:
+$(cat "$SANDBOX/results/run.log")"
+grep -q "vaultsync second" "$installed/Contents/MacOS/vaultsync" || fail "the running app was replaced by one that cannot run"
+if grep -q too-new "$installed/Contents/MacOS/vaultsync"; then
+	fail "the build that cannot run is in the app's place"
+fi
+[ "$(ls -A "$APPS")" = "VaultSync for Mac.app" ] || fail "a refused update left more than the app: $(ls -A "$APPS")"
+pass "a build that cannot run here leaves the installed one in place"
+
+# The new app cannot be moved into place: the one set aside is put back,
+# and the setup says so.
+release_with third-try
+if (FAIL_MV_UNPACKED=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+	fail "a failed move into place must stop the setup"
+fi
+grep -q "the one installed before stays" "$SANDBOX/results/run.log" || fail "the failed move is not said:
+$(cat "$SANDBOX/results/run.log")"
+grep -q "vaultsync second" "$installed/Contents/MacOS/vaultsync" || fail "the app installed before is not back in its place"
+if grep -q third-try "$installed/Contents/MacOS/vaultsync"; then
+	fail "the build that could not be moved into place is in it"
+fi
+[ "$(ls -A "$APPS")" = "VaultSync for Mac.app" ] || fail "a failed move left more than the app: $(ls -A "$APPS")"
+[ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "a failed move left temporary files: $(ls -A "$SANDBOX/tmp")"
+pass "an app set aside for an update is back when the new one cannot take its place"
+
 # Never replaced: a bundle of that name with another identifier, or a link —
 # even one to a VaultSync for Mac kept elsewhere (another disk, say): the
 # link is the person's, and replacing it would delete it.
-for spoiler in foreign link; do
+for spoiler in foreign nested link; do
 	rm -rf "$installed"
 	if [ "$spoiler" = foreign ]; then
 		make_app "$APPS" com.example.other someone-elses
+	elif [ "$spoiler" = nested ]; then
+		# Its own identifier is another; VaultSync's appears only inside a
+		# document type, which is not the bundle's.
+		make_app "$APPS" com.example.other someone-elses
+		sed 's#<dict>#<dict>\n\t<key>CFBundleDocumentTypes</key>\n\t<array><dict><key>CFBundleIdentifier</key><string>eu.vaultsync.desktop</string></dict></array>#' \
+			"$installed/Contents/Info.plist" >"$SANDBOX/nested.plist"
+		mv "$SANDBOX/nested.plist" "$installed/Contents/Info.plist"
 	else
 		make_app "$SANDBOX/elsewhere" eu.vaultsync.desktop linked
 		ln -s "$SANDBOX/elsewhere/VaultSync for Mac.app" "$installed"
@@ -825,7 +882,9 @@ fi
 # Nor does one whose checksum does not match.
 release_with third
 cp "$MAC_RELEASE/SHA256SUMS" "$SANDBOX/results/sums"
-sed 's/^./0/' "$SANDBOX/results/sums" >"$MAC_RELEASE/SHA256SUMS"
+# Every line's first digit changes, whatever it is (0 becomes 1, others 0).
+sed -e 's/^0/x/' -e 's/^[1-9a-f]/0/' -e 's/^x/1/' "$SANDBOX/results/sums" >"$MAC_RELEASE/SHA256SUMS"
+cmp -s "$SANDBOX/results/sums" "$MAC_RELEASE/SHA256SUMS" && fail "the checksums were not changed"
 if mac_setup >"$SANDBOX/results/run.log" 2>&1; then
 	fail "a checksum mismatch must stop the Mac setup"
 fi
@@ -834,6 +893,24 @@ $(cat "$SANDBOX/results/run.log")"
 [ -z "$(ls -A "$APPS")" ] || fail "a mismatching app was installed: $(ls -A "$APPS")"
 [ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "a failed Mac download left temporary files: $(ls -A "$SANDBOX/tmp")"
 pass "a download that is not VaultSync for Mac, or does not match, installs nothing"
+
+# An app this account cannot replace (another account installed it): left
+# alone, and this account's goes into ~/Applications.
+if [ "$(id -u)" != 0 ]; then
+	release_with theirs
+	make_app "$APPS" eu.vaultsync.desktop another-accounts
+	chmod 555 "$installed/Contents/MacOS" "$installed/Contents" "$installed"
+	before=$(ls -lR "$APPS")
+	mac_setup >"$SANDBOX/results/run.log" 2>&1 || { chmod -R u+w "$APPS"; fail "the setup beside another account's app failed:
+$(cat "$SANDBOX/results/run.log")"; }
+	[ "$before" = "$(ls -lR "$APPS")" ] || { chmod -R u+w "$APPS"; fail "another account's app was touched"; }
+	chmod -R u+w "$APPS"
+	[ "$(cat "$AGENT_SELF")" = "$HOME/Applications/VaultSync for Mac.app/Contents/MacOS/vaultsync" ] || fail "not run from ~/Applications beside another account's app: $(cat "$AGENT_SELF")"
+	rm -rf "$installed" "$HOME/Applications"
+	pass "an app this account cannot replace stays, and this account's goes into ~/Applications"
+else
+	pass "the other-account case skipped (root writes anywhere)"
+fi
 
 # Applications this account may not write to: ~/Applications. An app already
 # in ~/Applications is updated there even when Applications is writable.

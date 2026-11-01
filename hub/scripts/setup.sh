@@ -405,34 +405,67 @@ download_binary() {
 	mv "$tmpdir/$asset" "$dest"
 }
 
-# bundle_id APP prints the bundle identifier in APP's Info.plist — nothing
-# when there is none or it cannot be read (a binary plist without plutil):
-# such a bundle is never taken for VaultSync for Mac.
+# bundle_id APP prints the bundle identifier at the top of APP's
+# Info.plist — nothing when there is none or it cannot be read: such a
+# bundle is never taken for VaultSync for Mac. plutil reads any plist, and
+# only its top level (a nested CFBundleIdentifier — a document type's — is
+# not the bundle's); without plutil (a Linux test run) the same is read
+# from an XML plist, counting dictionary levels.
 bundle_id() {
 	plist="$1/Contents/Info.plist"
 	[ -f "$plist" ] || return 0
 	if command -v plutil >/dev/null 2>&1; then
-		xml=$(plutil -convert xml1 -o - "$plist" 2>/dev/null) || return 0
-	else
-		xml=$(cat "$plist")
+		plutil -extract CFBundleIdentifier raw -expect string -o - "$plist" 2>/dev/null || true
+		return 0
 	fi
-	printf '%s\n' "$xml" | awk '
-		want { if (match($0, /<string>[^<]*<\/string>/)) print substr($0, RSTART + 8, RLENGTH - 17); exit }
-		/<key>CFBundleIdentifier<\/key>/ { want = 1 }
-	'
+	awk '
+		{
+			line = $0
+			while (match(line, /<[^>]*>/)) {
+				tag = substr(line, RSTART, RLENGTH)
+				line = substr(line, RSTART + RLENGTH)
+				if (tag == "<dict>") { depth++; want = 0 }
+				else if (tag == "</dict>") { depth--; want = 0 }
+				else if (tag == "<key>") {
+					end = index(line, "</key>")
+					want = (end > 0 && depth == 1 && substr(line, 1, end - 1) == "CFBundleIdentifier")
+					if (end > 0) line = substr(line, end + 6)
+				} else if (tag == "<string>" && want) {
+					end = index(line, "</string>")
+					if (end > 0) print substr(line, 1, end - 1)
+					exit
+				} else want = 0
+			}
+		}
+	' "$plist"
 }
 
-# app_dir prints the folder VaultSync for Mac goes into: the one it is
-# already in (Applications first), else Applications when this account may
-# write there, else ~/Applications.
+# replaceable APP: this account can put another VaultSync for Mac in APP's
+# place and remove APP — APP's folder and the bundle's own folders are
+# writable to it (another account's app is not, nor one root installed).
+replaceable() {
+	[ -w "$(dirname -- "$1")" ] || return 1
+	# (sh has no local variables: app_dir's loop runs around this one.)
+	for part in "$1" "$1/Contents" "$1/Contents/MacOS" "$1/Contents/_CodeSignature"; do
+		[ ! -e "$part" ] || [ -w "$part" ] || return 1
+	done
+}
+
+# app_dir prints the folder VaultSync for Mac goes into: the one it already
+# is in (Applications first) when this account can replace it there, else
+# Applications when this account may write there and the name is free,
+# else ~/Applications.
 app_dir() {
 	for d in "$SYSTEM_APPLICATIONS" "$HOME/Applications"; do
 		if [ -e "$d/$APP_NAME" ] || [ -L "$d/$APP_NAME" ]; then
-			printf '%s\n' "$d"
-			return 0
+			if [ -L "$d/$APP_NAME" ] || replaceable "$d/$APP_NAME"; then
+				printf '%s\n' "$d"
+				return 0
+			fi
 		fi
 	done
-	if [ -d "$SYSTEM_APPLICATIONS" ] && [ -w "$SYSTEM_APPLICATIONS" ]; then
+	if [ -d "$SYSTEM_APPLICATIONS" ] && [ -w "$SYSTEM_APPLICATIONS" ] &&
+		[ ! -e "$SYSTEM_APPLICATIONS/$APP_NAME" ] && [ ! -L "$SYSTEM_APPLICATIONS/$APP_NAME" ]; then
 		printf '%s\n' "$SYSTEM_APPLICATIONS"
 	else
 		printf '%s\n' "$HOME/Applications"
@@ -452,10 +485,33 @@ check_app_place() {
 		fail "$1 is not VaultSync for Mac (its bundle identifier is ${id:-not readable}) — it was not replaced. Move it elsewhere, then run the setup again."
 }
 
+# The app being replaced, set aside beside it until the new one is in
+# place: restore_app puts it back when the setup ends before that — a
+# failed rename, Ctrl-C, a closed Terminal, a logout — so the background
+# service and the menu-bar app never lose their program to an interrupted
+# update; once the new one is in place, it removes what was set aside.
+REPLACED=""
+restore_app() {
+	[ -n "$REPLACED" ] && [ -e "$REPLACED" ] || return 0
+	if [ ! -e "$APP" ] && [ ! -L "$APP" ]; then
+		mv "$REPLACED" "$APP" 2>/dev/null || true
+	else
+		rm -rf "$REPLACED" 2>/dev/null || true
+	fi
+}
+
+# same_app A B: the two bundles hold the same programs, byte for byte.
+same_app() {
+	for prog in vaultsync vaultsync-tray; do
+		cmp -s "$1/Contents/MacOS/$prog" "$2/Contents/MacOS/$prog" || return 1
+	done
+}
+
 # install_app ZIP DIR WORKDIR unpacks VaultSync for Mac from the verified
-# ZIP into WORKDIR and moves it into DIR, where it replaces VaultSync for
-# Mac only (check_app_place); the replaced one is moved into WORKDIR,
-# which the caller removes. Sets APP to the installed app.
+# ZIP into WORKDIR, runs its agent once (one that cannot run on this Mac
+# never takes the place of one that can), and moves it into DIR — where it
+# replaces only VaultSync for Mac (check_app_place), and not at all when
+# that one is the same build. Sets APP to the app the setup then runs.
 install_app() {
 	command -v unzip >/dev/null 2>&1 || fail "unzip is required to install VaultSync for Mac — nothing was installed."
 	mkdir "$3/unpacked"
@@ -466,15 +522,26 @@ install_app() {
 	fi
 	APP="$2/$APP_NAME"
 	check_app_place "$APP"
-	old=""
+	"$new/Contents/MacOS/vaultsync" version >/dev/null 2>&1 ||
+		fail "The downloaded VaultSync for Mac does not run on this Mac — nothing was changed; a VaultSync already installed keeps running."
+	if [ -e "$APP" ] && same_app "$APP" "$new"; then
+		return 0
+	fi
 	if [ -e "$APP" ]; then
-		old="$3/replaced.app"
-		mv "$APP" "$old" || fail "Could not move the installed VaultSync for Mac aside — nothing was changed."
+		REPLACED="$2/.$APP_NAME.replaced.$$"
+		mv "$APP" "$REPLACED" || {
+			REPLACED=""
+			fail "Could not move the installed VaultSync for Mac aside — nothing was changed."
+		}
 	fi
 	mkdir -p "$2"
 	if ! mv "$new" "$APP"; then
-		[ -z "$old" ] || mv "$old" "$APP" || true
+		restore_app
 		fail "Could not install VaultSync for Mac into $2 — the one installed before stays."
+	fi
+	if [ -n "$REPLACED" ]; then
+		rm -rf "$REPLACED" || warn "The replaced VaultSync for Mac stays at $REPLACED — remove it by hand."
+		REPLACED=""
 	fi
 }
 
@@ -742,12 +809,14 @@ setup_device() {
 		info "[dry-run] would run: $program$shown"
 		return 0
 	fi
-	installer_dir=$(mktemp -d)
-	# The download is gone however this ends — also on Ctrl-C or a kill.
-	trap 'rm -rf "$installer_dir"' EXIT
-	trap 'rm -rf "$installer_dir"; exit 129' HUP
-	trap 'rm -rf "$installer_dir"; exit 130' INT
-	trap 'rm -rf "$installer_dir"; exit 143' TERM
+	installer_dir=$(mktemp -d "${TMPDIR:-/tmp}/vaultsync-setup.XXXXXXXX")
+	# The download is gone however this ends — also on Ctrl-C or a kill —
+	# and an app set aside for its update is back in its place unless the
+	# new one took it.
+	trap 'restore_app; rm -rf "$installer_dir"' EXIT
+	trap 'restore_app; rm -rf "$installer_dir"; exit 129' HUP
+	trap 'restore_app; rm -rf "$installer_dir"; exit 130' INT
+	trap 'restore_app; rm -rf "$installer_dir"; exit 143' TERM
 	mkdir "$installer_dir/download"
 	if [ -n "$app_asset" ]; then
 		download_binary "$app_asset" "$tag" "$installer_dir/$app_asset" "$installer_dir/download"
