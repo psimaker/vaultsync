@@ -380,9 +380,13 @@ func (s service) uninstallTray() (found bool, err error) {
 		found = true
 		// A job already on its way out (a logout, a setup loading it
 		// afresh) answers the bootout with an error: whether launchd let
-		// go of it is what counts.
-		_, _ = s.run.run("launchctl", "bootout", s.launchdTargetOf(trayLabel))
+		// go of it is what counts — and when it did not, the bootout's
+		// own words say why.
+		out, berr := s.run.run("launchctl", "bootout", s.launchdTargetOf(trayLabel))
 		if err := s.launchdJobGone(trayLabel); err != nil {
+			if berr != nil {
+				return found, fmt.Errorf("launchctl bootout of the menu-bar app's start at login: %v: %s", berr, out)
+			}
 			return found, err
 		}
 	} else if hasFile {

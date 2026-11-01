@@ -286,6 +286,16 @@ func (a *app) setup(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	// The copy first: the setup link has already put a new VaultSync for
+	// Mac in place, and the copy is the way back without it — it must not
+	// stay behind the app should this setup stop early. It also records
+	// which agent the service last got (a new one restarts the service
+	// below).
+	agentChanged, err := installAgentCopy(a.lay.Agent)
+	if err != nil {
+		unlockSetup()
+		return fmt.Errorf("could not install VaultSync into %s: %w", tildePath(a.home, a.lay.Bin), err)
+	}
 	st, engineChanged, err := a.ensureEngine(ctx, t)
 	if err != nil {
 		unlockSetup()
@@ -320,15 +330,7 @@ func (a *app) setup(ctx context.Context, args []string) error {
 		unlockSetup()
 		return err
 	}
-	// The copy stays current also when the service runs from the app: it
-	// records which agent the service was last set up with (a new one
-	// restarts the service below), and it is the way back should the app
-	// go — run from it, uninstall and setup work without the app.
-	agentChanged, err := installAgentCopy(a.lay.Agent)
 	unlockSetup()
-	if err != nil {
-		return fmt.Errorf("could not install VaultSync into %s: %w", tildePath(a.home, a.lay.Bin), err)
-	}
 	// An existing service moves into the app the first time setup runs
 	// from it: its file changes, so install loads it afresh. The command
 	// link follows.
@@ -429,6 +431,15 @@ func (a *app) dropStaleTray() bool {
 // the app — else VaultSync's own copy (decision 053).
 func (a *app) serviceProgram() (exe string, bundle macApp, fromApp bool) {
 	if bundle, ok := findInstalledApp(a.appEnv); ok {
+		return bundle.Agent, bundle, true
+	}
+	// Run from VaultSync's own copy — the command after an uninstall —
+	// with VaultSync for Mac still installed and holding the very same
+	// agent: the service goes back into the app. On the copy it would
+	// outlive the app's trip to the Trash and keep syncing (decision 053).
+	// Another agent than the app's (a bare download run on purpose) still
+	// decides for itself.
+	if bundle, ok := installedAppHolding(a.appEnv, a.lay.Agent); ok {
 		return bundle.Agent, bundle, true
 	}
 	return a.lay.Agent, macApp{}, false
@@ -553,11 +564,26 @@ func (a *app) ownCommandTarget(target string) bool {
 		}
 		for _, d := range []string{dir, resolved} {
 			if target == filepath.Join(d, appBundleName, "Contents", "MacOS", "vaultsync") {
-				return true
+				return appBundleIsOursOrGone(filepath.Join(d, appBundleName))
 			}
 		}
 	}
 	return false
+}
+
+// appBundleIsOursOrGone: the bundle at app is VaultSync for Mac, or nothing
+// is there any more (the app in the Trash) — not an app of someone else's
+// that happens to have the name.
+func appBundleIsOursOrGone(app string) bool {
+	if _, err := os.Lstat(app); errors.Is(err, fs.ErrNotExist) {
+		return true
+	}
+	data, err := os.ReadFile(filepath.Join(app, "Contents", "Info.plist"))
+	if err != nil {
+		return false
+	}
+	id, ok := plistString(data, "CFBundleIdentifier")
+	return ok && id == appBundleID
 }
 
 // replaceLink points link at target in one step: a new link beside it,

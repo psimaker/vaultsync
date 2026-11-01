@@ -157,14 +157,19 @@ func run(args []string) error {
 			systray.Quit()
 		}()
 	}, stop)
-	runErr := <-done
+	return endOfRun(<-done, logger)
+}
+
+// endOfRun is what the app's run ends with, as its exit: Quit and the
+// system ending the app (a cancelled run) are no failure, and neither is
+// another instance taking the lock while this one ran (the lock's file
+// went and came back) — the icon is up, and the start at login answers
+// only a failure with a restart (decision 053). Anything else is one.
+func endOfRun(runErr error, logger *log.Logger) error {
 	if errors.Is(runErr, context.Canceled) {
 		return nil
 	}
 	if errors.Is(runErr, tray.ErrAlreadyRunning) {
-		// Another instance took the lock while this one ran (the lock's
-		// file went and came back): the icon is up — not a failure that
-		// launchd should answer with a restart.
 		logger.Print(redact(runErr.Error()))
 		return nil
 	}

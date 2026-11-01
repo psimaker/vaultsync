@@ -298,7 +298,7 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 		// tell apart in the moment the job's app was starting. Refused
 		// before the service goes.
 		if trayLockHeld(a.lay) {
-			return refuse("%s (Its start at login is already removed; the background service is not.)", trayRunningRefusal)
+			return trayStillRunningRefusal(trayFound)
 		}
 	}
 	// What the removal found — a job, a unit file, or a unit the manager
@@ -310,6 +310,10 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	// The service is gone: the command link setup pointed into VaultSync for
+	// Mac goes back to the copy, which stays unless --remove-data takes it
+	// too — the app may go to the Trash now, whatever happens next.
+	a.commandBackToCopy()
 	grace := time.Duration(0)
 	if found {
 		grace = engineOwnerGrace
@@ -330,9 +334,6 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 		t.say("✓ Background service removed. VaultSync has stopped syncing on this computer. Your Hub keeps its copy and may still list this computer.")
 	}
 	if !*removeData {
-		// The command link setup pointed into VaultSync for Mac goes back to
-		// the copy that stays here: the app may go to the Trash now.
-		a.commandBackToCopy()
 		t.say("The vaultsync command, its sync engine, settings and pairing identity stay in %s, so running the setup again continues where you left off.", tildePath(a.home, a.lay.Base))
 		return nil
 	}
@@ -423,6 +424,17 @@ func (a *app) removeCommandLink() (string, bool) {
 		return "", false
 	}
 	return link, true
+}
+
+// trayStillRunningRefusal is --remove-data's refusal when a menu-bar app
+// still holds tray.lock after the start at login is gone: it says what
+// already happened — the start at login removed, if there was one — and
+// that the background service was not.
+func trayStillRunningRefusal(startAtLoginRemoved bool) error {
+	if startAtLoginRemoved {
+		return refuse("%s (Its start at login is already removed; the background service is not.)", trayRunningRefusal)
+	}
+	return refuse("%s (The background service is not removed.)", trayRunningRefusal)
 }
 
 // trayLockWait is how long trayLockHeld gives an app launchd just stopped

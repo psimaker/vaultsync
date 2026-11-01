@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -714,6 +715,15 @@ func TestIssue254_SetupFromTheAppRunsTheServiceFromIt(t *testing.T) {
 	if program(unit) != agent || program(a.svc.trayPlistPath()) != filepath.Join(app, "Contents", "MacOS", "vaultsync-tray") {
 		t.Fatalf("from the app: service %q, menu-bar app %q", program(unit), program(a.svc.trayPlistPath()))
 	}
+	// The start at login gives the menu-bar app VaultSync's folder and its
+	// own log — the very file setup wrote, read back.
+	trayData, _ := os.ReadFile(a.svc.trayPlistPath())
+	if args, _ := plistArray(trayData, "ProgramArguments"); strings.Join(args, "|") != filepath.Join(app, "Contents", "MacOS", "vaultsync-tray")+"|--state-dir|"+a.lay.Base {
+		t.Fatalf("the menu-bar app's arguments: %q", args)
+	}
+	if logPath, _ := plistString(trayData, "StandardErrorPath"); logPath != a.lay.TrayLogFile() {
+		t.Fatalf("the menu-bar app's log: %q", logPath)
+	}
 	if target, _ := os.Readlink(link); target != agent {
 		t.Fatalf("the command link: %q", target)
 	}
@@ -722,6 +732,48 @@ func TestIssue254_SetupFromTheAppRunsTheServiceFromIt(t *testing.T) {
 	}
 	if _, err := os.Stat(a.lay.Agent); err != nil {
 		t.Fatalf("the copy is not kept current: %v", err)
+	}
+
+	// A new agent came with the app (the copy differs from the program that
+	// runs setup): both jobs are restarted.
+	writeFile(t, a.lay.Agent, "an older agent")
+	run.calls = nil
+	setup()
+	for _, want := range []string{"launchctl kickstart -k gui/501/" + launchdLabel, "launchctl kickstart -k gui/501/" + trayLabel} {
+		if !slices.Contains(run.calls, want) {
+			t.Fatalf("an update did not run %q: %v", want, run.calls)
+		}
+	}
+
+	// Uninstalled, then set up again with `vaultsync` — which uninstall
+	// pointed at the copy — while VaultSync for Mac is still installed and
+	// holds the same agent: the service goes back into the app.
+	if err := a.uninstall(context.Background(), []string{"--yes"}); err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+	if target, _ := os.Readlink(link); target != a.lay.Agent {
+		t.Fatalf("after uninstall the command is %q", target)
+	}
+	copyBytes, _ := os.ReadFile(a.lay.Agent)
+	if err := os.WriteFile(agent, copyBytes, 0o755); err != nil { // the same build
+		t.Fatal(err)
+	}
+	a.appEnv = macAppEnv(a.home, filepath.Join(t.TempDir(), "none"), a.lay.Agent)
+	out = setup()
+	if program(unit) != agent || program(a.svc.trayPlistPath()) != filepath.Join(app, "Contents", "MacOS", "vaultsync-tray") || !strings.Contains(out, "✓ Menu-bar icon set up") {
+		t.Fatalf("setup from the copy beside the same app: service %q, menu-bar app %q\n%s", program(unit), program(a.svc.trayPlistPath()), out)
+	}
+	if target, _ := os.Readlink(link); target != agent {
+		t.Fatalf("the command link from the copy beside the app: %q", target)
+	}
+	// Another agent than the app's decides for itself: the copy.
+	writeFile(t, agent, "#!/bin/sh\necho another build\n")
+	if err := os.Chmod(agent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	setup()
+	if program(unit) != a.lay.Agent {
+		t.Fatalf("setup from another build beside the app: service %q", program(unit))
 	}
 
 	// The app goes to the Trash; setup from VaultSync's own copy.
@@ -837,6 +889,28 @@ func TestIssue254_UninstallPointsTheCommandBackAtTheCopy(t *testing.T) {
 	if target, err := os.Readlink(link); err != nil || target != a.lay.Agent {
 		t.Fatalf("the command link: %q %v", target, err)
 	}
+	// --remove-data that stops after the service is gone (Obsidian's list
+	// cannot be read) leaves the command on the copy as well.
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(a.home, "Applications", appBundleName, "Contents", "MacOS", "vaultsync"), link); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, mustUnitPath(t, a.svc), "installed\n")
+	registry := filepath.Join(a.home, "Library", "Application Support", "obsidian", "obsidian.json")
+	if err := os.MkdirAll(registry, 0o700); err != nil { // a folder where the file should be
+		t.Fatal(err)
+	}
+	if err := a.uninstall(context.Background(), []string{"--remove-data", "--yes"}); !strings.Contains(refusalText(err), "could not read Obsidian's list of vaults") {
+		t.Fatalf("--remove-data with an unreadable list: %v", err)
+	}
+	if target, _ := os.Readlink(link); target != a.lay.Agent {
+		t.Fatalf("--remove-data that stopped left the command at %q", target)
+	}
+	if err := os.RemoveAll(filepath.Dir(registry)); err != nil {
+		t.Fatal(err)
+	}
 	// Someone else's link stays as it is.
 	if err := os.Remove(link); err != nil {
 		t.Fatal(err)
@@ -850,6 +924,58 @@ func TestIssue254_UninstallPointsTheCommandBackAtTheCopy(t *testing.T) {
 	}
 	if target, _ := os.Readlink(link); target != "/usr/local/bin/vaultsync" {
 		t.Fatalf("someone else's link was changed: %q", target)
+	}
+}
+
+// The command link counts as setup's only for VaultSync for Mac's agent: an
+// app of that name with another identifier is someone else's, and its link
+// stays; an app gone to the Trash leaves a link that is still setup's.
+func TestIssue254_TheCommandIntoAnotherAppIsNotOurs(t *testing.T) {
+	home := t.TempDir()
+	lay, _ := layoutFor("darwin", home, envOf(nil))
+	a := &app{goos: "darwin", home: home, lay: lay}
+	apps := filepath.Join(home, "Applications")
+	target := filepath.Join(apps, appBundleName, "Contents", "MacOS", "vaultsync")
+	if !a.ownCommandTarget(target) {
+		t.Fatal("a link into an app that is gone is setup's")
+	}
+	other := fakeMacApp(t, apps, appBundleName, bytes.Replace(shippedInfoPlist(t), []byte(appBundleID), []byte("com.example.other"), 1))
+	if a.ownCommandTarget(target) {
+		t.Fatalf("a link into %s, another app of the name, counts as setup's", other)
+	}
+	if err := os.RemoveAll(other); err != nil {
+		t.Fatal(err)
+	}
+	fakeMacApp(t, apps, appBundleName, shippedInfoPlist(t))
+	if !a.ownCommandTarget(target) {
+		t.Fatal("a link into VaultSync for Mac is setup's")
+	}
+}
+
+// --remove-data's refusal after the start at login went says what happened:
+// the start at login removed only when there was one.
+func TestIssue254_TheRefusalSaysWhatWasRemoved(t *testing.T) {
+	if got := refusalText(trayStillRunningRefusal(true)); !strings.Contains(got, "start at login is already removed") {
+		t.Fatalf("with a start at login: %s", got)
+	}
+	if got := refusalText(trayStillRunningRefusal(false)); strings.Contains(got, "start at login") || !strings.Contains(got, "background service is not removed") {
+		t.Fatalf("without one: %s", got)
+	}
+}
+
+// A bootout that fails while the job stays is said in launchctl's words.
+func TestIssue254_AFailedBootoutIsSaid(t *testing.T) {
+	run := &fakeRunner{fail: map[string]error{"launchctl bootout gui/501/" + trayLabel: exitErr(5)}}
+	svc, home := testService(t, "darwin", run)
+	if err := svc.installTray(filepath.Join(home, "Applications", appBundleName, "Contents", "MacOS", "vaultsync-tray"), true); err != nil {
+		t.Fatal(err)
+	}
+	_, err := svc.uninstallTray()
+	if err == nil || !strings.Contains(err.Error(), "launchctl bootout of the menu-bar app's start at login") || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("got %v", err)
+	}
+	if _, serr := os.Stat(svc.trayPlistPath()); serr != nil {
+		t.Fatalf("the file went although the job stayed: %v", serr)
 	}
 }
 

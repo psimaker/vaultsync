@@ -3,7 +3,11 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"testing"
@@ -94,5 +98,21 @@ func TestIssue254_ASecondMenuBarAppEndsWithoutAFailure(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("a second instance did not end")
+	}
+}
+
+// The app's run ends without a failure on Quit, on the system ending it,
+// and when another instance took the lock while it ran — the start at
+// login restarts only a failure (#254); anything else is one.
+func TestIssue254_TheRunEndsAsTheStartAtLoginExpects(t *testing.T) {
+	quiet := log.New(io.Discard, "", 0)
+	for _, err := range []error{nil, context.Canceled, fmt.Errorf("refresh: %w", tray.ErrAlreadyRunning)} {
+		if got := endOfRun(err, quiet); got != nil {
+			t.Errorf("%v ends as %v", err, got)
+		}
+	}
+	other := errors.New("the menu could not be built")
+	if got := endOfRun(other, quiet); got != other {
+		t.Errorf("a failure ends as %v", got)
 	}
 }

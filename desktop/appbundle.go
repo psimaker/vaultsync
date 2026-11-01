@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/xml"
 	"io/fs"
 	"os"
@@ -65,32 +66,85 @@ func findInstalledApp(env appEnv) (macApp, bool) {
 		return macApp{}, false
 	}
 	inApplications := false
-	for _, dir := range []string{"/Applications", filepath.Join(env.home, "Applications")} {
-		if resolved, err := env.resolve(dir); err == nil && resolved == filepath.Dir(app) {
+	for _, dir := range applicationsDirs(env) {
+		if dir == filepath.Dir(app) {
 			inApplications = true
 		}
 	}
 	if !inApplications {
 		return macApp{}, false
 	}
-	data, err := env.readFile(filepath.Join(contents, "Info.plist"))
+	return checkApp(env, app)
+}
+
+// applicationsDirs are /Applications and ~/Applications as they resolve.
+func applicationsDirs(env appEnv) []string {
+	var dirs []string
+	for _, dir := range []string{"/Applications", filepath.Join(env.home, "Applications")} {
+		if resolved, err := env.resolve(dir); err == nil {
+			dirs = append(dirs, resolved)
+		}
+	}
+	return dirs
+}
+
+// checkApp: app is VaultSync for Mac — eu.vaultsync.desktop at the top of
+// its Info.plist, its agent and the menu-bar app plain executable files.
+func checkApp(env appEnv, app string) (macApp, bool) {
+	data, err := env.readFile(filepath.Join(app, "Contents", "Info.plist"))
 	if err != nil {
 		return macApp{}, false
 	}
 	if id, ok := plistString(data, "CFBundleIdentifier"); !ok || id != appBundleID {
 		return macApp{}, false
 	}
-	tray := filepath.Join(macOS, "vaultsync-tray")
-	if fi, err := env.lstat(tray); err != nil || !fi.Mode().IsRegular() || fi.Mode().Perm()&0o111 == 0 {
+	agent := filepath.Join(app, "Contents", "MacOS", "vaultsync")
+	tray := filepath.Join(app, "Contents", "MacOS", "vaultsync-tray")
+	for _, prog := range []string{agent, tray} {
+		if fi, err := env.lstat(prog); err != nil || !fi.Mode().IsRegular() || fi.Mode().Perm()&0o111 == 0 {
+			return macApp{}, false
+		}
+	}
+	return macApp{Path: app, Agent: agent, Tray: tray}, true
+}
+
+// installedAppHolding finds VaultSync for Mac installed in /Applications or
+// ~/Applications whose agent is byte for byte the program at agent — the
+// same build as VaultSync's copy, say.
+func installedAppHolding(env appEnv, agent string) (macApp, bool) {
+	if env.goos != "darwin" || env.readFile == nil {
 		return macApp{}, false
 	}
-	return macApp{Path: app, Agent: self, Tray: tray}, true
+	want, err := env.readFile(agent)
+	if err != nil {
+		return macApp{}, false
+	}
+	for _, dir := range applicationsDirs(env) {
+		bundle, ok := checkApp(env, filepath.Join(dir, appBundleName))
+		if !ok {
+			continue
+		}
+		if have, err := env.readFile(bundle.Agent); err == nil && bytes.Equal(have, want) {
+			return bundle, true
+		}
+	}
+	return macApp{}, false
 }
 
 // plistFirstString reads the first string of the array under key in the
 // top-level dictionary of an XML property list — a LaunchAgent's program,
 // in ProgramArguments.
 func plistFirstString(data []byte, key string) (string, bool) {
+	strs, ok := plistArray(data, key)
+	if !ok || len(strs) == 0 {
+		return "", false
+	}
+	return strs[0], true
+}
+
+// plistArray reads the strings of the array under key in the top-level
+// dictionary of an XML property list.
+func plistArray(data []byte, key string) ([]string, bool) {
 	var plist struct {
 		Dict struct {
 			Items []struct {
@@ -101,18 +155,18 @@ func plistFirstString(data []byte, key string) (string, bool) {
 		} `xml:"dict"`
 	}
 	if err := xml.Unmarshal(data, &plist); err != nil {
-		return "", false
+		return nil, false
 	}
 	items := plist.Dict.Items
 	for i := 0; i+1 < len(items); i++ {
 		if items[i].XMLName.Local == "key" && items[i].Value == key {
-			if next := items[i+1]; next.XMLName.Local == "array" && len(next.Strings) > 0 {
-				return next.Strings[0], true
+			if next := items[i+1]; next.XMLName.Local == "array" {
+				return next.Strings, true
 			}
-			return "", false
+			return nil, false
 		}
 	}
-	return "", false
+	return nil, false
 }
 
 // plistString reads one string value from the top-level dictionary of an
