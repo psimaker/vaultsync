@@ -62,7 +62,11 @@ base=$(cd "$(dirname "$0")/.." && pwd)
 cur="$base/current"
 echo "$*" >>"$cur/calls"
 env | grep -i -E '^(rcodesign_|rust_log=|aws_(profile|access|secret|region|endpoint))' >>"$cur/leaked" || true
-env | grep -E '^AWS_(CONFIG_FILE|SHARED_CREDENTIALS_FILE)=' | grep -v '=/dev/null$' >>"$cur/leaked" || true
+# The AWS SDK inside the notary upload must find no configuration: both
+# of its files are /dev/null on every call.
+for v in AWS_CONFIG_FILE AWS_SHARED_CREDENTIALS_FILE; do
+	[ "$(printenv "$v")" = /dev/null ] || echo "$v=$(printenv "$v")" >>"$cur/leaked"
+done
 cmd=$1
 shift
 if [ -s "$base/real" ]; then
