@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -30,7 +31,12 @@ func TestIssue256_ARunTestThatEndsEarlyLeavesNoEngineRunning(t *testing.T) {
 		t.Fatal("the engine never started")
 	}
 	for _, pid := range pids {
-		if runsFakeEngine(pid, a.lay) {
+		runs, err := runsFakeEngine(pid, a.lay)
+		if err != nil {
+			t.Errorf("the engine (pid %d) may still run after its test ended: %v", pid, err)
+			continue
+		}
+		if runs {
 			t.Errorf("the engine (pid %d) still runs after its test ended", pid)
 			_ = syscall.Kill(pid, syscall.SIGTERM) // and leaves nothing behind itself
 		}
@@ -39,11 +45,19 @@ func TestIssue256_ARunTestThatEndsEarlyLeavesNoEngineRunning(t *testing.T) {
 
 // runsFakeEngine reports whether process pid is still this test's fake
 // engine: gone, or its ID already another process's (its command line no
-// longer names this test's engine), is no.
-func runsFakeEngine(pid int, lay layout) bool {
+// longer names this test's engine), is no. A process ps cannot tell about
+// is an error, never a no: the test must not pass on an engine it could
+// not look at (a ps without -p, say).
+func runsFakeEngine(pid int, lay layout) (bool, error) {
 	if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
-		return false
+		return false, nil
 	}
 	out, err := exec.Command("ps", "-ww", "-o", "command=", "-p", strconv.Itoa(pid)).Output()
-	return err == nil && strings.Contains(string(out), lay.Syncthing)
+	if err != nil {
+		if errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) {
+			return false, nil // gone between the two looks
+		}
+		return false, fmt.Errorf("ps could not tell which program process %d runs: %v", pid, err)
+	}
+	return strings.Contains(string(out), lay.Syncthing), nil
 }
