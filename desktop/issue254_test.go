@@ -150,10 +150,18 @@ func TestIssue254_FindsVaultSyncForMacOnlyWhereItIsInstalled(t *testing.T) {
 	}
 	installed := filepath.Join(userApps, appBundleName)
 	notFound("another program of the bundle", macAppEnv(home, systemApps, filepath.Join(installed, "Contents", "MacOS", "vaultsync-tray")))
-	// A program named vaultsync elsewhere in the bundle is not its agent.
-	for _, other := range []string{filepath.Join(installed, "Contents", "Resources", "vaultsync"), filepath.Join(installed, "Other", "MacOS", "vaultsync")} {
-		writeFile(t, other, "#!/bin/sh\n")
-		notFound("a vaultsync at "+other, macAppEnv(home, systemApps, other))
+	// A program named vaultsync elsewhere in the bundle is not its agent —
+	// also with a menu-bar app beside it and an Info.plist above it, so
+	// only the bundle's shape tells.
+	for _, dir := range []string{filepath.Join(installed, "Contents", "Resources"), filepath.Join(installed, "Other", "MacOS")} {
+		for _, prog := range []string{"vaultsync", "vaultsync-tray"} {
+			writeFile(t, filepath.Join(dir, prog), "#!/bin/sh\n")
+			if err := os.Chmod(filepath.Join(dir, prog), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		writeFile(t, filepath.Join(filepath.Dir(dir), "Info.plist"), string(plist))
+		notFound("a vaultsync in "+dir, macAppEnv(home, systemApps, filepath.Join(dir, "vaultsync")))
 	}
 	linux := macAppEnv(home, systemApps, agentIn(installed))
 	linux.goos = "linux"
