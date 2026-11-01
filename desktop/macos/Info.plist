@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  VaultSync.app (decision 052): the menu-bar app is the bundle's executable,
+  VaultSync for Mac.app (decision 052): the menu-bar app is the bundle's executable,
   the agent sits beside it in Contents/MacOS. make-app.sh fills in
   @VERSION@. LSUIElement: a menu-bar icon, no Dock icon, no main menu.
   LSMinimumSystemVersion matches the binaries' minos (Go's floor, and the
@@ -14,7 +14,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>VaultSync</string>
+	<string>VaultSync for Mac</string>
 	<key>CFBundleExecutable</key>
 	<string>vaultsync-tray</string>
 	<key>CFBundleIdentifier</key>
@@ -22,7 +22,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>VaultSync</string>
+	<string>VaultSync for Mac</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

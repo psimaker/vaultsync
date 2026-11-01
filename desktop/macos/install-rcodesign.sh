@@ -16,7 +16,7 @@ dir=$1
 name="apple-codesign-${version}-x86_64-unknown-linux-musl"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-curl -fsSL -o "$tmp/$name.tar.gz" \
+curl -fsSL --retry 3 -o "$tmp/$name.tar.gz" \
 	"https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F${version}/$name.tar.gz"
 echo "$sha256  $tmp/$name.tar.gz" | sha256sum -c -
 tar -xzf "$tmp/$name.tar.gz" -C "$tmp"

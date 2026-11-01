@@ -3,13 +3,13 @@ name: Desktop Release
 # Builds the `vaultsync` desktop agent and the `vaultsync-tray` menu-bar app
 # (desktop/).
 #   pull_request   → cross-builds every release target, assembles
-#                    VaultSync.app, signs it ad hoc with the release's own
+#                    VaultSync for Mac, signs it ad hoc with the release's own
 #                    script, runs that script's release path against a
 #                    stand-in for Apple's notary service and checks the
 #                    result on a Mac; publishes nothing. The first run with
 #                    the real Developer ID and Apple is a tag — a suffixed
 #                    one makes a draft for exactly that.
-#   desktop-v* tag → signs the macOS binaries and VaultSync.app with the
+#   desktop-v* tag → signs the macOS binaries and VaultSync for Mac with the
 #                    Developer ID, notarizes them and makes a GitHub release
 #                    with vaultsync_<os>_<arch>, vaultsync-tray_linux_<arch>,
 #                    VaultSync_darwin_<arch>.zip and one SHA256SUMS —
@@ -20,7 +20,7 @@ name: Desktop Release
 # The agent is pure Go and cross-compiled on Linux for every target. The tray
 # is pure Go on Linux too (StatusNotifierItem over DBus), but on macOS it is
 # Cocoa through cgo, so it is built on a macOS runner (decision 048), which
-# also puts VaultSync.app together around it and the agent. Signing and
+# also puts VaultSync for Mac.app together around it and the agent. Signing and
 # notarization run desktop/macos/sign.sh with rcodesign on Linux; only the
 # tag's job sees the signing secrets (environment desktop-signing, desktop-v*
 # tags only). desktop/macos/verify.sh then checks the result on a Mac with
@@ -59,12 +59,22 @@ jobs:
     steps:
       # desktop-vX.Y.Z is what setup.sh installs, desktop-vX.Y.Z-<suffix> a
       # draft. Any other tag would be signed and published as a release
-      # nothing installs, with 0.0.0 as VaultSync.app's version.
+      # nothing installs, with 0.0.0 as the app's version.
+      # The team must be a repository variable: this job and verify see
+      # only that scope, while sign would see an environment variable of
+      # the same name first — kept on the environment, it would pass sign's
+      # checks and fail verify after notarization.
       - name: Check the tag
         if: github.ref_type == 'tag'
+        env:
+          TEAM: ${{ vars.MACOS_TEAM_ID }}
         run: |
           if ! [[ "$GITHUB_REF_NAME" =~ ^desktop-v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
             echo "::error::${GITHUB_REF_NAME} is neither desktop-vX.Y.Z nor desktop-vX.Y.Z-<suffix>"
+            exit 1
+          fi
+          if [ -z "$TEAM" ]; then
+            echo "::error::the repository variable MACOS_TEAM_ID (the Developer ID's team) is not set"
             exit 1
           fi
 
@@ -144,7 +154,7 @@ jobs:
       # minimum goes in through the cgo flags, which are part of Go's build
       # cache key (MACOSX_DEPLOYMENT_TARGET is not). It must match the
       # agent's and LSMinimumSystemVersion in desktop/macos/Info.plist.
-      - name: Build the tray and put VaultSync.app together
+      - name: Build the tray and put VaultSync for Mac.app together
         working-directory: desktop
         env:
           CGO_ENABLED: "1"
@@ -163,7 +173,7 @@ jobs:
               -ldflags="-s -w -X main.version=${version}" -o "dist/vaultsync-tray_darwin_${goarch}" ./cmd/vaultsync-tray
             mkdir "dist/${goarch}"
             macos/make-app.sh "$version" "../agent/vaultsync_darwin_${goarch}" "dist/vaultsync-tray_darwin_${goarch}" "dist/${goarch}"
-            for bin in "dist/${goarch}/VaultSync.app/Contents/MacOS/"*; do
+            for bin in "dist/${goarch}/VaultSync for Mac.app/Contents/MacOS/"*; do
               minos=$(vtool -show-build "$bin" | awk '$1 == "minos" { print $2 }')
               if [ "$minos" != "$want" ]; then
                 echo "::error::${bin} needs macOS ${minos}, Info.plist says ${want}"
@@ -171,7 +181,7 @@ jobs:
               fi
             done
           done
-          file dist/*/VaultSync.app/Contents/MacOS/*
+          file dist/*/"VaultSync for Mac.app"/Contents/MacOS/*
 
       # upload-artifact drops file modes, so each bundle travels as a tar;
       # COPYFILE_DISABLE and --no-mac-metadata keep macOS from adding ._
@@ -183,7 +193,7 @@ jobs:
           COPYFILE_DISABLE: "1"
         run: |
           for goarch in arm64 amd64; do
-            tar --no-mac-metadata -C "$goarch" -cf "VaultSync_darwin_${goarch}.app.tar" VaultSync.app
+            tar --no-mac-metadata -C "$goarch" -cf "VaultSync_darwin_${goarch}.app.tar" "VaultSync for Mac.app"
           done
           ls -l
 
@@ -217,7 +227,7 @@ jobs:
   # Apple's verdict themselves first meet a tag.
   sign-check:
     name: Sign ad hoc (macOS)
-    needs: [build, build-macos]
+    needs: [build, build-macos, sign-test]
     if: github.ref_type != 'tag'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -254,20 +264,19 @@ jobs:
 
   sign:
     name: Sign and notarize (macOS)
-    needs: [build, build-macos]
+    needs: [build, build-macos, sign-test]
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     # The environment holds the Developer ID certificate and the App Store
-    # Connect key and lets only desktop-v* tags use them; the scripts that
-    # see them are the tagged commit's own, so whoever can push such a tag
-    # can sign (decision 052). The secrets exist as files only between the
-    # step that writes them and the step that removes them, whatever
-    # happens in between.
+    # Connect key, lets only desktop-v* tags use them and waits for the
+    # owner's approval; the scripts that see them are the tagged commit's
+    # own (decision 052). The secrets exist as files only between the step
+    # that writes them and the step that removes them, whatever happens in
+    # between.
     environment: desktop-signing
     steps:
-      # sign.sh refuses a certificate of any other team before it signs;
-      # without the variable a release stops here, not after notarization.
+      # sign.sh compares the certificate with this team before it signs.
       - name: Check the team is set
         env:
           TEAM: ${{ vars.MACOS_TEAM_ID }}
@@ -304,8 +313,6 @@ jobs:
           P12: ${{ secrets.MACOS_DEVELOPER_ID_P12 }}
           P12_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_P12_PASSWORD }}
           API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
-          API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
-          API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
         run: |
           umask 077
           keys="$RUNNER_TEMP/keys"
@@ -313,17 +320,14 @@ jobs:
           printf '%s' "$P12" | base64 -d > "$keys/developer-id.p12"
           printf '%s' "$P12_PASSWORD" > "$keys/developer-id.password"
           printf '%s\n' "$API_KEY_P8" > "$keys/api-key.p8"
-          # As sign.sh runs it: no rcodesign_* variable, no config file.
-          env -i PATH="$PATH" HOME="$HOME" TMPDIR="$RUNNER_TEMP" \
-            rcodesign encode-app-store-connect-api-key -C /dev/null -o "$keys/api-key.json" \
-            "$API_ISSUER_ID" "$API_KEY_ID" "$keys/api-key.p8"
-          rm "$keys/api-key.p8"
 
       - name: Sign, notarize and staple
         env:
           VAULTSYNC_SIGN_P12: ${{ runner.temp }}/keys/developer-id.p12
           VAULTSYNC_SIGN_P12_PASSWORD_FILE: ${{ runner.temp }}/keys/developer-id.password
-          VAULTSYNC_NOTARY_KEY: ${{ runner.temp }}/keys/api-key.json
+          VAULTSYNC_NOTARY_P8: ${{ runner.temp }}/keys/api-key.p8
+          VAULTSYNC_NOTARY_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          VAULTSYNC_NOTARY_ISSUER: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           VAULTSYNC_SIGN_TEAM: ${{ vars.MACOS_TEAM_ID }}
         run: desktop/macos/sign.sh plain macos signed
 
@@ -355,6 +359,11 @@ jobs:
           name: vaultsync-desktop-signed
           path: signed
 
+      # The team checks themselves, held to a binary someone else signed
+      # and notarized: they first meet the real signature at a tag.
+      - name: Test the team checks
+        run: desktop/macos/tests/verify-team-test.sh
+
       # On a tag the team is pinned: a certificate from another team would
       # pass every other check and reset every user's granted permissions.
       # The repository variable MACOS_TEAM_ID holds it.
@@ -372,6 +381,34 @@ jobs:
             desktop/macos/verify.sh signed
           fi
 
+  # What a release would publish, from this pull request's build and its
+  # ad hoc signed macOS binaries: a change to what the build makes fails
+  # here, not at the tag.
+  assets:
+    name: Check the release assets
+    needs: [build, sign-check]
+    if: github.ref_type != 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+          sparse-checkout: desktop/scripts
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vaultsync-desktop-binaries
+          path: plain
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vaultsync-desktop-signed
+          path: signed
+
+      - name: Collect and sum the assets
+        run: desktop/scripts/release-assets.sh plain signed dist
+
   # Explicit results, not the implicit success(): on a tag sign-check is
   # skipped, and a skipped job anywhere upstream (here through verify)
   # makes GitHub skip a job whose condition has no status function — the
@@ -386,6 +423,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+          sparse-checkout: desktop/scripts
+
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: vaultsync-desktop-binaries
@@ -396,28 +438,9 @@ jobs:
           name: vaultsync-desktop-signed
           path: signed
 
-      # Everything the build made except macOS as built, macOS only as
-      # signed: an unsigned macOS build never reaches a release, and a new
-      # target the build adds fails the list below instead of vanishing.
-      - name: Collect the assets
-        run: |
-          mkdir dist
-          find plain -mindepth 1 -maxdepth 1 -type f ! -name '*_darwin_*' -exec cp {} dist/ \;
-          cp signed/vaultsync_darwin_* signed/VaultSync_darwin_*.zip dist/
-          have=$(find dist -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort | tr '\n' ' ')
-          want="VaultSync_darwin_amd64.zip VaultSync_darwin_arm64.zip vaultsync-tray_linux_amd64 vaultsync-tray_linux_arm64 vaultsync_darwin_amd64 vaultsync_darwin_arm64 vaultsync_linux_amd64 vaultsync_linux_arm64 "
-          if [ "$have" != "$want" ]; then
-            echo "::error::assets are: ${have}"; exit 1
-          fi
-
-      # One SHA256SUMS over everything: setup.sh takes exactly the one line
-      # whose name is the asset it downloads (an awk filter), so the other
-      # lines are passed over.
-      - name: Sum the assets
-        working-directory: dist
-        run: |
-          sha256sum vaultsync_* vaultsync-tray_* VaultSync_* > SHA256SUMS
-          cat SHA256SUMS
+      # The same script every pull request runs (assets job).
+      - name: Collect and sum the assets
+        run: desktop/scripts/release-assets.sh plain signed dist
 
       # A tag moved to another commit while this run waited on Apple must
       # not get this run's binaries under its name.
@@ -444,5 +467,5 @@ jobs:
           esac
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --latest=false "${draft[@]}" \
             --title "VaultSync for Mac and Linux ${GITHUB_REF_NAME#desktop-v}" \
-            --notes "The desktop agent \`vaultsync\` for macOS and Linux: it installs its own pinned Syncthing, pairs with your VaultSync Hub by code and keeps your Obsidian vaults in sync. Set it up with the setup link (docs/hub.md); it downloads \`vaultsync_<os>_<arch>\` for you. The menu-bar icon comes on top: on a Mac \`VaultSync_darwin_<arch>.zip\` (VaultSync.app), on Linux \`vaultsync-tray_linux_<arch>\`. Everything for macOS is signed with a Developer ID and notarized by Apple. Check downloads against SHA256SUMS." \
+            --notes "The desktop agent \`vaultsync\` for macOS and Linux: it installs its own pinned Syncthing, pairs with your VaultSync Hub by code and keeps your Obsidian vaults in sync. Set it up with the setup link (docs/hub.md); it downloads \`vaultsync_<os>_<arch>\` for you. The menu-bar icon comes on top: on a Mac \`VaultSync_darwin_<arch>.zip\` (VaultSync for Mac), on Linux \`vaultsync-tray_linux_<arch>\`. Everything for macOS is signed with a Developer ID and notarized by Apple. Check downloads against SHA256SUMS." \
             dist/*

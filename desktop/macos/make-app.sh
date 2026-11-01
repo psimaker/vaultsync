@@ -1,7 +1,8 @@
 #!/bin/sh
-# make-app.sh VERSION AGENT TRAY OUT — assembles OUT/VaultSync.app from the
-# two macOS binaries of one architecture (decision 052): the menu-bar app is
-# the bundle's executable, the agent sits beside it in Contents/MacOS.
+# make-app.sh VERSION AGENT TRAY OUT — assembles OUT/VaultSync for Mac.app
+# from the two macOS binaries of one architecture (decision 052): the
+# menu-bar app is the bundle's executable, the agent sits beside it in
+# Contents/MacOS.
 # Nothing is signed here — desktop-release.yml signs and notarizes the bundle
 # on a tag. VERSION is the release version (0.2.0, 0.2.0-rc.1) or anything
 # else for a development build, which gets 0.0.0 in Info.plist (the bundle
@@ -28,7 +29,9 @@ for f in "$agent" "$tray"; do
 	}
 done
 
-app="$out/VaultSync.app"
+# Not "VaultSync.app": that is the iOS app's name when it runs on an Apple
+# silicon Mac, and the two would meet in Applications (decision 052).
+app="$out/VaultSync for Mac.app"
 [ ! -e "$app" ] || {
 	echo "make-app.sh: $app already exists" >&2
 	exit 1

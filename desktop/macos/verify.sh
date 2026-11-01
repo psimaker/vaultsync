@@ -1,6 +1,7 @@
 #!/bin/bash
 # verify.sh DIR [TEAM] — checks on a Mac, with Apple's own tools, what
-# sign.sh put in DIR (decision 052): every binary has a strict signature,
+# sign.sh put in DIR (decision 052): every binary is for its architecture
+# (lipo) and has a strict signature,
 # the hardened runtime, no entitlements and its identifier
 # (eu.vaultsync.agent for the agent, alone and in the bundle;
 # eu.vaultsync.desktop for the bundle); the bare agent and the bundle's
@@ -17,15 +18,29 @@
 # online, the bundles' ticket is stapled, and Gatekeeper accepts the bundles
 # as notarized. The online lookups are tried again: right after
 # notarization they can still miss.
+#
+# verify.sh --check-binary PATH IDENTIFIER TEAM checks one signed binary the
+# way a release's binaries are checked — for tests/verify-team-test.sh,
+# which holds the team checks to a binary someone else signed.
 set -euo pipefail
 
-if [ $# -lt 1 ] || [ $# -gt 2 ]; then
-	echo "usage: verify.sh DIR [TEAM]" >&2
-	exit 2
+if [ "${1:-}" = --check-binary ]; then
+	[ $# -eq 4 ] || {
+		echo "usage: verify.sh --check-binary PATH IDENTIFIER TEAM" >&2
+		exit 2
+	}
+	mode=binary
+else
+	if [ $# -lt 1 ] || [ $# -gt 2 ]; then
+		echo "usage: verify.sh DIR [TEAM]" >&2
+		exit 2
+	fi
+	mode=dir
+	CDPATH='' cd -- "$1"
+	team=${2:-}
 fi
-CDPATH='' cd -- "$1"
-team=${2:-}
 archs="arm64 amd64"
+bundle="VaultSync for Mac.app"
 
 fail() {
 	echo "verify.sh: $*" >&2
@@ -59,6 +74,21 @@ cdhash() {
 	printf '%s\n' "$h"
 }
 
+# lipo names x86_64 what Go calls amd64.
+for_arch() { # path arch
+	local want=$2 have
+	[ "$want" = amd64 ] && want=x86_64
+	have=$(lipo -archs "$1") || fail "lipo cannot read $1"
+	[ "$have" = "$want" ] || fail "$1 is for '$have', not $want"
+}
+
+if [ "$mode" = binary ]; then
+	team=$4
+	check "$2" "$3"
+	echo "verify.sh: $2 passes as $3 of team $team"
+	exit 0
+fi
+
 retry() { # what command...
 	local what=$1 try
 	shift
@@ -73,16 +103,18 @@ retry() { # what command...
 
 for arch in $archs; do
 	agent="vaultsync_darwin_$arch"
+	for_arch "$agent" "$arch"
 	check "$agent" eu.vaultsync.agent
 	rm -rf "x-$arch"
 	mkdir "x-$arch"
 	ditto -x -k "VaultSync_darwin_$arch.zip" "x-$arch"
-	app="x-$arch/VaultSync.app"
+	app="x-$arch/$bundle"
 	codesign --verify --strict --deep --verbose=2 "$app"
 	check "$app" eu.vaultsync.desktop
 	check "$app/Contents/MacOS/vaultsync" eu.vaultsync.agent
 	for bin in vaultsync vaultsync-tray; do
 		[ -x "$app/Contents/MacOS/$bin" ] || fail "$app/Contents/MacOS/$bin is not executable"
+		for_arch "$app/Contents/MacOS/$bin" "$arch"
 		libs=$(otool -L "$app/Contents/MacOS/$bin") || fail "otool cannot read $app/Contents/MacOS/$bin"
 		others=$(tail -n +2 <<<"$libs" | awk '{ print $1 }' | grep -Ev '^(/usr/lib/|/System/Library/)' || true)
 		[ -z "$others" ] || fail "$app/Contents/MacOS/$bin links $others"
@@ -105,7 +137,10 @@ done
 
 if [ "$(uname -m)" = arm64 ]; then
 	for arch in $archs; do
-		run=()
+		# Started for the architecture named, never left to the system's
+		# choice: an Intel binary in the arm64 slot would otherwise run
+		# under Rosetta and pass.
+		run=(arch -arm64)
 		if [ "$arch" = amd64 ]; then
 			if ! arch -x86_64 /usr/bin/true 2>/dev/null; then
 				[ -z "$team" ] || fail "Rosetta is not installed: the Intel build cannot be started before the release"
@@ -115,9 +150,9 @@ if [ "$(uname -m)" = arm64 ]; then
 			run=(arch -x86_64)
 		fi
 		chmod 755 "vaultsync_darwin_$arch"
-		${run[@]+"${run[@]}"} "./vaultsync_darwin_$arch" version
-		${run[@]+"${run[@]}"} "x-$arch/VaultSync.app/Contents/MacOS/vaultsync" version
-		${run[@]+"${run[@]}"} "x-$arch/VaultSync.app/Contents/MacOS/vaultsync-tray" --version
+		"${run[@]}" "./vaultsync_darwin_$arch" version
+		"${run[@]}" "x-$arch/$bundle/Contents/MacOS/vaultsync" version
+		"${run[@]}" "x-$arch/$bundle/Contents/MacOS/vaultsync-tray" --version
 	done
 fi
 echo "verify.sh: all checks passed${team:+ (team $team)}"
