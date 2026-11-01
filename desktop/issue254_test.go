@@ -257,7 +257,7 @@ func TestIssue254_MenuBarAppStartAtLoginIsIdempotent(t *testing.T) {
 	}
 	// No enable: the service's undoes a vaultsync stop, the menu-bar app's
 	// would only undo the person's own launchctl disable.
-	if got := strings.Join(run.calls, "|"); got != "launchctl print "+target+"|launchctl print-disabled gui/501|launchctl bootstrap gui/501 "+plist {
+	if got := strings.Join(run.calls, "|"); got != "launchctl print-disabled gui/501|launchctl print "+target+"|launchctl bootstrap gui/501 "+plist {
 		t.Fatalf("first install ran: %s", got)
 	}
 	if !run.trayLoaded || run.trayIdle || run.loaded {
@@ -271,19 +271,19 @@ func TestIssue254_MenuBarAppStartAtLoginIsIdempotent(t *testing.T) {
 	// which stays off until the next login.
 	run.trayIdle = true
 	run.calls = nil
-	if err := svc.installTray(tray, false); err != nil || strings.Join(run.calls, "|") != "launchctl print "+target+"|launchctl print-disabled gui/501" || !run.trayIdle {
+	if err := svc.installTray(tray, false); err != nil || strings.Join(run.calls, "|") != "launchctl print-disabled gui/501|launchctl print "+target || !run.trayIdle {
 		t.Fatalf("second install: %v %v idle=%v", err, run.calls, run.trayIdle)
 	}
 	// A new app (a new agent came with it): restarted — and started again.
 	run.calls = nil
-	if err := svc.installTray(tray, true); err != nil || strings.Join(run.calls, "|") != "launchctl print "+target+"|launchctl print-disabled gui/501|launchctl kickstart -k "+target || run.trayIdle {
+	if err := svc.installTray(tray, true); err != nil || strings.Join(run.calls, "|") != "launchctl print-disabled gui/501|launchctl print "+target+"|launchctl kickstart -k "+target || run.trayIdle {
 		t.Fatalf("new app: %v %v idle=%v", err, run.calls, run.trayIdle)
 	}
 	// The app moved: the job is loaded afresh with the new file.
 	run.calls = nil
 	moved := filepath.Join("/Applications", appBundleName, "Contents", "MacOS", "vaultsync-tray")
 	if err := svc.installTray(moved, false); err != nil ||
-		strings.Join(run.calls, "|") != "launchctl print "+target+"|launchctl print-disabled gui/501|launchctl bootout "+target+"|launchctl print "+target+"|launchctl bootstrap gui/501 "+plist {
+		strings.Join(run.calls, "|") != "launchctl print-disabled gui/501|launchctl print "+target+"|launchctl bootout "+target+"|launchctl print "+target+"|launchctl bootstrap gui/501 "+plist {
 		t.Fatalf("moved app: %v %v", err, run.calls)
 	}
 	if data, _ := os.ReadFile(plist); !strings.Contains(string(data), "<string>"+moved+"</string>") {
@@ -303,7 +303,7 @@ func TestIssue254_MenuBarAppStartAtLoginIsIdempotent(t *testing.T) {
 		run.trayLoaded, run.trayIdle = loaded, false
 		run.calls = nil
 		err := svc.installTray(tray, true)
-		if !errors.Is(err, errTrayDisabled) || strings.Join(run.calls, "|") != "launchctl print "+target+"|launchctl print-disabled gui/501" || run.trayLoaded != loaded {
+		if !errors.Is(err, errTrayDisabled) || strings.Join(run.calls, "|") != "launchctl print-disabled gui/501" || run.trayLoaded != loaded {
 			t.Fatalf("disabled by the person (loaded %v): %v %v", loaded, err, run.calls)
 		}
 	}
@@ -385,7 +385,13 @@ func TestIssue254_CommandLinkFollowsIntoTheApp(t *testing.T) {
 	t.Setenv("PATH", "/usr/bin:/bin")
 	home := t.TempDir()
 	lay, _ := layoutFor("darwin", home, envOf(nil))
-	a := &app{goos: "darwin", home: home, lay: lay}
+	// /Applications is a stand-in: what this Mac has installed there does
+	// not count.
+	systemApps := filepath.Join(t.TempDir(), "Applications")
+	if err := os.MkdirAll(systemApps, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{goos: "darwin", home: home, lay: lay, appEnv: macAppEnv(home, systemApps, "")}
 	link := commandLink(home)
 	appAgent := filepath.Join(home, "Applications", appBundleName, "Contents", "MacOS", "vaultsync")
 	readLink := func() string {

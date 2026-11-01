@@ -556,15 +556,21 @@ func (a *app) ownCommandTarget(target string) bool {
 	if target == a.lay.Agent {
 		return true
 	}
+	// The app is looked at where setup looks for it (appEnv), so a test's
+	// stand-in for /Applications is the one consulted.
+	env := a.appEnv
+	if env.lstat == nil || env.resolve == nil || env.readFile == nil {
+		env = liveAppEnv(a.goos, a.home)
+	}
 	for _, dir := range []string{"/Applications", filepath.Join(a.home, "Applications")} {
 		// Setup links the app's agent by its resolved path (appbundle.go).
-		resolved, err := filepath.EvalSymlinks(dir)
+		resolved, err := env.resolve(dir)
 		if err != nil {
 			resolved = dir
 		}
 		for _, d := range []string{dir, resolved} {
 			if target == filepath.Join(d, appBundleName, "Contents", "MacOS", "vaultsync") {
-				return appBundleIsOursOrGone(filepath.Join(d, appBundleName))
+				return appBundleIsOursOrGone(env, filepath.Join(resolved, appBundleName))
 			}
 		}
 	}
@@ -574,11 +580,11 @@ func (a *app) ownCommandTarget(target string) bool {
 // appBundleIsOursOrGone: the bundle at app is VaultSync for Mac, or nothing
 // is there any more (the app in the Trash) — not an app of someone else's
 // that happens to have the name.
-func appBundleIsOursOrGone(app string) bool {
-	if _, err := os.Lstat(app); errors.Is(err, fs.ErrNotExist) {
+func appBundleIsOursOrGone(env appEnv, app string) bool {
+	if _, err := env.lstat(app); errors.Is(err, fs.ErrNotExist) {
 		return true
 	}
-	data, err := os.ReadFile(filepath.Join(app, "Contents", "Info.plist"))
+	data, err := env.readFile(filepath.Join(app, "Contents", "Info.plist"))
 	if err != nil {
 		return false
 	}

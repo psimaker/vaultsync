@@ -63,23 +63,35 @@ func (s service) wait(d time.Duration) {
 	time.Sleep(d)
 }
 
+// launchdJob is one of VaultSync's LaunchAgents: its label, how its errors
+// name it, and whether loading it undoes a disable first — the service's
+// does (that is how `vaultsync start` undoes `vaultsync stop`); the
+// menu-bar app's is disabled only by the person, and stays so.
+type launchdJob struct {
+	label  string
+	what   string
+	enable bool
+}
+
+var (
+	serviceJob = launchdJob{label: launchdLabel, what: "the background service", enable: true}
+	trayJob    = launchdJob{label: trayLabel, what: "the menu-bar app's start at login"}
+)
+
 // launchdGone waits until launchd no longer has the job: it removes a
 // booted-out job a moment after `launchctl bootout` returns (100–200 ms on
 // macOS 27), and a start or bootstrap in that moment finds a job that is
 // about to vanish.
-func (s service) launchdGone() error { return s.launchdJobGone(launchdLabel) }
+func (s service) launchdGone() error { return s.launchdJobGone(serviceJob) }
 
-func (s service) launchdJobGone(label string) error {
+func (s service) launchdJobGone(job launchdJob) error {
 	for i := 0; i < 300; i++ {
-		if _, err := s.run.run("launchctl", "print", s.launchdTargetOf(label)); err != nil {
+		if _, err := s.run.run("launchctl", "print", s.launchdTargetOf(job.label)); err != nil {
 			return nil
 		}
 		s.wait(100 * time.Millisecond)
 	}
-	if label == trayLabel {
-		return errors.New("launchd still has the menu-bar app's start at login 30 seconds after stopping it")
-	}
-	return errors.New("launchd still has the background service 30 seconds after stopping it")
+	return fmt.Errorf("launchd still has %s 30 seconds after stopping it", job.what)
 }
 
 // waitRunning gives a started service up to 10 seconds to run.
@@ -307,7 +319,12 @@ func (s service) installTray(exe string, binaryChanged bool) error {
 	if err != nil {
 		return err
 	}
-	return s.launchdStartJob(trayLabel, path, fileChanged, binaryChanged)
+	if s.launchdDisabled(trayLabel) {
+		// The person turned it off: left as it is, loaded or not; the
+		// file written for it waits for their launchctl enable.
+		return errTrayDisabled
+	}
+	return s.launchdStartJob(trayJob, path, fileChanged, binaryChanged)
 }
 
 // launchdDisabled: launchd keeps label disabled for this account — the
@@ -383,7 +400,7 @@ func (s service) uninstallTray() (found bool, err error) {
 		// go of it is what counts — and when it did not, the bootout's
 		// own words say why.
 		out, berr := s.run.run("launchctl", "bootout", s.launchdTargetOf(trayLabel))
-		if err := s.launchdJobGone(trayLabel); err != nil {
+		if err := s.launchdJobGone(trayJob); err != nil {
 			if berr != nil {
 				return found, fmt.Errorf("launchctl bootout of the menu-bar app's start at login: %v: %s", berr, out)
 			}
@@ -423,33 +440,27 @@ func (s service) launchdTargetOf(label string) string {
 }
 
 func (s service) launchdStart(plist string, fileChanged, binaryChanged bool) error {
-	return s.launchdStartJob(launchdLabel, plist, fileChanged, binaryChanged)
+	return s.launchdStartJob(serviceJob, plist, fileChanged, binaryChanged)
 }
 
-func (s service) launchdStartJob(label, plist string, fileChanged, binaryChanged bool) error {
-	target := s.launchdTargetOf(label)
+func (s service) launchdStartJob(job launchdJob, plist string, fileChanged, binaryChanged bool) error {
+	target := s.launchdTargetOf(job.label)
 	_, printErr := s.run.run("launchctl", "print", target)
 	loaded := printErr == nil
-	if label == trayLabel && s.launchdDisabled(label) {
-		// The person turned it off: left as it is, loaded or not; the
-		// file written for it waits for their launchctl enable.
-		return errTrayDisabled
-	}
 	if loaded && fileChanged {
 		// A loaded job keeps its old definition until it is booted out.
 		if out, err := s.run.run("launchctl", "bootout", target); err != nil {
 			return fmt.Errorf("launchctl bootout: %v: %s", err, out)
 		}
-		if err := s.launchdJobGone(label); err != nil {
+		if err := s.launchdJobGone(job); err != nil {
 			return err
 		}
 		loaded = false
 	}
 	if !loaded {
-		// enable undoes a `vaultsync stop` — the service's only; launchd
-		// refuses to bootstrap a disabled job, and the menu-bar app's is
-		// disabled only by the person.
-		if label != trayLabel {
+		// launchd refuses to bootstrap a disabled job; enable undoes the
+		// disable for a job whose disable is VaultSync's own (job.enable).
+		if job.enable {
 			if out, err := s.run.run("launchctl", "enable", target); err != nil {
 				return fmt.Errorf("launchctl enable: %v: %s", err, out)
 			}

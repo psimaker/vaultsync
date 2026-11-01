@@ -47,15 +47,16 @@ type fakeRunner struct {
 	// apart from the actions in calls.
 	probes []string
 	// The menu-bar app's start at login is a job of its own beside the
-	// agent's: loaded, disabled, and idle (loaded, its app not running —
-	// quit, or ended at once as a second instance). onTrayBootout runs as
-	// launchd stops the job's app: a test lets go of tray.lock there.
-	trayLoaded, trayDisabled, trayIdle bool
-	onTrayBootout                      func()
-	// trayOverride: the person ran `launchctl disable` on the menu-bar
-	// app's job — print-disabled lists it, bootstrap refuses it.
-	// trayBootoutVanishes: the job leaves on its own as bootout is asked
-	// (a logout, a setup loading it afresh), and bootout says so.
+	// agent's: loaded, and idle (loaded, its app not running — quit, or
+	// ended at once as a second instance). onTrayBootout runs as launchd
+	// stops the job's app: a test lets go of tray.lock there.
+	trayLoaded, trayIdle bool
+	onTrayBootout        func()
+	// trayOverride: the job is disabled — the person's `launchctl
+	// disable`; `launchctl enable` clears it, print-disabled lists it, and
+	// bootstrap and kickstart refuse it. trayBootoutVanishes: the job
+	// leaves on its own as bootout is asked (a logout, a setup loading it
+	// afresh), and bootout says so.
 	trayOverride, trayBootoutVanishes bool
 }
 
@@ -71,7 +72,7 @@ func (f *fakeRunner) trayJob(call string) (string, error) {
 		}
 		return "\tstate = running\n", nil
 	case strings.HasPrefix(call, "launchctl bootstrap"):
-		if f.trayDisabled || f.trayOverride {
+		if f.trayOverride {
 			return "Bootstrap failed: 5: Input/output error", errors.New("exit status 5")
 		}
 		f.trayLoaded, f.trayIdle = true, false
@@ -87,11 +88,11 @@ func (f *fakeRunner) trayJob(call string) (string, error) {
 			f.onTrayBootout()
 		}
 	case strings.HasPrefix(call, "launchctl disable"):
-		f.trayDisabled = true
+		f.trayOverride = true
 	case strings.HasPrefix(call, "launchctl enable"):
-		f.trayDisabled = false
+		f.trayOverride = false
 	case strings.HasPrefix(call, "launchctl kickstart"):
-		if !f.trayLoaded || f.trayDisabled {
+		if !f.trayLoaded || f.trayOverride {
 			return "", errors.New("cannot kickstart")
 		}
 		f.trayIdle = false
