@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -758,7 +759,7 @@ func TestIssue254_StatusAndStartSayWhenTheAppIsGone(t *testing.T) {
 	}
 	way := "it runs ~/Applications/VaultSync for Mac.app/Contents/MacOS/vaultsync, which is no longer there"
 	out := statusText(t, a)
-	if !strings.Contains(out, "Background service: cannot start — "+way) || !strings.Contains(out, shellQuote(a.lay.Agent)+" uninstall") || !strings.Contains(out, shellQuote(a.lay.Agent)+" setup") {
+	if !strings.Contains(out, "Background service: cannot start — "+way) || !strings.Contains(out, shellPath(a.home, a.lay.Agent)+" uninstall") || !strings.Contains(out, shellPath(a.home, a.lay.Agent)+" setup") {
 		t.Fatalf("status with the app gone:\n%s", out)
 	}
 	run.loaded = true
@@ -767,7 +768,7 @@ func TestIssue254_StatusAndStartSayWhenTheAppIsGone(t *testing.T) {
 	}
 	run.loaded = false
 	run.calls = nil
-	if err := a.startService(); !strings.Contains(refusalText(err), way) {
+	if err := a.startService(); !strings.Contains(refusalText(err), way) || strings.Contains(refusalText(err), "'~") {
 		t.Fatalf("start: %v", err)
 	}
 	for _, c := range run.calls {
@@ -782,6 +783,34 @@ func TestIssue254_StatusAndStartSayWhenTheAppIsGone(t *testing.T) {
 	}
 	if out := statusText(t, a); strings.Contains(out, "no longer there") {
 		t.Fatalf("status with the app back:\n%s", out)
+	}
+}
+
+// A path shown as a command to type works when typed: shortened to ~ under
+// the home folder (as printed paths are), the rest escaped — a ~ in quotes
+// would not expand — and quoted outside it. A real shell gives back the
+// very path.
+func TestIssue254_APathToTypeWorksWhenTyped(t *testing.T) {
+	home := t.TempDir()
+	for _, p := range []string{
+		filepath.Join(home, "Library", "Application Support", "VaultSync", "bin", "vaultsync"),
+		filepath.Join(home, "odd $name's (copy) & more", "vaultsync"),
+		filepath.Join(home, "plain", "vaultsync"),
+		filepath.Join(t.TempDir(), "outside home", "vaultsync"),
+	} {
+		word := shellPath(home, p)
+		if strings.Contains(word, "'~") {
+			t.Fatalf("a quoted ~ does not expand: %s", word)
+		}
+		cmd := exec.Command("/bin/sh", "-c", "printf '%s' "+word)
+		cmd.Env = []string{"HOME=" + home, "PATH=/usr/bin:/bin"}
+		out, err := cmd.Output()
+		if err != nil || string(out) != p {
+			t.Fatalf("%s typed into sh gave %q (%v), want %q", word, out, err, p)
+		}
+	}
+	if got := shellPath(home, filepath.Join(home, "Library", "Application Support", "x")); got != `~/Library/Application\ Support/x` {
+		t.Fatalf("the documented spelling: %s", got)
 	}
 }
 

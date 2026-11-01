@@ -403,7 +403,7 @@ func (a *app) setup(ctx context.Context, args []string) error {
 // go on without the app, or remove VaultSync, with the agent's own copy,
 // which setup keeps for that (decision 053).
 func (a *app) programGoneNote(prog string) string {
-	copyCmd := shellQuote(a.lay.Agent)
+	copyCmd := shellPath(a.home, a.lay.Agent)
 	return fmt.Sprintf("it runs %s, which is no longer there (VaultSync for Mac was moved or put in the Trash). Put VaultSync for Mac back in Applications, or run the setup link again; to go on without the app, run %s setup; to remove VaultSync, run %s uninstall", tildePath(a.home, prog), copyCmd, copyCmd)
 }
 
@@ -581,6 +581,27 @@ func shellQuote(p string) string {
 		return "'" + strings.ReplaceAll(p, "'", `'\''`) + "'"
 	}
 	return p
+}
+
+// shellPath is p as one word to type into a shell, shortened to ~ under the
+// home folder as printed paths are (redactPaths would shorten a full one):
+// a ~ inside single quotes would not expand, so the rest is escaped
+// character by character instead. Outside the home folder it is
+// shellQuote's word.
+func shellPath(home, p string) string {
+	short := tildePath(home, p)
+	if !strings.HasPrefix(short, "~/") {
+		return shellQuote(p)
+	}
+	var b strings.Builder
+	b.WriteString("~/")
+	for _, r := range short[2:] {
+		if strings.ContainsRune(" \t'\"$`\\!*?[]{}()&;|<>#~=", r) {
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // ensureEngine installs the pinned Syncthing unless the installed one is
