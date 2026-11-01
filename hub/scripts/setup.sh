@@ -407,37 +407,15 @@ download_binary() {
 
 # bundle_id APP prints the bundle identifier at the top of APP's
 # Info.plist — nothing when there is none or it cannot be read: such a
-# bundle is never taken for VaultSync for Mac. plutil reads any plist, and
-# only its top level (a nested CFBundleIdentifier — a document type's — is
-# not the bundle's); without plutil (a Linux test run) the same is read
-# from an XML plist, counting dictionary levels.
+# bundle is never taken for VaultSync for Mac. plutil (on every Mac, the
+# one place this runs for real) reads any plist and only its top level: a
+# nested CFBundleIdentifier — a document type's — is not the bundle's.
+# Without plutil nothing is read (the Linux test run brings its own).
 bundle_id() {
 	plist="$1/Contents/Info.plist"
 	[ -f "$plist" ] || return 0
-	if command -v plutil >/dev/null 2>&1; then
-		plutil -extract CFBundleIdentifier raw -expect string -o - "$plist" 2>/dev/null || true
-		return 0
-	fi
-	awk '
-		{
-			line = $0
-			while (match(line, /<[^>]*>/)) {
-				tag = substr(line, RSTART, RLENGTH)
-				line = substr(line, RSTART + RLENGTH)
-				if (tag == "<dict>") { depth++; want = 0 }
-				else if (tag == "</dict>") { depth--; want = 0 }
-				else if (tag == "<key>") {
-					end = index(line, "</key>")
-					want = (end > 0 && depth == 1 && substr(line, 1, end - 1) == "CFBundleIdentifier")
-					if (end > 0) line = substr(line, end + 6)
-				} else if (tag == "<string>" && want) {
-					end = index(line, "</string>")
-					if (end > 0) print substr(line, 1, end - 1)
-					exit
-				} else want = 0
-			}
-		}
-	' "$plist"
+	command -v plutil >/dev/null 2>&1 || return 0
+	plutil -extract CFBundleIdentifier raw -expect string -o - "$plist" 2>/dev/null || true
 }
 
 # replaceable APP: this account can put another VaultSync for Mac in APP's
@@ -485,30 +463,35 @@ check_app_place() {
 		fail "$1 is not VaultSync for Mac (its bundle identifier is ${id:-not readable}) — it was not replaced. Move it elsewhere, then run the setup again."
 }
 
-# The app being replaced, set aside beside it until the new one is in
-# place (REPLACED), and whether the new one is on its way there (PLACING):
-# a move across disks copies, and a full disk, an I/O error, Ctrl-C, a
-# closed Terminal or a logout can stop it halfway. restore_app — run by
-# the traps and by a failed move — then removes whatever the move left at
-# the app's place (while PLACING is set, nothing else can be there: the
-# installed app was set aside, or there was none) and puts the set-aside
-# app back, so the background service and the menu-bar app never lose
-# their program to an interrupted update. Once the new app is in place,
-# it removes what was set aside.
+# Where an update of the app stands (STAGE), set before each step: aside
+# — the installed app is being set aside, beside itself, at REPLACED;
+# placing — the new app is being moved into its place; placed — the new
+# one is in place. A move across disks copies, and a full disk, an I/O
+# error, Ctrl-C, a closed Terminal or a logout can stop any step halfway.
+# restore_app — run by the traps and by a failed move — undoes what the
+# stage leaves: before placed, whatever stands at the app's place came
+# from this run, so it goes and the set-aside app is put back (a first
+# install leaves nothing); once placed, the set-aside app goes. It clears
+# STAGE, so the EXIT trap after another trap undoes nothing twice. The
+# background service and the menu-bar app never lose their program to an
+# interrupted update.
+STAGE=""
 REPLACED=""
-PLACING=""
 restore_app() {
-	if [ -n "$PLACING" ]; then
-		rm -rf "$APP" 2>/dev/null || true
-		if [ -n "$REPLACED" ] && [ -e "$REPLACED" ]; then
-			mv "$REPLACED" "$APP" 2>/dev/null || true
-		fi
-		PLACING=""
-		return 0
-	fi
-	if [ -n "$REPLACED" ] && [ -e "$REPLACED" ]; then
-		rm -rf "$REPLACED" 2>/dev/null || true
-	fi
+	case "$STAGE" in
+		aside | placing)
+			if [ -n "$REPLACED" ] && { [ -e "$REPLACED" ] || [ -L "$REPLACED" ]; }; then
+				rm -rf "$APP" 2>/dev/null || true
+				mv "$REPLACED" "$APP" 2>/dev/null || true
+			elif [ "$STAGE" = placing ]; then
+				rm -rf "$APP" 2>/dev/null || true
+			fi
+			;;
+		placed)
+			[ -z "$REPLACED" ] || rm -rf "$REPLACED" 2>/dev/null || true
+			;;
+	esac
+	STAGE=""
 }
 
 # same_app A B: the two bundles hold the same programs, byte for byte.
@@ -538,27 +521,31 @@ install_app() {
 	if [ -e "$APP" ] && same_app "$APP" "$new"; then
 		return 0
 	fi
+	mkdir -p "$2"
 	if [ -e "$APP" ]; then
 		REPLACED="$2/.$APP_NAME.replaced.$$"
+		STAGE=aside
 		mv "$APP" "$REPLACED" || {
-			REPLACED=""
+			restore_app
 			fail "Could not move the installed VaultSync for Mac aside — nothing was changed."
 		}
 	fi
-	mkdir -p "$2"
-	PLACING=1
+	STAGE=placing
 	if ! mv "$new" "$APP"; then
 		restore_app
-		if [ -n "$REPLACED" ]; then
+		if [ -e "$APP" ]; then
 			fail "Could not install VaultSync for Mac into $2 — the one installed before stays."
+		elif [ -n "$REPLACED" ] && [ -e "$REPLACED" ]; then
+			fail "Could not install VaultSync for Mac into $2, nor put the one installed before back: it is at $REPLACED — rename it to $APP_NAME."
 		fi
 		fail "Could not install VaultSync for Mac into $2 — nothing was installed."
 	fi
-	PLACING=""
+	STAGE=placed
 	if [ -n "$REPLACED" ]; then
 		rm -rf "$REPLACED" || warn "The replaced VaultSync for Mac stays at $REPLACED — remove it by hand."
-		REPLACED=""
 	fi
+	STAGE=""
+	REPLACED=""
 }
 
 # --- 2) Hub ------------------------------------------------------------------

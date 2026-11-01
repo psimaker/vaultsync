@@ -201,6 +201,20 @@ cat >"$SANDBOX/bin/mv" <<SHIM
 if [ -n "\${FAIL_MV_UNPACKED:-}" ]; then
 	case "\$1" in */unpacked/*) exit 1 ;; esac
 fi
+# INT_AFTER_ASIDE: Ctrl-C right after the installed app was set aside, before
+# the new one moves. FAIL_MV_BACK: putting the set-aside app back fails.
+case "\$2" in
+	*/.VaultSync\ for\ Mac.app.replaced.*)
+		if [ -n "\${INT_AFTER_ASIDE:-}" ]; then
+			"$REAL_MV" "\$@" || exit 1
+			kill -INT \$PPID
+			exit 0
+		fi
+		;;
+esac
+case "\$1" in
+	*/.VaultSync\ for\ Mac.app.replaced.*) [ -z "\${FAIL_MV_BACK:-}" ] || exit 1 ;;
+esac
 # A move of the unpacked app that copies across disks and stops halfway:
 # part of the bundle is at the destination, then the copy fails
 # (FAIL_MV_PARTIAL) or the setup is interrupted (INT_MV_PARTIAL, Ctrl-C).
@@ -232,6 +246,38 @@ fi
 exec "$REAL_RM" "\$@"
 SHIM
 chmod +x "$SANDBOX/bin/sed" "$SANDBOX/bin/mv" "$SANDBOX/bin/mktemp" "$SANDBOX/bin/rm"
+# setup.sh reads a bundle's identifier with plutil, which every Mac has. On
+# a host without it (the Linux CI run) a stand-in answers the one question
+# setup.sh asks — `plutil -extract CFBundleIdentifier raw -expect string -o
+# - FILE` — from an XML plist, top level only, a string value only.
+if ! command -v plutil >/dev/null 2>&1; then
+	cat >"$SANDBOX/bin/plutil" <<'SHIM'
+#!/usr/bin/env sh
+[ "$1 $2 $3 $4 $5 $6 $7" = "-extract CFBundleIdentifier raw -expect string -o -" ] || exit 2
+awk '
+	{
+		line = $0
+		while (match(line, /<[^>]*>/)) {
+			tag = substr(line, RSTART, RLENGTH)
+			line = substr(line, RSTART + RLENGTH)
+			if (tag == "<dict>") { depth++; want = 0 }
+			else if (tag == "</dict>") { depth--; want = 0 }
+			else if (tag == "<key>") {
+				end = index(line, "</key>")
+				want = (end > 0 && depth == 1 && substr(line, 1, end - 1) == "CFBundleIdentifier")
+				if (end > 0) line = substr(line, end + 6)
+			} else if (tag == "<string>" && want) {
+				end = index(line, "</string>")
+				if (end > 0) { print substr(line, 1, end - 1); found = 1 }
+				exit
+			} else want = 0
+		}
+	}
+	END { exit !found }
+' "$8"
+SHIM
+	chmod +x "$SANDBOX/bin/plutil"
+fi
 export VIOLATIONS
 export PATH="$SANDBOX/bin:$PATH"
 export HOME="$SANDBOX/home"
@@ -870,6 +916,31 @@ $(find "$installed" 2>&1 | head -20)"
 done
 grep -q "the one installed before stays" "$SANDBOX/results/run.log" && fail "an interrupted setup claims a failed move"
 pass "a move into place that stops halfway leaves the app installed before, whole"
+
+# Ctrl-C right after the installed app was set aside, before the new one
+# moves: the set-aside app is the only copy, and it goes back.
+release_with interrupted-aside
+if (INT_AFTER_ASIDE=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+	fail "an interrupted update must stop the setup"
+fi
+grep -q "vaultsync second" "$installed/Contents/MacOS/vaultsync" || fail "the app set aside before an interrupt is not back:
+$(find "$APPS" 2>&1 | head -20)"
+[ "$(ls -A "$APPS")" = "VaultSync for Mac.app" ] || fail "an interrupt after the set-aside left more than the app: $(ls -A "$APPS")"
+pass "an interrupt right after the set-aside puts the installed app back"
+
+# Putting the set-aside app back fails too: it is kept where it is, never
+# removed, and the setup says where.
+release_with no-way-back
+if (FAIL_MV_PARTIAL=1 FAIL_MV_BACK=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+	fail "a failed update must stop the setup"
+fi
+grep -q "nor put the one installed before back: it is at" "$SANDBOX/results/run.log" || fail "the setup does not say where the old app is:
+$(cat "$SANDBOX/results/run.log")"
+kept=$(find "$APPS" -maxdepth 1 -name '.VaultSync for Mac.app.replaced.*')
+[ -n "$kept" ] || fail "the old app was not kept: $(ls -A "$APPS")"
+grep -q "vaultsync second" "$kept/Contents/MacOS/vaultsync" || fail "what was kept is not the old app"
+mv "$kept" "$installed"
+pass "an old app that cannot be put back is kept and named"
 
 # Never replaced: a bundle of that name with another identifier, or a link —
 # even one to a VaultSync for Mac kept elsewhere (another disk, say): the
