@@ -52,6 +52,11 @@ type fakeRunner struct {
 	// launchd stops the job's app: a test lets go of tray.lock there.
 	trayLoaded, trayDisabled, trayIdle bool
 	onTrayBootout                      func()
+	// trayOverride: the person ran `launchctl disable` on the menu-bar
+	// app's job — print-disabled lists it, bootstrap refuses it.
+	// trayBootoutVanishes: the job leaves on its own as bootout is asked
+	// (a logout, a setup loading it afresh), and bootout says so.
+	trayOverride, trayBootoutVanishes bool
 }
 
 // trayJob is launchd for the menu-bar app's start at login.
@@ -66,11 +71,14 @@ func (f *fakeRunner) trayJob(call string) (string, error) {
 		}
 		return "\tstate = running\n", nil
 	case strings.HasPrefix(call, "launchctl bootstrap"):
-		if f.trayDisabled {
+		if f.trayDisabled || f.trayOverride {
 			return "Bootstrap failed: 5: Input/output error", errors.New("exit status 5")
 		}
 		f.trayLoaded, f.trayIdle = true, false
 	case strings.HasPrefix(call, "launchctl bootout"):
+		if f.trayBootoutVanishes {
+			f.trayLoaded = false
+		}
 		if !f.trayLoaded {
 			return "Boot-out failed: 3: No such process", errors.New("exit status 3")
 		}
@@ -149,6 +157,13 @@ func (f *fakeRunner) run(name string, args ...string) (string, error) {
 		if strings.HasPrefix(call, prefix) {
 			return "boom", err
 		}
+	}
+	if strings.HasPrefix(call, "launchctl print-disabled") {
+		out := "disabled services = {\n"
+		if f.trayOverride {
+			out += "\t\"" + trayLabel + "\" => disabled\n"
+		}
+		return out + "}\n", nil
 	}
 	if name == "launchctl" && strings.Contains(call, "/"+trayLabel) {
 		return f.trayJob(call)

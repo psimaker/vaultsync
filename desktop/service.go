@@ -282,11 +282,17 @@ func (s service) trayPlistPath() string {
 	return filepath.Join(s.home, "Library", "LaunchAgents", trayLabel+".plist")
 }
 
+// errTrayDisabled: the person turned the menu-bar app's start at login off
+// (launchctl disable); setup leaves it so (safety rule 5).
+var errTrayDisabled = errors.New("the menu-bar icon's start at login is turned off for this account")
+
 // installTray writes the LaunchAgent that starts the menu-bar app at login
 // and starts it the way install starts the service: a new or changed file
 // loads it afresh, a new program (binaryChanged: setup installed another
 // agent, and the app came with it) restarts it, and nothing changed leaves
-// it as it is — off, too, when the person quit it. macOS only.
+// it as it is — off, too, when the person quit it. Unlike the service's,
+// a job the person disabled is not enabled again: errTrayDisabled. macOS
+// only.
 func (s service) installTray(exe string, binaryChanged bool) error {
 	if s.goos != "darwin" {
 		return fmt.Errorf("no menu-bar app start at login on %s", s.goos)
@@ -304,6 +310,35 @@ func (s service) installTray(exe string, binaryChanged bool) error {
 	return s.launchdStartJob(trayLabel, path, fileChanged, binaryChanged)
 }
 
+// launchdDisabled: launchd keeps label disabled for this account — the
+// person's `launchctl disable`, which outlasts logins and which bootstrap
+// refuses. print-disabled says "disabled" (macOS 13 on) or "true".
+func (s service) launchdDisabled(label string) bool {
+	out, err := s.run.run("launchctl", "print-disabled", "gui/"+strconv.Itoa(s.uid))
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), `"`+label+`" =>`); ok {
+			v = strings.TrimSpace(v)
+			return v == "disabled" || v == "true"
+		}
+	}
+	return false
+}
+
+// trayProgram is the program the menu-bar app's start at login names, read
+// back from the file this agent wrote; "" when there is no such file or it
+// names none.
+func (s service) trayProgram() string {
+	data, err := os.ReadFile(s.trayPlistPath())
+	if err != nil {
+		return ""
+	}
+	prog, _ := plistFirstString(data, "ProgramArguments")
+	return prog
+}
+
 // uninstallTray stops the menu-bar app's start at login and removes its
 // file; it says whether there was one. It waits until launchd let go of the
 // job — the app lets go of tray.lock as it ends, and a removal of
@@ -313,16 +348,23 @@ func (s service) uninstallTray() (found bool, err error) {
 	if s.goos != "darwin" {
 		return false, nil
 	}
+	_, statErr := os.Lstat(s.trayPlistPath())
+	hasFile := statErr == nil
 	if _, err := s.run.run("launchctl", "print", s.launchdTargetOf(trayLabel)); err == nil {
 		found = true
-		if out, err := s.run.run("launchctl", "bootout", s.launchdTargetOf(trayLabel)); err != nil {
-			return found, fmt.Errorf("launchctl bootout: %v: %s", err, out)
-		}
+		// A job already on its way out (a logout, a setup loading it
+		// afresh) answers the bootout with an error: whether launchd let
+		// go of it is what counts.
+		_, _ = s.run.run("launchctl", "bootout", s.launchdTargetOf(trayLabel))
 		if err := s.launchdJobGone(trayLabel); err != nil {
 			return found, err
 		}
-	} else if state, why := s.session(); state == sessionUnknown {
-		return false, fmt.Errorf("the service manager could not be asked whether the menu-bar app runs (%s); run vaultsync uninstall from your Mac's own session", why)
+	} else if hasFile {
+		// Only a file left to remove makes the session worth asking about:
+		// on a Mac that never had the menu-bar app there is nothing here.
+		if state, why := s.session(); state == sessionUnknown {
+			return false, fmt.Errorf("the service manager could not be asked whether the menu-bar app runs (%s); run vaultsync uninstall from your Mac's own session", why)
+		}
 	}
 	switch err := os.Remove(s.trayPlistPath()); {
 	case err == nil:
@@ -358,6 +400,11 @@ func (s service) launchdStartJob(label, plist string, fileChanged, binaryChanged
 	target := s.launchdTargetOf(label)
 	_, printErr := s.run.run("launchctl", "print", target)
 	loaded := printErr == nil
+	if label == trayLabel && s.launchdDisabled(label) {
+		// The person turned it off: left as it is, loaded or not; the
+		// file written for it waits for their launchctl enable.
+		return errTrayDisabled
+	}
 	if loaded && fileChanged {
 		// A loaded job keeps its old definition until it is booted out.
 		if out, err := s.run.run("launchctl", "bootout", target); err != nil {
@@ -369,10 +416,13 @@ func (s service) launchdStartJob(label, plist string, fileChanged, binaryChanged
 		loaded = false
 	}
 	if !loaded {
-		// enable undoes a `vaultsync stop`; launchd refuses to bootstrap a
-		// disabled job.
-		if out, err := s.run.run("launchctl", "enable", target); err != nil {
-			return fmt.Errorf("launchctl enable: %v: %s", err, out)
+		// enable undoes a `vaultsync stop` — the service's only; launchd
+		// refuses to bootstrap a disabled job, and the menu-bar app's is
+		// disabled only by the person.
+		if label != trayLabel {
+			if out, err := s.run.run("launchctl", "enable", target); err != nil {
+				return fmt.Errorf("launchctl enable: %v: %s", err, out)
+			}
 		}
 		if out, err := s.run.run("launchctl", "bootstrap", "gui/"+strconv.Itoa(s.uid), plist); err != nil {
 			return fmt.Errorf("launchctl bootstrap: %v: %s", err, out)

@@ -161,5 +161,12 @@ func run(args []string) error {
 	if errors.Is(runErr, context.Canceled) {
 		return nil
 	}
+	if errors.Is(runErr, tray.ErrAlreadyRunning) {
+		// Another instance took the lock while this one ran (the lock's
+		// file went and came back): the icon is up — not a failure that
+		// launchd should answer with a restart.
+		logger.Print(redact(runErr.Error()))
+		return nil
+	}
 	return runErr
 }

@@ -355,12 +355,17 @@ func (a *app) setup(ctx context.Context, args []string) error {
 		if fromApp {
 			// The menu-bar app comes with the app; syncing does not depend
 			// on it, so a start at login that could not be set up is said,
-			// not fatal.
-			if err := a.svc.installTray(bundle.Tray, agentChanged); err != nil {
+			// not fatal — and one the person turned off stays off.
+			switch err := a.svc.installTray(bundle.Tray, agentChanged); {
+			case errors.Is(err, errTrayDisabled):
+				t.say("  The menu-bar icon stays off at login, as it was turned off for this account (launchctl enable gui/%d/%s turns it on again).", a.svc.uid, trayLabel)
+			case err != nil:
 				t.say("  The menu-bar icon could not be set to open at login (%v). Open VaultSync for Mac yourself to see it.", err)
-			} else {
+			default:
 				t.say("✓ Menu-bar icon set up — it opens when you log in")
 			}
+		} else if a.dropStaleTray() {
+			t.say("✓ The menu-bar icon no longer opens at login: VaultSync for Mac is not where its start at login named.")
 		}
 	}
 	client, err := eng.client(st)
@@ -391,6 +396,22 @@ func (a *app) setup(ctx context.Context, args []string) error {
 		t.say("  Next device: run the same setup link, or in VaultSync on iPhone tap Add Hub.")
 	}
 	return err
+}
+
+// dropStaleTray removes the menu-bar app's start at login when the program
+// it names is gone — the app moved or put in the Trash, and setup run from
+// VaultSync's own copy — rather than leave launchd failing on it at every
+// login. It says whether it removed one.
+func (a *app) dropStaleTray() bool {
+	prog := a.svc.trayProgram()
+	if prog == "" {
+		return false
+	}
+	if _, err := os.Lstat(prog); !errors.Is(err, fs.ErrNotExist) {
+		return false
+	}
+	found, err := a.svc.uninstallTray()
+	return err == nil && found
 }
 
 // serviceProgram is the program the background service runs: the agent in

@@ -87,6 +87,34 @@ func findInstalledApp(env appEnv) (macApp, bool) {
 	return macApp{Path: app, Agent: self, Tray: tray}, true
 }
 
+// plistFirstString reads the first string of the array under key in the
+// top-level dictionary of an XML property list — a LaunchAgent's program,
+// in ProgramArguments.
+func plistFirstString(data []byte, key string) (string, bool) {
+	var plist struct {
+		Dict struct {
+			Items []struct {
+				XMLName xml.Name
+				Value   string   `xml:",chardata"`
+				Strings []string `xml:"string"`
+			} `xml:",any"`
+		} `xml:"dict"`
+	}
+	if err := xml.Unmarshal(data, &plist); err != nil {
+		return "", false
+	}
+	items := plist.Dict.Items
+	for i := 0; i+1 < len(items); i++ {
+		if items[i].XMLName.Local == "key" && items[i].Value == key {
+			if next := items[i+1]; next.XMLName.Local == "array" && len(next.Strings) > 0 {
+				return next.Strings[0], true
+			}
+			return "", false
+		}
+	}
+	return "", false
+}
+
 // plistString reads one string value from the top-level dictionary of an
 // XML property list. A binary plist, a key given twice, or a value that is
 // not a string reads as nothing: the caller then does not trust the file.

@@ -291,6 +291,16 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 	if trayFound {
 		t.say("✓ The menu-bar icon no longer opens when you log in.")
 	}
+	if *removeData {
+		// The probe passed over a tray.lock held while launchd ran the
+		// menu-bar app's start at login; that job is gone now, so a holder
+		// still there is an app opened by hand — one the probe could not
+		// tell apart in the moment the job's app was starting. Refused
+		// before the service goes.
+		if trayLockHeld(a.lay) {
+			return refuse("%s (Its start at login is already removed; the background service is not.)", trayRunningRefusal)
+		}
+	}
 	// What the removal found — a job, a unit file, or a unit the manager
 	// still runs — may hold the engine's lock a moment after the removal:
 	// its own run lets go a moment later. A terminal run holds it for
@@ -395,6 +405,27 @@ func (a *app) removeCommandLink() (string, bool) {
 		return "", false
 	}
 	return link, true
+}
+
+// trayLockWait is how long trayLockHeld gives an app launchd just stopped
+// to let go of tray.lock.
+var trayLockWait = 2 * time.Second
+
+// trayLockHeld: some menu-bar app still holds tray.lock after a short wait.
+// A lock that cannot be looked at is left to the removal, which refuses it
+// with its own words.
+func trayLockHeld(lay layout) bool {
+	deadline := time.Now().Add(trayLockWait)
+	for {
+		held, err := lock.Probe(lay.TrayLock())
+		if err != nil || !held {
+			return false
+		}
+		if time.Now().After(deadline) {
+			return true
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 // engineOwnerRunning reports whether some process still owns the engine once

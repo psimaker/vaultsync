@@ -238,7 +238,9 @@ func TestIssue254_MenuBarAppStartAtLoginIsIdempotent(t *testing.T) {
 	if err := svc.installTray(tray, true); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(run.calls, "|"); got != "launchctl print "+target+"|launchctl enable "+target+"|launchctl bootstrap gui/501 "+plist {
+	// No enable: the service's undoes a vaultsync stop, the menu-bar app's
+	// would only undo the person's own launchctl disable.
+	if got := strings.Join(run.calls, "|"); got != "launchctl print "+target+"|launchctl print-disabled gui/501|launchctl bootstrap gui/501 "+plist {
 		t.Fatalf("first install ran: %s", got)
 	}
 	if !run.trayLoaded || run.trayIdle || run.loaded {
@@ -252,19 +254,19 @@ func TestIssue254_MenuBarAppStartAtLoginIsIdempotent(t *testing.T) {
 	// which stays off until the next login.
 	run.trayIdle = true
 	run.calls = nil
-	if err := svc.installTray(tray, false); err != nil || strings.Join(run.calls, "|") != "launchctl print "+target || !run.trayIdle {
+	if err := svc.installTray(tray, false); err != nil || strings.Join(run.calls, "|") != "launchctl print "+target+"|launchctl print-disabled gui/501" || !run.trayIdle {
 		t.Fatalf("second install: %v %v idle=%v", err, run.calls, run.trayIdle)
 	}
 	// A new app (a new agent came with it): restarted — and started again.
 	run.calls = nil
-	if err := svc.installTray(tray, true); err != nil || strings.Join(run.calls, "|") != "launchctl print "+target+"|launchctl kickstart -k "+target || run.trayIdle {
+	if err := svc.installTray(tray, true); err != nil || strings.Join(run.calls, "|") != "launchctl print "+target+"|launchctl print-disabled gui/501|launchctl kickstart -k "+target || run.trayIdle {
 		t.Fatalf("new app: %v %v idle=%v", err, run.calls, run.trayIdle)
 	}
 	// The app moved: the job is loaded afresh with the new file.
 	run.calls = nil
 	moved := filepath.Join("/Applications", appBundleName, "Contents", "MacOS", "vaultsync-tray")
 	if err := svc.installTray(moved, false); err != nil ||
-		strings.Join(run.calls, "|") != "launchctl print "+target+"|launchctl bootout "+target+"|launchctl print "+target+"|launchctl enable "+target+"|launchctl bootstrap gui/501 "+plist {
+		strings.Join(run.calls, "|") != "launchctl print "+target+"|launchctl print-disabled gui/501|launchctl bootout "+target+"|launchctl print "+target+"|launchctl bootstrap gui/501 "+plist {
 		t.Fatalf("moved app: %v %v", err, run.calls)
 	}
 	if data, _ := os.ReadFile(plist); !strings.Contains(string(data), "<string>"+moved+"</string>") {
@@ -275,6 +277,21 @@ func TestIssue254_MenuBarAppStartAtLoginIsIdempotent(t *testing.T) {
 		if strings.Contains(c, launchdLabel) {
 			t.Fatalf("the agent's job was touched: %v", run.calls)
 		}
+	}
+
+	// The person turned the job off (launchctl disable): setup leaves it
+	// off, loaded or not — the file is written for their own enable.
+	run.trayOverride = true
+	for _, loaded := range []bool{true, false} {
+		run.trayLoaded, run.trayIdle = loaded, false
+		run.calls = nil
+		err := svc.installTray(tray, true)
+		if !errors.Is(err, errTrayDisabled) || strings.Join(run.calls, "|") != "launchctl print "+target+"|launchctl print-disabled gui/501" || run.trayLoaded != loaded {
+			t.Fatalf("disabled by the person (loaded %v): %v %v", loaded, err, run.calls)
+		}
+	}
+	if data, _ := os.ReadFile(plist); !strings.Contains(string(data), "<string>"+tray+"</string>") {
+		t.Fatalf("the file was not written for a later enable:\n%s", data)
 	}
 }
 
@@ -301,6 +318,27 @@ func TestIssue254_UninstallRemovesTheMenuBarAppStartAtLogin(t *testing.T) {
 	if found, err := svc.uninstallTray(); err != nil || found {
 		t.Fatalf("second uninstall: %v %v", found, err)
 	}
+	// A job already on its way out answers the bootout with an error: it
+	// is gone all the same, and so is the file.
+	if err := svc.installTray(tray, true); err != nil {
+		t.Fatal(err)
+	}
+	run.trayBootoutVanishes = true
+	if found, err := svc.uninstallTray(); err != nil || !found || run.trayLoaded {
+		t.Fatalf("a job on its way out: %v %v loaded=%v", found, err, run.trayLoaded)
+	}
+	run.trayBootoutVanishes = false
+	if _, err := os.Stat(svc.trayPlistPath()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the plist stayed beside a job on its way out: %v", err)
+	}
+	// No file and no job — a Mac that never had the menu-bar app — is
+	// nothing, without asking a manager that may not answer.
+	run.probeFails = "Could not print domain: 1: Operation not permitted"
+	run.calls, run.probes = nil, nil
+	if found, err := svc.uninstallTray(); err != nil || found || len(run.probes) != 0 {
+		t.Fatalf("nothing there: %v %v probes %v", found, err, run.probes)
+	}
+	run.probeFails = ""
 	// A file without a loaded job (never started, or a session ended) is
 	// found and removed without a bootout.
 	writeFile(t, svc.trayPlistPath(), "<plist/>")
@@ -506,6 +544,79 @@ func TestIssue254_UninstallStopsTheMenuBarAppItStartedAtLogin(t *testing.T) {
 		if _, err := os.Lstat(gone); !errors.Is(err, os.ErrNotExist) {
 			t.Errorf("%s stayed: %v", gone, err)
 		}
+	}
+}
+
+// A start at login whose program is gone — the app moved or trashed, setup
+// run from VaultSync's own copy — is removed rather than left failing at
+// every login; one whose program is there stays.
+func TestIssue254_SetupFromTheCopyDropsAStaleStartAtLogin(t *testing.T) {
+	run := &fakeRunner{}
+	svc, home := testService(t, "darwin", run)
+	a := &app{goos: "darwin", home: home, lay: svc.lay, svc: svc}
+	tray := filepath.Join(home, "Applications", appBundleName, "Contents", "MacOS", "vaultsync-tray")
+	writeFile(t, tray, "#!/bin/sh\n")
+	if err := svc.installTray(tray, true); err != nil {
+		t.Fatal(err)
+	}
+	if svc.trayProgram() != tray {
+		t.Fatalf("read back: %q", svc.trayProgram())
+	}
+	if a.dropStaleTray() || !run.trayLoaded {
+		t.Fatal("a start at login whose app is there was removed")
+	}
+	if err := os.RemoveAll(filepath.Join(home, "Applications")); err != nil {
+		t.Fatal(err)
+	}
+	if !a.dropStaleTray() || run.trayLoaded {
+		t.Fatal("a start at login whose app is gone stayed")
+	}
+	if _, err := os.Stat(svc.trayPlistPath()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("its file stayed: %v", err)
+	}
+	if a.dropStaleTray() {
+		t.Fatal("nothing left to remove, yet something was")
+	}
+}
+
+// A menu-bar app opened by hand that holds tray.lock in the moment the
+// login job's app was starting passes the probe as that job's; once the
+// job is gone the lock is looked at again, and the removal stops before
+// the background service goes.
+func TestIssue254_RemoveDataStopsAtAHandOpenedAppBeforeTheServiceGoes(t *testing.T) {
+	lay, foreign := ownedFixture(t)
+	if err := os.Remove(foreign); err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Dir(filepath.Dir(filepath.Dir(lay.Base)))
+	run := &fakeRunner{}
+	svc := service{goos: "darwin", home: home, uid: 501, getenv: envOf(nil), lay: lay, run: run, pause: func(time.Duration) {}}
+	a := &app{goos: "darwin", home: home, getenv: envOf(nil), lay: lay, out: &bytes.Buffer{}, svc: svc}
+	if err := svc.installTray(filepath.Join(home, "Applications", appBundleName, "Contents", "MacOS", "vaultsync-tray"), true); err != nil {
+		t.Fatal(err)
+	}
+	unit, _ := svc.unitPath()
+	writeFile(t, unit, "<plist/>")
+	byHand, err := lockFile(lay.TrayLock())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer byHand()
+	orig := trayLockWait
+	trayLockWait = 50 * time.Millisecond
+	defer func() { trayLockWait = orig }()
+	err = a.uninstall(context.Background(), []string{"--remove-data", "--yes"})
+	if !strings.Contains(refusalText(err), "menu-bar app is running") || !strings.Contains(refusalText(err), "background service is not") {
+		t.Fatalf("got %v", err)
+	}
+	if _, err := os.Stat(unit); err != nil {
+		t.Fatalf("the background service went before the refusal: %v", err)
+	}
+	if _, err := os.Stat(lay.State); err != nil {
+		t.Fatalf("VaultSync's files went: %v", err)
+	}
+	if _, err := os.Stat(svc.trayPlistPath()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the start at login stayed: %v", err)
 	}
 }
 
