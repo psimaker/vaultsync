@@ -486,16 +486,27 @@ check_app_place() {
 }
 
 # The app being replaced, set aside beside it until the new one is in
-# place: restore_app puts it back when the setup ends before that — a
-# failed rename, Ctrl-C, a closed Terminal, a logout — so the background
-# service and the menu-bar app never lose their program to an interrupted
-# update; once the new one is in place, it removes what was set aside.
+# place (REPLACED), and whether the new one is on its way there (PLACING):
+# a move across disks copies, and a full disk, an I/O error, Ctrl-C, a
+# closed Terminal or a logout can stop it halfway. restore_app — run by
+# the traps and by a failed move — then removes whatever the move left at
+# the app's place (while PLACING is set, nothing else can be there: the
+# installed app was set aside, or there was none) and puts the set-aside
+# app back, so the background service and the menu-bar app never lose
+# their program to an interrupted update. Once the new app is in place,
+# it removes what was set aside.
 REPLACED=""
+PLACING=""
 restore_app() {
-	[ -n "$REPLACED" ] && [ -e "$REPLACED" ] || return 0
-	if [ ! -e "$APP" ] && [ ! -L "$APP" ]; then
-		mv "$REPLACED" "$APP" 2>/dev/null || true
-	else
+	if [ -n "$PLACING" ]; then
+		rm -rf "$APP" 2>/dev/null || true
+		if [ -n "$REPLACED" ] && [ -e "$REPLACED" ]; then
+			mv "$REPLACED" "$APP" 2>/dev/null || true
+		fi
+		PLACING=""
+		return 0
+	fi
+	if [ -n "$REPLACED" ] && [ -e "$REPLACED" ]; then
 		rm -rf "$REPLACED" 2>/dev/null || true
 	fi
 }
@@ -535,10 +546,15 @@ install_app() {
 		}
 	fi
 	mkdir -p "$2"
+	PLACING=1
 	if ! mv "$new" "$APP"; then
 		restore_app
-		fail "Could not install VaultSync for Mac into $2 — the one installed before stays."
+		if [ -n "$REPLACED" ]; then
+			fail "Could not install VaultSync for Mac into $2 — the one installed before stays."
+		fi
+		fail "Could not install VaultSync for Mac into $2 — nothing was installed."
 	fi
+	PLACING=""
 	if [ -n "$REPLACED" ]; then
 		rm -rf "$REPLACED" || warn "The replaced VaultSync for Mac stays at $REPLACED — remove it by hand."
 		REPLACED=""

@@ -201,6 +201,19 @@ cat >"$SANDBOX/bin/mv" <<SHIM
 if [ -n "\${FAIL_MV_UNPACKED:-}" ]; then
 	case "\$1" in */unpacked/*) exit 1 ;; esac
 fi
+# A move of the unpacked app that copies across disks and stops halfway:
+# part of the bundle is at the destination, then the copy fails
+# (FAIL_MV_PARTIAL) or the setup is interrupted (INT_MV_PARTIAL, Ctrl-C).
+case "\$1" in
+	*/unpacked/*)
+		if [ -n "\${FAIL_MV_PARTIAL:-}\${INT_MV_PARTIAL:-}" ]; then
+			mkdir -p "\$2/Contents/MacOS"
+			printf 'half\\n' >"\$2/Contents/MacOS/vaultsync"
+			[ -z "\${INT_MV_PARTIAL:-}" ] || kill -INT \$PPID
+			exit 1
+		fi
+		;;
+esac
 exec "$REAL_MV" "\$@"
 SHIM
 REAL_MKTEMP=$(command -v mktemp)
@@ -788,10 +801,14 @@ pass "on a Mac the setup installs VaultSync for Mac and runs from it"
 # The same build again (another vault paired, say): the installed app is
 # not replaced — processes running from it keep their files — and the
 # setup runs from it.
-before=$(ls -ldi "$installed" "$installed/Contents/MacOS/vaultsync")
+# (Inodes only: an unzipped mtime can lie in the future, and ls then
+# shows the year instead of the time.)
+# shellcheck disable=SC2012 # ls -di is the one inode reading BSD and GNU share
+inodes() { ls -di "$installed" "$installed/Contents/MacOS/vaultsync" | awk '{print $1}' | tr '\n' ' '; }
+before=$(inodes)
 mac_setup >"$SANDBOX/results/run.log" 2>&1 || fail "the same-build setup failed:
 $(cat "$SANDBOX/results/run.log")"
-[ "$before" = "$(ls -ldi "$installed" "$installed/Contents/MacOS/vaultsync")" ] || fail "the same build replaced the installed app"
+[ "$before" = "$(inodes)" ] || fail "the same build replaced the installed app"
 [ "$(cat "$AGENT_SELF")" = "$installed/Contents/MacOS/vaultsync" ] || fail "the same-build setup did not run from the installed app"
 pass "the same build leaves the installed VaultSync for Mac in place"
 
@@ -835,6 +852,24 @@ fi
 [ "$(ls -A "$APPS")" = "VaultSync for Mac.app" ] || fail "a failed move left more than the app: $(ls -A "$APPS")"
 [ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "a failed move left temporary files: $(ls -A "$SANDBOX/tmp")"
 pass "an app set aside for an update is back when the new one cannot take its place"
+
+# A move into place that stops halfway — a copy across disks that fails, or
+# the setup interrupted (Ctrl-C) — leaves part of the new app at the app's
+# place: that part goes, and the app set aside is put back.
+for how in FAIL_MV_PARTIAL INT_MV_PARTIAL; do
+	release_with half-way
+	# (A subshell: an assignment before a function call outlives the call.)
+	if (export "$how=1"; mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+		fail "a move that stopped halfway ($how) must stop the setup"
+	fi
+	grep -q "vaultsync second" "$installed/Contents/MacOS/vaultsync" || fail "$how: the app installed before is not back:
+$(find "$installed" 2>&1 | head -20)"
+	[ -x "$installed/Contents/MacOS/vaultsync-tray" ] || fail "$how: what is in the app's place is not the whole app"
+	[ "$(ls -A "$APPS")" = "VaultSync for Mac.app" ] || fail "$how left more than the app: $(ls -A "$APPS")"
+	[ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "$how left temporary files: $(ls -A "$SANDBOX/tmp")"
+done
+grep -q "the one installed before stays" "$SANDBOX/results/run.log" && fail "an interrupted setup claims a failed move"
+pass "a move into place that stops halfway leaves the app installed before, whole"
 
 # Never replaced: a bundle of that name with another identifier, or a link —
 # even one to a VaultSync for Mac kept elsewhere (another disk, say): the
@@ -893,6 +928,18 @@ $(cat "$SANDBOX/results/run.log")"
 [ -z "$(ls -A "$APPS")" ] || fail "a mismatching app was installed: $(ls -A "$APPS")"
 [ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "a failed Mac download left temporary files: $(ls -A "$SANDBOX/tmp")"
 pass "a download that is not VaultSync for Mac, or does not match, installs nothing"
+
+# A first install whose move into place fails says that nothing was
+# installed — there was nothing before to stay.
+rm -rf "$installed"
+release_with first-try
+if (FAIL_MV_PARTIAL=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+	fail "a failed first install must stop the setup"
+fi
+grep -q "nothing was installed" "$SANDBOX/results/run.log" || fail "a failed first install does not say so:
+$(cat "$SANDBOX/results/run.log")"
+[ -z "$(ls -A "$APPS")" ] || fail "a failed first install left something: $(ls -A "$APPS")"
+pass "a first install that cannot be moved into place leaves nothing and says so"
 
 # An app this account cannot replace (another account installed it): left
 # alone, and this account's goes into ~/Applications.
