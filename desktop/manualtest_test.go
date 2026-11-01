@@ -149,7 +149,7 @@ func TestIssue175_ReadRefusalNamesFilesAndFolders(t *testing.T) {
 	got := refusalText(cannotRead("darwin", home, path, tcc, false))
 	// Inside the background service (the control socket's pairing) it is
 	// "vaultsync" that macOS has to allow, not the terminal app.
-	if bg := refusalText(cannotRead("darwin", home, path, tcc, true)); !strings.Contains(bg, "Allow “vaultsync”") || strings.Contains(bg, "Terminal") {
+	if bg := refusalText(cannotRead("darwin", home, path, tcc, true)); !strings.Contains(bg, "Allow “VaultSync for Mac” (or “vaultsync”)") || strings.Contains(bg, "Terminal") {
 		t.Fatalf("background wording: %s", bg)
 	}
 	if !strings.Contains(got, "Files & Folders") || !strings.Contains(got, "~/Documents/Testvault") {

@@ -63,9 +63,16 @@ func (a *app) status(ctx context.Context) error {
 		return nil
 	}
 	background := a.backgroundEngine()
+	prog, gone := a.svc.programGone()
 	switch {
 	case !a.svc.installed():
 		fmt.Fprintln(w, "Background service: not installed (vaultsync setup installs it; vaultsync run runs the engine in this terminal)")
+	case gone && background:
+		// It runs from a program no longer there: fine until it ends, and
+		// it does not start again — said before that happens.
+		fmt.Fprintln(w, "Background service: running, but it will not start again — "+a.programGoneNote(prog))
+	case gone:
+		fmt.Fprintln(w, "Background service: cannot start — "+a.programGoneNote(prog))
 	case background:
 		fmt.Fprintln(w, "Background service: running")
 	default:
@@ -284,7 +291,7 @@ func describeFolder(f syncthing.FolderConfig, s folderSummary, conns connections
 			// Downloads and other volumes; Full Disk Access would be more than
 			// a vault needs.
 			if background {
-				msg += " — allow access to this folder (on a Mac: allow “vaultsync” in System Settings → Privacy & Security → Files & Folders), then run vaultsync stop and vaultsync start"
+				msg += " — allow access to this folder (on a Mac: allow " + macPrivacyName + " in System Settings → Privacy & Security → Files & Folders), then run vaultsync stop and vaultsync start"
 			} else {
 				msg += " — allow access to this folder (on a Mac: allow the app you run vaultsync in, Terminal for example, in System Settings → Privacy & Security → Files & Folders), then restart vaultsync run"
 			}
@@ -352,8 +359,13 @@ func describeFolder(f syncthing.FolderConfig, s folderSummary, conns connections
 }
 
 // localNetworkSetting is where macOS lists the programs that may use the
-// local network; it lists the agent by its file name, “vaultsync”.
+// local network.
 const localNetworkSetting = "System Settings → Privacy & Security → Local Network"
+
+// macPrivacyName is how macOS names the agent in its privacy settings: by
+// its file name, “vaultsync”, or — the service run from VaultSync for Mac,
+// which its LaunchAgent names as its app — by the app's (decision 053).
+const macPrivacyName = "“VaultSync for Mac” (or “vaultsync”)"
 
 // localNetworkHint is status's remedy when macOS refuses the engine's
 // connections on the local network.
@@ -362,7 +374,7 @@ func localNetworkHint(background bool) string {
 	if !background {
 		restart = "then restart vaultsync run."
 	}
-	return "macOS refused the connection on your local network. Allow “vaultsync” in " + localNetworkSetting + ", " + restart
+	return "macOS refused the connection on your local network. Allow " + macPrivacyName + " in " + localNetworkSetting + ", " + restart
 }
 
 // localNetworkRefused: the engine's last dials to local addresses failed

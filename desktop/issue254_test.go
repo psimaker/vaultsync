@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -148,6 +150,11 @@ func TestIssue254_FindsVaultSyncForMacOnlyWhereItIsInstalled(t *testing.T) {
 	}
 	installed := filepath.Join(userApps, appBundleName)
 	notFound("another program of the bundle", macAppEnv(home, systemApps, filepath.Join(installed, "Contents", "MacOS", "vaultsync-tray")))
+	// A program named vaultsync elsewhere in the bundle is not its agent.
+	for _, other := range []string{filepath.Join(installed, "Contents", "Resources", "vaultsync"), filepath.Join(installed, "Other", "MacOS", "vaultsync")} {
+		writeFile(t, other, "#!/bin/sh\n")
+		notFound("a vaultsync at "+other, macAppEnv(home, systemApps, other))
+	}
 	linux := macAppEnv(home, systemApps, agentIn(installed))
 	linux.goos = "linux"
 	notFound("not a Mac", linux)
@@ -617,6 +624,195 @@ func TestIssue254_RemoveDataStopsAtAHandOpenedAppBeforeTheServiceGoes(t *testing
 	}
 	if _, err := os.Stat(svc.trayPlistPath()); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the start at login stayed: %v", err)
+	}
+}
+
+// macSetupFixture is a Mac where VaultSync's engine is prepared (its binary
+// recorded, a config answered by a fake engine) and VaultSync for Mac is in
+// ~/Applications; the service manager is a fake.
+func macSetupFixture(t *testing.T) (*app, *fakeRunner, string) {
+	t.Helper()
+	eng := newFakeEngine(t)
+	tmp, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(tmp, "home")
+	lay, err := layoutFor("darwin", home, envOf(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, lay.Syncthing, "engine")
+	sum, err := fileSHA256(lay.Syncthing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(lay.Home, "config.xml"), "<configuration><gui><address>"+eng.addr+"</address><apikey>engine-key</apikey></gui></configuration>\n")
+	_, port, _ := strings.Cut(eng.addr, ":")
+	n, _ := strconv.Atoi(port)
+	st := agentState{GUIPort: n, Env: map[string]string{}}
+	st.Syncthing.Version, st.Syncthing.BinarySHA256 = syncthingVersion, sum
+	if err := saveState(lay.State, st); err != nil {
+		t.Fatal(err)
+	}
+	bundle := fakeMacApp(t, filepath.Join(home, "Applications"), appBundleName, shippedInfoPlist(t))
+	run := &fakeRunner{}
+	svc := service{goos: "darwin", home: home, uid: 501, getenv: envOf(nil), lay: lay, run: run, pause: func(time.Duration) {}}
+	a := &app{goos: "darwin", home: home, getenv: envOf(nil), lay: lay, out: &bytes.Buffer{}, svc: svc,
+		appEnv: macAppEnv(home, filepath.Join(tmp, "no-system-applications"), filepath.Join(bundle, "Contents", "MacOS", "vaultsync"))}
+	return a, run, bundle
+}
+
+// setup run from VaultSync for Mac installed in ~/Applications: the service
+// runs the app's agent, the menu-bar app opens at login, the command link
+// points into the app. Run again from VaultSync's copy after the app went
+// to the Trash: the service moves back to the copy, the start at login
+// whose app is gone is removed, the link follows.
+func TestIssue254_SetupFromTheAppRunsTheServiceFromIt(t *testing.T) {
+	a, run, app := macSetupFixture(t)
+	t.Setenv("PATH", "/usr/bin:/bin")
+	orig := ttyPath
+	ttyPath = filepath.Join(t.TempDir(), "no-tty")
+	defer func() { ttyPath = orig }()
+	setup := func() string {
+		t.Helper()
+		out := &bytes.Buffer{}
+		a.out = out
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		// No Hub answers at this address: setup stops at the pairing, after
+		// the service and the command are in place.
+		err := a.setup(ctx, []string{"--code", "TULIP-ANCHOR-42", "--hub", "127.0.0.1:1"})
+		if !strings.Contains(refusalText(err)+fmt.Sprint(err), "did not answer") {
+			t.Fatalf("setup: %v\n%s", err, out)
+		}
+		return out.String()
+	}
+	program := func(path string) string {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return ""
+		}
+		prog, _ := plistFirstString(data, "ProgramArguments")
+		return prog
+	}
+	link := commandLink(a.home)
+	agent := filepath.Join(app, "Contents", "MacOS", "vaultsync")
+
+	out := setup()
+	unit := mustUnitPath(t, a.svc)
+	if program(unit) != agent || program(a.svc.trayPlistPath()) != filepath.Join(app, "Contents", "MacOS", "vaultsync-tray") {
+		t.Fatalf("from the app: service %q, menu-bar app %q", program(unit), program(a.svc.trayPlistPath()))
+	}
+	if target, _ := os.Readlink(link); target != agent {
+		t.Fatalf("the command link: %q", target)
+	}
+	if !run.loaded || !run.trayLoaded || !strings.Contains(out, "✓ Background service running") || !strings.Contains(out, "✓ Menu-bar icon set up") {
+		t.Fatalf("jobs loaded: service %v, menu-bar app %v\n%s", run.loaded, run.trayLoaded, out)
+	}
+	if _, err := os.Stat(a.lay.Agent); err != nil {
+		t.Fatalf("the copy is not kept current: %v", err)
+	}
+
+	// The app goes to the Trash; setup from VaultSync's own copy.
+	if err := os.RemoveAll(app); err != nil {
+		t.Fatal(err)
+	}
+	a.appEnv = macAppEnv(a.home, filepath.Join(t.TempDir(), "none"), a.lay.Agent)
+	out = setup()
+	if program(unit) != a.lay.Agent {
+		t.Fatalf("from the copy: service %q", program(unit))
+	}
+	if _, err := os.Stat(a.svc.trayPlistPath()); !errors.Is(err, os.ErrNotExist) || run.trayLoaded || !strings.Contains(out, "no longer opens at login") {
+		t.Fatalf("the start at login of a trashed app stayed: %v loaded=%v\n%s", err, run.trayLoaded, out)
+	}
+	if target, _ := os.Readlink(link); target != a.lay.Agent {
+		t.Fatalf("the command link from the copy: %q", target)
+	}
+}
+
+// A service whose program — VaultSync for Mac — is gone: status says so
+// while it still runs and once it cannot start, with the way back and the
+// way out; start refuses with the same words instead of loading a job
+// launchd cannot start.
+func TestIssue254_StatusAndStartSayWhenTheAppIsGone(t *testing.T) {
+	run := &fakeRunner{}
+	a := installedApp(t, "darwin", run)
+	gone := filepath.Join(a.home, "Applications", appBundleName, "Contents", "MacOS", "vaultsync")
+	data, err := a.svc.unitFile(gone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, mustUnitPath(t, a.svc), string(data))
+	if prog, ok := a.svc.programGone(); !ok || prog != gone {
+		t.Fatalf("programGone: %q %v", prog, ok)
+	}
+	way := "it runs ~/Applications/VaultSync for Mac.app/Contents/MacOS/vaultsync, which is no longer there"
+	out := statusText(t, a)
+	if !strings.Contains(out, "Background service: cannot start — "+way) || !strings.Contains(out, shellQuote(a.lay.Agent)+" uninstall") || !strings.Contains(out, shellQuote(a.lay.Agent)+" setup") {
+		t.Fatalf("status with the app gone:\n%s", out)
+	}
+	run.loaded = true
+	if out := statusText(t, a); !strings.Contains(out, "Background service: running, but it will not start again — "+way) {
+		t.Fatalf("status with the app gone while the service still runs:\n%s", out)
+	}
+	run.loaded = false
+	run.calls = nil
+	if err := a.startService(); !strings.Contains(refusalText(err), way) {
+		t.Fatalf("start: %v", err)
+	}
+	for _, c := range run.calls {
+		if strings.Contains(c, "bootstrap") || strings.Contains(c, "enable") {
+			t.Fatalf("start loaded a job that cannot start: %v", run.calls)
+		}
+	}
+	// The app back in its place: nothing to say.
+	writeFile(t, gone, "#!/bin/sh\n")
+	if _, ok := a.svc.programGone(); ok {
+		t.Fatal("the program is there again")
+	}
+	if out := statusText(t, a); strings.Contains(out, "no longer there") {
+		t.Fatalf("status with the app back:\n%s", out)
+	}
+}
+
+// uninstall without --remove-data keeps the vaultsync command — so the
+// link setup pointed into the app goes back to VaultSync's copy, which
+// stays, before the app may go to the Trash.
+func TestIssue254_UninstallPointsTheCommandBackAtTheCopy(t *testing.T) {
+	run := &fakeRunner{}
+	a := installedApp(t, "darwin", run)
+	writeFile(t, a.lay.Agent, "agent")
+	if err := os.Chmod(a.lay.Agent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := commandLink(a.home)
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(a.home, "Applications", appBundleName, "Contents", "MacOS", "vaultsync"), link); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.uninstall(context.Background(), []string{"--yes"}); err != nil {
+		t.Fatalf("uninstall: %v\n%s", err, a.out)
+	}
+	if target, err := os.Readlink(link); err != nil || target != a.lay.Agent {
+		t.Fatalf("the command link: %q %v", target, err)
+	}
+	// Someone else's link stays as it is.
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/usr/local/bin/vaultsync", link); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, mustUnitPath(t, a.svc), "installed\n")
+	if err := a.uninstall(context.Background(), []string{"--yes"}); err != nil {
+		t.Fatal(err)
+	}
+	if target, _ := os.Readlink(link); target != "/usr/local/bin/vaultsync" {
+		t.Fatalf("someone else's link was changed: %q", target)
 	}
 }
 

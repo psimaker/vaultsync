@@ -330,6 +330,9 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 		t.say("✓ Background service removed. VaultSync has stopped syncing on this computer. Your Hub keeps its copy and may still list this computer.")
 	}
 	if !*removeData {
+		// The command link setup pointed into VaultSync for Mac goes back to
+		// the copy that stays here: the app may go to the Trash now.
+		a.commandBackToCopy()
 		t.say("The vaultsync command, its sync engine, settings and pairing identity stay in %s, so running the setup again continues where you left off.", tildePath(a.home, a.lay.Base))
 		return nil
 	}
@@ -385,6 +388,21 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 	}
 	t.say("✓ VaultSync's own files are removed. Your vault files were not touched.")
 	return nil
+}
+
+// commandBackToCopy points the command link setup made into VaultSync for
+// Mac back at VaultSync's own copy, when that copy is there; a link to
+// anything else is left as it is.
+func (a *app) commandBackToCopy() {
+	link := commandLink(a.home)
+	target, err := os.Readlink(link)
+	if err != nil || target == a.lay.Agent || !a.ownCommandTarget(target) {
+		return
+	}
+	if fi, err := os.Stat(a.lay.Agent); err != nil || !fi.Mode().IsRegular() {
+		return
+	}
+	_ = replaceLink(link, a.lay.Agent)
 }
 
 // removeCommandLink removes the command link setup made — to VaultSync's

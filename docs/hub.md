@@ -184,11 +184,13 @@ vaultsync uninstall    # remove the background service; vaults stay
 ```
 
 `vaultsync uninstall --remove-data` refuses, before it changes anything, while
-the menu-bar app runs or a `vaultsync run`, `pair` or `setup` is in progress —
-quit or stop them first. On a Mac, run it from your own session: it must be
-able to ask the service manager. `vaultsync uninstall` also stops the
-menu-bar icon from opening at login; it leaves the app VaultSync for Mac
-itself alone — move it to the Trash afterwards. Afterwards it lists what it removed; a folder
+a `vaultsync run`, `pair` or `setup` is in progress or a menu-bar app you
+opened yourself runs — stop or quit them first; the icon VaultSync opened at
+login it quits itself. On a Mac, run it from your own session: it must be
+able to ask the service manager. `vaultsync uninstall` also quits the
+menu-bar icon VaultSync opened at login and stops it from opening at login;
+it leaves the app VaultSync for Mac itself alone — move it to the Trash
+afterwards. Afterwards it lists what it removed; a folder
 it could not remove is an error (exit status 1, for scripts); a folder that
 holds files VaultSync did not make, or in which VaultSync started again
 meanwhile, stays and is named; a folder that something other than
@@ -288,22 +290,26 @@ Obsidian keeps that outside the vault.
 
 **On a Mac.** The setup link puts VaultSync for Mac into Applications, and
 the background service runs from it: keep the app there while VaultSync is
-set up — moved or deleted, the service and the menu-bar icon no longer start
-(to remove VaultSync, run `vaultsync uninstall` first, then move the app to
-the Trash; trashed it first? `~/Library/Application\ Support/VaultSync/bin/vaultsync
-uninstall` still removes the service). Set up without the app — the bare
+set up — moved or put in the Trash, the service and the menu-bar icon no
+longer start, and `vaultsync status` says so with the way back (put the app
+back, or run the setup link again). To remove VaultSync, run `vaultsync
+uninstall` first — the `vaultsync` command then runs VaultSync's own copy
+again — and move the app to the Trash afterwards. Trashed it first? Run
+`~/Library/Application\ Support/VaultSync/bin/vaultsync uninstall` (or
+`… setup` to go on without the app). Set up without the app — the bare
 `vaultsync` download — the service runs VaultSync's own copy instead, as
-before. When the background service starts, macOS asks whether “vaultsync”
-may find devices on your local network, and notes that VaultSync can run in
-the background — under Login Items (Allow in the Background) as “VaultSync
-for Mac”, or, without the app, under the name on VaultSync's signing
-certificate, its developer “Umut Erdem” (“vaultsync” for `desktop-v0.1.0`).
-Keep that item on: switched off, the background service and the menu-bar
-icon no longer start and your vaults stop syncing. For a vault in Documents, Desktop or Downloads it
+before. When the background service starts, macOS asks whether VaultSync
+may find devices on your local network — naming “vaultsync” or “VaultSync
+for Mac” — and notes that VaultSync can run in the background — under Login
+Items (Allow in the Background) as “VaultSync for Mac”, or, without the app,
+under the name on VaultSync's signing certificate, its developer “Umut Erdem”
+(“vaultsync” for `desktop-v0.1.0`). Keep that item on: switched off, the
+background service and the menu-bar icon no longer start and your vaults
+stop syncing. For a vault in Documents, Desktop or Downloads it
 also asks twice for that folder: once for Terminal (where `setup` reads it),
-once for “vaultsync” (the background service) — and once more for
-“VaultSync for Mac” the first time you open such a vault from the menu-bar
-icon.
+once for the background service (“vaultsync” or “VaultSync for Mac”) — and
+once more for “VaultSync for Mac” the first time you open such a vault from
+the menu-bar icon.
 Allow all of them. Without
 local network access, `vaultsync setup` and `pair` cannot reach your Hub —
 the decision belongs to the program, also when it runs in Terminal; without

@@ -398,6 +398,15 @@ func (a *app) setup(ctx context.Context, args []string) error {
 	return err
 }
 
+// programGoneNote says what to do when the service's program is gone —
+// VaultSync for Mac moved or in the Trash: put it back or set up again;
+// go on without the app, or remove VaultSync, with the agent's own copy,
+// which setup keeps for that (decision 053).
+func (a *app) programGoneNote(prog string) string {
+	copyCmd := shellQuote(a.lay.Agent)
+	return fmt.Sprintf("it runs %s, which is no longer there (VaultSync for Mac was moved or put in the Trash). Put VaultSync for Mac back in Applications, or run the setup link again; to go on without the app, run %s setup; to remove VaultSync, run %s uninstall", tildePath(a.home, prog), copyCmd, copyCmd)
+}
+
 // dropStaleTray removes the menu-bar app's start at login when the program
 // it names is gone — the app moved or put in the Trash, and setup run from
 // VaultSync's own copy — rather than leave launchd failing on it at every
@@ -984,6 +993,10 @@ func (a *app) stopService() error {
 }
 
 func (a *app) startService() error {
+	// A job whose program is gone cannot start: said, not loaded in vain.
+	if prog, gone := a.svc.programGone(); gone {
+		return refuse("The background service cannot start: %s.", a.programGoneNote(prog))
+	}
 	if err := a.svc.start(); err != nil {
 		return err
 	}

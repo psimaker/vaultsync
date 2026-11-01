@@ -327,6 +327,32 @@ func (s service) launchdDisabled(label string) bool {
 	return false
 }
 
+// programGone reads the program the background service's LaunchAgent names
+// and says whether it is VaultSync for Mac's agent and gone: the app the
+// service runs from (decision 053) moved out of Applications or put in the
+// Trash — launchd then cannot start the service. macOS only; a file that
+// cannot be read, names nothing, or names VaultSync's own copy is not this
+// case.
+func (s service) programGone() (prog string, gone bool) {
+	if s.goos != "darwin" {
+		return "", false
+	}
+	path, err := s.unitPath()
+	if err != nil {
+		return "", false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	prog, ok := plistFirstString(data, "ProgramArguments")
+	if !ok || !strings.Contains(prog, string(filepath.Separator)+appBundleName+string(filepath.Separator)) {
+		return "", false
+	}
+	_, err = os.Lstat(prog)
+	return prog, errors.Is(err, fs.ErrNotExist)
+}
+
 // trayProgram is the program the menu-bar app's start at login names, read
 // back from the file this agent wrote; "" when there is no such file or it
 // names none.

@@ -481,7 +481,7 @@ func handshakeText(err error, s *pairSession) string {
 		// background service runs, and it holds for the same program in
 		// Terminal too.
 		if s.env.goos == "darwin" && errors.Is(err, syscall.EHOSTUNREACH) {
-			return fmt.Sprintf("VaultSync could not reach your Hub at %s (“no route to host”). On a Mac this usually means vaultsync may not use your local network: allow “vaultsync” in %s, then try again.", hostOf(s.hub.Address), localNetworkSetting)
+			return fmt.Sprintf("VaultSync could not reach your Hub at %s (“no route to host”). On a Mac this usually means vaultsync may not use your local network: allow %s in %s, then try again.", hostOf(s.hub.Address), macPrivacyName, localNetworkSetting)
 		}
 		if s.opts.hub != "" {
 			return fmt.Sprintf("Your Hub did not answer at %s. Check that it is running and on the same network as this computer.", s.hub.Address)
@@ -498,7 +498,7 @@ func macLocalNetworkNote(goos string) string {
 	if goos != "darwin" {
 		return ""
 	}
-	return " On a Mac, also check that “vaultsync” may use your local network: " + localNetworkSetting + "."
+	return " On a Mac, also check that " + macPrivacyName + " may use your local network: " + localNetworkSetting + "."
 }
 
 // cannotRead is the refusal for a folder VaultSync could not read. On a Mac,
@@ -508,7 +508,7 @@ func macLocalNetworkNote(goos string) string {
 func cannotRead(goos, home, path string, err error, background bool) error {
 	if goos == "darwin" && errors.Is(err, syscall.EPERM) {
 		if background {
-			return refuse("macOS did not let VaultSync read %s. Allow “vaultsync” to access this folder in System Settings → Privacy & Security → Files & Folders, then try again.", tildePath(home, path))
+			return refuse("macOS did not let VaultSync read %s. Allow %s to access this folder in System Settings → Privacy & Security → Files & Folders, then try again.", tildePath(home, path), macPrivacyName)
 		}
 		return refuse("macOS did not let VaultSync read %s. Allow the app you run vaultsync in (Terminal, for example) to access this folder in System Settings → Privacy & Security → Files & Folders, then try again.", tildePath(home, path))
 	}
