@@ -11,8 +11,10 @@ Design records: [046](../docs/decisions/046-desktop-agent-pinned-syncthing-child
 and [050](../docs/decisions/050-tray-asks-through-the-desktops-dialogs.md)
 (the tray), [049](../docs/decisions/049-desktop-control-socket.md) (the
 socket between them), [051](../docs/decisions/051-locks-in-vaultsyncs-folder.md)
-(the locks) and [052](../docs/decisions/052-macos-signing-and-app-bundle.md)
-(signing, notarization and the app bundle for macOS).
+(the locks), [052](../docs/decisions/052-macos-signing-and-app-bundle.md)
+(signing, notarization and the app bundle for macOS) and
+[053](../docs/decisions/053-service-runs-from-vaultsync-for-mac.md) (the
+service and the menu-bar app's start at login from VaultSync for Mac).
 
 ## What is in here
 
@@ -26,7 +28,8 @@ socket between them), [051](../docs/decisions/051-locks-in-vaultsyncs-folder.md)
 | `obsidian.go` | Obsidian's registry (`obsidian.json`: macOS, Linux incl. Flatpak/Snap, Windows) and the fallback scan |
 | `cloud.go` | the cloud-folder block (iCloud Drive, OneDrive, Dropbox, Google Drive, Nextcloud) |
 | `overlap.go` | overlap on disk (symlinks, case, file identity) and the read-only look at the user's own Syncthing |
-| `service.go` | LaunchAgent / systemd user unit, install, stop/start, uninstall |
+| `service.go` | LaunchAgent / systemd user unit, install, stop/start, uninstall; on a Mac the menu-bar app's start at login (`eu.vaultsync.tray`) |
+| `appbundle.go` | whether this program runs from VaultSync for Mac installed in Applications — then the service runs from the app (decision 053) |
 | `status.go` | `status`: service, engine, Hub connection, each vault's state on both sides — as text and as the report the socket serves |
 | `control.go` | the control socket (`agent.sock`, decision 049): the running agent answers status, pause, resume and pair for the terminal and the menu-bar app |
 | `attempts.go` | the pairing journal (`pairing.json`): recorded before the Hub is asked |
@@ -69,7 +72,8 @@ release (not marked Latest — that stays the iOS app's release) with
 - `vaultsync_<os>_<arch>` — the agent, the asset `setup.sh` downloads,
 - `VaultSync_darwin_<arch>.zip` — `VaultSync for Mac.app`: the menu-bar app
   with the agent inside (not `VaultSync.app`, the iOS app's name on Apple
-  silicon Macs),
+  silicon Macs); `setup.sh` installs it on a Mac, and the service and the
+  menu-bar app run from it (decision 053),
 - `vaultsync-tray_linux_<arch>` — the tray for Linux,
 - one `SHA256SUMS` over all of them.
 
