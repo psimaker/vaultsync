@@ -29,7 +29,7 @@ service and the menu-bar app's start at login from VaultSync for Mac).
 | `cloud.go` | the cloud-folder block (iCloud Drive, OneDrive, Dropbox, Google Drive, Nextcloud) |
 | `overlap.go` | overlap on disk (symlinks, case, file identity) and the read-only look at the user's own Syncthing |
 | `service.go` | LaunchAgent / systemd user unit, install, stop/start, uninstall; on a Mac the menu-bar app's start at login (`eu.vaultsync.tray`) |
-| `appbundle.go` | whether this program runs from VaultSync for Mac installed in Applications — then the service runs from the app (decision 053) |
+| `appbundle.go`, `appbundle_*.go` | whether this program runs from VaultSync for Mac installed in Applications, this account's — then the service runs from the app and ends when the app goes to the Trash (decision 053) |
 | `status.go` | `status`: service, engine, Hub connection, each vault's state on both sides — as text and as the report the socket serves |
 | `control.go` | the control socket (`agent.sock`, decision 049): the running agent answers status, pause, resume and pair for the terminal and the menu-bar app |
 | `attempts.go` | the pairing journal (`pairing.json`): recorded before the Hub is asked |

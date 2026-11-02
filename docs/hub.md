@@ -294,10 +294,11 @@ Obsidian keeps that outside the vault.
 
 **On a Mac.** The setup link puts VaultSync for Mac into Applications, and
 the background service runs from it: keep the app there while VaultSync is
-set up — moved or put in the Trash, the service and the menu-bar icon no
-longer start, and the `vaultsync` command goes with the app; VaultSync's own
-copy then says what happened and the way back (put the app back, or run the
-setup link again): `~/Library/Application\ Support/VaultSync/bin/vaultsync
+set up — moved or put in the Trash, the background service stops syncing
+within seconds, neither it nor the menu-bar icon starts again (an icon still
+open shows that nothing syncs), and the `vaultsync` command goes with the
+app; VaultSync's own copy then says what happened and the way back (put the
+app back, or run the setup link again): `~/Library/Application\ Support/VaultSync/bin/vaultsync
 status` (`… uninstall` removes VaultSync, `… setup` goes on without the
 app). To remove VaultSync, run `vaultsync uninstall` first — the `vaultsync`
 command then runs VaultSync's own copy — and move the app to the Trash
