@@ -296,22 +296,26 @@ Obsidian keeps that outside the vault.
 the background service runs from it: keep the app there while VaultSync is
 set up — moved or put in the Trash, the background service stops syncing
 within seconds, neither it nor the menu-bar icon starts again (an icon still
-open shows that nothing syncs), and the `vaultsync` command goes with the
-app; VaultSync's own copy then says what happened and the way back (put the
-app back, or run the setup link again): `~/Library/Application\ Support/VaultSync/bin/vaultsync
+open shows that nothing syncs) until the app is back where it was, and the
+`vaultsync` command goes with the app; VaultSync's own copy then says what
+happened and the way back (put the app back, or run the setup link again): `~/Library/Application\ Support/VaultSync/bin/vaultsync
 status` (`… uninstall` removes VaultSync, `… setup` goes on without the
 app). To remove VaultSync, run `vaultsync uninstall` first — the `vaultsync`
 command then runs VaultSync's own copy — and move the app to the Trash
 afterwards; a `vaultsync setup` before that, with the app still there, puts
 the service back into the app. Set up without the app — the bare
 `vaultsync` download — the service runs VaultSync's own copy instead, as
-before. When the background service starts, macOS asks whether VaultSync
+before; so it does when setup runs from a VaultSync for Mac outside
+Applications, or one your account may not change (locked, or another
+account's) — setup then says so, and that app's trip to the Trash does not
+stop the service. When the background service starts, macOS asks whether VaultSync
 may find devices on your local network, and notes that VaultSync can run in
 the background. The names macOS shows depend on its version and on how
 VaultSync was set up: “VaultSync for Mac” or “vaultsync” in the prompts and
 under Privacy & Security, and under Login Items (Allow in the Background)
-“VaultSync for Mac” — or, without the app, the name on VaultSync's signing
-certificate, its developer “Umut Erdem” (“vaultsync” for `desktop-v0.1.0`).
+“VaultSync for Mac” — or, for a service on VaultSync's own copy, the name on
+VaultSync's signing certificate, its developer “Umut Erdem” (“vaultsync” for
+`desktop-v0.1.0`).
 Look for the name macOS shows. Keep that item on: switched off, the
 background service and the menu-bar icon no longer start and your vaults
 stop syncing. To keep only the menu-bar icon from opening at login, run
