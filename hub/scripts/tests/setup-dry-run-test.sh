@@ -201,6 +201,9 @@ cat >"$SANDBOX/bin/mv" <<SHIM
 if [ -n "\${FAIL_MV_UNPACKED:-}" ]; then
 	case "\$1" in */unpacked/*) exit 1 ;; esac
 fi
+# The signals below reach the setup while it still waits for this mv (the
+# sleep): a shell runs the trap once the command it waits for is done, and
+# without the wait it may see the exit status first.
 # INT_AFTER_ASIDE: Ctrl-C right after the installed app was set aside, before
 # the new one moves. FAIL_MV_BACK: putting the set-aside app back fails.
 # HUP_AFTER_BACK: a second signal (Terminal closed) right after the
@@ -210,6 +213,7 @@ case "\$2" in
 		if [ -n "\${INT_AFTER_ASIDE:-}" ]; then
 			"$REAL_MV" "\$@" || exit 1
 			kill -INT \$PPID
+			sleep 1
 			exit 0
 		fi
 		;;
@@ -220,6 +224,7 @@ case "\$1" in
 		if [ -n "\${HUP_AFTER_BACK:-}" ]; then
 			"$REAL_MV" "\$@" || exit 1
 			kill -HUP \$PPID
+			sleep 1
 			exit 0
 		fi
 		;;
@@ -228,14 +233,25 @@ esac
 # part of the bundle is at the destination, then the copy fails
 # (FAIL_MV_PARTIAL) or the setup is interrupted (INT_MV_PARTIAL, Ctrl-C).
 # STUCK_PARTIAL: that part cannot be removed (a folder in it this account
-# may not change).
+# may not change). APPEAR_AT_APP: something else takes the app's place just
+# before the move (another setup at the same time). MV_PLACE_LOG: where the
+# move into place took the app from is written there.
+case "\$1" in
+	*/unpacked/*)
+		[ -z "\${MV_PLACE_LOG:-}" ] || printf '%s\n' "\$1" >>"\$MV_PLACE_LOG"
+		if [ -n "\${APPEAR_AT_APP:-}" ]; then
+			mkdir -p "\$2"
+			printf 'someone else\\n' >"\$2/marker"
+		fi
+		;;
+esac
 case "\$1" in
 	*/unpacked/*)
 		if [ -n "\${FAIL_MV_PARTIAL:-}\${INT_MV_PARTIAL:-}" ]; then
 			mkdir -p "\$2/Contents/MacOS"
 			printf 'half\\n' >"\$2/Contents/MacOS/vaultsync"
 			[ -z "\${STUCK_PARTIAL:-}" ] || chmod 555 "\$2/Contents/MacOS"
-			[ -z "\${INT_MV_PARTIAL:-}" ] || kill -INT \$PPID
+			[ -z "\${INT_MV_PARTIAL:-}" ] || { kill -INT \$PPID; sleep 1; }
 			exit 1
 		fi
 		;;
@@ -1130,6 +1146,82 @@ $(cat "$SANDBOX/results/run.log")"
 	pass "without write access to Applications the app goes into ~/Applications, and is updated there"
 else
 	pass "the ~/Applications case skipped (root writes anywhere)"
+fi
+
+# The new app is unpacked beside its place, so putting it there is a rename
+# within one folder — never a copy across disks that could stop halfway —
+# and nothing of the unpacking stays. A dry run with the app installed says
+# that the same build stays as it is.
+release_with sixth
+rm -f "$SANDBOX/results/mv-place"
+(MV_PLACE_LOG="$SANDBOX/results/mv-place" mac_setup) >"$SANDBOX/results/run.log" 2>&1 || fail "the update failed:
+$(cat "$SANDBOX/results/run.log")"
+case "$(cat "$SANDBOX/results/mv-place")" in
+	"$APPS/.VaultSync for Mac.app.new."*/unpacked/*) ;;
+	*) fail "the new app was moved into place from elsewhere: $(cat "$SANDBOX/results/mv-place")" ;;
+esac
+[ "$(ls -A "$APPS")" = "VaultSync for Mac.app" ] || fail "the unpacking left something beside the app: $(ls -A "$APPS")"
+out=$(mac_setup --dry-run 2>&1) || fail "the dry run beside the installed app failed:
+$out"
+printf '%s\n' "$out" | grep -q "would replace VaultSync for Mac in $APPS, unless it is already this build" ||
+	fail "the dry run does not say that the same build stays:
+$out"
+pass "the new app is unpacked beside its place and moved there in one rename"
+
+# Something else takes the app's place in the instant before the move (another
+# setup at the same time): the new app is not left inside it, what stands
+# there is not touched, and the app set aside is kept and named.
+release_with seventh
+if (APPEAR_AT_APP=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+	fail "a setup whose place was taken meanwhile must stop"
+fi
+grep -q "Something else was put at" "$SANDBOX/results/run.log" || fail "the taken place is not said:
+$(cat "$SANDBOX/results/run.log")"
+[ "$(ls -A "$installed")" = marker ] || fail "what took the place was changed: $(ls -A "$installed")"
+kept=$(find "$APPS" -maxdepth 1 -name '.VaultSync for Mac.app.replaced.*')
+{ [ -n "$kept" ] && grep -q "vaultsync sixth" "$kept/VaultSync for Mac.app/Contents/MacOS/vaultsync"; } ||
+	fail "the app set aside was not kept: $(ls -A "$APPS")"
+grep -q "installed before is at $kept/VaultSync for Mac.app" "$SANDBOX/results/run.log" || fail "the kept app is not named:
+$(cat "$SANDBOX/results/run.log")"
+[ -z "$(find "$APPS" -maxdepth 1 -name '.VaultSync for Mac.app.new.*')" ] || fail "the new app was left unpacked: $(ls -A "$APPS")"
+rm -rf "$installed"
+mv "$kept/VaultSync for Mac.app" "$installed" && rmdir "$kept"
+pass "a place taken meanwhile is left as it is, and the app set aside is kept"
+
+# A TMPDIR this account cannot use (another account's, after su without -):
+# the setup takes /tmp instead of stopping.
+rm -f "$AGENT_SELF"
+(TMPDIR="$SANDBOX/no-such-folder" FAKE_OS=Darwin FAKE_ARCH=arm64 FAKE_RELEASE="$MAC_RELEASE" VAULTSYNC_APPLICATIONS_DIR="$APPS" \
+	sh "$SETUP_SH" --device --code tulip-anchor-07) >"$SANDBOX/results/run.log" 2>&1 || fail "a setup with an unusable TMPDIR failed:
+$(cat "$SANDBOX/results/run.log")"
+[ "$(cat "$AGENT_SELF")" = "$installed/Contents/MacOS/vaultsync" ] || fail "the setup with an unusable TMPDIR did not run the app"
+pass "an unusable TMPDIR does not stop the setup"
+
+# VaultSync for Mac in ~/Applications that this account cannot replace
+# (locked), with Applications not writable: the setup stops and says why,
+# instead of running an app the agent passes over.
+if [ "$(id -u)" != 0 ]; then
+	release_with eighth
+	mkdir -p "$HOME/Applications"
+	mv "$installed" "$HOME/Applications/VaultSync for Mac.app"
+	locked="$HOME/Applications/VaultSync for Mac.app"
+	chmod 555 "$locked/Contents/MacOS" "$locked/Contents" "$locked"
+	chmod 555 "$APPS"
+	before=$(ls -lR "$HOME/Applications")
+	if mac_setup >"$SANDBOX/results/run.log" 2>&1; then
+		chmod 755 "$APPS"
+		chmod -R u+w "$HOME/Applications"
+		fail "a setup beside a locked app must stop"
+	fi
+	chmod 755 "$APPS"
+	[ "$before" = "$(ls -lR "$HOME/Applications")" ] || { chmod -R u+w "$HOME/Applications"; fail "the locked app was touched"; }
+	chmod -R u+w "$HOME/Applications"
+	grep -q "cannot be replaced by this account" "$SANDBOX/results/run.log" || fail "the refusal does not say why:
+$(cat "$SANDBOX/results/run.log")"
+	rm -rf "$HOME/Applications"
+	pass "a locked app in ~/Applications stops the setup with the reason"
+else
+	pass "the locked-app case skipped (root writes anywhere)"
 fi
 
 # A release without the app (desktop-v0.1.0): the bare agent, as before.
