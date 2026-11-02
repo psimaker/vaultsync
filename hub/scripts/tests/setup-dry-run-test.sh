@@ -203,6 +203,8 @@ if [ -n "\${FAIL_MV_UNPACKED:-}" ]; then
 fi
 # INT_AFTER_ASIDE: Ctrl-C right after the installed app was set aside, before
 # the new one moves. FAIL_MV_BACK: putting the set-aside app back fails.
+# HUP_AFTER_BACK: a second signal (Terminal closed) right after the
+# set-aside app went back, while the first one's restore is still running.
 case "\$2" in
 	*/.VaultSync\ for\ Mac.app.replaced.*)
 		if [ -n "\${INT_AFTER_ASIDE:-}" ]; then
@@ -213,16 +215,26 @@ case "\$2" in
 		;;
 esac
 case "\$1" in
-	*/.VaultSync\ for\ Mac.app.replaced.*) [ -z "\${FAIL_MV_BACK:-}" ] || exit 1 ;;
+	*/.VaultSync\ for\ Mac.app.replaced.*)
+		[ -z "\${FAIL_MV_BACK:-}" ] || exit 1
+		if [ -n "\${HUP_AFTER_BACK:-}" ]; then
+			"$REAL_MV" "\$@" || exit 1
+			kill -HUP \$PPID
+			exit 0
+		fi
+		;;
 esac
 # A move of the unpacked app that copies across disks and stops halfway:
 # part of the bundle is at the destination, then the copy fails
 # (FAIL_MV_PARTIAL) or the setup is interrupted (INT_MV_PARTIAL, Ctrl-C).
+# STUCK_PARTIAL: that part cannot be removed (a folder in it this account
+# may not change).
 case "\$1" in
 	*/unpacked/*)
 		if [ -n "\${FAIL_MV_PARTIAL:-}\${INT_MV_PARTIAL:-}" ]; then
 			mkdir -p "\$2/Contents/MacOS"
 			printf 'half\\n' >"\$2/Contents/MacOS/vaultsync"
+			[ -z "\${STUCK_PARTIAL:-}" ] || chmod 555 "\$2/Contents/MacOS"
 			[ -z "\${INT_MV_PARTIAL:-}" ] || kill -INT \$PPID
 			exit 1
 		fi
@@ -250,7 +262,8 @@ chmod +x "$SANDBOX/bin/sed" "$SANDBOX/bin/mv" "$SANDBOX/bin/mktemp" "$SANDBOX/bi
 # a host without it (the Linux CI run) a stand-in answers the one question
 # setup.sh asks — `plutil -extract CFBundleIdentifier raw -expect string -o
 # - FILE` — from an XML plist, top level only, a string value only.
-if ! command -v plutil >/dev/null 2>&1; then
+REAL_PLUTIL=$(command -v plutil || true)
+if [ -z "$REAL_PLUTIL" ]; then
 	cat >"$SANDBOX/bin/plutil" <<'SHIM'
 #!/usr/bin/env sh
 [ "$1 $2 $3 $4 $5 $6 $7" = "-extract CFBundleIdentifier raw -expect string -o -" ] || exit 2
@@ -928,19 +941,60 @@ $(find "$APPS" 2>&1 | head -20)"
 [ "$(ls -A "$APPS")" = "VaultSync for Mac.app" ] || fail "an interrupt after the set-aside left more than the app: $(ls -A "$APPS")"
 pass "an interrupt right after the set-aside puts the installed app back"
 
+# A second signal while the first one's restore runs — the Terminal closed
+# right after Ctrl-C — enters the restore again: the app it already put
+# back stays.
+release_with signalled-twice
+if (INT_MV_PARTIAL=1 HUP_AFTER_BACK=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+	fail "an interrupted update must stop the setup"
+fi
+grep -q "vaultsync second" "$installed/Contents/MacOS/vaultsync" 2>/dev/null || fail "a second signal during the restore lost the app installed before:
+$(find "$APPS" 2>&1 | head -20)
+$(cat "$SANDBOX/results/run.log")"
+[ -x "$installed/Contents/MacOS/vaultsync-tray" ] || fail "what is back after a second signal is not the whole app"
+[ "$(ls -A "$APPS")" = "VaultSync for Mac.app" ] || fail "a second signal left more than the app: $(ls -A "$APPS")"
+pass "a second signal during the restore keeps the app it put back"
+
 # Putting the set-aside app back fails too: it is kept where it is, never
 # removed, and the setup says where.
 release_with no-way-back
 if (FAIL_MV_PARTIAL=1 FAIL_MV_BACK=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
 	fail "a failed update must stop the setup"
 fi
-grep -q "nor put the one installed before back: it is at" "$SANDBOX/results/run.log" || fail "the setup does not say where the old app is:
+grep -q "could not be put back: it is at" "$SANDBOX/results/run.log" || fail "the setup does not say where the old app is:
 $(cat "$SANDBOX/results/run.log")"
 kept=$(find "$APPS" -maxdepth 1 -name '.VaultSync for Mac.app.replaced.*')
 [ -n "$kept" ] || fail "the old app was not kept: $(ls -A "$APPS")"
-grep -q "vaultsync second" "$kept/Contents/MacOS/vaultsync" || fail "what was kept is not the old app"
-mv "$kept" "$installed"
+grep -q "vaultsync second" "$kept/VaultSync for Mac.app/Contents/MacOS/vaultsync" || fail "what was kept is not the old app"
+grep -q "it is at $kept/VaultSync for Mac.app" "$SANDBOX/results/run.log" || fail "the setup names another place than where the old app is:
+$(cat "$SANDBOX/results/run.log")"
+mv "$kept/VaultSync for Mac.app" "$installed" && rmdir "$kept"
 pass "an old app that cannot be put back is kept and named"
+
+# Part of the new app that cannot be removed stands in the app's place: the
+# old app is not moved into it — it stays where it was set aside, whole,
+# and the setup says where both are.
+if [ "$(id -u)" != 0 ]; then
+	release_with stuck
+	if (FAIL_MV_PARTIAL=1 STUCK_PARTIAL=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+		chmod -R u+w "$APPS"
+		fail "a failed update must stop the setup"
+	fi
+	chmod -R u+w "$APPS"
+	kept=$(find "$APPS" -maxdepth 1 -name '.VaultSync for Mac.app.replaced.*')
+	{ [ -n "$kept" ] && grep -q "vaultsync second" "$kept/VaultSync for Mac.app/Contents/MacOS/vaultsync"; } ||
+		fail "the old app is not kept where it was set aside:
+$(find "$APPS" 2>&1 | head -20)"
+	[ -z "$(find "$installed" -mindepth 1 -name 'VaultSync for Mac.app' 2>/dev/null)" ] || fail "the old app was moved into the part that stayed:
+$(find "$APPS" 2>&1 | head -20)"
+	grep -q "could not be removed. It is at $kept/VaultSync for Mac.app" "$SANDBOX/results/run.log" || fail "the setup does not say where the old app is:
+$(cat "$SANDBOX/results/run.log")"
+	rm -rf "$installed"
+	mv "$kept/VaultSync for Mac.app" "$installed" && rmdir "$kept"
+	pass "an old app is never moved into a part of the new one that stayed"
+else
+	pass "the part-that-stayed case skipped (root removes anything)"
+fi
 
 # Never replaced: a bundle of that name with another identifier, or a link —
 # even one to a VaultSync for Mac kept elsewhere (another disk, say): the
@@ -985,6 +1039,34 @@ if mac_setup >"$SANDBOX/results/run.log" 2>&1; then
 	fail "an app with another identifier must not be installed"
 fi
 [ -z "$(ls -A "$APPS")" ] || fail "an impostor was installed: $(ls -A "$APPS")"
+# Nor one the agent would pass over in silence (desktop/appbundle.go's
+# checkApp): no menu-bar app, or an Info.plist it cannot read.
+for flaw in no-tray binary-plist; do
+	release_with "$flaw"
+	rm -rf "$SANDBOX/zipwork/flawed" && mkdir -p "$SANDBOX/zipwork/flawed"
+	(cd "$SANDBOX/zipwork/flawed" && unzip -q "$MAC_RELEASE/VaultSync_darwin_arm64.zip")
+	if [ "$flaw" = no-tray ]; then
+		rm "$SANDBOX/zipwork/flawed/VaultSync for Mac.app/Contents/MacOS/vaultsync-tray"
+	elif [ -n "$REAL_PLUTIL" ]; then
+		# Still eu.vaultsync.desktop to plutil — in a form the agent does not read.
+		"$REAL_PLUTIL" -convert binary1 "$SANDBOX/zipwork/flawed/VaultSync for Mac.app/Contents/Info.plist"
+	else
+		printf 'bplist00' >"$SANDBOX/zipwork/flawed/VaultSync for Mac.app/Contents/Info.plist"
+	fi
+	rm -f "$MAC_RELEASE/VaultSync_darwin_arm64.zip"
+	(cd "$SANDBOX/zipwork/flawed" && zip -qry -X "$MAC_RELEASE/VaultSync_darwin_arm64.zip" "VaultSync for Mac.app")
+	if command -v sha256sum >/dev/null 2>&1; then
+		(cd "$MAC_RELEASE" && sha256sum VaultSync_darwin_arm64.zip vaultsync_darwin_arm64 >SHA256SUMS)
+	else
+		(cd "$MAC_RELEASE" && shasum -a 256 VaultSync_darwin_arm64.zip vaultsync_darwin_arm64 >SHA256SUMS)
+	fi
+	if mac_setup >"$SANDBOX/results/run.log" 2>&1; then
+		fail "an app with $flaw must not be installed"
+	fi
+	grep -q "does not hold VaultSync for Mac" "$SANDBOX/results/run.log" || fail "$flaw: the refusal does not say why:
+$(cat "$SANDBOX/results/run.log")"
+	[ -z "$(ls -A "$APPS")" ] || fail "an app with $flaw was installed: $(ls -A "$APPS")"
+done
 # Nor does one whose checksum does not match.
 release_with third
 cp "$MAC_RELEASE/SHA256SUMS" "$SANDBOX/results/sums"

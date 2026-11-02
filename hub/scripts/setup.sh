@@ -464,34 +464,73 @@ check_app_place() {
 }
 
 # Where an update of the app stands (STAGE), set before each step: aside
-# — the installed app is being set aside, beside itself, at REPLACED;
-# placing — the new app is being moved into its place; placed — the new
-# one is in place. A move across disks copies, and a full disk, an I/O
-# error, Ctrl-C, a closed Terminal or a logout can stop any step halfway.
-# restore_app — run by the traps and by a failed move — undoes what the
-# stage leaves: before placed, whatever stands at the app's place came
-# from this run, so it goes and the set-aside app is put back (a first
-# install leaves nothing); once placed, the set-aside app goes. It clears
-# STAGE, so the EXIT trap after another trap undoes nothing twice. The
-# background service and the menu-bar app never lose their program to an
-# interrupted update.
+# — the installed app is being set aside as REPLACED, in a folder of its
+# own beside it (ASIDE, new for this run, so the name is free); placing —
+# the new app is being moved into its place; restoring — the set-aside app
+# is being moved back; placed — the new one is in place. A move across
+# disks copies, and a full disk, an I/O error, Ctrl-C, a closed Terminal or
+# a logout can stop any step halfway — restore_app's too, which a second
+# signal then enters again. restore_app — run by the traps and by a failed
+# move — undoes what the stage leaves, deciding from what is on disk:
+# before placed, whatever stands at the app's place came from this run, so
+# it goes and the set-aside app is put back (a first install leaves
+# nothing); restoring only finishes that move, so it never removes the app
+# it put back; once placed, the set-aside app goes. What it cannot put back
+# it says where it is. It clears STAGE, so the EXIT trap after another trap
+# undoes nothing twice. The background service and the menu-bar app never
+# lose their program to an interrupted update.
 STAGE=""
+ASIDE=""
 REPLACED=""
 restore_app() {
 	case "$STAGE" in
 		aside | placing)
 			if [ -n "$REPLACED" ] && { [ -e "$REPLACED" ] || [ -L "$REPLACED" ]; }; then
 				rm -rf "$APP" 2>/dev/null || true
-				mv "$REPLACED" "$APP" 2>/dev/null || true
+				STAGE=restoring
+				put_back
 			elif [ "$STAGE" = placing ]; then
 				rm -rf "$APP" 2>/dev/null || true
+				if [ -e "$APP" ] || [ -L "$APP" ]; then
+					warn "Part of a VaultSync for Mac that could not be installed stays at $APP — move it to the Trash."
+				fi
 			fi
 			;;
+		restoring)
+			put_back
+			;;
 		placed)
-			[ -z "$REPLACED" ] || rm -rf "$REPLACED" 2>/dev/null || true
+			if [ -n "$ASIDE" ] && ! rm -rf "$ASIDE" 2>/dev/null; then
+				warn "The replaced VaultSync for Mac stays at $ASIDE — move it to the Trash."
+			fi
 			;;
 	esac
+	[ -z "$ASIDE" ] || rmdir "$ASIDE" 2>/dev/null || true
 	STAGE=""
+}
+
+# put_back moves the set-aside app back to its place — only into an empty
+# one: mv would move it into a folder standing there — and says where it is
+# when it cannot.
+put_back() {
+	{ [ -e "$REPLACED" ] || [ -L "$REPLACED" ]; } || return 0
+	if [ -e "$APP" ] || [ -L "$APP" ]; then
+		warn "The VaultSync for Mac installed before could not be put back: $APP could not be removed. It is at $REPLACED — move what is at $APP to the Trash, then move it there."
+	elif ! mv "$REPLACED" "$APP" 2>/dev/null; then
+		warn "The VaultSync for Mac installed before could not be put back: it is at $REPLACED — move it to $APP."
+	fi
+}
+
+# app_complete APP: APP holds what the agent requires before the service
+# runs from it (checkApp in desktop/appbundle.go) — an XML Info.plist, the
+# one kind the agent reads, and both programs as plain executable files — so
+# the setup never installs an app the agent then passes over in silence.
+app_complete() {
+	[ "$(head -c 5 "$1/Contents/Info.plist" 2>/dev/null)" = "<?xml" ] || return 1
+	for prog in vaultsync vaultsync-tray; do
+		prog_path="$1/Contents/MacOS/$prog"
+		{ [ -f "$prog_path" ] && [ ! -L "$prog_path" ] && [ -x "$prog_path" ]; } || return 1
+	done
 }
 
 # same_app A B: the two bundles hold the same programs, byte for byte.
@@ -511,7 +550,7 @@ install_app() {
 	mkdir "$3/unpacked"
 	unzip -q "$1" -d "$3/unpacked" || fail "Could not unpack $(basename -- "$1") — nothing was installed."
 	new="$3/unpacked/$APP_NAME"
-	if [ -L "$new" ] || [ ! -d "$new" ] || [ "$(bundle_id "$new")" != "$APP_ID" ] || [ ! -x "$new/Contents/MacOS/vaultsync" ]; then
+	if [ -L "$new" ] || [ ! -d "$new" ] || [ "$(bundle_id "$new")" != "$APP_ID" ] || ! app_complete "$new"; then
 		fail "The download does not hold VaultSync for Mac — nothing was installed."
 	fi
 	APP="$2/$APP_NAME"
@@ -523,7 +562,9 @@ install_app() {
 	fi
 	mkdir -p "$2"
 	if [ -e "$APP" ]; then
-		REPLACED="$2/.$APP_NAME.replaced.$$"
+		ASIDE=$(mktemp -d "$2/.$APP_NAME.replaced.XXXXXXXX") ||
+			fail "Could not move the installed VaultSync for Mac aside — nothing was changed."
+		REPLACED="$ASIDE/$APP_NAME"
 		STAGE=aside
 		mv "$APP" "$REPLACED" || {
 			restore_app
@@ -533,18 +574,18 @@ install_app() {
 	STAGE=placing
 	if ! mv "$new" "$APP"; then
 		restore_app
-		if [ -e "$APP" ]; then
+		if [ -n "$REPLACED" ] && { [ -e "$REPLACED" ] || [ -L "$REPLACED" ]; }; then
+			fail "Could not install VaultSync for Mac into $2."
+		elif [ -n "$REPLACED" ]; then
 			fail "Could not install VaultSync for Mac into $2 — the one installed before stays."
-		elif [ -n "$REPLACED" ] && [ -e "$REPLACED" ]; then
-			fail "Could not install VaultSync for Mac into $2, nor put the one installed before back: it is at $REPLACED — rename it to $APP_NAME."
+		elif [ -e "$APP" ] || [ -L "$APP" ]; then
+			fail "Could not install VaultSync for Mac into $2."
 		fi
 		fail "Could not install VaultSync for Mac into $2 — nothing was installed."
 	fi
 	STAGE=placed
-	if [ -n "$REPLACED" ]; then
-		rm -rf "$REPLACED" || warn "The replaced VaultSync for Mac stays at $REPLACED — remove it by hand."
-	fi
-	STAGE=""
+	restore_app
+	ASIDE=""
 	REPLACED=""
 }
 
