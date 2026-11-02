@@ -144,23 +144,26 @@ func plistEscape(v string) string {
 	return b.String()
 }
 
-// launchdPlist is the background service's LaunchAgent. It names VaultSync
-// for Mac as its app (AssociatedBundleIdentifiers): macOS lists it under
-// Login Items as "VaultSync for Mac" — the app is signed by the same team —
-// instead of under the signing certificate's name, the developer's
-// (decision 052 (5)). Where no such app is installed the name stays the
-// certificate's, as before.
+// launchdPlist is the background service's LaunchAgent. When it runs the
+// agent in VaultSync for Mac it names the app (AssociatedBundleIdentifiers):
+// macOS lists it under Login Items as "VaultSync for Mac" — the app is
+// signed by the same team — instead of under the signing certificate's
+// name, the developer's (decision 052 (5)). A service on VaultSync's own
+// copy names no app, also with one installed: it is not the app's, and the
+// app's trip to the Trash does not stop it (decision 053 (2)).
 func launchdPlist(exe, stateDir, logFile string) []byte {
 	esc := plistEscape
+	associated := ""
+	if isAppAgent(exe) {
+		associated = "\t<key>AssociatedBundleIdentifiers</key>\n\t<string>" + appBundleID + "</string>\n"
+	}
 	return []byte(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
 	<key>Label</key>
 	<string>` + launchdLabel + `</string>
-	<key>AssociatedBundleIdentifiers</key>
-	<string>` + appBundleID + `</string>
-	<key>ProgramArguments</key>
+` + associated + `	<key>ProgramArguments</key>
 	<array>
 		<string>` + esc(exe) + `</string>
 		<string>run</string>
@@ -273,7 +276,7 @@ func (s service) install(exe string, binaryChanged bool) (bool, error) {
 
 // writeServiceFile writes a service file unless it already reads want, and
 // says whether it wrote it. On a Mac the log folder the file names is made
-// first: launchd does not make it.
+// first, owner-only — not left to launchd.
 func (s service) writeServiceFile(path string, want []byte) (bool, error) {
 	if have, _ := os.ReadFile(path); bytes.Equal(have, want) {
 		return false, nil

@@ -286,7 +286,7 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 	// app it ran lets go of tray.lock as it ends.
 	trayFound, err := a.svc.uninstallTray()
 	if err != nil {
-		return refuse("The menu-bar icon's start at login could not be removed (%v). Nothing else was changed — the background service still runs; run vaultsync uninstall again.", err)
+		return refuse("The menu-bar icon's start at login could not be removed (%v). The background service is not removed; run vaultsync uninstall again.", err)
 	}
 	if trayFound {
 		t.say("✓ The menu-bar icon no longer opens when you log in.")
@@ -312,7 +312,10 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 	}
 	// The service is gone: the command link setup pointed into VaultSync for
 	// Mac goes back to the copy, which stays unless --remove-data takes it
-	// too — the app may go to the Trash now, whatever happens next.
+	// too — the app may go to the Trash now, whatever happens next. Run from
+	// the app, the copy first gets the app's build (an update dragged over
+	// in the Finder had no setup to bring it along).
+	_ = a.keepCopyAtAppBuild()
 	a.commandBackToCopy()
 	grace := time.Duration(0)
 	if found {

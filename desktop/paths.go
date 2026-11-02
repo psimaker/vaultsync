@@ -84,6 +84,30 @@ func updateState(path string, fn func(*agentState)) error {
 	return saveState(path, st)
 }
 
+// updateStateIfSetUp is updateState for a note that only adds to a setup
+// that is there — what setup started the jobs with: it makes neither
+// VaultSync's folder nor agent.json, so an uninstall --remove-data that
+// finished meanwhile stays finished.
+func updateStateIfSetUp(path string, fn func(*agentState)) error {
+	if _, err := os.Stat(path); err != nil {
+		return err
+	}
+	unlock, err := lockFileWait(filepath.Join(filepath.Dir(path), "state.lock"))
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if _, err := os.Stat(path); err != nil {
+		return err
+	}
+	st, err := loadState(path)
+	if err != nil {
+		return err
+	}
+	fn(&st)
+	return saveState(path, st)
+}
+
 const agentStateVersion = 1
 
 func loadState(path string) (agentState, error) {
