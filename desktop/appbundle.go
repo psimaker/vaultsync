@@ -2,10 +2,14 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/xml"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sync/atomic"
+	"time"
 )
 
 // VaultSync for Mac (decisions 052, 053): when this program runs from the
@@ -32,10 +36,11 @@ type appEnv struct {
 	resolve    func(string) (string, error) // filepath.EvalSymlinks
 	readFile   func(string) ([]byte, error)
 	lstat      func(string) (fs.FileInfo, error)
+	writable   func(string) bool // this account may change what is at the path
 }
 
 func liveAppEnv(goos, home string) appEnv {
-	return appEnv{goos: goos, home: home, executable: os.Executable, resolve: filepath.EvalSymlinks, readFile: os.ReadFile, lstat: os.Lstat}
+	return appEnv{goos: goos, home: home, executable: os.Executable, resolve: filepath.EvalSymlinks, readFile: os.ReadFile, lstat: os.Lstat, writable: writableByMe}
 }
 
 // findInstalledApp reports the app bundle this program runs from, when that
@@ -88,9 +93,22 @@ func applicationsDirs(env appEnv) []string {
 	return dirs
 }
 
-// checkApp: app is VaultSync for Mac — eu.vaultsync.desktop at the top of
-// its Info.plist, its agent and the menu-bar app plain executable files.
+// checkApp: app is VaultSync for Mac — a folder, not a link to one,
+// eu.vaultsync.desktop at the top of its Info.plist, its agent and the
+// menu-bar app plain executable files — and this account's to replace, by
+// the rule the setup link places it with (setup.sh's replaceable): its
+// folder and the bundle's own folders writable. Another account's VaultSync
+// for Mac is theirs to update or move to the Trash, and this account's
+// service must not end with it.
 func checkApp(env appEnv, app string) (macApp, bool) {
+	if fi, err := env.lstat(app); err != nil || !fi.IsDir() || env.writable == nil {
+		return macApp{}, false
+	}
+	for _, dir := range []string{filepath.Dir(app), app, filepath.Join(app, "Contents"), filepath.Join(app, "Contents", "MacOS"), filepath.Join(app, "Contents", "_CodeSignature")} {
+		if _, err := env.lstat(dir); err == nil && !env.writable(dir) {
+			return macApp{}, false
+		}
+	}
 	data, err := env.readFile(filepath.Join(app, "Contents", "Info.plist"))
 	if err != nil {
 		return macApp{}, false
@@ -109,8 +127,8 @@ func checkApp(env appEnv, app string) (macApp, bool) {
 }
 
 // installedAppHolding finds VaultSync for Mac installed in /Applications or
-// ~/Applications whose agent is byte for byte the program at agent — the
-// same build as VaultSync's copy, say.
+// ~/Applications — this account's, no link (checkApp) — whose agent is byte
+// for byte the program at agent: the same build as VaultSync's copy, say.
 func installedAppHolding(env appEnv, agent string) (macApp, bool) {
 	if env.goos != "darwin" || env.readFile == nil {
 		return macApp{}, false
@@ -129,6 +147,39 @@ func installedAppHolding(env appEnv, agent string) (macApp, bool) {
 		}
 	}
 	return macApp{}, false
+}
+
+// appCheckEvery is how often a service that runs from VaultSync for Mac
+// looks whether the app is still there.
+var appCheckEvery = 5 * time.Second
+
+// whileProgramStays returns a context that ends once prog — the agent in
+// VaultSync for Mac the service runs — is gone: the app moved out of
+// Applications or put in the Trash, which keeps a running program running
+// until the next login. The person who did that expects VaultSync to stop,
+// and a service that went on would carry what they delete next to every
+// device (decision 053). gone says whether that is what ended it; stop
+// ends the look.
+func whileProgramStays(ctx context.Context, prog string, lstat func(string) (fs.FileInfo, error), every time.Duration) (watched context.Context, gone func() bool, stop func()) {
+	watched, cancel := context.WithCancel(ctx)
+	var wasGone atomic.Bool
+	go func() {
+		tick := time.NewTicker(every)
+		defer tick.Stop()
+		for {
+			select {
+			case <-watched.Done():
+				return
+			case <-tick.C:
+				if _, err := lstat(prog); errors.Is(err, fs.ErrNotExist) {
+					wasGone.Store(true)
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	return watched, wasGone.Load, cancel
 }
 
 // plistFirstString reads the first string of the array under key in the

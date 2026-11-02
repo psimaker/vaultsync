@@ -286,7 +286,7 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 	// app it ran lets go of tray.lock as it ends.
 	trayFound, err := a.svc.uninstallTray()
 	if err != nil {
-		return err
+		return refuse("The menu-bar icon's start at login could not be removed (%v). Nothing else was changed — the background service still runs; run vaultsync uninstall again.", err)
 	}
 	if trayFound {
 		t.say("✓ The menu-bar icon no longer opens when you log in.")
@@ -323,12 +323,12 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 		t.say("✓ Background service removed. VaultSync could not tell whether a vaultsync run started in a terminal still syncs on this computer (its lock file: %v); vaultsync status in that terminal tells.", errnoOf(err))
 		if *removeData {
 			// The removal would stop at that lock: no question for it.
-			return refuse("VaultSync's files stay: its lock file %s could not be looked at (%v) — a link or a permission in its place — so whether a vaultsync run still syncs here could not be told. Put the lock file right, then run vaultsync uninstall --remove-data again (the background service is removed).", tildePath(a.home, a.lay.Lock), errnoOf(err))
+			return refuse("VaultSync's files stay: its lock file %s could not be looked at (%v) — a link or a permission in its place — so whether a vaultsync run still syncs here could not be told. Put the lock file right, then run vaultsync uninstall --remove-data again (already removed: %s).", tildePath(a.home, a.lay.Lock), errnoOf(err), removedSoFar(trayFound))
 		}
 	case running:
 		t.say("✓ Background service removed. A vaultsync run started in a terminal still syncs on this computer — stop it (Ctrl-C in that terminal) to stop syncing.")
 		if *removeData {
-			return refuse("VaultSync's files stay while that run syncs. Stop it, then run vaultsync uninstall --remove-data again (the background service is removed).")
+			return refuse("VaultSync's files stay while that run syncs. Stop it, then run vaultsync uninstall --remove-data again (already removed: %s).", removedSoFar(trayFound))
 		}
 	default:
 		t.say("✓ Background service removed. VaultSync has stopped syncing on this computer. Your Hub keeps its copy and may still list this computer.")
@@ -352,14 +352,14 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 	// removed — and when a list cannot be read, nothing is removed.
 	known, errs := knownVaults(obsidianRegistries(a.goos, a.home, a.getenv))
 	if len(errs) > 0 {
-		return refuse("VaultSync could not read Obsidian's list of vaults (%v), so it cannot rule out that a vault lies inside its own folder. Nothing was removed besides the background service.", errs[0])
+		return refuse("VaultSync could not read Obsidian's list of vaults (%v), so it cannot rule out that a vault lies inside its own folder. Nothing was removed besides %s.", errs[0], removedSoFar(trayFound))
 	}
 	for _, v := range known {
 		vaults = append(vaults, v.Path)
 	}
 	if us, ok := a.userSyncthing(); ok {
 		if us.Unreadable != nil {
-			return refuse("VaultSync could not read the settings of the Syncthing on this computer (%s), so it cannot rule out that it syncs VaultSync's own folder. Nothing was removed besides the background service.", tildePath(a.home, us.ConfigPath))
+			return refuse("VaultSync could not read the settings of the Syncthing on this computer (%s), so it cannot rule out that it syncs VaultSync's own folder. Nothing was removed besides %s.", tildePath(a.home, us.ConfigPath), removedSoFar(trayFound))
 		}
 		vaults = append(vaults, us.Folders...)
 	}
@@ -424,6 +424,16 @@ func (a *app) removeCommandLink() (string, bool) {
 		return "", false
 	}
 	return link, true
+}
+
+// removedSoFar names what uninstall removed before --remove-data stopped:
+// the background service, and the menu-bar icon's start at login when
+// there was one.
+func removedSoFar(trayFound bool) string {
+	if trayFound {
+		return "the background service and the menu-bar icon's start at login"
+	}
+	return "the background service"
 }
 
 // trayStillRunningRefusal is --remove-data's refusal when a menu-bar app

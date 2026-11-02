@@ -38,6 +38,17 @@ type agentState struct {
 	// and the cloud clients' settings (#176). An empty record is a shell
 	// with none of them set (its defaults apply); nil is no record yet.
 	Env map[string]string `json:"env"`
+	// Started records, by SHA-256, the programs setup last started the
+	// background service and the menu-bar app's start at login with —
+	// written once they run (decision 053). A setup that stopped before
+	// that (a download that failed after the setup link put a new
+	// VaultSync for Mac in place) leaves the record behind the programs on
+	// disk, and the next setup restarts them. No record restarts them
+	// once, nothing more.
+	Started struct {
+		Service string `json:"service,omitempty"`
+		Tray    string `json:"tray,omitempty"`
+	} `json:"started"`
 }
 
 // guardEnvVars are the variables the pairing guards read.

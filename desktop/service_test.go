@@ -58,12 +58,22 @@ type fakeRunner struct {
 	// leaves on its own as bootout is asked (a logout, a setup loading it
 	// afresh), and bootout says so.
 	trayOverride, trayBootoutVanishes bool
+	// trayLingerAfterBootout: a booted-out job still answers that many
+	// prints, its app still running; the app ends (onTrayBootout) as
+	// launchd lets go of the job.
+	trayLingerAfterBootout, trayLingering int
 }
 
 // trayJob is launchd for the menu-bar app's start at login.
 func (f *fakeRunner) trayJob(call string) (string, error) {
 	switch {
 	case strings.HasPrefix(call, "launchctl print"):
+		if f.trayLingering > 0 {
+			if f.trayLingering--; f.trayLingering == 0 && f.onTrayBootout != nil && !f.trayIdle {
+				f.onTrayBootout()
+			}
+			return "\tstate = running\n", nil // still on its way out
+		}
 		if !f.trayLoaded {
 			return "", errors.New("not loaded")
 		}
@@ -84,6 +94,9 @@ func (f *fakeRunner) trayJob(call string) (string, error) {
 			return "Boot-out failed: 3: No such process", errors.New("exit status 3")
 		}
 		f.trayLoaded = false
+		if f.trayLingering = f.trayLingerAfterBootout; f.trayLingering > 0 {
+			break // the app ends as launchd lets go of the job
+		}
 		if f.onTrayBootout != nil && !f.trayIdle {
 			f.onTrayBootout()
 		}

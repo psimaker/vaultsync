@@ -102,6 +102,8 @@ func serviceSummary(err error) string {
 		return ErrNoPin.Error()
 	case errors.Is(err, errEngineStoppedOnItsOwn):
 		return errEngineStoppedOnItsOwn.Error()
+	case errors.Is(err, errAppGone):
+		return errAppGone.Error()
 	case errors.As(err, &ee):
 		return "the sync engine stopped (" + ee.String() + ")"
 	case errors.As(err, &pe):
@@ -288,11 +290,9 @@ func (a *app) setup(ctx context.Context, args []string) error {
 	}
 	// The copy first: the setup link has already put a new VaultSync for
 	// Mac in place, and the copy is the way back without it — it must not
-	// stay behind the app should this setup stop early. It also records
-	// which agent the service last got (a new one restarts the service
-	// below).
-	agentChanged, err := installAgentCopy(a.lay.Agent)
-	if err != nil {
+	// stay behind the app should this setup stop early. Whether the service
+	// gets a new program is agent.json's record (Started), not the copy's.
+	if _, err := installAgentCopy(a.lay.Agent); err != nil {
 		unlockSetup()
 		return fmt.Errorf("could not install VaultSync into %s: %w", tildePath(a.home, a.lay.Bin), err)
 	}
@@ -347,23 +347,30 @@ func (a *app) setup(ctx context.Context, args []string) error {
 		if err := a.svc.userManagerAvailable(); err != nil {
 			return refuse("This computer has no systemd user session (%v), so VaultSync cannot run in the background here. Run vaultsync setup --no-service, then keep vaultsync run running — for example from your desktop's autostart.", err)
 		}
+		// A program other than the one the service was last started with
+		// restarts it: the record, not this setup's refresh of the copy,
+		// knows whether an earlier setup stopped before the restart.
+		agent, agentChanged := a.startedChanged(exe, st.Started.Service)
 		if _, err := a.svc.install(exe, agentChanged || engineChanged); err != nil {
 			if a.goos == "darwin" {
 				return refuse("Could not start the background service (%v). Run vaultsync setup in Terminal on this Mac while you are logged in — not over SSH — or use vaultsync setup --no-service and keep vaultsync run running yourself.", err)
 			}
 			return refuse("Could not start the background service (%v). Check `systemctl --user status vaultsync`, or use vaultsync setup --no-service and keep vaultsync run running yourself.", err)
 		}
+		a.recordStarted(func(s *agentState) { s.Started.Service = agent })
 		t.say("✓ Background service running — it starts again when you log in")
 		if fromApp {
 			// The menu-bar app comes with the app; syncing does not depend
 			// on it, so a start at login that could not be set up is said,
 			// not fatal — and one the person turned off stays off.
-			switch err := a.svc.installTray(bundle.Tray, agentChanged); {
+			tray, trayChanged := a.startedChanged(bundle.Tray, st.Started.Tray)
+			switch err := a.svc.installTray(bundle.Tray, trayChanged); {
 			case errors.Is(err, errTrayDisabled):
 				t.say("  The menu-bar icon stays off at login, as it was turned off for this account (launchctl enable gui/%d/%s turns it on again).", a.svc.uid, trayLabel)
 			case err != nil:
 				t.say("  The menu-bar icon could not be set to open at login (%v). Open VaultSync for Mac yourself to see it.", err)
 			default:
+				a.recordStarted(func(s *agentState) { s.Started.Tray = tray })
 				t.say("✓ Menu-bar icon set up — it opens when you log in")
 			}
 		} else if a.dropStaleTray() {
@@ -563,14 +570,23 @@ func (a *app) ownCommandTarget(target string) bool {
 		env = liveAppEnv(a.goos, a.home)
 	}
 	for _, dir := range []string{"/Applications", filepath.Join(a.home, "Applications")} {
-		// Setup links the app's agent by its resolved path (appbundle.go).
-		resolved, err := env.resolve(dir)
-		if err != nil {
-			resolved = dir
+		// Setup links the app's agent by its resolved path (appbundle.go). A
+		// folder that no longer resolves — a link to a disk that is gone —
+		// is read as the link it is.
+		places := []string{dir}
+		if resolved, err := env.resolve(dir); err == nil {
+			places = append(places, resolved)
+		} else if to, err := os.Readlink(dir); err == nil {
+			if !filepath.IsAbs(to) {
+				to = filepath.Join(filepath.Dir(dir), to)
+			}
+			places = append(places, filepath.Clean(to))
 		}
-		for _, d := range []string{dir, resolved} {
+		// Looked at where it leads, as setup looked at it.
+		where := places[len(places)-1]
+		for _, d := range places {
 			if target == filepath.Join(d, appBundleName, "Contents", "MacOS", "vaultsync") {
-				return appBundleIsOursOrGone(env, filepath.Join(resolved, appBundleName))
+				return appBundleIsOursOrGone(env, filepath.Join(where, appBundleName))
 			}
 		}
 	}
@@ -700,6 +716,25 @@ func installAgentCopy(dst string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// startedChanged reads the SHA-256 of prog, the program setup is about to
+// start a job with, and says whether it differs from the one the job was
+// last started with (agent.json's Started) — also when it cannot be read: a
+// restart too many costs a moment, one too few leaves an old build running.
+func (a *app) startedChanged(prog, recorded string) (sum string, changed bool) {
+	sum, err := fileSHA256(prog)
+	if err != nil {
+		return "", true
+	}
+	return sum, sum != recorded
+}
+
+// recordStarted notes in agent.json the program a job now runs. A record
+// that cannot be written costs the next setup one restart more, nothing
+// else.
+func (a *app) recordStarted(fn func(*agentState)) {
+	_ = updateState(a.lay.State, fn)
 }
 
 func (a *app) logHint() string {
@@ -1024,9 +1059,26 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 		}
 	}
 	unlockSetup()
+	// Run from VaultSync for Mac, the service ends with the app's trip to
+	// the Trash, not at the next login (decision 053); the copy goes only
+	// with uninstall, which stops the service first.
+	engineCtx, appGone := ctx, func() bool { return false }
+	if bundle, ok := findInstalledApp(a.appEnv); ok {
+		var stopWatch func()
+		engineCtx, appGone, stopWatch = whileProgramStays(ctx, bundle.Agent, os.Lstat, appCheckEvery)
+		defer stopWatch()
+	}
 	logf("vaultsync %s: running the sync engine", version)
-	return eng.superviseLocked(ctx, st, logf)
+	err = eng.superviseLocked(engineCtx, st, logf)
+	if appGone() {
+		return errAppGone
+	}
+	return err
 }
+
+// errAppGone ends a service whose VaultSync for Mac went away; it names no
+// path, so the service log carries it as it is.
+var errAppGone = errors.New("VaultSync for Mac was moved or put in the Trash, so the background service stopped syncing — put it back in Applications, or run the setup link again")
 
 // beforeSocketPublish runs right before run records the control socket's
 // place in agent.json; a test uses it to look at the locks held then.
