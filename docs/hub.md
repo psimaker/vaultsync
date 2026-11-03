@@ -308,8 +308,12 @@ the service back into the app. Set up without the app — the bare
 before; so it does when setup runs from a VaultSync for Mac outside
 Applications, or another account's — setup then says so, and that app's
 trip to the Trash does not stop the service. With VaultSync for Mac installed, a `vaultsync` of another
-build (a bare download of another release) does not move the service: it
-stops and says to update the app with the setup link. Run the setup link as
+build (a bare download of another release, from `desktop-v0.2.0` on) does
+not move the service: it stops and says to update the app with the setup
+link. `desktop-v0.1.0`'s download knows nothing of the app — do not run it
+once the app is installed; if it moved the service onto VaultSync's own
+copy, `vaultsync status` says so, and the setup link puts it back into the
+app. Run the setup link as
 yourself, not with `sudo`. If you put VaultSync for Mac into an
 Applications folder only an administrator may change, the setup link cannot
 update it there: move it to `~/Applications` once in the Finder (it asks for
