@@ -9,9 +9,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -784,14 +786,25 @@ func TestIssue254_SetupFromTheAppRunsTheServiceFromIt(t *testing.T) {
 	if target, _ := os.Readlink(link); target != agent {
 		t.Fatalf("the command link from the copy beside the app: %q", target)
 	}
-	// Another agent than the app's decides for itself: the copy.
+	// Another build than the app's — a bare download of another release —
+	// never takes the service onto the copy beside the app (decision 053):
+	// it stops before anything changes and says how to update.
 	writeFile(t, agent, "#!/bin/sh\necho another build\n")
 	if err := os.Chmod(agent, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	setup()
-	if program(unit) != a.lay.Agent {
-		t.Fatalf("setup from another build beside the app: service %q", program(unit))
+	copyBefore, _ := os.ReadFile(a.lay.Agent)
+	run.calls = nil
+	a.out = &bytes.Buffer{}
+	err := a.setup(context.Background(), []string{"--code", "TULIP-ANCHOR-42", "--hub", "127.0.0.1:1"})
+	if !strings.Contains(refusalText(err), "this vaultsync is another build") || !strings.Contains(refusalText(err), "Nothing was changed") {
+		t.Fatalf("setup from another build beside the app: %v", err)
+	}
+	if program(unit) != agent || program(a.svc.trayPlistPath()) != filepath.Join(app, "Contents", "MacOS", "vaultsync-tray") || len(restarts(run.calls)) > 0 {
+		t.Fatalf("a refused setup changed the service: %q %v", program(unit), run.calls)
+	}
+	if copyAfter, _ := os.ReadFile(a.lay.Agent); !bytes.Equal(copyAfter, copyBefore) {
+		t.Fatal("a refused setup changed VaultSync's copy")
 	}
 
 	// The app goes to the Trash; setup from VaultSync's own copy.
@@ -874,8 +887,8 @@ func TestIssue254_ASetupThatStoppedEarlyStillRestartsOntoTheNewBuild(t *testing.
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("the setup did not stop at the pairing in progress: %v\n%s", err, a.out)
 	}
-	if have, _ := os.ReadFile(a.lay.Agent); string(have) == "the build before" {
-		t.Fatal("the stopped setup did not refresh the copy first")
+	if have, _ := os.ReadFile(a.lay.Agent); !bytes.Equal(have, ownBytes(t)) {
+		t.Fatal("the stopped setup did not refresh the copy before the pairing step")
 	}
 	if restarted := restarts(run.calls); len(restarted) > 0 {
 		t.Fatalf("the stopped setup restarted: %v", restarted)
@@ -1087,8 +1100,10 @@ func TestIssue254_TheRefusalSaysWhatWasRemoved(t *testing.T) {
 	}
 }
 
-// The menu-bar app's start at login that cannot be removed stops uninstall
-// before the service: said so, with the service still running.
+// The menu-bar app's start at login that cannot be removed does not keep a
+// plain uninstall from stopping the sync: the service goes, and the start
+// at login left is said. --remove-data, which needs the app the job ran
+// gone first, stops before the service instead.
 func TestIssue254_AStartAtLoginThatStaysStopsUninstallAndSaysSo(t *testing.T) {
 	run := &fakeRunner{fail: map[string]error{"launchctl bootout gui/501/" + trayLabel: exitErr(5)}}
 	a := installedApp(t, "darwin", run)
@@ -1098,8 +1113,19 @@ func TestIssue254_AStartAtLoginThatStaysStopsUninstallAndSaysSo(t *testing.T) {
 	unit := mustUnitPath(t, a.svc)
 	writeFile(t, unit, "installed\n")
 	run.loaded = true
+	if err := a.uninstall(context.Background(), []string{"--yes"}); err != nil {
+		t.Fatalf("plain uninstall: %v", err)
+	}
+	if out := a.out.(*bytes.Buffer).String(); !strings.Contains(out, "start at login could not be removed") || !strings.Contains(out, "✓ Background service removed") {
+		t.Fatalf("plain uninstall said:\n%s", out)
+	}
+	if _, err := os.Stat(unit); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("plain uninstall kept the service: %v", err)
+	}
+	writeFile(t, unit, "installed\n")
+	run.loaded = true
 	run.calls = nil
-	got := refusalText(a.uninstall(context.Background(), []string{"--yes"}))
+	got := refusalText(a.uninstall(context.Background(), []string{"--remove-data", "--yes"}))
 	if !strings.Contains(got, "start at login could not be removed") || !strings.Contains(got, "The background service is not removed") {
 		t.Fatalf("got %q", got)
 	}
@@ -1264,6 +1290,20 @@ func TestIssue254_RemoveDataTakesTheMenuBarAppsLog(t *testing.T) {
 	}
 }
 
+// ownBytes is this test program — what installAgentCopy copies.
+func ownBytes(t *testing.T) []byte {
+	t.Helper()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(exe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
 // setupFrom runs setup the way the #254 setup tests do — no terminal, a Hub
 // that does not answer — and returns its output and error.
 func setupFrom(t *testing.T, a *app, args ...string) (string, error) {
@@ -1417,8 +1457,8 @@ func TestIssue254_UninstallFromTheAppBringsTheCopyToItsBuild(t *testing.T) {
 	if err := a.uninstall(context.Background(), []string{"--yes"}); err != nil {
 		t.Fatalf("uninstall: %v", err)
 	}
-	if have, _ := os.ReadFile(a.lay.Agent); string(have) == "the build before" {
-		t.Fatal("uninstall from the app left the copy at an older build")
+	if have, _ := os.ReadFile(a.lay.Agent); !bytes.Equal(have, ownBytes(t)) {
+		t.Fatal("uninstall from the app left the copy at another build than the app's")
 	}
 	writeFile(t, mustUnitPath(t, a.svc), "installed\n")
 	writeFile(t, a.lay.Agent, "the build before")
@@ -1507,5 +1547,219 @@ func TestIssue254_OnlyTheAppsServiceNamesTheApp(t *testing.T) {
 	}
 	if id, ok := plistString(data, "AssociatedBundleIdentifiers"); !ok || id != appBundleID {
 		t.Fatalf("the app's service names %q %v", id, ok)
+	}
+}
+
+// The bare agent of a release and the one in VaultSync for Mac are signed
+// apart, so their bytes differ (the signatures' time stamps) while their
+// code directory — what the cdhash is the hash of — is the same: one build.
+// Another code directory is another build.
+func TestIssue254_TheBareAgentOfTheAppsBuildIsTheSameBuild(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("needs a signed Mach-O program: the test binary on a Mac")
+	}
+	self, err := os.ReadFile(os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	cd, ok := codeDirectory(self)
+	if !ok {
+		t.Skip("this test binary carries no code signature")
+	}
+	signedApart := append(bytes.Clone(self), 0) // other bytes, the same code directory
+	if !sameBuild(self, signedApart) {
+		t.Fatal("one build signed apart counted as another")
+	}
+	at := bytes.Index(self, cd)
+	another := bytes.Clone(self)
+	another[at+len(cd)-1] ^= 0xff // a page hash of other code
+	if sameBuild(self, another) {
+		t.Fatal("another code directory counted as the same build")
+	}
+	if sameBuild([]byte("#!/bin/sh\necho a\n"), []byte("#!/bin/sh\necho b\n")) || !sameBuild([]byte("x"), []byte("x")) {
+		t.Fatal("programs without a signature are one build only byte for byte")
+	}
+}
+
+// A run started through the vaultsync command — the link setup points into
+// the app — is the app's run, and watched like one.
+func TestIssue254_ARunThroughTheCommandIsWatched(t *testing.T) {
+	agent := "/Applications/" + appBundleName + "/Contents/MacOS/vaultsync"
+	env := appEnv{goos: "darwin",
+		executable: func() (string, error) { return "/Users/me/.local/bin/vaultsync", nil },
+		resolve: func(p string) (string, error) {
+			if p == "/Users/me/.local/bin/vaultsync" {
+				return agent, nil
+			}
+			return p, nil
+		},
+		lstat: func(p string) (fs.FileInfo, error) {
+			if p != agent {
+				t.Errorf("watched %s", p)
+			}
+			return nil, fs.ErrNotExist
+		}}
+	every, grace := appCheckEvery, appGoneGrace
+	appCheckEvery, appGoneGrace = time.Millisecond, time.Millisecond
+	defer func() { appCheckEvery, appGoneGrace = every, grace }()
+	watched, gone, stop := watchOwnApp(context.Background(), env)
+	defer stop()
+	select {
+	case <-watched.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("a run through the command was not watched")
+	}
+	if !gone() {
+		t.Fatal("not said to be the app's departure")
+	}
+}
+
+// The look at the app fails closed: anything but the program there — no
+// access, a file where the bundle was, a folder — counts as missing.
+func TestIssue254_TheWatchFailsClosed(t *testing.T) {
+	dir, err := os.Lstat(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, look := range map[string]func(string) (fs.FileInfo, error){
+		"no access":           func(string) (fs.FileInfo, error) { return nil, fs.ErrPermission },
+		"a file in the way":   func(string) (fs.FileInfo, error) { return nil, syscall.ENOTDIR },
+		"a folder in its way": func(string) (fs.FileInfo, error) { return dir, nil },
+	} {
+		watched, gone, stop := whileProgramStays(context.Background(), "/Applications/"+appBundleName+"/Contents/MacOS/vaultsync", look, time.Millisecond, time.Millisecond)
+		select {
+		case <-watched.Done():
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s: the watch went on", name)
+		}
+		if !gone() {
+			t.Fatalf("%s: not said to be the app's departure", name)
+		}
+		stop()
+	}
+	if !programMissing(syscall.ENOTDIR) || !programMissing(fs.ErrNotExist) || programMissing(fs.ErrPermission) {
+		t.Fatal("programMissing: a file in the way and nothing there are missing; no access is not")
+	}
+}
+
+// A definition launchd still runs although its file names another program
+// — the setup that rewrote the file could not reload it (its bootout
+// failed) — is loaded afresh by the next setup, not merely restarted: a
+// kickstart would run the old program on and record the new one.
+func TestIssue254_AStaleLoadedDefinitionIsLoadedAfresh(t *testing.T) {
+	run := &fakeRunner{}
+	svc, home := testService(t, "darwin", run)
+	copyProg := svc.lay.Agent
+	appProg := filepath.Join(home, "Applications", appBundleName, "Contents", "MacOS", "vaultsync")
+	if _, err := svc.install(copyProg, false); err != nil {
+		t.Fatal(err)
+	}
+	run.fail = map[string]error{"launchctl bootout gui/501/" + launchdLabel: exitErr(5)}
+	if _, err := svc.install(appProg, true); err == nil {
+		t.Fatal("a failed bootout must stop the move")
+	}
+	if run.loadedProgram != copyProg {
+		t.Fatalf("launchd's definition: %q", run.loadedProgram)
+	}
+	run.fail = nil
+	run.calls = nil
+	if _, err := svc.install(appProg, true); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(run.calls, "launchctl bootout gui/501/"+launchdLabel) || run.loadedProgram != appProg {
+		t.Fatalf("the stale definition was not loaded afresh: %q %v", run.loadedProgram, run.calls)
+	}
+}
+
+// uninstall run from the app where VaultSync is not set up makes no copy —
+// and no folder for it.
+func TestIssue254_UninstallWhereNothingIsSetUpMakesNoCopy(t *testing.T) {
+	a, _, _ := macSetupFixture(t)
+	if err := os.RemoveAll(a.lay.Base); err != nil {
+		t.Fatal(err)
+	}
+	_ = a.uninstall(context.Background(), []string{"--yes"})
+	if _, err := os.Lstat(a.lay.Base); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("uninstall made VaultSync's folder: %v", err)
+	}
+}
+
+// A copy that cannot be brought to the app's build keeps the vaultsync
+// command on the app, and uninstall says so: the way back must not run an
+// older build.
+func TestIssue254_UninstallKeepsTheCommandOnTheAppWhenTheCopyCannotFollow(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes anywhere")
+	}
+	a, _, app := macSetupFixture(t)
+	writeFile(t, mustUnitPath(t, a.svc), "installed\n")
+	writeFile(t, a.lay.Agent, "the build before")
+	link := commandLink(a.home)
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	agent := filepath.Join(app, "Contents", "MacOS", "vaultsync")
+	if err := os.Symlink(agent, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(a.lay.Bin, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(a.lay.Bin, 0o755) })
+	if err := a.uninstall(context.Background(), []string{"--yes"}); err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+	if out := a.out.(*bytes.Buffer).String(); !strings.Contains(out, "could not be brought to this build") {
+		t.Fatalf("not said:\n%s", out)
+	}
+	if target, _ := os.Readlink(link); target != agent {
+		t.Fatalf("the command went to the older copy: %q", target)
+	}
+}
+
+// setup --no-service run from the app also removes a start at login whose
+// program is gone (the app moved from one Applications folder to the other).
+func TestIssue254_SetupWithoutTheServiceFromTheAppDropsAStaleStartAtLogin(t *testing.T) {
+	a, run, _ := macSetupFixture(t)
+	gone := filepath.Join(t.TempDir(), "Applications", appBundleName, "Contents", "MacOS", "vaultsync-tray")
+	if err := a.svc.installTray(gone, true); err != nil {
+		t.Fatal(err)
+	}
+	out, _ := setupFrom(t, a, "--no-service")
+	if _, err := os.Stat(a.svc.trayPlistPath()); !errors.Is(err, os.ErrNotExist) || run.trayLoaded || !strings.Contains(out, "no longer opens at login") {
+		t.Fatalf("a start at login whose program is gone stayed: %v\n%s", err, out)
+	}
+}
+
+// The vaultsync command follows the service before the engine is waited
+// for: a setup from the copy after the app went to the Trash that stops
+// there leaves no command into the Trash.
+func TestIssue254_TheCommandFollowsBeforeTheEngineIsWaitedFor(t *testing.T) {
+	a, _, app := macSetupFixture(t)
+	link := commandLink(a.home)
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(app, "Contents", "MacOS", "vaultsync"), link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(app); err != nil {
+		t.Fatal(err)
+	}
+	a.appEnv = macAppEnv(a.home, filepath.Join(t.TempDir(), "none"), a.lay.Agent)
+	// An engine that does not answer.
+	writeFile(t, filepath.Join(a.lay.Home, "config.xml"), "<configuration><gui><address>127.0.0.1:1</address><apikey>engine-key</apikey></gui></configuration>\n")
+	t.Setenv("PATH", "/usr/bin:/bin")
+	orig := ttyPath
+	ttyPath = filepath.Join(t.TempDir(), "no-tty")
+	defer func() { ttyPath = orig }()
+	a.out = &bytes.Buffer{}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := a.setup(ctx, []string{"--code", "TULIP-ANCHOR-42", "--hub", "127.0.0.1:1"}); err == nil {
+		t.Fatal("setup with an engine that does not answer must fail")
+	}
+	if target, _ := os.Readlink(link); target != a.lay.Agent {
+		t.Fatalf("the command still leads into the Trash: %q", target)
 	}
 }

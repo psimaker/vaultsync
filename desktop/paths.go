@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	layoutpkg "github.com/psimaker/vaultsync/desktop/internal/layout"
 )
@@ -92,11 +94,13 @@ func updateStateIfSetUp(path string, fn func(*agentState)) error {
 	if _, err := os.Stat(path); err != nil {
 		return err
 	}
-	unlock, err := lockFileWait(filepath.Join(filepath.Dir(path), "state.lock"))
+	// The lock, and the write, without making the folder: one an uninstall
+	// took apart meanwhile stays gone.
+	h, err := waitForLock(context.Background(), filepath.Join(filepath.Dir(path), "state.lock"), 10*time.Second, lockFileNoCreate)
 	if err != nil {
 		return err
 	}
-	defer unlock()
+	defer h.Release()
 	if _, err := os.Stat(path); err != nil {
 		return err
 	}
@@ -105,7 +109,12 @@ func updateStateIfSetUp(path string, fn func(*agentState)) error {
 		return err
 	}
 	fn(&st)
-	return saveState(path, st)
+	st.Version = agentStateVersion
+	data, err := json.MarshalIndent(st, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeFileAtomicIn(path, append(data, '\n'), 0o600)
 }
 
 const agentStateVersion = 1
@@ -142,10 +151,16 @@ func saveState(path string, st agentState) error {
 // writeFileAtomic replaces path in one rename, so a reader sees the old or
 // the new content and never a torn file.
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
+	return writeFileAtomicIn(path, data, perm)
+}
+
+// writeFileAtomicIn is writeFileAtomic into a folder that must already be
+// there: it never makes one.
+func writeFileAtomicIn(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*")
 	if err != nil {
 		return err

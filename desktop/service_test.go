@@ -62,6 +62,10 @@ type fakeRunner struct {
 	// prints, its app still running; the app ends (onTrayBootout) as
 	// launchd lets go of the job.
 	trayLingerAfterBootout, trayLingering int
+	// loadedProgram is the program of the service's definition launchd
+	// loaded at its last bootstrap — which `launchctl print` names — kept
+	// apart from the file until the next bootout and bootstrap.
+	loadedProgram string
 }
 
 // trayJob is launchd for the menu-bar app's start at login.
@@ -191,15 +195,20 @@ func (f *fakeRunner) run(name string, args ...string) (string, error) {
 		if !f.loaded {
 			return "", errors.New("not loaded")
 		}
-		if f.idle || f.neverRuns {
-			return "\tstate = not running\n", nil
+		program := ""
+		if f.loadedProgram != "" {
+			program = "\tprogram = " + f.loadedProgram + "\n"
 		}
-		return "\tstate = running\n", nil
+		if f.idle || f.neverRuns {
+			return "\tstate = not running\n" + program, nil
+		}
+		return "\tstate = running\n" + program, nil
 	case strings.HasPrefix(call, "launchctl bootstrap"):
 		if f.disabled {
 			return "Bootstrap failed: 5: Input/output error", errors.New("exit status 5")
 		}
 		f.loaded, f.idle = true, false
+		f.loadedProgram = plistProgramOf(args[len(args)-1])
 	case strings.HasPrefix(call, "launchctl bootout"):
 		switch {
 		case f.loaded:

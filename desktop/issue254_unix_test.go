@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io/fs"
@@ -47,8 +48,8 @@ func TestIssue254_ARunFromTheAppEndsWhenTheAppGoesToTheTrash(t *testing.T) {
 		t.Fatalf("the run ended while the app was there: %v", err)
 	case <-time.After(10 * appCheckEvery):
 	}
-	if have, _ := os.ReadFile(a.lay.Agent); string(have) == "the build before" {
-		t.Fatal("a run from the app left VaultSync's copy at an older build")
+	if have, _ := os.ReadFile(a.lay.Agent); !bytes.Equal(have, ownBytes(t)) {
+		t.Fatal("a run from the app left VaultSync's copy at another build than the app's")
 	}
 
 	trash := filepath.Join(a.home, ".Trash")
@@ -72,8 +73,9 @@ func TestIssue254_ARunFromTheAppEndsWhenTheAppGoesToTheTrash(t *testing.T) {
 		}
 	}
 	_ = stop()
-	// The service log says it in so many words, with no path.
-	if got := serviceSummary(errAppGone); got != errAppGone.Error() || strings.Contains(got, a.home) {
+	// The service log says it in so many words, with no path — and the way
+	// out for someone who meant to remove VaultSync.
+	if got := serviceSummary(errAppGone); got != errAppGone.Error() || strings.Contains(got, a.home) || !strings.Contains(got, "uninstall") {
 		t.Fatalf("the service log says %q", got)
 	}
 }
@@ -123,11 +125,15 @@ func TestIssue254_ARunFromTheAppIsWatchedFromItsFirstMoment(t *testing.T) {
 func TestIssue254_AnUpdateIsNoTripToTheTrash(t *testing.T) {
 	var looks atomic.Int32
 	var gone atomic.Bool
+	there, err := os.Lstat(os.Args[0]) // a program, as the app's agent is
+	if err != nil {
+		t.Fatal(err)
+	}
 	lstat := func(string) (fs.FileInfo, error) {
 		if looks.Add(1) == 2 || gone.Load() { // the second look falls into the update's instant
 			return nil, fs.ErrNotExist
 		}
-		return nil, nil
+		return there, nil
 	}
 	ctx, appGone, stop := whileProgramStays(context.Background(), "/Applications/"+appBundleName+"/Contents/MacOS/vaultsync", lstat, time.Millisecond, 5*time.Millisecond)
 	defer stop()

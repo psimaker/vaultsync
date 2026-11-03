@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -370,7 +371,13 @@ func (s service) programGone() (prog string, gone bool) {
 		return "", false
 	}
 	_, err = os.Lstat(prog)
-	return prog, errors.Is(err, fs.ErrNotExist)
+	return prog, programMissing(err)
+}
+
+// programMissing: a look at a program found nothing there — not there at
+// all, or a file where a folder of its path should be.
+func programMissing(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
 }
 
 // trayProgram is the program the menu-bar app's start at login names, read
@@ -448,8 +455,16 @@ func (s service) launchdStart(plist string, fileChanged, binaryChanged bool) err
 
 func (s service) launchdStartJob(job launchdJob, plist string, fileChanged, binaryChanged bool) error {
 	target := s.launchdTargetOf(job.label)
-	_, printErr := s.run.run("launchctl", "print", target)
+	out, printErr := s.run.run("launchctl", "print", target)
 	loaded := printErr == nil
+	if loaded && !fileChanged {
+		// launchd keeps the definition it loaded until a bootout: one an
+		// earlier setup wrote the file for but could not reload (its bootout
+		// failed) still runs the old program. Loaded afresh, not restarted.
+		if have, ok := launchdProgram(out); ok && have != plistProgramOf(plist) {
+			fileChanged = true
+		}
+	}
 	if loaded && fileChanged {
 		// A loaded job keeps its old definition until it is booted out.
 		if out, err := s.run.run("launchctl", "bootout", target); err != nil {
@@ -479,6 +494,27 @@ func (s service) launchdStartJob(job launchdJob, plist string, fileChanged, bina
 		}
 	}
 	return nil
+}
+
+// launchdProgram reads the program out of `launchctl print` for a job.
+func launchdProgram(print string) (string, bool) {
+	for _, line := range strings.Split(print, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "program = "); ok {
+			return v, true
+		}
+	}
+	return "", false
+}
+
+// plistProgramOf is the program a LaunchAgent file names ("" when it cannot
+// be read).
+func plistProgramOf(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	prog, _ := plistFirstString(data, "ProgramArguments")
+	return prog
 }
 
 func (s service) systemdStart(fileChanged, binaryChanged bool) error {

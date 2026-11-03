@@ -285,10 +285,15 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 	// The menu-bar app's start at login goes first, and is waited for: the
 	// app it ran lets go of tray.lock as it ends.
 	trayFound, err := a.svc.uninstallTray()
-	if err != nil {
-		return refuse("The menu-bar icon's start at login could not be removed (%v). The background service is not removed; run vaultsync uninstall again.", err)
+	switch {
+	case err != nil && *removeData:
+		// The removal of VaultSync's files needs the app the job ran gone.
+		return refuse("The menu-bar icon's start at login could not be removed (%v). The background service is not removed; run vaultsync uninstall --remove-data again.", err)
+	case err != nil:
+		// Syncing stops all the same: the service goes below.
+		t.say("  The menu-bar icon's start at login could not be removed (%v); run vaultsync uninstall again to remove it.", err)
 	}
-	if trayFound {
+	if trayFound && err == nil {
 		t.say("✓ The menu-bar icon no longer opens when you log in.")
 	}
 	if *removeData {
@@ -314,9 +319,13 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 	// Mac goes back to the copy, which stays unless --remove-data takes it
 	// too — the app may go to the Trash now, whatever happens next. Run from
 	// the app, the copy first gets the app's build (an update dragged over
-	// in the Finder had no setup to bring it along).
-	_ = a.keepCopyAtAppBuild()
-	a.commandBackToCopy()
+	// in the Finder had no setup to bring it along); a copy that could not
+	// get it keeps the command on the app rather than on an older build.
+	if err := a.keepCopyAtAppBuild(); err != nil {
+		t.say("  VaultSync's own copy could not be brought to this build (%v): the vaultsync command keeps running VaultSync for Mac — keep the app until VaultSync is set up again or removed.", err)
+	} else {
+		a.commandBackToCopy()
+	}
 	grace := time.Duration(0)
 	if found {
 		grace = engineOwnerGrace

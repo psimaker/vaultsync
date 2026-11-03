@@ -3,8 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"debug/macho"
+	"encoding/binary"
 	"encoding/xml"
-	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -149,27 +150,110 @@ func checkApp(env appEnv, app string) (macApp, string) {
 	return macApp{Path: app, Agent: agent, Tray: tray}, ""
 }
 
-// installedAppHolding finds VaultSync for Mac installed in /Applications or
-// ~/Applications — this account's, no link (checkApp) — whose agent is byte
-// for byte the program at agent: the same build as VaultSync's copy, say.
-func installedAppHolding(env appEnv, agent string) (macApp, bool) {
+// installedApps are the VaultSync for Mac bundles installed in /Applications
+// and ~/Applications that count (checkApp), in that order.
+func installedApps(env appEnv) []macApp {
 	if env.goos != "darwin" || env.readFile == nil {
-		return macApp{}, false
+		return nil
 	}
-	want, err := env.readFile(agent)
+	var apps []macApp
+	for _, dir := range applicationsDirs(env) {
+		if bundle, why := checkApp(env, filepath.Join(dir, appBundleName)); why == "" {
+			apps = append(apps, bundle)
+		}
+	}
+	return apps
+}
+
+// installedAppHolding finds VaultSync for Mac installed in /Applications or
+// ~/Applications — this account's, no link (checkApp) — whose agent is the
+// build of the program at agent (sameBuild): VaultSync's copy, or the bare
+// agent of the same release.
+func installedAppHolding(env appEnv, agent string) (macApp, bool) {
+	want, err := readIf(env, agent)
 	if err != nil {
 		return macApp{}, false
 	}
-	for _, dir := range applicationsDirs(env) {
-		bundle, why := checkApp(env, filepath.Join(dir, appBundleName))
-		if why != "" {
-			continue
-		}
-		if have, err := env.readFile(bundle.Agent); err == nil && bytes.Equal(have, want) {
+	for _, bundle := range installedApps(env) {
+		if have, err := env.readFile(bundle.Agent); err == nil && sameBuild(have, want) {
 			return bundle, true
 		}
 	}
 	return macApp{}, false
+}
+
+func readIf(env appEnv, path string) ([]byte, error) {
+	if env.readFile == nil {
+		return nil, fs.ErrNotExist
+	}
+	return env.readFile(path)
+}
+
+// sameBuild: two programs are one build — byte for byte, or with the same
+// code directory, the part of a signature its cdhash is the hash of. The
+// bare agent of a release and the one in VaultSync for Mac are signed
+// apart, and their signatures' other bytes (the time stamps) differ.
+func sameBuild(a, b []byte) bool {
+	if bytes.Equal(a, b) {
+		return true
+	}
+	ca, ok := codeDirectory(a)
+	if !ok {
+		return false
+	}
+	cb, ok := codeDirectory(b)
+	return ok && bytes.Equal(ca, cb)
+}
+
+// codeDirectory is the code directory of a signed, single-architecture
+// Mach-O program: LC_CODE_SIGNATURE's super blob, its slot 0.
+func codeDirectory(data []byte) ([]byte, bool) {
+	f, err := macho.NewFile(bytes.NewReader(data))
+	if err != nil {
+		return nil, false
+	}
+	defer f.Close()
+	const (
+		lcCodeSignature    = 0x1d
+		superBlobMagic     = 0xfade0cc0
+		codeDirectoryType  = 0
+		codeDirectoryMagic = 0xfade0c02
+	)
+	for _, load := range f.Loads {
+		raw := load.Raw()
+		if len(raw) < 16 || f.ByteOrder.Uint32(raw) != lcCodeSignature {
+			continue
+		}
+		off, size := uint64(f.ByteOrder.Uint32(raw[8:])), uint64(f.ByteOrder.Uint32(raw[12:]))
+		if off+size > uint64(len(data)) || size < 12 {
+			return nil, false
+		}
+		blob := data[off : off+size]
+		if binary.BigEndian.Uint32(blob) != superBlobMagic {
+			return nil, false
+		}
+		count := uint64(binary.BigEndian.Uint32(blob[8:]))
+		for i := uint64(0); i < count; i++ {
+			entry := 12 + 8*i
+			if entry+8 > uint64(len(blob)) {
+				return nil, false
+			}
+			if binary.BigEndian.Uint32(blob[entry:]) != codeDirectoryType {
+				continue
+			}
+			at := uint64(binary.BigEndian.Uint32(blob[entry+4:]))
+			if at+8 > uint64(len(blob)) || binary.BigEndian.Uint32(blob[at:]) != codeDirectoryMagic {
+				return nil, false
+			}
+			end := at + uint64(binary.BigEndian.Uint32(blob[at+4:]))
+			if end > uint64(len(blob)) {
+				return nil, false
+			}
+			return blob[at:end], true
+		}
+		return nil, false
+	}
+	return nil, false
 }
 
 // appCheckEvery is how often a service that runs from VaultSync for Mac
@@ -193,9 +277,12 @@ var (
 func whileProgramStays(ctx context.Context, prog string, lstat func(string) (fs.FileInfo, error), every, grace time.Duration) (watched context.Context, gone func() bool, stop func()) {
 	watched, cancel := context.WithCancel(ctx)
 	var wasGone atomic.Bool
+	// Anything but the program there counts as missing — not there, a file
+	// or a link where the bundle was, no access to it: the watch fails
+	// closed, and launchd starts the service again once it can run.
 	missing := func() bool {
-		_, err := lstat(prog)
-		return errors.Is(err, fs.ErrNotExist)
+		fi, err := lstat(prog)
+		return err != nil || !fi.Mode().IsRegular()
 	}
 	go func() {
 		tick := time.NewTicker(every)
@@ -230,8 +317,17 @@ func whileProgramStays(ctx context.Context, prog string, lstat func(string) (fs.
 // being watched. Any other program is not watched.
 func watchOwnApp(ctx context.Context, env appEnv) (watched context.Context, gone func() bool, stop func()) {
 	if env.goos == "darwin" && env.executable != nil && env.lstat != nil {
-		if self, err := env.executable(); err == nil && isAppAgent(self) {
-			return whileProgramStays(ctx, self, env.lstat, appCheckEvery, appGoneGrace)
+		if self, err := env.executable(); err == nil {
+			// Started through a link (the vaultsync command setup points
+			// into the app): the program it leads to is the app's.
+			if env.resolve != nil {
+				if resolved, err := env.resolve(self); err == nil && isAppAgent(resolved) {
+					self = resolved
+				}
+			}
+			if isAppAgent(self) {
+				return whileProgramStays(ctx, self, env.lstat, appCheckEvery, appGoneGrace)
+			}
 		}
 	}
 	return ctx, func() bool { return false }, func() {}

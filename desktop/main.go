@@ -288,6 +288,12 @@ func (a *app) setup(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	if !*noService {
+		if err := a.refuseBesideAnotherBuild(); err != nil {
+			unlockSetup()
+			return err
+		}
+	}
 	st, engineChanged, err := a.ensureEngine(ctx, t)
 	if err != nil {
 		unlockSetup()
@@ -362,9 +368,18 @@ func (a *app) setup(ctx context.Context, args []string) error {
 		a.recordStarted(func(s *agentState) { s.Started.Service = agent })
 		t.say("✓ Background service running — it starts again when you log in")
 		if notApp != "" {
-			// Run from VaultSync for Mac that does not count: said, so the
-			// person knows the app's trip to the Trash will not stop it.
+			// On the copy beside a VaultSync for Mac — one that does not
+			// count, or another build: said, so the person knows the app's
+			// trip to the Trash will not stop it.
 			t.say("  It runs VaultSync's own copy, not %s.", notApp)
+		}
+		if !fromApp {
+			// The menu-bar app opens at login only for a service that runs
+			// from it: one on the copy beside the app's icon is the
+			// arrangement decision 053 rules out.
+			if found, err := a.svc.uninstallTray(); err == nil && found {
+				t.say("✓ The menu-bar icon no longer opens at login: the background service does not run from VaultSync for Mac.")
+			}
 		}
 		if fromApp {
 			// The menu-bar app comes with the app; syncing does not depend
@@ -382,9 +397,12 @@ func (a *app) setup(ctx context.Context, args []string) error {
 			}
 		}
 	}
-	if !fromApp && a.dropStaleTray() {
+	if a.dropStaleTray() {
 		t.say("✓ The menu-bar icon no longer opens at login: VaultSync for Mac is not where its start at login named.")
 	}
+	// The command follows the service before anything can stop this setup:
+	// a link left in an app that went to the Trash would lead nowhere.
+	command := a.installCommand(t, exe)
 	client, err := eng.client(st)
 	if err != nil {
 		return err
@@ -392,7 +410,6 @@ func (a *app) setup(ctx context.Context, args []string) error {
 	if err := waitEngine(ctx, client, 60*time.Second, temporary); err != nil {
 		return fmt.Errorf("the sync engine did not start: %w — see %s", err, a.logHint())
 	}
-	command := a.installCommand(t, exe)
 	_, err = a.pairWith(ctx, t, opts, client, pairOrigin{})
 	if *noService {
 		t.blank()
@@ -433,7 +450,7 @@ func (a *app) dropStaleTray() bool {
 	if prog == "" {
 		return false
 	}
-	if _, err := os.Lstat(prog); !errors.Is(err, fs.ErrNotExist) {
+	if _, err := os.Lstat(prog); !programMissing(err) {
 		return false
 	}
 	found, err := a.svc.uninstallTray()
@@ -463,6 +480,46 @@ func (a *app) serviceProgram() (exe string, bundle macApp, fromApp bool, notApp 
 		return held.Agent, held, true, ""
 	}
 	return a.lay.Agent, macApp{}, false, notApp
+}
+
+// refuseBesideAnotherBuild: with VaultSync for Mac installed — one that
+// counts — the background service runs from it (decision 053). A setup from
+// another build (a bare download of another release, an older copy) would
+// put the service on VaultSync's own copy, beside an app whose trip to the
+// Trash then does not stop it; it stops before anything changes and says
+// how to update. The same build hands the service to the app.
+func (a *app) refuseBesideAnotherBuild() error {
+	if _, ok := findInstalledApp(a.appEnv); ok {
+		return nil
+	}
+	apps := installedApps(a.appEnv)
+	if len(apps) == 0 {
+		return nil
+	}
+	self, err := ownProgram(a.appEnv)
+	if err == nil {
+		for _, app := range apps {
+			if have, err := a.appEnv.readFile(app.Agent); err == nil && sameBuild(have, self) {
+				return nil
+			}
+		}
+	}
+	return refuse("VaultSync for Mac is installed in %s, and the background service runs from it — but this vaultsync is another build. Update VaultSync for Mac with the setup link, or run its own setup (%s setup). Nothing was changed.", tildePath(a.home, filepath.Dir(apps[0].Path)), shellPath(a.home, apps[0].Agent))
+}
+
+// ownProgram reads this program, by the path it runs from as it resolves.
+func ownProgram(env appEnv) ([]byte, error) {
+	if env.executable == nil || env.resolve == nil || env.readFile == nil {
+		return nil, fs.ErrNotExist
+	}
+	self, err := env.executable()
+	if err != nil {
+		return nil, err
+	}
+	if self, err = env.resolve(self); err != nil {
+		return nil, err
+	}
+	return env.readFile(self)
 }
 
 // supervision is an engine supervisor running in the background; done is
@@ -758,6 +815,10 @@ func (a *app) recordStarted(fn func(*agentState)) {
 // its older engine back (#264) and the service on the copy.
 func (a *app) keepCopyAtAppBuild() error {
 	if _, ok := findInstalledApp(a.appEnv); !ok {
+		return nil
+	}
+	// Only where VaultSync is set up: the copy never makes its folder.
+	if _, err := os.Stat(a.lay.State); err != nil {
 		return nil
 	}
 	_, err := installAgentCopy(a.lay.Agent)
@@ -1106,7 +1167,7 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 
 // errAppGone ends a service whose VaultSync for Mac went away; it names no
 // path, so the service log carries it as it is.
-var errAppGone = errors.New("VaultSync for Mac is no longer where the background service runs it from — moved, or put in the Trash — so the service stopped syncing; put it back where it was, or run the setup link again")
+var errAppGone = errors.New("VaultSync for Mac is no longer where the background service runs it from — moved, or put in the Trash — so the service stopped syncing; put it back where it was, or run the setup link again; to remove VaultSync, run bin/vaultsync uninstall in VaultSync's folder")
 
 // withAppGone is what a run the app's departure ended returns: errAppGone,
 // beside any other failure on the way out — the cancellation it caused is
