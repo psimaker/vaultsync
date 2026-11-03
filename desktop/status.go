@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -54,6 +55,26 @@ type connectionsView struct {
 	} `json:"connections"`
 }
 
+// copyBesideAppNote says when the background service runs VaultSync's own
+// copy while a VaultSync for Mac that counts is installed — an older
+// vaultsync (desktop-v0.1.0 knows no app) set it up so, or the app came
+// after the setup: the app's trip to the Trash will not stop it, which the
+// person may believe (decision 053). "" otherwise.
+func (a *app) copyBesideAppNote(gone bool) string {
+	if gone || !a.svc.installed() {
+		return ""
+	}
+	prog := a.svc.program()
+	if prog == "" || isAppAgent(prog) {
+		return ""
+	}
+	apps := installedApps(a.appEnv)
+	if len(apps) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("  It runs VaultSync's own copy, not VaultSync for Mac in %s — moving the app to the Trash will not stop it. To run it from the app, run the setup link, or %s setup.", tildePath(a.home, filepath.Dir(apps[0].Path)), shellPath(a.home, apps[0].Agent))
+}
+
 func (a *app) status(ctx context.Context) error {
 	w := a.out
 	fmt.Fprintf(w, "VaultSync %s — sync engine Syncthing %s\n", version, strings.TrimPrefix(syncthingVersion, "v"))
@@ -86,6 +107,9 @@ func (a *app) status(ctx context.Context) error {
 		default:
 			fmt.Fprintln(w, "Background service: stopped — vaultsync start resumes it")
 		}
+	}
+	if note := a.copyBesideAppNote(gone); note != "" {
+		fmt.Fprintln(w, note)
 	}
 	st, err := loadState(a.lay.State)
 	if err != nil {

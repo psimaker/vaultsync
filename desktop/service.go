@@ -380,6 +380,19 @@ func programMissing(err error) bool {
 	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
 }
 
+// program is the program the background service's LaunchAgent names, read
+// back from its file; "" when there is none or it names none. macOS only.
+func (s service) program() string {
+	if s.goos != "darwin" {
+		return ""
+	}
+	path, err := s.unitPath()
+	if err != nil {
+		return ""
+	}
+	return plistProgramOf(path)
+}
+
 // trayProgram is the program the menu-bar app's start at login names, read
 // back from the file this agent wrote; "" when there is no such file or it
 // names none.

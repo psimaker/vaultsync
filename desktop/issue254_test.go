@@ -806,6 +806,14 @@ func TestIssue254_SetupFromTheAppRunsTheServiceFromIt(t *testing.T) {
 	if copyAfter, _ := os.ReadFile(a.lay.Agent); !bytes.Equal(copyAfter, copyBefore) {
 		t.Fatal("a refused setup changed VaultSync's copy")
 	}
+	// Also without the service: the copy and the command would follow it.
+	err = a.setup(context.Background(), []string{"--no-service", "--code", "TULIP-ANCHOR-42", "--hub", "127.0.0.1:1"})
+	if !strings.Contains(refusalText(err), "this vaultsync is another build") {
+		t.Fatalf("setup --no-service from another build beside the app: %v", err)
+	}
+	if copyAfter, _ := os.ReadFile(a.lay.Agent); !bytes.Equal(copyAfter, copyBefore) {
+		t.Fatal("a refused setup --no-service changed VaultSync's copy")
+	}
 
 	// The app goes to the Trash; setup from VaultSync's own copy.
 	if err := os.RemoveAll(app); err != nil {
@@ -1796,5 +1804,61 @@ func TestIssue254_TheStartAtLoginGoesWhenTheServiceRunsTheCopy(t *testing.T) {
 	run.fail = nil
 	if !strings.Contains(out, "start at login could not be removed") {
 		t.Fatalf("a start at login left beside a service on the copy was not said:\n%s", out)
+	}
+}
+
+// The look at the owner is a real one: what this account made is its own,
+// the root folder (root's) is not.
+func TestIssue254_OwnershipIsTheOwners(t *testing.T) {
+	if !ownedByMe(t.TempDir()) {
+		t.Fatal("a folder this account made is not its own")
+	}
+	if os.Geteuid() != 0 && ownedByMe("/") {
+		t.Fatal("the root folder counted as this account's")
+	}
+	if ownedByMe(filepath.Join(t.TempDir(), "nothing here")) {
+		t.Fatal("nothing at all counted as this account's")
+	}
+}
+
+// A service on VaultSync's own copy beside a VaultSync for Mac that counts —
+// an older vaultsync (desktop-v0.1.0 knows no app) set it up so, or the app
+// came after the setup — is said by status, with the way into the app: the
+// app's trip to the Trash would not stop it. Not said when the service runs
+// from the app, nor without an app.
+func TestIssue254_StatusSaysWhenTheServiceRunsTheCopyBesideTheApp(t *testing.T) {
+	run := &fakeRunner{loaded: true}
+	a := installedApp(t, "darwin", run)
+	app := fakeMacApp(t, filepath.Join(a.home, "Applications"), appBundleName, shippedInfoPlist(t))
+	a.appEnv = macAppEnv(a.home, filepath.Join(t.TempDir(), "none"), a.lay.Agent)
+	writeFile(t, a.lay.Agent, "agent")
+	data, err := a.svc.unitFile(a.lay.Agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, mustUnitPath(t, a.svc), string(data))
+	resolved, err := filepath.EvalSymlinks(app) // as the look at Applications finds it
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "It runs VaultSync's own copy, not VaultSync for Mac in " + tildePath(a.home, filepath.Dir(resolved)) + " — moving the app to the Trash will not stop it."
+	if out := statusText(t, a); !strings.Contains(out, want) || !strings.Contains(out, shellPath(a.home, filepath.Join(resolved, "Contents", "MacOS", "vaultsync"))+" setup.") {
+		t.Fatalf("status beside the app:\n%s", out)
+	}
+	data, err = a.svc.unitFile(filepath.Join(app, "Contents", "MacOS", "vaultsync"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, mustUnitPath(t, a.svc), string(data))
+	if out := statusText(t, a); strings.Contains(out, "It runs VaultSync's own copy") {
+		t.Fatalf("status with the service in the app:\n%s", out)
+	}
+	data, _ = a.svc.unitFile(a.lay.Agent)
+	writeFile(t, mustUnitPath(t, a.svc), string(data))
+	if err := os.RemoveAll(app); err != nil {
+		t.Fatal(err)
+	}
+	if out := statusText(t, a); strings.Contains(out, "It runs VaultSync's own copy") {
+		t.Fatalf("status without an app:\n%s", out)
 	}
 }
