@@ -288,11 +288,11 @@ func (a *app) setup(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if !*noService {
-		if err := a.refuseBesideAnotherBuild(); err != nil {
-			unlockSetup()
-			return err
-		}
+	// Also without the service: the copy and the command would follow this
+	// other build.
+	if err := a.refuseBesideAnotherBuild(); err != nil {
+		unlockSetup()
+		return err
 	}
 	st, engineChanged, err := a.ensureEngine(ctx, t)
 	if err != nil {
@@ -377,7 +377,10 @@ func (a *app) setup(ctx context.Context, args []string) error {
 			// The menu-bar app opens at login only for a service that runs
 			// from it: one on the copy beside the app's icon is the
 			// arrangement decision 053 rules out.
-			if found, err := a.svc.uninstallTray(); err == nil && found {
+			switch found, err := a.svc.uninstallTray(); {
+			case err != nil:
+				t.say("  The menu-bar icon's start at login could not be removed (%v), so the icon may still open at login although the background service does not run from VaultSync for Mac — run vaultsync setup again.", err)
+			case found:
 				t.say("✓ The menu-bar icon no longer opens at login: the background service does not run from VaultSync for Mac.")
 			}
 		}

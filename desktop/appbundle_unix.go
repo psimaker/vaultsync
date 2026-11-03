@@ -2,11 +2,20 @@
 
 package main
 
-import "syscall"
+import (
+	"os"
+	"syscall"
+)
 
-// writableByMe: this account may change what is at p — access(2) with
-// W_OK, which is what the setup link's test -w asks.
-func writableByMe(p string) bool {
-	const wOK = 2 // W_OK
-	return syscall.Access(p, wOK) == nil
+// ownedByMe: the file or folder at p belongs to this account — its owner,
+// not whether it may be changed right now (a bundle locked in the Finder is
+// still its owner's). The setup link decides "this account's app" the same
+// way.
+func ownedByMe(p string) bool {
+	fi, err := os.Lstat(p)
+	if err != nil {
+		return false
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	return ok && int(st.Uid) == os.Getuid()
 }

@@ -37,11 +37,11 @@ type appEnv struct {
 	resolve    func(string) (string, error) // filepath.EvalSymlinks
 	readFile   func(string) ([]byte, error)
 	lstat      func(string) (fs.FileInfo, error)
-	writable   func(string) bool // this account may change what is at the path
+	owned      func(string) bool // what is at the path belongs to this account
 }
 
 func liveAppEnv(goos, home string) appEnv {
-	return appEnv{goos: goos, home: home, executable: os.Executable, resolve: filepath.EvalSymlinks, readFile: os.ReadFile, lstat: os.Lstat, writable: writableByMe}
+	return appEnv{goos: goos, home: home, executable: os.Executable, resolve: filepath.EvalSymlinks, readFile: os.ReadFile, lstat: os.Lstat, owned: ownedByMe}
 }
 
 // findInstalledApp reports the app bundle this program runs from, when that
@@ -113,25 +113,22 @@ func applicationsDirs(env appEnv) []string {
 // checkApp: app is VaultSync for Mac — folders, not links to them, down to
 // Contents/MacOS, eu.vaultsync.desktop at the top of its Info.plist, its
 // agent and the menu-bar app plain executable files — and this account's:
-// the bundle's own folders writable to it, as they are to the account that
-// put it there (also into an /Applications only an administrator may
-// change). Another account's VaultSync for Mac is theirs to update or move
-// to the Trash, and this account's service must not end with it. It says
-// why app is not VaultSync for Mac ("" when it is).
+// the bundle's owner, as the setup link decides it too. Another account's
+// VaultSync for Mac (or one root installed) is theirs to update or move to
+// the Trash, and this account's service must not end with it; one locked
+// in the Finder is still its owner's, and the service runs from it. It
+// says why app is not VaultSync for Mac ("" when it is).
 func checkApp(env appEnv, app string) (macApp, string) {
-	if env.writable == nil {
+	if env.owned == nil {
 		return macApp{}, "it could not be looked at"
 	}
-	folders := []string{app, filepath.Join(app, "Contents"), filepath.Join(app, "Contents", "MacOS")}
-	for _, dir := range folders {
+	for _, dir := range []string{app, filepath.Join(app, "Contents"), filepath.Join(app, "Contents", "MacOS")} {
 		if fi, err := env.lstat(dir); err != nil || !fi.IsDir() {
 			return macApp{}, "it is not a folder of its own (a link, or part of it is)"
 		}
 	}
-	for _, dir := range append(folders, filepath.Join(app, "Contents", "_CodeSignature")) {
-		if _, err := env.lstat(dir); err == nil && !env.writable(dir) {
-			return macApp{}, "this account may not change it (another account's, or locked)"
-		}
+	if !env.owned(app) {
+		return macApp{}, "it belongs to another account"
 	}
 	data, err := env.readFile(filepath.Join(app, "Contents", "Info.plist"))
 	if err != nil {

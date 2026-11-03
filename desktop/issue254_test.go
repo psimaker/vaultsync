@@ -60,7 +60,7 @@ func macAppEnv(home, systemApps, exe string) appEnv {
 			}
 			return filepath.EvalSymlinks(p)
 		},
-		readFile: os.ReadFile, lstat: os.Lstat, writable: writableByMe}
+		readFile: os.ReadFile, lstat: os.Lstat, owned: ownedByMe}
 }
 
 func TestIssue254_FindsVaultSyncForMacOnlyWhereItIsInstalled(t *testing.T) {
@@ -1180,26 +1180,16 @@ func TestIssue254_TheWayBackIntoTheAppTakesOnlyThisAccountsApp(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if os.Geteuid() == 0 {
-		t.Skip("the other account's case needs an account that cannot write everywhere")
-	}
-	// Another account's app in /Applications holds the same build, and this
-	// account has its own in ~/Applications: the service goes into its own.
+	// Another account's app in /Applications holds the same build — owned
+	// by them (a test cannot chown, so the look at the owner says so) — and
+	// this account has its own in ~/Applications: the service goes into its
+	// own.
 	theirs := fakeMacApp(t, systemApps, appBundleName, shippedInfoPlist(t))
 	holding(theirs)
 	mine := fakeMacApp(t, filepath.Join(home, "Applications"), appBundleName, shippedInfoPlist(t))
 	holding(mine)
-	readOnly := []string{filepath.Join(theirs, "Contents", "MacOS"), filepath.Join(theirs, "Contents"), theirs}
-	for _, d := range readOnly {
-		if err := os.Chmod(d, 0o555); err != nil {
-			t.Fatal(err)
-		}
-	}
-	t.Cleanup(func() {
-		for _, d := range readOnly {
-			_ = os.Chmod(d, 0o755)
-		}
-	})
+	theirsOwned := func(p string) bool { return p != theirs && ownedByMe(p) }
+	env.owned = theirsOwned
 	if got, ok := installedAppHolding(env, lay.Agent); !ok || got.Path != mine {
 		t.Fatalf("beside another account's app: %+v %v", got, ok)
 	}
@@ -1211,7 +1201,9 @@ func TestIssue254_TheWayBackIntoTheAppTakesOnlyThisAccountsApp(t *testing.T) {
 		t.Fatalf("another account's app was taken: %+v", got)
 	}
 	// Nor is it the app setup runs from.
-	if got, ok := findInstalledApp(macAppEnv(home, systemApps, filepath.Join(theirs, "Contents", "MacOS", "vaultsync"))); ok {
+	fromTheirs := macAppEnv(home, systemApps, filepath.Join(theirs, "Contents", "MacOS", "vaultsync"))
+	fromTheirs.owned = theirsOwned
+	if got, ok := findInstalledApp(fromTheirs); ok {
 		t.Fatalf("setup from another account's app runs the service from it: %+v", got)
 	}
 }
@@ -1376,27 +1368,32 @@ func TestIssue254_SetupSaysWhyTheServiceRunsTheCopy(t *testing.T) {
 	if prog, _ := plistFirstString(mustRead(t, mustUnitPath(t, a.svc)), "ProgramArguments"); prog != a.lay.Agent {
 		t.Fatalf("the service runs %q", prog)
 	}
-	// Installed, but locked (Finder → Get Info → Locked, or another
-	// account's): said too.
+	// Installed, but another account's: said too.
+	if err := os.Rename(moved, app); err != nil {
+		t.Fatal(err)
+	}
+	a.appEnv = macAppEnv(a.home, filepath.Join(t.TempDir(), "none"), filepath.Join(app, "Contents", "MacOS", "vaultsync"))
+	a.appEnv.owned = func(p string) bool { return p != app && ownedByMe(p) }
+	out, _ = setupFrom(t, a)
+	if !strings.Contains(out, "It runs VaultSync's own copy, not VaultSync for Mac in ~/Applications: it belongs to another account.") {
+		t.Fatalf("another account's app was passed over without a word:\n%s", out)
+	}
+	// Locked in the Finder, the app is still its owner's: the service runs
+	// from it, and nothing is said.
 	if os.Geteuid() != 0 {
-		if err := os.Rename(moved, app); err != nil {
-			t.Fatal(err)
-		}
-		a.appEnv = macAppEnv(a.home, filepath.Join(t.TempDir(), "none"), filepath.Join(app, "Contents", "MacOS", "vaultsync"))
+		a.appEnv.owned = ownedByMe
 		locked := []string{filepath.Join(app, "Contents", "MacOS"), filepath.Join(app, "Contents"), app}
 		for _, d := range locked {
 			if err := os.Chmod(d, 0o555); err != nil {
 				t.Fatal(err)
 			}
 		}
-		t.Cleanup(func() {
-			for _, d := range locked {
-				_ = os.Chmod(d, 0o755)
-			}
-		})
 		out, _ = setupFrom(t, a)
-		if !strings.Contains(out, "It runs VaultSync's own copy, not VaultSync for Mac in ~/Applications: this account may not change it") {
-			t.Fatalf("a locked app was passed over without a word:\n%s", out)
+		for _, d := range locked {
+			_ = os.Chmod(d, 0o755)
+		}
+		if prog, _ := plistFirstString(mustRead(t, mustUnitPath(t, a.svc)), "ProgramArguments"); prog != filepath.Join(app, "Contents", "MacOS", "vaultsync") || strings.Contains(out, "It runs VaultSync's own copy") {
+			t.Fatalf("a locked app of this account's was passed over: %q\n%s", prog, out)
 		}
 	}
 	// Run from the copy, with no app to speak of: nothing to say.
@@ -1773,33 +1770,31 @@ func TestIssue254_TheCommandFollowsBeforeTheEngineIsWaitedFor(t *testing.T) {
 
 // The menu-bar app opens at login only for a service that runs from the
 // app: when setup puts the service on the copy — beside a VaultSync for Mac
-// that no longer counts (locked), whose menu-bar app is still there — the
-// start at login goes too, and setup says so.
+// that no longer counts (another account's now), whose menu-bar app is
+// still there — the start at login goes too, and setup says so; one that
+// cannot be removed is said as well.
 func TestIssue254_TheStartAtLoginGoesWhenTheServiceRunsTheCopy(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("needs an account that cannot write everywhere")
-	}
 	a, run, app := macSetupFixture(t)
 	if out, err := setupFrom(t, a); !strings.Contains(refusalText(err)+fmt.Sprint(err), "did not answer") || !run.trayLoaded {
 		t.Fatalf("setup from the app: %v\n%s", err, out)
 	}
-	locked := []string{filepath.Join(app, "Contents", "MacOS"), filepath.Join(app, "Contents"), app}
-	for _, d := range locked {
-		if err := os.Chmod(d, 0o555); err != nil {
-			t.Fatal(err)
-		}
-	}
-	t.Cleanup(func() {
-		for _, d := range locked {
-			_ = os.Chmod(d, 0o755)
-		}
-	})
 	a.appEnv = macAppEnv(a.home, filepath.Join(t.TempDir(), "none"), a.lay.Agent)
+	a.appEnv.owned = func(p string) bool { return p != app && ownedByMe(p) } // now another account's
 	out, _ := setupFrom(t, a)
 	if prog, _ := plistFirstString(mustRead(t, mustUnitPath(t, a.svc)), "ProgramArguments"); prog != a.lay.Agent {
 		t.Fatalf("the service runs %q", prog)
 	}
 	if _, err := os.Stat(a.svc.trayPlistPath()); !errors.Is(err, os.ErrNotExist) || run.trayLoaded || !strings.Contains(out, "does not run from VaultSync for Mac") {
 		t.Fatalf("the start at login stayed beside a service on the copy: %v loaded=%v\n%s", err, run.trayLoaded, out)
+	}
+	// A start at login that cannot be removed is said, not passed over.
+	if err := a.svc.installTray(filepath.Join(app, "Contents", "MacOS", "vaultsync-tray"), true); err != nil {
+		t.Fatal(err)
+	}
+	run.fail = map[string]error{"launchctl bootout gui/501/" + trayLabel: exitErr(5)}
+	out, _ = setupFrom(t, a)
+	run.fail = nil
+	if !strings.Contains(out, "start at login could not be removed") {
+		t.Fatalf("a start at login left beside a service on the copy was not said:\n%s", out)
 	}
 }
