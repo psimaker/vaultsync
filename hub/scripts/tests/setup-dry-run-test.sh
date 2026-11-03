@@ -166,6 +166,20 @@ case "$*" in
 	*) echo "${FAKE_OS:-Linux}" ;;
 esac
 SHIM
+# id -u answers FAKE_UID when it is set (the device path refuses root); a
+# test run as root (in a container) pins it to an ordinary account's, so the
+# device cases still run.
+REAL_ID=$(command -v id)
+[ "$("$REAL_ID" -u)" != 0 ] || FAKE_UID=${FAKE_UID:-4242}
+export FAKE_UID
+cat >"$SANDBOX/bin/id" <<SHIM
+#!/usr/bin/env sh
+if [ "\$1" = -u ] && [ -n "\${FAKE_UID:-}" ]; then
+	echo "\$FAKE_UID"
+	exit 0
+fi
+exec "$REAL_ID" "\$@"
+SHIM
 # Port probes are read-only: answer "nothing listening".
 for probe in ss netstat; do
 	printf '#!/usr/bin/env sh\nexit 0\n' >"$SANDBOX/bin/$probe"
@@ -880,6 +894,10 @@ pass "on a Mac the setup installs VaultSync for Mac and runs from it"
 # shows the year instead of the time.)
 # shellcheck disable=SC2012 # ls -di is the one inode reading BSD and GNU share
 inodes() { ls -di "$installed" "$installed/Contents/MacOS/vaultsync" | awk '{print $1}' | tr '\n' ' '; }
+# tree DIR…: every path under the folders with its inode — what "left as it
+# is" compares (ls -l is not stable here: it shows the year for an mtime in
+# the future, which an unzipped file has until its 2-second DOS time passed).
+tree() { find "$@" -exec ls -di {} + 2>/dev/null | awk '{ $1 = $1; print }' | LC_ALL=C sort; }
 before=$(inodes)
 mac_setup >"$SANDBOX/results/run.log" 2>&1 || fail "the same-build setup failed:
 $(cat "$SANDBOX/results/run.log")"
@@ -1030,7 +1048,7 @@ for spoiler in foreign nested link; do
 		make_app "$SANDBOX/elsewhere" eu.vaultsync.desktop linked
 		ln -s "$SANDBOX/elsewhere/VaultSync for Mac.app" "$installed"
 	fi
-	before=$(ls -lR "$APPS" "$SANDBOX/elsewhere" 2>/dev/null || true)
+	before=$(tree "$APPS" "$SANDBOX/elsewhere")
 	rm -f "$AGENT_ARGS" "$AGENT_MARK"
 	if out=$(mac_setup --dry-run 2>&1); then
 		fail "a dry run must stop at a $spoiler bundle in the app's place:
@@ -1042,7 +1060,7 @@ $(cat "$SANDBOX/results/run.log")"
 	fi
 	grep -q "it was not replaced" "$SANDBOX/results/run.log" || fail "the refusal does not say so:
 $(cat "$SANDBOX/results/run.log")"
-	[ "$before" = "$(ls -lR "$APPS" "$SANDBOX/elsewhere" 2>/dev/null || true)" ] || fail "the $spoiler bundle was touched"
+	[ "$before" = "$(tree "$APPS" "$SANDBOX/elsewhere")" ] || fail "the $spoiler bundle was touched"
 	[ ! -e "$AGENT_ARGS" ] || fail "an agent ran beside a $spoiler bundle"
 	[ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "a refused setup left temporary files: $(ls -A "$SANDBOX/tmp")"
 done
@@ -1116,10 +1134,10 @@ if [ "$(id -u)" != 0 ]; then
 	release_with theirs
 	make_app "$APPS" eu.vaultsync.desktop another-accounts
 	chmod 555 "$installed/Contents/MacOS" "$installed/Contents" "$installed"
-	before=$(ls -lR "$APPS")
+	before=$(tree "$APPS")
 	mac_setup >"$SANDBOX/results/run.log" 2>&1 || { chmod -R u+w "$APPS"; fail "the setup beside another account's app failed:
 $(cat "$SANDBOX/results/run.log")"; }
-	[ "$before" = "$(ls -lR "$APPS")" ] || { chmod -R u+w "$APPS"; fail "another account's app was touched"; }
+	[ "$before" = "$(tree "$APPS")" ] || { chmod -R u+w "$APPS"; fail "another account's app was touched"; }
 	chmod -R u+w "$APPS"
 	[ "$(cat "$AGENT_SELF")" = "$HOME/Applications/VaultSync for Mac.app/Contents/MacOS/vaultsync" ] || fail "not run from ~/Applications beside another account's app: $(cat "$AGENT_SELF")"
 	rm -rf "$installed" "$HOME/Applications"
@@ -1207,14 +1225,14 @@ if [ "$(id -u)" != 0 ]; then
 	locked="$HOME/Applications/VaultSync for Mac.app"
 	chmod 555 "$locked/Contents/MacOS" "$locked/Contents" "$locked"
 	chmod 555 "$APPS"
-	before=$(ls -lR "$HOME/Applications")
+	before=$(tree "$HOME/Applications")
 	if mac_setup >"$SANDBOX/results/run.log" 2>&1; then
 		chmod 755 "$APPS"
 		chmod -R u+w "$HOME/Applications"
 		fail "a setup beside a locked app must stop"
 	fi
 	chmod 755 "$APPS"
-	[ "$before" = "$(ls -lR "$HOME/Applications")" ] || { chmod -R u+w "$HOME/Applications"; fail "the locked app was touched"; }
+	[ "$before" = "$(tree "$HOME/Applications")" ] || { chmod -R u+w "$HOME/Applications"; fail "the locked app was touched"; }
 	chmod -R u+w "$HOME/Applications"
 	grep -q "cannot be replaced by this account" "$SANDBOX/results/run.log" || fail "the refusal does not say why:
 $(cat "$SANDBOX/results/run.log")"
@@ -1223,6 +1241,44 @@ $(cat "$SANDBOX/results/run.log")"
 else
 	pass "the locked-app case skipped (root writes anywhere)"
 fi
+
+# This account's app in an Applications folder only an administrator may
+# change: the setup cannot replace it there and stops with the reason —
+# never a second app in ~/Applications, which would take the service away
+# from the one the person knows.
+if [ "$(id -u)" != 0 ] && [ "${FAKE_UID:-}" != 4242 ]; then
+	release_with ninth
+	make_app "$APPS" eu.vaultsync.desktop own-in-admin-folder
+	chmod 555 "$APPS"
+	before=$(tree "$APPS")
+	if mac_setup >"$SANDBOX/results/run.log" 2>&1; then
+		chmod 755 "$APPS"
+		fail "a setup beside its own app in an admin-only folder must stop"
+	fi
+	chmod 755 "$APPS"
+	grep -q "is yours, but only an administrator may replace it there" "$SANDBOX/results/run.log" || fail "the refusal does not say why:
+$(cat "$SANDBOX/results/run.log")"
+	[ "$before" = "$(tree "$APPS")" ] || fail "the app in the admin-only folder was touched"
+	[ ! -e "$HOME/Applications/VaultSync for Mac.app" ] || fail "a second app went into ~/Applications"
+	rm -rf "$installed" "$HOME/Applications"
+	pass "this account's app where only an administrator may replace it stops the setup with the reason"
+else
+	pass "the admin-only-folder case skipped (root writes anywhere)"
+fi
+
+# As root (sudo) the device path stops before anything: the service is the
+# account's that uses Obsidian, and as root every check of whose an app is
+# would pass.
+for os in Darwin Linux; do
+	if (FAKE_UID=0 FAKE_OS=$os FAKE_ARCH=arm64 FAKE_RELEASE="$MAC_RELEASE" VAULTSYNC_APPLICATIONS_DIR="$APPS" TMPDIR="$SANDBOX/tmp" \
+		sh "$SETUP_SH" --device --code tulip-anchor-07) >"$SANDBOX/results/run.log" 2>&1; then
+		fail "the device path ran as root on $os"
+	fi
+	grep -q "without sudo" "$SANDBOX/results/run.log" || fail "the root refusal on $os does not say why:
+$(cat "$SANDBOX/results/run.log")"
+done
+[ -z "$(ls -A "$APPS")" ] || fail "a refused root setup installed something: $(ls -A "$APPS")"
+pass "the device path refuses to run as root"
 
 # A release without the app (desktop-v0.1.0): the bare agent, as before.
 rm -f "$MAC_RELEASE/VaultSync_darwin_arm64.zip"

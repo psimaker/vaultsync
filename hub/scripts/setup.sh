@@ -420,15 +420,20 @@ bundle_id() {
 	plutil -extract CFBundleIdentifier raw -expect string -o - "$plist" 2>/dev/null || true
 }
 
-# replaceable APP: this account can put another VaultSync for Mac in APP's
-# place and remove APP — APP's folder and the bundle's own folders are
-# writable to it (another account's app is not, nor one root installed).
-replaceable() {
-	[ -w "$(dirname -- "$1")" ] || return 1
+# own_app APP: APP is this account's — the bundle's own folders are writable
+# to it (another account's app is not, nor one root installed, nor a locked
+# one): the agent's rule too (checkApp).
+own_app() {
 	# (sh has no local variables: app_dir's loop runs around this one.)
 	for part in "$1" "$1/Contents" "$1/Contents/MacOS" "$1/Contents/_CodeSignature"; do
 		[ ! -e "$part" ] || [ -w "$part" ] || return 1
 	done
+}
+
+# replaceable APP: this account can put another VaultSync for Mac in APP's
+# place and remove APP — APP is its own, in a folder it may change.
+replaceable() {
+	[ -w "$(dirname -- "$1")" ] && own_app "$1"
 }
 
 # app_dir prints the folder VaultSync for Mac goes into: the one it already
@@ -441,6 +446,13 @@ app_dir() {
 			if [ -L "$d/$APP_NAME" ] || replaceable "$d/$APP_NAME"; then
 				printf '%s\n' "$d"
 				return 0
+			fi
+			# This account's app, in a folder only an administrator may
+			# change: the background service runs from it, and a second one
+			# in ~/Applications would take the service away from the app the
+			# person knows (decision 053).
+			if own_app "$d/$APP_NAME"; then
+				fail "VaultSync for Mac in $d is yours, but only an administrator may replace it there. Move it to $HOME/Applications in the Finder (or have an administrator run the setup link), then run the setup again."
 			fi
 		fi
 	done
@@ -835,6 +847,10 @@ cleanup_device() {
 }
 
 setup_device() {
+	# The service belongs to the account whose vaults it syncs; as root every
+	# check of whose an app is passes, and another account's app would be
+	# replaced.
+	[ "$(id -u)" != 0 ] || fail "Run the setup link as the account that uses Obsidian, without sudo — VaultSync runs as that account."
 	command -v curl >/dev/null 2>&1 || fail "curl is required."
 	asset=$(detect_asset vaultsync)
 	tag=$(latest_stable_tag desktop-v) || tag=""
