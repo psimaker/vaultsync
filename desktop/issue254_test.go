@@ -1747,8 +1747,15 @@ func TestIssue254_TheCommandFollowsBeforeTheEngineIsWaitedFor(t *testing.T) {
 		t.Fatal(err)
 	}
 	a.appEnv = macAppEnv(a.home, filepath.Join(t.TempDir(), "none"), a.lay.Agent)
-	// An engine that does not answer.
-	writeFile(t, filepath.Join(a.lay.Home, "config.xml"), "<configuration><gui><address>127.0.0.1:1</address><apikey>engine-key</apikey></gui></configuration>\n")
+	// An engine that does not answer: its port free, nothing listening.
+	port, err := freeLoopbackPort()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := updateState(a.lay.State, func(s *agentState) { s.GUIPort = port }); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(a.lay.Home, "config.xml"), "<configuration><gui><address>127.0.0.1:"+strconv.Itoa(port)+"</address><apikey>engine-key</apikey></gui></configuration>\n")
 	t.Setenv("PATH", "/usr/bin:/bin")
 	orig := ttyPath
 	ttyPath = filepath.Join(t.TempDir(), "no-tty")
@@ -1761,5 +1768,38 @@ func TestIssue254_TheCommandFollowsBeforeTheEngineIsWaitedFor(t *testing.T) {
 	}
 	if target, _ := os.Readlink(link); target != a.lay.Agent {
 		t.Fatalf("the command still leads into the Trash: %q", target)
+	}
+}
+
+// The menu-bar app opens at login only for a service that runs from the
+// app: when setup puts the service on the copy — beside a VaultSync for Mac
+// that no longer counts (locked), whose menu-bar app is still there — the
+// start at login goes too, and setup says so.
+func TestIssue254_TheStartAtLoginGoesWhenTheServiceRunsTheCopy(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("needs an account that cannot write everywhere")
+	}
+	a, run, app := macSetupFixture(t)
+	if out, err := setupFrom(t, a); !strings.Contains(refusalText(err)+fmt.Sprint(err), "did not answer") || !run.trayLoaded {
+		t.Fatalf("setup from the app: %v\n%s", err, out)
+	}
+	locked := []string{filepath.Join(app, "Contents", "MacOS"), filepath.Join(app, "Contents"), app}
+	for _, d := range locked {
+		if err := os.Chmod(d, 0o555); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		for _, d := range locked {
+			_ = os.Chmod(d, 0o755)
+		}
+	})
+	a.appEnv = macAppEnv(a.home, filepath.Join(t.TempDir(), "none"), a.lay.Agent)
+	out, _ := setupFrom(t, a)
+	if prog, _ := plistFirstString(mustRead(t, mustUnitPath(t, a.svc)), "ProgramArguments"); prog != a.lay.Agent {
+		t.Fatalf("the service runs %q", prog)
+	}
+	if _, err := os.Stat(a.svc.trayPlistPath()); !errors.Is(err, os.ErrNotExist) || run.trayLoaded || !strings.Contains(out, "does not run from VaultSync for Mac") {
+		t.Fatalf("the start at login stayed beside a service on the copy: %v loaded=%v\n%s", err, run.trayLoaded, out)
 	}
 }
