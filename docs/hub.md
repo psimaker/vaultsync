@@ -308,7 +308,13 @@ the service back into the app. Set up without the app — the bare
 before; so it does when setup runs from a VaultSync for Mac outside
 Applications, or one your account may not change (locked, or another
 account's) — setup then says so, and that app's trip to the Trash does not
-stop the service. When the background service starts, macOS asks whether VaultSync
+stop the service. With VaultSync for Mac installed, a `vaultsync` of another
+build (a bare download of another release) does not move the service: it
+stops and says to update the app with the setup link. Run the setup link as
+yourself, not with `sudo`. If you put VaultSync for Mac into an
+Applications folder only an administrator may change, the setup link cannot
+update it there: move it to `~/Applications` once, or have an administrator
+run the setup link. When the background service starts, macOS asks whether VaultSync
 may find devices on your local network, and notes that VaultSync can run in
 the background. The names macOS shows depend on its version and on how
 VaultSync was set up: “VaultSync for Mac” or “vaultsync” in the prompts and
