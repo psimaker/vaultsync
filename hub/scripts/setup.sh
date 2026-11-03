@@ -420,10 +420,17 @@ bundle_id() {
 	plutil -extract CFBundleIdentifier raw -expect string -o - "$plist" 2>/dev/null || true
 }
 
-# own_app APP: APP is this account's — the bundle's own folders are writable
-# to it (another account's app is not, nor one root installed, nor a locked
-# one): the agent's rule too (checkApp).
+# own_app APP: APP is this account's — its owner (another account's app is
+# not, nor one root installed; one locked in the Finder still is): the
+# agent's rule too (checkApp). find -user takes the account's number on BSD
+# and GNU alike.
 own_app() {
+	[ -n "$(find "$1" -maxdepth 0 -user "$(id -u)" 2>/dev/null)" ]
+}
+
+# unlocked APP: this account may change the bundle's own folders — one
+# locked in the Finder (Get Info → Locked) it may not.
+unlocked() {
 	# (sh has no local variables: app_dir's loop runs around this one.)
 	for part in "$1" "$1/Contents" "$1/Contents/MacOS" "$1/Contents/_CodeSignature"; do
 		[ ! -e "$part" ] || [ -w "$part" ] || return 1
@@ -431,9 +438,9 @@ own_app() {
 }
 
 # replaceable APP: this account can put another VaultSync for Mac in APP's
-# place and remove APP — APP is its own, in a folder it may change.
+# place and remove APP — its own, unlocked, in a folder it may change.
 replaceable() {
-	[ -w "$(dirname -- "$1")" ] && own_app "$1"
+	[ -w "$(dirname -- "$1")" ] && own_app "$1" && unlocked "$1"
 }
 
 # app_dir prints the folder VaultSync for Mac goes into: the one it already
@@ -447,12 +454,16 @@ app_dir() {
 				printf '%s\n' "$d"
 				return 0
 			fi
-			# This account's app, in a folder only an administrator may
-			# change: the background service runs from it, and a second one
-			# in ~/Applications would take the service away from the app the
-			# person knows (decision 053).
+			# This account's app that cannot be replaced where it is: the
+			# background service runs from it, and a second app elsewhere
+			# would take the service away from the one the person knows
+			# (decision 053).
 			if own_app "$d/$APP_NAME"; then
-				fail "VaultSync for Mac in $d is yours, but only an administrator may replace it there. Move it to $HOME/Applications in the Finder (or have an administrator run the setup link), then run the setup again."
+				unlocked "$d/$APP_NAME" ||
+					fail "VaultSync for Mac in $d is locked (Finder → Get Info → Locked). Unlock it, then run the setup again."
+				[ "$d" != "$HOME/Applications" ] ||
+					fail "VaultSync for Mac in $d cannot be replaced: this account may not change that folder. Give it write access again (Finder → Get Info → Sharing & Permissions), then run the setup again."
+				fail "VaultSync for Mac in $d is yours, but only an administrator may change that folder, so the setup link cannot update it there. Move it to $HOME/Applications in the Finder (it asks for an administrator's password), then run the setup again."
 			fi
 		fi
 	done

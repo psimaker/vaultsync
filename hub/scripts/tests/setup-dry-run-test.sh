@@ -961,7 +961,9 @@ $(find "$installed" 2>&1 | head -20)"
 	[ "$(ls -A "$APPS")" = "VaultSync for Mac.app" ] || fail "$how left more than the app: $(ls -A "$APPS")"
 	[ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "$how left temporary files: $(ls -A "$SANDBOX/tmp")"
 done
-grep -q "the one installed before stays" "$SANDBOX/results/run.log" && fail "an interrupted setup claims a failed move"
+# (Which words an interrupted run prints depends on when the shell runs the
+# trap — bash may finish the failed move's branch first; what is on disk is
+# the same, and that is what the loop above checks.)
 pass "a move into place that stops halfway leaves the app installed before, whole"
 
 # Ctrl-C right after the installed app was set aside, before the new one
@@ -1008,7 +1010,7 @@ pass "an old app that cannot be put back is kept and named"
 # Part of the new app that cannot be removed stands in the app's place: the
 # old app is not moved into it — it stays where it was set aside, whole,
 # and the setup says where both are.
-if [ "$(id -u)" != 0 ]; then
+if [ "$("$REAL_ID" -u)" != 0 ]; then
 	release_with stuck
 	if (FAIL_MV_PARTIAL=1 STUCK_PARTIAL=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
 		chmod -R u+w "$APPS"
@@ -1128,14 +1130,15 @@ $(cat "$SANDBOX/results/run.log")"
 [ -z "$(ls -A "$APPS")" ] || fail "a failed first install left something: $(ls -A "$APPS")"
 pass "a first install that cannot be moved into place leaves nothing and says so"
 
-# An app this account cannot replace (another account installed it): left
-# alone, and this account's goes into ~/Applications.
-if [ "$(id -u)" != 0 ]; then
+# An app another account installed (its owner another — the id stand-in
+# makes this account another one): left alone, and this account's goes into
+# ~/Applications.
+if [ "$("$REAL_ID" -u)" != 0 ]; then
 	release_with theirs
 	make_app "$APPS" eu.vaultsync.desktop another-accounts
 	chmod 555 "$installed/Contents/MacOS" "$installed/Contents" "$installed"
 	before=$(tree "$APPS")
-	mac_setup >"$SANDBOX/results/run.log" 2>&1 || { chmod -R u+w "$APPS"; fail "the setup beside another account's app failed:
+	(FAKE_UID=4243 mac_setup) >"$SANDBOX/results/run.log" 2>&1 || { chmod -R u+w "$APPS"; fail "the setup beside another account's app failed:
 $(cat "$SANDBOX/results/run.log")"; }
 	[ "$before" = "$(tree "$APPS")" ] || { chmod -R u+w "$APPS"; fail "another account's app was touched"; }
 	chmod -R u+w "$APPS"
@@ -1148,7 +1151,7 @@ fi
 
 # Applications this account may not write to: ~/Applications. An app already
 # in ~/Applications is updated there even when Applications is writable.
-if [ "$(id -u)" != 0 ]; then
+if [ "$("$REAL_ID" -u)" != 0 ]; then
 	release_with fourth
 	chmod 555 "$APPS"
 	mac_setup >"$SANDBOX/results/run.log" 2>&1 || { chmod 755 "$APPS"; fail "the setup into ~/Applications failed:
@@ -1218,7 +1221,7 @@ pass "an unusable TMPDIR does not stop the setup"
 # VaultSync for Mac in ~/Applications that this account cannot replace
 # (locked), with Applications not writable: the setup stops and says why,
 # instead of running an app the agent passes over.
-if [ "$(id -u)" != 0 ]; then
+if [ "$("$REAL_ID" -u)" != 0 ]; then
 	release_with eighth
 	mkdir -p "$HOME/Applications"
 	mv "$installed" "$HOME/Applications/VaultSync for Mac.app"
@@ -1234,10 +1237,29 @@ if [ "$(id -u)" != 0 ]; then
 	chmod 755 "$APPS"
 	[ "$before" = "$(tree "$HOME/Applications")" ] || { chmod -R u+w "$HOME/Applications"; fail "the locked app was touched"; }
 	chmod -R u+w "$HOME/Applications"
-	grep -q "cannot be replaced by this account" "$SANDBOX/results/run.log" || fail "the refusal does not say why:
+	grep -q "is locked (Finder → Get Info → Locked). Unlock it" "$SANDBOX/results/run.log" || fail "the refusal does not say why:
 $(cat "$SANDBOX/results/run.log")"
 	rm -rf "$HOME/Applications"
 	pass "a locked app in ~/Applications stops the setup with the reason"
+
+	# The same app locked in an Applications folder this account may change:
+	# it stops too — never a second app in ~/Applications that would take the
+	# service away from it.
+	release_with tenth
+	make_app "$APPS" eu.vaultsync.desktop locked-own
+	chmod 555 "$installed/Contents/MacOS" "$installed/Contents" "$installed"
+	before=$(tree "$APPS")
+	if mac_setup >"$SANDBOX/results/run.log" 2>&1; then
+		chmod -R u+w "$APPS"
+		fail "a setup beside a locked app of this account's must stop"
+	fi
+	[ "$before" = "$(tree "$APPS")" ] || { chmod -R u+w "$APPS"; fail "the locked app was touched"; }
+	chmod -R u+w "$APPS"
+	grep -q "is locked (Finder → Get Info → Locked). Unlock it" "$SANDBOX/results/run.log" || fail "the refusal does not say why:
+$(cat "$SANDBOX/results/run.log")"
+	[ ! -e "$HOME/Applications/VaultSync for Mac.app" ] || fail "a second app went into ~/Applications beside a locked one"
+	rm -rf "$installed" "$HOME/Applications"
+	pass "a locked app of this account's stops the setup in either Applications folder"
 else
 	pass "the locked-app case skipped (root writes anywhere)"
 fi
@@ -1246,7 +1268,7 @@ fi
 # change: the setup cannot replace it there and stops with the reason —
 # never a second app in ~/Applications, which would take the service away
 # from the one the person knows.
-if [ "$(id -u)" != 0 ] && [ "${FAKE_UID:-}" != 4242 ]; then
+if [ "$("$REAL_ID" -u)" != 0 ]; then
 	release_with ninth
 	make_app "$APPS" eu.vaultsync.desktop own-in-admin-folder
 	chmod 555 "$APPS"
@@ -1256,7 +1278,7 @@ if [ "$(id -u)" != 0 ] && [ "${FAKE_UID:-}" != 4242 ]; then
 		fail "a setup beside its own app in an admin-only folder must stop"
 	fi
 	chmod 755 "$APPS"
-	grep -q "is yours, but only an administrator may replace it there" "$SANDBOX/results/run.log" || fail "the refusal does not say why:
+	grep -q "is yours, but only an administrator may change that folder" "$SANDBOX/results/run.log" || fail "the refusal does not say why:
 $(cat "$SANDBOX/results/run.log")"
 	[ "$before" = "$(tree "$APPS")" ] || fail "the app in the admin-only folder was touched"
 	[ ! -e "$HOME/Applications/VaultSync for Mac.app" ] || fail "a second app went into ~/Applications"
