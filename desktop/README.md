@@ -139,7 +139,10 @@ macos/make-app.sh dev /tmp/vaultsync /tmp/vaultsync-tray /tmp/app
 
 ## Bumping Syncthing
 
-Change `syncthingVersion` and the four entries in `pins.go`. First verify
+A pin only ever moves forward: an agent refuses to install a Syncthing
+older than the one `agent.json` records (decision 054), so a lowered pin
+would stop every computer the newer one reached. Change `syncthingVersion`
+and the four entries in `pins.go`. First verify
 the release's `sha256sum.txt.asc` with Syncthing's release key
 (`curl -fsSL https://syncthing.net/release-key.txt | gpg --import`, then
 `gpg --verify sha256sum.txt.asc`). v2.1.6 is signed by

@@ -1,5 +1,10 @@
 package main
 
+import (
+	"strconv"
+	"strings"
+)
+
 // The one stock Syncthing release this agent installs (decision 046). The
 // checksums are part of this binary, never fetched next to the download: an
 // archive that does not match is refused before anything is unpacked.
@@ -9,6 +14,42 @@ package main
 // GitHub's asset digests, and a green Desktop Syncthing E2E on the new
 // archive (the engine's generated config.xml shape is pinned with it).
 const syncthingVersion = "v2.1.6"
+
+// engineNewer: Syncthing version a (vX.Y.Z — a suffix such as -rc.1 aside)
+// is newer than b. A version that does not read as one is not newer.
+func engineNewer(a, b string) bool {
+	va, ok := engineVersion(a)
+	if !ok {
+		return false
+	}
+	vb, ok := engineVersion(b)
+	if !ok {
+		return false
+	}
+	for i := range va {
+		if va[i] != vb[i] {
+			return va[i] > vb[i]
+		}
+	}
+	return false
+}
+
+func engineVersion(v string) ([3]int, bool) {
+	var out [3]int
+	core, _, _ := strings.Cut(strings.TrimPrefix(v, "v"), "-")
+	parts := strings.Split(core, ".")
+	if len(parts) != 3 {
+		return out, false
+	}
+	for i, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 {
+			return out, false
+		}
+		out[i] = n
+	}
+	return out, true
+}
 
 // syncthingDownloadBase is where the pinned archives come from.
 const syncthingDownloadBase = "https://github.com/syncthing/syncthing/releases/download/" + syncthingVersion + "/"

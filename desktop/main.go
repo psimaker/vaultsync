@@ -104,6 +104,8 @@ func serviceSummary(err error) string {
 		return errEngineStoppedOnItsOwn.Error()
 	case errors.Is(err, errAppGone):
 		return errAppGone.Error()
+	case errors.Is(err, errOlderAgent):
+		return errOlderAgent.Error()
 	case errors.As(err, &ee):
 		return "the sync engine stopped (" + ee.String() + ")"
 	case errors.As(err, &pe):
@@ -744,6 +746,10 @@ func (a *app) ensureEngine(ctx context.Context, t *term) (agentState, bool, erro
 	if err != nil {
 		return st, false, err
 	}
+	// Never an older engine over the state a newer one wrote (#264).
+	if engineNewer(st.Syncthing.Version, syncthingVersion) {
+		return st, false, refuse("This VaultSync is older than the one set up on this computer: its sync engine is Syncthing %s, this vaultsync brings %s. Nothing was changed — run the setup link to get the current VaultSync.", strings.TrimPrefix(st.Syncthing.Version, "v"), strings.TrimPrefix(syncthingVersion, "v"))
+	}
 	if st.Syncthing.Version == syncthingVersion && st.Syncthing.BinarySHA256 != "" {
 		if sum, err := fileSHA256(a.lay.Syncthing); err == nil && sum == st.Syncthing.BinarySHA256 {
 			t.say("✓ Sync engine ready (Syncthing %s)", strings.TrimPrefix(syncthingVersion, "v"))
@@ -1115,6 +1121,13 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 		unlockSetup()
 		return err
 	}
+	// An older VaultSync — an old copy, an older VaultSync for Mac put in
+	// Applications — never puts its older engine over the state the newer
+	// one wrote; it stops, and so does its copy refresh below (#264).
+	if engineNewer(st.Syncthing.Version, syncthingVersion) {
+		unlockSetup()
+		return errOlderAgent
+	}
 	eng := a.engine()
 	sum, sumErr := fileSHA256(a.lay.Syncthing)
 	if st.Syncthing.Version != syncthingVersion || sumErr != nil || sum != st.Syncthing.BinarySHA256 {
@@ -1243,6 +1256,12 @@ var stderrIsTerminal = func() bool {
 	st, err := os.Stderr.Stat()
 	return err == nil && st.Mode()&os.ModeCharDevice != 0
 }
+
+// errOlderAgent ends a service, and a setup, of a VaultSync older than the
+// one set up on this computer: it pins an older Syncthing than agent.json
+// records, and putting that over the state the newer one wrote is what it
+// must never do (#264). It names no path.
+var errOlderAgent = errors.New("this VaultSync is older than the one set up on this computer, whose sync engine is newer — nothing was changed; run the setup link to get the current VaultSync")
 
 // errAppGone ends a service whose VaultSync for Mac went away; it names no
 // path, so the service log carries it as it is.
