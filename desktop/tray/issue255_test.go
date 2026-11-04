@@ -7,8 +7,12 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
+	"time"
+
+	"github.com/psimaker/vaultsync/desktop/internal/control"
 )
 
 // #255: macOS asks once whether VaultSync for Mac may open a folder in
@@ -93,5 +97,54 @@ func TestIssue255_AnOpenThatWaitsForMacOSIsSaid(t *testing.T) {
 	}
 	if err := readContents(dir + "/none"); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("nothing there: %v", err)
+	}
+}
+
+// The notice that asks to click the vault again goes once an open has
+// worked; what else the menu said (a pause with no Hub) is not an open's
+// to take back.
+func TestIssue255_AnOpenThatWorksTakesBackWhatAnOpenSaid(t *testing.T) {
+	agent := newFakeAgent(t)
+	agent.set(func(f *fakeAgent) {
+		f.hubs = 1
+		f.status.Hubs = []Hub{{Name: "Office Hub", State: "connected", Kind: control.KindOK}}
+		f.status.Vaults = []Vault{{Label: "Notes", Path: "/Users/me/Documents/Notes", State: "up to date", Kind: control.KindOK}}
+	})
+	ui := newFakeUI(t)
+	var mu sync.Mutex
+	fails := []error{errOpenWaited}
+	opened := make(chan struct{}, 8)
+	open := func(context.Context, string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(fails) > 0 {
+			err := fails[0]
+			fails = fails[1:]
+			return err
+		}
+		opened <- struct{}{}
+		return nil
+	}
+	controllerFor(t, agent, ui, &Controller{Open: open})
+	ui.view(t, "up to date", func(v View) bool { return v.Headline == "Up to date" })
+	notes := Event{Kind: EventOpenVault, Path: "/Users/me/Documents/Notes"}
+	ui.send(notes)
+	ui.view(t, "the wait said", func(v View) bool { return strings.Contains(v.Notice, "then click it again") })
+	ui.send(notes)
+	ui.view(t, "the notice gone once it opened", func(v View) bool { return v.Notice == "" })
+
+	agent.set(func(f *fakeAgent) { f.hubs = 0; f.status.Hubs = []Hub{} })
+	ui.click(EventOpened, 0)
+	ui.view(t, "no Hub", func(v View) bool { return v.Headline == "No Hub paired yet" })
+	ui.send(Event{Kind: EventPause, Pause: true})
+	ui.view(t, "the pause notice", func(v View) bool { return strings.Contains(v.Notice, "nothing to pause") })
+	ui.send(notes)
+	<-opened
+	// The open's outcome reaches the loop right after it returned; a
+	// refresh after that shows what the menu says now.
+	time.Sleep(100 * time.Millisecond)
+	ui.click(EventOpened, 0)
+	if v := ui.view(t, "a refresh after the open", func(View) bool { return true }); !strings.Contains(v.Notice, "nothing to pause") {
+		t.Fatalf("an open took back what a pause said: %q", v.Notice)
 	}
 }

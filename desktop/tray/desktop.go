@@ -73,9 +73,8 @@ func openCommand(goos, path string, look func(string) (bool, error)) (name strin
 		// LaunchServices (Journal.app), which `open` would launch — with
 		// synced content that carries no quarantine. Such a folder is
 		// revealed in its parent instead, which launches nothing; so is
-		// one this app may not look at — macOS asks once, and may refuse,
-		// whether VaultSync for Mac may open folders in Documents, Desktop
-		// or Downloads (#255). Only a look that found a file (the log), or
+		// one this app may not look at, which cannot be told from a
+		// bundle (#255). Only a look that found a file (the log), or
 		// nothing at all, opens it.
 		if strings.Contains(strings.TrimPrefix(filepath.Base(path), "."), ".") {
 			if dir, err := look(path); dir || (err != nil && !errors.Is(err, fs.ErrNotExist)) {
@@ -131,10 +130,12 @@ func openWith(goos string, run runner, look func(string) (bool, error), read fun
 			return err
 		}
 		if status != 0 {
-			// macOS refused this app the folder: a look at it (stat) still
-			// passes, its contents are refused with EPERM — the Files &
-			// Folders setting's answer. A plain permission (EACCES) is not
-			// that setting's, and keeps open's own words.
+			// An open that failed while macOS refuses this app the folder
+			// names the Files & Folders setting: under that refusal a look
+			// at it (stat) still passes, its contents are refused with
+			// EPERM. A plain permission (EACCES) is not that setting's, and
+			// keeps open's own words. (The refusal alone does not stop an
+			// open: macOS 27.2 hands the folder to the Finder all the same.)
 			if goos == "darwin" && errors.Is(read(path), syscall.EPERM) {
 				return errOpenRefused
 			}

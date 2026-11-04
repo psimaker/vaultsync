@@ -82,6 +82,9 @@ type Controller struct {
 	view    View
 	pairing bool
 	notice  string
+	// openNotice: the notice an open's failure set — the one an open that
+	// works takes back (it may ask to click the vault again).
+	openNotice string
 	// lockWords: why the one-instance lock could not be taken, shown next
 	// to the notice until it holds; lockSaid: the failure is in the log.
 	lockWords string
@@ -125,7 +128,7 @@ func (c *Controller) Run(ctx context.Context) error {
 		}
 	}()
 	pairDone := make(chan string, 1)
-	openFailed := make(chan string, 8)
+	openDone := make(chan string, 8)
 	if err := c.refresh(ctx); err != nil {
 		return err
 	}
@@ -140,10 +143,16 @@ func (c *Controller) Run(ctx context.Context) error {
 			c.pairing = false
 			c.notice = line
 			err = c.refresh(ctx)
-		case notice := <-openFailed:
-			c.notice = notice
-			c.notify(ctx, notice)
-			c.render()
+		case notice := <-openDone:
+			switch {
+			case notice != "":
+				c.notice, c.openNotice = notice, notice
+				c.notify(ctx, notice)
+				c.render()
+			case c.notice != "" && c.notice == c.openNotice:
+				c.notice = ""
+				c.render()
+			}
 		case ev, ok := <-c.UI.Events():
 			if !ok {
 				return nil
@@ -154,9 +163,9 @@ func (c *Controller) Run(ctx context.Context) error {
 			case EventOpened:
 				err = c.refresh(ctx)
 			case EventOpenVault:
-				c.openVault(ev.Path, openFailed)
+				c.openVault(ev.Path, openDone)
 			case EventOpenLog:
-				c.openLog(openFailed)
+				c.openLog(openDone)
 			case EventPause:
 				err = c.setPaused(ctx, ev.Pause)
 			case EventPair:
@@ -311,21 +320,21 @@ func (c *Controller) client() (*Client, error) {
 
 // openVault opens the folder the clicked line showed — one the agent
 // listed, now or at the click: a path that is no vault's is not opened.
-func (c *Controller) openVault(path string, failed chan<- string) {
+func (c *Controller) openVault(path string, done chan<- string) {
 	if path == "" {
 		return
 	}
 	for _, vt := range c.view.Vaults {
 		if vt.Path == path {
-			c.openPath(path, failed)
+			c.openPath(path, done)
 			return
 		}
 	}
 }
 
-func (c *Controller) openLog(failed chan<- string) {
+func (c *Controller) openLog(done chan<- string) {
 	if c.logPath != "" {
-		c.openPath(c.logPath, failed)
+		c.openPath(c.logPath, done)
 	}
 }
 
@@ -344,17 +353,20 @@ func (c *Controller) logFile() string {
 
 // openPath opens path off the loop: the desktop's program may not return
 // before what it opened is closed, and the menu must not wait for that.
-// A failure comes back as a notice.
-func (c *Controller) openPath(path string, failed chan<- string) {
+// The outcome comes back on done: a failure as its notice, an open that
+// worked as "".
+func (c *Controller) openPath(path string, done chan<- string) {
 	if c.Open == nil {
 		return
 	}
 	go func() {
+		notice := ""
 		if err := c.Open(context.Background(), path); err != nil {
-			select {
-			case failed <- "Could not open it: " + err.Error():
-			default:
-			}
+			notice = "Could not open it: " + err.Error()
+		}
+		select {
+		case done <- notice:
+		default:
 		}
 	}()
 }
