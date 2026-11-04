@@ -403,6 +403,10 @@ func (a *app) setup(ctx context.Context, args []string) error {
 	if a.dropStaleTray() {
 		t.say("✓ The menu-bar icon no longer opens at login: VaultSync for Mac is not where its start at login named.")
 	}
+	// Set up anew: a park a service on the copy noted ends here — the
+	// service now runs from the app, or this setup chose the copy with no
+	// app (decision 053 (8)).
+	a.recordStarted(func(s *agentState) { s.ParkedBesideApp = "" })
 	// The command follows the service before anything can stop this setup:
 	// a link left in an app that went to the Trash would lead nowhere.
 	command := a.installCommand(t, exe)
@@ -507,7 +511,7 @@ func (a *app) refuseBesideAnotherBuild() error {
 			}
 		}
 	}
-	return refuse("VaultSync for Mac is installed in %s, and the background service runs from it — but this vaultsync is another build. Update VaultSync for Mac with the setup link, or run its own setup (%s setup). Nothing was changed.", tildePath(a.home, filepath.Dir(apps[0].Path)), shellPath(a.home, apps[0].Agent))
+	return refuse("VaultSync for Mac is installed in %s, where the background service belongs — but this vaultsync is another build. Update VaultSync for Mac with the setup link, or run its own setup (%s setup). Nothing was changed.", tildePath(a.home, filepath.Dir(apps[0].Path)), shellPath(a.home, apps[0].Agent))
 }
 
 // ownProgram reads this program, by the path it runs from as it resolves.
@@ -1035,6 +1039,35 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 	}
 	logger := log.New(os.Stderr, "", log.LstdFlags)
 	logf := func(format string, args ...any) { logger.Printf(format, args...) }
+	// On a Mac, while VaultSync for Mac is installed only its agent runs the
+	// engine (decision 053 (8)): a run of any other program — VaultSync's own
+	// copy, an older download — does not sync beside the app, whose trip to
+	// the Trash would not stop it. The service parks — no engine, no lock,
+	// no socket — until it is stopped or set up anew (launchd would only
+	// start an exiting one again); a run in a terminal says why and ends.
+	if _, own := ownAppAgent(a.appEnv); !own && a.appEnv.goos == "darwin" {
+		if why := a.parkReason(); why != "" {
+			if !serviceMode {
+				return refuse("%s", why)
+			}
+			logf("%s", errParked)
+			<-ctx.Done()
+			return nil
+		}
+		var came func() (macApp, bool)
+		var stopLook func()
+		ctx, came, stopLook = whileNoAppCounts(ctx, a.appEnv, appCheckEvery)
+		defer stopLook()
+		defer func() {
+			// An app that came while the engine ran: the engine stopped;
+			// noted, so the run launchd starts next parks (and stays so).
+			if app, ok := came(); ok {
+				_ = updateStateIfSetUp(a.lay.State, func(s *agentState) { s.ParkedBesideApp = app.Path })
+				logf("%s", errParked)
+				retErr = nil
+			}
+		}()
+	}
 	// Installing and preparing the engine happens under the same lock setup
 	// takes: two preparations at once would generate identities over each
 	// other.
@@ -1168,6 +1201,31 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 	return eng.superviseLocked(ctx, st, logf)
 }
 
+// errParked is what a service that does not sync beside VaultSync for Mac
+// says in its log, once, with no path (decision 053 (8)).
+var errParked = errors.New("VaultSync for Mac is installed (or was, when this service last looked): this service runs VaultSync's own copy and does not sync beside it — run the setup link, or the app's own setup; vaultsync status says more")
+
+// parkReason says why a run of a program other than VaultSync for Mac's
+// agent does not run the engine — the app is installed, or a run found it
+// so and setup has not set the service up anew since (agent.json's
+// ParkedBesideApp) — and notes the park; "" when it may run.
+func (a *app) parkReason() string {
+	st, err := loadState(a.lay.State)
+	if err != nil {
+		return "" // the run's own look at agent.json says what is wrong
+	}
+	if apps := installedApps(a.appEnv); len(apps) > 0 {
+		if st.ParkedBesideApp != apps[0].Path {
+			_ = updateStateIfSetUp(a.lay.State, func(s *agentState) { s.ParkedBesideApp = apps[0].Path })
+		}
+		return fmt.Sprintf("VaultSync for Mac is installed in %s, and this is VaultSync's own copy, which does not sync beside it. Run the setup link, or %s setup, to sync from the app.", tildePath(a.home, filepath.Dir(apps[0].Path)), shellPath(a.home, apps[0].Agent))
+	}
+	if st.ParkedBesideApp != "" {
+		return fmt.Sprintf("This is VaultSync's own copy, which stopped syncing when it found VaultSync for Mac installed. Run %s setup to go on without the app, or the setup link to use the app again.", shellPath(a.home, a.lay.Agent))
+	}
+	return ""
+}
+
 // errAppGone ends a service whose VaultSync for Mac went away; it names no
 // path, so the service log carries it as it is.
 var errAppGone = errors.New("VaultSync for Mac is no longer where the background service runs it from — moved, or put in the Trash — so the service stopped syncing; put it back where it was, or run the setup link again; to remove VaultSync, run bin/vaultsync uninstall in VaultSync's folder")
@@ -1210,6 +1268,10 @@ func (a *app) startService() error {
 	// Say "running" only for a service that runs.
 	if !a.svc.waitRunning() {
 		return refuse("VaultSync asked the system to start its background service, but it is not running. See %s, or run vaultsync setup again.", a.logHint())
+	}
+	// Nor "running again" for one that runs but does not sync.
+	if note := a.parkedNote(); note != "" {
+		return refuse("The background service runs, but it does not sync: %s", note)
 	}
 	fmt.Fprintln(a.out, "✓ VaultSync is running again.")
 	return nil

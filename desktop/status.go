@@ -75,6 +75,24 @@ func (a *app) copyBesideAppNote(gone bool) string {
 	return fmt.Sprintf("  It runs VaultSync's own copy, not VaultSync for Mac in %s — moving the app to the Trash will not stop it. To run it from the app, run the setup link, or %s setup.", tildePath(a.home, filepath.Dir(apps[0].Path)), shellPath(a.home, apps[0].Agent))
 }
 
+// parkedNote says, for a background service on VaultSync's own copy that
+// parked beside VaultSync for Mac (decision 053 (8)), why it does not sync
+// and the way out; "" for any other service.
+func (a *app) parkedNote() string {
+	prog := a.svc.program()
+	if prog == "" || isAppAgent(prog) {
+		return ""
+	}
+	st, err := loadState(a.lay.State)
+	if err != nil || st.ParkedBesideApp == "" {
+		return ""
+	}
+	if apps := installedApps(a.appEnv); len(apps) > 0 {
+		return fmt.Sprintf("it runs VaultSync's own copy, and VaultSync for Mac is installed in %s. Run the setup link, or %s setup, to sync from the app.", tildePath(a.home, filepath.Dir(apps[0].Path)), shellPath(a.home, apps[0].Agent))
+	}
+	return fmt.Sprintf("it stopped when it found VaultSync for Mac installed. Run %s setup to go on without the app, or the setup link to use the app again.", shellPath(a.home, a.lay.Agent))
+}
+
 func (a *app) status(ctx context.Context) error {
 	w := a.out
 	fmt.Fprintf(w, "VaultSync %s — sync engine Syncthing %s\n", version, strings.TrimPrefix(syncthingVersion, "v"))
@@ -108,7 +126,9 @@ func (a *app) status(ctx context.Context) error {
 			fmt.Fprintln(w, "Background service: stopped — vaultsync start resumes it")
 		}
 	}
-	if note := a.copyBesideAppNote(gone); note != "" {
+	if note := a.parkedNote(); note != "" && !gone {
+		fmt.Fprintln(w, "  It does not sync: "+note)
+	} else if note := a.copyBesideAppNote(gone); note != "" {
 		fmt.Fprintln(w, note)
 	}
 	st, err := loadState(a.lay.State)

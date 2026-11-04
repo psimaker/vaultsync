@@ -51,6 +51,12 @@ type agentState struct {
 		Service string `json:"service,omitempty"`
 		Tray    string `json:"tray,omitempty"`
 	} `json:"started"`
+	// ParkedBesideApp is the VaultSync for Mac a run of any other program —
+	// VaultSync's own copy — found installed: on a Mac only the app's agent
+	// runs the engine while the app is there (decision 053 (8)), and such a
+	// run stays parked also once the app is gone again, until setup sets
+	// the service up anew and clears it. Empty: not parked.
+	ParkedBesideApp string `json:"parkedBesideApp,omitempty"`
 }
 
 // guardEnvVars are the variables the pairing guards read.

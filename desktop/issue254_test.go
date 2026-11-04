@@ -1862,3 +1862,49 @@ func TestIssue254_StatusSaysWhenTheServiceRunsTheCopyBesideTheApp(t *testing.T) 
 		t.Fatalf("status without an app:\n%s", out)
 	}
 }
+
+// status and start say that a parked service runs but does not sync, and
+// the way out — with the app installed (sync from the app) or gone again
+// (go on without it, or use it again) — never "running again".
+func TestIssue254_StatusAndStartSayAParkedServiceDoesNotSync(t *testing.T) {
+	run := &fakeRunner{loaded: true}
+	a := installedApp(t, "darwin", run)
+	app := fakeMacApp(t, filepath.Join(a.home, "Applications"), appBundleName, shippedInfoPlist(t))
+	a.appEnv = macAppEnv(a.home, filepath.Join(t.TempDir(), "none"), a.lay.Agent)
+	data, err := a.svc.unitFile(a.lay.Agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, mustUnitPath(t, a.svc), string(data))
+	if err := updateState(a.lay.State, func(s *agentState) { s.ParkedBesideApp = app }); err != nil {
+		t.Fatal(err)
+	}
+	if out := statusText(t, a); !strings.Contains(out, "It does not sync: it runs VaultSync's own copy, and VaultSync for Mac is installed in") || strings.Contains(out, "moving the app to the Trash will not stop it") {
+		t.Fatalf("status of a parked service beside the app:\n%s", out)
+	}
+	run.loaded = false
+	if err := a.startService(); !strings.Contains(refusalText(err), "runs, but it does not sync") {
+		t.Fatalf("start of a parked service: %v", err)
+	}
+	if err := os.RemoveAll(app); err != nil {
+		t.Fatal(err)
+	}
+	if out := statusText(t, a); !strings.Contains(out, "It does not sync: it stopped when it found VaultSync for Mac installed. Run "+shellPath(a.home, a.lay.Agent)+" setup to go on without the app") {
+		t.Fatalf("status of a parked service without the app:\n%s", out)
+	}
+}
+
+// A setup sets the service up anew and ends a park: the service now runs
+// from the app, or the person chose the copy with no app.
+func TestIssue254_SetupEndsAPark(t *testing.T) {
+	a, _, _ := macSetupFixture(t)
+	if err := updateState(a.lay.State, func(s *agentState) { s.ParkedBesideApp = "/Applications/" + appBundleName }); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := setupFrom(t, a); !strings.Contains(refusalText(err)+fmt.Sprint(err), "did not answer") {
+		t.Fatalf("setup: %v\n%s", err, out)
+	}
+	if st, _ := loadState(a.lay.State); st.ParkedBesideApp != "" {
+		t.Fatalf("setup left the park: %q", st.ParkedBesideApp)
+	}
+}

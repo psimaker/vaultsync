@@ -313,21 +313,62 @@ func whileProgramStays(ctx context.Context, prog string, lstat func(string) (fs.
 // (whileProgramStays). Fails closed: no look at the bundle can keep it from
 // being watched. Any other program is not watched.
 func watchOwnApp(ctx context.Context, env appEnv) (watched context.Context, gone func() bool, stop func()) {
-	if env.goos == "darwin" && env.executable != nil && env.lstat != nil {
-		if self, err := env.executable(); err == nil {
-			// Started through a link (the vaultsync command setup points
-			// into the app): the program it leads to is the app's.
-			if env.resolve != nil {
-				if resolved, err := env.resolve(self); err == nil && isAppAgent(resolved) {
-					self = resolved
-				}
-			}
-			if isAppAgent(self) {
-				return whileProgramStays(ctx, self, env.lstat, appCheckEvery, appGoneGrace)
-			}
+	if env.lstat != nil {
+		if self, ok := ownAppAgent(env); ok {
+			return whileProgramStays(ctx, self, env.lstat, appCheckEvery, appGoneGrace)
 		}
 	}
 	return ctx, func() bool { return false }, func() {}
+}
+
+// ownAppAgent: on a Mac, this program is VaultSync for Mac's agent — by the
+// path it was started with, or the one a link it was started through leads
+// to (the vaultsync command setup points into the app) — and that path.
+func ownAppAgent(env appEnv) (string, bool) {
+	if env.goos != "darwin" || env.executable == nil {
+		return "", false
+	}
+	self, err := env.executable()
+	if err != nil {
+		return "", false
+	}
+	if env.resolve != nil {
+		if resolved, err := env.resolve(self); err == nil && isAppAgent(resolved) {
+			self = resolved
+		}
+	}
+	return self, isAppAgent(self)
+}
+
+// whileNoAppCounts returns a context that ends once a VaultSync for Mac
+// that counts is installed (installedApps), looked at every every — for a
+// run of any other program, which does not sync beside the app (decision
+// 053 (8)). came says which app ended it; stop ends the look.
+func whileNoAppCounts(ctx context.Context, env appEnv, every time.Duration) (watched context.Context, came func() (macApp, bool), stop func()) {
+	watched, cancel := context.WithCancel(ctx)
+	var found atomic.Pointer[macApp]
+	go func() {
+		tick := time.NewTicker(every)
+		defer tick.Stop()
+		for {
+			select {
+			case <-watched.Done():
+				return
+			case <-tick.C:
+				if apps := installedApps(env); len(apps) > 0 {
+					found.Store(&apps[0])
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	return watched, func() (macApp, bool) {
+		if app := found.Load(); app != nil {
+			return *app, true
+		}
+		return macApp{}, false
+	}, cancel
 }
 
 // plistFirstString reads the first string of the array under key in the

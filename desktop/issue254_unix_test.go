@@ -164,3 +164,116 @@ func TestIssue254_AnUpdateIsNoTripToTheTrash(t *testing.T) {
 		stop()
 	}
 }
+
+// copyBesideApp is a run fixture whose run is VaultSync's own copy, with an
+// app that counts in ~/Applications when withApp; it returns the app's
+// path as the look at Applications finds it.
+func copyBesideApp(t *testing.T, withApp bool) (*app, string) {
+	t.Helper()
+	a, _ := runFixture(t)
+	a.appEnv = macAppEnv(a.home, filepath.Join(t.TempDir(), "none"), a.lay.Agent)
+	fastAppWatch(t)
+	orig := serviceMode
+	serviceMode = true // the service, not a terminal: it parks
+	t.Cleanup(func() { serviceMode = orig })
+	if !withApp {
+		return a, ""
+	}
+	app := fakeMacApp(t, filepath.Join(a.home, "Applications"), appBundleName, shippedInfoPlist(t))
+	resolved, err := filepath.EvalSymlinks(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a, resolved
+}
+
+// parkedRun runs a in the background and checks it parks: no engine, not
+// ended, ends when stopped.
+func parkedRun(t *testing.T, a *app) {
+	t.Helper()
+	ended := make(chan error, 1)
+	stop := inBackground(t, func(ctx context.Context) error {
+		err := a.run(ctx, nil)
+		ended <- err
+		return err
+	})
+	select {
+	case err := <-ended:
+		t.Fatalf("the run ended instead of parking: %v", err)
+	case <-time.After(20 * appCheckEvery):
+	}
+	if pids := fakeEnginePIDs(t, a.lay); len(pids) > 0 {
+		t.Fatalf("an engine started beside the app: %v", pids)
+	}
+	if err := stop(); err != nil {
+		t.Fatalf("a parked run ended with %v when stopped", err)
+	}
+}
+
+// On a Mac, while VaultSync for Mac is installed only its agent runs the
+// engine (decision 053 (8)): the service on VaultSync's own copy parks — no
+// engine — and notes it, until it is stopped.
+func TestIssue254_TheCopyDoesNotSyncBesideTheApp(t *testing.T) {
+	a, app := copyBesideApp(t, true)
+	parkedRun(t, a)
+	if st, err := loadState(a.lay.State); err != nil || st.ParkedBesideApp != app {
+		t.Fatalf("the park was not noted: %q %v", st.ParkedBesideApp, err)
+	}
+}
+
+// A park outlasts the app: put in the Trash again, the copy does not
+// resume syncing on its own — only a setup sets it up anew.
+func TestIssue254_AParkedCopyStaysParkedWithoutTheApp(t *testing.T) {
+	a, _ := copyBesideApp(t, false)
+	if err := updateState(a.lay.State, func(s *agentState) { s.ParkedBesideApp = "/Applications/" + appBundleName }); err != nil {
+		t.Fatal(err)
+	}
+	parkedRun(t, a)
+}
+
+// An app that comes while the copy syncs — dragged into Applications, or
+// put back from the Trash after "go on without the app" — stops the copy's
+// engine within moments and notes the park, so the next start parks.
+func TestIssue254_AnAppThatComesStopsTheCopy(t *testing.T) {
+	a, _ := copyBesideApp(t, false)
+	ended := make(chan error, 1)
+	stop := inBackground(t, func(ctx context.Context) error {
+		err := a.run(ctx, nil)
+		ended <- err
+		return err
+	})
+	defer func() { _ = stop() }()
+	e2eWait(t, "the engine", 15*time.Second, func() bool { return len(fakeEnginePIDs(t, a.lay)) > 0 })
+	app := fakeMacApp(t, filepath.Join(a.home, "Applications"), appBundleName, shippedInfoPlist(t))
+	select {
+	case err := <-ended:
+		if err != nil {
+			t.Fatalf("the run ended with %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("the copy went on syncing beside an app that came")
+	}
+	for _, pid := range fakeEnginePIDs(t, a.lay) {
+		if runs, err := runsFakeEngine(pid, a.lay); runs || err != nil {
+			t.Fatalf("the engine (pid %d) outlived the run: %v %v", pid, runs, err)
+		}
+	}
+	resolved, _ := filepath.EvalSymlinks(app)
+	if st, _ := loadState(a.lay.State); st.ParkedBesideApp != resolved {
+		t.Fatalf("the park was not noted: %q", st.ParkedBesideApp)
+	}
+}
+
+// Without an app and without a park, the copy runs; and off a Mac there is
+// no app to park beside.
+func TestIssue254_TheCopyRunsWithoutTheApp(t *testing.T) {
+	for _, goos := range []string{"darwin", "linux"} {
+		t.Run(goos, func(t *testing.T) {
+			a, _ := copyBesideApp(t, goos == "linux")
+			a.appEnv.goos = goos
+			stop := inBackground(t, func(ctx context.Context) error { return a.run(ctx, nil) })
+			e2eWait(t, "the engine", 15*time.Second, func() bool { return len(fakeEnginePIDs(t, a.lay)) > 0 })
+			_ = stop()
+		})
+	}
+}
