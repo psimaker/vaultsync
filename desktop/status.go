@@ -97,14 +97,20 @@ func (a *app) status(ctx context.Context) error {
 	w := a.out
 	fmt.Fprintf(w, "VaultSync %s — sync engine Syncthing %s\n", version, strings.TrimPrefix(syncthingVersion, "v"))
 	eng := a.engine()
-	if !eng.prepared() {
-		fmt.Fprintln(w, "VaultSync is not set up on this computer yet. Run vaultsync setup.")
-		return nil
+	// This program is older than the VaultSync set up here (#264): it would
+	// not run the engine, and its service parks. Said first — with no
+	// engine config either, "run vaultsync setup" would point to a setup
+	// that refuses.
+	rec, recErr := loadState(a.lay.State)
+	older := olderThanSetUp(rec, recErr)
+	if older {
+		fmt.Fprintln(w, "Note: "+a.olderNote(rec, recErr))
 	}
-	if st, err := loadState(a.lay.State); olderThanSetUp(st, err) {
-		// This program is older than the VaultSync set up here (#264): it
-		// would not run the engine, and its service parks.
-		fmt.Fprintln(w, "Note: "+a.olderNote(st, err))
+	if !eng.prepared() {
+		if !older {
+			fmt.Fprintln(w, "VaultSync is not set up on this computer yet. Run vaultsync setup.")
+		}
+		return nil
 	}
 	background := a.backgroundEngine()
 	prog, gone := a.svc.programGone()

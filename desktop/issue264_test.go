@@ -119,6 +119,22 @@ func TestIssue264_StatusSaysThisVaultSyncIsOlder(t *testing.T) {
 	if out := statusText(t, a); !strings.Contains(out, "Note: this VaultSync is older than the one set up on this computer: its sync engine is Syncthing 9.0.0") {
 		t.Fatalf("status of an older build:\n%s", out)
 	}
+	// Without the engine's config too it says the same, not "run vaultsync
+	// setup": this build's setup refuses.
+	if err := os.Remove(filepath.Join(a.lay.Home, "config.xml")); err != nil {
+		t.Fatal(err)
+	}
+	out := statusText(t, a)
+	if !strings.Contains(out, "Note: this VaultSync is older than the one set up on this computer") || strings.Contains(out, "Run vaultsync setup") {
+		t.Fatalf("status of an older build without the engine's config:\n%s", out)
+	}
+	// Nothing set up at all is still "not set up".
+	if err := os.Remove(a.lay.State); err != nil {
+		t.Fatal(err)
+	}
+	if out := statusText(t, a); !strings.Contains(out, "not set up on this computer yet. Run vaultsync setup.") {
+		t.Fatalf("status with nothing set up:\n%s", out)
+	}
 }
 
 func TestIssue264_EngineVersionsCompare(t *testing.T) {
