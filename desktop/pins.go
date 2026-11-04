@@ -34,6 +34,20 @@ func engineNewer(a, b string) bool {
 	return false
 }
 
+// recordedEngineNewer: the Syncthing agent.json records is newer than this
+// build's pin — or reads as no version this build knows: either way this
+// build may be the older one, and installs nothing over it (decision 054).
+// Nothing recorded is a first setup.
+func recordedEngineNewer(recorded string) bool {
+	if recorded == "" {
+		return false
+	}
+	if _, ok := engineVersion(recorded); !ok {
+		return true
+	}
+	return engineNewer(recorded, syncthingVersion)
+}
+
 func engineVersion(v string) ([3]int, bool) {
 	var out [3]int
 	core, _, _ := strings.Cut(strings.TrimPrefix(v, "v"), "-")

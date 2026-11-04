@@ -116,7 +116,7 @@ func TestIssue264_AnOlderServiceDoesNotPutAnOlderEngineBack(t *testing.T) {
 func TestIssue264_StatusSaysThisVaultSyncIsOlder(t *testing.T) {
 	a := installedApp(t, "linux", &fakeRunner{})
 	newerEngineHere(t, a.lay)
-	if out := statusText(t, a); !strings.Contains(out, "This VaultSync is older than the one set up on this computer (its sync engine is Syncthing 9.0.0)") {
+	if out := statusText(t, a); !strings.Contains(out, "Note: this VaultSync is older than the one set up on this computer: its sync engine is Syncthing 9.0.0") {
 		t.Fatalf("status of an older build:\n%s", out)
 	}
 }
@@ -133,5 +133,111 @@ func TestIssue264_EngineVersionsCompare(t *testing.T) {
 		if got := engineNewer(c.a, c.b); got != c.newer {
 			t.Errorf("engineNewer(%q, %q) = %v", c.a, c.b, got)
 		}
+	}
+}
+
+// agent.json in a newer format than this build knows is a newer VaultSync
+// set up here: setup refuses, the service parks, status says so — never the
+// bare "another version" error, nor a restart every 10 s. (desktop-v0.1.0
+// refuses such an agent.json too: the one guard it has.)
+func TestIssue264_ANewerAgentJSONMeansThisBuildIsOlder(t *testing.T) {
+	a, _ := runFixture(t)
+	writeFile(t, a.lay.State, `{"version": 2, "syncthing": {"version": "v3.0.0"}}`)
+	orig := ttyPath
+	ttyPath = filepath.Join(t.TempDir(), "no-tty")
+	defer func() { ttyPath = orig }()
+	out := &bytes.Buffer{}
+	term, closeTerm := openTerm(out)
+	defer closeTerm()
+	if _, _, err := a.ensureEngine(context.Background(), term); !strings.Contains(refusalText(err), "older than the one set up on this computer") {
+		t.Fatalf("setup beside a newer agent.json: %v", err)
+	}
+	origMode := serviceMode
+	defer func() { serviceMode = origMode }()
+	serviceMode = true
+	ended := make(chan error, 1)
+	stop := inBackground(t, func(ctx context.Context) error {
+		err := a.run(ctx, nil)
+		ended <- err
+		return err
+	})
+	select {
+	case err := <-ended:
+		t.Fatalf("the service beside a newer agent.json ended instead of parking: %v", err)
+	case <-time.After(500 * time.Millisecond):
+	}
+	if err := stop(); err != nil {
+		t.Fatalf("it ended with %v when stopped", err)
+	}
+	if have, _ := os.ReadFile(a.lay.State); !strings.Contains(string(have), `"version": 2`) {
+		t.Fatalf("the newer agent.json was rewritten: %s", have)
+	}
+}
+
+// A recorded engine version this build cannot read is not taken for an
+// older one: the guard fails closed.
+func TestIssue264_AnUnreadableEngineVersionIsNotTakenForOlder(t *testing.T) {
+	for _, v := range []string{"v2.2", "v2.2.0+build", "next"} {
+		if !recordedEngineNewer(v) {
+			t.Errorf("%q counted as not newer", v)
+		}
+	}
+	if recordedEngineNewer("") || recordedEngineNewer(syncthingVersion) {
+		t.Fatal("nothing recorded, or this pin, counted as newer")
+	}
+}
+
+// The service of an older VaultSync for Mac parks until its program is
+// replaced — the setup link putting the current app in place, or one
+// dragged over it: then it ends, and launchd starts the current build.
+func TestIssue264_AParkedOlderAppEndsWhenItsProgramIsReplaced(t *testing.T) {
+	a, _ := runFixture(t)
+	newerEngineHere(t, a.lay)
+	app := fakeMacApp(t, filepath.Join(a.home, "Applications"), appBundleName, shippedInfoPlist(t))
+	agent := filepath.Join(app, "Contents", "MacOS", "vaultsync")
+	a.appEnv = macAppEnv(a.home, filepath.Join(t.TempDir(), "none"), agent)
+	every, grace := appCheckEvery, appGoneGrace
+	appCheckEvery, appGoneGrace = 20*time.Millisecond, 20*time.Millisecond
+	defer func() { appCheckEvery, appGoneGrace = every, grace }()
+	origMode := serviceMode
+	defer func() { serviceMode = origMode }()
+	serviceMode = true
+	ended := make(chan error, 1)
+	stop := inBackground(t, func(ctx context.Context) error {
+		err := a.run(ctx, nil)
+		ended <- err
+		return err
+	})
+	defer func() { _ = stop() }()
+	select {
+	case err := <-ended:
+		t.Fatalf("the older app's service ended instead of parking: %v", err)
+	case <-time.After(10 * appCheckEvery):
+	}
+	newer := agent + ".new"
+	writeFile(t, newer, "#!/bin/sh\necho the current build\n")
+	if err := os.Chmod(newer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(newer, agent); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-ended:
+		if err != nil {
+			t.Fatalf("the replaced older service ended with %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the older app's service stayed parked after its program was replaced")
+	}
+}
+
+// start of an older build says that the service runs but does not sync.
+func TestIssue264_StartOfAnOlderBuildSaysItDoesNotSync(t *testing.T) {
+	run := &fakeRunner{}
+	a := installedApp(t, "darwin", run)
+	newerEngineHere(t, a.lay)
+	if err := a.startService(); !strings.Contains(refusalText(err), "runs, but it does not sync: this VaultSync is older") {
+		t.Fatalf("start of an older build: %v", err)
 	}
 }

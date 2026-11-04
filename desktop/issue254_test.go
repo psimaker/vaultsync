@@ -1486,7 +1486,7 @@ func TestIssue254_ASetupThatFailsBeforeTheEngineLeavesTheCopy(t *testing.T) {
 	writeFile(t, a.lay.Agent, "the build that runs")
 	// agent.json from a newer VaultSync: loadState refuses it.
 	writeFile(t, a.lay.State, `{"version": 2}`)
-	if _, err := setupFrom(t, a); err == nil || !strings.Contains(err.Error(), "another VaultSync version") {
+	if _, err := setupFrom(t, a); !strings.Contains(refusalText(err), "older than the one set up on this computer") {
 		t.Fatalf("setup with a newer agent.json: %v", err)
 	}
 	if have, _ := os.ReadFile(a.lay.Agent); string(have) != "the build that runs" {

@@ -281,10 +281,23 @@ func whileProgramStays(ctx context.Context, prog string, lstat func(string) (fs.
 		fi, err := lstat(prog)
 		return err != nil || !fi.Mode().IsRegular()
 	}
+	// Another program at the path — the setup link put another VaultSync
+	// for Mac in place, or one was dragged over it — ends the run too, not
+	// as the app's departure: launchd starts the service again from what is
+	// there now (the run of an older build parks until then, decision 054).
+	started, startErr := lstat(prog)
+	replaced := func() bool {
+		fi, err := lstat(prog)
+		return startErr == nil && started != nil && err == nil && fi != nil && fi.Mode().IsRegular() && !os.SameFile(started, fi)
+	}
 	go func() {
 		tick := time.NewTicker(every)
 		defer tick.Stop()
 		for {
+			if replaced() {
+				cancel()
+				return
+			}
 			if missing() {
 				select {
 				case <-watched.Done():

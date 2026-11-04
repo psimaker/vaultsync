@@ -138,11 +138,18 @@ func loadState(path string) (agentState, error) {
 	if err := json.Unmarshal(data, &st); err != nil {
 		return st, fmt.Errorf("%s is damaged: %w", path, err)
 	}
+	if st.Version > agentStateVersion {
+		return st, fmt.Errorf("%s was written by a newer VaultSync (format %d): %w", path, st.Version, errStateNewer)
+	}
 	if st.Version != agentStateVersion {
 		return st, fmt.Errorf("%s was written by another VaultSync version (%d)", path, st.Version)
 	}
 	return st, nil
 }
+
+// errStateNewer: agent.json is in a newer format than this build knows — a
+// newer VaultSync is set up here, and this build is older (decision 054).
+var errStateNewer = errors.New("agent.json was written by a newer VaultSync")
 
 // saveState writes agent.json atomically with owner-only permissions.
 func saveState(path string, st agentState) error {

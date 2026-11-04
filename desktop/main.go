@@ -743,12 +743,12 @@ func shellPath(home, p string) string {
 // exactly it (re-verified by its checksum).
 func (a *app) ensureEngine(ctx context.Context, t *term) (agentState, bool, error) {
 	st, err := loadState(a.lay.State)
+	// Never an older engine over the state a newer one wrote (#264).
+	if olderThanSetUp(st, err) {
+		return st, false, refuse("%s", a.olderNote(st, err))
+	}
 	if err != nil {
 		return st, false, err
-	}
-	// Never an older engine over the state a newer one wrote (#264).
-	if engineNewer(st.Syncthing.Version, syncthingVersion) {
-		return st, false, refuse("This VaultSync is older than the one set up on this computer: its sync engine is Syncthing %s, this vaultsync brings %s. Nothing was changed — run the setup link to get the current VaultSync.", strings.TrimPrefix(st.Syncthing.Version, "v"), strings.TrimPrefix(syncthingVersion, "v"))
 	}
 	if st.Syncthing.Version == syncthingVersion && st.Syncthing.BinarySHA256 != "" {
 		if sum, err := fileSHA256(a.lay.Syncthing); err == nil && sum == st.Syncthing.BinarySHA256 {
@@ -1117,16 +1117,14 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 		return removedMeanwhile
 	}
 	st, err := loadState(a.lay.State)
-	if err != nil {
-		unlockSetup()
-		return err
-	}
 	// An older VaultSync — an old copy, an older VaultSync for Mac put in
 	// Applications — never puts its older engine over the state the newer
-	// one wrote, nor its copy over the newer one (#264). As the service it
-	// parks — launchd would only start an exiting one again every 10 s —
-	// with one line in its log; in a terminal it says so and ends.
-	if engineNewer(st.Syncthing.Version, syncthingVersion) {
+	// one wrote, nor its copy over the newer one, nor its own agent.json
+	// (#264). As the service it parks — launchd would only start an exiting
+	// one again every 10 s — with one line in its log, until it is stopped
+	// or its program is replaced (the setup link putting the current app in
+	// place; watchOwnApp); in a terminal it says so and ends.
+	if olderThanSetUp(st, err) {
 		unlockSetup()
 		if !serviceMode {
 			return errOlderAgent
@@ -1134,6 +1132,10 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 		logf("%s", errOlderAgent)
 		<-ctx.Done()
 		return nil
+	}
+	if err != nil {
+		unlockSetup()
+		return err
 	}
 	eng := a.engine()
 	sum, sumErr := fileSHA256(a.lay.Syncthing)
@@ -1257,6 +1259,24 @@ func (a *app) parkReason() (why, app string) {
 	return "", ""
 }
 
+// olderThanSetUp: this build is older than the VaultSync set up here —
+// agent.json is in a newer format, or records a newer (or unknown) engine
+// version (decision 054).
+func olderThanSetUp(st agentState, loadErr error) bool {
+	if errors.Is(loadErr, errStateNewer) {
+		return true
+	}
+	return loadErr == nil && recordedEngineNewer(st.Syncthing.Version)
+}
+
+// olderNote says so for a person, with the versions where they are known.
+func (a *app) olderNote(st agentState, loadErr error) string {
+	if loadErr == nil && st.Syncthing.Version != "" {
+		return fmt.Sprintf("this VaultSync is older than the one set up on this computer: its sync engine is Syncthing %s, this vaultsync brings %s. Nothing was changed — run the setup link to get the current VaultSync.", strings.TrimPrefix(st.Syncthing.Version, "v"), strings.TrimPrefix(syncthingVersion, "v"))
+	}
+	return "this VaultSync is older than the one set up on this computer. Nothing was changed — run the setup link to get the current VaultSync."
+}
+
 // stderrIsTerminal: this run writes to a terminal, not a log — a person
 // runs it; a test says so for the run it starts.
 var stderrIsTerminal = func() bool {
@@ -1264,10 +1284,12 @@ var stderrIsTerminal = func() bool {
 	return err == nil && st.Mode()&os.ModeCharDevice != 0
 }
 
-// errOlderAgent ends a service, and a setup, of a VaultSync older than the
-// one set up on this computer: it pins an older Syncthing than agent.json
-// records, and putting that over the state the newer one wrote is what it
-// must never do (#264). It names no path.
+// errOlderAgent is what a run of a VaultSync older than the one set up on
+// this computer says — in a terminal as its error, as the service once in
+// its log before it parks: it pins an older Syncthing than agent.json
+// records (or agent.json is in a newer format), and putting its engine over
+// the state the newer one wrote is what it must never do (#264). It names
+// no path.
 var errOlderAgent = errors.New("this VaultSync is older than the one set up on this computer, whose sync engine is newer — nothing was changed; run the setup link to get the current VaultSync")
 
 // errAppGone ends a service whose VaultSync for Mac went away; it names no
@@ -1316,6 +1338,9 @@ func (a *app) startService() error {
 	// Nor "running again" for one that runs but does not sync.
 	if note := a.parkedNote(); note != "" {
 		return refuse("The background service runs, but it does not sync: %s", note)
+	}
+	if st, err := loadState(a.lay.State); olderThanSetUp(st, err) {
+		return refuse("The background service runs, but it does not sync: %s", a.olderNote(st, err))
 	}
 	fmt.Fprintln(a.out, "✓ VaultSync is running again.")
 	return nil
