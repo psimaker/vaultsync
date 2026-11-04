@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -18,10 +19,14 @@ import (
 // on Linux. No root, one file in the user's own service directory, the same
 // file on every install (installing twice changes nothing), and uninstalling
 // removes exactly that file after stopping the service. The service runs
-// `vaultsync run` from the agent's own copy, which owns the engine.
+// `vaultsync run` — from VaultSync for Mac when setup ran from the app
+// installed in Applications (appbundle.go), else from the agent's own copy —
+// and owns the engine. On a Mac, setup from the app adds a second
+// LaunchAgent that starts the menu-bar app at login (decision 053).
 
 const (
 	launchdLabel = "eu.vaultsync.agent"
+	trayLabel    = "eu.vaultsync.tray"
 	systemdUnit  = "vaultsync.service"
 )
 
@@ -59,18 +64,35 @@ func (s service) wait(d time.Duration) {
 	time.Sleep(d)
 }
 
+// launchdJob is one of VaultSync's LaunchAgents: its label, how its errors
+// name it, and whether loading it undoes a disable first — the service's
+// does (that is how `vaultsync start` undoes `vaultsync stop`); the
+// menu-bar app's is disabled only by the person, and stays so.
+type launchdJob struct {
+	label  string
+	what   string
+	enable bool
+}
+
+var (
+	serviceJob = launchdJob{label: launchdLabel, what: "the background service", enable: true}
+	trayJob    = launchdJob{label: trayLabel, what: "the menu-bar app's start at login"}
+)
+
 // launchdGone waits until launchd no longer has the job: it removes a
 // booted-out job a moment after `launchctl bootout` returns (100–200 ms on
 // macOS 27), and a start or bootstrap in that moment finds a job that is
 // about to vanish.
-func (s service) launchdGone() error {
+func (s service) launchdGone() error { return s.launchdJobGone(serviceJob) }
+
+func (s service) launchdJobGone(job launchdJob) error {
 	for i := 0; i < 300; i++ {
-		if _, err := s.run.run("launchctl", "print", s.launchdTarget()); err != nil {
+		if _, err := s.run.run("launchctl", "print", s.launchdTargetOf(job.label)); err != nil {
 			return nil
 		}
 		s.wait(100 * time.Millisecond)
 	}
-	return errors.New("launchd still has the background service 30 seconds after stopping it")
+	return fmt.Errorf("launchd still has %s 30 seconds after stopping it", job.what)
 }
 
 // waitRunning gives a started service up to 10 seconds to run.
@@ -117,11 +139,24 @@ func (s service) unitFile(exe string) ([]byte, error) {
 	return nil, fmt.Errorf("no background service on %s yet", s.goos)
 }
 
+func plistEscape(v string) string {
+	var b bytes.Buffer
+	_ = xml.EscapeText(&b, []byte(v))
+	return b.String()
+}
+
+// launchdPlist is the background service's LaunchAgent. When it runs the
+// agent in VaultSync for Mac it names the app (AssociatedBundleIdentifiers):
+// macOS lists it under Login Items as "VaultSync for Mac" — the app is
+// signed by the same team — instead of under the signing certificate's
+// name, the developer's (decision 052 (5)). A service on VaultSync's own
+// copy names no app, also with one installed: it is not the app's, and the
+// app's trip to the Trash does not stop it (decision 053 (2)).
 func launchdPlist(exe, stateDir, logFile string) []byte {
-	esc := func(v string) string {
-		var b bytes.Buffer
-		_ = xml.EscapeText(&b, []byte(v))
-		return b.String()
+	esc := plistEscape
+	associated := ""
+	if isAppAgent(exe) {
+		associated = "\t<key>AssociatedBundleIdentifiers</key>\n\t<string>" + appBundleID + "</string>\n"
 	}
 	return []byte(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -129,7 +164,7 @@ func launchdPlist(exe, stateDir, logFile string) []byte {
 <dict>
 	<key>Label</key>
 	<string>` + launchdLabel + `</string>
-	<key>ProgramArguments</key>
+` + associated + `	<key>ProgramArguments</key>
 	<array>
 		<string>` + esc(exe) + `</string>
 		<string>run</string>
@@ -142,6 +177,49 @@ func launchdPlist(exe, stateDir, logFile string) []byte {
 	<true/>
 	<key>ThrottleInterval</key>
 	<integer>10</integer>
+	<key>StandardOutPath</key>
+	<string>` + esc(logFile) + `</string>
+	<key>StandardErrorPath</key>
+	<string>` + esc(logFile) + `</string>
+</dict>
+</plist>
+`)
+}
+
+// trayPlist is the LaunchAgent that starts the menu-bar app at login: its
+// program in the bundle, the VaultSync folder the service was set up with.
+// KeepAlive only on an unsuccessful exit: a crash starts it again after
+// ThrottleInterval, Quit (exit 0) leaves it off until the next login — and
+// so does a second instance, which ends with 0 for that reason
+// (cmd/vaultsync-tray). Interactive: an app the person uses, not a
+// background job macOS may slow down.
+func trayPlist(exe, stateDir, logFile string) []byte {
+	esc := plistEscape
+	return []byte(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>` + trayLabel + `</string>
+	<key>AssociatedBundleIdentifiers</key>
+	<string>` + appBundleID + `</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>` + esc(exe) + `</string>
+		<string>--state-dir</string>
+		<string>` + esc(stateDir) + `</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<key>ProcessType</key>
+	<string>Interactive</string>
 	<key>StandardOutPath</key>
 	<string>` + esc(logFile) + `</string>
 	<key>StandardErrorPath</key>
@@ -184,20 +262,9 @@ func (s service) install(exe string, binaryChanged bool) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	have, _ := os.ReadFile(path)
-	fileChanged := !bytes.Equal(have, want)
-	if fileChanged {
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return false, err
-		}
-		if s.goos == "darwin" {
-			if err := os.MkdirAll(s.lay.Logs, 0o700); err != nil {
-				return false, err
-			}
-		}
-		if err := writeFileAtomic(path, want, 0o644); err != nil {
-			return false, err
-		}
+	fileChanged, err := s.writeServiceFile(path, want)
+	if err != nil {
+		return false, err
 	}
 	switch s.goos {
 	case "darwin":
@@ -208,26 +275,226 @@ func (s service) install(exe string, binaryChanged bool) (bool, error) {
 	return false, nil
 }
 
-func (s service) launchdTarget() string { return "gui/" + strconv.Itoa(s.uid) + "/" + launchdLabel }
+// writeServiceFile writes a service file unless it already reads want, and
+// says whether it wrote it. On a Mac the log folder the file names is made
+// first, owner-only — not left to launchd.
+func (s service) writeServiceFile(path string, want []byte) (bool, error) {
+	if have, _ := os.ReadFile(path); bytes.Equal(have, want) {
+		return false, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return false, err
+	}
+	if s.goos == "darwin" {
+		if err := os.MkdirAll(s.lay.Logs, 0o700); err != nil {
+			return false, err
+		}
+	}
+	return true, writeFileAtomic(path, want, 0o644)
+}
+
+// trayPlistPath is the file of the LaunchAgent that starts the menu-bar app.
+func (s service) trayPlistPath() string {
+	return filepath.Join(s.home, "Library", "LaunchAgents", trayLabel+".plist")
+}
+
+// errTrayDisabled: the person turned the menu-bar app's start at login off
+// (launchctl disable); setup leaves it so (safety rule 5).
+var errTrayDisabled = errors.New("the menu-bar icon's start at login is turned off for this account")
+
+// installTray writes the LaunchAgent that starts the menu-bar app at login
+// and starts it the way install starts the service: a new or changed file
+// loads it afresh, a new program (binaryChanged: setup installed another
+// agent, and the app came with it) restarts it, and nothing changed leaves
+// it as it is — off, too, when the person quit it. Unlike the service's,
+// a job the person disabled is not enabled again: errTrayDisabled. macOS
+// only.
+func (s service) installTray(exe string, binaryChanged bool) error {
+	if s.goos != "darwin" {
+		return fmt.Errorf("no menu-bar app start at login on %s", s.goos)
+	}
+	for _, p := range []string{exe, s.lay.Base} {
+		if strings.ContainsAny(p, "\n\r\x00") {
+			return fmt.Errorf("the path %q cannot be written into a service file", p)
+		}
+	}
+	path := s.trayPlistPath()
+	fileChanged, err := s.writeServiceFile(path, trayPlist(exe, s.lay.Base, s.lay.TrayLogFile()))
+	if err != nil {
+		return err
+	}
+	if s.launchdDisabled(trayLabel) {
+		// The person turned it off: left as it is, loaded or not; the
+		// file written for it waits for their launchctl enable.
+		return errTrayDisabled
+	}
+	return s.launchdStartJob(trayJob, path, fileChanged, binaryChanged)
+}
+
+// launchdDisabled: launchd keeps label disabled for this account — the
+// person's `launchctl disable`, which outlasts logins and which bootstrap
+// refuses. print-disabled says "disabled" (macOS 13 on) or "true".
+func (s service) launchdDisabled(label string) bool {
+	out, err := s.run.run("launchctl", "print-disabled", "gui/"+strconv.Itoa(s.uid))
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), `"`+label+`" =>`); ok {
+			v = strings.TrimSpace(v)
+			return v == "disabled" || v == "true"
+		}
+	}
+	return false
+}
+
+// programGone reads the program the background service's LaunchAgent names
+// and says whether it is VaultSync for Mac's agent and gone: the app the
+// service runs from (decision 053) moved out of Applications or put in the
+// Trash — launchd then cannot start the service. macOS only; a file that
+// cannot be read, names nothing, or names VaultSync's own copy is not this
+// case.
+func (s service) programGone() (prog string, gone bool) {
+	if s.goos != "darwin" {
+		return "", false
+	}
+	path, err := s.unitPath()
+	if err != nil {
+		return "", false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	prog, ok := plistFirstString(data, "ProgramArguments")
+	if !ok || !strings.Contains(prog, string(filepath.Separator)+appBundleName+string(filepath.Separator)) {
+		return "", false
+	}
+	_, err = os.Lstat(prog)
+	return prog, programMissing(err)
+}
+
+// programMissing: a look at a program found nothing there — not there at
+// all, or a file where a folder of its path should be.
+func programMissing(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
+}
+
+// program is the program the background service's LaunchAgent names, read
+// back from its file; "" when there is none or it names none. macOS only.
+func (s service) program() string {
+	if s.goos != "darwin" {
+		return ""
+	}
+	path, err := s.unitPath()
+	if err != nil {
+		return ""
+	}
+	return plistProgramOf(path)
+}
+
+// trayProgram is the program the menu-bar app's start at login names, read
+// back from the file this agent wrote; "" when there is no such file or it
+// names none.
+func (s service) trayProgram() string {
+	data, err := os.ReadFile(s.trayPlistPath())
+	if err != nil {
+		return ""
+	}
+	prog, _ := plistFirstString(data, "ProgramArguments")
+	return prog
+}
+
+// uninstallTray stops the menu-bar app's start at login and removes its
+// file; it says whether there was one. It waits until launchd let go of the
+// job — the app lets go of tray.lock as it ends, and a removal of
+// VaultSync's files takes that lock next. Like uninstall, it keeps the file
+// when the service manager could not be asked about the job.
+func (s service) uninstallTray() (found bool, err error) {
+	if s.goos != "darwin" {
+		return false, nil
+	}
+	_, statErr := os.Lstat(s.trayPlistPath())
+	hasFile := statErr == nil
+	if _, err := s.run.run("launchctl", "print", s.launchdTargetOf(trayLabel)); err == nil {
+		found = true
+		// A job already on its way out (a logout, a setup loading it
+		// afresh) answers the bootout with an error: whether launchd let
+		// go of it is what counts — and when it did not, the bootout's
+		// own words say why.
+		out, berr := s.run.run("launchctl", "bootout", s.launchdTargetOf(trayLabel))
+		if err := s.launchdJobGone(trayJob); err != nil {
+			if berr != nil {
+				return found, fmt.Errorf("launchctl bootout of the menu-bar app's start at login: %v: %s", berr, out)
+			}
+			return found, err
+		}
+	} else if hasFile {
+		// Only a file left to remove makes the session worth asking about:
+		// on a Mac that never had the menu-bar app there is nothing here.
+		if state, why := s.session(); state == sessionUnknown {
+			return false, fmt.Errorf("the service manager could not be asked whether the menu-bar app runs (%s); run vaultsync uninstall from your Mac's own session", why)
+		}
+	}
+	switch err := os.Remove(s.trayPlistPath()); {
+	case err == nil:
+		found = true
+	case !errors.Is(err, os.ErrNotExist):
+		return found, err
+	}
+	return found, nil
+}
+
+// trayRunning asks launchd whether the menu-bar app's start at login runs
+// the app right now — then that job holds tray.lock (a second instance
+// beside it ends at once), and uninstallTray stops it.
+func (s service) trayRunning() bool {
+	if s.goos != "darwin" {
+		return false
+	}
+	out, err := s.run.run("launchctl", "print", s.launchdTargetOf(trayLabel))
+	return err == nil && strings.Contains(out, "state = running")
+}
+
+func (s service) launchdTarget() string { return s.launchdTargetOf(launchdLabel) }
+
+func (s service) launchdTargetOf(label string) string {
+	return "gui/" + strconv.Itoa(s.uid) + "/" + label
+}
 
 func (s service) launchdStart(plist string, fileChanged, binaryChanged bool) error {
-	_, printErr := s.run.run("launchctl", "print", s.launchdTarget())
+	return s.launchdStartJob(serviceJob, plist, fileChanged, binaryChanged)
+}
+
+func (s service) launchdStartJob(job launchdJob, plist string, fileChanged, binaryChanged bool) error {
+	target := s.launchdTargetOf(job.label)
+	out, printErr := s.run.run("launchctl", "print", target)
 	loaded := printErr == nil
+	if loaded && !fileChanged {
+		// launchd keeps the definition it loaded until a bootout: one an
+		// earlier setup wrote the file for but could not reload (its bootout
+		// failed) still runs the old program. Loaded afresh, not restarted.
+		if have, ok := launchdProgram(out); ok && have != plistProgramOf(plist) {
+			fileChanged = true
+		}
+	}
 	if loaded && fileChanged {
 		// A loaded job keeps its old definition until it is booted out.
-		if out, err := s.run.run("launchctl", "bootout", s.launchdTarget()); err != nil {
+		if out, err := s.run.run("launchctl", "bootout", target); err != nil {
 			return fmt.Errorf("launchctl bootout: %v: %s", err, out)
 		}
-		if err := s.launchdGone(); err != nil {
+		if err := s.launchdJobGone(job); err != nil {
 			return err
 		}
 		loaded = false
 	}
 	if !loaded {
-		// enable undoes a `vaultsync stop`; launchd refuses to bootstrap a
-		// disabled job.
-		if out, err := s.run.run("launchctl", "enable", s.launchdTarget()); err != nil {
-			return fmt.Errorf("launchctl enable: %v: %s", err, out)
+		// launchd refuses to bootstrap a disabled job; enable undoes the
+		// disable for a job whose disable is VaultSync's own (job.enable).
+		if job.enable {
+			if out, err := s.run.run("launchctl", "enable", target); err != nil {
+				return fmt.Errorf("launchctl enable: %v: %s", err, out)
+			}
 		}
 		if out, err := s.run.run("launchctl", "bootstrap", "gui/"+strconv.Itoa(s.uid), plist); err != nil {
 			return fmt.Errorf("launchctl bootstrap: %v: %s", err, out)
@@ -235,11 +502,32 @@ func (s service) launchdStart(plist string, fileChanged, binaryChanged bool) err
 		return nil
 	}
 	if binaryChanged {
-		if out, err := s.run.run("launchctl", "kickstart", "-k", s.launchdTarget()); err != nil {
+		if out, err := s.run.run("launchctl", "kickstart", "-k", target); err != nil {
 			return fmt.Errorf("launchctl kickstart: %v: %s", err, out)
 		}
 	}
 	return nil
+}
+
+// launchdProgram reads the program out of `launchctl print` for a job.
+func launchdProgram(print string) (string, bool) {
+	for _, line := range strings.Split(print, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "program = "); ok {
+			return v, true
+		}
+	}
+	return "", false
+}
+
+// plistProgramOf is the program a LaunchAgent file names ("" when it cannot
+// be read).
+func plistProgramOf(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	prog, _ := plistFirstString(data, "ProgramArguments")
+	return prog
 }
 
 func (s service) systemdStart(fileChanged, binaryChanged bool) error {

@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -54,6 +55,44 @@ type connectionsView struct {
 	} `json:"connections"`
 }
 
+// copyBesideAppNote says when the background service runs VaultSync's own
+// copy while a VaultSync for Mac that counts is installed — an older
+// vaultsync (desktop-v0.1.0 knows no app) set it up so, or the app came
+// after the setup: the app's trip to the Trash will not stop it, which the
+// person may believe (decision 053). "" otherwise.
+func (a *app) copyBesideAppNote(gone bool) string {
+	if gone || !a.svc.installed() {
+		return ""
+	}
+	prog := a.svc.program()
+	if prog == "" || isAppAgent(prog) {
+		return ""
+	}
+	apps := installedApps(a.appEnv)
+	if len(apps) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("  It runs VaultSync's own copy, not VaultSync for Mac in %s — moving the app to the Trash will not stop it. To run it from the app, run the setup link, or %s setup.", tildePath(a.home, filepath.Dir(apps[0].Path)), shellPath(a.home, apps[0].Agent))
+}
+
+// parkedNote says, for a background service on VaultSync's own copy that
+// parked beside VaultSync for Mac (decision 053 (8)), why it does not sync
+// and the way out; "" for any other service.
+func (a *app) parkedNote() string {
+	prog := a.svc.program()
+	if prog == "" || isAppAgent(prog) {
+		return ""
+	}
+	st, err := loadState(a.lay.State)
+	if err != nil || st.ParkedBesideApp == "" {
+		return ""
+	}
+	if apps := installedApps(a.appEnv); len(apps) > 0 {
+		return fmt.Sprintf("it runs VaultSync's own copy, and VaultSync for Mac is installed in %s. Run the setup link, or %s setup, to sync from the app.", tildePath(a.home, filepath.Dir(apps[0].Path)), shellPath(a.home, apps[0].Agent))
+	}
+	return fmt.Sprintf("it stopped when it found VaultSync for Mac installed. Run %s setup to go on without the app, or the setup link to use the app again.", shellPath(a.home, a.lay.Agent))
+}
+
 func (a *app) status(ctx context.Context) error {
 	w := a.out
 	fmt.Fprintf(w, "VaultSync %s — sync engine Syncthing %s\n", version, strings.TrimPrefix(syncthingVersion, "v"))
@@ -63,9 +102,16 @@ func (a *app) status(ctx context.Context) error {
 		return nil
 	}
 	background := a.backgroundEngine()
+	prog, gone := a.svc.programGone()
 	switch {
 	case !a.svc.installed():
 		fmt.Fprintln(w, "Background service: not installed (vaultsync setup installs it; vaultsync run runs the engine in this terminal)")
+	case gone && background:
+		// It runs from a program no longer there: fine until it ends, and
+		// it does not start again — said before that happens.
+		fmt.Fprintln(w, "Background service: running, but it will not start again — "+a.programGoneNote(prog))
+	case gone:
+		fmt.Fprintln(w, "Background service: cannot start — "+a.programGoneNote(prog))
 	case background:
 		fmt.Fprintln(w, "Background service: running")
 	default:
@@ -79,6 +125,11 @@ func (a *app) status(ctx context.Context) error {
 		default:
 			fmt.Fprintln(w, "Background service: stopped — vaultsync start resumes it")
 		}
+	}
+	if note := a.parkedNote(); note != "" && !gone {
+		fmt.Fprintln(w, "  It does not sync: "+note)
+	} else if note := a.copyBesideAppNote(gone); note != "" {
+		fmt.Fprintln(w, note)
 	}
 	st, err := loadState(a.lay.State)
 	if err != nil {
@@ -284,7 +335,7 @@ func describeFolder(f syncthing.FolderConfig, s folderSummary, conns connections
 			// Downloads and other volumes; Full Disk Access would be more than
 			// a vault needs.
 			if background {
-				msg += " — allow access to this folder (on a Mac: allow “vaultsync” in System Settings → Privacy & Security → Files & Folders), then run vaultsync stop and vaultsync start"
+				msg += " — allow access to this folder (on a Mac: allow " + macPrivacyName + " in System Settings → Privacy & Security → Files & Folders), then run vaultsync stop and vaultsync start"
 			} else {
 				msg += " — allow access to this folder (on a Mac: allow the app you run vaultsync in, Terminal for example, in System Settings → Privacy & Security → Files & Folders), then restart vaultsync run"
 			}
@@ -352,8 +403,13 @@ func describeFolder(f syncthing.FolderConfig, s folderSummary, conns connections
 }
 
 // localNetworkSetting is where macOS lists the programs that may use the
-// local network; it lists the agent by its file name, “vaultsync”.
+// local network.
 const localNetworkSetting = "System Settings → Privacy & Security → Local Network"
+
+// macPrivacyName is how macOS names the agent in its privacy settings: by
+// its file name, “vaultsync”, or — the service run from VaultSync for Mac,
+// which its LaunchAgent names as its app — by the app's (decision 053).
+const macPrivacyName = "“VaultSync for Mac” (or “vaultsync”)"
 
 // localNetworkHint is status's remedy when macOS refuses the engine's
 // connections on the local network.
@@ -362,7 +418,7 @@ func localNetworkHint(background bool) string {
 	if !background {
 		restart = "then restart vaultsync run."
 	}
-	return "macOS refused the connection on your local network. Allow “vaultsync” in " + localNetworkSetting + ", " + restart
+	return "macOS refused the connection on your local network. Allow " + macPrivacyName + " in " + localNetworkSetting + ", " + restart
 }
 
 // localNetworkRefused: the engine's last dials to local addresses failed

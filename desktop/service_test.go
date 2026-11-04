@@ -46,6 +46,78 @@ type fakeRunner struct {
 	// probes records the session probes (the domain print, show-environment)
 	// apart from the actions in calls.
 	probes []string
+	// The menu-bar app's start at login is a job of its own beside the
+	// agent's: loaded, and idle (loaded, its app not running — quit, or
+	// ended at once as a second instance). onTrayBootout runs as launchd
+	// stops the job's app: a test lets go of tray.lock there.
+	trayLoaded, trayIdle bool
+	onTrayBootout        func()
+	// trayOverride: the job is disabled — the person's `launchctl
+	// disable`; `launchctl enable` clears it, print-disabled lists it, and
+	// bootstrap and kickstart refuse it. trayBootoutVanishes: the job
+	// leaves on its own as bootout is asked (a logout, a setup loading it
+	// afresh), and bootout says so.
+	trayOverride, trayBootoutVanishes bool
+	// trayLingerAfterBootout: a booted-out job still answers that many
+	// prints, its app still running; the app ends (onTrayBootout) as
+	// launchd lets go of the job.
+	trayLingerAfterBootout, trayLingering int
+	// loadedProgram is the program of the service's definition launchd
+	// loaded at its last bootstrap — which `launchctl print` names — kept
+	// apart from the file until the next bootout and bootstrap.
+	loadedProgram string
+	// onCall runs at each action call, before it is answered: a test looks
+	// at what the state was when launchd was asked.
+	onCall func(call string)
+}
+
+// trayJob is launchd for the menu-bar app's start at login.
+func (f *fakeRunner) trayJob(call string) (string, error) {
+	switch {
+	case strings.HasPrefix(call, "launchctl print"):
+		if f.trayLingering > 0 {
+			if f.trayLingering--; f.trayLingering == 0 && f.onTrayBootout != nil && !f.trayIdle {
+				f.onTrayBootout()
+			}
+			return "\tstate = running\n", nil // still on its way out
+		}
+		if !f.trayLoaded {
+			return "", errors.New("not loaded")
+		}
+		if f.trayIdle {
+			return "\tstate = not running\n", nil
+		}
+		return "\tstate = running\n", nil
+	case strings.HasPrefix(call, "launchctl bootstrap"):
+		if f.trayOverride {
+			return "Bootstrap failed: 5: Input/output error", errors.New("exit status 5")
+		}
+		f.trayLoaded, f.trayIdle = true, false
+	case strings.HasPrefix(call, "launchctl bootout"):
+		if f.trayBootoutVanishes {
+			f.trayLoaded = false
+		}
+		if !f.trayLoaded {
+			return "Boot-out failed: 3: No such process", errors.New("exit status 3")
+		}
+		f.trayLoaded = false
+		if f.trayLingering = f.trayLingerAfterBootout; f.trayLingering > 0 {
+			break // the app ends as launchd lets go of the job
+		}
+		if f.onTrayBootout != nil && !f.trayIdle {
+			f.onTrayBootout()
+		}
+	case strings.HasPrefix(call, "launchctl disable"):
+		f.trayOverride = true
+	case strings.HasPrefix(call, "launchctl enable"):
+		f.trayOverride = false
+	case strings.HasPrefix(call, "launchctl kickstart"):
+		if !f.trayLoaded || f.trayOverride {
+			return "", errors.New("cannot kickstart")
+		}
+		f.trayIdle = false
+	}
+	return f.answers[call], nil
 }
 
 // exitErr is how a command that ran and failed reports, like *exec.ExitError.
@@ -96,6 +168,9 @@ func (f *fakeRunner) run(name string, args ...string) (string, error) {
 		return f.answers[call], nil
 	}
 	f.calls = append(f.calls, call)
+	if f.onCall != nil {
+		f.onCall(call)
+	}
 	if f.noSession {
 		if name == "launchctl" {
 			return f.noDomain(args), exitErr(112)
@@ -107,6 +182,16 @@ func (f *fakeRunner) run(name string, args ...string) (string, error) {
 			return "boom", err
 		}
 	}
+	if strings.HasPrefix(call, "launchctl print-disabled") {
+		out := "disabled services = {\n"
+		if f.trayOverride {
+			out += "\t\"" + trayLabel + "\" => disabled\n"
+		}
+		return out + "}\n", nil
+	}
+	if name == "launchctl" && strings.Contains(call, "/"+trayLabel) {
+		return f.trayJob(call)
+	}
 	switch {
 	case strings.HasPrefix(call, "launchctl print"):
 		if f.lingering > 0 {
@@ -116,15 +201,20 @@ func (f *fakeRunner) run(name string, args ...string) (string, error) {
 		if !f.loaded {
 			return "", errors.New("not loaded")
 		}
-		if f.idle || f.neverRuns {
-			return "\tstate = not running\n", nil
+		program := ""
+		if f.loadedProgram != "" {
+			program = "\tprogram = " + f.loadedProgram + "\n"
 		}
-		return "\tstate = running\n", nil
+		if f.idle || f.neverRuns {
+			return "\tstate = not running\n" + program, nil
+		}
+		return "\tstate = running\n" + program, nil
 	case strings.HasPrefix(call, "launchctl bootstrap"):
 		if f.disabled {
 			return "Bootstrap failed: 5: Input/output error", errors.New("exit status 5")
 		}
 		f.loaded, f.idle = true, false
+		f.loadedProgram = plistProgramOf(args[len(args)-1])
 	case strings.HasPrefix(call, "launchctl bootout"):
 		switch {
 		case f.loaded:

@@ -14,6 +14,10 @@
 #      answers the release lookup).
 #   4. The embedded compose text in setup.sh is byte-identical to
 #      hub/docker-compose.yml — the one link must ship exactly the reviewed stack.
+#   5. On a Mac (uname pinned to Darwin) the device path installs VaultSync for
+#      Mac into Applications when the release has it and runs the setup from
+#      there, falls back to the bare agent when it has not, and never replaces
+#      a bundle that is not VaultSync for Mac.
 set -eu
 
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -140,21 +144,41 @@ if [ -n "${FAKE_RELEASE:-}" ]; then
 		esac
 		shift
 	done
-	[ -n "$out" ] && [ -f "$FAKE_RELEASE/${url##*/}" ] && cp "$FAKE_RELEASE/${url##*/}" "$out" && exit 0
+	[ -f "$FAKE_RELEASE/${url##*/}" ] || exit 22
+	if [ -n "$out" ]; then
+		cp "$FAKE_RELEASE/${url##*/}" "$out" && exit 0
+	else
+		cat "$FAKE_RELEASE/${url##*/}" && exit 0
+	fi
 	exit 22
 fi
 printf 'curl %s\n' "$*" >>"$VIOLATIONS"
 exit 1
 SHIM
 # The Hub path is Linux-only; pin uname so the test is the same on a macOS
-# developer machine and on the Linux CI runner.
+# developer machine and on the Linux CI runner. FAKE_OS / FAKE_ARCH make it
+# a Mac for the VaultSync for Mac cases.
 cat >"$SANDBOX/bin/uname" <<'SHIM'
 #!/usr/bin/env sh
 case "$*" in
-	-s) echo Linux ;;
-	-m) echo x86_64 ;;
-	*) echo Linux ;;
+	-s) echo "${FAKE_OS:-Linux}" ;;
+	-m) echo "${FAKE_ARCH:-x86_64}" ;;
+	*) echo "${FAKE_OS:-Linux}" ;;
 esac
+SHIM
+# id -u answers FAKE_UID when it is set (the device path refuses root); a
+# test run as root (in a container) pins it to an ordinary account's, so the
+# device cases still run.
+REAL_ID=$(command -v id)
+[ "$("$REAL_ID" -u)" != 0 ] || FAKE_UID=${FAKE_UID:-4242}
+export FAKE_UID
+cat >"$SANDBOX/bin/id" <<SHIM
+#!/usr/bin/env sh
+if [ "\$1" = -u ] && [ -n "\${FAKE_UID:-}" ]; then
+	echo "\$FAKE_UID"
+	exit 0
+fi
+exec "$REAL_ID" "\$@"
 SHIM
 # Port probes are read-only: answer "nothing listening".
 for probe in ss netstat; do
@@ -188,6 +212,64 @@ SHIM
 cat >"$SANDBOX/bin/mv" <<SHIM
 #!/usr/bin/env sh
 [ -z "\${FAIL_MV:-}" ] || exit 1
+if [ -n "\${FAIL_MV_UNPACKED:-}" ]; then
+	case "\$1" in */unpacked/*) exit 1 ;; esac
+fi
+# The signals below reach the setup while it still waits for this mv (the
+# sleep): a shell runs the trap once the command it waits for is done, and
+# without the wait it may see the exit status first.
+# INT_AFTER_ASIDE: Ctrl-C right after the installed app was set aside, before
+# the new one moves. FAIL_MV_BACK: putting the set-aside app back fails.
+# HUP_AFTER_BACK: a second signal (Terminal closed) right after the
+# set-aside app went back, while the first one's restore is still running.
+case "\$2" in
+	*/.VaultSync\ for\ Mac.app.replaced.*)
+		if [ -n "\${INT_AFTER_ASIDE:-}" ]; then
+			"$REAL_MV" "\$@" || exit 1
+			kill -INT \$PPID
+			sleep 1
+			exit 0
+		fi
+		;;
+esac
+case "\$1" in
+	*/.VaultSync\ for\ Mac.app.replaced.*)
+		[ -z "\${FAIL_MV_BACK:-}" ] || exit 1
+		if [ -n "\${HUP_AFTER_BACK:-}" ]; then
+			"$REAL_MV" "\$@" || exit 1
+			kill -HUP \$PPID
+			sleep 1
+			exit 0
+		fi
+		;;
+esac
+# A move of the unpacked app that copies across disks and stops halfway:
+# part of the bundle is at the destination, then the copy fails
+# (FAIL_MV_PARTIAL) or the setup is interrupted (INT_MV_PARTIAL, Ctrl-C).
+# STUCK_PARTIAL: that part cannot be removed (a folder in it this account
+# may not change). APPEAR_AT_APP: something else takes the app's place just
+# before the move (another setup at the same time). MV_PLACE_LOG: where the
+# move into place took the app from is written there.
+case "\$1" in
+	*/unpacked/*)
+		[ -z "\${MV_PLACE_LOG:-}" ] || printf '%s\n' "\$1" >>"\$MV_PLACE_LOG"
+		if [ -n "\${APPEAR_AT_APP:-}" ]; then
+			mkdir -p "\$2"
+			printf 'someone else\\n' >"\$2/marker"
+		fi
+		;;
+esac
+case "\$1" in
+	*/unpacked/*)
+		if [ -n "\${FAIL_MV_PARTIAL:-}\${INT_MV_PARTIAL:-}" ]; then
+			mkdir -p "\$2/Contents/MacOS"
+			printf 'half\\n' >"\$2/Contents/MacOS/vaultsync"
+			[ -z "\${STUCK_PARTIAL:-}" ] || chmod 555 "\$2/Contents/MacOS"
+			[ -z "\${INT_MV_PARTIAL:-}" ] || { kill -INT \$PPID; sleep 1; }
+			exit 1
+		fi
+		;;
+esac
 exec "$REAL_MV" "\$@"
 SHIM
 REAL_MKTEMP=$(command -v mktemp)
@@ -206,6 +288,39 @@ fi
 exec "$REAL_RM" "\$@"
 SHIM
 chmod +x "$SANDBOX/bin/sed" "$SANDBOX/bin/mv" "$SANDBOX/bin/mktemp" "$SANDBOX/bin/rm"
+# setup.sh reads a bundle's identifier with plutil, which every Mac has. On
+# a host without it (the Linux CI run) a stand-in answers the one question
+# setup.sh asks — `plutil -extract CFBundleIdentifier raw -expect string -o
+# - FILE` — from an XML plist, top level only, a string value only.
+REAL_PLUTIL=$(command -v plutil || true)
+if [ -z "$REAL_PLUTIL" ]; then
+	cat >"$SANDBOX/bin/plutil" <<'SHIM'
+#!/usr/bin/env sh
+[ "$1 $2 $3 $4 $5 $6 $7" = "-extract CFBundleIdentifier raw -expect string -o -" ] || exit 2
+awk '
+	{
+		line = $0
+		while (match(line, /<[^>]*>/)) {
+			tag = substr(line, RSTART, RLENGTH)
+			line = substr(line, RSTART + RLENGTH)
+			if (tag == "<dict>") { depth++; want = 0 }
+			else if (tag == "</dict>") { depth--; want = 0 }
+			else if (tag == "<key>") {
+				end = index(line, "</key>")
+				want = (end > 0 && depth == 1 && substr(line, 1, end - 1) == "CFBundleIdentifier")
+				if (end > 0) line = substr(line, end + 6)
+			} else if (tag == "<string>" && want) {
+				end = index(line, "</string>")
+				if (end > 0) { print substr(line, 1, end - 1); found = 1 }
+				exit
+			} else want = 0
+		}
+	}
+	END { exit !found }
+' "$8"
+SHIM
+	chmod +x "$SANDBOX/bin/plutil"
+fi
 export VIOLATIONS
 export PATH="$SANDBOX/bin:$PATH"
 export HOME="$SANDBOX/home"
@@ -681,6 +796,534 @@ $(cat "$SANDBOX/results/run.log")"
 cp "$SANDBOX/results/sums" "$FAKE_RELEASE/SHA256SUMS"
 unset FAKE_RELEASE
 pass "a checksum mismatch runs nothing and leaves nothing behind"
+
+# --- 5. On a Mac: VaultSync for Mac ----------------------------------------
+
+# The release has VaultSync for Mac zipped the way the release job zips it
+# (zip -qry -X), beside the bare agent; the app's agent is a stand-in that
+# records its arguments, where it ran from and which build it is. APPS
+# stands in for /Applications.
+command -v zip >/dev/null 2>&1 || fail "the VaultSync for Mac cases need zip"
+MAC_RELEASE="$SANDBOX/mac-release"
+APPS="$SANDBOX/Applications"
+AGENT_MARK="$SANDBOX/results/agent-mark"
+export AGENT_MARK
+mkdir -p "$MAC_RELEASE" "$APPS" "$SANDBOX/zipwork"
+# make_app DIR ID MARK puts a VaultSync for Mac.app with bundle identifier ID
+# into DIR, its agent saying MARK.
+make_app() {
+	app="$1/VaultSync for Mac.app"
+	mkdir -p "$app/Contents/MacOS"
+	sed -e "s/@VERSION@/0.10.0/" -e "s/eu\.vaultsync\.desktop/$2/" "$REPO_ROOT/desktop/macos/Info.plist" >"$app/Contents/Info.plist"
+	cat >"$app/Contents/MacOS/vaultsync" <<AGENT
+#!/usr/bin/env sh
+if [ "\$1" = version ]; then
+	[ -z "\${AGENT_CANNOT_RUN:-}" ] || exit 1
+	echo "vaultsync $3"
+	exit 0
+fi
+: >"\$AGENT_ARGS"
+for a in "\$@"; do printf '[%s]\n' "\$a" >>"\$AGENT_ARGS"; done
+printf '%s\n' "\$0" >"\$AGENT_SELF"
+printf '%s\n' "$3" >"\$AGENT_MARK"
+AGENT
+	printf '#!/bin/sh\n' >"$app/Contents/MacOS/vaultsync-tray"
+	chmod 755 "$app/Contents/MacOS/vaultsync" "$app/Contents/MacOS/vaultsync-tray"
+}
+# release_with MARK [ID] zips an app into the release and lists it.
+release_with() {
+	rm -rf "$SANDBOX/zipwork/VaultSync for Mac.app" "$MAC_RELEASE/VaultSync_darwin_arm64.zip"
+	make_app "$SANDBOX/zipwork" "${2:-eu.vaultsync.desktop}" "$1"
+	(cd "$SANDBOX/zipwork" && zip -qry -X "$MAC_RELEASE/VaultSync_darwin_arm64.zip" "VaultSync for Mac.app")
+	cp "$FAKE_RELEASE_BARE" "$MAC_RELEASE/vaultsync_darwin_arm64"
+	if command -v sha256sum >/dev/null 2>&1; then
+		(cd "$MAC_RELEASE" && sha256sum VaultSync_darwin_arm64.zip vaultsync_darwin_arm64 >SHA256SUMS)
+	else
+		(cd "$MAC_RELEASE" && shasum -a 256 VaultSync_darwin_arm64.zip vaultsync_darwin_arm64 >SHA256SUMS)
+	fi
+}
+FAKE_RELEASE_BARE="$SANDBOX/release/vaultsync_linux_amd64"
+mac_setup() {
+	FAKE_OS=Darwin FAKE_ARCH=arm64 FAKE_RELEASE="$MAC_RELEASE" VAULTSYNC_APPLICATIONS_DIR="$APPS" TMPDIR="$SANDBOX/tmp" \
+		sh "$SETUP_SH" --device --code tulip-anchor-07 "$@"
+}
+installed="$APPS/VaultSync for Mac.app"
+release_with first
+
+# A dry run plans the app, the place and the setup from there — and makes
+# nothing.
+out=$(mac_setup --dry-run 2>&1) || fail "Mac dry-run exited non-zero:
+$out"
+printf '%s\n' "$out" | grep -q "would download: $release/VaultSync_darwin_arm64.zip " ||
+	fail "the Mac dry-run does not plan the app:
+$out"
+printf '%s\n' "$out" | grep -q "would install VaultSync for Mac into $APPS\$" ||
+	fail "the Mac dry-run does not plan the place:
+$out"
+printf '%s\n' "$out" | grep -q "would run: $installed/Contents/MacOS/vaultsync setup --code <code>\$" ||
+	fail "the Mac dry-run does not plan the setup from the app:
+$out"
+if printf '%s\n' "$out" | grep -qi "tulip-anchor-07"; then
+	fail "the Mac dry-run printed the pairing code:
+$out"
+fi
+[ -z "$(ls -A "$APPS")" ] || fail "the Mac dry-run installed something: $(ls -A "$APPS")"
+pass "on a Mac a dry run plans VaultSync for Mac in Applications and the setup from there"
+
+# For real: the app lands in Applications and the setup runs from it, with
+# exactly the given arguments; the app stays, nothing else does.
+rm -f "$AGENT_ARGS" "$AGENT_SELF" "$AGENT_MARK"
+mac_setup -- --vault "My Notes" >"$SANDBOX/results/run.log" 2>&1 ||
+	fail "the Mac setup failed:
+$(cat "$SANDBOX/results/run.log")"
+[ "$(cat "$AGENT_SELF")" = "$installed/Contents/MacOS/vaultsync" ] || fail "the setup did not run from the installed app: $(cat "$AGENT_SELF")"
+[ "$(cat "$AGENT_ARGS")" = '[setup]
+[--code]
+[tulip-anchor-07]
+[--vault]
+[My Notes]' ] || fail "the app's agent got other arguments:
+$(cat "$AGENT_ARGS")"
+[ -x "$installed/Contents/MacOS/vaultsync-tray" ] || fail "the menu-bar app is missing from the installed app"
+[ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "the Mac setup left temporary files: $(ls -A "$SANDBOX/tmp")"
+pass "on a Mac the setup installs VaultSync for Mac and runs from it"
+
+# The same build again (another vault paired, say): the installed app is
+# not replaced — processes running from it keep their files — and the
+# setup runs from it.
+# (Inodes only: an unzipped mtime can lie in the future, and ls then
+# shows the year instead of the time.)
+# shellcheck disable=SC2012 # ls -di is the one inode reading BSD and GNU share
+inodes() { ls -di "$installed" "$installed/Contents/MacOS/vaultsync" | awk '{print $1}' | tr '\n' ' '; }
+# tree DIR…: every path under the folders with its inode — what "left as it
+# is" compares (ls -l is not stable here: it shows the year for an mtime in
+# the future, which an unzipped file has until its 2-second DOS time passed).
+tree() { find "$@" -exec ls -di {} + 2>/dev/null | awk '{ $1 = $1; print }' | LC_ALL=C sort; }
+before=$(inodes)
+mac_setup >"$SANDBOX/results/run.log" 2>&1 || fail "the same-build setup failed:
+$(cat "$SANDBOX/results/run.log")"
+[ "$before" = "$(inodes)" ] || fail "the same build replaced the installed app"
+[ "$(cat "$AGENT_SELF")" = "$installed/Contents/MacOS/vaultsync" ] || fail "the same-build setup did not run from the installed app"
+pass "the same build leaves the installed VaultSync for Mac in place"
+
+# A newer release replaces VaultSync for Mac in place.
+release_with second
+mac_setup >"$SANDBOX/results/run.log" 2>&1 || fail "the Mac update failed:
+$(cat "$SANDBOX/results/run.log")"
+[ "$(cat "$AGENT_MARK")" = second ] || fail "the update ran the old app: $(cat "$AGENT_MARK")"
+[ "$(ls -A "$APPS")" = "VaultSync for Mac.app" ] || fail "the update left more than the app: $(ls -A "$APPS")"
+[ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "the update left temporary files: $(ls -A "$SANDBOX/tmp")"
+pass "a newer VaultSync for Mac replaces the installed one"
+
+# A newer build that does not run on this Mac (a newer macOS needed, say)
+# never takes the place of the one that runs.
+release_with too-new
+# (A subshell: an assignment before a function call outlives the call.)
+if (AGENT_CANNOT_RUN=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+	fail "an app that cannot run here must not be installed"
+fi
+grep -q "does not run on this Mac" "$SANDBOX/results/run.log" || fail "the refusal does not say why:
+$(cat "$SANDBOX/results/run.log")"
+grep -q "vaultsync second" "$installed/Contents/MacOS/vaultsync" || fail "the running app was replaced by one that cannot run"
+if grep -q too-new "$installed/Contents/MacOS/vaultsync"; then
+	fail "the build that cannot run is in the app's place"
+fi
+[ "$(ls -A "$APPS")" = "VaultSync for Mac.app" ] || fail "a refused update left more than the app: $(ls -A "$APPS")"
+pass "a build that cannot run here leaves the installed one in place"
+
+# The new app cannot be moved into place: the one set aside is put back,
+# and the setup says so.
+release_with third-try
+if (FAIL_MV_UNPACKED=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+	fail "a failed move into place must stop the setup"
+fi
+grep -q "the one installed before stays" "$SANDBOX/results/run.log" || fail "the failed move is not said:
+$(cat "$SANDBOX/results/run.log")"
+grep -q "vaultsync second" "$installed/Contents/MacOS/vaultsync" || fail "the app installed before is not back in its place"
+if grep -q third-try "$installed/Contents/MacOS/vaultsync"; then
+	fail "the build that could not be moved into place is in it"
+fi
+[ "$(ls -A "$APPS")" = "VaultSync for Mac.app" ] || fail "a failed move left more than the app: $(ls -A "$APPS")"
+[ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "a failed move left temporary files: $(ls -A "$SANDBOX/tmp")"
+pass "an app set aside for an update is back when the new one cannot take its place"
+
+# A move into place that stops halfway — a copy across disks that fails, or
+# the setup interrupted (Ctrl-C) — leaves part of the new app at the app's
+# place: that part goes, and the app set aside is put back.
+for how in FAIL_MV_PARTIAL INT_MV_PARTIAL; do
+	release_with half-way
+	# (A subshell: an assignment before a function call outlives the call.)
+	if (export "$how=1"; mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+		fail "a move that stopped halfway ($how) must stop the setup"
+	fi
+	grep -q "vaultsync second" "$installed/Contents/MacOS/vaultsync" || fail "$how: the app installed before is not back:
+$(find "$installed" 2>&1 | head -20)"
+	[ -x "$installed/Contents/MacOS/vaultsync-tray" ] || fail "$how: what is in the app's place is not the whole app"
+	[ "$(ls -A "$APPS")" = "VaultSync for Mac.app" ] || fail "$how left more than the app: $(ls -A "$APPS")"
+	[ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "$how left temporary files: $(ls -A "$SANDBOX/tmp")"
+done
+# (Which words an interrupted run prints depends on when the shell runs the
+# trap — bash may finish the failed move's branch first; what is on disk is
+# the same, and that is what the loop above checks.)
+pass "a move into place that stops halfway leaves the app installed before, whole"
+
+# Ctrl-C right after the installed app was set aside, before the new one
+# moves: the set-aside app is the only copy, and it goes back.
+release_with interrupted-aside
+if (INT_AFTER_ASIDE=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+	fail "an interrupted update must stop the setup"
+fi
+grep -q "vaultsync second" "$installed/Contents/MacOS/vaultsync" || fail "the app set aside before an interrupt is not back:
+$(find "$APPS" 2>&1 | head -20)"
+[ "$(ls -A "$APPS")" = "VaultSync for Mac.app" ] || fail "an interrupt after the set-aside left more than the app: $(ls -A "$APPS")"
+pass "an interrupt right after the set-aside puts the installed app back"
+
+# A second signal while the first one's restore runs — the Terminal closed
+# right after Ctrl-C — enters the restore again: the app it already put
+# back stays.
+release_with signalled-twice
+if (INT_MV_PARTIAL=1 HUP_AFTER_BACK=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+	fail "an interrupted update must stop the setup"
+fi
+grep -q "vaultsync second" "$installed/Contents/MacOS/vaultsync" 2>/dev/null || fail "a second signal during the restore lost the app installed before:
+$(find "$APPS" 2>&1 | head -20)
+$(cat "$SANDBOX/results/run.log")"
+[ -x "$installed/Contents/MacOS/vaultsync-tray" ] || fail "what is back after a second signal is not the whole app"
+[ "$(ls -A "$APPS")" = "VaultSync for Mac.app" ] || fail "a second signal left more than the app: $(ls -A "$APPS")"
+pass "a second signal during the restore keeps the app it put back"
+
+# Putting the set-aside app back fails too: it is kept where it is, never
+# removed, and the setup says where.
+release_with no-way-back
+if (FAIL_MV_PARTIAL=1 FAIL_MV_BACK=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+	fail "a failed update must stop the setup"
+fi
+grep -q "could not be put back: it is at" "$SANDBOX/results/run.log" || fail "the setup does not say where the old app is:
+$(cat "$SANDBOX/results/run.log")"
+kept=$(find "$APPS" -maxdepth 1 -name '.VaultSync for Mac.app.replaced.*')
+[ -n "$kept" ] || fail "the old app was not kept: $(ls -A "$APPS")"
+grep -q "vaultsync second" "$kept/VaultSync for Mac.app/Contents/MacOS/vaultsync" || fail "what was kept is not the old app"
+grep -q "it is at $kept/VaultSync for Mac.app" "$SANDBOX/results/run.log" || fail "the setup names another place than where the old app is:
+$(cat "$SANDBOX/results/run.log")"
+mv "$kept/VaultSync for Mac.app" "$installed" && rmdir "$kept"
+pass "an old app that cannot be put back is kept and named"
+
+# Part of the new app that cannot be removed stands in the app's place: the
+# old app is not moved into it — it stays where it was set aside, whole,
+# and the setup says where both are.
+if [ "$("$REAL_ID" -u)" != 0 ]; then
+	release_with stuck
+	if (FAIL_MV_PARTIAL=1 STUCK_PARTIAL=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+		chmod -R u+w "$APPS"
+		fail "a failed update must stop the setup"
+	fi
+	chmod -R u+w "$APPS"
+	kept=$(find "$APPS" -maxdepth 1 -name '.VaultSync for Mac.app.replaced.*')
+	{ [ -n "$kept" ] && grep -q "vaultsync second" "$kept/VaultSync for Mac.app/Contents/MacOS/vaultsync"; } ||
+		fail "the old app is not kept where it was set aside:
+$(find "$APPS" 2>&1 | head -20)"
+	[ -z "$(find "$installed" -mindepth 1 -name 'VaultSync for Mac.app' 2>/dev/null)" ] || fail "the old app was moved into the part that stayed:
+$(find "$APPS" 2>&1 | head -20)"
+	grep -q "could not be removed. It is at $kept/VaultSync for Mac.app" "$SANDBOX/results/run.log" || fail "the setup does not say where the old app is:
+$(cat "$SANDBOX/results/run.log")"
+	rm -rf "$installed"
+	mv "$kept/VaultSync for Mac.app" "$installed" && rmdir "$kept"
+	pass "an old app is never moved into a part of the new one that stayed"
+else
+	pass "the part-that-stayed case skipped (root removes anything)"
+fi
+
+# Never replaced: a bundle of that name with another identifier, or a link —
+# even one to a VaultSync for Mac kept elsewhere (another disk, say): the
+# link is the person's, and replacing it would delete it.
+for spoiler in foreign nested link; do
+	rm -rf "$installed"
+	if [ "$spoiler" = foreign ]; then
+		make_app "$APPS" com.example.other someone-elses
+	elif [ "$spoiler" = nested ]; then
+		# Its own identifier is another; VaultSync's appears only inside a
+		# document type, which is not the bundle's.
+		make_app "$APPS" com.example.other someone-elses
+		sed 's#<dict>#<dict>\n\t<key>CFBundleDocumentTypes</key>\n\t<array><dict><key>CFBundleIdentifier</key><string>eu.vaultsync.desktop</string></dict></array>#' \
+			"$installed/Contents/Info.plist" >"$SANDBOX/nested.plist"
+		mv "$SANDBOX/nested.plist" "$installed/Contents/Info.plist"
+	else
+		make_app "$SANDBOX/elsewhere" eu.vaultsync.desktop linked
+		ln -s "$SANDBOX/elsewhere/VaultSync for Mac.app" "$installed"
+	fi
+	before=$(tree "$APPS" "$SANDBOX/elsewhere")
+	rm -f "$AGENT_ARGS" "$AGENT_MARK"
+	if out=$(mac_setup --dry-run 2>&1); then
+		fail "a dry run must stop at a $spoiler bundle in the app's place:
+$out"
+	fi
+	if mac_setup >"$SANDBOX/results/run.log" 2>&1; then
+		fail "the setup must stop at a $spoiler bundle in the app's place:
+$(cat "$SANDBOX/results/run.log")"
+	fi
+	grep -q "it was not replaced" "$SANDBOX/results/run.log" || fail "the refusal does not say so:
+$(cat "$SANDBOX/results/run.log")"
+	[ "$before" = "$(tree "$APPS" "$SANDBOX/elsewhere")" ] || fail "the $spoiler bundle was touched"
+	[ ! -e "$AGENT_ARGS" ] || fail "an agent ran beside a $spoiler bundle"
+	[ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "a refused setup left temporary files: $(ls -A "$SANDBOX/tmp")"
+done
+rm -rf "$installed" "$SANDBOX/elsewhere"
+pass "a bundle that is not VaultSync for Mac, or a link, is never replaced"
+
+# A download that does not hold VaultSync for Mac installs nothing.
+release_with impostor com.example.impostor
+if mac_setup >"$SANDBOX/results/run.log" 2>&1; then
+	fail "an app with another identifier must not be installed"
+fi
+[ -z "$(ls -A "$APPS")" ] || fail "an impostor was installed: $(ls -A "$APPS")"
+# Nor one the agent would pass over in silence (desktop/appbundle.go's
+# checkApp): no menu-bar app, or an Info.plist it cannot read.
+for flaw in no-tray binary-plist; do
+	release_with "$flaw"
+	rm -rf "$SANDBOX/zipwork/flawed" && mkdir -p "$SANDBOX/zipwork/flawed"
+	(cd "$SANDBOX/zipwork/flawed" && unzip -q "$MAC_RELEASE/VaultSync_darwin_arm64.zip")
+	if [ "$flaw" = no-tray ]; then
+		rm "$SANDBOX/zipwork/flawed/VaultSync for Mac.app/Contents/MacOS/vaultsync-tray"
+	elif [ -n "$REAL_PLUTIL" ]; then
+		# Still eu.vaultsync.desktop to plutil — in a form the agent does not read.
+		"$REAL_PLUTIL" -convert binary1 "$SANDBOX/zipwork/flawed/VaultSync for Mac.app/Contents/Info.plist"
+	else
+		printf 'bplist00' >"$SANDBOX/zipwork/flawed/VaultSync for Mac.app/Contents/Info.plist"
+	fi
+	rm -f "$MAC_RELEASE/VaultSync_darwin_arm64.zip"
+	(cd "$SANDBOX/zipwork/flawed" && zip -qry -X "$MAC_RELEASE/VaultSync_darwin_arm64.zip" "VaultSync for Mac.app")
+	if command -v sha256sum >/dev/null 2>&1; then
+		(cd "$MAC_RELEASE" && sha256sum VaultSync_darwin_arm64.zip vaultsync_darwin_arm64 >SHA256SUMS)
+	else
+		(cd "$MAC_RELEASE" && shasum -a 256 VaultSync_darwin_arm64.zip vaultsync_darwin_arm64 >SHA256SUMS)
+	fi
+	if mac_setup >"$SANDBOX/results/run.log" 2>&1; then
+		fail "an app with $flaw must not be installed"
+	fi
+	grep -q "does not hold VaultSync for Mac" "$SANDBOX/results/run.log" || fail "$flaw: the refusal does not say why:
+$(cat "$SANDBOX/results/run.log")"
+	[ -z "$(ls -A "$APPS")" ] || fail "an app with $flaw was installed: $(ls -A "$APPS")"
+done
+# Nor does one whose checksum does not match.
+release_with third
+cp "$MAC_RELEASE/SHA256SUMS" "$SANDBOX/results/sums"
+# Every line's first digit changes, whatever it is (0 becomes 1, others 0).
+sed -e 's/^0/x/' -e 's/^[1-9a-f]/0/' -e 's/^x/1/' "$SANDBOX/results/sums" >"$MAC_RELEASE/SHA256SUMS"
+cmp -s "$SANDBOX/results/sums" "$MAC_RELEASE/SHA256SUMS" && fail "the checksums were not changed"
+if mac_setup >"$SANDBOX/results/run.log" 2>&1; then
+	fail "a checksum mismatch must stop the Mac setup"
+fi
+grep -q "Checksum mismatch" "$SANDBOX/results/run.log" || fail "the Mac checksum mismatch is not reported:
+$(cat "$SANDBOX/results/run.log")"
+[ -z "$(ls -A "$APPS")" ] || fail "a mismatching app was installed: $(ls -A "$APPS")"
+[ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "a failed Mac download left temporary files: $(ls -A "$SANDBOX/tmp")"
+pass "a download that is not VaultSync for Mac, or does not match, installs nothing"
+
+# A first install whose move into place fails says that nothing was
+# installed — there was nothing before to stay.
+rm -rf "$installed"
+release_with first-try
+if (FAIL_MV_PARTIAL=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+	fail "a failed first install must stop the setup"
+fi
+grep -q "nothing was installed" "$SANDBOX/results/run.log" || fail "a failed first install does not say so:
+$(cat "$SANDBOX/results/run.log")"
+[ -z "$(ls -A "$APPS")" ] || fail "a failed first install left something: $(ls -A "$APPS")"
+pass "a first install that cannot be moved into place leaves nothing and says so"
+
+# An app another account installed (its owner another — the id stand-in
+# makes this account another one): left alone, and this account's goes into
+# ~/Applications.
+if [ "$("$REAL_ID" -u)" != 0 ]; then
+	release_with theirs
+	make_app "$APPS" eu.vaultsync.desktop another-accounts
+	chmod 555 "$installed/Contents/MacOS" "$installed/Contents" "$installed"
+	before=$(tree "$APPS")
+	(FAKE_UID=4243 mac_setup) >"$SANDBOX/results/run.log" 2>&1 || { chmod -R u+w "$APPS"; fail "the setup beside another account's app failed:
+$(cat "$SANDBOX/results/run.log")"; }
+	[ "$before" = "$(tree "$APPS")" ] || { chmod -R u+w "$APPS"; fail "another account's app was touched"; }
+	chmod -R u+w "$APPS"
+	[ "$(cat "$AGENT_SELF")" = "$HOME/Applications/VaultSync for Mac.app/Contents/MacOS/vaultsync" ] || fail "not run from ~/Applications beside another account's app: $(cat "$AGENT_SELF")"
+	rm -rf "$installed" "$HOME/Applications"
+	pass "an app this account cannot replace stays, and this account's goes into ~/Applications"
+else
+	pass "the other-account case skipped (root writes anywhere)"
+fi
+
+# Applications this account may not write to: ~/Applications. An app already
+# in ~/Applications is updated there even when Applications is writable.
+if [ "$("$REAL_ID" -u)" != 0 ]; then
+	release_with fourth
+	chmod 555 "$APPS"
+	mac_setup >"$SANDBOX/results/run.log" 2>&1 || { chmod 755 "$APPS"; fail "the setup into ~/Applications failed:
+$(cat "$SANDBOX/results/run.log")"; }
+	chmod 755 "$APPS"
+	[ "$(cat "$AGENT_SELF")" = "$HOME/Applications/VaultSync for Mac.app/Contents/MacOS/vaultsync" ] || fail "not run from ~/Applications: $(cat "$AGENT_SELF")"
+	release_with fifth
+	mac_setup >"$SANDBOX/results/run.log" 2>&1 || fail "the update in ~/Applications failed:
+$(cat "$SANDBOX/results/run.log")"
+	[ "$(cat "$AGENT_MARK")" = fifth ] || fail "the app in ~/Applications was not updated: $(cat "$AGENT_MARK")"
+	[ -z "$(ls -A "$APPS")" ] || fail "the update went into Applications instead: $(ls -A "$APPS")"
+	rm -rf "$HOME/Applications"
+	pass "without write access to Applications the app goes into ~/Applications, and is updated there"
+else
+	pass "the ~/Applications case skipped (root writes anywhere)"
+fi
+
+# The new app is unpacked beside its place, so putting it there is a rename
+# within one folder — never a copy across disks that could stop halfway —
+# and nothing of the unpacking stays. A dry run with the app installed says
+# that the same build stays as it is.
+release_with sixth
+rm -f "$SANDBOX/results/mv-place"
+(MV_PLACE_LOG="$SANDBOX/results/mv-place" mac_setup) >"$SANDBOX/results/run.log" 2>&1 || fail "the update failed:
+$(cat "$SANDBOX/results/run.log")"
+case "$(cat "$SANDBOX/results/mv-place")" in
+	"$APPS/.VaultSync for Mac.app.new."*/unpacked/*) ;;
+	*) fail "the new app was moved into place from elsewhere: $(cat "$SANDBOX/results/mv-place")" ;;
+esac
+[ "$(ls -A "$APPS")" = "VaultSync for Mac.app" ] || fail "the unpacking left something beside the app: $(ls -A "$APPS")"
+out=$(mac_setup --dry-run 2>&1) || fail "the dry run beside the installed app failed:
+$out"
+printf '%s\n' "$out" | grep -q "would replace VaultSync for Mac in $APPS, unless it is already this build" ||
+	fail "the dry run does not say that the same build stays:
+$out"
+pass "the new app is unpacked beside its place and moved there in one rename"
+
+# Something else takes the app's place in the instant before the move (another
+# setup at the same time): the new app is not left inside it, what stands
+# there is not touched, and the app set aside is kept and named.
+release_with seventh
+if (APPEAR_AT_APP=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+	fail "a setup whose place was taken meanwhile must stop"
+fi
+grep -q "Something else was put at" "$SANDBOX/results/run.log" || fail "the taken place is not said:
+$(cat "$SANDBOX/results/run.log")"
+[ "$(ls -A "$installed")" = marker ] || fail "what took the place was changed: $(ls -A "$installed")"
+kept=$(find "$APPS" -maxdepth 1 -name '.VaultSync for Mac.app.replaced.*')
+{ [ -n "$kept" ] && grep -q "vaultsync sixth" "$kept/VaultSync for Mac.app/Contents/MacOS/vaultsync"; } ||
+	fail "the app set aside was not kept: $(ls -A "$APPS")"
+grep -q "installed before is at $kept/VaultSync for Mac.app" "$SANDBOX/results/run.log" || fail "the kept app is not named:
+$(cat "$SANDBOX/results/run.log")"
+[ -z "$(find "$APPS" -maxdepth 1 -name '.VaultSync for Mac.app.new.*')" ] || fail "the new app was left unpacked: $(ls -A "$APPS")"
+rm -rf "$installed"
+mv "$kept/VaultSync for Mac.app" "$installed" && rmdir "$kept"
+pass "a place taken meanwhile is left as it is, and the app set aside is kept"
+
+# A TMPDIR this account cannot use (another account's, after su without -):
+# the setup takes /tmp instead of stopping.
+rm -f "$AGENT_SELF"
+(TMPDIR="$SANDBOX/no-such-folder" FAKE_OS=Darwin FAKE_ARCH=arm64 FAKE_RELEASE="$MAC_RELEASE" VAULTSYNC_APPLICATIONS_DIR="$APPS" \
+	sh "$SETUP_SH" --device --code tulip-anchor-07) >"$SANDBOX/results/run.log" 2>&1 || fail "a setup with an unusable TMPDIR failed:
+$(cat "$SANDBOX/results/run.log")"
+[ "$(cat "$AGENT_SELF")" = "$installed/Contents/MacOS/vaultsync" ] || fail "the setup with an unusable TMPDIR did not run the app"
+pass "an unusable TMPDIR does not stop the setup"
+
+# VaultSync for Mac in ~/Applications that this account cannot replace
+# (locked), with Applications not writable: the setup stops and says why,
+# instead of running an app the agent passes over.
+if [ "$("$REAL_ID" -u)" != 0 ]; then
+	release_with eighth
+	mkdir -p "$HOME/Applications"
+	mv "$installed" "$HOME/Applications/VaultSync for Mac.app"
+	locked="$HOME/Applications/VaultSync for Mac.app"
+	chmod 555 "$locked/Contents/MacOS" "$locked/Contents" "$locked"
+	chmod 555 "$APPS"
+	before=$(tree "$HOME/Applications")
+	if mac_setup >"$SANDBOX/results/run.log" 2>&1; then
+		chmod 755 "$APPS"
+		chmod -R u+w "$HOME/Applications"
+		fail "a setup beside a locked app must stop"
+	fi
+	chmod 755 "$APPS"
+	[ "$before" = "$(tree "$HOME/Applications")" ] || { chmod -R u+w "$HOME/Applications"; fail "the locked app was touched"; }
+	chmod -R u+w "$HOME/Applications"
+	grep -q "is locked (Finder → Get Info → Locked). Unlock it" "$SANDBOX/results/run.log" || fail "the refusal does not say why:
+$(cat "$SANDBOX/results/run.log")"
+	rm -rf "$HOME/Applications"
+	pass "a locked app in ~/Applications stops the setup with the reason"
+
+	# The same app locked in an Applications folder this account may change:
+	# it stops too — never a second app in ~/Applications that would take the
+	# service away from it.
+	release_with tenth
+	make_app "$APPS" eu.vaultsync.desktop locked-own
+	chmod 555 "$installed/Contents/MacOS" "$installed/Contents" "$installed"
+	before=$(tree "$APPS")
+	if mac_setup >"$SANDBOX/results/run.log" 2>&1; then
+		chmod -R u+w "$APPS"
+		fail "a setup beside a locked app of this account's must stop"
+	fi
+	[ "$before" = "$(tree "$APPS")" ] || { chmod -R u+w "$APPS"; fail "the locked app was touched"; }
+	chmod -R u+w "$APPS"
+	grep -q "is locked (Finder → Get Info → Locked). Unlock it" "$SANDBOX/results/run.log" || fail "the refusal does not say why:
+$(cat "$SANDBOX/results/run.log")"
+	[ ! -e "$HOME/Applications/VaultSync for Mac.app" ] || fail "a second app went into ~/Applications beside a locked one"
+	rm -rf "$installed" "$HOME/Applications"
+	pass "a locked app of this account's stops the setup in either Applications folder"
+else
+	pass "the locked-app case skipped (root writes anywhere)"
+fi
+
+# This account's app in an Applications folder only an administrator may
+# change: the setup cannot replace it there and stops with the reason —
+# never a second app in ~/Applications, which would take the service away
+# from the one the person knows.
+if [ "$("$REAL_ID" -u)" != 0 ]; then
+	release_with ninth
+	make_app "$APPS" eu.vaultsync.desktop own-in-admin-folder
+	chmod 555 "$APPS"
+	before=$(tree "$APPS")
+	if mac_setup >"$SANDBOX/results/run.log" 2>&1; then
+		chmod 755 "$APPS"
+		fail "a setup beside its own app in an admin-only folder must stop"
+	fi
+	chmod 755 "$APPS"
+	grep -q "is yours, but only an administrator may change that folder" "$SANDBOX/results/run.log" || fail "the refusal does not say why:
+$(cat "$SANDBOX/results/run.log")"
+	[ "$before" = "$(tree "$APPS")" ] || fail "the app in the admin-only folder was touched"
+	[ ! -e "$HOME/Applications/VaultSync for Mac.app" ] || fail "a second app went into ~/Applications"
+	rm -rf "$installed" "$HOME/Applications"
+	pass "this account's app where only an administrator may replace it stops the setup with the reason"
+else
+	pass "the admin-only-folder case skipped (root writes anywhere)"
+fi
+
+# As root (sudo) the device path stops before anything: the service is the
+# account's that uses Obsidian, and as root every check of whose an app is
+# would pass.
+for os in Darwin Linux; do
+	if (FAKE_UID=0 FAKE_OS=$os FAKE_ARCH=arm64 FAKE_RELEASE="$MAC_RELEASE" VAULTSYNC_APPLICATIONS_DIR="$APPS" TMPDIR="$SANDBOX/tmp" \
+		sh "$SETUP_SH" --device --code tulip-anchor-07) >"$SANDBOX/results/run.log" 2>&1; then
+		fail "the device path ran as root on $os"
+	fi
+	grep -q "without sudo" "$SANDBOX/results/run.log" || fail "the root refusal on $os does not say why:
+$(cat "$SANDBOX/results/run.log")"
+done
+[ -z "$(ls -A "$APPS")" ] || fail "a refused root setup installed something: $(ls -A "$APPS")"
+pass "the device path refuses to run as root"
+
+# A release without the app (desktop-v0.1.0): the bare agent, as before.
+rm -f "$MAC_RELEASE/VaultSync_darwin_arm64.zip"
+if command -v sha256sum >/dev/null 2>&1; then
+	(cd "$MAC_RELEASE" && sha256sum vaultsync_darwin_arm64 >SHA256SUMS)
+else
+	(cd "$MAC_RELEASE" && shasum -a 256 vaultsync_darwin_arm64 >SHA256SUMS)
+fi
+out=$(mac_setup --dry-run 2>&1) || fail "Mac dry-run without the app exited non-zero:
+$out"
+printf '%s\n' "$out" | grep -q "would download: $release/vaultsync_darwin_arm64 " ||
+	fail "without the app the Mac dry-run does not plan the bare agent:
+$out"
+printf '%s\n' "$out" | grep -q "would run: <temporary folder>/vaultsync setup --code <code>\$" ||
+	fail "without the app the Mac dry-run does not plan the setup from the download:
+$out"
+rm -f "$AGENT_ARGS" "$AGENT_SELF"
+mac_setup >"$SANDBOX/results/run.log" 2>&1 || fail "the bare-agent Mac setup failed:
+$(cat "$SANDBOX/results/run.log")"
+[ ! -e "$(cat "$AGENT_SELF")" ] || fail "the bare installer is still there: $(cat "$AGENT_SELF")"
+[ -z "$(ls -A "$APPS")" ] || fail "an app appeared without one in the release: $(ls -A "$APPS")"
+[ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "the bare-agent Mac setup left temporary files: $(ls -A "$SANDBOX/tmp")"
+pass "a release without VaultSync for Mac sets up with the bare agent"
 
 # --- 4. Embedded compose = reviewed compose ----------------------------------
 

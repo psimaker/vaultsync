@@ -3,7 +3,11 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"testing"
@@ -64,5 +68,51 @@ func TestIssue176_TrayStartLocksLikeARefresh(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "agent.json")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A second menu-bar app ends without a failure (#254): its start at login
+// keeps it alive only after an unsuccessful exit, so a second instance —
+// beside a login item of the person's own — must not be started again
+// every ten seconds.
+func TestIssue254_ASecondMenuBarAppEndsWithoutAFailure(t *testing.T) {
+	dir := t.TempDir()
+	lay := layout.Layout{}.At(dir)
+	if err := os.WriteFile(lay.State, []byte(`{"version":1,"guiPort":8384}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	origDelay := tray.LockRetryDelay
+	tray.LockRetryDelay = 10 * time.Millisecond
+	defer func() { tray.LockRetryDelay = origDelay }()
+	first, err := lock.Take(lay.TrayLock())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Release()
+	done := make(chan error, 1)
+	go func() { done <- run([]string{"--state-dir", dir}) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("a second instance ended with %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("a second instance did not end")
+	}
+}
+
+// The app's run ends without a failure on Quit, on the system ending it,
+// and when another instance took the lock while it ran — the start at
+// login restarts only a failure (#254); anything else is one.
+func TestIssue254_TheRunEndsAsTheStartAtLoginExpects(t *testing.T) {
+	quiet := log.New(io.Discard, "", 0)
+	for _, err := range []error{nil, context.Canceled, fmt.Errorf("refresh: %w", tray.ErrAlreadyRunning)} {
+		if got := endOfRun(err, quiet); got != nil {
+			t.Errorf("%v ends as %v", err, got)
+		}
+	}
+	other := errors.New("the menu could not be built")
+	if got := endOfRun(other, quiet); got != other {
+		t.Errorf("a failure ends as %v", got)
 	}
 }

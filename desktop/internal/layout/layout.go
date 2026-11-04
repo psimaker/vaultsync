@@ -76,6 +76,15 @@ func (l Layout) LogFile() string {
 	return filepath.Join(l.Logs, "vaultsync.log")
 }
 
+// TrayLogFile is where the menu-bar app's output goes when its start at
+// login (a LaunchAgent) starts it on a Mac; "" where there is no log folder.
+func (l Layout) TrayLogFile() string {
+	if l.Logs == "" {
+		return ""
+	}
+	return filepath.Join(l.Logs, "vaultsync-tray.log")
+}
+
 // AtStateDir is the layout rooted at a --state-dir flag's value: the folder
 // setup used, as the service names it (run --state-dir) and the menu-bar
 // app may be told it. "" keeps the layout; anything else must be absolute.

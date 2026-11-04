@@ -78,11 +78,12 @@ func errnoOf(err error) error {
 // ownLockEntry is one of VaultSync's own locks: where it is, what the
 // removal says when it is held (the service is gone by then), what the
 // probe before the service goes says (the service may hold it: at its
-// start it holds setup.lock, during a socket pairing pair.lock), and
-// whether a running service holds it for as long as it runs.
+// start it holds setup.lock, during a socket pairing pair.lock), whether
+// a running service holds it for as long as it runs, and whether the
+// menu-bar app's start at login does while it runs the app (tray.lock).
 type ownLockEntry struct {
 	path, held, probed string
-	service            bool
+	service, trayJob   bool
 }
 
 // ownLocks is the one list of VaultSync's own locks, for the probe before
@@ -93,10 +94,10 @@ type ownLockEntry struct {
 // first, agent.lock is never touched then.
 func ownLocks(lay layout) []ownLockEntry {
 	return []ownLockEntry{
-		{filepath.Join(lay.Base, "setup.lock"), ownerRunningRefusal + serviceGone, busyRefusal, false},
-		{filepath.Join(lay.Base, "pair.lock"), ownerRunningRefusal + serviceGone, busyRefusal, false},
-		{lay.TrayLock(), trayRunningRefusal + serviceGone, trayRunningRefusal, false},
-		{lay.Lock, ownerRunningRefusal + serviceGone, busyRefusal, true},
+		{filepath.Join(lay.Base, "setup.lock"), ownerRunningRefusal + serviceGone, busyRefusal, false, false},
+		{filepath.Join(lay.Base, "pair.lock"), ownerRunningRefusal + serviceGone, busyRefusal, false, false},
+		{lay.TrayLock(), trayRunningRefusal + serviceGone, trayRunningRefusal, false, true},
+		{lay.Lock, ownerRunningRefusal + serviceGone, busyRefusal, true, false},
 	}
 }
 
@@ -152,11 +153,14 @@ func ownFolder(lay layout) (exists, own bool, err error) {
 // holds setup.lock before it writes agent.json, and is named as such
 // rather than the folder handed to the person to remove. A running
 // service holds the engine's lock for as long as it runs, so that one's
-// held verdict is passed over then; its error (a link, a directory in
-// the lock's place) is not. A missing folder is nothing to probe; a link
-// in the folder's place, or a folder that is not VaultSync's, is refused
-// with the removal's words.
-func probeOwnLocks(lay layout, serviceRunning bool) error {
+// held verdict is passed over then; so is tray.lock's while launchd runs
+// the menu-bar app's start at login (trayJobRunning), which the removal
+// stops — a menu-bar app opened by hand beside it ends at once, so the
+// holder is that job's app. Their errors (a link, a directory in the
+// lock's place) are not passed over. A missing folder is nothing to
+// probe; a link in the folder's place, or a folder that is not
+// VaultSync's, is refused with the removal's words.
+func probeOwnLocks(lay layout, serviceRunning, trayJobRunning bool) error {
 	exists, own, err := ownFolder(lay)
 	if err != nil || !exists {
 		return withServiceRemedy(err)
@@ -168,7 +172,7 @@ func probeOwnLocks(lay layout, serviceRunning bool) error {
 			// way out — the raw error would carry the path and nothing else.
 			return refuse("VaultSync's lock file %s in %s could not be looked at (%v): something VaultSync cannot open stands in its place — a link, a directory, or a file it may not read. Put it right, then run vaultsync uninstall --remove-data again."+serviceRemedy, filepath.Base(l.path), lay.Base, errnoOf(err))
 		}
-		if isHeld && !(l.service && serviceRunning) {
+		if isHeld && !(l.service && serviceRunning) && !(l.trayJob && trayJobRunning) {
 			return refuse("%s", l.probed)
 		}
 	}
@@ -255,8 +259,9 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 		// the service does not run — must be gone before anything is asked
 		// or changed: probed first, so the refusal costs nothing. Whether
 		// the service runs (a read of the service manager) decides whose
-		// the engine's lock is.
-		if err := probeOwnLocks(a.lay, a.svc.running()); err != nil {
+		// the engine's lock is; whether the menu-bar app's start at login
+		// runs, whose tray.lock is.
+		if err := probeOwnLocks(a.lay, a.svc.running(), a.svc.trayRunning()); err != nil {
 			return err
 		}
 	}
@@ -277,6 +282,30 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 		t.say("Nothing was changed.")
 		return nil
 	}
+	// The menu-bar app's start at login goes first, and is waited for: the
+	// app it ran lets go of tray.lock as it ends.
+	trayFound, err := a.svc.uninstallTray()
+	switch {
+	case err != nil && *removeData:
+		// The removal of VaultSync's files needs the app the job ran gone.
+		return refuse("The menu-bar icon's start at login could not be removed (%v). The background service is not removed; run vaultsync uninstall --remove-data again.", err)
+	case err != nil:
+		// Syncing stops all the same: the service goes below.
+		t.say("  The menu-bar icon's start at login could not be removed (%v); run vaultsync uninstall again to remove it.", err)
+	}
+	if trayFound && err == nil {
+		t.say("✓ The menu-bar icon no longer opens when you log in.")
+	}
+	if *removeData {
+		// The probe passed over a tray.lock held while launchd ran the
+		// menu-bar app's start at login; that job is gone now, so a holder
+		// still there is an app opened by hand — one the probe could not
+		// tell apart in the moment the job's app was starting. Refused
+		// before the service goes.
+		if trayLockHeld(a.lay) {
+			return trayStillRunningRefusal(trayFound)
+		}
+	}
 	// What the removal found — a job, a unit file, or a unit the manager
 	// still runs — may hold the engine's lock a moment after the removal:
 	// its own run lets go a moment later. A terminal run holds it for
@@ -285,6 +314,17 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 	found, err := a.svc.uninstall()
 	if err != nil {
 		return err
+	}
+	// The service is gone: the command link setup pointed into VaultSync for
+	// Mac goes back to the copy, which stays unless --remove-data takes it
+	// too — the app may go to the Trash now, whatever happens next. Run from
+	// the app, the copy first gets the app's build (an update dragged over
+	// in the Finder had no setup to bring it along); a copy that could not
+	// get it keeps the command on the app rather than on an older build.
+	if err := a.keepCopyAtAppBuild(); err != nil {
+		t.say("  VaultSync's own copy could not be brought to this build (%v): the vaultsync command keeps running VaultSync for Mac — keep the app until VaultSync is set up again or removed.", err)
+	} else {
+		a.commandBackToCopy()
 	}
 	grace := time.Duration(0)
 	if found {
@@ -295,12 +335,12 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 		t.say("✓ Background service removed. VaultSync could not tell whether a vaultsync run started in a terminal still syncs on this computer (its lock file: %v); vaultsync status in that terminal tells.", errnoOf(err))
 		if *removeData {
 			// The removal would stop at that lock: no question for it.
-			return refuse("VaultSync's files stay: its lock file %s could not be looked at (%v) — a link or a permission in its place — so whether a vaultsync run still syncs here could not be told. Put the lock file right, then run vaultsync uninstall --remove-data again (the background service is removed).", tildePath(a.home, a.lay.Lock), errnoOf(err))
+			return refuse("VaultSync's files stay: its lock file %s could not be looked at (%v) — a link or a permission in its place — so whether a vaultsync run still syncs here could not be told. Put the lock file right, then run vaultsync uninstall --remove-data again (already removed: %s).", tildePath(a.home, a.lay.Lock), errnoOf(err), removedSoFar(trayFound))
 		}
 	case running:
 		t.say("✓ Background service removed. A vaultsync run started in a terminal still syncs on this computer — stop it (Ctrl-C in that terminal) to stop syncing.")
 		if *removeData {
-			return refuse("VaultSync's files stay while that run syncs. Stop it, then run vaultsync uninstall --remove-data again (the background service is removed).")
+			return refuse("VaultSync's files stay while that run syncs. Stop it, then run vaultsync uninstall --remove-data again (already removed: %s).", removedSoFar(trayFound))
 		}
 	default:
 		t.say("✓ Background service removed. VaultSync has stopped syncing on this computer. Your Hub keeps its copy and may still list this computer.")
@@ -324,14 +364,14 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 	// removed — and when a list cannot be read, nothing is removed.
 	known, errs := knownVaults(obsidianRegistries(a.goos, a.home, a.getenv))
 	if len(errs) > 0 {
-		return refuse("VaultSync could not read Obsidian's list of vaults (%v), so it cannot rule out that a vault lies inside its own folder. Nothing was removed besides the background service.", errs[0])
+		return refuse("VaultSync could not read Obsidian's list of vaults (%v), so it cannot rule out that a vault lies inside its own folder. Nothing was removed besides %s.", errs[0], removedSoFar(trayFound))
 	}
 	for _, v := range known {
 		vaults = append(vaults, v.Path)
 	}
 	if us, ok := a.userSyncthing(); ok {
 		if us.Unreadable != nil {
-			return refuse("VaultSync could not read the settings of the Syncthing on this computer (%s), so it cannot rule out that it syncs VaultSync's own folder. Nothing was removed besides the background service.", tildePath(a.home, us.ConfigPath))
+			return refuse("VaultSync could not read the settings of the Syncthing on this computer (%s), so it cannot rule out that it syncs VaultSync's own folder. Nothing was removed besides %s.", tildePath(a.home, us.ConfigPath), removedSoFar(trayFound))
 		}
 		vaults = append(vaults, us.Folders...)
 	}
@@ -363,12 +403,30 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 	return nil
 }
 
-// removeCommandLink removes the command link setup made, but only while it
-// still points at VaultSync's own copy and that copy is gone: a `vaultsync`
-// someone else put there, or a link that still works, stays.
+// commandBackToCopy points the command link setup made into VaultSync for
+// Mac back at VaultSync's own copy, when that copy is there; a link to
+// anything else is left as it is.
+func (a *app) commandBackToCopy() {
+	link := commandLink(a.home)
+	target, err := os.Readlink(link)
+	if err != nil || target == a.lay.Agent || !a.ownCommandTarget(target) {
+		return
+	}
+	if fi, err := os.Stat(a.lay.Agent); err != nil || !fi.Mode().IsRegular() {
+		return
+	}
+	_ = replaceLink(link, a.lay.Agent)
+}
+
+// removeCommandLink removes the command link setup made — to VaultSync's
+// own copy, or to the agent in VaultSync for Mac, which uninstall leaves for
+// the person to move to the Trash — once that copy is gone: the removal got
+// that far (setup keeps the copy also when the service runs from the app).
+// A `vaultsync` someone else put there stays.
 func (a *app) removeCommandLink() (string, bool) {
 	link := commandLink(a.home)
-	if target, err := os.Readlink(link); err != nil || target != a.lay.Agent {
+	target, err := os.Readlink(link)
+	if err != nil || !a.ownCommandTarget(target) {
 		return "", false
 	}
 	if _, err := os.Lstat(a.lay.Agent); !errors.Is(err, fs.ErrNotExist) {
@@ -378,6 +436,48 @@ func (a *app) removeCommandLink() (string, bool) {
 		return "", false
 	}
 	return link, true
+}
+
+// removedSoFar names what uninstall removed before --remove-data stopped:
+// the background service, and the menu-bar icon's start at login when
+// there was one.
+func removedSoFar(trayFound bool) string {
+	if trayFound {
+		return "the background service and the menu-bar icon's start at login"
+	}
+	return "the background service"
+}
+
+// trayStillRunningRefusal is --remove-data's refusal when a menu-bar app
+// still holds tray.lock after the start at login is gone: it says what
+// already happened — the start at login removed, if there was one — and
+// that the background service was not.
+func trayStillRunningRefusal(startAtLoginRemoved bool) error {
+	if startAtLoginRemoved {
+		return refuse("%s (Its start at login is already removed; the background service is not.)", trayRunningRefusal)
+	}
+	return refuse("%s (The background service is not removed.)", trayRunningRefusal)
+}
+
+// trayLockWait is how long trayLockHeld gives an app launchd just stopped
+// to let go of tray.lock.
+var trayLockWait = 2 * time.Second
+
+// trayLockHeld: some menu-bar app still holds tray.lock after a short wait.
+// A lock that cannot be looked at is left to the removal, which refuses it
+// with its own words.
+func trayLockHeld(lay layout) bool {
+	deadline := time.Now().Add(trayLockWait)
+	for {
+		held, err := lock.Probe(lay.TrayLock())
+		if err != nil || !held {
+			return false
+		}
+		if time.Now().After(deadline) {
+			return true
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 // engineOwnerRunning reports whether some process still owns the engine once
@@ -705,8 +805,10 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 			if err != nil {
 				return removed, kept, err
 			}
-			if logs.Remove("vaultsync.log") == nil {
-				removed = append(removed, filepath.Join(lay.Logs, "vaultsync.log"))
+			for _, name := range []string{"vaultsync.log", "vaultsync-tray.log"} {
+				if logs.Remove(name) == nil {
+					removed = append(removed, filepath.Join(lay.Logs, name))
+				}
 			}
 			logs.Close()
 			if os.Remove(lay.Logs) == nil {

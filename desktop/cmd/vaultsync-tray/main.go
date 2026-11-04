@@ -107,6 +107,15 @@ func run(args []string) error {
 	// The lock is the controller's from here: it releases it on its way
 	// out, or earlier when the file is gone and it takes a fresh one.
 	held, err := lockAtStart(lay)
+	if errors.Is(err, tray.ErrAlreadyRunning) {
+		// Not a failure: the icon is up, or VaultSync is being removed. The
+		// start at login keeps the app alive only after an unsuccessful
+		// exit (decision 053), so a second start — a login item of the
+		// person's own beside it — ends with 0 rather than being started
+		// again every ten seconds.
+		logger.Print(redact(err.Error()))
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -148,8 +157,20 @@ func run(args []string) error {
 			systray.Quit()
 		}()
 	}, stop)
-	runErr := <-done
+	return endOfRun(<-done, logger)
+}
+
+// endOfRun is what the app's run ends with, as its exit: Quit and the
+// system ending the app (a cancelled run) are no failure, and neither is
+// another instance taking the lock while this one ran (the lock's file
+// went and came back) — the icon is up, and the start at login answers
+// only a failure with a restart (decision 053). Anything else is one.
+func endOfRun(runErr error, logger *log.Logger) error {
 	if errors.Is(runErr, context.Canceled) {
+		return nil
+	}
+	if errors.Is(runErr, tray.ErrAlreadyRunning) {
+		logger.Print(redact(runErr.Error()))
 		return nil
 	}
 	return runErr

@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	layoutpkg "github.com/psimaker/vaultsync/desktop/internal/layout"
 )
@@ -38,6 +40,23 @@ type agentState struct {
 	// and the cloud clients' settings (#176). An empty record is a shell
 	// with none of them set (its defaults apply); nil is no record yet.
 	Env map[string]string `json:"env"`
+	// Started records, by SHA-256, the programs setup last started the
+	// background service and the menu-bar app's start at login with —
+	// written once they run (decision 053). A setup that stopped before
+	// that (a download that failed after the setup link put a new
+	// VaultSync for Mac in place) leaves the record behind the programs on
+	// disk, and the next setup restarts them. No record restarts them
+	// once, nothing more.
+	Started struct {
+		Service string `json:"service,omitempty"`
+		Tray    string `json:"tray,omitempty"`
+	} `json:"started"`
+	// ParkedBesideApp is the VaultSync for Mac a run of any other program —
+	// VaultSync's own copy — found installed: on a Mac only the app's agent
+	// runs the engine while the app is there (decision 053 (8)), and such a
+	// run stays parked also once the app is gone again, until setup sets
+	// the service up anew and clears it. Empty: not parked.
+	ParkedBesideApp string `json:"parkedBesideApp,omitempty"`
 }
 
 // guardEnvVars are the variables the pairing guards read.
@@ -71,6 +90,37 @@ func updateState(path string, fn func(*agentState)) error {
 	}
 	fn(&st)
 	return saveState(path, st)
+}
+
+// updateStateIfSetUp is updateState for a note that only adds to a setup
+// that is there — what setup started the jobs with: it makes neither
+// VaultSync's folder nor agent.json, so an uninstall --remove-data that
+// finished meanwhile stays finished.
+func updateStateIfSetUp(path string, fn func(*agentState)) error {
+	if _, err := os.Stat(path); err != nil {
+		return err
+	}
+	// The lock, and the write, without making the folder: one an uninstall
+	// took apart meanwhile stays gone.
+	h, err := waitForLock(context.Background(), filepath.Join(filepath.Dir(path), "state.lock"), 10*time.Second, lockFileNoCreate)
+	if err != nil {
+		return err
+	}
+	defer h.Release()
+	if _, err := os.Stat(path); err != nil {
+		return err
+	}
+	st, err := loadState(path)
+	if err != nil {
+		return err
+	}
+	fn(&st)
+	st.Version = agentStateVersion
+	data, err := json.MarshalIndent(st, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeFileAtomicIn(path, append(data, '\n'), 0o600)
 }
 
 const agentStateVersion = 1
@@ -107,10 +157,16 @@ func saveState(path string, st agentState) error {
 // writeFileAtomic replaces path in one rename, so a reader sees the old or
 // the new content and never a torn file.
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
+	return writeFileAtomicIn(path, data, perm)
+}
+
+// writeFileAtomicIn is writeFileAtomic into a folder that must already be
+// there: it never makes one.
+func writeFileAtomicIn(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*")
 	if err != nil {
 		return err
