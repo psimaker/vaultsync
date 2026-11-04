@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"os"
 	"reflect"
 	"strings"
 	"syscall"
@@ -50,27 +51,47 @@ func TestIssue255_AnOpenThatWaitsForMacOSIsSaid(t *testing.T) {
 	waited := func(context.Context, string, []string, string) (string, string, int, error) {
 		return "", "", 0, context.DeadlineExceeded
 	}
-	err := openWith("darwin", waited, lookAs(true, nil))(ctx, "/Users/me/Documents/Notes")
+	readable := func(string) error { return nil }
+	err := openWith("darwin", waited, lookAs(true, nil), readable)(ctx, "/Users/me/Documents/Notes")
 	if err == nil || !strings.Contains(err.Error(), "VaultSync for Mac") || !strings.Contains(err.Error(), "click it again") {
 		t.Fatalf("an open that waited on a Mac: %v", err)
 	}
-	if err := openWith("linux", waited, lookAs(true, nil))(ctx, "/home/me/Notes"); err != nil {
+	if err := openWith("linux", waited, lookAs(true, nil), readable)(ctx, "/home/me/Notes"); err != nil {
 		t.Fatalf("a file manager that stays in front on Linux: %v", err)
 	}
-	// An open that fails where macOS refused the menu its look names the
-	// setting; one that fails for another reason keeps its own words.
+	// An open that fails where macOS refused the app the folder names the
+	// setting. Under that refusal a look at the folder (stat) passes; its
+	// contents are refused with EPERM — that is what is asked. A plain
+	// permission (EACCES), or a folder that can be read, keeps open's own
+	// words: the Files & Folders setting cannot help there.
 	failed := func(context.Context, string, []string, string) (string, string, int, error) {
 		return "", "LSOpenURLsWithRole() failed with error -54 for the file /Users/me/Documents/Notes.\n", 1, nil
 	}
-	denied := &fs.PathError{Op: "stat", Path: "/Users/me/Documents/Notes", Err: syscall.EPERM}
-	err = openWith("darwin", failed, lookAs(false, denied))(ctx, "/Users/me/Documents/Notes")
+	refused := func(p string) error { return &fs.PathError{Op: "open", Path: p, Err: syscall.EPERM} }
+	err = openWith("darwin", failed, lookAs(true, nil), refused)(ctx, "/Users/me/Documents/Notes")
 	if err == nil || !strings.Contains(err.Error(), "Privacy & Security → Files & Folders") || !strings.Contains(err.Error(), "“VaultSync for Mac”") {
-		t.Fatalf("a refused open: %v", err)
+		t.Fatalf("an open macOS refused: %v", err)
 	}
-	if err := openWith("darwin", failed, lookAs(true, nil))(ctx, "/Users/me/Documents/Notes"); err == nil || !strings.Contains(err.Error(), "error -54") || strings.Contains(err.Error(), "Files & Folders") {
-		t.Fatalf("a failure macOS's refusal does not explain: %v", err)
+	unixDenied := func(p string) error { return &fs.PathError{Op: "open", Path: p, Err: syscall.EACCES} }
+	for name, read := range map[string]func(string) error{"a plain permission": unixDenied, "a folder that can be read": readable} {
+		if err := openWith("darwin", failed, lookAs(true, nil), read)(ctx, "/Users/me/Documents/Notes"); err == nil || !strings.Contains(err.Error(), "error -54") || strings.Contains(err.Error(), "Files & Folders") {
+			t.Fatalf("%s: %v", name, err)
+		}
 	}
-	if !errors.Is(denied, fs.ErrPermission) {
-		t.Fatal("EPERM must read as a permission error")
+	// The read itself: a folder's first name, a file's first byte — and
+	// nothing there is said as such.
+	dir := t.TempDir()
+	if err := readContents(dir); err != nil {
+		t.Fatalf("an empty folder: %v", err)
+	}
+	file := dir + "/log"
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := readContents(file); err != nil {
+		t.Fatalf("a file: %v", err)
+	}
+	if err := readContents(dir + "/none"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("nothing there: %v", err)
 	}
 }

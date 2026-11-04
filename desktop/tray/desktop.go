@@ -5,11 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -98,10 +100,13 @@ var (
 // Open opens a folder or a file with the desktop's own program. What it
 // opens outlives the menu-bar app: the program is not tied to ctx.
 func Open(goos string) func(ctx context.Context, path string) error {
-	return openWith(goos, execRunner, lookAt)
+	return openWith(goos, execRunner, lookAt, readContents)
 }
 
-func openWith(goos string, run runner, look func(string) (bool, error)) func(ctx context.Context, path string) error {
+// openWith opens path with run; look says whether it is a folder (for the
+// reveal of a dotted name), read reads its contents — the read macOS's Files
+// & Folders refuses where a look passes.
+func openWith(goos string, run runner, look func(string) (bool, error), read func(string) error) func(ctx context.Context, path string) error {
 	return func(_ context.Context, path string) error {
 		name, args, err := openCommand(goos, path, look)
 		if err != nil {
@@ -126,10 +131,12 @@ func openWith(goos string, run runner, look func(string) (bool, error)) func(ctx
 			return err
 		}
 		if status != 0 {
-			if goos == "darwin" {
-				if _, lerr := look(path); errors.Is(lerr, fs.ErrPermission) {
-					return errOpenRefused
-				}
+			// macOS refused this app the folder: a look at it (stat) still
+			// passes, its contents are refused with EPERM — the Files &
+			// Folders setting's answer. A plain permission (EACCES) is not
+			// that setting's, and keeps open's own words.
+			if goos == "darwin" && errors.Is(read(path), syscall.EPERM) {
+				return errOpenRefused
 			}
 			if why := strings.TrimSpace(stderr); why != "" {
 				return errors.New(why)
@@ -138,6 +145,27 @@ func openWith(goos string, run runner, look func(string) (bool, error)) func(ctx
 		}
 		return nil
 	}
+}
+
+// readContents reads the start of what is at path: a folder's first name,
+// a file's first byte.
+func readContents(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if fi, err := f.Stat(); err == nil && fi.IsDir() {
+		if _, err := f.Readdirnames(1); err != nil && !errors.Is(err, io.EOF) {
+			return err
+		}
+		return nil
+	}
+	var b [1]byte
+	if _, err := f.Read(b[:]); err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+	return nil
 }
 
 // lookAt says whether path is a folder — or why it could not tell: a

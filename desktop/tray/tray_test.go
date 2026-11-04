@@ -1236,13 +1236,13 @@ func TestIssue176_TrayDialogsCarryTextAsData(t *testing.T) {
 	silent := func(_ context.Context, name string, args []string, stdin string) (string, string, int, error) {
 		return "", "", 3, nil
 	}
-	if err := openWith("linux", silent, lookAt)(ctx, "/home/me/Notes"); err == nil || err.Error() != "xdg-open exited with status 3" {
+	if err := openWith("linux", silent, lookAt, readContents)(ctx, "/home/me/Notes"); err == nil || err.Error() != "xdg-open exited with status 3" {
 		t.Fatalf("a silent failure: %v", err)
 	}
 	loud := func(_ context.Context, name string, args []string, stdin string) (string, string, int, error) {
 		return "", "no application to open it\n", 4, nil
 	}
-	if err := openWith("linux", loud, lookAt)(ctx, "/home/me/Notes"); err == nil || err.Error() != "no application to open it" {
+	if err := openWith("linux", loud, lookAt, readContents)(ctx, "/home/me/Notes"); err == nil || err.Error() != "no application to open it" {
 		t.Fatalf("a failure with words: %v", err)
 	}
 }
