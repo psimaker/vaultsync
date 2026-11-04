@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // #264: an agent never installs a Syncthing older than the one VaultSync
@@ -72,19 +73,52 @@ func TestIssue264_AnOlderSetupDoesNotPutAnOlderEngineBack(t *testing.T) {
 	untouched(t, lay, engine)
 }
 
+// The service of an older build parks — launchd would only start an
+// exiting one again every 10 s — and touches nothing; run in a terminal it
+// says so and ends.
 func TestIssue264_AnOlderServiceDoesNotPutAnOlderEngineBack(t *testing.T) {
 	a, _ := runFixture(t)
 	engine := newerEngineHere(t, a.lay)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	origMode, origTerm := serviceMode, stderrIsTerminal
+	defer func() { serviceMode, stderrIsTerminal = origMode, origTerm }()
+	serviceMode = true
+	ended := make(chan error, 1)
+	stop := inBackground(t, func(ctx context.Context) error {
+		err := a.run(ctx, nil)
+		ended <- err
+		return err
+	})
+	select {
+	case err := <-ended:
+		t.Fatalf("an older service ended instead of parking: %v", err)
+	case <-time.After(500 * time.Millisecond):
+	}
+	if err := stop(); err != nil {
+		t.Fatalf("a parked older service ended with %v when stopped", err)
+	}
+	untouched(t, a.lay, engine)
+
+	serviceMode = false
+	stderrIsTerminal = func() bool { return true }
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
 	err := a.run(ctx, nil)
 	if !errors.Is(err, errOlderAgent) {
-		t.Fatalf("an older service with a newer engine here: %v", err)
+		t.Fatalf("an older run in a terminal: %v", err)
 	}
 	if got := serviceSummary(err); got != errOlderAgent.Error() {
 		t.Fatalf("the service log says %q", got)
 	}
 	untouched(t, a.lay, engine)
+}
+
+// status of an older build says it is older than the VaultSync set up here.
+func TestIssue264_StatusSaysThisVaultSyncIsOlder(t *testing.T) {
+	a := installedApp(t, "linux", &fakeRunner{})
+	newerEngineHere(t, a.lay)
+	if out := statusText(t, a); !strings.Contains(out, "This VaultSync is older than the one set up on this computer (its sync engine is Syncthing 9.0.0)") {
+		t.Fatalf("status of an older build:\n%s", out)
+	}
 }
 
 func TestIssue264_EngineVersionsCompare(t *testing.T) {

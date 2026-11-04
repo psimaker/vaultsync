@@ -1123,10 +1123,17 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 	}
 	// An older VaultSync — an old copy, an older VaultSync for Mac put in
 	// Applications — never puts its older engine over the state the newer
-	// one wrote; it stops, and so does its copy refresh below (#264).
+	// one wrote, nor its copy over the newer one (#264). As the service it
+	// parks — launchd would only start an exiting one again every 10 s —
+	// with one line in its log; in a terminal it says so and ends.
 	if engineNewer(st.Syncthing.Version, syncthingVersion) {
 		unlockSetup()
-		return errOlderAgent
+		if !serviceMode {
+			return errOlderAgent
+		}
+		logf("%s", errOlderAgent)
+		<-ctx.Done()
+		return nil
 	}
 	eng := a.engine()
 	sum, sumErr := fileSHA256(a.lay.Syncthing)
