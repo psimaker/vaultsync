@@ -1908,3 +1908,42 @@ func TestIssue254_SetupEndsAPark(t *testing.T) {
 		t.Fatalf("setup left the park: %q", st.ParkedBesideApp)
 	}
 }
+
+// The way out the docs and status give once the app is gone — VaultSync's
+// own copy's setup, "go on without the app" — ends a park: the note is
+// cleared before the service is started anew, so the run launchd starts
+// reads no park, and a parked service is restarted although its file and
+// program did not change.
+func TestIssue254_TheCopysOwnSetupEndsAPark(t *testing.T) {
+	a, run, app := macSetupFixture(t)
+	if err := os.RemoveAll(app); err != nil {
+		t.Fatal(err)
+	}
+	a.appEnv = macAppEnv(a.home, filepath.Join(t.TempDir(), "none"), a.lay.Agent)
+	if out, err := setupFrom(t, a); !strings.Contains(refusalText(err)+fmt.Sprint(err), "did not answer") {
+		t.Fatalf("the first setup on the copy: %v\n%s", err, out)
+	}
+	if err := updateState(a.lay.State, func(s *agentState) { s.ParkedBesideApp = app }); err != nil {
+		t.Fatal(err)
+	}
+	notedAtRestart := ""
+	run.onCall = func(call string) {
+		if strings.HasPrefix(call, "launchctl kickstart -k gui/501/"+launchdLabel) || strings.HasPrefix(call, "launchctl bootstrap") {
+			st, _ := loadState(a.lay.State)
+			notedAtRestart = st.ParkedBesideApp
+			if notedAtRestart == "" {
+				notedAtRestart = "-"
+			}
+		}
+	}
+	run.calls = nil
+	if out, err := setupFrom(t, a); !strings.Contains(refusalText(err)+fmt.Sprint(err), "did not answer") {
+		t.Fatalf("the copy's setup of a parked service: %v\n%s", err, out)
+	}
+	if !slices.Contains(run.calls, "launchctl kickstart -k gui/501/"+launchdLabel) {
+		t.Fatalf("the parked service was not started anew: %v", run.calls)
+	}
+	if notedAtRestart != "-" {
+		t.Fatalf("the run launchd started read the park %q", notedAtRestart)
+	}
+}

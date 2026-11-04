@@ -66,6 +66,9 @@ type fakeRunner struct {
 	// loaded at its last bootstrap — which `launchctl print` names — kept
 	// apart from the file until the next bootout and bootstrap.
 	loadedProgram string
+	// onCall runs at each action call, before it is answered: a test looks
+	// at what the state was when launchd was asked.
+	onCall func(call string)
 }
 
 // trayJob is launchd for the menu-bar app's start at login.
@@ -165,6 +168,9 @@ func (f *fakeRunner) run(name string, args ...string) (string, error) {
 		return f.answers[call], nil
 	}
 	f.calls = append(f.calls, call)
+	if f.onCall != nil {
+		f.onCall(call)
+	}
 	if f.noSession {
 		if name == "launchctl" {
 			return f.noDomain(args), exitErr(112)

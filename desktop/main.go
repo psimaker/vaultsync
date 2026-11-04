@@ -357,9 +357,17 @@ func (a *app) setup(ctx context.Context, args []string) error {
 		}
 		// A program other than the one the service was last started with
 		// restarts it: the record, not this setup's refresh of the copy,
-		// knows whether an earlier setup stopped before the restart.
+		// knows whether an earlier setup stopped before the restart. So does
+		// a park the service noted (decision 053 (8)): this setup sets it up
+		// anew, and the parked run looks no more — cleared first, so the run
+		// launchd starts reads no park.
 		agent, agentChanged := a.startedChanged(exe, st.Started.Service)
-		if _, err := a.svc.install(exe, agentChanged || engineChanged); err != nil {
+		parked := false
+		if cur, err := loadState(a.lay.State); err == nil && cur.ParkedBesideApp != "" {
+			parked = true
+			a.recordStarted(func(s *agentState) { s.ParkedBesideApp = "" })
+		}
+		if _, err := a.svc.install(exe, agentChanged || engineChanged || parked); err != nil {
 			if a.goos == "darwin" {
 				return refuse("Could not start the background service (%v). Run vaultsync setup in Terminal on this Mac while you are logged in — not over SSH — or use vaultsync setup --no-service and keep vaultsync run running yourself.", err)
 			}
@@ -1034,7 +1042,7 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 		}
 	}()
 	stateDirShown = a.lay.Base
-	if st, err := os.Stderr.Stat(); err == nil && st.Mode()&os.ModeCharDevice == 0 {
+	if !stderrIsTerminal() {
 		serviceMode = true
 	}
 	logger := log.New(os.Stderr, "", log.LstdFlags)
@@ -1046,9 +1054,15 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 	// no socket — until it is stopped or set up anew (launchd would only
 	// start an exiting one again); a run in a terminal says why and ends.
 	if _, own := ownAppAgent(a.appEnv); !own && a.appEnv.goos == "darwin" {
-		if why := a.parkReason(); why != "" {
+		if why, app := a.parkReason(); why != "" {
 			if !serviceMode {
 				return refuse("%s", why)
+			}
+			// Only the service that parks notes it — so it stays parked
+			// also once the app is gone again — never a run that was only
+			// refused.
+			if app != "" {
+				_ = updateStateIfSetUp(a.lay.State, func(s *agentState) { s.ParkedBesideApp = app })
 			}
 			logf("%s", errParked)
 			<-ctx.Done()
@@ -1060,10 +1074,9 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 		defer stopLook()
 		defer func() {
 			// An app that came while the engine ran: the engine stopped;
-			// noted, so the run launchd starts next parks (and stays so).
+			// noted, so the run launchd starts next parks (and says so).
 			if app, ok := came(); ok {
 				_ = updateStateIfSetUp(a.lay.State, func(s *agentState) { s.ParkedBesideApp = app.Path })
-				logf("%s", errParked)
 				retErr = nil
 			}
 		}()
@@ -1206,24 +1219,29 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 var errParked = errors.New("VaultSync for Mac is installed (or was, when this service last looked): this service runs VaultSync's own copy and does not sync beside it — run the setup link, or the app's own setup; vaultsync status says more")
 
 // parkReason says why a run of a program other than VaultSync for Mac's
-// agent does not run the engine — the app is installed, or a run found it
-// so and setup has not set the service up anew since (agent.json's
-// ParkedBesideApp) — and notes the park; "" when it may run.
-func (a *app) parkReason() string {
+// agent does not run the engine — the app is installed (app: its path), or
+// a service found it so and setup has not set the service up anew since
+// (agent.json's ParkedBesideApp) — or "" when it may run. It changes
+// nothing: only the service that parks notes it (run).
+func (a *app) parkReason() (why, app string) {
 	st, err := loadState(a.lay.State)
 	if err != nil {
-		return "" // the run's own look at agent.json says what is wrong
+		return "", "" // the run's own look at agent.json says what is wrong
 	}
 	if apps := installedApps(a.appEnv); len(apps) > 0 {
-		if st.ParkedBesideApp != apps[0].Path {
-			_ = updateStateIfSetUp(a.lay.State, func(s *agentState) { s.ParkedBesideApp = apps[0].Path })
-		}
-		return fmt.Sprintf("VaultSync for Mac is installed in %s, and this is VaultSync's own copy, which does not sync beside it. Run the setup link, or %s setup, to sync from the app.", tildePath(a.home, filepath.Dir(apps[0].Path)), shellPath(a.home, apps[0].Agent))
+		return fmt.Sprintf("VaultSync for Mac is installed in %s, and this is VaultSync's own copy, which does not sync beside it. Run the setup link, or %s setup, to sync from the app.", tildePath(a.home, filepath.Dir(apps[0].Path)), shellPath(a.home, apps[0].Agent)), apps[0].Path
 	}
 	if st.ParkedBesideApp != "" {
-		return fmt.Sprintf("This is VaultSync's own copy, which stopped syncing when it found VaultSync for Mac installed. Run %s setup to go on without the app, or the setup link to use the app again.", shellPath(a.home, a.lay.Agent))
+		return fmt.Sprintf("This is VaultSync's own copy, which stopped syncing when it found VaultSync for Mac installed. Run %s setup to go on without the app, or the setup link to use the app again.", shellPath(a.home, a.lay.Agent)), ""
 	}
-	return ""
+	return "", ""
+}
+
+// stderrIsTerminal: this run writes to a terminal, not a log — a person
+// runs it; a test says so for the run it starts.
+var stderrIsTerminal = func() bool {
+	st, err := os.Stderr.Stat()
+	return err == nil && st.Mode()&os.ModeCharDevice != 0
 }
 
 // errAppGone ends a service whose VaultSync for Mac went away; it names no

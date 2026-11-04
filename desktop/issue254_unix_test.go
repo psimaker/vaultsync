@@ -277,3 +277,20 @@ func TestIssue254_TheCopyRunsWithoutTheApp(t *testing.T) {
 		})
 	}
 }
+
+// A run in a terminal beside the app is refused, with the reason — and
+// notes no park: only the service that parks does.
+func TestIssue254_ARefusedTerminalRunNotesNoPark(t *testing.T) {
+	a, _ := copyBesideApp(t, true)
+	serviceMode = false
+	orig := stderrIsTerminal
+	stderrIsTerminal = func() bool { return true }
+	defer func() { stderrIsTerminal = orig }()
+	err := a.run(context.Background(), nil)
+	if !strings.Contains(refusalText(err), "which does not sync beside it") {
+		t.Fatalf("a terminal run beside the app: %v", err)
+	}
+	if st, _ := loadState(a.lay.State); st.ParkedBesideApp != "" {
+		t.Fatalf("a refused run noted a park: %q", st.ParkedBesideApp)
+	}
+}
