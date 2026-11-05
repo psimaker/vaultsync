@@ -316,7 +316,8 @@ func (a *app) setup(ctx context.Context, args []string) error {
 		unlockSetup()
 		return fmt.Errorf("could not set up the sync engine: %w", err)
 	}
-	if err := updateState(a.lay.State, func(s *agentState) { s.GUIPort = st.GUIPort }); err != nil {
+	// VaultSync's copy is this build now: agent.json takes its format.
+	if err := updateState(a.lay.State, func(s *agentState) { s.GUIPort = st.GUIPort; raiseStateFormat(s) }); err != nil {
 		unlockSetup()
 		return err
 	}
@@ -772,7 +773,7 @@ func (a *app) ensureEngine(ctx context.Context, t *term) (agentState, bool, erro
 	t.say("done")
 	st.Syncthing.Version = syncthingVersion
 	st.Syncthing.BinarySHA256 = got.SHA256
-	if err := updateState(a.lay.State, func(s *agentState) { s.Syncthing = st.Syncthing }); err != nil {
+	if err := updateState(a.lay.State, func(s *agentState) { s.Syncthing = st.Syncthing; raiseStateFormat(s) }); err != nil {
 		return st, false, err
 	}
 	t.say("✓ Sync engine installed (Syncthing %s, checksum verified)", strings.TrimPrefix(syncthingVersion, "v"))
@@ -1165,7 +1166,7 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 			return err
 		}
 		st.Syncthing.Version, st.Syncthing.BinarySHA256 = syncthingVersion, got.SHA256
-		if err := updateState(a.lay.State, func(s *agentState) { s.Syncthing = st.Syncthing }); err != nil {
+		if err := updateState(a.lay.State, func(s *agentState) { s.Syncthing = st.Syncthing; raiseStateFormat(s) }); err != nil {
 			unlockSetup()
 			return err
 		}

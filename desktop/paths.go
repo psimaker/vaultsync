@@ -115,7 +115,6 @@ func updateStateIfSetUp(path string, fn func(*agentState)) error {
 		return err
 	}
 	fn(&st)
-	st.Version = agentStateVersion
 	data, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		return err
@@ -164,13 +163,25 @@ func loadState(path string) (agentState, error) {
 	return st, nil
 }
 
+// raiseStateFormat gives agent.json this build's format — written where
+// this build takes over: its engine installed, its copy in VaultSync's
+// place. An older VaultSync, desktop-v0.1.0 among them, refuses it from
+// then on.
+func raiseStateFormat(s *agentState) { s.Version = agentStateVersion }
+
 // errStateNewer: agent.json is in a newer format than this build knows — a
 // newer VaultSync is set up here, and this build is older (decision 054).
 var errStateNewer = errors.New("agent.json was written by a newer VaultSync")
 
-// saveState writes agent.json atomically with owner-only permissions.
+// saveState writes agent.json atomically with owner-only permissions, in
+// the format it was read in (a new one in this build's): a desktop-v0.1.0
+// still installed reads format 1 alone, and a pair or run of a later build
+// beside it must not stop it. Only where this build takes over does the
+// format move (raiseStateFormat).
 func saveState(path string, st agentState) error {
-	st.Version = agentStateVersion
+	if st.Version == 0 {
+		st.Version = agentStateVersion
+	}
 	data, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		return err

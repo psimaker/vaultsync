@@ -142,10 +142,12 @@ macos/make-app.sh dev /tmp/vaultsync /tmp/vaultsync-tray /tmp/app
 A pin only ever moves forward: an agent refuses to install a Syncthing
 older than the one `agent.json` records (decision 054), so a lowered pin
 would stop every computer the newer one reached. desktop-v0.1.0 has no
-such refusal, but it refuses an `agent.json` in any format but 1, and every
-build from desktop-v0.2.0 on writes format 2 — so a kept v0.1.0 download
-never puts its Syncthing 2.1.6 over a newer engine's state, and a bump needs
-no format change. Change `syncthingVersion` and the four entries in
+such refusal, but it refuses an `agent.json` in any format but 1, and a
+build from desktop-v0.2.0 on writes format 2 when it installs its engine or
+its setup takes over — so a kept v0.1.0 download never puts its Syncthing
+2.1.6 over a newer engine's state, and a bump needs no format change. A
+release that adds a field an older build must not drop raises
+`agentStateVersion` (and lets `loadState` read the older format). Change `syncthingVersion` and the four entries in
 `pins.go`. First verify
 the release's `sha256sum.txt.asc` with Syncthing's release key
 (`curl -fsSL https://syncthing.net/release-key.txt | gpg --import`, then

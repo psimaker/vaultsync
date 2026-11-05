@@ -314,10 +314,10 @@ func TestIssue264_StartJudgesTheServiceByWhatItRuns(t *testing.T) {
 	}
 }
 
-// agent.json is in format 2 from desktop-v0.2.0 on, and desktop-v0.1.0
-// refuses every format but 1: a kept v0.1.0 download changes nothing where
-// this build is set up — it knows neither the app nor an older engine's
-// hazard. Format 1 is read, and written back as 2.
+// agent.json takes format 2 where a build from desktop-v0.2.0 on takes
+// over, and desktop-v0.1.0 refuses every format but 1: a kept v0.1.0
+// download changes nothing there — it knows neither the app nor an older
+// engine's hazard. Format 1 is read, and the takeover writes 2.
 func TestIssue264_DesktopV010RefusesWhatThisBuildWrites(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "agent.json")
 	writeFile(t, path, `{"version": 1, "guiPort": 41234, "syncthing": {"version": "v2.1.6"}}`)
@@ -325,7 +325,7 @@ func TestIssue264_DesktopV010RefusesWhatThisBuildWrites(t *testing.T) {
 	if err != nil || st.GUIPort != 41234 || st.Syncthing.Version != "v2.1.6" {
 		t.Fatalf("format 1 not read: %+v %v", st, err)
 	}
-	if err := updateState(path, func(*agentState) {}); err != nil {
+	if err := updateState(path, raiseStateFormat); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path)
@@ -338,7 +338,7 @@ func TestIssue264_DesktopV010RefusesWhatThisBuildWrites(t *testing.T) {
 	// desktop-v0.1.0's loadState: anything but version 1 is "another
 	// VaultSync version", and it stops before it changes anything.
 	if err := json.Unmarshal(data, &format); err != nil || format.Version == 1 || format.Version != agentStateVersion {
-		t.Fatalf("written back in format %d (%v); desktop-v0.1.0 reads format 1", format.Version, err)
+		t.Fatalf("the takeover wrote format %d (%v); desktop-v0.1.0 reads format 1", format.Version, err)
 	}
 	if back, err := loadState(path); err != nil || back.GUIPort != 41234 {
 		t.Fatalf("format 2 not read back: %+v %v", back, err)
@@ -488,5 +488,82 @@ func TestIssue264_ATerminalRunSaysWhenItsProgramIsReplaced(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("the run went on after its program was replaced")
+	}
+}
+
+// A later build's pair, setup notes or run beside a desktop-v0.1.0 that is
+// still installed keep agent.json in format 1: v0.1.0 reads that format
+// alone, and its service would otherwise stop at its next start — again
+// every 10 s, with nothing synced. Only a setup that takes over (this
+// build's copy in VaultSync's place) moves it to format 2.
+func TestIssue264_AFormatOneSetupStaysReadableUntilSetupTakesOver(t *testing.T) {
+	formatOf := func(t *testing.T, path string) int {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var f struct {
+			Version int `json:"version"`
+		}
+		if err := json.Unmarshal(data, &f); err != nil {
+			t.Fatal(err)
+		}
+		return f.Version
+	}
+	asV010 := func(t *testing.T, path string) {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(data, &m); err != nil {
+			t.Fatal(err)
+		}
+		m["version"] = 1
+		out, err := json.MarshalIndent(m, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, path, string(out)+"\n")
+	}
+
+	a, _ := runFixture(t)
+	asV010(t, a.lay.State)
+	if err := updateState(a.lay.State, func(s *agentState) { s.Env = map[string]string{"PATH": "/usr/bin"} }); err != nil {
+		t.Fatal(err)
+	}
+	if err := updateStateIfSetUp(a.lay.State, func(s *agentState) { s.Started.Service = "a build" }); err != nil {
+		t.Fatal(err)
+	}
+	if f := formatOf(t, a.lay.State); f != 1 {
+		t.Fatalf("a note beside desktop-v0.1.0 wrote format %d", f)
+	}
+	// A run: its engine's port, its socket's place, and that place cleared
+	// when it ends.
+	stop := inBackground(t, func(ctx context.Context) error { return a.run(ctx, nil) })
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		if st, err := loadState(a.lay.State); err == nil && st.ControlSocket != "" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the run did not record its socket")
+		}
+	}
+	if err := stop(); err != nil {
+		t.Fatalf("the run ended with %v", err)
+	}
+	if f := formatOf(t, a.lay.State); f != 1 {
+		t.Fatalf("a run beside desktop-v0.1.0 wrote format %d", f)
+	}
+
+	// setup takes over: its copy is in place, and agent.json takes this
+	// build's format, which desktop-v0.1.0 refuses from then on.
+	b, _, _ := macSetupFixture(t)
+	asV010(t, b.lay.State)
+	_, _ = setupFrom(t, b) // its pairing with nobody fails after the takeover
+	if f := formatOf(t, b.lay.State); f != agentStateVersion {
+		t.Fatalf("setup left agent.json in format %d", f)
 	}
 }
