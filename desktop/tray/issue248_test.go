@@ -100,10 +100,16 @@ func TestIssue248_StartRunsVaultsyncStartAndShowsWhatItSaid(t *testing.T) {
 		t.Fatalf("ran %v", got)
 	}
 	close(started.hold)
-	// The service runs, its socket not yet: what start said stands.
+	// The service runs, its socket not yet: what start said stands, and
+	// a click now would restart a service on its way up.
 	v = ui.view(t, "what start said", func(v View) bool { return v.Notice != "" })
-	if v.Notice != "✓ VaultSync is running again." || v.Start != (Action{"Start VaultSync", true}) {
+	if v.Notice != "✓ VaultSync is running again." || v.Start != (Action{"Starting VaultSync…", false}) {
 		t.Fatalf("after the start: %+v", v)
+	}
+	ui.send(Event{Kind: EventStart})
+	ui.click(EventOpened, 0)
+	if got := started.runs(); len(got) != 1 {
+		t.Fatalf("a click after the start ran again: %v", got)
 	}
 	select {
 	case note := <-notes:
@@ -190,8 +196,96 @@ func TestIssue248_NothingToRunNoStart(t *testing.T) {
 	}
 }
 
-// The agent beside this program in VaultSync for Mac, else VaultSync's own
-// copy; never one found on PATH.
+// A service that started and never answers (a run that keeps ending before
+// its socket counts as running for a moment each time) does not leave "running
+// again" standing: the menu says it does not answer, notifies, and Start is
+// there again. An agent that answers later still speaks for itself.
+func TestIssue248_ARunningAgainThatNeverAnswersDoesNotStand(t *testing.T) {
+	agent := newFakeAgent(t)
+	agent.stop()
+	ui := newFakeUI(t)
+	started := &fakeStart{said: "✓ VaultSync is running again."}
+	notes := make(chan string, 4)
+	controllerFor(t, agent, ui, &Controller{
+		StartProgram: func() string { return "/x/vaultsync" },
+		Start:        started.start,
+		StartWaits:   []time.Duration{10 * time.Millisecond, 10 * time.Millisecond},
+		Notify:       func(_ context.Context, s string) { notes <- s },
+	})
+	ui.view(t, "not running", notRunning)
+	ui.send(Event{Kind: EventStart})
+	v := ui.view(t, "no answer", func(v View) bool { return v.Notice == noStartAnswer })
+	if v.Start != (Action{"Start VaultSync", true}) || !notRunning(v) {
+		t.Fatalf("after the wait: %+v", v)
+	}
+	select {
+	case note := <-notes:
+		if note != noStartAnswer {
+			t.Fatalf("notified %q", note)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("it was not notified")
+	}
+	restartAgent(t, agent)
+	ui.click(EventOpened, 0)
+	v = ui.view(t, "the agent answers", func(v View) bool { return v.Headline == "Up to date" })
+	if v.Notice != "" {
+		t.Fatalf("with the agent back: %+v", v)
+	}
+}
+
+// An answer in time ends the wait: nothing about "does not answer" follows
+// when the waits run out.
+func TestIssue248_AnAnswerInTimeEndsTheWait(t *testing.T) {
+	agent := newFakeAgent(t)
+	agent.stop()
+	ui := newFakeUI(t)
+	started := &fakeStart{said: "✓ VaultSync is running again."}
+	notes := make(chan string, 4)
+	controllerFor(t, agent, ui, &Controller{
+		StartProgram: func() string { return "/x/vaultsync" },
+		Start:        started.start,
+		StartWaits:   []time.Duration{50 * time.Millisecond, 50 * time.Millisecond},
+		Notify:       func(_ context.Context, s string) { notes <- s },
+	})
+	ui.view(t, "not running", notRunning)
+	started.onRun = func() { restartAgent(t, agent) }
+	ui.send(Event{Kind: EventStart})
+	ui.view(t, "the agent answers", func(v View) bool { return v.Headline == "Up to date" })
+	time.Sleep(150 * time.Millisecond)
+	select {
+	case note := <-notes:
+		t.Fatalf("notified %q", note)
+	default:
+	}
+	if v := ui.view(t, "still the agent", func(v View) bool { return v.Headline == "Up to date" }); v.Notice != "" {
+		t.Fatalf("after the waits: %+v", v)
+	}
+}
+
+// A click on a menu older than the agent asks first: a start would restart
+// an agent that has come up since the last poll.
+func TestIssue248_AClickOnAStaleMenuAsksFirst(t *testing.T) {
+	agent := newFakeAgent(t)
+	agent.stop()
+	ui := newFakeUI(t)
+	started := &fakeStart{}
+	controllerFor(t, agent, ui, &Controller{
+		StartProgram: func() string { return "/x/vaultsync" },
+		Start:        started.start,
+	})
+	ui.view(t, "not running", notRunning)
+	restartAgent(t, agent)
+	ui.send(Event{Kind: EventStart})
+	ui.view(t, "the agent answers", func(v View) bool { return v.Headline == "Up to date" })
+	if got := started.runs(); len(got) != 0 {
+		t.Fatalf("started beside a running agent: %v", got)
+	}
+}
+
+// VaultSync's own copy, else the agent beside this program in VaultSync for
+// Mac; never one found on PATH. A bundle kept elsewhere (in Downloads, a
+// "Keep Both" copy) does not come ahead of the copy.
 func TestIssue248_WhichVaultsyncStartRuns(t *testing.T) {
 	tmp, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -223,8 +317,14 @@ func TestIssue248_WhichVaultsyncStartRuns(t *testing.T) {
 		t.Fatalf("only the copy: %q", got)
 	}
 	exec(agent)
+	if got := AgentProgram(tray, lay)(); got != copyOf {
+		t.Fatalf("a bundle beside the copy: %q", got)
+	}
+	if err := os.Remove(copyOf); err != nil {
+		t.Fatal(err)
+	}
 	if got := AgentProgram(tray, lay)(); got != agent {
-		t.Fatalf("beside it in the app: %q", got)
+		t.Fatalf("beside it in the app, no copy: %q", got)
 	}
 	// Reached through a link, it still looks beside the real program.
 	link := filepath.Join(tmp, "vaultsync-tray-link")
@@ -234,6 +334,7 @@ func TestIssue248_WhichVaultsyncStartRuns(t *testing.T) {
 	if got := AgentProgram(link, lay)(); got != agent {
 		t.Fatalf("through a link: %q", got)
 	}
+	exec(copyOf)
 	// A tray anywhere else (a Linux download) takes the copy, even beside
 	// a file of that name.
 	elsewhere := filepath.Join(tmp, "Downloads", "vaultsync-tray")
@@ -243,10 +344,10 @@ func TestIssue248_WhichVaultsyncStartRuns(t *testing.T) {
 		t.Fatalf("a download beside a file of that name: %q", got)
 	}
 	// What cannot be run does not count.
-	if err := os.Chmod(agent, 0o644); err != nil {
+	if err := os.Chmod(copyOf, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := AgentProgram(tray, lay)(); got != copyOf {
+	if got := AgentProgram(tray, lay)(); got != agent {
 		t.Fatalf("not executable: %q", got)
 	}
 }

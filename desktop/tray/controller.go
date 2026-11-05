@@ -67,6 +67,9 @@ type Controller struct {
 	// them the menu points to a terminal.
 	StartProgram func() string
 	Start        func(ctx context.Context, program string) (string, error)
+	// StartWaits replaces the seconds between asking the agent again after
+	// a start; a test shortens them.
+	StartWaits []time.Duration
 	// Notify shows a short notification, or nothing (nil).
 	Notify func(ctx context.Context, text string)
 	// Poll is how often the agent is asked between opens; 0 is 30 s.
@@ -96,7 +99,10 @@ type Controller struct {
 	openNoticePath string
 	// starting: a start from the menu is at it. startNotice: the notice it
 	// left, which goes once an agent answers and speaks for itself.
-	starting    bool
+	starting bool
+	// settling: vaultsync start has said the service runs and no agent has
+	// answered yet. A click now would restart the service on its way up.
+	settling    bool
 	startNotice string
 	canStart    bool
 	// lockWords: why the one-instance lock could not be taken, shown next
@@ -144,7 +150,11 @@ func (c *Controller) Run(ctx context.Context) error {
 	pairDone := make(chan string, 1)
 	openDone := make(chan openOutcome, 8)
 	startDone := make(chan startOutcome, 1)
-	recheck := make(chan struct{}, 1)
+	// The agent is asked again in the seconds after a start: the service
+	// runs by then, but its socket comes a moment later, and the next poll
+	// is up to half a minute away. nil when no start is being followed.
+	var askAgain <-chan time.Time
+	var waits []time.Duration
 	if err := c.refresh(ctx); err != nil {
 		return err
 	}
@@ -161,11 +171,25 @@ func (c *Controller) Run(ctx context.Context) error {
 			if out.failed {
 				c.notify(ctx, out.notice)
 			} else {
-				go askAgainSoon(ctx, recheck)
+				c.settling = true
+				waits = c.startWaits()
+				askAgain = time.After(waits[0])
 			}
 			err = c.refresh(ctx)
-		case <-recheck:
+		case <-askAgain:
+			waits = waits[1:]
 			err = c.refresh(ctx)
+			switch {
+			case !c.settling:
+				askAgain = nil
+			case len(waits) > 0:
+				askAgain = time.After(waits[0])
+			default:
+				askAgain = nil
+				if err == nil {
+					c.noAnswerAfterStart(ctx)
+				}
+			}
 		case line := <-pairDone:
 			c.pairing = false
 			c.notice = line
@@ -194,7 +218,7 @@ func (c *Controller) Run(ctx context.Context) error {
 			case EventOpenLog:
 				c.openLog(ctx, openDone)
 			case EventStart:
-				c.startService(startDone)
+				err = c.startService(ctx, startDone)
 			case EventPause:
 				err = c.setPaused(ctx, ev.Pause)
 			case EventPair:
@@ -306,8 +330,11 @@ func (c *Controller) refresh(ctx context.Context) error {
 	c.status, c.known, c.lastErr = st, err == nil, err
 	c.logPath = c.logFile()
 	c.canStart = c.Start != nil && c.StartProgram != nil && c.StartProgram() != ""
-	if c.known && c.startNotice != "" && c.notice == c.startNotice {
-		c.notice, c.startNotice = "", ""
+	if c.known {
+		c.settling = false
+		if c.startNotice != "" && c.notice == c.startNotice {
+			c.notice, c.startNotice = "", ""
+		}
 	}
 	c.render()
 	return nil
@@ -331,7 +358,7 @@ func (c *Controller) render() {
 		Pairing:  c.pairing,
 		CanAsk:   c.Asker != nil,
 		CanStart: c.canStart,
-		Starting: c.starting,
+		Starting: c.starting || c.settling,
 		Notice:   notice,
 	})
 	c.UI.Render(c.view)
@@ -422,13 +449,21 @@ type startOutcome struct {
 // to half a minute when an old job is on its way out. It decides nothing
 // itself — whether the service may start and what that means is the
 // agent's, and the menu shows what it said.
-func (c *Controller) startService(done chan<- startOutcome) {
+func (c *Controller) startService(ctx context.Context, done chan<- startOutcome) error {
 	if !c.view.Start.Enabled {
-		return
+		return nil
+	}
+	// The agent is asked first: a start would restart one that has come
+	// up since the last poll. What ends a poll's refresh ends this one.
+	if err := c.refresh(ctx); err != nil {
+		return err
+	}
+	if !c.view.Start.Enabled {
+		return nil
 	}
 	program := c.StartProgram()
 	if program == "" {
-		return
+		return nil
 	}
 	c.starting = true
 	c.notice = ""
@@ -443,23 +478,30 @@ func (c *Controller) startService(done chan<- startOutcome) {
 		}
 		done <- startOutcome{notice: said}
 	}()
+	return nil
 }
 
-// askAgainSoon has the loop ask the agent again in the seconds after a
-// start: the service is running by then, but its socket comes a moment
-// later, and the next poll is up to half a minute away.
-func askAgainSoon(ctx context.Context, recheck chan<- struct{}) {
-	for _, wait := range []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second} {
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(wait):
-		}
-		select {
-		case recheck <- struct{}{}:
-		default:
-		}
+// startWaits is how long to wait before each time the agent is asked again
+// after a start.
+func (c *Controller) startWaits() []time.Duration {
+	if len(c.StartWaits) > 0 {
+		return c.StartWaits
 	}
+	return []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second}
+}
+
+// noStartAnswer is the notice for a service that started and has not
+// answered: one whose run ends before its socket counts as running for a
+// moment each time it is restarted, so "running again" would stand there.
+const noStartAnswer = "VaultSync started but does not answer yet — vaultsync status in a terminal tells where it stands"
+
+// noAnswerAfterStart ends the wait after a start with no agent answering. A
+// later poll still takes the agent's report when one comes.
+func (c *Controller) noAnswerAfterStart(ctx context.Context) {
+	c.settling = false
+	c.notice, c.startNotice = noStartAnswer, noStartAnswer
+	c.notify(ctx, noStartAnswer)
+	c.render()
 }
 
 // setPaused pauses or resumes as the click asked; a click that asks for

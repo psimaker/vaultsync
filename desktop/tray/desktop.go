@@ -24,7 +24,19 @@ import (
 // execRunner runs a program with stdin and returns what it printed and
 // its exit status; a program that could not be started is the error.
 func execRunner(ctx context.Context, name string, args []string, stdin string) (string, string, int, error) {
+	return runCommand(ctx, exec.CommandContext(ctx, name, args...), stdin)
+}
+
+// startRunner is execRunner for a program that must outlive this one: it
+// finishes what it started after a quit, with nobody left to read what it
+// says.
+func startRunner(ctx context.Context, name string, args []string, stdin string) (string, string, int, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	ownProcessGroup(cmd)
+	return runCommand(ctx, cmd, stdin)
+}
+
+func runCommand(ctx context.Context, cmd *exec.Cmd, stdin string) (string, string, int, error) {
 	cmd.Stdin = strings.NewReader(stdin)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
@@ -90,16 +102,17 @@ func openCommand(goos, path string, look func(string) (bool, error)) (name strin
 	return "", nil, errors.New("no program to open it with on " + goos)
 }
 
-// AgentProgram says which vaultsync the menu's Start item runs: the one
-// beside this program in VaultSync for Mac, else VaultSync's own copy —
-// the places setup puts it, in folders of this account's. Never one found on
-// PATH, which may be an old download or anything else of that name. "" when
-// neither is there.
+// AgentProgram says which vaultsync the menu's Start item runs: VaultSync's
+// own copy, which setup puts in a folder of this account's. Without one, the
+// one beside this program in VaultSync for Mac: this app may be a bundle kept
+// in Downloads, so it does not come first, but its start can load the job,
+// whose run puts the copy back. Never one found on PATH, which may be an old
+// download or anything else of that name. "" when neither is there.
 func AgentProgram(self string, lay layout.Layout) func() string {
 	return func() string {
 		candidates := []string{lay.Agent}
 		if resolved, err := filepath.EvalSymlinks(self); err == nil && filepath.Base(filepath.Dir(resolved)) == "MacOS" {
-			candidates = []string{filepath.Join(filepath.Dir(resolved), "vaultsync"), lay.Agent}
+			candidates = append(candidates, filepath.Join(filepath.Dir(resolved), "vaultsync"))
 		}
 		for _, p := range candidates {
 			if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() && fi.Mode()&0o111 != 0 {
@@ -119,7 +132,7 @@ var errStartWaited = errors.New("it did not finish in two minutes — vaultsync 
 // Start runs vaultsync start with program and returns what it said, or its
 // refusal as the error.
 func Start(ctx context.Context, program string) (string, error) {
-	return startWith(execRunner)(ctx, program)
+	return startWith(startRunner)(ctx, program)
 }
 
 func startWith(run runner) func(context.Context, string) (string, error) {
