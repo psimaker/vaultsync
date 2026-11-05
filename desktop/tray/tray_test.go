@@ -609,7 +609,7 @@ func TestIssue176_TrayOpensOnlyWhatTheAgentListed(t *testing.T) {
 	slow.view(t, "a refresh while the open runs", func(v View) bool { return v.Headline == "Up to date" })
 	close(release)
 
-	dirs := func(path string) bool { return !strings.HasSuffix(path, ".log") }
+	dirs := func(path string) (bool, error) { return !strings.HasSuffix(path, ".log"), nil }
 	for _, c := range []struct {
 		goos, path, name string
 		args             []string
@@ -1236,13 +1236,13 @@ func TestIssue176_TrayDialogsCarryTextAsData(t *testing.T) {
 	silent := func(_ context.Context, name string, args []string, stdin string) (string, string, int, error) {
 		return "", "", 3, nil
 	}
-	if err := openWith("linux", silent)(ctx, "/home/me/Notes"); err == nil || err.Error() != "xdg-open exited with status 3" {
+	if err := openWith("linux", silent, lookAt, readContents)(ctx, "/home/me/Notes"); err == nil || err.Error() != "xdg-open exited with status 3" {
 		t.Fatalf("a silent failure: %v", err)
 	}
 	loud := func(_ context.Context, name string, args []string, stdin string) (string, string, int, error) {
 		return "", "no application to open it\n", 4, nil
 	}
-	if err := openWith("linux", loud)(ctx, "/home/me/Notes"); err == nil || err.Error() != "no application to open it" {
+	if err := openWith("linux", loud, lookAt, readContents)(ctx, "/home/me/Notes"); err == nil || err.Error() != "no application to open it" {
 		t.Fatalf("a failure with words: %v", err)
 	}
 }
