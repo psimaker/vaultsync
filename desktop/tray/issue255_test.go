@@ -172,3 +172,44 @@ func TestIssue255_AnOpenThatWorksTakesBackWhatAnOpenSaid(t *testing.T) {
 		t.Fatalf("an open took back what a pause said: %q", v.Notice)
 	}
 }
+
+// Every open's outcome reaches the menu: one that comes while the menu is
+// busy (here: still saying the last one) waits for it instead of being
+// dropped once a few are queued.
+func TestIssue255_NoOpenOutcomeIsDropped(t *testing.T) {
+	agent := newFakeAgent(t)
+	agent.set(func(f *fakeAgent) {
+		f.hubs = 1
+		f.status.Hubs = []Hub{{Name: "Office Hub", State: "connected", Kind: control.KindOK}}
+		f.status.Vaults = []Vault{{Label: "Notes", Path: "/Users/me/Notes", State: "up to date", Kind: control.KindOK}}
+	})
+	ui := newFakeUI(t)
+	release := make(chan struct{})
+	var mu sync.Mutex
+	said := 0
+	open := func(context.Context, string) error { <-release; return errors.New("no program to open it with") }
+	notify := func(context.Context, string) {
+		mu.Lock()
+		said++
+		mu.Unlock()
+		time.Sleep(20 * time.Millisecond)
+	}
+	controllerFor(t, agent, ui, &Controller{Open: open, Notify: notify})
+	ui.view(t, "up to date", func(v View) bool { return v.Headline == "Up to date" })
+	const opens = 12
+	for range opens {
+		ui.send(Event{Kind: EventOpenVault, Path: "/Users/me/Notes"})
+	}
+	close(release)
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		mu.Lock()
+		n := said
+		mu.Unlock()
+		if n == opens {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d of %d failed opens were said", n, opens)
+		}
+	}
+}
