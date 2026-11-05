@@ -48,6 +48,7 @@ type menu struct {
 	waiting  []item
 	attempts []item
 	pause    *systray.MenuItem
+	start    *systray.MenuItem
 	pair     *systray.MenuItem
 	log      *systray.MenuItem
 	quit     *systray.MenuItem
@@ -96,6 +97,8 @@ func (m *menu) build() {
 	m.waiting = m.pool(waitingSlots, nil)
 	m.attempts = m.pool(attemptSlots, nil)
 	systray.AddSeparator()
+	m.start = m.action("Start VaultSync", tray.EventStart)
+	m.start.Hide()
 	m.pause = systray.AddMenuItem("Pause Syncing", "")
 	go func() {
 		for range m.pause.ClickedCh {
@@ -212,6 +215,7 @@ func (m *menu) Render(v tray.View) {
 	fillPool(m.vaults, first, vaultLines(last.Vaults), vaultLines(v.Vaults), true)
 	fillPool(m.waiting, first, last.Waiting, v.Waiting, false)
 	fillPool(m.attempts, first, last.Attempts, v.Attempts, false)
+	setAction(m.start, first, last.Start, v.Start)
 	setAction(m.pause, first, last.Pause, v.Pause)
 	setAction(m.pair, first, last.Pair, v.Pair)
 	setAction(m.log, first, last.Log, v.Log)

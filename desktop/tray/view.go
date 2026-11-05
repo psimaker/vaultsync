@@ -79,6 +79,7 @@ type View struct {
 	Vaults      []VaultLine
 	Waiting     []Line
 	Attempts    []Line
+	Start       Action // "Start VaultSync" when no agent answers; Title "" otherwise
 	Pause       Action // "Pause Syncing" or "Resume Syncing"
 	Pair        Action
 	Log         Action // Title "" on Linux: the journal has no file to open
@@ -95,7 +96,11 @@ type Options struct {
 	// on a Mac, zenity on Linux); without them the Pair item says what to
 	// do instead.
 	CanAsk bool
-	Notice string
+	// CanStart: there is a vaultsync to run for the Start item (AgentProgram);
+	// Starting: the one started from the menu is still at it.
+	CanStart bool
+	Starting bool
+	Notice   string
 }
 
 // Render is the view for the agent's report, or for why there is none.
@@ -123,7 +128,14 @@ func Render(st Status, err error, o Options) View {
 		return v
 	case errors.Is(err, ErrNoAgent):
 		v.Headline = "VaultSync is not running"
-		v.Detail = "Run vaultsync start in a terminal"
+		switch {
+		case o.Starting:
+			v.Start = Action{Title: "Starting VaultSync…"}
+		case o.CanStart:
+			v.Start = Action{Title: "Start VaultSync", Enabled: true}
+		default:
+			v.Detail = "Run vaultsync start in a terminal"
+		}
 		return v
 	case errors.Is(err, ErrOldAgent):
 		v.Glyph = GlyphAttention

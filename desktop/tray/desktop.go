@@ -13,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/psimaker/vaultsync/desktop/internal/layout"
 )
 
 // What the desktop does for the menu-bar app: opening a folder or a file
@@ -86,6 +88,62 @@ func openCommand(goos, path string, look func(string) (bool, error)) (name strin
 		return "xdg-open", []string{path}, nil
 	}
 	return "", nil, errors.New("no program to open it with on " + goos)
+}
+
+// AgentProgram says which vaultsync the menu's Start item runs: the one
+// beside this program in VaultSync for Mac, else VaultSync's own copy —
+// the places setup puts it, in folders of this account's. Never one found on
+// PATH, which may be an old download or anything else of that name. "" when
+// neither is there.
+func AgentProgram(self string, lay layout.Layout) func() string {
+	return func() string {
+		candidates := []string{lay.Agent}
+		if resolved, err := filepath.EvalSymlinks(self); err == nil && filepath.Base(filepath.Dir(resolved)) == "MacOS" {
+			candidates = []string{filepath.Join(filepath.Dir(resolved), "vaultsync"), lay.Agent}
+		}
+		for _, p := range candidates {
+			if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() && fi.Mode()&0o111 != 0 {
+				return p
+			}
+		}
+		return ""
+	}
+}
+
+// startWait is how long vaultsync start may take: it waits for an old job
+// to go and the new one to run.
+const startWait = 2 * time.Minute
+
+var errStartWaited = errors.New("it did not finish in two minutes — vaultsync status in a terminal tells where it stands")
+
+// Start runs vaultsync start with program and returns what it said, or its
+// refusal as the error.
+func Start(ctx context.Context, program string) (string, error) {
+	return startWith(execRunner)(ctx, program)
+}
+
+func startWith(run runner) func(context.Context, string) (string, error) {
+	return func(_ context.Context, program string) (string, error) {
+		// Its own time, whatever the caller's: a start ended half-way may
+		// leave the service taken down and not loaded again.
+		ctx, cancel := context.WithTimeout(context.Background(), startWait)
+		defer cancel()
+		stdout, stderr, status, err := run(ctx, program, []string{"start"}, "")
+		if errors.Is(err, context.DeadlineExceeded) {
+			return "", errStartWaited
+		}
+		if err != nil {
+			return "", err
+		}
+		if status != 0 {
+			why := strings.TrimPrefix(strings.TrimSpace(stderr), "error: ")
+			if why == "" {
+				why = fmt.Sprintf("vaultsync start exited with status %d", status)
+			}
+			return "", errors.New(why)
+		}
+		return strings.TrimSpace(stdout), nil
+	}
 }
 
 // What the menu says when macOS stands between it and a folder (#255): it

@@ -28,6 +28,8 @@ const (
 	EventPair
 	EventOpenLog
 	EventQuit
+	// EventStart: start the background service, as vaultsync start does.
+	EventStart
 )
 
 type Event struct {
@@ -60,6 +62,11 @@ type Controller struct {
 	Asker Asker
 	// Open opens a folder or a file with the desktop.
 	Open func(ctx context.Context, path string) error
+	// StartProgram says which vaultsync the Start item runs, "" for none;
+	// Start runs it and returns what it said, or why it refused. Without
+	// them the menu points to a terminal.
+	StartProgram func() string
+	Start        func(ctx context.Context, program string) (string, error)
 	// Notify shows a short notification, or nothing (nil).
 	Notify func(ctx context.Context, text string)
 	// Poll is how often the agent is asked between opens; 0 is 30 s.
@@ -87,6 +94,11 @@ type Controller struct {
 	// click the vault again).
 	openNotice     string
 	openNoticePath string
+	// starting: a start from the menu is at it. startNotice: the notice it
+	// left, which goes once an agent answers and speaks for itself.
+	starting    bool
+	startNotice string
+	canStart    bool
 	// lockWords: why the one-instance lock could not be taken, shown next
 	// to the notice until it holds; lockSaid: the failure is in the log.
 	lockWords string
@@ -131,6 +143,8 @@ func (c *Controller) Run(ctx context.Context) error {
 	}()
 	pairDone := make(chan string, 1)
 	openDone := make(chan openOutcome, 8)
+	startDone := make(chan startOutcome, 1)
+	recheck := make(chan struct{}, 1)
 	if err := c.refresh(ctx); err != nil {
 		return err
 	}
@@ -140,6 +154,17 @@ func (c *Controller) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
+			err = c.refresh(ctx)
+		case out := <-startDone:
+			c.starting = false
+			c.notice, c.startNotice = out.notice, out.notice
+			if out.failed {
+				c.notify(ctx, out.notice)
+			} else {
+				go askAgainSoon(ctx, recheck)
+			}
+			err = c.refresh(ctx)
+		case <-recheck:
 			err = c.refresh(ctx)
 		case line := <-pairDone:
 			c.pairing = false
@@ -168,6 +193,8 @@ func (c *Controller) Run(ctx context.Context) error {
 				c.openVault(ctx, ev.Path, openDone)
 			case EventOpenLog:
 				c.openLog(ctx, openDone)
+			case EventStart:
+				c.startService(startDone)
 			case EventPause:
 				err = c.setPaused(ctx, ev.Pause)
 			case EventPair:
@@ -278,6 +305,10 @@ func (c *Controller) refresh(ctx context.Context) error {
 	}
 	c.status, c.known, c.lastErr = st, err == nil, err
 	c.logPath = c.logFile()
+	c.canStart = c.Start != nil && c.StartProgram != nil && c.StartProgram() != ""
+	if c.known && c.startNotice != "" && c.notice == c.startNotice {
+		c.notice, c.startNotice = "", ""
+	}
 	c.render()
 	return nil
 }
@@ -295,11 +326,13 @@ func (c *Controller) render() {
 		notice += c.lockWords
 	}
 	c.view = Render(c.status, c.lastErr, Options{
-		Home:    c.Home,
-		LogPath: c.logPath,
-		Pairing: c.pairing,
-		CanAsk:  c.Asker != nil,
-		Notice:  notice,
+		Home:     c.Home,
+		LogPath:  c.logPath,
+		Pairing:  c.pairing,
+		CanAsk:   c.Asker != nil,
+		CanStart: c.canStart,
+		Starting: c.starting,
+		Notice:   notice,
 	})
 	c.UI.Render(c.view)
 }
@@ -377,6 +410,56 @@ func (c *Controller) openPath(ctx context.Context, path string, done chan<- open
 type openOutcome struct {
 	path   string
 	notice string
+}
+
+// startOutcome is how a start from the menu ended: the notice it leaves.
+type startOutcome struct {
+	notice string
+	failed bool
+}
+
+// startService runs vaultsync start off the loop: it takes seconds, and up
+// to half a minute when an old job is on its way out. It decides nothing
+// itself — whether the service may start and what that means is the
+// agent's, and the menu shows what it said.
+func (c *Controller) startService(done chan<- startOutcome) {
+	if c.starting || !c.view.Start.Enabled {
+		return
+	}
+	program := c.StartProgram()
+	if program == "" {
+		return
+	}
+	c.starting = true
+	c.notice = ""
+	c.render()
+	go func() {
+		// Not the menu's context: a quit must not end the start between
+		// taking the old job down and loading it again.
+		said, err := c.Start(context.Background(), program)
+		if err != nil {
+			done <- startOutcome{notice: "Could not start VaultSync: " + err.Error(), failed: true}
+			return
+		}
+		done <- startOutcome{notice: said}
+	}()
+}
+
+// askAgainSoon has the loop ask the agent again in the seconds after a
+// start: the service is running by then, but its socket comes a moment
+// later, and the next poll is up to half a minute away.
+func askAgainSoon(ctx context.Context, recheck chan<- struct{}) {
+	for _, wait := range []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second} {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+		select {
+		case recheck <- struct{}{}:
+		default:
+		}
+	}
 }
 
 // setPaused pauses or resumes as the click asked; a click that asks for

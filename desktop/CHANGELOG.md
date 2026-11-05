@@ -4,6 +4,12 @@ The desktop agent `vaultsync`, VaultSync for Mac and the menu-bar app, released 
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **The menu-bar icon can start VaultSync when it is not running** ([#248](https://github.com/psimaker/vaultsync/issues/248)) — after `vaultsync stop`, or when the background service did not start, the menu offers **Start VaultSync**, which does what `vaultsync start` does and shows what that says, a refusal included. It appears only when VaultSync is set up on this computer, and it runs the `vaultsync` in VaultSync for Mac or VaultSync's own copy, never one found on your `PATH`.
+
 ## [0.2.0] — 2026-11-05
 
 ### Added

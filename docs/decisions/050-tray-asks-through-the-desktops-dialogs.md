@@ -6,6 +6,6 @@
 
 **Why.** No GUI toolkit for three dialogs, and the person sees the dialogs they know. A structured `needs` keeps the tray honest when a refusal's wording changes, and keeps consent a decision of the person, not of a string match. One conversation per code, no session in the agent (049).
 
-**Rejected alternatives.** Parsing the refusal text for `--yes`/`--vault` (a reworded refusal would silently break pairing, or worse, pass `yes`). A folder picker for a Hub vault's destination (`~/Vaults/<name>` is the terminal's default; the terminal takes any folder). Handing pairing to a terminal window from the menu (no reliable way to open one on Linux; the socket's pairing exists for this). Shipping icon files (five shapes drawn at start are smaller than one PNG and never stale).
+**Rejected alternatives.** Finding `vaultsync` on `PATH` for the menu's Start item (#248): it may be an old download or anything else of that name, and a menu-bar app has no terminal to show which ran; it runs the agent beside it in VaultSync for Mac, else VaultSync's own copy. Parsing the refusal text for `--yes`/`--vault` (a reworded refusal would silently break pairing, or worse, pass `yes`). A folder picker for a Hub vault's destination (`~/Vaults/<name>` is the terminal's default; the terminal takes any folder). Handing pairing to a terminal window from the menu (no reliable way to open one on Linux; the socket's pairing exists for this). Shipping icon files (five shapes drawn at start are smaller than one PNG and never stale).
 
 **Links.** #176; decisions 048, 049.

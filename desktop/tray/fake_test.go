@@ -155,6 +155,22 @@ func (f *fakeAgent) set(fn func(*fakeAgent)) {
 
 func (f *fakeAgent) stop() { _ = f.srv.Close() }
 
+// serveAgain answers on the socket again after a stop, as a service that has
+// started does.
+func (f *fakeAgent) serveAgain() {
+	f.t.Helper()
+	handler := f.srv.Handler
+	_ = os.Remove(f.socket)
+	l, err := net.Listen("unix", f.socket)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	srv := &http.Server{Handler: handler}
+	f.srv = srv
+	go func() { _ = srv.Serve(l) }()
+	f.t.Cleanup(func() { _ = srv.Close() })
+}
+
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
