@@ -1373,17 +1373,15 @@ func (a *app) startService() error {
 		fmt.Fprintln(a.out, "✓ VaultSync is running again.")
 		return nil
 	}
-	// The service runs another build: this program's pin says nothing of it
-	// — a newer one syncs, an older one parks (#264). Only an agent that
-	// answers tells; a parked service opens no socket.
-	if a.agentAnswers(st) {
-		fmt.Fprintln(a.out, "✓ VaultSync is running again.")
-		if older {
-			fmt.Fprintln(a.out, "Note: "+a.olderNote(st, err))
-		}
-		return nil
+	// The service runs another build, of which this program's pin says
+	// nothing — a newer one syncs, an older one parks (#264). start says
+	// only what it knows, and leaves whether it syncs to status, which
+	// asks the running agent.
+	fmt.Fprintln(a.out, "✓ The background service is running. It runs another VaultSync build than this vaultsync — vaultsync status says whether it syncs.")
+	if older {
+		fmt.Fprintln(a.out, "Note: "+a.olderNote(st, err))
 	}
-	return refuse("The background service runs another build than this vaultsync, and it did not answer: it may be an older VaultSync, which does not sync. Run the setup link to get the current VaultSync; vaultsync status says more.")
+	return nil
 }
 
 // serviceRunsThisBuild: the background service runs this very build — the
@@ -1401,27 +1399,4 @@ func (a *app) serviceRunsThisBuild() bool {
 	}
 	have, err := a.appEnv.readFile(prog)
 	return err == nil && sameBuild(have, self)
-}
-
-// agentAnswerWait is how long start waits for the agent of a service that
-// runs another build to answer.
-var agentAnswerWait = 20 * time.Second
-
-// agentAnswers: an agent answers on the control socket within
-// agentAnswerWait — one that runs the engine, or is bringing it up.
-func (a *app) agentAnswers(st agentState) bool {
-	client := a.controlClient(st)
-	deadline := time.Now().Add(agentAnswerWait)
-	for {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		_, err := client.Status(ctx)
-		cancel()
-		if err == nil {
-			return true
-		}
-		if !time.Now().Before(deadline) {
-			return false
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
 }
