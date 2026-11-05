@@ -6,8 +6,10 @@
   @VERSION@. LSUIElement: a menu-bar icon, no Dock icon, no main menu.
   LSMinimumSystemVersion matches the binaries' minos (Go's floor, and the
   tray's cgo build pins it with -mmacosx-version-min).
-  NSLocalNetworkUsageDescription is for the agent: it finds the Hub on the
-  local network once it runs from the bundle; the tray uses no network.
+  NSLocalNetworkUsageDescription was meant for the agent, which finds the
+  Hub on the local network; the tray uses no network. On the signed build it
+  does not reach the agent: macOS's question names "vaultsync" and shows its
+  generic text (decision 052, #286).
 -->
 <plist version="1.0">
 <dict>
