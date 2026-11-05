@@ -269,11 +269,11 @@ var (
 // until the next login. The person who did that expects VaultSync to stop,
 // and a service that went on would carry what they delete next to every
 // device (decision 053). It looks at once, then every every; missing twice,
-// grace apart, is gone. gone says whether that is what ended it; stop ends
-// the look.
-func whileProgramStays(ctx context.Context, prog string, lstat func(string) (fs.FileInfo, error), every, grace time.Duration) (watched context.Context, gone func() bool, stop func()) {
+// grace apart, is gone. ended says what ended it, if the watch did; stop
+// ends the look.
+func whileProgramStays(ctx context.Context, prog string, lstat func(string) (fs.FileInfo, error), every, grace time.Duration) (watched context.Context, ended func() programEnd, stop func()) {
 	watched, cancel := context.WithCancel(ctx)
-	var wasGone atomic.Bool
+	var end atomic.Int32
 	// Anything but the program there counts as missing — not there, a file
 	// or a link where the bundle was, no access to it: the watch fails
 	// closed, and launchd starts the service again once it can run.
@@ -295,6 +295,7 @@ func whileProgramStays(ctx context.Context, prog string, lstat func(string) (fs.
 		defer tick.Stop()
 		for {
 			if replaced() {
+				end.Store(int32(programReplaced))
 				cancel()
 				return
 			}
@@ -305,7 +306,7 @@ func whileProgramStays(ctx context.Context, prog string, lstat func(string) (fs.
 				case <-time.After(grace):
 				}
 				if missing() {
-					wasGone.Store(true)
+					end.Store(int32(programGone))
 					cancel()
 					return
 				}
@@ -317,21 +318,31 @@ func whileProgramStays(ctx context.Context, prog string, lstat func(string) (fs.
 			}
 		}
 	}()
-	return watched, wasGone.Load, cancel
+	return watched, func() programEnd { return programEnd(end.Load()) }, cancel
 }
+
+// programEnd is what ended a watched run: not the watch, the program gone
+// (the app moved or put in the Trash), or another program in its place.
+type programEnd int32
+
+const (
+	programHeld programEnd = iota
+	programGone
+	programReplaced
+)
 
 // watchOwnApp: a service started from VaultSync for Mac — the program's
 // path, as it was started, is Contents/MacOS/vaultsync of a bundle of that
 // name, whatever else is true of the bundle — runs while that program stays
 // (whileProgramStays). Fails closed: no look at the bundle can keep it from
 // being watched. Any other program is not watched.
-func watchOwnApp(ctx context.Context, env appEnv) (watched context.Context, gone func() bool, stop func()) {
+func watchOwnApp(ctx context.Context, env appEnv) (watched context.Context, ended func() programEnd, stop func()) {
 	if env.lstat != nil {
 		if self, ok := ownAppAgent(env); ok {
 			return whileProgramStays(ctx, self, env.lstat, appCheckEvery, appGoneGrace)
 		}
 	}
-	return ctx, func() bool { return false }, func() {}
+	return ctx, func() programEnd { return programHeld }, func() {}
 }
 
 // ownAppAgent: on a Mac, this program is VaultSync for Mac's agent — by the

@@ -123,7 +123,16 @@ func updateStateIfSetUp(path string, fn func(*agentState)) error {
 	return writeFileAtomicIn(path, append(data, '\n'), 0o600)
 }
 
-const agentStateVersion = 1
+// agentStateVersion is the agent.json format this build writes. Format 2,
+// from desktop-v0.2.0 on, has format 1's fields: it is read, and written
+// back as 2. desktop-v0.1.0 refuses every format but its own, so a kept
+// v0.1.0 changes nothing where a later VaultSync is set up — it knows
+// neither VaultSync for Mac (decision 053) nor that an older engine must
+// not go over a newer one's state (decision 054).
+const agentStateVersion = 2
+
+// oldestStateVersion is the oldest agent.json format this build reads.
+const oldestStateVersion = 1
 
 func loadState(path string) (agentState, error) {
 	var st agentState
@@ -135,14 +144,22 @@ func loadState(path string) (agentState, error) {
 	if err != nil {
 		return st, err
 	}
-	if err := json.Unmarshal(data, &st); err != nil {
+	// The format is read on its own first: a newer one may give a field
+	// this build knows another shape, and is newer, not damaged.
+	var format struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(data, &format); err != nil {
 		return st, fmt.Errorf("%s is damaged: %w", path, err)
 	}
-	if st.Version > agentStateVersion {
-		return st, fmt.Errorf("%s was written by a newer VaultSync (format %d): %w", path, st.Version, errStateNewer)
+	if format.Version > agentStateVersion {
+		return st, fmt.Errorf("%s was written by a newer VaultSync (format %d): %w", path, format.Version, errStateNewer)
 	}
-	if st.Version != agentStateVersion {
-		return st, fmt.Errorf("%s was written by another VaultSync version (%d)", path, st.Version)
+	if format.Version < oldestStateVersion {
+		return st, fmt.Errorf("%s was written by another VaultSync version (%d)", path, format.Version)
+	}
+	if err := json.Unmarshal(data, &st); err != nil {
+		return st, fmt.Errorf("%s is damaged: %w", path, err)
 	}
 	return st, nil
 }

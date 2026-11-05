@@ -143,7 +143,8 @@ func (a *app) status(ctx context.Context) error {
 		fmt.Fprintln(w, note)
 	}
 	st, err := loadState(a.lay.State)
-	if err != nil {
+	newer := errors.Is(err, errStateNewer)
+	if err != nil && !newer {
 		return err
 	}
 	// The running agent answers first (control.go): one truth for the
@@ -165,6 +166,11 @@ func (a *app) status(ctx context.Context) error {
 		// An agent answered and failed: that is the news, not whatever a
 		// look at the engine would say.
 		return fmt.Errorf("the running VaultSync agent could not report: %w", aerr)
+	}
+	if newer {
+		// Said above: this build is older than the VaultSync set up here,
+		// and reads nothing of the engine from its agent.json.
+		return nil
 	}
 	client, err := eng.client(st)
 	if err != nil {

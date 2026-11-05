@@ -1040,11 +1040,18 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 	// there — watched from the first moment, by the path it was started
 	// with, so an app moved or put in the Trash at any point ends it, not
 	// the next login (decision 053).
-	ctx, appGone, stopWatch := watchOwnApp(ctx, a.appEnv)
+	ctx, watchEnded, stopWatch := watchOwnApp(ctx, a.appEnv)
 	defer stopWatch()
 	defer func() {
-		if appGone() {
+		switch watchEnded() {
+		case programGone:
 			retErr = withAppGone(retErr)
+		case programReplaced:
+			// The service ends without an error, and launchd starts what
+			// is there now; a run in a terminal says why it stopped.
+			if !serviceMode && (retErr == nil || errors.Is(retErr, context.Canceled)) {
+				retErr = errProgramReplaced
+			}
 		}
 	}()
 	stateDirShown = a.lay.Base
@@ -1067,7 +1074,9 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 			// Only the service that parks notes it — so it stays parked
 			// also once the app is gone again — never a run that was only
 			// refused.
-			if app != "" {
+			// An older build writes nothing: it would drop what a newer
+			// one keeps in agent.json (decision 054).
+			if app != "" && !a.olderBuild() {
 				_ = updateStateIfSetUp(a.lay.State, func(s *agentState) { s.ParkedBesideApp = app })
 			}
 			logf("%s", errParked)
@@ -1082,7 +1091,9 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 			// An app that came while the engine ran: the engine stopped;
 			// noted, so the run launchd starts next parks (and says so).
 			if app, ok := came(); ok {
-				_ = updateStateIfSetUp(a.lay.State, func(s *agentState) { s.ParkedBesideApp = app.Path })
+				if !a.olderBuild() {
+					_ = updateStateIfSetUp(a.lay.State, func(s *agentState) { s.ParkedBesideApp = app.Path })
+				}
 				retErr = nil
 			}
 		}()
@@ -1247,9 +1258,11 @@ var errParked = errors.New("VaultSync for Mac is installed (or was, when this se
 // nothing: only the service that parks notes it (run).
 func (a *app) parkReason() (why, app string) {
 	st, err := loadState(a.lay.State)
-	if err != nil {
+	if err != nil && !errors.Is(err, errStateNewer) {
 		return "", "" // the run's own look at agent.json says what is wrong
 	}
+	// An agent.json newer than this build reads does not hide the app: an
+	// older copy beside it parks here, not after a restart every 10 s.
 	if apps := installedApps(a.appEnv); len(apps) > 0 {
 		return fmt.Sprintf("VaultSync for Mac is installed in %s, and this is VaultSync's own copy, which does not sync beside it. Run the setup link, or %s setup, to sync from the app.", tildePath(a.home, filepath.Dir(apps[0].Path)), shellPath(a.home, apps[0].Agent)), apps[0].Path
 	}
@@ -1267,6 +1280,12 @@ func olderThanSetUp(st agentState, loadErr error) bool {
 		return true
 	}
 	return loadErr == nil && recordedEngineNewer(st.Syncthing.Version)
+}
+
+// olderBuild: olderThanSetUp, by a look at agent.json now.
+func (a *app) olderBuild() bool {
+	st, err := loadState(a.lay.State)
+	return olderThanSetUp(st, err)
 }
 
 // olderNote says so for a person, with the versions where they are known.
@@ -1291,6 +1310,11 @@ var stderrIsTerminal = func() bool {
 // the state the newer one wrote is what it must never do (#264). It names
 // no path.
 var errOlderAgent = errors.New("this VaultSync is older than the one set up on this computer, whose sync engine is newer — nothing was changed; run the setup link to get the current VaultSync")
+
+// errProgramReplaced ends a run in a terminal whose VaultSync for Mac was
+// replaced by another build while it ran — the setup link's update, or one
+// dragged over it. It names no path.
+var errProgramReplaced = errors.New("VaultSync for Mac was replaced by another build while this run synced, so this run stopped — run it again to sync with the new one")
 
 // errAppGone ends a service whose VaultSync for Mac went away; it names no
 // path, so the service log carries it as it is.
@@ -1339,9 +1363,65 @@ func (a *app) startService() error {
 	if note := a.parkedNote(); note != "" {
 		return refuse("The background service runs, but it does not sync: %s", note)
 	}
-	if st, err := loadState(a.lay.State); olderThanSetUp(st, err) {
-		return refuse("The background service runs, but it does not sync: %s", a.olderNote(st, err))
+	st, err := loadState(a.lay.State)
+	older := olderThanSetUp(st, err)
+	if a.serviceRunsThisBuild() {
+		// What this program knows of itself holds for the service.
+		if older {
+			return refuse("The background service runs, but it does not sync: %s", a.olderNote(st, err))
+		}
+		fmt.Fprintln(a.out, "✓ VaultSync is running again.")
+		return nil
 	}
-	fmt.Fprintln(a.out, "✓ VaultSync is running again.")
-	return nil
+	// The service runs another build: this program's pin says nothing of it
+	// — a newer one syncs, an older one parks (#264). Only an agent that
+	// answers tells; a parked service opens no socket.
+	if a.agentAnswers(st) {
+		fmt.Fprintln(a.out, "✓ VaultSync is running again.")
+		if older {
+			fmt.Fprintln(a.out, "Note: "+a.olderNote(st, err))
+		}
+		return nil
+	}
+	return refuse("The background service runs another build than this vaultsync, and it did not answer: it may be an older VaultSync, which does not sync. Run the setup link to get the current VaultSync; vaultsync status says more.")
+}
+
+// serviceRunsThisBuild: the background service runs this very build — the
+// program its LaunchAgent names on a Mac, VaultSync's own copy on Linux
+// (the only one setup gives the unit), byte for byte or by its code
+// directory. Either one not to be read: not known to be this build.
+func (a *app) serviceRunsThisBuild() bool {
+	prog := a.lay.Agent
+	if a.goos == "darwin" {
+		prog = a.svc.program()
+	}
+	self, err := ownProgram(a.appEnv)
+	if prog == "" || err != nil {
+		return false
+	}
+	have, err := a.appEnv.readFile(prog)
+	return err == nil && sameBuild(have, self)
+}
+
+// agentAnswerWait is how long start waits for the agent of a service that
+// runs another build to answer.
+var agentAnswerWait = 20 * time.Second
+
+// agentAnswers: an agent answers on the control socket within
+// agentAnswerWait — one that runs the engine, or is bringing it up.
+func (a *app) agentAnswers(st agentState) bool {
+	client := a.controlClient(st)
+	deadline := time.Now().Add(agentAnswerWait)
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		_, err := client.Status(ctx)
+		cancel()
+		if err == nil {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
 }

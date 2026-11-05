@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -158,7 +159,7 @@ func TestIssue264_EngineVersionsCompare(t *testing.T) {
 // refuses such an agent.json too: the one guard it has.)
 func TestIssue264_ANewerAgentJSONMeansThisBuildIsOlder(t *testing.T) {
 	a, _ := runFixture(t)
-	writeFile(t, a.lay.State, `{"version": 2, "syncthing": {"version": "v3.0.0"}}`)
+	writeFile(t, a.lay.State, `{"version": 3, "syncthing": {"version": "v3.0.0"}}`)
 	orig := ttyPath
 	ttyPath = filepath.Join(t.TempDir(), "no-tty")
 	defer func() { ttyPath = orig }()
@@ -185,7 +186,7 @@ func TestIssue264_ANewerAgentJSONMeansThisBuildIsOlder(t *testing.T) {
 	if err := stop(); err != nil {
 		t.Fatalf("it ended with %v when stopped", err)
 	}
-	if have, _ := os.ReadFile(a.lay.State); !strings.Contains(string(have), `"version": 2`) {
+	if have, _ := os.ReadFile(a.lay.State); !strings.Contains(string(have), `"version": 3`) {
 		t.Fatalf("the newer agent.json was rewritten: %s", have)
 	}
 }
@@ -248,12 +249,202 @@ func TestIssue264_AParkedOlderAppEndsWhenItsProgramIsReplaced(t *testing.T) {
 	}
 }
 
-// start of an older build says that the service runs but does not sync.
-func TestIssue264_StartOfAnOlderBuildSaysItDoesNotSync(t *testing.T) {
-	run := &fakeRunner{}
-	a := installedApp(t, "darwin", run)
+// runsAs makes this program the file at self (with what), as os.Executable
+// would say it.
+func runsAs(t *testing.T, a *app, self, what string) {
+	t.Helper()
+	writeFile(t, self, what)
+	a.appEnv = appEnv{goos: a.goos, home: a.home,
+		executable: func() (string, error) { return self, nil },
+		resolve:    filepath.EvalSymlinks, readFile: os.ReadFile, lstat: os.Lstat, owned: ownedByMe}
+}
+
+// start judges the background service by the program it runs. For this
+// very build, what this program knows of itself holds: older says it does
+// not sync, current says running again. For another build this program's
+// pin says nothing — a newer service syncs, an older one parks — so only an
+// agent that answers counts: an older download's start must not say "does
+// not sync" beside a newer service that syncs (the person would delete in
+// that belief, and the deletions reach every device), nor the current
+// build's start "running again" beside an older one that parks.
+func TestIssue264_StartJudgesTheServiceByWhatItRuns(t *testing.T) {
+	orig := agentAnswerWait
+	agentAnswerWait = 300 * time.Millisecond
+	defer func() { agentAnswerWait = orig }()
+	// systemd says the started unit runs.
+	active := func() *fakeRunner {
+		return &fakeRunner{answers: map[string]string{"systemctl --user is-active vaultsync.service": "active"}}
+	}
+
+	// This very build, older than what is set up: it does not sync.
+	a := installedApp(t, "linux", active())
 	newerEngineHere(t, a.lay)
+	runsAs(t, a, a.lay.Agent, "this build")
 	if err := a.startService(); !strings.Contains(refusalText(err), "runs, but it does not sync: this VaultSync is older") {
-		t.Fatalf("start of an older build: %v", err)
+		t.Fatalf("start of an older build that the service runs: %v", err)
+	}
+	// This very build, current: running again, without asking anyone.
+	a = installedApp(t, "linux", active())
+	runsAs(t, a, a.lay.Agent, "this build")
+	if err := a.startService(); err != nil || !strings.Contains(a.out.(*bytes.Buffer).String(), "running again") {
+		t.Fatalf("start of the build the service runs: %v\n%s", err, a.out)
+	}
+
+	// An older download beside a newer service whose agent answers: it
+	// syncs, whatever this program's pin says.
+	eng := newFakeEngine(t)
+	a = agentApp(t, eng)
+	a.svc.run = active()
+	writeFile(t, mustUnitPath(t, a.svc), "installed\n")
+	writeFile(t, a.lay.Agent, "the newer build the service runs")
+	newerEngineHere(t, a.lay)
+	runsAs(t, a, filepath.Join(t.TempDir(), "vaultsync"), "an older download")
+	serveControl(t, a)
+	if err := a.startService(); err != nil {
+		t.Fatalf("start beside a newer service that syncs: %v", err)
+	}
+	if out := a.out.(*bytes.Buffer).String(); !strings.Contains(out, "running again") || !strings.Contains(out, "Note: this VaultSync is older") {
+		t.Fatalf("start beside a newer service that syncs:\n%s", out)
+	}
+
+	// The current build beside an older service that parks: no agent
+	// answers, so not "running again".
+	a = installedApp(t, "linux", active())
+	writeFile(t, a.lay.Agent, "an older build the service runs")
+	runsAs(t, a, filepath.Join(t.TempDir(), "vaultsync"), "the current build")
+	err := a.startService()
+	if !strings.Contains(refusalText(err), "another build than this vaultsync, and it did not answer") || strings.Contains(a.out.(*bytes.Buffer).String(), "running again") {
+		t.Fatalf("start beside a service that parks: %v\n%s", err, a.out)
+	}
+}
+
+// agent.json is in format 2 from desktop-v0.2.0 on, and desktop-v0.1.0
+// refuses every format but 1: a kept v0.1.0 download changes nothing where
+// this build is set up — it knows neither the app nor an older engine's
+// hazard. Format 1 is read, and written back as 2.
+func TestIssue264_DesktopV010RefusesWhatThisBuildWrites(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.json")
+	writeFile(t, path, `{"version": 1, "guiPort": 41234, "syncthing": {"version": "v2.1.6"}}`)
+	st, err := loadState(path)
+	if err != nil || st.GUIPort != 41234 || st.Syncthing.Version != "v2.1.6" {
+		t.Fatalf("format 1 not read: %+v %v", st, err)
+	}
+	if err := updateState(path, func(*agentState) {}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var format struct {
+		Version int `json:"version"`
+	}
+	// desktop-v0.1.0's loadState: anything but version 1 is "another
+	// VaultSync version", and it stops before it changes anything.
+	if err := json.Unmarshal(data, &format); err != nil || format.Version == 1 || format.Version != agentStateVersion {
+		t.Fatalf("written back in format %d (%v); desktop-v0.1.0 reads format 1", format.Version, err)
+	}
+	if back, err := loadState(path); err != nil || back.GUIPort != 41234 {
+		t.Fatalf("format 2 not read back: %+v %v", back, err)
+	}
+}
+
+// A newer format is newer whatever shape its fields take — never
+// "damaged", which would skip the guard (and a person told the file is
+// damaged may delete it). This format with a field of the wrong shape is.
+func TestIssue264_ANewerFormatIsNewerWhateverItsFieldsLookLike(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.json")
+	writeFile(t, path, `{"version": 3, "guiPort": "8384", "syncthing": ["v3.0.0"], "started": "now"}`)
+	if st, err := loadState(path); !errors.Is(err, errStateNewer) || !olderThanSetUp(st, err) {
+		t.Fatalf("a newer format with reshaped fields: %v", err)
+	}
+	writeFile(t, path, `{"version": 2, "guiPort": "8384"}`)
+	if _, err := loadState(path); err == nil || errors.Is(err, errStateNewer) || !strings.Contains(err.Error(), "damaged") {
+		t.Fatalf("this format with a field of the wrong shape: %v", err)
+	}
+}
+
+// An older copy beside an installed VaultSync for Mac parks and stays
+// parked — with a newer engine recorded or a newer agent.json format — and
+// writes nothing: a park note in its older shape would drop what the newer
+// build keeps, and a run ended at the first look would be started again by
+// launchd every 10 s.
+func TestIssue264_AnOlderCopyBesideTheAppParksAndWritesNothing(t *testing.T) {
+	for name, older := range map[string]func(*testing.T, *app){
+		"a newer engine recorded": func(t *testing.T, a *app) { newerEngineHere(t, a.lay) },
+		"a newer agent.json format": func(t *testing.T, a *app) {
+			writeFile(t, a.lay.State, `{"version": 3, "syncthing": {"version": "v3.0.0"}}`)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			a, _ := copyBesideApp(t, true)
+			older(t, a)
+			before, err := os.ReadFile(a.lay.State)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ended := make(chan error, 1)
+			stop := inBackground(t, func(ctx context.Context) error {
+				err := a.run(ctx, nil)
+				ended <- err
+				return err
+			})
+			select {
+			case err := <-ended:
+				t.Fatalf("the older copy ended instead of parking: %v", err)
+			case <-time.After(20 * appCheckEvery):
+			}
+			if err := stop(); err != nil {
+				t.Fatalf("the parked copy ended with %v when stopped", err)
+			}
+			if after, _ := os.ReadFile(a.lay.State); !bytes.Equal(before, after) {
+				t.Fatalf("the older copy rewrote agent.json:\n%s", after)
+			}
+		})
+	}
+}
+
+// A run in a terminal from VaultSync for Mac ends when the app is replaced
+// by another build (the setup link's update, one dragged over it) — and
+// says so: a `vaultsync run` kept in a terminal must not stop syncing
+// without a word. The service ends without an error instead, and launchd
+// starts what is there now.
+func TestIssue264_ATerminalRunSaysWhenItsProgramIsReplaced(t *testing.T) {
+	a, _ := runFixture(t)
+	app := fakeMacApp(t, filepath.Join(a.home, "Applications"), appBundleName, shippedInfoPlist(t))
+	agent := filepath.Join(app, "Contents", "MacOS", "vaultsync")
+	a.appEnv = macAppEnv(a.home, filepath.Join(t.TempDir(), "none"), agent)
+	fastAppWatch(t)
+	origMode, origTerm := serviceMode, stderrIsTerminal
+	defer func() { serviceMode, stderrIsTerminal = origMode, origTerm }()
+	serviceMode = false
+	stderrIsTerminal = func() bool { return true }
+	ended := make(chan error, 1)
+	stop := inBackground(t, func(ctx context.Context) error {
+		err := a.run(ctx, nil)
+		ended <- err
+		return err
+	})
+	defer func() { _ = stop() }()
+	select {
+	case err := <-ended:
+		t.Fatalf("the run ended before its program was replaced: %v", err)
+	case <-time.After(10 * appCheckEvery):
+	}
+	newer := agent + ".new"
+	writeFile(t, newer, "#!/bin/sh\necho the current build\n")
+	if err := os.Chmod(newer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(newer, agent); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-ended:
+		if !errors.Is(err, errProgramReplaced) {
+			t.Fatalf("the replaced run ended with %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the run went on after its program was replaced")
 	}
 }
