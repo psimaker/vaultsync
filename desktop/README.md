@@ -67,8 +67,9 @@ On a Mac, use `syncthing-macos-arm64-$v.zip` (or `-amd64`).
 ## Release
 
 What a person meets of this agent goes into [CHANGELOG.md](CHANGELOG.md), one
-`## [X.Y.Z] — date` section per release (the repository's root changelog is
-the iOS app's, the Hub's and the helper's).
+`## [X.Y.Z] — date` section per release. The repository's root changelog is
+the iOS app's, the Hub's and the helper's; a change that spans every component
+goes there, with one line here.
 
 Tag `desktop-vX.Y.Z` on `main`. `desktop-release.yml` publishes a GitHub
 release (not marked Latest — that stays the iOS app's release) with
