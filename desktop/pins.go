@@ -65,8 +65,9 @@ func engineVersion(v string) ([3]int, bool) {
 	return out, true
 }
 
-// syncthingDownloadBase is where the pinned archives come from.
-const syncthingDownloadBase = "https://github.com/syncthing/syncthing/releases/download/" + syncthingVersion + "/"
+// syncthingDownloadBase is where the pinned archives come from; a test
+// points it at a local server (the checksum still decides).
+var syncthingDownloadBase = "https://github.com/syncthing/syncthing/releases/download/" + syncthingVersion + "/"
 
 type syncthingPin struct {
 	archive string // release asset name

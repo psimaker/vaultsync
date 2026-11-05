@@ -843,8 +843,11 @@ func (a *app) keepCopyAtAppBuild() error {
 	if _, err := os.Stat(a.lay.State); err != nil {
 		return nil
 	}
-	_, err := installAgentCopy(a.lay.Agent)
-	return err
+	if _, err := installAgentCopy(a.lay.Agent); err != nil {
+		return err
+	}
+	// The copy is this build now: agent.json takes its format.
+	return updateStateIfSetUp(a.lay.State, raiseStateFormat)
 }
 
 func (a *app) logHint() string {
