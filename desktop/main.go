@@ -104,6 +104,8 @@ func serviceSummary(err error) string {
 		return errEngineStoppedOnItsOwn.Error()
 	case errors.Is(err, errAppGone):
 		return errAppGone.Error()
+	case errors.Is(err, errOlderAgent):
+		return errOlderAgent.Error()
 	case errors.As(err, &ee):
 		return "the sync engine stopped (" + ee.String() + ")"
 	case errors.As(err, &pe):
@@ -314,7 +316,8 @@ func (a *app) setup(ctx context.Context, args []string) error {
 		unlockSetup()
 		return fmt.Errorf("could not set up the sync engine: %w", err)
 	}
-	if err := updateState(a.lay.State, func(s *agentState) { s.GUIPort = st.GUIPort }); err != nil {
+	// VaultSync's copy is this build now: agent.json takes its format.
+	if err := updateState(a.lay.State, func(s *agentState) { s.GUIPort = st.GUIPort; raiseStateFormat(s) }); err != nil {
 		unlockSetup()
 		return err
 	}
@@ -741,6 +744,10 @@ func shellPath(home, p string) string {
 // exactly it (re-verified by its checksum).
 func (a *app) ensureEngine(ctx context.Context, t *term) (agentState, bool, error) {
 	st, err := loadState(a.lay.State)
+	// Never an older engine over the state a newer one wrote (#264).
+	if olderThanSetUp(st, err) {
+		return st, false, refuse("%s", a.olderNote(st, err))
+	}
 	if err != nil {
 		return st, false, err
 	}
@@ -766,7 +773,7 @@ func (a *app) ensureEngine(ctx context.Context, t *term) (agentState, bool, erro
 	t.say("done")
 	st.Syncthing.Version = syncthingVersion
 	st.Syncthing.BinarySHA256 = got.SHA256
-	if err := updateState(a.lay.State, func(s *agentState) { s.Syncthing = st.Syncthing }); err != nil {
+	if err := updateState(a.lay.State, func(s *agentState) { s.Syncthing = st.Syncthing; raiseStateFormat(s) }); err != nil {
 		return st, false, err
 	}
 	t.say("✓ Sync engine installed (Syncthing %s, checksum verified)", strings.TrimPrefix(syncthingVersion, "v"))
@@ -836,8 +843,14 @@ func (a *app) keepCopyAtAppBuild() error {
 	if _, err := os.Stat(a.lay.State); err != nil {
 		return nil
 	}
-	_, err := installAgentCopy(a.lay.Agent)
-	return err
+	if _, err := installAgentCopy(a.lay.Agent); err != nil {
+		return err
+	}
+	// The copy is this build now: agent.json takes its format. One that
+	// cannot be written (damaged, say) is not the copy's failure, which is
+	// what the callers report.
+	_ = updateStateIfSetUp(a.lay.State, raiseStateFormat)
+	return nil
 }
 
 func (a *app) logHint() string {
@@ -1034,11 +1047,18 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 	// there — watched from the first moment, by the path it was started
 	// with, so an app moved or put in the Trash at any point ends it, not
 	// the next login (decision 053).
-	ctx, appGone, stopWatch := watchOwnApp(ctx, a.appEnv)
+	ctx, watchEnded, stopWatch := watchOwnApp(ctx, a.appEnv)
 	defer stopWatch()
 	defer func() {
-		if appGone() {
+		switch watchEnded() {
+		case programGone:
 			retErr = withAppGone(retErr)
+		case programReplaced:
+			// The service ends without an error, and launchd starts what
+			// is there now; a run in a terminal says why it stopped.
+			if !serviceMode && (retErr == nil || errors.Is(retErr, context.Canceled)) {
+				retErr = errProgramReplaced
+			}
 		}
 	}()
 	stateDirShown = a.lay.Base
@@ -1061,7 +1081,9 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 			// Only the service that parks notes it — so it stays parked
 			// also once the app is gone again — never a run that was only
 			// refused.
-			if app != "" {
+			// An older build writes nothing: it would drop what a newer
+			// one keeps in agent.json (decision 054).
+			if app != "" && !a.olderBuild() {
 				_ = updateStateIfSetUp(a.lay.State, func(s *agentState) { s.ParkedBesideApp = app })
 			}
 			logf("%s", errParked)
@@ -1076,7 +1098,9 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 			// An app that came while the engine ran: the engine stopped;
 			// noted, so the run launchd starts next parks (and says so).
 			if app, ok := came(); ok {
-				_ = updateStateIfSetUp(a.lay.State, func(s *agentState) { s.ParkedBesideApp = app.Path })
+				if !a.olderBuild() {
+					_ = updateStateIfSetUp(a.lay.State, func(s *agentState) { s.ParkedBesideApp = app.Path })
+				}
 				retErr = nil
 			}
 		}()
@@ -1111,11 +1135,43 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 		return removedMeanwhile
 	}
 	st, err := loadState(a.lay.State)
+	// An older VaultSync — an old copy, an older VaultSync for Mac put in
+	// Applications — never puts its older engine over the state the newer
+	// one wrote, nor its copy over the newer one, nor its own agent.json
+	// (#264). As the service it parks — launchd would only start an exiting
+	// one again every 10 s — with one line in its log, until it is stopped
+	// or its program is replaced (the setup link putting the current app in
+	// place; watchOwnApp); in a terminal it says so and ends.
+	if olderThanSetUp(st, err) {
+		unlockSetup()
+		if !serviceMode {
+			return errOlderAgent
+		}
+		logf("%s", errOlderAgent)
+		<-ctx.Done()
+		return nil
+	}
 	if err != nil {
 		unlockSetup()
 		return err
 	}
 	eng := a.engine()
+	// The engine lock makes this process the engine's only owner — and the
+	// control socket's: a socket file found now belongs to an agent that is
+	// gone. The socket is a convenience for status and the menu-bar app;
+	// an engine that cannot have one still runs. It comes before anything
+	// is touched: a run refused here owns nothing, and leaves the engine
+	// and agent.json to the VaultSync that holds it, a desktop-v0.1.0 too.
+	unlock, err := lockFile(eng.lay.Lock)
+	if errors.Is(err, ErrEngineRunning) {
+		unlockSetup()
+		return refuse("VaultSync is already running on this computer (the background service). See vaultsync status.")
+	}
+	if err != nil {
+		unlockSetup()
+		return err
+	}
+	defer unlock()
 	sum, sumErr := fileSHA256(a.lay.Syncthing)
 	if st.Syncthing.Version != syncthingVersion || sumErr != nil || sum != st.Syncthing.BinarySHA256 {
 		// Missing, another version, or changed since it was installed:
@@ -1132,7 +1188,7 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 			return err
 		}
 		st.Syncthing.Version, st.Syncthing.BinarySHA256 = syncthingVersion, got.SHA256
-		if err := updateState(a.lay.State, func(s *agentState) { s.Syncthing = st.Syncthing }); err != nil {
+		if err := updateState(a.lay.State, func(s *agentState) { s.Syncthing = st.Syncthing; raiseStateFormat(s) }); err != nil {
 			unlockSetup()
 			return err
 		}
@@ -1145,20 +1201,6 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 		unlockSetup()
 		return err
 	}
-	// The engine lock makes this process the engine's only owner — and the
-	// control socket's: a socket file found now belongs to an agent that is
-	// gone. The socket is a convenience for status and the menu-bar app;
-	// an engine that cannot have one still runs.
-	unlock, err := lockFile(eng.lay.Lock)
-	if errors.Is(err, ErrEngineRunning) {
-		unlockSetup()
-		return refuse("VaultSync is already running on this computer (the background service). See vaultsync status.")
-	}
-	if err != nil {
-		unlockSetup()
-		return err
-	}
-	defer unlock()
 	ctl := &controlServer{a: a, eng: eng, logf: logf, background: a.backgroundEngine()}
 	// The record of a socket that could not be made or kept at an earlier
 	// start no longer holds — and it goes before this start's own attempt,
@@ -1225,9 +1267,11 @@ var errParked = errors.New("VaultSync for Mac is installed (or was, when this se
 // nothing: only the service that parks notes it (run).
 func (a *app) parkReason() (why, app string) {
 	st, err := loadState(a.lay.State)
-	if err != nil {
+	if err != nil && !errors.Is(err, errStateNewer) {
 		return "", "" // the run's own look at agent.json says what is wrong
 	}
+	// An agent.json newer than this build reads does not hide the app: an
+	// older copy beside it parks here, not after a restart every 10 s.
 	if apps := installedApps(a.appEnv); len(apps) > 0 {
 		return fmt.Sprintf("VaultSync for Mac is installed in %s, and this is VaultSync's own copy, which does not sync beside it. Run the setup link, or %s setup, to sync from the app.", tildePath(a.home, filepath.Dir(apps[0].Path)), shellPath(a.home, apps[0].Agent)), apps[0].Path
 	}
@@ -1237,12 +1281,49 @@ func (a *app) parkReason() (why, app string) {
 	return "", ""
 }
 
+// olderThanSetUp: this build is older than the VaultSync set up here —
+// agent.json is in a newer format, or records a newer (or unknown) engine
+// version (decision 054).
+func olderThanSetUp(st agentState, loadErr error) bool {
+	if errors.Is(loadErr, errStateNewer) {
+		return true
+	}
+	return loadErr == nil && recordedEngineNewer(st.Syncthing.Version)
+}
+
+// olderBuild: olderThanSetUp, by a look at agent.json now.
+func (a *app) olderBuild() bool {
+	st, err := loadState(a.lay.State)
+	return olderThanSetUp(st, err)
+}
+
+// olderNote says so for a person, with the versions where they are known.
+func (a *app) olderNote(st agentState, loadErr error) string {
+	if loadErr == nil && st.Syncthing.Version != "" {
+		return fmt.Sprintf("this VaultSync is older than the one set up on this computer: its sync engine is Syncthing %s, this vaultsync brings %s. Nothing was changed — run the setup link to get the current VaultSync.", strings.TrimPrefix(st.Syncthing.Version, "v"), strings.TrimPrefix(syncthingVersion, "v"))
+	}
+	return "this VaultSync is older than the one set up on this computer. Nothing was changed — run the setup link to get the current VaultSync."
+}
+
 // stderrIsTerminal: this run writes to a terminal, not a log — a person
 // runs it; a test says so for the run it starts.
 var stderrIsTerminal = func() bool {
 	st, err := os.Stderr.Stat()
 	return err == nil && st.Mode()&os.ModeCharDevice != 0
 }
+
+// errOlderAgent is what a run of a VaultSync older than the one set up on
+// this computer says — in a terminal as its error, as the service once in
+// its log before it parks: it pins an older Syncthing than agent.json
+// records (or agent.json is in a newer format), and putting its engine over
+// the state the newer one wrote is what it must never do (#264). It names
+// no path.
+var errOlderAgent = errors.New("this VaultSync is older than the one set up on this computer, whose sync engine is newer — nothing was changed; run the setup link to get the current VaultSync")
+
+// errProgramReplaced ends a run in a terminal whose VaultSync for Mac was
+// replaced by another build while it ran — the setup link's update, or one
+// dragged over it. It names no path.
+var errProgramReplaced = errors.New("VaultSync for Mac was replaced by another build while this run synced, so this run stopped — run it again to sync with the new one")
 
 // errAppGone ends a service whose VaultSync for Mac went away; it names no
 // path, so the service log carries it as it is.
@@ -1291,6 +1372,40 @@ func (a *app) startService() error {
 	if note := a.parkedNote(); note != "" {
 		return refuse("The background service runs, but it does not sync: %s", note)
 	}
-	fmt.Fprintln(a.out, "✓ VaultSync is running again.")
+	st, err := loadState(a.lay.State)
+	older := olderThanSetUp(st, err)
+	if a.serviceRunsThisBuild() {
+		// What this program knows of itself holds for the service.
+		if older {
+			return refuse("The background service runs, but it does not sync: %s", a.olderNote(st, err))
+		}
+		fmt.Fprintln(a.out, "✓ VaultSync is running again.")
+		return nil
+	}
+	// The service runs another build, of which this program's pin says
+	// nothing — a newer one syncs, an older one parks (#264). start says
+	// only what it knows, and leaves whether it syncs to status, which
+	// asks the running agent.
+	fmt.Fprintln(a.out, "✓ The background service is running. It runs another VaultSync build than this vaultsync — vaultsync status says whether it syncs.")
+	if older {
+		fmt.Fprintln(a.out, "Note: "+a.olderNote(st, err))
+	}
 	return nil
+}
+
+// serviceRunsThisBuild: the background service runs this very build — the
+// program its LaunchAgent names on a Mac, VaultSync's own copy on Linux
+// (the only one setup gives the unit), byte for byte or by its code
+// directory. Either one not to be read: not known to be this build.
+func (a *app) serviceRunsThisBuild() bool {
+	prog := a.lay.Agent
+	if a.goos == "darwin" {
+		prog = a.svc.program()
+	}
+	self, err := ownProgram(a.appEnv)
+	if prog == "" || err != nil {
+		return false
+	}
+	have, err := a.appEnv.readFile(prog)
+	return err == nil && sameBuild(have, self)
 }

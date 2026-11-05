@@ -123,42 +123,55 @@ func TestIssue254_ARunFromTheAppIsWatchedFromItsFirstMoment(t *testing.T) {
 // between its two renames: a program missing at one look and back at the
 // next is no departure. Missing at both is.
 func TestIssue254_AnUpdateIsNoTripToTheTrash(t *testing.T) {
-	var looks atomic.Int32
-	var gone atomic.Bool
 	there, err := os.Lstat(os.Args[0]) // a program, as the app's agent is
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The update's instant falls on one look, whichever: the first ones
+	// after the start are the replaced look and the missing look of the
+	// first round, and either may meet it.
+	for miss := int32(2); miss <= 5; miss++ {
+		var looks atomic.Int32
+		lstat := func(string) (fs.FileInfo, error) {
+			if looks.Add(1) == miss {
+				return nil, fs.ErrNotExist
+			}
+			return there, nil
+		}
+		ctx, ended, stop := whileProgramStays(context.Background(), "/Applications/"+appBundleName+"/Contents/MacOS/vaultsync", lstat, time.Millisecond, 5*time.Millisecond)
+		deadline := time.Now().Add(2 * time.Second)
+		for looks.Load() < miss+10 && time.Now().Before(deadline) {
+			time.Sleep(time.Millisecond)
+		}
+		if ctx.Err() != nil || ended() != programHeld {
+			t.Fatalf("a program missing at look %d alone ended the run (%d looks, %v)", miss, looks.Load(), ended())
+		}
+		stop()
+	}
+	var gone atomic.Bool
 	lstat := func(string) (fs.FileInfo, error) {
-		if looks.Add(1) == 2 || gone.Load() { // the second look falls into the update's instant
+		if gone.Load() {
 			return nil, fs.ErrNotExist
 		}
 		return there, nil
 	}
-	ctx, appGone, stop := whileProgramStays(context.Background(), "/Applications/"+appBundleName+"/Contents/MacOS/vaultsync", lstat, time.Millisecond, 5*time.Millisecond)
+	ctx, ended, stop := whileProgramStays(context.Background(), "/Applications/"+appBundleName+"/Contents/MacOS/vaultsync", lstat, time.Millisecond, 5*time.Millisecond)
 	defer stop()
-	deadline := time.Now().Add(2 * time.Second)
-	for looks.Load() < 10 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if ctx.Err() != nil || appGone() {
-		t.Fatalf("a program missing at one look counted as gone (%d looks)", looks.Load())
-	}
 	gone.Store(true)
 	select {
 	case <-ctx.Done():
 	case <-time.After(5 * time.Second):
 		t.Fatal("a program missing at two looks did not count as gone")
 	}
-	if !appGone() {
+	if ended() != programGone {
 		t.Fatal("the end was not said to be the app's departure")
 	}
 	// Any program but VaultSync for Mac's agent is not watched.
 	for _, prog := range []string{"/usr/local/bin/vaultsync", "/Applications/" + appBundleName + "/Contents/MacOS/vaultsync-tray", "/Users/me/Library/Application Support/VaultSync/bin/vaultsync"} {
 		env := appEnv{goos: "darwin", executable: func() (string, error) { return prog, nil }, lstat: func(string) (fs.FileInfo, error) { return nil, fs.ErrNotExist }}
-		watched, gone, stop := watchOwnApp(context.Background(), env)
+		watched, ended, stop := watchOwnApp(context.Background(), env)
 		time.Sleep(20 * time.Millisecond)
-		if watched.Err() != nil || gone() {
+		if watched.Err() != nil || ended() != programHeld {
 			t.Fatalf("%s was watched as the app's agent", prog)
 		}
 		stop()

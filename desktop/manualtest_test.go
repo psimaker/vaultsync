@@ -182,6 +182,9 @@ func TestIssue175_StartAfterAStopThatRanOutOfTime(t *testing.T) {
 	}
 	out := &bytes.Buffer{}
 	a := &app{goos: "darwin", home: svc.home, getenv: envOf(nil), lay: svc.lay, svc: svc, out: out}
+	// The service runs this very build (#264: start judges it by that).
+	writeFile(t, svc.lay.Agent, "this build")
+	a.appEnv = macAppEnv(svc.home, filepath.Join(t.TempDir(), "none"), svc.lay.Agent)
 	if err := a.startService(); err != nil {
 		t.Fatalf("start: %v (%v)", err, run.calls)
 	}

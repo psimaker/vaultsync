@@ -1,5 +1,10 @@
 package main
 
+import (
+	"strconv"
+	"strings"
+)
+
 // The one stock Syncthing release this agent installs (decision 046). The
 // checksums are part of this binary, never fetched next to the download: an
 // archive that does not match is refused before anything is unpacked.
@@ -10,8 +15,59 @@ package main
 // archive (the engine's generated config.xml shape is pinned with it).
 const syncthingVersion = "v2.1.6"
 
-// syncthingDownloadBase is where the pinned archives come from.
-const syncthingDownloadBase = "https://github.com/syncthing/syncthing/releases/download/" + syncthingVersion + "/"
+// engineNewer: Syncthing version a (vX.Y.Z — a suffix such as -rc.1 aside)
+// is newer than b. A version that does not read as one is not newer.
+func engineNewer(a, b string) bool {
+	va, ok := engineVersion(a)
+	if !ok {
+		return false
+	}
+	vb, ok := engineVersion(b)
+	if !ok {
+		return false
+	}
+	for i := range va {
+		if va[i] != vb[i] {
+			return va[i] > vb[i]
+		}
+	}
+	return false
+}
+
+// recordedEngineNewer: the Syncthing agent.json records is newer than this
+// build's pin — or reads as no version this build knows: either way this
+// build may be the older one, and installs nothing over it (decision 054).
+// Nothing recorded is a first setup.
+func recordedEngineNewer(recorded string) bool {
+	if recorded == "" {
+		return false
+	}
+	if _, ok := engineVersion(recorded); !ok {
+		return true
+	}
+	return engineNewer(recorded, syncthingVersion)
+}
+
+func engineVersion(v string) ([3]int, bool) {
+	var out [3]int
+	core, _, _ := strings.Cut(strings.TrimPrefix(v, "v"), "-")
+	parts := strings.Split(core, ".")
+	if len(parts) != 3 {
+		return out, false
+	}
+	for i, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 {
+			return out, false
+		}
+		out[i] = n
+	}
+	return out, true
+}
+
+// syncthingDownloadBase is where the pinned archives come from; a test
+// points it at a local server (the checksum still decides).
+var syncthingDownloadBase = "https://github.com/syncthing/syncthing/releases/download/" + syncthingVersion + "/"
 
 type syncthingPin struct {
 	archive string // release asset name

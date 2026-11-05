@@ -1485,8 +1485,8 @@ func TestIssue254_ASetupThatFailsBeforeTheEngineLeavesTheCopy(t *testing.T) {
 	a.appEnv = appEnv{}
 	writeFile(t, a.lay.Agent, "the build that runs")
 	// agent.json from a newer VaultSync: loadState refuses it.
-	writeFile(t, a.lay.State, `{"version": 2}`)
-	if _, err := setupFrom(t, a); err == nil || !strings.Contains(err.Error(), "another VaultSync version") {
+	writeFile(t, a.lay.State, `{"version": 3}`)
+	if _, err := setupFrom(t, a); !strings.Contains(refusalText(err), "older than the one set up on this computer") {
 		t.Fatalf("setup with a newer agent.json: %v", err)
 	}
 	if have, _ := os.ReadFile(a.lay.Agent); string(have) != "the build that runs" {
@@ -1607,14 +1607,14 @@ func TestIssue254_ARunThroughTheCommandIsWatched(t *testing.T) {
 	every, grace := appCheckEvery, appGoneGrace
 	appCheckEvery, appGoneGrace = time.Millisecond, time.Millisecond
 	defer func() { appCheckEvery, appGoneGrace = every, grace }()
-	watched, gone, stop := watchOwnApp(context.Background(), env)
+	watched, ended, stop := watchOwnApp(context.Background(), env)
 	defer stop()
 	select {
 	case <-watched.Done():
 	case <-time.After(5 * time.Second):
 		t.Fatal("a run through the command was not watched")
 	}
-	if !gone() {
+	if ended() != programGone {
 		t.Fatal("not said to be the app's departure")
 	}
 }
@@ -1631,13 +1631,13 @@ func TestIssue254_TheWatchFailsClosed(t *testing.T) {
 		"a file in the way":   func(string) (fs.FileInfo, error) { return nil, syscall.ENOTDIR },
 		"a folder in its way": func(string) (fs.FileInfo, error) { return dir, nil },
 	} {
-		watched, gone, stop := whileProgramStays(context.Background(), "/Applications/"+appBundleName+"/Contents/MacOS/vaultsync", look, time.Millisecond, time.Millisecond)
+		watched, ended, stop := whileProgramStays(context.Background(), "/Applications/"+appBundleName+"/Contents/MacOS/vaultsync", look, time.Millisecond, time.Millisecond)
 		select {
 		case <-watched.Done():
 		case <-time.After(5 * time.Second):
 			t.Fatalf("%s: the watch went on", name)
 		}
-		if !gone() {
+		if ended() != programGone {
 			t.Fatalf("%s: not said to be the app's departure", name)
 		}
 		stop()

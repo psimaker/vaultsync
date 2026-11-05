@@ -97,8 +97,19 @@ func (a *app) status(ctx context.Context) error {
 	w := a.out
 	fmt.Fprintf(w, "VaultSync %s — sync engine Syncthing %s\n", version, strings.TrimPrefix(syncthingVersion, "v"))
 	eng := a.engine()
+	// This program is older than the VaultSync set up here (#264): it would
+	// not run the engine, and its service parks. Said first — with no
+	// engine config either, "run vaultsync setup" would point to a setup
+	// that refuses.
+	rec, recErr := loadState(a.lay.State)
+	older := olderThanSetUp(rec, recErr)
+	if older {
+		fmt.Fprintln(w, "Note: "+a.olderNote(rec, recErr))
+	}
 	if !eng.prepared() {
-		fmt.Fprintln(w, "VaultSync is not set up on this computer yet. Run vaultsync setup.")
+		if !older {
+			fmt.Fprintln(w, "VaultSync is not set up on this computer yet. Run vaultsync setup.")
+		}
 		return nil
 	}
 	background := a.backgroundEngine()
@@ -132,7 +143,8 @@ func (a *app) status(ctx context.Context) error {
 		fmt.Fprintln(w, note)
 	}
 	st, err := loadState(a.lay.State)
-	if err != nil {
+	newer := errors.Is(err, errStateNewer)
+	if err != nil && !newer {
 		return err
 	}
 	// The running agent answers first (control.go): one truth for the
@@ -154,6 +166,11 @@ func (a *app) status(ctx context.Context) error {
 		// An agent answered and failed: that is the news, not whatever a
 		// look at the engine would say.
 		return fmt.Errorf("the running VaultSync agent could not report: %w", aerr)
+	}
+	if newer {
+		// Said above: this build is older than the VaultSync set up here,
+		// and reads nothing of the engine from its agent.json.
+		return nil
 	}
 	client, err := eng.client(st)
 	if err != nil {

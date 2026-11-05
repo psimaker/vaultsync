@@ -143,7 +143,9 @@ allow it once under System Settings → Privacy & Security.
 `setup`
 
 1. downloads Syncthing 2.1.6 from github.com and installs it only if it
-   matches the checksum built into VaultSync,
+   matches the checksum built into VaultSync — never over a newer one a
+   newer VaultSync installed: an older `vaultsync` (an old download, an
+   older VaultSync for Mac) stops and says to run the setup link,
 2. installs a background service — a LaunchAgent on macOS, a systemd user
    service on Linux; no administrator rights — which runs that Syncthing with
    its own settings, next to (and never touching) a Syncthing you may run

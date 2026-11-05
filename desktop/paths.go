@@ -115,7 +115,7 @@ func updateStateIfSetUp(path string, fn func(*agentState)) error {
 		return err
 	}
 	fn(&st)
-	st.Version = agentStateVersion
+	st.Version = writtenFormat(st.Version)
 	data, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		return err
@@ -123,7 +123,20 @@ func updateStateIfSetUp(path string, fn func(*agentState)) error {
 	return writeFileAtomicIn(path, append(data, '\n'), 0o600)
 }
 
-const agentStateVersion = 1
+// agentStateVersion is the agent.json format this build writes
+// (writtenFormat, raiseStateFormat). Format 2, from desktop-v0.2.0 on, has
+// format 1's fields, and format 1 is read. desktop-v0.1.0 refuses every
+// format but its own, so once a later VaultSync took over, a kept v0.1.0
+// changes nothing — it knows neither VaultSync for Mac (decision 053) nor
+// that an older engine must not go over a newer one's state (decision 054).
+const agentStateVersion = 2
+
+// v010StateVersion is desktop-v0.1.0's agent.json format, which writes keep
+// until this build takes over (writtenFormat).
+const v010StateVersion = 1
+
+// oldestStateVersion is the oldest agent.json format this build reads.
+const oldestStateVersion = v010StateVersion
 
 func loadState(path string) (agentState, error) {
 	var st agentState
@@ -135,18 +148,54 @@ func loadState(path string) (agentState, error) {
 	if err != nil {
 		return st, err
 	}
-	if err := json.Unmarshal(data, &st); err != nil {
+	// The format is read on its own first: a newer one may give a field
+	// this build knows another shape, and is newer, not damaged.
+	var format struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(data, &format); err != nil {
 		return st, fmt.Errorf("%s is damaged: %w", path, err)
 	}
-	if st.Version != agentStateVersion {
-		return st, fmt.Errorf("%s was written by another VaultSync version (%d)", path, st.Version)
+	if format.Version > agentStateVersion {
+		return st, fmt.Errorf("%s was written by a newer VaultSync (format %d): %w", path, format.Version, errStateNewer)
+	}
+	if format.Version < oldestStateVersion {
+		return st, fmt.Errorf("%s was written by another VaultSync version (%d)", path, format.Version)
+	}
+	if err := json.Unmarshal(data, &st); err != nil {
+		return st, fmt.Errorf("%s is damaged: %w", path, err)
 	}
 	return st, nil
 }
 
-// saveState writes agent.json atomically with owner-only permissions.
+// writtenFormat is the format a write gives agent.json that was found in
+// format found: format 1 stays — a desktop-v0.1.0 still installed reads it
+// alone, and a pair or run of a later build beside it must not stop it —
+// until this build takes over (raiseStateFormat); any other is written as
+// this build's, so a later format reaches agent.json with that build's
+// first write.
+func writtenFormat(found int) int {
+	if found == v010StateVersion {
+		return found
+	}
+	return agentStateVersion
+}
+
+// raiseStateFormat gives agent.json this build's format — written where
+// this build takes over: its engine installed, its copy in VaultSync's
+// place (setup, and VaultSync for Mac's run and uninstall keeping the copy
+// at the app's build). An older VaultSync, desktop-v0.1.0 among them,
+// refuses it from then on.
+func raiseStateFormat(s *agentState) { s.Version = agentStateVersion }
+
+// errStateNewer: agent.json is in a newer format than this build knows — a
+// newer VaultSync is set up here, and this build is older (decision 054).
+var errStateNewer = errors.New("agent.json was written by a newer VaultSync")
+
+// saveState writes agent.json atomically with owner-only permissions, in
+// the format writtenFormat gives it.
 func saveState(path string, st agentState) error {
-	st.Version = agentStateVersion
+	st.Version = writtenFormat(st.Version)
 	data, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		return err
