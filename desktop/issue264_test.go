@@ -404,6 +404,52 @@ func TestIssue264_AnOlderCopyBesideTheAppParksAndWritesNothing(t *testing.T) {
 	}
 }
 
+// status of a build older than agent.json's format says so — and does not
+// end on the raw format error after that note.
+func TestIssue264_StatusOfAnOlderBuildBesideANewerFormat(t *testing.T) {
+	a := installedApp(t, "linux", &fakeRunner{})
+	writeFile(t, a.lay.State, `{"version": 3, "syncthing": {"version": "v3.0.0"}}`)
+	if out := statusText(t, a); !strings.Contains(out, "Note: this VaultSync is older than the one set up on this computer") {
+		t.Fatalf("status beside a newer agent.json format:\n%s", out)
+	}
+}
+
+// An older copy whose engine is parked, and VaultSync for Mac arrives: it
+// ends (launchd starts it again, and it parks beside the app) — and notes
+// nothing in agent.json, whose newer build's fields it would drop.
+func TestIssue264_AnOlderCopyNotesNothingWhenTheAppComes(t *testing.T) {
+	a, _ := copyBesideApp(t, false)
+	newerEngineHere(t, a.lay)
+	before, err := os.ReadFile(a.lay.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ended := make(chan error, 1)
+	stop := inBackground(t, func(ctx context.Context) error {
+		err := a.run(ctx, nil)
+		ended <- err
+		return err
+	})
+	defer func() { _ = stop() }()
+	select {
+	case err := <-ended:
+		t.Fatalf("the older copy ended before the app came: %v", err)
+	case <-time.After(10 * appCheckEvery):
+	}
+	fakeMacApp(t, filepath.Join(a.home, "Applications"), appBundleName, shippedInfoPlist(t))
+	select {
+	case err := <-ended:
+		if err != nil {
+			t.Fatalf("the older copy ended with %v when the app came", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the older copy went on beside the app")
+	}
+	if after, _ := os.ReadFile(a.lay.State); !bytes.Equal(before, after) {
+		t.Fatalf("the older copy rewrote agent.json:\n%s", after)
+	}
+}
+
 // A run in a terminal from VaultSync for Mac ends when the app is replaced
 // by another build (the setup link's update, one dragged over it) — and
 // says so: a `vaultsync run` kept in a terminal must not stop syncing
