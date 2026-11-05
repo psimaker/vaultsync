@@ -38,7 +38,7 @@ service and the menu-bar app's start at login from VaultSync for Mac).
 | `internal/control/` | the control socket's client and its answers' types (`wire.go`), used by the terminal's commands and the tray alike |
 | `internal/layout/` | where VaultSync keeps its files on this computer, the service's log and the `~` shortening — the agent's `layout` is an alias of it |
 | `internal/lock/` | the one flock behind the agent's `lockFile`/`lockFileWait` and the tray's one-instance lock |
-| `tray/` | the menu-bar app without the menu bar: the socket client, what the icon and the menu show (`view.go`), the loop (`controller.go`), the pairing conversation (`pairflow.go`) and the dialogs it uses (`ask.go`: osascript, zenity) — pure Go, tested on Linux |
+| `tray/` | the menu-bar app without the menu bar: the socket client, what the icon and the menu show (`view.go`), the loop (`controller.go`), the pairing conversation (`pairflow.go`) and the dialogs it uses (`ask.go`: osascript, zenity, kdialog) — pure Go, tested on Linux |
 | `cmd/vaultsync-tray/` | the `vaultsync-tray` binary: `fyne.io/systray` glue (Cocoa through cgo on macOS, StatusNotifierItem over DBus on Linux) and the GNOME hint |
 | `macos/` | VaultSync for Mac (decision 052): `Info.plist` and `make-app.sh` (the tray as the bundle's executable, the agent beside it), `sign.sh` (Developer ID and notarization on a tag, ad hoc on a pull request), `verify.sh` (Apple's checks of the result), `install-rcodesign.sh` (the pinned signer), `tests/` (the release path against a stand-in, the team checks against a signed fixture) |
 | `scripts/release-assets.sh` | a release's assets and `SHA256SUMS`, run by the release job and by every pull request |

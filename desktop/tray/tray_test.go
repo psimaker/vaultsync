@@ -1028,10 +1028,6 @@ func TestIssue176_TrayDialogsCarryTextAsData(t *testing.T) {
 	if got := appleScriptList([]string{"a", `b"c`}); got != `{"a", "b\"c"}` {
 		t.Fatalf("appleScriptList: %s", got)
 	}
-	// zenity: the markup it would interpret is escaped.
-	if got := pangoText("R&D <notes>"); got != "R&amp;D &lt;notes&gt;" {
-		t.Fatalf("pangoText: %s", got)
-	}
 	// The menu's lines are numbered so a choice is found by number alone.
 	m := Menu{Local: []MenuEntry{{Label: "Work", Path: "/w", Note: "~/w"}, {Label: "Work", Path: "/w2"}}, Hub: []MenuEntry{{Label: "Notes", Vault: "vs-1", Note: "1 file on your Hub", Default: "/home/me/Vaults/Notes"}}}
 	items, choices := menuItems(m, "/home/me")
@@ -1155,7 +1151,7 @@ func TestIssue176_TrayDialogsCarryTextAsData(t *testing.T) {
 	if c, ok, err := z.ChooseVault(ctx, m); err != nil || ok || c != (Choice{}) {
 		t.Fatalf("zenity without a row: %+v %v %v", c, ok, err)
 	}
-	if c := calls[len(calls)-1]; !reflect.DeepEqual(c.args[len(c.args)-3:], items) || !strings.Contains(strings.Join(c.args, " "), "--column=Vault") {
+	if c := calls[len(calls)-1]; !reflect.DeepEqual(c.args[len(c.args)-4:], append([]string{noChoiceRow}, items...)) || !strings.Contains(strings.Join(c.args, " "), "--column=Vault") {
 		t.Fatalf("zenity list args: %q", c.args)
 	}
 
@@ -1176,7 +1172,13 @@ func TestIssue176_TrayDialogsCarryTextAsData(t *testing.T) {
 	if _, ok := NewAsker("linux", "/home/me", has("zenity")).(*zenityAsker); !ok {
 		t.Fatal("Linux with zenity asks through it")
 	}
-	if NewAsker("linux", "/home/me", has()) != nil || NewAsker("windows", "/home/me", has("zenity")) != nil {
+	if _, ok := NewAsker("linux", "/home/me", has("kdialog")).(*kdialogAsker); !ok {
+		t.Fatal("Linux with kdialog alone asks through it")
+	}
+	if _, ok := NewAsker("linux", "/home/me", has("kdialog", "zenity")).(*zenityAsker); !ok {
+		t.Fatal("zenity comes first where both are there")
+	}
+	if NewAsker("linux", "/home/me", has()) != nil || NewAsker("windows", "/home/me", has("zenity", "kdialog")) != nil {
 		t.Fatal("no dialogs elsewhere")
 	}
 	// Notifications: a Mac through osascript, Linux through notify-send

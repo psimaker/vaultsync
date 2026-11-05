@@ -253,8 +253,8 @@ decides nothing itself; without a running agent it says so and offers
 only Open Log and Quit. **Pair a Vault…** asks for the code, then which vault, then
 — for a folder on this computer that already holds files — the same consent
 `vaultsync pair` asks for, through the desktop's own dialogs (on Linux this
-needs `zenity`; without it the item says to use `vaultsync pair` in a
-terminal). A vault from your Hub goes into `~/Vaults/<name>`; to put it
+needs `zenity` or KDE's `kdialog`; without them the item says to use
+`vaultsync pair` in a terminal). A vault from your Hub goes into `~/Vaults/<name>`; to put it
 elsewhere, or to name this computer's vault differently on your Hub, use
 `vaultsync pair` in a terminal. On GNOME, tray icons need the “AppIndicator
 and KStatusNotifierItem Support” extension; `vaultsync-tray` says so when it

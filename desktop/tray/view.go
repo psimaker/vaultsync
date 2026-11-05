@@ -92,8 +92,8 @@ type Options struct {
 	// Pairing: a pairing started from the menu is running.
 	Pairing bool
 	// CanAsk: this computer can show the dialogs a pairing needs (osascript
-	// on a Mac, zenity on Linux); without them the Pair item says what to
-	// do instead.
+	// on a Mac, zenity or kdialog on Linux); without them the Pair item says
+	// what to do instead.
 	CanAsk bool
 	Notice string
 }
