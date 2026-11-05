@@ -29,14 +29,15 @@
 # configuration, RUST_LOG decides what it prints (which sign.sh reads), and
 # the AWS SDK inside its notary upload would read ~/.aws. Every step that
 # talks to Apple (the time-stamp server when signing, the notary service,
-# the ticket lookup) is tried again; VAULTSYNC_SIGN_RETRY_DELAY is the pause
-# between tries in seconds (default 30). Ad hoc signing talks to nobody, so
-# its one try decides.
+# the staple after Apple's verdict) is tried again; VAULTSYNC_SIGN_RETRY_DELAY
+# is the pause between tries in seconds (default 30). Ad hoc signing talks
+# to nobody, so its one try decides.
 #
 # A re-run of a release's signing job (Re-run failed jobs, on the same build
 # artifacts) signs the same input again, and rcodesign reproduces the code
 # directory — the cdhash a notarization ticket is keyed by (#257). Each
-# bundle is stapled first; only one Apple has no ticket for goes up.
+# bundle is stapled first, once: one whose ticket that lookup finds is done;
+# any other (no ticket yet, or a lookup that failed) goes up to Apple.
 set -euo pipefail
 
 [ $# -eq 3 ] || {
@@ -169,11 +170,13 @@ if [ "$release" = 1 ]; then
 		if rc staple "$work/$arch/$app" >"$work/staple-first-$arch.log" 2>&1; then
 			echo "VaultSync_darwin_$arch: stapled the ticket Apple issued for this build before"
 		else
+			# Why: no ticket yet (NOT_FOUND), or the lookup failed.
+			echo "VaultSync_darwin_$arch: no ticket from an earlier run; it goes to Apple ($(tail -1 "$work/staple-first-$arch.log"))"
 			todo+=("$arch")
 		fi
 	done
-	# Both bundles go up first, so Apple works on them side by side; then
-	# each is waited for. A network error ends rcodesign's wait but not the
+	# The bundles without a ticket go up first, so Apple works on them side
+	# by side; then each is waited for. A network error ends rcodesign's wait but not the
 	# notarization at Apple, so the wait is tried again with the same
 	# submission. notary-wait exits 0 whatever Apple decided: its last
 	# "poll state" line says it. Three waits of 30 minutes fit the signing
