@@ -846,8 +846,11 @@ func (a *app) keepCopyAtAppBuild() error {
 	if _, err := installAgentCopy(a.lay.Agent); err != nil {
 		return err
 	}
-	// The copy is this build now: agent.json takes its format.
-	return updateStateIfSetUp(a.lay.State, raiseStateFormat)
+	// The copy is this build now: agent.json takes its format. One that
+	// cannot be written (damaged, say) is not the copy's failure, which is
+	// what the callers report.
+	_ = updateStateIfSetUp(a.lay.State, raiseStateFormat)
+	return nil
 }
 
 func (a *app) logHint() string {
@@ -1153,6 +1156,22 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 		return err
 	}
 	eng := a.engine()
+	// The engine lock makes this process the engine's only owner — and the
+	// control socket's: a socket file found now belongs to an agent that is
+	// gone. The socket is a convenience for status and the menu-bar app;
+	// an engine that cannot have one still runs. It comes before anything
+	// is touched: a run refused here owns nothing, and leaves the engine
+	// and agent.json to the VaultSync that holds it, a desktop-v0.1.0 too.
+	unlock, err := lockFile(eng.lay.Lock)
+	if errors.Is(err, ErrEngineRunning) {
+		unlockSetup()
+		return refuse("VaultSync is already running on this computer (the background service). See vaultsync status.")
+	}
+	if err != nil {
+		unlockSetup()
+		return err
+	}
+	defer unlock()
 	sum, sumErr := fileSHA256(a.lay.Syncthing)
 	if st.Syncthing.Version != syncthingVersion || sumErr != nil || sum != st.Syncthing.BinarySHA256 {
 		// Missing, another version, or changed since it was installed:
@@ -1182,20 +1201,6 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 		unlockSetup()
 		return err
 	}
-	// The engine lock makes this process the engine's only owner — and the
-	// control socket's: a socket file found now belongs to an agent that is
-	// gone. The socket is a convenience for status and the menu-bar app;
-	// an engine that cannot have one still runs.
-	unlock, err := lockFile(eng.lay.Lock)
-	if errors.Is(err, ErrEngineRunning) {
-		unlockSetup()
-		return refuse("VaultSync is already running on this computer (the background service). See vaultsync status.")
-	}
-	if err != nil {
-		unlockSetup()
-		return err
-	}
-	defer unlock()
 	ctl := &controlServer{a: a, eng: eng, logf: logf, background: a.backgroundEngine()}
 	// The record of a socket that could not be made or kept at an earlier
 	// start no longer holds — and it goes before this start's own attempt,

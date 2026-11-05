@@ -492,6 +492,43 @@ func TestIssue264_ATerminalRunSaysWhenItsProgramIsReplaced(t *testing.T) {
 	}
 }
 
+// serveEngineLocally makes the engine download come from a local server,
+// its checksum pinned to the archive served there.
+func serveEngineLocally(t *testing.T, goos string, binary []byte) {
+	t.Helper()
+	key := goos + "/" + runtime.GOARCH
+	pin, ok := syncthingPins[key]
+	if !ok {
+		t.Skipf("no pin for %s", key)
+	}
+	top, _, _ := strings.Cut(pin.binary, "/")
+	archive := realTarGz(t, top, binary)
+	if strings.HasSuffix(pin.archive, ".zip") {
+		archive = realZip(t, top, binary)
+	}
+	origPin, origBase := pin, syncthingDownloadBase
+	syncthingPins[key] = syncthingPin{archive: pin.archive, sha256: sum(archive), binary: pin.binary}
+	syncthingDownloadBase = serveArchive(t, pin.archive, archive).URL + "/"
+	t.Cleanup(func() { syncthingPins[key], syncthingDownloadBase = origPin, origBase })
+}
+
+// untilTheRunServes waits for a's run to have its engine going: its socket
+// recorded, or the record that it has to do without one.
+func untilTheRunServes(t *testing.T, a *app) {
+	t.Helper()
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		if st, err := loadState(a.lay.State); err == nil && st.ControlSocket != "" {
+			return
+		}
+		if _, err := os.Stat(a.lay.SocketErrorFile()); err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the run did not get its engine going")
+		}
+	}
+}
+
 // stateFormat is the format agent.json at path is in.
 func stateFormat(t *testing.T, path string) int {
 	t.Helper()
@@ -530,8 +567,7 @@ func asV010(t *testing.T, path string) {
 // A later build's pair, setup notes or run beside a desktop-v0.1.0 that is
 // still installed keep agent.json in format 1: v0.1.0 reads that format
 // alone, and its service would otherwise stop at its next start — again
-// every 10 s, with nothing synced. Only a setup that takes over (this
-// build's copy in VaultSync's place) moves it to format 2.
+// every 10 s, with nothing synced. Only a takeover moves it to format 2.
 func TestIssue264_AFormatOneSetupStaysReadableUntilSetupTakesOver(t *testing.T) {
 	a, _ := runFixture(t)
 	asV010(t, a.lay.State)
@@ -547,14 +583,7 @@ func TestIssue264_AFormatOneSetupStaysReadableUntilSetupTakesOver(t *testing.T) 
 	// A run: its engine's port, its socket's place, and that place cleared
 	// when it ends.
 	stop := inBackground(t, func(ctx context.Context) error { return a.run(ctx, nil) })
-	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(20 * time.Millisecond) {
-		if st, err := loadState(a.lay.State); err == nil && st.ControlSocket != "" {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("the run did not record its socket")
-		}
-	}
+	untilTheRunServes(t, a)
 	if err := stop(); err != nil {
 		t.Fatalf("the run ended with %v", err)
 	}
@@ -578,26 +607,6 @@ func TestIssue264_AFormatOneSetupStaysReadableUntilSetupTakesOver(t *testing.T) 
 // at VaultSync for Mac's build, after which a restart of the old service
 // runs this build.
 func TestIssue264_EveryTakeoverMovesTheFormat(t *testing.T) {
-	// The engine comes from a local server, its checksum pinned to the
-	// archive served there.
-	serveEngine := func(t *testing.T, goos string, binary []byte) {
-		t.Helper()
-		key := goos + "/" + runtime.GOARCH
-		pin, ok := syncthingPins[key]
-		if !ok {
-			t.Skipf("no pin for %s", key)
-		}
-		top, _, _ := strings.Cut(pin.binary, "/")
-		archive := realTarGz(t, top, binary)
-		if strings.HasSuffix(pin.archive, ".zip") {
-			archive = realZip(t, top, binary)
-		}
-		origPin, origBase := pin, syncthingDownloadBase
-		syncthingPins[key] = syncthingPin{archive: pin.archive, sha256: sum(archive), binary: pin.binary}
-		syncthingDownloadBase = serveArchive(t, pin.archive, archive).URL + "/"
-		t.Cleanup(func() { syncthingPins[key], syncthingDownloadBase = origPin, origBase })
-	}
-
 	t.Run("run installs its engine", func(t *testing.T) {
 		a, _ := runFixture(t)
 		binary, err := os.ReadFile(a.lay.Syncthing)
@@ -608,16 +617,9 @@ func TestIssue264_EveryTakeoverMovesTheFormat(t *testing.T) {
 		if err := os.Remove(a.lay.Syncthing); err != nil {
 			t.Fatal(err)
 		}
-		serveEngine(t, a.goos, binary)
+		serveEngineLocally(t, a.goos, binary)
 		stop := inBackground(t, func(ctx context.Context) error { return a.run(ctx, nil) })
-		for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(20 * time.Millisecond) {
-			if st, err := loadState(a.lay.State); err == nil && st.ControlSocket != "" {
-				break
-			}
-			if time.Now().After(deadline) {
-				t.Fatal("the run did not get its engine going")
-			}
-		}
+		untilTheRunServes(t, a)
 		if err := stop(); err != nil {
 			t.Fatalf("the run ended with %v", err)
 		}
@@ -636,7 +638,7 @@ func TestIssue264_EveryTakeoverMovesTheFormat(t *testing.T) {
 		if err := os.Remove(a.lay.Syncthing); err != nil {
 			t.Fatal(err)
 		}
-		serveEngine(t, a.goos, binary)
+		serveEngineLocally(t, a.goos, binary)
 		orig := ttyPath
 		ttyPath = filepath.Join(t.TempDir(), "no-tty")
 		defer func() { ttyPath = orig }()
@@ -662,5 +664,53 @@ func TestIssue264_EveryTakeoverMovesTheFormat(t *testing.T) {
 		if f := stateFormat(t, a.lay.State); f != agentStateVersion {
 			t.Fatalf("the copy at the app's build left agent.json in format %d", f)
 		}
+		// An agent.json that cannot be written is not the copy's failure:
+		// uninstall would say the copy could not follow, and keep the
+		// command on the app.
+		writeFile(t, a.lay.State, "not json")
+		if err := a.keepCopyAtAppBuild(); err != nil {
+			t.Fatalf("a damaged agent.json reported as the copy's failure: %v", err)
+		}
 	})
+}
+
+// A run refused because another holds the engine lock has taken over
+// nothing: it installs no engine and writes nothing. Beside a desktop-v0.1.0
+// service holding that lock, a format 2 written here would stop that service
+// at its next start, and a newer engine put in place would run under it.
+func TestIssue264_ARunRefusedAtTheEngineLockTouchesNothing(t *testing.T) {
+	a, _ := runFixture(t)
+	binary, err := os.ReadFile(a.lay.Syncthing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	asV010(t, a.lay.State)
+	before, err := os.ReadFile(a.lay.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(a.lay.Syncthing); err != nil {
+		t.Fatal(err)
+	}
+	serveEngineLocally(t, a.goos, binary)
+	unlock, err := lockFile(a.lay.Lock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	origMode, origTerm := serviceMode, stderrIsTerminal
+	defer func() { serviceMode, stderrIsTerminal = origMode, origTerm }()
+	serviceMode = false
+	stderrIsTerminal = func() bool { return true }
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := a.run(ctx, nil); !strings.Contains(refusalText(err), "already running") {
+		t.Fatalf("a run beside the lock's holder: %v", err)
+	}
+	if _, err := os.Stat(a.lay.Syncthing); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a refused run installed its engine: %v", err)
+	}
+	if after, _ := os.ReadFile(a.lay.State); !bytes.Equal(before, after) {
+		t.Fatalf("a refused run wrote agent.json:\n%s", after)
+	}
 }

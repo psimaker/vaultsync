@@ -131,9 +131,12 @@ func updateStateIfSetUp(path string, fn func(*agentState)) error {
 // that an older engine must not go over a newer one's state (decision 054).
 const agentStateVersion = 2
 
-// oldestStateVersion is the oldest agent.json format this build reads:
-// desktop-v0.1.0's, which writes keep until this build takes over.
-const oldestStateVersion = 1
+// v010StateVersion is desktop-v0.1.0's agent.json format, which writes keep
+// until this build takes over (writtenFormat).
+const v010StateVersion = 1
+
+// oldestStateVersion is the oldest agent.json format this build reads.
+const oldestStateVersion = v010StateVersion
 
 func loadState(path string) (agentState, error) {
 	var st agentState
@@ -172,7 +175,7 @@ func loadState(path string) (agentState, error) {
 // this build's, so a later format reaches agent.json with that build's
 // first write.
 func writtenFormat(found int) int {
-	if found == oldestStateVersion {
+	if found == v010StateVersion {
 		return found
 	}
 	return agentStateVersion
@@ -180,8 +183,9 @@ func writtenFormat(found int) int {
 
 // raiseStateFormat gives agent.json this build's format — written where
 // this build takes over: its engine installed, its copy in VaultSync's
-// place (setup, run keeping the copy at VaultSync for Mac's build). An
-// older VaultSync, desktop-v0.1.0 among them, refuses it from then on.
+// place (setup, and VaultSync for Mac's run and uninstall keeping the copy
+// at the app's build). An older VaultSync, desktop-v0.1.0 among them,
+// refuses it from then on.
 func raiseStateFormat(s *agentState) { s.Version = agentStateVersion }
 
 // errStateNewer: agent.json is in a newer format than this build knows — a
