@@ -64,17 +64,21 @@ func TestIssue255_AnOpenThatWaitsForMacOSIsSaid(t *testing.T) {
 		t.Fatalf("a file manager that stays in front on Linux: %v", err)
 	}
 	// An open that fails where macOS refused the app the folder names the
-	// setting. Under that refusal a look at the folder (stat) passes; its
-	// contents are refused with EPERM — that is what is asked. A plain
-	// permission (EACCES), or a folder that can be read, keeps open's own
-	// words: the Files & Folders setting cannot help there.
+	// setting, beside open's own words. Under that refusal a look at the
+	// folder (stat) passes; its contents are refused with EPERM — that is
+	// what is asked. A plain permission (EACCES), a folder that can be
+	// read, or EPERM off a Mac keeps open's words alone: the Files &
+	// Folders setting cannot help there.
 	failed := func(context.Context, string, []string, string) (string, string, int, error) {
 		return "", "LSOpenURLsWithRole() failed with error -54 for the file /Users/me/Documents/Notes.\n", 1, nil
 	}
 	refused := func(p string) error { return &fs.PathError{Op: "open", Path: p, Err: syscall.EPERM} }
 	err = openWith("darwin", failed, lookAs(true, nil), refused)(ctx, "/Users/me/Documents/Notes")
-	if err == nil || !strings.Contains(err.Error(), "Privacy & Security → Files & Folders") || !strings.Contains(err.Error(), "“VaultSync for Mac”") {
+	if err == nil || !errors.Is(err, errOpenRefused) || !strings.Contains(err.Error(), "Privacy & Security → Files & Folders") || !strings.Contains(err.Error(), "“VaultSync for Mac”") || !strings.Contains(err.Error(), "error -54") {
 		t.Fatalf("an open macOS refused: %v", err)
+	}
+	if err := openWith("linux", failed, lookAs(true, nil), refused)(ctx, "/home/me/Notes"); err == nil || !strings.Contains(err.Error(), "error -54") || strings.Contains(err.Error(), "Files & Folders") {
+		t.Fatalf("EPERM off a Mac: %v", err)
 	}
 	unixDenied := func(p string) error { return &fs.PathError{Op: "open", Path: p, Err: syscall.EACCES} }
 	for name, read := range map[string]func(string) error{"a plain permission": unixDenied, "a folder that can be read": readable} {
@@ -82,8 +86,8 @@ func TestIssue255_AnOpenThatWaitsForMacOSIsSaid(t *testing.T) {
 			t.Fatalf("%s: %v", name, err)
 		}
 	}
-	// The read itself: a folder's first name, a file's first byte — and
-	// nothing there is said as such.
+	// The read itself: a folder's first name; anything but a folder is not
+	// read; nothing there is said as such.
 	dir := t.TempDir()
 	if err := readContents(dir); err != nil {
 		t.Fatalf("an empty folder: %v", err)
@@ -100,38 +104,63 @@ func TestIssue255_AnOpenThatWaitsForMacOSIsSaid(t *testing.T) {
 	}
 }
 
-// The notice that asks to click the vault again goes once an open has
-// worked; what else the menu said (a pause with no Hub) is not an open's
-// to take back.
+// The notice that asks to click the vault again goes once that vault has
+// opened — not when another vault or the log opens, and what else the menu
+// said (a pause with no Hub) is not an open's to take back.
 func TestIssue255_AnOpenThatWorksTakesBackWhatAnOpenSaid(t *testing.T) {
 	agent := newFakeAgent(t)
 	agent.set(func(f *fakeAgent) {
 		f.hubs = 1
 		f.status.Hubs = []Hub{{Name: "Office Hub", State: "connected", Kind: control.KindOK}}
-		f.status.Vaults = []Vault{{Label: "Notes", Path: "/Users/me/Documents/Notes", State: "up to date", Kind: control.KindOK}}
+		f.status.Vaults = []Vault{
+			{Label: "Notes", Path: "/Users/me/Documents/Notes", State: "up to date", Kind: control.KindOK},
+			{Label: "Work", Path: "/Users/me/Work", State: "up to date", Kind: control.KindOK},
+		}
 	})
 	ui := newFakeUI(t)
 	var mu sync.Mutex
-	fails := []error{errOpenWaited}
-	opened := make(chan struct{}, 8)
-	open := func(context.Context, string) error {
+	fails := map[string][]error{"/Users/me/Documents/Notes": {errOpenWaited}}
+	opened := make(chan string, 8)
+	open := func(_ context.Context, p string) error {
 		mu.Lock()
 		defer mu.Unlock()
-		if len(fails) > 0 {
-			err := fails[0]
-			fails = fails[1:]
-			return err
+		if errs := fails[p]; len(errs) > 0 {
+			fails[p] = errs[1:]
+			return errs[0]
 		}
-		opened <- struct{}{}
+		opened <- p
 		return nil
 	}
 	controllerFor(t, agent, ui, &Controller{Open: open})
 	ui.view(t, "up to date", func(v View) bool { return v.Headline == "Up to date" })
 	notes := Event{Kind: EventOpenVault, Path: "/Users/me/Documents/Notes"}
+	// An open's outcome reaches the loop right after the opener returned;
+	// a refresh after that shows what the menu says now.
+	afterOpen := func(path, what string) View {
+		t.Helper()
+		select {
+		case p := <-opened:
+			if p != path {
+				t.Fatalf("opened %s, want %s", p, path)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%s did not open", path)
+		}
+		time.Sleep(100 * time.Millisecond)
+		ui.click(EventOpened, 0)
+		return ui.view(t, what, func(View) bool { return true })
+	}
+
 	ui.send(notes)
 	ui.view(t, "the wait said", func(v View) bool { return strings.Contains(v.Notice, "then click it again") })
+	ui.send(Event{Kind: EventOpenVault, Path: "/Users/me/Work"})
+	if v := afterOpen("/Users/me/Work", "after another vault opened"); !strings.Contains(v.Notice, "then click it again") {
+		t.Fatalf("another vault's open took back this one's note: %q", v.Notice)
+	}
 	ui.send(notes)
-	ui.view(t, "the notice gone once it opened", func(v View) bool { return v.Notice == "" })
+	if v := afterOpen("/Users/me/Documents/Notes", "after this vault opened"); v.Notice != "" {
+		t.Fatalf("the note stayed after the vault opened: %q", v.Notice)
+	}
 
 	agent.set(func(f *fakeAgent) { f.hubs = 0; f.status.Hubs = []Hub{} })
 	ui.click(EventOpened, 0)
@@ -139,12 +168,7 @@ func TestIssue255_AnOpenThatWorksTakesBackWhatAnOpenSaid(t *testing.T) {
 	ui.send(Event{Kind: EventPause, Pause: true})
 	ui.view(t, "the pause notice", func(v View) bool { return strings.Contains(v.Notice, "nothing to pause") })
 	ui.send(notes)
-	<-opened
-	// The open's outcome reaches the loop right after it returned; a
-	// refresh after that shows what the menu says now.
-	time.Sleep(100 * time.Millisecond)
-	ui.click(EventOpened, 0)
-	if v := ui.view(t, "a refresh after the open", func(View) bool { return true }); !strings.Contains(v.Notice, "nothing to pause") {
+	if v := afterOpen("/Users/me/Documents/Notes", "after an open beside the pause notice"); !strings.Contains(v.Notice, "nothing to pause") {
 		t.Fatalf("an open took back what a pause said: %q", v.Notice)
 	}
 }

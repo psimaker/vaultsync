@@ -82,9 +82,11 @@ type Controller struct {
 	view    View
 	pairing bool
 	notice  string
-	// openNotice: the notice an open's failure set — the one an open that
-	// works takes back (it may ask to click the vault again).
-	openNotice string
+	// openNotice: the notice an open's failure set, for openNoticePath —
+	// the one an open of that path that works takes back (it may ask to
+	// click the vault again).
+	openNotice     string
+	openNoticePath string
 	// lockWords: why the one-instance lock could not be taken, shown next
 	// to the notice until it holds; lockSaid: the failure is in the log.
 	lockWords string
@@ -128,7 +130,7 @@ func (c *Controller) Run(ctx context.Context) error {
 		}
 	}()
 	pairDone := make(chan string, 1)
-	openDone := make(chan string, 8)
+	openDone := make(chan openOutcome, 8)
 	if err := c.refresh(ctx); err != nil {
 		return err
 	}
@@ -143,13 +145,13 @@ func (c *Controller) Run(ctx context.Context) error {
 			c.pairing = false
 			c.notice = line
 			err = c.refresh(ctx)
-		case notice := <-openDone:
+		case out := <-openDone:
 			switch {
-			case notice != "":
-				c.notice, c.openNotice = notice, notice
-				c.notify(ctx, notice)
+			case out.notice != "":
+				c.notice, c.openNotice, c.openNoticePath = out.notice, out.notice, out.path
+				c.notify(ctx, out.notice)
 				c.render()
-			case c.notice != "" && c.notice == c.openNotice:
+			case c.notice != "" && c.notice == c.openNotice && out.path == c.openNoticePath:
 				c.notice = ""
 				c.render()
 			}
@@ -163,9 +165,9 @@ func (c *Controller) Run(ctx context.Context) error {
 			case EventOpened:
 				err = c.refresh(ctx)
 			case EventOpenVault:
-				c.openVault(ev.Path, openDone)
+				c.openVault(ctx, ev.Path, openDone)
 			case EventOpenLog:
-				c.openLog(openDone)
+				c.openLog(ctx, openDone)
 			case EventPause:
 				err = c.setPaused(ctx, ev.Pause)
 			case EventPair:
@@ -320,21 +322,21 @@ func (c *Controller) client() (*Client, error) {
 
 // openVault opens the folder the clicked line showed — one the agent
 // listed, now or at the click: a path that is no vault's is not opened.
-func (c *Controller) openVault(path string, done chan<- string) {
+func (c *Controller) openVault(ctx context.Context, path string, done chan<- openOutcome) {
 	if path == "" {
 		return
 	}
 	for _, vt := range c.view.Vaults {
 		if vt.Path == path {
-			c.openPath(path, done)
+			c.openPath(ctx, path, done)
 			return
 		}
 	}
 }
 
-func (c *Controller) openLog(done chan<- string) {
+func (c *Controller) openLog(ctx context.Context, done chan<- openOutcome) {
 	if c.logPath != "" {
-		c.openPath(c.logPath, done)
+		c.openPath(ctx, c.logPath, done)
 	}
 }
 
@@ -353,22 +355,28 @@ func (c *Controller) logFile() string {
 
 // openPath opens path off the loop: the desktop's program may not return
 // before what it opened is closed, and the menu must not wait for that.
-// The outcome comes back on done: a failure as its notice, an open that
-// worked as "".
-func (c *Controller) openPath(path string, done chan<- string) {
+// The outcome comes back on done — never dropped while the loop runs (ctx).
+func (c *Controller) openPath(ctx context.Context, path string, done chan<- openOutcome) {
 	if c.Open == nil {
 		return
 	}
 	go func() {
-		notice := ""
+		out := openOutcome{path: path}
 		if err := c.Open(context.Background(), path); err != nil {
-			notice = "Could not open it: " + err.Error()
+			out.notice = "Could not open it: " + err.Error()
 		}
 		select {
-		case done <- notice:
-		default:
+		case done <- out:
+		case <-ctx.Done():
 		}
 	}()
+}
+
+// openOutcome is how an open of path ended: notice says why it failed, ""
+// when it opened.
+type openOutcome struct {
+	path   string
+	notice string
 }
 
 // setPaused pauses or resumes as the click asked; a click that asks for

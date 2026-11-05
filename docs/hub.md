@@ -347,8 +347,8 @@ then click the vault again).
 Allow all of them. Without
 local network access, `vaultsync setup` and `pair` cannot reach your Hub —
 the decision belongs to the program, also when it runs in Terminal; without
-folder access the vault does not sync, and the menu-bar icon cannot open
-it. Chose “Don’t Allow”? Turn it on under System Settings → Privacy &
+folder access the vault does not sync; the menu-bar icon opens it in the
+Finder either way. Chose “Don’t Allow”? Turn it on under System Settings → Privacy &
 Security → Local Network or Files & Folders (for “vaultsync” or
 “VaultSync for Mac”), then run `vaultsync stop` and `vaultsync start`; `vaultsync status` and `pair`
 name the setting when they see macOS refusing. Keeping vaults in `~/Vaults`

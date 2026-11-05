@@ -130,40 +130,41 @@ func openWith(goos string, run runner, look func(string) (bool, error), read fun
 			return err
 		}
 		if status != 0 {
+			why := strings.TrimSpace(stderr)
+			if why == "" {
+				why = fmt.Sprintf("%s exited with status %d", name, status)
+			}
 			// An open that failed while macOS refuses this app the folder
-			// names the Files & Folders setting: under that refusal a look
-			// at it (stat) still passes, its contents are refused with
-			// EPERM. A plain permission (EACCES) is not that setting's, and
-			// keeps open's own words. (The refusal alone does not stop an
-			// open: macOS 27.2 hands the folder to the Finder all the same.)
+			// names the Files & Folders setting, beside open's own words:
+			// under that refusal a look at it (stat) still passes, its
+			// contents are refused with EPERM. A plain permission (EACCES)
+			// is not that setting's, and keeps open's words alone. (The
+			// refusal alone does not stop an open: macOS 27.2 hands the
+			// folder to the Finder all the same.)
 			if goos == "darwin" && errors.Is(read(path), syscall.EPERM) {
-				return errOpenRefused
+				return fmt.Errorf("%w (%s)", errOpenRefused, why)
 			}
-			if why := strings.TrimSpace(stderr); why != "" {
-				return errors.New(why)
-			}
-			return fmt.Errorf("%s exited with status %d", name, status)
+			return errors.New(why)
 		}
 		return nil
 	}
 }
 
-// readContents reads the start of what is at path: a folder's first name,
-// a file's first byte.
+// readContents reads the first name in the folder at path — the read
+// macOS's Files & Folders refuses where a look passes. Anything but a
+// folder is not read: a vault is one, and opening a pipe to read it would
+// wait for a writer.
 func readContents(path string) error {
+	fi, err := os.Stat(path)
+	if err != nil || !fi.IsDir() {
+		return err
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	if fi, err := f.Stat(); err == nil && fi.IsDir() {
-		if _, err := f.Readdirnames(1); err != nil && !errors.Is(err, io.EOF) {
-			return err
-		}
-		return nil
-	}
-	var b [1]byte
-	if _, err := f.Read(b[:]); err != nil && !errors.Is(err, io.EOF) {
+	if _, err := f.Readdirnames(1); err != nil && !errors.Is(err, io.EOF) {
 		return err
 	}
 	return nil
