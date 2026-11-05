@@ -4,10 +4,13 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/psimaker/vaultsync/desktop/internal/control"
+	layoutpkg "github.com/psimaker/vaultsync/desktop/internal/layout"
 	"github.com/psimaker/vaultsync/desktop/tray"
 	"github.com/psimaker/vaultsync/hub/syncthing"
 )
@@ -165,5 +168,35 @@ func TestIssue176_TheTrayLooksWhereTheAgentIs(t *testing.T) {
 	m := menuToJSON(vaultMenu{local: []menuEntry{{label: "Work: 2026", path: "/home/me/Work: 2026", hubName: safeVaultName("Work: 2026")}}})
 	if len(m.Local) != 1 || m.Local[0].Name != "Work 2026" {
 		t.Fatalf("the proposed name: %+v", m.Local)
+	}
+}
+
+// #248: the menu's Start runs the program the LaunchAgent names, and reads it
+// from the very file setup writes, an awkward path and all.
+func TestIssue248_TheMenuReadsTheLaunchAgentSetupWrites(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	program := filepath.Join(home, "R&D <apps>", "VaultSync for Mac.app", "Contents", "MacOS", "vaultsync")
+	if err := os.MkdirAll(filepath.Dir(program), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(program, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	unit := layoutpkg.LaunchAgentPlist(home)
+	if err := os.MkdirAll(filepath.Dir(unit), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(unit, launchdPlist(program, filepath.Join(home, "state"), filepath.Join(home, "log")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := tray.AgentProgram("darwin", home, layoutpkg.Layout{})(); got != program {
+		t.Fatalf("the menu would run %q, the LaunchAgent names %q", got, program)
+	}
+	svc := service{goos: "darwin", home: home}
+	if got := svc.program(); got != program {
+		t.Fatalf("the agent reads %q", got)
 	}
 }

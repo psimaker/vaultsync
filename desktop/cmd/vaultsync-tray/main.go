@@ -141,7 +141,7 @@ func run(args []string) error {
 		UI:           ui,
 		Asker:        tray.NewAsker(runtime.GOOS, home, exec.LookPath),
 		Open:         tray.Open(runtime.GOOS),
-		StartProgram: startProgram(lay),
+		StartProgram: tray.AgentProgram(runtime.GOOS, home, lay),
 		Start:        tray.Start,
 		Notify:       tray.Notify(runtime.GOOS, exec.LookPath),
 		Logf:         logger.Printf,
@@ -161,16 +161,6 @@ func run(args []string) error {
 		}()
 	}, stop)
 	return endOfRun(<-done, logger)
-}
-
-// startProgram: the vaultsync the Start item runs, looked for from this
-// program; nothing to run when this program cannot tell where it is.
-func startProgram(lay layout.Layout) func() string {
-	self, err := os.Executable()
-	if err != nil {
-		return func() string { return "" }
-	}
-	return tray.AgentProgram(self, lay)
 }
 
 // endOfRun is what the app's run ends with, as its exit: Quit and the

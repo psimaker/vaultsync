@@ -4,12 +4,14 @@ package tray
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // vaultsync start runs in a process group of its own. launchd signals what is
@@ -37,5 +39,20 @@ func TestIssue248_AStartIsNotInTheMenusProcessGroup(t *testing.T) {
 	}
 	if pgid == syscall.Getpgrp() {
 		t.Fatalf("the start ran in this program's process group %d", pgid)
+	}
+}
+
+// A start has its time limit: one that hangs does not leave "Starting
+// VaultSync…" standing for good.
+func TestIssue248_AStartThatHangsIsEnded(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	began := time.Now()
+	_, _, _, err := startRunner(ctx, "sleep", []string{"30"}, "")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("its end: %v", err)
+	}
+	if took := time.Since(began); took > 10*time.Second {
+		t.Fatalf("it took %v", took)
 	}
 }

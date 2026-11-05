@@ -249,9 +249,10 @@ folder), **Pause Syncing** / **Resume Syncing** (the same as `vaultsync pause`
 and `resume`), **Pair a Vault…**, **Open Log** (on a Mac) and **Quit**, which
 quits the icon only — syncing continues in the background. The menu asks the
 running agent for everything over the same socket as the terminal and
-decides nothing itself; without a running agent it says so and, where a start
-can help, offers **Start VaultSync** (the same as `vaultsync start`, what that
-says shows in the menu), beside Open Log and Quit. **Pair a Vault…** asks for the code, then which vault, then
+decides nothing itself; without a running agent it says so and offers **Start
+VaultSync** (the same as `vaultsync start`, what that says shows in the menu),
+beside Open Log and Quit. It offers no start while the service may be running
+without answering. **Pair a Vault…** asks for the code, then which vault, then
 — for a folder on this computer that already holds files — the same consent
 `vaultsync pair` asks for, through the desktop's own dialogs (on Linux this
 needs `zenity`; without it the item says to use `vaultsync pair` in a

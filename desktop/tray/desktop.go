@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/psimaker/vaultsync/desktop/internal/layout"
+	"github.com/psimaker/vaultsync/desktop/internal/plist"
 )
 
 // What the desktop does for the menu-bar app: opening a folder or a file
@@ -102,18 +103,26 @@ func openCommand(goos, path string, look func(string) (bool, error)) (name strin
 	return "", nil, errors.New("no program to open it with on " + goos)
 }
 
-// AgentProgram says which vaultsync the menu's Start item runs: VaultSync's
-// own copy, which setup puts in a folder of this account's. Without one, the
-// one beside this program in VaultSync for Mac: this app may be a bundle kept
-// in Downloads, so it does not come first, but its start can load the job,
-// whose run puts the copy back. Never one found on PATH, which may be an old
-// download or anything else of that name. "" when neither is there.
-func AgentProgram(self string, lay layout.Layout) func() string {
+// AgentProgram says which vaultsync the menu's Start item runs: the program
+// the background service runs — the one its LaunchAgent names on a Mac,
+// VaultSync's own copy on Linux, the only one setup gives the unit. vaultsync
+// start judges the service by comparing itself with that program, so only
+// this one speaks for the service: another build would say it cannot tell, and
+// the copy, which the run it starts may replace, could then take itself for
+// older than a service that syncs. Without a program named or there, VaultSync's
+// copy, whose start says what is wrong. Never one found on PATH, which may be
+// an old download or anything else of that name. "" when there is none.
+func AgentProgram(goos, home string, lay layout.Layout) func() string {
 	return func() string {
-		candidates := []string{lay.Agent}
-		if resolved, err := filepath.EvalSymlinks(self); err == nil && filepath.Base(filepath.Dir(resolved)) == "MacOS" {
-			candidates = append(candidates, filepath.Join(filepath.Dir(resolved), "vaultsync"))
+		var candidates []string
+		if goos == "darwin" {
+			if data, err := os.ReadFile(layout.LaunchAgentPlist(home)); err == nil {
+				if prog, ok := plist.FirstString(data, "ProgramArguments"); ok && filepath.IsAbs(prog) {
+					candidates = append(candidates, prog)
+				}
+			}
 		}
+		candidates = append(candidates, lay.Agent)
 		for _, p := range candidates {
 			if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() && fi.Mode()&0o111 != 0 {
 				return p

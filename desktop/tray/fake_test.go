@@ -36,8 +36,10 @@ type fakeAgent struct {
 	layout   layout.Layout // rooted at stateDir, no log folder
 	logs     string        // a log folder with a vaultsync.log, for a Mac-like controller
 	socket   string
-	srv      *http.Server
-	served   chan struct{}
+	// statusAsks counts the status requests.
+	statusAsks int
+	srv        *http.Server
+	served     chan struct{}
 
 	mu     sync.Mutex
 	status Status
@@ -72,6 +74,7 @@ func newFakeAgent(t *testing.T) *fakeAgent {
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		hold := f.statusHold
+		f.statusAsks++
 		f.mu.Unlock()
 		if hold != nil {
 			select {
@@ -161,8 +164,8 @@ func (f *fakeAgent) stop() {
 	<-f.served
 }
 
-// serve answers on l with srv. The goroutine has its own srv and channel:
-// serveAgain replaces the fields while the last one may still be ending.
+// serve answers on l with srv until stop. The goroutine keeps its own srv and
+// channel: the fields are the test's, and serveAgain replaces them.
 func (f *fakeAgent) serve(srv *http.Server, l net.Listener) {
 	served := make(chan struct{})
 	f.srv, f.served = srv, served

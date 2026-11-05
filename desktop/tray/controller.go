@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/psimaker/vaultsync/desktop/internal/control"
@@ -100,7 +101,7 @@ type Controller struct {
 	// starting: a start from the menu is at it. startNotice: the notice it
 	// left, which goes once an agent answers and speaks for itself.
 	starting bool
-	// settling: vaultsync start has said the service runs and no agent has
+	// settling: vaultsync start has said the service runs and nothing has
 	// answered yet. A click now would restart the service on its way up.
 	settling    bool
 	startNotice string
@@ -178,17 +179,18 @@ func (c *Controller) Run(ctx context.Context) error {
 			err = c.refresh(ctx)
 		case <-askAgain:
 			waits = waits[1:]
-			err = c.refresh(ctx)
+			askAgain = nil
+			if err = c.refresh(ctx); err != nil {
+				break
+			}
 			switch {
-			case !c.settling:
-				askAgain = nil
-			case len(waits) > 0:
+			case len(waits) > 0 && (c.settling || c.known):
+				// Past the first answer too: the socket comes before the
+				// engine, and an agent saying its engine is starting has
+				// more to say soon. One that answered badly gets the poll.
 				askAgain = time.After(waits[0])
-			default:
-				askAgain = nil
-				if err == nil {
-					c.noAnswerAfterStart(ctx)
-				}
+			case c.settling:
+				c.noAnswerAfterStart(ctx)
 			}
 		case line := <-pairDone:
 			c.pairing = false
@@ -330,7 +332,8 @@ func (c *Controller) refresh(ctx context.Context) error {
 	c.status, c.known, c.lastErr = st, err == nil, err
 	c.logPath = c.logFile()
 	c.canStart = c.Start != nil && c.StartProgram != nil && c.StartProgram() != ""
-	if c.known {
+	if !errors.Is(err, ErrNoAgent) && !errors.Is(err, ErrNoSocket) {
+		// Something answered, however badly: it speaks for itself now.
 		c.settling = false
 		if c.startNotice != "" && c.notice == c.startNotice {
 			c.notice, c.startNotice = "", ""
@@ -493,14 +496,21 @@ func (c *Controller) startWaits() []time.Duration {
 // noStartAnswer is the notice for a service that started and has not
 // answered: one whose run ends before its socket counts as running for a
 // moment each time it is restarted, so "running again" would stand there.
-const noStartAnswer = "VaultSync started but does not answer yet — vaultsync status in a terminal tells where it stands"
+// vaultsync status would only say it stopped; a run's reason is in this file.
+func noStartAnswer(lay layout.Layout, home string) string {
+	return "VaultSync started but does not answer yet. If that stays, " + layout.TildePath(home, filepath.Join(lay.Base, "last-error.txt")) + " says why"
+}
 
 // noAnswerAfterStart ends the wait after a start with no agent answering. A
-// later poll still takes the agent's report when one comes.
+// later poll still takes the agent's report when one comes, and what a
+// pairing or an open has said since the start stays.
 func (c *Controller) noAnswerAfterStart(ctx context.Context) {
 	c.settling = false
-	c.notice, c.startNotice = noStartAnswer, noStartAnswer
-	c.notify(ctx, noStartAnswer)
+	said := noStartAnswer(c.Layout, c.Home)
+	if c.notice == c.startNotice {
+		c.notice, c.startNotice = said, said
+	}
+	c.notify(ctx, said)
 	c.render()
 }
 
