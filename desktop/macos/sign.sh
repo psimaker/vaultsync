@@ -29,8 +29,15 @@
 # configuration, RUST_LOG decides what it prints (which sign.sh reads), and
 # the AWS SDK inside its notary upload would read ~/.aws. Every step that
 # talks to Apple (the time-stamp server when signing, the notary service,
-# the ticket lookup) is tried again; VAULTSYNC_SIGN_RETRY_DELAY is the pause
-# between tries in seconds (default 30).
+# the staple after Apple's verdict) is tried again; VAULTSYNC_SIGN_RETRY_DELAY
+# is the pause between tries in seconds (default 30). Ad hoc signing talks
+# to nobody, so its one try decides.
+#
+# A re-run of a release's signing job (Re-run failed jobs, on the same build
+# artifacts) signs the same input again, and rcodesign reproduces the code
+# directory — the cdhash a notarization ticket is keyed by (#257). Each
+# bundle is stapled first, once: one whose ticket that lookup finds is done;
+# any other (no ticket yet, or a lookup that failed) goes up to Apple.
 set -euo pipefail
 
 [ $# -eq 3 ] || {
@@ -102,6 +109,7 @@ if [ -n "$p12$password$p8$key_id$issuer$team" ]; then
 	release=1
 	mode=(--for-notarization --p12-file "$p12" --p12-password-file "$password")
 	inner=()
+	signs=3
 	# The wrong certificate would sign — another team's even notarizes —
 	# and fail only at Apple or at the users': another team resets every
 	# granted permission. It stops here, before anything is signed.
@@ -136,30 +144,45 @@ else
 	release=0
 	mode=(--code-signature-flags runtime)
 	inner=(--code-signature-flags Contents/MacOS/vaultsync:runtime)
+	signs=1
 fi
 
 for arch in $archs; do
 	cp "$plain/vaultsync_darwin_$arch" "$out/vaultsync_darwin_$arch"
-	tries 3 "$work/sign.log" rc sign "${mode[@]}" --binary-identifier eu.vaultsync.agent "$out/vaultsync_darwin_$arch" || exit 1
+	tries "$signs" "$work/sign.log" rc sign "${mode[@]}" --binary-identifier eu.vaultsync.agent "$out/vaultsync_darwin_$arch" || exit 1
 	mkdir "$work/$arch"
 	tar -C "$work/$arch" -xf "$macos/VaultSync_darwin_$arch.app.tar"
 	if [ -n "$(find "$work/$arch" -name '._*' -print -quit)" ]; then
 		echo "sign.sh: VaultSync_darwin_$arch.app.tar holds ._ files" >&2
 		exit 1
 	fi
-	tries 3 "$work/sign.log" rc sign "${mode[@]}" ${inner[@]+"${inner[@]}"} \
+	tries "$signs" "$work/sign.log" rc sign "${mode[@]}" ${inner[@]+"${inner[@]}"} \
 		--binary-identifier Contents/MacOS/vaultsync:eu.vaultsync.agent "$work/$arch/$app" || exit 1
 done
 
 if [ "$release" = 1 ]; then
-	# Both bundles go up first, so Apple works on them side by side; then
-	# each is waited for. A network error ends rcodesign's wait but not the
+	# The staple looks the ticket up by the bundle's cdhash. No ticket
+	# (NOT_FOUND: never notarized) sends the bundle to Apple — so does a
+	# lookup that failed for another reason: slower, never weaker, and
+	# verify.sh's stapler and Gatekeeper checks decide as before.
+	todo=()
+	for arch in $archs; do
+		if rc staple "$work/$arch/$app" >"$work/staple-first-$arch.log" 2>&1; then
+			echo "VaultSync_darwin_$arch: stapled the ticket Apple issued for this build before"
+		else
+			# Why: no ticket yet (NOT_FOUND), or the lookup failed.
+			echo "VaultSync_darwin_$arch: no ticket from an earlier run; it goes to Apple ($(tail -1 "$work/staple-first-$arch.log"))"
+			todo+=("$arch")
+		fi
+	done
+	# The bundles without a ticket go up first, so Apple works on them side
+	# by side; then each is waited for. A network error ends rcodesign's wait but not the
 	# notarization at Apple, so the wait is tried again with the same
 	# submission. notary-wait exits 0 whatever Apple decided: its last
 	# "poll state" line says it. Three waits of 30 minutes fit the signing
 	# job's two hours with room for the second bundle and the staples.
 	ids=()
-	for arch in $archs; do
+	for arch in ${todo[@]+"${todo[@]}"}; do
 		log="$work/submit-$arch.log"
 		tries 3 "$log" rc notary-submit --api-key-file "$notary" "$work/$arch/$app" || exit 1
 		id=$(sed -n 's/.*created submission ID: //p' "$log" | tail -1)
@@ -171,8 +194,8 @@ if [ "$release" = 1 ]; then
 		echo "VaultSync_darwin_$arch: notary submission $id"
 		ids+=("$id")
 	done
-	set -- "${ids[@]}"
-	for arch in $archs; do
+	set -- ${ids[@]+"${ids[@]}"}
+	for arch in ${todo[@]+"${todo[@]}"}; do
 		id=$1
 		shift
 		log="$work/wait-$arch.log"

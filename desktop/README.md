@@ -104,7 +104,11 @@ puts the assets and `SHA256SUMS` together. The
 release is all or nothing: when the Apple side fails (an expired
 certificate, a key, the notary service), the Linux binaries wait too. A
 failure outside the repository (a secret, Apple's service): fix it, then
-**Re-run failed jobs** on the tag's run while its artifacts last (7 days).
+**Re-run failed jobs** on the tag's run while its artifacts last (7 days);
+the re-run signs the same artifacts again, which gives the same code
+directory, so a bundle whose ticket the lookup finds is stapled with it
+instead of being sent to Apple again. A lookup that fails (no ticket, or
+the network) sends the bundle as on a first run.
 A fix in the repository: delete the tag (and a draft it made), merge the
 fix, tag the new commit — pushing an unchanged tag again starts nothing.
 

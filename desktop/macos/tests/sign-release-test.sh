@@ -6,9 +6,11 @@
 # Developer ID flags and -C /dev/null on every call; nothing named
 # rcodesign_*, RUST_LOG or an AWS setting reaching rcodesign; each bundle
 # uploaded once under its own architecture; every step that talks to Apple
-# tried again; the verdict read from the last poll line; a refused or
-# missing verdict and exhausted staples stopping everything; the ticket
-# stapled before the zip) and the refusals. The stand-in signs nothing:
+# tried again, but the first ticket lookup once; the verdict read from the
+# last poll line; a refused or missing verdict and exhausted staples
+# stopping everything; the ticket stapled before the zip; a bundle Apple
+# has a ticket for from an earlier run stapled, not sent again, #257), ad
+# hoc signing tried once, and the refusals. The stand-in signs nothing:
 # what Apple's tools say about real signatures is verify.sh's part, on a Mac.
 #
 # With REAL_RCODESIGN naming the pinned rcodesign, every flag sign.sh passes
@@ -50,11 +52,16 @@ touch "$tmp/developer-id.p12" "$tmp/password" "$tmp/AuthKey.p8"
 # The stand-in. sign.sh clears rcodesign's environment, so it is steered by
 # files in $tmp/current: status (the verdict; default Accepted, "none" for
 # no poll line), team (default TEAM123456), profile (default
-# DeveloperIdApplication), until (default 2099-01-01T00:00:00+00:00), and
-# the switches submit-noid, wait-dead and staple-dead. By default the first
-# try of every signature, every upload, every wait and every staple fails,
-# as a network error would; encoding writes a key file sign.sh must pass
-# on; a staple writes the ticket into the bundle.
+# DeveloperIdApplication), until (default 2099-01-01T00:00:00+00:00),
+# ticketed (the architectures Apple has a ticket for from an earlier run),
+# and the switches submit-noid, wait-dead, staple-dead and sign-dead. By
+# default the first try of every Developer ID signature, every upload and
+# every wait fails, as a network error would; ad hoc signing talks to
+# nobody and does not. Apple has a ticket once a wait says Accepted (the
+# first lookup after that still misses, as right after a real one) or
+# when ticketed names the architecture; without one a lookup says
+# NOT_FOUND. Encoding writes a key file sign.sh must pass on; a staple
+# writes the ticket into the bundle.
 mkdir "$tmp/bin"
 cat >"$tmp/bin/rcodesign" <<'STANDIN'
 #!/bin/bash
@@ -115,10 +122,18 @@ case $cmd in
 		done
 		;;
 	sign)
-		if first "sign $last"; then
-			echo "CMS error: Time-Stamp Protocol error: bad HTTP response" >&2
+		if [ -e "$cur/sign-dead" ]; then
+			echo "error: the binary cannot be signed" >&2
 			exit 1
 		fi
+		case " $* " in
+			*" --for-notarization "*)
+				if first "sign $last"; then
+					echo "CMS error: Time-Stamp Protocol error: bad HTTP response" >&2
+					exit 1
+				fi
+				;;
+		esac
 		;;
 	notary-submit)
 		key "$@"
@@ -142,9 +157,19 @@ case $cmd in
 		echo "poll state after 3s: InProgress" >&2
 		echo "poll state after 6s: $verdict" >&2
 		echo "notary log> \"status\": \"$verdict\"" >&2
+		if [ "$verdict" = Accepted ]; then
+			echo "${last#sub-}" >>"$cur/accepted"
+		fi
 		;;
 	staple)
-		if [ -e "$cur/staple-dead" ] || first "staple $last"; then
+		[ -e "$cur/staple-dead" ] && exit 1
+		arch=$(head -1 "$last/Contents/Info.plist" | cut -d' ' -f2)
+		if grep -q -w "$arch" "$cur/ticketed" 2>/dev/null; then
+			:
+		elif grep -q -x "$arch" "$cur/accepted" 2>/dev/null; then
+			first "staple $last" && exit 1
+		else
+			echo "Error: notarization ticket lookup failure: NOT_FOUND: Record not found" >&2
 			exit 1
 		fi
 		echo ticket >"$last/Contents/CodeResources"
@@ -201,7 +226,10 @@ for arch in arm64 amd64; do
 		fail "the $arch bundle's agent not signed as eu.vaultsync.agent, or not tried again"
 	[ "$(count "^notary-submit .*/$arch/VaultSync for Mac.app\$" "$calls")" = 2 ] || fail "the $arch bundle not uploaded, or the failed upload not tried again"
 	[ "$(count "^notary-wait .*--max-wait-seconds [0-9]+ sub-$arch\$" "$calls")" = 2 ] || fail "the wait for $arch not tried again after a network error"
-	[ "$(count "^staple .*/$arch/VaultSync for Mac.app\$" "$calls")" = 2 ] || fail "the $arch staple not tried again"
+	[ "$(count "^staple .*/$arch/VaultSync for Mac.app\$" "$calls")" = 3 ] || fail "the $arch ticket not looked up first, or the staple not tried again"
+	lookup=$(grep -n -m1 "^staple .*/$arch/VaultSync for Mac.app\$" "$calls" | cut -d: -f1)
+	upload=$(grep -n -m1 "^notary-submit .*/$arch/VaultSync for Mac.app\$" "$calls" | cut -d: -f1)
+	[ "$lookup" -lt "$upload" ] || fail "the $arch ticket not looked up before the upload"
 	grep -q "VaultSync_darwin_$arch: notary submission sub-$arch: Accepted" "$tmp/accepted/log" || fail "$arch submission and verdict not in the log"
 	[ -s "$tmp/accepted.out/vaultsync_darwin_$arch" ] || fail "release: vaultsync_darwin_$arch missing"
 	[ "$(unzip -p "$tmp/accepted.out/VaultSync_darwin_$arch.zip" "VaultSync for Mac.app/Contents/CodeResources")" = ticket ] ||
@@ -209,6 +237,8 @@ for arch in arm64 amd64; do
 done
 [ "$(count '^notary-submit' "$calls")" = 4 ] || fail "something other than the two bundles uploaded"
 grep -q 'notary log>' "$tmp/accepted/log" || fail "Apple's notary log not in the log"
+grep -q 'VaultSync_darwin_arm64: no ticket from an earlier run; it goes to Apple (Error: notarization ticket lookup failure: NOT_FOUND' "$tmp/accepted/log" ||
+	fail "a failed first lookup not said, or without its reason"
 grep -q 'try 1 of 3 failed: rc sign' "$tmp/accepted/log" || fail "a failed try not said"
 grep -q 'Time-Stamp Protocol error' "$tmp/accepted/log" || fail "a failed try's reason not shown"
 
@@ -219,7 +249,7 @@ for verdict in Invalid Rejected none; do
 	want=$verdict
 	[ "$verdict" = none ] && want="no verdict"
 	grep -q "did not accept VaultSync_darwin_arm64 ($want, submission sub-arm64)" "$tmp/verdict-$verdict/log" || fail "the refusal of '$verdict' does not name the bundle"
-	[ "$(count '^staple' "$tmp/verdict-$verdict/calls")" = 0 ] || fail "stapled after the verdict '$verdict'"
+	[ "$(count '^staple' "$tmp/verdict-$verdict/calls")" = 2 ] || fail "stapled after the verdict '$verdict'"
 	[ ! -e "$tmp/verdict-$verdict.out/VaultSync_darwin_arm64.zip" ] || fail "a zip was made after the verdict '$verdict'"
 done
 
@@ -231,10 +261,11 @@ grep -q 'no submission ID for VaultSync_darwin_arm64' "$tmp/noid/log" || fail "t
 run waitdead wait-dead=1 -- "${release[@]}"
 [ "$rc" != 0 ] || fail "a wait that never got through was not refused"
 [ "$(count '^notary-wait' "$tmp/waitdead/calls")" = 3 ] || fail "the wait not tried three times"
-[ "$(count '^staple' "$tmp/waitdead/calls")" = 0 ] || fail "stapled without a verdict"
+[ "$(count '^staple' "$tmp/waitdead/calls")" = 2 ] || fail "stapled without a verdict"
 run stapledead staple-dead=1 -- "${release[@]}"
 [ "$rc" != 0 ] || fail "staples that never worked were not refused"
-[ "$(count '^staple' "$tmp/stapledead/calls")" = 5 ] || fail "the staple not tried five times"
+[ "$(count '^staple' "$tmp/stapledead/calls")" = 7 ] || fail "the staple not tried five times after the two first lookups"
+[ "$(count '^notary-submit' "$tmp/stapledead/calls")" = 4 ] || fail "a failed first lookup did not send the bundles to Apple"
 [ ! -e "$tmp/stapledead.out/VaultSync_darwin_arm64.zip" ] || fail "a zip was made without a ticket"
 
 # The wrong certificate: refused before anything is signed.
@@ -249,9 +280,48 @@ grep -q "expired on 2020-01-01" "$tmp/cert-until/log" || fail "the expiry refusa
 # A pull request: ad hoc, the hardened runtime asked for, nothing for Apple.
 run adhoc
 [ "$rc" = 0 ] || { cat "$tmp/adhoc/log"; fail "ad hoc: sign.sh exited $rc"; }
-[ "$(count '^sign -C /dev/null --code-signature-flags runtime ' "$tmp/adhoc/calls")" = 8 ] || fail "ad hoc: not every binary with the runtime flag"
-[ "$(count 'Contents/MacOS/vaultsync:runtime' "$tmp/adhoc/calls")" = 4 ] || fail "ad hoc: the bundled agent without the runtime flag"
+[ "$(count '^sign -C /dev/null --code-signature-flags runtime ' "$tmp/adhoc/calls")" = 4 ] || fail "ad hoc: not every binary signed once with the runtime flag"
+[ "$(count 'Contents/MacOS/vaultsync:runtime' "$tmp/adhoc/calls")" = 2 ] || fail "ad hoc: the bundled agent without the runtime flag"
 [ "$(count '--for-notarization|--p12-file|^notary|^staple|^analyze|^encode' "$tmp/adhoc/calls")" = 0 ] || fail "ad hoc: a release step ran"
+
+# An ad hoc signature that fails is not tried again: nothing to wait for.
+run adhoc-fails sign-dead=1
+[ "$rc" != 0 ] || fail "ad hoc: a failed signature was not refused"
+[ "$(count '^sign' "$tmp/adhoc-fails/calls")" = 1 ] || fail "ad hoc: a failed signature tried again"
+grep -q 'try 1 of 1 failed: rc sign' "$tmp/adhoc-fails/log" || fail "ad hoc: the failed try not said"
+
+# A re-run (#257): Apple has the arm64 bundle's ticket from the first run,
+# so it is stapled and not sent again; amd64 goes up as on a first run.
+# With both tickets there, nothing goes to Apple.
+run rerun ticketed=arm64 -- "${release[@]}"
+[ "$rc" = 0 ] || { cat "$tmp/rerun/log"; fail "re-run: sign.sh exited $rc"; }
+calls="$tmp/rerun/calls"
+[ "$(count '^notary-(submit|wait) .*arm64' "$calls")" = 0 ] || fail "re-run: the arm64 bundle with a ticket was sent to Apple again"
+[ "$(count "^staple .*/arm64/VaultSync for Mac.app\$" "$calls")" = 1 ] || fail "re-run: the arm64 ticket not stapled at the first look"
+grep -q 'VaultSync_darwin_arm64: stapled the ticket Apple issued for this build before' "$tmp/rerun/log" || fail "re-run: the earlier ticket not said"
+[ "$(count '^notary-submit .*/amd64/' "$calls")" = 2 ] || fail "re-run: the amd64 bundle without a ticket not uploaded"
+grep -q 'VaultSync_darwin_amd64: notary submission sub-amd64: Accepted' "$tmp/rerun/log" || fail "re-run: the amd64 verdict not in the log"
+for arch in arm64 amd64; do
+	[ "$(unzip -p "$tmp/rerun.out/VaultSync_darwin_$arch.zip" "VaultSync for Mac.app/Contents/CodeResources")" = ticket ] ||
+		fail "re-run: VaultSync_darwin_$arch.zip was made without the stapled ticket"
+done
+run rerun-all "ticketed=arm64 amd64" -- "${release[@]}"
+[ "$rc" = 0 ] || { cat "$tmp/rerun-all/log"; fail "re-run with both tickets: sign.sh exited $rc"; }
+[ "$(count '^notary' "$tmp/rerun-all/calls")" = 0 ] || fail "re-run with both tickets: something went to Apple"
+for arch in arm64 amd64; do
+	[ "$(unzip -p "$tmp/rerun-all.out/VaultSync_darwin_$arch.zip" "VaultSync for Mac.app/Contents/CodeResources")" = ticket ] ||
+		fail "re-run with both tickets: VaultSync_darwin_$arch.zip without the ticket"
+done
+# Only amd64 has a ticket: arm64 goes up, amd64 does not.
+run rerun-amd64 ticketed=amd64 -- "${release[@]}"
+[ "$rc" = 0 ] || { cat "$tmp/rerun-amd64/log"; fail "re-run with the amd64 ticket: sign.sh exited $rc"; }
+[ "$(count '^notary-(submit|wait) .*amd64' "$tmp/rerun-amd64/calls")" = 0 ] || fail "re-run: the amd64 bundle with a ticket was sent to Apple again"
+[ "$(count '^notary-submit .*/arm64/' "$tmp/rerun-amd64/calls")" = 2 ] || fail "re-run: the arm64 bundle without a ticket not uploaded"
+
+# A Developer ID signature that keeps failing is tried three times.
+run signdead sign-dead=1 -- "${release[@]}"
+[ "$rc" != 0 ] || fail "a signature that never worked was not refused"
+[ "$(count '^sign' "$tmp/signdead/calls")" = 3 ] || fail "a release signature not tried three times"
 
 # Refusals before rcodesign runs at all.
 run half -- VAULTSYNC_SIGN_P12="$tmp/developer-id.p12"
