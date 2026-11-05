@@ -37,6 +37,7 @@ type fakeAgent struct {
 	logs     string        // a log folder with a vaultsync.log, for a Mac-like controller
 	socket   string
 	srv      *http.Server
+	served   chan struct{}
 
 	mu     sync.Mutex
 	status Status
@@ -127,10 +128,7 @@ func newFakeAgent(t *testing.T) *fakeAgent {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := &http.Server{Handler: mux}
-	f.srv = srv
-	go func() { _ = srv.Serve(l) }()
-	t.Cleanup(func() { _ = srv.Close() })
+	f.serve(&http.Server{Handler: mux}, l)
 	return f
 }
 
@@ -154,7 +152,26 @@ func (f *fakeAgent) set(fn func(*fakeAgent)) {
 	fn(f)
 }
 
-func (f *fakeAgent) stop() { _ = f.srv.Close() }
+// stop takes the agent off its socket and waits for Serve to return. A Close
+// before Serve has started leaves the listener open until Serve runs, and a
+// menu that dials in between gets EOF, not "no agent": the state the test
+// stopped the agent to see never comes.
+func (f *fakeAgent) stop() {
+	_ = f.srv.Close()
+	<-f.served
+}
+
+// serve answers on l with srv. The goroutine has its own srv and channel:
+// serveAgain replaces the fields while the last one may still be ending.
+func (f *fakeAgent) serve(srv *http.Server, l net.Listener) {
+	served := make(chan struct{})
+	f.srv, f.served = srv, served
+	go func() {
+		defer close(served)
+		_ = srv.Serve(l)
+	}()
+	f.t.Cleanup(func() { _ = srv.Close() })
+}
 
 // serveAgain answers on the socket again after a stop, as a service that has
 // started does.
@@ -166,10 +183,7 @@ func (f *fakeAgent) serveAgain() {
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	srv := &http.Server{Handler: handler}
-	f.srv = srv
-	go func() { _ = srv.Serve(l) }()
-	f.t.Cleanup(func() { _ = srv.Close() })
+	f.serve(&http.Server{Handler: handler}, l)
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
