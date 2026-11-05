@@ -127,9 +127,10 @@ func newFakeAgent(t *testing.T) *fakeAgent {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.srv = &http.Server{Handler: mux}
-	go func() { _ = f.srv.Serve(l) }()
-	t.Cleanup(func() { _ = f.srv.Close() })
+	srv := &http.Server{Handler: mux}
+	f.srv = srv
+	go func() { _ = srv.Serve(l) }()
+	t.Cleanup(func() { _ = srv.Close() })
 	return f
 }
 

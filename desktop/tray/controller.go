@@ -423,7 +423,7 @@ type startOutcome struct {
 // itself — whether the service may start and what that means is the
 // agent's, and the menu shows what it said.
 func (c *Controller) startService(done chan<- startOutcome) {
-	if c.starting || !c.view.Start.Enabled {
+	if !c.view.Start.Enabled {
 		return
 	}
 	program := c.StartProgram()
