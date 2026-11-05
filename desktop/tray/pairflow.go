@@ -23,9 +23,11 @@ const pairRequestTimeout = 15 * time.Minute
 // cancelled; an error is a dialog that could not be shown.
 type Asker interface {
 	AskCode(ctx context.Context) (code string, ok bool, err error)
-	// AskHub asks which Hub printed the code — by its address, as the
-	// terminal takes it — when several answered; refusal is the agent's
-	// words, which list them.
+	// ChooseHub asks which of the Hubs that answered printed the code, by
+	// name, and returns the chosen one's address.
+	ChooseHub(ctx context.Context, hubs []HubChoice) (addr string, ok bool, err error)
+	// AskHub asks for that Hub's address, as the terminal takes it, when an
+	// agent older than this app names them only in its words: refusal.
 	AskHub(ctx context.Context, refusal string) (addr string, ok bool, err error)
 	ChooseVault(ctx context.Context, m Menu) (c Choice, ok bool, err error)
 	// Confirm asks the consent the agent asked for, with No as the default.
@@ -96,7 +98,14 @@ func Pair(ctx context.Context, c *Client, ask Asker) (string, error) {
 		asked[res.Needs] = true
 		switch res.Needs {
 		case "hub":
-			addr, ok, err := ask.AskHub(ctx, res.Refusal)
+			var addr string
+			var ok bool
+			var err error
+			if len(res.Hubs) > 0 {
+				addr, ok, err = ask.ChooseHub(ctx, res.Hubs)
+			} else {
+				addr, ok, err = ask.AskHub(ctx, res.Refusal)
+			}
 			if err != nil || !ok {
 				return "", err
 			}

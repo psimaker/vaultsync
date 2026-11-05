@@ -3,8 +3,10 @@ package tray
 import (
 	"context"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/psimaker/vaultsync/desktop/internal/layout"
 )
@@ -44,11 +46,14 @@ func NewAsker(goos, home string, lookPath func(string) (string, error)) Asker {
 const (
 	codePrompt    = "Enter the code your Hub printed (like TULIP-ANCHOR-42):"
 	hubPrompt     = "Which Hub printed your code? Enter its address (like 192.168.1.20):"
+	hubListPrompt = "Which Hub printed your code? VaultSync sends it only to the Hub you choose."
 	consentButton = "Start syncing"
-	// noVaultRow comes first in a list on Linux: zenity 4 and kdialog open a
-	// list with its first row selected, so Return alone would choose that
-	// vault. Here it chooses nothing, and the list is asked again.
+	// noVaultRow and noHubRow come first in a list on Linux: zenity 4 and
+	// kdialog open a list with its first row selected, so Return alone would
+	// choose that vault, or send the code to whichever Hub answered first
+	// (decision 045). Here it chooses nothing, and the list is asked again.
 	noVaultRow = "Choose a vault below"
+	noHubRow   = "Choose a Hub below"
 )
 
 // menuPrompt is the text above the list of vaults.
@@ -122,6 +127,45 @@ func chooseVault(ctx context.Context, a rowChooser, home string, m Menu) (Choice
 		return Choice{}, false, err
 	}
 	return choices[i], true, nil
+}
+
+// hubRowName is a Hub's name for a row. It comes from whoever answered the
+// search, with control characters already gone, but format and separator
+// characters could reverse the address beside it (U+202E) or push it out of
+// view (U+2028).
+func hubRowName(name string) string {
+	clean := strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) {
+			return -1
+		}
+		return r
+	}, name)
+	if strings.TrimSpace(clean) == "" {
+		return "your Hub"
+	}
+	return clean
+}
+
+// hubItems lists the Hubs. The address comes first: it is the one field an
+// answer cannot write, and a long name would otherwise push it out of the row.
+func hubItems(hubs []HubChoice) []string {
+	items := make([]string, len(hubs))
+	for i, h := range hubs {
+		host := h.Address
+		if hostOnly, _, err := net.SplitHostPort(host); err == nil {
+			host = hostOnly
+		}
+		items[i] = host + " — " + hubRowName(h.Name)
+	}
+	return items
+}
+
+func chooseHub(ctx context.Context, a rowChooser, hubs []HubChoice) (string, bool, error) {
+	i, ok, err := a.chooseRow(ctx, "Hub", hubListPrompt, noHubRow, hubItems(hubs))
+	if err != nil || !ok {
+		return "", false, err
+	}
+	return hubs[i].Address, true, nil
 }
 
 // noChoiceTag is what a list on Linux prints for the row that chooses nothing.
@@ -265,6 +309,10 @@ func (a *scriptAsker) ChooseVault(ctx context.Context, m Menu) (Choice, bool, er
 	return chooseVault(ctx, a, a.home, m)
 }
 
+func (a *scriptAsker) ChooseHub(ctx context.Context, hubs []HubChoice) (string, bool, error) {
+	return chooseHub(ctx, a, hubs)
+}
+
 // chooseRow: AppleScript's list opens with nothing selected and takes no
 // Continue without a row, so it has no noRow. A row is read back by its number,
 // since two rows may read alike.
@@ -341,6 +389,10 @@ func (a *zenityAsker) AskHub(ctx context.Context, refusal string) (string, bool,
 
 func (a *zenityAsker) ChooseVault(ctx context.Context, m Menu) (Choice, bool, error) {
 	return chooseVault(ctx, a, a.home, m)
+}
+
+func (a *zenityAsker) ChooseHub(ctx context.Context, hubs []HubChoice) (string, bool, error) {
+	return chooseHub(ctx, a, hubs)
 }
 
 // zenityListHeight gives a long prompt its room: on zenity 4 it would otherwise
@@ -442,6 +494,10 @@ func (a *kdialogAsker) list(ctx context.Context, what, text string, rows ...stri
 
 func (a *kdialogAsker) ChooseVault(ctx context.Context, m Menu) (Choice, bool, error) {
 	return chooseVault(ctx, a, a.home, m)
+}
+
+func (a *kdialogAsker) ChooseHub(ctx context.Context, hubs []HubChoice) (string, bool, error) {
+	return chooseHub(ctx, a, hubs)
 }
 
 func (a *kdialogAsker) chooseRow(ctx context.Context, what, prompt, noRow string, items []string) (int, bool, error) {

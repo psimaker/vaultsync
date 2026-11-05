@@ -15,5 +15,6 @@ type (
 	PairRequest = control.PairRequest
 	PairResult  = control.PairResult
 	Menu        = control.Menu
+	HubChoice   = control.HubChoice
 	MenuEntry   = control.MenuEntry
 )

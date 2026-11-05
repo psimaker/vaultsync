@@ -217,6 +217,8 @@ type app struct {
 	// appEnv is where setup looks for VaultSync for Mac around this
 	// program (appbundle.go); the zero value finds none.
 	appEnv appEnv
+	// discover replaces the search for Hubs on this network; a test sets it.
+	discover func(context.Context) ([]pairing.DiscoveredHub, error)
 }
 
 func newApp() (*app, error) {
@@ -981,6 +983,9 @@ func (a *app) pairWith(ctx context.Context, t *term, opts pairOptions, client *s
 		env: pairEnv{
 			goos: a.goos, home: a.home, getenv: a.getenv, lay: a.lay, engine: client,
 			discover: func(ctx context.Context) ([]pairing.DiscoveredHub, error) {
+				if a.discover != nil {
+					return a.discover(ctx)
+				}
 				return pairing.DiscoverHubs(ctx, pairing.DefaultPort, hubDiscoveryWait)
 			},
 			dial: pairing.NewLocalClient,

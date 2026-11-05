@@ -112,6 +112,18 @@ type PairResult struct {
 	// its identity; the caller sends it back with yes.
 	Folder string `json:"folder,omitempty"`
 	Menu   *Menu  `json:"menu,omitempty"`
+	// Hubs, with needs hub, are the Hubs that answered, for a caller that
+	// offers them by name and sends the chosen one's Address as Hub. The
+	// refusal's words and needs stay as they are beside it: a caller older
+	// than this field asks for an address under those words, and an agent
+	// older than it sends none (decision 056).
+	Hubs []HubChoice `json:"hubs,omitempty"`
+}
+
+// HubChoice is a Hub that answered the search.
+type HubChoice struct {
+	Name    string `json:"name,omitempty"`
+	Address string `json:"address"`
 }
 
 type Menu struct {

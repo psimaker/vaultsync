@@ -537,6 +537,7 @@ func (c *controlServer) pair(w http.ResponseWriter, r *http.Request) {
 		resp.Needs = ref.needs
 		resp.Consent = redactPaths(ref.consent)
 		resp.Folder = ref.folder
+		resp.Hubs = ref.hubs
 	default:
 		fail(w, http.StatusInternalServerError, errors.New(redactPaths(err.Error())))
 		return
