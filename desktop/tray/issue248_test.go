@@ -307,8 +307,8 @@ func TestIssue248_ARunThatEndsAfterItsFirstAnswerIsSaid(t *testing.T) {
 	}
 }
 
-// A connection dropped before an answer does not end the wait, and Start stays
-// out of reach: a click would restart a service on its way up.
+// A bad answer, then nobody: the wait goes on, and Start stays out of reach, as
+// a click would restart a service on its way up.
 func TestIssue248_AnAnswerGoneBadStillWaits(t *testing.T) {
 	agent := newFakeAgent(t)
 	agent.stop()
@@ -317,7 +317,7 @@ func TestIssue248_AnAnswerGoneBadStillWaits(t *testing.T) {
 	controllerFor(t, agent, ui, &Controller{
 		StartProgram: func() string { return "/x/vaultsync" },
 		Start:        started.start,
-		StartWaits:   []time.Duration{10 * time.Millisecond, 400 * time.Millisecond},
+		StartWaits:   []time.Duration{10 * time.Millisecond, 400 * time.Millisecond, 400 * time.Millisecond},
 	})
 	ui.view(t, "not running", notRunning)
 	ui.send(Event{Kind: EventStart})
@@ -379,6 +379,65 @@ func TestIssue248_ABadAnswerAtTheEndIsWhatTheMenuShows(t *testing.T) {
 			})
 		})
 	}
+}
+
+// The wait's words go when an agent speaks later, even badly, and a failed
+// start's do too: neither stands beside what that agent says.
+func TestIssue248_StartsWordsGoBesideALaterBadAnswer(t *testing.T) {
+	for name, start := range map[string]*fakeStart{
+		"the wait's words": {said: "✓ VaultSync is running again."},
+		"a failed start's": {err: errors.New("it refused")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			agent := newFakeAgent(t)
+			agent.stop()
+			ui := newFakeUI(t)
+			controllerFor(t, agent, ui, &Controller{
+				StartProgram: func() string { return "/x/vaultsync" },
+				Start:        start.start,
+				StartWaits:   []time.Duration{10 * time.Millisecond},
+			})
+			ui.view(t, "not running", notRunning)
+			ui.send(Event{Kind: EventStart})
+			ui.view(t, "the words", func(v View) bool { return v.Notice != "" && v.Start.Enabled })
+			agent.set(func(f *fakeAgent) { f.old = true })
+			agent.serveAgain()
+			ui.click(EventOpened, 0)
+			v := ui.view(t, "the older agent", func(v View) bool { return !notRunning(v) })
+			if v.Notice != "" {
+				t.Fatalf("beside what the agent says: %+v", v)
+			}
+		})
+	}
+}
+
+// A socket that stalls takes a status timeout per ask: the wait ends by the
+// clock all the same, not after every ask has had its timeout.
+func TestIssue248_AStalledSocketDoesNotStretchTheWait(t *testing.T) {
+	agent := newFakeAgent(t)
+	agent.stop()
+	ui := newFakeUI(t)
+	started := &fakeStart{hold: make(chan struct{}), said: "✓ VaultSync is running again."}
+	controllerFor(t, agent, ui, &Controller{
+		StartProgram:  func() string { return "/x/vaultsync" },
+		Start:         started.start,
+		StatusTimeout: 100 * time.Millisecond,
+		StartWaits:    []time.Duration{50 * time.Millisecond, 50 * time.Millisecond, 50 * time.Millisecond, 50 * time.Millisecond},
+	})
+	ui.view(t, "not running", notRunning)
+	ui.send(Event{Kind: EventStart})
+	ui.view(t, "starting", func(v View) bool { return v.Start == Action{"Starting VaultSync…", false} })
+	hold := make(chan struct{})
+	defer close(hold)
+	agent.set(func(f *fakeAgent) { f.statusHold = hold })
+	agent.serveAgain()
+	close(started.hold)
+	time.Sleep(time.Second)
+	agent.set(func(f *fakeAgent) {
+		if f.statusAsks > 3 {
+			t.Errorf("asked %d times past the wait's end", f.statusAsks)
+		}
+	})
 }
 
 // A socket error on record is no answer: the run that recorded it may be gone,

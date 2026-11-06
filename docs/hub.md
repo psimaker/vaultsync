@@ -171,8 +171,8 @@ Mac, the logs in `~/Library/Logs/VaultSync`. Your vaults stay where they are. Th
 sync engine's own log (in that folder's `syncthing/`) names your vaults and
 their paths; it never leaves this computer. The background service's own
 log (`~/Library/Logs/VaultSync` on a Mac, the journal on Linux) names no
-vault and no path; when the service stops, the reason is in that folder's
-`last-error.txt`. `setup` also links the command
+vault and no path; when the service ends with an error, that folder's
+`last-error.txt` holds the reason, and keeps it until the next one. `setup` also links the command
 as `~/.local/bin/vaultsync` (unless that name is taken) and says how to call
 it if that folder is not on your `PATH`.
 

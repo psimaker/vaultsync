@@ -156,6 +156,7 @@ func (c *Controller) Run(ctx context.Context) error {
 	// is being followed.
 	var askAgain <-chan time.Time
 	var waits []time.Duration
+	var waitEnds time.Time
 	if err := c.refresh(ctx); err != nil {
 		return err
 	}
@@ -175,6 +176,10 @@ func (c *Controller) Run(ctx context.Context) error {
 				c.settling = true
 				waits = c.startWaits()
 				askAgain = time.After(waits[0])
+				waitEnds = time.Now()
+				for _, wait := range waits {
+					waitEnds = waitEnds.Add(wait)
+				}
 			}
 			err = c.refresh(ctx)
 		case <-askAgain:
@@ -183,7 +188,9 @@ func (c *Controller) Run(ctx context.Context) error {
 			if err = c.refresh(ctx); err != nil {
 				break
 			}
-			if len(waits) > 0 {
+			// By the clock too: a socket that stalls takes a status timeout
+			// per ask, on this loop.
+			if len(waits) > 0 && time.Now().Before(waitEnds) {
 				askAgain = time.After(waits[0])
 			} else {
 				c.endOfWait(ctx)
@@ -328,7 +335,8 @@ func (c *Controller) refresh(ctx context.Context) error {
 	c.status, c.known, c.lastErr = st, err == nil, err
 	c.logPath = c.logFile()
 	c.canStart = c.Start != nil && c.StartProgram != nil && c.StartProgram() != ""
-	if c.known && c.startNotice != "" && c.notice == c.startNotice {
+	// What answers speaks for itself, however badly.
+	if c.startNotice != "" && c.notice == c.startNotice && !nobodyThere(err) {
 		c.notice, c.startNotice = "", ""
 	}
 	c.render()
@@ -491,24 +499,23 @@ func (c *Controller) startWaits() []time.Duration {
 // would stand there.
 const noStartAnswer = "VaultSync started but does not answer yet — vaultsync status in a terminal tells where it stands"
 
+// nobodyThere: the last look found no agent to answer.
+func nobodyThere(err error) bool {
+	return errors.Is(err, ErrNoAgent) || errors.Is(err, ErrNoSocket)
+}
+
 // endOfWait decides what a start from the menu came to, once, by how things
 // stand when its asks end: a first answer proves little, since a run can end
-// right after it. An agent that answers has spoken for itself. One that
-// answers badly is what the menu shows, without start's words beside it. With
-// nobody there the menu says so, keeping what a pairing or an open has said
-// since; a later poll still takes the agent's report when one comes.
+// right after it. Whatever answers has spoken for itself. With nobody there
+// the menu says so, keeping what a pairing or an open has said since; a later
+// poll still takes the agent's report when one comes.
 func (c *Controller) endOfWait(ctx context.Context) {
 	c.settling = false
-	own := c.notice == "" || c.notice == c.startNotice
-	switch {
-	case c.known:
-	case errors.Is(c.lastErr, ErrNoAgent), errors.Is(c.lastErr, ErrNoSocket):
-		if own {
+	if nobodyThere(c.lastErr) {
+		if c.notice == "" || c.notice == c.startNotice {
 			c.notice, c.startNotice = noStartAnswer, noStartAnswer
 		}
 		c.notify(ctx, noStartAnswer)
-	case own:
-		c.notice, c.startNotice = "", ""
 	}
 	c.render()
 }
