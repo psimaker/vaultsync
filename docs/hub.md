@@ -171,8 +171,8 @@ Mac, the logs in `~/Library/Logs/VaultSync`. Your vaults stay where they are. Th
 sync engine's own log (in that folder's `syncthing/`) names your vaults and
 their paths; it never leaves this computer. The background service's own
 log (`~/Library/Logs/VaultSync` on a Mac, the journal on Linux) names no
-vault and no path; when the service stops, the reason is in that folder's
-`last-error.txt`. `setup` also links the command
+vault and no path; when the service ends with an error, that folder's
+`last-error.txt` holds the reason, and keeps it until the next one. `setup` also links the command
 as `~/.local/bin/vaultsync` (unless that name is taken) and says how to call
 it if that folder is not on your `PATH`.
 
@@ -249,8 +249,11 @@ folder), **Pause Syncing** / **Resume Syncing** (the same as `vaultsync pause`
 and `resume`), **Pair a Vault…**, **Open Log** (on a Mac) and **Quit**, which
 quits the icon only — syncing continues in the background. The menu asks the
 running agent for everything over the same socket as the terminal and
-decides nothing itself; without a running agent it says so and offers
-only Open Log and Quit. **Pair a Vault…** asks for the code, then which vault, then
+decides nothing itself; without a running agent it says so and offers **Start
+VaultSync** (the same as `vaultsync start`, what that says shows in the menu),
+beside Open Log and Quit. It offers no start when the service has recorded that
+it could not open its socket, or for about 15 seconds after a start from the
+menu. **Pair a Vault…** asks for the code, then which vault, then
 — for a folder on this computer that already holds files — the same consent
 `vaultsync pair` asks for, through the desktop's own dialogs (on Linux this
 needs `zenity`; without it the item says to use `vaultsync pair` in a

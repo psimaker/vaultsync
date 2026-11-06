@@ -13,6 +13,9 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/psimaker/vaultsync/desktop/internal/layout"
+	"github.com/psimaker/vaultsync/desktop/internal/plist"
 )
 
 // What the desktop does for the menu-bar app: opening a folder or a file
@@ -22,7 +25,19 @@ import (
 // execRunner runs a program with stdin and returns what it printed and
 // its exit status; a program that could not be started is the error.
 func execRunner(ctx context.Context, name string, args []string, stdin string) (string, string, int, error) {
+	return runCommand(ctx, exec.CommandContext(ctx, name, args...), stdin)
+}
+
+// startRunner is execRunner for a program that must outlive this one: it
+// finishes what it started after a quit, with nobody left to read what it
+// says.
+func startRunner(ctx context.Context, name string, args []string, stdin string) (string, string, int, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	ownProcessGroup(cmd)
+	return runCommand(ctx, cmd, stdin)
+}
+
+func runCommand(ctx context.Context, cmd *exec.Cmd, stdin string) (string, string, int, error) {
 	cmd.Stdin = strings.NewReader(stdin)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
@@ -86,6 +101,72 @@ func openCommand(goos, path string, look func(string) (bool, error)) (name strin
 		return "xdg-open", []string{path}, nil
 	}
 	return "", nil, errors.New("no program to open it with on " + goos)
+}
+
+// AgentProgram says which vaultsync the menu's Start item runs: the program
+// the background service runs — the one its LaunchAgent names on a Mac,
+// VaultSync's own copy on Linux, the only one setup gives the unit. vaultsync
+// start judges the service by comparing itself with that program, so only
+// this one speaks for the service: another build would say it cannot tell, and
+// the copy, which the run it starts may replace, could then take itself for
+// older than a service that syncs. Without a vaultsync named or there,
+// VaultSync's copy, whose start says what is wrong. Never one found on PATH,
+// which may be an old download or anything else of that name. "" when there is
+// none.
+func AgentProgram(goos, home string, lay layout.Layout) func() string {
+	return func() string {
+		var candidates []string
+		if goos == "darwin" {
+			if data, err := os.ReadFile(layout.LaunchAgentPlist(home)); err == nil {
+				if prog, ok := plist.FirstString(data, "ProgramArguments"); ok && filepath.IsAbs(prog) && filepath.Base(prog) == "vaultsync" {
+					candidates = append(candidates, prog)
+				}
+			}
+		}
+		candidates = append(candidates, lay.Agent)
+		for _, p := range candidates {
+			if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() && fi.Mode()&0o111 != 0 {
+				return p
+			}
+		}
+		return ""
+	}
+}
+
+// startWait is how long vaultsync start may take: it waits for an old job
+// to go and the new one to run.
+const startWait = 2 * time.Minute
+
+var errStartWaited = errors.New("it did not finish in two minutes — vaultsync status in a terminal tells where it stands")
+
+// Start runs vaultsync start with program and returns what it said, or its
+// refusal as the error.
+func Start(ctx context.Context, program string) (string, error) {
+	return startWith(startRunner)(ctx, program)
+}
+
+func startWith(run runner) func(context.Context, string) (string, error) {
+	return func(_ context.Context, program string) (string, error) {
+		// Its own time, whatever the caller's: a start ended half-way may
+		// leave the service taken down and not loaded again.
+		ctx, cancel := context.WithTimeout(context.Background(), startWait)
+		defer cancel()
+		stdout, stderr, status, err := run(ctx, program, []string{"start"}, "")
+		if errors.Is(err, context.DeadlineExceeded) {
+			return "", errStartWaited
+		}
+		if err != nil {
+			return "", err
+		}
+		if status != 0 {
+			why := strings.TrimPrefix(strings.TrimSpace(stderr), "error: ")
+			if why == "" {
+				why = fmt.Sprintf("vaultsync start exited with status %d", status)
+			}
+			return "", errors.New(why)
+		}
+		return strings.TrimSpace(stdout), nil
+	}
 }
 
 // What the menu says when macOS stands between it and a folder (#255): it
