@@ -109,15 +109,16 @@ func openCommand(goos, path string, look func(string) (bool, error)) (name strin
 // start judges the service by comparing itself with that program, so only
 // this one speaks for the service: another build would say it cannot tell, and
 // the copy, which the run it starts may replace, could then take itself for
-// older than a service that syncs. Without a program named or there, VaultSync's
-// copy, whose start says what is wrong. Never one found on PATH, which may be
-// an old download or anything else of that name. "" when there is none.
+// older than a service that syncs. Without a vaultsync named or there,
+// VaultSync's copy, whose start says what is wrong. Never one found on PATH,
+// which may be an old download or anything else of that name. "" when there is
+// none.
 func AgentProgram(goos, home string, lay layout.Layout) func() string {
 	return func() string {
 		var candidates []string
 		if goos == "darwin" {
 			if data, err := os.ReadFile(layout.LaunchAgentPlist(home)); err == nil {
-				if prog, ok := plist.FirstString(data, "ProgramArguments"); ok && filepath.IsAbs(prog) {
+				if prog, ok := plist.FirstString(data, "ProgramArguments"); ok && filepath.IsAbs(prog) && filepath.Base(prog) == "vaultsync" {
 					candidates = append(candidates, prog)
 				}
 			}

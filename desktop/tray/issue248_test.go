@@ -50,19 +50,15 @@ type fakeStart struct {
 	hold     chan struct{}
 	err      error
 	said     string
-	onRun    func()
 }
 
 func (f *fakeStart) start(_ context.Context, program string) (string, error) {
 	f.mu.Lock()
 	f.programs = append(f.programs, program)
-	hold, err, said, onRun := f.hold, f.err, f.said, f.onRun
+	hold, err, said := f.hold, f.err, f.said
 	f.mu.Unlock()
 	if hold != nil {
 		<-hold
-	}
-	if onRun != nil {
-		onRun()
 	}
 	return said, err
 }
@@ -221,17 +217,13 @@ func TestIssue248_ARunningAgainThatNeverAnswersDoesNotStand(t *testing.T) {
 	})
 	ui.view(t, "not running", notRunning)
 	ui.send(Event{Kind: EventStart})
-	said := noStartAnswer(agent.layout, "/home/me")
-	if !strings.Contains(said, "last-error.txt") {
-		t.Fatalf("no word of where the reason is: %q", said)
-	}
-	v := ui.view(t, "no answer", func(v View) bool { return v.Notice == said })
+	v := ui.view(t, "no answer", func(v View) bool { return v.Notice == noStartAnswer })
 	if v.Start != (Action{"Start VaultSync", true}) || !notRunning(v) {
 		t.Fatalf("after the wait: %+v", v)
 	}
 	select {
 	case note := <-notes:
-		if note != said {
+		if note != noStartAnswer {
 			t.Fatalf("notified %q", note)
 		}
 	case <-time.After(5 * time.Second):
@@ -261,6 +253,7 @@ func TestIssue248_AnAnswerOnTheLastAskIsInTime(t *testing.T) {
 	ui.view(t, "not running", notRunning)
 	ui.send(Event{Kind: EventStart})
 	ui.view(t, "what start said", func(v View) bool { return v.Notice == "✓ VaultSync is running again." })
+	ui.view(t, "the first ask goes unanswered", notRunning)
 	restartAgent(t, agent)
 	v := ui.view(t, "the agent answers", func(v View) bool { return v.Headline == "Up to date" })
 	if v.Notice != "" {
@@ -273,9 +266,81 @@ func TestIssue248_AnAnswerOnTheLastAskIsInTime(t *testing.T) {
 	}
 }
 
-// Whatever answers speaks for itself, however badly: the wait ends with nothing
-// about "does not answer" under it.
-func TestIssue248_ABadAnswerEndsTheWaitToo(t *testing.T) {
+// A first answer proves little: a run can end right after it, and the end of
+// the wait goes by how things stand then.
+func TestIssue248_ARunThatEndsAfterItsFirstAnswerIsSaid(t *testing.T) {
+	agent := newFakeAgent(t)
+	agent.stop()
+	ui := newFakeUI(t)
+	started := &fakeStart{hold: make(chan struct{}), said: "✓ VaultSync is running again."}
+	notes := make(chan string, 4)
+	controllerFor(t, agent, ui, &Controller{
+		StartProgram: func() string { return "/x/vaultsync" },
+		Start:        started.start,
+		StartWaits:   []time.Duration{10 * time.Millisecond, 500 * time.Millisecond},
+		Notify:       func(_ context.Context, s string) { notes <- s },
+	})
+	ui.view(t, "not running", notRunning)
+	ui.send(Event{Kind: EventStart})
+	ui.view(t, "starting", func(v View) bool { return v.Start == Action{"Starting VaultSync…", false} })
+	agent.set(func(f *fakeAgent) { f.status.Engine = "starting" })
+	agent.serveAgain()
+	close(started.hold)
+	ui.view(t, "the engine is starting", func(v View) bool { return strings.Contains(v.Headline, "Starting") })
+	agent.stop()
+	// Gone, and the wait has not ended: Start stays out of reach.
+	v := ui.view(t, "the run ended", notRunning)
+	if v.Start != (Action{"Starting VaultSync…", false}) {
+		t.Fatalf("during the wait: %+v", v)
+	}
+	v = ui.view(t, "the wait is over", func(v View) bool { return v.Notice == noStartAnswer })
+	if v.Start != (Action{"Start VaultSync", true}) {
+		t.Fatalf("after the wait: %+v", v)
+	}
+	select {
+	case note := <-notes:
+		if note != noStartAnswer {
+			t.Fatalf("notified %q", note)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("it was not notified")
+	}
+}
+
+// A connection dropped before an answer does not end the wait, and Start stays
+// out of reach: a click would restart a service on its way up.
+func TestIssue248_AnAnswerGoneBadStillWaits(t *testing.T) {
+	agent := newFakeAgent(t)
+	agent.stop()
+	ui := newFakeUI(t)
+	started := &fakeStart{hold: make(chan struct{}), said: "✓ VaultSync is running again."}
+	controllerFor(t, agent, ui, &Controller{
+		StartProgram: func() string { return "/x/vaultsync" },
+		Start:        started.start,
+		StartWaits:   []time.Duration{10 * time.Millisecond, 400 * time.Millisecond},
+	})
+	ui.view(t, "not running", notRunning)
+	ui.send(Event{Kind: EventStart})
+	ui.view(t, "starting", func(v View) bool { return v.Start == Action{"Starting VaultSync…", false} })
+	agent.set(func(f *fakeAgent) { f.statusErr = "boom" })
+	agent.serveAgain()
+	close(started.hold)
+	ui.view(t, "the bad answer", func(v View) bool { return !notRunning(v) })
+	agent.stop()
+	v := ui.view(t, "nobody there", notRunning)
+	if v.Start != (Action{"Starting VaultSync…", false}) {
+		t.Fatalf("during the wait: %+v", v)
+	}
+	ui.send(Event{Kind: EventStart})
+	if got := started.settledRuns(); len(got) != 1 {
+		t.Fatalf("a click during the wait ran %v", got)
+	}
+}
+
+// One that answers badly at the end of the wait is what the menu shows: nothing
+// about "does not answer", and start's words go. It may be on its way up, so
+// the asks go on through such an answer.
+func TestIssue248_ABadAnswerAtTheEndIsWhatTheMenuShows(t *testing.T) {
 	for name, set := range map[string]func(*fakeAgent){
 		"an error":       func(f *fakeAgent) { f.statusErr = "the sync engine does not answer" },
 		"an older agent": func(f *fakeAgent) { f.old = true },
@@ -302,19 +367,14 @@ func TestIssue248_ABadAnswerEndsTheWaitToo(t *testing.T) {
 			if v.Start != (Action{}) {
 				t.Fatalf("the view: %+v", v)
 			}
-			if got := started.runs(); len(got) != 1 {
-				t.Fatalf("ran %v", got)
-			}
 			select {
 			case note := <-notes:
 				t.Fatalf("notified %q", note)
 			case <-time.After(150 * time.Millisecond):
 			}
-			// One that answers badly gets the poll: a stalled socket would
-			// hold the loop through every ask.
 			agent.set(func(f *fakeAgent) {
-				if f.statusAsks > 2 {
-					t.Errorf("asked %d times after a bad answer", f.statusAsks)
+				if f.statusAsks != 4 {
+					t.Errorf("asked %d times, the asks go on through a bad answer", f.statusAsks)
 				}
 			})
 		})
@@ -344,7 +404,7 @@ func TestIssue248_ASocketErrorOnRecordIsNoAnswer(t *testing.T) {
 	close(started.hold)
 	select {
 	case note := <-notes:
-		if note != noStartAnswer(agent.layout, "/home/me") {
+		if note != noStartAnswer {
 			t.Fatalf("notified %q", note)
 		}
 	case <-time.After(5 * time.Second):
@@ -408,11 +468,10 @@ func TestIssue248_AnothersNoticeStaysThroughTheWait(t *testing.T) {
 	if v.Notice != opened.Notice {
 		t.Fatalf("the open's notice went: %q", v.Notice)
 	}
-	said := noStartAnswer(agent.layout, "/home/me")
 	for want := 2; want > 0; want-- {
 		select {
 		case note := <-notes:
-			if note == said {
+			if note == noStartAnswer {
 				return
 			}
 		case <-time.After(5 * time.Second):
@@ -435,11 +494,11 @@ func TestIssue248_ASecondStartIsFollowedToo(t *testing.T) {
 		StartWaits:   []time.Duration{10 * time.Millisecond},
 		Notify:       func(_ context.Context, s string) { notes <- s },
 	})
-	said := noStartAnswer(agent.layout, "/home/me")
 	ui.view(t, "not running", notRunning)
 	for round := 1; round <= 2; round++ {
 		ui.send(Event{Kind: EventStart})
-		ui.view(t, "no answer", func(v View) bool { return v.Notice == said && v.Start.Enabled })
+		ui.view(t, "starting", func(v View) bool { return v.Start == Action{"Starting VaultSync…", false} })
+		ui.view(t, "no answer", func(v View) bool { return v.Notice == noStartAnswer && v.Start.Enabled })
 		select {
 		case <-notes:
 		case <-time.After(5 * time.Second):
@@ -449,6 +508,36 @@ func TestIssue248_ASecondStartIsFollowedToo(t *testing.T) {
 			t.Fatalf("round %d ran %v", round, got)
 		}
 	}
+}
+
+// With nothing else said, the end of the wait says it, also when another's
+// notice has gone in between.
+func TestIssue248_AnEmptiedNoticeTakesTheWords(t *testing.T) {
+	agent := newFakeAgent(t)
+	agent.stop()
+	ui := newFakeUI(t)
+	var mu sync.Mutex
+	var openErr error = errors.New("no way to open it")
+	controllerFor(t, agent, ui, &Controller{
+		StartProgram: func() string { return "/x/vaultsync" },
+		Start:        (&fakeStart{said: "✓ VaultSync is running again."}).start,
+		StartWaits:   []time.Duration{400 * time.Millisecond},
+		Open: func(context.Context, string) error {
+			mu.Lock()
+			defer mu.Unlock()
+			return openErr
+		},
+	})
+	ui.view(t, "not running", notRunning)
+	ui.send(Event{Kind: EventStart})
+	ui.view(t, "what start said", func(v View) bool { return v.Notice == "✓ VaultSync is running again." })
+	ui.send(Event{Kind: EventOpenLog})
+	ui.view(t, "the open's notice", func(v View) bool { return strings.Contains(v.Notice, "no way to open it") })
+	mu.Lock()
+	openErr = nil
+	mu.Unlock()
+	ui.send(Event{Kind: EventOpenLog})
+	ui.view(t, "the words", func(v View) bool { return v.Notice == noStartAnswer })
 }
 
 func TestIssue248_TheAsksTakeAboutFifteenSeconds(t *testing.T) {
@@ -594,6 +683,13 @@ func TestIssue248_WhichVaultsyncStartRuns(t *testing.T) {
 	if err := os.Chmod(bundle, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// Something else first, a wrapper say, would not run start.
+	other := filepath.Join(home, "bin", "nice")
+	exec(other)
+	names(other)
+	if got := mac(); got != copyOf {
+		t.Fatalf("it names another program: %q", got)
+	}
 	t.Chdir(filepath.Dir(copyOf))
 	names("vaultsync")
 	if got := mac(); got != copyOf {
@@ -638,8 +734,12 @@ func TestIssue248_WhatStartSaysComesFromItsOutput(t *testing.T) {
 	} {
 		var args []string
 		var ctxErr error
+		var left time.Duration
 		run := func(ctx context.Context, name string, a []string, _ string) (string, string, int, error) {
 			args, ctxErr = a, ctx.Err()
+			if deadline, ok := ctx.Deadline(); ok {
+				left = time.Until(deadline)
+			}
 			return c.run.stdout, c.run.stderr, c.run.status, c.run.err
 		}
 		// Whatever the caller's context: a quit must not end a start.
@@ -648,6 +748,10 @@ func TestIssue248_WhatStartSaysComesFromItsOutput(t *testing.T) {
 		said, err := startWith(run)(cancelled, "/x/vaultsync")
 		if strings.Join(args, " ") != "start" || ctxErr != nil {
 			t.Errorf("%s: ran %v, its context %v", name, args, ctxErr)
+		}
+		// Its own limit, the menu's only bound on a launchctl that hangs.
+		if left <= time.Minute || left > 2*time.Minute {
+			t.Errorf("%s: %v left to run", name, left)
 		}
 		if said != c.said || (err == nil) != (c.why == "") || (err != nil && err.Error() != c.why) {
 			t.Errorf("%s: said %q, %v", name, said, err)

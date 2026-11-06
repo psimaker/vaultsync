@@ -98,7 +98,7 @@ type Options struct {
 	CanAsk bool
 	// CanStart: there is a vaultsync to run for the Start item (AgentProgram);
 	// Starting: the one started from the menu is still at it, or has said
-	// the service runs and no agent has answered yet.
+	// the service runs and the menu is still asking the agent.
 	CanStart bool
 	Starting bool
 	Notice   string
