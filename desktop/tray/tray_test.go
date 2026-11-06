@@ -1031,17 +1031,17 @@ func TestIssue176_TrayDialogsCarryTextAsData(t *testing.T) {
 	// The menu's lines are numbered so a choice is found by number alone.
 	m := Menu{Local: []MenuEntry{{Label: "Work", Path: "/w", Note: "~/w"}, {Label: "Work", Path: "/w2"}}, Hub: []MenuEntry{{Label: "Notes", Vault: "vs-1", Note: "1 file on your Hub", Default: "/home/me/Vaults/Notes"}}}
 	items, choices := menuItems(m, "/home/me")
-	if !reflect.DeepEqual(items, []string{"1) Work — on this computer, ~/w", "2) Work — on this computer", "3) Notes — on your Hub → ~/Vaults/Notes, 1 file on your Hub"}) {
+	if !reflect.DeepEqual(items, []string{"Work — on this computer, ~/w", "Work — on this computer", "Notes — on your Hub → ~/Vaults/Notes, 1 file on your Hub"}) {
 		t.Fatalf("items: %q", items)
 	}
-	if c, ok := chosen("2) Work — on this computer", choices); !ok || !c.Local || c.Entry.Path != "/w2" {
-		t.Fatalf("chosen 2: %+v %v", c, ok)
+	if i, ok := chosen("2) Work — on this computer", len(choices)); !ok || !choices[i].Local || choices[i].Entry.Path != "/w2" {
+		t.Fatalf("chosen 2: %d %v", i, ok)
 	}
-	if c, ok := chosen("3) Notes — on your Hub → ~/Vaults/Notes, 1 file on your Hub", choices); !ok || c.Local || c.Entry.Vault != "vs-1" {
-		t.Fatalf("chosen 3: %+v %v", c, ok)
+	if i, ok := chosen("3)", len(choices)); !ok || choices[i].Local || choices[i].Entry.Vault != "vs-1" {
+		t.Fatalf("chosen 3: %d %v", i, ok)
 	}
 	for _, bad := range []string{"", "4) x", "x) y", "false"} {
-		if _, ok := chosen(bad, choices); ok {
+		if _, ok := chosen(bad, len(choices)); ok {
 			t.Fatalf("%q chosen", bad)
 		}
 	}
@@ -1102,7 +1102,7 @@ func TestIssue176_TrayDialogsCarryTextAsData(t *testing.T) {
 	if c, ok, err := a.ChooseVault(ctx, m); err != nil || !ok || c.Entry.Vault != "vs-1" {
 		t.Fatalf("choose: %+v %v %v", c, ok, err)
 	}
-	if c := calls[len(calls)-1]; !strings.Contains(c.stdin, appleScriptList(items)) || !strings.Contains(c.stdin, "if c is false then error number -128") {
+	if c := calls[len(calls)-1]; !strings.Contains(c.stdin, appleScriptList([]string{"1) " + items[0], "2) " + items[1], "3) " + items[2]})) || !strings.Contains(c.stdin, "if c is false then error number -128") {
 		t.Fatalf("the list script: %s", c.stdin)
 	}
 	a = &scriptAsker{run: script("", "", 0)}
@@ -1130,7 +1130,7 @@ func TestIssue176_TrayDialogsCarryTextAsData(t *testing.T) {
 	if ok, err := z.Confirm(ctx, "R&D already contains files."); !ok || err != nil {
 		t.Fatalf("zenity consent: %v %v", ok, err)
 	}
-	if c := calls[len(calls)-1]; !reflect.DeepEqual(c.args, []string{"--title=VaultSync", "--question", "--no-markup", "--default-cancel", "--ok-label=Start syncing", "--cancel-label=Cancel", "--width=480", "--text=R&D already contains files."}) {
+	if c := calls[len(calls)-1]; !reflect.DeepEqual(c.args, []string{"--title=VaultSync", "--question", "--no-markup", "--default-cancel", "--ok-label=Start syncing", "--cancel-label=Cancel", "--width=560", "--text=R&D already contains files."}) {
 		t.Fatalf("zenity consent args: %q", c.args)
 	}
 	z = &zenityAsker{run: script("", "", 1)}
@@ -1141,17 +1141,17 @@ func TestIssue176_TrayDialogsCarryTextAsData(t *testing.T) {
 	if _, err := z.Confirm(ctx, "x"); err == nil {
 		t.Fatal("zenity timeout is a failure")
 	}
-	z = &zenityAsker{run: script("3) Notes — on your Hub → ~/Vaults/Notes, 1 file on your Hub\n", "", 0), home: "/home/me"}
+	z = &zenityAsker{run: script("3)\n", "", 0), home: "/home/me"}
 	if c, ok, err := z.ChooseVault(ctx, m); err != nil || !ok || c.Entry.Vault != "vs-1" {
 		t.Fatalf("zenity choose: %+v %v %v", c, ok, err)
 	}
-	// Continue without a row: nothing chosen, as a cancel — not a dialog
-	// that could not be shown.
+	// Continue without a row, again and again: nothing chosen, as a cancel —
+	// not a dialog that could not be shown.
 	z = &zenityAsker{run: script("\n", "", 0), home: "/home/me"}
 	if c, ok, err := z.ChooseVault(ctx, m); err != nil || ok || c != (Choice{}) {
 		t.Fatalf("zenity without a row: %+v %v %v", c, ok, err)
 	}
-	if c := calls[len(calls)-1]; !reflect.DeepEqual(c.args[len(c.args)-4:], append([]string{noChoiceRow}, items...)) || !strings.Contains(strings.Join(c.args, " "), "--column=Vault") {
+	if c := calls[len(calls)-1]; !reflect.DeepEqual(c.args[len(c.args)-8:], []string{noChoiceTag, noVaultRow, "1)", items[0], "2)", items[1], "3)", items[2]}) {
 		t.Fatalf("zenity list args: %q", c.args)
 	}
 

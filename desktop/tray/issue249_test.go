@@ -14,18 +14,25 @@ import (
 // 23.08 and 25.04; these tests hold the arguments that came of it.
 
 // recorder is a runner that says what it is told to and keeps the arguments.
+// stdouts, when set, are the answers in turn, and calls counts the runs.
 type recorder struct {
-	name   string
-	args   []string
-	stdin  string
-	stdout string
-	stderr string
-	status int
-	err    error
+	name    string
+	args    []string
+	stdin   string
+	stdout  string
+	stdouts []string
+	stderr  string
+	status  int
+	err     error
+	calls   int
 }
 
 func (r *recorder) run(_ context.Context, name string, args []string, stdin string) (string, string, int, error) {
 	r.name, r.args, r.stdin = name, args, stdin
+	r.calls++
+	if len(r.stdouts) > 0 {
+		r.stdout, r.stdouts = r.stdouts[0], r.stdouts[1:]
+	}
 	return r.stdout, r.stderr, r.status, r.err
 }
 
@@ -63,7 +70,7 @@ func TestIssue249_ZenityEscapesOnlyForTheDialogThatReadsIt(t *testing.T) {
 	if got := text(r.args); !strings.HasSuffix(got, `R&amp;D &lt;b&gt;x&lt;/b&gt; a_b &amp;amp; c:\\temp\\new`) {
 		t.Fatalf("list: %q", got)
 	}
-	if got := r.args[len(r.args)-1]; !strings.HasPrefix(got, "1) "+awkward+" — on your Hub") {
+	if got := r.args[len(r.args)-1]; !strings.HasPrefix(got, awkward+" — on your Hub") {
 		t.Fatalf("row: %q", got)
 	}
 	// --no-markup: as written, a backslash included.
@@ -82,17 +89,122 @@ func TestIssue249_ZenityEscapesOnlyForTheDialogThatReadsIt(t *testing.T) {
 	}
 }
 
-// Return alone chooses nothing where a list opens with a row selected.
-func TestIssue249_ReturnInAListChoosesNoVault(t *testing.T) {
+// Return alone chooses nothing where a list opens with a row selected, and the
+// list is shown again: the person would otherwise type the code again.
+func TestIssue249_ReturnInAListChoosesNoVaultAndAsksAgain(t *testing.T) {
 	ctx := context.Background()
-	m := Menu{Local: []MenuEntry{{Label: "Work", Path: "/w"}}}
-	z := &zenityAsker{run: (&recorder{stdout: noChoiceRow + "\n"}).run}
-	if c, ok, err := z.ChooseVault(ctx, m); ok || err != nil || c != (Choice{}) {
-		t.Fatalf("zenity: %+v %v %v", c, ok, err)
+	m := Menu{Local: []MenuEntry{{Label: "Work", Path: "/w"}, {Label: "Notes", Path: "/n"}}}
+	for name, a := range map[string]func(*recorder) Asker{
+		"zenity":  func(r *recorder) Asker { return &zenityAsker{run: r.run} },
+		"kdialog": func(r *recorder) Asker { return &kdialogAsker{run: r.run} },
+	} {
+		r := &recorder{stdouts: []string{noChoiceTag + "\n", "\n", "2)\n"}}
+		c, ok, err := a(r).ChooseVault(ctx, m)
+		if !ok || err != nil || c.Entry.Path != "/n" || r.calls != 3 {
+			t.Errorf("%s, chosen on the third time: %+v %v %v, %d times", name, c, ok, err, r.calls)
+		}
+		r = &recorder{stdout: noChoiceTag + "\n"}
+		c, ok, err = a(r).ChooseVault(ctx, m)
+		if ok || err != nil || c != (Choice{}) || r.calls != rowTries {
+			t.Errorf("%s, never chosen: %+v %v %v, %d times", name, c, ok, err, r.calls)
+		}
+		r = &recorder{status: 1}
+		if _, ok, err := a(r).ChooseVault(ctx, m); ok || err != nil || r.calls != 1 {
+			t.Errorf("%s, a cancel: %v %v, %d times", name, ok, err, r.calls)
+		}
 	}
-	k := &kdialogAsker{run: (&recorder{stdout: kdialogNoChoice + "\n"}).run}
-	if c, ok, err := k.ChooseVault(ctx, m); ok || err != nil || c != (Choice{}) {
-		t.Fatalf("kdialog: %+v %v %v", c, ok, err)
+}
+
+// A row shows no number to type: zenity 4 filters on a typed key. What is read
+// back is a hidden column, printed alone.
+func TestIssue249_ARowShowsNoNumberAndAHiddenTagIsReadBack(t *testing.T) {
+	ctx := context.Background()
+	m := Menu{Local: []MenuEntry{{Label: "Work", Path: "/w"}}, Hub: []MenuEntry{{Label: "Work", Vault: "vs-1"}}}
+	r := &recorder{stdout: "2)\n"}
+	c, ok, err := (&zenityAsker{run: r.run}).ChooseVault(ctx, m)
+	if err != nil || !ok || c.Entry.Vault != "vs-1" {
+		t.Fatalf("%+v %v %v", c, ok, err)
+	}
+	joined := strings.Join(r.args, "\x00")
+	for _, want := range []string{"--column=Row", "--column=Choice", "--hide-column=1", "--print-column=1"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("no %s in %q", want, r.args)
+		}
+	}
+	if got := r.args[len(r.args)-6:]; !reflect.DeepEqual(got, []string{noChoiceTag, noVaultRow, "1)", "Work — on this computer", "2)", "Work — on your Hub"}) {
+		t.Fatalf("rows: %q", got)
+	}
+	// On a Mac the row's words come back, so its number stays in them.
+	r = &recorder{stdout: "2) Work — on your Hub\n"}
+	c, ok, err = (&scriptAsker{run: r.run}).ChooseVault(ctx, m)
+	if err != nil || !ok || c.Entry.Vault != "vs-1" {
+		t.Fatalf("mac: %+v %v %v", c, ok, err)
+	}
+	if !strings.Contains(r.stdin, `{"1) Work — on this computer", "2) Work — on your Hub"}`) {
+		t.Fatalf("mac rows: %s", r.stdin)
+	}
+}
+
+// With nothing to choose, each program says so, and asks nothing.
+func TestIssue249_NothingToChooseIsSaid(t *testing.T) {
+	ctx := context.Background()
+	for name, a := range map[string]func(*recorder) Asker{
+		"zenity":  func(r *recorder) Asker { return &zenityAsker{run: r.run} },
+		"kdialog": func(r *recorder) Asker { return &kdialogAsker{run: r.run} },
+		"mac":     func(r *recorder) Asker { return &scriptAsker{run: r.run} },
+	} {
+		r := &recorder{}
+		if _, ok, err := a(r).ChooseVault(ctx, Menu{}); ok || err != nil || r.calls != 1 {
+			t.Errorf("%s: %v %v, %d times", name, ok, err, r.calls)
+		}
+		if !strings.Contains(strings.Join(r.args, " ")+r.stdin, "Nothing to choose") {
+			t.Errorf("%s: %q %q", name, r.args, r.stdin)
+		}
+		if strings.Contains(strings.Join(r.args, " ")+r.stdin, "choose from list") || strings.Contains(strings.Join(r.args, " "), "--list") || strings.Contains(strings.Join(r.args, " "), "--menu") {
+			t.Errorf("%s offered a list: %q %q", name, r.args, r.stdin)
+		}
+	}
+}
+
+// A long prompt takes the list's room on zenity 4: the window grows with it.
+func TestIssue249_TheListGrowsWithItsPrompt(t *testing.T) {
+	if got := zenityListHeight("one\ntwo\nthree\nfour"); got != 420 {
+		t.Errorf("a short prompt: %d", got)
+	}
+	if got := zenityListHeight(strings.Repeat("line\n", 9) + "line"); got != 420+17*6 {
+		t.Errorf("ten lines: %d", got)
+	}
+	if got := zenityListHeight(strings.Repeat("line\n", 200)); got != 760 {
+		t.Errorf("no end of lines: %d", got)
+	}
+	r := &recorder{stdout: "1)\n"}
+	long := Menu{Note: strings.Repeat("word ", 200), Local: []MenuEntry{{Label: "Work", Path: "/w"}}}
+	if _, _, err := (&zenityAsker{run: r.run}).ChooseVault(context.Background(), long); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(r.args, " "), "--height=") || strings.Contains(strings.Join(r.args, " "), "--height=420") {
+		t.Fatalf("the window did not grow: %q", r.args)
+	}
+}
+
+// A failure says its first line: Qt goes on for several, about plugins and
+// reinstalling, and the words end up in one line of the menu.
+func TestIssue249_AFailureSaysItsFirstLine(t *testing.T) {
+	r := &recorder{status: 134, stderr: "qt.qpa.xcb: could not connect to display\nThis application failed to start. Reinstalling may fix this.\n"}
+	_, _, err := (&kdialogAsker{run: r.run}).AskCode(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "could not connect to display") || strings.Contains(err.Error(), "Reinstalling") {
+		t.Fatalf("%v", err)
+	}
+}
+
+// zenity's only cancel is status 1: anything else but 0 is a failure.
+func TestIssue249_ZenityStatuses(t *testing.T) {
+	for status, c := range map[int]struct{ ok, failed bool }{0: {ok: true}, 1: {}, 2: {failed: true}, 5: {failed: true}} {
+		r := &recorder{stdout: "x\n", status: status}
+		_, ok, err := (&zenityAsker{run: r.run}).AskCode(context.Background())
+		if ok != c.ok || (err != nil) != c.failed {
+			t.Errorf("status %d: %v %v", status, ok, err)
+		}
 	}
 }
 
@@ -131,7 +243,7 @@ func TestIssue249_KdialogArguments(t *testing.T) {
 	if err != nil || !ok || c.Entry.Vault != "vs-1" {
 		t.Fatalf("choose: %+v %v %v", c, ok, err)
 	}
-	if got := r.args[4:]; !reflect.DeepEqual(got, []string{kdialogNoChoice, noChoiceRow, "1)", "1) " + awkward + " — on this computer", "2)", "2) Notes — on your Hub → ~/Vaults/Notes"}) {
+	if got := r.args[4:]; !reflect.DeepEqual(got, []string{noChoiceTag, noVaultRow, "1)", awkward + " — on this computer", "2)", "Notes — on your Hub → ~/Vaults/Notes"}) {
 		t.Fatalf("rows: %q", got)
 	}
 	// Nothing to choose says so; a tag not in the list is a failure.
