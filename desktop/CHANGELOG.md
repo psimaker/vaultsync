@@ -9,6 +9,7 @@ The desktop agent `vaultsync`, VaultSync for Mac and the menu-bar app, released 
 ### Added
 
 - **Pair a Vault… works on Linux with KDE's `kdialog`, without `zenity`** ([#249](https://github.com/psimaker/vaultsync/issues/249)) — the menu asks for the code, the vault and the consent through whichever is installed, `zenity` first. In `kdialog`, the consent is a list with **Cancel** selected: Return alone never starts syncing.
+- **When several Hubs answer, the menu offers them by name** ([#250](https://github.com/psimaker/vaultsync/issues/250)) — **Pair a Vault…** used to ask you to type your Hub's address under a list of what answered. It now shows a list, as the terminal does, and sends the code only to the Hub you choose. Return alone chooses none. A menu-bar app from 0.2.0 still running beside the new agent keeps asking for the address, and the new one does the same beside an older agent.
 
 ### Fixed
 
