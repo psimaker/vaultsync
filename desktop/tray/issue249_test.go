@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -182,8 +183,10 @@ func TestIssue249_TheListGrowsWithItsPrompt(t *testing.T) {
 	if _, _, err := (&zenityAsker{run: r.run}).ChooseVault(context.Background(), long); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(strings.Join(r.args, " "), "--height=") || strings.Contains(strings.Join(r.args, " "), "--height=420") {
-		t.Fatalf("the window did not grow: %q", r.args)
+	// By the lines as shown, broken to fit, not as the agent wrote them.
+	want := "--height=" + strconv.Itoa(zenityListHeight(wrapLines(menuPrompt(long), lineWidth)))
+	if !strings.Contains(strings.Join(r.args, " "), want) || want == "--height="+strconv.Itoa(zenityListHeight(menuPrompt(long))) {
+		t.Fatalf("no %s in %q", want, r.args)
 	}
 }
 
