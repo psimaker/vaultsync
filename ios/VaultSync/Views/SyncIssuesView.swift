@@ -104,7 +104,7 @@ struct SyncIssuesView: View {
             return "exclamationmark.triangle.fill"
         case .backgroundSync:
             return "clock.badge.exclamationmark"
-        case .vaultInSelectedFolderItself, .selectedFolderOutsideObsidian:
+        case .vaultInSelectedFolderItself, .selectedFolderNotObsidiansOwn:
             return "eye.slash.fill"
         case .disconnectedPeers:
             return "wifi.exclamationmark"
@@ -157,17 +157,25 @@ struct SyncIssuesView: View {
             }
             .buttonStyle(.vault(.neutral, compact: true))
 
-        case .selectedFolderOutsideObsidian:
-            // The folder picker is otherwise offered only once access is
-            // lost, so the step "select Obsidian's folder" needs its button
-            // here (#270). Stacked: side by side, both labels wrap.
-            VStack(spacing: VaultSpacing.s) {
+        case .selectedFolderNotObsidiansOwn:
+            if issue.count == 0 {
+                // Nothing syncs in the selected folder, so another one can
+                // be selected without cutting a vault off from the folder
+                // it lives in. The folder picker is otherwise offered only
+                // once access is lost, so this step needs its button here
+                // (#270).
                 Button(L10n.tr("Select Obsidian's Folder")) {
                     onSelectObsidianFolder()
                 }
                 .buttonStyle(.vault(.primary, compact: true))
+            } else {
+                // While vaults sync here the picker stays closed: a new
+                // selected folder replaces the one grant they are read
+                // through, and the container-move repair would then take
+                // each of them for a folder whose storage is gone (decision
+                // 003). Removing them first is step 1 of the notice.
                 Button(L10n.tr("Keep It This Way")) {
-                    syncthingManager.keepSetupDespiteObsidianVisibility(kind: .selectedFolderOutsideAppFolder)
+                    syncthingManager.keepSetupDespiteObsidianVisibility(kind: .selectedFolderNotAnAppFolder)
                 }
                 .buttonStyle(.vault(.neutral, compact: true))
             }
@@ -210,7 +218,7 @@ struct SyncIssuesView: View {
             // remediation is the complete fix path — don't surface a
             // misdirecting link (same stance as `.conflicts`).
             return nil
-        case .vaultInSelectedFolderItself, .selectedFolderOutsideObsidian:
+        case .vaultInSelectedFolderItself, .selectedFolderNotObsidiansOwn:
             anchor = "vault-syncs-but-never-appears-in-obsidian"
         case .folderErrors:
             anchor = "bookmark-access-expired"

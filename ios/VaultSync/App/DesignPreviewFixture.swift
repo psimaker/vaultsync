@@ -148,7 +148,7 @@ enum DesignPreviewFixture {
             env: ObsidianVisibility.Environment(
                 canonicalize: { $0 },
                 content: { _ in nil },
-                acknowledged: { [] }
+                record: { [] }
             )
         ))
         syncthingManager._testSetPendingFolders(screen == .attention || screen == .outsideObsidian ? [

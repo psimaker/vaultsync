@@ -40,6 +40,7 @@ struct ManualShareTargetTests {
     ) -> ShareTargetDecision {
         VaultManager.resolveAcceptPath(
             manualTarget: manualTarget,
+            manualTargetConsented: true,
             rawRoot: root,
             rootIsVault: rootIsVault,
             folderName: name,
@@ -229,14 +230,28 @@ struct ManualShareTargetTests {
     @Test("Sidecar set / read round-trips through UserDefaults and overwrites cleanly")
     func sidecarRoundTrip() {
         UserDefaults.standard.removeObject(forKey: "vaultsync.manualShareTargets")
+        UserDefaults.standard.removeObject(forKey: "vaultsync.manualShareTargetRoots")
         #expect(ManualShareTargetStore.target(forFolder: "f1") == nil)
+        #expect(ManualShareTargetStore.consentRoot(forFolder: "f1") == nil)
 
-        ManualShareTargetStore.setTarget("Life", forFolder: "f1")
+        ManualShareTargetStore.setTarget("Life", forFolder: "f1", underRoot: "/root-a")
         #expect(ManualShareTargetStore.target(forFolder: "f1") == "Life")
+        #expect(ManualShareTargetStore.consentRoot(forFolder: "f1") == "/root-a")
         #expect(ManualShareTargetStore.target(forFolder: "other") == nil)
+        #expect(ManualShareTargetStore.consentRoot(forFolder: "other") == nil)
 
-        ManualShareTargetStore.setTarget("Work", forFolder: "f1")
+        // The same name confirmed under another selected folder moves the
+        // consent with it (#270).
+        ManualShareTargetStore.setTarget("Life", forFolder: "f1", underRoot: "/root-b")
+        #expect(ManualShareTargetStore.consentRoot(forFolder: "f1") == "/root-b")
+
+        ManualShareTargetStore.setTarget("Work", forFolder: "f1", underRoot: "/root-b")
         #expect(ManualShareTargetStore.target(forFolder: "f1") == "Work")
+
+        // A record written by an earlier version has a name and no folder.
+        UserDefaults.standard.removeObject(forKey: "vaultsync.manualShareTargetRoots")
+        #expect(ManualShareTargetStore.target(forFolder: "f1") == "Work")
+        #expect(ManualShareTargetStore.consentRoot(forFolder: "f1") == nil)
 
         UserDefaults.standard.removeObject(forKey: "vaultsync.manualShareTargets")
     }

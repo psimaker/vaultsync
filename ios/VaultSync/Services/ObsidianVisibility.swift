@@ -10,9 +10,10 @@ import Foundation
 ///   straight into the selected folder (decision 058 removed them). When that
 ///   folder is an app's own folder, the vault's notes lie where Obsidian
 ///   lists vaults, not inside one.
-/// - **A selected folder that is no app's own folder.** A folder the user
-///   made and named "Obsidian" passed the earlier folder check (decision
-///   059). Whatever syncs there, Obsidian never opens it.
+/// - **A selected folder that is not an app's own folder.** A folder the
+///   user made and named "Obsidian" passed the earlier folder check
+///   (decision 059), and so did a folder inside Obsidian's folder. Whatever
+///   syncs there, Obsidian does not list it as a vault.
 ///
 /// Both keep syncing, and nothing here changes that: no folder is paused,
 /// moved or re-pointed (decisions 002, 003). The finding only becomes a
@@ -29,15 +30,19 @@ enum ObsidianVisibility {
         /// folder is an app's own folder, and by what it holds it is a
         /// single vault.
         case vaultInSelectedFolderItself
-        /// The selected folder lies outside every app's own folder.
-        case selectedFolderOutsideAppFolder
+        /// The selected folder is not an app's own folder: it lies outside
+        /// every app's folder, or inside one without being the single vault
+        /// that syncs there.
+        case selectedFolderNotAnAppFolder
     }
 
     struct Finding: Equatable, Sendable {
         let kind: Kind
-        /// The folders the finding is about, sorted. May be empty for
-        /// `.selectedFolderOutsideAppFolder`: the folder is the wrong place
-        /// for the next share even while nothing syncs there.
+        /// The folders the finding is about, sorted. Empty for
+        /// `.selectedFolderNotAnAppFolder` while nothing syncs there: the
+        /// folder is still the wrong place for the next share, and only
+        /// then may another folder be selected without cutting a syncing
+        /// vault off.
         let folderIDs: [String]
         /// What "keep it this way" records for this finding.
         let tokens: [String]
@@ -49,6 +54,16 @@ enum ObsidianVisibility {
         var hasOwnConfig: Bool
         /// At least one direct subfolder with a `.obsidian/` inside.
         var hasVaultSubfolders: Bool
+
+        /// A single vault by what it holds — the rule of decision 014
+        /// without the exemption for app folders.
+        var isSingleVault: Bool {
+            VaultManager.rootIsItselfVault(
+                isAppDocumentsRoot: false,
+                hasOwnConfig: hasOwnConfig,
+                hasVaultSubfolders: hasVaultSubfolders
+            )
+        }
     }
 
     // MARK: - Classification (pure)
@@ -59,7 +74,9 @@ enum ObsidianVisibility {
         /// read. Called at most once, and only for a folder that syncs into
         /// an app's own folder itself.
         var content: (String) -> DirectoryContent?
-        var acknowledged: () -> Set<String>
+        /// Everything the sidecar holds: what the user keeps, and which
+        /// vaults were reported before.
+        var record: () -> Set<String>
     }
 
     /// The findings for the selected folder and the configured folders.
@@ -68,57 +85,61 @@ enum ObsidianVisibility {
     /// folder check does (`VaultManager.selectedFolderPlace`), so the notice
     /// and the check can never disagree about what an app's own folder is.
     ///
-    /// A folder in an app's own folder itself is reported only when that
-    /// folder is a single vault by what it holds — a `.obsidian/` of its own
-    /// and no vault subfolder, the rule of decision 014 without the
-    /// exemption for app folders. A whole-directory sync whose shared folder
-    /// contains the vaults looks the same by path and is the setup Obsidian
-    /// shows correctly; it must not be reported. What cannot be read is not
-    /// reported either.
+    /// **An app's own folder.** A folder that syncs into it itself is
+    /// reported when the folder is a single vault by what it holds. A
+    /// whole-directory sync whose shared folder contains the vaults looks
+    /// the same by path and is the setup Obsidian shows correctly; it must
+    /// not be reported, and what cannot be read is not reported either.
+    /// Once reported, a vault stays reported until it is removed or kept:
+    /// the content changes as soon as the user opens one of its folders in
+    /// Obsidian, and a notice that left by itself would read as "fixed".
     ///
-    /// A single vault picked as the selected folder (a folder inside an
-    /// app's own folder) is a direct subfolder of that app's folder:
-    /// Obsidian lists it, and nothing is reported.
+    /// **Any other folder** is reported, with one exception: a single vault
+    /// picked as the selected folder — a direct subfolder of an app's
+    /// folder with a vault syncing into it — is where Obsidian lists it.
+    ///
+    /// Keeping a selected folder silences its notice only while vaults sync
+    /// there. With nothing syncing there is nothing to keep, the next share
+    /// would land in the wrong place, and the notice is the one place that
+    /// offers another folder.
     static func findings(
         selectedRoot: String?,
         folders: [(id: String, path: String)],
         env: Environment
     ) -> [Finding] {
         guard let rawRoot = selectedRoot else { return [] }
-        let acknowledged = env.acknowledged()
+        let record = env.record()
         // Lowercased like every path comparison in the collision guards:
         // the iOS data volume is case-folding APFS.
         let rootKey = env.canonicalize(rawRoot).lowercased()
         let folderKeys = folders.map { (id: $0.id, key: env.canonicalize($0.path).lowercased()) }
+        let atRoot = folderKeys.filter { $0.key == rootKey }.map(\.id).sorted()
+        let below = folderKeys.filter { $0.key.hasPrefix(rootKey + "/") }.map(\.id).sorted()
+
+        func notAnAppFolder(_ folderIDs: [String]) -> [Finding] {
+            let token = rootToken(canonicalLowercasedRoot: rootKey)
+            if !folderIDs.isEmpty, record.contains(token) { return [] }
+            return [Finding(kind: .selectedFolderNotAnAppFolder, folderIDs: folderIDs, tokens: [token])]
+        }
 
         switch VaultManager.selectedFolderPlace(rawRoot) {
-        case .elsewhere:
-            let token = rootToken(canonicalLowercasedRoot: rootKey)
-            guard !acknowledged.contains(token) else { return [] }
-            let inside = folderKeys
-                .filter { $0.key == rootKey || $0.key.hasPrefix(rootKey + "/") }
-                .map(\.id)
-                .sorted()
-            return [Finding(kind: .selectedFolderOutsideAppFolder, folderIDs: inside, tokens: [token])]
-
         case .appFolder:
-            let atRoot = folderKeys
-                .filter { $0.key == rootKey }
-                .map(\.id)
-                .filter { !acknowledged.contains(folderToken($0)) }
-                .sorted()
-            guard !atRoot.isEmpty,
-                  let content = env.content(rawRoot),
-                  VaultManager.rootIsItselfVault(
-                      isAppDocumentsRoot: false,
-                      hasOwnConfig: content.hasOwnConfig,
-                      hasVaultSubfolders: content.hasVaultSubfolders
-                  )
-            else { return [] }
-            return [Finding(kind: .vaultInSelectedFolderItself, folderIDs: atRoot, tokens: atRoot.map(folderToken))]
+            let open = atRoot.filter { !record.contains(folderToken($0)) }
+            guard !open.isEmpty else { return [] }
+            var reported = open.filter { record.contains(seenToken($0)) }
+            if reported.count < open.count, env.content(rawRoot)?.isSingleVault == true {
+                reported = open
+            }
+            guard !reported.isEmpty else { return [] }
+            return [Finding(kind: .vaultInSelectedFolderItself, folderIDs: reported, tokens: reported.map(folderToken))]
 
         case .insideAppFolder:
-            return []
+            let parent = (rawRoot as NSString).deletingLastPathComponent
+            if VaultManager.isAppDocumentsRoot(parent), !atRoot.isEmpty { return [] }
+            return notAnAppFolder((atRoot + below).sorted())
+
+        case .elsewhere:
+            return notAnAppFolder((atRoot + below).sorted())
         }
     }
 
@@ -126,16 +147,21 @@ enum ObsidianVisibility {
         "folder:" + folderID
     }
 
+    /// A vault that was reported once (see `findings`).
+    static func seenToken(_ folderID: String) -> String {
+        "seen:" + folderID
+    }
+
     /// Keyed by the path, so another selected folder gets its own notice.
     static func rootToken(canonicalLowercasedRoot: String) -> String {
         "root:" + canonicalLowercasedRoot
     }
 
-    // MARK: - Acknowledged sidecar ("keep it this way")
+    // MARK: - Sidecar (what the user keeps, what was reported)
 
-    /// Findings the user chose to keep. A notice that could never be put
-    /// away would hold the status at "Action Needed" for good on an install
-    /// that syncs outside Obsidian's folder on purpose.
+    /// A notice that could never be put away would hold the status at
+    /// "Action Needed" for good on an install that syncs outside Obsidian's
+    /// folder on purpose; and a reported vault has to stay reported.
     private static let storeKey = "vaultsync.obsidianVisibilityAcknowledged"
 
     /// Serializes the read-modify-write of the sidecar — same pattern as
@@ -144,12 +170,13 @@ enum ObsidianVisibility {
 
     /// `defaults` is a parameter so the sidecar is testable against a store
     /// of its own; the app only ever uses the standard one.
-    static func loadAcknowledged(defaults: UserDefaults = .standard) -> Set<String> {
+    static func loadRecord(defaults: UserDefaults = .standard) -> Set<String> {
         queue.sync { Set(defaults.array(forKey: storeKey) as? [String] ?? []) }
     }
 
-    /// Record that the user keeps these findings. Atomic and idempotent.
-    static func acknowledge(_ tokens: [String], defaults: UserDefaults = .standard) {
+    /// Add tokens to the record. Atomic and idempotent.
+    static func record(_ tokens: [String], defaults: UserDefaults = .standard) {
+        guard !tokens.isEmpty else { return }
         queue.sync {
             var stored = Set(defaults.array(forKey: storeKey) as? [String] ?? [])
             let before = stored
@@ -159,12 +186,15 @@ enum ObsidianVisibility {
         }
     }
 
-    /// Forget a folder's record when the folder is removed, so a later
+    /// Forget everything about a folder when it is removed, so a later
     /// folder with the same ID is judged afresh. Atomic.
-    static func clearAcknowledged(folderID: String, defaults: UserDefaults = .standard) {
+    static func forget(folderID: String, defaults: UserDefaults = .standard) {
         queue.sync {
             var stored = Set(defaults.array(forKey: storeKey) as? [String] ?? [])
-            guard stored.remove(folderToken(folderID)) != nil else { return }
+            let before = stored
+            stored.remove(folderToken(folderID))
+            stored.remove(seenToken(folderID))
+            guard stored != before else { return }
             defaults.set(stored.sorted(), forKey: storeKey)
         }
     }
@@ -184,15 +214,26 @@ enum ObsidianVisibility {
         return DirectoryContent(hasOwnConfig: hasOwnConfig, hasVaultSubfolders: !vaults.isEmpty)
     }
 
-    static func findingsLive(selectedRoot: String?, folders: [(id: String, path: String)]) -> [Finding] {
-        findings(
+    /// The findings as they stand now. Remembers every vault it reports as
+    /// being in the selected folder itself (see `findings`).
+    static func findingsLive(
+        selectedRoot: String?,
+        folders: [(id: String, path: String)],
+        defaults: UserDefaults = .standard
+    ) -> [Finding] {
+        let found = findings(
             selectedRoot: selectedRoot,
             folders: folders,
             env: Environment(
                 canonicalize: FolderPathReconciler.canonical,
                 content: liveContent,
-                acknowledged: { loadAcknowledged() }
+                record: { loadRecord(defaults: defaults) }
             )
         )
+        record(
+            found.filter { $0.kind == .vaultInSelectedFolderItself }.flatMap(\.folderIDs).map(seenToken),
+            defaults: defaults
+        )
+        return found
     }
 }

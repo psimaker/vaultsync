@@ -347,9 +347,9 @@ final class SyncthingManager {
             /// A vault syncs into the selected folder itself, where Obsidian
             /// lists vaults instead of showing one (#270).
             case vaultInSelectedFolderItself
-            /// The selected folder is no app's own folder: Obsidian opens
-            /// nothing from it (#270).
-            case selectedFolderOutsideObsidian
+            /// The selected folder is not Obsidian's own: Obsidian lists no
+            /// vault from it (#270).
+            case selectedFolderNotObsidiansOwn
             case disconnectedPeers
             case pendingShares
             case conflicts
@@ -672,7 +672,11 @@ final class SyncthingManager {
     /// critical: the sync is intact and nothing is being damaged — the vault
     /// is only in a place Obsidian does not list. The remediation is the
     /// whole way out, because nothing is moved for the user (decisions 002,
-    /// 003). Pure, so the copy and the tier are unit-testable.
+    /// 003). It never names "up to date" as the moment to remove a vault:
+    /// that status says this iPhone needs nothing from its peers, not that a
+    /// peer has what was changed here. And it never asks for the earlier
+    /// copy to be deleted — that copy may hold the only version of a note.
+    /// Pure, so the copy and the tier are unit-testable.
     nonisolated static func obsidianVisibilityIssues(
         findings: [ObsidianVisibility.Finding],
         labels: [String: String]
@@ -688,25 +692,28 @@ final class SyncthingManager {
                         "“%@” syncs straight into the folder you selected instead of into a folder of its own. Obsidian shows only the folders inside its folder as vaults, so the notes arrive, but the vault never appears in Obsidian.",
                         names.joined(separator: ", ")
                     ),
-                    remediation: L10n.tr("Syncing continues, and VaultSync moves nothing on its own. To see the vault in Obsidian:\n1. Wait until it is up to date, then remove it on this iPhone.\n2. Accept it again under Pending Shares — it gets a folder of its own.\nThe copy that already arrived stays where it is until you delete it in the Files app."),
+                    remediation: L10n.tr("Syncing continues, and VaultSync moves nothing on its own. To see the vault in Obsidian:\n1. Make sure another device has everything you changed on this iPhone, then remove the vault here.\n2. Accept it again under Pending Shares — it gets a folder of its own.\nThe copy that already arrived stays where it is."),
                     severity: .warning,
                     count: finding.folderIDs.count,
                     folderID: finding.folderIDs.first,
                     deviceID: nil
                 )
-            case .selectedFolderOutsideAppFolder:
+            case .selectedFolderNotAnAppFolder:
                 return SyncIssueItem(
-                    kind: .selectedFolderOutsideObsidian,
+                    kind: .selectedFolderNotObsidiansOwn,
                     title: L10n.tr("Obsidian Cannot Show Vaults From This Folder"),
                     message: names.isEmpty
-                        ? L10n.tr("The folder VaultSync is connected to is not Obsidian's own folder. Obsidian opens vaults only from its own folder, so a vault that syncs here never appears in Obsidian.")
+                        ? L10n.tr("The folder VaultSync is connected to is not Obsidian's own folder. Obsidian lists only the folders directly inside its own folder as vaults, so a vault that syncs here never appears there as a vault.")
                         : L10n.fmt(
-                            "The folder VaultSync is connected to is not Obsidian's own folder. Obsidian opens vaults only from its own folder, so what syncs here never appears in Obsidian: %@.",
+                            "The folder VaultSync is connected to is not Obsidian's own folder. Obsidian lists only the folders directly inside its own folder as vaults, so what syncs here never appears there as a vault: %@.",
                             names.joined(separator: ", ")
                         ),
+                    // Another folder is offered only once nothing syncs
+                    // here: selecting one earlier would cut the vaults off
+                    // from the folder they live in.
                     remediation: names.isEmpty
-                        ? L10n.tr("Tap Select Obsidian's Folder and choose \"On My iPhone\" → \"Obsidian\". If \"Obsidian\" is missing there, open Obsidian and create a vault with \"Store in iCloud\" turned off first.")
-                        : L10n.tr("Syncing continues, and VaultSync moves nothing on its own. To see your vaults in Obsidian:\n1. Wait until they are up to date, then remove them on this iPhone.\n2. Tap Select Obsidian's Folder and choose \"On My iPhone\" → \"Obsidian\". If \"Obsidian\" is missing there, open Obsidian and create a vault with \"Store in iCloud\" turned off first.\n3. Accept the shares again under Pending Shares.\nThe copies that already arrived stay where they are until you delete them in the Files app."),
+                        ? L10n.tr("Tap Select Obsidian's Folder, choose \"On My iPhone\" → \"Obsidian\" and tap Open there, without opening one of your vaults. If \"Obsidian\" is missing, open Obsidian and create a vault with \"Store in iCloud\" turned off first.")
+                        : L10n.tr("Syncing continues, and VaultSync moves nothing on its own. To see your vaults in Obsidian:\n1. Make sure another device has everything you changed on this iPhone, then remove the vaults here.\n2. This notice then offers Select Obsidian's Folder. Tap it, choose \"On My iPhone\" → \"Obsidian\" and tap Open there, without opening one of your vaults. If \"Obsidian\" is missing, open Obsidian and create a vault with \"Store in iCloud\" turned off first.\n3. Accept the shares again under Pending Shares.\nThe copies that already arrived stay where they are."),
                     severity: .warning,
                     count: finding.folderIDs.count,
                     folderID: finding.folderIDs.first,
@@ -732,12 +739,19 @@ final class SyncthingManager {
     }
 
     /// The user keeps the setup a notice is about: it stays away for these
-    /// folders, or for this selected folder. Nothing else changes.
+    /// vaults, or for this selected folder while vaults sync there. Nothing
+    /// else changes.
     func keepSetupDespiteObsidianVisibility(kind: ObsidianVisibility.Kind) {
         let tokens = obsidianVisibilityFindings.filter { $0.kind == kind }.flatMap(\.tokens)
         guard !tokens.isEmpty else { return }
-        ObsidianVisibility.acknowledge(tokens)
+        ObsidianVisibility.record(tokens)
         refreshObsidianVisibility()
+    }
+
+    /// The selected folder is one Obsidian lists no vault from, and the user
+    /// has not chosen to keep it: no share goes there without a tap (#270).
+    var selectedFolderHidesVaultsFromObsidian: Bool {
+        obsidianVisibilityFindings.contains { $0.kind == .selectedFolderNotAnAppFolder }
     }
 
     private func backgroundSyncIssueItem() -> SyncIssueItem? {
@@ -1050,9 +1064,9 @@ final class SyncthingManager {
             // chosen target.
             userRemovedFolderIDs.insert(id)
             persistUserRemovedFolderIDs()
-            // A kept notice belongs to the folder that was kept (#270): a
-            // later folder with this ID is judged afresh.
-            ObsidianVisibility.clearAcknowledged(folderID: id)
+            // What was kept or reported belongs to the folder that was
+            // removed (#270): a later folder with this ID is judged afresh.
+            ObsidianVisibility.forget(folderID: id)
             refreshObsidianVisibility()
         }
         return result

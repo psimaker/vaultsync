@@ -44,6 +44,14 @@ struct ContentView: View {
     @State private var showSettings = false
     @State private var showSetupChecklist = false
     @State private var showObsidianPicker = false
+    /// Opened from the notice about a folder that is not Obsidian's own
+    /// (#270): the picker must not start inside that folder — it is usually
+    /// titled "Obsidian" itself, with an Open button right there.
+    @State private var obsidianPickerLeavesCurrentFolder = false
+    /// Where each pending share would arrive (#270). Computed when what it
+    /// depends on changes, not on every pass over `body`: the decision reads
+    /// the selected folder and the target from disk.
+    @State private var pendingShareDestinationLines: [String: PendingShareDestination.Line] = [:]
     /// Set when AddDeviceSheet reports a successful add; the hint alert is
     /// presented from the sheet's onDismiss so it survives the dismissal
     /// transition (#95) — same pattern as runPendingChecklistAction.
@@ -179,10 +187,11 @@ struct ContentView: View {
                 }
             )
         }
-        .sheet(isPresented: $showObsidianPicker) {
-            FolderPicker(initialDirectoryURL: vaultManager.obsidianDirectoryURL, onCancel: {
-                showObsidianPicker = false
-            }) { url in
+        .sheet(isPresented: $showObsidianPicker, onDismiss: { obsidianPickerLeavesCurrentFolder = false }) {
+            FolderPicker(
+                initialDirectoryURL: obsidianPickerLeavesCurrentFolder ? nil : vaultManager.obsidianDirectoryURL,
+                onCancel: { showObsidianPicker = false }
+            ) { url in
                 showObsidianPicker = false
                 Task {
                     if let err = await ObsidianReconnectFlow.run(
@@ -1040,7 +1049,10 @@ struct ContentView: View {
                 onRescanFailedFolders: rescanFailedVaults,
                 onOpenAddDevice: { showAddDevice = true },
                 onRescanAllVaults: rescanAllVaults,
-                onSelectObsidianFolder: { showObsidianPicker = true }
+                onSelectObsidianFolder: {
+                    obsidianPickerLeavesCurrentFolder = true
+                    showObsidianPicker = true
+                }
             )
         }
     }
@@ -1256,7 +1268,7 @@ struct ContentView: View {
                 pendingFolders: pendingFolders,
                 ignoredFolders: ignoredFolders,
                 failureByFolderID: shareAccept.pendingShareFailures,
-                destinationByFolderID: pendingShareDestinations(pendingFolders),
+                destinationByFolderID: pendingShareDestinationLines,
                 inFlightFolderIDs: shareAccept.pendingShareInFlight,
                 obsidianAccessible: vaultManager.isAccessible,
                 onAccept: { folder in
@@ -1278,7 +1290,19 @@ struct ContentView: View {
                     showObsidianPicker = true
                 }
             )
+            .task(id: pendingShareDestinationInputs) {
+                pendingShareDestinationLines = pendingShareDestinations(syncthingManager.actionablePendingFolders)
+            }
         }
+    }
+
+    /// Everything the destination lines are computed from, without touching
+    /// the disk: when none of it changed, the lines stand.
+    private var pendingShareDestinationInputs: [String] {
+        [vaultManager.isAccessible ? "connected" : "", vaultManager.obsidianBasePath ?? ""]
+            + syncthingManager.actionablePendingFolders.map { "share|\($0.id)|\($0.label)" }
+            + syncthingManager.folders.map { "folder|\($0.id)|\($0.path)" }
+            + shareAccept.pendingShareFailures.keys.sorted().map { "parked|\($0)" }
     }
 
     /// Where each pending share would arrive, by the accept's own decision
@@ -1287,16 +1311,30 @@ struct ContentView: View {
     private func pendingShareDestinations(
         _ folders: [SyncthingManager.PendingFolderInfo]
     ) -> [String: PendingShareDestination.Line] {
-        let rootPlace = vaultManager.obsidianBasePath.map(VaultManager.selectedFolderPlace)
+        let root = vaultManager.obsidianBasePath
+        let rootPlace = root.map(VaultManager.selectedFolderPlace)
+        // Read at most once, and only when a target already holds files.
+        var earlierCopy: Bool?
+        func rootHoldsEarlierCopy() -> Bool {
+            if let earlierCopy { return earlierCopy }
+            let holds = rootPlace == .appFolder
+                && root.flatMap(ObsidianVisibility.liveContent)?.isSingleVault == true
+            earlierCopy = holds
+            return holds
+        }
         var lines: [String: PendingShareDestination.Line] = [:]
         for folder in folders where shareAccept.pendingShareFailures[folder.id] == nil {
+            let decision = vaultManager.previewShareDestination(
+                folderID: folder.id,
+                label: folder.label,
+                syncthingManager: syncthingManager
+            )
+            var holdsEarlierCopy = false
+            if case .requiresMergeConfirmation = decision { holdsEarlierCopy = rootHoldsEarlierCopy() }
             lines[folder.id] = PendingShareDestination.line(
-                decision: vaultManager.previewShareDestination(
-                    folderID: folder.id,
-                    label: folder.label,
-                    syncthingManager: syncthingManager
-                ),
-                rootPlace: rootPlace
+                decision: decision,
+                rootPlace: rootPlace,
+                rootHoldsEarlierCopy: holdsEarlierCopy
             )
         }
         return lines

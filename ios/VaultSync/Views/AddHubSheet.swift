@@ -588,13 +588,23 @@ private struct HubVaultStep: View {
             )
         case .path(let path):
             let folder = (path as NSString).lastPathComponent
-            VaultNotice(
-                systemImage: "folder",
-                text: folder == vault.label
-                    ? L10n.fmt("“%@” will be created inside your Obsidian folder. VaultSync never merges into a folder that already has files without asking you.", vault.label)
-                    : L10n.fmt("“%@” will be created inside your Obsidian folder as “%@”. VaultSync never merges into a folder that already has files without asking you.", vault.label, folder),
-                tone: .info
-            )
+            // Under a selected folder that is not Obsidian's own the vault
+            // arrives in full and Obsidian does not list it (#270): say so
+            // here as on a pending share, instead of "your Obsidian folder".
+            if let caution = PendingShareDestination.line(
+                decision: .path(path),
+                rootPlace: vaultManager.obsidianBasePath.map(VaultManager.selectedFolderPlace)
+            ), caution.isCaution {
+                VaultNotice(systemImage: "eye.slash", text: caution.text, tone: .attention)
+            } else {
+                VaultNotice(
+                    systemImage: "folder",
+                    text: folder == vault.label
+                        ? L10n.fmt("“%@” will be created inside your Obsidian folder. VaultSync never merges into a folder that already has files without asking you.", vault.label)
+                        : L10n.fmt("“%@” will be created inside your Obsidian folder as “%@”. VaultSync never merges into a folder that already has files without asking you.", vault.label, folder),
+                    tone: .info
+                )
+            }
         case .requiresMergeConfirmation(_, let targetName):
             VaultNotice(
                 systemImage: "folder.badge.questionmark",

@@ -20,12 +20,13 @@ struct Issue270ObsidianVisibilityTests {
     private static let iCloudDriveFolder = "/private/var/mobile/Library/Mobile Documents/com~apple~CloudDocs/Obsidian"
 
     private static let singleVault = ObsidianVisibility.DirectoryContent(hasOwnConfig: true, hasVaultSubfolders: false)
+    private static let container = ObsidianVisibility.DirectoryContent(hasOwnConfig: true, hasVaultSubfolders: true)
 
     private func findings(
         root: String?,
         folders: [(id: String, path: String)],
         content: ObsidianVisibility.DirectoryContent? = Issue270ObsidianVisibilityTests.singleVault,
-        acknowledged: Set<String> = [],
+        record: Set<String> = [],
         canonicalize: @escaping (String) -> String = { $0 }
     ) -> [ObsidianVisibility.Finding] {
         ObsidianVisibility.findings(
@@ -34,9 +35,17 @@ struct Issue270ObsidianVisibilityTests {
             env: ObsidianVisibility.Environment(
                 canonicalize: canonicalize,
                 content: { _ in content },
-                acknowledged: { acknowledged }
+                record: { record }
             )
         )
+    }
+
+    private func notAnAppFolder(_ root: String, _ folderIDs: [String]) -> [ObsidianVisibility.Finding] {
+        [ObsidianVisibility.Finding(
+            kind: .selectedFolderNotAnAppFolder,
+            folderIDs: folderIDs,
+            tokens: ["root:" + root.lowercased()]
+        )]
     }
 
     // MARK: A vault in the selected folder itself
@@ -85,6 +94,34 @@ struct Issue270ObsidianVisibilityTests {
         #expect(found.isEmpty)
     }
 
+    @Test("A reported vault stays reported when the folder later looks like a container — the user opened one of its folders in Obsidian")
+    func reportedVaultStaysReported() {
+        var contentReads = 0
+        let found = ObsidianVisibility.findings(
+            selectedRoot: Self.obsidiansFolder,
+            folders: [(id: "notes", path: Self.obsidiansFolder)],
+            env: ObsidianVisibility.Environment(
+                canonicalize: { $0 },
+                content: { _ in
+                    contentReads += 1
+                    return Self.container
+                },
+                record: { ["seen:notes"] }
+            )
+        )
+        #expect(found.map(\.folderIDs) == [["notes"]])
+        // What it holds now no longer decides, so it is not read.
+        #expect(contentReads == 0)
+
+        // A vault that was never reported is still judged by what the folder holds.
+        #expect(findings(
+            root: Self.obsidiansFolder,
+            folders: [(id: "other", path: Self.obsidiansFolder)],
+            content: Self.container,
+            record: ["seen:notes"]
+        ).isEmpty)
+    }
+
     @Test("A vault in its own folder inside Obsidian's folder is where it belongs — the disk is not even read")
     func vaultInItsOwnFolder() {
         var contentReads = 0
@@ -100,7 +137,7 @@ struct Issue270ObsidianVisibilityTests {
                     contentReads += 1
                     return Self.singleVault
                 },
-                acknowledged: { [] }
+                record: { [] }
             )
         )
         #expect(found.isEmpty)
@@ -125,14 +162,7 @@ struct Issue270ObsidianVisibilityTests {
         #expect(found.map(\.folderIDs) == [["notes"]])
     }
 
-    @Test("A single vault picked as the selected folder is a direct subfolder of Obsidian's folder — Obsidian lists it")
-    func singleVaultPickedAsTheSelectedFolder() {
-        let root = Self.obsidiansFolder + "/MyVault"
-        #expect(findings(root: root, folders: [(id: "notes", path: root)]).isEmpty)
-        #expect(findings(root: root, folders: []).isEmpty)
-    }
-
-    // MARK: A selected folder outside every app's own folder
+    // MARK: A selected folder that is not an app's own folder
 
     @Test("A self-made folder is reported with the vaults that sync there")
     func selfMadeFolderWithVaults() {
@@ -144,19 +174,38 @@ struct Issue270ObsidianVisibilityTests {
                 (id: "elsewhere", path: Self.obsidiansFolder + "/Other"),
                 (id: "sibling", path: root + "-old/Notes"),
             ])
-            #expect(found == [ObsidianVisibility.Finding(
-                kind: .selectedFolderOutsideAppFolder,
-                folderIDs: ["all", "notes", "work"],
-                tokens: ["root:" + root.lowercased()]
-            )])
+            #expect(found == notAnAppFolder(root, ["all", "notes", "work"]))
         }
     }
 
     @Test("A self-made folder is reported while nothing syncs yet — the next share would land there")
     func selfMadeFolderWithoutVaults() {
-        let found = findings(root: Self.selfMadeObsidian, folders: [])
-        #expect(found.map(\.kind) == [.selectedFolderOutsideAppFolder])
-        #expect(found.first?.folderIDs.isEmpty == true)
+        #expect(findings(root: Self.selfMadeObsidian, folders: []) == notAnAppFolder(Self.selfMadeObsidian, []))
+    }
+
+    @Test("A single vault picked as the selected folder: quiet while it syncs there, reported once nothing does — the only way to another folder")
+    func singleVaultPickedAsTheSelectedFolder() {
+        let root = Self.obsidiansFolder + "/MyVault"
+        // Obsidian lists it: a direct subfolder of its folder with the vault in it.
+        #expect(findings(root: root, folders: [(id: "notes", path: root)]).isEmpty)
+        // The vault was removed. A share is refused here (the folder is
+        // itself a vault) and no other screen opens the folder picker.
+        #expect(findings(root: root, folders: []) == notAnAppFolder(root, []))
+    }
+
+    @Test("A folder inside Obsidian's folder that only holds vaults is reported: they arrive as folders inside it, not as vaults")
+    func folderInsideObsidiansFolderUsedAsContainer() {
+        let root = Self.obsidiansFolder + "/Vaults"
+        let found = findings(root: root, folders: [
+            (id: "recipes", path: root + "/Recipes"),
+            (id: "notes", path: root + "/Notes"),
+        ])
+        #expect(found == notAnAppFolder(root, ["notes", "recipes"]))
+
+        // Deeper down, even a vault in the selected folder itself is not one
+        // Obsidian lists.
+        let deep = Self.obsidiansFolder + "/Archive/2025"
+        #expect(findings(root: deep, folders: [(id: "old", path: deep)]) == notAnAppFolder(deep, ["old"]))
     }
 
     @Test("Without a selected folder there is nothing to report")
@@ -169,7 +218,7 @@ struct Issue270ObsidianVisibilityTests {
     @Test("A vault the user keeps where it is stays quiet; another one in the same place is still reported")
     func keptVaultStaysQuiet() {
         let folders = [(id: "notes", path: Self.obsidiansFolder), (id: "second", path: Self.obsidiansFolder)]
-        let found = findings(root: Self.obsidiansFolder, folders: folders, acknowledged: ["folder:notes"])
+        let found = findings(root: Self.obsidiansFolder, folders: folders, record: ["folder:notes", "seen:notes"])
         #expect(found.map(\.folderIDs) == [["second"]])
         #expect(found.flatMap(\.tokens) == ["folder:second"])
 
@@ -183,25 +232,31 @@ struct Issue270ObsidianVisibilityTests {
                     contentReads += 1
                     return Self.singleVault
                 },
-                acknowledged: { ["folder:notes", "folder:second"] }
+                record: { ["folder:notes", "folder:second"] }
             )
         )
         #expect(allKept.isEmpty)
         #expect(contentReads == 0)
     }
 
-    @Test("A selected folder the user keeps stays quiet; a different one gets its own notice")
-    func keptSelectedFolderStaysQuiet() {
-        let kept: Set<String> = ["root:" + Self.selfMadeObsidian.lowercased()]
-        #expect(findings(root: Self.selfMadeObsidian, folders: [], acknowledged: kept).isEmpty)
-        #expect(findings(root: Self.iCloudDriveFolder, folders: [], acknowledged: kept).count == 1)
-        // What was kept for a folder says nothing about the selected folder.
-        #expect(findings(root: Self.selfMadeObsidian, folders: [], acknowledged: ["folder:notes"]).count == 1)
+    @Test("A selected folder the user keeps stays quiet while vaults sync there — and is reported again once nothing does")
+    func keptSelectedFolder() {
+        let root = Self.selfMadeObsidian
+        let kept: Set<String> = ["root:" + root.lowercased()]
+        let syncing = [(id: "notes", path: root + "/Notes")]
+        #expect(findings(root: root, folders: syncing, record: kept).isEmpty)
+        // Nothing syncs: nothing is being kept, the next share would land
+        // here, and this notice is the one place that offers another folder.
+        #expect(findings(root: root, folders: [], record: kept) == notAnAppFolder(root, []))
+        // A different selected folder gets its own notice.
+        #expect(findings(root: Self.iCloudDriveFolder, folders: [(id: "notes", path: Self.iCloudDriveFolder + "/Notes")], record: kept).count == 1)
+        // What was kept for a vault says nothing about the selected folder.
+        #expect(findings(root: root, folders: syncing, record: ["folder:notes"]).count == 1)
     }
 }
 
-/// The record of what the user chose to keep.
-@Suite("Existing installs — the kept-notice record (#270)")
+/// The record of what the user chose to keep and what was reported.
+@Suite("Existing installs — the notice record (#270)")
 struct Issue270ObsidianVisibilitySidecarTests {
 
     private let suiteName = "issue270-visibility-\(UUID().uuidString)"
@@ -212,23 +267,24 @@ struct Issue270ObsidianVisibilitySidecarTests {
         body(defaults)
     }
 
-    @Test("Keeping is recorded once, survives a second tap, and a removed vault is forgotten")
-    func acknowledgeAndClear() throws {
+    @Test("A record is written once, survives a second write, and a removed vault is forgotten")
+    func recordAndForget() throws {
         try withDefaults { defaults in
-            #expect(ObsidianVisibility.loadAcknowledged(defaults: defaults).isEmpty)
+            #expect(ObsidianVisibility.loadRecord(defaults: defaults).isEmpty)
 
-            ObsidianVisibility.acknowledge(["folder:notes", "root:/some/folder"], defaults: defaults)
-            ObsidianVisibility.acknowledge(["folder:notes"], defaults: defaults)
-            #expect(ObsidianVisibility.loadAcknowledged(defaults: defaults) == ["folder:notes", "root:/some/folder"])
+            ObsidianVisibility.record(["folder:notes", "seen:notes", "root:/some/folder"], defaults: defaults)
+            ObsidianVisibility.record(["folder:notes"], defaults: defaults)
+            ObsidianVisibility.record([], defaults: defaults)
+            #expect(ObsidianVisibility.loadRecord(defaults: defaults) == ["folder:notes", "seen:notes", "root:/some/folder"])
 
             // Removing another vault leaves the record alone.
-            ObsidianVisibility.clearAcknowledged(folderID: "work", defaults: defaults)
-            #expect(ObsidianVisibility.loadAcknowledged(defaults: defaults) == ["folder:notes", "root:/some/folder"])
+            ObsidianVisibility.forget(folderID: "work", defaults: defaults)
+            #expect(ObsidianVisibility.loadRecord(defaults: defaults) == ["folder:notes", "seen:notes", "root:/some/folder"])
 
-            // Removing the vault forgets its record and nothing else: the
-            // selected folder was kept on its own.
-            ObsidianVisibility.clearAcknowledged(folderID: "notes", defaults: defaults)
-            #expect(ObsidianVisibility.loadAcknowledged(defaults: defaults) == ["root:/some/folder"])
+            // Removing the vault forgets what was kept and reported for it,
+            // and nothing else: the selected folder was kept on its own.
+            ObsidianVisibility.forget(folderID: "notes", defaults: defaults)
+            #expect(ObsidianVisibility.loadRecord(defaults: defaults) == ["root:/some/folder"])
         }
     }
 }
@@ -238,6 +294,7 @@ struct Issue270ObsidianVisibilitySidecarTests {
 struct Issue270ObsidianVisibilityLiveTests {
 
     private let sandbox: URL
+    private let suiteName = "issue270-visibility-live-\(UUID().uuidString)"
 
     init() throws {
         sandbox = FileManager.default.temporaryDirectory
@@ -251,21 +308,15 @@ struct Issue270ObsidianVisibilityLiveTests {
         return url
     }
 
-    private func liveFindings(root: URL, folders: [(id: String, path: String)]) -> [ObsidianVisibility.Finding] {
-        ObsidianVisibility.findings(
-            selectedRoot: root.path,
-            folders: folders,
-            env: ObsidianVisibility.Environment(
-                canonicalize: FolderPathReconciler.canonical,
-                content: ObsidianVisibility.liveContent,
-                acknowledged: { [] }
-            )
-        )
-    }
-
-    @Test("The reported install: a vault collapsed into Obsidian's folder — and the notice ends once it has a folder of its own")
+    @Test("The reported install: a vault collapsed into Obsidian's folder stays reported until it has a folder of its own")
     func collapsedVaultOnDisk() throws {
         defer { try? FileManager.default.removeItem(at: sandbox) }
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        func live(_ folders: [(id: String, path: String)], root: URL) -> [ObsidianVisibility.Finding] {
+            ObsidianVisibility.findingsLive(selectedRoot: root.path, folders: folders, defaults: defaults)
+        }
+
         let root = try makeDirectory("Containers/Data/Application/\(UUID().uuidString)/Documents")
         // What the old shortcut left behind: the vault's configuration, a
         // note and a plain subfolder directly in Obsidian's folder.
@@ -278,27 +329,46 @@ struct Issue270ObsidianVisibilityLiveTests {
         try Data("# note".utf8).write(to: root.appendingPathComponent("Inbox.md"))
 
         #expect(ObsidianVisibility.liveContent(root.path) == .init(hasOwnConfig: true, hasVaultSubfolders: false))
-        let collapsed = liveFindings(root: root, folders: [(id: "notes", path: root.path)])
+        let collapsed = live([(id: "notes", path: root.path)], root: root)
         #expect(collapsed.map(\.kind) == [.vaultInSelectedFolderItself])
         #expect(collapsed.first?.folderIDs == ["notes"])
 
+        // Missing the vault, the user opens "Daily" in Obsidian, which
+        // writes a .obsidian into it. By content the folder now reads as a
+        // container — and nothing was fixed. The notice stays.
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("Daily/.obsidian", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        #expect(ObsidianVisibility.liveContent(root.path)?.hasVaultSubfolders == true)
+        #expect(live([(id: "notes", path: root.path)], root: root).map(\.folderIDs) == [["notes"]])
+
         // The way out, done by the user: remove, accept again — the vault
         // now syncs in a folder of its own, the leftovers still lie around.
+        ObsidianVisibility.forget(folderID: "notes", defaults: defaults)
         let ownFolder = root.appendingPathComponent("Notes", isDirectory: true)
         try FileManager.default.createDirectory(at: ownFolder, withIntermediateDirectories: true)
-        #expect(liveFindings(root: root, folders: [(id: "notes", path: ownFolder.path)]).isEmpty)
+        #expect(live([(id: "notes", path: ownFolder.path)], root: root).isEmpty)
     }
 
     @Test("Obsidian's folder with the vaults inside is read as a container; a folder that is gone is not read at all")
     func containerAndMissingFolderOnDisk() throws {
         defer { try? FileManager.default.removeItem(at: sandbox) }
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
         let relative = "Containers/Data/Application/\(UUID().uuidString)/Documents"
         let root = try makeDirectory(relative)
         _ = try makeDirectory(relative + "/.obsidian")
         _ = try makeDirectory(relative + "/Personal/.obsidian")
 
         #expect(ObsidianVisibility.liveContent(root.path) == .init(hasOwnConfig: true, hasVaultSubfolders: true))
-        #expect(liveFindings(root: root, folders: [(id: "all", path: root.path)]).isEmpty)
+        #expect(ObsidianVisibility.findingsLive(
+            selectedRoot: root.path,
+            folders: [(id: "all", path: root.path)],
+            defaults: defaults
+        ).isEmpty)
+        // Nothing was reported, so nothing is remembered.
+        #expect(ObsidianVisibility.loadRecord(defaults: defaults).isEmpty)
 
         #expect(ObsidianVisibility.liveContent(root.path + "-gone") == nil)
     }
@@ -307,6 +377,15 @@ struct Issue270ObsidianVisibilityLiveTests {
 /// How the findings reach the user: the issue cards and the status tier.
 @Suite("Existing installs — the notice and its tier (#270)")
 struct Issue270ObsidianVisibilityIssueTests {
+
+    /// The steps must not lean on a status that proves less than it seems to,
+    /// and must not ask for the earlier copy to be deleted: it may hold the
+    /// only version of a note written on the iPhone.
+    private func expectSafeSteps(_ issue: SyncthingManager.SyncIssueItem) {
+        let text = (issue.message + " " + issue.remediation).lowercased()
+        #expect(!text.contains("up to date"))
+        #expect(!text.contains("delete"))
+    }
 
     @Test("A vault in the selected folder itself becomes a warning that names it and the way out")
     func vaultInSelectedFolderItselfIssue() throws {
@@ -323,39 +402,51 @@ struct Issue270ObsidianVisibilityIssueTests {
         #expect(issue.message.contains("My Notes"))
         // Nothing is moved for the user: the steps are theirs, in order.
         #expect(issue.remediation.contains("moves nothing on its own"))
-        let remove = try #require(issue.remediation.range(of: "remove it on this iPhone"))
+        let check = try #require(issue.remediation.range(of: "another device has everything you changed"))
+        let remove = try #require(issue.remediation.range(of: "remove the vault here"))
         let accept = try #require(issue.remediation.range(of: "Accept it again under Pending Shares"))
+        #expect(check.upperBound <= remove.lowerBound)
         #expect(remove.upperBound <= accept.lowerBound)
+        expectSafeSteps(issue)
     }
 
-    @Test("A selected folder outside Obsidian becomes a warning — with the vaults that sync there, and without any")
-    func selectedFolderOutsideObsidianIssue() throws {
-        let withVaults = try #require(SyncthingManager.obsidianVisibilityIssues(
-            findings: [.init(kind: .selectedFolderOutsideAppFolder, folderIDs: ["a", "b"], tokens: ["root:/x"])],
+    @Test("A selected folder that is not Obsidian's own, with vaults syncing there: remove first, the folder comes second")
+    func selectedFolderWithVaultsIssue() throws {
+        let issue = try #require(SyncthingManager.obsidianVisibilityIssues(
+            findings: [.init(kind: .selectedFolderNotAnAppFolder, folderIDs: ["a", "b"], tokens: ["root:/x"])],
             labels: ["a": "Notes"]
         ).first)
-        #expect(withVaults.kind == .selectedFolderOutsideObsidian)
-        #expect(withVaults.severity == .warning)
-        #expect(withVaults.count == 2)
+        #expect(issue.kind == .selectedFolderNotObsidiansOwn)
+        #expect(issue.severity == .warning)
+        // The view offers the folder picker only at count 0.
+        #expect(issue.count == 2)
         // A vault without a label is named by its ID.
-        #expect(withVaults.message.contains("Notes, b"))
-        // Remove first: with nothing syncing, the folder picked next is held
-        // against the first-selection rule (decision 059).
-        let remove = try #require(withVaults.remediation.range(of: "remove them on this iPhone"))
-        let select = try #require(withVaults.remediation.range(of: "Select Obsidian's Folder"))
-        let accept = try #require(withVaults.remediation.range(of: "Accept the shares again"))
+        #expect(issue.message.contains("Notes, b"))
+        let remove = try #require(issue.remediation.range(of: "remove the vaults here"))
+        let select = try #require(issue.remediation.range(of: "Select Obsidian's Folder"))
+        let accept = try #require(issue.remediation.range(of: "Accept the shares again"))
         #expect(remove.upperBound <= select.lowerBound)
         #expect(select.upperBound <= accept.lowerBound)
+        expectSafeSteps(issue)
+    }
 
+    @Test("A selected folder that is not Obsidian's own, with nothing syncing there: the one step is selecting Obsidian's folder")
+    func selectedFolderWithoutVaultsIssue() throws {
+        let withVaults = try #require(SyncthingManager.obsidianVisibilityIssues(
+            findings: [.init(kind: .selectedFolderNotAnAppFolder, folderIDs: ["a"], tokens: ["root:/x"])],
+            labels: [:]
+        ).first)
         let empty = try #require(SyncthingManager.obsidianVisibilityIssues(
-            findings: [.init(kind: .selectedFolderOutsideAppFolder, folderIDs: [], tokens: ["root:/x"])],
+            findings: [.init(kind: .selectedFolderNotAnAppFolder, folderIDs: [], tokens: ["root:/x"])],
             labels: [:]
         ).first)
         #expect(empty.count == 0)
         #expect(empty.folderID == nil)
         #expect(empty.remediation.contains("Select Obsidian's Folder"))
+        #expect(empty.remediation.contains("without opening one of your vaults"))
         #expect(!empty.remediation.contains("remove"))
         #expect(empty.id != withVaults.id)
+        expectSafeSteps(empty)
     }
 
     @Test("No finding, no notice")
@@ -366,7 +457,7 @@ struct Issue270ObsidianVisibilityIssueTests {
     @Test("The notice holds the header at Action Needed and the widget at its warning tier, across a background sync")
     func noticeReachesHeaderAndWidget() {
         let issues = SyncthingManager.obsidianVisibilityIssues(
-            findings: [.init(kind: .selectedFolderOutsideAppFolder, folderIDs: ["a"], tokens: ["root:/x"])],
+            findings: [.init(kind: .selectedFolderNotAnAppFolder, folderIDs: ["a"], tokens: ["root:/x"])],
             labels: [:]
         )
         let header = SyncHeaderModel.derive(.init(
@@ -398,7 +489,7 @@ struct Issue270ObsidianVisibilityIssueListTests {
 
     private func noticeKinds(_ manager: SyncthingManager) -> [SyncthingManager.SyncIssueItem.Kind] {
         manager.unresolvedIssues.map(\.kind).filter {
-            $0 == .vaultInSelectedFolderItself || $0 == .selectedFolderOutsideObsidian
+            $0 == .vaultInSelectedFolderItself || $0 == .selectedFolderNotObsidiansOwn
         }
     }
 
@@ -418,18 +509,149 @@ struct Issue270ObsidianVisibilityIssueListTests {
         // The folder list alone raises nothing: the findings are read on
         // settled paths, never derived on the fly from an unsettled list.
         #expect(noticeKinds(manager).isEmpty)
+        #expect(!manager.selectedFolderHidesVaultsFromObsidian)
 
         manager._testSetObsidianVisibilityFindings([
             .init(kind: .vaultInSelectedFolderItself, folderIDs: ["notes"], tokens: ["folder:notes"]),
-            .init(kind: .selectedFolderOutsideAppFolder, folderIDs: [], tokens: ["root:/x"]),
         ])
-        #expect(noticeKinds(manager) == [.vaultInSelectedFolderItself, .selectedFolderOutsideObsidian])
+        #expect(noticeKinds(manager) == [.vaultInSelectedFolderItself])
         let issue = try #require(manager.unresolvedIssues.first { $0.kind == .vaultInSelectedFolderItself })
         #expect(issue.message.contains("My Notes"))
         #expect(issue.severity == .warning)
+        // The selected folder is Obsidian's own: shares are accepted as ever.
+        #expect(!manager.selectedFolderHidesVaultsFromObsidian)
+
+        manager._testSetObsidianVisibilityFindings([
+            .init(kind: .selectedFolderNotAnAppFolder, folderIDs: [], tokens: ["root:/x"]),
+        ])
+        #expect(noticeKinds(manager) == [.selectedFolderNotObsidiansOwn])
+        #expect(manager.selectedFolderHidesVaultsFromObsidian)
 
         manager._testSetObsidianVisibilityFindings([])
         #expect(noticeKinds(manager).isEmpty)
+        #expect(!manager.selectedFolderHidesVaultsFromObsidian)
+    }
+}
+
+/// #270: no share goes into a folder Obsidian lists no vault from unless the
+/// user taps for it — accepted automatically, it would be the report itself.
+@MainActor
+@Suite("Automatic accepts wait under a folder Obsidian cannot show (#270)")
+struct Issue270AutomaticAcceptParkingTests {
+
+    private static let offer = SyncthingManager.PendingFolderInfo(id: "notes", label: "Notes", offeredBy: [])
+
+    @MainActor
+    private final class Recorder {
+        var accepts: [String] = []
+    }
+
+    private static func coordinator(hides: Bool, recorder: Recorder) -> ShareAcceptCoordinator {
+        ShareAcceptCoordinator(environment: ShareAcceptCoordinator.Environment(
+            settled: { true },
+            vaultAccessible: { true },
+            pendingFolders: { [offer] },
+            autoAcceptEligible: { [offer] },
+            accept: { folder, _ in
+                recorder.accepts.append(folder.id)
+                return .accepted
+            },
+            acceptIntoTarget: { _, _ in nil },
+            unignorePendingFolder: { _ in },
+            ignorePendingFolder: { _ in },
+            selectedFolderHidesVaults: { hides }
+        ))
+    }
+
+    @Test("The automatic pass parks the share with what to do, without an alert — and the user's own tap still accepts it")
+    func parkedUntilTheUserDecides() throws {
+        let recorder = Recorder()
+        let c = Self.coordinator(hides: true, recorder: recorder)
+
+        c.runAutomaticPass()
+        c.runAutomaticPass()
+        #expect(recorder.accepts.isEmpty)
+        let parked = try #require(c.pendingShareFailures["notes"])
+        #expect(parked.message.contains("not Obsidian's own folder"))
+        #expect(parked.remediation.contains("Review and Accept"))
+        // A decision waiting for the user, not an error.
+        #expect(c.alertMessage == nil)
+
+        c.retry(Self.offer)
+        #expect(recorder.accepts == ["notes"])
+        #expect(c.pendingShareFailures["notes"] == nil)
+    }
+
+    @Test("Under Obsidian's own folder, and under a folder the user keeps, shares are accepted as ever")
+    func acceptedWhereObsidianShowsIt() {
+        let recorder = Recorder()
+        let c = Self.coordinator(hides: false, recorder: recorder)
+        c.runAutomaticPass()
+        #expect(recorder.accepts == ["notes"])
+        #expect(c.pendingShareFailures.isEmpty)
+    }
+}
+
+/// #270: a manual target is a folder name. The consent it stands for was
+/// given for one directory, under the folder that was selected then.
+@Suite("A manual target is consent only under the folder it was chosen in (#270)")
+struct Issue270ManualTargetConsentTests {
+
+    private func resolve(
+        consented: Bool,
+        mergeConfirmed: Bool = false,
+        occupied: Set<String> = [],
+        listing: [String]?
+    ) -> ShareTargetDecision {
+        VaultManager.resolveAcceptPath(
+            manualTarget: "Personal",
+            manualTargetConsented: consented,
+            rawRoot: "/Obsidian",
+            rootIsVault: false,
+            folderName: "Notes",
+            occupiedCanonLower: occupied,
+            mergeConfirmed: mergeConfirmed,
+            canonicalize: { $0 },
+            listingFor: { $0 == "/Obsidian/Personal" ? listing : nil }
+        )
+    }
+
+    @Test("Chosen under this selected folder: the share returns to its place, earlier notes and all")
+    func consentedTargetKeepsItsPlace() {
+        #expect(resolve(consented: true, listing: ["note.md", ".stfolder"]) == .path("/Obsidian/Personal"))
+    }
+
+    @Test("Chosen under another selected folder: a directory of that name that holds files needs the user's confirmation")
+    func unconsentedTargetWithFilesAsks() {
+        // After the selected folder changed, "Personal" is another
+        // directory — here someone else's vault.
+        #expect(resolve(consented: false, listing: ["note.md"])
+            == .requiresMergeConfirmation(path: "/Obsidian/Personal", targetName: "Personal"))
+        // Confirmed by the user: accepted, like any merge they decided.
+        #expect(resolve(consented: false, mergeConfirmed: true, listing: ["note.md"]) == .path("/Obsidian/Personal"))
+    }
+
+    @Test("Chosen under another selected folder: an empty or missing directory of that name is taken without asking")
+    func unconsentedEmptyTargetIsTaken() {
+        #expect(resolve(consented: false, listing: nil) == .path("/Obsidian/Personal"))
+        #expect(resolve(consented: false, listing: []) == .path("/Obsidian/Personal"))
+        #expect(resolve(consented: false, listing: [".obsidian"]) == .path("/Obsidian/Personal"))
+    }
+
+    @Test("An overlap is refused before any question of consent")
+    func overlapStillRefuses() {
+        for consented in [false, true] {
+            guard case .refused = resolve(consented: consented, occupied: ["/obsidian/personal"], listing: ["note.md"]) else {
+                Issue.record("an overlapping manual target must be refused")
+                continue
+            }
+        }
+    }
+
+    @Test("The selected folder is identified the way paths are compared everywhere else")
+    func rootKeyIsCanonicalAndLowercased() {
+        #expect(ManualShareTargetStore.rootKey("/tmp/Some/Folder/") == ManualShareTargetStore.rootKey("/tmp/some/folder"))
+        #expect(ManualShareTargetStore.rootKey("/tmp/a") != ManualShareTargetStore.rootKey("/tmp/b"))
     }
 }
 
@@ -439,14 +661,12 @@ struct Issue270PendingShareDestinationTests {
 
     private static let root = "/private/var/mobile/Containers/Data/Application/0A1B2C3D-0000-4000-8000-000000000000/Documents"
 
-    @Test("A share headed for its own folder names that folder")
+    @Test("A share headed for its own folder in Obsidian's folder names that folder")
     func ownFolder() {
-        for place in [VaultManager.SelectedFolderPlace.appFolder, .insideAppFolder] {
-            let line = PendingShareDestination.line(decision: .path(Self.root + "/Recipes"), rootPlace: place)
-            #expect(line?.isCaution == false)
-            #expect(line?.text.contains("Recipes") == true)
-            #expect(line?.text.contains("your Obsidian folder") == true)
-        }
+        let line = PendingShareDestination.line(decision: .path(Self.root + "/Recipes"), rootPlace: .appFolder)
+        #expect(line?.isCaution == false)
+        #expect(line?.text.contains("Recipes") == true)
+        #expect(line?.text.contains("your Obsidian folder") == true)
     }
 
     @Test("A name clash shows the folder the share really gets")
@@ -455,12 +675,17 @@ struct Issue270PendingShareDestinationTests {
         #expect(line?.text.contains("Recipes (2)") == true)
     }
 
-    @Test("Under a selected folder outside Obsidian the line says that Obsidian cannot show the vault")
-    func outsideObsidian() {
-        let line = PendingShareDestination.line(decision: .path("/elsewhere/Obsidian/Recipes"), rootPlace: .elsewhere)
-        #expect(line?.isCaution == true)
-        #expect(line?.text.contains("Recipes") == true)
-        #expect(line?.text.contains("Obsidian cannot show") == true)
+    @Test("Under any selected folder that is not Obsidian's own, the line says that Obsidian will not list the vault")
+    func notObsidiansOwnFolder() {
+        // Outside every app's folder, and inside one: a share below a folder
+        // in Obsidian's folder arrives as a folder inside it, not as a vault.
+        for place in [VaultManager.SelectedFolderPlace.elsewhere, .insideAppFolder] {
+            let line = PendingShareDestination.line(decision: .path("/selected/Recipes"), rootPlace: place)
+            #expect(line?.isCaution == true)
+            #expect(line?.text.contains("Recipes") == true)
+            #expect(line?.text.contains("will not list it as a vault") == true)
+            #expect(line?.text.contains("your Obsidian folder") == false)
+        }
     }
 
     @Test("A folder that already holds files is announced before the tap")
@@ -472,6 +697,35 @@ struct Issue270PendingShareDestinationTests {
         #expect(line?.isCaution == true)
         #expect(line?.text.contains("Recipes") == true)
         #expect(line?.text.contains("asks you before") == true)
+    }
+
+    @Test("A folder that already holds files under a folder Obsidian cannot show keeps both warnings")
+    func existingFolderWhereObsidianCannotShowIt() {
+        for place in [VaultManager.SelectedFolderPlace.elsewhere, .insideAppFolder] {
+            let line = PendingShareDestination.line(
+                decision: .requiresMergeConfirmation(path: "/selected/Recipes", targetName: "Recipes"),
+                rootPlace: place,
+                rootHoldsEarlierCopy: true
+            )
+            #expect(line?.isCaution == true)
+            #expect(line?.text.contains("already holds files") == true)
+            #expect(line?.text.contains("will not list a vault") == true)
+        }
+    }
+
+    @Test("While the earlier copy still lies in Obsidian's folder, a target that holds files is most likely part of it: do not combine")
+    func existingFolderNextToTheEarlierCopy() {
+        // The vault "Notes" was collapsed into Obsidian's folder and has a
+        // top-level folder "Notes". Removed and accepted again, the share
+        // resolves to that subfolder.
+        let line = PendingShareDestination.line(
+            decision: .requiresMergeConfirmation(path: Self.root + "/Notes", targetName: "Notes"),
+            rootPlace: .appFolder,
+            rootHoldsEarlierCopy: true
+        )
+        #expect(line?.isCaution == true)
+        #expect(line?.text.contains("do not combine") == true)
+        #expect(line?.text.contains("Choose Vault…") == true)
     }
 
     @Test("No line while the folder is not connected or the accept would refuse")
