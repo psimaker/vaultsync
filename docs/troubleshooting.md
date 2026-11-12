@@ -177,6 +177,8 @@ you're subscribed but wake-ups never arrive; or per-device provisioning says
 
 Do not create a folder named "Obsidian" yourself. A vault synced into such a folder arrives in full, but Obsidian never shows it.
 
+These steps are for the first setup. If vaults already sync on this iPhone and VaultSync asks you to reconnect, select the folder they sync in again, whatever it is called — see [Bookmark Access Expired](#bookmark-access-expired). Another folder would cut those vaults off from their files.
+
 ---
 
 ## Vault Syncs but Never Appears in Obsidian
