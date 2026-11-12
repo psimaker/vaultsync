@@ -13,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	layoutpkg "github.com/psimaker/vaultsync/desktop/internal/layout"
 )
 
 // The background service: a launchd LaunchAgent on macOS, a systemd user unit
@@ -25,7 +27,7 @@ import (
 // LaunchAgent that starts the menu-bar app at login (decision 053).
 
 const (
-	launchdLabel = "eu.vaultsync.agent"
+	launchdLabel = layoutpkg.ServiceLabel
 	trayLabel    = "eu.vaultsync.tray"
 	systemdUnit  = "vaultsync.service"
 )
@@ -109,7 +111,7 @@ func (s service) waitRunning() bool {
 func (s service) unitPath() (string, error) {
 	switch s.goos {
 	case "darwin":
-		return filepath.Join(s.home, "Library", "LaunchAgents", launchdLabel+".plist"), nil
+		return layoutpkg.LaunchAgentPlist(s.home), nil
 	case "linux":
 		// Where the user manager looks, which is its XDG_CONFIG_HOME — not
 		// necessarily the one of the shell running setup.
