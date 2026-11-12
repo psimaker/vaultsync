@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -299,6 +300,11 @@ func (a *fakeAsker) AskCode(context.Context) (string, bool, error) {
 	a.record("code")
 	a.wait()
 	return a.code, a.cancel != "code", nil
+}
+
+func (a *fakeAsker) ChooseHub(_ context.Context, hubs []HubChoice) (string, bool, error) {
+	a.record(fmt.Sprintf("hubs:%d", len(hubs)))
+	return a.hub, a.cancel != "hub", nil
 }
 
 func (a *fakeAsker) AskHub(_ context.Context, refusal string) (string, bool, error) {

@@ -254,9 +254,10 @@ Open Log and Quit — and, from `desktop-v0.3.0` on, **Start VaultSync** (the
 same as `vaultsync start`; what that says shows in the menu). It offers no
 start when the service has recorded that it could not open its socket, or for
 about 15 seconds after a start from the menu. **Pair a Vault…** asks for the
-code, then which vault, then — for a folder on this computer that already
-holds files — the same consent `vaultsync pair` asks for, through the
-desktop's own dialogs (on Linux this needs `zenity` or, from
+code, then which Hub if several answered (from `desktop-v0.3.0` on from a
+list; before, by its address), then which vault, then — for a folder on this
+computer that already holds files — the same consent `vaultsync pair` asks
+for, through the desktop's own dialogs (on Linux this needs `zenity` or, from
 `desktop-v0.3.0` on, KDE's `kdialog`; without them the item says to use
 `vaultsync pair` in a terminal). A vault from your Hub goes into
 `~/Vaults/<name>`; to put it elsewhere, or to name this computer's vault

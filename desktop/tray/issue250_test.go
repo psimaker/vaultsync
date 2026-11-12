@@ -1,0 +1,244 @@
+package tray
+
+import (
+	"context"
+	"errors"
+	"reflect"
+	"strings"
+	"testing"
+)
+
+// #250: when several Hubs answer, the menu offers them by name and sends the
+// chosen one's address; beside an agent older than the list it asks for an
+// address, as before. Decision 056.
+
+var twoHubs = []HubChoice{{Name: "Home", Address: "192.168.1.20:8390"}, {Address: "192.168.1.21:8390"}}
+
+const severalWords = "2 Hubs answered (Home at 192.168.1.20:8390, 192.168.1.21:8390) — choose yours with --hub; a code is sent only to the Hub you choose. VaultSync sends a code only to the Hub you choose."
+
+// severalHubsAgent asks for a Hub until it gets one, with hubs in its answer.
+func severalHubsAgent(t *testing.T, hubs []HubChoice) *fakeAgent {
+	t.Helper()
+	agent := newFakeAgent(t)
+	agent.set(func(f *fakeAgent) {
+		inner := pairingScript(t, "TULIP-ANCHOR-42")
+		f.pair = func(req PairRequest) (PairResult, int) {
+			if req.Hub == "" {
+				return PairResult{Refusal: severalWords, Needs: "hub", Hubs: hubs}, 200
+			}
+			return inner(req)
+		}
+	})
+	return agent
+}
+
+func TestIssue250_TheMenuOffersTheHubsAndSendsTheChosenAddress(t *testing.T) {
+	agent := severalHubsAgent(t, twoHubs)
+	ask := &fakeAsker{code: "TULIP-ANCHOR-42", hub: "192.168.1.21:8390", choose: func(m Menu) (Choice, bool) { return Choice{Entry: m.Hub[0]}, true }}
+	line, err := Pair(context.Background(), NewClient(agent.socket), ask)
+	if err != nil || !strings.Contains(line, "is set up") {
+		t.Fatalf("%q %v", line, err)
+	}
+	if got := ask.sequence(); len(got) < 2 || got[1] != "hubs:2" {
+		t.Fatalf("asked: %v", got)
+	}
+	agent.set(func(f *fakeAgent) {
+		if f.pairs[0].Hub != "" || len(f.pairs) < 2 {
+			t.Fatalf("requests: %+v", f.pairs)
+		}
+		for _, r := range f.pairs[1:] {
+			if r.Hub != "192.168.1.21:8390" {
+				t.Fatalf("the Hub was not carried along: %+v", f.pairs)
+			}
+		}
+	})
+}
+
+// A cancel sends nothing more.
+func TestIssue250_NoHubChosenSendsNothing(t *testing.T) {
+	agent := severalHubsAgent(t, twoHubs)
+	ask := &fakeAsker{code: "TULIP-ANCHOR-42", cancel: "hub"}
+	if line, err := Pair(context.Background(), NewClient(agent.socket), ask); err != nil || line != "" {
+		t.Fatalf("%q %v", line, err)
+	}
+	agent.set(func(f *fakeAgent) {
+		if len(f.pairs) != 1 {
+			t.Fatalf("requests after the cancel: %+v", f.pairs)
+		}
+	})
+}
+
+// Beside an agent older than the list there is no list: the words and the
+// address prompt, as before.
+func TestIssue250_AnOlderAgentIsAskedForAnAddress(t *testing.T) {
+	agent := severalHubsAgent(t, nil)
+	ask := &fakeAsker{code: "TULIP-ANCHOR-42", hub: "192.168.1.20", choose: func(m Menu) (Choice, bool) { return Choice{Entry: m.Hub[0]}, true }}
+	line, err := Pair(context.Background(), NewClient(agent.socket), ask)
+	if err != nil || !strings.Contains(line, "is set up") {
+		t.Fatalf("%q %v", line, err)
+	}
+	if got := ask.sequence(); len(got) < 2 || got[1] != "hub:"+severalWords {
+		t.Fatalf("asked: %v", got)
+	}
+	agent.set(func(f *fakeAgent) {
+		if f.pairs[len(f.pairs)-1].Hub != "192.168.1.20" {
+			t.Fatalf("requests: %+v", f.pairs)
+		}
+	})
+}
+
+// Beside an agent older than the list, the menu shows that agent's own sentence
+// above the address prompt, and it carries names as they came from the
+// network: desktop-v0.2.0 keeps U+202E and U+2029 in them. One device could
+// so make its own address the only readable text in the dialog that asks for
+// the Hub's address. What hides or reorders text is taken out before it is
+// shown; the sentence's own line breaks stay.
+func TestIssue250_AnOlderAgentsWordsAreShownWithoutWhatHides(t *testing.T) {
+	const words = "2 Hubs answered (Home at 192.168.1.66:8390)\u2029\u202e, 192.168.1.20:8390) \u2014 choose yours with --hub.\nA code is sent only to the Hub you choose.\u0085\u009b\u200f"
+	agent := newFakeAgent(t)
+	agent.set(func(f *fakeAgent) {
+		f.pair = func(req PairRequest) (PairResult, int) {
+			return PairResult{Refusal: words, Needs: "hub"}, 200
+		}
+	})
+	ask := &fakeAsker{code: "TULIP-ANCHOR-42", cancel: "hub"}
+	if _, err := Pair(context.Background(), NewClient(agent.socket), ask); err != nil {
+		t.Fatal(err)
+	}
+	want := "hub:2 Hubs answered (Home at 192.168.1.66:8390), 192.168.1.20:8390) \u2014 choose yours with --hub.\nA code is sent only to the Hub you choose."
+	if got := ask.sequence(); len(got) < 2 || got[1] != want {
+		t.Fatalf("asked: %q", got)
+	}
+}
+
+// The address first, the one field an answer cannot write; a name is only a
+// hint from the network, and what it can do to a row is taken out of it. A
+// left-to-right mark follows the address: without it one Hebrew or Arabic
+// letter in a name laid the whole row out from the right, on zenity and on a
+// Mac, the name's words first and the address last.
+func TestIssue250_TheRowsNameEachHub(t *testing.T) {
+	got := hubItems([]HubChoice{
+		{Name: "Home", Address: "192.168.1.20:8390"},
+		{Address: "192.168.1.21:8390"},
+		{Name: "Home", Address: "[fe80::1]:8390"},
+		{Name: "No port", Address: "192.168.1.22"},
+		{Name: "Home Hub — 192.168.1.20\u2028\u2028\u2028.", Address: "192.168.1.67:8390"},
+		{Name: "\u202eHub evil\u200b", Address: "192.168.1.68:8390"},
+		{Name: " \u2029\u202e ", Address: "192.168.1.69:8390"},
+		{Name: `R&D <b>x</b> a_b`, Address: "192.168.1.70:8390"},
+		{Name: "Attic\u2029Hub", Address: "192.168.1.71:8390"},
+		// A C1 control, which the Hub's own cleaning of a name leaves in.
+		{Name: "C1\u0085NEL\u009bCSI", Address: "192.168.1.72:8390"},
+		// Right-to-left letters stay, and so does the mark before them: a name
+		// cannot bring a left-to-right mark, an override or an isolate of its own.
+		{Name: "\u05beHome — \u05be192.168.1.20", Address: "192.168.1.66:8390"},
+		{Name: "\u200f\u2067\u05d1\u2069\u200e", Address: "192.168.1.73:8390"},
+	})
+	const mark = " \u200e— "
+	want := []string{
+		"192.168.1.20" + mark + "Home",
+		"192.168.1.21" + mark + "your Hub",
+		"fe80::1" + mark + "Home",
+		"192.168.1.22" + mark + "No port",
+		"192.168.1.67" + mark + "Home Hub — 192.168.1.20.",
+		"192.168.1.68" + mark + "Hub evil",
+		"192.168.1.69" + mark + "your Hub",
+		"192.168.1.70" + mark + "R&D <b>x</b> a_b",
+		"192.168.1.71" + mark + "AtticHub",
+		"192.168.1.72" + mark + "C1NELCSI",
+		"192.168.1.66" + mark + "\u05beHome — \u05be192.168.1.20",
+		"192.168.1.73" + mark + "\u05d1",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("%q", got)
+	}
+	// The mark is the first character of a row that says a direction. Before
+	// it stand the address and one space, which is what a person may type to
+	// find the row: without the space 192.168.1.2 also finds 192.168.1.20.
+	for _, row := range got {
+		typed, rest, found := strings.Cut(row, "\u200e")
+		if !found || strings.Contains(rest, "\u200e") || !strings.HasSuffix(typed, " ") || strings.ContainsFunc(typed, func(r rune) bool { return r > 0x7f }) {
+			t.Errorf("the row %q", row)
+		}
+	}
+	// A wide or a no-break space is no line separator and stays in a name.
+	if got := hubItems([]HubChoice{{Name: "Home\u00a0Hub\u3000x", Address: "192.168.1.74:8390"}}); got[0] != "192.168.1.74"+mark+"Home\u00a0Hub\u3000x" {
+		t.Errorf("spaces in a name: %q", got)
+	}
+}
+
+// Each program: the list, the row read back by its tag or number (two Hubs may
+// have one name), the row that chooses nothing, and a cancel.
+func TestIssue250_EveryProgramOffersTheHubs(t *testing.T) {
+	ctx := context.Background()
+	sameName := []HubChoice{{Name: "Home", Address: "192.168.1.20:8390"}, {Name: "Home", Address: "192.168.1.21:8390"}}
+	items := hubItems(sameName)
+	linux := map[string]func(*recorder) Asker{
+		"zenity":  func(r *recorder) Asker { return &zenityAsker{run: r.run} },
+		"kdialog": func(r *recorder) Asker { return &kdialogAsker{run: r.run} },
+	}
+	// zenity takes a row's words first and its tag after them, kdialog the tag
+	// first (decision 055).
+	rows := map[string][]string{
+		"zenity":  {noHubRow, noChoiceTag, items[0], linuxTag(0), items[1], linuxTag(1)},
+		"kdialog": {noChoiceTag, noHubRow, linuxTag(0), items[0], linuxTag(1), items[1]},
+	}
+	for name, a := range linux {
+		r := &recorder{stdout: linuxTag(1) + "\n"}
+		addr, ok, err := a(r).ChooseHub(ctx, sameName)
+		if err != nil || !ok || addr != "192.168.1.21:8390" {
+			t.Fatalf("%s: %q %v %v", name, addr, ok, err)
+		}
+		if got := r.args[len(r.args)-6:]; !reflect.DeepEqual(got, rows[name]) {
+			t.Fatalf("%s rows: %q", name, got)
+		}
+		if !strings.Contains(strings.Join(r.args, "\x00"), "Which Hub printed your code?") {
+			t.Fatalf("%s prompt: %q", name, r.args)
+		}
+		// Return alone, then a choice: asked again, and only the chosen hears.
+		r = &recorder{stdouts: []string{noChoiceTag + "\n", linuxTag(0) + "\n"}}
+		addr, ok, err = a(r).ChooseHub(ctx, sameName)
+		if err != nil || !ok || addr != "192.168.1.20:8390" || r.calls != 2 {
+			t.Fatalf("%s, Return first: %q %v %v, %d times", name, addr, ok, err, r.calls)
+		}
+		// Never a choice: none, not the first, and a message says so.
+		r = &recorder{stdout: noChoiceTag + "\n"}
+		if addr, ok, err := a(r).ChooseHub(ctx, sameName); addr != "" || ok || err != nil {
+			t.Fatalf("%s, never chosen: %q %v %v", name, addr, ok, err)
+		}
+		if !strings.Contains(strings.Join(r.args, " "), "No Hub was chosen") {
+			t.Fatalf("%s, after the last showing: %q", name, r.args)
+		}
+		r = &recorder{status: 1}
+		if addr, ok, err := a(r).ChooseHub(ctx, sameName); addr != "" || ok || err != nil {
+			t.Fatalf("%s, Cancel: %q %v %v", name, addr, ok, err)
+		}
+		r = &recorder{stdout: linuxTag(8) + "\n"}
+		if _, _, err := a(r).ChooseHub(ctx, sameName); err == nil {
+			t.Errorf("%s: a row not in the list", name)
+		}
+		// A dialog that cannot be shown is a failure, not a cancel.
+		r = &recorder{err: errors.New("no display")}
+		if _, _, err := a(r).ChooseHub(ctx, sameName); err == nil {
+			t.Errorf("%s: a failure", name)
+		}
+	}
+
+	// osascript: its list opens with nothing selected, and needs no such row.
+	r := &recorder{stdout: "2) " + items[1] + "\n"}
+	addr, ok, err := (&scriptAsker{run: r.run}).ChooseHub(ctx, sameName)
+	if err != nil || !ok || addr != "192.168.1.21:8390" {
+		t.Fatalf("osascript: %q %v %v", addr, ok, err)
+	}
+	if !strings.Contains(r.stdin, "choose from list "+appleScriptList([]string{"1) " + items[0], "2) " + items[1]})) || !strings.Contains(r.stdin, appleScriptString(hubListPrompt)) {
+		t.Fatalf("osascript script: %s", r.stdin)
+	}
+	r = &recorder{stderr: "execution error: User canceled. (-128)", status: 1}
+	if addr, ok, err := (&scriptAsker{run: r.run}).ChooseHub(ctx, sameName); addr != "" || ok || err != nil {
+		t.Fatalf("osascript cancel: %q %v %v", addr, ok, err)
+	}
+	r = &recorder{stdout: "9) Elsewhere\n"}
+	if _, _, err := (&scriptAsker{run: r.run}).ChooseHub(ctx, sameName); err == nil {
+		t.Error("osascript: a row not in the list")
+	}
+}

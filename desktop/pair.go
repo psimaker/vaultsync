@@ -17,6 +17,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/psimaker/vaultsync/desktop/internal/control"
 	"github.com/psimaker/vaultsync/hub/join"
 	"github.com/psimaker/vaultsync/hub/pairing"
 	"github.com/psimaker/vaultsync/hub/syncthing"
@@ -61,6 +62,9 @@ type refusal struct {
 	// folder is the identity of the folder the consent is about, for the
 	// caller to send back with yes (folderToken).
 	folder string
+	// hubs, when needs is hub, are the Hubs that answered, for a caller that
+	// offers them by name.
+	hubs []control.HubChoice
 }
 
 func (r *refusal) Error() string { return r.msg }
@@ -348,7 +352,11 @@ func (s *pairSession) findHub(ctx context.Context) error {
 	hub, err := join.PickHub(hubs, choose)
 	var several *join.SeveralHubsError
 	if errors.As(err, &several) {
-		return refuseNeeding("hub", "%s. VaultSync sends a code only to the Hub you choose.", several.Error())
+		r := &refusal{msg: several.Error() + ". VaultSync sends a code only to the Hub you choose.", needs: "hub"}
+		for _, h := range several.Hubs {
+			r.hubs = append(r.hubs, control.HubChoice{Name: h.Name, Address: h.Address})
+		}
+		return r
 	}
 	if err != nil {
 		return err

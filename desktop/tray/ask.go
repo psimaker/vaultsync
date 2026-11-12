@@ -3,8 +3,10 @@ package tray
 import (
 	"context"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/psimaker/vaultsync/desktop/internal/layout"
 )
@@ -44,11 +46,14 @@ func NewAsker(goos, home string, lookPath func(string) (string, error)) Asker {
 const (
 	codePrompt    = "Enter the code your Hub printed (like TULIP-ANCHOR-42):"
 	hubPrompt     = "Which Hub printed your code? Enter its address (like 192.168.1.20):"
+	hubListPrompt = "Which Hub printed your code? VaultSync sends it only to the Hub you choose."
 	consentButton = "Start syncing"
-	// noVaultRow comes first in a list on Linux: zenity 4 and kdialog open a
-	// list with its first row selected, so Return alone would choose that
-	// vault. Here it chooses nothing, and the list is asked again.
+	// noVaultRow and noHubRow come first in a list on Linux: zenity 4 and
+	// kdialog open a list with its first row selected, so Return alone would
+	// choose that vault, or send the code to whichever Hub answered first
+	// (decision 045). Here it chooses nothing, and the list is asked again.
 	noVaultRow = "Choose a vault below"
+	noHubRow   = "Choose a Hub below"
 )
 
 // menuPrompt is the text above the list of vaults.
@@ -126,6 +131,77 @@ func chooseVault(ctx context.Context, a rowChooser, home string, m Menu) (Choice
 		return Choice{}, false, err
 	}
 	return choices[i], true, nil
+}
+
+// hides reports a character that can hide or reorder the text around it: a
+// control character, a format character (U+202E reverses what follows) or a
+// line or paragraph separator (U+2028 breaks the line). A space is none of
+// these.
+func hides(r rune) bool {
+	return unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp)
+}
+
+// shownWords is an agent's sentence for a dialog that asks for an answer,
+// without what hides; its own line breaks stay. An agent older than this app
+// puts names into it as they came from the network (desktop-v0.2.0 keeps
+// U+202E and U+2029 in a name), and one device could so make its own address
+// the only readable text above the prompt for the Hub's address.
+func shownWords(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r != '\n' && hides(r) {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// hubRowName is a Hub's name for a row. It comes from whoever answered the
+// search. What hides is dropped from it: it could reverse the address beside
+// it, push it out of view or take back the direction hubItems gives the row.
+// The joiners some scripts and emoji need (U+200C, U+200D) are format
+// characters and go with them; a name is a hint, and the row is found by its
+// address.
+func hubRowName(name string) string {
+	clean := strings.Map(func(r rune) rune {
+		if hides(r) {
+			return -1
+		}
+		return r
+	}, name)
+	if strings.TrimSpace(clean) == "" {
+		return "your Hub"
+	}
+	return clean
+}
+
+// leftToRight makes a row read from the left whatever the name holds: an IPv4
+// address has no letter to say so, and one Hebrew or Arabic letter in the name
+// would otherwise lay the whole row out from the right, the name's words first
+// and the address last. It follows the address and the space after it, so a
+// row still begins with what a person may type to find it: the address, and
+// the space that tells 192.168.1.2 from 192.168.1.20.
+const leftToRight = "\u200e"
+
+// hubItems lists the Hubs. The address comes first: it is the one field an
+// answer cannot write, and a long name would otherwise push it out of the row.
+func hubItems(hubs []HubChoice) []string {
+	items := make([]string, len(hubs))
+	for i, h := range hubs {
+		host := h.Address
+		if hostOnly, _, err := net.SplitHostPort(host); err == nil {
+			host = hostOnly
+		}
+		items[i] = host + " " + leftToRight + "— " + hubRowName(h.Name)
+	}
+	return items
+}
+
+func chooseHub(ctx context.Context, a rowChooser, hubs []HubChoice) (string, bool, error) {
+	i, ok, err := chooseRow(ctx, a, "Hub", hubListPrompt, noHubRow, hubItems(hubs))
+	if err != nil || !ok {
+		return "", false, err
+	}
+	return hubs[i].Address, true, nil
 }
 
 // tagMark is what a row's tag on Linux is made of, a unit separator. A tag is
@@ -320,6 +396,10 @@ func (a *scriptAsker) ChooseVault(ctx context.Context, m Menu) (Choice, bool, er
 	return chooseVault(ctx, a, a.home, m)
 }
 
+func (a *scriptAsker) ChooseHub(ctx context.Context, hubs []HubChoice) (string, bool, error) {
+	return chooseHub(ctx, a, hubs)
+}
+
 // showRows: AppleScript's list opens with nothing selected and takes no
 // Continue without a row, so it has no noRow. A row is read back by its number,
 // since two rows may read alike.
@@ -396,6 +476,10 @@ func (a *zenityAsker) AskHub(ctx context.Context, refusal string) (string, bool,
 
 func (a *zenityAsker) ChooseVault(ctx context.Context, m Menu) (Choice, bool, error) {
 	return chooseVault(ctx, a, a.home, m)
+}
+
+func (a *zenityAsker) ChooseHub(ctx context.Context, hubs []HubChoice) (string, bool, error) {
+	return chooseHub(ctx, a, hubs)
 }
 
 // zenityWidth is the width of zenity's windows: a line of lineWidth characters
@@ -504,6 +588,10 @@ func (a *kdialogAsker) list(ctx context.Context, what, text string, rows ...stri
 
 func (a *kdialogAsker) ChooseVault(ctx context.Context, m Menu) (Choice, bool, error) {
 	return chooseVault(ctx, a, a.home, m)
+}
+
+func (a *kdialogAsker) ChooseHub(ctx context.Context, hubs []HubChoice) (string, bool, error) {
+	return chooseHub(ctx, a, hubs)
 }
 
 func (a *kdialogAsker) showRows(ctx context.Context, what, prompt, noRow string, items []string) (string, bool, error) {
