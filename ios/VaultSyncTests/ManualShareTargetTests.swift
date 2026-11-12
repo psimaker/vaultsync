@@ -255,6 +255,18 @@ struct ManualShareTargetTests {
         #expect(ManualShareTargetStore.consentRoot(forFolder: folder) == "/root-b")
     }
 
+    // MARK: - Auto-accept suppression for user-removed folders
+
+    @Test("#52: a share whose folder the user removed is not auto-accept eligible")
+    func userRemovedSharesAreSkipped() {
+        let pending = [
+            SyncthingManager.PendingFolderInfo(id: "keep", label: "Keep", offeredBy: []),
+            SyncthingManager.PendingFolderInfo(id: "removed", label: "Removed", offeredBy: []),
+        ]
+        let eligible = SyncthingManager.autoAcceptEligible(actionable: pending, userRemoved: ["removed"])
+        #expect(eligible.map(\.id) == ["keep"])
+    }
+
     @Test("Nothing is suppressed while the user has removed nothing")
     func noSuppressionByDefault() {
         let pending = [SyncthingManager.PendingFolderInfo(id: "a", label: "A", offeredBy: [])]
