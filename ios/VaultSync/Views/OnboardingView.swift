@@ -436,13 +436,6 @@ struct OnboardingView: View {
         .accessibilityElement(children: .combine)
     }
 
-    // MARK: - Error presentation
-
-    private func present(error: String, fallbackTitle: String) {
-        alertMessage = SyncUserError.from(rawMessage: error, fallbackTitle: fallbackTitle).userVisibleDescription
-        showAlert = true
-    }
-
     /// Post-add guidance (#95) — same hint as the main app's device flow.
     private func presentDeviceAddedHintIfNeeded() {
         guard showDeviceAddedHint else { return }
