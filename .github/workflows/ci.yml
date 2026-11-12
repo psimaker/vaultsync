@@ -322,7 +322,7 @@ jobs:
             -e GOCACHE=/tmp/go-cache \
             -e GOMODCACHE=/opt/vaultsync-m5-notify-mod \
             -e VAULTSYNC_M5_SYNCTHING_BIN=/opt/vaultsync-m5-syncthing \
-            golang:1.26@sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82 \
+            golang:1.26@sha256:957952ae74dc010608717144399a59a2c6e82ea03d63be1c7ff6577c5a135f93 \
             go test -tags diagnostics_m5_syncthing_e2e \
               -run '^TestDiagnostics(Upload|Download)ThroughTwoEphemeralSyncthingInstances$' \
               -count=1 -v
