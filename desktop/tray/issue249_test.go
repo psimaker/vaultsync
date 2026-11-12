@@ -119,6 +119,12 @@ func TestIssue249_ReturnInAListChoosesNoVaultAndAsksAgain(t *testing.T) {
 		if _, ok, err := a(r).ChooseVault(ctx, m); ok || err != nil || r.calls != 1 {
 			t.Errorf("%s, a cancel: %v %v, %d times", name, ok, err, r.calls)
 		}
+		// A row's words printed in place of its tag choose nothing, whatever
+		// number they begin with: the dialog failed.
+		r = &recorder{stdout: "2) Notes — on this computer\n"}
+		if _, ok, err := a(r).ChooseVault(ctx, m); ok || err == nil || r.calls != 1 {
+			t.Errorf("%s, words for a tag: %v %v, %d times", name, ok, err, r.calls)
+		}
 	}
 }
 

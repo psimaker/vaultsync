@@ -109,6 +109,9 @@ type rowChooser interface {
 	// and returns what the program printed for the row chosen; false when
 	// the person cancelled.
 	showRows(ctx context.Context, what, prompt, noRow string, items []string) (string, bool, error)
+	// rowOf finds which of n rows a line this program printed names, counted
+	// from 0.
+	rowOf(line string, n int) (int, bool)
 	Inform(ctx context.Context, text string) error
 }
 
@@ -149,20 +152,23 @@ const rowTries = 3
 // moves the selection to the first row that holds it.
 func rowTag(i int) string { return strconv.Itoa(i+1) + ")" }
 
-// chosen finds which of n rows a line names, counted from 0: by its marks on
-// Linux, by the number it begins with on a Mac.
-func chosen(line string, n int) (int, bool) {
-	i := -1
-	if marks := strings.Count(line, tagMark); marks > 0 {
-		if marks == len(line) {
-			i = marks - 2
-		}
-	} else if number, _, found := strings.Cut(line, ")"); found {
-		if v, err := strconv.Atoi(number); err == nil {
-			i = v - 1
-		}
+// numberedRow finds which of n rows a line names by the number it begins with,
+// counted from 0: a row on a Mac.
+func numberedRow(line string, n int) (int, bool) {
+	number, _, found := strings.Cut(line, ")")
+	i, err := strconv.Atoi(number)
+	if !found || err != nil || i < 1 || i > n {
+		return 0, false
 	}
-	if i < 0 || i >= n {
+	return i - 1, true
+}
+
+// taggedRow finds which of n rows a tag names, counted from 0: a row on Linux.
+// Marks and nothing else: a program that printed a row's words instead must
+// not have chosen by a number they begin with.
+func taggedRow(line string, n int) (int, bool) {
+	i := len(line) - 2
+	if strings.Trim(line, tagMark) != "" || i < 0 || i >= n {
 		return 0, false
 	}
 	return i, true
@@ -182,7 +188,7 @@ func chooseRow(ctx context.Context, a rowChooser, what, prompt, noRow string, it
 		if t == "" || t == noChoiceTag {
 			continue
 		}
-		i, found := chosen(t, len(items))
+		i, found := a.rowOf(t, len(items))
 		if !found {
 			return 0, false, dialogError(what, fmt.Errorf("the choice %q is not in the list", line))
 		}
@@ -324,6 +330,8 @@ if c is false then error number -128
 return item 1 of c`)
 }
 
+func (a *scriptAsker) rowOf(line string, n int) (int, bool) { return numberedRow(line, n) }
+
 func (a *scriptAsker) Confirm(ctx context.Context, text string) (bool, error) {
 	_, ok, err := a.osascript(ctx, "consent", `set r to display dialog `+appleScriptString(text)+` with title `+appleScriptString(dialogTitle)+` buttons {"Cancel", `+appleScriptString(consentButton)+`} default button "Cancel" with icon caution
 if button returned of r is not `+appleScriptString(consentButton)+` then error number -128`)
@@ -412,6 +420,8 @@ func (a *zenityAsker) showRows(ctx context.Context, what, prompt, noRow string, 
 	return a.zenity(ctx, what, args...)
 }
 
+func (a *zenityAsker) rowOf(line string, n int) (int, bool) { return taggedRow(line, n) }
+
 func (a *zenityAsker) Confirm(ctx context.Context, text string) (bool, error) {
 	_, ok, err := a.zenity(ctx, "consent", "--question", "--no-markup", "--default-cancel", "--ok-label="+consentButton, "--cancel-label=Cancel", zenityWidth, "--text="+wrapLines(text, lineWidth))
 	return ok, err
@@ -496,6 +506,8 @@ func (a *kdialogAsker) ChooseVault(ctx context.Context, m Menu) (Choice, bool, e
 func (a *kdialogAsker) showRows(ctx context.Context, what, prompt, noRow string, items []string) (string, bool, error) {
 	return a.list(ctx, what, prompt, linuxRows(noRow, items, false)...)
 }
+
+func (a *kdialogAsker) rowOf(line string, n int) (int, bool) { return taggedRow(line, n) }
 
 // Confirm asks through a list, with Cancel as the row that is selected. A
 // yes-or-no question cannot be asked: kdialog's takes Return as yes with no

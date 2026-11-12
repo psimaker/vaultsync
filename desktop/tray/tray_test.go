@@ -1034,24 +1034,26 @@ func TestIssue176_TrayDialogsCarryTextAsData(t *testing.T) {
 	if !reflect.DeepEqual(items, []string{"Work — on this computer, ~/w", "Work — on this computer", "Notes — on your Hub → ~/Vaults/Notes, 1 file on your Hub"}) {
 		t.Fatalf("items: %q", items)
 	}
-	if i, ok := chosen("2) Work — on this computer", len(choices)); !ok || !choices[i].Local || choices[i].Entry.Path != "/w2" {
+	if i, ok := numberedRow("2) Work — on this computer", len(choices)); !ok || !choices[i].Local || choices[i].Entry.Path != "/w2" {
 		t.Fatalf("chosen 2: %d %v", i, ok)
 	}
-	if i, ok := chosen("3)", len(choices)); !ok || choices[i].Local || choices[i].Entry.Vault != "vs-1" {
+	if i, ok := numberedRow("3)", len(choices)); !ok || choices[i].Local || choices[i].Entry.Vault != "vs-1" {
 		t.Fatalf("chosen 3: %d %v", i, ok)
 	}
-	for _, bad := range []string{"", "4) x", "x) y", "false", "0) x"} {
-		if _, ok := chosen(bad, len(choices)); ok {
+	for _, bad := range []string{"", "4) x", "x) y", "false", "0) x", linuxTag(1)} {
+		if _, ok := numberedRow(bad, len(choices)); ok {
 			t.Fatalf("%q chosen", bad)
 		}
 	}
 	// On Linux a row is named by its marks alone: the third row by four, the
 	// row that chooses nothing by one, and marks beside anything else by none.
-	if i, ok := chosen(linuxTag(2), len(choices)); !ok || choices[i].Entry.Vault != "vs-1" {
+	// Nor by a number: a program that printed a row's words must not have
+	// chosen the vault a name such as "2) Notes" counts to.
+	if i, ok := taggedRow(linuxTag(2), len(choices)); !ok || choices[i].Entry.Vault != "vs-1" {
 		t.Fatalf("chosen by its tag: %d %v", i, ok)
 	}
-	for _, bad := range []string{noChoiceTag, linuxTag(3), linuxTag(0) + "1)", "2)" + tagMark} {
-		if _, ok := chosen(bad, len(choices)); ok {
+	for _, bad := range []string{"", noChoiceTag, linuxTag(3), linuxTag(0) + "1)", "2)" + tagMark, "2)", "2) Notes — on your Hub"} {
+		if _, ok := taggedRow(bad, len(choices)); ok {
 			t.Fatalf("%q chosen", bad)
 		}
 	}
