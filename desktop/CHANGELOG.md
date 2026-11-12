@@ -4,6 +4,12 @@ The desktop agent `vaultsync`, VaultSync for Mac and the menu-bar app, released 
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- **Updated the Go runtime the desktop agent is built with** — Go 1.26.10 → 1.26.11 with the latest standard-library security fix; the [root changelog](../CHANGELOG.md) names it.
+
 ## [0.2.0] — 2026-11-05
 
 ### Added
