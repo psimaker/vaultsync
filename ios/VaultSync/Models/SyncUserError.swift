@@ -33,6 +33,21 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
         return lines.joined(separator: "\n\n")
     }
 
+    /// Text the app itself wrote for the user — a refusal together with its
+    /// way out — shown as it is. `from(rawMessage:)` is for engine errors:
+    /// it looks for English fragments of those, guidance contains none, and
+    /// so every refusal came out as "VaultSync reported an unexpected
+    /// error." with the way out replaced by "retry" (#270).
+    static func guidance(_ message: String, title: String) -> SyncUserError {
+        SyncUserError(
+            category: .config,
+            title: title,
+            message: message,
+            remediation: "",
+            technicalDetails: nil
+        )
+    }
+
     static func from(rawMessage: String, fallbackTitle: String = L10n.tr("Sync Error")) -> SyncUserError {
         let normalized = rawMessage.lowercased()
 
