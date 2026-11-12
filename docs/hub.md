@@ -253,15 +253,17 @@ decides nothing itself; without a running agent it says so and offers only
 Open Log and Quit — and, from `desktop-v0.3.0` on, **Start VaultSync** (the
 same as `vaultsync start`; what that says shows in the menu). It offers no
 start when the service has recorded that it could not open its socket, or for
-about 15 seconds after a start from the menu. **Pair a Vault…** asks for the code, then which vault, then
-— for a folder on this computer that already holds files — the same consent
-`vaultsync pair` asks for, through the desktop's own dialogs (on Linux this
-needs `zenity`; without it the item says to use `vaultsync pair` in a
-terminal). A vault from your Hub goes into `~/Vaults/<name>`; to put it
-elsewhere, or to name this computer's vault differently on your Hub, use
-`vaultsync pair` in a terminal. On GNOME, tray icons need the “AppIndicator
-and KStatusNotifierItem Support” extension; `vaultsync-tray` says so when it
-starts without one and shows the icon as soon as the extension is there.
+about 15 seconds after a start from the menu. **Pair a Vault…** asks for the
+code, then which vault, then — for a folder on this computer that already
+holds files — the same consent `vaultsync pair` asks for, through the
+desktop's own dialogs (on Linux this needs `zenity` or, from
+`desktop-v0.3.0` on, KDE's `kdialog`; without them the item says to use
+`vaultsync pair` in a terminal). A vault from your Hub goes into
+`~/Vaults/<name>`; to put it elsewhere, or to name this computer's vault
+differently on your Hub, use `vaultsync pair` in a terminal. On GNOME, tray
+icons need the “AppIndicator and KStatusNotifierItem Support” extension;
+`vaultsync-tray` says so when it starts without one and shows the icon as
+soon as the extension is there.
 
 `--yes` is consent to sync a `--path` that already holds files with the new
 vault named by `--vault`; it never chooses a Hub and never overrides a

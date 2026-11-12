@@ -8,4 +8,4 @@
 
 **Rejected alternatives.** Finding `vaultsync` on `PATH` for the menu's Start item (#248): it may be an old download or anything else of that name, and a menu-bar app has no terminal to show which ran; decision 057 says which it runs. Parsing the refusal text for `--yes`/`--vault` (a reworded refusal would silently break pairing, or worse, pass `yes`). A folder picker for a Hub vault's destination (`~/Vaults/<name>` is the terminal's default; the terminal takes any folder). Handing pairing to a terminal window from the menu (no reliable way to open one on Linux; the socket's pairing exists for this). Shipping icon files (five shapes drawn at start are smaller than one PNG and never stale).
 
-**Links.** #176; decisions 048, 049, 057.
+**Links.** #176; decisions 048, 049, 057; on Linux since #249, decision 055.

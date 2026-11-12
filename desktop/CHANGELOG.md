@@ -9,10 +9,16 @@ The desktop agent `vaultsync`, VaultSync for Mac and the menu-bar app, released 
 ### Added
 
 - **The menu-bar icon can start VaultSync when it is not running** ([#248](https://github.com/psimaker/vaultsync/issues/248)) — after `vaultsync stop`, or when the background service did not start, the menu offers **Start VaultSync**, which does what `vaultsync start` does and shows what that says, a refusal included. It runs the program the background service runs, never a `vaultsync` found on your `PATH`, so what it says is about that service. It does not appear when VaultSync was never set up here, or when the service has recorded that it could not open its socket; a service that is not installed says so when you click. A start that gets no answer from the service says so after about 15 seconds, and quitting the icon does not end a start under way.
+- **Pair a Vault… works on Linux with KDE's `kdialog`, without `zenity`** ([#249](https://github.com/psimaker/vaultsync/issues/249)) — the menu asks for the code, the vault and the consent through whichever is installed, `zenity` first. In `kdialog`, the consent is a list with **Cancel** selected: Return alone never starts syncing.
 
 ### Changed
 
 - **Updated the Go runtime the desktop agent is built with** — Go 1.26.10 → 1.26.11 with the latest standard-library security fix; the [root changelog](../CHANGELOG.md) names it.
+
+### Fixed
+
+- **On Linux, names show as they are written in the pairing dialogs** ([#249](https://github.com/psimaker/vaultsync/issues/249)) — above an entry, a `&` read `&amp;`, a `_` went missing, and a backslash could break the line. The texts are now written for what each dialog does with them, tried on zenity 3.42, 3.44, 4.0 and 4.1. A long line is broken to fit: it could make a window wider than the screen, with its buttons out of reach.
+- **Return alone chooses no vault in the Linux list** ([#249](https://github.com/psimaker/vaultsync/issues/249)) — zenity 4 opens the list with its first row selected, so Return took that vault. The list now starts with a row that chooses nothing and shows again if you continue on it; after the third time it says that nothing was chosen. Its rows show no number, and what you type finds only the words you see.
 
 ## [0.2.0] — 2026-11-05
 
