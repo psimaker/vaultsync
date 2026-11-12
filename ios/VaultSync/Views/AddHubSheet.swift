@@ -605,10 +605,18 @@ private struct HubVaultStep: View {
                     tone: .info
                 )
             }
-        case .requiresMergeConfirmation(_, let targetName):
+        case .requiresMergeConfirmation(let path, let targetName):
+            let rootPlace = vaultManager.obsidianBasePath.map(VaultManager.selectedFolderPlace)
             VaultNotice(
                 systemImage: "folder.badge.questionmark",
-                text: L10n.fmt("The folder “%@” in your Obsidian folder already has files. When the vault arrives, VaultSync asks you before it combines them.", targetName),
+                // Not "your Obsidian folder" under a folder that is not
+                // Obsidian's own (#270) — the same words as a pending share.
+                text: rootPlace == .appFolder
+                    ? L10n.fmt("The folder “%@” in your Obsidian folder already has files. When the vault arrives, VaultSync asks you before it combines them.", targetName)
+                    : PendingShareDestination.line(
+                        decision: .requiresMergeConfirmation(path: path, targetName: targetName),
+                        rootPlace: rootPlace
+                    )?.text ?? "",
                 tone: .attention
             )
         case .refused(let message):

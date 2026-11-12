@@ -43,11 +43,8 @@ struct ContentView: View {
     @State private var addHubRequest: AddHubRequest?
     @State private var showSettings = false
     @State private var showSetupChecklist = false
+    @Environment(\.scenePhase) private var scenePhase
     @State private var showObsidianPicker = false
-    /// Opened from the notice about a folder that is not Obsidian's own
-    /// (#270): the picker must not start inside that folder — it is usually
-    /// titled "Obsidian" itself, with an Open button right there.
-    @State private var obsidianPickerLeavesCurrentFolder = false
     /// Where each pending share would arrive (#270). Computed when what it
     /// depends on changes, not on every pass over `body`: the decision reads
     /// the selected folder and the target from disk.
@@ -187,9 +184,9 @@ struct ContentView: View {
                 }
             )
         }
-        .sheet(isPresented: $showObsidianPicker, onDismiss: { obsidianPickerLeavesCurrentFolder = false }) {
+        .sheet(isPresented: $showObsidianPicker) {
             FolderPicker(
-                initialDirectoryURL: obsidianPickerLeavesCurrentFolder ? nil : vaultManager.obsidianDirectoryURL,
+                initialDirectoryURL: ObsidianReconnectFlow.pickerStartURL(selectedFolder: vaultManager.obsidianDirectoryURL),
                 onCancel: { showObsidianPicker = false }
             ) { url in
                 showObsidianPicker = false
@@ -276,6 +273,13 @@ struct ContentView: View {
         }
         .onChange(of: syncthingManager.pendingFolders, initial: true) { _, _ in
             shareAccept.runAutomaticPass()
+        }
+        .onChange(of: syncthingManager.selectedFolderHidesVaultsFromObsidian) { _, hides in
+            // Another folder was selected, or the user keeps this one: what
+            // waited only for that goes on (#270).
+            if !hides {
+                shareAccept.runAutomaticPass()
+            }
         }
         .onChange(of: syncthingManager.pathSettlement.settled) { _, settled in
             // Paths just settled: run the pass that was held during the
@@ -1049,10 +1053,7 @@ struct ContentView: View {
                 onRescanFailedFolders: rescanFailedVaults,
                 onOpenAddDevice: { showAddDevice = true },
                 onRescanAllVaults: rescanAllVaults,
-                onSelectObsidianFolder: {
-                    obsidianPickerLeavesCurrentFolder = true
-                    showObsidianPicker = true
-                }
+                onSelectObsidianFolder: { showObsidianPicker = true }
             )
         }
     }
@@ -1299,7 +1300,10 @@ struct ContentView: View {
     /// Everything the destination lines are computed from, without touching
     /// the disk: when none of it changed, the lines stand.
     private var pendingShareDestinationInputs: [String] {
-        [vaultManager.isAccessible ? "connected" : "", vaultManager.obsidianBasePath ?? ""]
+        // The scene phase stands in for the disk: a folder made or filled in
+        // Files or Obsidian changes a line, and the user is back in this app
+        // only through an activation.
+        [scenePhase == .active ? "active" : "", vaultManager.isAccessible ? "connected" : "", vaultManager.obsidianBasePath ?? ""]
             + syncthingManager.actionablePendingFolders.map { "share|\($0.id)|\($0.label)" }
             + syncthingManager.folders.map { "folder|\($0.id)|\($0.path)" }
             + shareAccept.pendingShareFailures.keys.sorted().map { "parked|\($0)" }

@@ -321,6 +321,7 @@
 "Arrives as “%@” in the folder you selected. Obsidian will not list it as a vault there." = "将以“%@”到达你选择的文件夹。Obsidian 不会在那里把它显示为 Vault。";
 "The folder “%@” already holds files, and Obsidian will not list a vault in the folder you selected. VaultSync asks you before it combines anything." = "文件夹“%@”已包含文件，而且 Obsidian 不会显示你所选文件夹里的 Vault。VaultSync 会在合并任何内容前先询问你。";
 "The folder “%@” already holds files. If they belong to the copy that arrived earlier, do not combine them: tap \"Choose Vault…\" and give this vault another folder name." = "文件夹“%@”已包含文件。如果它们属于之前到达的副本，请不要合并：轻点“选择 Vault…”，为这个 Vault 另取一个文件夹名称。";
+"A vault already syncs straight into the folder you selected, so no other vault can get a folder of its own there. Remove that vault on this iPhone and accept it again under Pending Shares — it then gets its own folder — and accept this share after that." = "已经有一个 Vault 直接同步到你选择的文件夹里，所以其他 Vault 无法在那里得到自己的文件夹。请在此 iPhone 上移除那个 Vault，并在“待处理共享”中重新接受它——它就会得到自己的文件夹——然后再接受这个共享。";
 "Obsidian Would Not Show This Vault" = "Obsidian 不会显示这个 Vault";
 "The folder VaultSync is connected to is not Obsidian's own folder, so this vault would arrive where Obsidian does not list it." = "VaultSync 连接的文件夹不是 Obsidian 自己的文件夹，所以这个 Vault 会到达 Obsidian 不显示的位置。";
 "Follow the notice under Sync Issues to select Obsidian's folder first. To sync it here anyway, tap \"Review and Accept\"." = "请先按照“同步问题”下的提示选择 Obsidian 的文件夹。如果仍要同步到这里，请轻点“查看并接受”。";

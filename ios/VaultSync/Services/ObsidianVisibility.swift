@@ -214,11 +214,16 @@ enum ObsidianVisibility {
         return DirectoryContent(hasOwnConfig: hasOwnConfig, hasVaultSubfolders: !vaults.isEmpty)
     }
 
-    /// The findings as they stand now. Remembers every vault it reports as
-    /// being in the selected folder itself (see `findings`).
+    /// The findings as they stand now. Remembers a vault it reports as
+    /// being in the selected folder itself (see `findings`) — but only one
+    /// `mayRemember` vouches for: a folder that has finished a sync and
+    /// needs nothing more. Before that, a whole-directory sync whose vaults
+    /// have not arrived yet reads exactly like a single vault, and a record
+    /// made then would report it for good.
     static func findingsLive(
         selectedRoot: String?,
         folders: [(id: String, path: String)],
+        mayRemember: (String) -> Bool,
         defaults: UserDefaults = .standard
     ) -> [Finding] {
         let found = findings(
@@ -231,7 +236,10 @@ enum ObsidianVisibility {
             )
         )
         record(
-            found.filter { $0.kind == .vaultInSelectedFolderItself }.flatMap(\.folderIDs).map(seenToken),
+            found.filter { $0.kind == .vaultInSelectedFolderItself }
+                .flatMap(\.folderIDs)
+                .filter(mayRemember)
+                .map(seenToken),
             defaults: defaults
         )
         return found

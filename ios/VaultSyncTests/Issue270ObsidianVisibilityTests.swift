@@ -313,8 +313,15 @@ struct Issue270ObsidianVisibilityLiveTests {
         defer { try? FileManager.default.removeItem(at: sandbox) }
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
+        // The vault has synced with a peer: what the folder holds is the share.
+        let finishedSyncing = true
         func live(_ folders: [(id: String, path: String)], root: URL) -> [ObsidianVisibility.Finding] {
-            ObsidianVisibility.findingsLive(selectedRoot: root.path, folders: folders, defaults: defaults)
+            ObsidianVisibility.findingsLive(
+                selectedRoot: root.path,
+                folders: folders,
+                mayRemember: { _ in finishedSyncing },
+                defaults: defaults
+            )
         }
 
         let root = try makeDirectory("Containers/Data/Application/\(UUID().uuidString)/Documents")
@@ -351,6 +358,34 @@ struct Issue270ObsidianVisibilityLiveTests {
         #expect(live([(id: "notes", path: ownFolder.path)], root: root).isEmpty)
     }
 
+    @Test("A whole-folder sync whose vaults have not arrived yet reads like a single vault — reported for now, never remembered")
+    func transientReadingIsNotRemembered() throws {
+        defer { try? FileManager.default.removeItem(at: sandbox) }
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        func live(_ root: URL, finishedSyncing: Bool) -> [ObsidianVisibility.Finding] {
+            ObsidianVisibility.findingsLive(
+                selectedRoot: root.path,
+                folders: [(id: "all", path: root.path)],
+                mayRemember: { _ in finishedSyncing },
+                defaults: defaults
+            )
+        }
+        let relative = "Containers/Data/Application/\(UUID().uuidString)/Documents"
+        let root = try makeDirectory(relative)
+        // A stray .obsidian in Obsidian's folder; the share that syncs into
+        // it is a folder of vaults, and none of them has arrived yet.
+        _ = try makeDirectory(relative + "/.obsidian")
+        #expect(live(root, finishedSyncing: false).map(\.kind) == [.vaultInSelectedFolderItself])
+        #expect(ObsidianVisibility.loadRecord(defaults: defaults).isEmpty)
+
+        // The vaults arrive: it is the setup Obsidian shows, and the notice
+        // goes — it was never written down.
+        _ = try makeDirectory(relative + "/Personal/.obsidian")
+        #expect(live(root, finishedSyncing: true).isEmpty)
+        #expect(ObsidianVisibility.loadRecord(defaults: defaults).isEmpty)
+    }
+
     @Test("Obsidian's folder with the vaults inside is read as a container; a folder that is gone is not read at all")
     func containerAndMissingFolderOnDisk() throws {
         defer { try? FileManager.default.removeItem(at: sandbox) }
@@ -365,6 +400,7 @@ struct Issue270ObsidianVisibilityLiveTests {
         #expect(ObsidianVisibility.findingsLive(
             selectedRoot: root.path,
             folders: [(id: "all", path: root.path)],
+            mayRemember: { _ in true },
             defaults: defaults
         ).isEmpty)
         // Nothing was reported, so nothing is remembered.
@@ -473,6 +509,17 @@ struct Issue270ObsidianVisibilityIssueTests {
         #expect(SyncthingManager.noticeOffersKeeping(collapsed))
     }
 
+    @Test("While the engine has not delivered its folder list, nothing is said about what syncs where")
+    func pendingFolderList() {
+        // Folders are on record, the engine lists none yet: "nothing syncs
+        // here" would open the folder picker over vaults that do.
+        #expect(SyncthingManager.folderListIsPending(engineFolderCount: 0, recordedFolderCount: 2))
+        // Nothing on record: the install really has no vault.
+        #expect(!SyncthingManager.folderListIsPending(engineFolderCount: 0, recordedFolderCount: 0))
+        #expect(!SyncthingManager.folderListIsPending(engineFolderCount: 2, recordedFolderCount: 2))
+        #expect(!SyncthingManager.folderListIsPending(engineFolderCount: 1, recordedFolderCount: 0))
+    }
+
     @Test("No finding, no notice")
     func noFindingNoIssue() {
         #expect(SyncthingManager.obsidianVisibilityIssues(findings: [], labels: ["notes": "Notes"]).isEmpty)
@@ -568,6 +615,8 @@ struct Issue270AutomaticAcceptParkingTests {
     @MainActor
     private final class Recorder {
         var accepts: [String] = []
+        /// The selected folder is one Obsidian lists no vault from.
+        var hides = true
     }
 
     private static func coordinator(hides: Bool, recorder: Recorder) -> ShareAcceptCoordinator {
@@ -606,6 +655,58 @@ struct Issue270AutomaticAcceptParkingTests {
         #expect(c.pendingShareFailures["notes"] == nil)
     }
 
+    @Test("A parked share goes on by itself once the folder is Obsidian's own or the user keeps it")
+    func parkedShareIsReleased() {
+        let recorder = Recorder()
+        let c = ShareAcceptCoordinator(environment: ShareAcceptCoordinator.Environment(
+            settled: { true },
+            vaultAccessible: { true },
+            pendingFolders: { [Self.offer] },
+            autoAcceptEligible: { [Self.offer] },
+            accept: { folder, _ in
+                recorder.accepts.append(folder.id)
+                return .accepted
+            },
+            acceptIntoTarget: { _, _ in nil },
+            unignorePendingFolder: { _ in },
+            ignorePendingFolder: { _ in },
+            selectedFolderHidesVaults: { recorder.hides }
+        ))
+        c.runAutomaticPass()
+        #expect(recorder.accepts.isEmpty)
+        #expect(c.pendingShareFailures["notes"] != nil)
+
+        // "Keep It This Way", or another folder was selected.
+        recorder.hides = false
+        c.runAutomaticPass()
+        #expect(recorder.accepts == ["notes"])
+        #expect(c.pendingShareFailures["notes"] == nil)
+    }
+
+    @Test("A failure the user's own attempt recorded is not taken for parking and stays")
+    func ownFailureIsNotReleased() {
+        let recorder = Recorder()
+        let c = ShareAcceptCoordinator(environment: ShareAcceptCoordinator.Environment(
+            settled: { true },
+            vaultAccessible: { true },
+            pendingFolders: { [Self.offer] },
+            autoAcceptEligible: { [Self.offer] },
+            accept: { _, _ in .refused(message: "no room") },
+            acceptIntoTarget: { _, _ in nil },
+            unignorePendingFolder: { _ in },
+            ignorePendingFolder: { _ in },
+            selectedFolderHidesVaults: { recorder.hides }
+        ))
+        c.runAutomaticPass()
+        // The user tries anyway, and the accept refuses for its own reason.
+        c.retry(Self.offer)
+        #expect(c.pendingShareFailures["notes"]?.message == "no room")
+
+        recorder.hides = false
+        c.runAutomaticPass()
+        #expect(c.pendingShareFailures["notes"]?.message == "no room")
+    }
+
     @Test("Under Obsidian's own folder, and under a folder the user keeps, shares are accepted as ever")
     func acceptedWhereObsidianShowsIt() {
         let recorder = Recorder()
@@ -613,6 +714,74 @@ struct Issue270AutomaticAcceptParkingTests {
         c.runAutomaticPass()
         #expect(recorder.accepts == ["notes"])
         #expect(c.pendingShareFailures.isEmpty)
+    }
+}
+
+/// #270: what a refused share and the folder picker tell the user has to be
+/// something the user can do on the install they have.
+@Suite("The way out that is named is one that exists (#270)")
+struct Issue270WayOutTests {
+
+    private static let uuid = "0A1B2C3D-0000-4000-8000-000000000000"
+    private static let obsidiansFolder = "/private/var/mobile/Containers/Data/Application/\(uuid)/Documents"
+    private static let selfMadeObsidian = "/private/var/mobile/Containers/Shared/AppGroup/\(uuid)/File Provider Storage/Obsidian"
+
+    private func refusal(root: String, rootIsVault: Bool, occupied: Set<String>) -> String? {
+        let decision = VaultManager.resolveAcceptPath(
+            manualTarget: nil,
+            manualTargetConsented: false,
+            rawRoot: root,
+            rootIsVault: rootIsVault,
+            folderName: "Recipes",
+            occupiedCanonLower: occupied,
+            mergeConfirmed: false,
+            canonicalize: { $0 },
+            listingFor: { _ in nil }
+        )
+        guard case .refused(let message) = decision else { return nil }
+        return message
+    }
+
+    @Test("A vault collapsed into Obsidian's folder blocks a new share — the refusal says to give that vault its own folder, not to re-select the folder already selected")
+    func collapsedVaultBlocksANewShare() throws {
+        let root = Self.obsidiansFolder
+        let message = try #require(refusal(root: root, rootIsVault: false, occupied: [root.lowercased()]))
+        #expect(message.contains("Remove that vault on this iPhone and accept it again"))
+        #expect(!message.contains("Re-select"))
+
+        // The same through "Choose Vault…".
+        let manual = VaultManager.validateManualTarget(
+            rawRoot: root,
+            rootIsVault: false,
+            name: "Recipes",
+            occupiedCanonLower: [root.lowercased()],
+            targetEntries: nil,
+            canonicalize: { $0 }
+        )
+        #expect(manual == .refused(message: message))
+    }
+
+    @Test("A selected folder that is itself a vault keeps the guidance to select the folder above it")
+    func selectedFolderIsAVault() throws {
+        let picked = Self.obsidiansFolder + "/MyVault"
+        let byContent = try #require(refusal(root: picked, rootIsVault: true, occupied: []))
+        #expect(byContent.contains("Re-select the folder that contains your vaults"))
+        let bySync = try #require(refusal(root: picked, rootIsVault: false, occupied: [picked.lowercased()]))
+        #expect(bySync == byContent)
+    }
+
+    @Test("The folder picker opens in Obsidian's folder to reconnect it, and one level above any other folder")
+    func whereTheFolderPickerStarts() {
+        func start(_ path: String) -> String? {
+            ObsidianReconnectFlow.pickerStartURL(selectedFolder: URL(fileURLWithPath: path, isDirectory: true))?.path
+        }
+        #expect(start(Self.obsidiansFolder) == Self.obsidiansFolder)
+        // The wrong folder is usually titled "Obsidian" itself: starting
+        // inside it puts Open right there.
+        #expect(start(Self.selfMadeObsidian) == (Self.selfMadeObsidian as NSString).deletingLastPathComponent)
+        // A single vault picked as the folder: one level up is Obsidian's own.
+        #expect(start(Self.obsidiansFolder + "/MyVault") == Self.obsidiansFolder)
+        #expect(ObsidianReconnectFlow.pickerStartURL(selectedFolder: nil) == nil)
     }
 }
 

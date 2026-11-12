@@ -40,6 +40,20 @@ enum ObsidianReconnectFlow {
         return nil
     }
 
+    /// Where the folder picker opens. Inside the selected folder when that
+    /// is an app's own folder: reconnecting means tapping Open right there.
+    /// One level up for any other folder: that folder is the wrong one
+    /// (#270), usually titled "Obsidian" itself, and opening inside it puts
+    /// Open under the user's thumb. A value derived from the selected
+    /// folder, not a flag set next to the sheet's — the sheet reads it
+    /// whenever it is built. The picker treats it as a starting point only.
+    static func pickerStartURL(selectedFolder: URL?) -> URL? {
+        guard let selectedFolder else { return nil }
+        return VaultManager.selectedFolderPlace(selectedFolder.path) == .appFolder
+            ? selectedFolder
+            : selectedFolder.deletingLastPathComponent()
+    }
+
     /// What the host's alert shows when `grantAccess` refuses the folder.
     /// The refusal is guidance — which folder to pick instead, and how —
     /// and reaches the user as written. Both hosts passed it through the

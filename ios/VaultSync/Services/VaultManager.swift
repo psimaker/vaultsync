@@ -857,7 +857,11 @@ final class VaultManager {
             occupiedCanonLower: occupiedCanonLower,
             canonicalize: canonicalize
         ) else {
-            return .refused(message: L10n.tr("This share needs its own folder, but the folder selected for VaultSync is itself a vault, so everything inside it belongs to that vault. Re-select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") — new vaults then sync side by side instead of inside each other."))
+            return .refused(message: noOwnFolderRefusal(
+                rawRoot: rawRoot,
+                occupiedCanonLower: occupiedCanonLower,
+                canonicalize: canonicalize
+            ))
         }
 
         if !mergeConfirmed,
@@ -869,6 +873,22 @@ final class VaultManager {
             )
         }
         return .path(path)
+    }
+
+    /// Why a share has no folder of its own to go to, with the way out that
+    /// exists for the case. When an app's own folder is selected and a vault
+    /// syncs straight into it — the install #270 is about — "re-select the
+    /// folder that contains your vaults" names the folder that is already
+    /// selected. The way out there is to give that vault its own folder.
+    nonisolated private static func noOwnFolderRefusal(
+        rawRoot: String,
+        occupiedCanonLower: Set<String>,
+        canonicalize: (String) -> String
+    ) -> String {
+        if isAppDocumentsRoot(rawRoot), occupiedCanonLower.contains(canonicalize(rawRoot).lowercased()) {
+            return L10n.tr("A vault already syncs straight into the folder you selected, so no other vault can get a folder of its own there. Remove that vault on this iPhone and accept it again under Pending Shares — it then gets its own folder — and accept this share after that.")
+        }
+        return L10n.tr("This share needs its own folder, but the folder selected for VaultSync is itself a vault, so everything inside it belongs to that vault. Re-select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") — new vaults then sync side by side instead of inside each other.")
     }
 
     /// Validate a manually chosen share target (issue #52): `name` — a picked
@@ -902,7 +922,11 @@ final class VaultManager {
         }
         if rootIsVault
             || rootIsCompromised(rawRoot, occupiedCanonLower: occupiedCanonLower, canonicalize: canonicalize) {
-            return .refused(message: L10n.tr("This share needs its own folder, but the folder selected for VaultSync is itself a vault, so everything inside it belongs to that vault. Re-select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") — new vaults then sync side by side instead of inside each other."))
+            return .refused(message: noOwnFolderRefusal(
+                rawRoot: rawRoot,
+                occupiedCanonLower: occupiedCanonLower,
+                canonicalize: canonicalize
+            ))
         }
         let candidate = (rawRoot as NSString).appendingPathComponent(folderName)
         if overlaps(candidate, occupiedCanonLower: occupiedCanonLower, canonicalize: canonicalize) {

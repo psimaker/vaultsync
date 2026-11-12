@@ -148,6 +148,10 @@ final class SyncthingManager {
     /// folder list changes after that — and part of `unresolvedIssues`, so
     /// the header and the widget follow (decision 012).
     private(set) var obsidianVisibilityFindings: [ObsidianVisibility.Finding] = []
+    /// What the findings were last read from: the folder list and which
+    /// folders had finished syncing. The poll replaces `folders` every few
+    /// seconds; the findings are read again when either changes.
+    private var obsidianVisibilityInputs: [String] = []
     private(set) var hasSeenPendingFolderOffer = false
     private(set) var lastSyncTime: Date?
     private(set) var lastSyncTimeByFolder: [String: Date] = [:]
@@ -750,13 +754,54 @@ final class SyncthingManager {
     /// that no longer exists.
     private func refreshObsidianVisibility() {
         guard pathSettlement.settled else { return }
+        obsidianVisibilityInputs = currentObsidianVisibilityInputs()
+        if Self.folderListIsPending(
+            engineFolderCount: folders.count,
+            recordedFolderCount: FolderPathReconciler.loadRel().count
+        ) {
+            if !obsidianVisibilityFindings.isEmpty { obsidianVisibilityFindings = [] }
+            return
+        }
         let found = ObsidianVisibility.findingsLive(
             selectedRoot: lastReconcileObsidianRoot,
-            folders: folders.map { (id: $0.id, path: $0.path) }
+            folders: folders.map { (id: $0.id, path: $0.path) },
+            mayRemember: { self.hasFinishedSyncing(folderID: $0) }
         )
         if found != obsidianVisibilityFindings {
             obsidianVisibilityFindings = found
         }
+    }
+
+    /// The engine reports no folder although the reconciler's record holds
+    /// some: its list has not arrived yet (the reconcile waits a few seconds
+    /// for it and then settles regardless). Nothing can be said about what
+    /// syncs where — least of all "nothing syncs here", which is what opens
+    /// the folder picker. The poll reads the findings once the list is in.
+    nonisolated static func folderListIsPending(engineFolderCount: Int, recordedFolderCount: Int) -> Bool {
+        engineFolderCount == 0 && recordedFolderCount > 0
+    }
+
+    /// Read the findings again when the folder list or a folder's
+    /// "finished syncing" changed since they were last read. Called from the
+    /// poll: the engine may deliver its folder list only after the reconcile
+    /// settled — a finding read from an empty list says "nothing syncs
+    /// here" and would offer the folder picker over vaults that do (#270).
+    private func refreshObsidianVisibilityIfInputsChanged() {
+        guard pathSettlement.settled else { return }
+        if currentObsidianVisibilityInputs() != obsidianVisibilityInputs {
+            refreshObsidianVisibility()
+        }
+    }
+
+    private func currentObsidianVisibilityInputs() -> [String] {
+        folders.map { "\($0.id)|\($0.path)|\(hasFinishedSyncing(folderID: $0.id))" }
+    }
+
+    /// The folder has exchanged everything with a peer at least once and
+    /// needs nothing now: what it holds is what the share holds.
+    private func hasFinishedSyncing(folderID: String) -> Bool {
+        guard let status = folderStatuses[folderID] else { return false }
+        return status.state == "idle" && status.needFiles == 0 && lastSyncTimeByFolder[folderID] != nil
     }
 
     /// The user keeps the setup a notice is about: it stays away for these
@@ -1019,6 +1064,7 @@ final class SyncthingManager {
         // (#56).
         pathSettlement.reset()
         obsidianVisibilityFindings = []
+        obsidianVisibilityInputs = []
         lastBridgeEventID = 0
         activityDeduplicationCache = [:]
         nextSyntheticEventID = -1
@@ -1232,6 +1278,7 @@ final class SyncthingManager {
         // as unsettled until its own reconcile completes (#56).
         pathSettlement.reset()
         obsidianVisibilityFindings = []
+        obsidianVisibilityInputs = []
         lastBridgeEventID = 0
         activityDeduplicationCache = [:]
         nextSyntheticEventID = -1
@@ -1365,6 +1412,7 @@ final class SyncthingManager {
         if let data = snapshot.1.data(using: .utf8),
            let decoded = try? JSONDecoder().decode([FolderInfo].self, from: data) {
             folders = decoded
+            refreshObsidianVisibilityIfInputsChanged()
         }
         if let data = snapshot.0.data(using: .utf8),
            let decoded = try? JSONDecoder().decode([DeviceInfo].self, from: data) {
@@ -1444,6 +1492,7 @@ final class SyncthingManager {
             )
         )
         folderStatuses = newStatuses
+        refreshObsidianVisibilityIfInputsChanged()
 
         var newConflicts: [String: [ConflictInfo]] = [:]
         for (id, data) in statusSnapshot.1 {

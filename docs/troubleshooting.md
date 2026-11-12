@@ -204,7 +204,7 @@ The button appears only once no vault syncs in the old folder: selecting another
 - Sync Filters belong to the vault's folder and start fresh in the new one. Set them again on the vault's page before large folders you had excluded start to sync.
 - If the share on your computer is a folder that holds several vaults, it arrives as one folder, and Obsidian shows it as a single vault with yours as folders inside. Share each vault on its own from the computer instead.
 
-If you keep things where they are on purpose, tap **Keep It This Way**: the notice goes away for that vault, or for that folder while vaults sync in it, and nothing else changes. New shares then keep arriving there. Without it, a new share waits under **Pending Shares** until you accept it yourself.
+If you keep things where they are on purpose, tap **Keep It This Way**: the notice goes away for that vault, or for that folder while vaults sync in it, and nothing else changes. New shares then arrive there again, including one that was waiting. Without it, a new share waits under **Pending Shares** until you accept it yourself.
 
 ---
 
