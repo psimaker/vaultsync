@@ -96,8 +96,11 @@ func GetPendingFoldersJSON() string {
 // Obsidian's `.obsidian` configuration folder as empty — mirror of the Swift
 // `VaultManager.isEmptyVaultListing` rule; the two layers must decide
 // emptiness identically or a share refused above would slip through below.
+//
+// root is the folder the user selected for their vaults. The share is only
+// accepted into a direct subfolder of it (#270, see notDirectChildError).
 // Returns empty string on success, error message on failure.
-func AcceptPendingFolder(folderID, label, path string, allowNonEmpty bool) string {
+func AcceptPendingFolder(folderID, label, path, root string, allowNonEmpty bool) string {
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -112,6 +115,13 @@ func AcceptPendingFolder(folderID, label, path string, allowNonEmpty bool) strin
 	// Reject if folder already configured.
 	if _, exists := stCfg.Folders()[folderID]; exists {
 		return "folder already exists"
+	}
+
+	// Reject any path that is not a direct subfolder of the selected folder.
+	// The client maps every share to `root/<name>`; this floor holds even if
+	// it computed the selected folder itself or a path further down (#270).
+	if msg := notDirectChildError(root, path); msg != "" {
+		return msg
 	}
 
 	// Reject if this local path overlaps another configured folder's path —
@@ -229,6 +239,26 @@ func nonEmptyTargetError(path string) string {
 		if !strings.EqualFold(entry.Name(), ".obsidian") {
 			return "the target folder already contains files"
 		}
+	}
+	return ""
+}
+
+// notDirectChildError returns a non-empty error message unless path is a
+// direct subfolder of root, the folder the user selected for their vaults.
+// Obsidian lists the direct subfolders of its folder as vaults and nothing
+// else: a share synced into the folder itself, or two levels down, arrives in
+// full and never shows up as a vault (#270). Both paths are cleaned first, so
+// a name of "." or ".." cannot stand in for the selected folder or its parent.
+// Compared case-insensitively like the overlap check: the iOS data volume is
+// case-folding APFS.
+func notDirectChildError(root, path string) string {
+	if root == "" {
+		return "the selected folder is required"
+	}
+	r := filepath.Clean(root)
+	p := filepath.Clean(path)
+	if strings.EqualFold(p, r) || !strings.EqualFold(filepath.Dir(p), r) {
+		return "the folder must be a direct subfolder of the selected folder"
 	}
 	return ""
 }

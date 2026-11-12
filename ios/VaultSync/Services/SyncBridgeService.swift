@@ -357,9 +357,11 @@ struct SyncBridgeService {
     /// `allowNonEmpty` carries the user's explicit merge confirmation through to
     /// the Go hard floor, which otherwise refuses a target directory that
     /// already holds content (#54) — pass false unless the user confirmed.
+    /// `root` is the selected Obsidian folder; the floor accepts only into a
+    /// direct subfolder of it (#270).
     /// - Returns: nil on success, error message on failure.
-    static func acceptPendingFolder(folderID: String, label: String, path: String, allowNonEmpty: Bool) -> String? {
-        let result = BridgeAcceptPendingFolder(folderID, label, path, allowNonEmpty)
+    static func acceptPendingFolder(folderID: String, label: String, path: String, root: String, allowNonEmpty: Bool) -> String? {
+        let result = BridgeAcceptPendingFolder(folderID, label, path, root, allowNonEmpty)
         return result.isEmpty ? nil : result
     }
 

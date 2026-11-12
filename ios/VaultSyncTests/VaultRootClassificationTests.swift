@@ -13,18 +13,18 @@ struct VaultRootClassificationTests {
     // (which would nest every existing vault inside that share's synced tree).
     @Test("Stray .obsidian next to real vaults classifies as container")
     func strayConfigNextToVaultsIsContainer() {
-        #expect(!VaultManager.rootIsItselfVault(hasOwnConfig: true, hasVaultSubfolders: true))
+        #expect(!VaultManager.rootIsItselfVault(isAppDocumentsRoot: false, hasOwnConfig: true, hasVaultSubfolders: true))
     }
 
     @Test("A root whose only vault config is its own stays a vault-as-root")
     func bareVaultRootStaysVault() {
-        #expect(VaultManager.rootIsItselfVault(hasOwnConfig: true, hasVaultSubfolders: false))
+        #expect(VaultManager.rootIsItselfVault(isAppDocumentsRoot: false, hasOwnConfig: true, hasVaultSubfolders: false))
     }
 
     @Test("A root without its own config is never a vault")
     func plainContainerIsNotVault() {
-        #expect(!VaultManager.rootIsItselfVault(hasOwnConfig: false, hasVaultSubfolders: true))
-        #expect(!VaultManager.rootIsItselfVault(hasOwnConfig: false, hasVaultSubfolders: false))
+        #expect(!VaultManager.rootIsItselfVault(isAppDocumentsRoot: false, hasOwnConfig: false, hasVaultSubfolders: true))
+        #expect(!VaultManager.rootIsItselfVault(isAppDocumentsRoot: false, hasOwnConfig: false, hasVaultSubfolders: false))
     }
 
     // FS seam behind the classification, against the reported on-disk layout.

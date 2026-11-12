@@ -13,8 +13,7 @@ struct ImplicitMergeGuardTests {
     private func resolve(
         manualTarget: String? = nil,
         root: String = "/Obsidian",
-        baseIsVault: Bool = false,
-        nameMatchesBase: Bool = false,
+        rootIsVault: Bool = false,
         name: String,
         occupied: Set<String> = [],
         mergeConfirmed: Bool = false,
@@ -23,8 +22,7 @@ struct ImplicitMergeGuardTests {
         VaultManager.resolveAcceptPath(
             manualTarget: manualTarget,
             rawRoot: root,
-            baseIsVault: baseIsVault,
-            nameMatchesBase: nameMatchesBase,
+            rootIsVault: rootIsVault,
             folderName: name,
             occupiedCanonLower: Set(occupied.map { $0.lowercased() }),
             mergeConfirmed: mergeConfirmed,
@@ -118,26 +116,35 @@ struct ImplicitMergeGuardTests {
         }
     }
 
-    // MARK: - Root collapse and suffix candidates get the same guard
+    // MARK: - A vault as root and suffix candidates
 
-    @Test("Vault-as-root collapse over existing notes needs the merge decision too")
-    func rootCollapseGetsTheSameGuard() {
-        let decision = resolve(
-            baseIsVault: true,
-            name: "Life",
-            listings: ["/Obsidian": [".obsidian", "Daily", "note.md"]]
-        )
-        #expect(decision == .requiresMergeConfirmation(path: "/Obsidian", targetName: "Obsidian"))
+    @Test("#270: a selected folder that is itself a vault refuses the share — a merge decision cannot open it")
+    func vaultAsRootRefusesEvenWhenMergeConfirmed() {
+        for mergeConfirmed in [false, true] {
+            let decision = resolve(
+                rootIsVault: true,
+                name: "Life",
+                mergeConfirmed: mergeConfirmed,
+                listings: ["/Obsidian": [".obsidian", "Daily", "note.md"]]
+            )
+            guard case .refused(let message) = decision else {
+                Issue.record("expected a refusal under a vault-as-root, got \(decision)")
+                continue
+            }
+            #expect(message.contains("contains your vaults"))
+        }
     }
 
-    @Test("A name-matches-base collapse over an empty root proceeds without a decision")
-    func nameMatchesBaseOverEmptyRootProceeds() {
-        let decision = resolve(
-            nameMatchesBase: true,
-            name: "Obsidian",
-            listings: ["/Obsidian": [".obsidian"]]
+    @Test("#270: a vault named like the root goes to its own folder, guarded like every other target")
+    func vaultNamedLikeTheRootGetsTheSameGuard() {
+        #expect(
+            resolve(name: "Obsidian", listings: ["/Obsidian": [".obsidian"]])
+                == .path("/Obsidian/Obsidian")
         )
-        #expect(decision == .path("/Obsidian"))
+        #expect(
+            resolve(name: "Obsidian", listings: ["/Obsidian/Obsidian": ["note.md"]])
+                == .requiresMergeConfirmation(path: "/Obsidian/Obsidian", targetName: "Obsidian")
+        )
     }
 
     @Test("A numeric-suffix candidate holding foreign content is confirmed, never silently merged or skipped")

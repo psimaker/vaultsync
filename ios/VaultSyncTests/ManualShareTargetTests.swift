@@ -16,12 +16,14 @@ struct ManualShareTargetTests {
 
     private func validate(
         root: String = "/Obsidian",
+        rootIsVault: Bool = false,
         name: String,
         occupied: Set<String> = [],
         entries: [String]? = nil
     ) -> ShareTargetDecision {
         VaultManager.validateManualTarget(
             rawRoot: root,
+            rootIsVault: rootIsVault,
             name: name,
             occupiedCanonLower: occupied,
             targetEntries: entries,
@@ -32,16 +34,14 @@ struct ManualShareTargetTests {
     private func resolve(
         manualTarget: String?,
         root: String = "/Obsidian",
-        baseIsVault: Bool = false,
-        nameMatchesBase: Bool = false,
+        rootIsVault: Bool = false,
         name: String,
         occupied: Set<String> = []
     ) -> ShareTargetDecision {
         VaultManager.resolveAcceptPath(
             manualTarget: manualTarget,
             rawRoot: root,
-            baseIsVault: baseIsVault,
-            nameMatchesBase: nameMatchesBase,
+            rootIsVault: rootIsVault,
             folderName: name,
             occupiedCanonLower: occupied,
             mergeConfirmed: false,
@@ -157,10 +157,23 @@ struct ManualShareTargetTests {
         )
     }
 
-    @Test("The override also suppresses the collapse-into-root shortcuts")
-    func overrideSuppressesRootCollapse() {
+    @Test("#270: a new manual choice under a selected folder that is itself a vault is refused")
+    func newManualChoiceUnderAVaultRootIsRefused() {
+        guard case .refused(let message) = validate(rootIsVault: true, name: "Notes") else {
+            Issue.record("a new target inside a vault must be refused")
+            return
+        }
+        #expect(message.contains("contains your vaults"))
+        // The same name under a container is a folder of its own.
+        #expect(validate(rootIsVault: false, name: "Notes") == .path("/Obsidian/Notes"))
+    }
+
+    @Test("A recorded override keeps its place when the selected folder is itself a vault")
+    func overrideKeepsItsPlaceUnderAVaultRoot() {
+        // Recorded consent (#52): the label-derived mapping refuses under such
+        // a root (#270), the location the user chose stays what it was.
         #expect(
-            resolve(manualTarget: "Life", baseIsVault: true, name: "Obsidian-Vault-Life")
+            resolve(manualTarget: "Life", rootIsVault: true, name: "Obsidian-Vault-Life")
                 == .path("/Obsidian/Life")
         )
     }
@@ -201,7 +214,7 @@ struct ManualShareTargetTests {
     func labelRefusalKeepsGuidance() {
         guard case .refused(let message) = resolve(
             manualTarget: nil,
-            baseIsVault: true,
+            rootIsVault: true,
             name: "Second",
             occupied: occupied("/obsidian")
         ) else {
@@ -215,17 +228,19 @@ struct ManualShareTargetTests {
 
     @Test("Sidecar set / read round-trips through UserDefaults and overwrites cleanly")
     func sidecarRoundTrip() {
-        UserDefaults.standard.removeObject(forKey: "vaultsync.manualShareTargets")
-        #expect(ManualShareTargetStore.target(forFolder: "f1") == nil)
+        // Folder IDs of its own, and never the whole key: other suites keep
+        // records in the same store while this test runs, and removing the
+        // key under them made their recorded target disappear (#270).
+        let folder = "sidecar-\(UUID().uuidString)"
+        let other = "sidecar-\(UUID().uuidString)"
+        #expect(ManualShareTargetStore.target(forFolder: folder) == nil)
 
-        ManualShareTargetStore.setTarget("Life", forFolder: "f1")
-        #expect(ManualShareTargetStore.target(forFolder: "f1") == "Life")
-        #expect(ManualShareTargetStore.target(forFolder: "other") == nil)
+        ManualShareTargetStore.setTarget("Life", forFolder: folder)
+        #expect(ManualShareTargetStore.target(forFolder: folder) == "Life")
+        #expect(ManualShareTargetStore.target(forFolder: other) == nil)
 
-        ManualShareTargetStore.setTarget("Work", forFolder: "f1")
-        #expect(ManualShareTargetStore.target(forFolder: "f1") == "Work")
-
-        UserDefaults.standard.removeObject(forKey: "vaultsync.manualShareTargets")
+        ManualShareTargetStore.setTarget("Work", forFolder: folder)
+        #expect(ManualShareTargetStore.target(forFolder: folder) == "Work")
     }
 
     // MARK: - Auto-accept suppression for user-removed folders

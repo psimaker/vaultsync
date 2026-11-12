@@ -72,7 +72,8 @@ struct OnboardingView: View {
                                 shareAccept.runAutomaticPass()
                             }
                         ) {
-                            present(error: err, fallbackTitle: L10n.tr("Obsidian Folder Connection Failed"))
+                            alertMessage = ObsidianReconnectFlow.alertText(forRefusedGrant: err)
+                            showAlert = true
                         }
                     }
                 }
@@ -433,13 +434,6 @@ struct OnboardingView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .vaultCard(tone: needsAttention || !obsidianConnected ? .attention : .info)
         .accessibilityElement(children: .combine)
-    }
-
-    // MARK: - Error presentation
-
-    private func present(error: String, fallbackTitle: String) {
-        alertMessage = SyncUserError.from(rawMessage: error, fallbackTitle: fallbackTitle).userVisibleDescription
-        showAlert = true
     }
 
     /// Post-add guidance (#95) — same hint as the main app's device flow.

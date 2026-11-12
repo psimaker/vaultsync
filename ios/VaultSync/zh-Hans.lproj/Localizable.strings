@@ -155,7 +155,6 @@
 "Not attempted" = "未尝试";
 "Not checked" = "未检查";
 "OK" = "确定";
-"Obsidian Folder Connection Failed" = "连接 Obsidian 文件夹失败";
 "Obsidian Vaults" = "Obsidian Vault";
 "Obsidian access expired" = "Obsidian 访问已过期";
 "Obsidian directory not accessible." = "无法访问 Obsidian 目录。";
@@ -627,7 +626,7 @@
 "A vault's folder is inside another vault's folder, so the outer vault syncs the inner vault's notes to its own devices. The affected vaults have been paused to stop further mixing." = "一个 Vault 的文件夹位于另一个 Vault 的文件夹内，因此外层 Vault 会把内层 Vault 的笔记同步到它自己的设备上。受影响的 Vault 已被暂停，以防止进一步混合。";
 "Select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") as VaultSync's Obsidian directory, then remove the inner vault on this iPhone and accept it again under Pending Shares — it gets its own folder. Only afterwards, delete the leftover copy inside the outer vault on your other devices." = "将包含所有 Vault 的文件夹（“在我的 iPhone 上” → “Obsidian”）设为 VaultSync 的 Obsidian 目录，然后在此 iPhone 上移除内层 Vault 并在“待处理共享”中重新接受它——它会获得自己的文件夹。之后再删除其他设备上外层 Vault 中遗留的副本。";
 "This share needs its own folder, but the folder selected for VaultSync is itself a vault, so everything inside it belongs to that vault. Re-select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") — new vaults then sync side by side instead of inside each other." = "此共享需要自己的文件夹，但为 VaultSync 选择的文件夹本身就是一个 Vault，其中的所有内容都属于该 Vault。请重新选择包含所有 Vault 的文件夹（“在我的 iPhone 上” → “Obsidian”）——这样新的 Vault 会并排同步，而不会嵌套在一起。";
-"The folder you selected is itself a vault. Syncing this one vault works, but additional vaults cannot get their own folder next to it. If you plan to sync more than one vault, select the folder that contains your vaults instead (\"On My iPhone\" → \"Obsidian\")." = "所选文件夹本身就是一个 Vault。这样同步这一个 Vault 没有问题，但其他 Vault 将无法在它旁边获得自己的文件夹。如果你打算同步多个 Vault，请改为选择包含所有 Vault 的文件夹（“在我的 iPhone 上” → “Obsidian”）。";
+"The folder you selected is itself a vault. A vault that already syncs here keeps syncing, but a new share needs a folder of its own and cannot be accepted here. Select the folder that contains your vaults instead (\"On My iPhone\" → \"Obsidian\")." = "所选文件夹本身就是一个 Vault。已在此同步的 Vault 会继续同步，但新的共享需要自己的文件夹，无法在此接受。请改为选择包含所有 Vault 的文件夹（“在我的 iPhone 上” → “Obsidian”）。";
 "Note" = "提示";
 "Sync into a folder that already contains files?" = "同步到已包含文件的文件夹？";
 "Merge and Sync" = "合并并同步";
