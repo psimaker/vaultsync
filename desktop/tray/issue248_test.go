@@ -545,6 +545,99 @@ func TestIssue248_TheWaitIsItsAsksAndNoMore(t *testing.T) {
 	asksStayAt(t, agent, 5)
 }
 
+// An agent that answered at the end of the wait has spoken for itself, and the
+// start is settled: stopped later, the menu does not say that a start got no
+// answer.
+func TestIssue248_AnAnswerAfterTheWaitSettlesTheStart(t *testing.T) {
+	agent := newFakeAgent(t)
+	agent.stop()
+	ui := newFakeUI(t)
+	started := &fakeStart{hold: make(chan struct{}), said: "✓ VaultSync is running again."}
+	notes := make(chan string, 4)
+	controllerFor(t, agent, ui, &Controller{
+		StartProgram: func() string { return "/x/vaultsync" },
+		Start:        started.start,
+		StartWaits:   []time.Duration{5 * time.Millisecond, 5 * time.Millisecond},
+		Notify:       func(_ context.Context, s string) { notes <- s },
+	})
+	ui.view(t, "not running", notRunning)
+	ui.send(Event{Kind: EventStart})
+	ui.view(t, "starting", func(v View) bool { return v.Start == Action{"Starting VaultSync…", false} })
+	restartAgent(t, agent)
+	close(started.hold)
+	agent.asked(3)
+	ui.send(Event{Kind: EventOpened}) // taken once the wait's last turn is over
+	ui.send(Event{Kind: EventOpened})
+	agent.stop()
+	ui.send(Event{Kind: EventOpened})
+	v := ui.view(t, "stopped later", notRunning)
+	ui.send(Event{Kind: EventOpened})
+	select {
+	case note := <-notes:
+		t.Fatalf("notified %q", note)
+	default:
+	}
+	if v.Notice != "" || v.Start != (Action{"Start VaultSync", true}) {
+		t.Fatalf("after a stop: %+v", v)
+	}
+}
+
+// cutShortSocket answers every request with a 200 and part of a body, then
+// closes the connection or, with stall, holds it open.
+func cutShortSocket(t *testing.T, agent *fakeAgent, stall bool) {
+	t.Helper()
+	_ = os.Remove(agent.socket)
+	l, err := net.Listen("unix", agent.socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	t.Cleanup(func() { close(done); _ = l.Close() })
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				_, _ = c.Read(make([]byte, 4096))
+				_, _ = c.Write([]byte("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 4000\r\n\r\n{\"version\": \"1\","))
+				if stall {
+					<-done
+				}
+				_ = c.Close()
+			}()
+		}
+	}()
+}
+
+// An answer that is cut short on the way is lost, not unreadable: a body that
+// stalls is an ask that got no answer in its time, and one whose connection
+// drops tells nothing. Neither takes a failed start's reason back.
+func TestIssue248_AnAnswerCutShortIsNoAnswer(t *testing.T) {
+	for name, stall := range map[string]bool{"the body stalls": true, "the connection drops": false} {
+		t.Run(name, func(t *testing.T) {
+			agent := newFakeAgent(t)
+			agent.stop()
+			ui := newFakeUI(t)
+			started := &fakeStart{hold: make(chan struct{}), err: errors.New("it refused")}
+			controllerFor(t, agent, ui, &Controller{StartProgram: func() string { return "/x/vaultsync" }, Start: started.start, StatusTimeout: 200 * time.Millisecond})
+			ui.view(t, "not running", notRunning)
+			ui.send(Event{Kind: EventStart})
+			ui.view(t, "starting", func(v View) bool { return v.Start == Action{"Starting VaultSync…", false} })
+			cutShortSocket(t, agent, stall)
+			close(started.hold)
+			v := ui.view(t, "the look cut short", func(v View) bool { return v.Headline == "VaultSync could not report" })
+			if v.Notice != "Could not start VaultSync: it refused" {
+				t.Fatalf("the reason: %+v", v)
+			}
+			if stall && v.Detail != errNoAnswer.Error() {
+				t.Fatalf("a stalled body is no answer in time: %+v", v)
+			}
+		})
+	}
+}
+
 // droppingSocket takes every connection on the agent's socket and closes it:
 // a look that reached something and got no answer.
 func droppingSocket(t *testing.T, agent *fakeAgent) {

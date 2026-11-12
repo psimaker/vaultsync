@@ -119,18 +119,19 @@ func (c *Client) Pair(ctx context.Context, req PairRequest) (PairResult, error) 
 }
 
 // AnswerError is an error that came with an agent's answer: one it answered
-// with, in its words, or an answer this client cannot read. Do's other errors
-// say less: nobody may have taken the request, or its answer was lost on the
-// way.
+// with, in its words, or an answer that arrived whole and cannot be read.
+// Do's other errors say less: nobody may have taken the request, or its
+// answer was lost on the way (the time ran out, the connection dropped).
 type AnswerError struct{ words string }
 
 func (e *AnswerError) Error() string { return e.words }
 
 // Do sends one request and decodes the answer into out (nil: none
 // expected). No socket file, or nobody listening on it, is ErrNoAgent; a
-// 404 is notFound; an error the agent answered with is returned in its
-// words; anything else — a socket this account may not open, one served
-// by another account, a connection made and then dropped — as it is.
+// 404 is notFound; an error the agent answered with, or an answer that came
+// whole and cannot be read, is an *AnswerError; anything else — a socket this
+// account may not open, one served by another account, a connection made and
+// then dropped, an answer cut short on the way — as it is.
 func (c *Client) Do(ctx context.Context, method, path string, in, out any) error {
 	// A socket address too long for this system cannot be served by anyone
 	// — the agent fell back elsewhere, or runs without a socket — so it is
@@ -184,7 +185,14 @@ func (c *Client) Do(ctx context.Context, method, path string, in, out any) error
 	if out == nil {
 		return nil
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(out); err != nil {
+	// Read to its end first: an answer cut short on the way (the request's
+	// time ran out, the connection dropped) is not one that cannot be read,
+	// and its cause stays what it is for the caller to tell.
+	answer, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(answer, out); err != nil {
 		return &AnswerError{err.Error()}
 	}
 	return nil
