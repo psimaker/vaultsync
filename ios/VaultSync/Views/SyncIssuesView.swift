@@ -148,34 +148,27 @@ struct SyncIssuesView: View {
                 .buttonStyle(.vault(.primary, compact: true))
             }
 
-        case .vaultInSelectedFolderItself:
+        case .vaultInSelectedFolderItself, .selectedFolderNotObsidiansOwn:
             // The way out is manual and written above: nothing is moved for
-            // the user (decisions 002, 003). Keeping the setup is theirs to
-            // decide too — the notice then stays away for this vault (#270).
-            Button(L10n.tr("Keep It This Way")) {
-                syncthingManager.keepSetupDespiteObsidianVisibility(kind: .vaultInSelectedFolderItself)
-            }
-            .buttonStyle(.vault(.neutral, compact: true))
-
-        case .selectedFolderNotObsidiansOwn:
-            if issue.count == 0 {
-                // Nothing syncs in the selected folder, so another one can
-                // be selected without cutting a vault off from the folder
-                // it lives in. The folder picker is otherwise offered only
-                // once access is lost, so this step needs its button here
-                // (#270).
+            // the user (decisions 002, 003). Which button a notice carries
+            // is decided by the manager's pure rules (#270): the folder
+            // picker only while nothing syncs in the selected folder — it
+            // is otherwise offered only once access is lost, so that step
+            // needs its button here — and "keep" only while there is a
+            // vault to keep.
+            if SyncthingManager.noticeOffersFolderPicker(issue) {
                 Button(L10n.tr("Select Obsidian's Folder")) {
                     onSelectObsidianFolder()
                 }
                 .buttonStyle(.vault(.primary, compact: true))
-            } else {
-                // While vaults sync here the picker stays closed: a new
-                // selected folder replaces the one grant they are read
-                // through, and the container-move repair would then take
-                // each of them for a folder whose storage is gone (decision
-                // 003). Removing them first is step 1 of the notice.
+            }
+            if SyncthingManager.noticeOffersKeeping(issue) {
                 Button(L10n.tr("Keep It This Way")) {
-                    syncthingManager.keepSetupDespiteObsidianVisibility(kind: .selectedFolderNotAnAppFolder)
+                    syncthingManager.keepSetupDespiteObsidianVisibility(
+                        kind: issue.kind == .vaultInSelectedFolderItself
+                            ? .vaultInSelectedFolderItself
+                            : .selectedFolderNotAnAppFolder
+                    )
                 }
                 .buttonStyle(.vault(.neutral, compact: true))
             }

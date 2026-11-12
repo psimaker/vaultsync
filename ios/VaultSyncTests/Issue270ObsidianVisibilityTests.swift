@@ -449,6 +449,30 @@ struct Issue270ObsidianVisibilityIssueTests {
         expectSafeSteps(empty)
     }
 
+    @Test("The folder picker is offered only while nothing syncs in the selected folder; keeping only while something does")
+    func whichButtonsANoticeCarries() throws {
+        func issue(_ kind: ObsidianVisibility.Kind, _ folderIDs: [String]) throws -> SyncthingManager.SyncIssueItem {
+            try #require(SyncthingManager.obsidianVisibilityIssues(
+                findings: [.init(kind: kind, folderIDs: folderIDs, tokens: ["t"])],
+                labels: [:]
+            ).first)
+        }
+        // Vaults still sync in the old folder: selecting another one would
+        // cut them off from it. Remove first — the notice says so.
+        let syncing = try issue(.selectedFolderNotAnAppFolder, ["a"])
+        #expect(!SyncthingManager.noticeOffersFolderPicker(syncing))
+        #expect(SyncthingManager.noticeOffersKeeping(syncing))
+
+        let empty = try issue(.selectedFolderNotAnAppFolder, [])
+        #expect(SyncthingManager.noticeOffersFolderPicker(empty))
+        #expect(!SyncthingManager.noticeOffersKeeping(empty))
+
+        // The selected folder is the right one; only the vault's place is not.
+        let collapsed = try issue(.vaultInSelectedFolderItself, ["a"])
+        #expect(!SyncthingManager.noticeOffersFolderPicker(collapsed))
+        #expect(SyncthingManager.noticeOffersKeeping(collapsed))
+    }
+
     @Test("No finding, no notice")
     func noFindingNoIssue() {
         #expect(SyncthingManager.obsidianVisibilityIssues(findings: [], labels: ["notes": "Notes"]).isEmpty)

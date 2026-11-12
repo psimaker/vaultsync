@@ -723,6 +723,27 @@ final class SyncthingManager {
         }
     }
 
+    /// Whether a notice may open the folder picker: only the one about the
+    /// selected folder, and only while nothing syncs in that folder. A new
+    /// selected folder replaces the one grant the vaults are read through;
+    /// the container-move repair would then take each of them for a folder
+    /// whose storage is gone and could re-point it (decision 003). Pure, so
+    /// the rule is pinned by a test instead of living in a view.
+    nonisolated static func noticeOffersFolderPicker(_ issue: SyncIssueItem) -> Bool {
+        issue.kind == .selectedFolderNotObsidiansOwn && issue.count == 0
+    }
+
+    /// Whether a notice can be put away: there has to be a vault that is
+    /// being kept where it is.
+    nonisolated static func noticeOffersKeeping(_ issue: SyncIssueItem) -> Bool {
+        switch issue.kind {
+        case .vaultInSelectedFolderItself, .selectedFolderNotObsidiansOwn:
+            return issue.count > 0
+        default:
+            return false
+        }
+    }
+
     /// Re-read the findings — on settled paths only, like every decision
     /// that depends on where folders live (decision 008): before the
     /// reconcile has run, a folder may still carry the path of a container
