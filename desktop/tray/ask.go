@@ -194,7 +194,10 @@ func chooseRow(ctx context.Context, a rowChooser, what, prompt, noRow string, it
 		}
 		return i, true, nil
 	}
-	return 0, false, a.Inform(ctx, "No "+what+" was chosen, so nothing was changed. Pair a Vault… starts over.")
+	// Said, not answered for: a message that cannot be shown is no failure of
+	// the pairing, which ends here as a cancel does.
+	_ = a.Inform(ctx, "No "+what+" was chosen, so nothing was changed. Pair a Vault… starts over.")
+	return 0, false, nil
 }
 
 // rowWords is a row's words as an argument of zenity's or kdialog's. Both read
