@@ -104,7 +104,7 @@ func Pair(ctx context.Context, c *Client, ask Asker) (string, error) {
 			if len(res.Hubs) > 0 {
 				addr, ok, err = ask.ChooseHub(ctx, res.Hubs)
 			} else {
-				addr, ok, err = ask.AskHub(ctx, res.Refusal)
+				addr, ok, err = ask.AskHub(ctx, shownWords(res.Refusal))
 			}
 			if err != nil || !ok {
 				return "", err

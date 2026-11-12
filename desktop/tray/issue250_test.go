@@ -87,6 +87,30 @@ func TestIssue250_AnOlderAgentIsAskedForAnAddress(t *testing.T) {
 	})
 }
 
+// Beside an agent older than the list, the menu shows that agent's own sentence
+// above the address prompt, and it carries names as they came from the
+// network: desktop-v0.2.0 keeps U+202E and U+2029 in them. One device could
+// so make its own address the only readable text in the dialog that asks for
+// the Hub's address. What hides or reorders text is taken out before it is
+// shown; the sentence's own line breaks stay.
+func TestIssue250_AnOlderAgentsWordsAreShownWithoutWhatHides(t *testing.T) {
+	const words = "2 Hubs answered (Home at 192.168.1.66:8390)\u2029\u202e, 192.168.1.20:8390) \u2014 choose yours with --hub.\nA code is sent only to the Hub you choose.\u0085\u009b\u200f"
+	agent := newFakeAgent(t)
+	agent.set(func(f *fakeAgent) {
+		f.pair = func(req PairRequest) (PairResult, int) {
+			return PairResult{Refusal: words, Needs: "hub"}, 200
+		}
+	})
+	ask := &fakeAsker{code: "TULIP-ANCHOR-42", cancel: "hub"}
+	if _, err := Pair(context.Background(), NewClient(agent.socket), ask); err != nil {
+		t.Fatal(err)
+	}
+	want := "hub:2 Hubs answered (Home at 192.168.1.66:8390), 192.168.1.20:8390) \u2014 choose yours with --hub.\nA code is sent only to the Hub you choose."
+	if got := ask.sequence(); len(got) < 2 || got[1] != want {
+		t.Fatalf("asked: %q", got)
+	}
+}
+
 // The address first, the one field an answer cannot write; a name is only a
 // hint from the network, and what it can do to a row is taken out of it. A
 // left-to-right mark follows the address: without it one Hebrew or Arabic
@@ -110,31 +134,36 @@ func TestIssue250_TheRowsNameEachHub(t *testing.T) {
 		{Name: "\u05beHome — \u05be192.168.1.20", Address: "192.168.1.66:8390"},
 		{Name: "\u200f\u2067\u05d1\u2069\u200e", Address: "192.168.1.73:8390"},
 	})
-	const mark = "\u200e"
+	const mark = " \u200e— "
 	want := []string{
-		"192.168.1.20" + mark + " — Home",
-		"192.168.1.21" + mark + " — your Hub",
-		"fe80::1" + mark + " — Home",
-		"192.168.1.22" + mark + " — No port",
-		"192.168.1.67" + mark + " — Home Hub — 192.168.1.20.",
-		"192.168.1.68" + mark + " — Hub evil",
-		"192.168.1.69" + mark + " — your Hub",
-		"192.168.1.70" + mark + " — R&D <b>x</b> a_b",
-		"192.168.1.71" + mark + " — AtticHub",
-		"192.168.1.72" + mark + " — C1NELCSI",
-		"192.168.1.66" + mark + " — \u05beHome — \u05be192.168.1.20",
-		"192.168.1.73" + mark + " — \u05d1",
+		"192.168.1.20" + mark + "Home",
+		"192.168.1.21" + mark + "your Hub",
+		"fe80::1" + mark + "Home",
+		"192.168.1.22" + mark + "No port",
+		"192.168.1.67" + mark + "Home Hub — 192.168.1.20.",
+		"192.168.1.68" + mark + "Hub evil",
+		"192.168.1.69" + mark + "your Hub",
+		"192.168.1.70" + mark + "R&D <b>x</b> a_b",
+		"192.168.1.71" + mark + "AtticHub",
+		"192.168.1.72" + mark + "C1NELCSI",
+		"192.168.1.66" + mark + "\u05beHome — \u05be192.168.1.20",
+		"192.168.1.73" + mark + "\u05d1",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("%q", got)
 	}
-	// The mark is the first character of a row that says a direction, and the
-	// address before it is what a person may type to find the row.
+	// The mark is the first character of a row that says a direction. Before
+	// it stand the address and one space, which is what a person may type to
+	// find the row: without the space 192.168.1.2 also finds 192.168.1.20.
 	for _, row := range got {
-		addr, rest, found := strings.Cut(row, mark)
-		if !found || strings.Contains(rest, mark) || strings.ContainsFunc(addr, func(r rune) bool { return r > 0x7f }) {
+		typed, rest, found := strings.Cut(row, "\u200e")
+		if !found || strings.Contains(rest, "\u200e") || !strings.HasSuffix(typed, " ") || strings.ContainsFunc(typed, func(r rune) bool { return r > 0x7f }) {
 			t.Errorf("the row %q", row)
 		}
+	}
+	// A wide or a no-break space is no line separator and stays in a name.
+	if got := hubItems([]HubChoice{{Name: "Home\u00a0Hub\u3000x", Address: "192.168.1.74:8390"}}); got[0] != "192.168.1.74"+mark+"Home\u00a0Hub\u3000x" {
+		t.Errorf("spaces in a name: %q", got)
 	}
 }
 
