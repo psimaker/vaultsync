@@ -16,24 +16,20 @@ struct VaultManagerSharePathTests {
 
     private func resolve(
         root: String = "/Obsidian",
-        baseIsVault: Bool = false,
-        nameMatchesBase: Bool = false,
         name: String,
         occupied: Set<String> = []
     ) -> String? {
         VaultManager.resolveSharePath(
             rawRoot: root,
-            baseIsVault: baseIsVault,
-            nameMatchesBase: nameMatchesBase,
             folderName: name,
             occupiedCanonLower: occupied,
             canonicalize: identity
         )
     }
 
-    @Test("Fresh install: a single vault collapses into the root")
-    func freshSingleVaultCollapsesIntoRoot() {
-        #expect(resolve(baseIsVault: true, name: "MyVault") == "/Obsidian")
+    @Test("#270: the first vault on a fresh install gets its own subdirectory, never the root")
+    func freshSingleVaultGetsSubfolder() {
+        #expect(resolve(name: "MyVault") == "/Obsidian/MyVault")
     }
 
     @Test("Multi-vault root: a distinct vault gets its own subdirectory")
@@ -41,33 +37,35 @@ struct VaultManagerSharePathTests {
         #expect(resolve(name: "Personal") == "/Obsidian/Personal")
     }
 
-    @Test("nameMatchesBase collapses into the root only while it is free")
-    func nameMatchesBaseCollapsesWhenFree() {
-        #expect(resolve(nameMatchesBase: true, name: "Obsidian") == "/Obsidian")
+    @Test("#270: a vault named like the root gets its own subdirectory, never the root")
+    func vaultNamedLikeTheRootGetsSubfolder() {
+        #expect(resolve(name: "Obsidian") == "/Obsidian/Obsidian")
+        // Obsidian's folder is `Documents` on disk — the name a label has to
+        // match to have collapsed into it.
+        let obsidiansFolder = "/var/mobile/Containers/Data/Application/0A1B2C3D-0000-4000-8000-000000000000/Documents"
+        #expect(resolve(root: obsidiansFolder, name: "Documents") == obsidiansFolder + "/Documents")
+        #expect(resolve(root: obsidiansFolder, name: "documents") == obsidiansFolder + "/documents")
     }
 
     @Test("#45 follow-up: a vault-as-root setup refuses a second share instead of nesting it")
     func secondVaultIsRefusedWhenRootIsOccupiedVault() {
-        // The root already holds the first vault — `baseIsVault` is true because
-        // the root itself contains a `.obsidian/`. The second share must NOT
-        // collapse on top of it (the #45 merge), and it must NOT get a
-        // subdirectory either: that subdirectory would sit inside the first
-        // vault's synced tree, so the outer share syncs the inner vault's files
-        // to its own peers. There is no safe location — refuse.
+        // The root already holds the first vault, synced into the root itself
+        // by an earlier version. The second share must NOT get a subdirectory:
+        // that subdirectory would sit inside the first vault's synced tree, so
+        // the outer share syncs the inner vault's files to its own peers.
+        // There is no safe location — refuse.
         let result = resolve(
-            baseIsVault: true,
             name: "Second",
             occupied: occupied("/Obsidian")
         )
         #expect(result == nil)
     }
 
-    @Test("nameMatchesBase refuses when the root is another folder's directory")
-    func nameMatchesBaseRefusesWhenRootTaken() {
+    @Test("A vault named like the root is refused when the root is another folder's directory")
+    func vaultNamedLikeTheRootRefusedWhenRootTaken() {
         // The root is occupied by a whole-directory share, so any subdirectory
         // (including `Obsidian/Obsidian`) would nest inside its synced tree.
         let result = resolve(
-            nameMatchesBase: true,
             name: "Obsidian",
             occupied: occupied("/Obsidian")
         )
@@ -110,15 +108,25 @@ struct VaultManagerSharePathTests {
         #expect(b == "/Obsidian/Personal")
     }
 
-    @Test("Sequential accept on a vault-as-root: first collapses into root, second is refused")
-    func sequentialAcceptNeverNests() {
-        // First vault, root empty, baseIsVault true → collapses into the root.
-        let first = resolve(baseIsVault: true, name: "Alpha")
-        #expect(first == "/Obsidian")
-        // Second vault: the root is now the first vault's synced directory, so
-        // every subdirectory would nest inside it (#45 follow-up) — refused.
-        let second = resolve(baseIsVault: true, name: "Beta", occupied: occupied(first ?? ""))
-        #expect(second == nil)
+    @Test("#270: whatever the label and whatever already syncs, the target is a direct child of the root")
+    func targetIsAlwaysADirectChildOfTheRoot() {
+        let root = "/Obsidian"
+        let occupiedSets: [Set<String>] = [
+            [],
+            occupied("/Obsidian/Notes"),
+            occupied("/Obsidian/Obsidian", "/Obsidian/Obsidian (2)"),
+            occupied("/Elsewhere/Vault")
+        ]
+        for name in ["Obsidian", "obsidian", "OBSIDIAN", "Notes", "Documents", "A", "Notes (2)"] {
+            for taken in occupiedSets {
+                guard let target = resolve(root: root, name: name, occupied: taken) else {
+                    Issue.record("\(name) found no place under a root nothing overlaps")
+                    continue
+                }
+                #expect(target != root)
+                #expect((target as NSString).deletingLastPathComponent == root)
+            }
+        }
     }
 
     @Test("Sequential accept on a container root maps every vault to its own sibling")

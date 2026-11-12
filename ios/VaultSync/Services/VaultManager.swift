@@ -24,10 +24,10 @@ final class VaultManager {
     private(set) var needsReconnect = false
 
     /// One-time, non-blocking notice set when the user picks a folder that is
-    /// itself a vault. A single-vault setup is legitimate, but additional
-    /// shares can never get a sibling folder inside that scope (the #45
-    /// follow-up nesting trap) — point at the container up front instead of
-    /// failing at accept time. The UI presents and then clears it.
+    /// itself a vault. A vault that already syncs into it keeps syncing, but
+    /// no share is accepted there: it has no folder of its own to go to (the
+    /// #45 follow-up nesting trap, #270) — point at the container up front
+    /// instead of failing at accept time. The UI presents and then clears it.
     private(set) var selectionAdvisory: String?
 
     func clearSelectionAdvisory() {
@@ -304,11 +304,41 @@ final class VaultManager {
     /// stays a pure container (decision 014). Misclassifying here is what
     /// collapses a share into the container root, nesting every existing
     /// vault inside that share's synced tree (the #45 family).
+    ///
+    /// An app's own folder (`isAppDocumentsRoot`) is a container whatever it
+    /// holds: Obsidian lists that folder's direct subfolders as vaults and
+    /// never the folder itself, so a `.obsidian/` left in it — with every
+    /// vault gone — still does not make it one (#270).
     nonisolated static func rootIsItselfVault(
+        isAppDocumentsRoot: Bool,
         hasOwnConfig: Bool,
         hasVaultSubfolders: Bool
     ) -> Bool {
-        hasOwnConfig && !hasVaultSubfolders
+        !isAppDocumentsRoot && hasOwnConfig && !hasVaultSubfolders
+    }
+
+    /// Whether `path` is an app's own folder as the folder picker hands it
+    /// out: `…/Containers/Data/Application/<UUID>/Documents` for "On My
+    /// iPhone" → the app, `…/Mobile Documents/<container>/Documents` for the
+    /// app's folder in iCloud Drive. That is the only form in which Obsidian's
+    /// folder reaches this app — its name on disk is `Documents`, never
+    /// `Obsidian` (read on a device and on the iOS 18 and 26 simulators,
+    /// #270). The path cannot tell which app the folder belongs to. Pure, so
+    /// every site that classifies the selected folder decides alike.
+    nonisolated static func isAppDocumentsRoot(_ path: String) -> Bool {
+        let parts = (path as NSString).pathComponents.filter { $0 != "/" }
+        guard parts.count >= 3, parts[parts.count - 1] == "Documents" else { return false }
+        let owner = parts[parts.count - 2]
+        let above = parts[parts.count - 3]
+        if above == "Application" {
+            return parts.count >= 5
+                && parts[parts.count - 4] == "Data"
+                && parts[parts.count - 5] == "Containers"
+                && UUID(uuidString: owner) != nil
+        }
+        // `com~apple~CloudDocs` is iCloud Drive itself; its `Documents` is a
+        // folder of the user's, not an app's.
+        return above == "Mobile Documents" && owner != "com~apple~CloudDocs"
     }
 
     /// Why a just-picked root deserves a one-time advisory (#95).
@@ -390,8 +420,7 @@ final class VaultManager {
         let folderName = placement.folderName
         let manualTarget = placement.manualTarget
         let basePath = placement.basePath
-        let baseIsVault = placement.baseIsVault
-        let nameMatchesBase = placement.nameMatchesBase
+        let rootIsVault = placement.rootIsVault
         let occupied = placement.occupied
 
         let path: String
@@ -401,7 +430,7 @@ final class VaultManager {
             // folder's synced directory (#45 follow-up), or the stored manual
             // target has become unsafe. Refuse with guidance; the share stays
             // pending until the user acts.
-            logger.error("Refusing share because no safe location exists (manual=\(manualTarget != nil), baseIsVault=\(baseIsVault), occupiedCount=\(occupied.count))")
+            logger.error("Refusing share because no safe location exists (manual=\(manualTarget != nil), rootIsVault=\(rootIsVault), occupiedCount=\(occupied.count))")
             return .refused(message: message)
         case .requiresMergeConfirmation(_, let targetName):
             // The label-derived target already holds content the engine would
@@ -416,7 +445,7 @@ final class VaultManager {
         // The local vault keeps the user's chosen name when one exists; the
         // share label on the offering devices is untouched either way (#52).
         let label = manualTarget ?? folderName
-        logger.info("Accepting share (manual=\(manualTarget != nil), baseIsVault=\(baseIsVault), nameMatchesBase=\(nameMatchesBase), occupiedCount=\(occupied.count), mergeConfirmed=\(mergeConfirmed))")
+        logger.info("Accepting share (manual=\(manualTarget != nil), rootIsVault=\(rootIsVault), occupiedCount=\(occupied.count), mergeConfirmed=\(mergeConfirmed))")
 
         // A recorded manual target is recorded consent (#52/006); otherwise
         // only the user's fresh confirmation may open the Go hard floor.
@@ -424,6 +453,7 @@ final class VaultManager {
             folderID: folder.id,
             label: label,
             path: path,
+            root: basePath,
             allowNonEmpty: manualTarget != nil || mergeConfirmed
         ) {
             return .refused(message: err)
@@ -455,8 +485,7 @@ final class VaultManager {
         let folderName: String
         let manualTarget: String?
         let basePath: String
-        let baseIsVault: Bool
-        let nameMatchesBase: Bool
+        let rootIsVault: Bool
         let occupied: Set<String>
     }
 
@@ -477,7 +506,7 @@ final class VaultManager {
         let rawName = label.isEmpty ? folderID : label
         let folderName = Self.sanitizeDirectoryName(rawName)
 
-        guard !folderName.isEmpty else {
+        guard Self.isUsableDirectoryName(folderName) else {
             return .refused(L10n.fmt("Invalid folder name: '%@'", rawName))
         }
 
@@ -495,13 +524,11 @@ final class VaultManager {
 
         // Fresh filesystem read (not the cached detectedVaults): this decides
         // a sync target, so it must classify against the disk as it is now.
-        let baseIsVault = Self.rootIsItselfVault(
+        let rootIsVault = Self.rootIsItselfVault(
+            isAppDocumentsRoot: Self.isAppDocumentsRoot(basePath),
             hasOwnConfig: baseHasOwnConfig,
             hasVaultSubfolders: !(Self.vaultSubfolderNames(in: baseURL) ?? []).isEmpty
         )
-
-        let nameMatchesBase = baseURL.lastPathComponent
-            .compare(folderName, options: .caseInsensitive) == .orderedSame
 
         // Canonical, lowercased paths already held by *other* folders. The share
         // must never reuse one of these — that is exactly the merge that corrupts
@@ -519,8 +546,7 @@ final class VaultManager {
         let decision = Self.resolveAcceptPath(
             manualTarget: manualTarget,
             rawRoot: basePath,
-            baseIsVault: baseIsVault,
-            nameMatchesBase: nameMatchesBase,
+            rootIsVault: rootIsVault,
             folderName: folderName,
             occupiedCanonLower: occupied,
             mergeConfirmed: mergeConfirmed,
@@ -536,8 +562,7 @@ final class VaultManager {
             folderName: folderName,
             manualTarget: manualTarget,
             basePath: basePath,
-            baseIsVault: baseIsVault,
-            nameMatchesBase: nameMatchesBase,
+            rootIsVault: rootIsVault,
             occupied: occupied
         ))
     }
@@ -569,13 +594,16 @@ final class VaultManager {
     /// deleting that stray copy propagates the deletion into the inner vault
     /// everywhere (#45 follow-up).
     ///
-    /// The Obsidian root stays a pure container: each vault gets its own
-    /// subdirectory `root/<name>`. The two legacy shortcuts that sync a share
-    /// straight into the root — `baseIsVault` (the root itself is a single vault)
-    /// and `nameMatchesBase` (avoid `Obsidian/obsidian` double-nesting) — are
-    /// honoured ONLY while nothing overlaps the root. A genuine name clash
-    /// between two vaults is disambiguated deterministically (`<name> (2)`,
-    /// `(3)`, …) rather than silently merged.
+    /// The Obsidian root is a pure container: each vault gets its own
+    /// subdirectory `root/<name>`, and no share ever syncs into the root
+    /// itself (#270, decision 058). Obsidian lists the direct subfolders of
+    /// its folder as vaults and nothing else, so a share collapsed into the
+    /// root arrives in full and never appears there. The two shortcuts that
+    /// did collapse are gone: one fired when the label matched the root's
+    /// name on disk — which for Obsidian's folder is `Documents` — the other
+    /// when the root held a `.obsidian/` and no vault subfolder. A genuine
+    /// name clash between two vaults is disambiguated deterministically
+    /// (`<name> (2)`, `(3)`, …) rather than silently merged.
     ///
     /// Returns nil when NO safe location exists: once the root itself is (or
     /// lies inside) another folder's directory, every possible subdirectory
@@ -589,19 +617,12 @@ final class VaultManager {
     /// because the iOS data volume is case-folding APFS.
     nonisolated static func resolveSharePath(
         rawRoot: String,
-        baseIsVault: Bool,
-        nameMatchesBase: Bool,
         folderName: String,
         occupiedCanonLower: Set<String>,
         canonicalize: (String) -> String
     ) -> String? {
         func overlapsOccupied(_ candidate: String) -> Bool {
             overlaps(candidate, occupiedCanonLower: occupiedCanonLower, canonicalize: canonicalize)
-        }
-
-        // Collapse into the root only while nothing overlaps it.
-        if (baseIsVault || nameMatchesBase) && !overlapsOccupied(rawRoot) {
-            return rawRoot
         }
 
         // Once the root is — or lies inside — an occupied directory, every
@@ -672,7 +693,7 @@ final class VaultManager {
     /// content (exactly like the label-default path on a plain re-accept).
     ///
     /// The label-derived target, by contrast, carries no recorded consent: if
-    /// the resolved directory (label default, root collapse, or numeric-suffix
+    /// the resolved directory (label default or numeric-suffix
     /// disambiguation alike) already holds anything beyond `.obsidian`,
     /// accepting would merge two content sets and push the mix to every peer
     /// (#54). Unless `mergeConfirmed` says the user explicitly approved that,
@@ -681,11 +702,16 @@ final class VaultManager {
     /// never silently merged. `listingFor` returns a directory's full listing
     /// (hidden entries included) or nil when it does not exist — injected so
     /// the rule is unit-testable without the filesystem.
+    ///
+    /// `rootIsVault` — the selected folder is itself a vault
+    /// (`rootIsItselfVault`): the label-derived mapping then has no place for
+    /// the share. Syncing into the root would put it where the user's vault
+    /// is; a subfolder would bury it inside that vault, where Obsidian shows
+    /// a folder, not a vault. It is refused with the way out (#270).
     nonisolated static func resolveAcceptPath(
         manualTarget: String?,
         rawRoot: String,
-        baseIsVault: Bool,
-        nameMatchesBase: Bool,
+        rootIsVault: Bool,
         folderName: String,
         occupiedCanonLower: Set<String>,
         mergeConfirmed: Bool,
@@ -704,10 +730,8 @@ final class VaultManager {
             return .path(candidate)
         }
 
-        guard let path = resolveSharePath(
+        guard !rootIsVault, let path = resolveSharePath(
             rawRoot: rawRoot,
-            baseIsVault: baseIsVault,
-            nameMatchesBase: nameMatchesBase,
             folderName: folderName,
             occupiedCanonLower: occupiedCanonLower,
             canonicalize: canonicalize
@@ -745,7 +769,7 @@ final class VaultManager {
         canonicalize: (String) -> String
     ) -> ShareTargetDecision {
         let folderName = sanitizeDirectoryName(name)
-        guard !folderName.isEmpty else {
+        guard isUsableDirectoryName(folderName) else {
             return .refused(message: L10n.tr("Enter a folder name."))
         }
         if rootIsCompromised(rawRoot, occupiedCanonLower: occupiedCanonLower, canonicalize: canonicalize) {
@@ -827,6 +851,7 @@ final class VaultManager {
                 folderID: folder.id,
                 label: sanitized,
                 path: path,
+                root: basePath,
                 allowNonEmpty: false
             ) {
                 return err
@@ -898,6 +923,14 @@ final class VaultManager {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Whether a sanitized name stands for a folder of its own. `.` is the
+    /// selected folder itself and `..` the one above it: a share labelled so
+    /// would sync into the root or out of it (#270). The Go floor refuses
+    /// both as well.
+    nonisolated static func isUsableDirectoryName(_ name: String) -> Bool {
+        !name.isEmpty && name != "." && name != ".."
+    }
+
     // MARK: - Legacy Migration
 
     private func preparedSelectionAdvisory(
@@ -910,6 +943,7 @@ final class VaultManager {
             isDirectory: &pickedConfigIsDirectory
         ) && pickedConfigIsDirectory.boolValue
         let pickedFolderIsVault = Self.rootIsItselfVault(
+            isAppDocumentsRoot: Self.isAppDocumentsRoot(url.path),
             hasOwnConfig: pickedFolderHasOwnConfig,
             hasVaultSubfolders: !detectedVaults.isEmpty
         )
@@ -922,7 +956,7 @@ final class VaultManager {
         case .iCloudRoot:
             message = L10n.tr("The folder you selected is stored in iCloud Drive. iCloud can keep files as placeholders that are not fully downloaded on this iPhone, which can stall syncing and create conflicts. For reliable syncing, use your vaults under \"On My iPhone\" → \"Obsidian\" and select that folder instead.")
         case .rootIsVault:
-            message = L10n.tr("The folder you selected is itself a vault. Syncing this one vault works, but additional vaults cannot get their own folder next to it. If you plan to sync more than one vault, select the folder that contains your vaults instead (\"On My iPhone\" → \"Obsidian\").")
+            message = L10n.tr("The folder you selected is itself a vault. A vault that already syncs here keeps syncing, but a new share needs a folder of its own and cannot be accepted here. Select the folder that contains your vaults instead (\"On My iPhone\" → \"Obsidian\").")
         case nil:
             message = nil
         }

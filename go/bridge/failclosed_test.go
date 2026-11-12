@@ -29,9 +29,9 @@ func TestIssue182_AcceptRefusedWhenPendingOffersUnreadable(t *testing.T) {
 	}
 
 	folderPath := filepath.Join(configDir, "unreadable-offers-vault")
-	errMsg := AcceptPendingFolder("vault-182", "Vault 182", folderPath, false)
+	errMsg := acceptAsDirectChild("vault-182", "Vault 182", folderPath, false)
 	if !strings.Contains(errMsg, "pending folder offers") || !strings.Contains(errMsg, "database is closed") {
-		t.Fatalf("AcceptPendingFolder() = %q, want a refusal naming the failed offers read", errMsg)
+		t.Fatalf("acceptAsDirectChild() = %q, want a refusal naming the failed offers read", errMsg)
 	}
 	if _, err := os.Stat(folderPath); !os.IsNotExist(err) {
 		t.Fatalf("folder path exists although the accept was refused (stat err = %v)", err)
@@ -55,8 +55,8 @@ func TestIssue182_AcceptWithoutOfferStillSucceeds(t *testing.T) {
 		t.Fatalf("StartSyncthing() failed: %s", errMsg)
 	}
 	folderPath := filepath.Join(configDir, "withdrawn-offer-vault")
-	if errMsg := AcceptPendingFolder("vault-182-b", "Vault", folderPath, false); errMsg != "" {
-		t.Fatalf("AcceptPendingFolder() without an offer = %q, want success", errMsg)
+	if errMsg := acceptAsDirectChild("vault-182-b", "Vault", folderPath, false); errMsg != "" {
+		t.Fatalf("acceptAsDirectChild() without an offer = %q, want success", errMsg)
 	}
 }
 

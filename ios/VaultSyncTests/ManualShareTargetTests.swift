@@ -32,16 +32,14 @@ struct ManualShareTargetTests {
     private func resolve(
         manualTarget: String?,
         root: String = "/Obsidian",
-        baseIsVault: Bool = false,
-        nameMatchesBase: Bool = false,
+        rootIsVault: Bool = false,
         name: String,
         occupied: Set<String> = []
     ) -> ShareTargetDecision {
         VaultManager.resolveAcceptPath(
             manualTarget: manualTarget,
             rawRoot: root,
-            baseIsVault: baseIsVault,
-            nameMatchesBase: nameMatchesBase,
+            rootIsVault: rootIsVault,
             folderName: name,
             occupiedCanonLower: occupied,
             mergeConfirmed: false,
@@ -157,10 +155,12 @@ struct ManualShareTargetTests {
         )
     }
 
-    @Test("The override also suppresses the collapse-into-root shortcuts")
-    func overrideSuppressesRootCollapse() {
+    @Test("A recorded override keeps its place when the selected folder is itself a vault")
+    func overrideKeepsItsPlaceUnderAVaultRoot() {
+        // Recorded consent (#52): the label-derived mapping refuses under such
+        // a root (#270), the location the user chose stays what it was.
         #expect(
-            resolve(manualTarget: "Life", baseIsVault: true, name: "Obsidian-Vault-Life")
+            resolve(manualTarget: "Life", rootIsVault: true, name: "Obsidian-Vault-Life")
                 == .path("/Obsidian/Life")
         )
     }
@@ -201,7 +201,7 @@ struct ManualShareTargetTests {
     func labelRefusalKeepsGuidance() {
         guard case .refused(let message) = resolve(
             manualTarget: nil,
-            baseIsVault: true,
+            rootIsVault: true,
             name: "Second",
             occupied: occupied("/obsidian")
         ) else {

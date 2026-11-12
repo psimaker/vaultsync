@@ -145,8 +145,8 @@ func TestIssue185_HeavyTombstoneIndexExchangeSurvives(t *testing.T) {
 		return false
 	})
 	acceptPath := filepath.Join(configDir, "accepted-vault")
-	if errMsg := AcceptPendingFolder(folderID, "Tombstone Vault", acceptPath, false); errMsg != "" {
-		t.Fatalf("AcceptPendingFolder() = %q", errMsg)
+	if errMsg := acceptAsDirectChild(folderID, "Tombstone Vault", acceptPath, false); errMsg != "" {
+		t.Fatalf("acceptAsDirectChild() = %q", errMsg)
 	}
 
 	// --- Index exchange: the connection must hold and the folder must
