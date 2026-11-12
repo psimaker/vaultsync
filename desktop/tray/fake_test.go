@@ -37,7 +37,10 @@ type fakeAgent struct {
 	layout   layout.Layout // rooted at stateDir, no log folder
 	logs     string        // a log folder with a vaultsync.log, for a Mac-like controller
 	socket   string
-	srv      *http.Server
+	// statusAsks counts the status requests.
+	statusAsks int
+	srv        *http.Server
+	served     chan struct{}
 
 	mu     sync.Mutex
 	status Status
@@ -53,6 +56,10 @@ type fakeAgent struct {
 	// statusHold, when set, keeps every status request waiting until it
 	// is closed.
 	statusHold chan struct{}
+	// statusDelay is how long every status request takes to answer.
+	statusDelay time.Duration
+	// unreadable: status answers 200 with a body that is no report.
+	unreadable bool
 }
 
 func newFakeAgent(t *testing.T) *fakeAgent {
@@ -71,7 +78,8 @@ func newFakeAgent(t *testing.T) *fakeAgent {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
-		hold := f.statusHold
+		hold, delay := f.statusHold, f.statusDelay
+		f.statusAsks++
 		f.mu.Unlock()
 		if hold != nil {
 			select {
@@ -80,10 +88,16 @@ func newFakeAgent(t *testing.T) *fakeAgent {
 				return
 			}
 		}
+		time.Sleep(delay)
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		if f.old {
 			http.NotFound(w, r)
+			return
+		}
+		if f.unreadable {
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`{"version": 5`))
 			return
 		}
 		if f.statusErr != "" {
@@ -128,9 +142,7 @@ func newFakeAgent(t *testing.T) *fakeAgent {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.srv = &http.Server{Handler: mux}
-	go func() { _ = f.srv.Serve(l) }()
-	t.Cleanup(func() { _ = f.srv.Close() })
+	f.serve(&http.Server{Handler: mux}, l)
 	return f
 }
 
@@ -154,7 +166,56 @@ func (f *fakeAgent) set(fn func(*fakeAgent)) {
 	fn(f)
 }
 
-func (f *fakeAgent) stop() { _ = f.srv.Close() }
+// asked waits until the agent has been asked for its status n times.
+func (f *fakeAgent) asked(n int) {
+	f.t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var got int
+		f.set(func(f *fakeAgent) { got = f.statusAsks })
+		if got >= n {
+			return
+		}
+		if time.Now().After(deadline) {
+			f.t.Fatalf("asked for its status %d times, not %d", got, n)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// stop takes the agent off its socket and waits for Serve to return. A Close
+// before Serve has started leaves the listener open until Serve runs, and a
+// menu that dials in between gets EOF, not "no agent": the state the test
+// stopped the agent to see never comes.
+func (f *fakeAgent) stop() {
+	_ = f.srv.Close()
+	<-f.served
+}
+
+// serve answers on l with srv until stop. The goroutine keeps its own srv and
+// channel: the fields are the test's, and serveAgain replaces them.
+func (f *fakeAgent) serve(srv *http.Server, l net.Listener) {
+	served := make(chan struct{})
+	f.srv, f.served = srv, served
+	go func() {
+		defer close(served)
+		_ = srv.Serve(l)
+	}()
+	f.t.Cleanup(func() { _ = srv.Close() })
+}
+
+// serveAgain answers on the socket again after a stop, as a service that has
+// started does.
+func (f *fakeAgent) serveAgain() {
+	f.t.Helper()
+	handler := f.srv.Handler
+	_ = os.Remove(f.socket)
+	l, err := net.Listen("unix", f.socket)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	f.serve(&http.Server{Handler: handler}, l)
+}
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")

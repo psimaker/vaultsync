@@ -8,8 +8,13 @@ The desktop agent `vaultsync`, VaultSync for Mac and the menu-bar app, released 
 
 ### Added
 
+- **The menu-bar icon can start VaultSync when it is not running** ([#248](https://github.com/psimaker/vaultsync/issues/248)) — after `vaultsync stop`, or when the background service did not start, the menu offers **Start VaultSync**, which does what `vaultsync start` does and shows what that says, a refusal included. It runs the program the background service runs, never a `vaultsync` found on your `PATH`, so what it says is about that service. It does not appear when VaultSync was never set up here, or when the service has recorded that it could not open its socket; a service that is not installed says so when you click. A start that gets no answer from the service says so after about 15 seconds, and quitting the icon does not end a start under way.
 - **Pair a Vault… works on Linux with KDE's `kdialog`, without `zenity`** ([#249](https://github.com/psimaker/vaultsync/issues/249)) — the menu asks for the code, the vault and the consent through whichever is installed, `zenity` first. In `kdialog`, the consent is a list with **Cancel** selected: Return alone never starts syncing.
 - **When several Hubs answer, the menu offers them by name** ([#250](https://github.com/psimaker/vaultsync/issues/250)) — **Pair a Vault…** used to ask you to type your Hub's address under a list of what answered. It now shows a list, as the terminal does, and sends the code only to the Hub you choose. Return alone chooses none. A menu-bar app from 0.2.0 still running beside the new agent keeps asking for the address, and the new one does the same beside an older agent.
+
+### Changed
+
+- **Updated the Go runtime the desktop agent is built with** — Go 1.26.10 → 1.26.11 with the latest standard-library security fix; the [root changelog](../CHANGELOG.md) names it.
 
 ### Fixed
 

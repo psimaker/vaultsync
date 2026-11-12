@@ -61,6 +61,14 @@ func (l Layout) At(base string) Layout {
 	return l
 }
 
+// ServiceLabel is the background service's LaunchAgent on a Mac.
+const ServiceLabel = "eu.vaultsync.agent"
+
+// LaunchAgentPlist is the file that LaunchAgent is loaded from.
+func LaunchAgentPlist(home string) string {
+	return filepath.Join(home, "Library", "LaunchAgents", ServiceLabel+".plist")
+}
+
 // SocketErrorFile is the agent's record that it could not make or keep
 // its control socket (control.go), in VaultSync's folder.
 func (l Layout) SocketErrorFile() string {

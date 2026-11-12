@@ -1,8 +1,9 @@
 // vaultsync-tray is VaultSync's menu-bar app for a Mac or a Linux desktop
 // (#176, decision 048): an icon that shows what `vaultsync status` shows,
 // a menu with the vaults (click to open), Pause/Resume, Pair a Vault…,
-// Open Log and Quit. It asks the running agent on its control socket for
-// everything and decides nothing itself.
+// Open Log and Quit, and Start VaultSync when no agent answers. It asks the
+// running agent on its control socket for everything and decides nothing
+// itself.
 //
 //	vaultsync-tray                 show the icon until Quit
 //	vaultsync-tray --state-dir D   the VaultSync folder the agent was set up with
@@ -135,15 +136,17 @@ func run(args []string) error {
 	ui := newMenu()
 	ui.onQuit = stop
 	c := &tray.Controller{
-		Home:   home,
-		Layout: lay,
-		UI:     ui,
-		Asker:  tray.NewAsker(runtime.GOOS, home, exec.LookPath),
-		Open:   tray.Open(runtime.GOOS),
-		Notify: tray.Notify(runtime.GOOS, exec.LookPath),
-		Logf:   logger.Printf,
-		Lock:   tray.TakeLock,
-		Held:   held,
+		Home:         home,
+		Layout:       lay,
+		UI:           ui,
+		Asker:        tray.NewAsker(runtime.GOOS, home, exec.LookPath),
+		Open:         tray.Open(runtime.GOOS),
+		StartProgram: tray.AgentProgram(runtime.GOOS, home, lay),
+		Start:        tray.Start,
+		Notify:       tray.Notify(runtime.GOOS, exec.LookPath),
+		Logf:         logger.Printf,
+		Lock:         tray.TakeLock,
+		Held:         held,
 	}
 	// The controller ends the tray (Quit after Run returns), and the tray
 	// ends the controller: when the native loop stops on its own — the
