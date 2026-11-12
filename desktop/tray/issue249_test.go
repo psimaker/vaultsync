@@ -27,6 +27,9 @@ type recorder struct {
 	status  int
 	err     error
 	calls   int
+	// failFrom, when set, makes that run and every later one end with
+	// status 255.
+	failFrom int
 }
 
 func (r *recorder) run(_ context.Context, name string, args []string, stdin string) (string, string, int, error) {
@@ -34,6 +37,9 @@ func (r *recorder) run(_ context.Context, name string, args []string, stdin stri
 	r.calls++
 	if len(r.stdouts) > 0 {
 		r.stdout, r.stdouts = r.stdouts[0], r.stdouts[1:]
+	}
+	if r.failFrom > 0 && r.calls >= r.failFrom {
+		return "", "This option is not available.", 255, nil
 	}
 	return r.stdout, r.stderr, r.status, r.err
 }
@@ -115,6 +121,13 @@ func TestIssue249_ReturnInAListChoosesNoVaultAndAsksAgain(t *testing.T) {
 		if said := strings.Join(r.args, " "); !strings.Contains(said, "No vault was chosen") || strings.Contains(said, "--list") || strings.Contains(said, "--menu") {
 			t.Errorf("%s, after the last showing: %q", name, r.args)
 		}
+		// A message that cannot be shown (zenity without a UTF-8 locale ends
+		// with 255 on its "…") is no failure of the pairing: it ends as a
+		// cancel, as it did before there was a message.
+		r = &recorder{stdout: noChoiceTag + "\n", failFrom: rowTries + 1}
+		if _, ok, err := a(r).ChooseVault(ctx, m); ok || err != nil || r.calls != rowTries+1 {
+			t.Errorf("%s, the message could not be shown: %v %v, %d runs", name, ok, err, r.calls)
+		}
 		r = &recorder{status: 1}
 		if _, ok, err := a(r).ChooseVault(ctx, m); ok || err != nil || r.calls != 1 {
 			t.Errorf("%s, a cancel: %v %v, %d times", name, ok, err, r.calls)
@@ -133,7 +146,7 @@ func TestIssue249_ReturnInAListChoosesNoVaultAndAsksAgain(t *testing.T) {
 // looks for what a person types in the first column, and with the tags there
 // a typed 192.168.1.21 chose the first row. Its tag is made of a character
 // no keyboard types: zenity 4.1 looks in the hidden column too, and a typed 2
-// chose the row once tagged linuxTag(1).
+// chose the row once tagged "2)".
 func TestIssue249_ARowShowsNoNumberAndAHiddenTagIsReadBack(t *testing.T) {
 	ctx := context.Background()
 	m := Menu{Local: []MenuEntry{{Label: "Work", Path: "/w"}}, Hub: []MenuEntry{{Label: "Work", Vault: "vs-1"}}}
@@ -208,8 +221,7 @@ func TestIssue249_TheListGrowsWithItsPrompt(t *testing.T) {
 			height = v
 		}
 	}
-	lines := strings.Count(text, "\n") + 1
-	if lines < 10 || height != strconv.Itoa(420+17*(lines-4)) {
+	if lines := strings.Count(text, "\n") + 1; lines < 10 || height != strconv.Itoa(zenityListHeight(text)) || height == strconv.Itoa(zenityListHeight(menuPrompt(long))) {
 		t.Fatalf("%d lines of text, height %s: %q", lines, height, r.args)
 	}
 }
@@ -340,8 +352,8 @@ func TestIssue249_KdialogArguments(t *testing.T) {
 	if got := r.args[3]; !strings.HasPrefix(got, open+label) || !strings.HasSuffix(got, closing) {
 		t.Fatalf("entry label: %q", got)
 	}
-	// A message and a list's label: & once, and each row as written with its
-	// number for a tag.
+	// A message and a list's label: & once, and each row as written behind
+	// its tag.
 	if err := k.Inform(ctx, awkward+"\nnext"); err != nil {
 		t.Fatal(err)
 	}
@@ -438,9 +450,14 @@ func TestIssue249_EveryDialogGetsItsTextBroken(t *testing.T) {
 			"zenity":  func(r *recorder) Asker { return &zenityAsker{run: r.run} },
 			"kdialog": func(r *recorder) Asker { return &kdialogAsker{run: r.run} },
 		} {
-			r := &recorder{}
+			// A row chosen, so that the list is the last dialog shown and
+			// not the message after three showings without a choice.
+			r := &recorder{stdout: linuxTag(0) + "\n"}
 			if err := ask(a(r)); err != nil {
 				t.Fatalf("%s %s: %v", program, name, err)
+			}
+			if name == "vault" && !slices.ContainsFunc(r.args, func(a string) bool { return a == "--list" || a == "--menu" }) {
+				t.Fatalf("%s %s: not the list: %q", program, name, r.args)
 			}
 			var text string
 			if program == "kdialog" {
