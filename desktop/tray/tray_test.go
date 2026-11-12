@@ -1028,20 +1028,32 @@ func TestIssue176_TrayDialogsCarryTextAsData(t *testing.T) {
 	if got := appleScriptList([]string{"a", `b"c`}); got != `{"a", "b\"c"}` {
 		t.Fatalf("appleScriptList: %s", got)
 	}
-	// The menu's lines are numbered so a choice is found by number alone.
+	// The menu's lines, as every program's list shows them.
 	m := Menu{Local: []MenuEntry{{Label: "Work", Path: "/w", Note: "~/w"}, {Label: "Work", Path: "/w2"}}, Hub: []MenuEntry{{Label: "Notes", Vault: "vs-1", Note: "1 file on your Hub", Default: "/home/me/Vaults/Notes"}}}
 	items, choices := menuItems(m, "/home/me")
 	if !reflect.DeepEqual(items, []string{"Work — on this computer, ~/w", "Work — on this computer", "Notes — on your Hub → ~/Vaults/Notes, 1 file on your Hub"}) {
 		t.Fatalf("items: %q", items)
 	}
-	if i, ok := chosen("2) Work — on this computer", len(choices)); !ok || !choices[i].Local || choices[i].Entry.Path != "/w2" {
+	if i, ok := numberedRow("2) Work — on this computer", len(choices)); !ok || !choices[i].Local || choices[i].Entry.Path != "/w2" {
 		t.Fatalf("chosen 2: %d %v", i, ok)
 	}
-	if i, ok := chosen("3)", len(choices)); !ok || choices[i].Local || choices[i].Entry.Vault != "vs-1" {
+	if i, ok := numberedRow("3)", len(choices)); !ok || choices[i].Local || choices[i].Entry.Vault != "vs-1" {
 		t.Fatalf("chosen 3: %d %v", i, ok)
 	}
-	for _, bad := range []string{"", "4) x", "x) y", "false"} {
-		if _, ok := chosen(bad, len(choices)); ok {
+	for _, bad := range []string{"", "4) x", "x) y", "false", "0) x", linuxTag(1)} {
+		if _, ok := numberedRow(bad, len(choices)); ok {
+			t.Fatalf("%q chosen", bad)
+		}
+	}
+	// On Linux a row is named by its marks alone: the third row by four, the
+	// row that chooses nothing by one, and marks beside anything else by none.
+	// Nor by a number: a program that printed a row's words must not have
+	// chosen the vault a name such as "2) Notes" counts to.
+	if i, ok := taggedRow(linuxTag(2), len(choices)); !ok || choices[i].Entry.Vault != "vs-1" {
+		t.Fatalf("chosen by its tag: %d %v", i, ok)
+	}
+	for _, bad := range []string{"", noChoiceTag, linuxTag(3), linuxTag(0) + "1)", "2)" + tagMark, "2)", "2) Notes — on your Hub"} {
+		if _, ok := taggedRow(bad, len(choices)); ok {
 			t.Fatalf("%q chosen", bad)
 		}
 	}
@@ -1141,18 +1153,21 @@ func TestIssue176_TrayDialogsCarryTextAsData(t *testing.T) {
 	if _, err := z.Confirm(ctx, "x"); err == nil {
 		t.Fatal("zenity timeout is a failure")
 	}
-	z = &zenityAsker{run: script("3)\n", "", 0), home: "/home/me"}
+	z = &zenityAsker{run: script(linuxTag(2)+"\n", "", 0), home: "/home/me"}
 	if c, ok, err := z.ChooseVault(ctx, m); err != nil || !ok || c.Entry.Vault != "vs-1" {
 		t.Fatalf("zenity choose: %+v %v %v", c, ok, err)
 	}
 	// Continue without a row, again and again: nothing chosen, as a cancel —
-	// not a dialog that could not be shown.
+	// not a dialog that could not be shown — and a message says so.
 	z = &zenityAsker{run: script("\n", "", 0), home: "/home/me"}
 	if c, ok, err := z.ChooseVault(ctx, m); err != nil || ok || c != (Choice{}) {
 		t.Fatalf("zenity without a row: %+v %v %v", c, ok, err)
 	}
-	if c := calls[len(calls)-1]; !reflect.DeepEqual(c.args[len(c.args)-8:], []string{noChoiceTag, noVaultRow, "1)", items[0], "2)", items[1], "3)", items[2]}) {
+	if c := calls[len(calls)-2]; !reflect.DeepEqual(c.args[len(c.args)-8:], []string{noVaultRow, noChoiceTag, items[0], linuxTag(0), items[1], linuxTag(1), items[2], linuxTag(2)}) {
 		t.Fatalf("zenity list args: %q", c.args)
+	}
+	if c := calls[len(calls)-1]; c.args[1] != "--info" {
+		t.Fatalf("zenity after the last showing: %q", c.args)
 	}
 
 	// Which dialogs a computer has.

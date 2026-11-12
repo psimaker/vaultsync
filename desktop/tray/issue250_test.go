@@ -127,34 +127,43 @@ func TestIssue250_EveryProgramOffersTheHubs(t *testing.T) {
 		"zenity":  func(r *recorder) Asker { return &zenityAsker{run: r.run} },
 		"kdialog": func(r *recorder) Asker { return &kdialogAsker{run: r.run} },
 	}
+	// zenity takes a row's words first and its tag after them, kdialog the tag
+	// first (decision 055).
+	rows := map[string][]string{
+		"zenity":  {noHubRow, noChoiceTag, items[0], linuxTag(0), items[1], linuxTag(1)},
+		"kdialog": {noChoiceTag, noHubRow, linuxTag(0), items[0], linuxTag(1), items[1]},
+	}
 	for name, a := range linux {
-		r := &recorder{stdout: "2)\n"}
+		r := &recorder{stdout: linuxTag(1) + "\n"}
 		addr, ok, err := a(r).ChooseHub(ctx, sameName)
 		if err != nil || !ok || addr != "192.168.1.21:8390" {
 			t.Fatalf("%s: %q %v %v", name, addr, ok, err)
 		}
-		if got := r.args[len(r.args)-6:]; !reflect.DeepEqual(got, []string{noChoiceTag, noHubRow, "1)", items[0], "2)", items[1]}) {
+		if got := r.args[len(r.args)-6:]; !reflect.DeepEqual(got, rows[name]) {
 			t.Fatalf("%s rows: %q", name, got)
 		}
 		if !strings.Contains(strings.Join(r.args, "\x00"), "Which Hub printed your code?") {
 			t.Fatalf("%s prompt: %q", name, r.args)
 		}
 		// Return alone, then a choice: asked again, and only the chosen hears.
-		r = &recorder{stdouts: []string{noChoiceTag + "\n", "1)\n"}}
+		r = &recorder{stdouts: []string{noChoiceTag + "\n", linuxTag(0) + "\n"}}
 		addr, ok, err = a(r).ChooseHub(ctx, sameName)
 		if err != nil || !ok || addr != "192.168.1.20:8390" || r.calls != 2 {
 			t.Fatalf("%s, Return first: %q %v %v, %d times", name, addr, ok, err, r.calls)
 		}
-		// Never a choice: none, not the first.
+		// Never a choice: none, not the first, and a message says so.
 		r = &recorder{stdout: noChoiceTag + "\n"}
 		if addr, ok, err := a(r).ChooseHub(ctx, sameName); addr != "" || ok || err != nil {
 			t.Fatalf("%s, never chosen: %q %v %v", name, addr, ok, err)
+		}
+		if !strings.Contains(strings.Join(r.args, " "), "No Hub was chosen") {
+			t.Fatalf("%s, after the last showing: %q", name, r.args)
 		}
 		r = &recorder{status: 1}
 		if addr, ok, err := a(r).ChooseHub(ctx, sameName); addr != "" || ok || err != nil {
 			t.Fatalf("%s, Cancel: %q %v %v", name, addr, ok, err)
 		}
-		r = &recorder{stdout: "9)\n"}
+		r = &recorder{stdout: linuxTag(8) + "\n"}
 		if _, _, err := a(r).ChooseHub(ctx, sameName); err == nil {
 			t.Errorf("%s: a row not in the list", name)
 		}

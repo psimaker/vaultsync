@@ -14,7 +14,7 @@ The desktop agent `vaultsync`, VaultSync for Mac and the menu-bar app, released 
 ### Fixed
 
 - **On Linux, names show as they are written in the pairing dialogs** ([#249](https://github.com/psimaker/vaultsync/issues/249)) — above an entry, a `&` read `&amp;`, a `_` went missing, and a backslash could break the line. The texts are now written for what each dialog does with them, tried on zenity 3.42, 3.44, 4.0 and 4.1. A long line is broken to fit: it could make a window wider than the screen, with its buttons out of reach.
-- **Return alone chooses no vault in the Linux list** ([#249](https://github.com/psimaker/vaultsync/issues/249)) — zenity 4 opens the list with its first row selected, so Return took that vault. The list now starts with a row that chooses nothing, and asks again if you continue on it.
+- **Return alone chooses no vault in the Linux list** ([#249](https://github.com/psimaker/vaultsync/issues/249)) — zenity 4 opens the list with its first row selected, so Return took that vault. The list now starts with a row that chooses nothing and shows again if you continue on it; after the third time it says that nothing was chosen. Its rows show no number, and what you type finds only the words you see.
 
 ## [0.2.0] — 2026-11-05
 

@@ -110,9 +110,13 @@ func menuItems(m Menu, home string) (items []string, choices []Choice) {
 
 // rowChooser is what a program's dialogs need for a choice among rows.
 type rowChooser interface {
-	// chooseRow asks for one of items, below noRow where a list needs such a
-	// row, and returns its index; false when nothing was chosen.
-	chooseRow(ctx context.Context, what, prompt, noRow string, items []string) (int, bool, error)
+	// showRows shows items once, below noRow where a list needs such a row,
+	// and returns what the program printed for the row chosen; false when
+	// the person cancelled.
+	showRows(ctx context.Context, what, prompt, noRow string, items []string) (string, bool, error)
+	// rowOf finds which of n rows a line this program printed names, counted
+	// from 0.
+	rowOf(line string, n int) (int, bool)
 	Inform(ctx context.Context, text string) error
 }
 
@@ -122,7 +126,7 @@ func chooseVault(ctx context.Context, a rowChooser, home string, m Menu) (Choice
 		err := a.Inform(ctx, "Nothing to choose: "+menuPrompt(m))
 		return Choice{}, false, err
 	}
-	i, ok, err := a.chooseRow(ctx, "vault", menuPrompt(m), noVaultRow, items)
+	i, ok, err := chooseRow(ctx, a, "vault", menuPrompt(m), noVaultRow, items)
 	if err != nil || !ok {
 		return Choice{}, false, err
 	}
@@ -161,28 +165,41 @@ func hubItems(hubs []HubChoice) []string {
 }
 
 func chooseHub(ctx context.Context, a rowChooser, hubs []HubChoice) (string, bool, error) {
-	i, ok, err := a.chooseRow(ctx, "Hub", hubListPrompt, noHubRow, hubItems(hubs))
+	i, ok, err := chooseRow(ctx, a, "Hub", hubListPrompt, noHubRow, hubItems(hubs))
 	if err != nil || !ok {
 		return "", false, err
 	}
 	return hubs[i].Address, true, nil
 }
 
-// noChoiceTag is what a list on Linux prints for the row that chooses nothing.
-const noChoiceTag = "none"
+// tagMark is what a row's tag on Linux is made of, a unit separator. A tag is
+// the hidden text a list prints for the row chosen, and zenity looks for what
+// a person types in the hidden column too: with "2)" for a tag, a typed 2
+// chose the second row on zenity 4.1, whatever it read, and a typed address
+// the first on zenity 3. No keyboard types this character, so what is typed
+// can only find the words in view.
+const tagMark = "\x1f"
 
-// rowTries bounds how often a list is asked again: a program that prints
+// noChoiceTag is the tag of the row that chooses nothing: one mark. The rows
+// after it have one more each.
+const noChoiceTag = tagMark
+
+// linuxTag is the tag of row i, counted from 0.
+func linuxTag(i int) string { return strings.Repeat(tagMark, i+2) }
+
+// rowTries is how often a list is shown at most: a program that prints
 // nothing must not open dialogs for ever.
 const rowTries = 3
 
-// rowTag is what a row prints when chosen, or begins with on a Mac. Rows on
-// Linux show no number: zenity 4 filters a list on a typed key, and moves the
-// selection to the first row that holds it.
+// rowTag is what a row begins with on a Mac, where the row's words come back.
+// Rows on Linux show no number: zenity 4 filters a list on a typed key, and
+// moves the selection to the first row that holds it.
 func rowTag(i int) string { return strconv.Itoa(i+1) + ")" }
 
-// chosen finds which of n rows a line names by its tag, counted from 0.
-func chosen(line string, n int) (int, bool) {
-	number, _, found := strings.Cut(strings.TrimSpace(line), ")")
+// numberedRow finds which of n rows a line names by the number it begins with,
+// counted from 0: a row on a Mac.
+func numberedRow(line string, n int) (int, bool) {
+	number, _, found := strings.Cut(line, ")")
 	i, err := strconv.Atoi(number)
 	if !found || err != nil || i < 1 || i > n {
 		return 0, false
@@ -190,11 +207,24 @@ func chosen(line string, n int) (int, bool) {
 	return i - 1, true
 }
 
-// askRow shows a list until a row is chosen. Continuing without one asks again,
-// as the terminal's list does: the person would otherwise type the code again.
-func askRow(what string, n int, show func() (string, bool, error)) (int, bool, error) {
+// taggedRow finds which of n rows a tag names, counted from 0: a row on Linux.
+// Marks and nothing else: a program that printed a row's words instead must
+// not have chosen by a number they begin with.
+func taggedRow(line string, n int) (int, bool) {
+	i := len(line) - 2
+	if strings.Trim(line, tagMark) != "" || i < 0 || i >= n {
+		return 0, false
+	}
+	return i, true
+}
+
+// chooseRow shows a list until a row is chosen, and returns the row's index.
+// Continuing without one shows it again, as the terminal's list asks again:
+// the person would otherwise type the code again. When the list has been
+// shown rowTries times, a message says that nothing was chosen.
+func chooseRow(ctx context.Context, a rowChooser, what, prompt, noRow string, items []string) (int, bool, error) {
 	for try := 0; try < rowTries; try++ {
-		line, ok, err := show()
+		line, ok, err := a.showRows(ctx, what, prompt, noRow, items)
 		if err != nil || !ok {
 			return 0, false, err
 		}
@@ -202,20 +232,42 @@ func askRow(what string, n int, show func() (string, bool, error)) (int, bool, e
 		if t == "" || t == noChoiceTag {
 			continue
 		}
-		i, found := chosen(t, n)
+		i, found := a.rowOf(t, len(items))
 		if !found {
 			return 0, false, dialogError(what, fmt.Errorf("the choice %q is not in the list", line))
 		}
 		return i, true, nil
 	}
-	return 0, false, nil
+	return 0, false, a.Inform(ctx, "No "+what+" was chosen, so nothing was changed. Pair a Vault… starts over.")
 }
 
-// tagRows is rows for a list on Linux: tag, label, tag, label…
-func tagRows(noRow string, items []string) []string {
-	rows := []string{noChoiceTag, noRow}
+// rowWords is a row's words as an argument of zenity's or kdialog's. Both read
+// an argument that begins with "-" as an option of their own: for a vault
+// called -archive the list did not open, and a name can spell an option that
+// is taken, such as --text= or the GTK module to load. A space before it
+// makes it a row again; neither program has a mark that ends its options for
+// both.
+func rowWords(s string) string {
+	if strings.HasPrefix(s, "-") {
+		return " " + s
+	}
+	return s
+}
+
+// linuxRows is the rows of a list as arguments, a pair for each: its tag, and
+// its words as shown. wordsFirst puts the words first.
+func linuxRows(noRow string, items []string, wordsFirst bool) []string {
+	rows := make([]string, 0, 2*(len(items)+1))
+	add := func(tag, words string) {
+		if wordsFirst {
+			rows = append(rows, rowWords(words), tag)
+		} else {
+			rows = append(rows, tag, rowWords(words))
+		}
+	}
+	add(noChoiceTag, noRow)
 	for i, item := range items {
-		rows = append(rows, rowTag(i), item)
+		add(linuxTag(i), item)
 	}
 	return rows
 }
@@ -313,20 +365,20 @@ func (a *scriptAsker) ChooseHub(ctx context.Context, hubs []HubChoice) (string, 
 	return chooseHub(ctx, a, hubs)
 }
 
-// chooseRow: AppleScript's list opens with nothing selected and takes no
+// showRows: AppleScript's list opens with nothing selected and takes no
 // Continue without a row, so it has no noRow. A row is read back by its number,
 // since two rows may read alike.
-func (a *scriptAsker) chooseRow(ctx context.Context, what, prompt, _ string, items []string) (int, bool, error) {
+func (a *scriptAsker) showRows(ctx context.Context, what, prompt, _ string, items []string) (string, bool, error) {
 	numbered := make([]string, len(items))
 	for i, item := range items {
 		numbered[i] = rowTag(i) + " " + item
 	}
-	return askRow(what, len(items), func() (string, bool, error) {
-		return a.osascript(ctx, what, `set c to choose from list `+appleScriptList(numbered)+` with title `+appleScriptString(dialogTitle)+` with prompt `+appleScriptString(prompt)+` OK button name "Continue" cancel button name "Cancel"
+	return a.osascript(ctx, what, `set c to choose from list `+appleScriptList(numbered)+` with title `+appleScriptString(dialogTitle)+` with prompt `+appleScriptString(prompt)+` OK button name "Continue" cancel button name "Cancel"
 if c is false then error number -128
 return item 1 of c`)
-	})
 }
+
+func (a *scriptAsker) rowOf(line string, n int) (int, bool) { return numberedRow(line, n) }
 
 func (a *scriptAsker) Confirm(ctx context.Context, text string) (bool, error) {
 	_, ok, err := a.osascript(ctx, "consent", `set r to display dialog `+appleScriptString(text)+` with title `+appleScriptString(dialogTitle)+` buttons {"Cancel", `+appleScriptString(consentButton)+`} default button "Cancel" with icon caution
@@ -395,33 +447,40 @@ func (a *zenityAsker) ChooseHub(ctx context.Context, hubs []HubChoice) (string, 
 	return chooseHub(ctx, a, hubs)
 }
 
-// zenityListHeight gives a long prompt its room: on zenity 4 it would otherwise
-// take the list's, and no vault would be in view.
-func zenityListHeight(prompt string) int {
+// zenityWidth is the width of zenity's windows: a line of lineWidth characters
+// fits it. At 480 it did not, and zenity broke each line once more.
+const zenityWidth = "--width=560"
+
+// zenityListHeight gives a long text above a list its room, by its lines as
+// shown: on zenity 4 it would otherwise take the list's, and no vault would be
+// in view.
+func zenityListHeight(text string) int {
 	const base, lineHeight, baseLines, most = 420, 17, 4, 760
-	lines := strings.Count(prompt, "\n") + 1
+	lines := strings.Count(text, "\n") + 1
 	if lines <= baseLines {
 		return base
 	}
 	return min(base+lineHeight*(lines-baseLines), most)
 }
 
-// chooseRow reads back a hidden column, not the row's words.
-func (a *zenityAsker) chooseRow(ctx context.Context, what, prompt, noRow string, items []string) (int, bool, error) {
-	wrapped := wrapLines(prompt, lineWidth)
-	args := append([]string{"--list", "--hide-header", "--width=560", "--height=" + strconv.Itoa(zenityListHeight(wrapped)), "--column=Row", "--column=Choice", "--hide-column=1", "--print-column=1", "--text=" + zenityListText(prompt), "--ok-label=Continue"}, tagRows(noRow, items)...)
-	return askRow(what, len(items), func() (string, bool, error) {
-		return a.zenity(ctx, what, args...)
-	})
+// showRows puts the row's words in the first column and reads back a hidden
+// second one: zenity 3 looks for what a person types in the first column only,
+// so the words there are what typing finds.
+func (a *zenityAsker) showRows(ctx context.Context, what, prompt, noRow string, items []string) (string, bool, error) {
+	text := zenityListText(prompt)
+	args := append([]string{"--list", "--hide-header", zenityWidth, "--height=" + strconv.Itoa(zenityListHeight(text)), "--column=Choice", "--column=Row", "--hide-column=2", "--print-column=2", "--text=" + text, "--ok-label=Continue"}, linuxRows(noRow, items, true)...)
+	return a.zenity(ctx, what, args...)
 }
 
+func (a *zenityAsker) rowOf(line string, n int) (int, bool) { return taggedRow(line, n) }
+
 func (a *zenityAsker) Confirm(ctx context.Context, text string) (bool, error) {
-	_, ok, err := a.zenity(ctx, "consent", "--question", "--no-markup", "--default-cancel", "--ok-label="+consentButton, "--cancel-label=Cancel", "--width=560", "--text="+wrapLines(text, lineWidth))
+	_, ok, err := a.zenity(ctx, "consent", "--question", "--no-markup", "--default-cancel", "--ok-label="+consentButton, "--cancel-label=Cancel", zenityWidth, "--text="+wrapLines(text, lineWidth))
 	return ok, err
 }
 
 func (a *zenityAsker) Inform(ctx context.Context, text string) error {
-	_, _, err := a.zenity(ctx, "message", "--info", "--no-markup", "--width=560", "--text="+wrapLines(text, lineWidth))
+	_, _, err := a.zenity(ctx, "message", "--info", "--no-markup", zenityWidth, "--text="+wrapLines(text, lineWidth))
 	return err
 }
 
@@ -462,9 +521,9 @@ func (a *kdialogAsker) kdialog(ctx context.Context, what string, args ...string)
 	case 1, 2:
 		return "", false, nil
 	}
-	// The first line: Qt goes on for several, about plugins and reinstalling.
-	first, _, _ := strings.Cut(strings.TrimSpace(stderr), "\n")
-	return "", false, dialogError(what, fmt.Errorf("kdialog exited with status %d: %s", status, first))
+	// All of it: Qt's first line may be a warning that also heads a run that
+	// works, with the cause further down.
+	return "", false, dialogError(what, fmt.Errorf("kdialog exited with status %d: %s", status, strings.TrimSpace(stderr)))
 }
 
 func (a *kdialogAsker) entry(ctx context.Context, what, text string) (string, bool, error) {
@@ -500,11 +559,11 @@ func (a *kdialogAsker) ChooseHub(ctx context.Context, hubs []HubChoice) (string,
 	return chooseHub(ctx, a, hubs)
 }
 
-func (a *kdialogAsker) chooseRow(ctx context.Context, what, prompt, noRow string, items []string) (int, bool, error) {
-	return askRow(what, len(items), func() (string, bool, error) {
-		return a.list(ctx, what, prompt, tagRows(noRow, items)...)
-	})
+func (a *kdialogAsker) showRows(ctx context.Context, what, prompt, noRow string, items []string) (string, bool, error) {
+	return a.list(ctx, what, prompt, linuxRows(noRow, items, false)...)
 }
+
+func (a *kdialogAsker) rowOf(line string, n int) (int, bool) { return taggedRow(line, n) }
 
 // Confirm asks through a list, with Cancel as the row that is selected. A
 // yes-or-no question cannot be asked: kdialog's takes Return as yes with no
