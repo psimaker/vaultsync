@@ -1,0 +1,11 @@
+# 059 — The first folder VaultSync connects to is an app's own folder with a vault in it
+
+**Context.** The folder check accepted a picked folder that was named "Obsidian", held a `.obsidian/`, or held a vault subfolder. Read on a device and on the iOS 18 and 26 simulators (#270): Obsidian's folder reaches the app as `…/Containers/Data/Application/<UUID>/Documents` — never under the name "Obsidian" — and it is listed under "On My iPhone" only while it holds a visible entry. A new user finds no "Obsidian" there, creates the folder by hand (`…/File Provider Storage/Obsidian`), and the check by name accepts exactly that folder. The vault then syncs to a place Obsidian never opens.
+
+**Decision.** `folderSelectionVerdict` has two modes. *First selection* (nothing syncs yet): the folder must be an app's own folder (`isAppDocumentsRoot`, 058) that holds a vault subfolder. A folder inside one, a folder anywhere else, and an app's folder without a vault are refused, each with its own guidance; the guidance says to create a vault in Obsidian first, stored on the iPhone. *Existing install* (a folder is configured — the reconciler's record or the engine's list): the earlier rule applies unchanged, at launch and when the folder is granted again. Restoring a saved grant always uses the existing-install rule.
+
+**Why.** The first selection is the one moment where a refusal costs nothing: no vault can be cut off. After that, refusing the folder a vault lives in would leave it unreachable — a device restore changes the container path, and the reconciler finds a folder's marker only under the same kind of root (003). Nothing is moved for the user (002), so the earlier rule has to keep working for those who were set up under it.
+
+**Rejected alternatives.** Recognizing Obsidian's folder by its name or display name: both read `Documents`. Accepting any app's own folder without a vault in it: the path cannot tell Obsidian from another app. Holding saved grants against the new rule at launch: it would disconnect folders that sync today. A warning with "use anyway" for a self-made folder: the reported failure is exactly a setup that looks finished.
+
+**Links.** #270; decisions 002, 003, 014, 058; `Issue270FolderSelectionRuleTests`, `Issue270FolderSelectionLiveTests`.

@@ -102,7 +102,7 @@
 "Ignore for Now" = "Vorerst ignorieren";
 "Ignored shares (%d)" = "Ignorierte Freigaben (%d)";
 "In progress" = "Läuft";
-"Install Obsidian from the App Store and open it once. The folder appears after Obsidian creates it." = "Installiere Obsidian aus dem App Store und öffne es einmal. Der Ordner erscheint, nachdem Obsidian ihn erstellt hat.";
+"Open Obsidian and create a vault with \"Store in iCloud\" turned off — any name will do. The Obsidian folder appears under \"On My iPhone\" as soon as it holds a vault. Do not create a folder named \"Obsidian\" yourself: Obsidian cannot open vaults from it." = "Öffne Obsidian und lege einen Vault an, der auf dem iPhone gespeichert wird (nicht in iCloud) – der Name ist egal. Der Obsidian-Ordner erscheint unter „Auf meinem iPhone“, sobald ein Vault darin liegt. Lege keinen eigenen Ordner namens „Obsidian“ an: Daraus kann Obsidian keine Vaults öffnen.";
 "Invalid Input" = "Ungültige Eingabe";
 "Invalid folder name: '%@'" = "Ungültiger Ordnername: „%@“";
 "Keep Both" = "Beide behalten";
@@ -305,6 +305,9 @@
 "The sync engine stopped unexpectedly." = "Die Sync-Engine wurde unerwartet beendet.";
 "This Device" = "Dieses Gerät";
 "This folder does not look like your Obsidian directory yet. In the picker choose \"On My iPhone\" → \"Obsidian\"." = "Dieser Ordner sieht noch nicht wie dein Obsidian-Verzeichnis aus. Wähle im Picker „Auf meinem iPhone“ → „Obsidian“.";
+"The folder you selected lies inside an app's folder — it is a single vault or a folder within one. Select the folder that contains your vaults instead: in the picker open \"On My iPhone\" → \"Obsidian\" and tap Open there, without opening one of your vaults." = "Der ausgewählte Ordner liegt im Ordner einer App – er ist ein einzelner Vault oder ein Ordner darin. Wähle stattdessen den Ordner aus, der deine Vaults enthält: Öffne im Picker „Auf meinem iPhone“ → „Obsidian“ und tippe dort auf „Öffnen“, ohne einen deiner Vaults zu öffnen.";
+"This folder is not Obsidian's own folder, so vaults synced into it would never appear in Obsidian. In the picker choose \"On My iPhone\" → \"Obsidian\". If \"Obsidian\" is missing there, open Obsidian, create a vault with \"Store in iCloud\" turned off, and try again." = "Dieser Ordner ist nicht Obsidians eigener Ordner – Vaults, die hierhin synchronisiert werden, würden in Obsidian nie erscheinen. Wähle im Picker „Auf meinem iPhone“ → „Obsidian“. Fehlt „Obsidian“ dort, öffne Obsidian, lege einen Vault an, der auf dem iPhone gespeichert wird (nicht in iCloud), und versuche es erneut.";
+"This folder does not hold a vault yet. Open Obsidian, create a vault with \"Store in iCloud\" turned off, then choose \"On My iPhone\" → \"Obsidian\" again." = "In diesem Ordner liegt noch kein Vault. Öffne Obsidian, lege einen Vault an, der auf dem iPhone gespeichert wird (nicht in iCloud), und wähle dann erneut „Auf meinem iPhone“ → „Obsidian“.";
 "This timestamp is updated when VaultSync receives a silent push from Cloud Relay." = "Dieser Zeitstempel wird aktualisiert, wenn VaultSync einen stillen Push von Cloud Relay empfängt.";
 "This will permanently discard the version from the other device." = "Dadurch wird die Version des anderen Geräts dauerhaft verworfen.";
 "This will permanently discard your local version." = "Dadurch wird deine lokale Version dauerhaft verworfen.";
@@ -554,7 +557,7 @@
 "Cloud Relay wakes a specific device. Pair the computer or server that hosts your vault on the Devices tab, then come back to subscribe." = "Cloud Relay weckt ein bestimmtes Gerät. Verbinde im Tab „Geräte“ den Computer oder Server, der deinen Vault bereitstellt, und komm dann zum Abonnieren zurück.";
 "Connect your Obsidian folder" = "Deinen Obsidian-Ordner verbinden";
 "Double tap to copy" = "Zum Kopieren doppeltippen";
-"Give VaultSync one-time access to your local Obsidian folder so it can sync your notes." = "Gib VaultSync einmaligen Zugriff auf deinen lokalen Obsidian-Ordner, damit es deine Notizen synchronisieren kann.";
+"Give VaultSync one-time access to your Obsidian folder so it can sync your notes. The folder appears under \"On My iPhone\" once Obsidian holds a vault on this iPhone." = "Gib VaultSync einmaligen Zugriff auf deinen Obsidian-Ordner, damit es deine Notizen synchronisieren kann. Der Ordner erscheint unter „Auf meinem iPhone“, sobald Obsidian auf diesem iPhone einen Vault enthält.";
 "How is this private?" = "Wie ist das privat?";
 "Instant sync, still private" = "Sofort synchron, weiterhin privat";
 "Let’s get your vault synced" = "Bringen wir deinen Vault zum Synchronisieren";

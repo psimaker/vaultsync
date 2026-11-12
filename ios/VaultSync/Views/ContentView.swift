@@ -186,7 +186,7 @@ struct ContentView: View {
                 showObsidianPicker = false
                 Task {
                     if let err = await ObsidianReconnectFlow.run(
-                        grantAccess: { vaultManager.grantAccess(url: url) },
+                        grantAccess: { vaultManager.grantAccess(url: url, engineHasFolders: !syncthingManager.folders.isEmpty) },
                         onGrantSucceeded: {
                             // A share that had no safe location under the old
                             // root (e.g. the root was itself a vault, #45
@@ -984,7 +984,7 @@ struct ContentView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             DisclosureGroup(L10n.tr("Can't find the Obsidian folder?")) {
-                Text(L10n.tr("Install Obsidian from the App Store and open it once. The folder appears after Obsidian creates it."))
+                Text(L10n.tr("Open Obsidian and create a vault with \"Store in iCloud\" turned off — any name will do. The Obsidian folder appears under \"On My iPhone\" as soon as it holds a vault. Do not create a folder named \"Obsidian\" yourself: Obsidian cannot open vaults from it."))
                     .font(.footnote)
                     .foregroundStyle(Color.vaultSecondaryLabel)
                     .fixedSize(horizontal: false, vertical: true)

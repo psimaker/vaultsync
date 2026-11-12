@@ -54,7 +54,7 @@ struct OnboardingView: View {
                         // grant would sit untouched. The accept pass runs only
                         // after the reconcile settled paths (#56, decision 008).
                         if let err = await ObsidianReconnectFlow.run(
-                            grantAccess: { vaultManager.grantAccess(url: url) },
+                            grantAccess: { vaultManager.grantAccess(url: url, engineHasFolders: !syncthingManager.folders.isEmpty) },
                             onGrantSucceeded: {
                                 shareAccept.clearRecordedFailures()
                                 if let advisory = vaultManager.selectionAdvisory {
@@ -224,7 +224,7 @@ struct OnboardingView: View {
             number: 1,
             isComplete: obsidianConnected,
             title: L10n.tr("Connect your Obsidian folder"),
-            description: L10n.tr("Give VaultSync one-time access to your local Obsidian folder so it can sync your notes."),
+            description: L10n.tr("Give VaultSync one-time access to your Obsidian folder so it can sync your notes. The folder appears under \"On My iPhone\" once Obsidian holds a vault on this iPhone."),
             actionTitle: L10n.tr("Connect Obsidian Folder"),
             action: { showObsidianPicker = true }
         )

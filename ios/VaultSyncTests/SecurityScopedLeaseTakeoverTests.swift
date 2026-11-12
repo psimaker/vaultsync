@@ -145,10 +145,11 @@ struct SecurityScopedLeaseTakeoverTests {
                     )
                 },
                 sameResource: { $0.standardizedFileURL == $1.standardizedFileURL },
-                validateDirectory: { [self] url in
+                validateDirectory: { [self] url, _ in
                     events.append(.validate(url))
                     return validationErrors[url]
                 },
+                hasSyncedFolders: { false },
                 makeBookmarkData: { [self] url in
                     events.append(.makeBookmark(url))
                     if bookmarkFailures.contains(url) {
