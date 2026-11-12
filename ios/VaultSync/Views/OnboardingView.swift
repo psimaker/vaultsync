@@ -72,7 +72,8 @@ struct OnboardingView: View {
                                 shareAccept.runAutomaticPass()
                             }
                         ) {
-                            present(error: err, fallbackTitle: L10n.tr("Obsidian Folder Connection Failed"))
+                            alertMessage = ObsidianReconnectFlow.alertText(forRefusedGrant: err)
+                            showAlert = true
                         }
                     }
                 }

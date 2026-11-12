@@ -39,4 +39,13 @@ enum ObsidianReconnectFlow {
         retryPendingShares()
         return nil
     }
+
+    /// What the host's alert shows when `grantAccess` refuses the folder.
+    /// The refusal is guidance — which folder to pick instead, and how —
+    /// and reaches the user as written. Both hosts passed it through the
+    /// engine-error mapper, which knows none of these texts and showed
+    /// "VaultSync reported an unexpected error." in their place (#270).
+    static func alertText(forRefusedGrant guidance: String) -> String {
+        guidance
+    }
 }

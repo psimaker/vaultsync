@@ -337,3 +337,94 @@ extension EngineBridgeSuites {
         }
     }
 }
+
+/// #270: a refusal is worth only as much as the guidance the user reads.
+/// The placement rules write that guidance themselves; it used to pass
+/// through the engine-error mapper, which matched none of it and showed
+/// "VaultSync reported an unexpected error." with "retry" as the way out.
+@MainActor
+@Suite("Refusals reach the user as written (#270)")
+struct Issue270RefusalGuidanceTests {
+
+    private static let offer = SyncthingManager.PendingFolderInfo(id: "notes", label: "Notes", offeredBy: [])
+
+    /// The refusal a share gets when the selected folder is itself a vault.
+    private static var rootIsVaultGuidance: String {
+        let decision = VaultManager.resolveAcceptPath(
+            manualTarget: nil,
+            rawRoot: "/root",
+            rootIsVault: true,
+            folderName: "Notes",
+            occupiedCanonLower: [],
+            mergeConfirmed: false,
+            canonicalize: { $0 },
+            listingFor: { _ in nil }
+        )
+        guard case .refused(let message) = decision else { return "" }
+        return message
+    }
+
+    private static func coordinator(
+        outcome: PendingShareAcceptOutcome = .accepted,
+        intoTarget: String? = nil
+    ) -> ShareAcceptCoordinator {
+        ShareAcceptCoordinator(environment: ShareAcceptCoordinator.Environment(
+            settled: { true },
+            vaultAccessible: { true },
+            pendingFolders: { [offer] },
+            autoAcceptEligible: { [offer] },
+            accept: { _, _ in outcome },
+            acceptIntoTarget: { _, _ in intoTarget },
+            unignorePendingFolder: { _ in },
+            ignorePendingFolder: { _ in }
+        ))
+    }
+
+    @Test("A refused share shows the refusal's own guidance on its row and in its alert")
+    func refusedShareShowsItsGuidance() throws {
+        let guidance = Self.rootIsVaultGuidance
+        #expect(guidance.contains("On My iPhone"))
+
+        let c = Self.coordinator(outcome: .refused(message: guidance))
+        c.runAutomaticPass()
+
+        let failure = try #require(c.pendingShareFailures["notes"])
+        #expect(failure.message == guidance)
+        #expect(failure.userVisibleDescription == guidance)
+        let alert = try #require(c.alertMessage)
+        #expect(alert.contains(guidance))
+        #expect(!alert.contains(L10n.tr("VaultSync reported an unexpected error.")))
+    }
+
+    @Test("A refused manual target shows its guidance in the picker sheet")
+    func refusedManualTargetShowsItsGuidance() {
+        let guidance = Self.rootIsVaultGuidance
+        let c = Self.coordinator(intoTarget: guidance)
+        #expect(c.acceptManually(folder: Self.offer, intoTargetNamed: "Notes") == guidance)
+    }
+
+    @Test("A refused folder selection shows its guidance in the alert")
+    func refusedFolderSelectionShowsItsGuidance() {
+        let guidance = L10n.tr("Could not access the selected folder.")
+        #expect(ObsidianReconnectFlow.alertText(forRefusedGrant: guidance) == guidance)
+    }
+
+    @Test("The engine's own refusal still goes through the error mapper, never raw")
+    func engineRefusalIsMapped() {
+        let raw = "open /private/var/x: permission denied"
+        let shown = VaultManager.presentable(engineRefusal: raw)
+        #expect(!shown.contains(raw))
+        #expect(shown.contains(L10n.tr("VaultSync does not have the required permission for this action.")))
+    }
+
+    @Test("An app's own folder is never read to learn that it is a container")
+    func appFolderIsAContainerWithoutReadingIt() {
+        // The path does not exist: any read would fail, and the answer must
+        // not depend on one.
+        let root = URL(
+            fileURLWithPath: "/nonexistent/Containers/Data/Application/0A1B2C3D-0000-4000-8000-000000000000/Documents",
+            isDirectory: true
+        )
+        #expect(VaultManager.selectedRootIsVault(root) == false)
+    }
+}
