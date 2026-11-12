@@ -46,7 +46,10 @@ final class VaultManager {
     struct Environment {
         var acquireAccess: @MainActor (URL, SecurityScopedLeaseOwner) -> SecurityScopedLease?
         var sameResource: @MainActor (URL, URL) -> Bool
-        var validateDirectory: @MainActor (URL) -> String?
+        var validateDirectory: @MainActor (URL, FolderSelectionMode) -> String?
+        /// Whether a vault already syncs on this install, read without the
+        /// engine (which may not be up when the folder is granted).
+        var hasSyncedFolders: @MainActor () -> Bool
         var makeBookmarkData: @MainActor (URL) throws -> Data
         var persistBookmarkData: @MainActor (Data) -> Void
         var refreshBookmarkData: @MainActor (Data, Data) -> Bool
@@ -65,7 +68,10 @@ final class VaultManager {
                 // balanced handoff, while a false positive could reuse access
                 // for a different provider resource.
                 sameResource: { $0.standardizedFileURL == $1.standardizedFileURL },
-                validateDirectory: { VaultManager.liveValidationError(for: $0) },
+                validateDirectory: { VaultManager.liveValidationError(for: $0, mode: $1) },
+                // The reconciler records where every configured folder lives
+                // and drops the record when the folder is removed.
+                hasSyncedFolders: { !FolderPathReconciler.loadRel().isEmpty },
                 makeBookmarkData: { try BookmarkService.makeBookmarkData(for: $0) },
                 persistBookmarkData: {
                     BookmarkService.persistBookmarkData(
@@ -109,7 +115,14 @@ final class VaultManager {
 
     /// Grant access to the Obsidian root directory via a user-picked URL.
     /// Returns nil on success, error message on failure.
-    func grantAccess(url: URL) -> String? {
+    ///
+    /// While nothing syncs yet, the folder has to be one Obsidian shows
+    /// vaults from (`FolderSelectionMode.firstSelection`, #270). Once a vault
+    /// syncs — `engineHasFolders`, or the reconciler's record when the engine
+    /// is not up — the rule those vaults were set up under keeps applying, so
+    /// the folder they live in can be granted again after its permission was
+    /// lost or the device was restored.
+    func grantAccess(url: URL, engineHasFolders: Bool = false) -> String? {
         let priorLease = foregroundLease
         let reusesPriorLease = priorLease.map {
             $0.isActive && environment.sameResource($0.url, url)
@@ -126,7 +139,10 @@ final class VaultManager {
         // failure. Same-URL validation reuses the existing foreground lease.
         defer { candidateLease?.release() }
 
-        if let validationError = environment.validateDirectory(url) {
+        let mode: FolderSelectionMode = engineHasFolders || environment.hasSyncedFolders()
+            ? .existingInstall
+            : .firstSelection
+        if let validationError = environment.validateDirectory(url, mode) {
             return validationError
         }
 
@@ -198,7 +214,9 @@ final class VaultManager {
         var candidateLease: SecurityScopedLease? = acquiredLease
         defer { candidateLease?.release() }
 
-        if let validationError = environment.validateDirectory(url) {
+        // A folder that was granted before stays granted under the rule it was
+        // granted by: nothing here may cut a syncing vault off (#270).
+        if let validationError = environment.validateDirectory(url, .existingInstall) {
             markReconnectRequired(reason: validationError)
             logger.warning("Saved Obsidian directory failed validation")
             return
@@ -339,6 +357,64 @@ final class VaultManager {
         // `com~apple~CloudDocs` is iCloud Drive itself; its `Documents` is a
         // folder of the user's, not an app's.
         return above == "Mobile Documents" && owner != "com~apple~CloudDocs"
+    }
+
+    /// Where a picked folder lies, as far as its path tells (#270).
+    enum SelectedFolderPlace: Equatable, Sendable {
+        /// An app's own folder — the form Obsidian's folder comes in.
+        case appFolder
+        /// Somewhere below an app's own folder: a vault, or a folder in one.
+        case insideAppFolder
+        /// A folder of the user's in "On My iPhone" or iCloud Drive, or any
+        /// other provider's: no app lists vaults from it.
+        case elsewhere
+    }
+
+    nonisolated static func selectedFolderPlace(_ path: String) -> SelectedFolderPlace {
+        if isAppDocumentsRoot(path) { return .appFolder }
+        var parent = (path as NSString).deletingLastPathComponent
+        while parent.count > 1 {
+            if isAppDocumentsRoot(parent) { return .insideAppFolder }
+            parent = (parent as NSString).deletingLastPathComponent
+        }
+        return .elsewhere
+    }
+
+    /// Whether a picked folder may become the Obsidian folder. Pure: the
+    /// caller supplies what it read from the disk.
+    ///
+    /// A first selection is accepted only for an app's own folder that holds
+    /// a vault. The name of the folder says nothing: Obsidian's folder is
+    /// `Documents` on disk, and a folder named "Obsidian" is always one the
+    /// user made — the place where a vault syncs in full and never appears
+    /// in Obsidian (#270). The path cannot tell Obsidian's folder from
+    /// another app's, so a vault inside it is still asked for.
+    ///
+    /// An install that already syncs keeps the rule it was set up under,
+    /// name check included: refusing the folder its vaults live in would
+    /// leave them unreachable, and nothing is moved for the user (decisions
+    /// 002, 003).
+    nonisolated static func folderSelectionVerdict(
+        path: String,
+        mode: FolderSelectionMode,
+        hasOwnConfig: Bool,
+        hasVaultSubfolders: Bool
+    ) -> FolderSelectionVerdict {
+        switch mode {
+        case .existingInstall:
+            let isNamedObsidian = (path as NSString).lastPathComponent
+                .compare("Obsidian", options: .caseInsensitive) == .orderedSame
+            return isNamedObsidian || hasOwnConfig || hasVaultSubfolders ? .accepted : .notAnObsidianFolder
+        case .firstSelection:
+            switch selectedFolderPlace(path) {
+            case .appFolder:
+                return hasVaultSubfolders ? .accepted : .appFolderWithoutVault
+            case .insideAppFolder:
+                return .insideAppFolder
+            case .elsewhere:
+                return .outsideAppFolder
+            }
+        }
     }
 
     /// Why a just-picked root deserves a one-time advisory (#95).
@@ -974,14 +1050,13 @@ final class VaultManager {
         lease?.release()
     }
 
-    nonisolated private static func liveValidationError(for url: URL) -> String? {
+    nonisolated static func liveValidationError(for url: URL, mode: FolderSelectionMode) -> String? {
         let fm = FileManager.default
         var isDirectory: ObjCBool = false
         guard fm.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue else {
             return L10n.tr("Please select a folder. In the picker choose \"On My iPhone\" → \"Obsidian\".")
         }
 
-        let isNamedObsidian = url.lastPathComponent.compare("Obsidian", options: .caseInsensitive) == .orderedSame
         var selectedConfigIsDirectory: ObjCBool = false
         let selectedFolderContainsVaultConfig = fm.fileExists(
             atPath: url.appendingPathComponent(".obsidian", isDirectory: true).path,
@@ -1002,11 +1077,23 @@ final class VaultManager {
             return fm.fileExists(atPath: configPath, isDirectory: &obsidianIsDirectory) && obsidianIsDirectory.boolValue
         }
 
-        if isNamedObsidian || selectedFolderContainsVaultConfig || containsVaultSubfolders {
+        switch folderSelectionVerdict(
+            path: url.path,
+            mode: mode,
+            hasOwnConfig: selectedFolderContainsVaultConfig,
+            hasVaultSubfolders: containsVaultSubfolders
+        ) {
+        case .accepted:
             return nil
+        case .notAnObsidianFolder:
+            return L10n.tr("This folder does not look like your Obsidian directory yet. In the picker choose \"On My iPhone\" → \"Obsidian\".")
+        case .insideAppFolder:
+            return L10n.tr("The folder you selected lies inside an app's folder — it is a single vault or a folder within one. Select the folder that contains your vaults instead: in the picker open \"On My iPhone\" → \"Obsidian\" and tap Open there, without opening one of your vaults.")
+        case .outsideAppFolder:
+            return L10n.tr("This folder is not Obsidian's own folder, so vaults synced into it would never appear in Obsidian. In the picker choose \"On My iPhone\" → \"Obsidian\". If \"Obsidian\" is missing there, open Obsidian, create a vault with \"Store in iCloud\" turned off, and try again.")
+        case .appFolderWithoutVault:
+            return L10n.tr("This folder does not hold a vault yet. Open Obsidian, create a vault with \"Store in iCloud\" turned off, then choose \"On My iPhone\" → \"Obsidian\" again.")
         }
-
-        return L10n.tr("This folder does not look like your Obsidian directory yet. In the picker choose \"On My iPhone\" → \"Obsidian\".")
     }
 
     private func markReconnectRequired(reason: String) {
@@ -1038,6 +1125,30 @@ final class VaultManager {
         accessIssue = nil
     }
     #endif
+}
+
+/// Which rule a folder selection is held against (#270).
+enum FolderSelectionMode: Equatable, Sendable {
+    /// Nothing syncs yet: the folder must be one Obsidian shows vaults from.
+    case firstSelection
+    /// A vault already syncs on this install: the rule it was set up under
+    /// keeps applying.
+    case existingInstall
+}
+
+/// What `VaultManager.folderSelectionVerdict` decides about a picked folder.
+/// Each refusal has its own guidance, because each has a different way out.
+enum FolderSelectionVerdict: Equatable, Sendable {
+    case accepted
+    /// Existing installs: no trace of Obsidian in or on the folder.
+    case notAnObsidianFolder
+    /// A vault, or a folder in one, was picked instead of the folder above.
+    case insideAppFolder
+    /// Not an app's folder at all — the folder a user makes when "Obsidian"
+    /// is missing under "On My iPhone".
+    case outsideAppFolder
+    /// An app's own folder that holds no vault.
+    case appFolderWithoutVault
 }
 
 /// Outcome of deciding where a share may sync: a safe absolute path, a

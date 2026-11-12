@@ -166,14 +166,15 @@ you're subscribed but wake-ups never arrive; or per-device provisioning says
 
 ## Obsidian Folder Not Found
 
-**Looks like:** setup says the Obsidian folder isn't connected; the picker guidance keeps reappearing; the vault list stays empty. Usually Obsidian hasn't created its folder yet, or the wrong folder was picked.
+**Looks like:** setup says the Obsidian folder isn't connected; the picker shows no "Obsidian" under "On My iPhone"; or VaultSync declines the folder you picked. The Obsidian folder only shows up there once Obsidian holds a vault on the iPhone, and only that folder works: Obsidian opens vaults from its own folder and from nowhere else.
 
 **Fix:**
-1. Install/open Obsidian at least once on the device.
+1. Open Obsidian and create a vault with **Store in iCloud** turned off. Any name will do.
 2. In VaultSync tap **Connect Obsidian Folder**.
-3. In the picker choose **On My iPhone → Obsidian** (or the vault root that contains `.obsidian`).
-4. Tap **Open** and return to VaultSync.
-5. Confirm VaultSync now lists detected vaults or pending shares.
+3. In the picker choose **On My iPhone → Obsidian** and tap **Open** there, without going into one of your vaults.
+4. Return to VaultSync and confirm it lists detected vaults or pending shares.
+
+Do not create a folder named "Obsidian" yourself. A vault synced into such a folder arrives in full, but Obsidian never shows it.
 
 ---
 

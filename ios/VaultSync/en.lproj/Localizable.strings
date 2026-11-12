@@ -102,7 +102,7 @@
 "Ignore for Now" = "Ignore for Now";
 "Ignored shares (%d)" = "Ignored shares (%d)";
 "In progress" = "In progress";
-"Install Obsidian from the App Store and open it once. The folder appears after Obsidian creates it." = "Install Obsidian from the App Store and open it once. The folder appears after Obsidian creates it.";
+"Open Obsidian and create a vault with \"Store in iCloud\" turned off — any name will do. The Obsidian folder appears under \"On My iPhone\" as soon as it holds a vault. Do not create a folder named \"Obsidian\" yourself: Obsidian cannot open vaults from it." = "Open Obsidian and create a vault with \"Store in iCloud\" turned off — any name will do. The Obsidian folder appears under \"On My iPhone\" as soon as it holds a vault. Do not create a folder named \"Obsidian\" yourself: Obsidian cannot open vaults from it.";
 "Invalid Input" = "Invalid Input";
 "Invalid folder name: '%@'" = "Invalid folder name: '%@'";
 "Keep Both" = "Keep Both";
@@ -306,6 +306,9 @@
 "The sync engine stopped unexpectedly." = "The sync engine stopped unexpectedly.";
 "This Device" = "This Device";
 "This folder does not look like your Obsidian directory yet. In the picker choose \"On My iPhone\" → \"Obsidian\"." = "This folder does not look like your Obsidian directory yet. In the picker choose \"On My iPhone\" → \"Obsidian\".";
+"The folder you selected lies inside an app's folder — it is a single vault or a folder within one. Select the folder that contains your vaults instead: in the picker open \"On My iPhone\" → \"Obsidian\" and tap Open there, without opening one of your vaults." = "The folder you selected lies inside an app's folder — it is a single vault or a folder within one. Select the folder that contains your vaults instead: in the picker open \"On My iPhone\" → \"Obsidian\" and tap Open there, without opening one of your vaults.";
+"This folder is not Obsidian's own folder, so vaults synced into it would never appear in Obsidian. In the picker choose \"On My iPhone\" → \"Obsidian\". If \"Obsidian\" is missing there, open Obsidian, create a vault with \"Store in iCloud\" turned off, and try again." = "This folder is not Obsidian's own folder, so vaults synced into it would never appear in Obsidian. In the picker choose \"On My iPhone\" → \"Obsidian\". If \"Obsidian\" is missing there, open Obsidian, create a vault with \"Store in iCloud\" turned off, and try again.";
+"This folder does not hold a vault yet. Open Obsidian, create a vault with \"Store in iCloud\" turned off, then choose \"On My iPhone\" → \"Obsidian\" again." = "This folder does not hold a vault yet. Open Obsidian, create a vault with \"Store in iCloud\" turned off, then choose \"On My iPhone\" → \"Obsidian\" again.";
 "This timestamp is updated when VaultSync receives a silent push from Cloud Relay." = "This timestamp is updated when VaultSync receives a silent push from Cloud Relay.";
 "This will permanently discard the version from the other device." = "This will permanently discard the version from the other device.";
 "This will permanently discard your local version." = "This will permanently discard your local version.";
@@ -555,7 +558,7 @@
 "Cloud Relay wakes a specific device. Pair the computer or server that hosts your vault on the Devices tab, then come back to subscribe." = "Cloud Relay wakes a specific device. Pair the computer or server that hosts your vault on the Devices tab, then come back to subscribe.";
 "Connect your Obsidian folder" = "Connect your Obsidian folder";
 "Double tap to copy" = "Double tap to copy";
-"Give VaultSync one-time access to your local Obsidian folder so it can sync your notes." = "Give VaultSync one-time access to your local Obsidian folder so it can sync your notes.";
+"Give VaultSync one-time access to your Obsidian folder so it can sync your notes. The folder appears under \"On My iPhone\" once Obsidian holds a vault on this iPhone." = "Give VaultSync one-time access to your Obsidian folder so it can sync your notes. The folder appears under \"On My iPhone\" once Obsidian holds a vault on this iPhone.";
 "How is this private?" = "How is this private?";
 "Instant sync, still private" = "Instant sync, still private";
 "Let’s get your vault synced" = "Let’s get your vault synced";

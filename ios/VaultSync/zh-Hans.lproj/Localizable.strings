@@ -102,7 +102,7 @@
 "Ignore for Now" = "暂时忽略";
 "Ignored shares (%d)" = "已忽略的共享（%d）";
 "In progress" = "进行中";
-"Install Obsidian from the App Store and open it once. The folder appears after Obsidian creates it." = "从 App Store 安装 Obsidian 并打开一次。文件夹会在 Obsidian 创建后出现。";
+"Open Obsidian and create a vault with \"Store in iCloud\" turned off — any name will do. The Obsidian folder appears under \"On My iPhone\" as soon as it holds a vault. Do not create a folder named \"Obsidian\" yourself: Obsidian cannot open vaults from it." = "打开 Obsidian，创建一个存储在 iPhone 上（而不是 iCloud 中）的 Vault——名称随意。只要其中有一个 Vault，Obsidian 文件夹就会出现在“在我的 iPhone 上”。不要自己创建名为“Obsidian”的文件夹：Obsidian 无法从中打开 Vault。";
 "Invalid Input" = "输入无效";
 "Invalid folder name: '%@'" = "无效的文件夹名称：“%@”";
 "Keep Both" = "两者都保留";
@@ -306,6 +306,9 @@
 "The sync engine stopped unexpectedly." = "同步引擎意外停止。";
 "This Device" = "此设备";
 "This folder does not look like your Obsidian directory yet. In the picker choose \"On My iPhone\" → \"Obsidian\"." = "这个文件夹目前看起来还不像你的 Obsidian 目录。请在选择器中选择“在我的 iPhone 上” → “Obsidian”。";
+"The folder you selected lies inside an app's folder — it is a single vault or a folder within one. Select the folder that contains your vaults instead: in the picker open \"On My iPhone\" → \"Obsidian\" and tap Open there, without opening one of your vaults." = "所选文件夹位于某个 App 的文件夹内——它是单个 Vault 或其中的一个文件夹。请改为选择包含所有 Vault 的文件夹：在选择器中打开“在我的 iPhone 上” → “Obsidian”，直接在那里轻点“打开”，不要进入任何一个 Vault。";
+"This folder is not Obsidian's own folder, so vaults synced into it would never appear in Obsidian. In the picker choose \"On My iPhone\" → \"Obsidian\". If \"Obsidian\" is missing there, open Obsidian, create a vault with \"Store in iCloud\" turned off, and try again." = "这个文件夹不是 Obsidian 自己的文件夹，同步到这里的 Vault 永远不会出现在 Obsidian 中。请在选择器中选择“在我的 iPhone 上” → “Obsidian”。如果那里没有“Obsidian”，请打开 Obsidian，创建一个存储在 iPhone 上（而不是 iCloud 中）的 Vault，然后重试。";
+"This folder does not hold a vault yet. Open Obsidian, create a vault with \"Store in iCloud\" turned off, then choose \"On My iPhone\" → \"Obsidian\" again." = "这个文件夹里还没有 Vault。请打开 Obsidian，创建一个存储在 iPhone 上（而不是 iCloud 中）的 Vault，然后再次选择“在我的 iPhone 上” → “Obsidian”。";
 "This timestamp is updated when VaultSync receives a silent push from Cloud Relay." = "当 VaultSync 收到来自 Cloud Relay 的静默推送时，此时间戳会更新。";
 "This will permanently discard the version from the other device." = "这将永久丢弃另一台设备上的版本。";
 "This will permanently discard your local version." = "这将永久丢弃你的本地版本。";
@@ -555,7 +558,7 @@
 "Cloud Relay wakes a specific device. Pair the computer or server that hosts your vault on the Devices tab, then come back to subscribe." = "Cloud Relay 会唤醒指定的设备。请先在“设备”标签页中配对承载你 Vault 的电脑或服务器，然后再回来订阅。";
 "Connect your Obsidian folder" = "连接你的 Obsidian 文件夹";
 "Double tap to copy" = "双击以复制";
-"Give VaultSync one-time access to your local Obsidian folder so it can sync your notes." = "授予 VaultSync 对本地 Obsidian 文件夹的一次性访问权限，以便同步你的笔记。";
+"Give VaultSync one-time access to your Obsidian folder so it can sync your notes. The folder appears under \"On My iPhone\" once Obsidian holds a vault on this iPhone." = "授予 VaultSync 对 Obsidian 文件夹的一次性访问权限，以便同步你的笔记。只要 Obsidian 在这台 iPhone 上有一个 Vault，该文件夹就会出现在“在我的 iPhone 上”。";
 "How is this private?" = "这如何保护隐私？";
 "Instant sync, still private" = "即时同步，依然私密";
 "Let’s get your vault synced" = "来同步你的 Vault 吧";
