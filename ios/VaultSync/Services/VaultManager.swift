@@ -339,6 +339,9 @@ final class VaultManager {
     /// A fresh read, not the cached `detectedVaults`: every caller decides a
     /// sync target with it.
     nonisolated static func selectedRootIsVault(_ root: URL) -> Bool {
+        // An app's own folder is a container whatever it holds: no need to
+        // list it, and callers ask on the main thread.
+        if isAppDocumentsRoot(root.path) { return false }
         var isDirectory: ObjCBool = false
         let hasOwnConfig = FileManager.default.fileExists(
             atPath: root.appendingPathComponent(".obsidian", isDirectory: true).path,
@@ -548,7 +551,7 @@ final class VaultManager {
             root: basePath,
             allowNonEmpty: manualTarget != nil || mergeConfirmed
         ) {
-            return .refused(message: err)
+            return .refused(message: Self.presentable(engineRefusal: err))
         }
 
         // Record where this folder lives relative to the Obsidian root so its
@@ -945,7 +948,7 @@ final class VaultManager {
                 root: basePath,
                 allowNonEmpty: false
             ) {
-                return err
+                return Self.presentable(engineRefusal: err)
             }
             // Only a successful accept records the choice — a failed one must
             // not pin future auto-accepts to a target that never materialized.
@@ -1006,6 +1009,15 @@ final class VaultManager {
             }
             return name
         }.sorted()
+    }
+
+    /// What the user reads when the engine itself refuses an accept. With
+    /// this, every message an accept returns is ready to show as it is: the
+    /// placement rules' refusals are guidance written for the user, and only
+    /// the engine's own text goes through the error mapper — which would
+    /// turn guidance into "unexpected error" (#270).
+    nonisolated static func presentable(engineRefusal raw: String) -> String {
+        SyncUserError.from(rawMessage: raw, fallbackTitle: L10n.tr("Could Not Accept Share")).userVisibleDescription
     }
 
     /// Replace characters that are invalid in iOS directory names.

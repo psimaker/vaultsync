@@ -160,7 +160,10 @@ final class ShareAcceptCoordinator {
 
         switch outcome {
         case .refused(let err):
-            let userError = SyncUserError.from(rawMessage: err, fallbackTitle: L10n.tr("Could Not Accept Share"))
+            // The refusal is written for the user — why, and the way out —
+            // and is shown as it is (#270): the engine-error mapper matched
+            // none of it and replaced it with "unexpected error".
+            let userError = SyncUserError.guidance(err, title: L10n.tr("Could Not Accept Share"))
             pendingShareFailures[folder.id] = userError
             // The automatic pass re-runs on every launch (initial: true), so a
             // persistently refused share re-fired the same modal forever (#95).
@@ -234,7 +237,8 @@ final class ShareAcceptCoordinator {
         pendingShareInFlight.remove(folder.id)
 
         if let err {
-            return SyncUserError.from(rawMessage: err, fallbackTitle: L10n.tr("Could Not Accept Share")).userVisibleDescription
+            // Written for the user, shown as it is (#270).
+            return err
         }
         pendingShareFailures.removeValue(forKey: folder.id)
         environment.clearRefusalAlertRecord(folder.id)

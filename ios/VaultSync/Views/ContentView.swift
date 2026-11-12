@@ -216,7 +216,7 @@ struct ContentView: View {
                             shareAccept.runAutomaticPass()
                         }
                     ) {
-                        alertMessage = mappedError(err, fallbackTitle: L10n.tr("Obsidian Folder Connection Failed")).userVisibleDescription
+                        alertMessage = ObsidianReconnectFlow.alertText(forRefusedGrant: err)
                         showAlert = true
                     }
                 }
