@@ -17,6 +17,10 @@ enum DesignPreviewFixture {
         case home
         /// A conflict and a pending share waiting on the user.
         case attention
+        /// An install connected to a folder that is not Obsidian's own
+        /// (#270): the notice with its way out, and a pending share that
+        /// says where it would arrive.
+        case outsideObsidian = "outside-obsidian"
         /// One vault mid-transfer.
         case syncing
         case devices
@@ -65,7 +69,16 @@ enum DesignPreviewFixture {
     static let serverID = "P7DHKQX-2LZC4VN-YB5TQ3M-W6KR2JD-HS4NFXA-9UEQ7CL-MVZ3TBW-K2RX8QA"
     static let macBookID = "J4QW2ZT-8NDKX3R-LC7VYHP-5MQB2TS-W9FRK4D-ZX6GTN2-QH3LPV8-B7YMC5E"
     static let iPadID = "T2MXH7R-WQ4ZLK9-D3NPC6V-8YBGJ5S-K7FRX2Q-HM9VTD4-ZC6LQW3-P5NJB8R"
-    private static let root = "/DesignPreview/Obsidian"
+    /// An app's own folder, in the form the folder picker hands out
+    /// Obsidian's (#270) — under a path of another shape every pending
+    /// share would say that Obsidian cannot show it.
+    private static let obsidianRoot = "/DesignPreview/Containers/Data/Application/5B2E0C4A-9D17-4E6B-A3F1-7C8D2E4F6A1B/Documents"
+    /// A folder the user made under "On My iPhone" and named "Obsidian".
+    private static let selfMadeRoot = "/DesignPreview/Containers/Shared/AppGroup/0F3C5A7E-2B4D-4C6E-8A1F-9E7D5C3B1A20/File Provider Storage/Obsidian"
+
+    private static var root: String {
+        screen == .outsideObsidian ? selfMadeRoot : obsidianRoot
+    }
 
     static let conflict = SyncthingManager.ConflictInfo(
         originalPath: "Daily/2026-10-05.md",
@@ -127,7 +140,18 @@ enum DesignPreviewFixture {
         )
         let withConflict: Set<Screen> = [.attention, .vault, .conflicts, .conflict]
         syncthingManager._testSetConflictFiles(withConflict.contains(screen) ? [notesID: [conflict]] : [:])
-        syncthingManager._testSetPendingFolders(screen == .attention ? [
+        // The real classification over the seeded state, without the disk
+        // and without what an earlier run chose to keep.
+        syncthingManager._testSetObsidianVisibilityFindings(ObsidianVisibility.findings(
+            selectedRoot: root,
+            folders: syncthingManager.folders.map { (id: $0.id, path: $0.path) },
+            env: ObsidianVisibility.Environment(
+                canonicalize: { $0 },
+                content: { _ in nil },
+                acknowledged: { [] }
+            )
+        ))
+        syncthingManager._testSetPendingFolders(screen == .attention || screen == .outsideObsidian ? [
             SyncthingManager.PendingFolderInfo(
                 id: "design-recipes",
                 label: "Recipes",

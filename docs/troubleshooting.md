@@ -12,6 +12,7 @@ Find your symptom, jump to the fix. After each fix, retry from the app to confir
 | Subscribed, but per-device provisioning says "Failed" | [APNs Not Registered](#apns-not-registered) |
 | Ran the server installer, app still says "Not active yet" | [Relay quick triage](#relay-quick-triage) |
 | Vault list empty, "folder not connected" | [Obsidian Folder Not Found](#obsidian-folder-not-found) |
+| The vault syncs, but Obsidian does not show it | [Vault Syncs but Never Appears in Obsidian](#vault-syncs-but-never-appears-in-obsidian) |
 | "Vault Folder Was Moved or Deleted" on a vault | [Vault Folder Was Moved or Deleted](#vault-folder-was-moved-or-deleted) |
 | "Cannot access this folder" / reconnect needed | [Bookmark Access Expired](#bookmark-access-expired) |
 | Syncs in foreground but not when closed | [Background Sync Not Working](#background-sync-not-working) |
@@ -175,6 +176,31 @@ you're subscribed but wake-ups never arrive; or per-device provisioning says
 4. Return to VaultSync and confirm it lists detected vaults or pending shares.
 
 Do not create a folder named "Obsidian" yourself. A vault synced into such a folder arrives in full, but Obsidian never shows it.
+
+---
+
+## Vault Syncs but Never Appears in Obsidian
+
+**Looks like:** VaultSync shows the vault as up to date and the file count is right, but Obsidian does not list it. VaultSync shows a notice under **Sync Issues**: "Obsidian Cannot Show This Vault" or "Obsidian Cannot Show Vaults From This Folder". Obsidian lists the folders directly inside its own folder as vaults and nothing else. Earlier versions could set a vault up outside that: in a folder you made yourself, or straight in Obsidian's folder instead of in a folder of its own.
+
+Syncing continues either way, and VaultSync never moves a vault on its own. The steps below are yours to take; nothing is lost on your other devices.
+
+**Fix — "Obsidian Cannot Show This Vault"** (the vault syncs straight into the folder you selected):
+1. Wait until the vault shows **Up to Date**.
+2. Open the vault in VaultSync and remove it. This only stops syncing it on this iPhone.
+3. Under **Pending Shares**, accept the vault again. It now gets a folder of its own, and Obsidian lists it once the notes have arrived.
+4. The copy that arrived earlier still lies in Obsidian's folder. Delete those files in the Files app when the new folder is complete — not the new folder itself.
+
+**Fix — "Obsidian Cannot Show Vaults From This Folder"** (VaultSync is connected to a folder that is not Obsidian's own):
+1. Open Obsidian and create a vault with **Store in iCloud** turned off, if there is none on the iPhone yet. Without one, "Obsidian" does not appear under "On My iPhone".
+2. In VaultSync, wait until your vaults show **Up to Date**, then remove them. This only stops syncing them on this iPhone.
+3. On the notice, tap **Select Obsidian's Folder**, choose **On My iPhone → Obsidian** and tap **Open** there, without going into one of your vaults.
+4. Under **Pending Shares**, accept the vaults again. They arrive in Obsidian's folder, and Obsidian lists them.
+5. The copies that arrived earlier stay in the old folder until you delete them in the Files app.
+
+If a pending share says that its folder already holds files, VaultSync asks before it combines anything. When the files there are not this vault's, tap **Choose Vault…** and give the vault another folder name instead.
+
+If you keep the vault where it is on purpose, tap **Keep It This Way**: the notice goes away for that vault or folder, and nothing else changes.
 
 ---
 

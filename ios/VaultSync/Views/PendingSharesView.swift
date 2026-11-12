@@ -4,6 +4,8 @@ struct PendingSharesView: View {
     let pendingFolders: [SyncthingManager.PendingFolderInfo]
     let ignoredFolders: [SyncthingManager.PendingFolderInfo]
     let failureByFolderID: [String: SyncUserError]
+    /// Where each share would arrive if it were accepted now (#270).
+    var destinationByFolderID: [String: PendingShareDestination.Line] = [:]
     let inFlightFolderIDs: Set<String>
     let obsidianAccessible: Bool
     var onAccept: (SyncthingManager.PendingFolderInfo) -> Void
@@ -68,6 +70,14 @@ struct PendingSharesView: View {
                     Text(offeredByDescription(for: folder))
                         .font(.footnote)
                         .foregroundStyle(Color.vaultSecondaryLabel)
+
+                    // Before the tap, not after: where the vault will be,
+                    // and whether Obsidian shows vaults from there (#270).
+                    if let destination = destinationByFolderID[folder.id] {
+                        Text(destination.text)
+                            .font(.footnote)
+                            .foregroundStyle(destination.isCaution ? Color.statusAttentionText : Color.vaultSecondaryLabel)
+                    }
 
                     if let failure {
                         Text(failure.message)

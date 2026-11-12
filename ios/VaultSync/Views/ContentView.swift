@@ -636,7 +636,7 @@ struct ContentView: View {
     private func openDesignPreviewScreen() {
         let notes = DesignPreviewFixture.notesID
         switch DesignPreviewFixture.screen {
-        case .home, .attention, .syncing, .onboarding, .onboardingShare:
+        case .home, .attention, .outsideObsidian, .syncing, .onboarding, .onboardingShare:
             break
         case .devices:
             selectedTab = .devices
@@ -1039,7 +1039,8 @@ struct ContentView: View {
                 syncthingManager: syncthingManager,
                 onRescanFailedFolders: rescanFailedVaults,
                 onOpenAddDevice: { showAddDevice = true },
-                onRescanAllVaults: rescanAllVaults
+                onRescanAllVaults: rescanAllVaults,
+                onSelectObsidianFolder: { showObsidianPicker = true }
             )
         }
     }
@@ -1255,6 +1256,7 @@ struct ContentView: View {
                 pendingFolders: pendingFolders,
                 ignoredFolders: ignoredFolders,
                 failureByFolderID: shareAccept.pendingShareFailures,
+                destinationByFolderID: pendingShareDestinations(pendingFolders),
                 inFlightFolderIDs: shareAccept.pendingShareInFlight,
                 obsidianAccessible: vaultManager.isAccessible,
                 onAccept: { folder in
@@ -1277,6 +1279,27 @@ struct ContentView: View {
                 }
             )
         }
+    }
+
+    /// Where each pending share would arrive, by the accept's own decision
+    /// (`previewShareDestination`, #270). A share the automatic pass parked
+    /// already says what it waits for, so it gets no second line.
+    private func pendingShareDestinations(
+        _ folders: [SyncthingManager.PendingFolderInfo]
+    ) -> [String: PendingShareDestination.Line] {
+        let rootPlace = vaultManager.obsidianBasePath.map(VaultManager.selectedFolderPlace)
+        var lines: [String: PendingShareDestination.Line] = [:]
+        for folder in folders where shareAccept.pendingShareFailures[folder.id] == nil {
+            lines[folder.id] = PendingShareDestination.line(
+                decision: vaultManager.previewShareDestination(
+                    folderID: folder.id,
+                    label: folder.label,
+                    syncthingManager: syncthingManager
+                ),
+                rootPlace: rootPlace
+            )
+        }
+        return lines
     }
 
     // MARK: - Vaults
