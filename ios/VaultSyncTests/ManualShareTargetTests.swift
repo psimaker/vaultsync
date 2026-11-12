@@ -228,17 +228,19 @@ struct ManualShareTargetTests {
 
     @Test("Sidecar set / read round-trips through UserDefaults and overwrites cleanly")
     func sidecarRoundTrip() {
-        UserDefaults.standard.removeObject(forKey: "vaultsync.manualShareTargets")
-        #expect(ManualShareTargetStore.target(forFolder: "f1") == nil)
+        // Folder IDs of its own, and never the whole key: other suites keep
+        // records in the same store while this test runs, and removing the
+        // key under them made their recorded target disappear (#270).
+        let folder = "sidecar-\(UUID().uuidString)"
+        let other = "sidecar-\(UUID().uuidString)"
+        #expect(ManualShareTargetStore.target(forFolder: folder) == nil)
 
-        ManualShareTargetStore.setTarget("Life", forFolder: "f1")
-        #expect(ManualShareTargetStore.target(forFolder: "f1") == "Life")
-        #expect(ManualShareTargetStore.target(forFolder: "other") == nil)
+        ManualShareTargetStore.setTarget("Life", forFolder: folder)
+        #expect(ManualShareTargetStore.target(forFolder: folder) == "Life")
+        #expect(ManualShareTargetStore.target(forFolder: other) == nil)
 
-        ManualShareTargetStore.setTarget("Work", forFolder: "f1")
-        #expect(ManualShareTargetStore.target(forFolder: "f1") == "Work")
-
-        UserDefaults.standard.removeObject(forKey: "vaultsync.manualShareTargets")
+        ManualShareTargetStore.setTarget("Work", forFolder: folder)
+        #expect(ManualShareTargetStore.target(forFolder: folder) == "Work")
     }
 
     // MARK: - Auto-accept suppression for user-removed folders
