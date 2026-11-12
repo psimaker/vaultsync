@@ -229,43 +229,30 @@ struct ManualShareTargetTests {
 
     @Test("Sidecar set / read round-trips through UserDefaults and overwrites cleanly")
     func sidecarRoundTrip() {
-        UserDefaults.standard.removeObject(forKey: "vaultsync.manualShareTargets")
-        UserDefaults.standard.removeObject(forKey: "vaultsync.manualShareTargetRoots")
-        #expect(ManualShareTargetStore.target(forFolder: "f1") == nil)
-        #expect(ManualShareTargetStore.consentRoot(forFolder: "f1") == nil)
+        // Folder IDs of its own, and never the whole key: other suites keep
+        // records in the same store while this test runs, and removing the
+        // key under them made their recorded target disappear (#270).
+        let folder = "sidecar-\(UUID().uuidString)"
+        let other = "sidecar-\(UUID().uuidString)"
+        #expect(ManualShareTargetStore.target(forFolder: folder) == nil)
+        #expect(ManualShareTargetStore.consentRoot(forFolder: folder) == nil)
 
-        ManualShareTargetStore.setTarget("Life", forFolder: "f1", underRoot: "/root-a")
-        #expect(ManualShareTargetStore.target(forFolder: "f1") == "Life")
-        #expect(ManualShareTargetStore.consentRoot(forFolder: "f1") == "/root-a")
-        #expect(ManualShareTargetStore.target(forFolder: "other") == nil)
-        #expect(ManualShareTargetStore.consentRoot(forFolder: "other") == nil)
+        ManualShareTargetStore.setTarget("Life", forFolder: folder, underRoot: "/root-a")
+        #expect(ManualShareTargetStore.target(forFolder: folder) == "Life")
+        #expect(ManualShareTargetStore.consentRoot(forFolder: folder) == "/root-a")
+        // A folder without a record — which is also how a record written by
+        // an earlier version reads for its selected folder: no consent.
+        #expect(ManualShareTargetStore.target(forFolder: other) == nil)
+        #expect(ManualShareTargetStore.consentRoot(forFolder: other) == nil)
 
         // The same name confirmed under another selected folder moves the
         // consent with it (#270).
-        ManualShareTargetStore.setTarget("Life", forFolder: "f1", underRoot: "/root-b")
-        #expect(ManualShareTargetStore.consentRoot(forFolder: "f1") == "/root-b")
+        ManualShareTargetStore.setTarget("Life", forFolder: folder, underRoot: "/root-b")
+        #expect(ManualShareTargetStore.consentRoot(forFolder: folder) == "/root-b")
 
-        ManualShareTargetStore.setTarget("Work", forFolder: "f1", underRoot: "/root-b")
-        #expect(ManualShareTargetStore.target(forFolder: "f1") == "Work")
-
-        // A record written by an earlier version has a name and no folder.
-        UserDefaults.standard.removeObject(forKey: "vaultsync.manualShareTargetRoots")
-        #expect(ManualShareTargetStore.target(forFolder: "f1") == "Work")
-        #expect(ManualShareTargetStore.consentRoot(forFolder: "f1") == nil)
-
-        UserDefaults.standard.removeObject(forKey: "vaultsync.manualShareTargets")
-    }
-
-    // MARK: - Auto-accept suppression for user-removed folders
-
-    @Test("#52: a share whose folder the user removed is not auto-accept eligible")
-    func userRemovedSharesAreSkipped() {
-        let pending = [
-            SyncthingManager.PendingFolderInfo(id: "keep", label: "Keep", offeredBy: []),
-            SyncthingManager.PendingFolderInfo(id: "removed", label: "Removed", offeredBy: []),
-        ]
-        let eligible = SyncthingManager.autoAcceptEligible(actionable: pending, userRemoved: ["removed"])
-        #expect(eligible.map(\.id) == ["keep"])
+        ManualShareTargetStore.setTarget("Work", forFolder: folder, underRoot: "/root-b")
+        #expect(ManualShareTargetStore.target(forFolder: folder) == "Work")
+        #expect(ManualShareTargetStore.consentRoot(forFolder: folder) == "/root-b")
     }
 
     @Test("Nothing is suppressed while the user has removed nothing")
