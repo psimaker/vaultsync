@@ -55,6 +55,10 @@ type fakeAgent struct {
 	// statusHold, when set, keeps every status request waiting until it
 	// is closed.
 	statusHold chan struct{}
+	// statusDelay is how long every status request takes to answer.
+	statusDelay time.Duration
+	// unreadable: status answers 200 with a body that is no report.
+	unreadable bool
 }
 
 func newFakeAgent(t *testing.T) *fakeAgent {
@@ -73,7 +77,7 @@ func newFakeAgent(t *testing.T) *fakeAgent {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
-		hold := f.statusHold
+		hold, delay := f.statusHold, f.statusDelay
 		f.statusAsks++
 		f.mu.Unlock()
 		if hold != nil {
@@ -83,10 +87,16 @@ func newFakeAgent(t *testing.T) *fakeAgent {
 				return
 			}
 		}
+		time.Sleep(delay)
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		if f.old {
 			http.NotFound(w, r)
+			return
+		}
+		if f.unreadable {
+			w.WriteHeader(200)
+			_, _ = w.Write([]byte(`{"version": 5`))
 			return
 		}
 		if f.statusErr != "" {

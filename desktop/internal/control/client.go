@@ -118,8 +118,10 @@ func (c *Client) Pair(ctx context.Context, req PairRequest) (PairResult, error) 
 	return r, err
 }
 
-// AnswerError is an error the agent itself answered a request with, in its
-// words. Any other error of Do's means no agent took the request.
+// AnswerError is an error that came with an agent's answer: one it answered
+// with, in its words, or an answer this client cannot read. Do's other errors
+// say less: nobody may have taken the request, or its answer was lost on the
+// way.
 type AnswerError struct{ words string }
 
 func (e *AnswerError) Error() string { return e.words }
@@ -182,5 +184,8 @@ func (c *Client) Do(ctx context.Context, method, path string, in, out any) error
 	if out == nil {
 		return nil
 	}
-	return json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(out)
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(out); err != nil {
+		return &AnswerError{err.Error()}
+	}
+	return nil
 }

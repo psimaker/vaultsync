@@ -104,7 +104,10 @@ type Controller struct {
 	// not ended. A click now would restart a service on its way up.
 	settling    bool
 	startNotice string
-	canStart    bool
+	// owed: vaultsync start has said the service runs, and what came of it
+	// is not settled yet (startVerdict).
+	owed     bool
+	canStart bool
 	// lockWords: why the one-instance lock could not be taken, shown next
 	// to the notice until it holds; lockSaid: the failure is in the log.
 	lockWords string
@@ -169,6 +172,7 @@ func (c *Controller) Run(ctx context.Context) error {
 		case out := <-startDone:
 			c.starting = false
 			c.notice, c.startNotice = out.notice, out.notice
+			c.owed = !out.failed
 			if out.failed {
 				c.notify(ctx, out.notice)
 			} else {
@@ -328,6 +332,7 @@ func (c *Controller) refresh(ctx context.Context) error {
 	if c.startNotice != "" && c.notice == c.startNotice && answered(err) {
 		c.notice, c.startNotice = "", ""
 	}
+	c.startVerdict(ctx)
 	c.render()
 	return nil
 }
@@ -458,6 +463,7 @@ func (c *Controller) startService(ctx context.Context, done chan<- startOutcome)
 		return nil
 	}
 	c.starting = true
+	c.owed = false
 	c.notice = ""
 	c.render()
 	go func() {
@@ -494,7 +500,8 @@ func nobodyThere(err error) bool {
 }
 
 // answered: an agent took the last look's request and said something — its
-// report, an error in its own words, or the 404 of one older than this app.
+// report, an error in its own words, an answer that cannot be read, or the
+// 404 of one older than this app.
 func answered(err error) bool {
 	var said *control.AnswerError
 	return err == nil || errors.Is(err, ErrOldAgent) || errors.As(err, &said)
@@ -512,19 +519,33 @@ func (c *Controller) afterAsk(ctx context.Context, waits []time.Duration) (<-cha
 	return time.After(waits[0]), waits[1:]
 }
 
-// endOfWait says, once, when the asks after a start end, that nobody is there:
-// a first answer proves little, since a run can end right after it. It keeps
-// what a pairing or an open has said since; a later poll still takes the
-// agent's report when one comes.
+// endOfWait ends the asks after a start; what the start came to is settled by
+// how things stand from here on.
 func (c *Controller) endOfWait(ctx context.Context) {
 	c.settling = false
-	if nobodyThere(c.lastErr) {
+	c.startVerdict(ctx)
+	c.render()
+}
+
+// startVerdict settles, once, what a start that said the service runs came
+// to, by the first look from the end of its wait on that tells: with nobody
+// there the menu says so and notifies, keeping what a pairing or an open has
+// said since; an agent that answers has spoken for itself. A look that tells
+// neither (no answer in time, a connection dropped) leaves it to the next
+// one, so start's "running again" never stays under "not running". An answer
+// inside the wait settles nothing: a run can end right after it.
+func (c *Controller) startVerdict(ctx context.Context) {
+	switch {
+	case !c.owed || c.settling:
+	case nobodyThere(c.lastErr):
+		c.owed = false
 		if c.notice == "" || c.notice == c.startNotice {
 			c.notice, c.startNotice = noStartAnswer, noStartAnswer
 		}
 		c.notify(ctx, noStartAnswer)
+	case answered(c.lastErr):
+		c.owed = false
 	}
-	c.render()
 }
 
 // setPaused pauses or resumes as the click asked; a click that asks for

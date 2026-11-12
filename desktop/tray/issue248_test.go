@@ -3,6 +3,7 @@ package tray
 import (
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -409,8 +410,9 @@ func TestIssue248_StartsWordsGoBesideALaterBadAnswer(t *testing.T) {
 		"a failed start's": func() *fakeStart { return &fakeStart{err: errors.New("it refused")} },
 	}
 	answers := map[string]func(*fakeAgent){
-		"an older agent": func(f *fakeAgent) { f.old = true },
-		"an error":       func(f *fakeAgent) { f.statusErr = "the sync engine does not answer" },
+		"an older agent":       func(f *fakeAgent) { f.old = true },
+		"an error":             func(f *fakeAgent) { f.statusErr = "the sync engine does not answer" },
+		"an unreadable answer": func(f *fakeAgent) { f.unreadable = true },
 	}
 	for startName, newStart := range starts {
 		for answerName, set := range answers {
@@ -463,10 +465,24 @@ func stalledAfterStart(t *testing.T, started *fakeStart, c *Controller) (*fakeAg
 
 func noAnswerInTime(v View) bool { return v.Detail == errNoAnswer.Error() }
 
+// asksStayAt fails when the agent is asked for its status more than n times in
+// the time further asks of a wait would take.
+func asksStayAt(t *testing.T, agent *fakeAgent, n int) {
+	t.Helper()
+	agent.asked(n)
+	time.Sleep(300 * time.Millisecond)
+	agent.set(func(f *fakeAgent) {
+		if f.statusAsks != n {
+			t.Fatalf("asked %d times, not %d", f.statusAsks, n)
+		}
+	})
+}
+
 // An ask that gets no answer in its time ends the asks: something is there, and
-// every further ask would hold the menu's loop for a status timeout. The wait
-// is over with it, so Start is offered again once nobody is there, and start's
-// words stay, since nobody has spoken for the service.
+// every further ask would hold the menu's loop for a status timeout. Nothing is
+// said yet, since such a look tells neither way. The wait is over with it, so
+// once the run is gone the next look says that the service does not answer:
+// start's "running again" does not stay under "not running".
 func TestIssue248_AnAskWithNoAnswerInTimeEndsTheWait(t *testing.T) {
 	started := &fakeStart{said: "✓ VaultSync is running again."}
 	notes := make(chan string, 4)
@@ -477,20 +493,154 @@ func TestIssue248_AnAskWithNoAnswerInTimeEndsTheWait(t *testing.T) {
 	if v := ui.view(t, "no answer in time", noAnswerInTime); v.Notice != started.said {
 		t.Fatalf("start's words beside a look that got no answer: %+v", v)
 	}
+	asksStayAt(t, agent, 1)
+	select {
+	case note := <-notes:
+		t.Fatalf("notified %q for a look that tells neither way", note)
+	default:
+	}
 	agent.stop()
 	ui.send(Event{Kind: EventOpened})
 	v := ui.view(t, "nobody there", notRunning)
 	if v.Start != (Action{"Start VaultSync", true}) {
 		t.Fatalf("the wait did not end with the ask that got no answer: %+v", v)
 	}
-	if v.Notice != started.said {
-		t.Fatalf("the asks went on to their end: %+v", v)
+	if v.Notice != noStartAnswer {
+		t.Fatalf("running again under not running: %+v", v)
 	}
+	if note := <-notes; note != noStartAnswer {
+		t.Fatalf("notified %q", note)
+	}
+	// Said once: the next look that finds nobody says nothing more.
+	ui.send(Event{Kind: EventOpened})
+	ui.send(Event{Kind: EventOpened})
 	select {
 	case note := <-notes:
-		t.Fatalf("notified %q", note)
+		t.Fatalf("notified again: %q", note)
 	default:
 	}
+}
+
+// The wait is its asks and no more: the look at start's end and one per wait,
+// however long each answer takes. It ended by the clock for a while, and an
+// agent slow to answer then lost its last asks.
+func TestIssue248_TheWaitIsItsAsksAndNoMore(t *testing.T) {
+	agent := newFakeAgent(t)
+	agent.stop()
+	ui := newFakeUI(t)
+	started := &fakeStart{hold: make(chan struct{}), said: "✓ VaultSync is running again."}
+	controllerFor(t, agent, ui, &Controller{
+		StartProgram: func() string { return "/x/vaultsync" },
+		Start:        started.start,
+		StartWaits:   []time.Duration{5 * time.Millisecond, 5 * time.Millisecond, 5 * time.Millisecond, 5 * time.Millisecond},
+	})
+	ui.view(t, "not running", notRunning)
+	ui.send(Event{Kind: EventStart})
+	ui.view(t, "starting", func(v View) bool { return v.Start == Action{"Starting VaultSync…", false} })
+	agent.set(func(f *fakeAgent) {
+		f.statusErr, f.statusDelay = "the sync engine does not answer", 30*time.Millisecond
+	})
+	agent.serveAgain()
+	close(started.hold)
+	asksStayAt(t, agent, 5)
+}
+
+// droppingSocket takes every connection on the agent's socket and closes it:
+// a look that reached something and got no answer.
+func droppingSocket(t *testing.T, agent *fakeAgent) {
+	t.Helper()
+	_ = os.Remove(agent.socket)
+	l, err := net.Listen("unix", agent.socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+}
+
+// A connection that drops is no answer either: a failed start's reason stays,
+// and a start that said the service runs is still owed its word, which the
+// first look that finds nobody gives.
+func TestIssue248_ADroppedConnectionIsNoAnswer(t *testing.T) {
+	t.Run("a failed start's reason stays", func(t *testing.T) {
+		agent := newFakeAgent(t)
+		agent.stop()
+		ui := newFakeUI(t)
+		started := &fakeStart{hold: make(chan struct{}), err: errors.New("it refused")}
+		controllerFor(t, agent, ui, &Controller{StartProgram: func() string { return "/x/vaultsync" }, Start: started.start})
+		ui.view(t, "not running", notRunning)
+		ui.send(Event{Kind: EventStart})
+		ui.view(t, "starting", func(v View) bool { return v.Start == Action{"Starting VaultSync…", false} })
+		droppingSocket(t, agent)
+		close(started.hold)
+		if v := ui.view(t, "the dropped look", func(v View) bool { return v.Headline == "VaultSync could not report" }); v.Notice != "Could not start VaultSync: it refused" {
+			t.Fatalf("the reason: %+v", v)
+		}
+	})
+	t.Run("the word comes once nobody is there", func(t *testing.T) {
+		agent := newFakeAgent(t)
+		agent.stop()
+		ui := newFakeUI(t)
+		started := &fakeStart{hold: make(chan struct{}), said: "✓ VaultSync is running again."}
+		notes := make(chan string, 4)
+		gone := make(chan struct{})
+		controllerFor(t, agent, ui, &Controller{
+			StartProgram: func() string { return "/x/vaultsync" },
+			Start:        started.start,
+			StartWaits:   []time.Duration{time.Millisecond, time.Millisecond},
+			Notify:       func(_ context.Context, s string) { notes <- s; close(gone) },
+		})
+		ui.view(t, "not running", notRunning)
+		ui.send(Event{Kind: EventStart})
+		ui.view(t, "starting", func(v View) bool { return v.Start == Action{"Starting VaultSync…", false} })
+		l, err := net.Listen("unix", agent.socket)
+		if err != nil {
+			t.Fatal(err)
+		}
+		drops := make(chan struct{}, 16)
+		go func() {
+			for {
+				c, err := l.Accept()
+				if err != nil {
+					return
+				}
+				_ = c.Close()
+				drops <- struct{}{}
+			}
+		}()
+		close(started.hold)
+		// The look at start's end and one per wait, every one dropped: the
+		// wait is over and nothing is said.
+		for range 3 {
+			<-drops
+		}
+		ui.send(Event{Kind: EventOpened})
+		<-drops
+		select {
+		case note := <-notes:
+			t.Fatalf("notified %q for looks that tell neither way", note)
+		default:
+		}
+		_ = l.Close()
+		_ = os.Remove(agent.socket)
+		ui.send(Event{Kind: EventOpened})
+		v := ui.view(t, "nobody there", notRunning)
+		if v.Notice != noStartAnswer || v.Start != (Action{"Start VaultSync", true}) {
+			t.Fatalf("running again under not running: %+v", v)
+		}
+		<-gone
+		if note := <-notes; note != noStartAnswer {
+			t.Fatalf("notified %q", note)
+		}
+	})
 }
 
 // A look that gets no answer takes nothing back: a failed start's reason would

@@ -168,7 +168,7 @@ VaultSync keeps its sync engine, settings and pairing identity in one folder —
 expects it (`~/Library/LaunchAgents`, `~/.config/systemd/user`; on a Mac set
 up from VaultSync for Mac a second one starts the menu-bar icon) and, on a
 Mac, the logs in `~/Library/Logs/VaultSync`. Your vaults stay where they are. The
-sync engine's own log (in that folder's `syncthing/`) names your vaults and
+sync engine's own log (in `syncthing/` in VaultSync's folder) names your vaults and
 their paths; it never leaves this computer. The background service's own
 log (`~/Library/Logs/VaultSync` on a Mac, the journal on Linux) names no
 vault and no path; when the service ends with an error, `last-error.txt` in
