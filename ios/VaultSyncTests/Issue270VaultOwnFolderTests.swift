@@ -213,3 +213,77 @@ struct Issue270ClassificationTests {
         }
     }
 }
+
+extension EngineBridgeSuites {
+    /// #270 through every layer: the app's own accept against the real engine.
+    /// The mapping decides `root/<name>`, the bridge is handed the selected
+    /// folder, and the Go floor accepts into its direct subfolder.
+    @Suite("A real accept lands in a direct subfolder of the selected folder (#270)")
+    struct Issue270AcceptThroughTheBridgeTests {
+
+        @MainActor
+        @Test("Obsidian's folder with a leftover .obsidian: a vault labelled like the folder, and a manually placed one, each get their own folder")
+        func acceptsLandInTheirOwnFolders() throws {
+            TestSupport.resetSyncthingState()
+            BackgroundSyncService.lifecycleLock.withLock { $0.releaseForeground() }
+            #expect(SyncBridgeService.startSyncthing(configDir: TestSupport.syncthingConfigPath()) == nil)
+
+            let syncthingManager = SyncthingManager()
+            #expect(syncthingManager.adoptRunningEngine())
+
+            let labelled = "issue270-\(UUID().uuidString)"
+            let placed = "issue270-\(UUID().uuidString)"
+            let sandbox = FileManager.default.temporaryDirectory
+                .appendingPathComponent("issue270-\(UUID().uuidString)", isDirectory: true)
+            defer {
+                syncthingManager.stop()
+                TestSupport.resetSyncthingState()
+                FolderPathReconciler.removeRel(forFolder: labelled)
+                FolderPathReconciler.removeRel(forFolder: placed)
+                try? FileManager.default.removeItem(at: sandbox)
+            }
+
+            // Both conditions that used to sync into the root itself: the
+            // root's name on disk equals the label, and the root holds a
+            // `.obsidian/` and no vault subfolder.
+            let root = sandbox
+                .appendingPathComponent("Containers/Data/Application/\(UUID().uuidString)/Documents", isDirectory: true)
+            try FileManager.default.createDirectory(
+                at: root.appendingPathComponent(".obsidian", isDirectory: true),
+                withIntermediateDirectories: true
+            )
+            let vaultManager = VaultManager()
+            vaultManager._testSetAccess(accessible: true, detectedVaults: [], obsidianDirectoryURL: root)
+
+            func syncedPath(of folderID: String) -> String? {
+                syncthingManager.folders.first { $0.id == folderID }
+                    .map { FolderPathReconciler.canonical($0.path) }
+            }
+            func canonicalChild(_ name: String) -> String {
+                FolderPathReconciler.canonical(root.appendingPathComponent(name, isDirectory: true).path)
+            }
+
+            let outcome = vaultManager.acceptPendingShare(
+                folder: SyncthingManager.PendingFolderInfo(id: labelled, label: "Documents", offeredBy: []),
+                syncthingManager: syncthingManager,
+                mergeConfirmed: false
+            )
+            #expect(outcome == .accepted)
+            #expect(syncedPath(of: labelled) == canonicalChild("Documents"))
+            #expect(FolderPathReconciler.loadRel()[labelled] == "Documents")
+
+            let manualError = vaultManager.acceptPendingShare(
+                folder: SyncthingManager.PendingFolderInfo(id: placed, label: "Elsewhere", offeredBy: []),
+                intoTargetNamed: "Chosen",
+                syncthingManager: syncthingManager
+            )
+            #expect(manualError == nil)
+            #expect(syncedPath(of: placed) == canonicalChild("Chosen"))
+
+            // The engine's marker sits in each vault's own folder — the
+            // selected folder itself was never made a sync folder.
+            #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("Documents/.stfolder").path))
+            #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent(".stfolder").path))
+        }
+    }
+}
