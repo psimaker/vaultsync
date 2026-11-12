@@ -108,6 +108,55 @@ struct Issue270VaultOwnFolderTests {
         #expect(isRefused(destination(root: userVault, label: "Notes")))
     }
 
+    @Test("A new manual target under a picked vault is refused and not offered; a recorded one keeps its place")
+    func manualTargetsUnderAPickedVault() throws {
+        let pickedVault = try makeUserFolder(named: "MyVault")
+        try addVaultConfig(to: pickedVault)
+        // An empty folder inside the vault: under a container it would be an
+        // eligible target.
+        try FileManager.default.createDirectory(
+            at: pickedVault.appendingPathComponent("Empty", isDirectory: true),
+            withIntermediateDirectories: false
+        )
+        let vaultManager = VaultManager()
+        vaultManager._testSetAccess(accessible: true, detectedVaults: [], obsidianDirectoryURL: pickedVault)
+        let syncthingManager = SyncthingManager()
+
+        // First-time choice: refused before anything reaches the engine.
+        let refusal = vaultManager.acceptPendingShare(
+            folder: SyncthingManager.PendingFolderInfo(id: "issue270-\(UUID().uuidString)", label: "Notes", offeredBy: []),
+            intoTargetNamed: "Notes",
+            syncthingManager: syncthingManager
+        )
+        #expect(refusal?.contains("contains your vaults") == true)
+        #expect(!FileManager.default.fileExists(atPath: pickedVault.appendingPathComponent("Notes").path))
+        #expect(vaultManager.eligibleShareTargets(syncthingManager: syncthingManager).isEmpty)
+
+        // A target recorded earlier (#52) is where this share lives.
+        let recorded = "issue270-\(UUID().uuidString)"
+        ManualShareTargetStore.setTarget("Life", forFolder: recorded)
+        #expect(
+            vaultManager.previewShareDestination(folderID: recorded, label: "Notes", syncthingManager: syncthingManager)
+                == child(pickedVault, "Life")
+        )
+    }
+
+    @Test("A recorded target keeps its place when the share's label stops naming a folder")
+    func recordedTargetSurvivesAnUnusableLabel() throws {
+        let root = try makeAppDocumentsRoot()
+        let recorded = "issue270-\(UUID().uuidString)"
+        ManualShareTargetStore.setTarget("Life", forFolder: recorded)
+        let vaultManager = VaultManager()
+        vaultManager._testSetAccess(accessible: true, detectedVaults: [], obsidianDirectoryURL: root)
+        for label in [".", "..", " . "] {
+            #expect(
+                vaultManager.previewShareDestination(folderID: recorded, label: label, syncthingManager: SyncthingManager())
+                    == child(root, "Life"),
+                "label \(label.debugDescription)"
+            )
+        }
+    }
+
     @Test("An empty container places the first vault in its own folder")
     func emptyContainerPlacesTheVaultInItsOwnFolder() throws {
         let root = try makeAppDocumentsRoot()
@@ -201,6 +250,7 @@ struct Issue270ClassificationTests {
         for name in [".", "..", " .. "] {
             let decision = VaultManager.validateManualTarget(
                 rawRoot: "/Obsidian",
+                rootIsVault: false,
                 name: name,
                 occupiedCanonLower: [],
                 targetEntries: nil,

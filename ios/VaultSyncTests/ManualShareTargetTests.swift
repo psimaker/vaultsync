@@ -16,12 +16,14 @@ struct ManualShareTargetTests {
 
     private func validate(
         root: String = "/Obsidian",
+        rootIsVault: Bool = false,
         name: String,
         occupied: Set<String> = [],
         entries: [String]? = nil
     ) -> ShareTargetDecision {
         VaultManager.validateManualTarget(
             rawRoot: root,
+            rootIsVault: rootIsVault,
             name: name,
             occupiedCanonLower: occupied,
             targetEntries: entries,
@@ -153,6 +155,17 @@ struct ManualShareTargetTests {
             resolve(manualTarget: "Life", name: "Obsidian-Vault-Life")
                 == .path("/Obsidian/Life")
         )
+    }
+
+    @Test("#270: a new manual choice under a selected folder that is itself a vault is refused")
+    func newManualChoiceUnderAVaultRootIsRefused() {
+        guard case .refused(let message) = validate(rootIsVault: true, name: "Notes") else {
+            Issue.record("a new target inside a vault must be refused")
+            return
+        }
+        #expect(message.contains("contains your vaults"))
+        // The same name under a container is a folder of its own.
+        #expect(validate(rootIsVault: false, name: "Notes") == .path("/Obsidian/Notes"))
     }
 
     @Test("A recorded override keeps its place when the selected folder is itself a vault")

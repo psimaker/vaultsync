@@ -317,6 +317,22 @@ final class VaultManager {
         !isAppDocumentsRoot && hasOwnConfig && !hasVaultSubfolders
     }
 
+    /// `rootIsItselfVault` for the selected folder as it is on disk right now.
+    /// A fresh read, not the cached `detectedVaults`: every caller decides a
+    /// sync target with it.
+    nonisolated static func selectedRootIsVault(_ root: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        let hasOwnConfig = FileManager.default.fileExists(
+            atPath: root.appendingPathComponent(".obsidian", isDirectory: true).path,
+            isDirectory: &isDirectory
+        ) && isDirectory.boolValue
+        return rootIsItselfVault(
+            isAppDocumentsRoot: isAppDocumentsRoot(root.path),
+            hasOwnConfig: hasOwnConfig,
+            hasVaultSubfolders: !(vaultSubfolderNames(in: root) ?? []).isEmpty
+        )
+    }
+
     /// Whether `path` is an app's own folder as the folder picker hands it
     /// out: `…/Containers/Data/Application/<UUID>/Documents` for "On My
     /// iPhone" → the app, `…/Mobile Documents/<container>/Documents` for the
@@ -506,7 +522,15 @@ final class VaultManager {
         let rawName = label.isEmpty ? folderID : label
         let folderName = Self.sanitizeDirectoryName(rawName)
 
-        guard Self.isUsableDirectoryName(folderName) else {
+        // A manually chosen target (#52) wins over the label-derived mapping.
+        // The record survives folder removal, so remove + re-accept lands the
+        // share back where the user put it, never silently at the label default.
+        let manualTarget = ManualShareTargetStore.target(forFolder: folderID)
+
+        // The label has to name a folder only when the target is derived
+        // from it: a recorded target keeps its place whatever the offering
+        // device calls the share now.
+        guard manualTarget != nil || Self.isUsableDirectoryName(folderName) else {
             return .refused(L10n.fmt("Invalid folder name: '%@'", rawName))
         }
 
@@ -515,20 +539,7 @@ final class VaultManager {
             return .refused(L10n.tr("Obsidian directory not accessible."))
         }
 
-        let fm = FileManager.default
-        var isDir: ObjCBool = false
-        let baseHasOwnConfig = fm.fileExists(
-            atPath: baseURL.appendingPathComponent(".obsidian", isDirectory: true).path,
-            isDirectory: &isDir
-        ) && isDir.boolValue
-
-        // Fresh filesystem read (not the cached detectedVaults): this decides
-        // a sync target, so it must classify against the disk as it is now.
-        let rootIsVault = Self.rootIsItselfVault(
-            isAppDocumentsRoot: Self.isAppDocumentsRoot(basePath),
-            hasOwnConfig: baseHasOwnConfig,
-            hasVaultSubfolders: !(Self.vaultSubfolderNames(in: baseURL) ?? []).isEmpty
-        )
+        let rootIsVault = Self.selectedRootIsVault(baseURL)
 
         // Canonical, lowercased paths already held by *other* folders. The share
         // must never reuse one of these — that is exactly the merge that corrupts
@@ -537,11 +548,6 @@ final class VaultManager {
         let occupied = Set(syncthingManager.folders.map {
             FolderPathReconciler.canonical($0.path).lowercased()
         })
-
-        // A manually chosen target (#52) wins over the label-derived mapping.
-        // The record survives folder removal, so remove + re-accept lands the
-        // share back where the user put it, never silently at the label default.
-        let manualTarget = ManualShareTargetStore.target(forFolder: folderID)
 
         let decision = Self.resolveAcceptPath(
             manualTarget: manualTarget,
@@ -761,8 +767,15 @@ final class VaultManager {
     /// Only *empty* vaults are eligible as existing targets: linking a share
     /// to a folder that already holds content would merge two content sets,
     /// which needs its own safety design (out of scope for #52).
+    ///
+    /// `rootIsVault`: a new choice under a selected folder that is itself a
+    /// vault is refused like a label-derived target — `root/<name>` would lie
+    /// inside that vault, where Obsidian shows a folder, not a vault (#270).
+    /// A target recorded earlier is not validated here and keeps its place
+    /// (`resolveAcceptPath`).
     nonisolated static func validateManualTarget(
         rawRoot: String,
+        rootIsVault: Bool,
         name: String,
         occupiedCanonLower: Set<String>,
         targetEntries: [String]?,
@@ -772,7 +785,8 @@ final class VaultManager {
         guard isUsableDirectoryName(folderName) else {
             return .refused(message: L10n.tr("Enter a folder name."))
         }
-        if rootIsCompromised(rawRoot, occupiedCanonLower: occupiedCanonLower, canonicalize: canonicalize) {
+        if rootIsVault
+            || rootIsCompromised(rawRoot, occupiedCanonLower: occupiedCanonLower, canonicalize: canonicalize) {
             return .refused(message: L10n.tr("This share needs its own folder, but the folder selected for VaultSync is itself a vault, so everything inside it belongs to that vault. Re-select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") — new vaults then sync side by side instead of inside each other."))
         }
         let candidate = (rawRoot as NSString).appendingPathComponent(folderName)
@@ -828,6 +842,7 @@ final class VaultManager {
 
         let decision = Self.validateManualTarget(
             rawRoot: basePath,
+            rootIsVault: Self.selectedRootIsVault(baseURL),
             name: targetName,
             occupiedCanonLower: occupied,
             targetEntries: entries,
@@ -892,6 +907,7 @@ final class VaultManager {
         ) else {
             return []
         }
+        let rootIsVault = Self.selectedRootIsVault(baseURL)
         return contents.compactMap { itemURL -> String? in
             var isDir: ObjCBool = false
             guard fm.fileExists(atPath: itemURL.path, isDirectory: &isDir), isDir.boolValue else {
@@ -904,6 +920,7 @@ final class VaultManager {
             guard let entries = try? fm.contentsOfDirectory(atPath: itemURL.path) else { return nil }
             guard case .path = Self.validateManualTarget(
                 rawRoot: basePath,
+                rootIsVault: rootIsVault,
                 name: name,
                 occupiedCanonLower: occupied,
                 targetEntries: entries,
