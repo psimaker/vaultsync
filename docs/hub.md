@@ -168,11 +168,11 @@ VaultSync keeps its sync engine, settings and pairing identity in one folder —
 expects it (`~/Library/LaunchAgents`, `~/.config/systemd/user`; on a Mac set
 up from VaultSync for Mac a second one starts the menu-bar icon) and, on a
 Mac, the logs in `~/Library/Logs/VaultSync`. Your vaults stay where they are. The
-sync engine's own log (in that folder's `syncthing/`) names your vaults and
+sync engine's own log (in `syncthing/` in VaultSync's folder) names your vaults and
 their paths; it never leaves this computer. The background service's own
 log (`~/Library/Logs/VaultSync` on a Mac, the journal on Linux) names no
-vault and no path; when the service stops, the reason is in that folder's
-`last-error.txt`. `setup` also links the command
+vault and no path; when the service ends with an error, `last-error.txt` in
+VaultSync's folder holds the reason, and keeps it until the next one. `setup` also links the command
 as `~/.local/bin/vaultsync` (unless that name is taken) and says how to call
 it if that folder is not on your `PATH`.
 
@@ -249,16 +249,21 @@ folder), **Pause Syncing** / **Resume Syncing** (the same as `vaultsync pause`
 and `resume`), **Pair a Vault…**, **Open Log** (on a Mac) and **Quit**, which
 quits the icon only — syncing continues in the background. The menu asks the
 running agent for everything over the same socket as the terminal and
-decides nothing itself; without a running agent it says so and offers
-only Open Log and Quit. **Pair a Vault…** asks for the code, then which vault, then
-— for a folder on this computer that already holds files — the same consent
-`vaultsync pair` asks for, through the desktop's own dialogs (on Linux this
-needs `zenity` or, from `desktop-v0.3.0` on, KDE's `kdialog`; without them the
-item says to use `vaultsync pair` in a terminal). A vault from your Hub goes into `~/Vaults/<name>`; to put it
-elsewhere, or to name this computer's vault differently on your Hub, use
-`vaultsync pair` in a terminal. On GNOME, tray icons need the “AppIndicator
-and KStatusNotifierItem Support” extension; `vaultsync-tray` says so when it
-starts without one and shows the icon as soon as the extension is there.
+decides nothing itself; without a running agent it says so and offers only
+Open Log and Quit — and, from `desktop-v0.3.0` on, **Start VaultSync** (the
+same as `vaultsync start`; what that says shows in the menu). It offers no
+start when the service has recorded that it could not open its socket, or for
+about 15 seconds after a start from the menu. **Pair a Vault…** asks for the
+code, then which vault, then — for a folder on this computer that already
+holds files — the same consent `vaultsync pair` asks for, through the
+desktop's own dialogs (on Linux this needs `zenity` or, from
+`desktop-v0.3.0` on, KDE's `kdialog`; without them the item says to use
+`vaultsync pair` in a terminal). A vault from your Hub goes into
+`~/Vaults/<name>`; to put it elsewhere, or to name this computer's vault
+differently on your Hub, use `vaultsync pair` in a terminal. On GNOME, tray
+icons need the “AppIndicator and KStatusNotifierItem Support” extension;
+`vaultsync-tray` says so when it starts without one and shows the icon as
+soon as the extension is there.
 
 `--yes` is consent to sync a `--path` that already holds files with the new
 vault named by `--vault`; it never chooses a Hub and never overrides a

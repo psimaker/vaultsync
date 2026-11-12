@@ -289,7 +289,9 @@ func controllerFor(t *testing.T, agent *fakeAgent, ui *fakeUI, c *Controller) {
 	}
 	c.UI = ui
 	c.Poll = time.Hour
-	c.StatusTimeout = 5 * time.Second
+	if c.StatusTimeout == 0 {
+		c.StatusTimeout = 5 * time.Second
+	}
 	done := make(chan error, 1)
 	go func() { done <- c.Run(ctx) }()
 	t.Cleanup(func() {
