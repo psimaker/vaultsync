@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -64,14 +65,14 @@ func TestIssue249_ZenityEscapesOnlyForTheDialogThatReadsIt(t *testing.T) {
 	// A list: Pango markup, backslash sequences are read; its rows are shown
 	// as written.
 	m := Menu{Hub: []MenuEntry{{Label: awkward, Vault: "vs-1", Default: "/home/me/Vaults/x"}}, Note: awkward}
-	r.stdout = "\n"
+	r.stdout = linuxTag(0) + "\n"
 	if _, _, err := z.ChooseVault(ctx, m); err != nil {
 		t.Fatal(err)
 	}
 	if got := text(r.args); !strings.HasSuffix(got, `R&amp;D &lt;b&gt;x&lt;/b&gt; a_b &amp;amp; c:\\temp\\new`) {
 		t.Fatalf("list: %q", got)
 	}
-	if got := r.args[len(r.args)-1]; !strings.HasPrefix(got, awkward+" — on your Hub") {
+	if got := r.args[len(r.args)-2]; !strings.HasPrefix(got, awkward+" — on your Hub") {
 		t.Fatalf("row: %q", got)
 	}
 	// --no-markup: as written, a backslash included.
@@ -99,15 +100,20 @@ func TestIssue249_ReturnInAListChoosesNoVaultAndAsksAgain(t *testing.T) {
 		"zenity":  func(r *recorder) Asker { return &zenityAsker{run: r.run} },
 		"kdialog": func(r *recorder) Asker { return &kdialogAsker{run: r.run} },
 	} {
-		r := &recorder{stdouts: []string{noChoiceTag + "\n", "\n", "2)\n"}}
+		r := &recorder{stdouts: []string{noChoiceTag + "\n", "\n", linuxTag(1) + "\n"}}
 		c, ok, err := a(r).ChooseVault(ctx, m)
 		if !ok || err != nil || c.Entry.Path != "/n" || r.calls != 3 {
 			t.Errorf("%s, chosen on the third time: %+v %v %v, %d times", name, c, ok, err, r.calls)
 		}
+		// Never chosen: the list shows rowTries times, then a message says
+		// that nothing was chosen. Before, the pairing ended without a word.
 		r = &recorder{stdout: noChoiceTag + "\n"}
 		c, ok, err = a(r).ChooseVault(ctx, m)
-		if ok || err != nil || c != (Choice{}) || r.calls != rowTries {
-			t.Errorf("%s, never chosen: %+v %v %v, %d times", name, c, ok, err, r.calls)
+		if ok || err != nil || c != (Choice{}) || r.calls != rowTries+1 {
+			t.Errorf("%s, never chosen: %+v %v %v, %d runs", name, c, ok, err, r.calls)
+		}
+		if said := strings.Join(r.args, " "); !strings.Contains(said, "No vault was chosen") || strings.Contains(said, "--list") || strings.Contains(said, "--menu") {
+			t.Errorf("%s, after the last showing: %q", name, r.args)
 		}
 		r = &recorder{status: 1}
 		if _, ok, err := a(r).ChooseVault(ctx, m); ok || err != nil || r.calls != 1 {
@@ -117,22 +123,24 @@ func TestIssue249_ReturnInAListChoosesNoVaultAndAsksAgain(t *testing.T) {
 }
 
 // A row shows no number to type: zenity 4 filters on a typed key. What is read
-// back is a hidden column, printed alone.
+// back is a hidden column, printed alone, and it is the second one: zenity 3
+// looks for what a person types in the first column, and with the tags there
+// a typed 192.168.1.21 chose the first row. Its tag is made of a character
+// no keyboard types: zenity 4.1 looks in the hidden column too, and a typed 2
+// chose the row once tagged linuxTag(1).
 func TestIssue249_ARowShowsNoNumberAndAHiddenTagIsReadBack(t *testing.T) {
 	ctx := context.Background()
 	m := Menu{Local: []MenuEntry{{Label: "Work", Path: "/w"}}, Hub: []MenuEntry{{Label: "Work", Vault: "vs-1"}}}
-	r := &recorder{stdout: "2)\n"}
+	r := &recorder{stdout: linuxTag(1) + "\n"}
 	c, ok, err := (&zenityAsker{run: r.run}).ChooseVault(ctx, m)
 	if err != nil || !ok || c.Entry.Vault != "vs-1" {
 		t.Fatalf("%+v %v %v", c, ok, err)
 	}
 	joined := strings.Join(r.args, "\x00")
-	for _, want := range []string{"--column=Row", "--column=Choice", "--hide-column=1", "--print-column=1"} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("no %s in %q", want, r.args)
-		}
+	if !strings.Contains(joined, strings.Join([]string{"--column=Choice", "--column=Row", "--hide-column=2", "--print-column=2"}, "\x00")) {
+		t.Fatalf("the columns: %q", r.args)
 	}
-	if got := r.args[len(r.args)-6:]; !reflect.DeepEqual(got, []string{noChoiceTag, noVaultRow, "1)", "Work — on this computer", "2)", "Work — on your Hub"}) {
+	if got := r.args[len(r.args)-6:]; !reflect.DeepEqual(got, []string{noVaultRow, noChoiceTag, "Work — on this computer", linuxTag(0), "Work — on your Hub", linuxTag(1)}) {
 		t.Fatalf("rows: %q", got)
 	}
 	// On a Mac the row's words come back, so its number stays in them.
@@ -178,24 +186,104 @@ func TestIssue249_TheListGrowsWithItsPrompt(t *testing.T) {
 	if got := zenityListHeight(strings.Repeat("line\n", 200)); got != 760 {
 		t.Errorf("no end of lines: %d", got)
 	}
-	r := &recorder{stdout: "1)\n"}
+	r := &recorder{stdout: linuxTag(0) + "\n"}
 	long := Menu{Note: strings.Repeat("word ", 200), Local: []MenuEntry{{Label: "Work", Path: "/w"}}}
 	if _, _, err := (&zenityAsker{run: r.run}).ChooseVault(context.Background(), long); err != nil {
 		t.Fatal(err)
 	}
-	// By the lines as shown, broken to fit, not as the agent wrote them.
-	want := "--height=" + strconv.Itoa(zenityListHeight(wrapLines(menuPrompt(long), lineWidth)))
-	if !strings.Contains(strings.Join(r.args, " "), want) || want == "--height="+strconv.Itoa(zenityListHeight(menuPrompt(long))) {
-		t.Fatalf("no %s in %q", want, r.args)
+	// By the lines of the text as zenity is given it, broken to fit, not as
+	// the agent wrote them: the note above is one line of a thousand characters.
+	var text, height string
+	for _, a := range r.args {
+		if v, ok := strings.CutPrefix(a, "--text="); ok {
+			text = v
+		}
+		if v, ok := strings.CutPrefix(a, "--height="); ok {
+			height = v
+		}
+	}
+	lines := strings.Count(text, "\n") + 1
+	if lines < 10 || height != strconv.Itoa(420+17*(lines-4)) {
+		t.Fatalf("%d lines of text, height %s: %q", lines, height, r.args)
 	}
 }
 
-// A failure says its first line: Qt goes on for several, about plugins and
-// reinstalling, and the words end up in one line of the menu.
-func TestIssue249_AFailureSaysItsFirstLine(t *testing.T) {
-	r := &recorder{status: 134, stderr: "qt.qpa.xcb: could not connect to display\nThis application failed to start. Reinstalling may fix this.\n"}
+// zenity's windows are wide enough for a line of lineWidth characters: at 480
+// zenity broke each line once more, and a message read as stubs.
+func TestIssue249_ZenityWindowsFitALine(t *testing.T) {
+	ctx := context.Background()
+	r := &recorder{stdout: linuxTag(0) + "\n"}
+	z := &zenityAsker{run: r.run}
+	shows := map[string]func() error{
+		"message": func() error { return z.Inform(ctx, "x") },
+		"consent": func() error { _, err := z.Confirm(ctx, "x"); return err },
+		"list": func() error {
+			_, _, err := z.ChooseVault(ctx, Menu{Local: []MenuEntry{{Label: "Work", Path: "/w"}}})
+			return err
+		},
+	}
+	for name, show := range shows {
+		if err := show(); err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Contains(r.args, "--width=560") {
+			t.Errorf("the %s: %q", name, r.args)
+		}
+	}
+}
+
+// A row's words are an argument of their own, and zenity and kdialog read one
+// that begins with "-" as an option: for a vault called -archive the list did
+// not open, and a name could spell an option that is taken. Such a row gets a
+// space before it; the others stay as written.
+func TestIssue249_ARowThatBeginsWithADashIsNoOption(t *testing.T) {
+	ctx := context.Background()
+	m := Menu{
+		Local: []MenuEntry{{Label: "-archive", Path: "/a"}, {Label: "Work", Path: "/w"}},
+		Hub:   []MenuEntry{{Label: "--gtk-module=/home/me/Vaults/Notes/x.so:", Vault: "vs-1", Default: "/home/me/Vaults/x"}},
+	}
+	for name, c := range map[string]struct {
+		asker Asker
+		rows  func([]string) []string
+	}{
+		"zenity":  {&zenityAsker{}, func(args []string) []string { return args[slices.Index(args, "--ok-label=Continue")+1:] }},
+		"kdialog": {&kdialogAsker{}, func(args []string) []string { return args[4:] }},
+	} {
+		r := &recorder{stdout: linuxTag(2) + "\n"}
+		switch a := c.asker.(type) {
+		case *zenityAsker:
+			a.run, a.home = r.run, "/home/me"
+		case *kdialogAsker:
+			a.run, a.home = r.run, "/home/me"
+		}
+		choice, ok, err := c.asker.ChooseVault(ctx, m)
+		if err != nil || !ok || choice.Entry.Vault != "vs-1" {
+			t.Fatalf("%s: %+v %v %v", name, choice, ok, err)
+		}
+		rows := c.rows(r.args)
+		if len(rows) != 8 {
+			t.Fatalf("%s rows: %q", name, rows)
+		}
+		for _, row := range rows {
+			if strings.HasPrefix(row, "-") {
+				t.Errorf("%s would read %q as an option", name, row)
+			}
+		}
+		joined := strings.Join(rows, "\x00")
+		for _, want := range []string{" -archive — on this computer", "Work — on this computer", " --gtk-module=/home/me/Vaults/Notes/x.so: — on your Hub → ~/Vaults/x"} {
+			if !slices.Contains(rows, want) {
+				t.Errorf("%s: no row %q in %q", name, want, joined)
+			}
+		}
+	}
+}
+
+// A failure says all that the program wrote: Qt's first line may be a warning
+// that also heads a run that works, with the cause further down.
+func TestIssue249_AFailureSaysAllThatWasWritten(t *testing.T) {
+	r := &recorder{status: -1, stderr: "Detected locale \"C\" with character encoding \"ANSI_X3.4-1968\", which is not UTF-8.\nqt.qpa.xcb: could not connect to display\n"}
 	_, _, err := (&kdialogAsker{run: r.run}).AskCode(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "could not connect to display") || strings.Contains(err.Error(), "Reinstalling") {
+	if err == nil || !strings.Contains(err.Error(), "Detected locale") || !strings.Contains(err.Error(), "could not connect to display") {
 		t.Fatalf("%v", err)
 	}
 }
@@ -241,19 +329,19 @@ func TestIssue249_KdialogArguments(t *testing.T) {
 		t.Fatalf("message args: %q", r.args)
 	}
 	m := Menu{Local: []MenuEntry{{Label: awkward, Path: "/w"}}, Hub: []MenuEntry{{Label: "Notes", Vault: "vs-1", Default: "/home/me/Vaults/Notes"}}}
-	r.stdout = "2)\n"
+	r.stdout = linuxTag(1) + "\n"
 	c, ok, err := k.ChooseVault(ctx, m)
 	if err != nil || !ok || c.Entry.Vault != "vs-1" {
 		t.Fatalf("choose: %+v %v %v", c, ok, err)
 	}
-	if got := r.args[4:]; !reflect.DeepEqual(got, []string{noChoiceTag, noVaultRow, "1)", awkward + " — on this computer", "2)", "Notes — on your Hub → ~/Vaults/Notes"}) {
+	if got := r.args[4:]; !reflect.DeepEqual(got, []string{noChoiceTag, noVaultRow, linuxTag(0), awkward + " — on this computer", linuxTag(1), "Notes — on your Hub → ~/Vaults/Notes"}) {
 		t.Fatalf("rows: %q", got)
 	}
 	// Nothing to choose says so; a tag not in the list is a failure.
 	if _, ok, err := k.ChooseVault(ctx, Menu{}); ok || err != nil || r.args[2] != "--msgbox" {
 		t.Fatalf("nothing to choose: %v %v %q", ok, err, r.args)
 	}
-	r.stdout = "9)\n"
+	r.stdout = linuxTag(8) + "\n"
 	if _, _, err := k.ChooseVault(ctx, m); err == nil {
 		t.Fatal("a row that is not in the list")
 	}
