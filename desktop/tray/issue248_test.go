@@ -142,7 +142,9 @@ func restartAgent(t *testing.T, was *fakeAgent) *fakeAgent {
 }
 
 // What start refuses with is the menu's notice, in start's words — and it
-// is notified. The Start item stays for another try.
+// is notified. The Start item stays for another try, and the refusal stands:
+// no wait follows a start that failed, so nothing says "does not answer yet"
+// in its place.
 func TestIssue248_ARefusedStartIsSaidInItsWords(t *testing.T) {
 	agent := newFakeAgent(t)
 	agent.stop()
@@ -168,6 +170,22 @@ func TestIssue248_ARefusedStartIsSaidInItsWords(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("the refusal was not notified")
+	}
+	// The loop takes this event only once the turn that showed the refusal
+	// is over; a socket error on record gives the view of this look a
+	// headline of its own.
+	if err := os.WriteFile(agent.layout.SocketErrorFile(), []byte("no socket\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ui.send(Event{Kind: EventOpened})
+	later := ui.view(t, "the look after it", func(v View) bool { return v.Headline == "VaultSync does not answer" })
+	if later.Notice != v.Notice {
+		t.Fatalf("the refusal did not stand: %+v", later)
+	}
+	select {
+	case note := <-notes:
+		t.Fatalf("notified again: %q", note)
+	default:
 	}
 }
 
