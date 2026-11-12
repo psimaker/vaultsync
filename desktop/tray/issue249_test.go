@@ -109,7 +109,7 @@ func TestIssue249_ReturnInAListChoosesNoVaultAndAsksAgain(t *testing.T) {
 		// that nothing was chosen. Before, the pairing ended without a word.
 		r = &recorder{stdout: noChoiceTag + "\n"}
 		c, ok, err = a(r).ChooseVault(ctx, m)
-		if ok || err != nil || c != (Choice{}) || r.calls != rowTries+1 {
+		if ok || err != nil || c != (Choice{}) || r.calls != 3+1 {
 			t.Errorf("%s, never chosen: %+v %v %v, %d runs", name, c, ok, err, r.calls)
 		}
 		if said := strings.Join(r.args, " "); !strings.Contains(said, "No vault was chosen") || strings.Contains(said, "--list") || strings.Contains(said, "--menu") {
@@ -229,6 +229,21 @@ func TestIssue249_ZenityWindowsFitALine(t *testing.T) {
 		if !slices.Contains(r.args, "--width=560") {
 			t.Errorf("the %s: %q", name, r.args)
 		}
+	}
+}
+
+// A tag holds nothing a keyboard types, the tag of the row that chooses nothing
+// included: zenity looks for what a person types in the hidden column too.
+func TestIssue249_ATagHoldsNothingAKeyboardTypes(t *testing.T) {
+	seen := map[string]bool{}
+	for _, tag := range append([]string{noChoiceTag}, linuxTag(0), linuxTag(1), linuxTag(9), linuxTag(40)) {
+		if tag == "" || strings.Trim(tag, "\x1f") != "" {
+			t.Errorf("the tag %q", tag)
+		}
+		if seen[tag] {
+			t.Errorf("the tag %q twice", tag)
+		}
+		seen[tag] = true
 	}
 }
 
