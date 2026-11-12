@@ -463,7 +463,6 @@ func (c *Controller) startService(ctx context.Context, done chan<- startOutcome)
 		return nil
 	}
 	c.starting = true
-	c.owed = false
 	c.notice = ""
 	c.render()
 	go func() {
