@@ -155,6 +155,23 @@ func (f *fakeAgent) set(fn func(*fakeAgent)) {
 	fn(f)
 }
 
+// asked waits until the agent has been asked for its status n times.
+func (f *fakeAgent) asked(n int) {
+	f.t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var got int
+		f.set(func(f *fakeAgent) { got = f.statusAsks })
+		if got >= n {
+			return
+		}
+		if time.Now().After(deadline) {
+			f.t.Fatalf("asked for its status %d times, not %d", got, n)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 // stop takes the agent off its socket and waits for Serve to return. A Close
 // before Serve has started leaves the listener open until Serve runs, and a
 // menu that dials in between gets EOF, not "no agent": the state the test

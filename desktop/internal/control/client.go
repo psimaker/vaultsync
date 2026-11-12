@@ -118,6 +118,12 @@ func (c *Client) Pair(ctx context.Context, req PairRequest) (PairResult, error) 
 	return r, err
 }
 
+// AnswerError is an error the agent itself answered a request with, in its
+// words. Any other error of Do's means no agent took the request.
+type AnswerError struct{ words string }
+
+func (e *AnswerError) Error() string { return e.words }
+
 // Do sends one request and decodes the answer into out (nil: none
 // expected). No socket file, or nobody listening on it, is ErrNoAgent; a
 // 404 is notFound; an error the agent answered with is returned in its
@@ -171,7 +177,7 @@ func (c *Client) Do(ctx context.Context, method, path string, in, out any) error
 		if e.Error == "" {
 			e.Error = resp.Status
 		}
-		return errors.New(e.Error)
+		return &AnswerError{e.Error}
 	}
 	if out == nil {
 		return nil

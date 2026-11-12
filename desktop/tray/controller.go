@@ -156,7 +156,6 @@ func (c *Controller) Run(ctx context.Context) error {
 	// is being followed.
 	var askAgain <-chan time.Time
 	var waits []time.Duration
-	var waitEnds time.Time
 	if err := c.refresh(ctx); err != nil {
 		return err
 	}
@@ -175,25 +174,13 @@ func (c *Controller) Run(ctx context.Context) error {
 			} else {
 				c.settling = true
 				waits = c.startWaits()
-				askAgain = time.After(waits[0])
-				waitEnds = time.Now()
-				for _, wait := range waits {
-					waitEnds = waitEnds.Add(wait)
-				}
 			}
-			err = c.refresh(ctx)
+			if err = c.refresh(ctx); err == nil && c.settling {
+				askAgain, waits = c.afterAsk(ctx, waits)
+			}
 		case <-askAgain:
-			waits = waits[1:]
-			askAgain = nil
-			if err = c.refresh(ctx); err != nil {
-				break
-			}
-			// By the clock too: a socket that stalls takes a status timeout
-			// per ask, on this loop.
-			if len(waits) > 0 && time.Now().Before(waitEnds) {
-				askAgain = time.After(waits[0])
-			} else {
-				c.endOfWait(ctx)
+			if err = c.refresh(ctx); err == nil {
+				askAgain, waits = c.afterAsk(ctx, waits)
 			}
 		case line := <-pairDone:
 			c.pairing = false
@@ -335,8 +322,10 @@ func (c *Controller) refresh(ctx context.Context) error {
 	c.status, c.known, c.lastErr = st, err == nil, err
 	c.logPath = c.logFile()
 	c.canStart = c.Start != nil && c.StartProgram != nil && c.StartProgram() != ""
-	// What answers speaks for itself, however badly.
-	if c.startNotice != "" && c.notice == c.startNotice && !nobodyThere(err) {
+	// What answers speaks for itself, however badly, and start's words go. A
+	// look that reached no agent, or got no answer in time, takes nothing
+	// back: a failed start's reason would be gone before it was shown.
+	if c.startNotice != "" && c.notice == c.startNotice && answered(err) {
 		c.notice, c.startNotice = "", ""
 	}
 	c.render()
@@ -504,11 +493,29 @@ func nobodyThere(err error) bool {
 	return errors.Is(err, ErrNoAgent) || errors.Is(err, ErrNoSocket)
 }
 
-// endOfWait decides what a start from the menu came to, once, by how things
-// stand when its asks end: a first answer proves little, since a run can end
-// right after it. Whatever answers has spoken for itself. With nobody there
-// the menu says so, keeping what a pairing or an open has said since; a later
-// poll still takes the agent's report when one comes.
+// answered: an agent took the last look's request and said something — its
+// report, an error in its own words, or the 404 of one older than this app.
+func answered(err error) bool {
+	var said *control.AnswerError
+	return err == nil || errors.Is(err, ErrOldAgent) || errors.As(err, &said)
+}
+
+// afterAsk arms the next ask of the wait after a start, or ends the wait:
+// when its asks are used up, or when the last one got no answer in its time.
+// Something is there then, each ask is on the menu's loop for as long as it
+// takes, and the next poll asks again.
+func (c *Controller) afterAsk(ctx context.Context, waits []time.Duration) (<-chan time.Time, []time.Duration) {
+	if len(waits) == 0 || errors.Is(c.lastErr, errNoAnswer) {
+		c.endOfWait(ctx)
+		return nil, nil
+	}
+	return time.After(waits[0]), waits[1:]
+}
+
+// endOfWait says, once, when the asks after a start end, that nobody is there:
+// a first answer proves little, since a run can end right after it. It keeps
+// what a pairing or an open has said since; a later poll still takes the
+// agent's report when one comes.
 func (c *Controller) endOfWait(ctx context.Context) {
 	c.settling = false
 	if nobodyThere(c.lastErr) {
