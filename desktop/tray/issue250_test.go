@@ -88,7 +88,10 @@ func TestIssue250_AnOlderAgentIsAskedForAnAddress(t *testing.T) {
 }
 
 // The address first, the one field an answer cannot write; a name is only a
-// hint from the network, and what it can do to a row is taken out of it.
+// hint from the network, and what it can do to a row is taken out of it. A
+// left-to-right mark follows the address: without it one Hebrew or Arabic
+// letter in a name laid the whole row out from the right, on zenity and on a
+// Mac, the name's words first and the address last.
 func TestIssue250_TheRowsNameEachHub(t *testing.T) {
 	got := hubItems([]HubChoice{
 		{Name: "Home", Address: "192.168.1.20:8390"},
@@ -100,20 +103,38 @@ func TestIssue250_TheRowsNameEachHub(t *testing.T) {
 		{Name: " \u2029\u202e ", Address: "192.168.1.69:8390"},
 		{Name: `R&D <b>x</b> a_b`, Address: "192.168.1.70:8390"},
 		{Name: "Attic\u2029Hub", Address: "192.168.1.71:8390"},
+		// A C1 control, which the Hub's own cleaning of a name leaves in.
+		{Name: "C1\u0085NEL\u009bCSI", Address: "192.168.1.72:8390"},
+		// Right-to-left letters stay, and so does the mark before them: a name
+		// cannot bring a left-to-right mark, an override or an isolate of its own.
+		{Name: "\u05beHome — \u05be192.168.1.20", Address: "192.168.1.66:8390"},
+		{Name: "\u200f\u2067\u05d1\u2069\u200e", Address: "192.168.1.73:8390"},
 	})
+	const mark = "\u200e"
 	want := []string{
-		"192.168.1.20 — Home",
-		"192.168.1.21 — your Hub",
-		"fe80::1 — Home",
-		"192.168.1.22 — No port",
-		"192.168.1.67 — Home Hub — 192.168.1.20.",
-		"192.168.1.68 — Hub evil",
-		"192.168.1.69 — your Hub",
-		"192.168.1.70 — R&D <b>x</b> a_b",
-		"192.168.1.71 — AtticHub",
+		"192.168.1.20" + mark + " — Home",
+		"192.168.1.21" + mark + " — your Hub",
+		"fe80::1" + mark + " — Home",
+		"192.168.1.22" + mark + " — No port",
+		"192.168.1.67" + mark + " — Home Hub — 192.168.1.20.",
+		"192.168.1.68" + mark + " — Hub evil",
+		"192.168.1.69" + mark + " — your Hub",
+		"192.168.1.70" + mark + " — R&D <b>x</b> a_b",
+		"192.168.1.71" + mark + " — AtticHub",
+		"192.168.1.72" + mark + " — C1NELCSI",
+		"192.168.1.66" + mark + " — \u05beHome — \u05be192.168.1.20",
+		"192.168.1.73" + mark + " — \u05d1",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("%q", got)
+	}
+	// The mark is the first character of a row that says a direction, and the
+	// address before it is what a person may type to find the row.
+	for _, row := range got {
+		addr, rest, found := strings.Cut(row, mark)
+		if !found || strings.Contains(rest, mark) || strings.ContainsFunc(addr, func(r rune) bool { return r > 0x7f }) {
+			t.Errorf("the row %q", row)
+		}
 	}
 }
 

@@ -134,9 +134,11 @@ func chooseVault(ctx context.Context, a rowChooser, home string, m Menu) (Choice
 }
 
 // hubRowName is a Hub's name for a row. It comes from whoever answered the
-// search, with control characters already gone, but format and separator
-// characters could reverse the address beside it (U+202E) or push it out of
-// view (U+2028).
+// search. Control, format and separator characters are dropped from it: they
+// could reverse the address beside it (U+202E), push it out of view (U+2028)
+// or take back the direction hubItems gives the row. The joiners some scripts
+// and emoji need (U+200C, U+200D) go with them; a name is a hint, and the
+// row is found by its address.
 func hubRowName(name string) string {
 	clean := strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) {
@@ -150,6 +152,13 @@ func hubRowName(name string) string {
 	return clean
 }
 
+// leftToRight after the address makes a row read from the left whatever the
+// name holds: an IPv4 address has no letter to say so, and one Hebrew or Arabic
+// letter in the name would otherwise lay the whole row out from the right,
+// the name's words first and the address last. It follows the address, so a
+// row still begins with what a person may type to find it.
+const leftToRight = "\u200e"
+
 // hubItems lists the Hubs. The address comes first: it is the one field an
 // answer cannot write, and a long name would otherwise push it out of the row.
 func hubItems(hubs []HubChoice) []string {
@@ -159,7 +168,7 @@ func hubItems(hubs []HubChoice) []string {
 		if hostOnly, _, err := net.SplitHostPort(host); err == nil {
 			host = hostOnly
 		}
-		items[i] = host + " — " + hubRowName(h.Name)
+		items[i] = host + leftToRight + " — " + hubRowName(h.Name)
 	}
 	return items
 }
