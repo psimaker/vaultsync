@@ -341,7 +341,9 @@ func (s *pairSession) findHub(ctx context.Context) error {
 		s.t.say("none answered.")
 		return refuse("No Hub answered on this network. Pairing needs this computer and your Hub on the same network (afterwards they sync from anywhere). If they are, name your Hub: vaultsync pair --hub 192.168.1.20%s", macLocalNetworkNote(s.env.goos))
 	case 1:
-		s.t.say("found %s (%s)", quoted(hubName(hubs[0])), hostOf(hubs[0].Address))
+		// The address first, as in the list: this line is all a person sees
+		// of where the code goes, and a name can hold anything (#292).
+		s.t.say("found %s", join.HubRow(hostOf(hubs[0].Address), quoted(hubName(hubs[0]))))
 	default:
 		s.t.say("%d Hubs answered:", len(hubs))
 	}
@@ -365,11 +367,12 @@ func (s *pairSession) findHub(ctx context.Context) error {
 	return nil
 }
 
-// chooseHub lists the Hubs that answered; there is no default — an empty
-// answer never sends the code to the first responder.
+// chooseHub lists the Hubs that answered, each by its address first
+// (join.HubRow); there is no default — an empty answer never sends the code
+// to the first responder.
 func (s *pairSession) chooseHub(hubs []pairing.DiscoveredHub) (int, error) {
 	for i, h := range hubs {
-		s.t.say("    %d) %-20s %s", i+1, hubName(h), hostOf(h.Address))
+		s.t.say("    %d) %s", i+1, join.HubRow(hostOf(h.Address), hubName(h)))
 	}
 	for {
 		a, err := s.t.ask("  Which Hub printed your code? Enter a number: ")
@@ -1125,14 +1128,31 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 	if err != nil {
 		return plan{}, refuse("%s is not a folder path.", s.opts.path)
 	}
-	switch n := s.catalogueMatches(s.opts.vault); {
+	// With --create the Hub is asked for the cleaned name, and resolves it
+	// like any selector. The catalogue is searched for that name too: a name
+	// that differs from an existing vault's only in what cleaning drops (a
+	// pasted zero-width space, a direction mark) would otherwise pass here
+	// as new and join that vault on the Hub (#292).
+	named := func(v pairing.VaultInfo) bool { return matchesSelector(v, s.opts.vault) }
+	if cleaned := pairing.SanitizeName(s.opts.vault); s.opts.create && cleaned != "" {
+		named = func(v pairing.VaultInfo) bool {
+			return matchesSelector(v, s.opts.vault) || matchesSelector(v, cleaned)
+		}
+	}
+	n := 0
+	for _, v := range s.hello.Vaults {
+		if named(v) {
+			n++
+		}
+	}
+	switch {
 	case n > 1 && s.opts.create:
 		return plan{}, refuse("Your Hub already has more than one vault named like %s. Choose another name for a new vault.", quoted(s.opts.vault))
 	case n > 1:
 		return plan{}, refuse("Your Hub has more than one vault matching %s. Name it by its ID instead (vaultsync-hub vault list shows the IDs).", quoted(s.opts.vault))
 	case n == 1:
 		for _, v := range s.hello.Vaults {
-			if !matchesSelector(v, s.opts.vault) {
+			if !named(v) {
 				continue
 			}
 			if s.opts.create {

@@ -21,6 +21,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/signal"
@@ -617,6 +618,13 @@ func handshakeChosenHub(ctx context.Context, candidates []discoveredHub, code st
 	if err != nil {
 		return nil, hubPayload{}, fmt.Errorf("hub at %s did not answer properly: %w", hub.Address, err)
 	}
+	// The name is printed and becomes the Hub's name in the local Syncthing.
+	// It arrives cleaned (pairing.Client); one that cleans to nothing gets a
+	// name here, because Syncthing fills an empty one with what the peer
+	// announces, which nothing cleans.
+	if hello.HubName == "" {
+		hello.HubName = defaultHubName
+	}
 	return client, hello, nil
 }
 
@@ -628,18 +636,24 @@ func chooseHubTTY(hubs []discoveredHub) (int, error) {
 		return 0, &join.SeveralHubsError{Hubs: hubs}
 	}
 	defer closeTTY(in)
+	return chooseHubOn(in, os.Stdout, hubs)
+}
+
+// chooseHubOn lists the Hubs on out, each by its address first (join.HubRow),
+// and reads the number of one from in.
+func chooseHubOn(in io.Reader, out io.Writer, hubs []discoveredHub) (int, error) {
 	reader := bufio.NewReader(in)
-	fmt.Println()
-	fmt.Println("Several Hubs answered:")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Several Hubs answered:")
 	for i, h := range hubs {
 		name := h.Name
 		if name == "" {
 			name = "(unnamed Hub)"
 		}
-		fmt.Printf("  %d) %s  (%s)\n", i+1, name, h.Address)
+		fmt.Fprintf(out, "  %d) %s\n", i+1, join.HubRow(h.Address, name))
 	}
 	for {
-		fmt.Print("Which Hub printed your code? ")
+		fmt.Fprint(out, "Which Hub printed your code? ")
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			return 0, err

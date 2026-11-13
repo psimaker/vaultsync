@@ -127,7 +127,7 @@ func TestIssue250_TheRowsNameEachHub(t *testing.T) {
 		{Name: " \u2029\u202e ", Address: "192.168.1.69:8390"},
 		{Name: `R&D <b>x</b> a_b`, Address: "192.168.1.70:8390"},
 		{Name: "Attic\u2029Hub", Address: "192.168.1.71:8390"},
-		// A C1 control, which the Hub's own cleaning of a name leaves in.
+		// A C1 control, which an agent from before desktop-v0.3.0 leaves in.
 		{Name: "C1\u0085NEL\u009bCSI", Address: "192.168.1.72:8390"},
 		// Right-to-left letters stay, and so does the mark before them: a name
 		// cannot bring a left-to-right mark, an override or an isolate of its own.

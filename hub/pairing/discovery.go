@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -147,23 +148,73 @@ func broadcastTargets(port int) []net.Addr {
 	return targets
 }
 
-// SanitizeName keeps a hub or device name printable and single-line for the
-// wire and for terminals, at most 64 bytes.
+// SanitizeName keeps a Hub's or a device's name, and the name typed for a new
+// vault, printable and single-line for the wire, for terminals and for a list
+// that shows it beside an address, at most 64 bytes. A name comes from anyone
+// on the network (a discovery answer) or from the other end of a pairing, so
+// it loses what can hide or reorder the text around it (hides). It never
+// begins or ends with a space, and a name with nothing in it but spaces and
+// joiners is no name: the empty string.
 func SanitizeName(name string) string {
-	name = strings.TrimSpace(name)
 	var b strings.Builder
+	flag := false // inside the tags that follow U+1F3F4 in an emoji flag
 	for _, r := range name {
-		if r < 0x20 || r == 0x7f {
+		switch {
+		case flag && flagTag(r):
+			flag = r != cancelTag
+		case hides(r):
+			flag = false
 			continue
+		default:
+			flag = r == blackFlag
 		}
 		b.WriteRune(r)
 	}
-	out := b.String()
+	// Trimmed after the dropping, not before: what was dropped may have stood
+	// between the name and the spaces around it.
+	out := strings.TrimSpace(b.String())
 	// At most 64 bytes, cut on a rune boundary: a byte cut through a
 	// multi-byte character would put invalid UTF-8 on the wire.
 	for len(out) > 64 {
 		_, size := utf8.DecodeLastRuneInString(out)
 		out = out[:len(out)-size]
 	}
+	out = strings.TrimSpace(out)
+	// Joiners draw nothing by themselves, and "no name" is told by the empty
+	// string: every caller's fallback hangs on it.
+	if strings.TrimFunc(out, func(r rune) bool { return unicode.IsSpace(r) || joiner(r) }) == "" {
+		return ""
+	}
 	return out
+}
+
+// hides reports a character that can hide or reorder the text around it: a
+// control character (C0, DEL and C1; U+009B starts a terminal sequence), a
+// format character (U+202E reverses what follows, and a direction mark moves
+// what stands beside it) or a line or paragraph separator (U+2028 breaks the
+// line). Two kinds of format character only shape what a name is written
+// with and stay (decision 061): the joiners, and the tags of an emoji flag,
+// which SanitizeName keeps where they follow U+1F3F4.
+func hides(r rune) bool {
+	if joiner(r) {
+		return false
+	}
+	return unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp)
+}
+
+// joiner: U+200C keeps two letters apart (a Persian plural is written with
+// it), U+200D joins two (several emoji are two joined by it, and after some
+// letters it chooses the letter's form, also at the end of a word).
+func joiner(r rune) bool { return r == 0x200c || r == 0x200d }
+
+// The flags of England, Scotland and Wales are U+1F3F4 followed by tag
+// letters and digits and closed by the cancel tag. Tags are format
+// characters and draw nothing anywhere else, so they stay only there.
+const (
+	blackFlag = 0x1f3f4
+	cancelTag = 0xe007f
+)
+
+func flagTag(r rune) bool {
+	return r >= 0xe0030 && r <= 0xe0039 || r >= 0xe0061 && r <= 0xe007a || r == cancelTag
 }

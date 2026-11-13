@@ -329,3 +329,24 @@ func TestAcceptShareGuards(t *testing.T) {
 		}
 	})
 }
+
+// A Hub in a terminal's line: the address first, the one field an answer
+// cannot write, and a left-to-right mark before the name. An address has no
+// letter to give the line a direction, so without the mark a name in a
+// right-to-left script decides how the whole line is laid out. The mark
+// stands at the name: an address copied with the blanks behind it carries
+// nothing a person cannot see (#292, decisions 056 and 061).
+func TestIssue292_AHubsRowBeginsWithItsAddress(t *testing.T) {
+	for _, tc := range []struct{ address, name, want string }{
+		{"192.168.1.20", "Home", "192.168.1.20 — \u200eHome"},
+		{"192.168.1.20:8390", "Home", "192.168.1.20:8390 — \u200eHome"},
+		{"fe80::1", "your Hub", "fe80::1 — \u200eyour Hub"},
+		// Right-to-left letters stay in the name, behind the mark.
+		{"192.168.1.66", "\u05d1\u05d9\u05ea 192.168.1.20", "192.168.1.66 — \u200e\u05d1\u05d9\u05ea 192.168.1.20"},
+		{"192.168.1.67", "\u0627\u0644\u0645\u0643\u062a\u0628", "192.168.1.67 — \u200e\u0627\u0644\u0645\u0643\u062a\u0628"},
+	} {
+		if got := HubRow(tc.address, tc.name); got != tc.want {
+			t.Errorf("HubRow(%q, %+q) = %+q, want %+q", tc.address, tc.name, got, tc.want)
+		}
+	}
+}

@@ -354,6 +354,12 @@ type hubUnderTest struct {
 
 func startHubUnderTest(t *testing.T) *hubUnderTest {
 	t.Helper()
+	return startHubNamed(t, "Test Hub")
+}
+
+// startHubNamed starts the Hub under the name its operator gave it.
+func startHubNamed(t *testing.T, name string) *hubUnderTest {
+	t.Helper()
 	dir := t.TempDir()
 	fake := &hubFakeSyncthing{
 		apiKey:  "bridge-test-key",
@@ -386,7 +392,7 @@ func startHubUnderTest(t *testing.T) *hubUnderTest {
 		"VAULTSYNC_HUB_STATE="+h.state,
 		"VAULTSYNC_HUB_VAULTS="+filepath.Join(dir, "vaults"),
 		"VAULTSYNC_HUB_PORT="+strconv.Itoa(port),
-		"VAULTSYNC_HUB_NAME=Test Hub",
+		"VAULTSYNC_HUB_NAME="+name,
 	)
 	ctx, cancel := context.WithCancel(context.Background())
 	serve := exec.CommandContext(ctx, h.bin, "serve", "--listen", h.addr, "--no-discovery")
@@ -669,5 +675,24 @@ func TestIssue174_EndedFlowAddsNoDeviceAfterWaitingForTheEngine(t *testing.T) {
 	}
 	if len(devices) != 0 {
 		t.Fatalf("an ended pairing added a device: %+v", devices)
+	}
+}
+
+// A Hub's name reaches the app through the handshake, and the app shows it
+// and keeps it as the name of the Hub's device. It arrives without what can
+// break a line or reverse the text beside it (#292): the real vaultsync-hub
+// sends its name as its operator wrote it.
+func TestIssue292_TheHubsNameReachesTheAppWithoutWhatHides(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs vaultsync-hub")
+	}
+	hub := startHubNamed(t, "\u202eHome\u2028 Hub\u009b\u200f")
+	code := hub.issueCode(t)
+
+	flow := HubPairingBegin()
+	defer HubPairingEnd(flow)
+	hello := wantHubOK[hubHandshakeData](t, HubPairingHandshake(flow, hub.addr, code))
+	if hello.HubName != "Home Hub" {
+		t.Fatalf("the Hub's name: %+q", hello.HubName)
 	}
 }
