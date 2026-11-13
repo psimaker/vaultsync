@@ -14,7 +14,8 @@ import (
 // brackets. A name can hold anything that looks like an address, and one
 // Hebrew or Arabic letter in it drew the address before the name in a
 // terminal that follows a text's direction. The row now begins with the
-// address, and a left-to-right mark gives it its direction (decision 056).
+// address, and a left-to-right mark before the name gives it its direction
+// (decisions 056 and 061).
 func TestIssue292_PairListsEachHubByItsAddressFirst(t *testing.T) {
 	hubs := []discoveredHub{
 		{Address: "192.168.1.66:8390", Name: "Home  (192.168.1.20:8390)"},
@@ -29,9 +30,9 @@ func TestIssue292_PairListsEachHubByItsAddressFirst(t *testing.T) {
 	}
 	const ask = "Which Hub printed your code? "
 	want := "\nSeveral Hubs answered:\n" +
-		"  1) 192.168.1.66:8390 \u200e— Home  (192.168.1.20:8390)\n" +
-		"  2) 192.168.1.20:8390 \u200e— \u05d1\u05d9\u05ea 192.168.1.66\n" +
-		"  3) 192.168.1.21:8390 \u200e— (unnamed Hub)\n" +
+		"  1) 192.168.1.66:8390 — \u200eHome  (192.168.1.20:8390)\n" +
+		"  2) 192.168.1.20:8390 — \u200e\u05d1\u05d9\u05ea 192.168.1.66\n" +
+		"  3) 192.168.1.21:8390 — \u200e(unnamed Hub)\n" +
 		ask + ask + ask
 	if out.String() != want {
 		t.Fatalf("the list:\n%q\nwant:\n%q", out.String(), want)
@@ -39,13 +40,29 @@ func TestIssue292_PairListsEachHubByItsAddressFirst(t *testing.T) {
 }
 
 // The name a Hub gives itself in the handshake was printed and given to the
-// local Syncthing as it came, control characters included (#292).
+// local Syncthing as it came, control characters included (#292). It now
+// arrives cleaned from the pairing client, in the first answer and in every
+// later one.
 func TestIssue292_PairKnowsTheHubByItsNameWithoutWhatHides(t *testing.T) {
+	ctx := context.Background()
 	h := newCountingHub(t)
 	h.fx.server.hubName = "\u202eHome\u2028 Hub\x1b[2J\u0085"
-	_, hello, err := handshakeChosenHub(context.Background(), []discoveredHub{{Address: h.addr}}, h.fx.code, nil)
+	client, hello, err := handshakeChosenHub(ctx, []discoveredHub{{Address: h.addr}}, h.fx.code, nil)
 	if err != nil || hello.HubName != "Home Hub[2J" {
 		t.Fatalf("the Hub's name: %+q, %v", hello.HubName, err)
+	}
+	reply, err := client.Provision(ctx, 1, fakeDeviceID, "Laptop", "", false)
+	if err != nil || reply.HubName != "Home Hub[2J" {
+		t.Fatalf("the Hub's name in a later answer: %+q, %v", reply.HubName, err)
+	}
+
+	// A name with nothing left of it: the Hub is still called something, and
+	// gets a name in the local Syncthing, which fills an empty one with what
+	// the peer announces.
+	h = newCountingHub(t)
+	h.fx.server.hubName = "\u202e\u200b \u200d"
+	if _, hello, err = handshakeChosenHub(ctx, []discoveredHub{{Address: h.addr}}, h.fx.code, nil); err != nil || hello.HubName != "VaultSync Hub" {
+		t.Fatalf("a Hub whose name cleans to nothing: %+q, %v", hello.HubName, err)
 	}
 }
 

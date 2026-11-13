@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/psimaker/vaultsync/hub/pairing"
+	"github.com/psimaker/vaultsync/hub/syncthing"
 )
 
 // #292: a Hub's name comes from anyone on the network and is shown beside the
@@ -16,7 +19,7 @@ import (
 // letter in it laid the row out from the right in a terminal that follows a
 // text's direction, the address before the name. The row now begins with the
 // address, the one field an answer cannot write, and a left-to-right mark
-// gives it its direction, as the menu's rows do (decision 056).
+// before the name gives it its direction (decisions 056 and 061).
 func TestIssue292_TheTerminalListsEachHubByItsAddressFirst(t *testing.T) {
 	eng := newFakeEngine(t)
 	// Nothing that is no number of the list chooses a Hub; the third answer does.
@@ -36,27 +39,21 @@ func TestIssue292_TheTerminalListsEachHubByItsAddressFirst(t *testing.T) {
 	}
 	const ask = "  Which Hub printed your code? Enter a number: "
 	want := "  Looking for your Hub on this network… 3 Hubs answered:\n" +
-		"    1) 192.168.1.66 \u200e— Home                 192.168.1.20\n" +
-		"    2) 192.168.1.20 \u200e— \u05d1\u05d9\u05ea 192.168.1.66\n" +
-		"    3) 192.168.1.21 \u200e— your Hub\n" +
+		"    1) 192.168.1.66 — \u200eHome                 192.168.1.20\n" +
+		"    2) 192.168.1.20 — \u200e\u05d1\u05d9\u05ea 192.168.1.66\n" +
+		"    3) 192.168.1.21 — \u200eyour Hub\n" +
 		ask + ask + ask
 	if out.String() != want {
 		t.Fatalf("the list:\n%q\nwant:\n%q", out.String(), want)
 	}
-	// The mark is the first character of a row that says a direction: before
-	// it stand only the number, the address and spaces.
-	for _, row := range strings.Split(out.String(), "\n")[1:4] {
-		before, rest, found := strings.Cut(row, "\u200e")
-		if !found || strings.Contains(rest, "\u200e") || !strings.HasSuffix(before, " ") || strings.ContainsFunc(before, func(r rune) bool { return r > 0x7f }) {
-			t.Errorf("the row %q", row)
-		}
-	}
 }
 
-// One Hub answered: the line names it and then its address. A name in a
-// right-to-left script drew the address before itself, inside its quotes; a
-// left-to-right mark after the name keeps the address where it is written.
-func TestIssue292_TheOneHubFoundKeepsItsAddressAfterItsName(t *testing.T) {
+// One Hub answered: the code goes to it without a question, and this line is
+// all a person sees of where. It named the Hub and then its address: a name
+// in a right-to-left script drew the address before itself, inside its
+// quotes, and a name with a quote and a bracket in it wrote an address of
+// its own before the real one. The address now comes first here too.
+func TestIssue292_TheOneHubFoundIsShownByItsAddressFirst(t *testing.T) {
 	eng := newFakeEngine(t)
 	s, out := testSession(t, eng, nil, pairOptions{})
 	s.env.discover = func(context.Context) ([]pairing.DiscoveredHub, error) {
@@ -65,7 +62,7 @@ func TestIssue292_TheOneHubFoundKeepsItsAddressAfterItsName(t *testing.T) {
 	if err := s.findHub(context.Background()); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	want := "  Looking for your Hub on this network… found “\u05d1\u05d9\u05ea 2”\u200e (192.168.1.20)\n"
+	want := "  Looking for your Hub on this network… found 192.168.1.20 — \u200e“\u05d1\u05d9\u05ea 2”\n"
 	if out.String() != want {
 		t.Fatalf("the line:\n%q\nwant:\n%q", out.String(), want)
 	}
@@ -98,5 +95,65 @@ func TestIssue292_TheHubsOwnNameIsKeptWithoutWhatHides(t *testing.T) {
 	}
 	if att, _ := loadAttempts(s.env.lay); len(att) != 1 || att[0].Hub != "Home Hub" {
 		t.Errorf("the attempt's record: %+v", att)
+	}
+}
+
+// --create asks for a new vault, and the name the Hub is asked for is the
+// cleaned one. The catalogue was searched for the name as typed only: with a
+// character in it that cleaning drops — a pasted zero-width space, a soft
+// hyphen, a direction mark — an existing vault of the cleaned name was not
+// found here, the Hub found it, and an empty folder received a vault nobody
+// chose. Cleaning now drops many more characters than it did, so the search
+// goes by the cleaned name too (#292).
+func TestIssue292_CreateFindsAnExistingVaultByTheCleanedName(t *testing.T) {
+	ctx := context.Background()
+	const id = "vs-aaaaaaaaaaaa"
+	for _, typed := range []string{"Notes\u200b", "No\u00adtes", "\ufeffNotes", "Notes\u200e", "notes\u2028"} {
+		eng := newFakeEngine(t)
+		hub := newFakeHub(t, eng, pairing.VaultInfo{ID: id, Label: "Notes", Files: 3})
+		s, out := testSession(t, eng, hub, pairOptions{vault: typed, create: true, path: "~/Vaults/New"})
+		s.opts.code = hub.code
+		// The folder above exists: nothing but the name stands in the way.
+		if err := os.MkdirAll(filepath.Join(s.env.home, "Vaults"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		err := s.run(ctx)
+		if !strings.Contains(refusalText(err), "Your Hub already has a vault named “Notes”.") {
+			t.Errorf("--vault %+q --create: %v\n%s", typed, err, out)
+		}
+		if n := hub.provisionCount("Notes"); n != 0 || eng.folderCount() != 0 {
+			t.Errorf("--vault %+q --create: the Hub was asked for “Notes” %d times, and %d folders were added", typed, n, eng.folderCount())
+		}
+	}
+
+	// The same flags again, after they set the vault up here: it is found,
+	// as for a name that needs no cleaning (#228).
+	eng := newFakeEngine(t)
+	hub := newFakeHub(t, eng, pairing.VaultInfo{ID: id, Label: "Notes", Files: 3, SharedWith: []string{testMyID}})
+	s, out := testSession(t, eng, hub, pairOptions{vault: "Notes\u200b", create: true, path: "~/Vaults/Notes"})
+	s.opts.code = hub.code
+	local := filepath.Join(s.env.home, "Vaults", "Notes")
+	mkVault(t, local)
+	eng.mu.Lock()
+	eng.folders = append(eng.folders, syncthing.FolderConfig{ID: id, Label: "Notes", Path: local})
+	eng.mu.Unlock()
+	if err := s.run(ctx); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out.String(), "✓ “Notes” is already set up to sync at ~/Vaults/Notes.") || strings.Contains(out.String(), "overlaps") {
+		t.Fatalf("the same flags again:\n%s", out)
+	}
+	if hub.provisionCount(id) != 0 || eng.folderCount() != 1 {
+		t.Fatal("the Hub was asked, or a folder was added")
+	}
+
+	// Without --create nothing is cleaned: a vault is chosen by its ID or by
+	// its label as the Hub has it.
+	eng = newFakeEngine(t)
+	hub = newFakeHub(t, eng, pairing.VaultInfo{ID: id, Label: "Notes", Files: 3})
+	s, _ = testSession(t, eng, hub, pairOptions{vault: "Notes\u200b", path: "~/Vaults/New"})
+	s.opts.code = hub.code
+	if err := s.run(ctx); !strings.Contains(refusalText(err), "Your Hub has no vault named") {
+		t.Fatalf("without --create: %v", err)
 	}
 }

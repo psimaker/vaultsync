@@ -96,6 +96,10 @@ func TestIssue292_SanitizeNameDropsWhatHidesOrReorders(t *testing.T) {
 		{"C1 controls", "Home\u0080\u0085 \u009bHub\u009f", "Home Hub"},
 		{"a byte order mark, a soft hyphen and a word joiner", "\ufeffHo\u00adme\u2060", "Home"},
 		{"tag characters", "Home\U000e0001\U000e0041\U000e007f", "Home"},
+		{"tags that follow no flag", "Home\U000e0067\U000e0062\U000e007f", "Home"},
+		{"a flag's tags behind something dropped", "\U0001f3f4\u202e\U000e0067\U000e0062\U000e007f", "\U0001f3f4"},
+		{"tags behind a flag's end", "\U0001f3f4\U000e0067\U000e0062\U000e007f\U000e0061\U000e007f", "\U0001f3f4\U000e0067\U000e0062\U000e007f"},
+		{"tags no flag is written with", "\U0001f3f4\U000e0041\U000e0020", "\U0001f3f4"},
 		{"C0 controls and DEL, as before", "Ho\x1b[2Jme\x09\x7f", "Ho[2Jme"},
 		{"spaces that what was dropped leaves at the ends", "\u202e  Home \u2028", "Home"},
 		{"nothing but what hides", "\u202e\u2028\u200e\u0085\ufeff", ""},
@@ -118,9 +122,10 @@ func TestIssue292_SanitizeNameDropsWhatHidesOrReorders(t *testing.T) {
 }
 
 // The same function cleans the names people give their own devices and
-// vaults. What only shapes letters stays: the two joiners (a Persian plural
-// is written with U+200C, and one emoji can be two joined by U+200D), marks
-// that combine, and every script's letters (#292).
+// vaults. What a name is written with stays: every script's letters, marks
+// that combine, the two joiners (a Persian plural is written with U+200C,
+// one emoji can be two joined by U+200D, and at the end of a word a joiner
+// chooses the last letter's form) and the tags of an emoji flag (#292).
 func TestIssue292_SanitizeNameKeepsWhatANameIsWrittenWith(t *testing.T) {
 	for _, name := range []string{
 		"Küchen-Hub",
@@ -133,17 +138,20 @@ func TestIssue292_SanitizeNameKeepsWhatANameIsWrittenWith(t *testing.T) {
 		"❤\ufe0f Notes",
 		"Cafe\u0301",
 		"Home\u00a0Hub",
+		"\U0001f3f4\U000e0067\U000e0062\U000e0073\U000e0063\U000e0074\U000e007f Notes", // the flag of Scotland
+		"\u0915\u094d\u200d",             // Devanagari: a half letter at the end
+		"\u0646\u0627\u0645\u0647\u200d", // Persian: the last letter in its joining form
 	} {
 		if got := SanitizeName(name); got != name {
 			t.Errorf("SanitizeName(%+q) = %+q, want it unchanged", name, got)
 		}
 	}
-	// At an end a joiner has nothing to join, and a name of joiners alone
-	// would show as nothing where the empty string says "no name".
+	// Joiners draw nothing by themselves: a name of joiners alone would show
+	// as nothing where the empty string says "no name".
 	for _, tc := range []struct{ what, in, want string }{
-		{"joiners at the ends", "\u200d Home\u200c\u200d", "Home"},
 		{"nothing but joiners and spaces", "\u200d \u200c", ""},
-		{"a joiner the cut to 64 bytes leaves at the end", strings.Repeat("a", 57) + "👩\u200d💻", strings.Repeat("a", 57) + "👩"},
+		{"nothing but a joiner", "\u200d", ""},
+		{"a joiner the cut to 64 bytes leaves at the end stays", strings.Repeat("a", 57) + "👩\u200d💻", strings.Repeat("a", 57) + "👩\u200d"},
 		{"a space the cut to 64 bytes leaves at the end", strings.Repeat("a", 63) + " b", strings.Repeat("a", 63)},
 	} {
 		if got := SanitizeName(tc.in); got != tc.want {

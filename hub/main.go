@@ -619,7 +619,12 @@ func handshakeChosenHub(ctx context.Context, candidates []discoveredHub, code st
 		return nil, hubPayload{}, fmt.Errorf("hub at %s did not answer properly: %w", hub.Address, err)
 	}
 	// The name is printed and becomes the Hub's name in the local Syncthing.
-	hello.HubName = sanitizeName(hello.HubName)
+	// It arrives cleaned (pairing.Client); one that cleans to nothing gets a
+	// name here, because Syncthing fills an empty one with what the peer
+	// announces, which nothing cleans.
+	if hello.HubName == "" {
+		hello.HubName = defaultHubName
+	}
 	return client, hello, nil
 }
 

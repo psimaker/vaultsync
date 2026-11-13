@@ -148,6 +148,8 @@ func (c *Client) Handshake(ctx context.Context, code string) (HubPayload, error)
 	}
 	c.session = started.Session
 	c.key = key
+	// Cleaned here, for every program that shows or stores the Hub's name.
+	reply.HubName = SanitizeName(reply.HubName)
 	return reply, nil
 }
 
@@ -172,6 +174,7 @@ func (c *Client) Provision(ctx context.Context, seq uint64, deviceID, deviceName
 	if err := OpenBox(c.session, c.key, DirectionHubToDevice, resp.Box, &reply); err != nil {
 		return HubPayload{}, errors.New("hub reply could not be decrypted")
 	}
+	reply.HubName = SanitizeName(reply.HubName)
 	return reply, nil
 }
 
