@@ -100,17 +100,22 @@ func TestIssue292_TheHubsOwnNameIsKeptWithoutWhatHides(t *testing.T) {
 
 // --create asks for a new vault, and the name the Hub is asked for is the
 // cleaned one. The catalogue was searched for the name as typed only: with a
-// character in it that cleaning drops — a pasted zero-width space, a soft
-// hyphen, a direction mark — an existing vault of the cleaned name was not
-// found here, the Hub found it, and an empty folder received a vault nobody
-// chose. Cleaning now drops many more characters than it did, so the search
-// goes by the cleaned name too (#292).
+// character in it that cleaning drops — a control character, and now a
+// pasted zero-width space, a soft hyphen, a direction mark — or with more
+// than the 64 bytes cleaning keeps, an existing vault of the cleaned name
+// was not found here, the Hub found it, and an empty folder received a vault
+// nobody chose. The search goes by the cleaned name too (#292).
 func TestIssue292_CreateFindsAnExistingVaultByTheCleanedName(t *testing.T) {
 	ctx := context.Background()
 	const id = "vs-aaaaaaaaaaaa"
-	for _, typed := range []string{"Notes\u200b", "No\u00adtes", "\ufeffNotes", "Notes\u200e", "notes\u2028"} {
+	long := strings.Repeat("я", 32) // 64 bytes: all that is kept of a longer name
+	for _, typed := range []string{"Notes\u200b", "No\u00adtes", "\ufeffNotes", "Notes\u200e", "notes\u2028", "Notes\x01", long + "2", long + " 2027"} {
+		label := "Notes"
+		if strings.HasPrefix(typed, long) {
+			label = long
+		}
 		eng := newFakeEngine(t)
-		hub := newFakeHub(t, eng, pairing.VaultInfo{ID: id, Label: "Notes", Files: 3})
+		hub := newFakeHub(t, eng, pairing.VaultInfo{ID: id, Label: label, Files: 3})
 		s, out := testSession(t, eng, hub, pairOptions{vault: typed, create: true, path: "~/Vaults/New"})
 		s.opts.code = hub.code
 		// The folder above exists: nothing but the name stands in the way.
@@ -118,11 +123,11 @@ func TestIssue292_CreateFindsAnExistingVaultByTheCleanedName(t *testing.T) {
 			t.Fatal(err)
 		}
 		err := s.run(ctx)
-		if !strings.Contains(refusalText(err), "Your Hub already has a vault named “Notes”.") {
+		if !strings.Contains(refusalText(err), "Your Hub already has a vault named “"+label+"”.") {
 			t.Errorf("--vault %+q --create: %v\n%s", typed, err, out)
 		}
-		if n := hub.provisionCount("Notes"); n != 0 || eng.folderCount() != 0 {
-			t.Errorf("--vault %+q --create: the Hub was asked for “Notes” %d times, and %d folders were added", typed, n, eng.folderCount())
+		if n := hub.provisionCount(label); n != 0 || eng.folderCount() != 0 {
+			t.Errorf("--vault %+q --create: the Hub was asked for the existing vault's name %d times, and %d folders were added", typed, n, eng.folderCount())
 		}
 	}
 
