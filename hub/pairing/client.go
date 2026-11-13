@@ -12,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/psimaker/vaultsync/hub/pake"
 )
@@ -38,7 +39,8 @@ var ErrHubNotAuthenticated = errors.New("the hub could not prove that it knows t
 var ErrIncompatible = errors.New("the hub speaks another pairing protocol version")
 
 // APIError is a non-200 answer from the Hub's pairing service. Body is the
-// Hub's error text.
+// answer's error text as errorText leaves it: one clean line of at most
+// maxErrorText bytes, or the status's own text when the answer brought none.
 type APIError struct {
 	Status int
 	Body   string
@@ -148,9 +150,7 @@ func (c *Client) Handshake(ctx context.Context, code string) (HubPayload, error)
 	}
 	c.session = started.Session
 	c.key = key
-	// Cleaned here, for every program that shows or stores the Hub's name.
-	reply.HubName = SanitizeName(reply.HubName)
-	return reply, nil
+	return cleaned(reply), nil
 }
 
 // Provision registers the device on the Hub and, when vault is non-empty,
@@ -174,8 +174,22 @@ func (c *Client) Provision(ctx context.Context, seq uint64, deviceID, deviceName
 	if err := OpenBox(c.session, c.key, DirectionHubToDevice, resp.Box, &reply); err != nil {
 		return HubPayload{}, errors.New("hub reply could not be decrypted")
 	}
+	return cleaned(reply), nil
+}
+
+// cleaned returns a Hub's answer with its two free texts fit to show: the
+// Hub's name (decision 061) and the error it reports (decision 062). They are
+// cleaned here, for every program that shows or stores them. An error with
+// nothing left to show stays an error: callers tell a refusal from a share
+// by whether Error is empty.
+func cleaned(reply HubPayload) HubPayload {
 	reply.HubName = SanitizeName(reply.HubName)
-	return reply, nil
+	if reply.Error != "" {
+		if reply.Error = errorText(reply.Error); reply.Error == "" {
+			reply.Error = unreadableError
+		}
+	}
+	return reply
 }
 
 func (c *Client) post(ctx context.Context, path string, in, out any) error {
@@ -200,12 +214,58 @@ func (c *Client) post(ctx context.Context, path string, in, out any) error {
 	if resp.StatusCode != http.StatusOK {
 		var e ErrorResponse
 		_ = json.Unmarshal(data, &e)
-		if e.Error == "" {
-			e.Error = http.StatusText(resp.StatusCode)
+		// Cleaned here, for every program that prints the text or reads the
+		// kind of a refusal from it.
+		text := errorText(e.Error)
+		if text == "" {
+			text = http.StatusText(resp.StatusCode)
 		}
-		return &APIError{Status: resp.StatusCode, Body: e.Error}
+		return &APIError{Status: resp.StatusCode, Body: text}
 	}
 	return json.Unmarshal(data, out)
+}
+
+// maxErrorText bounds an error text the client hands out, in bytes. The
+// longest text a Hub words itself stays under it: its own words in front of
+// an answer of its Syncthing, which it cuts at 200 bytes, about 260 in all.
+const maxErrorText = 300
+
+// unreadableError stands for an error in a Hub's encrypted answer that holds
+// nothing that can be shown.
+const unreadableError = "the hub reported an error without readable text"
+
+// errorText makes the text of an error answer fit to print, and to read the
+// kind of a refusal from: one line, without what SanitizeName drops from a
+// name, at most maxErrorText bytes. The text comes from whatever answered at
+// the dialled address — before the key exchange that is anyone — or from a
+// Hub's encrypted answer, where it passes on what the Hub's Syncthing said
+// (#319, decision 062). Every run of white space becomes one space, a line
+// break, a tab and U+2028 included: what stood on two lines stays two words.
+// A text that is cut ends in "…". A text with nothing to show in it is the
+// empty string.
+func errorText(text string) string {
+	// Split first: hides takes a line break out from between two words.
+	words := strings.Fields(text)
+	kept := words[:0]
+	for _, w := range words {
+		if w = withoutHidden(w); w != "" {
+			kept = append(kept, w)
+		}
+	}
+	out := strings.Join(kept, " ")
+	if drawsNothing(out) {
+		return ""
+	}
+	if len(out) <= maxErrorText {
+		return out
+	}
+	const mark = "…"
+	// Cut between two characters: out is valid UTF-8 (withoutHidden).
+	end := maxErrorText - len(mark)
+	for !utf8.RuneStart(out[end]) {
+		end--
+	}
+	return strings.TrimRight(out[:end], " ") + mark
 }
 
 // Kind sorts a pairing failure into what a user interface has to say about

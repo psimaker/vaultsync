@@ -18,6 +18,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/psimaker/vaultsync/hub/pairing"
 	"github.com/syncthing/syncthing/lib/protocol"
@@ -694,5 +695,37 @@ func TestIssue292_TheHubsNameReachesTheAppWithoutWhatHides(t *testing.T) {
 	hello := wantHubOK[hubHandshakeData](t, HubPairingHandshake(flow, hub.addr, code))
 	if hello.HubName != "Home Hub" {
 		t.Fatalf("the Hub's name: %+q", hello.HubName)
+	}
+}
+
+// The app shows its own words for a failed pairing and writes the Hub's to
+// its log. The text of an error answer comes from whatever answered at the
+// address, as long as an answer may be and with anything in it (#319): the
+// bridge hands on one clean, short line of it, and the kind of failure is
+// still read from its words.
+func TestIssue319_AnErrorAnswerReachesTheAppAsOneCleanShortLine(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(pairing.ErrorResponse{
+			Error: "\x1b[2J\u202ethe pairing code was locked\u2028after repeated\r\nwrong attempts " + strings.Repeat("я", 30000),
+		})
+	}))
+	defer srv.Close()
+
+	flow := HubPairingBegin()
+	defer HubPairingEnd(flow)
+	e := decodeHubEnvelope(t, HubPairingHandshake(flow, strings.TrimPrefix(srv.URL, "http://"), "TULIP-ANCHOR-42"))
+	if e.OK || e.Error.Kind != string(pairing.KindCodeLocked) {
+		t.Fatalf("the kind of failure: %+v", e.Error)
+	}
+	const lead = "hub pairing: HTTP 403: "
+	msg := e.Error.Message
+	if !strings.HasPrefix(msg, lead+"[2Jthe pairing code was locked after repeated wrong attempts яя") || !strings.HasSuffix(msg, "я…") {
+		t.Errorf("the message: %+q", msg)
+	}
+	if len(msg) > len(lead)+300 || strings.ContainsFunc(msg, func(r rune) bool {
+		return unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp)
+	}) {
+		t.Errorf("the message is %d bytes behind the client's own words, or holds what is not shown as written: %+q", len(msg)-len(lead), msg)
 	}
 }

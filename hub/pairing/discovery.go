@@ -156,9 +156,31 @@ func broadcastTargets(port int) []net.Addr {
 // begins or ends with a space, and a name with nothing in it but spaces and
 // joiners is no name: the empty string.
 func SanitizeName(name string) string {
+	// Trimmed after the dropping, not before: what was dropped may have stood
+	// between the name and the spaces around it.
+	out := strings.TrimSpace(withoutHidden(name))
+	// At most 64 bytes, cut on a rune boundary: a byte cut through a
+	// multi-byte character would put invalid UTF-8 on the wire.
+	for len(out) > 64 {
+		_, size := utf8.DecodeLastRuneInString(out)
+		out = out[:len(out)-size]
+	}
+	out = strings.TrimSpace(out)
+	// Joiners draw nothing by themselves, and "no name" is told by the empty
+	// string: every caller's fallback hangs on it.
+	if drawsNothing(out) {
+		return ""
+	}
+	return out
+}
+
+// withoutHidden returns text without the characters that hide. The tags of
+// an emoji flag stay where they follow U+1F3F4. Bytes that are no UTF-8 come
+// out as U+FFFD, so the result is always valid text.
+func withoutHidden(text string) string {
 	var b strings.Builder
 	flag := false // inside the tags that follow U+1F3F4 in an emoji flag
-	for _, r := range name {
+	for _, r := range text {
 		switch {
 		case flag && flagTag(r):
 			flag = r != cancelTag
@@ -170,22 +192,12 @@ func SanitizeName(name string) string {
 		}
 		b.WriteRune(r)
 	}
-	// Trimmed after the dropping, not before: what was dropped may have stood
-	// between the name and the spaces around it.
-	out := strings.TrimSpace(b.String())
-	// At most 64 bytes, cut on a rune boundary: a byte cut through a
-	// multi-byte character would put invalid UTF-8 on the wire.
-	for len(out) > 64 {
-		_, size := utf8.DecodeLastRuneInString(out)
-		out = out[:len(out)-size]
-	}
-	out = strings.TrimSpace(out)
-	// Joiners draw nothing by themselves, and "no name" is told by the empty
-	// string: every caller's fallback hangs on it.
-	if strings.TrimFunc(out, func(r rune) bool { return unicode.IsSpace(r) || joiner(r) }) == "" {
-		return ""
-	}
-	return out
+	return b.String()
+}
+
+// drawsNothing reports a text of spaces and joiners alone.
+func drawsNothing(text string) bool {
+	return strings.TrimFunc(text, func(r rune) bool { return unicode.IsSpace(r) || joiner(r) }) == ""
 }
 
 // hides reports a character that can hide or reorder the text around it: a
