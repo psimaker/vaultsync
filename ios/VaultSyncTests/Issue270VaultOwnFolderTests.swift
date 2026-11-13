@@ -134,7 +134,7 @@ struct Issue270VaultOwnFolderTests {
 
         // A target recorded earlier (#52) is where this share lives.
         let recorded = "issue270-\(UUID().uuidString)"
-        ManualShareTargetStore.setTarget("Life", forFolder: recorded)
+        ManualShareTargetStore.setTarget("Life", forFolder: recorded, underRoot: ManualShareTargetStore.rootKey(pickedVault.path))
         #expect(
             vaultManager.previewShareDestination(folderID: recorded, label: "Notes", syncthingManager: syncthingManager)
                 == child(pickedVault, "Life")
@@ -145,7 +145,7 @@ struct Issue270VaultOwnFolderTests {
     func recordedTargetSurvivesAnUnusableLabel() throws {
         let root = try makeAppDocumentsRoot()
         let recorded = "issue270-\(UUID().uuidString)"
-        ManualShareTargetStore.setTarget("Life", forFolder: recorded)
+        ManualShareTargetStore.setTarget("Life", forFolder: recorded, underRoot: ManualShareTargetStore.rootKey(root.path))
         let vaultManager = VaultManager()
         vaultManager._testSetAccess(accessible: true, detectedVaults: [], obsidianDirectoryURL: root)
         for label in [".", "..", " . "] {
@@ -352,6 +352,7 @@ struct Issue270RefusalGuidanceTests {
     private static var rootIsVaultGuidance: String {
         let decision = VaultManager.resolveAcceptPath(
             manualTarget: nil,
+            manualTargetConsented: false,
             rawRoot: "/root",
             rootIsVault: true,
             folderName: "Notes",

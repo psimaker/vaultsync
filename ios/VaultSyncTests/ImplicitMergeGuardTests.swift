@@ -12,6 +12,7 @@ struct ImplicitMergeGuardTests {
 
     private func resolve(
         manualTarget: String? = nil,
+        manualTargetConsented: Bool = true,
         root: String = "/Obsidian",
         rootIsVault: Bool = false,
         name: String,
@@ -21,6 +22,7 @@ struct ImplicitMergeGuardTests {
     ) -> ShareTargetDecision {
         VaultManager.resolveAcceptPath(
             manualTarget: manualTarget,
+            manualTargetConsented: manualTargetConsented,
             rawRoot: root,
             rootIsVault: rootIsVault,
             folderName: name,

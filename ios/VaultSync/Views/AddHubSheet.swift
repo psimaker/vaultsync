@@ -588,17 +588,35 @@ private struct HubVaultStep: View {
             )
         case .path(let path):
             let folder = (path as NSString).lastPathComponent
-            VaultNotice(
-                systemImage: "folder",
-                text: folder == vault.label
-                    ? L10n.fmt("“%@” will be created inside your Obsidian folder. VaultSync never merges into a folder that already has files without asking you.", vault.label)
-                    : L10n.fmt("“%@” will be created inside your Obsidian folder as “%@”. VaultSync never merges into a folder that already has files without asking you.", vault.label, folder),
-                tone: .info
-            )
-        case .requiresMergeConfirmation(_, let targetName):
+            // Under a selected folder that is not Obsidian's own the vault
+            // arrives in full and Obsidian does not list it (#270): say so
+            // here as on a pending share, instead of "your Obsidian folder".
+            if let caution = PendingShareDestination.line(
+                decision: .path(path),
+                rootPlace: vaultManager.obsidianBasePath.map(VaultManager.selectedFolderPlace)
+            ), caution.isCaution {
+                VaultNotice(systemImage: "eye.slash", text: caution.text, tone: .attention)
+            } else {
+                VaultNotice(
+                    systemImage: "folder",
+                    text: folder == vault.label
+                        ? L10n.fmt("“%@” will be created inside your Obsidian folder. VaultSync never merges into a folder that already has files without asking you.", vault.label)
+                        : L10n.fmt("“%@” will be created inside your Obsidian folder as “%@”. VaultSync never merges into a folder that already has files without asking you.", vault.label, folder),
+                    tone: .info
+                )
+            }
+        case .requiresMergeConfirmation(let path, let targetName):
+            let rootPlace = vaultManager.obsidianBasePath.map(VaultManager.selectedFolderPlace)
             VaultNotice(
                 systemImage: "folder.badge.questionmark",
-                text: L10n.fmt("The folder “%@” in your Obsidian folder already has files. When the vault arrives, VaultSync asks you before it combines them.", targetName),
+                // Not "your Obsidian folder" under a folder that is not
+                // Obsidian's own (#270) — the same words as a pending share.
+                text: rootPlace == .appFolder
+                    ? L10n.fmt("The folder “%@” in your Obsidian folder already has files. When the vault arrives, VaultSync asks you before it combines them.", targetName)
+                    : PendingShareDestination.line(
+                        decision: .requiresMergeConfirmation(path: path, targetName: targetName),
+                        rootPlace: rootPlace
+                    )?.text ?? "",
                 tone: .attention
             )
         case .refused(let message):

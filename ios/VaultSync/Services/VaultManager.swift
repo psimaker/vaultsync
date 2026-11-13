@@ -514,6 +514,7 @@ final class VaultManager {
         let decision = placement.decision
         let folderName = placement.folderName
         let manualTarget = placement.manualTarget
+        let manualTargetConsented = placement.manualTargetConsented
         let basePath = placement.basePath
         let rootIsVault = placement.rootIsVault
         let occupied = placement.occupied
@@ -542,16 +543,27 @@ final class VaultManager {
         let label = manualTarget ?? folderName
         logger.info("Accepting share (manual=\(manualTarget != nil), rootIsVault=\(rootIsVault), occupiedCount=\(occupied.count), mergeConfirmed=\(mergeConfirmed))")
 
-        // A recorded manual target is recorded consent (#52/006); otherwise
-        // only the user's fresh confirmation may open the Go hard floor.
+        // A manual target recorded under this selected folder is recorded
+        // consent (#52/006); otherwise only the user's fresh confirmation may
+        // open the Go hard floor.
         if let err = syncthingManager.acceptPendingFolder(
             folderID: folder.id,
             label: label,
             path: path,
             root: basePath,
-            allowNonEmpty: manualTarget != nil || mergeConfirmed
+            allowNonEmpty: manualTargetConsented || mergeConfirmed
         ) {
             return .refused(message: Self.presentable(engineRefusal: err))
+        }
+
+        // The chosen name now stands for this directory under this selected
+        // folder: an empty target, or one the user just confirmed.
+        if let manualTarget, !manualTargetConsented {
+            ManualShareTargetStore.setTarget(
+                manualTarget,
+                forFolder: folder.id,
+                underRoot: ManualShareTargetStore.rootKey(basePath)
+            )
         }
 
         // Record where this folder lives relative to the Obsidian root so its
@@ -579,6 +591,9 @@ final class VaultManager {
         let decision: ShareTargetDecision
         let folderName: String
         let manualTarget: String?
+        /// The target was chosen, or confirmed, under the folder that is
+        /// selected now.
+        let manualTargetConsented: Bool
         let basePath: String
         let rootIsVault: Bool
         let occupied: Set<String>
@@ -620,6 +635,12 @@ final class VaultManager {
 
         let rootIsVault = Self.selectedRootIsVault(baseURL)
 
+        // The record is a folder name; the consent it stands for was given
+        // for one directory. Under another selected folder the same name is
+        // another directory, and whatever it holds was never agreed to (#270).
+        let manualTargetConsented = manualTarget != nil
+            && ManualShareTargetStore.consentRoot(forFolder: folderID) == ManualShareTargetStore.rootKey(basePath)
+
         // Canonical, lowercased paths already held by *other* folders. The share
         // must never reuse one of these — that is exactly the merge that corrupts
         // both vaults (#45). `folders` is refreshed synchronously after every
@@ -630,6 +651,7 @@ final class VaultManager {
 
         let decision = Self.resolveAcceptPath(
             manualTarget: manualTarget,
+            manualTargetConsented: manualTargetConsented,
             rawRoot: basePath,
             rootIsVault: rootIsVault,
             folderName: folderName,
@@ -646,6 +668,7 @@ final class VaultManager {
             decision: decision,
             folderName: folderName,
             manualTarget: manualTarget,
+            manualTargetConsented: manualTargetConsented,
             basePath: basePath,
             rootIsVault: rootIsVault,
             occupied: occupied
@@ -777,6 +800,12 @@ final class VaultManager {
     /// remove + re-accept it legitimately holds this same share's earlier
     /// content (exactly like the label-default path on a plain re-accept).
     ///
+    /// That holds for the selected folder the target was chosen under
+    /// (`manualTargetConsented`). The record is only a name: under another
+    /// selected folder it names another directory, and a directory there
+    /// that holds files is a merge nobody agreed to. It then needs the same
+    /// confirmation as a label-derived target (#270, #54).
+    ///
     /// The label-derived target, by contrast, carries no recorded consent: if
     /// the resolved directory (label default or numeric-suffix
     /// disambiguation alike) already holds anything beyond `.obsidian`,
@@ -795,6 +824,7 @@ final class VaultManager {
     /// a folder, not a vault. It is refused with the way out (#270).
     nonisolated static func resolveAcceptPath(
         manualTarget: String?,
+        manualTargetConsented: Bool,
         rawRoot: String,
         rootIsVault: Bool,
         folderName: String,
@@ -812,6 +842,12 @@ final class VaultManager {
                     target
                 ))
             }
+            if !manualTargetConsented,
+               !mergeConfirmed,
+               let entries = listingFor(candidate),
+               !isEmptyVaultListing(entries) {
+                return .requiresMergeConfirmation(path: candidate, targetName: target)
+            }
             return .path(candidate)
         }
 
@@ -821,7 +857,11 @@ final class VaultManager {
             occupiedCanonLower: occupiedCanonLower,
             canonicalize: canonicalize
         ) else {
-            return .refused(message: L10n.tr("This share needs its own folder, but the folder selected for VaultSync is itself a vault, so everything inside it belongs to that vault. Re-select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") — new vaults then sync side by side instead of inside each other."))
+            return .refused(message: noOwnFolderRefusal(
+                rawRoot: rawRoot,
+                occupiedCanonLower: occupiedCanonLower,
+                canonicalize: canonicalize
+            ))
         }
 
         if !mergeConfirmed,
@@ -833,6 +873,22 @@ final class VaultManager {
             )
         }
         return .path(path)
+    }
+
+    /// Why a share has no folder of its own to go to, with the way out that
+    /// exists for the case. When an app's own folder is selected and a vault
+    /// syncs straight into it — the install #270 is about — "re-select the
+    /// folder that contains your vaults" names the folder that is already
+    /// selected. The way out there is to give that vault its own folder.
+    nonisolated private static func noOwnFolderRefusal(
+        rawRoot: String,
+        occupiedCanonLower: Set<String>,
+        canonicalize: (String) -> String
+    ) -> String {
+        if isAppDocumentsRoot(rawRoot), occupiedCanonLower.contains(canonicalize(rawRoot).lowercased()) {
+            return L10n.tr("A vault already syncs straight into the folder you selected, so no other vault can get a folder of its own there. Remove that vault on this iPhone and accept it again under Pending Shares — it then gets its own folder — and accept this share after that.")
+        }
+        return L10n.tr("This share needs its own folder, but the folder selected for VaultSync is itself a vault, so everything inside it belongs to that vault. Re-select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") — new vaults then sync side by side instead of inside each other.")
     }
 
     /// Validate a manually chosen share target (issue #52): `name` — a picked
@@ -866,7 +922,11 @@ final class VaultManager {
         }
         if rootIsVault
             || rootIsCompromised(rawRoot, occupiedCanonLower: occupiedCanonLower, canonicalize: canonicalize) {
-            return .refused(message: L10n.tr("This share needs its own folder, but the folder selected for VaultSync is itself a vault, so everything inside it belongs to that vault. Re-select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") — new vaults then sync side by side instead of inside each other."))
+            return .refused(message: noOwnFolderRefusal(
+                rawRoot: rawRoot,
+                occupiedCanonLower: occupiedCanonLower,
+                canonicalize: canonicalize
+            ))
         }
         let candidate = (rawRoot as NSString).appendingPathComponent(folderName)
         if overlaps(candidate, occupiedCanonLower: occupiedCanonLower, canonicalize: canonicalize) {
@@ -952,7 +1012,11 @@ final class VaultManager {
             }
             // Only a successful accept records the choice — a failed one must
             // not pin future auto-accepts to a target that never materialized.
-            ManualShareTargetStore.setTarget(sanitized, forFolder: folder.id)
+            ManualShareTargetStore.setTarget(
+                sanitized,
+                forFolder: folder.id,
+                underRoot: ManualShareTargetStore.rootKey(basePath)
+            )
             if let rel = FolderPathReconciler.relativeIfUnder(
                 FolderPathReconciler.canonical(path),
                 root: FolderPathReconciler.canonical(basePath)
@@ -1214,6 +1278,11 @@ enum PendingShareAcceptOutcome: Equatable, Sendable {
 /// `FolderPathReconciler`.
 enum ManualShareTargetStore {
     private static let storeKey = "vaultsync.manualShareTargets"
+    /// The selected folder each target was chosen under (#270). A separate
+    /// map, so a record written by an earlier version — a name without a
+    /// folder — reads as "chosen somewhere unknown" and asks once before it
+    /// merges into a directory that holds files.
+    private static let rootStoreKey = "vaultsync.manualShareTargetRoots"
     private static let queue = DispatchQueue(label: "eu.vaultsync.manualsharetargets.sidecar")
 
     static func target(forFolder folderID: String) -> String? {
@@ -1222,14 +1291,36 @@ enum ManualShareTargetStore {
         }
     }
 
-    /// Record the chosen folder name after a successful manual accept.
-    /// Atomic read-modify-write.
-    static func setTarget(_ name: String, forFolder folderID: String) {
+    /// The selected folder the target was chosen, or last confirmed, under —
+    /// in the form `rootKey` gives. Nil for a record without one.
+    static func consentRoot(forFolder folderID: String) -> String? {
+        queue.sync {
+            (UserDefaults.standard.dictionary(forKey: rootStoreKey) as? [String: String])?[folderID]
+        }
+    }
+
+    /// How a selected folder is identified: canonical and lowercased, like
+    /// every path comparison of the placement rules. A container move
+    /// changes it; the next accept then asks before it merges, which is the
+    /// safe side.
+    static func rootKey(_ rawRoot: String) -> String {
+        FolderPathReconciler.canonical(rawRoot).lowercased()
+    }
+
+    /// Record the chosen folder name and the selected folder it was chosen
+    /// under, after a successful accept. Atomic read-modify-write.
+    static func setTarget(_ name: String, forFolder folderID: String, underRoot rootKey: String) {
         queue.sync {
             var map = UserDefaults.standard.dictionary(forKey: storeKey) as? [String: String] ?? [:]
-            guard map[folderID] != name else { return }
-            map[folderID] = name
-            UserDefaults.standard.set(map, forKey: storeKey)
+            if map[folderID] != name {
+                map[folderID] = name
+                UserDefaults.standard.set(map, forKey: storeKey)
+            }
+            var roots = UserDefaults.standard.dictionary(forKey: rootStoreKey) as? [String: String] ?? [:]
+            if roots[folderID] != rootKey {
+                roots[folderID] = rootKey
+                UserDefaults.standard.set(roots, forKey: rootStoreKey)
+            }
         }
     }
 }

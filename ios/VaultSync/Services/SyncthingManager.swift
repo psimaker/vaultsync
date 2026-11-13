@@ -143,6 +143,15 @@ final class SyncthingManager {
     /// (#56, decision 008). Observable so the UI can hold accept passes while
     /// a path reconcile is in flight and re-fire them once it completes.
     private(set) var pathSettlement = PathSettlement()
+    /// What syncs where Obsidian cannot show it (#270, decision 060). Read
+    /// on settled paths only — when a reconcile completes and when the
+    /// folder list changes after that — and part of `unresolvedIssues`, so
+    /// the header and the widget follow (decision 012).
+    private(set) var obsidianVisibilityFindings: [ObsidianVisibility.Finding] = []
+    /// What the findings were last read from: the folder list and which
+    /// folders had finished syncing. The poll replaces `folders` every few
+    /// seconds; the findings are read again when either changes.
+    private var obsidianVisibilityInputs: [String] = []
     private(set) var hasSeenPendingFolderOffer = false
     private(set) var lastSyncTime: Date?
     private(set) var lastSyncTimeByFolder: [String: Date] = [:]
@@ -339,6 +348,12 @@ final class SyncthingManager {
             case pathCollision
             case nestedFolders
             case folderErrors
+            /// A vault syncs into the selected folder itself, where Obsidian
+            /// lists vaults instead of showing one (#270).
+            case vaultInSelectedFolderItself
+            /// The selected folder is not Obsidian's own: Obsidian lists no
+            /// vault from it (#270).
+            case selectedFolderNotObsidiansOwn
             case disconnectedPeers
             case pendingShares
             case conflicts
@@ -575,6 +590,14 @@ final class SyncthingManager {
             )
         }
 
+        issues.append(contentsOf: Self.obsidianVisibilityIssues(
+            findings: obsidianVisibilityFindings,
+            labels: Dictionary(
+                folders.map { ($0.id, $0.label.isEmpty ? $0.id : $0.label) },
+                uniquingKeysWith: { first, _ in first }
+            )
+        ))
+
         if !disconnectedRequiredDeviceIDs.isEmpty {
             let count = disconnectedRequiredDeviceIDs.count
             issues.append(
@@ -647,6 +670,154 @@ final class SyncthingManager {
         }
 
         return issues
+    }
+
+    /// The notices for vaults Obsidian cannot show (#270). Warnings, not
+    /// critical: the sync is intact and nothing is being damaged — the vault
+    /// is only in a place Obsidian does not list. The remediation is the
+    /// whole way out, because nothing is moved for the user (decisions 002,
+    /// 003). It never names "up to date" as the moment to remove a vault:
+    /// that status says this iPhone needs nothing from its peers, not that a
+    /// peer has what was changed here. And it never asks for the earlier
+    /// copy to be deleted — that copy may hold the only version of a note.
+    /// Pure, so the copy and the tier are unit-testable.
+    nonisolated static func obsidianVisibilityIssues(
+        findings: [ObsidianVisibility.Finding],
+        labels: [String: String]
+    ) -> [SyncIssueItem] {
+        findings.map { finding in
+            let names = finding.folderIDs.map { labels[$0] ?? $0 }
+            switch finding.kind {
+            case .vaultInSelectedFolderItself:
+                return SyncIssueItem(
+                    kind: .vaultInSelectedFolderItself,
+                    title: L10n.tr("Obsidian Cannot Show This Vault"),
+                    message: L10n.fmt(
+                        "“%@” syncs straight into the folder you selected instead of into a folder of its own. Obsidian shows only the folders inside its folder as vaults, so the notes arrive, but the vault never appears in Obsidian.",
+                        names.joined(separator: ", ")
+                    ),
+                    remediation: L10n.tr("Syncing continues, and VaultSync moves nothing on its own. To see the vault in Obsidian:\n1. Make sure another device has everything you changed on this iPhone, then remove the vault here.\n2. Accept it again under Pending Shares — it gets a folder of its own.\nThe copy that already arrived stays where it is."),
+                    severity: .warning,
+                    count: finding.folderIDs.count,
+                    folderID: finding.folderIDs.first,
+                    deviceID: nil
+                )
+            case .selectedFolderNotAnAppFolder:
+                return SyncIssueItem(
+                    kind: .selectedFolderNotObsidiansOwn,
+                    title: L10n.tr("Obsidian Cannot Show Vaults From This Folder"),
+                    message: names.isEmpty
+                        ? L10n.tr("The folder VaultSync is connected to is not Obsidian's own folder. Obsidian lists only the folders directly inside its own folder as vaults, so a vault that syncs here never appears there as a vault.")
+                        : L10n.fmt(
+                            "The folder VaultSync is connected to is not Obsidian's own folder. Obsidian lists only the folders directly inside its own folder as vaults, so what syncs here never appears there as a vault: %@.",
+                            names.joined(separator: ", ")
+                        ),
+                    // Another folder is offered only once nothing syncs
+                    // here: selecting one earlier would cut the vaults off
+                    // from the folder they live in.
+                    remediation: names.isEmpty
+                        ? L10n.tr("Tap Select Obsidian's Folder, choose \"On My iPhone\" → \"Obsidian\" and tap Open there, without opening one of your vaults. If \"Obsidian\" is missing, open Obsidian and create a vault with \"Store in iCloud\" turned off first.")
+                        : L10n.tr("Syncing continues, and VaultSync moves nothing on its own. To see your vaults in Obsidian:\n1. Make sure another device has everything you changed on this iPhone, then remove the vaults here.\n2. This notice then offers Select Obsidian's Folder. Tap it, choose \"On My iPhone\" → \"Obsidian\" and tap Open there, without opening one of your vaults. If \"Obsidian\" is missing, open Obsidian and create a vault with \"Store in iCloud\" turned off first.\n3. Accept the shares again under Pending Shares.\nThe copies that already arrived stay where they are."),
+                    severity: .warning,
+                    count: finding.folderIDs.count,
+                    folderID: finding.folderIDs.first,
+                    deviceID: nil
+                )
+            }
+        }
+    }
+
+    /// Whether a notice may open the folder picker: only the one about the
+    /// selected folder, and only while nothing syncs in that folder. A new
+    /// selected folder replaces the one grant the vaults are read through;
+    /// the container-move repair would then take each of them for a folder
+    /// whose storage is gone and could re-point it (decision 003). Pure, so
+    /// the rule is pinned by a test instead of living in a view.
+    nonisolated static func noticeOffersFolderPicker(_ issue: SyncIssueItem) -> Bool {
+        issue.kind == .selectedFolderNotObsidiansOwn && issue.count == 0
+    }
+
+    /// Whether a notice can be put away: there has to be a vault that is
+    /// being kept where it is.
+    nonisolated static func noticeOffersKeeping(_ issue: SyncIssueItem) -> Bool {
+        switch issue.kind {
+        case .vaultInSelectedFolderItself, .selectedFolderNotObsidiansOwn:
+            return issue.count > 0
+        default:
+            return false
+        }
+    }
+
+    /// Re-read the findings — on settled paths only, like every decision
+    /// that depends on where folders live (decision 008): before the
+    /// reconcile has run, a folder may still carry the path of a container
+    /// that no longer exists.
+    private func refreshObsidianVisibility() {
+        guard pathSettlement.settled else { return }
+        obsidianVisibilityInputs = currentObsidianVisibilityInputs()
+        if Self.folderListIsPending(
+            engineFolderCount: folders.count,
+            recordedFolderCount: FolderPathReconciler.loadRel().count
+        ) {
+            if !obsidianVisibilityFindings.isEmpty { obsidianVisibilityFindings = [] }
+            return
+        }
+        let found = ObsidianVisibility.findingsLive(
+            selectedRoot: lastReconcileObsidianRoot,
+            folders: folders.map { (id: $0.id, path: $0.path) },
+            mayRemember: { self.hasFinishedSyncing(folderID: $0) }
+        )
+        if found != obsidianVisibilityFindings {
+            obsidianVisibilityFindings = found
+        }
+    }
+
+    /// The engine reports no folder although the reconciler's record holds
+    /// some: its list has not arrived yet (the reconcile waits a few seconds
+    /// for it and then settles regardless). Nothing can be said about what
+    /// syncs where — least of all "nothing syncs here", which is what opens
+    /// the folder picker. The poll reads the findings once the list is in.
+    nonisolated static func folderListIsPending(engineFolderCount: Int, recordedFolderCount: Int) -> Bool {
+        engineFolderCount == 0 && recordedFolderCount > 0
+    }
+
+    /// Read the findings again when the folder list or a folder's
+    /// "finished syncing" changed since they were last read. Called from the
+    /// poll: the engine may deliver its folder list only after the reconcile
+    /// settled — a finding read from an empty list says "nothing syncs
+    /// here" and would offer the folder picker over vaults that do (#270).
+    private func refreshObsidianVisibilityIfInputsChanged() {
+        guard pathSettlement.settled else { return }
+        if currentObsidianVisibilityInputs() != obsidianVisibilityInputs {
+            refreshObsidianVisibility()
+        }
+    }
+
+    private func currentObsidianVisibilityInputs() -> [String] {
+        folders.map { "\($0.id)|\($0.path)|\(hasFinishedSyncing(folderID: $0.id))" }
+    }
+
+    /// The folder has exchanged everything with a peer at least once and
+    /// needs nothing now: what it holds is what the share holds.
+    private func hasFinishedSyncing(folderID: String) -> Bool {
+        guard let status = folderStatuses[folderID] else { return false }
+        return status.state == "idle" && status.needFiles == 0 && lastSyncTimeByFolder[folderID] != nil
+    }
+
+    /// The user keeps the setup a notice is about: it stays away for these
+    /// vaults, or for this selected folder while vaults sync there. Nothing
+    /// else changes.
+    func keepSetupDespiteObsidianVisibility(kind: ObsidianVisibility.Kind) {
+        let tokens = obsidianVisibilityFindings.filter { $0.kind == kind }.flatMap(\.tokens)
+        guard !tokens.isEmpty else { return }
+        ObsidianVisibility.record(tokens)
+        refreshObsidianVisibility()
+    }
+
+    /// The selected folder is one Obsidian lists no vault from, and the user
+    /// has not chosen to keep it: no share goes there without a tap (#270).
+    var selectedFolderHidesVaultsFromObsidian: Bool {
+        obsidianVisibilityFindings.contains { $0.kind == .selectedFolderNotAnAppFolder }
     }
 
     private func backgroundSyncIssueItem() -> SyncIssueItem? {
@@ -863,6 +1034,7 @@ final class SyncthingManager {
     private func markReconcile(token: PathSettlement.Token, completed: Bool) {
         if completed {
             pathSettlement.reconcileFinished(token: token)
+            refreshObsidianVisibility()
         } else {
             pathSettlement.reconcileAbandoned(token: token)
         }
@@ -891,6 +1063,8 @@ final class SyncthingManager {
         // completes, and a still-running reconcile's late outcome is ignored
         // (#56).
         pathSettlement.reset()
+        obsidianVisibilityFindings = []
+        obsidianVisibilityInputs = []
         lastBridgeEventID = 0
         activityDeduplicationCache = [:]
         nextSyntheticEventID = -1
@@ -957,6 +1131,10 @@ final class SyncthingManager {
             // chosen target.
             userRemovedFolderIDs.insert(id)
             persistUserRemovedFolderIDs()
+            // What was kept or reported belongs to the folder that was
+            // removed (#270): a later folder with this ID is judged afresh.
+            ObsidianVisibility.forget(folderID: id)
+            refreshObsidianVisibility()
         }
         return result
     }
@@ -1054,6 +1232,7 @@ final class SyncthingManager {
                 persistUserRemovedFolderIDs()
             }
             refreshFolders()
+            refreshObsidianVisibility()
             refreshPendingFolders()
             // Trigger a rescan after a short delay to kick-start initial sync.
             // The delay gives Syncthing time to initialize the folder model
@@ -1098,6 +1277,8 @@ final class SyncthingManager {
         // New generation, same as stop(): the restarted engine's paths count
         // as unsettled until its own reconcile completes (#56).
         pathSettlement.reset()
+        obsidianVisibilityFindings = []
+        obsidianVisibilityInputs = []
         lastBridgeEventID = 0
         activityDeduplicationCache = [:]
         nextSyntheticEventID = -1
@@ -1231,6 +1412,7 @@ final class SyncthingManager {
         if let data = snapshot.1.data(using: .utf8),
            let decoded = try? JSONDecoder().decode([FolderInfo].self, from: data) {
             folders = decoded
+            refreshObsidianVisibilityIfInputsChanged()
         }
         if let data = snapshot.0.data(using: .utf8),
            let decoded = try? JSONDecoder().decode([DeviceInfo].self, from: data) {
@@ -1310,6 +1492,7 @@ final class SyncthingManager {
             )
         )
         folderStatuses = newStatuses
+        refreshObsidianVisibilityIfInputsChanged()
 
         var newConflicts: [String: [ConflictInfo]] = [:]
         for (id, data) in statusSnapshot.1 {
@@ -2529,6 +2712,10 @@ final class SyncthingManager {
 
     func _testSetPendingFolders(_ newPending: [PendingFolderInfo]) {
         pendingFolders = newPending
+    }
+
+    func _testSetObsidianVisibilityFindings(_ findings: [ObsidianVisibility.Finding]) {
+        obsidianVisibilityFindings = findings
     }
 
     func _testSetEngineStartedAt(_ date: Date?) {

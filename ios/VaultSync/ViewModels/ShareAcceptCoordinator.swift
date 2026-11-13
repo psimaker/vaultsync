@@ -56,6 +56,9 @@ final class ShareAcceptCoordinator {
         var shouldPresentRefusalAlert: @MainActor (_ folderID: String, _ reason: String) -> Bool = { _, _ in true }
         var markRefusalAlertPresented: @MainActor (_ folderID: String, _ reason: String) -> Void = { _, _ in }
         var clearRefusalAlertRecord: @MainActor (_ folderID: String) -> Void = { _ in }
+        /// The selected folder is one Obsidian lists no vault from, and the
+        /// user has not chosen to keep it (#270, decision 060).
+        var selectedFolderHidesVaults: @MainActor () -> Bool = { false }
 
         static func live(
             syncthingManager: SyncthingManager,
@@ -84,7 +87,8 @@ final class ShareAcceptCoordinator {
                 ignorePendingFolder: { syncthingManager.ignorePendingFolder(id: $0) },
                 shouldPresentRefusalAlert: { ShareRefusalAlertStore.shouldPresentAlert(folderID: $0, reason: $1) },
                 markRefusalAlertPresented: { ShareRefusalAlertStore.markPresented(folderID: $0, reason: $1) },
-                clearRefusalAlertRecord: { ShareRefusalAlertStore.clear(folderID: $0) }
+                clearRefusalAlertRecord: { ShareRefusalAlertStore.clear(folderID: $0) },
+                selectedFolderHidesVaults: { syncthingManager.selectedFolderHidesVaultsFromObsidian }
             )
         }
     }
@@ -92,6 +96,11 @@ final class ShareAcceptCoordinator {
     // MARK: - Published state
 
     private(set) var pendingShareFailures: [String: SyncUserError] = [:]
+    /// Shares the automatic pass parked only because the selected folder is
+    /// one Obsidian lists no vault from (#270). When that stops being true —
+    /// another folder was selected, or the user keeps this one — they are
+    /// released; a failure recorded for any other reason is not touched.
+    private var parkedForPlace: Set<String> = []
     private(set) var pendingShareInFlight: Set<String> = []
 
     /// Set only by manual accepts; the home screen binds its merge dialog to
@@ -115,6 +124,7 @@ final class ShareAcceptCoordinator {
         let pendingIDs = Set(environment.pendingFolders().map(\.id))
         pendingShareFailures = pendingShareFailures.filter { pendingIDs.contains($0.key) }
         pendingShareInFlight = pendingShareInFlight.intersection(pendingIDs)
+        parkedForPlace = parkedForPlace.intersection(pendingIDs)
 
         // Accept decisions only run on settled paths (#56, decision 008): a
         // pass during a pending path reconcile would judge overlap against
@@ -123,6 +133,29 @@ final class ShareAcceptCoordinator {
         guard environment.settled() else { return }
 
         guard environment.vaultAccessible() else { return }
+
+        // No share goes into a folder Obsidian lists no vault from without
+        // the user's tap (#270): accepted automatically it would arrive in
+        // full, count up, and never appear in Obsidian — the report itself.
+        // It is a decision waiting for the user, not an error: the row says
+        // what to do, no alert. An explicit accept still goes through.
+        if environment.selectedFolderHidesVaults() {
+            for folder in environment.autoAcceptEligible() where pendingShareFailures[folder.id] == nil {
+                pendingShareFailures[folder.id] = SyncUserError(
+                    category: .fileAccess,
+                    title: L10n.tr("Obsidian Would Not Show This Vault"),
+                    message: L10n.tr("The folder VaultSync is connected to is not Obsidian's own folder, so this vault would arrive where Obsidian does not list it."),
+                    remediation: L10n.tr("Follow the notice under Sync Issues to select Obsidian's folder first. To sync it here anyway, tap \"Review and Accept\"."),
+                    technicalDetails: nil
+                )
+                parkedForPlace.insert(folder.id)
+            }
+            return
+        }
+        for id in parkedForPlace {
+            pendingShareFailures.removeValue(forKey: id)
+        }
+        parkedForPlace.removeAll()
 
         // Auto-accept skips shares whose folder the user removed on this
         // iPhone (doctrine 002 / #52) — those stay visible as pending rows
@@ -154,6 +187,8 @@ final class ShareAcceptCoordinator {
             return
         }
 
+        // Whatever this attempt records is its own outcome, not the parking.
+        parkedForPlace.remove(folder.id)
         pendingShareInFlight.insert(folder.id)
         let outcome = environment.accept(folder, mergeConfirmed)
         pendingShareInFlight.remove(folder.id)
@@ -264,6 +299,7 @@ final class ShareAcceptCoordinator {
     func ignore(_ folder: SyncthingManager.PendingFolderInfo) {
         environment.ignorePendingFolder(folder.id)
         pendingShareFailures.removeValue(forKey: folder.id)
+        parkedForPlace.remove(folder.id)
     }
 
     /// A share that had no safe location under the old Obsidian root may
@@ -271,5 +307,6 @@ final class ShareAcceptCoordinator {
     /// failures so the next pass attempts it again.
     func clearRecordedFailures() {
         pendingShareFailures.removeAll()
+        parkedForPlace.removeAll()
     }
 }

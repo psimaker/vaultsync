@@ -6,6 +6,7 @@ struct SyncIssuesView: View {
     let onRescanFailedFolders: () -> Void
     let onOpenAddDevice: () -> Void
     let onRescanAllVaults: () -> Void
+    let onSelectObsidianFolder: () -> Void
 
     /// Problems get a full card on the wash of their severity — what is
     /// wrong, why, the next step and its action. Conflicts are an ordinary
@@ -103,6 +104,8 @@ struct SyncIssuesView: View {
             return "exclamationmark.triangle.fill"
         case .backgroundSync:
             return "clock.badge.exclamationmark"
+        case .vaultInSelectedFolderItself, .selectedFolderNotObsidiansOwn:
+            return "eye.slash.fill"
         case .disconnectedPeers:
             return "wifi.exclamationmark"
         case .pendingShares:
@@ -145,6 +148,31 @@ struct SyncIssuesView: View {
                 .buttonStyle(.vault(.primary, compact: true))
             }
 
+        case .vaultInSelectedFolderItself, .selectedFolderNotObsidiansOwn:
+            // The way out is manual and written above: nothing is moved for
+            // the user (decisions 002, 003). Which button a notice carries
+            // is decided by the manager's pure rules (#270): the folder
+            // picker only while nothing syncs in the selected folder — it
+            // is otherwise offered only once access is lost, so that step
+            // needs its button here — and "keep" only while there is a
+            // vault to keep.
+            if SyncthingManager.noticeOffersFolderPicker(issue) {
+                Button(L10n.tr("Select Obsidian's Folder")) {
+                    onSelectObsidianFolder()
+                }
+                .buttonStyle(.vault(.primary, compact: true))
+            }
+            if SyncthingManager.noticeOffersKeeping(issue) {
+                Button(L10n.tr("Keep It This Way")) {
+                    syncthingManager.keepSetupDespiteObsidianVisibility(
+                        kind: issue.kind == .vaultInSelectedFolderItself
+                            ? .vaultInSelectedFolderItself
+                            : .selectedFolderNotAnAppFolder
+                    )
+                }
+                .buttonStyle(.vault(.neutral, compact: true))
+            }
+
         case .disconnectedPeers:
             Button("Add or Reconnect Device") {
                 onOpenAddDevice()
@@ -183,6 +211,8 @@ struct SyncIssuesView: View {
             // remediation is the complete fix path — don't surface a
             // misdirecting link (same stance as `.conflicts`).
             return nil
+        case .vaultInSelectedFolderItself, .selectedFolderNotObsidiansOwn:
+            anchor = "vault-syncs-but-never-appears-in-obsidian"
         case .folderErrors:
             anchor = "bookmark-access-expired"
         case .disconnectedPeers:

@@ -40,6 +40,7 @@ struct ManualShareTargetTests {
     ) -> ShareTargetDecision {
         VaultManager.resolveAcceptPath(
             manualTarget: manualTarget,
+            manualTargetConsented: true,
             rawRoot: root,
             rootIsVault: rootIsVault,
             folderName: name,
@@ -234,13 +235,24 @@ struct ManualShareTargetTests {
         let folder = "sidecar-\(UUID().uuidString)"
         let other = "sidecar-\(UUID().uuidString)"
         #expect(ManualShareTargetStore.target(forFolder: folder) == nil)
+        #expect(ManualShareTargetStore.consentRoot(forFolder: folder) == nil)
 
-        ManualShareTargetStore.setTarget("Life", forFolder: folder)
+        ManualShareTargetStore.setTarget("Life", forFolder: folder, underRoot: "/root-a")
         #expect(ManualShareTargetStore.target(forFolder: folder) == "Life")
+        #expect(ManualShareTargetStore.consentRoot(forFolder: folder) == "/root-a")
+        // A folder without a record — which is also how a record written by
+        // an earlier version reads for its selected folder: no consent.
         #expect(ManualShareTargetStore.target(forFolder: other) == nil)
+        #expect(ManualShareTargetStore.consentRoot(forFolder: other) == nil)
 
-        ManualShareTargetStore.setTarget("Work", forFolder: folder)
+        // The same name confirmed under another selected folder moves the
+        // consent with it (#270).
+        ManualShareTargetStore.setTarget("Life", forFolder: folder, underRoot: "/root-b")
+        #expect(ManualShareTargetStore.consentRoot(forFolder: folder) == "/root-b")
+
+        ManualShareTargetStore.setTarget("Work", forFolder: folder, underRoot: "/root-b")
         #expect(ManualShareTargetStore.target(forFolder: folder) == "Work")
+        #expect(ManualShareTargetStore.consentRoot(forFolder: folder) == "/root-b")
     }
 
     // MARK: - Auto-accept suppression for user-removed folders

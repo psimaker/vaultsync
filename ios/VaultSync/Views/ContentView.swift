@@ -43,7 +43,12 @@ struct ContentView: View {
     @State private var addHubRequest: AddHubRequest?
     @State private var showSettings = false
     @State private var showSetupChecklist = false
+    @Environment(\.scenePhase) private var scenePhase
     @State private var showObsidianPicker = false
+    /// Where each pending share would arrive (#270). Computed when what it
+    /// depends on changes, not on every pass over `body`: the decision reads
+    /// the selected folder and the target from disk.
+    @State private var pendingShareDestinationLines: [String: PendingShareDestination.Line] = [:]
     /// Set when AddDeviceSheet reports a successful add; the hint alert is
     /// presented from the sheet's onDismiss so it survives the dismissal
     /// transition (#95) — same pattern as runPendingChecklistAction.
@@ -180,9 +185,10 @@ struct ContentView: View {
             )
         }
         .sheet(isPresented: $showObsidianPicker) {
-            FolderPicker(initialDirectoryURL: vaultManager.obsidianDirectoryURL, onCancel: {
-                showObsidianPicker = false
-            }) { url in
+            FolderPicker(
+                initialDirectoryURL: ObsidianReconnectFlow.pickerStartURL(selectedFolder: vaultManager.obsidianDirectoryURL),
+                onCancel: { showObsidianPicker = false }
+            ) { url in
                 showObsidianPicker = false
                 Task {
                     if let err = await ObsidianReconnectFlow.run(
@@ -267,6 +273,13 @@ struct ContentView: View {
         }
         .onChange(of: syncthingManager.pendingFolders, initial: true) { _, _ in
             shareAccept.runAutomaticPass()
+        }
+        .onChange(of: syncthingManager.selectedFolderHidesVaultsFromObsidian) { _, hides in
+            // Another folder was selected, or the user keeps this one: what
+            // waited only for that goes on (#270).
+            if !hides {
+                shareAccept.runAutomaticPass()
+            }
         }
         .onChange(of: syncthingManager.pathSettlement.settled) { _, settled in
             // Paths just settled: run the pass that was held during the
@@ -636,7 +649,7 @@ struct ContentView: View {
     private func openDesignPreviewScreen() {
         let notes = DesignPreviewFixture.notesID
         switch DesignPreviewFixture.screen {
-        case .home, .attention, .syncing, .onboarding, .onboardingShare:
+        case .home, .attention, .outsideObsidian, .syncing, .onboarding, .onboardingShare:
             break
         case .devices:
             selectedTab = .devices
@@ -1039,7 +1052,8 @@ struct ContentView: View {
                 syncthingManager: syncthingManager,
                 onRescanFailedFolders: rescanFailedVaults,
                 onOpenAddDevice: { showAddDevice = true },
-                onRescanAllVaults: rescanAllVaults
+                onRescanAllVaults: rescanAllVaults,
+                onSelectObsidianFolder: { showObsidianPicker = true }
             )
         }
     }
@@ -1255,6 +1269,7 @@ struct ContentView: View {
                 pendingFolders: pendingFolders,
                 ignoredFolders: ignoredFolders,
                 failureByFolderID: shareAccept.pendingShareFailures,
+                destinationByFolderID: pendingShareDestinationLines,
                 inFlightFolderIDs: shareAccept.pendingShareInFlight,
                 obsidianAccessible: vaultManager.isAccessible,
                 onAccept: { folder in
@@ -1276,7 +1291,57 @@ struct ContentView: View {
                     showObsidianPicker = true
                 }
             )
+            .task(id: pendingShareDestinationInputs) {
+                pendingShareDestinationLines = pendingShareDestinations(syncthingManager.actionablePendingFolders)
+            }
         }
+    }
+
+    /// Everything the destination lines are computed from, without touching
+    /// the disk: when none of it changed, the lines stand.
+    private var pendingShareDestinationInputs: [String] {
+        // The scene phase stands in for the disk: a folder made or filled in
+        // Files or Obsidian changes a line, and the user is back in this app
+        // only through an activation.
+        [scenePhase == .active ? "active" : "", vaultManager.isAccessible ? "connected" : "", vaultManager.obsidianBasePath ?? ""]
+            + syncthingManager.actionablePendingFolders.map { "share|\($0.id)|\($0.label)" }
+            + syncthingManager.folders.map { "folder|\($0.id)|\($0.path)" }
+            + shareAccept.pendingShareFailures.keys.sorted().map { "parked|\($0)" }
+    }
+
+    /// Where each pending share would arrive, by the accept's own decision
+    /// (`previewShareDestination`, #270). A share the automatic pass parked
+    /// already says what it waits for, so it gets no second line.
+    private func pendingShareDestinations(
+        _ folders: [SyncthingManager.PendingFolderInfo]
+    ) -> [String: PendingShareDestination.Line] {
+        let root = vaultManager.obsidianBasePath
+        let rootPlace = root.map(VaultManager.selectedFolderPlace)
+        // Read at most once, and only when a target already holds files.
+        var earlierCopy: Bool?
+        func rootHoldsEarlierCopy() -> Bool {
+            if let earlierCopy { return earlierCopy }
+            let holds = rootPlace == .appFolder
+                && root.flatMap(ObsidianVisibility.liveContent)?.isSingleVault == true
+            earlierCopy = holds
+            return holds
+        }
+        var lines: [String: PendingShareDestination.Line] = [:]
+        for folder in folders where shareAccept.pendingShareFailures[folder.id] == nil {
+            let decision = vaultManager.previewShareDestination(
+                folderID: folder.id,
+                label: folder.label,
+                syncthingManager: syncthingManager
+            )
+            var holdsEarlierCopy = false
+            if case .requiresMergeConfirmation = decision { holdsEarlierCopy = rootHoldsEarlierCopy() }
+            lines[folder.id] = PendingShareDestination.line(
+                decision: decision,
+                rootPlace: rootPlace,
+                rootHoldsEarlierCopy: holdsEarlierCopy
+            )
+        }
+        return lines
     }
 
     // MARK: - Vaults

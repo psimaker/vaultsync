@@ -43,7 +43,7 @@ struct OnboardingView: View {
             }
             .toolbar(.hidden, for: .navigationBar)
             .sheet(isPresented: $showObsidianPicker) {
-                FolderPicker(initialDirectoryURL: vaultManager.obsidianDirectoryURL, onCancel: {
+                FolderPicker(initialDirectoryURL: ObsidianReconnectFlow.pickerStartURL(selectedFolder: vaultManager.obsidianDirectoryURL), onCancel: {
                     showObsidianPicker = false
                 }) { url in
                     showObsidianPicker = false
@@ -140,6 +140,13 @@ struct OnboardingView: View {
         }
         .onChange(of: syncthingManager.pathSettlement.settled) { _, settled in
             if settled {
+                shareAccept.runAutomaticPass()
+            }
+        }
+        .onChange(of: syncthingManager.selectedFolderHidesVaultsFromObsidian) { _, hides in
+            // Same trigger as ContentView (decision 015): what waited only
+            // for the selected folder goes on (#270).
+            if !hides {
                 shareAccept.runAutomaticPass()
             }
         }
