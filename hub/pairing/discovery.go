@@ -159,13 +159,8 @@ func SanitizeName(name string) string {
 	// Trimmed after the dropping, not before: what was dropped may have stood
 	// between the name and the spaces around it.
 	out := strings.TrimSpace(withoutHidden(name))
-	// At most 64 bytes, cut on a rune boundary: a byte cut through a
-	// multi-byte character would put invalid UTF-8 on the wire.
-	for len(out) > 64 {
-		_, size := utf8.DecodeLastRuneInString(out)
-		out = out[:len(out)-size]
-	}
-	out = strings.TrimSpace(out)
+	// At most 64 bytes.
+	out = strings.TrimSpace(cutTo(out, 64))
 	// Joiners draw nothing by themselves, and "no name" is told by the empty
 	// string: every caller's fallback hangs on it.
 	if drawsNothing(out) {
@@ -193,6 +188,20 @@ func withoutHidden(text string) string {
 		b.WriteRune(r)
 	}
 	return b.String()
+}
+
+// cutTo returns text cut to at most limit bytes, between two characters: a
+// byte cut through a multi-byte character would put invalid UTF-8 on the
+// wire and on the terminal.
+func cutTo(text string, limit int) string {
+	if len(text) <= limit {
+		return text
+	}
+	end := limit
+	for end > 0 && !utf8.RuneStart(text[end]) {
+		end--
+	}
+	return text[:end]
 }
 
 // drawsNothing reports a text of spaces and joiners alone.

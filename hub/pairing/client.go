@@ -12,7 +12,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"unicode/utf8"
+	"unicode"
 
 	"github.com/psimaker/vaultsync/hub/pake"
 )
@@ -40,7 +40,9 @@ var ErrIncompatible = errors.New("the hub speaks another pairing protocol versio
 
 // APIError is a non-200 answer from the Hub's pairing service. Body is the
 // answer's error text as errorText leaves it: one clean line of at most
-// maxErrorText bytes, or the status's own text when the answer brought none.
+// maxErrorText bytes. When the answer brought no text, or none that can be
+// shown, Body is the status's own text, which is empty for a status that has
+// none.
 type APIError struct {
 	Status int
 	Body   string
@@ -177,11 +179,11 @@ func (c *Client) Provision(ctx context.Context, seq uint64, deviceID, deviceName
 	return cleaned(reply), nil
 }
 
-// cleaned returns a Hub's answer with its two free texts fit to show: the
-// Hub's name (decision 061) and the error it reports (decision 062). They are
-// cleaned here, for every program that shows or stores them. An error with
-// nothing left to show stays an error: callers tell a refusal from a share
-// by whether Error is empty.
+// cleaned returns a Hub's answer with the Hub's name (decision 061) and the
+// error it reports (decision 062) fit to show. They are cleaned here, for
+// every program that shows or stores them; a vault's label is not (#320). An
+// error with nothing left to show stays an error: callers tell a refusal
+// from a share by whether Error is empty.
 func cleaned(reply HubPayload) HubPayload {
 	reply.HubName = SanitizeName(reply.HubName)
 	if reply.Error != "" {
@@ -225,9 +227,13 @@ func (c *Client) post(ctx context.Context, path string, in, out any) error {
 	return json.Unmarshal(data, out)
 }
 
-// maxErrorText bounds an error text the client hands out, in bytes. The
-// longest text a Hub words itself stays under it: its own words in front of
-// an answer of its Syncthing, which it cuts at 200 bytes, about 260 in all.
+// maxErrorText bounds an error text the client hands out, in bytes. What a
+// Hub words itself stays under it in the setup it ships with: a refusal is
+// at most 100 bytes, and the Hub's own words in front of an answer of its
+// Syncthing, which it cuts at 200 bytes, are about 260. A text that quotes a
+// long path or name can pass it and loses its end (#324). The words a
+// refusal is told by have to stand within these bytes: Handshake and
+// FailureKind read the text as it is cut.
 const maxErrorText = 300
 
 // unreadableError stands for an error in a Hub's encrypted answer that holds
@@ -239,34 +245,41 @@ const unreadableError = "the hub reported an error without readable text"
 // name, at most maxErrorText bytes. The text comes from whatever answered at
 // the dialled address — before the key exchange that is anyone — or from a
 // Hub's encrypted answer, where it passes on what the Hub's Syncthing said
-// (#319, decision 062). Every run of white space becomes one space, a line
-// break, a tab and U+2028 included: what stood on two lines stays two words.
-// A text that is cut ends in "…". A text with nothing to show in it is the
-// empty string.
+// (#319, decision 062). A run of white space with a tab, a line break or a
+// line separator in it becomes one space: what stood on two lines stays two
+// words. Other white space stays as it came, because a Hub quotes names in
+// its texts; at either end it goes. A text that is cut ends in "…". A text
+// with nothing to show in it is the empty string.
 func errorText(text string) string {
-	// Split first: hides takes a line break out from between two words.
-	words := strings.Fields(text)
-	kept := words[:0]
-	for _, w := range words {
-		if w = withoutHidden(w); w != "" {
-			kept = append(kept, w)
+	// Split before the dropping: hides takes a line break out from between
+	// two words. Each piece is trimmed after it, as a name is.
+	var kept []string
+	for _, piece := range strings.FieldsFunc(text, breaksLine) {
+		if piece = strings.TrimSpace(withoutHidden(piece)); piece != "" {
+			kept = append(kept, piece)
 		}
 	}
 	out := strings.Join(kept, " ")
+	const mark = "…"
+	cut := len(out) > maxErrorText
+	if cut {
+		out = strings.TrimRightFunc(cutTo(out, maxErrorText-len(mark)), unicode.IsSpace)
+	}
+	// Judged after the cut, as for a name: what is left may draw nothing.
 	if drawsNothing(out) {
 		return ""
 	}
-	if len(out) <= maxErrorText {
-		return out
+	if cut {
+		out += mark
 	}
-	const mark = "…"
-	// Cut between two characters: out is valid UTF-8 (withoutHidden).
-	end := maxErrorText - len(mark)
-	for !utf8.RuneStart(out[end]) {
-		end--
-	}
-	return strings.TrimRight(out[:end], " ") + mark
+	return out
 }
+
+// breaksLine reports white space that ends a line or jumps within one: a
+// tab, a line feed, a vertical tab, a form feed, a carriage return, NEL
+// (U+0085) and the line and paragraph separators — the white space hides
+// would take out.
+func breaksLine(r rune) bool { return unicode.IsSpace(r) && hides(r) }
 
 // Kind sorts a pairing failure into what a user interface has to say about
 // it. The Hub's refusals carry no machine-readable code, so the HTTP status

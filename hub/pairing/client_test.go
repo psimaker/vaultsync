@@ -89,12 +89,12 @@ func errorAnswer(t *testing.T, status int, text string) error {
 	return err
 }
 
-// oneCleanLine reports what a terminal would not show as written: a control
-// character, a format character, a line or paragraph separator, or bytes that
-// are no text.
+// oneCleanLine reports a text a terminal shows as written: valid UTF-8 with
+// no control character, no format character and no line or paragraph
+// separator in it.
 func oneCleanLine(s string) bool {
 	return utf8.ValidString(s) && !strings.ContainsFunc(s, func(r rune) bool {
-		return r == utf8.RuneError || unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp)
+		return unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp)
 	})
 }
 
@@ -116,6 +116,14 @@ func TestIssue319_AnErrorAnswerIsOneCleanLine(t *testing.T) {
 	// The words that tell one refusal from another are still read out of it.
 	if k := FailureKind(err); k != KindCodeLocked {
 		t.Errorf("the kind of failure: %q", k)
+	}
+
+	// White space that breaks no line stays as it came: a Hub quotes names
+	// in its texts, and a name may be written with two spaces or a wide one.
+	// A run that holds a line break is one space, whatever stands around it.
+	err = errorAnswer(t, http.StatusBadRequest, "  two  spaces,\u3000a wide\u00a0one \t \r\n \u2029 and a break  ")
+	if !errors.As(err, &apiErr) || apiErr.Body != "two  spaces,\u3000a wide\u00a0one and a break" {
+		t.Errorf("white space: %+q", err)
 	}
 }
 
@@ -158,9 +166,11 @@ func TestIssue319_AnErrorAnswerIsShort(t *testing.T) {
 }
 
 // An answer whose text holds nothing that can be shown is still an error:
-// it reads as the status does, like an answer without a text.
+// it reads as the status does, like an answer without a text. That is judged
+// on what is kept: joiners draw nothing, and a text that is nothing else up
+// to the cut is no text either.
 func TestIssue319_AnErrorAnswerWithNothingToShowIsItsStatus(t *testing.T) {
-	for _, text := range []string{"", "\x1b\u202e\u2028 \t\u200b\r\n", "\u200d \u200c"} {
+	for _, text := range []string{"", "\x1b\u202e\u2028 \t\u200b\r\n", "\u200d \u200c", strings.Repeat("\u200d", 100) + "x"} {
 		err := errorAnswer(t, http.StatusForbidden, text)
 		var apiErr *APIError
 		if !errors.As(err, &apiErr) || apiErr.Body != "Forbidden" {
@@ -207,7 +217,7 @@ func TestIssue319_ARefusalIsStillToldByItsWords(t *testing.T) {
 
 // exchangeHub is a pairing service that knows code. It answers finish with
 // finishError when that is set, and seals what reply returns into every
-// other answer.
+// other answer. A request it cannot follow fails the test.
 func exchangeHub(t *testing.T, code, finishError string, reply func() HubPayload) *Client {
 	t.Helper()
 	const session = "session-1"
@@ -217,10 +227,6 @@ func exchangeHub(t *testing.T, code, finishError string, reply func() HubPayload
 		hubConfirm []byte
 		key        []byte
 	)
-	fail := func(w http.ResponseWriter, status int, text string) {
-		w.WriteHeader(status)
-		_ = json.NewEncoder(w).Encode(ErrorResponse{Error: text})
-	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/pair/start", func(w http.ResponseWriter, r *http.Request) {
 		var req StartRequest
@@ -234,17 +240,17 @@ func exchangeHub(t *testing.T, code, finishError string, reply func() HubPayload
 			return
 		}
 		pb, _ := st.Start()
-		confirm, err := st.Finish(pa)
-		if err != nil {
-			fail(w, http.StatusBadRequest, "malformed key exchange")
+		if hubConfirm, err = st.Finish(pa); err != nil {
+			t.Error(err)
 			return
 		}
-		state, hubConfirm = st, confirm
+		state = st
 		_ = json.NewEncoder(w).Encode(StartResponse{Session: session, PB: B64Encode(pb)})
 	})
 	mux.HandleFunc("POST /v1/pair/finish", func(w http.ResponseWriter, r *http.Request) {
 		if finishError != "" {
-			fail(w, http.StatusForbidden, finishError)
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(ErrorResponse{Error: finishError})
 			return
 		}
 		var req FinishRequest
@@ -252,12 +258,11 @@ func exchangeHub(t *testing.T, code, finishError string, reply func() HubPayload
 		confirm, _ := B64Decode(req.Confirm)
 		mu.Lock()
 		defer mu.Unlock()
-		k, err := state.Verify(confirm)
-		if err != nil {
-			fail(w, http.StatusForbidden, "pairing code rejected")
+		var err error
+		if key, err = state.Verify(confirm); err != nil {
+			t.Error(err)
 			return
 		}
-		key = k
 		box, _ := SealBox(session, key, DirectionHubToDevice, reply())
 		_ = json.NewEncoder(w).Encode(FinishResponse{Confirm: B64Encode(hubConfirm), Box: box})
 	})
@@ -281,6 +286,29 @@ func TestIssue319_ARejectedCodeIsStillAWrongCode(t *testing.T) {
 	}
 }
 
+// The kind of a refusal is read from the text the client hands out, not from
+// the one that came (decision 062): what is judged is what is shown.
+func TestIssue319_TheKindIsReadFromTheTextThatIsShown(t *testing.T) {
+	// Two words on two lines are the phrase once the line break is a space.
+	err := errorAnswer(t, http.StatusForbidden, "unknown or expired pairing\nsession")
+	if k := FailureKind(err); k != KindSessionExpired {
+		t.Errorf("a phrase over two lines: kind %q for %+q", k, err)
+	}
+	// Words behind the cut are not shown, and not read.
+	behind := strings.Repeat("a", 310) + " "
+	err = errorAnswer(t, http.StatusForbidden, behind+"the pairing code was locked")
+	if k := FailureKind(err); k != KindOther || strings.Contains(err.Error(), "locked") {
+		t.Errorf("a phrase behind the cut: kind %q for %+q", k, err)
+	}
+	// The same for the one word a wrong code is told by.
+	c := exchangeHub(t, "TULIP-ANCHOR-42", behind+"pairing code rejected", nil)
+	_, err = c.Handshake(context.Background(), "TULIP-ANCHOR-42")
+	var apiErr *APIError
+	if errors.Is(err, ErrCodeRejected) || !errors.As(err, &apiErr) || FailureKind(err) != KindOther {
+		t.Errorf("\"rejected\" behind the cut: %+q", err)
+	}
+}
+
 // A Hub that knows the code reports what went wrong on its side inside its
 // encrypted answer — what its Syncthing said, for one. The same programs
 // print that text, so it is cleaned and cut the same way, and it keeps the
@@ -300,7 +328,8 @@ func TestIssue319_TheErrorInAHubsReplyIsOneCleanShortLine(t *testing.T) {
 		t.Fatalf("the first answer's error: %+q, %v", hello.Error, err)
 	}
 
-	// As long as an encrypted answer can be: its box has to fit in MaxBody.
+	// Far longer than what is kept, and still an answer the client reads:
+	// the box has to fit in MaxBody.
 	report(RegistrationRefusedPrefix + ": syncthing API: HTTP 500:\u2028\x1b[2J" + strings.Repeat("я", 10000))
 	got, err := c.Provision(ctx, 1, "device", "Laptop", "", false)
 	if err != nil {

@@ -2,23 +2,30 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/psimaker/vaultsync/hub/join"
+	"github.com/psimaker/vaultsync/hub/pairing"
 )
 
 // countingHub is a real pairing server behind a request counter: every
-// request the device sends to it is visible, and its state holds the wrong
-// codes it counted.
+// request the device sends to it is visible, its state holds the wrong
+// codes it counted, and it keeps the text of the last refusal it sent.
 type countingHub struct {
 	fx       *pairingFixture
 	requests atomic.Int64
 	addr     string
+	mu       sync.Mutex
+	refusal  string // the error text of the last answer that was no 200
+	from     string // when set, the server sees every request come from here
 }
 
 func newCountingHub(t *testing.T) *countingHub {
@@ -27,11 +34,43 @@ func newCountingHub(t *testing.T) *countingHub {
 	handler := h.fx.server.handler()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.requests.Add(1)
-		handler.ServeHTTP(w, r)
+		h.mu.Lock()
+		if h.from != "" {
+			r.RemoteAddr = h.from
+		}
+		h.mu.Unlock()
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, r)
+		if rec.Code != http.StatusOK {
+			var e errorResponse
+			_ = json.Unmarshal(rec.Body.Bytes(), &e)
+			h.mu.Lock()
+			h.refusal = e.Error
+			h.mu.Unlock()
+		}
+		maps.Copy(w.Header(), rec.Header())
+		w.WriteHeader(rec.Code)
+		_, _ = w.Write(rec.Body.Bytes())
 	}))
 	t.Cleanup(srv.Close)
 	h.addr = strings.TrimPrefix(srv.URL, "http://")
 	return h
+}
+
+func (h *countingHub) client() *pairing.Client { return pairing.NewClient(h.addr) }
+
+// said is the text of the last refusal the server sent, as it sent it.
+func (h *countingHub) said() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.refusal
+}
+
+// askedFrom makes the server see every later request come from remote.
+func (h *countingHub) askedFrom(remote string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.from = remote
 }
 
 func (h *countingHub) failures(t *testing.T) int {

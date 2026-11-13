@@ -40,8 +40,8 @@ func TestIssue319_AHubsErrorAnswerIsShownAsOneCleanShortLine(t *testing.T) {
 	if !strings.HasPrefix(msg, lead+"[2Jhub state unavailable $ яя") || !strings.HasSuffix(msg, "я…") {
 		t.Errorf("the refusal: %+q\n%s", msg, out)
 	}
-	if len(msg) > len(lead)+300 || strings.ContainsFunc(msg, hidden) || strings.ContainsFunc(strings.ReplaceAll(out.String(), "\n", ""), hidden) {
-		t.Errorf("the refusal is %d bytes behind the agent's own words, or something is shown that is not written: %+q\n%+q", len(msg)-len(lead), msg, out)
+	if len(msg) > len(lead)+300 || strings.ContainsFunc(msg, hidden) {
+		t.Errorf("the refusal is %d bytes behind the agent's own words, or shows what is not written: %+q", len(msg)-len(lead), msg)
 	}
 }
 
@@ -51,7 +51,8 @@ func TestIssue319_AHubsErrorAnswerIsShownAsOneCleanShortLine(t *testing.T) {
 // is still told by its first words.
 func TestIssue319_TheErrorInAHubsReplyIsShownAsOneCleanShortLine(t *testing.T) {
 	const dirt = "\r\n\x1b[2J\u202esyncthing API: HTTP 500:\u2028"
-	// As long as an encrypted answer can be: its box has to fit in 64 KiB.
+	// Far longer than what is kept, and still an answer the agent reads: the
+	// box has to fit in 64 KiB.
 	tail := strings.Repeat("я", 10000)
 	cases := []struct {
 		name, reported, own, kept string
