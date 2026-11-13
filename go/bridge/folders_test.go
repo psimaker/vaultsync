@@ -245,10 +245,20 @@ func TestSetFolderPath(t *testing.T) {
 		t.Fatalf("SetFolderPath foreign target = %q, want marker-missing refusal", errMsg)
 	}
 
-	// Valid in-place rebase to a directory that holds THIS folder's data
-	// (marker with this folder's fingerprint present).
+	// A folder whose own directory still exists is live and is never
+	// re-pointed, whatever the target holds (decision 003; #315).
 	pathB := filepath.Join(configDir, "vaultB")
 	writeFolderMarker(t, pathB, "pathtest")
+	if errMsg := SetFolderPath("pathtest", pathB); errMsg != "the folder's own directory still exists" {
+		t.Fatalf("SetFolderPath for a live folder = %q, want the refusal for a folder whose directory still exists", errMsg)
+	}
+
+	// Valid in-place rebase: the folder's own directory is gone, and the
+	// target holds THIS folder's marker and agrees with its index — which has
+	// no entries here, the folder never held a file.
+	if err := os.RemoveAll(pathA); err != nil {
+		t.Fatalf("RemoveAll: %v", err)
+	}
 	if errMsg := SetFolderPath("pathtest", pathB); errMsg != "" {
 		t.Fatalf("SetFolderPath valid rebase = %q, want ''", errMsg)
 	}

@@ -649,7 +649,7 @@ struct ContentView: View {
     private func openDesignPreviewScreen() {
         let notes = DesignPreviewFixture.notesID
         switch DesignPreviewFixture.screen {
-        case .home, .attention, .outsideObsidian, .syncing, .onboarding, .onboardingShare:
+        case .home, .attention, .outsideObsidian, .earlierCopy, .syncing, .onboarding, .onboardingShare:
             break
         case .devices:
             selectedTab = .devices
@@ -1097,7 +1097,7 @@ struct ContentView: View {
                     Text(folder.label)
                         .font(.body.weight(.semibold))
                         .foregroundStyle(Color.vaultLabel)
-                    Text(L10n.tr("This vault points to storage that no longer exists on this iPhone, so it can no longer sync."))
+                    Text(folder.explanation)
                         .font(.subheadline)
                         .foregroundStyle(Color.vaultSecondaryLabel)
                         .fixedSize(horizontal: false, vertical: true)

@@ -127,25 +127,36 @@ func RemoveFolder(id string) string {
 //
 // VaultSync uses this to re-point a folder at the current sandbox location
 // after iOS changes the absolute container path (which it does on reinstall,
-// restore, or migration). The new path MUST already exist as a directory that
-// physically holds the folder's data and its `.stfolder` marker. This call
-// deliberately does NOT create the directory: pointing a send-receive folder at
-// a fresh empty directory looks like "all files deleted" and could propagate
-// deletions to peers, and an already-indexed folder will not recreate its
-// marker (yielding ErrMarkerMissing).
+// restore, or migration). The folder goes on with the index it has, so the
+// new path must be the folder's storage: whatever differs there from the
+// index is taken for a local change on the first scan and sent to every peer,
+// a missing file as a deletion, an older one as the new version. Three things
+// have to hold, and each refusal leaves the folder where it is:
+//
+//   - the folder's own directory is gone — while it exists the folder is
+//     live, and a live folder is never re-pointed (decision 003);
+//   - the new path is a directory with this folder's `.stfolder` marker. This
+//     call deliberately does NOT create the directory: an already-indexed
+//     folder will not recreate its marker (yielding ErrMarkerMissing);
+//   - the directory agrees with the folder's index (verifyFolderStorage). The
+//     marker alone is no proof: a copy made by hand carries it (#315,
+//     decision 063).
+//
+// The checks read the disk and the whole index, so they run without the
+// bridge lock; the folder is looked up again before the change is written.
 //
 // Returns empty string on success — including a no-op when the path is already
 // equivalent — or an error message on failure.
 func SetFolderPath(folderID, newPath string) string {
 	mu.Lock()
-	defer mu.Unlock()
-
 	if !engineUpLocked() || stCfg == nil {
+		mu.Unlock()
 		return "syncthing not running"
 	}
+	folder, exists := stCfg.Folders()[folderID]
+	index, _ := stDB.(localIndex)
+	mu.Unlock()
 
-	folders := stCfg.Folders()
-	folder, exists := folders[folderID]
 	if !exists {
 		return "folder not found"
 	}
@@ -168,16 +179,41 @@ func SetFolderPath(folderID, newPath string) string {
 		return "target path is not a directory"
 	}
 
-	// Defense in depth against a destructive rebase: only re-point a folder at a
-	// directory that already holds THIS folder's data. Syncthing's marker is a
-	// `.stfolder` directory containing `syncthing-folder-<hash(folderID)>.txt`,
-	// so the presence of that exact file proves the target was this very
-	// folder's root (not an empty dir, and not a foreign folder). Without this,
-	// rebasing a send-receive folder onto an empty or mismatched directory would
-	// make Syncthing treat every indexed file as deleted and propagate those
-	// deletions to peers.
+	// Syncthing's marker is a `.stfolder` directory containing
+	// `syncthing-folder-<hash(folderID)>.txt`: without that exact file the
+	// target is an empty directory or another folder's.
 	if markerErr := verifyFolderMarker(folder, newPath); markerErr != "" {
 		return markerErr
+	}
+
+	// A folder whose own directory is still there keeps syncing in it: its
+	// index moves with every file that arrives, and nothing compared against
+	// it below would still hold when the change is written.
+	if own, err := os.Stat(folder.Path); err == nil && own.IsDir() {
+		return "the folder's own directory still exists"
+	}
+
+	if storageErr := verifyFolderStorage(folder, newPath, index); storageErr != "" {
+		return storageErr
+	}
+
+	return writeFolderPath(folderID, folder.Path, newPath)
+}
+
+// writeFolderPath re-points a folder at newPath if it is still the folder
+// SetFolderPath checked: configured, and at checkedPath. The checks ran
+// without the bridge lock, so the folder may have been removed, added again
+// or moved by another call since. That would be another question, and its
+// answer is not known.
+func writeFolderPath(folderID, checkedPath, newPath string) string {
+	mu.Lock()
+	defer mu.Unlock()
+
+	if !engineUpLocked() || stCfg == nil {
+		return "syncthing not running"
+	}
+	if current, ok := stCfg.Folders()[folderID]; !ok || current.Path != checkedPath {
+		return "the folder changed while the target was checked"
 	}
 
 	if err := commitConfigLocked(func(cfg *config.Configuration) {
@@ -197,9 +233,10 @@ func SetFolderPath(folderID, newPath string) string {
 // verifyFolderMarker returns "" if newPath holds the Syncthing folder marker for
 // this folder, or a user-facing error string if it does not. For the default
 // `.stfolder` marker it checks the folder-ID-specific fingerprint file
-// (`syncthing-folder-<hash>.txt`), which proves the target was this very
-// folder's root rather than an empty or foreign directory. For a custom marker
-// name it falls back to checking the marker entry's presence.
+// (`syncthing-folder-<hash>.txt`), which tells this folder's directory from an
+// empty or a foreign one — and not from a copy of it, which is why
+// verifyFolderStorage follows. For a custom marker name it falls back to
+// checking the marker entry's presence.
 func verifyFolderMarker(folder config.FolderConfiguration, newPath string) string {
 	markerName := folder.MarkerName
 	if markerName == "" {

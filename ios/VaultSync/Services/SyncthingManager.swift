@@ -130,6 +130,11 @@ final class SyncthingManager {
 
     private(set) var folders: [FolderInfo] = []
     private(set) var folderStatuses: [String: FolderStatusInfo] = [:]
+    /// Folders the last path reconcile left where they are although a
+    /// directory of their name exists under the selected folder: the bridge
+    /// refused it as not their storage (#315). Their card says so instead of
+    /// "storage no longer exists". Replaced by every completed reconcile.
+    private(set) var foldersWithoutTheirStorage: Set<String> = []
     private(set) var conflictFiles: [String: [ConflictInfo]] = [:]
     private(set) var pendingFolders: [PendingFolderInfo] = []
     private(set) var ignoredPendingFolderIDs: Set<String> = []
@@ -1017,22 +1022,27 @@ final class SyncthingManager {
                 if json != "[]", !json.isEmpty { break }
                 try? await Task.sleep(for: .milliseconds(250))
             }
-            FolderPathReconciler.reconcileLive(obsidianRoot: obsidianRoot)
+            let outcome = FolderPathReconciler.reconcileLive(obsidianRoot: obsidianRoot)
             // With paths settled, pause any folders an older version already
             // merged onto one local path (#45 migration shield) — once each.
             // Runs before the refresh below so the new paused state and the
             // critical banner surface on this same launch.
             PathCollisionGuard.pauseCollisionsLive()
             await self?.refreshFolders()
-            await self?.markReconcile(token: token, completed: true)
+            await self?.markReconcile(token: token, completed: true, outcome: outcome)
         }
     }
 
     /// Record a reconcile outcome on the main actor. Completion settles paths
     /// and releases held accept passes; abandonment only releases the
     /// in-flight count and keeps accepts held (see `PathSettlement`).
-    private func markReconcile(token: PathSettlement.Token, completed: Bool) {
+    private func markReconcile(
+        token: PathSettlement.Token,
+        completed: Bool,
+        outcome: FolderPathReconciler.Outcome = FolderPathReconciler.Outcome()
+    ) {
         if completed {
+            foldersWithoutTheirStorage = outcome.notTheirStorage
             pathSettlement.reconcileFinished(token: token)
             refreshObsidianVisibility()
         } else {
@@ -1118,6 +1128,8 @@ final class SyncthingManager {
             // Drop the path mapping so a future folder reusing this ID does not
             // inherit a stale relative path.
             FolderPathReconciler.removeRel(forFolder: id)
+            // Nor what the last reconcile found for the folder that had it.
+            foldersWithoutTheirStorage.remove(id)
             // Forget any #45 auto-pause record so a future folder reusing this
             // ID can be paused again if it collides (removing a colliding vault
             // is the sanctioned recovery; accepting the returning share re-adds
@@ -2328,6 +2340,22 @@ final class SyncthingManager {
         /// re-picking the Obsidian directory can rebase it (vs. a legacy folder
         /// that only ever lived in app storage and should just be removed).
         let hasObsidianMapping: Bool
+        /// True if a directory of the folder's name exists under the selected
+        /// folder and was refused: it does not hold what the folder last
+        /// synced (#315). The card names that instead of missing storage.
+        let foundDirectoryIsNotItsStorage: Bool
+
+        /// What the vault's card says is wrong. A directory that was found
+        /// and refused gets its own text: "storage no longer exists" would
+        /// send the user looking for a folder they can see, and the way on
+        /// from an earlier copy is to accept the share again, which asks and
+        /// combines (decisions 002, 007) — never to continue in it.
+        var explanation: String {
+            if foundDirectoryIsNotItsStorage {
+                return L10n.tr("A folder with this vault's name is in the folder you selected, but it does not hold what this iPhone last synced — it may be an earlier copy. VaultSync does not continue in it on its own, because every difference would reach your other devices as a deleted or an older note. To sync with that folder, remove this vault and accept it again under Pending Shares: VaultSync then asks before it combines the two.")
+            }
+            return L10n.tr("This vault points to storage that no longer exists on this iPhone, so it can no longer sync.")
+        }
     }
 
     var unreachableFolders: [UnreachableFolder] {
@@ -2347,7 +2375,8 @@ final class SyncthingManager {
                 label: folder.label.isEmpty ? folder.id : folder.label,
                 path: status.errorPath ?? folder.path,
                 reason: reason,
-                hasObsidianMapping: rel[folder.id] != nil
+                hasObsidianMapping: rel[folder.id] != nil,
+                foundDirectoryIsNotItsStorage: foldersWithoutTheirStorage.contains(folder.id)
             )
         }
     }
@@ -2736,6 +2765,10 @@ final class SyncthingManager {
 
     func _testSetFolderStatuses(_ newStatuses: [String: FolderStatusInfo]) {
         folderStatuses = newStatuses
+    }
+
+    func _testSetFoldersWithoutTheirStorage(_ folderIDs: Set<String>) {
+        foldersWithoutTheirStorage = folderIDs
     }
 
     func _testSetRunning(_ running: Bool) {
