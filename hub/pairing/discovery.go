@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -147,23 +148,58 @@ func broadcastTargets(port int) []net.Addr {
 	return targets
 }
 
-// SanitizeName keeps a hub or device name printable and single-line for the
-// wire and for terminals, at most 64 bytes.
+// SanitizeName keeps a Hub's, a device's or a vault's name printable and
+// single-line for the wire, for terminals and for a list that shows it beside
+// an address, at most 64 bytes. A name comes from anyone on the network (a
+// discovery answer) or from the other end of a pairing, so it loses what can
+// hide or reorder the text around it (hides). It never begins or ends with a
+// space or a joiner.
 func SanitizeName(name string) string {
-	name = strings.TrimSpace(name)
 	var b strings.Builder
 	for _, r := range name {
-		if r < 0x20 || r == 0x7f {
+		if hides(r) {
 			continue
 		}
 		b.WriteRune(r)
 	}
-	out := b.String()
+	// Trimmed after the dropping, not before: what was dropped may have stood
+	// between the name and the spaces around it.
+	out := trimName(b.String())
 	// At most 64 bytes, cut on a rune boundary: a byte cut through a
 	// multi-byte character would put invalid UTF-8 on the wire.
 	for len(out) > 64 {
 		_, size := utf8.DecodeLastRuneInString(out)
 		out = out[:len(out)-size]
 	}
-	return out
+	return trimName(out)
+}
+
+// The two joiners: U+200C keeps two letters apart (a Persian plural is
+// written with it), U+200D joins two (several emoji are two joined by it).
+const (
+	zeroWidthNonJoiner = 0x200c
+	zeroWidthJoiner    = 0x200d
+)
+
+// hides reports a character that can hide or reorder the text around it: a
+// control character (C0, DEL and C1; U+009B starts a terminal sequence), a
+// format character (U+202E reverses what follows, and a direction mark moves
+// what stands beside it) or a line or paragraph separator (U+2028 breaks the
+// line). The joiners are format characters too, but they only shape the
+// letters beside them, and the names people give their own devices and
+// vaults are written with them: they stay (decision 061).
+func hides(r rune) bool {
+	if r == zeroWidthNonJoiner || r == zeroWidthJoiner {
+		return false
+	}
+	return unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp)
+}
+
+// trimName takes spaces from both ends, and joiners with them: at an end a
+// joiner has nothing to join, and a name of joiners alone would show as
+// nothing where "no name" is told by the empty string.
+func trimName(s string) string {
+	return strings.TrimFunc(s, func(r rune) bool {
+		return unicode.IsSpace(r) || r == zeroWidthNonJoiner || r == zeroWidthJoiner
+	})
 }

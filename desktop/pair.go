@@ -341,7 +341,9 @@ func (s *pairSession) findHub(ctx context.Context) error {
 		s.t.say("none answered.")
 		return refuse("No Hub answered on this network. Pairing needs this computer and your Hub on the same network (afterwards they sync from anywhere). If they are, name your Hub: vaultsync pair --hub 192.168.1.20%s", macLocalNetworkNote(s.env.goos))
 	case 1:
-		s.t.say("found %s (%s)", quoted(hubName(hubs[0])), hostOf(hubs[0].Address))
+		// The mark keeps the address behind the name: without it a name in a
+		// right-to-left script draws the address before itself (#292).
+		s.t.say("found %s%s (%s)", quoted(hubName(hubs[0])), join.LeftToRight, hostOf(hubs[0].Address))
 	default:
 		s.t.say("%d Hubs answered:", len(hubs))
 	}
@@ -365,11 +367,12 @@ func (s *pairSession) findHub(ctx context.Context) error {
 	return nil
 }
 
-// chooseHub lists the Hubs that answered; there is no default — an empty
-// answer never sends the code to the first responder.
+// chooseHub lists the Hubs that answered, each by its address first
+// (join.HubRow); there is no default — an empty answer never sends the code
+// to the first responder.
 func (s *pairSession) chooseHub(hubs []pairing.DiscoveredHub) (int, error) {
 	for i, h := range hubs {
-		s.t.say("    %d) %-20s %s", i+1, hubName(h), hostOf(h.Address))
+		s.t.say("    %d) %s", i+1, join.HubRow(hostOf(h.Address), hubName(h)))
 	}
 	for {
 		a, err := s.t.ask("  Which Hub printed your code? Enter a number: ")

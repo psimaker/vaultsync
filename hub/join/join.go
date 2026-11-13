@@ -120,6 +120,24 @@ func (e *SeveralHubsError) Error() string {
 		len(e.Hubs), strings.Join(names, ", "))
 }
 
+// LeftToRight is U+200E, the left-to-right mark. It stands between an
+// address and a name in one line: an address has no letter to give the line
+// a direction, so a name in a right-to-left script would take the address
+// into its own (decisions 056, 061).
+const LeftToRight = "\u200e"
+
+// HubRow is one Hub in a terminal's list: its address, then its name. The
+// address comes first: it is the one field an answer cannot write, and a
+// name can hold anything that looks like an address. The mark after it gives
+// the row its direction: where a line takes its direction from its first
+// letter, one Hebrew or Arabic letter in the name would otherwise lay the
+// whole row out from the right, the name first and the address last. name
+// is cleaned already (pairing.SanitizeName): it cannot bring a mark of its
+// own.
+func HubRow(address, name string) string {
+	return address + " " + LeftToRight + "— " + name
+}
+
 // PickHub returns the one Hub a code may go to: the only answer, or the one
 // choose returns when several answered. A nil choose (no terminal to ask on)
 // never picks for the user.
