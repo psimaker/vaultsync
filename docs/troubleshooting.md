@@ -202,11 +202,11 @@ Syncing continues either way, and VaultSync never moves a vault on its own. Befo
 The button appears only once no vault syncs in the old folder: selecting another folder earlier would cut those vaults off from the folder they live in.
 
 **Afterwards:**
-- The copy that arrived earlier stays where it was. Nothing needs it anymore, but it may hold a note that never reached another device. Delete it in the Files app only after you have checked that, and only the earlier copy — never the folder the vault syncs into now. Its place is shown under **Location** on the vault's page.
+- The copy that arrived earlier stays where it was. Nothing needs it anymore, but it may hold a note that never reached another device. Delete it in the Files app only after you have checked that, and only the earlier copy — never the folder the vault syncs into now. Its place is shown under **Location** on the vault's page. For a vault that synced straight into Obsidian's folder, the earlier copy is what lies loose in that folder, right beside the vault's new folder: delete those files and folders one by one, never everything in the folder.
 - Sync Filters belong to the vault's folder and start fresh in the new one. Set them again on the vault's page before large folders you had excluded start to sync.
 - If the share on your computer is a folder that holds several vaults, it arrives as one folder, and Obsidian shows it as a single vault with yours as folders inside. Share each vault on its own from the computer instead.
 
-If you keep things where they are on purpose, tap **Keep It This Way**: the notice goes away for that vault, or for that folder while vaults sync in it, and nothing else changes. New shares then arrive there again, including one that was waiting. Without it, a new share waits under **Pending Shares** until you accept it yourself.
+If you keep things where they are on purpose, tap **Keep It This Way**: the notice goes away for that vault, or for that folder while vaults sync in it, and nothing else changes. Under a folder that is not Obsidian's own, new shares then arrive there again, including one that was waiting; without it, a new share waits under **Pending Shares** until you accept it yourself. A vault that syncs straight into the folder you selected leaves no room beside it either way: VaultSync declines a new share there until that vault has a folder of its own.
 
 ---
 
