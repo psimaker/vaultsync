@@ -1,6 +1,6 @@
 # VaultSync Cloud Relay — Specification
 
-> **Status:** Cloud Relay 1.3.2 and VaultSync 2.0.1 are in production, and helper 2.0.2 is published. Relay 1.3 provisioning requires a verified StoreKit signed transaction and gives exact pre-existing legacy registrations a bounded compatibility window through October 31, 2026. Helper publication state is determined only by the newest public `notify-v*` release and its exact manifest; `notify-v1.8.0` remains the fixed rollback baseline for helper 2.0.2. A Relay-observed signal proves only accepted Relay processing: not helper identity, APNs delivery, background start, local data progress, upload, download, or a roundtrip. Existing Relay v1 provisioning, trigger, and push contracts remain unchanged. This document is the protocol and architecture reference for the relay, the `vaultsync-notify` sidecar, and the iOS client.
+> **Status:** Cloud Relay 1.4.0 and VaultSync 2.1.0 are in production, and helper 2.0.2 is published. Since Relay 1.4 the App Store reports renewals, refunds, and revocations to the relay directly, so a renewed subscription keeps its wake-ups without the app having to be opened. Relay provisioning requires a verified StoreKit signed transaction; the compatibility window for exact pre-existing legacy registrations ended on October 31, 2026. Helper publication state is determined only by the newest public `notify-v*` release and its exact manifest; `notify-v1.8.0` remains the fixed rollback baseline for helper 2.0.2. A Relay-observed signal proves only accepted Relay processing: not helper identity, APNs delivery, background start, local data progress, upload, download, or a roundtrip. Existing Relay v1 provisioning, trigger, and push contracts remain unchanged. This document is the protocol and architecture reference for the relay, the `vaultsync-notify` sidecar, and the iOS client.
 
 ## Overview
 
@@ -76,6 +76,7 @@ Identity is based on **Syncthing Device IDs** — no user accounts, no API keys.
 - The homeserver container auto-reads its own Device ID from the local Syncthing API
 - The iOS app provisions the relay by sending the homeserver's Device ID (from its peer list), the APNs token, and the StoreKit **signed transaction (JWS)**
 - The central relay verifies the signed transaction against Apple's certificate chain to confirm an active subscription and read its expiry (offline — no per-request Apple API call). During the compatibility window, an older app can refresh only a pre-existing matching legacy registration; it cannot create a new one
+- The App Store tells the relay when a subscription renews, is refunded, or is revoked (App Store Server Notifications). The relay verifies Apple's signature and keeps the stored expiry current, so a renewal does not depend on the app being opened
 - Trigger v1 requests are matched by Device ID. They do not carry cryptographic sender authentication; knowledge of a Device ID is not proof of helper identity
 
 This avoids a user account system while keeping provisioning fail-closed. The
@@ -130,6 +131,29 @@ Remove a device token.
   "status": "deprovisioned"
 }
 ```
+
+### POST /appstore/notifications
+
+Called by the App Store, never by the app or the helper: Apple's App Store Server Notifications, version 2. It keeps a subscription's expiry current while the app is not running.
+
+```json
+// Request (sent by Apple)
+{
+  "signedPayload": "eyJ...JWS..."
+}
+
+// Response 200
+{
+  "status": "ok"
+}
+```
+
+- The relay verifies Apple's signature on the notification and on the signed transaction inside it, offline against Apple's certificate chain. A notification it cannot verify changes nothing
+- A renewal - also a resubscription, an upgrade, or a refund Apple took back - moves the stored expiry of the subscription's verified registrations forward, never backward. A refund or revocation that ends the subscription ends them, unless the relay has verified a newer purchase since. An expiry needs no change: the stored expiry already ends the registration
+- Registrations are found by the subscription's original transaction identifier, which the relay holds from provisioning. A notification never creates a registration and never touches a push token: only the app can say which homeserver a subscription wakes
+- From a notification the relay keeps the new expiry and the time it verified it. Everything else in it, such as price and storefront, is neither stored nor logged
+- Notifications for another app, another App Store environment, or another product are acknowledged and ignored
+- Any answer other than `200` makes the App Store send the notification again over the following days, so verification and server errors answer `401`, `422`, or `500`
 
 ### POST /trigger
 
@@ -216,7 +240,7 @@ No authentication required.
 // Response 200
 {
   "status": "ok",
-  "version": "1.3.2"
+  "version": "1.4.0"
 }
 ```
 
@@ -267,6 +291,7 @@ The container reads its own Syncthing Device ID automatically from `/rest/system
 
 - No API keys or user accounts. The Syncthing Device ID is a routing identifier; trigger v1 does not cryptographically authenticate the sender
 - Provisioning sends the StoreKit signed transaction (JWS), verified offline against Apple's certificate chain; the verified expiry gates the subscription server-side (an expired or revoked subscription stops receiving pushes). Compatibility requests from older apps can only refresh an exact pre-existing legacy mapping until the published cutoff
+- App Store Server Notifications are authenticated by Apple's signature alone; the route has no other caller and accepts nothing unsigned. A verified renewal extends the stored expiry, and a verified refund or revocation ends it
 - Trigger requests are matched by Device ID — only Device IDs with an active, non-expired subscription receive push notifications
 - Rate limiting per Device ID: 60 requests/minute for provisioning, 10 triggers/minute
 - TLS required on all endpoints (HSTS, minimum TLS 1.2)

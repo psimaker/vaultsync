@@ -28,7 +28,7 @@ Only the **latest release** of each component receives security fixes. If you ar
 |---|---|
 | VaultSync iOS app | Latest App Store release (currently 1.8.2) |
 | `vaultsync-notify` server helper | Latest `notify-v*` release (currently 2.0.2) |
-| Cloud Relay (hosted service) | The currently deployed version (1.3.1) — operated by the maintainer, no user action needed |
+| Cloud Relay (hosted service) | The currently deployed version (1.4.0) — operated by the maintainer, no user action needed |
 
 ## Scope
 
