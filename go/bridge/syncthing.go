@@ -26,7 +26,7 @@ import (
 var (
 	mu         sync.Mutex
 	stApp      *syncthing.App
-	stDB       interface{ Close() error } // syncthing database handle
+	stDB       engineDatabase // syncthing database handle
 	stEvLogger events.Logger
 	stCfg      config.Wrapper
 	stCert     tls.Certificate
@@ -101,6 +101,20 @@ func awaitWithin(phase string, timeout time.Duration, fn func() error) error {
 	}
 }
 
+// engineDatabase is what the bridge itself asks of the engine's database. A
+// named set of methods, so an engine version that changes one of them stops
+// the build instead of quietly switching off what depends on it.
+type engineDatabase interface {
+	Close() error
+	storageRecords
+}
+
+// stConfigCommits counts the configuration changes the bridge has asked for,
+// one that timed out included: it may still land. Work that reads without
+// the lock compares it to know whether what it read is still the question.
+// Guarded by mu.
+var stConfigCommits uint64
+
 // commitConfigLocked applies fn to the live configuration and waits, bounded
 // by lifecycleTimeouts.configCommit, for the commit to reach every
 // subscriber. Caller holds mu. A timed-out commit may still land later; the
@@ -108,6 +122,7 @@ func awaitWithin(phase string, timeout time.Duration, fn func() error) error {
 // actual state.
 func commitConfigLocked(fn config.ModifyFunction) error {
 	cfg := stCfg
+	stConfigCommits++
 	return awaitWithin("config commit", lifecycleTimeouts.configCommit, func() error {
 		waiter, err := cfg.Modify(fn)
 		if err != nil {
@@ -320,13 +335,10 @@ func StartSyncthing(configDir string) string {
 	stRunning = true
 	go watchEngine(stApp)
 
-	// Which directory each folder syncs in (#315): every folder whose
-	// directory is there with its marker gets its record now, so the record
-	// exists by the time the directory is gone.
-	stStorageAnchor = ensureStorageAnchor(configDir)
-	for _, folder := range stCfg.Folders() {
-		noteFolderStorageLocked(folder)
-	}
+	// What this install's records of folder directories are tied to (#315).
+	// The directories themselves are read by NoteFolderStorage, not here:
+	// nothing in a start leaves the app's own container.
+	stStorageAnchor, stStorageAnchorErr = readStorageAnchor(configDir)
 
 	// Create a buffered event subscription for the bridge.
 	var sub events.Subscription
@@ -371,7 +383,7 @@ func configurePrivacySafeLogging() {
 func stopEngineLocked() string {
 	app, sdb, earlyCancel := stApp, stDB, stEarlyCancel
 	stApp, stDB, stEarlyCancel = nil, nil, nil
-	stStorageAnchor = 0
+	stStorageAnchor, stStorageAnchorErr = 0, nil
 	stEventSub = nil
 	stRunning = false
 	stExited = false

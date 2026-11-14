@@ -35,6 +35,11 @@ import (
 // Records are derived state. They live in the engine's database beside the
 // index they stand for, are written by the bridge only, and a missing one
 // costs nothing but the protection: the folder falls back to the marker.
+//
+// The engine must not give a folder a new index ID while it keeps the
+// folder's index: every record of a folder whose directory is gone would
+// stop applying at that moment. No version in use does; a test holds the
+// engine's database migrations to the ones that were read for this.
 
 // folderStorageMismatch is how SetFolderPath refuses a directory that carries
 // a folder's marker and is not the directory the folder synced in.
@@ -65,10 +70,20 @@ const folderStorageKeyPrefix = "vaultsync/folder-storage/1/"
 // storageAnchorName is the anchor's file in the configuration directory.
 const storageAnchorName = "vaultsync-storage-anchor"
 
+// errNoFileNumbers is fileNumber's answer where the file system has none to
+// give. That is no failed read: without file numbers there are no records.
+var errNoFileNumbers = errors.New("no file numbers on this file system")
+
 // stStorageAnchor is the file number of this install's anchor, read when the
-// engine started, or 0 when there is none to be had. Without an anchor
-// nothing is recorded and no record applies. Guarded by mu.
-var stStorageAnchor uint64
+// engine started; 0 where there are no file numbers, and then nothing is
+// recorded and no record applies. stStorageAnchorErr says that the anchor
+// could not be read: nothing is recorded then either, and a folder that has
+// a record is not re-pointed until the anchor reads again (decision 039).
+// Both guarded by mu.
+var (
+	stStorageAnchor    uint64
+	stStorageAnchorErr error
+)
 
 // storageRecords is the part of the engine's database the records need.
 type storageRecords interface {
@@ -77,53 +92,126 @@ type storageRecords interface {
 	GetIndexID(folder string, device protocol.DeviceID) (protocol.IndexID, error)
 }
 
-// ensureStorageAnchor returns the file number of the anchor in configDir,
-// creating the file if it is not there, or 0 when that fails.
-func ensureStorageAnchor(configDir string) uint64 {
+// readStorageAnchor is ensureStorageAnchor. A variable, so a test can make
+// the read fail.
+var readStorageAnchor = ensureStorageAnchor
+
+// ensureStorageAnchor returns the file number of the anchor in configDir and
+// creates the file if it is not there. The file is looked at before it is
+// created: an install that has its anchor must not lose its records to a
+// create that fails for a reason of its own.
+func ensureStorageAnchor(configDir string) (uint64, error) {
 	path := filepath.Join(configDir, storageAnchorName)
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err == nil {
-		file.Close()
-	} else if !os.IsExist(err) {
-		return 0
-	}
 	number, err := fileNumber(path)
-	if err != nil {
-		return 0
+	if os.IsNotExist(err) {
+		file, createErr := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if createErr == nil {
+			file.Close()
+		} else if !os.IsExist(createErr) {
+			return 0, createErr
+		}
+		number, err = fileNumber(path)
 	}
-	return number
+	if errors.Is(err, errNoFileNumbers) {
+		return 0, nil
+	}
+	return number, err
+}
+
+// NoteFolderStorage writes down, for every folder whose directory is there
+// with its marker, which directory the folder syncs in. A folder whose
+// directory is gone keeps the record it has: that record is what its
+// directory is known by when it shows up again.
+//
+// The app calls this at the start of every path reconcile — after an engine
+// start, after another folder was selected, in a background run — so a
+// folder gets its record at the first moment its directory can be reached,
+// and before the reconcile decides anything. It notes whatever directory a
+// folder is configured at: a live folder's record follows the directory the
+// engine scans, also when that directory was replaced in its place, which no
+// record can tell (#329).
+//
+// The markers are read without the bridge lock. These are paths the user
+// chose, and a file system that takes its time there must not hold up every
+// other call.
+func NoteFolderStorage() {
+	if seen, ok := readFolderMarkers(); ok {
+		seen.record()
+	}
+}
+
+// folderMarkers is what one pass over the configured folders read: the file
+// number of each marker that was there, and which configuration it was read
+// for.
+type folderMarkers struct {
+	commits uint64
+	folders map[string]config.FolderConfiguration
+	numbers map[string]uint64
+}
+
+func readFolderMarkers() (folderMarkers, bool) {
+	mu.Lock()
+	if !engineUpLocked() || stCfg == nil || stStorageAnchor == 0 {
+		mu.Unlock()
+		return folderMarkers{}, false
+	}
+	seen := folderMarkers{commits: stConfigCommits, folders: stCfg.Folders(), numbers: make(map[string]uint64)}
+	mu.Unlock()
+
+	for id, folder := range seen.folders {
+		if number, err := fileNumber(folderMarkerPath(folder, folder.Path)); err == nil {
+			seen.numbers[id] = number
+		}
+	}
+	return seen, true
+}
+
+// record writes the records for what was read, unless the configuration has
+// changed since: a folder that was removed, added again or moved meanwhile
+// is another folder than the one whose marker was read, and the call that
+// changed it has noted it itself.
+func (m folderMarkers) record() {
+	mu.Lock()
+	defer mu.Unlock()
+	if !engineUpLocked() || stConfigCommits != m.commits {
+		return
+	}
+	for id, number := range m.numbers {
+		writeFolderStorageLocked(m.folders[id], number)
+	}
 }
 
 // noteFolderStorageLocked writes down the directory a folder syncs in, if its
-// marker is there to be read. A folder whose directory is gone keeps the
-// record it has: that record is what its directory is known by when it shows
-// up again. Caller holds mu.
-//
-// It notes whatever directory the folder is configured at, so a live folder's
-// record follows the directory the engine scans — also when that directory
-// was replaced in its place, which no record can tell (#329).
+// marker is there to be read: for the calls that have just put a folder at a
+// path — added, accepted, re-pointed — and hold the lock. Caller holds mu.
 func noteFolderStorageLocked(folder config.FolderConfiguration) {
-	store, ok := stDB.(storageRecords)
-	if !ok || stStorageAnchor == 0 {
+	if stStorageAnchor == 0 {
 		return
 	}
-	marker, err := fileNumber(folderMarkerPath(folder, folder.Path))
-	if err != nil {
+	if marker, err := fileNumber(folderMarkerPath(folder, folder.Path)); err == nil {
+		writeFolderStorageLocked(folder, marker)
+	}
+}
+
+// writeFolderStorageLocked records marker as the file number of the folder's
+// marker, for the index and the anchor the engine has now. Caller holds mu.
+func writeFolderStorageLocked(folder config.FolderConfiguration, marker uint64) {
+	if stDB == nil || stStorageAnchor == 0 {
 		return
 	}
-	index, err := store.GetIndexID(folder.ID, protocol.LocalDeviceID)
+	index, err := stDB.GetIndexID(folder.ID, protocol.LocalDeviceID)
 	if err != nil {
 		return
 	}
 	record := folderStorageRecord{Marker: marker, Index: uint64(index), Anchor: stStorageAnchor}
-	if existing, found, err := readFolderStorage(store, folder.ID); err == nil && found && existing == record {
+	if existing, found, err := readFolderStorage(stDB, folder.ID); err == nil && found && existing == record {
 		return
 	}
 	value, err := json.Marshal(record)
 	if err != nil {
 		return
 	}
-	_ = store.PutKV(folderStorageKeyPrefix+folder.ID, value)
+	_ = stDB.PutKV(folderStorageKeyPrefix+folder.ID, value)
 }
 
 // readFolderStorage returns a folder's record and whether there is one. An
@@ -157,20 +245,26 @@ func readFolderStorage(store storageRecords, folderID string) (folderStorageReco
 //     has already decided.
 //
 // What cannot be read is not taken for unknown (decision 039): a failed read
-// of the record, of the index ID or of the marker's file number refuses.
+// of the record, of the anchor, of the index ID or of the marker's file
+// number refuses.
 func folderStorageRefusalLocked(folder config.FolderConfiguration, newPath string) string {
-	store, ok := stDB.(storageRecords)
-	if !ok || stStorageAnchor == 0 {
+	if stDB == nil {
 		return ""
 	}
-	record, found, err := readFolderStorage(store, folder.ID)
+	record, found, err := readFolderStorage(stDB, folder.ID)
 	if err != nil {
 		return fmt.Sprintf("check folder storage: read the record: %v", err)
 	}
-	if !found || record.Anchor != stStorageAnchor {
+	if !found {
 		return ""
 	}
-	index, err := store.GetIndexID(folder.ID, protocol.LocalDeviceID)
+	if stStorageAnchorErr != nil {
+		return fmt.Sprintf("check folder storage: read the anchor: %v", stStorageAnchorErr)
+	}
+	if record.Anchor != stStorageAnchor {
+		return ""
+	}
+	index, err := stDB.GetIndexID(folder.ID, protocol.LocalDeviceID)
 	if err != nil {
 		return fmt.Sprintf("check folder storage: read the index ID: %v", err)
 	}

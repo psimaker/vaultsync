@@ -221,16 +221,15 @@ func issue315MarkerNumber(t *testing.T, folderID, dir string) uint64 {
 	return number
 }
 
-// issue315Store returns the engine's database as the records use it.
-func issue315Store(t *testing.T) storageRecords {
+// issue315Store returns the engine's database as the bridge holds it.
+func issue315Store(t *testing.T) engineDatabase {
 	t.Helper()
 	mu.Lock()
 	defer mu.Unlock()
-	store, ok := stDB.(storageRecords)
-	if !ok {
-		t.Fatal("the engine's database does not offer what the records need — adjust storageRecords for this Syncthing version")
+	if stDB == nil {
+		t.Fatal("the engine is not running")
 	}
-	return store
+	return stDB
 }
 
 // issue315Record reads a folder's record from the engine's database.
@@ -243,11 +242,15 @@ func issue315Record(t *testing.T, folderID string) (folderStorageRecord, bool) {
 	return record, found
 }
 
-// issue315ConfigOnDisk waits until the configuration file holds text. The
-// engine writes it a moment after a change, and an engine stopped before that
-// starts again without the change.
-func issue315ConfigOnDisk(t *testing.T, configDir, text string) {
+// issue315StopWithConfigOnDisk stops the engine and waits until its
+// configuration file holds text. The engine saves on a timer and once more
+// as it stops, and StopSyncthing does not wait for that last write: an
+// engine started before it is done starts without the change.
+func issue315StopWithConfigOnDisk(t *testing.T, configDir, text string) {
 	t.Helper()
+	if errMsg := StopSyncthing(); errMsg != "" {
+		t.Fatalf("StopSyncthing() = %q", errMsg)
+	}
 	waitFor(t, "the change in the configuration on disk", 30*time.Second, func() bool {
 		data, err := os.ReadFile(filepath.Join(configDir, "config.xml"))
 		return err == nil && strings.Contains(string(data), text)
@@ -488,6 +491,17 @@ func newIssue315Engine(t *testing.T, folderID string) (*issue315Engine, string) 
 	if err := os.WriteFile(filepath.Join(own, "note.md"), []byte("# Note\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// Indexed before anything else happens: a folder with nothing in its
+	// index is a new one to the engine, which makes its directory and marker
+	// again at the next start if they are gone.
+	waitFor(t, "the note in the folder's index", 60*time.Second, func() bool {
+		RescanFolder(folderID)
+		var st FolderStatus
+		if err := json.Unmarshal([]byte(GetFolderStatusJSON(folderID)), &st); err != nil {
+			return false
+		}
+		return st.LocalFiles == 1
+	})
 	return e, own
 }
 
@@ -527,6 +541,22 @@ func (e *issue315Engine) putRecord(value []byte) {
 	e.t.Helper()
 	if err := issue315Store(e.t).PutKV(folderStorageKeyPrefix+e.folderID, value); err != nil {
 		e.t.Fatalf("PutKV: %v", err)
+	}
+}
+
+// dropRecord leaves the folder without a record, as an install is that comes
+// from a version that wrote none.
+func (e *issue315Engine) dropRecord() {
+	e.t.Helper()
+	store, ok := issue315Store(e.t).(interface{ DeleteKV(key string) error })
+	if !ok {
+		e.t.Fatal("the engine's database cannot delete a key — adjust the test for this Syncthing version")
+	}
+	if err := store.DeleteKV(folderStorageKeyPrefix + e.folderID); err != nil {
+		e.t.Fatalf("DeleteKV: %v", err)
+	}
+	if _, found := issue315Record(e.t, e.folderID); found {
+		e.t.Fatal("the folder still has a record after it was dropped")
 	}
 }
 
@@ -662,6 +692,15 @@ func TestIssue315_WhenARecordApplies(t *testing.T) {
 	}
 	e.expectRecord(current)
 
+	// And no record at all: an install that comes from a version without
+	// records, with a folder whose directory was gone before it got one.
+	current = e.copyAndRemove(current)
+	e.dropRecord()
+	if errMsg := SetFolderPath(folderID, current); errMsg != "" {
+		t.Fatalf("SetFolderPath without a record = %q, want the marker to decide", errMsg)
+	}
+	e.expectRecord(current)
+
 	// What cannot be read is not taken for "no record" (decision 039): the
 	// folder's own directory waits until the read works again.
 	renamed := filepath.Join(e.base, "selected-3", "Vault")
@@ -671,9 +710,7 @@ func TestIssue315_WhenARecordApplies(t *testing.T) {
 	if err := os.Rename(current, renamed); err != nil {
 		t.Fatal(err)
 	}
-	mu.Lock()
-	database := stDB
-	mu.Unlock()
+	database := issue315Store(t)
 	for _, failing := range []struct {
 		store issue315FailingStore
 		want  string
@@ -681,7 +718,7 @@ func TestIssue315_WhenARecordApplies(t *testing.T) {
 		{issue315FailingStore{kvErr: errors.New("disk I/O error")}, "check folder storage: read the record: disk I/O error"},
 		{issue315FailingStore{indexErr: errors.New("disk I/O error")}, "check folder storage: read the index ID: disk I/O error"},
 	} {
-		failing.store.storageRecords, failing.store.Closer = database.(storageRecords), database
+		failing.store.storageRecords, failing.store.Closer = database, database
 		mu.Lock()
 		stDB = failing.store
 		mu.Unlock()
@@ -700,35 +737,52 @@ func TestIssue315_WhenARecordApplies(t *testing.T) {
 		t.Fatalf("SetFolderPath once the database reads again = %q, want ''", errMsg)
 	}
 
-	// An install that comes from a version without records gets them at its
-	// next start, for every folder whose directory is there.
-	e.putRecord([]byte("not a record"))
-	issue315ConfigOnDisk(t, e.base, renamed)
-	if errMsg := StopSyncthing(); errMsg != "" {
-		t.Fatalf("StopSyncthing() = %q", errMsg)
-	}
+	// The same for the anchor: an engine run that could not read it does not
+	// know whether the record applies, and refuses for that run.
+	issue315StopWithConfigOnDisk(t, e.base, renamed)
+	readStorageAnchor = func(string) (uint64, error) { return 0, errors.New("disk I/O error") }
+	defer func() { readStorageAnchor = ensureStorageAnchor }()
 	if errMsg := StartSyncthing(e.base); errMsg != "" {
 		t.Fatalf("StartSyncthing() failed: %s", errMsg)
 	}
-	e.expectRecord(renamed)
+	current = filepath.Join(e.base, "selected-4", "Vault")
+	if err := os.MkdirAll(filepath.Dir(current), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(renamed, current); err != nil {
+		t.Fatal(err)
+	}
+	const anchorUnread = "check folder storage: read the anchor: disk I/O error"
+	if errMsg := SetFolderPath(folderID, current); errMsg != anchorUnread {
+		t.Fatalf("SetFolderPath while the anchor cannot be read = %q, want %q", errMsg, anchorUnread)
+	}
+	if errMsg := StopSyncthing(); errMsg != "" {
+		t.Fatalf("StopSyncthing() = %q", errMsg)
+	}
+	readStorageAnchor = ensureStorageAnchor
+	if errMsg := StartSyncthing(e.base); errMsg != "" {
+		t.Fatalf("StartSyncthing() failed: %s", errMsg)
+	}
+	if errMsg := SetFolderPath(folderID, current); errMsg != "" {
+		t.Fatalf("SetFolderPath once the anchor reads again = %q, want ''", errMsg)
+	}
 
 	// An install whose anchor is gone no longer knows what its records were
 	// written on. A new anchor is made, the old records stop applying, and
 	// the next re-point writes one that does.
-	if errMsg := StopSyncthing(); errMsg != "" {
-		t.Fatalf("StopSyncthing() = %q", errMsg)
-	}
+	issue315StopWithConfigOnDisk(t, e.base, current)
 	anchorPath := filepath.Join(e.base, storageAnchorName)
 	// Kept under another name, so its file number is not handed out again.
 	if err := os.Rename(anchorPath, anchorPath+".kept"); err != nil {
 		t.Fatal(err)
 	}
-	current = e.copyAndRemove(renamed)
+	current = e.copyAndRemove(current)
 	if errMsg := StartSyncthing(e.base); errMsg != "" {
 		t.Fatalf("StartSyncthing() failed: %s", errMsg)
 	}
+	NoteFolderStorage()
 	if stale, _ := issue315Record(t, folderID); stale.Anchor != record.Anchor {
-		t.Fatalf("the record of a folder whose directory is gone was rewritten at start: %+v", stale)
+		t.Fatalf("the record of a folder whose directory is gone was rewritten: %+v", stale)
 	}
 	if errMsg := SetFolderPath(folderID, current); errMsg != "" {
 		t.Fatalf("SetFolderPath with a record from before the anchor was lost = %q, want the marker to decide", errMsg)
@@ -739,6 +793,102 @@ func TestIssue315_WhenARecordApplies(t *testing.T) {
 	// And from here on a copy is refused again.
 	if errMsg := SetFolderPath(folderID, e.copyAndRemove(current)); errMsg != mismatch {
 		t.Fatalf("SetFolderPath onto a copy, with a fresh record = %q, want %q", errMsg, mismatch)
+	}
+}
+
+// When records are written besides the moment a folder is added or
+// re-pointed: at every path reconcile, for each folder whose directory can
+// be reached then.
+func TestIssue315_RecordsAreNotedWhenADirectoryCanBeReached(t *testing.T) {
+	const folderID = "issue315-noted"
+	e, own := newIssue315Engine(t, folderID)
+	defer StopSyncthing()
+	away := own + "-out-of-reach"
+
+	// An install that comes from a version without records, and whose
+	// folder cannot be reached when its engine starts: the saved access to
+	// the selected folder did not resolve, for one.
+	e.dropRecord()
+	if err := os.Rename(own, away); err != nil {
+		t.Fatal(err)
+	}
+	issue315StopWithConfigOnDisk(t, e.base, own)
+	if errMsg := StartSyncthing(e.base); errMsg != "" {
+		t.Fatalf("StartSyncthing() failed: %s", errMsg)
+	}
+	NoteFolderStorage()
+	if record, found := issue315Record(t, folderID); found {
+		t.Fatalf("a folder whose directory is out of reach got a record: %+v", record)
+	}
+
+	// Its folder is selected again in the same engine run: recorded now, not
+	// at the next start.
+	if err := os.Rename(away, own); err != nil {
+		t.Fatal(err)
+	}
+	NoteFolderStorage()
+	noted := e.expectRecord(own)
+
+	// Out of reach again, the folder keeps what it has.
+	if err := os.Rename(own, away); err != nil {
+		t.Fatal(err)
+	}
+	NoteFolderStorage()
+	if kept, _ := issue315Record(t, folderID); kept != noted {
+		t.Fatalf("the record of a folder whose directory is out of reach changed from %+v to %+v", noted, kept)
+	}
+	if err := os.Rename(away, own); err != nil {
+		t.Fatal(err)
+	}
+
+	// The markers are read without the bridge lock. A folder removed and
+	// added again in between is another folder with another marker, and what
+	// was read for the first one must not be written for it.
+	seen, ok := readFolderMarkers()
+	if !ok {
+		t.Fatal("readFolderMarkers found no engine to read for")
+	}
+	if errMsg := RemoveFolder(folderID); errMsg != "" {
+		t.Fatalf("RemoveFolder failed: %s", errMsg)
+	}
+	if errMsg := AddFolder(folderID, "Vault", own); errMsg != "" {
+		t.Fatalf("AddFolder failed: %s", errMsg)
+	}
+	e.expectRecord(own)
+	seen.record()
+	e.expectRecord(own)
+
+	// Without an engine there is nothing to note, and nothing to fail.
+	if errMsg := StopSyncthing(); errMsg != "" {
+		t.Fatalf("StopSyncthing() = %q", errMsg)
+	}
+	NoteFolderStorage()
+}
+
+// A record applies only while the folder's index ID is the one it was written
+// for, so the engine must not change that ID while it keeps the index: every
+// record of a folder whose directory is gone would stop applying at once, and
+// a copy that was refused would be taken (decision 063). One of the engine's
+// database migrations does exactly that, for databases older than any that
+// can hold a record. This test fails when the engine brings a migration that
+// was not read for it — read it, and if it leaves the `indexids` table alone,
+// add its name here.
+func TestIssue315_TheEnginesMigrationsWereReadForIndexIDs(t *testing.T) {
+	dir := filepath.Join("..", "_syncthing_patched", "internal", "db", "sqlite", "sql", "migrations", "folder")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read the engine's folder migrations (run `make patch` first): %v", err)
+	}
+	read := map[string]bool{
+		"02-remove-invalid.sql":      true,
+		"03-drop-bad-invalid.sql":    true, // clears indexids; runs for a database older than schema 3, records exist from schema 5 on
+		"04-alter-blocks-tables.sql": true,
+		"05-normalize-files.sql":     true,
+	}
+	for _, entry := range entries {
+		if !read[entry.Name()] {
+			t.Errorf("the engine has a folder migration that was not read for what it does to index IDs: %s", entry.Name())
+		}
 	}
 }
 
@@ -851,10 +1001,7 @@ func TestIssue315_AfterARestoreTheMarkerDecides(t *testing.T) {
 	if !found {
 		t.Fatal("the folder has no record before the restore")
 	}
-	issue315ConfigOnDisk(t, filepath.Join(device, "config"), folderID)
-	if errMsg := StopSyncthing(); errMsg != "" {
-		t.Fatalf("StopSyncthing() = %q", errMsg)
-	}
+	issue315StopWithConfigOnDisk(t, filepath.Join(device, "config"), folderID)
 
 	// Two restores of the same device, each a copy of everything it held.
 	restoredA, restoredB := filepath.Join(base, "restored-a"), filepath.Join(base, "restored-b")
