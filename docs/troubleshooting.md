@@ -226,12 +226,14 @@ VaultSync never moves, recreates, or deletes folders on its own, and a rescan ca
 
 ## The Folder Found Is a Copy
 
-**Looks like:** under **Sync Issues**, a vault's card says that a folder with the vault's name is in the folder you selected, but that it is a copy and not the folder this vault synced in. The vault's own folder is gone — deleted, or in a folder VaultSync is no longer connected to — and what lies under the vault's name in the folder you selected is a copy of it, made in the Files app or by another app on this iPhone.
+**Looks like:** under **Sync Issues**, a vault's card says that a folder with the vault's name is in the folder you selected, but that it is a copy and not the folder this vault synced in. The vault's own folder is gone — deleted, or in a folder VaultSync is no longer connected to — and what lies under the vault's name in the folder you selected is a copy of it, made in the Files app or by another app on this iPhone. For a vault that syncs the selected folder itself, the card says that the folder you selected is the copy.
 
-VaultSync does not go on in a copy. A copy holds what the vault held when it was made, and VaultSync would take every difference since then for a change you made and send it to your other devices: a note the copy lacks as a deletion, an older note as the current version. A vault you moved is not a copy: syncing goes on in it, with whatever you changed in it while VaultSync was not running.
+**These steps belong to that card.** If your VaultSync shows no such card, update it first: a version without it goes on in a copy as if it were the vault, and what the copy lacks is then deleted on your other devices.
+
+VaultSync does not go on in a copy. A copy holds what the vault held when it was made, and VaultSync would take every difference since then for a change you made and send it to your other devices: a note the copy lacks as a deletion, an older note as the current version. A vault you moved to another folder under "On My iPhone" is not a copy: syncing goes on in it, with whatever you changed in it while VaultSync was not running. A vault moved between storage locations — out of iCloud Drive, or off an external drive — can arrive as newly created files; VaultSync then takes it for a copy, and step 2 is the way on.
 
 **Fix:**
-1. If the vault's own folder still exists in another place, tap **Reconnect to Obsidian** and select the folder that contains it. Selecting another folder cuts every other vault that syncs in the current folder off from the folder it lives in, so do this only when the folder you select contains all your vaults.
+1. If the vault's own folder still exists in another place, tap **Reconnect to Obsidian** and select the folder that contains it — or the vault's folder itself, if the card says that the folder you selected is the copy. Selecting another folder cuts every other vault that syncs in the current folder off from the folder it lives in, so do this only when the folder you select contains all your vaults.
 2. Otherwise tap **Remove This Vault** and accept the vault again under **Pending Shares**. If the share says that its folder already holds files, that folder is the copy: do not combine them — tap **Choose Vault…** and give the vault another folder name. The vault then arrives in a folder of its own, complete, from your other devices.
 
 **Afterwards:**

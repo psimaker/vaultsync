@@ -1307,6 +1307,20 @@ enum ManualShareTargetStore {
         FolderPathReconciler.canonical(rawRoot).lowercased()
     }
 
+    /// Keep the chosen folder name and drop the consent it stood for: the
+    /// next accept under that name asks before it combines the share with a
+    /// directory that holds files. For a vault removed while a copy was
+    /// found in its place — the directory of that name is then the copy, and
+    /// nobody agreed to sync into that (#315).
+    static func forgetConsent(forFolder folderID: String) {
+        queue.sync {
+            var roots = UserDefaults.standard.dictionary(forKey: rootStoreKey) as? [String: String] ?? [:]
+            guard roots[folderID] != nil else { return }
+            roots.removeValue(forKey: folderID)
+            UserDefaults.standard.set(roots, forKey: rootStoreKey)
+        }
+    }
+
     /// Record the chosen folder name and the selected folder it was chosen
     /// under, after a successful accept. Atomic read-modify-write.
     static func setTarget(_ name: String, forFolder folderID: String, underRoot rootKey: String) {

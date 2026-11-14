@@ -166,6 +166,14 @@ struct SyncBridgeService {
         return result.isEmpty ? nil : result
     }
 
+    /// Let the bridge write down, for every folder whose directory is there
+    /// with its marker, which directory the folder syncs in — what a copy is
+    /// told from later (#315, decision 063). Reads the file system at each
+    /// folder's path: call it off the main actor.
+    static func noteFolderStorage() {
+        BridgeNoteFolderStorage()
+    }
+
     /// The refusal `setFolderPath` returns for a directory that carries the
     /// folder's marker but is not the directory the folder synced in — a
     /// copy of it (#315). Read from the bridge, so the two cannot drift

@@ -1105,6 +1105,10 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .accessibilityElement(children: .combine)
+            if let url = folder.troubleshootingURL {
+                ExternalLinkButton(titleKey: "Learn how to fix", url: url)
+                    .font(.footnote)
+            }
             VaultButtonRow {
                 if folder.hasObsidianMapping {
                     Button(L10n.tr("Reconnect to Obsidian")) {
@@ -1378,7 +1382,8 @@ struct ContentView: View {
             }),
             rootCanonLower: vaultManager.obsidianBasePath.map {
                 Self.canonicalPath($0).lowercased()
-            }
+            },
+            refusedCopyRels: syncthingManager.refusedCopyRels
         )
     }
 

@@ -56,7 +56,9 @@ enum EngineAttach {
                 }
             }
         case .alreadyAttached:
-            break
+            // Nothing to attach — but a copy found in a vault's place may
+            // have been dealt with in the Files app meanwhile (#315).
+            syncthingManager.recheckCopiesFound(obsidianRoot: vaultManager.obsidianBasePath)
         }
         return action
     }

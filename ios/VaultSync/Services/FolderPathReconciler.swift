@@ -137,9 +137,8 @@ enum FolderPathReconciler {
         var notTheirStorage: Set<String> = []
 
         /// What of this outcome still holds for the folders configured now.
-        /// A reconcile runs beside the main actor: a folder removed while it
-        /// ran is no longer there to report, and a folder accepted again
-        /// under its ID is another one.
+        /// A reconcile runs beside the main actor, and a folder removed
+        /// while it ran is no longer there to report.
         func cut(to configured: some Sequence<String>) -> Outcome {
             Outcome(notTheirStorage: notTheirStorage.intersection(configured))
         }
@@ -241,6 +240,11 @@ enum FolderPathReconciler {
     /// run it off the main actor.
     @discardableResult
     static func reconcileLive(obsidianRoot: String?) -> Outcome {
+        // First of all: every folder whose directory can be reached now gets
+        // its record, before anything is decided. A folder that was out of
+        // reach when the engine started is in reach at this point at the
+        // latest — a reconcile follows every folder selection (#315).
+        SyncBridgeService.noteFolderStorage()
         let json = SyncBridgeService.getFoldersJSON()
         guard let data = json.data(using: .utf8),
               let decoded = try? JSONDecoder().decode([BridgeFolder].self, from: data) else {

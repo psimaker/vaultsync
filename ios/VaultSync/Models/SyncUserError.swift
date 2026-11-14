@@ -49,6 +49,10 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
         )
     }
 
+    /// The troubleshooting section for a vault with a copy found in its
+    /// place (#315). Its card and its page both link there.
+    static let folderIsACopyAnchor = "the-folder-found-is-a-copy"
+
     /// A vault whose folder is gone, with a copy of it found in its place
     /// (#315): the words of its card under Sync Issues, and the link to the
     /// section that has the rest. The engine's own error for it says that
@@ -348,7 +352,7 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
         case .folderMarkerMissing:
             anchor = "vault-folder-was-moved-or-deleted"
         case .folderIsACopy:
-            anchor = "the-folder-found-is-a-copy"
+            anchor = folderIsACopyAnchor
         case .config, .validation:
             if details.contains("pending") || details.contains("share") {
                 anchor = "no-pending-shares-appear"

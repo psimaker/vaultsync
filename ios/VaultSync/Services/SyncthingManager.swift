@@ -1135,7 +1135,13 @@ final class SyncthingManager {
             // inherit a stale relative path.
             FolderPathReconciler.removeRel(forFolder: id)
             // Nor what the last reconcile found for the folder that had it.
-            foldersWithoutTheirStorage.remove(id)
+            // If that was a copy in its place, a folder name remembered for
+            // its share stops standing for consent: the directory of that
+            // name is the copy, and accepting the share into it has to ask
+            // (#315, decision 007).
+            if foldersWithoutTheirStorage.remove(id) != nil {
+                ManualShareTargetStore.forgetConsent(forFolder: id)
+            }
             // Forget any #45 auto-pause record so a future folder reusing this
             // ID can be paused again if it collides (removing a colliding vault
             // is the sanctioned recovery; accepting the returning share re-adds
@@ -2315,10 +2321,15 @@ final class SyncthingManager {
 
     func folderUserError(folderID: String) -> SyncUserError? {
         guard let status = folderStatuses[folderID], status.state == "error" else { return nil }
-        // A vault with a copy found in its place gets the words of its card,
-        // wherever its error is shown (#315).
-        if foldersWithoutTheirStorage.contains(folderID) {
-            return .folderIsACopy(explanation: UnreachableFolder.copyExplanation)
+        // A vault with a copy found in its place gets the words of its card
+        // wherever its error is shown (#315) — while that error is that its
+        // directory cannot be reached. Any other error keeps its own text.
+        if foldersWithoutTheirStorage.contains(folderID),
+           let reason = status.errorReason, Self.pathErrorReasons.contains(reason) {
+            let wholeFolder = FolderPathReconciler.loadRel()[folderID] == ""
+            return .folderIsACopy(
+                explanation: UnreachableFolder.copyExplanation(syncsSelectedFolderItself: wholeFolder)
+            )
         }
         return SyncUserError.fromFolderStatus(
             reason: status.errorReason,
@@ -2356,38 +2367,80 @@ final class SyncthingManager {
         /// folder and was refused: it is a copy, not the directory the folder
         /// synced in (#315). The card names that instead of missing storage.
         let foundDirectoryIsNotItsStorage: Bool
+        /// True if the vault syncs the selected folder itself, as installs
+        /// from before 3.0 can: what was refused is then the selected folder,
+        /// not a folder in it.
+        let syncsSelectedFolderItself: Bool
 
         /// What the vault's card says is wrong. A directory that was found
         /// and refused gets its own text: "storage no longer exists" would
         /// send the user looking for a folder they can see.
         var explanation: String {
             if foundDirectoryIsNotItsStorage {
-                return Self.copyExplanation
+                return Self.copyExplanation(syncsSelectedFolderItself: syncsSelectedFolderItself)
             }
             return L10n.tr("This vault points to storage that no longer exists on this iPhone, so it can no longer sync.")
         }
 
+        /// Where the rest is said — what selecting another folder does to
+        /// the other vaults, and what to do with the copy afterwards. Only
+        /// the copy's card has a section of its own.
+        var troubleshootingURL: URL? {
+            foundDirectoryIsNotItsStorage
+                ? SyncUserError.troubleshootingURL(anchor: SyncUserError.folderIsACopyAnchor)
+                : nil
+        }
+
         /// What was found and the way on. Never to combine the share with
         /// the copy: a copy can hold older text of a note, and combining
-        /// would send that out as the newer version (#331). The step is tied
-        /// to what the share says about its folder, because a share with a
-        /// remembered folder skips the question (decisions 002, 007).
-        static var copyExplanation: String {
-            L10n.tr("A folder with this vault's name is in the folder you selected, but it is a copy, not the folder this vault synced in. VaultSync does not continue in a copy. If the vault's own folder still exists, select the folder that contains it. Otherwise remove this vault and accept it again under Pending Shares. If the share then says that its folder already holds files, do not combine them: tap \"Choose Vault…\" and give the vault another folder name.")
+        /// would send that out as the newer version (#331). The step hangs
+        /// on what the share says about its folder, and `removeFolder` sees
+        /// to it that the share says so: a folder name remembered for it
+        /// stops standing for consent (decisions 002, 007).
+        static func copyExplanation(syncsSelectedFolderItself: Bool) -> String {
+            if syncsSelectedFolderItself {
+                // No folder of the vault's name is involved, and selecting
+                // "the folder that contains it" would offer the bridge a
+                // folder without the marker.
+                return L10n.tr("The folder you selected is a copy, not the folder this vault synced in. VaultSync does not continue in a copy. If the vault's own folder still exists, select that folder itself. Otherwise remove this vault, select the folder that contains your vaults, and accept the vault again under Pending Shares.")
+            }
+            return L10n.tr("A folder with this vault's name is in the folder you selected, but it is a copy, not the folder this vault synced in. VaultSync does not continue in a copy. If the vault's own folder still exists, select the folder that contains it. Otherwise remove this vault and accept it again under Pending Shares. If the share then says that its folder already holds files, do not combine them: tap \"Choose Vault…\" and give the vault another folder name.")
         }
     }
 
+    /// The folder errors that say a folder's directory cannot be reached.
+    private static let pathErrorReasons: Set<String> = [
+        "folder_path_missing",
+        "permission_denied",
+        "folder_path_invalid",
+        "folder_path_unreadable",
+    ]
+
+    /// Where, under the selected folder, the copies lie that were refused in
+    /// a vault's place — relative paths, "" for the selected folder itself.
+    /// They are no vaults waiting to be shared (#315).
+    var refusedCopyRels: [String] {
+        let rel = FolderPathReconciler.loadRel()
+        return foldersWithoutTheirStorage.compactMap { rel[$0] }
+    }
+
+    /// A copy found in a vault's place is a finding about folders the user
+    /// can change in the Files app while VaultSync is in the background: the
+    /// copy deleted, the vault's own folder put where the copy was. A return
+    /// to the app over a running engine reconciles nothing by itself, so the
+    /// card would go on describing what is no longer there. Reconciles again
+    /// while a finding is shown; nil when there is none.
+    @discardableResult
+    func recheckCopiesFound(obsidianRoot: String?) -> Task<Void, Never>? {
+        guard !foldersWithoutTheirStorage.isEmpty else { return nil }
+        return reconcileFolderPaths(obsidianRoot: obsidianRoot)
+    }
+
     var unreachableFolders: [UnreachableFolder] {
-        let pathErrorReasons: Set<String> = [
-            "folder_path_missing",
-            "permission_denied",
-            "folder_path_invalid",
-            "folder_path_unreadable",
-        ]
         let rel = FolderPathReconciler.loadRel()
         return folders.compactMap { folder in
             guard let status = folderStatuses[folder.id], status.state == "error",
-                  let reason = status.errorReason, pathErrorReasons.contains(reason)
+                  let reason = status.errorReason, Self.pathErrorReasons.contains(reason)
             else { return nil }
             return UnreachableFolder(
                 id: folder.id,
@@ -2395,7 +2448,8 @@ final class SyncthingManager {
                 path: status.errorPath ?? folder.path,
                 reason: reason,
                 hasObsidianMapping: rel[folder.id] != nil,
-                foundDirectoryIsNotItsStorage: foldersWithoutTheirStorage.contains(folder.id)
+                foundDirectoryIsNotItsStorage: foldersWithoutTheirStorage.contains(folder.id),
+                syncsSelectedFolderItself: rel[folder.id] == ""
             )
         }
     }

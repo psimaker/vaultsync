@@ -83,18 +83,29 @@ struct Issue315CopiedMarkerTests {
 
     @Test("The vault's card names the copy and the way on, and keeps its text for storage that is gone")
     func cardExplainsWhatWasFound() {
-        func folder(refused: Bool) -> SyncthingManager.UnreachableFolder {
+        func folder(refused: Bool, wholeFolder: Bool = false) -> SyncthingManager.UnreachableFolder {
             SyncthingManager.UnreachableFolder(
                 id: "f1",
                 label: "Vault",
                 path: "/old/Obsidian/Vault",
                 reason: "folder_path_missing",
                 hasObsidianMapping: true,
-                foundDirectoryIsNotItsStorage: refused
+                foundDirectoryIsNotItsStorage: refused,
+                syncsSelectedFolderItself: wholeFolder
             )
         }
         let gone = folder(refused: false).explanation
         let copy = folder(refused: true).explanation
+        // Only the copy's card has a section of its own to link to.
+        #expect(folder(refused: false).troubleshootingURL == nil)
+        #expect(folder(refused: true).troubleshootingURL?.fragment == "the-folder-found-is-a-copy")
+        // A vault that syncs the selected folder itself: no folder of its
+        // name is involved, and "the folder that contains it" has no marker.
+        let wholeFolderCopy = folder(refused: true, wholeFolder: true).explanation
+        #expect(wholeFolderCopy.contains("The folder you selected is a copy"))
+        #expect(wholeFolderCopy.contains("select that folder itself"))
+        #expect(!wholeFolderCopy.contains("with this vault's name"))
+        #expect(folder(refused: false, wholeFolder: true).explanation == gone)
         #expect(gone == "This vault points to storage that no longer exists on this iPhone, so it can no longer sync.")
         #expect(copy != gone)
         #expect(copy.contains("it is a copy, not the folder this vault synced in"))
@@ -106,7 +117,7 @@ struct Issue315CopiedMarkerTests {
         #expect(!copy.contains("asks before it combines"))
     }
 
-    private func pathMissing() -> SyncthingManager.FolderStatusInfo {
+    private func inError(_ reason: String = "folder_path_missing") -> SyncthingManager.FolderStatusInfo {
         SyncthingManager.FolderStatusInfo(payload: .init(
             state: "error",
             stateChanged: "2026-11-14T09:00:00Z",
@@ -118,7 +129,7 @@ struct Issue315CopiedMarkerTests {
             needBytes: 0,
             needFiles: 0,
             inProgressBytes: 0,
-            errorReason: "folder_path_missing",
+            errorReason: reason,
             errorMessage: nil,
             errorPath: nil,
             errorChanged: nil
@@ -148,15 +159,15 @@ struct Issue315CopiedMarkerTests {
         manager._testFinishReconcile(overtaken, finding: found(["f1"]))
         #expect(manager.foldersWithoutTheirStorage.isEmpty)
 
-        // The overtaken pass finishes first: it says nothing until the later
-        // one has.
+        // The overtaken pass finishes first: what it found changes nothing,
+        // and the later one decides when it is done.
+        manager._testSetFoldersWithoutTheirStorage(["the-state-before"])
         overtaken = manager._testBeginReconcile()
         last = manager._testBeginReconcile()
-        manager._testFinishReconcile(overtaken, finding: found([]))
-        manager._testSetFoldersWithoutTheirStorage(["marker-of-the-state-before"])
-        #expect(manager.foldersWithoutTheirStorage == ["marker-of-the-state-before"])
-        manager._testFinishReconcile(last, finding: found(["f1"]))
-        #expect(manager.foldersWithoutTheirStorage == ["f1"])
+        manager._testFinishReconcile(overtaken, finding: found(["f1"]))
+        #expect(manager.foldersWithoutTheirStorage == ["the-state-before"])
+        manager._testFinishReconcile(last, finding: found([]))
+        #expect(manager.foldersWithoutTheirStorage.isEmpty)
     }
 
     @MainActor
@@ -173,12 +184,12 @@ struct Issue315CopiedMarkerTests {
     @Test("The vault's own page says what its card says, not \"recreate or reselect the folder\"")
     func vaultPageSaysWhatTheCardSays() throws {
         let manager = SyncthingManager()
-        manager._testSetFolderStatuses(["f1": pathMissing(), "f2": pathMissing()])
-        manager._testSetFoldersWithoutTheirStorage(["f1"])
+        manager._testSetFolderStatuses(["f1": inError(), "f2": inError(), "f3": inError("unknown_error")])
+        manager._testSetFoldersWithoutTheirStorage(["f1", "f3"])
 
         let copy = try #require(manager.folderUserError(folderID: "f1"))
         #expect(copy.category == .folderIsACopy)
-        #expect(copy.message == SyncthingManager.UnreachableFolder.copyExplanation)
+        #expect(copy.message == SyncthingManager.UnreachableFolder.copyExplanation(syncsSelectedFolderItself: false))
         // Recreating the folder is what puts a copy in the vault's place.
         #expect(copy.remediation.isEmpty)
         #expect(SyncUserError.troubleshootingURL(for: copy)?.fragment == "the-folder-found-is-a-copy")
@@ -187,6 +198,46 @@ struct Issue315CopiedMarkerTests {
         let gone = try #require(manager.folderUserError(folderID: "f2"))
         #expect(gone.category == .config)
         #expect(gone.remediation == "Recreate or reselect the folder, then trigger a rescan.")
+
+        // The copy text belongs to a directory that cannot be reached. A
+        // flagged vault in another error is shown that error.
+        let other = try #require(manager.folderUserError(folderID: "f3"))
+        #expect(other.category != .folderIsACopy)
+    }
+
+    @MainActor
+    @Test("A vault that syncs the selected folder itself gets the text for a copied selected folder on its page")
+    func vaultPageForAWholeFolderVault() throws {
+        let id = "issue315-whole-\(UUID().uuidString)"
+        FolderPathReconciler.setRel("", forFolder: id)
+        defer { FolderPathReconciler.removeRel(forFolder: id) }
+        let manager = SyncthingManager()
+        manager._testSetFolderStatuses([id: inError()])
+        manager._testSetFoldersWithoutTheirStorage([id])
+
+        let copy = try #require(manager.folderUserError(folderID: id))
+        #expect(copy.message == SyncthingManager.UnreachableFolder.copyExplanation(syncsSelectedFolderItself: true))
+        // And every vault in that folder is part of the copy.
+        #expect(manager.refusedCopyRels == [""])
+    }
+
+    @Test("A copy that was refused in a vault's place is not listed as a vault waiting to be shared")
+    func refusedCopyIsNotAnUnsyncedVault() {
+        let root = "/new/obsidian"
+        func unsynced(_ rels: [String]) -> [String] {
+            UnsyncedVaultsModel.derive(
+                detectedVaults: ["Vault", "Other"],
+                folderPathsCanonLower: ["/old/obsidian/vault"],
+                rootCanonLower: root,
+                refusedCopyRels: rels
+            )
+        }
+        // Without a finding both are vaults nothing syncs.
+        #expect(unsynced([]) == ["Vault", "Other"])
+        // The copy under the vault's name is spoken for by its card.
+        #expect(unsynced(["Vault"]) == ["Other"])
+        // A copied selected folder: everything in it is part of the copy.
+        #expect(unsynced([""]).isEmpty)
     }
 }
 
@@ -325,8 +376,95 @@ extension EngineBridgeSuites {
             try await rig.leaveOnlyACopy()
             #expect(rig.manager.foldersWithoutTheirStorage == [rig.folderID])
 
+            // A folder name remembered for the vault's share, chosen under
+            // the folder that is selected now: until here it stood for
+            // consent to sync into the directory of that name.
+            let root = ManualShareTargetStore.rootKey(rig.secondRoot.path)
+            ManualShareTargetStore.setTarget("Vault", forFolder: rig.folderID, underRoot: root)
+
             #expect(rig.manager.removeFolder(id: rig.folderID) == nil)
             #expect(rig.manager.foldersWithoutTheirStorage.isEmpty)
+            // The name stays, the consent does not: that directory is the
+            // copy, and the share must not go into it without the question.
+            #expect(ManualShareTargetStore.target(forFolder: rig.folderID) == "Vault")
+            #expect(ManualShareTargetStore.consentRoot(forFolder: rig.folderID) == nil)
+        }
+
+        @MainActor
+        @Test("Removing a vault without such a finding leaves a remembered folder name as it was (#52)")
+        func removalWithoutAFindingKeepsTheConsent() async throws {
+            let rig = try await Rig()
+            defer { rig.tearDown() }
+            let root = ManualShareTargetStore.rootKey(rig.firstRoot.path)
+            ManualShareTargetStore.setTarget("Vault", forFolder: rig.folderID, underRoot: root)
+
+            #expect(rig.manager.removeFolder(id: rig.folderID) == nil)
+            #expect(ManualShareTargetStore.consentRoot(forFolder: rig.folderID) == root)
+        }
+
+        @MainActor
+        @Test("A copied selected folder is refused for a vault that syncs the selected folder itself")
+        func wholeFolderCopyIsRefused() async throws {
+            let rig = try await Rig(wholeFolder: true)
+            defer { rig.tearDown() }
+
+            try await rig.leaveOnlyACopy()
+
+            #expect(rig.manager.foldersWithoutTheirStorage == [rig.folderID])
+            #expect(rig.manager.refusedCopyRels == [""])
+        }
+
+        @MainActor
+        @Test("Coming back to the app looks again while a copy is reported: once the copy is gone, so is the finding")
+        func returningToTheAppRechecksACopy() async throws {
+            let rig = try await Rig()
+            defer { rig.tearDown() }
+            let vaultManager = VaultManager()
+            vaultManager._testSetAccess(accessible: true, detectedVaults: [], obsidianDirectoryURL: rig.secondRoot)
+
+            // Nothing reported: coming back reconciles nothing.
+            #expect(rig.manager.recheckCopiesFound(obsidianRoot: rig.secondRoot.path) == nil)
+
+            try await rig.leaveOnlyACopy()
+            #expect(rig.manager.foldersWithoutTheirStorage == [rig.folderID])
+
+            // The copy is deleted in the Files app, and the app comes back
+            // to the foreground over its running engine.
+            try FileManager.default.removeItem(at: rig.other)
+            #expect(EngineAttach.onForeground(syncthingManager: rig.manager, vaultManager: vaultManager) == .alreadyAttached)
+            for _ in 0..<100 where !rig.manager.foldersWithoutTheirStorage.isEmpty {
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            #expect(rig.manager.foldersWithoutTheirStorage.isEmpty)
+        }
+
+        @MainActor
+        @Test("What a vault's folder is known by is read again at every reconcile")
+        func everyReconcileNotesTheFolder() async throws {
+            let rig = try await Rig()
+            defer { rig.tearDown() }
+
+            // The marker is made anew in its place, so the folder is known
+            // by another file than the one recorded when it was added. A
+            // reconcile while the folder is there records the new one.
+            let markerDirectory = rig.own.appendingPathComponent(".stfolder", isDirectory: true)
+            let markerName = try #require(try FileManager.default.contentsOfDirectory(atPath: markerDirectory.path).first)
+            let marker = markerDirectory.appendingPathComponent(markerName)
+            let content = try Data(contentsOf: marker)
+            // The new one is written before the old one goes, so it cannot
+            // be handed the old one's file number.
+            try content.write(to: markerDirectory.appendingPathComponent("\(markerName).new"))
+            try FileManager.default.removeItem(at: marker)
+            try FileManager.default.moveItem(at: markerDirectory.appendingPathComponent("\(markerName).new"), to: marker)
+            await rig.manager.reconcileFolderPaths(obsidianRoot: rig.firstRoot.path).value
+
+            // Moved afterwards, the folder is taken where it is. With the
+            // record from the add it would be refused as a copy.
+            try FileManager.default.moveItem(at: rig.own, to: rig.other)
+            await rig.manager.reconcileFolderPaths(obsidianRoot: rig.secondRoot.path).value
+
+            #expect(rig.manager.foldersWithoutTheirStorage.isEmpty)
+            #expect(rig.configuredPath() == FolderPathReconciler.canonical(rig.other.path))
         }
 
         @MainActor

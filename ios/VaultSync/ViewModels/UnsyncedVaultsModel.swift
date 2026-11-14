@@ -15,16 +15,26 @@ import Foundation
 /// from outside the root) is the collision guards' territory, not this row's.
 enum UnsyncedVaultsModel {
 
+    /// `refusedCopyRels` are the places, relative to the root, of copies
+    /// that were refused in a vault's place (#315) — "" for the root itself.
+    /// Such a copy looks like a vault nothing syncs, and its vault's card
+    /// already says what it is: listed here it would be offered for sharing
+    /// from the computer, right below the card that says VaultSync does not
+    /// go on in it.
     static func derive(
         detectedVaults: [String],
         folderPathsCanonLower: Set<String>,
-        rootCanonLower: String?
+        rootCanonLower: String?,
+        refusedCopyRels: [String] = []
     ) -> [String] {
         guard let root = rootCanonLower, !root.isEmpty else { return [] }
-        if folderPathsCanonLower.contains(root) { return [] }
+        let taken = folderPathsCanonLower.union(refusedCopyRels.map { rel in
+            rel.isEmpty ? root : (root as NSString).appendingPathComponent(rel.lowercased())
+        })
+        if taken.contains(root) { return [] }
         return detectedVaults.filter { vault in
             let subfolder = (root as NSString).appendingPathComponent(vault.lowercased())
-            return !folderPathsCanonLower.contains(subfolder)
+            return !taken.contains(subfolder)
         }
     }
 }
