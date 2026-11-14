@@ -134,6 +134,8 @@ In the app: **Cloud Relay** tab → **Relay health & diagnostics** → **Check R
 4. In VaultSync, pull to refresh (or reopen the app) and check **Pending Shares**; accept manually if shown.
 5. Still empty? Unshare and re-share the folder from the desktop.
 
+**After you removed a vault:** its share comes back under **Pending Shares** by itself while the other device is connected, usually within a few seconds. If you removed several vaults one after another, give it up to a minute. It then waits for you to accept it.
+
 ---
 
 ## APNs Not Registered

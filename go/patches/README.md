@@ -57,6 +57,25 @@ Two safety nets compensate:
   its own error variable. Unfixed upstream as of v2.1.6-rc.4: carry it
   across a bump, and drop it only once upstream changes the closure and
   `TestIssue152_*` stays green under `-race`. Worth reporting upstream.
+- `syncthing/006-reannounce-after-folder-removal.patch` — when a folder is
+  removed, the connections to the devices it was shared with are closed, after
+  the pending entries of that folder were discarded (#316, decision 064). A
+  device that goes on sharing the folder announces it only when a connection
+  is set up or its own configuration changes, so without the reconnect the
+  folder was not offered again until the app restarted. Upstream closes a
+  connection for the same reason when an ignored folder is un-ignored, but
+  not when a folder is removed (unchanged in the pinned tree). Worth reporting
+  upstream.
+- `syncthing/007-retry-without-port-reuse-after-failed-handshake.patch` — a
+  TCP dial whose TLS handshake fails is tried once more without reusing the
+  listening port (#316, decision 064). After a connection is closed both
+  sides dial at once, each from its listening port to the other's; TCP can
+  join two such attempts into one connection on which both ends are TLS
+  clients, the handshake fails on both, and both retry after the same
+  interval and meet again. 006 makes that moment ordinary, so it must not be
+  carried without 007: `TestIssue316_AFailedHandshakeIsTriedAgainFromAnotherPort`
+  fails without it. Touches the lines 003 changes in `tcp_dial.go`. Worth
+  reporting upstream.
 - `go-stun/001-nil-safe-host-methods.patch` — nil-safe host methods.
 
 ## Before each release

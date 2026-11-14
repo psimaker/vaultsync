@@ -1,0 +1,69 @@
+--- a/lib/model/model.go
++++ b/lib/model/model.go
+@@ -207,6 +207,8 @@
+ 	errEncryptionTokenWrite               = errors.New("failed to write encryption token")
+ 	errMissingRemoteInClusterConfig       = errors.New("remote device missing in cluster config")
+ 	errMissingLocalInClusterConfig        = errors.New("local device missing in cluster config")
++	// VaultSync (#316): the other side receives this text with the close.
++	errFolderRemoved = errors.New("reconnecting after a folder was removed")
+ )
+ 
+ // NewModel creates and starts a new model. The model starts in read-only mode,
+@@ -2995,6 +2997,8 @@
+ 	}
+ 
+ 	removedFolders := make(map[string]struct{})
++	// VaultSync (#316): the devices a removed folder was shared with.
++	removedFolderDevices := make(deviceIDSet)
+ 	for folderID, fromCfg := range fromFolders {
+ 		toCfg, ok := toFolders[folderID]
+ 		if !ok {
+@@ -3002,6 +3006,7 @@
+ 			m.removeFolder(fromCfg)
+ 			clusterConfigDevices.add(fromCfg.DeviceIDs())
+ 			removedFolders[fromCfg.ID] = struct{}{}
++			removedFolderDevices.add(fromCfg.DeviceIDs())
+ 			continue
+ 		}
+ 
+@@ -3110,11 +3115,40 @@
+ 		}
+ 	}
+ 	m.mut.RUnlock()
++	// VaultSync (#316): no cluster config for a device whose connection is
++	// closed below. It gets ours on the new connection, and a message sent
++	// just before the close can hold the close message back until it is
++	// acknowledged, by which time the connection is gone.
++	for id := range removedFolderDevices {
++		delete(clusterConfigDevices, id)
++	}
+ 	// Generating cluster-configs acquires the mutex.
+ 	m.sendClusterConfig(clusterConfigDevices.AsSlice())
+ 
+ 	ignoredDevices := observedDeviceSet(to.IgnoredDevices)
+ 	m.cleanPending(toDevices, toFolders, ignoredDevices, removedFolders)
++
++	// VaultSync (#316): a device that goes on sharing a folder removed here
++	// does not announce it again by itself. It sends its cluster config when
++	// a connection is set up or when its own configuration changes, and a
++	// removal on this side is neither, so the folder never became pending
++	// until the next reconnect. Close the connections to the devices the
++	// folder was shared with, as is done above for a device whose ignored
++	// folder was un-ignored: the connection service dials again at once, and
++	// both sides announce their folders on the new connection.
++	//
++	// It has to come after cleanPending, which discards what is pending for
++	// a removed folder: an announcement that arrived before it would be
++	// discarded with the rest. And it reads the connections now, not from a
++	// list made earlier, so that a connection set up during this commit is
++	// closed too.
++	m.mut.RLock()
++	for id := range removedFolderDevices {
++		for _, connID := range m.deviceConnIDs[id] {
++			go m.connections[connID].Close(errFolderRemoved)
++		}
++	}
++	m.mut.RUnlock()
+ 
+ 	m.globalRequestLimiter.SetCapacity(1024 * to.Options.MaxConcurrentIncomingRequestKiB())
+ 	m.folderIOLimiter.SetCapacity(to.Options.MaxFolderConcurrency())
