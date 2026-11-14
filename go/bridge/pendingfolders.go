@@ -199,6 +199,7 @@ func AcceptPendingFolder(folderID, label, path, root string, allowNonEmpty bool)
 	}); err != nil {
 		return fmt.Sprintf("modify config: %v", err)
 	}
+	noteFolderStorageLocked(newFolder)
 
 	return ""
 }

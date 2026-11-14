@@ -245,11 +245,27 @@ func TestSetFolderPath(t *testing.T) {
 		t.Fatalf("SetFolderPath foreign target = %q, want marker-missing refusal", errMsg)
 	}
 
-	// Valid in-place rebase to a directory that holds THIS folder's data
-	// (marker with this folder's fingerprint present).
+	// A folder whose own directory still exists is live and is never
+	// re-pointed, whatever the target holds (decision 003; #315).
 	pathB := filepath.Join(configDir, "vaultB")
 	writeFolderMarker(t, pathB, "pathtest")
-	if errMsg := SetFolderPath("pathtest", pathB); errMsg != "" {
+	if errMsg := SetFolderPath("pathtest", pathB); errMsg != "the folder's own directory still exists" {
+		t.Fatalf("SetFolderPath for a live folder = %q, want the refusal for a folder whose directory still exists", errMsg)
+	}
+
+	// A directory that merely carries the marker is not the directory the
+	// folder synced in, also once that one is gone: the bridge knows the
+	// folder's directory by its marker's file number (#315, decision 063).
+	pathC := filepath.Join(configDir, "vaultC")
+	if err := os.Rename(pathA, pathC); err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+	if errMsg := SetFolderPath("pathtest", pathB); errMsg != FolderStorageMismatchError() {
+		t.Fatalf("SetFolderPath onto another directory with the marker = %q, want %q", errMsg, FolderStorageMismatchError())
+	}
+
+	// Valid in-place rebase: the folder's own directory, under another path.
+	if errMsg := SetFolderPath("pathtest", pathC); errMsg != "" {
 		t.Fatalf("SetFolderPath valid rebase = %q, want ''", errMsg)
 	}
 
@@ -261,8 +277,8 @@ func TestSetFolderPath(t *testing.T) {
 	if len(folders) != 1 {
 		t.Fatalf("got %d folders, want 1", len(folders))
 	}
-	if folders[0].Path != pathB {
-		t.Errorf("path = %q, want %q", folders[0].Path, pathB)
+	if folders[0].Path != pathC {
+		t.Errorf("path = %q, want %q", folders[0].Path, pathC)
 	}
 	if len(folders[0].DeviceIDs) != 1 || folders[0].DeviceIDs[0] != testDeviceID {
 		t.Errorf("deviceIDs = %v, want [%s] (share must survive path change)", folders[0].DeviceIDs, testDeviceID)

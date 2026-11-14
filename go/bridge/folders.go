@@ -84,6 +84,7 @@ func AddFolder(id, label, path string) string {
 	}); err != nil {
 		return fmt.Sprintf("modify config: %v", err)
 	}
+	noteFolderStorageLocked(newFolder)
 
 	return ""
 }
@@ -127,12 +128,21 @@ func RemoveFolder(id string) string {
 //
 // VaultSync uses this to re-point a folder at the current sandbox location
 // after iOS changes the absolute container path (which it does on reinstall,
-// restore, or migration). The new path MUST already exist as a directory that
-// physically holds the folder's data and its `.stfolder` marker. This call
-// deliberately does NOT create the directory: pointing a send-receive folder at
-// a fresh empty directory looks like "all files deleted" and could propagate
-// deletions to peers, and an already-indexed folder will not recreate its
-// marker (yielding ErrMarkerMissing).
+// restore, or migration). The folder goes on with the index it has, so the
+// new path must be the directory the folder synced in: in any other one,
+// whatever differs from the index is taken for a local change on the first
+// scan and sent to every peer, a missing file as a deletion, an older one as
+// the new version. Three things have to hold, and each refusal leaves the
+// folder where it is:
+//
+//   - the new path is a directory with this folder's `.stfolder` marker. This
+//     call deliberately does NOT create the directory: an already-indexed
+//     folder will not recreate its marker (yielding ErrMarkerMissing);
+//   - the folder's own directory is gone — while it exists the folder is
+//     live, and a live folder is never re-pointed (decision 003);
+//   - the directory is not known to be another one than the folder synced in
+//     (folderStorageRefusalLocked). The marker alone cannot tell: a copy made
+//     by hand carries it (#315, decision 063).
 //
 // Returns empty string on success — including a no-op when the path is already
 // equivalent — or an error message on failure.
@@ -168,16 +178,23 @@ func SetFolderPath(folderID, newPath string) string {
 		return "target path is not a directory"
 	}
 
-	// Defense in depth against a destructive rebase: only re-point a folder at a
-	// directory that already holds THIS folder's data. Syncthing's marker is a
-	// `.stfolder` directory containing `syncthing-folder-<hash(folderID)>.txt`,
-	// so the presence of that exact file proves the target was this very
-	// folder's root (not an empty dir, and not a foreign folder). Without this,
-	// rebasing a send-receive folder onto an empty or mismatched directory would
-	// make Syncthing treat every indexed file as deleted and propagate those
-	// deletions to peers.
+	// Syncthing's marker is a `.stfolder` directory containing
+	// `syncthing-folder-<hash(folderID)>.txt`: without that exact file the
+	// target is an empty directory or another folder's.
 	if markerErr := verifyFolderMarker(folder, newPath); markerErr != "" {
 		return markerErr
+	}
+
+	// A folder whose own directory is still there keeps syncing in it. Only
+	// a directory that answers counts as there: on iOS a container the app
+	// can no longer reach answers "operation not permitted" whether it
+	// exists or not, and that is the very case this repair is for (#25).
+	if own, err := os.Stat(folder.Path); err == nil && own.IsDir() {
+		return "the folder's own directory still exists"
+	}
+
+	if refusal := folderStorageRefusalLocked(folder, newPath); refusal != "" {
+		return refusal
 	}
 
 	if err := commitConfigLocked(func(cfg *config.Configuration) {
@@ -191,28 +208,38 @@ func SetFolderPath(folderID, newPath string) string {
 		return fmt.Sprintf("modify config: %v", err)
 	}
 
+	// The folder syncs here from now on. Where the marker decided, this is
+	// the record that knows the directory the next time.
+	folder.Path = newPath
+	noteFolderStorageLocked(folder)
+
 	return ""
 }
 
-// verifyFolderMarker returns "" if newPath holds the Syncthing folder marker for
-// this folder, or a user-facing error string if it does not. For the default
-// `.stfolder` marker it checks the folder-ID-specific fingerprint file
-// (`syncthing-folder-<hash>.txt`), which proves the target was this very
-// folder's root rather than an empty or foreign directory. For a custom marker
-// name it falls back to checking the marker entry's presence.
-func verifyFolderMarker(folder config.FolderConfiguration, newPath string) string {
+// folderMarkerPath returns the entry whose presence in root marks it as the
+// folder's directory: for the default `.stfolder` marker the fingerprint file
+// named after the folder's ID (`syncthing-folder-<hash>.txt`), for a custom
+// marker name the marker entry itself.
+func folderMarkerPath(folder config.FolderConfiguration, root string) string {
 	markerName := folder.MarkerName
 	if markerName == "" {
 		markerName = config.DefaultMarkerName
 	}
 
-	markerPath := filepath.Join(newPath, markerName)
+	markerPath := filepath.Join(root, markerName)
 	if markerName == config.DefaultMarkerName {
 		h := sha256.Sum256([]byte(folder.ID))
 		markerPath = filepath.Join(markerPath, fmt.Sprintf("syncthing-folder-%x.txt", h[:3]))
 	}
+	return markerPath
+}
 
-	if _, err := os.Stat(markerPath); err != nil {
+// verifyFolderMarker returns "" if newPath holds the Syncthing folder marker for
+// this folder, or a user-facing error string if it does not. The marker tells
+// this folder's directory from an empty or a foreign one — and not from a copy
+// of it, which is why folderStorageRefusalLocked follows.
+func verifyFolderMarker(folder config.FolderConfiguration, newPath string) string {
+	if _, err := os.Stat(folderMarkerPath(folder, newPath)); err != nil {
 		if os.IsNotExist(err) {
 			return "target does not contain this folder's data (marker missing)"
 		}

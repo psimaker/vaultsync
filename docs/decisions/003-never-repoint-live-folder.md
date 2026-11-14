@@ -8,4 +8,4 @@
 
 **Rejected alternative:** Trusting the app's stored path mapping and re-pointing whenever it disagrees — 1.7.2 showed exactly that: a blocked rebase retried against a healthy vault on every launch.
 
-**Links:** #25, #45 follow-up (PR #51), CHANGELOG 1.7.2.
+**Links:** #25, #45 follow-up (PR #51), CHANGELOG 1.7.2. Since 063 (#315) the marker is necessary and no longer sufficient: where the bridge recorded which directory the folder synced in, the target also has to be that directory.
