@@ -243,7 +243,7 @@ struct ContentView: View {
             }
             Button(L10n.tr("Cancel"), role: .cancel) { vaultPendingRemoval = nil }
         } message: { target in
-            Text(L10n.fmt("“%@” will stop syncing on this iPhone. Files already on your other devices are not deleted.", target.label))
+            Text(L10n.fmt("“%@” will stop syncing on this iPhone. Files already on your other devices are not deleted. To sync it here again later: wait ten seconds, close VaultSync in the app switcher and open it again, and accept it under Pending Shares once it shows there.", target.label))
         }
         .alert(
             L10n.tr("Sync into a folder that already contains files?"),
@@ -256,7 +256,7 @@ struct ContentView: View {
             Button(L10n.tr("Cancel"), role: .cancel) { shareAccept.pendingMergeConfirmation = nil }
         } message: { request in
             Text(L10n.fmt(
-                "The folder \"%@\" already contains files. If you accept, those files and the contents of the shared vault \"%@\" will be combined and synced to the other devices sharing this vault. Accept only if this folder holds this vault's own earlier notes — for example after removing the vault and accepting its share again. If it is a different vault or unrelated files, cancel and use \"Choose Vault…\" to pick a different location.",
+                "The folder \"%@\" already contains files. If you accept, those files and the contents of the shared vault \"%@\" will be combined and synced to the other devices sharing this vault. Accept only if this folder holds this vault's own earlier notes — for example after removing the vault, reopening VaultSync and accepting its share again. If it is a different vault or unrelated files, cancel and use \"Choose Vault…\" to pick a different location.",
                 request.targetName,
                 request.folder.label.isEmpty ? request.folder.id : request.folder.label
             ))

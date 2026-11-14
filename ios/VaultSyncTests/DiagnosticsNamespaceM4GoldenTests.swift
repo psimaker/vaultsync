@@ -95,12 +95,7 @@ struct DiagnosticsNamespaceM4GoldenTests {
         ]
 
         for (locale, terms) in requiredTerms {
-            let url = productDirectory
-                .appendingPathComponent("\(locale).lproj", isDirectory: true)
-                .appendingPathComponent("Localizable.strings")
-            let data = try Data(contentsOf: url)
-            let propertyList = try PropertyListSerialization.propertyList(from: data, format: nil)
-            let strings = try #require(propertyList as? [String: String])
+            let strings = try TestSupport.localizedStrings(locale)
             let copy = try #require(strings[sourceKey])
             #expect(copy.components(separatedBy: "%@").count - 1 == 2)
             #expect(copy.contains("VaultSync Diagnostics"))

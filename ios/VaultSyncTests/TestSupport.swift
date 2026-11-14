@@ -67,4 +67,26 @@ enum TestSupport {
         let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
         return documentsURL.appendingPathComponent("syncthing", isDirectory: true)
     }
+
+    struct LocalizedStringsUnreadable: Error {
+        let language: String
+    }
+
+    /// The app's `Localizable.strings` for one language (`en`, `de`, `es`,
+    /// `zh-Hans`), read from the source tree beside this file — key to text.
+    /// For tests that hold a text to what it must say in every language.
+    static func localizedStrings(_ language: String) throws -> [String: String] {
+        let url = URL(fileURLWithPath: "\(#filePath)")
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("VaultSync", isDirectory: true)
+            .appendingPathComponent("\(language).lproj", isDirectory: true)
+            .appendingPathComponent("Localizable.strings")
+        let data = try Data(contentsOf: url)
+        let list = try PropertyListSerialization.propertyList(from: data, format: nil)
+        guard let table = list as? [String: String] else {
+            throw LocalizedStringsUnreadable(language: language)
+        }
+        return table
+    }
 }
