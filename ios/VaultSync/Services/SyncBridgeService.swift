@@ -155,23 +155,12 @@ struct SyncBridgeService {
 
     /// Rewrite a folder's on-disk path IN PLACE, preserving its devices, label,
     /// ignore patterns, and index database (Syncthing restarts the folder runner
-    /// at the new path without re-hashing or re-downloading). The bridge moves
-    /// a folder only when its own directory is gone and the target is its
-    /// storage: a directory with the folder's marker that agrees with the
-    /// folder's index (#315, decision 063). Reads the whole index — call it
-    /// off the main actor.
+    /// at the new path without re-hashing or re-downloading). The target path
+    /// must already exist as a directory holding the folder's data.
     /// - Returns: nil on success (incl. a no-op when unchanged), error message on failure.
     static func setFolderPath(folderID: String, path: String) -> String? {
         let result = BridgeSetFolderPath(folderID, path)
         return result.isEmpty ? nil : result
-    }
-
-    /// The refusal `setFolderPath` returns for a directory that carries the
-    /// folder's marker but does not hold what the folder last synced — an
-    /// earlier copy, for one (#315). Read from the bridge, so the two cannot
-    /// drift apart.
-    static var folderStorageMismatchError: String {
-        BridgeFolderStorageMismatchError()
     }
 
     /// Pause or resume a configured folder. A paused folder is neither scanned

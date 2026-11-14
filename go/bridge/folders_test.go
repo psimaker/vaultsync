@@ -253,13 +253,19 @@ func TestSetFolderPath(t *testing.T) {
 		t.Fatalf("SetFolderPath for a live folder = %q, want the refusal for a folder whose directory still exists", errMsg)
 	}
 
-	// Valid in-place rebase: the folder's own directory is gone, and the
-	// target holds THIS folder's marker and agrees with its index — which has
-	// no entries here, the folder never held a file.
-	if err := os.RemoveAll(pathA); err != nil {
-		t.Fatalf("RemoveAll: %v", err)
+	// A directory that merely carries the marker is not the directory the
+	// folder synced in, also once that one is gone: the bridge knows the
+	// folder's directory by its marker's file number (#315, decision 063).
+	pathC := filepath.Join(configDir, "vaultC")
+	if err := os.Rename(pathA, pathC); err != nil {
+		t.Fatalf("Rename: %v", err)
 	}
-	if errMsg := SetFolderPath("pathtest", pathB); errMsg != "" {
+	if errMsg := SetFolderPath("pathtest", pathB); errMsg != FolderStorageMismatchError() {
+		t.Fatalf("SetFolderPath onto another directory with the marker = %q, want %q", errMsg, FolderStorageMismatchError())
+	}
+
+	// Valid in-place rebase: the folder's own directory, under another path.
+	if errMsg := SetFolderPath("pathtest", pathC); errMsg != "" {
 		t.Fatalf("SetFolderPath valid rebase = %q, want ''", errMsg)
 	}
 
@@ -271,8 +277,8 @@ func TestSetFolderPath(t *testing.T) {
 	if len(folders) != 1 {
 		t.Fatalf("got %d folders, want 1", len(folders))
 	}
-	if folders[0].Path != pathB {
-		t.Errorf("path = %q, want %q", folders[0].Path, pathB)
+	if folders[0].Path != pathC {
+		t.Errorf("path = %q, want %q", folders[0].Path, pathC)
 	}
 	if len(folders[0].DeviceIDs) != 1 || folders[0].DeviceIDs[0] != testDeviceID {
 		t.Errorf("deviceIDs = %v, want [%s] (share must survive path change)", folders[0].DeviceIDs, testDeviceID)

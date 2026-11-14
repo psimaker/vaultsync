@@ -611,7 +611,6 @@
 "“%@” will stop syncing on this iPhone. Files already on your other devices are not deleted." = "“%@”将停止在此 iPhone 上同步。已在你其他设备上的文件不会被删除。";
 "Removing a vault only stops syncing it on this iPhone. The notes on your other devices are not affected." = "移除 Vault 只会停止在此 iPhone 上的同步。你其他设备上的笔记不受影响。";
 "This vault points to storage that no longer exists on this iPhone, so it can no longer sync." = "此 Vault 指向的存储位置在此 iPhone 上已不存在，因此无法再同步。";
-"A folder with this vault's name is in the folder you selected, but it does not hold what this iPhone last synced — it may be an earlier copy. VaultSync does not continue in it on its own, because every difference would reach your other devices as a deleted or an older note. To sync with that folder, remove this vault and accept it again under Pending Shares: VaultSync then asks before it combines the two." = "你选择的文件夹里有一个与此 Vault 同名的文件夹，但其中的内容不是此 iPhone 上次同步的内容——它可能是较早的副本。VaultSync 不会自行在其中继续同步，因为每一处差异都会作为已删除或较旧的笔记传到你的其他设备。要与该文件夹同步，请移除此 Vault，然后在“待处理共享”中重新接受它：VaultSync 会在合并两者前先询问你。";
 "Stops syncing this vault on this iPhone. The notes on your other devices are not affected." = "停止在此 iPhone 上同步此 Vault。你其他设备上的笔记不受影响。";
 
 /* Cloud Relay activation (lab → wave 1; es/zh-Hans need a native review) */

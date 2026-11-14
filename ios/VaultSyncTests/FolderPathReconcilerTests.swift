@@ -11,8 +11,6 @@ struct FolderPathReconcilerTests {
         var rel: [String: String]
         var existingDirs: Set<String>
         var setPathCalls: [(id: String, path: String)] = []
-        /// What the bridge answers to a path change.
-        var setPathResult: FolderPathReconciler.SetPathResult = .moved
 
         init(rel: [String: String], existingDirs: Set<String> = []) {
             self.rel = rel
@@ -28,7 +26,7 @@ struct FolderPathReconcilerTests {
             dirExists: { spy.existingDirs.contains(FolderPathReconciler.canonical($0)) },
             setPath: { id, path in
                 spy.setPathCalls.append((id, path))
-                return spy.setPathResult
+                return nil
             }
         )
     }

@@ -223,18 +223,6 @@ VaultSync never moves, recreates, or deletes folders on its own, and a rescan ca
 
 ---
 
-## A Folder With the Vault's Name Was Found but Is Not Used
-
-**Looks like:** under **Sync Issues**, a vault's card says that a folder with the vault's name is in the folder you selected, but that it does not hold what this iPhone last synced. The vault's own folder is gone — deleted, or in a folder VaultSync is no longer connected to — and the folder found in its place differs from what VaultSync last synced there: it is an earlier copy of the vault, or notes in it were changed or deleted while VaultSync was not running.
-
-VaultSync does not go on in such a folder by itself. It would take every difference for a change you made and send it to your other devices: a note the folder lacks as a deletion, an older note as the current version.
-
-**Fix:**
-1. If the vault's own folder still exists in another place, tap **Reconnect to Obsidian** and select the folder that contains it. Syncing goes on there.
-2. Otherwise tap **Remove This Vault** and accept the vault again under **Pending Shares**. VaultSync says that the folder already holds files and asks before it combines them; accept if the folder holds this vault's notes. Nothing is deleted: a note that exists on one side only is kept, a note you had deleted on another device since the copy was made comes back, and where both sides hold a different version of a note, the older one is kept beside the newer one as a conflict copy.
-
----
-
 ## Bookmark Access Expired
 
 VaultSync re-derives every vault's location from your Obsidian folder on launch, so most storage moves self-heal. When a vault still can't be reached, the security-scoped bookmark needs renewing.

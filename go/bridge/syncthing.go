@@ -320,6 +320,14 @@ func StartSyncthing(configDir string) string {
 	stRunning = true
 	go watchEngine(stApp)
 
+	// Which directory each folder syncs in (#315): every folder whose
+	// directory is there with its marker gets its record now, so the record
+	// exists by the time the directory is gone.
+	stStorageAnchor = ensureStorageAnchor(configDir)
+	for _, folder := range stCfg.Folders() {
+		noteFolderStorageLocked(folder)
+	}
+
 	// Create a buffered event subscription for the bridge.
 	var sub events.Subscription
 	evLogger := stEvLogger
@@ -363,6 +371,7 @@ func configurePrivacySafeLogging() {
 func stopEngineLocked() string {
 	app, sdb, earlyCancel := stApp, stDB, stEarlyCancel
 	stApp, stDB, stEarlyCancel = nil, nil, nil
+	stStorageAnchor = 0
 	stEventSub = nil
 	stRunning = false
 	stExited = false
