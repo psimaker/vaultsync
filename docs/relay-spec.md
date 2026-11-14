@@ -153,7 +153,7 @@ Called by the App Store, never by the app or the helper: Apple's App Store Serve
 - Registrations are found by the subscription's original transaction identifier, which the relay holds from provisioning. A notification never creates a registration and never touches a push token: only the app can say which homeserver a subscription wakes
 - From a notification the relay keeps the new expiry and the time it verified it. Everything else in it, such as price and storefront, is neither stored nor logged
 - Notifications for another app, another App Store environment, or another product are acknowledged and ignored
-- Any answer other than `200` makes the App Store send the notification again over the following days, so verification and server errors answer `401`, `422`, or `500`
+- The App Store counts any answer from `200` to `206` as received. After any other answer it sends a production notification again, up to five times over the following days; a sandbox notification is sent once. Verification and server errors therefore answer `401`, `422`, or `500`
 
 ### POST /trigger
 
