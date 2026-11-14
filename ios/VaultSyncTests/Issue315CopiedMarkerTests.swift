@@ -391,15 +391,42 @@ extension EngineBridgeSuites {
         }
 
         @MainActor
-        @Test("Removing a vault without such a finding leaves a remembered folder name as it was (#52)")
+        @Test("Removing a vault without such a finding, on settled paths, leaves a remembered folder name as it was (#52)")
         func removalWithoutAFindingKeepsTheConsent() async throws {
             let rig = try await Rig()
             defer { rig.tearDown() }
             let root = ManualShareTargetStore.rootKey(rig.firstRoot.path)
             ManualShareTargetStore.setTarget("Vault", forFolder: rig.folderID, underRoot: root)
+            await rig.manager.reconcileFolderPaths(obsidianRoot: rig.firstRoot.path).value
+            #expect(rig.manager.pathSettlement.settled)
 
             #expect(rig.manager.removeFolder(id: rig.folderID) == nil)
             #expect(ManualShareTargetStore.consentRoot(forFolder: rig.folderID) == root)
+        }
+
+        @MainActor
+        @Test("Removing a vault while a reconcile is still under way drops the consent: what it will find is not known yet")
+        func removalDuringAReconcileForgetsTheConsent() async throws {
+            let rig = try await Rig()
+            defer { rig.tearDown() }
+            let root = ManualShareTargetStore.rootKey(rig.firstRoot.path)
+            ManualShareTargetStore.setTarget("Vault", forFolder: rig.folderID, underRoot: root)
+            await rig.manager.reconcileFolderPaths(obsidianRoot: rig.firstRoot.path).value
+
+            // A pass that has begun and not reported: it may be about to
+            // find a copy in this vault's place.
+            let underWay = rig.manager._testBeginReconcile()
+            #expect(!rig.manager.pathSettlement.settled)
+            #expect(rig.manager.removeFolder(id: rig.folderID) == nil)
+            #expect(ManualShareTargetStore.target(forFolder: rig.folderID) == "Vault")
+            #expect(ManualShareTargetStore.consentRoot(forFolder: rig.folderID) == nil)
+
+            // And what that pass then reports for the removed vault is dropped.
+            rig.manager._testFinishReconcile(
+                underWay,
+                finding: FolderPathReconciler.Outcome(notTheirStorage: [rig.folderID])
+            )
+            #expect(rig.manager.foldersWithoutTheirStorage.isEmpty)
         }
 
         @MainActor

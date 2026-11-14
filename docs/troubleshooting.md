@@ -237,7 +237,7 @@ VaultSync does not go on in a copy. A copy holds what the vault held when it was
 2. Otherwise tap **Remove This Vault** and accept the vault again under **Pending Shares**. If the share says that its folder already holds files, that folder is the copy: do not combine them — tap **Choose Vault…** and give the vault another folder name. The vault then arrives in a folder of its own, complete, from your other devices.
 
 **Afterwards:**
-- The copy stays where it is, untouched. It may hold notes that exist nowhere else: written in the copy, or written on this iPhone and never synced before the vault's folder went away. Copy those into the vault's new folder in the Files app, and compare by hand before you delete the copy.
+- The copy stays where it is, untouched. It may hold notes that exist nowhere else: written in the copy, or written on this iPhone and never synced before the vault's folder went away. Compare the two by hand first, then copy over in the Files app only the notes the vault's new folder does not have. If Files asks whether to replace a note, keep both: the one in the new folder is the one your other devices have. Delete the copy only after that.
 - Sync Filters belong to the vault's folder and start fresh in the new one. Set them again on the vault's page before large folders you had excluded start to sync.
 - Never put a copy in a vault's place yourself, under the vault's name in the folder it syncs in. There VaultSync cannot tell it from the vault, and what the copy lacks would be deleted on your other devices.
 

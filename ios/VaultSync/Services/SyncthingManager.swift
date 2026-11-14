@@ -1138,8 +1138,11 @@ final class SyncthingManager {
             // If that was a copy in its place, a folder name remembered for
             // its share stops standing for consent: the directory of that
             // name is the copy, and accepting the share into it has to ask
-            // (#315, decision 007).
-            if foldersWithoutTheirStorage.remove(id) != nil {
+            // (#315, decision 007). The same while a reconcile is still
+            // under way: what it is about to find is not known yet, and a
+            // question too many costs less than a copy combined unasked.
+            let copyFound = foldersWithoutTheirStorage.remove(id) != nil
+            if copyFound || !pathSettlement.settled {
                 ManualShareTargetStore.forgetConsent(forFolder: id)
             }
             // Forget any #45 auto-pause record so a future folder reusing this
