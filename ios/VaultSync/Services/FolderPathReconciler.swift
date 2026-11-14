@@ -63,6 +63,17 @@ enum FolderPathReconciler {
         }
     }
 
+#if DEBUG
+    /// LAB: shows folders as mapped for the design-preview fixture without
+    /// writing the sidecar. The argument domain lives in memory only and is
+    /// read before the stored one.
+    static func _previewSetRel(_ map: [String: String]) {
+        var arguments = UserDefaults.standard.volatileDomain(forName: UserDefaults.argumentDomain)
+        arguments[relStoreKey] = map
+        UserDefaults.standard.setVolatileDomain(arguments, forName: UserDefaults.argumentDomain)
+    }
+#endif
+
     // MARK: - Path helpers
 
     /// Normalize a path so paths that differ only by `/var`↔`/private/var`
@@ -103,8 +114,35 @@ enum FolderPathReconciler {
         var recordRel: (_ folderID: String, _ rel: String) -> Void
         /// Whether `path` currently exists as a directory.
         var dirExists: (String) -> Bool
-        /// Apply a path change; returns an error message or nil.
-        var setPath: (_ folderID: String, _ newPath: String) -> String?
+        /// Apply a path change and say how the bridge answered.
+        var setPath: (_ folderID: String, _ newPath: String) -> SetPathResult
+    }
+
+    /// The bridge's answer to a path change.
+    enum SetPathResult: Equatable, Sendable {
+        case moved
+        /// The directory carries the folder's marker but is not the directory
+        /// the folder synced in — a copy of it (#315). The bridge leaves the
+        /// folder where it is; the user is told why.
+        case notItsStorage
+        /// Any other refusal or failure.
+        case failed
+    }
+
+    /// What a reconcile found and could not repair by itself.
+    struct Outcome: Equatable, Sendable {
+        /// Folders whose directory is gone while a directory of their name
+        /// exists under the selected folder that the bridge refused as a
+        /// copy (#315).
+        var notTheirStorage: Set<String> = []
+
+        /// What of this outcome still holds for the folders configured now.
+        /// A reconcile runs beside the main actor: a folder removed while it
+        /// ran is no longer there to report, and a folder accepted again
+        /// under its ID is another one.
+        func cut(to configured: some Sequence<String>) -> Outcome {
+            Outcome(notTheirStorage: notTheirStorage.intersection(configured))
+        }
     }
 
     /// For each folder:
@@ -119,18 +157,24 @@ enum FolderPathReconciler {
     ///  - **known mapping, configured path gone**: the container moved (#25) —
     ///    rebase to `root(+rel)` when the target directory actually exists
     ///    (never point a folder at a missing or empty directory — that risks
-    ///    marker loss / deletions).
+    ///    marker loss / deletions). Whether that directory is the one the
+    ///    folder synced in is the bridge's decision (its marker, and the
+    ///    marker's file number where the bridge recorded it — decision 063);
+    ///    a directory it refuses as a copy is reported in the outcome, and
+    ///    the folder stays where it is (#315).
     ///  - **no mapping but currently under the root**: backfill the sidecar
     ///    (no path change) — this adopts already-healthy folders on first launch
     ///    after the update.
     ///  - **no mapping and not under the root**: leave untouched; such a folder
     ///    surfaces via the guided "remove this vault" flow.
-    static func reconcile(folders: [(id: String, path: String)], env: Environment) {
-        guard !folders.isEmpty else { return }
+    @discardableResult
+    static func reconcile(folders: [(id: String, path: String)], env: Environment) -> Outcome {
+        var outcome = Outcome()
+        guard !folders.isEmpty else { return outcome }
 
         // Without a resolved Obsidian root this launch we can neither rebase
         // known folders nor backfill new ones — leave everything as-is.
-        guard let rawRoot = env.obsidianRoot else { return }
+        guard let rawRoot = env.obsidianRoot else { return outcome }
         let canonRoot = canonical(rawRoot)
 
         // Snapshot used only for per-folder decisions; writes go through the
@@ -164,10 +208,14 @@ enum FolderPathReconciler {
                     logger.warning("Skipped folder rebase because the target is missing")
                     continue
                 }
-                if env.setPath(folder.id, desired) != nil {
-                    logger.warning("Folder rebase failed")
-                } else {
+                switch env.setPath(folder.id, desired) {
+                case .moved:
                     logger.info("Rebased a folder to the current Obsidian location")
+                case .notItsStorage:
+                    outcome.notTheirStorage.insert(folder.id)
+                    logger.warning("Skipped folder rebase because the target is a copy of the folder's directory")
+                case .failed:
+                    logger.warning("Folder rebase failed")
                 }
                 continue
             }
@@ -178,6 +226,7 @@ enum FolderPathReconciler {
                 env.recordRel(folder.id, r)
             }
         }
+        return outcome
     }
 
     // MARK: - Live reconcile (wired to the bridge)
@@ -190,14 +239,15 @@ enum FolderPathReconciler {
     /// Read the live folder list from the bridge and reconcile their paths
     /// against the current Obsidian root. Blocks briefly on bridge calls, so
     /// run it off the main actor.
-    static func reconcileLive(obsidianRoot: String?) {
+    @discardableResult
+    static func reconcileLive(obsidianRoot: String?) -> Outcome {
         let json = SyncBridgeService.getFoldersJSON()
         guard let data = json.data(using: .utf8),
               let decoded = try? JSONDecoder().decode([BridgeFolder].self, from: data) else {
-            return
+            return Outcome()
         }
         let folders = decoded.map { (id: $0.id, path: $0.path) }
-        guard !folders.isEmpty else { return }
+        guard !folders.isEmpty else { return Outcome() }
 
         let env = Environment(
             obsidianRoot: obsidianRoot,
@@ -208,9 +258,12 @@ enum FolderPathReconciler {
                 return FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
             },
             setPath: { folderID, newPath in
-                SyncBridgeService.setFolderPath(folderID: folderID, path: newPath)
+                guard let refusal = SyncBridgeService.setFolderPath(folderID: folderID, path: newPath) else {
+                    return .moved
+                }
+                return refusal == SyncBridgeService.folderStorageMismatchError ? .notItsStorage : .failed
             }
         )
-        reconcile(folders: folders, env: env)
+        return reconcile(folders: folders, env: env)
     }
 }

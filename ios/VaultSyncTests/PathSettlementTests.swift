@@ -103,4 +103,44 @@ struct PathSettlementTests {
         settlement.reconcileFinished(token: reconnect)
         #expect(settlement.settled)
     }
+
+    // MARK: - Which pass says what it found (#315)
+
+    @Test("A single pass that completes is the current picture")
+    func singlePassReports() {
+        var settlement = PathSettlement()
+        let token = settlement.reconcileBegan()
+        let reports = settlement.reconcileFinished(token: token)
+        #expect(reports)
+    }
+
+    @Test("Of two overlapping passes only the one that began last reports, in whichever order they finish")
+    func onlyThePassThatBeganLastReports() {
+        var settlement = PathSettlement()
+        let coldStart = settlement.reconcileBegan()
+        let reselect = settlement.reconcileBegan()
+        let overtakenReports = settlement.reconcileFinished(token: coldStart)
+        let lastReports = settlement.reconcileFinished(token: reselect)
+        #expect(!overtakenReports)
+        #expect(lastReports)
+        #expect(settlement.settled)
+
+        settlement = PathSettlement()
+        let first = settlement.reconcileBegan()
+        let second = settlement.reconcileBegan()
+        let secondReports = settlement.reconcileFinished(token: second)
+        let firstReports = settlement.reconcileFinished(token: first)
+        #expect(secondReports)
+        #expect(!firstReports)
+        #expect(settlement.settled) // an overtaken pass still counts as finished
+    }
+
+    @Test("A pass from before a reset reports nothing, also when no pass began since")
+    func passFromAnEarlierGenerationDoesNotReport() {
+        var settlement = PathSettlement()
+        let stale = settlement.reconcileBegan()
+        settlement.reset()
+        let reports = settlement.reconcileFinished(token: stale)
+        #expect(!reports)
+    }
 }

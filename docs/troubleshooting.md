@@ -14,6 +14,7 @@ Find your symptom, jump to the fix. After each fix, retry from the app to confir
 | Vault list empty, "folder not connected" | [Obsidian Folder Not Found](#obsidian-folder-not-found) |
 | The vault syncs, but Obsidian does not show it | [Vault Syncs but Never Appears in Obsidian](#vault-syncs-but-never-appears-in-obsidian) |
 | "Vault Folder Was Moved or Deleted" on a vault | [Vault Folder Was Moved or Deleted](#vault-folder-was-moved-or-deleted) |
+| A vault's card says the folder that was found is a copy | [The Folder Found Is a Copy](#the-folder-found-is-a-copy) |
 | "Cannot access this folder" / reconnect needed | [Bookmark Access Expired](#bookmark-access-expired) |
 | Syncs in foreground but not when closed | [Background Sync Not Working](#background-sync-not-working) |
 | "Required device disconnected" | [Required Device Disconnected](#required-device-disconnected) |
@@ -220,6 +221,23 @@ If you keep things where they are on purpose, tap **Keep It This Way**: the noti
 3. If notes are missing on this iPhone, they are still on your other synced devices — re-accepting the share in step 2 brings them back.
 
 VaultSync never moves, recreates, or deletes folders on its own, and a rescan cannot fix this — recovery here is always your manual decision.
+
+---
+
+## The Folder Found Is a Copy
+
+**Looks like:** under **Sync Issues**, a vault's card says that a folder with the vault's name is in the folder you selected, but that it is a copy and not the folder this vault synced in. The vault's own folder is gone — deleted, or in a folder VaultSync is no longer connected to — and what lies under the vault's name in the folder you selected is a copy of it, made in the Files app or by another app on this iPhone.
+
+VaultSync does not go on in a copy. A copy holds what the vault held when it was made, and VaultSync would take every difference since then for a change you made and send it to your other devices: a note the copy lacks as a deletion, an older note as the current version. A vault you moved is not a copy: syncing goes on in it, with whatever you changed in it while VaultSync was not running.
+
+**Fix:**
+1. If the vault's own folder still exists in another place, tap **Reconnect to Obsidian** and select the folder that contains it. Selecting another folder cuts every other vault that syncs in the current folder off from the folder it lives in, so do this only when the folder you select contains all your vaults.
+2. Otherwise tap **Remove This Vault** and accept the vault again under **Pending Shares**. If the share says that its folder already holds files, that folder is the copy: do not combine them — tap **Choose Vault…** and give the vault another folder name. The vault then arrives in a folder of its own, complete, from your other devices.
+
+**Afterwards:**
+- The copy stays where it is, untouched. It may hold notes that exist nowhere else: written in the copy, or written on this iPhone and never synced before the vault's folder went away. Copy those into the vault's new folder in the Files app, and compare by hand before you delete the copy.
+- Sync Filters belong to the vault's folder and start fresh in the new one. Set them again on the vault's page before large folders you had excluded start to sync.
+- Never put a copy in a vault's place yourself, under the vault's name in the folder it syncs in. There VaultSync cannot tell it from the vault, and what the copy lacks would be deleted on your other devices.
 
 ---
 
