@@ -8,12 +8,12 @@
  	"net/url"
  	"time"
  
-@@ -41,8 +42,42 @@
+@@ -41,8 +42,47 @@
  		return internalConn{}, err
  	}
  
 -	err = dialer.SetTCPOptions(conn)
-+	tc, err := d.handshake(conn)
++	tc, err := d.handshake(conn, time.Now().Add(tlsHandshakeTimeout))
  	if err != nil {
 +		// VaultSync (#316): try once more from a port of its own. The dial
 +		// above goes out from our listening port to the other side's. When
@@ -25,11 +25,15 @@
 +		// dial that does not reuse the listening port cannot be joined with
 +		// one coming in. A handshake that failed for another reason fails
 +		// here again, and the first error is the one returned.
++		//
++		// The second try, its handshake included, has what is left of the
++		// dial's deadline: a dial takes no longer than it could before.
++		deadline, _ := timeoutCtx.Deadline()
 +		retryConn, retryErr := dialer.DialContext(timeoutCtx, uri.Scheme, uri.Host)
 +		if retryErr != nil {
 +			return internalConn{}, err
 +		}
-+		if tc, retryErr = d.handshake(retryConn); retryErr != nil {
++		if tc, retryErr = d.handshake(retryConn, deadline); retryErr != nil {
 +			return internalConn{}, err
 +		}
 +		l.Debugln("Dial (BEP/tcp): connected from another port after a failed handshake:", err)
@@ -45,15 +49,22 @@
 +}
 +
 +// handshake sets the options of a dialed connection and runs the TLS
-+// handshake on it as the client. It closes the connection when that fails.
-+func (d *tcpDialer) handshake(conn net.Conn) (*tls.Conn, error) {
++// handshake on it as the client, until the deadline. It closes the connection
++// when that fails.
++func (d *tcpDialer) handshake(conn net.Conn, deadline time.Time) (*tls.Conn, error) {
 +	err := dialer.SetTCPOptions(conn)
 +	if err != nil {
  		l.Debugln("Dial (BEP/tcp): setting tcp options:", err)
  	}
  
-@@ -55,16 +90,9 @@
- 	err = tlsTimedHandshake(tc)
+@@ -52,19 +92,14 @@
+ 	}
+ 
+ 	tc := tls.Client(conn, d.tlsCfg)
+-	err = tlsTimedHandshake(tc)
++	_ = tc.SetDeadline(deadline)
++	err = tc.Handshake()
++	_ = tc.SetDeadline(time.Time{})
  	if err != nil {
  		tc.Close()
 -		return internalConn{}, err

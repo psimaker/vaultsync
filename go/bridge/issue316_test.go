@@ -383,9 +383,12 @@ func TestIssue316_VaultsRemovedOneAfterAnotherAreEachOfferedAgain(t *testing.T) 
 // the same moments, and no connection for the rest of the test).
 //
 // The dial is therefore tried once more from a port of its own when the
-// handshake fails. Here a listener stands in for the other side and closes
-// every connection as soon as it is accepted, which fails the handshake:
-// the second connection has to follow at once and from another port.
+// handshake fails. Here a listener stands in for the other side. It closes
+// the first connection as soon as it is accepted, which fails the handshake:
+// the second connection has to follow at once and from another port. That
+// one it holds open without a word: the bridge has to give it up when the
+// dial's deadline is over, so that a dial takes no longer than it could
+// without the second try.
 func TestIssue316_AFailedHandshakeIsTriedAgainFromAnotherPort(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -395,19 +398,38 @@ func TestIssue316_AFailedHandshakeIsTriedAgainFromAnotherPort(t *testing.T) {
 	type arrival struct {
 		port int
 		at   time.Time
+		// over receives the moment the bridge closed a connection the
+		// listener held open.
+		over chan time.Time
 	}
 	arrivals := make(chan arrival, 64)
 	go func() {
-		for {
+		for first := true; ; first = false {
 			conn, err := listener.Accept()
 			if err != nil {
 				return
 			}
+			a := arrival{conn.RemoteAddr().(*net.TCPAddr).Port, time.Now(), make(chan time.Time, 1)}
 			select {
-			case arrivals <- arrival{conn.RemoteAddr().(*net.TCPAddr).Port, time.Now()}:
+			case arrivals <- a:
 			default:
 			}
-			conn.Close()
+			if first {
+				conn.Close()
+				continue
+			}
+			go func() {
+				defer conn.Close()
+				// The client's first handshake message, and then nothing
+				// until the bridge closes the connection.
+				buf := make([]byte, 4096)
+				for {
+					if _, err := conn.Read(buf); err != nil {
+						a.over <- time.Now()
+						return
+					}
+				}
+			}()
 		}
 	}()
 
@@ -451,24 +473,32 @@ func TestIssue316_AFailedHandshakeIsTriedAgainFromAnotherPort(t *testing.T) {
 	// dials a device again after a second at the earliest, so a connection
 	// from another port within half a second is the second try of the same
 	// dial and not the next one.
-	deadline := time.After(30 * time.Second)
-	var first arrival
-	for first.port != bridgePort {
-		select {
-		case first = <-arrivals:
-		case <-deadline:
-			t.Fatalf("no dial from the bridge's listening port %d", bridgePort)
-		}
+	var first, second arrival
+	select {
+	case first = <-arrivals:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the bridge never dialed")
+	}
+	if first.port != bridgePort {
+		t.Fatalf("the first dial came from port %d, want the bridge's listening port %d", first.port, bridgePort)
 	}
 	select {
-	case second := <-arrivals:
-		if second.port == bridgePort {
-			t.Fatalf("the next connection came from the listening port again, %s later", second.at.Sub(first.at))
-		}
-		if gap := second.at.Sub(first.at); gap > 500*time.Millisecond {
-			t.Fatalf("the connection from another port came %s after the failed handshake", gap)
-		}
+	case second = <-arrivals:
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("no second try from another port after the failed handshake")
+	}
+	if second.port == bridgePort {
+		t.Fatalf("the next connection came from the listening port again, %s later", second.at.Sub(first.at))
+	}
+
+	// The dial's deadline is five seconds (fork patch 003), a handshake's
+	// own limit is ten: the second try has to end with the first of them.
+	select {
+	case over := <-second.over:
+		if took := over.Sub(first.at); took > 7*time.Second {
+			t.Fatalf("the bridge held the second try for %s after the dial began", took)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("the bridge never gave the second try up")
 	}
 }
