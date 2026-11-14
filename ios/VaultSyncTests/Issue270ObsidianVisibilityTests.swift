@@ -442,7 +442,7 @@ struct Issue270ObsidianVisibilityIssueTests {
         let remove = try #require(issue.remediation.range(of: "remove the vault here"))
         // A removed share is offered again only once VaultSync has started
         // anew (#316): the step between removing and accepting says so.
-        let reopen = try #require(issue.remediation.range(of: "Close VaultSync in the app switcher and open it again"))
+        let reopen = try #require(issue.remediation.range(of: "Wait ten seconds, then close VaultSync in the app switcher and open it again"))
         let accept = try #require(issue.remediation.range(of: "Accept the vault again under Pending Shares"))
         #expect(check.upperBound <= remove.lowerBound)
         #expect(remove.upperBound <= reopen.lowerBound)
@@ -464,7 +464,7 @@ struct Issue270ObsidianVisibilityIssueTests {
         #expect(issue.message.contains("Notes, b"))
         let remove = try #require(issue.remediation.range(of: "remove the vaults here"))
         let select = try #require(issue.remediation.range(of: "Select Obsidian's Folder"))
-        let reopen = try #require(issue.remediation.range(of: "Close VaultSync in the app switcher and open it again"))
+        let reopen = try #require(issue.remediation.range(of: "Wait ten seconds, then close VaultSync in the app switcher and open it again"))
         let accept = try #require(issue.remediation.range(of: "Accept the shares again"))
         #expect(remove.upperBound <= select.lowerBound)
         #expect(select.upperBound <= reopen.lowerBound)
@@ -752,7 +752,7 @@ struct Issue270WayOutTests {
     func collapsedVaultBlocksANewShare() throws {
         let root = Self.obsidiansFolder
         let message = try #require(refusal(root: root, rootIsVault: false, occupied: [root.lowercased()]))
-        #expect(message.contains("Remove that vault on this iPhone, close VaultSync in the app switcher and open it again, then accept that vault again"))
+        #expect(message.contains("Remove that vault on this iPhone, wait ten seconds, close VaultSync in the app switcher and open it again, then accept that vault again"))
         #expect(!message.contains("Re-select"))
 
         // The same through "Choose Vault…".

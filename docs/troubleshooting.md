@@ -80,7 +80,7 @@ In the app: **Cloud Relay** tab → **Relay health & diagnostics** → **Check R
 **Looks like:** dashboard shows "Sync Engine Not Running", Device ID stays empty, sync actions fail instantly. Usually the bridge didn't finish starting (app backgrounded too soon, or a hiccup after update/reboot).
 
 **Fix:**
-1. Force-close VaultSync and reopen it.
+1. Close VaultSync in the app switcher and open it again.
 2. Keep it in the foreground 20–30 seconds.
 3. Confirm your Device ID appears in onboarding or settings.
 4. Tap **Rescan Vault** from the vault detail page.
@@ -128,13 +128,12 @@ In the app: **Cloud Relay** tab → **Relay health & diagnostics** → **Check R
 **Looks like:** onboarding stays on "Confirm your first share"; nothing under **Pending Shares**; no vault activates. Usually the desktop never offered the folder to this device, or the Device IDs don't match.
 
 **Fix:**
-1. On desktop Syncthing, open the folder → **Sharing**, and confirm the iOS Device ID is listed.
-2. Confirm that Device ID matches the one VaultSync shows.
-3. Ensure desktop Syncthing is online and the folder isn't paused.
-4. In VaultSync, pull to refresh (or reopen the app) and check **Pending Shares**; accept manually if shown.
-5. Still empty? Unshare and re-share the folder from the desktop.
-
-After you remove a vault on this iPhone, its share is not offered again right away: it shows under **Pending Shares** once you have closed VaultSync in the app switcher and opened it again. Leaving the app and returning to it is not enough.
+1. If you removed the vault on this iPhone, its share is not offered again right away. Wait ten seconds after removing it, then close VaultSync in the app switcher and open it again: the share shows under **Pending Shares** as soon as the device that shares the vault is connected. Switching to another app and back does not reliably bring it.
+2. On desktop Syncthing, open the folder → **Sharing**, and confirm the iOS Device ID is listed.
+3. Confirm that Device ID matches the one VaultSync shows.
+4. Ensure desktop Syncthing is online and the folder isn't paused.
+5. In VaultSync, pull to refresh (or close VaultSync in the app switcher and open it again) and check **Pending Shares**; accept manually if shown.
+6. Still empty? Unshare and re-share the folder from the desktop.
 
 ---
 
@@ -194,14 +193,14 @@ Syncing continues either way, and VaultSync never moves a vault on its own. Befo
 
 **Fix — "Obsidian Cannot Show This Vault"** (the vault syncs straight into the folder you selected):
 1. Open the vault in VaultSync and remove it. This only stops syncing it on this iPhone.
-2. Close VaultSync in the app switcher and open it again. Until then, the vault's share does not show under **Pending Shares**.
+2. Wait ten seconds, then close VaultSync in the app switcher and open it again. Only then is the vault offered again, as soon as the device that shares it is connected. Waiting first matters: VaultSync writes the removal down a few seconds after it, and closing the app in the app switcher ends it at once.
 3. Under **Pending Shares**, accept the vault again. It now gets a folder of its own, and Obsidian lists it once the notes have arrived. If the share says that its folder already holds files, that folder is most likely part of the earlier copy: do not combine them — tap **Choose Vault…** and give the vault another folder name.
 
 **Fix — "Obsidian Cannot Show Vaults From This Folder"** (VaultSync is connected to a folder that is not Obsidian's own):
 1. Open Obsidian and create a vault with **Store in iCloud** turned off, if there is none on the iPhone yet. Without one, "Obsidian" does not appear under "On My iPhone".
 2. In VaultSync, remove the vaults that sync in this folder. This only stops syncing them on this iPhone.
 3. The notice now offers **Select Obsidian's Folder**. Tap it, choose **On My iPhone → Obsidian** and tap **Open** there, without going into one of your vaults.
-4. Close VaultSync in the app switcher and open it again. Until then, the shares do not show under **Pending Shares**.
+4. Wait ten seconds, then close VaultSync in the app switcher and open it again. Only then are the vaults offered again, as soon as the devices that share them are connected.
 5. Under **Pending Shares**, accept the vaults again. They arrive in Obsidian's folder, and Obsidian lists them.
 
 The button appears only once no vault syncs in the old folder: selecting another folder earlier would cut those vaults off from the folder they live in.
@@ -221,7 +220,7 @@ If you keep things where they are on purpose, tap **Keep It This Way**: the noti
 
 **Fix:**
 1. If you moved or renamed the folder: move it back to its original place and name — syncing resumes on its own.
-2. If the folder is gone or was replaced: remove the vault in VaultSync on this iPhone, close VaultSync in the app switcher and open it again, then accept its share again under **Pending Shares** — it syncs into a fresh folder.
+2. If the folder is gone or was replaced: remove the vault in VaultSync on this iPhone, wait ten seconds, close VaultSync in the app switcher and open it again, then accept its share again under **Pending Shares** once it shows there — it syncs into a fresh folder.
 3. If notes are missing on this iPhone, they are still on your other synced devices — re-accepting the share in step 2 brings them back.
 
 VaultSync never moves, recreates, or deletes folders on its own, and a rescan cannot fix this — recovery here is always your manual decision.
@@ -238,7 +237,7 @@ VaultSync does not go on in a copy. A copy holds what the vault held when it was
 
 **Fix:**
 1. If the vault's own folder still exists in another place, tap **Reconnect to Obsidian** and select the folder that contains it — or the vault's folder itself, if the card says that the folder you selected is the copy. Selecting another folder cuts every other vault that syncs in the current folder off from the folder it lives in, so do this only when the folder you select contains all your vaults.
-2. Otherwise tap **Remove This Vault**, close VaultSync in the app switcher and open it again, and accept the vault again under **Pending Shares**. If the share says that its folder already holds files, that folder is the copy: do not combine them — tap **Choose Vault…** and give the vault another folder name. The vault then arrives in a folder of its own, complete, from your other devices.
+2. Otherwise tap **Remove This Vault**, wait ten seconds, close VaultSync in the app switcher and open it again, and accept the vault again under **Pending Shares** once it shows there. If the share says that its folder already holds files, that folder is the copy: do not combine them — tap **Choose Vault…** and give the vault another folder name. The vault then arrives in a folder of its own, complete, from your other devices.
 
 **Afterwards:**
 - The copy stays where it is, untouched. It may hold notes that exist nowhere else: written in the copy, or written on this iPhone and never synced before the vault's folder went away. Compare the two by hand first, then copy over in the Files app only the notes the vault's new folder does not have. If Files asks whether to replace a note, keep both: the one in the new folder is the one your other devices have. Delete the copy only after that.

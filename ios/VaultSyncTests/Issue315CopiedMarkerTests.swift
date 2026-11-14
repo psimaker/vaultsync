@@ -111,8 +111,8 @@ struct Issue315CopiedMarkerTests {
         #expect(copy.contains("it is a copy, not the folder this vault synced in"))
         // The share of a removed vault is offered again only after a new
         // start of VaultSync (#316), so the step says to reopen it first.
-        #expect(copy.contains("remove this vault, close VaultSync in the app switcher and open it again, and accept the vault again under Pending Shares"))
-        #expect(wholeFolderCopy.contains("then close VaultSync in the app switcher, open it again, and accept the vault again under Pending Shares"))
+        #expect(copy.contains("remove this vault, wait ten seconds, close VaultSync in the app switcher and open it again, and accept the vault again under Pending Shares"))
+        #expect(wholeFolderCopy.contains("then wait ten seconds, close VaultSync in the app switcher and open it again, and accept the vault again under Pending Shares"))
         // The way on never combines the share with the copy (#331), and the
         // step hangs on what the share says, not on a question that a share
         // with a remembered folder never asks.

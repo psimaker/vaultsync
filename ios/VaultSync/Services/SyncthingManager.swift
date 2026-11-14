@@ -141,9 +141,9 @@ final class SyncthingManager {
     private(set) var ignoredPendingFolderIDs: Set<String> = []
     /// Folder IDs the user removed on this iPhone. While a peer still shares
     /// such a folder, its offer reappears as pending once the peer announces
-    /// the folder again — when a connection to it is set up, as at the next
-    /// start of VaultSync, not upon the removal (#316) — and auto-accepting
-    /// it would silently undo the removal. Re-adding is an explicit user
+    /// the folder again — when a connection to it is set up or the peer's
+    /// own configuration changes, not upon the removal (#316) — and
+    /// auto-accepting it would silently undo the removal. Re-adding is an explicit user
     /// decision (doctrine 002 / #52). Deliberately never pruned: the set
     /// stays tiny and an entry is only lifted by an explicit accept.
     private(set) var userRemovedFolderIDs: Set<String> = []
@@ -537,7 +537,7 @@ final class SyncthingManager {
                     kind: .pathCollision,
                     title: L10n.tr("Two Vaults Are Sharing One Folder"),
                     message: L10n.tr("Two or more vaults sync into the same local folder, so their contents are being mixed together. The affected vaults have been paused to stop further damage."),
-                    remediation: L10n.tr("Remove an affected vault on this iPhone, close VaultSync in the app switcher and open it again, then accept the vault again under Pending Shares — it moves into its own folder. If the files are already mixed, restore the clean copy on your computer first."),
+                    remediation: L10n.tr("Remove an affected vault on this iPhone, wait ten seconds, close VaultSync in the app switcher and open it again, then accept the vault again under Pending Shares once it shows there — it moves into its own folder. If the files are already mixed, restore the clean copy on your computer first."),
                     severity: .critical,
                     count: affectedCount,
                     folderID: collisionGroups.flatMap { $0 }.min(),
@@ -562,7 +562,7 @@ final class SyncthingManager {
                     kind: .nestedFolders,
                     title: L10n.tr("One Vault Is Nested Inside Another"),
                     message: L10n.tr("A vault's folder is inside another vault's folder, so the outer vault syncs the inner vault's notes to its own devices. The affected vaults have been paused to stop further mixing."),
-                    remediation: L10n.tr("Select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") as VaultSync's Obsidian directory, then remove the inner vault on this iPhone, close VaultSync in the app switcher, open it again, and accept the inner vault again under Pending Shares — it gets its own folder. Only afterwards, delete the leftover copy inside the outer vault on your other devices."),
+                    remediation: L10n.tr("Select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") as VaultSync's Obsidian directory, then remove the inner vault on this iPhone, wait ten seconds, close VaultSync in the app switcher and open it again, and accept the inner vault again under Pending Shares once it shows there — it gets its own folder. Only afterwards, delete the leftover copy inside the outer vault on your other devices."),
                     severity: .critical,
                     count: nestedIDs.count,
                     folderID: nestedIDs.min(),
@@ -704,7 +704,7 @@ final class SyncthingManager {
                         "“%@” syncs straight into the folder you selected instead of into a folder of its own. Obsidian shows only the folders inside its folder as vaults, so the notes arrive, but the vault never appears in Obsidian.",
                         names.joined(separator: ", ")
                     ),
-                    remediation: L10n.tr("Syncing continues, and VaultSync moves nothing on its own. To see the vault in Obsidian:\n1. Make sure another device has everything you changed on this iPhone, then remove the vault here.\n2. Close VaultSync in the app switcher and open it again — until then, the vault's share does not show under Pending Shares.\n3. Accept the vault again under Pending Shares — it gets a folder of its own.\nThe copy that already arrived stays where it is."),
+                    remediation: L10n.tr("Syncing continues, and VaultSync moves nothing on its own. To see the vault in Obsidian:\n1. Make sure another device has everything you changed on this iPhone, then remove the vault here.\n2. Wait ten seconds, then close VaultSync in the app switcher and open it again. Only then is the vault offered again, as soon as the device that shares it is connected.\n3. Accept the vault again under Pending Shares — it gets a folder of its own.\nThe copy that already arrived stays where it is."),
                     severity: .warning,
                     count: finding.folderIDs.count,
                     folderID: finding.folderIDs.first,
@@ -724,8 +724,8 @@ final class SyncthingManager {
                     // here: selecting one earlier would cut the vaults off
                     // from the folder they live in.
                     remediation: names.isEmpty
-                        ? L10n.tr("Tap Select Obsidian's Folder, choose \"On My iPhone\" → \"Obsidian\" and tap Open there, without opening one of your vaults. If \"Obsidian\" is missing, open Obsidian and create a vault with \"Store in iCloud\" turned off first.")
-                        : L10n.tr("Syncing continues, and VaultSync moves nothing on its own. To see your vaults in Obsidian:\n1. Make sure another device has everything you changed on this iPhone, then remove the vaults here.\n2. This notice then offers Select Obsidian's Folder. Tap it, choose \"On My iPhone\" → \"Obsidian\" and tap Open there, without opening one of your vaults. If \"Obsidian\" is missing, open Obsidian and create a vault with \"Store in iCloud\" turned off first.\n3. Close VaultSync in the app switcher and open it again — until then, the shares do not show under Pending Shares.\n4. Accept the shares again under Pending Shares.\nThe copies that already arrived stay where they are."),
+                        ? L10n.tr("Tap Select Obsidian's Folder, choose \"On My iPhone\" → \"Obsidian\" and tap Open there, without opening one of your vaults. If \"Obsidian\" is missing, open Obsidian and create a vault with \"Store in iCloud\" turned off first. Vaults you stopped syncing here are offered again after that: wait ten seconds, close VaultSync in the app switcher and open it again, and accept them under Pending Shares once they show there.")
+                        : L10n.tr("Syncing continues, and VaultSync moves nothing on its own. To see your vaults in Obsidian:\n1. Make sure another device has everything you changed on this iPhone, then remove the vaults here.\n2. This notice then offers Select Obsidian's Folder. Tap it, choose \"On My iPhone\" → \"Obsidian\" and tap Open there, without opening one of your vaults. If \"Obsidian\" is missing, open Obsidian and create a vault with \"Store in iCloud\" turned off first.\n3. Wait ten seconds, then close VaultSync in the app switcher and open it again. Only then are the vaults offered again, as soon as the devices that share them are connected.\n4. Accept the shares again under Pending Shares.\nThe copies that already arrived stay where they are."),
                     severity: .warning,
                     count: finding.folderIDs.count,
                     folderID: finding.folderIDs.first,
@@ -1155,13 +1155,15 @@ final class SyncthingManager {
             // Never auto-re-accept a share the user just removed: while a peer
             // still shares the folder, its offer comes back once the peer
             // announces the folder again, and silently pulling it back in
-            // would undo the removal (doctrine 002 / #52). The removal itself
-            // discards the pending offer and makes the peer announce nothing,
-            // so the offer returns with the next connection to the peer — at
-            // the next start of VaultSync, which is why the texts that say
-            // to accept it again say to reopen VaultSync first (#316). The
-            // share then stays under Pending Shares until the user explicitly
-            // accepts it — which honours a manually chosen target.
+            // would undo the removal (doctrine 002 / #52). The removal sends
+            // our configuration without the folder and discards its pending
+            // offer, but gives the peer no cause to send its own: the offer
+            // returns when a connection to the peer is set up or its own
+            // configuration changes — in practice once VaultSync was closed
+            // and opened again, which is why the texts that say to accept it
+            // again say to reopen VaultSync first (#316). The share then
+            // stays under Pending Shares until the user explicitly accepts
+            // it — which honours a manually chosen target.
             userRemovedFolderIDs.insert(id)
             persistUserRemovedFolderIDs()
             // What was kept or reported belongs to the folder that was
@@ -2411,9 +2413,9 @@ final class SyncthingManager {
                 // No folder of the vault's name is involved, and selecting
                 // "the folder that contains it" would offer the bridge a
                 // folder without the marker.
-                return L10n.tr("The folder you selected is a copy, not the folder this vault synced in. VaultSync does not continue in a copy. If the vault's own folder still exists, select that folder itself. Otherwise remove this vault and select the folder that contains your vaults; then close VaultSync in the app switcher, open it again, and accept the vault again under Pending Shares.")
+                return L10n.tr("The folder you selected is a copy, not the folder this vault synced in. VaultSync does not continue in a copy. If the vault's own folder still exists, select that folder itself. Otherwise remove this vault and select the folder that contains your vaults; then wait ten seconds, close VaultSync in the app switcher and open it again, and accept the vault again under Pending Shares once it shows there.")
             }
-            return L10n.tr("A folder with this vault's name is in the folder you selected, but it is a copy, not the folder this vault synced in. VaultSync does not continue in a copy. If the vault's own folder still exists, select the folder that contains it. Otherwise remove this vault, close VaultSync in the app switcher and open it again, and accept the vault again under Pending Shares. If the share then says that its folder already holds files, do not combine them: tap \"Choose Vault…\" and give the vault another folder name.")
+            return L10n.tr("A folder with this vault's name is in the folder you selected, but it is a copy, not the folder this vault synced in. VaultSync does not continue in a copy. If the vault's own folder still exists, select the folder that contains it. Otherwise remove this vault, wait ten seconds, close VaultSync in the app switcher and open it again, and accept the vault again under Pending Shares once it shows there. If the share then says that its folder already holds files, do not combine them: tap \"Choose Vault…\" and give the vault another folder name.")
         }
     }
 

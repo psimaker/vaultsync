@@ -886,7 +886,7 @@ final class VaultManager {
         canonicalize: (String) -> String
     ) -> String {
         if isAppDocumentsRoot(rawRoot), occupiedCanonLower.contains(canonicalize(rawRoot).lowercased()) {
-            return L10n.tr("A vault already syncs straight into the folder you selected, so no other vault can get a folder of its own there. Remove that vault on this iPhone, close VaultSync in the app switcher and open it again, then accept that vault again under Pending Shares — it gets its own folder. Accept this share after that.")
+            return L10n.tr("A vault already syncs straight into the folder you selected, so no other vault can get a folder of its own there. Remove that vault on this iPhone, wait ten seconds, close VaultSync in the app switcher and open it again, then accept that vault again under Pending Shares once it shows there — it gets its own folder. Accept this share after that.")
         }
         return L10n.tr("This share needs its own folder, but the folder selected for VaultSync is itself a vault, so everything inside it belongs to that vault. Re-select the folder that contains your vaults (\"On My iPhone\" → \"Obsidian\") — new vaults then sync side by side instead of inside each other.")
     }

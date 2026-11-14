@@ -243,7 +243,7 @@ struct ContentView: View {
             }
             Button(L10n.tr("Cancel"), role: .cancel) { vaultPendingRemoval = nil }
         } message: { target in
-            Text(L10n.fmt("“%@” will stop syncing on this iPhone. Files already on your other devices are not deleted.", target.label))
+            Text(L10n.fmt("“%@” will stop syncing on this iPhone. Files already on your other devices are not deleted. To sync it here again later: wait ten seconds, close VaultSync in the app switcher and open it again, and accept it under Pending Shares once it shows there.", target.label))
         }
         .alert(
             L10n.tr("Sync into a folder that already contains files?"),
