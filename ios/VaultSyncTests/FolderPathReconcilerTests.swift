@@ -26,7 +26,7 @@ struct FolderPathReconcilerTests {
             dirExists: { spy.existingDirs.contains(FolderPathReconciler.canonical($0)) },
             setPath: { id, path in
                 spy.setPathCalls.append((id, path))
-                return nil
+                return .moved
             }
         )
     }

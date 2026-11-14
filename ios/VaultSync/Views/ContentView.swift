@@ -649,7 +649,7 @@ struct ContentView: View {
     private func openDesignPreviewScreen() {
         let notes = DesignPreviewFixture.notesID
         switch DesignPreviewFixture.screen {
-        case .home, .attention, .outsideObsidian, .syncing, .onboarding, .onboardingShare:
+        case .home, .attention, .outsideObsidian, .earlierCopy, .syncing, .onboarding, .onboardingShare:
             break
         case .devices:
             selectedTab = .devices
@@ -1097,7 +1097,7 @@ struct ContentView: View {
                     Text(folder.label)
                         .font(.body.weight(.semibold))
                         .foregroundStyle(Color.vaultLabel)
-                    Text(L10n.tr("This vault points to storage that no longer exists on this iPhone, so it can no longer sync."))
+                    Text(folder.explanation)
                         .font(.subheadline)
                         .foregroundStyle(Color.vaultSecondaryLabel)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1105,6 +1105,10 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .accessibilityElement(children: .combine)
+            if let url = folder.troubleshootingURL {
+                ExternalLinkButton(titleKey: "Learn how to fix", url: url)
+                    .font(.footnote)
+            }
             VaultButtonRow {
                 if folder.hasObsidianMapping {
                     Button(L10n.tr("Reconnect to Obsidian")) {
@@ -1378,7 +1382,8 @@ struct ContentView: View {
             }),
             rootCanonLower: vaultManager.obsidianBasePath.map {
                 Self.canonicalPath($0).lowercased()
-            }
+            },
+            refusedCopyRels: syncthingManager.refusedCopyRels
         )
     }
 

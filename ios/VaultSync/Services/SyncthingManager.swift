@@ -130,6 +130,12 @@ final class SyncthingManager {
 
     private(set) var folders: [FolderInfo] = []
     private(set) var folderStatuses: [String: FolderStatusInfo] = [:]
+    /// Folders the path reconcile left where they are although a directory
+    /// of their name exists under the selected folder: the bridge refused it
+    /// as a copy (#315). Their card says so instead of "storage no longer
+    /// exists". Replaced by the reconcile that began last, emptied when the
+    /// engine stops.
+    private(set) var foldersWithoutTheirStorage: Set<String> = []
     private(set) var conflictFiles: [String: [ConflictInfo]] = [:]
     private(set) var pendingFolders: [PendingFolderInfo] = []
     private(set) var ignoredPendingFolderIDs: Set<String> = []
@@ -1017,23 +1023,32 @@ final class SyncthingManager {
                 if json != "[]", !json.isEmpty { break }
                 try? await Task.sleep(for: .milliseconds(250))
             }
-            FolderPathReconciler.reconcileLive(obsidianRoot: obsidianRoot)
+            let outcome = FolderPathReconciler.reconcileLive(obsidianRoot: obsidianRoot)
             // With paths settled, pause any folders an older version already
             // merged onto one local path (#45 migration shield) — once each.
             // Runs before the refresh below so the new paused state and the
             // critical banner surface on this same launch.
             PathCollisionGuard.pauseCollisionsLive()
             await self?.refreshFolders()
-            await self?.markReconcile(token: token, completed: true)
+            await self?.markReconcile(token: token, completed: true, outcome: outcome)
         }
     }
 
     /// Record a reconcile outcome on the main actor. Completion settles paths
     /// and releases held accept passes; abandonment only releases the
     /// in-flight count and keeps accepts held (see `PathSettlement`).
-    private func markReconcile(token: PathSettlement.Token, completed: Bool) {
+    private func markReconcile(
+        token: PathSettlement.Token,
+        completed: Bool,
+        outcome: FolderPathReconciler.Outcome = FolderPathReconciler.Outcome()
+    ) {
         if completed {
-            pathSettlement.reconcileFinished(token: token)
+            // Only the pass that began last, in this engine generation, says
+            // which folders have a copy in their place — and only for the
+            // folders that are still configured (#315).
+            if pathSettlement.reconcileFinished(token: token) {
+                foldersWithoutTheirStorage = outcome.cut(to: folders.map(\.id)).notTheirStorage
+            }
             refreshObsidianVisibility()
         } else {
             pathSettlement.reconcileAbandoned(token: token)
@@ -1063,6 +1078,7 @@ final class SyncthingManager {
         // completes, and a still-running reconcile's late outcome is ignored
         // (#56).
         pathSettlement.reset()
+        foldersWithoutTheirStorage = []
         obsidianVisibilityFindings = []
         obsidianVisibilityInputs = []
         lastBridgeEventID = 0
@@ -1118,6 +1134,17 @@ final class SyncthingManager {
             // Drop the path mapping so a future folder reusing this ID does not
             // inherit a stale relative path.
             FolderPathReconciler.removeRel(forFolder: id)
+            // Nor what the last reconcile found for the folder that had it.
+            // If that was a copy in its place, a folder name remembered for
+            // its share stops standing for consent: the directory of that
+            // name is the copy, and accepting the share into it has to ask
+            // (#315, decision 007). The same while a reconcile is still
+            // under way: what it is about to find is not known yet, and a
+            // question too many costs less than a copy combined unasked.
+            let copyFound = foldersWithoutTheirStorage.remove(id) != nil
+            if copyFound || !pathSettlement.settled {
+                ManualShareTargetStore.forgetConsent(forFolder: id)
+            }
             // Forget any #45 auto-pause record so a future folder reusing this
             // ID can be paused again if it collides (removing a colliding vault
             // is the sanctioned recovery; accepting the returning share re-adds
@@ -1277,6 +1304,7 @@ final class SyncthingManager {
         // New generation, same as stop(): the restarted engine's paths count
         // as unsettled until its own reconcile completes (#56).
         pathSettlement.reset()
+        foldersWithoutTheirStorage = []
         obsidianVisibilityFindings = []
         obsidianVisibilityInputs = []
         lastBridgeEventID = 0
@@ -2296,6 +2324,16 @@ final class SyncthingManager {
 
     func folderUserError(folderID: String) -> SyncUserError? {
         guard let status = folderStatuses[folderID], status.state == "error" else { return nil }
+        // A vault with a copy found in its place gets the words of its card
+        // wherever its error is shown (#315) — while that error is that its
+        // directory cannot be reached. Any other error keeps its own text.
+        if foldersWithoutTheirStorage.contains(folderID),
+           let reason = status.errorReason, Self.pathErrorReasons.contains(reason) {
+            let wholeFolder = FolderPathReconciler.loadRel()[folderID] == ""
+            return .folderIsACopy(
+                explanation: UnreachableFolder.copyExplanation(syncsSelectedFolderItself: wholeFolder)
+            )
+        }
         return SyncUserError.fromFolderStatus(
             reason: status.errorReason,
             message: status.errorMessage,
@@ -2328,26 +2366,93 @@ final class SyncthingManager {
         /// re-picking the Obsidian directory can rebase it (vs. a legacy folder
         /// that only ever lived in app storage and should just be removed).
         let hasObsidianMapping: Bool
+        /// True if a directory of the folder's name exists under the selected
+        /// folder and was refused: it is a copy, not the directory the folder
+        /// synced in (#315). The card names that instead of missing storage.
+        let foundDirectoryIsNotItsStorage: Bool
+        /// True if the vault syncs the selected folder itself, as installs
+        /// from before 3.0 can: what was refused is then the selected folder,
+        /// not a folder in it.
+        let syncsSelectedFolderItself: Bool
+
+        /// What the vault's card says is wrong. A directory that was found
+        /// and refused gets its own text: "storage no longer exists" would
+        /// send the user looking for a folder they can see.
+        var explanation: String {
+            if foundDirectoryIsNotItsStorage {
+                return Self.copyExplanation(syncsSelectedFolderItself: syncsSelectedFolderItself)
+            }
+            return L10n.tr("This vault points to storage that no longer exists on this iPhone, so it can no longer sync.")
+        }
+
+        /// Where the rest is said — what selecting another folder does to
+        /// the other vaults, and what to do with the copy afterwards. Only
+        /// the copy's card has a section of its own.
+        var troubleshootingURL: URL? {
+            foundDirectoryIsNotItsStorage
+                ? SyncUserError.troubleshootingURL(anchor: SyncUserError.folderIsACopyAnchor)
+                : nil
+        }
+
+        /// What was found and the way on. Never to combine the share with
+        /// the copy: a copy can hold older text of a note, and combining
+        /// would send that out as the newer version (#331). The step hangs
+        /// on what the share says about its folder, and `removeFolder` sees
+        /// to it that the share says so: a folder name remembered for it
+        /// stops standing for consent (decisions 002, 007).
+        static func copyExplanation(syncsSelectedFolderItself: Bool) -> String {
+            if syncsSelectedFolderItself {
+                // No folder of the vault's name is involved, and selecting
+                // "the folder that contains it" would offer the bridge a
+                // folder without the marker.
+                return L10n.tr("The folder you selected is a copy, not the folder this vault synced in. VaultSync does not continue in a copy. If the vault's own folder still exists, select that folder itself. Otherwise remove this vault, select the folder that contains your vaults, and accept the vault again under Pending Shares.")
+            }
+            return L10n.tr("A folder with this vault's name is in the folder you selected, but it is a copy, not the folder this vault synced in. VaultSync does not continue in a copy. If the vault's own folder still exists, select the folder that contains it. Otherwise remove this vault and accept it again under Pending Shares. If the share then says that its folder already holds files, do not combine them: tap \"Choose Vault…\" and give the vault another folder name.")
+        }
+    }
+
+    /// The folder errors that say a folder's directory cannot be reached.
+    private static let pathErrorReasons: Set<String> = [
+        "folder_path_missing",
+        "permission_denied",
+        "folder_path_invalid",
+        "folder_path_unreadable",
+    ]
+
+    /// Where, under the selected folder, the copies lie that were refused in
+    /// a vault's place — relative paths, "" for the selected folder itself.
+    /// They are no vaults waiting to be shared (#315).
+    var refusedCopyRels: [String] {
+        let rel = FolderPathReconciler.loadRel()
+        return foldersWithoutTheirStorage.compactMap { rel[$0] }
+    }
+
+    /// A copy found in a vault's place is a finding about folders the user
+    /// can change in the Files app while VaultSync is in the background: the
+    /// copy deleted, the vault's own folder put where the copy was. A return
+    /// to the app over a running engine reconciles nothing by itself, so the
+    /// card would go on describing what is no longer there. Reconciles again
+    /// while a finding is shown; nil when there is none.
+    @discardableResult
+    func recheckCopiesFound(obsidianRoot: String?) -> Task<Void, Never>? {
+        guard !foldersWithoutTheirStorage.isEmpty else { return nil }
+        return reconcileFolderPaths(obsidianRoot: obsidianRoot)
     }
 
     var unreachableFolders: [UnreachableFolder] {
-        let pathErrorReasons: Set<String> = [
-            "folder_path_missing",
-            "permission_denied",
-            "folder_path_invalid",
-            "folder_path_unreadable",
-        ]
         let rel = FolderPathReconciler.loadRel()
         return folders.compactMap { folder in
             guard let status = folderStatuses[folder.id], status.state == "error",
-                  let reason = status.errorReason, pathErrorReasons.contains(reason)
+                  let reason = status.errorReason, Self.pathErrorReasons.contains(reason)
             else { return nil }
             return UnreachableFolder(
                 id: folder.id,
                 label: folder.label.isEmpty ? folder.id : folder.label,
                 path: status.errorPath ?? folder.path,
                 reason: reason,
-                hasObsidianMapping: rel[folder.id] != nil
+                hasObsidianMapping: rel[folder.id] != nil,
+                foundDirectoryIsNotItsStorage: foldersWithoutTheirStorage.contains(folder.id),
+                syncsSelectedFolderItself: rel[folder.id] == ""
             )
         }
     }
@@ -2736,6 +2841,20 @@ final class SyncthingManager {
 
     func _testSetFolderStatuses(_ newStatuses: [String: FolderStatusInfo]) {
         folderStatuses = newStatuses
+    }
+
+    func _testSetFoldersWithoutTheirStorage(_ folderIDs: Set<String>) {
+        foldersWithoutTheirStorage = folderIDs
+    }
+
+    /// Begins a reconcile pass the way `reconcileFolderPaths` does, without
+    /// its detached work: the test decides when it ends, and with what.
+    func _testBeginReconcile() -> PathSettlement.Token {
+        pathSettlement.reconcileBegan()
+    }
+
+    func _testFinishReconcile(_ token: PathSettlement.Token, finding outcome: FolderPathReconciler.Outcome) {
+        markReconcile(token: token, completed: true, outcome: outcome)
     }
 
     func _testSetRunning(_ running: Bool) {

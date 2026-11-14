@@ -21,6 +21,10 @@ enum DesignPreviewFixture {
         /// (#270): the notice with its way out, and a pending share that
         /// says where it would arrive.
         case outsideObsidian = "outside-obsidian"
+        /// A vault whose folder is gone, with a copy of it found under the
+        /// selected folder (#315): the card that says so and names the way
+        /// on.
+        case earlierCopy = "earlier-copy"
         /// One vault mid-transfer.
         case syncing
         case devices
@@ -125,13 +129,25 @@ enum DesignPreviewFixture {
             folder(id: notesID, label: "Notes", deviceIDs: [serverID, macBookID]),
             folder(id: workID, label: "Work", deviceIDs: [serverID]),
         ])
-        let workSyncing = screen == .syncing
+        let workStatus: SyncthingManager.FolderStatusInfo
+        switch screen {
+        case .syncing:
+            workStatus = status(state: "syncing", pct: 63, files: 307, bytes: 9_437_184, need: 3)
+        case .earlierCopy:
+            workStatus = status(state: "error", pct: 100, files: 310, bytes: 9_437_184, need: 0, errorReason: "folder_path_missing")
+        default:
+            workStatus = status(state: "idle", pct: 100, files: 310, bytes: 9_437_184, need: 0)
+        }
         syncthingManager._testSetFolderStatuses([
             notesID: status(state: "idle", pct: 100, files: 1284, bytes: 44_040_192, need: 0),
-            workID: workSyncing
-                ? status(state: "syncing", pct: 63, files: 307, bytes: 9_437_184, need: 3)
-                : status(state: "idle", pct: 100, files: 310, bytes: 9_437_184, need: 0),
+            workID: workStatus,
         ])
+        if screen == .earlierCopy {
+            // Only a vault with a known place under the selected folder is
+            // ever looked for there, so the card comes with its mapping.
+            FolderPathReconciler._previewSetRel([workID: "Work"])
+            syncthingManager._testSetFoldersWithoutTheirStorage([workID])
+        }
         syncthingManager._testApplyDeviceList(devices)
         let now = Date()
         syncthingManager._testSetLastSyncTimes(
@@ -217,7 +233,8 @@ enum DesignPreviewFixture {
         pct: Double,
         files: Int,
         bytes: Int64,
-        need: Int
+        need: Int,
+        errorReason: String? = nil
     ) -> SyncthingManager.FolderStatusInfo {
         SyncthingManager.FolderStatusInfo(payload: .init(
             state: state,
@@ -230,7 +247,7 @@ enum DesignPreviewFixture {
             needBytes: Int64(need) * 4_096,
             needFiles: need,
             inProgressBytes: 0,
-            errorReason: nil,
+            errorReason: errorReason,
             errorMessage: nil,
             errorPath: nil,
             errorChanged: nil

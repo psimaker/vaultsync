@@ -11,6 +11,7 @@ enum SyncUserErrorCategory: String, Sendable {
     case relayProvision = "relay_provision"
     case fileAccess = "file_access"
     case folderMarkerMissing = "folder_marker_missing"
+    case folderIsACopy = "folder_is_a_copy"
     case unknown
 }
 
@@ -43,6 +44,25 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
             category: .config,
             title: title,
             message: message,
+            remediation: "",
+            technicalDetails: nil
+        )
+    }
+
+    /// The troubleshooting section for a vault with a copy found in its
+    /// place (#315). Its card and its page both link there.
+    static let folderIsACopyAnchor = "the-folder-found-is-a-copy"
+
+    /// A vault whose folder is gone, with a copy of it found in its place
+    /// (#315): the words of its card under Sync Issues, and the link to the
+    /// section that has the rest. The engine's own error for it says that
+    /// the path is missing, and its advice — recreate the folder — is what
+    /// makes a copy pass for the vault.
+    static func folderIsACopy(explanation: String) -> SyncUserError {
+        SyncUserError(
+            category: .folderIsACopy,
+            title: L10n.tr("The Folder Found Is a Copy"),
+            message: explanation,
             remediation: "",
             technicalDetails: nil
         )
@@ -331,6 +351,8 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
             }
         case .folderMarkerMissing:
             anchor = "vault-folder-was-moved-or-deleted"
+        case .folderIsACopy:
+            anchor = folderIsACopyAnchor
         case .config, .validation:
             if details.contains("pending") || details.contains("share") {
                 anchor = "no-pending-shares-appear"
