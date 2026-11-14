@@ -284,7 +284,7 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
                 "VaultSync can no longer verify that this folder still holds this vault's data%@ — the folder was likely moved, renamed, replaced, or deleted outside VaultSync. Syncing has stopped to protect your notes.",
                 pathHint
             ),
-            remediation: L10n.tr("If you moved or renamed the folder, move it back to its original place. If it is gone, remove this vault on this iPhone and accept it again under Pending Shares. VaultSync never moves, recreates, or deletes folders on its own."),
+            remediation: L10n.tr("If you moved or renamed the folder, move it back to its original place. If it is gone, remove this vault on this iPhone, close VaultSync in the app switcher and open it again, and accept the vault again under Pending Shares. VaultSync never moves, recreates, or deletes folders on its own."),
             technicalDetails: detail
         )
     }
