@@ -1151,11 +1151,18 @@ final class SyncthingManager {
             // it unpaused into its own folder).
             PathCollisionGuard.clearAutoPaused(id)
             // Never auto-re-accept a share the user just removed: while a peer
-            // still shares the folder, the offer reappears within moments, and
-            // silently pulling it back in would undo the removal (doctrine
-            // 002 / #52). The share stays visible under Pending Shares until
-            // the user explicitly accepts it — which then honours a manually
-            // chosen target.
+            // still shares the folder, the offer is back while the app is
+            // open, and silently pulling it back in would undo the removal
+            // (doctrine 002 / #52). The share stays visible under Pending
+            // Shares until the user explicitly accepts it — which then
+            // honours a manually chosen target.
+            //
+            // The offer comes back because the engine closes its connections
+            // to the folder's devices on removal: a peer announces its
+            // folders when a connection is set up, and a removal here gave
+            // it no other reason to (#316, decision 064). The reconnect takes
+            // about a second; after several removals within a few minutes
+            // the engine no longer dials at once, and it can take a minute.
             userRemovedFolderIDs.insert(id)
             persistUserRemovedFolderIDs()
             // What was kept or reported belongs to the folder that was
