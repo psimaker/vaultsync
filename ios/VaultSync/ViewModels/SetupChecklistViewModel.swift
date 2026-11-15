@@ -238,7 +238,7 @@ final class SetupChecklistViewModel {
                 requirement: .relayConfigured,
                 title: L10n.tr("Cloud Relay"),
                 description: L10n.tr("Cloud Relay is not enabled. Without it, incoming changes arrive when you open VaultSync."),
-                remediation: L10n.tr("Enable Cloud Relay on the Relay tab if you want changes pushed the moment they happen."),
+                remediation: L10n.tr("Enable Cloud Relay on the Relay tab if you want your server to wake VaultSync when it has changes."),
                 isOptional: true,
                 isComplete: false,
                 action: .openRelayTab
@@ -257,7 +257,7 @@ final class SetupChecklistViewModel {
             return ChecklistItem(
                 requirement: .relayConfigured,
                 title: L10n.tr("Cloud Relay active"),
-                description: L10n.tr("Wake-ups are being delivered — incoming changes sync the moment they happen."),
+                description: L10n.tr("Wake-ups are being delivered — incoming changes sync in the background, usually within moments."),
                 remediation: "",
                 isOptional: true,
                 isComplete: true

@@ -268,7 +268,7 @@ struct OnboardingView: View {
 
         VaultNotice(
             systemImage: "antenna.radiowaves.left.and.right",
-            text: L10n.tr("Optional: turn on Cloud Relay later for instant updates — you’ll find it on the Relay tab."),
+            text: L10n.tr("Optional: turn on Cloud Relay later for faster updates — you’ll find it on the Relay tab."),
             tone: .neutral
         )
     }

@@ -889,8 +889,8 @@ struct ContentView: View {
     private var relayUpsellCard: some View {
         askCard(
             systemImage: "antenna.radiowaves.left.and.right",
-            title: L10n.tr("Get instant updates"),
-            message: L10n.tr("Your first sync is done. Cloud Relay wakes this iPhone the moment your notes change — even while the app is closed."),
+            title: L10n.tr("Get faster updates"),
+            message: L10n.tr("Your first sync is done. When your server has changes, Cloud Relay sends this iPhone a wake-up, and VaultSync syncs in the background once iOS delivers it — usually within moments. iOS decides when a wake-up arrives, and after you force-quit the app, wake-ups resume once you open it again."),
             confirmTitle: L10n.tr("View Cloud Relay"),
             onConfirm: { dismissRelayUpsell(openRelay: true) },
             onDecline: { dismissRelayUpsell(openRelay: false) }
@@ -1230,7 +1230,7 @@ struct ContentView: View {
     private var relayPromo: some View {
         if relayDashboardState == .promo {
             relayNavCard(
-                title: L10n.tr("Get instant updates"),
+                title: L10n.tr("Get faster updates"),
                 subtitle: L10n.tr("Turn on Cloud Relay"),
                 systemImage: "antenna.radiowaves.left.and.right",
                 tone: nil
