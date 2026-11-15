@@ -655,16 +655,34 @@ install_app() {
 # converts a database for good.
 syncthing_image_for_new_env() {
 	st_dir="$HUB_DIR/syncthing"
-	if [ ! -e "$st_dir" ] && [ ! -L "$st_dir" ]; then
+	if [ -d "$st_dir/config/index-v2" ]; then
 		echo "$SYNCTHING_IMAGE_NEW"
-	elif [ -d "$st_dir" ] && [ ! -L "$st_dir" ] && [ -x "$st_dir" ] &&
-		[ ! -e "$st_dir/config" ] && [ ! -L "$st_dir/config" ]; then
-		echo "$SYNCTHING_IMAGE_NEW"
-	elif [ -d "$st_dir/config/index-v2" ]; then
+	elif [ -e "$st_dir/config" ] || [ -L "$st_dir/config" ]; then
+		echo "$SYNCTHING_IMAGE_KEPT"
+	elif { [ ! -e "$st_dir" ] && [ ! -L "$st_dir" ]; } ||
+		{ [ -d "$st_dir" ] && [ ! -L "$st_dir" ] && [ -x "$st_dir" ]; }; then
+		# No config under a folder setup can search (or none at all, in a
+		# dry run, which creates nothing): no Syncthing has run here.
 		echo "$SYNCTHING_IMAGE_NEW"
 	else
 		echo "$SYNCTHING_IMAGE_KEPT"
 	fi
+}
+
+# The page section that explains the two lines, for every message about them.
+SYNCTHING_LINE_DOC="https://github.com/psimaker/vaultsync/blob/main/docs/hub.md#which-syncthing-your-hub-runs"
+
+kept_syncthing_note() {
+	info "This Hub directory already holds a Syncthing that setup cannot tell to be 2.x: the new .env keeps it on $SYNCTHING_IMAGE_KEPT."
+	info "  Why, and what to do if it runs 2.x: $SYNCTHING_LINE_DOC"
+}
+
+# A wrong 1.x on a 2.x home is the one way this goes wrong: 1.x refuses to
+# start. The log shows it; this says what it means.
+syncthing_start_hint() {
+	info "  If the Syncthing log above says the config file version is newer than supported,"
+	info "  this Hub's Syncthing is on 2.x: set VAULTSYNC_HUB_SYNCTHING_IMAGE=$SYNCTHING_IMAGE_NEW"
+	info "  in $HUB_DIR/.env and run the setup again ($SYNCTHING_LINE_DOC)."
 }
 
 write_hub_files() {
@@ -673,7 +691,9 @@ write_hub_files() {
 	if [ "$DRY_RUN" = 1 ]; then
 		info "[dry-run] would write: $compose and $env_file (PUID=$PUID PGID=$PGID SYNC_PORT=$SYNC_PORT GUI_PORT=$GUI_PORT)"
 		if [ ! -f "$env_file" ]; then
-			info "[dry-run] the new $env_file would name VAULTSYNC_HUB_SYNCTHING_IMAGE=$(syncthing_image_for_new_env)"
+			syncthing_image=$(syncthing_image_for_new_env)
+			info "[dry-run] the new $env_file would name VAULTSYNC_HUB_SYNCTHING_IMAGE=$syncthing_image"
+			[ "$syncthing_image" != "$SYNCTHING_IMAGE_KEPT" ] || kept_syncthing_note
 		fi
 		return 0
 	fi
@@ -777,9 +797,7 @@ VAULTSYNC_HUB_IMAGE=$HUB_IMAGE
 VAULTSYNC_HUB_SYNCTHING_IMAGE=$syncthing_image
 RELAY_URL=$RELAY_URL
 ENV
-		if [ "$syncthing_image" = "$SYNCTHING_IMAGE_KEPT" ]; then
-			info "This Hub directory already holds a Syncthing that setup cannot tell to be 2.x: the new .env keeps it on $SYNCTHING_IMAGE_KEPT."
-		fi
+		[ "$syncthing_image" != "$SYNCTHING_IMAGE_KEPT" ] || kept_syncthing_note
 	fi
 }
 
@@ -811,6 +829,10 @@ setup_hub() {
 		[ -z "$existing_sync" ] || SYNC_PORT="$existing_sync"
 		[ -z "$existing_gui" ] || GUI_PORT="$existing_gui"
 		offer_newer_hub_image "$HUB_DIR/.env"
+		if ! grep -qs '^VAULTSYNC_HUB_SYNCTHING_IMAGE=' "$HUB_DIR/.env"; then
+			info "Your Hub's Syncthing follows the 1.x line, which gets no more fixes. Setup leaves it there:"
+			info "  the move to 2.x cannot be undone. Which line it runs and why: $SYNCTHING_LINE_DOC"
+		fi
 	else
 		if port_in_use 22000; then
 			warn "Port 22000 is already in use (another Syncthing?). The Hub will use 22001."
@@ -840,13 +862,18 @@ setup_hub() {
 		return 0
 	fi
 	$DOCKER compose --project-directory "$HUB_DIR" pull --quiet
-	$DOCKER compose --project-directory "$HUB_DIR" up -d
+	if ! $DOCKER compose --project-directory "$HUB_DIR" up -d; then
+		$DOCKER compose --project-directory "$HUB_DIR" logs --tail 30 syncthing >&2 || true
+		syncthing_start_hint
+		fail "The Hub did not start. The log above explains why; fix it and re-run."
+	fi
 
 	i=0
 	until $DOCKER compose --project-directory "$HUB_DIR" exec -T hub vaultsync-hub status >/dev/null 2>&1; do
 		i=$((i + 1))
 		[ "$i" -lt 45 ] || {
-			$DOCKER compose --project-directory "$HUB_DIR" logs --tail 30 hub >&2 || true
+			$DOCKER compose --project-directory "$HUB_DIR" logs --tail 30 syncthing hub >&2 || true
+			syncthing_start_hint
 			fail "The Hub did not become ready. The log above explains why; fix it and re-run."
 		}
 		sleep 2

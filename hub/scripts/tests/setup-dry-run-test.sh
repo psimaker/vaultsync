@@ -26,7 +26,9 @@ SETUP_SH="$REPO_ROOT/hub/scripts/setup.sh"
 COMPOSE="$REPO_ROOT/hub/docker-compose.yml"
 
 SANDBOX=$(mktemp -d)
-trap 'rm -rf "$SANDBOX"' EXIT
+# chmod first: a case that takes a folder's modes away and fails before it
+# gives them back must not leave a sandbox rm cannot remove.
+trap 'chmod -R u+rwx "$SANDBOX" 2>/dev/null; rm -rf "$SANDBOX"' EXIT
 
 fail() {
 	printf 'FAIL: %s\n' "$*" >&2
@@ -54,7 +56,9 @@ esac
 if [ -n "${ALLOW_COMPOSE:-}" ]; then
 	printf 'docker %s (VAULTSYNC_HUB_IMAGE=%s) (VAULTSYNC_HUB_SYNCTHING_IMAGE=%s)\n' "$*" "${VAULTSYNC_HUB_IMAGE-unset}" "${VAULTSYNC_HUB_SYNCTHING_IMAGE-unset}" >>"$COMPOSE_LOG"
 	case "$*" in
-		"compose --project-directory "*" pull --quiet" | "compose --project-directory "*" up -d") exit 0 ;;
+		"compose --project-directory "*" pull --quiet") exit 0 ;;
+		"compose --project-directory "*" up -d") [ -z "${FAIL_COMPOSE_UP:-}" ] || exit 1; exit 0 ;;
+		"compose --project-directory "*" logs --tail 30 "*) echo "syncthing log: test"; exit 0 ;;
 		"compose --project-directory "*" exec -T hub vaultsync-hub status") printf 'VaultSync Hub test\nDevice ID:   TEST\n'; exit 0 ;;
 		"compose --project-directory "*" exec -T hub vaultsync-hub code") printf 'Pairing code: TULIP-ANCHOR-42\n'; exit 0 ;;
 	esac
@@ -383,6 +387,25 @@ fi
 grep -qx "$ST_FALLBACK" "$ST_HUB/docker-compose.yml" ||
 	fail "the compose file does not take the Syncthing image from .env with 1.x as its fallback"
 pass "a new Hub's .env names Syncthing 2.x, and only .env decides it"
+out=$(new_env_run) || fail "a second setup run on the new Hub exited non-zero:
+$out"
+if printf '%s\n' "$out" | grep -q "follows the 1.x line"; then
+	fail "a Hub whose .env names 2.x is told it follows 1.x:
+$out"
+fi
+pass "a Hub whose .env names 2.x hears nothing about 1.x"
+
+# A start that fails shows Syncthing's log and what a refused 2.x home means.
+rm -rf "$ST_HUB"
+if out=$(FAIL_COMPOSE_UP=1 new_env_run); then
+	fail "a failed start must stop the setup:
+$out"
+fi
+grep -q "logs --tail 30 syncthing" "$COMPOSE_LOG" || fail "a failed start does not show Syncthing's log:
+$(cat "$COMPOSE_LOG")"
+printf '%s\n' "$out" | grep -q "set VAULTSYNC_HUB_SYNCTHING_IMAGE=syncthing/syncthing:2" || fail "a failed start does not name the .env line:
+$out"
+pass "a failed start shows Syncthing's log and names the .env line"
 
 lost_env() { # NAME EXPECTED-IMAGE: a Hub directory without .env, as prepared
 	out=$(new_env_run) || fail "$1: setup exited non-zero:
@@ -395,6 +418,15 @@ $out"
 	pass "$1: the new .env names $2"
 }
 rm -rf "$ST_HUB"; mkdir -p "$ST_HUB/syncthing/config/index-v0.14.0.db"
+out=$(VAULTSYNC_HUB_DIR="$ST_HUB" sh "$SETUP_SH" --hub --dry-run 2>&1) || fail "dry run on a Hub directory without .env exited non-zero:
+$out"
+if ! printf '%s\n' "$out" | grep -q "would name VAULTSYNC_HUB_SYNCTHING_IMAGE=syncthing/syncthing:1$" ||
+	! printf '%s\n' "$out" | grep -q "cannot tell to be 2.x"; then
+	fail "a dry run on a Hub directory with a 1.x database does not say it keeps 1.x and why:
+$out"
+fi
+[ ! -e "$ST_HUB/.env" ] || fail "a dry run wrote .env"
+pass "a dry run on a Hub directory with a 1.x database says it keeps 1.x and why"
 lost_env "a Hub directory whose Syncthing has a 1.x database" "syncthing/syncthing:1"
 rm -rf "$ST_HUB"; mkdir -p "$ST_HUB/syncthing/config/index-v0.14.0.db-migrated" "$ST_HUB/syncthing/config/index-v2"
 lost_env "a Hub directory whose Syncthing is on 2.x already" "syncthing/syncthing:2"
@@ -432,6 +464,8 @@ if grep -v "(VAULTSYNC_HUB_SYNCTHING_IMAGE=unset)" "$COMPOSE_LOG" | grep -q .; t
 $(cat "$COMPOSE_LOG")"
 fi
 [ -d "$ST_HUB/syncthing/config/index-v0.14.0.db" ] || fail "an existing Hub's database was touched"
+printf '%s\n' "$out" | grep -q "Your Hub's Syncthing follows the 1.x line" || fail "an existing Hub on 1.x is not told so:
+$out"
 pass "an existing Hub's .env stays as it is and its Syncthing stays on 1.x"
 grep -v '^chown ' "$SANDBOX/results/violations-301.log" 2>/dev/null | grep -q . && fail "a #301 Hub setup ran a privileged or network-changing command:
 $(cat "$SANDBOX/results/violations-301.log")"

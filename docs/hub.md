@@ -19,7 +19,8 @@ Choose **2) Hub**. The setup
 2. creates `/srv/vaultsync/` (override with `VAULTSYNC_HUB_DIR`) with three
    plain directories: `vaults/` (your notes), `syncthing/` (identity, config,
    database), `hub/` (pairing state),
-3. starts three containers — the Hub's own Syncthing (2.x), the `hub`
+3. starts three containers — the Hub's own Syncthing (2.x for a new Hub; see
+   [Which Syncthing your Hub runs](#which-syncthing-your-hub-runs)), the `hub`
    coordinator and the `notify` wake-up helper for VaultSync on iPhone,
 4. prints the Hub's **Device ID** and a **pairing code**.
 
@@ -409,7 +410,7 @@ docker compose exec hub vaultsync-hub code            # new pairing code
 docker compose exec hub vaultsync-hub vault list
 docker compose exec hub vaultsync-hub vault create "Work"
 docker compose exec hub vaultsync-hub vault adopt "Old Notes"   # existing dir in vaults/
-docker compose pull && docker compose up -d           # refresh the images .env names
+docker compose pull && docker compose up -d           # refresh the images the stack names
 ```
 
 ## Update the Hub
