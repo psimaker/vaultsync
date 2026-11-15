@@ -1091,7 +1091,7 @@ struct ContentView: View {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.title3)
                     .foregroundStyle(Color.statusAttention)
-                    .frame(width: 28)
+                    .vaultLeadingSlot()
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: VaultSpacing.xs) {
                     Text(folder.label)
@@ -1758,7 +1758,7 @@ struct ContentView: View {
                 Image(systemName: "laptopcomputer")
                     .font(.title3)
                     .foregroundStyle(Color.vaultSecondaryLabel)
-                    .frame(width: 28)
+                    .vaultLeadingSlot()
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: VaultSpacing.xxs) {
                     Text(name)
