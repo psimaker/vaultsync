@@ -382,7 +382,7 @@
 "VaultSync cannot access your local Obsidian folder." = "VaultSync cannot access your local Obsidian folder.";
 "Connect your Obsidian folder from the VaultSync home screen." = "Connect your Obsidian folder from the VaultSync home screen.";
 "Computer or server added" = "Computer or server added";
-"Your first sync is done. Cloud Relay wakes this iPhone the moment your notes change — even while the app is closed." = "Your first sync is done. Cloud Relay wakes this iPhone the moment your notes change — even while the app is closed.";
+"Your first sync is done. When your server has changes, Cloud Relay sends this iPhone a wake-up, and VaultSync syncs in the background once iOS delivers it — usually within moments." = "Your first sync is done. When your server has changes, Cloud Relay sends this iPhone a wake-up, and VaultSync syncs in the background once iOS delivers it — usually within moments.";
 "Your iPhone is paired with at least one Syncthing device." = "Your iPhone is paired with at least one Syncthing device.";
 "Your iPhone is not paired with a Syncthing device yet." = "Your iPhone is not paired with a Syncthing device yet.";
 "Add your computer or server from the Devices section on the home screen." = "Add your computer or server from the Devices section on the home screen.";
@@ -513,7 +513,7 @@
 "Both versions were kept.\n\nYour local version remains as '%@'.\nThe other device's version was renamed to '%@'." = "Both versions were kept.\n\nYour local version remains as '%@'.\nThe other device's version was renamed to '%@'.";
 "%d conflicts" = "%d conflicts";
 "Your contribution is pending approval." = "Your contribution is pending approval.";
-"iOS did not provide a push token required for instant sync." = "iOS did not provide a push token required for instant sync.";
+"iOS did not provide a push token required for Cloud Relay wake-ups." = "iOS did not provide a push token required for Cloud Relay wake-ups.";
 "%@ (Trigger: %@)" = "%@ (Trigger: %@)";
 "1 additional file synced in %@" = "1 additional file synced in %@";
 "%d additional files synced in %@" = "%d additional files synced in %@";
@@ -543,11 +543,11 @@
 
 /* Cloud Relay activation (2026-05-31): honest server-setup + conversion */
 "Cloud Relay is not enabled. Without it, incoming changes arrive when you open VaultSync." = "Cloud Relay is not enabled. Without it, incoming changes arrive when you open VaultSync.";
-"Enable Cloud Relay on the Relay tab if you want changes pushed the moment they happen." = "Enable Cloud Relay on the Relay tab if you want changes pushed the moment they happen.";
+"Enable Cloud Relay on the Relay tab if you want your server to wake VaultSync when it has changes." = "Enable Cloud Relay on the Relay tab if you want your server to wake VaultSync when it has changes.";
 "Cloud Relay — finish server setup" = "Cloud Relay — finish server setup";
 "You’re subscribed, but no recent wake-up has arrived. Make sure the vaultsync-notify helper is running on your server." = "You’re subscribed, but no recent wake-up has arrived. Make sure the vaultsync-notify helper is running on your server.";
 "Set up the server helper from the Relay tab → Set Up Your Server." = "Set up the server helper from the Relay tab → Set Up Your Server.";
-"Wake-ups are being delivered — incoming changes sync the moment they happen." = "Wake-ups are being delivered — incoming changes sync the moment they happen.";
+"Wake-ups are being delivered — incoming changes sync in the background, usually within moments." = "Wake-ups are being delivered — incoming changes sync in the background, usually within moments.";
 "Your server helper is running — wake-ups are being delivered." = "Your server helper is running — wake-ups are being delivered.";
 "Why this step" = "Why this step";
 "Cloud Relay needs a small helper on your server. It watches Syncthing for changes and sends VaultSync a wake-up signal — it never sees your notes. Without it, the subscription has nothing to wake the app with." = "Cloud Relay needs a small helper on your server. It watches Syncthing for changes and sends VaultSync a wake-up signal — it never sees your notes. Without it, the subscription has nothing to wake the app with.";
@@ -564,7 +564,7 @@
 "Last wake-up" = "Last wake-up";
 "Auto-renews until canceled. Cancel anytime in Settings → Subscriptions." = "Auto-renews until canceled. Cancel anytime in Settings → Subscriptions.";
 "Cancel anytime in Settings → Subscriptions" = "Cancel anytime in Settings → Subscriptions";
-"Get instant updates" = "Get instant updates";
+"Get faster updates" = "Get faster updates";
 "Turn on Cloud Relay" = "Turn on Cloud Relay";
 
 /* Redesign (Vault OS) strings — added in branch redesign/vault-os-foundation */
@@ -578,16 +578,16 @@
 "Double tap to copy" = "Double tap to copy";
 "Give VaultSync one-time access to your Obsidian folder so it can sync your notes. The folder appears under \"On My iPhone\" once Obsidian holds a vault on this iPhone." = "Give VaultSync one-time access to your Obsidian folder so it can sync your notes. The folder appears under \"On My iPhone\" once Obsidian holds a vault on this iPhone.";
 "How is this private?" = "How is this private?";
-"Instant sync, still private" = "Instant sync, still private";
+"Faster sync, still private" = "Faster sync, still private";
 "Let’s get your vault synced" = "Let’s get your vault synced";
 "Loading plans…" = "Loading plans…";
 "Manage" = "Manage";
 "Monthly" = "Monthly";
 "One step left to activate" = "One step left to activate";
-"Optional: turn on Cloud Relay later for instant updates — you’ll find it on the Relay tab." = "Optional: turn on Cloud Relay later for instant updates — you’ll find it on the Relay tab.";
+"Optional: turn on Cloud Relay later for faster updates — you’ll find it on the Relay tab." = "Optional: turn on Cloud Relay later for faster updates — you’ll find it on the Relay tab.";
 "Relay" = "Relay";
 "Relay health & diagnostics" = "Relay health & diagnostics";
-"One step left: run a single line on your server and instant updates start. The helper only sends a wake-up — it never sees your notes." = "One step left: run a single line on your server and instant updates start. The helper only sends a wake-up — it never sees your notes.";
+"One step left: run a single line on your server and it starts waking this iPhone. The helper only sends a wake-up — it never sees your notes." = "One step left: run a single line on your server and it starts waking this iPhone. The helper only sends a wake-up — it never sees your notes.";
 "Save %d%%" = "Save %d%%";
 "Server helper setup" = "Server helper setup";
 "Set up the server helper" = "Set up the server helper";
@@ -597,7 +597,7 @@
 "Wake-ups are being delivered — changes from your other devices arrive instantly." = "Wake-ups are being delivered — changes from your other devices arrive instantly.";
 "Yearly" = "Yearly";
 "Your local version is kept, and the other device’s version is added under a new name. Nothing is discarded." = "Your local version is kept, and the other device’s version is added under a new name. Nothing is discarded.";
-"Your notes never touch our servers. Cloud Relay sends a tiny wake-up so changes from your other devices land the moment they happen — even with the app closed." = "Your notes never touch our servers. Cloud Relay sends a tiny wake-up so changes from your other devices land the moment they happen — even with the app closed.";
+"Your notes never touch our servers. When your server has changes, Cloud Relay sends a tiny wake-up, and VaultSync syncs in the background once iOS delivers it — usually within moments. If you force-quit the app, wake-ups resume when you open it again." = "Your notes never touch our servers. When your server has changes, Cloud Relay sends a tiny wake-up, and VaultSync syncs in the background once iOS delivers it — usually within moments. If you force-quit the app, wake-ups resume when you open it again.";
 "One-step setup: a single line on your server." = "One-step setup: a single line on your server.";
 "Your vault already syncs free and peer-to-peer. Relay only removes the “open the app to sync” wait — it isn’t cloud storage." = "Your vault already syncs free and peer-to-peer. Relay only removes the “open the app to sync” wait — it isn’t cloud storage.";
 "You’re subscribed, but no wake-up has arrived yet. Cloud Relay only delivers once the helper is running on your server." = "You’re subscribed, but no wake-up has arrived yet. Cloud Relay only delivers once the helper is running on your server.";

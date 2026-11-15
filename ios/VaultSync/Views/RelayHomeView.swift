@@ -63,11 +63,11 @@ struct RelayHomeView: View {
             VaultHeroHeader(
                 tone: .accent,
                 systemImage: "antenna.radiowaves.left.and.right",
-                title: L10n.tr("Instant sync, still private")
+                title: L10n.tr("Faster sync, still private")
             )
             .accessibilityElement(children: .combine)
 
-            Text(L10n.tr("Your notes never touch our servers. Cloud Relay sends a tiny wake-up so changes from your other devices land the moment they happen — even with the app closed."))
+            Text(L10n.tr("Your notes never touch our servers. When your server has changes, Cloud Relay sends a tiny wake-up, and VaultSync syncs in the background once iOS delivers it — usually within moments. If you force-quit the app, wake-ups resume when you open it again."))
                 .font(.subheadline)
                 .foregroundStyle(Color.vaultSecondaryLabel)
                 .fixedSize(horizontal: false, vertical: true)
@@ -126,7 +126,7 @@ struct RelayHomeView: View {
         if relayUserStatus == .waitingForFirstSignal {
             nextStepCard(
                 title: L10n.tr("Set up the server helper"),
-                detail: L10n.tr("One step left: run a single line on your server and instant updates start. The helper only sends a wake-up — it never sees your notes."),
+                detail: L10n.tr("One step left: run a single line on your server and it starts waking this iPhone. The helper only sends a wake-up — it never sees your notes."),
                 systemImage: "server.rack"
             ) {
                 RelayServerSetupView(isDelivering: isDelivering)

@@ -322,7 +322,7 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
         SyncUserError(
             category: .permission,
             title: L10n.tr("Push Registration Failed"),
-            message: L10n.tr("iOS did not provide a push token required for instant sync."),
+            message: L10n.tr("iOS did not provide a push token required for Cloud Relay wake-ups."),
             remediation: L10n.tr("Notification permission is not required for this. Check that the iPhone is online and signed in to an Apple Account, then reopen the app so push registration can retry."),
             technicalDetails: reason
         )
