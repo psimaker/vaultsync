@@ -65,7 +65,7 @@ struct SyncIssuesView: View {
                 Image(systemName: symbol(for: issue))
                     .font(.title3)
                     .foregroundStyle(color(for: issue))
-                    .frame(width: 28)
+                    .vaultLeadingSlot()
                     .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: VaultSpacing.xs) {

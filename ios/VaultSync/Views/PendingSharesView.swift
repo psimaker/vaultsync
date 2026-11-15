@@ -56,7 +56,7 @@ struct PendingSharesView: View {
                 Image(systemName: hasFailure ? "exclamationmark.circle.fill" : "tray.and.arrow.down.fill")
                     .font(.title3)
                     .foregroundStyle(hasFailure ? Color.statusAttention : Color.statusInfo)
-                    .frame(width: 28)
+                    .vaultLeadingSlot()
                     .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: VaultSpacing.xs) {
