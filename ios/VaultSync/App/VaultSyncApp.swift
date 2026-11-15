@@ -76,7 +76,11 @@ struct VaultSyncApp: App {
             .onOpenURL { url in
                 handleIncomingURL(url)
             }
-            .tint(.vaultAccent)
+            // The inherited tint colors TEXT — toolbar buttons, back
+            // buttons, links, the selected tab — so it is the text token,
+            // not the brand teal (4.4:1 on white, #208). Fills that follow
+            // the tint (toggles) name `vaultAccent` where they stand.
+            .tint(.vaultAccentText)
             .animation(.easeInOut(duration: 0.3), value: hasCompletedOnboarding)
         }
         .onChange(of: scenePhase) { _, newPhase in

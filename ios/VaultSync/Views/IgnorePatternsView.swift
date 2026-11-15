@@ -75,6 +75,7 @@ struct IgnorePatternsView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+                    .tint(Color.vaultAccent)
                 }
             }
         }
@@ -159,6 +160,7 @@ struct IgnorePatternsView: View {
                 }
             }
         }
+        .tint(Color.vaultAccent)
     }
 
     private func bindingFor(_ preset: IgnorePreset) -> Binding<Bool> {
