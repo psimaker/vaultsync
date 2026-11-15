@@ -46,13 +46,13 @@ struct SubscribePlanPicker: View {
                 if subscriptionManager.isLoadingProduct || !subscriptionManager.productLoadFailed {
                     HStack(spacing: VaultSpacing.s) {
                         ProgressView()
-                        Text(L10n.tr("Loading plans…")).foregroundStyle(.secondary)
+                        Text(L10n.tr("Loading plans…")).foregroundStyle(Color.vaultSecondaryLabel)
                     }
                 } else {
                     VStack(alignment: .leading, spacing: VaultSpacing.s) {
                         Text(L10n.tr("The subscription plans could not be loaded. This is usually a brief network or App Store hiccup."))
                             .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Color.vaultSecondaryLabel)
                             .fixedSize(horizontal: false, vertical: true)
                         Button {
                             Task { await subscriptionManager.reloadProductsIfNeeded() }
@@ -60,7 +60,7 @@ struct SubscribePlanPicker: View {
                             Label(L10n.tr("Try Again"), systemImage: "arrow.clockwise")
                                 .font(.subheadline.weight(.semibold))
                         }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(.vault(.tinted, compact: true))
                     }
                 }
             } else {
@@ -81,7 +81,7 @@ struct SubscribePlanPicker: View {
                 Label {
                     Text(verificationHint)
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.vaultSecondaryLabel)
                         .fixedSize(horizontal: false, vertical: true)
                 } icon: {
                     Image(systemName: "exclamationmark.shield")
@@ -94,7 +94,7 @@ struct SubscribePlanPicker: View {
                 Label {
                     Text(storageError)
                         .font(.footnote)
-                        .foregroundStyle(Color.statusError)
+                        .foregroundStyle(Color.statusErrorText)
                         .fixedSize(horizontal: false, vertical: true)
                 } icon: {
                     Image(systemName: "exclamationmark.shield")
@@ -146,7 +146,7 @@ struct SubscribePlanPicker: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .buttonStyle(.plain)
-            .foregroundStyle(Color.vaultAccent)
+            .foregroundStyle(Color.vaultAccentText)
             .disabled(isRestoring || subscriptionManager.purchaseInProgress)
 
             complianceFooter
@@ -170,7 +170,7 @@ struct SubscribePlanPicker: View {
                     .font(.headline)
                 Text(L10n.tr("Cloud Relay wakes a specific device. Pair the computer or server that hosts your vault on the Devices tab, then come back to subscribe."))
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.vaultSecondaryLabel)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -192,14 +192,14 @@ struct SubscribePlanPicker: View {
                     .font(.headline)
                 Text(L10n.tr("This purchase needs approval (Ask to Buy). Cloud Relay activates automatically once it is approved. If it was declined, you can simply subscribe again."))
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.vaultSecondaryLabel)
                     .fixedSize(horizontal: false, vertical: true)
                 Button(L10n.tr("Dismiss")) {
                     subscriptionManager.clearPendingApproval()
                 }
                 .font(.subheadline)
                 .buttonStyle(.plain)
-                .foregroundStyle(Color.vaultAccent)
+                .foregroundStyle(Color.vaultAccentText)
                 .padding(.top, VaultSpacing.xxs)
             }
         }
@@ -225,12 +225,12 @@ struct SubscribePlanPicker: View {
                         Text(title)
                             .font(.headline)
                         if recommended, let savings = yearlySavingsText {
-                            StatusTag(text: savings, tint: .vaultAccent, filled: true)
+                            StatusTag(text: savings)
                         }
                     }
                     Text(subscriptionManager.priceText(for: product))
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.vaultSecondaryLabel)
                 }
                 Spacer(minLength: VaultSpacing.s)
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
@@ -265,22 +265,27 @@ struct SubscribePlanPicker: View {
             guard let product = selectedProduct else { return }
             purchase(product)
         } label: {
-            HStack(spacing: VaultSpacing.s) {
-                Spacer()
-                if subscriptionManager.purchaseInProgress {
-                    ProgressView()
-                        .tint(.white)
-                        .accessibilityHidden(true)
-                } else {
-                    Text(L10n.tr("Subscribe"))
-                        .font(.headline)
-                }
-                Spacer()
+            // The label keeps its text while a purchase runs, hidden, so the
+            // button keeps its size and VoiceOver its name.
+            Text(L10n.tr("Subscribe"))
+                .font(.headline)
+                .opacity(subscriptionManager.purchaseInProgress ? 0 : 1)
+        }
+        // The kit's primary pair (#199): white on the lifted dark-mode teal
+        // measured 2.2:1; `vaultOnAccent` on `vaultAccentProminent` clears
+        // 4.8:1 in light, dark and Increase Contrast.
+        .buttonStyle(.vault(.primary))
+        .disabled(subscriptionManager.purchaseInProgress || selectedProduct == nil)
+        .overlay {
+            // Outside the button: the style dims a disabled button to 40 %,
+            // and a spinner drawn inside it faded into the fill (1.3:1 in
+            // dark). The label color stays clear of the dimmed fill.
+            if subscriptionManager.purchaseInProgress {
+                ProgressView()
+                    .tint(Color.vaultLabel)
+                    .accessibilityHidden(true)
             }
         }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.large)
-        .disabled(subscriptionManager.purchaseInProgress || selectedProduct == nil)
         .accessibilityHint(L10n.tr("Starts a subscription purchase."))
     }
 
@@ -316,7 +321,7 @@ struct SubscribePlanPicker: View {
             }
         }
         .font(.caption)
-        .foregroundStyle(.secondary)
+        .foregroundStyle(Color.vaultSecondaryLabel)
     }
 
     private func purchase(_ product: Product) {
