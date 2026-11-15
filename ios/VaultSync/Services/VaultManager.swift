@@ -1147,7 +1147,7 @@ final class VaultManager {
         let fm = FileManager.default
         var isDirectory: ObjCBool = false
         guard fm.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue else {
-            return L10n.tr("Please select a folder. In the picker choose \"On My iPhone\" → \"Obsidian\".")
+            return L10n.tr("Please select a folder. In the picker, tap Browse at the bottom, then \"On My iPhone\" → \"Obsidian\".")
         }
 
         var selectedConfigIsDirectory: ObjCBool = false
@@ -1161,7 +1161,7 @@ final class VaultManager {
             includingPropertiesForKeys: [.isDirectoryKey],
             options: [.skipsHiddenFiles]
         ) else {
-            return L10n.tr("VaultSync cannot read this folder. Reopen the picker and select \"On My iPhone\" → \"Obsidian\".")
+            return L10n.tr("VaultSync cannot read this folder. Reopen the picker, tap Browse at the bottom, then select \"On My iPhone\" → \"Obsidian\".")
         }
 
         let containsVaultSubfolders = contents.contains { itemURL in
@@ -1179,13 +1179,13 @@ final class VaultManager {
         case .accepted:
             return nil
         case .notAnObsidianFolder:
-            return L10n.tr("This folder does not look like your Obsidian directory yet. In the picker choose \"On My iPhone\" → \"Obsidian\".")
+            return L10n.tr("This folder does not look like your Obsidian directory yet. In the picker, tap Browse at the bottom, then \"On My iPhone\" → \"Obsidian\".")
         case .insideAppFolder:
-            return L10n.tr("The folder you selected lies inside an app's folder — it is a single vault or a folder within one. Select the folder that contains your vaults instead: in the picker open \"On My iPhone\" → \"Obsidian\" and tap Open there, without opening one of your vaults.")
+            return L10n.tr("The folder you selected lies inside an app's folder — it is a single vault or a folder within one. Select the folder that contains your vaults instead: in the picker, tap Browse at the bottom, then \"On My iPhone\" → \"Obsidian\", and tap Open there, without opening one of your vaults.")
         case .outsideAppFolder:
-            return L10n.tr("This folder is not Obsidian's own folder, so vaults synced into it would never appear in Obsidian. In the picker choose \"On My iPhone\" → \"Obsidian\". If \"Obsidian\" is missing there, open Obsidian, create a vault with \"Store in iCloud\" turned off, and try again.")
+            return L10n.tr("This folder is not Obsidian's own folder, so vaults synced into it would never appear in Obsidian. In the picker, tap Browse at the bottom, then \"On My iPhone\" → \"Obsidian\". If two folders there are named \"Obsidian\", Obsidian's own is the one that holds the vault you created in Obsidian on this iPhone, and it may carry Obsidian's icon; the other was made by hand. If no \"Obsidian\" there holds a vault you created in Obsidian on this iPhone, open Obsidian, create one with \"Store in iCloud\" turned off, and try again.")
         case .appFolderWithoutVault:
-            return L10n.tr("This folder does not hold a vault yet. Open Obsidian, create a vault with \"Store in iCloud\" turned off, then choose \"On My iPhone\" → \"Obsidian\" again.")
+            return L10n.tr("This folder does not hold a vault yet. Open Obsidian, create a vault with \"Store in iCloud\" turned off, then tap Browse at the bottom of the picker and choose \"On My iPhone\" → \"Obsidian\" again.")
         }
     }
 

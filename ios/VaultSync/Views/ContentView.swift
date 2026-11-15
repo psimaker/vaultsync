@@ -991,25 +991,37 @@ struct ContentView: View {
                     .font(.footnote)
             }
 
-            Text(L10n.tr("In the picker, choose \"On My iPhone\" → \"Obsidian\", then tap Open."))
+            Text(L10n.tr("In the picker, tap Browse at the bottom, then \"On My iPhone\" → \"Obsidian\", and tap Open there."))
                 .font(.footnote)
                 .foregroundStyle(Color.vaultSecondaryLabel)
                 .fixedSize(horizontal: false, vertical: true)
 
-            DisclosureGroup(L10n.tr("Can't find the Obsidian folder?")) {
-                Text(L10n.tr("Open Obsidian and create a vault with \"Store in iCloud\" turned off — any name will do. The Obsidian folder appears under \"On My iPhone\" as soon as it holds a vault. Do not create a folder named \"Obsidian\" yourself: Obsidian cannot open vaults from it."))
-                    .font(.footnote)
-                    .foregroundStyle(Color.vaultSecondaryLabel)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, VaultSpacing.xs)
+            // First setup only: it sends people to Obsidian's own folder.
+            // Vaults that already sync keep the folder they were set up in,
+            // whatever it is called (decision 060), and a reconnect has to
+            // select that one again, which "Learn how to fix" explains.
+            if !vaultManager.needsReconnect && syncthingManager.folders.isEmpty {
+                firstSetupFolderHelp
             }
-            .font(.footnote)
-            .tint(Color.vaultAccentText)
-            // The sole path to first-install help — a footnote-sized label is
-            // far under the 44pt minimum tap target (#69).
-            .frame(minHeight: 44)
-            .contentShape(Rectangle())
         }
+    }
+
+    /// Where Obsidian's folder comes from, and how to tell it from one made
+    /// by hand (#317).
+    private var firstSetupFolderHelp: some View {
+        DisclosureGroup(L10n.tr("Can't find the Obsidian folder?")) {
+            Text(L10n.tr("Open Obsidian and create a vault with \"Store in iCloud\" turned off — any name will do. The Obsidian folder appears under \"On My iPhone\" as soon as it holds a vault. Do not create a folder named \"Obsidian\" yourself: Obsidian cannot open vaults from it. If you already made one, \"On My iPhone\" then shows two folders named \"Obsidian\": Obsidian's own is the one that holds the vault you created in Obsidian on this iPhone, and it may carry Obsidian's icon."))
+                .font(.footnote)
+                .foregroundStyle(Color.vaultSecondaryLabel)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, VaultSpacing.xs)
+        }
+        .font(.footnote)
+        .tint(Color.vaultAccentText)
+        // The sole path to first-install help — a footnote-sized label is
+        // far under the 44pt minimum tap target (#69).
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
     }
 
     // MARK: - Sync Issues
