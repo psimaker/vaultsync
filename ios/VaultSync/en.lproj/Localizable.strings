@@ -529,7 +529,7 @@
 "No folders were available after forced silent-push restart." = "No folders were available after forced silent-push restart.";
 "No folders were available for background sync." = "No folders were available for background sync.";
 "No security-scoped bookmark access was available." = "No security-scoped bookmark access was available.";
-"Accept or create a shared vault before relying on background sync." = "Accept or create a shared vault before relying on background sync.";
+"If this iPhone has no vault yet, accept or create a shared vault. If your vaults are there, open VaultSync — this goes away once it lists them." = "If this iPhone has no vault yet, accept or create a shared vault. If your vaults are there, open VaultSync — this goes away once it lists them.";
 "Retry from the app and review relay/background diagnostics in Settings." = "Retry from the app and review relay/background diagnostics in Settings.";
 "Silent push restarted Syncthing, but no real sync progress was observed before the app returned to idle." = "Silent push restarted Syncthing, but no real sync progress was observed before the app returned to idle.";
 "Sync did not reach idle before %ds deadline." = "Sync did not reach idle before %ds deadline.";
@@ -794,6 +794,8 @@
 "Last observed local data progress" = "Last observed local data progress";
 "A wake-up recorded on this iPhone is stronger delivery evidence. Local data progress is separate; upload, controlled download, and a full roundtrip are not confirmed." = "A wake-up recorded on this iPhone is stronger delivery evidence. Local data progress is separate; upload, controlled download, and a full roundtrip are not confirmed.";
 "The embedded sync engine could not start." = "The embedded sync engine could not start.";
+"The sync engine stopped before its vaults could be read." = "The sync engine stopped before its vaults could be read.";
+"The sync engine's vault list could not be read." = "The sync engine's vault list could not be read.";
 "The embedded sync engine could not restart." = "The embedded sync engine could not restart.";
 "Purchase locally verified" = "Purchase locally verified";
 "Confirmed" = "Confirmed";

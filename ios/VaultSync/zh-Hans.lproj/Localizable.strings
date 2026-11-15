@@ -529,7 +529,7 @@
 "No folders were available after forced silent-push restart." = "强制静默推送重启后没有可用的文件夹。";
 "No folders were available for background sync." = "没有可用于后台同步的文件夹。";
 "No security-scoped bookmark access was available." = "没有可用的安全范围书签访问权限。";
-"Accept or create a shared vault before relying on background sync." = "在依赖后台同步前，请接受或创建一个共享 Vault。";
+"If this iPhone has no vault yet, accept or create a shared vault. If your vaults are there, open VaultSync — this goes away once it lists them." = "如果这台 iPhone 上还没有 Vault，请接受或创建一个共享 Vault。如果你的 Vault 已经在，请打开 VaultSync——一旦它列出这些 Vault，此提示就会消失。";
 "Retry from the app and review relay/background diagnostics in Settings." = "请在应用中重试，并在设置中查看 Relay/后台诊断。";
 "Silent push restarted Syncthing, but no real sync progress was observed before the app returned to idle." = "静默推送已重启 Syncthing，但在应用返回空闲前未观察到实际同步进展。";
 "Sync did not reach idle before %ds deadline." = "同步未在 %d 秒截止时间前进入空闲状态。";
@@ -794,6 +794,8 @@
 "Last observed local data progress" = "上次观察到本地数据进展";
 "A wake-up recorded on this iPhone is stronger delivery evidence. Local data progress is separate; upload, controlled download, and a full roundtrip are not confirmed." = "在这台 iPhone 上记录到唤醒信号，是更有力的送达证据。本地数据进展与此分开；上传、受控下载和完整往返均未确认。";
 "The embedded sync engine could not start." = "无法启动内置同步引擎。";
+"The sync engine stopped before its vaults could be read." = "同步引擎在读取其 Vault 之前已停止。";
+"The sync engine's vault list could not be read." = "无法读取同步引擎的 Vault 列表。";
 "The embedded sync engine could not restart." = "无法重新启动内置同步引擎。";
 "Purchase locally verified" = "已在本地验证购买状态";
 "Confirmed" = "已确认";
