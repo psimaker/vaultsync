@@ -2,10 +2,12 @@
 package bridge
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/syncthing/syncthing/lib/config"
@@ -29,6 +31,8 @@ type PendingDeviceInfo struct {
 
 // GetPendingFoldersJSON returns a JSON array of folders offered by remote
 // devices that have not yet been accepted (i.e. not configured locally).
+// The folders, and the devices offering each, come in the same order on every
+// call for the same offers (#342): see sortPendingFolders.
 func GetPendingFoldersJSON() string {
 	mu.Lock()
 	defer mu.Unlock()
@@ -56,32 +60,79 @@ func GetPendingFoldersJSON() string {
 
 	infos := make([]PendingFolderInfo, 0, len(pending))
 	for folderID, pf := range pending {
-		offered := make([]PendingDeviceInfo, 0, len(pf.OfferedBy))
-		label := ""
+		offers := make([]pendingOffer, 0, len(pf.OfferedBy))
 		for devID, obs := range pf.OfferedBy {
 			devIDStr := devID.String()
-			name := deviceNames[devIDStr]
-			offered = append(offered, PendingDeviceInfo{
-				DeviceID: devIDStr,
-				Name:     name,
-				Time:     obs.Time.Format("2006-01-02T15:04:05Z07:00"),
+			offers = append(offers, pendingOffer{
+				device: PendingDeviceInfo{
+					DeviceID: devIDStr,
+					Name:     deviceNames[devIDStr],
+					Time:     obs.Time.Format("2006-01-02T15:04:05Z07:00"),
+				},
+				label: obs.Label,
 			})
-			if label == "" && obs.Label != "" {
-				label = obs.Label
-			}
 		}
-		infos = append(infos, PendingFolderInfo{
-			ID:        folderID,
-			Label:     label,
-			OfferedBy: offered,
-		})
+		infos = append(infos, pendingFolderInfo(folderID, offers))
 	}
+	sortPendingFolders(infos)
 
 	data, err := json.Marshal(infos)
 	if err != nil {
 		return "[]"
 	}
 	return string(data)
+}
+
+// pendingOffer is one device's offer of a pending folder, with the label that
+// device gives it.
+type pendingOffer struct {
+	device PendingDeviceInfo
+	label  string
+}
+
+// pendingFolderInfo builds a folder's row from its offers, which arrive in
+// map order: the engine keeps the offers of one folder in a map keyed by
+// device. The devices are put in the order of the names the app shows for
+// them, and the folder takes the label of the first of them that gives one —
+// so neither the list nor the label changes from one call to the next (#342).
+func pendingFolderInfo(folderID string, offers []pendingOffer) PendingFolderInfo {
+	slices.SortFunc(offers, func(a, b pendingOffer) int {
+		return compareShownNames(a.device.Name, a.device.DeviceID, b.device.Name, b.device.DeviceID)
+	})
+	info := PendingFolderInfo{ID: folderID, OfferedBy: make([]PendingDeviceInfo, 0, len(offers))}
+	for _, o := range offers {
+		info.OfferedBy = append(info.OfferedBy, o.device)
+		if info.Label == "" {
+			info.Label = o.label
+		}
+	}
+	return info
+}
+
+// sortPendingFolders puts the pending folders in the order of the names the
+// app shows for them. The engine hands them out as a map, whose order differs
+// from one call to the next; the app lists them as they come and runs its
+// automatic accept pass on every change of the list, so unsorted, the rows
+// swapped places between two polls — a tap aimed at one share could land on
+// another — and every swap ran the pass again (#342).
+func sortPendingFolders(infos []PendingFolderInfo) {
+	slices.SortFunc(infos, func(a, b PendingFolderInfo) int {
+		return compareShownNames(a.Label, a.ID, b.Label, b.ID)
+	})
+}
+
+// compareShownNames orders two entries by the name the app shows for each —
+// the name, or the ID when the name is empty — without regard to case, then
+// by that name's exact spelling, then by ID. IDs are unique within a list, so
+// no two entries compare equal and the order does not depend on the order
+// they arrived in.
+func compareShownNames(nameA, idA, nameB, idB string) int {
+	shownA, shownB := cmp.Or(nameA, idA), cmp.Or(nameB, idB)
+	return cmp.Or(
+		cmp.Compare(strings.ToLower(shownA), strings.ToLower(shownB)),
+		cmp.Compare(shownA, shownB),
+		cmp.Compare(idA, idB),
+	)
 }
 
 // AcceptPendingFolder creates a new SendReceive folder with the given ID and
