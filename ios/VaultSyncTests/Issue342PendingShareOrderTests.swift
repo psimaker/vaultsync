@@ -25,11 +25,24 @@ struct Issue342PendingShareOrderTests {
             folder("id-v2", "Vault 2"),
             folder("id-b", "banana"),
         ]
-        let ordered = SyncthingManager.pendingFoldersInDisplayOrder(folders).map(\.id)
+        let ordered = SyncthingManager.pendingFoldersInDisplayOrder(
+            folders,
+            locale: Locale(identifier: "en_US")
+        ).map(\.id)
         // A share without a label shows, and sorts by, its folder ID; a name
         // with an umlaut sorts with its letter, not after Z; numbers in names
         // sort by value; case does not put capitals first.
         #expect(ordered == ["archive", "id-ae", "id-b", "id-v2", "id-v10", "id-z"])
+    }
+
+    @Test("The user's language decides where a letter with an accent goes")
+    func languageDecidesAccentedLetters() {
+        let folders = [folder("id-z", "Zettel"), folder("id-ae", "Ärzte")]
+        let german = SyncthingManager.pendingFoldersInDisplayOrder(folders, locale: Locale(identifier: "de_DE"))
+        let swedish = SyncthingManager.pendingFoldersInDisplayOrder(folders, locale: Locale(identifier: "sv_SE"))
+        #expect(german.map(\.id) == ["id-ae", "id-z"])
+        // Swedish puts Ä after Z.
+        #expect(swedish.map(\.id) == ["id-z", "id-ae"])
     }
 
     @Test("Every order the shares arrive in gives the same list")

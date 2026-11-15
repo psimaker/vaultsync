@@ -424,12 +424,22 @@ final class SyncthingManager {
     /// swapped under a tap meant for another share, and each new order counted
     /// as a change of `pendingFolders` and ran the automatic accept pass
     /// again. The bridge answers sorted by ID; only here is the user's
-    /// language known.
-    nonisolated static func pendingFoldersInDisplayOrder(_ folders: [PendingFolderInfo]) -> [PendingFolderInfo] {
+    /// language known. The comparison is the one `localizedStandardCompare`
+    /// makes, with the locale passed in so that tests can pin it: where a
+    /// letter with an accent goes depends on the language (Swedish puts Ä
+    /// after Z).
+    nonisolated static func pendingFoldersInDisplayOrder(
+        _ folders: [PendingFolderInfo],
+        locale: Locale = .current
+    ) -> [PendingFolderInfo] {
         folders.sorted { lhs, rhs in
             let lhsName = lhs.label.isEmpty ? lhs.id : lhs.label
             let rhsName = rhs.label.isEmpty ? rhs.id : rhs.label
-            switch lhsName.localizedStandardCompare(rhsName) {
+            switch lhsName.compare(
+                rhsName,
+                options: [.caseInsensitive, .numeric, .widthInsensitive, .forcedOrdering],
+                locale: locale
+            ) {
             case .orderedAscending: return true
             case .orderedDescending: return false
             case .orderedSame: return lhs.id < rhs.id
