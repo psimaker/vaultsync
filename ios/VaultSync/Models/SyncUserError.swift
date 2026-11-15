@@ -247,7 +247,10 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
                 category: .config,
                 title: L10n.tr("Folder Path Missing"),
                 message: L10n.fmt("The folder path no longer exists%@.", pathHint),
-                remediation: L10n.tr("Recreate or reselect the folder, then trigger a rescan."),
+                // Never "recreate the folder": one recreated at its old place
+                // from a copy is taken for the vault (#329), and combining
+                // with a copy can send older notes out as newer (#308).
+                remediation: L10n.tr("If you moved or renamed the folder, move it back to its original place. If it is gone, remove this vault on this iPhone, wait ten seconds, close VaultSync in the app switcher and open it again, and accept the vault again under Pending Shares once it shows there. VaultSync never moves, recreates, or deletes folders on its own."),
                 technicalDetails: detail
             )
         case "folder_not_found":

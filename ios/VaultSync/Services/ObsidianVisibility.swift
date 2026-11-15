@@ -199,6 +199,35 @@ enum ObsidianVisibility {
         }
     }
 
+    // MARK: - An earlier copy in the selected folder (#308)
+
+    /// The selected folder still holds a vault's own files directly: it is
+    /// an app's own folder with a `.obsidian/` of its own. Obsidian's folder
+    /// never has one by itself — only a vault that synced straight into it
+    /// leaves one behind (#270), and stays behind after that vault was
+    /// given a folder of its own. Every subfolder of the selected folder is
+    /// then most likely part of that copy, so a share whose folder already
+    /// holds files there must not be combined with it.
+    ///
+    /// Vault subfolders beside the copy do not change that: the vault that
+    /// was moved into its own folder is one of them. One rule for the
+    /// pending row and the merge question, so they cannot disagree.
+    static func holdsEarlierCopy(
+        place: VaultManager.SelectedFolderPlace?,
+        content: DirectoryContent?
+    ) -> Bool {
+        place == .appFolder && content?.hasOwnConfig == true
+    }
+
+    /// `holdsEarlierCopy` for the selected folder as it is on disk now.
+    /// Reads the folder only when it is an app's own folder.
+    static func selectedFolderHoldsEarlierCopy(_ root: String?) -> Bool {
+        guard let root else { return false }
+        let place = VaultManager.selectedFolderPlace(root)
+        guard place == .appFolder else { return false }
+        return holdsEarlierCopy(place: place, content: liveContent(root))
+    }
+
     // MARK: - Live wiring
 
     /// Reads what the directory holds. Needs the access the selected folder
