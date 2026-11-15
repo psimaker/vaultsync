@@ -890,7 +890,7 @@ struct ContentView: View {
         askCard(
             systemImage: "antenna.radiowaves.left.and.right",
             title: L10n.tr("Get faster updates"),
-            message: L10n.tr("Your first sync is done. When your server has changes, Cloud Relay sends this iPhone a wake-up, and VaultSync syncs in the background once iOS delivers it — usually within moments."),
+            message: L10n.tr("Your first sync is done. When your server has changes, Cloud Relay sends this iPhone a wake-up, and VaultSync syncs in the background once iOS delivers it — usually within moments. iOS decides when a wake-up arrives, and after you force-quit the app, wake-ups resume once you open it again."),
             confirmTitle: L10n.tr("View Cloud Relay"),
             onConfirm: { dismissRelayUpsell(openRelay: true) },
             onDecline: { dismissRelayUpsell(openRelay: false) }

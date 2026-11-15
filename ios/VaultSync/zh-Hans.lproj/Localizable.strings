@@ -382,7 +382,7 @@
 "VaultSync cannot access your local Obsidian folder." = "VaultSync 无法访问你的本地 Obsidian 文件夹。";
 "Connect your Obsidian folder from the VaultSync home screen." = "请在 VaultSync 主屏幕连接你的 Obsidian 文件夹。";
 "Computer or server added" = "已添加电脑或服务器";
-"Your first sync is done. When your server has changes, Cloud Relay sends this iPhone a wake-up, and VaultSync syncs in the background once iOS delivers it — usually within moments." = "首次同步已完成。服务器有变更时，Cloud Relay 会向这部 iPhone 发送唤醒信号；iOS 送达后，VaultSync 会在后台同步——通常只需片刻。";
+"Your first sync is done. When your server has changes, Cloud Relay sends this iPhone a wake-up, and VaultSync syncs in the background once iOS delivers it — usually within moments. iOS decides when a wake-up arrives, and after you force-quit the app, wake-ups resume once you open it again." = "首次同步已完成。服务器有变更时，Cloud Relay 会向这部 iPhone 发送唤醒信号；iOS 送达后，VaultSync 会在后台同步——通常只需片刻。唤醒信号何时到达由 iOS 决定；如果你在应用切换器中强制退出应用，唤醒信号会在你再次打开应用后恢复。";
 "Your iPhone is paired with at least one Syncthing device." = "你的 iPhone 已与至少一台 Syncthing 设备配对。";
 "Your iPhone is not paired with a Syncthing device yet." = "你的 iPhone 尚未与 Syncthing 设备配对。";
 "Add your computer or server from the Devices section on the home screen." = "请在主屏幕的“设备”部分添加你的电脑或服务器。";
@@ -597,7 +597,7 @@
 "Wake-ups are being delivered — changes from your other devices arrive instantly." = "唤醒信号正在送达——来自你其他设备的更改会即时到达。";
 "Yearly" = "按年";
 "Your local version is kept, and the other device’s version is added under a new name. Nothing is discarded." = "保留你的本地版本，另一台设备的版本会以新名称添加。不会丢弃任何内容。";
-"Your notes never touch our servers. When your server has changes, Cloud Relay sends a tiny wake-up, and VaultSync syncs in the background once iOS delivers it — usually within moments. If you force-quit the app, wake-ups resume when you open it again." = "你的笔记绝不会经过我们的服务器。服务器有变更时，Cloud Relay 会发送一个微小的唤醒信号；iOS 送达后，VaultSync 会在后台同步——通常只需片刻。如果你在应用切换器中强制退出应用，唤醒信号会在你再次打开应用后恢复。";
+"Your notes never touch our servers. When your server has changes, Cloud Relay sends a tiny wake-up, and VaultSync syncs in the background once iOS delivers it — usually within moments. iOS decides when a wake-up arrives, and after you force-quit the app, wake-ups resume once you open it again." = "你的笔记绝不会经过我们的服务器。服务器有变更时，Cloud Relay 会发送一个微小的唤醒信号；iOS 送达后，VaultSync 会在后台同步——通常只需片刻。唤醒信号何时到达由 iOS 决定；如果你在应用切换器中强制退出应用，唤醒信号会在你再次打开应用后恢复。";
 "One-step setup: a single line on your server." = "一步设置：只需在服务器上运行一行命令。";
 "Your vault already syncs free and peer-to-peer. Relay only removes the “open the app to sync” wait — it isn’t cloud storage." = "你的 Vault 本身就已经免费、点对点地同步。Relay 只是免去了“打开应用才能同步”的等待——它不是云存储。";
 "You’re subscribed, but no wake-up has arrived yet. Cloud Relay only delivers once the helper is running on your server." = "你已订阅，但尚未收到唤醒信号。只有当助手在你的服务器上运行时，Cloud Relay 才会送达。";
