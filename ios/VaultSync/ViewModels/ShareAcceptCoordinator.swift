@@ -253,7 +253,11 @@ final class ShareAcceptCoordinator {
                         "The folder \"%@\" already contains files. Accepting this share would combine its contents with the shared vault and sync the result to the other devices.",
                         targetName
                     ),
-                remediation: L10n.tr("Tap \"Review and Accept\" to decide, or \"Choose Vault…\" to pick a different location."),
+                // The message carries the way out; "Review and Accept to
+                // decide" would offer the merge it advises against (066).
+                remediation: inEarlierCopy
+                    ? ""
+                    : L10n.tr("Tap \"Review and Accept\" to decide, or \"Choose Vault…\" to pick a different location."),
                 technicalDetails: nil
             )
             if source == .manual {

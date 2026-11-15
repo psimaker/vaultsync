@@ -23,7 +23,7 @@ enum MergeQuestion {
             )
         }
         return L10n.fmt(
-            "The folder \"%@\" already contains files. If you accept, those files and the contents of the shared vault \"%@\" will be combined and synced to the other devices sharing this vault. Accept only if this is the folder this vault synced in on this iPhone, unchanged since, or if it holds notes you want to add to this vault. Never combine a copy of this vault: where a copy holds an older version of a note, the older version can replace the newer one on every device. For a copy, a different vault or unrelated files, cancel and use \"Choose Vault…\" to give this vault another folder name.",
+            "The folder \"%@\" already contains files. If you accept, those files and the contents of the shared vault \"%@\" will be combined and synced to the other devices sharing this vault. Accept only if this is the folder this vault synced in on this iPhone, unchanged since and not a copy put in its place, or if it holds notes you want to add to this vault. Never combine a copy of this vault: where a copy holds an older version of a note, the older version can replace the newer one on every device. For a copy, a different vault or unrelated files, cancel and use \"Choose Vault…\" to give this vault another folder name.",
             targetName,
             shareLabel
         )

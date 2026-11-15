@@ -14,7 +14,7 @@ import Testing
 @Suite("The merge question never recommends combining with an earlier copy (#308)")
 struct Issue308MergeQuestionTests {
 
-    static let defaultKey = "The folder \"%@\" already contains files. If you accept, those files and the contents of the shared vault \"%@\" will be combined and synced to the other devices sharing this vault. Accept only if this is the folder this vault synced in on this iPhone, unchanged since, or if it holds notes you want to add to this vault. Never combine a copy of this vault: where a copy holds an older version of a note, the older version can replace the newer one on every device. For a copy, a different vault or unrelated files, cancel and use \"Choose Vault…\" to give this vault another folder name."
+    static let defaultKey = "The folder \"%@\" already contains files. If you accept, those files and the contents of the shared vault \"%@\" will be combined and synced to the other devices sharing this vault. Accept only if this is the folder this vault synced in on this iPhone, unchanged since and not a copy put in its place, or if it holds notes you want to add to this vault. Never combine a copy of this vault: where a copy holds an older version of a note, the older version can replace the newer one on every device. For a copy, a different vault or unrelated files, cancel and use \"Choose Vault…\" to give this vault another folder name."
     static let earlierCopyKey = "The folder \"%@\" lies in the folder you selected, which still holds the files of a vault that synced straight into it, so it is most likely part of that earlier copy. If you accept, its files will be combined with the shared vault \"%@\" and synced to the other devices sharing this vault: notes of the earlier copy can appear a second time, at the top level of the vault, and where it holds an older version of a note, the older version can replace the newer one on every device. Do not combine them: cancel and use \"Choose Vault…\" to give this vault another folder name."
     static let earlierCopyRowKey = "The folder “%@” already holds files. If they belong to the copy that arrived earlier, do not combine them: tap \"Choose Vault…\" and give this vault another folder name."
 
@@ -86,11 +86,14 @@ struct Issue308MergeQuestionTests {
 
     // MARK: - When the target lies in an earlier copy
 
-    @Test("An app's own folder with a .obsidian of its own holds an earlier copy, also beside a vault that was moved into its own folder")
+    @Test("An app's own folder that is, by what it holds, a single vault holds an earlier copy; one with vaults beside a .obsidian does not")
     func holdsEarlierCopyRule() {
         typealias Content = ObsidianVisibility.DirectoryContent
         #expect(ObsidianVisibility.holdsEarlierCopy(place: .appFolder, content: Content(hasOwnConfig: true, hasVaultSubfolders: false)))
-        #expect(ObsidianVisibility.holdsEarlierCopy(place: .appFolder, content: Content(hasOwnConfig: true, hasVaultSubfolders: true)))
+        // A target that is a vault of its own, or an iCloud folder once
+        // opened as a vault on a computer: not called part of a copy — the
+        // plain text still warns against any copy.
+        #expect(!ObsidianVisibility.holdsEarlierCopy(place: .appFolder, content: Content(hasOwnConfig: true, hasVaultSubfolders: true)))
         // Obsidian's folder as it should be: vaults side by side.
         #expect(!ObsidianVisibility.holdsEarlierCopy(place: .appFolder, content: Content(hasOwnConfig: false, hasVaultSubfolders: true)))
         #expect(!ObsidianVisibility.holdsEarlierCopy(place: .appFolder, content: Content(hasOwnConfig: false, hasVaultSubfolders: false)))
@@ -117,9 +120,10 @@ struct Issue308MergeQuestionTests {
         try FileManager.default.createDirectory(at: appFolder.appendingPathComponent(".obsidian"), withIntermediateDirectories: true)
         #expect(ObsidianVisibility.selectedFolderHoldsEarlierCopy(appFolder.path))
 
-        // Still so once the vault has a folder of its own beside the copy.
+        // A vault of its own beside it: the target may be that vault, so
+        // the question does not call it part of the copy.
         try FileManager.default.createDirectory(at: appFolder.appendingPathComponent("Life Notes/.obsidian"), withIntermediateDirectories: true)
-        #expect(ObsidianVisibility.selectedFolderHoldsEarlierCopy(appFolder.path))
+        #expect(!ObsidianVisibility.selectedFolderHoldsEarlierCopy(appFolder.path))
 
         #expect(!ObsidianVisibility.selectedFolderHoldsEarlierCopy(nil))
     }
@@ -150,7 +154,10 @@ struct Issue308MergeQuestionTests {
         let request = try #require(c.pendingMergeConfirmation)
         #expect(request.targetInEarlierCopy)
         #expect(request.targetName == "Projects")
-        #expect(c.pendingShareFailures["f1"]?.message == L10n.fmt(Self.earlierCopyRowKey, "Projects"))
+        let row = try #require(c.pendingShareFailures["f1"])
+        #expect(row.message == L10n.fmt(Self.earlierCopyRowKey, "Projects"))
+        // No "Review and Accept to decide" beside "do not combine" (066).
+        #expect(row.remediation.isEmpty)
     }
 
     @MainActor
@@ -160,7 +167,9 @@ struct Issue308MergeQuestionTests {
         c.accept(SyncthingManager.PendingFolderInfo(id: "f1", label: "Life Notes", offeredBy: []), source: .manual)
         let request = try #require(c.pendingMergeConfirmation)
         #expect(!request.targetInEarlierCopy)
-        #expect(c.pendingShareFailures["f1"]?.message != L10n.fmt(Self.earlierCopyRowKey, "Projects"))
+        let row = try #require(c.pendingShareFailures["f1"])
+        #expect(row.message != L10n.fmt(Self.earlierCopyRowKey, "Projects"))
+        #expect(row.remediation == L10n.tr("Tap \"Review and Accept\" to decide, or \"Choose Vault…\" to pick a different location."))
     }
 
     // MARK: - Folder Path Missing
@@ -173,6 +182,7 @@ struct Issue308MergeQuestionTests {
         #expect(!missing.remediation.localizedCaseInsensitiveContains("recreate or reselect"))
         #expect(missing.remediation.contains("move it back to its original place"))
         #expect(missing.remediation.contains("never moves, recreates, or deletes folders"))
+        #expect(missing.remediation == SyncUserError.vaultFolderGoneRemediation)
     }
 
     @Test("The old texts are gone from every language")

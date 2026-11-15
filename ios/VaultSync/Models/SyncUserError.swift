@@ -250,7 +250,7 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
                 // Never "recreate the folder": one recreated at its old place
                 // from a copy is taken for the vault (#329), and combining
                 // with a copy can send older notes out as newer (#308).
-                remediation: L10n.tr("If you moved or renamed the folder, move it back to its original place. If it is gone, remove this vault on this iPhone, wait ten seconds, close VaultSync in the app switcher and open it again, and accept the vault again under Pending Shares once it shows there. VaultSync never moves, recreates, or deletes folders on its own."),
+                remediation: vaultFolderGoneRemediation,
                 technicalDetails: detail
             )
         case "folder_not_found":
@@ -278,6 +278,12 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
     /// rescan cannot recreate the marker (Syncthing refuses to scan without
     /// it, by design), and recreating or re-pointing anything automatically
     /// risks propagating the loss to every peer (safety rule 3).
+    /// The way on for a vault whose folder was moved, deleted or replaced —
+    /// one text for both cards, so they cannot drift apart (#308).
+    static var vaultFolderGoneRemediation: String {
+        L10n.tr("If you moved or renamed the folder, move it back to its original place. If it is gone, remove this vault on this iPhone, wait ten seconds, close VaultSync in the app switcher and open it again, and accept the vault again under Pending Shares once it shows there. VaultSync never moves, recreates, or deletes folders on its own.")
+    }
+
     private static func folderMarkerMissing(detail: String, path: String?) -> SyncUserError {
         let pathHint = path.map { L10n.fmt(" (%@)", $0) } ?? ""
         return SyncUserError(
@@ -287,7 +293,7 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
                 "VaultSync can no longer verify that this folder still holds this vault's data%@ — the folder was likely moved, renamed, replaced, or deleted outside VaultSync. Syncing has stopped to protect your notes.",
                 pathHint
             ),
-            remediation: L10n.tr("If you moved or renamed the folder, move it back to its original place. If it is gone, remove this vault on this iPhone, wait ten seconds, close VaultSync in the app switcher and open it again, and accept the vault again under Pending Shares once it shows there. VaultSync never moves, recreates, or deletes folders on its own."),
+            remediation: vaultFolderGoneRemediation,
             technicalDetails: detail
         )
     }
