@@ -1046,3 +1046,8 @@
 "If a vault does not sync with your Hub, pair again." = "如果某个 Vault 没有与你的 Hub 同步，请重新配对。";
 "This Is a Hub QR Code" = "这是 Hub 二维码";
 "Open Add Hub to pair this iPhone with your VaultSync Hub." = "打开“添加 Hub”，将这台 iPhone 与你的 VaultSync Hub 配对。";
+
+/* A vault's Location: the place an app's own folder is listed in the Files app (#307) */
+"On My iPhone" = "在我的 iPhone 上";
+"iCloud Drive" = "iCloud 云盘";
+"App Folder" = "App 文件夹";

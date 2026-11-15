@@ -1780,16 +1780,13 @@ struct ContentView: View {
             : L10n.tr("Double-tap to share this vault with this device."))
     }
 
-    /// "Obsidian › Notes" when the vault lives under the connected Obsidian
-    /// directory, the folder name otherwise; the full path stays below it.
+    /// The place the vault syncs in, named the way the Files app shows it
+    /// (#307); the full path stays below it.
     private func locationTitle(for item: VaultRowItem) -> String {
-        let path = Self.canonicalPath(item.vaultSubpath ?? item.folder.path)
-        if let base = vaultManager.obsidianBasePath.map(Self.canonicalPath),
-           path == base || path.hasPrefix(base + "/") {
-            let relative = path.dropFirst(base.count).split(separator: "/").map(String.init)
-            return ([(base as NSString).lastPathComponent] + relative).joined(separator: " › ")
-        }
-        return (path as NSString).lastPathComponent
+        VaultLocationTitle.title(
+            path: Self.canonicalPath(item.vaultSubpath ?? item.folder.path),
+            base: vaultManager.obsidianBasePath.map(Self.canonicalPath)
+        )
     }
 
     private func vaultOptionsCard(folder: SyncthingManager.FolderInfo, isScanning: Bool) -> some View {

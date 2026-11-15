@@ -1046,3 +1046,8 @@
 "If a vault does not sync with your Hub, pair again." = "If a vault does not sync with your Hub, pair again.";
 "This Is a Hub QR Code" = "This Is a Hub QR Code";
 "Open Add Hub to pair this iPhone with your VaultSync Hub." = "Open Add Hub to pair this iPhone with your VaultSync Hub.";
+
+/* A vault's Location: the place an app's own folder is listed in the Files app (#307) */
+"On My iPhone" = "On My iPhone";
+"iCloud Drive" = "iCloud Drive";
+"App Folder" = "App Folder";
