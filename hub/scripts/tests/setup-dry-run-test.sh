@@ -52,7 +52,7 @@ case "$*" in
 	"compose version") echo "Docker Compose version v2.0.0"; exit 0 ;;
 esac
 if [ -n "${ALLOW_COMPOSE:-}" ]; then
-	printf 'docker %s (VAULTSYNC_HUB_IMAGE=%s)\n' "$*" "${VAULTSYNC_HUB_IMAGE-unset}" >>"$COMPOSE_LOG"
+	printf 'docker %s (VAULTSYNC_HUB_IMAGE=%s) (VAULTSYNC_HUB_SYNCTHING_IMAGE=%s)\n' "$*" "${VAULTSYNC_HUB_IMAGE-unset}" "${VAULTSYNC_HUB_SYNCTHING_IMAGE-unset}" >>"$COMPOSE_LOG"
 	case "$*" in
 		"compose --project-directory "*" pull --quiet" | "compose --project-directory "*" up -d") exit 0 ;;
 		"compose --project-directory "*" exec -T hub vaultsync-hub status") printf 'VaultSync Hub test\nDevice ID:   TEST\n'; exit 0 ;;
@@ -345,6 +345,97 @@ printf '%s\n' "$out" | grep -q "would run: docker compose --project-directory $H
 	fail "hub dry-run does not plan to print a pairing code:
 $out"
 pass "hub dry-run plans compose up, init and pairing code with the right owner"
+
+# --- The line of Syncthing a Hub follows (#301, decision 068) ----------------
+# A new Hub's .env names 2.x; a Hub directory where Syncthing already ran
+# keeps 1.x unless setup sees 2.x's own database there, because 2.x converts
+# a 1.x database for good; an .env setup wrote before names no line, is never
+# edited, and the compose file falls back to 1.x for it.
+printf '%s\n' "$out" | grep -q "the new $HUB_DIR/.env would name VAULTSYNC_HUB_SYNCTHING_IMAGE=syncthing/syncthing:2$" ||
+	fail "a new Hub's dry run does not name Syncthing 2.x:
+$out"
+COMPOSE_LOG="$SANDBOX/results/compose.log"
+export COMPOSE_LOG
+ST_HUB="$SANDBOX/hub-301"
+# shellcheck disable=SC2016 # the braces are literal text in the compose file
+ST_FALLBACK='    image: ${VAULTSYNC_HUB_SYNCTHING_IMAGE:-syncthing/syncthing:1}'
+new_env_run() { # a non-dry-run Hub setup in $ST_HUB, Docker stubbed, no terminal
+	: >"$COMPOSE_LOG"
+	VAULTSYNC_HUB_DIR="$ST_HUB" VIOLATIONS="$SANDBOX/results/violations-301.log" ALLOW_COMPOSE=1 sh "$SETUP_SH" --hub </dev/null 2>&1
+}
+st_line() { sed -n 's/^VAULTSYNC_HUB_SYNCTHING_IMAGE=//p' "$ST_HUB/.env"; }
+rm -rf "$ST_HUB"
+out=$(VAULTSYNC_HUB_SYNCTHING_IMAGE=syncthing/syncthing:9 new_env_run) || fail "new-Hub setup exited non-zero:
+$out"
+[ "$(st_line)" = "syncthing/syncthing:2" ] || fail "a new Hub's .env does not name Syncthing 2.x (an exported value must not decide it):
+$(cat "$ST_HUB/.env")"
+[ "$(grep -c '^VAULTSYNC_HUB_SYNCTHING_IMAGE=' "$ST_HUB/.env")" = 1 ] || fail "a new Hub's .env names the Syncthing image more than once"
+if printf '%s\n' "$out" | grep -q "keeps it on"; then
+	fail "a new Hub is told it stays on 1.x:
+$out"
+fi
+grep -q " up -d " "$COMPOSE_LOG" || fail "a new Hub was not started:
+$(cat "$COMPOSE_LOG")"
+if grep -v "(VAULTSYNC_HUB_SYNCTHING_IMAGE=unset)" "$COMPOSE_LOG" | grep -q .; then
+	fail "Compose would see an exported Syncthing image over .env:
+$(cat "$COMPOSE_LOG")"
+fi
+grep -qx "$ST_FALLBACK" "$ST_HUB/docker-compose.yml" ||
+	fail "the compose file does not take the Syncthing image from .env with 1.x as its fallback"
+pass "a new Hub's .env names Syncthing 2.x, and only .env decides it"
+
+lost_env() { # NAME EXPECTED-IMAGE: a Hub directory without .env, as prepared
+	out=$(new_env_run) || fail "$1: setup exited non-zero:
+$out"
+	[ "$(st_line)" = "$2" ] || fail "$1: the new .env names $(st_line), not $2"
+	if [ "$2" = "syncthing/syncthing:1" ]; then
+		printf '%s\n' "$out" | grep -q "the new .env keeps it on syncthing/syncthing:1" || fail "$1: the kept line is not reported:
+$out"
+	fi
+	pass "$1: the new .env names $2"
+}
+rm -rf "$ST_HUB"; mkdir -p "$ST_HUB/syncthing/config/index-v0.14.0.db"
+lost_env "a Hub directory whose Syncthing has a 1.x database" "syncthing/syncthing:1"
+rm -rf "$ST_HUB"; mkdir -p "$ST_HUB/syncthing/config/index-v0.14.0.db-migrated" "$ST_HUB/syncthing/config/index-v2"
+lost_env "a Hub directory whose Syncthing is on 2.x already" "syncthing/syncthing:2"
+rm -rf "$ST_HUB"; mkdir -p "$ST_HUB/syncthing/config"; : >"$ST_HUB/syncthing/config/config.xml"
+lost_env "a Hub directory whose Syncthing has no database setup can read" "syncthing/syncthing:1"
+rm -rf "$ST_HUB"; mkdir -p "$ST_HUB/syncthing/config/index-v2"; chmod 000 "$ST_HUB/syncthing/config"
+# Root sees through the mode; every other account sees nothing to tell 2.x by.
+if [ "$("$REAL_ID" -u)" = 0 ]; then
+	lost_env "a Hub directory whose Syncthing folder setup cannot open (run as root)" "syncthing/syncthing:2"
+else
+	lost_env "a Hub directory whose Syncthing folder setup cannot open" "syncthing/syncthing:1"
+fi
+chmod 700 "$ST_HUB/syncthing/config"
+rm -rf "$ST_HUB"; mkdir -p "$ST_HUB/syncthing/config"; chmod 000 "$ST_HUB/syncthing"
+lost_env "a Hub directory whose syncthing folder setup cannot search" "syncthing/syncthing:1"
+chmod 755 "$ST_HUB/syncthing"
+
+# An .env written before #301 names no Syncthing line: it stays as it is,
+# and Compose falls back to 1.x for it.
+rm -rf "$ST_HUB"; mkdir -p "$ST_HUB/syncthing/config/index-v0.14.0.db"
+# shellcheck disable=SC2016 # the braces are literal text in setup.sh
+printf '# Written by setup.sh\nPUID=1000\nPGID=1000\nSYNC_PORT=22000\nGUI_PORT=8384\nHUB_PORT=8390\nVAULTSYNC_HUB_NAME=My Hub\nVAULTSYNC_HUB_IMAGE=%s\nRELAY_URL=https://relay.example\n' \
+	"$(sed -n 's/^HUB_IMAGE="${VAULTSYNC_HUB_IMAGE:-\(.*\)}"$/\1/p' "$SETUP_SH")" >"$ST_HUB/.env"
+cp "$ST_HUB/.env" "$SANDBOX/results/env-301-before"
+out=$(VAULTSYNC_HUB_SYNCTHING_IMAGE=syncthing/syncthing:2 new_env_run) || fail "existing-Hub setup (#301) exited non-zero:
+$out"
+cmp -s "$ST_HUB/.env" "$SANDBOX/results/env-301-before" || fail "an existing Hub's .env was edited:
+$(diff -u "$SANDBOX/results/env-301-before" "$ST_HUB/.env" || true)"
+grep -qx "$ST_FALLBACK" "$ST_HUB/docker-compose.yml" ||
+	fail "an existing Hub's compose file does not fall back to 1.x"
+grep -q " up -d " "$COMPOSE_LOG" || fail "the existing Hub was not restarted:
+$(cat "$COMPOSE_LOG")"
+if grep -v "(VAULTSYNC_HUB_SYNCTHING_IMAGE=unset)" "$COMPOSE_LOG" | grep -q .; then
+	fail "an exported Syncthing image would move an existing Hub:
+$(cat "$COMPOSE_LOG")"
+fi
+[ -d "$ST_HUB/syncthing/config/index-v0.14.0.db" ] || fail "an existing Hub's database was touched"
+pass "an existing Hub's .env stays as it is and its Syncthing stays on 1.x"
+grep -v '^chown ' "$SANDBOX/results/violations-301.log" 2>/dev/null | grep -q . && fail "a #301 Hub setup ran a privileged or network-changing command:
+$(cat "$SANDBOX/results/violations-301.log")"
+rm -rf "$ST_HUB"
 
 # An existing Hub keeps its .env; setup offers only a newer official image —
 # never a custom one, never a downgrade — and in a dry run only on paper (#216).

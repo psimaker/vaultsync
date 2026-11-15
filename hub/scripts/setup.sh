@@ -32,6 +32,10 @@ HUB_IMAGE="${VAULTSYNC_HUB_IMAGE:-ghcr.io/psimaker/vaultsync-hub:0.3.0}"
 # environment it would decide the image of an existing Hub over its .env —
 # and over a "no" to the offer below (#216).
 unset VAULTSYNC_HUB_IMAGE
+# The same for the line of Syncthing a Hub follows (#301): .env decides it.
+unset VAULTSYNC_HUB_SYNCTHING_IMAGE
+SYNCTHING_IMAGE_NEW="syncthing/syncthing:2"
+SYNCTHING_IMAGE_KEPT="syncthing/syncthing:1"
 RELAY_URL="${RELAY_URL:-https://relay.vaultsync.eu}"
 # VaultSync for Mac (decision 053): the app holds the agent and the menu-bar
 # app; the agent's setup, run from the app in Applications, makes the
@@ -642,11 +646,35 @@ install_app() {
 
 # --- 2) Hub ------------------------------------------------------------------
 
+# syncthing_image_for_new_env: the Syncthing image a new .env names (#301,
+# decision 068). 2.x converts a 1.x database on its first start, and 1.x
+# then refuses to start on it — so 2.x only where no Syncthing has run in
+# this Hub directory yet, or where 2.x already has. Anything setup cannot
+# see into (Syncthing keeps its folder 0700, readable by its own user only)
+# keeps 1.x: a wrong 1.x stops the Hub with a clear log line, a wrong 2.x
+# converts a database for good.
+syncthing_image_for_new_env() {
+	st_dir="$HUB_DIR/syncthing"
+	if [ ! -e "$st_dir" ] && [ ! -L "$st_dir" ]; then
+		echo "$SYNCTHING_IMAGE_NEW"
+	elif [ -d "$st_dir" ] && [ ! -L "$st_dir" ] && [ -x "$st_dir" ] &&
+		[ ! -e "$st_dir/config" ] && [ ! -L "$st_dir/config" ]; then
+		echo "$SYNCTHING_IMAGE_NEW"
+	elif [ -d "$st_dir/config/index-v2" ]; then
+		echo "$SYNCTHING_IMAGE_NEW"
+	else
+		echo "$SYNCTHING_IMAGE_KEPT"
+	fi
+}
+
 write_hub_files() {
 	compose="$HUB_DIR/docker-compose.yml"
 	env_file="$HUB_DIR/.env"
 	if [ "$DRY_RUN" = 1 ]; then
 		info "[dry-run] would write: $compose and $env_file (PUID=$PUID PGID=$PGID SYNC_PORT=$SYNC_PORT GUI_PORT=$GUI_PORT)"
+		if [ ! -f "$env_file" ]; then
+			info "[dry-run] the new $env_file would name VAULTSYNC_HUB_SYNCTHING_IMAGE=$(syncthing_image_for_new_env)"
+		fi
 		return 0
 	fi
 	cat >"$compose" <<'COMPOSE'
@@ -664,7 +692,11 @@ write_hub_files() {
 
 services:
   syncthing:
-    image: syncthing/syncthing:1
+    # A new Hub's .env names Syncthing's 2.x line. Without that line the stack
+    # stays on 1.x: a Hub set up before 2.x was its line keeps the database
+    # it has, because 2.x converts it on its first start and 1.x then refuses
+    # to start on it (decision 068).
+    image: ${VAULTSYNC_HUB_SYNCTHING_IMAGE:-syncthing/syncthing:1}
     container_name: vaultsync-hub-syncthing
     hostname: ${VAULTSYNC_HUB_NAME:-VaultSync Hub}
     environment:
@@ -732,6 +764,7 @@ services:
     restart: unless-stopped
 COMPOSE
 	if [ ! -f "$env_file" ]; then
+		syncthing_image=$(syncthing_image_for_new_env)
 		cat >"$env_file" <<ENV
 # Written by setup.sh — edit and run \`docker compose up -d\` to apply.
 PUID=$PUID
@@ -741,8 +774,12 @@ GUI_PORT=$GUI_PORT
 HUB_PORT=8390
 VAULTSYNC_HUB_NAME=$HUB_NAME
 VAULTSYNC_HUB_IMAGE=$HUB_IMAGE
+VAULTSYNC_HUB_SYNCTHING_IMAGE=$syncthing_image
 RELAY_URL=$RELAY_URL
 ENV
+		if [ "$syncthing_image" = "$SYNCTHING_IMAGE_KEPT" ]; then
+			info "This Hub directory already holds a Syncthing that setup cannot tell to be 2.x: the new .env keeps it on $SYNCTHING_IMAGE_KEPT."
+		fi
 	fi
 }
 
