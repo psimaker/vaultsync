@@ -60,8 +60,7 @@ struct SubscribePlanPicker: View {
                             Label(L10n.tr("Try Again"), systemImage: "arrow.clockwise")
                                 .font(.subheadline.weight(.semibold))
                         }
-                        .buttonStyle(.bordered)
-                        .tint(Color.vaultAccentText)
+                        .buttonStyle(.vault(.tinted, compact: true))
                     }
                 }
             } else {
@@ -226,7 +225,7 @@ struct SubscribePlanPicker: View {
                         Text(title)
                             .font(.headline)
                         if recommended, let savings = yearlySavingsText {
-                            StatusTag(text: savings, tint: .vaultAccent, filled: true)
+                            StatusTag(text: savings)
                         }
                     }
                     Text(subscriptionManager.priceText(for: product))
@@ -266,24 +265,27 @@ struct SubscribePlanPicker: View {
             guard let product = selectedProduct else { return }
             purchase(product)
         } label: {
-            HStack(spacing: VaultSpacing.s) {
-                Spacer()
-                if subscriptionManager.purchaseInProgress {
-                    ProgressView()
-                        .tint(Color.vaultOnAccent)
-                        .accessibilityHidden(true)
-                } else {
-                    Text(L10n.tr("Subscribe"))
-                        .font(.headline)
-                }
-                Spacer()
-            }
+            // The label keeps its text while a purchase runs, hidden, so the
+            // button keeps its size and VoiceOver its name.
+            Text(L10n.tr("Subscribe"))
+                .font(.headline)
+                .opacity(subscriptionManager.purchaseInProgress ? 0 : 1)
         }
         // The kit's primary pair (#199): white on the lifted dark-mode teal
         // measured 2.2:1; `vaultOnAccent` on `vaultAccentProminent` clears
         // 4.8:1 in light, dark and Increase Contrast.
         .buttonStyle(.vault(.primary))
         .disabled(subscriptionManager.purchaseInProgress || selectedProduct == nil)
+        .overlay {
+            // Outside the button: the style dims a disabled button to 40 %,
+            // and a spinner drawn inside it faded into the fill (1.3:1 in
+            // dark). The label color stays clear of the dimmed fill.
+            if subscriptionManager.purchaseInProgress {
+                ProgressView()
+                    .tint(Color.vaultLabel)
+                    .accessibilityHidden(true)
+            }
+        }
         .accessibilityHint(L10n.tr("Starts a subscription purchase."))
     }
 
