@@ -12,7 +12,11 @@
 
 services:
   syncthing:
-    image: syncthing/syncthing:1
+    # A new Hub's .env names Syncthing's 2.x line. Without that line the stack
+    # stays on 1.x: a Hub set up before 2.x was its line keeps the database
+    # it has, because 2.x converts it on its first start and 1.x then refuses
+    # to start on it (decision 068).
+    image: ${VAULTSYNC_HUB_SYNCTHING_IMAGE:-syncthing/syncthing:1}
     container_name: vaultsync-hub-syncthing
     hostname: ${VAULTSYNC_HUB_NAME:-VaultSync Hub}
     environment:

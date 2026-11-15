@@ -19,8 +19,9 @@ Choose **2) Hub**. The setup
 2. creates `/srv/vaultsync/` (override with `VAULTSYNC_HUB_DIR`) with three
    plain directories: `vaults/` (your notes), `syncthing/` (identity, config,
    database), `hub/` (pairing state),
-3. starts three containers — the Hub's own Syncthing, the `hub` coordinator and
-   the `notify` wake-up helper for VaultSync on iPhone,
+3. starts three containers — the Hub's own Syncthing (2.x for a new Hub; see
+   [Which Syncthing your Hub runs](#which-syncthing-your-hub-runs)), the `hub`
+   coordinator and the `notify` wake-up helper for VaultSync on iPhone,
 4. prints the Hub's **Device ID** and a **pairing code**.
 
 Everything lives under that one directory as plain files. Back it up like any
@@ -409,14 +410,15 @@ docker compose exec hub vaultsync-hub code            # new pairing code
 docker compose exec hub vaultsync-hub vault list
 docker compose exec hub vaultsync-hub vault create "Work"
 docker compose exec hub vaultsync-hub vault adopt "Old Notes"   # existing dir in vaults/
-docker compose pull && docker compose up -d           # refresh the images .env names
+docker compose pull && docker compose up -d           # refresh the images the stack names
 ```
 
 ## Update the Hub
 
 `docker compose pull` fetches the images at the tags the stack names: the
-Hub's Syncthing follows its 1.x line, but the Hub itself stays on the version
-in `.env` (`VAULTSYNC_HUB_IMAGE`) — re-running the setup keeps `.env` too. To
+Hub's Syncthing follows the line its `.env` names (see below), and the Hub
+itself stays on the version in `.env` (`VAULTSYNC_HUB_IMAGE`) — re-running the
+setup keeps `.env` too. To
 move a Hub to 0.3.0 (the release that proves a vault empty before a device
 may join it with files; 0.2.0 brought the QR code):
 
@@ -443,6 +445,31 @@ image.
 Without a terminal, or on an `.env` you reshaped by hand, it tells you to
 change the line yourself instead. As on every run, it prints a new
 pairing code at the end.
+
+### Which Syncthing your Hub runs
+
+A Hub set up with the setup link today has
+`VAULTSYNC_HUB_SYNCTHING_IMAGE=syncthing/syncthing:2` in its `.env` and
+follows Syncthing's 2.x line. An `.env` without that line follows the 1.x line,
+whose last release is 1.30.0 of July 2025. That applies to every Hub set up
+before the setup link moved to 2.x. To see which one yours runs:
+
+```sh
+cd /srv/vaultsync
+docker compose exec syncthing syncthing --version
+```
+
+Re-running the setup never adds or changes that line. The reason: Syncthing 2.x
+converts a 1.x Hub's database on its first start, and 1.x does not start on it
+again, so the move cannot be undone. A Hub on 1.x keeps working as it does. A
+tested step for moving it is not published yet.
+
+If you already moved your Hub's Syncthing to 2.x by hand in
+`docker-compose.yml`, add `VAULTSYNC_HUB_SYNCTHING_IMAGE=syncthing/syncthing:2`
+to `.env`. The setup writes `docker-compose.yml` anew on every run, and without
+that line it would start 1.x again. 1.x refuses a 2.x database: the Hub's
+Syncthing stops with "config file version … is newer than supported", and
+nothing is lost.
 
 ## Troubleshooting
 
