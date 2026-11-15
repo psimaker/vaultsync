@@ -1616,9 +1616,20 @@ final class SyncthingManager {
     private func refreshBackgroundSyncOutcome() {
         guard let outcome = BackgroundSyncService.lastSyncOutcome() else { return }
         guard outcome != lastBackgroundSyncOutcome else { return }
+        adoptBackgroundOutcome(outcome)
+        appendBackgroundSyncActivityIfNeeded(outcome, force: false)
+    }
+
+    /// Take a new background outcome. The run that recorded it also wrote the
+    /// widget snapshot, behind this manager's back (`completeSync`), so the
+    /// manager's record of its own last write no longer describes what the
+    /// widget shows: forget it, or the next write — "synced" again once a
+    /// fresh read retires the warning (#210) — would be skipped as unchanged
+    /// and leave the run's amber standing.
+    private func adoptBackgroundOutcome(_ outcome: BackgroundSyncService.SyncOutcome?) {
         lastBackgroundSyncOutcome = outcome
         backgroundOutcomeSeenAt = Self.monotonicNow()
-        appendBackgroundSyncActivityIfNeeded(outcome, force: false)
+        lastWrittenWidgetSnapshot = nil
     }
 
     private func appendBackgroundSyncActivityIfNeeded(
@@ -3036,8 +3047,7 @@ final class SyncthingManager {
     /// which parallel suites share — tests that assert on the issue cascade
     /// clear it to stay hermetic.
     func _testSetLastBackgroundSyncOutcome(_ outcome: BackgroundSyncService.SyncOutcome?) {
-        lastBackgroundSyncOutcome = outcome
-        backgroundOutcomeSeenAt = Self.monotonicNow()
+        adoptBackgroundOutcome(outcome)
     }
 
     func _testBackgroundOutcomeSeenAt() -> TimeInterval {

@@ -1628,8 +1628,9 @@ enum BackgroundSyncService {
         while Date() < deadline {
             if Task.isCancelled { return nil }
             let read = readFolderAvailability()
-            if read.availability == .configured { return .configured }
-            if !read.engineUpAfterRead { return .engineStopped }
+            if let end = folderWaitStep(read.availability, engineUpAfterRead: read.engineUpAfterRead) {
+                return end
+            }
             try? await Task.sleep(for: .milliseconds(250))
         }
         if Task.isCancelled { return nil }
@@ -1682,6 +1683,16 @@ enum BackgroundSyncService {
         }
         if !folders.isEmpty { return .configured }
         return engineRunningAcrossRead ? .verifiedEmpty : .engineStopped
+    }
+
+    /// One step of the folder wait (#210): the state that ends the wait, or
+    /// nil to read again. A vault ends it; so does an engine that is down
+    /// after the read. An engine restarted during the read (a generation
+    /// change, classified as stopped) is up afterwards and is read again.
+    static func folderWaitStep(_ availability: FolderAvailability, engineUpAfterRead: Bool) -> FolderAvailability? {
+        if availability == .configured { return .configured }
+        if !engineUpAfterRead { return .engineStopped }
+        return nil
     }
 
     private static func readFolderAvailability() -> (availability: FolderAvailability, engineUpAfterRead: Bool) {

@@ -281,6 +281,25 @@ struct Issue210NoVaultsWarningTests {
         #expect(backgroundIssue(manager) == nil)
     }
 
+    @MainActor
+    @Test("A new background outcome makes the next widget write go through: the run wrote the widget behind the manager")
+    func newOutcomeForcesTheNextWidgetWrite() {
+        let manager = makeManager(outcome: nil)
+        manager._testSetFolders([Self.vaultA])
+        manager._testWriteWidgetSnapshot()
+        let synced = manager._testLastWrittenWidgetSnapshot()
+        #expect(synced?.status == SyncStatus.synced.wireValue)
+
+        // The background run wrote its amber to the widget store, then the
+        // manager took its outcome; the first fresh read retires it at once.
+        manager._testSetLastBackgroundSyncOutcome(Self.outcome(.noFoldersConfigured))
+        #expect(manager._testLastWrittenWidgetSnapshot() == nil)
+        manager._testApplyPolledFolderRead(json: Self.oneVaultJSON, readStartedAt: Self.seen(manager, 1), engineRunningAcrossRead: true)
+        manager._testWriteWidgetSnapshot()
+        // Same values as before the run — written anyway, over the amber.
+        #expect(manager._testLastWrittenWidgetSnapshot() == synced)
+    }
+
     // MARK: - The pure rule
 
     @Test("The rule: a no-vaults outcome, a running engine, vaults, a read after the outcome")
@@ -327,6 +346,20 @@ struct Issue210NoVaultsWarningTests {
         #expect(classify("not json", true) == Availability.unreadable)
         #expect(classify("", true) == Availability.unreadable)
         #expect(classify("not json", false) == Availability.engineStopped)
+    }
+
+    @Test("The folder wait reads again while an engine is up and ends on a vault or a stopped engine")
+    func folderWaitStep() {
+        typealias Availability = BackgroundSyncService.FolderAvailability
+        let step = BackgroundSyncService.folderWaitStep(_:engineUpAfterRead:)
+        #expect(step(.configured, true) == Availability.configured)
+        #expect(step(.configured, false) == Availability.configured)
+        #expect(step(.verifiedEmpty, true) == nil)
+        #expect(step(.unreadable, true) == nil)
+        // A restart during the read: classified stopped, but up afterwards.
+        #expect(step(.engineStopped, true) == nil)
+        #expect(step(.engineStopped, false) == Availability.engineStopped)
+        #expect(step(.unreadable, false) == Availability.engineStopped)
     }
 
     @Test("Each way of finding no vaults keeps the no-vaults result and says which it was")
