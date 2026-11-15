@@ -78,7 +78,7 @@ struct ActionCard: View {
                 Image(systemName: status.symbolName)
                     .font(.title3)
                     .foregroundStyle(status.tint)
-                    .frame(width: 28)
+                    .vaultLeadingSlot()
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: VaultSpacing.xs) {
                     Text(title)
@@ -313,13 +313,13 @@ struct VaultRow<Trailing: View>: View {
         HStack(spacing: VaultSpacing.m) {
             if busy {
                 ProgressView()
-                    .frame(width: 28)
+                    .vaultLeadingSlot()
                     .accessibilityHidden(true)
             } else if let systemImage {
                 Image(systemName: systemImage)
                     .font(.title3)
                     .foregroundStyle(iconTint)
-                    .frame(width: 28)
+                    .vaultLeadingSlot()
                     .accessibilityHidden(true)
             }
             VStack(alignment: .leading, spacing: VaultSpacing.xxs) {
@@ -344,6 +344,26 @@ struct VaultRow<Trailing: View>: View {
         .padding(.vertical, 10)
         .frame(minHeight: VaultMetrics.rowMinHeight)
         .contentShape(Rectangle())
+    }
+}
+
+/// The leading glyph column of rows and cards. Its 28pt width at the
+/// default text size scales with the `.title3` glyph it holds: a fixed
+/// width let the glyph outgrow it at accessibility sizes and run into the
+/// text beside it (#209). The row's 12pt spacing then always stays clear.
+private struct VaultLeadingSlot: ViewModifier {
+    @ScaledMetric(relativeTo: .title3) private var width: CGFloat = 28
+
+    func body(content: Content) -> some View {
+        content.frame(width: width)
+    }
+}
+
+extension View {
+    /// Puts a `.title3` glyph (or a spinner in its place) in the leading
+    /// column of a row or card.
+    func vaultLeadingSlot() -> some View {
+        modifier(VaultLeadingSlot())
     }
 }
 
