@@ -86,6 +86,7 @@ struct SyncFilterRecommendationSheet: View {
                 Text(L10n.tr(preset.description)).font(.caption).foregroundStyle(.secondary)
             }
         }
+        .tint(Color.vaultAccent)
     }
 
     private func detectedToggle(_ item: DetectedPattern) -> some View {
@@ -117,6 +118,7 @@ struct SyncFilterRecommendationSheet: View {
                 Text(formattedSize(item)).font(.caption).foregroundStyle(.secondary)
             }
         }
+        .tint(Color.vaultAccent)
     }
 
     private func scan() async {

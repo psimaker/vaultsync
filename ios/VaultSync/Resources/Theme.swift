@@ -63,9 +63,11 @@ private func vaultColor(
 // MARK: - Brand palette
 
 extension Color {
-    /// Primary interactive / affirmative-active brand accent. This is the single
-    /// app-wide tint (also mirrored in `AccentColor` so the asset-catalog global
-    /// accent matches). Used for links, selection, primary buttons, "syncing".
+    /// The brand teal, for glyphs, fills and outlines: icon wells, toggles,
+    /// the selected plan's outline and check mark, "syncing". It measures
+    /// 4.4:1 as text on white, so text never uses it — the app's inherited
+    /// tint and the `AccentColor` asset are `vaultAccentText` (#208), and a
+    /// control whose tint fills a shape (a toggle) names this token itself.
     static let vaultAccent = vaultColor(
         light: (0, 137, 123),       // #00897B — the established brand teal, P3-tuned
         dark: (38, 196, 176),       // lifted so it stays vivid on a dark canvas
@@ -130,7 +132,9 @@ extension Color {
         light: (38, 50, 56), dark: (176, 190, 197),
         lightAlpha: 0.06, darkAlpha: 0.10
     )
-    /// Accent-colored TEXT (links, tinted buttons, row actions). The brand
+    /// Accent-colored TEXT (links, tinted buttons, row actions) and the app's
+    /// inherited tint, mirrored in the `AccentColor` asset for system UI the
+    /// tint modifier does not reach, such as alert buttons (#208). The brand
     /// teal itself measures 4.32:1 on white — fine for glyphs and fills, short
     /// of WCAG AA for 15–17pt text — so text uses this deeper light variant
     /// (6.2:1 on white, 5.3:1 on `vaultAccentFill`).
