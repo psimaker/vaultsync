@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/syncthing/syncthing/lib/config"
@@ -29,6 +30,8 @@ type PendingDeviceInfo struct {
 
 // GetPendingFoldersJSON returns a JSON array of folders offered by remote
 // devices that have not yet been accepted (i.e. not configured locally).
+// The folders, and the devices offering each, come in the same order on every
+// call for the same offers (#342): see sortPendingFolders.
 func GetPendingFoldersJSON() string {
 	mu.Lock()
 	defer mu.Unlock()
@@ -56,32 +59,68 @@ func GetPendingFoldersJSON() string {
 
 	infos := make([]PendingFolderInfo, 0, len(pending))
 	for folderID, pf := range pending {
-		offered := make([]PendingDeviceInfo, 0, len(pf.OfferedBy))
-		label := ""
+		offers := make([]pendingOffer, 0, len(pf.OfferedBy))
 		for devID, obs := range pf.OfferedBy {
 			devIDStr := devID.String()
-			name := deviceNames[devIDStr]
-			offered = append(offered, PendingDeviceInfo{
-				DeviceID: devIDStr,
-				Name:     name,
-				Time:     obs.Time.Format("2006-01-02T15:04:05Z07:00"),
+			offers = append(offers, pendingOffer{
+				device: PendingDeviceInfo{
+					DeviceID: devIDStr,
+					Name:     deviceNames[devIDStr],
+					Time:     obs.Time.Format("2006-01-02T15:04:05Z07:00"),
+				},
+				label: obs.Label,
 			})
-			if label == "" && obs.Label != "" {
-				label = obs.Label
-			}
 		}
-		infos = append(infos, PendingFolderInfo{
-			ID:        folderID,
-			Label:     label,
-			OfferedBy: offered,
-		})
+		infos = append(infos, pendingFolderInfo(folderID, offers))
 	}
+	sortPendingFolders(infos)
 
 	data, err := json.Marshal(infos)
 	if err != nil {
 		return "[]"
 	}
 	return string(data)
+}
+
+// pendingOffer is one device's offer of a pending folder, with the label that
+// device gives it.
+type pendingOffer struct {
+	device PendingDeviceInfo
+	label  string
+}
+
+// pendingFolderInfo builds a folder's row from its offers, which arrive in
+// map order: the engine keeps the offers of one folder in a map keyed by
+// device. The devices are put in the order of their device IDs, and the
+// folder takes the label of the first of them that gives one, so neither the
+// list nor the label changes from one call to the next (#342). Not by the
+// devices' names: the engine fills in a name when a device connects, and the
+// user can edit it, and the label — which names the folder a share is
+// accepted into — would then change with it.
+func pendingFolderInfo(folderID string, offers []pendingOffer) PendingFolderInfo {
+	slices.SortFunc(offers, func(a, b pendingOffer) int {
+		return strings.Compare(a.device.DeviceID, b.device.DeviceID)
+	})
+	info := PendingFolderInfo{ID: folderID, OfferedBy: make([]PendingDeviceInfo, 0, len(offers))}
+	for _, o := range offers {
+		info.OfferedBy = append(info.OfferedBy, o.device)
+		if info.Label == "" {
+			info.Label = o.label
+		}
+	}
+	return info
+}
+
+// sortPendingFolders puts the pending folders in the order of their IDs. The
+// engine hands them out as a map, whose order differs from one call to the
+// next; unsorted, the app's rows swapped places between two polls and every
+// swap ran its automatic accept pass again (#342). The app lists them by name
+// in the user's language (SyncthingManager.pendingFoldersInDisplayOrder),
+// which Go cannot sort by without a collation library.
+func sortPendingFolders(infos []PendingFolderInfo) {
+	slices.SortFunc(infos, func(a, b PendingFolderInfo) int {
+		return strings.Compare(a.ID, b.ID)
+	})
 }
 
 // AcceptPendingFolder creates a new SendReceive folder with the given ID and

@@ -416,6 +416,37 @@ final class SyncthingManager {
         pendingFolders.filter { ignoredPendingFolderIDs.contains($0.id) }
     }
 
+    /// Pending shares in the order the lists show them (#342): by the name a
+    /// row shows — the label, or the folder ID without one (`PendingSharesView`)
+    /// — compared the way Finder sorts names in the user's language, then by
+    /// folder ID, which is unique, so no two shares tie. Every poll then puts
+    /// the same shares in the same places: in the order they came, rows
+    /// swapped under a tap meant for another share, and each new order counted
+    /// as a change of `pendingFolders` and ran the automatic accept pass
+    /// again. The bridge answers sorted by ID; only here is the user's
+    /// language known. The comparison is the one `localizedStandardCompare`
+    /// makes, with the locale passed in so that tests can pin it: where a
+    /// letter with an accent goes depends on the language (Swedish puts Ä
+    /// after Z).
+    nonisolated static func pendingFoldersInDisplayOrder(
+        _ folders: [PendingFolderInfo],
+        locale: Locale = .current
+    ) -> [PendingFolderInfo] {
+        folders.sorted { lhs, rhs in
+            let lhsName = lhs.label.isEmpty ? lhs.id : lhs.label
+            let rhsName = rhs.label.isEmpty ? rhs.id : rhs.label
+            switch lhsName.compare(
+                rhsName,
+                options: [.caseInsensitive, .numeric, .widthInsensitive, .forcedOrdering],
+                locale: locale
+            ) {
+            case .orderedAscending: return true
+            case .orderedDescending: return false
+            case .orderedSame: return lhs.id < rhs.id
+            }
+        }
+    }
+
     var staleSyncWarning: String? {
         guard !folders.isEmpty else { return nil }
         guard !isAnySyncing else { return nil }
@@ -1469,7 +1500,7 @@ final class SyncthingManager {
 
         if let data = snapshot.2.data(using: .utf8),
            let decoded = try? JSONDecoder().decode([PendingFolderInfo].self, from: data) {
-            pendingFolders = decoded
+            pendingFolders = Self.pendingFoldersInDisplayOrder(decoded)
             if !decoded.isEmpty {
                 markPendingShareSeen()
             }
@@ -1671,7 +1702,7 @@ final class SyncthingManager {
               let decoded = try? JSONDecoder().decode([PendingFolderInfo].self, from: data) else {
             return
         }
-        pendingFolders = decoded
+        pendingFolders = Self.pendingFoldersInDisplayOrder(decoded)
         if !decoded.isEmpty {
             markPendingShareSeen()
         }
