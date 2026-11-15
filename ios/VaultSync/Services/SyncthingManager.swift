@@ -165,6 +165,12 @@ final class SyncthingManager {
     private(set) var lastSyncTimeByFolder: [String: Date] = [:]
     private(set) var syncActivity: [SyncEventItem] = []
     private(set) var lastBackgroundSyncOutcome: BackgroundSyncService.SyncOutcome?
+    /// The background outcome a fresh folder read has shown to be over (#210,
+    /// decision 064): a no-vaults run, followed by a read of one running
+    /// engine that lists vaults. Kept in memory only — the persisted outcome,
+    /// its activity entry and the diagnostics keep what the run found, and a
+    /// new process shows the warning until its own first fresh read.
+    private var retiredBackgroundOutcome: BackgroundSyncService.SyncOutcome?
     private(set) var error: String?
     private(set) var userError: SyncUserError?
 
@@ -862,6 +868,9 @@ final class SyncthingManager {
     private func backgroundSyncIssueItem() -> SyncIssueItem? {
         guard let outcome = lastBackgroundSyncOutcome else { return nil }
         guard outcome.result.shouldSurfaceIssue else { return nil }
+        // Only the very outcome a fresh read retired: a newer one — of any
+        // kind — surfaces again (#210).
+        guard outcome != retiredBackgroundOutcome else { return nil }
 
         let severity: SyncIssueSeverity
         switch outcome.result {
@@ -1451,7 +1460,10 @@ final class SyncthingManager {
     /// Run bridge calls off the main thread, then update @MainActor properties.
     private func pollBridgeState() async {
         let currentEventCursor = lastBridgeEventID
-        let snapshot: (String, String, String, String)? = await Task.detached {
+        let snapshot: (String, String, String, String, FolderRead)? = await Task.detached {
+            // Taken before anything is read: a background outcome recorded
+            // after this moment is not answered by this poll (#210).
+            let readStartedAt = Date()
             // A dead bridge under an attached manager — the residual adoption
             // race from #60 (a background stop that passed its lock re-read
             // just before the foreground claimed) or an engine crash — must
@@ -1459,10 +1471,19 @@ final class SyncthingManager {
             // (#61). Detect it here, before decoding.
             guard SyncBridgeService.isRunning() else { return nil }
             let devicesJSON = SyncBridgeService.getDevicesJSON()
+            let generationBeforeFolders = SyncBridgeService.eventStreamGeneration()
             let foldersJSON = SyncBridgeService.getFoldersJSON()
+            let generationAfterFolders = SyncBridgeService.eventStreamGeneration()
             let pendingJSON = SyncBridgeService.getPendingFoldersJSON()
             let eventsJSON = SyncBridgeService.getEventsSince(lastID: currentEventCursor)
-            return (devicesJSON, foldersJSON, pendingJSON, eventsJSON)
+            let folderRead = FolderRead(
+                startedAt: readStartedAt,
+                // Zero while no engine runs; equal values mean one and the
+                // same engine was up for the whole folder read.
+                engineRunningAcrossRead: generationBeforeFolders != 0
+                    && generationBeforeFolders == generationAfterFolders
+            )
+            return (devicesJSON, foldersJSON, pendingJSON, eventsJSON, folderRead)
         }.value
 
         guard let snapshot else {
@@ -1476,11 +1497,11 @@ final class SyncthingManager {
         // Decode on main — lightweight after the bridge calls are done.
         // Folders must be applied before devices so applyDeviceList sees the
         // current required-device set when reconciling disconnectedSince.
-        if let data = snapshot.1.data(using: .utf8),
-           let decoded = try? JSONDecoder().decode([FolderInfo].self, from: data) {
-            folders = decoded
-            refreshObsidianVisibilityIfInputsChanged()
-        }
+        applyPolledFolders(
+            json: snapshot.1,
+            readStartedAt: snapshot.4.startedAt,
+            engineRunningAcrossRead: snapshot.4.engineRunningAcrossRead
+        )
         if let data = snapshot.0.data(using: .utf8),
            let decoded = try? JSONDecoder().decode([DeviceInfo].self, from: data) {
             applyDeviceList(decoded)
@@ -1659,6 +1680,60 @@ final class SyncthingManager {
             return
         }
         applyDeviceList(decoded)
+    }
+
+    /// When the poll read the folder list, and whether one engine ran for
+    /// the whole read (#210).
+    private struct FolderRead: Sendable {
+        let startedAt: Date
+        let engineRunningAcrossRead: Bool
+    }
+
+    /// Whether a folder read shows a background "no vaults" outcome to be
+    /// over (#210, decision 064). Pure, so the rule is pinned by tests. All
+    /// of it must hold: the outcome is the no-vaults one (every other
+    /// failure says something a folder list cannot answer); one engine ran
+    /// across the read, so the list is that engine's configuration and not
+    /// the bridge's empty answer for a stopped one (`GetFoldersJSON`
+    /// returns `[]` unless the engine is up with its config loaded); the
+    /// list holds a vault; and the read began after the outcome was
+    /// recorded, so it is newer than what the background run saw. A cached
+    /// list never comes here — only the poll's own read does.
+    nonisolated static func freshFolderReadResolves(
+        outcome: BackgroundSyncService.SyncOutcome,
+        readStartedAt: Date,
+        engineRunningAcrossRead: Bool,
+        folderCount: Int
+    ) -> Bool {
+        outcome.result == .noFoldersConfigured
+            && engineRunningAcrossRead
+            && folderCount > 0
+            && readStartedAt > outcome.timestamp
+    }
+
+    /// Apply the folder list the poll just read from the bridge. An
+    /// unreadable list changes nothing — neither the folders nor the
+    /// background warning. Runs before the poll's widget write, so the
+    /// widget follows a retired warning in the same pass (decision 012).
+    private func applyPolledFolders(json: String, readStartedAt: Date, engineRunningAcrossRead: Bool) {
+        guard let data = json.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode([FolderInfo].self, from: data) else {
+            return
+        }
+        folders = decoded
+        refreshObsidianVisibilityIfInputsChanged()
+
+        if let outcome = lastBackgroundSyncOutcome,
+           outcome != retiredBackgroundOutcome,
+           Self.freshFolderReadResolves(
+               outcome: outcome,
+               readStartedAt: readStartedAt,
+               engineRunningAcrossRead: engineRunningAcrossRead,
+               folderCount: decoded.count
+           ) {
+            retiredBackgroundOutcome = outcome
+            logger.info("A fresh folder read lists \(decoded.count) vault(s): the background no-vaults warning is retired (#210)")
+        }
     }
 
     private func refreshFolders() {
@@ -2852,6 +2927,10 @@ final class SyncthingManager {
 
     func _testSetFolders(_ newFolders: [FolderInfo]) {
         folders = newFolders
+    }
+
+    func _testApplyPolledFolderRead(json: String, readStartedAt: Date, engineRunningAcrossRead: Bool) {
+        applyPolledFolders(json: json, readStartedAt: readStartedAt, engineRunningAcrossRead: engineRunningAcrossRead)
     }
 
     func _testSetPendingFolders(_ newPending: [PendingFolderInfo]) {

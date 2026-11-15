@@ -794,6 +794,8 @@
 "Last observed local data progress" = "Last observed local data progress";
 "A wake-up recorded on this iPhone is stronger delivery evidence. Local data progress is separate; upload, controlled download, and a full roundtrip are not confirmed." = "A wake-up recorded on this iPhone is stronger delivery evidence. Local data progress is separate; upload, controlled download, and a full roundtrip are not confirmed.";
 "The embedded sync engine could not start." = "The embedded sync engine could not start.";
+"The sync engine stopped before its vaults could be read." = "The sync engine stopped before its vaults could be read.";
+"The sync engine's vault list could not be read." = "The sync engine's vault list could not be read.";
 "The embedded sync engine could not restart." = "The embedded sync engine could not restart.";
 "Purchase locally verified" = "Purchase locally verified";
 "Confirmed" = "Confirmed";

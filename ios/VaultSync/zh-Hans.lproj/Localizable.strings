@@ -794,6 +794,8 @@
 "Last observed local data progress" = "上次观察到本地数据进展";
 "A wake-up recorded on this iPhone is stronger delivery evidence. Local data progress is separate; upload, controlled download, and a full roundtrip are not confirmed." = "在这台 iPhone 上记录到唤醒信号，是更有力的送达证据。本地数据进展与此分开；上传、受控下载和完整往返均未确认。";
 "The embedded sync engine could not start." = "无法启动内置同步引擎。";
+"The sync engine stopped before its vaults could be read." = "同步引擎在读取其 Vault 之前已停止。";
+"The sync engine's vault list could not be read." = "无法读取同步引擎的 Vault 列表。";
 "The embedded sync engine could not restart." = "无法重新启动内置同步引擎。";
 "Purchase locally verified" = "已在本地验证购买状态";
 "Confirmed" = "已确认";

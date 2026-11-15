@@ -945,7 +945,7 @@ enum BackgroundSyncService {
             trace("Bridge start requested for background-owned sync.")
         }
 
-        let hasFolders = await waitForAnyFolders(maxWait: 3)
+        let folderAvailability = await waitForAnyFolders(maxWait: 3)
         if Task.isCancelled {
             let completion = completeCancelledSync(
                 reason: reason,
@@ -955,13 +955,13 @@ enum BackgroundSyncService {
             if ownsLifecycle { cleanupBackgroundManaged() }
             return completion
         }
-        trace("Folder availability check completed: hasFolders=\(hasFolders).")
+        trace("Folder availability check completed: \(folderAvailability).")
         traceFolderStatuses(label: "post-folder-availability")
-        guard hasFolders else {
+        if let noVaultsDetail = folderAvailability.noVaultsDetail {
             let completion = completeSync(
                 reason: reason,
                 result: .noFoldersConfigured,
-                detail: L10n.tr("No folders were available for background sync."),
+                detail: noVaultsDetail,
                 startedAt: syncStartedAt,
                 initialEventCursor: syncStartEventCursor
             )
@@ -1093,11 +1093,17 @@ enum BackgroundSyncService {
                 trace("Post-restart folder availability: \(recoveredFolders).")
                 trace("Managed security-scoped access retained after restart.")
                 traceFolderStatuses(label: "post-forced-restart")
-                guard recoveredFolders else {
+                if let stoppedOrUnreadableDetail = recoveredFolders.noVaultsDetail {
+                    // The restart's own wording names the verified-empty
+                    // case; a stopped engine or an unreadable list says
+                    // which it was (#210).
+                    let detail = recoveredFolders == .verifiedEmpty
+                        ? L10n.tr("No folders were available after forced silent-push restart.")
+                        : stoppedOrUnreadableDetail
                     let completion = completeSync(
                         reason: reason,
                         result: .noFoldersConfigured,
-                        detail: L10n.tr("No folders were available after forced silent-push restart."),
+                        detail: detail,
                         startedAt: syncStartedAt,
                         initialEventCursor: syncStartEventCursor
                     )
@@ -1601,29 +1607,81 @@ enum BackgroundSyncService {
 
     // MARK: - Helpers
 
-    private static func waitForAnyFolders(maxWait: TimeInterval) async -> Bool {
+    /// Wait up to `maxWait` for the engine to list a vault and report what
+    /// the last read showed (#210). A stopped engine ends the wait at once.
+    /// The window stays at its length: a running engine's empty list is
+    /// already its loaded configuration, so waiting longer would not turn
+    /// one into a vault before a share is accepted.
+    private static func waitForAnyFolders(maxWait: TimeInterval) async -> FolderAvailability {
         let deadline = Date(timeIntervalSinceNow: maxWait)
         while Date() < deadline {
-            if Task.isCancelled { return false }
-            if hasConfiguredFolders() {
-                return true
-            }
-            if !SyncBridgeService.isRunning() {
-                break
+            if Task.isCancelled { return .engineStopped }
+            let availability = readFolderAvailability()
+            if availability == .configured || availability == .engineStopped {
+                return availability
             }
             try? await Task.sleep(for: .milliseconds(250))
         }
-        if Task.isCancelled { return false }
-        return hasConfiguredFolders()
+        if Task.isCancelled { return .engineStopped }
+        return readFolderAvailability()
     }
 
-    private static func hasConfiguredFolders() -> Bool {
-        let json = SyncBridgeService.getFoldersJSON()
-        guard let data = json.data(using: .utf8),
-              let folders = try? JSONDecoder().decode([FolderStub].self, from: data) else {
-            return false
+    /// What one read of the engine's folder list showed (#210). The run's
+    /// result stays `.noFoldersConfigured` for every state but `configured`
+    /// — a new result value would change the persisted outcome's format —
+    /// but its detail and the trace say which it was.
+    enum FolderAvailability: Equatable, Sendable {
+        /// The engine lists at least one vault.
+        case configured
+        /// One running engine was up for the read and lists none: nothing
+        /// is configured yet, as before a share is accepted. The bridge
+        /// loads the configuration before it reports the engine as running
+        /// (`StartSyncthing` holds its lock through the load), so this is
+        /// no start-up gap.
+        case verifiedEmpty
+        /// No engine, or not the same one, was up for the read: the empty
+        /// answer says nothing about the vaults.
+        case engineStopped
+        /// The engine ran, but its answer could not be read as a list.
+        case unreadable
+
+        /// The detail a run that ends here records; nil when it goes on.
+        var noVaultsDetail: String? {
+            switch self {
+            case .configured:
+                return nil
+            case .verifiedEmpty:
+                return L10n.tr("No folders were available for background sync.")
+            case .engineStopped:
+                return L10n.tr("The sync engine stopped before its vaults could be read.")
+            case .unreadable:
+                return L10n.tr("The sync engine's vault list could not be read.")
+            }
         }
-        return !folders.isEmpty
+    }
+
+    /// Classify one folder read. Pure, so the matrix is pinned by tests. A
+    /// list with vaults counts whatever happened after it: only an engine
+    /// that was up returns one. An empty or unreadable answer counts only
+    /// if one engine ran across the read — otherwise it is the stopped
+    /// bridge's empty answer.
+    static func folderAvailability(foldersJSON: String, engineRunningAcrossRead: Bool) -> FolderAvailability {
+        guard let data = foldersJSON.data(using: .utf8),
+              let folders = try? JSONDecoder().decode([FolderStub].self, from: data) else {
+            return engineRunningAcrossRead ? .unreadable : .engineStopped
+        }
+        if !folders.isEmpty { return .configured }
+        return engineRunningAcrossRead ? .verifiedEmpty : .engineStopped
+    }
+
+    private static func readFolderAvailability() -> FolderAvailability {
+        let generationBefore = SyncBridgeService.eventStreamGeneration()
+        let json = SyncBridgeService.getFoldersJSON()
+        let generationAfter = SyncBridgeService.eventStreamGeneration()
+        return folderAvailability(
+            foldersJSON: json,
+            engineRunningAcrossRead: generationBefore != 0 && generationBefore == generationAfter
+        )
     }
 
     /// Engine cleanup only. The run-owned security-scope token is released by
