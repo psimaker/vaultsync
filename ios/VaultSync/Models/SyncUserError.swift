@@ -363,7 +363,11 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
         case .folderIsACopy:
             anchor = folderIsACopyAnchor
         case .config, .validation:
-            if details.contains("pending") || details.contains("share") {
+            // A missing folder is routed by its title, not by words in its
+            // text: its way on names Pending Shares (#308).
+            if error.title == L10n.tr("Folder Path Missing") {
+                anchor = "vault-folder-was-moved-or-deleted"
+            } else if details.contains("pending") || details.contains("share") {
                 anchor = "no-pending-shares-appear"
             } else if details.contains("background") {
                 anchor = "background-sync-not-working"

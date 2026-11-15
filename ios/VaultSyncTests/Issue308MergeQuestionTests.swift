@@ -183,6 +183,9 @@ struct Issue308MergeQuestionTests {
         #expect(missing.remediation.contains("move it back to its original place"))
         #expect(missing.remediation.contains("never moves, recreates, or deletes folders"))
         #expect(missing.remediation == SyncUserError.vaultFolderGoneRemediation)
+        // Its way on names Pending Shares; the help it links stays the
+        // moved-or-deleted section, not "No Pending Shares Appear".
+        #expect(SyncUserError.troubleshootingURL(for: missing)?.fragment == "vault-folder-was-moved-or-deleted")
     }
 
     @Test("The old texts are gone from every language")

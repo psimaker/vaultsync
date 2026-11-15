@@ -218,7 +218,7 @@ If you keep things where they are on purpose, tap **Keep It This Way**: the noti
 
 ## Vault Folder Was Moved or Deleted
 
-**Looks like:** a vault shows "Vault Folder Was Moved or Deleted" and its syncing has stopped. The vault's folder was moved, renamed, replaced, or deleted outside VaultSync (in the Files app, by Obsidian, or by another app), so VaultSync can no longer verify that the folder still holds this vault's data.
+**Looks like:** a vault shows "Vault Folder Was Moved or Deleted" or "Folder Path Missing" and its syncing has stopped. The vault's folder was moved, renamed, replaced, or deleted outside VaultSync (in the Files app, by Obsidian, or by another app), so VaultSync can no longer verify that the folder still holds this vault's data.
 
 **Fix:**
 1. If you moved or renamed the folder: move it back to its original place and name — syncing resumes on its own.
