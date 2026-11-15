@@ -197,10 +197,12 @@ struct Issue315CopiedMarkerTests {
         #expect(copy.remediation.isEmpty)
         #expect(SyncUserError.troubleshootingURL(for: copy)?.fragment == "the-folder-found-is-a-copy")
 
-        // A vault whose folder is gone and nothing was found keeps its text.
+        // A vault whose folder is gone and nothing was found keeps its own
+        // text — which no longer says to recreate the folder (#308).
         let gone = try #require(manager.folderUserError(folderID: "f2"))
         #expect(gone.category == .config)
-        #expect(gone.remediation == "Recreate or reselect the folder, then trigger a rescan.")
+        #expect(gone.title == "Folder Path Missing")
+        #expect(gone.remediation.hasPrefix("If you moved or renamed the folder, move it back to its original place."))
 
         // The copy text belongs to a directory that cannot be reached. A
         // flagged vault in another error is shown that error.

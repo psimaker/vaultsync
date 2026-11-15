@@ -255,10 +255,10 @@ struct ContentView: View {
             }
             Button(L10n.tr("Cancel"), role: .cancel) { shareAccept.pendingMergeConfirmation = nil }
         } message: { request in
-            Text(L10n.fmt(
-                "The folder \"%@\" already contains files. If you accept, those files and the contents of the shared vault \"%@\" will be combined and synced to the other devices sharing this vault. Accept only if this folder holds this vault's own earlier notes — for example after removing the vault, reopening VaultSync and accepting its share again. If it is a different vault or unrelated files, cancel and use \"Choose Vault…\" to pick a different location.",
-                request.targetName,
-                request.folder.label.isEmpty ? request.folder.id : request.folder.label
+            Text(MergeQuestion.message(
+                targetName: request.targetName,
+                shareLabel: request.folder.label.isEmpty ? request.folder.id : request.folder.label,
+                targetInEarlierCopy: request.targetInEarlierCopy
             ))
         }
         .sheet(item: $shareTargetPickerFolder) { folder in
@@ -593,14 +593,15 @@ struct ContentView: View {
     /// see UIAuditFixture. Compiled out of release builds.
     private func applyUIAuditFixture() {
         switch UIAuditFixture.active {
-        case UIAuditFixture.mergeConsent:
+        case UIAuditFixture.mergeConsent, UIAuditFixture.mergeConsentEarlierCopy:
             shareAccept.pendingMergeConfirmation = ShareAcceptCoordinator.MergeConfirmationRequest(
                 folder: SyncthingManager.PendingFolderInfo(
                     id: "uiaudit-vault",
                     label: "Life Notes",
                     offeredBy: []
                 ),
-                targetName: "Life Notes"
+                targetName: "Life Notes",
+                targetInEarlierCopy: UIAuditFixture.active == UIAuditFixture.mergeConsentEarlierCopy
             )
         case UIAuditFixture.removalConsent:
             vaultPendingRemoval = VaultRemovalTarget(id: "uiaudit-vault", label: "Life Notes")
@@ -1334,11 +1335,11 @@ struct ContentView: View {
         let root = vaultManager.obsidianBasePath
         let rootPlace = root.map(VaultManager.selectedFolderPlace)
         // Read at most once, and only when a target already holds files.
+        // The same rule as the merge question's (#308).
         var earlierCopy: Bool?
         func rootHoldsEarlierCopy() -> Bool {
             if let earlierCopy { return earlierCopy }
-            let holds = rootPlace == .appFolder
-                && root.flatMap(ObsidianVisibility.liveContent)?.isSingleVault == true
+            let holds = ObsidianVisibility.selectedFolderHoldsEarlierCopy(root)
             earlierCopy = holds
             return holds
         }

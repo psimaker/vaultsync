@@ -11,6 +11,8 @@ import Foundation
 /// builds, so it can never affect shipping behaviour.
 enum UIAuditFixture {
     static let mergeConsent = "merge-consent"
+    /// The merge question for a target in an earlier copy (#308).
+    static let mergeConsentEarlierCopy = "merge-consent-earlier-copy"
     static let removalConsent = "removal-consent"
     static let markerError = "marker-error"
     static let deviceRemovalConsent = "device-removal-consent"

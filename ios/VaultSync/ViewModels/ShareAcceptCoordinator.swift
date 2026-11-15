@@ -32,6 +32,10 @@ final class ShareAcceptCoordinator {
     struct MergeConfirmationRequest: Identifiable {
         let folder: SyncthingManager.PendingFolderInfo
         let targetName: String
+        /// The selected folder still holds a vault's earlier copy, so the
+        /// target is most likely part of it: the question says not to
+        /// combine (#308).
+        var targetInEarlierCopy: Bool = false
         var id: String { folder.id }
     }
 
@@ -59,6 +63,9 @@ final class ShareAcceptCoordinator {
         /// The selected folder is one Obsidian lists no vault from, and the
         /// user has not chosen to keep it (#270, decision 060).
         var selectedFolderHidesVaults: @MainActor () -> Bool = { false }
+        /// The selected folder still holds a vault's earlier copy
+        /// (`ObsidianVisibility.holdsEarlierCopy`, #308).
+        var selectedFolderHoldsEarlierCopy: @MainActor () -> Bool = { false }
 
         static func live(
             syncthingManager: SyncthingManager,
@@ -88,7 +95,10 @@ final class ShareAcceptCoordinator {
                 shouldPresentRefusalAlert: { ShareRefusalAlertStore.shouldPresentAlert(folderID: $0, reason: $1) },
                 markRefusalAlertPresented: { ShareRefusalAlertStore.markPresented(folderID: $0, reason: $1) },
                 clearRefusalAlertRecord: { ShareRefusalAlertStore.clear(folderID: $0) },
-                selectedFolderHidesVaults: { syncthingManager.selectedFolderHidesVaultsFromObsidian }
+                selectedFolderHidesVaults: { syncthingManager.selectedFolderHidesVaultsFromObsidian },
+                selectedFolderHoldsEarlierCopy: {
+                    ObsidianVisibility.selectedFolderHoldsEarlierCopy(vaultManager.obsidianBasePath)
+                }
             )
         }
     }
@@ -227,20 +237,34 @@ final class ShareAcceptCoordinator {
             // explicit tap additionally gets the confirmation dialog. No
             // modal alert on the automatic pass: this is a decision waiting
             // for the user, not an error.
+            // A target in an earlier copy keeps the warning the row showed
+            // before the tap (#306): the row and the question say the same
+            // (#308).
+            let inEarlierCopy = environment.selectedFolderHoldsEarlierCopy()
             pendingShareFailures[folder.id] = SyncUserError(
                 category: .fileAccess,
                 title: L10n.tr("Folder Already Contains Files"),
-                message: L10n.fmt(
-                    "The folder \"%@\" already contains files. Accepting this share would combine its contents with the shared vault and sync the result to the other devices.",
-                    targetName
-                ),
-                remediation: L10n.tr("Tap \"Review and Accept\" to decide, or \"Choose Vault…\" to pick a different location."),
+                message: inEarlierCopy
+                    ? L10n.fmt(
+                        "The folder “%@” already holds files. If they belong to the copy that arrived earlier, do not combine them: tap \"Choose Vault…\" and give this vault another folder name.",
+                        targetName
+                    )
+                    : L10n.fmt(
+                        "The folder \"%@\" already contains files. Accepting this share would combine its contents with the shared vault and sync the result to the other devices.",
+                        targetName
+                    ),
+                // The message carries the way out; "Review and Accept to
+                // decide" would offer the merge it advises against (066).
+                remediation: inEarlierCopy
+                    ? ""
+                    : L10n.tr("Tap \"Review and Accept\" to decide, or \"Choose Vault…\" to pick a different location."),
                 technicalDetails: nil
             )
             if source == .manual {
                 pendingMergeConfirmation = MergeConfirmationRequest(
                     folder: folder,
-                    targetName: targetName
+                    targetName: targetName,
+                    targetInEarlierCopy: inEarlierCopy
                 )
             }
 

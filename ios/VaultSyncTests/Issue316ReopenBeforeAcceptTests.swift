@@ -25,15 +25,13 @@ struct Issue316ReopenBeforeAcceptTests {
         let openAgain: String
         /// How it names Pending Shares, where the share is accepted again.
         let pendingShares: String
-        /// How the merge question's example says that VaultSync was reopened.
-        let reopenedInExample: String
     }
 
     private static let languages = [
-        Language(code: "en", remove: "remov", wait: "wait ten seconds", reopen: "app switcher", openAgain: "open it again", pendingShares: "Pending Shares", reopenedInExample: "reopening VaultSync"),
-        Language(code: "de", remove: "entfern", wait: "zehn Sekunden", reopen: "App-Umschalter", openAgain: "öffne es erneut", pendingShares: "„Ausstehende Freigaben“", reopenedInExample: "VaultSync erneut geöffnet"),
-        Language(code: "es", remove: "elimina", wait: "diez segundos", reopen: "selector de aplicaciones", openAgain: "vuelve a abrirla", pendingShares: "\"Comparticiones pendientes\"", reopenedInExample: "volver a abrir VaultSync"),
-        Language(code: "zh-Hans", remove: "移除", wait: "等待十秒", reopen: "应用切换器", openAgain: "重新打开", pendingShares: "“待处理共享”", reopenedInExample: "重新打开 VaultSync"),
+        Language(code: "en", remove: "remov", wait: "wait ten seconds", reopen: "app switcher", openAgain: "open it again", pendingShares: "Pending Shares"),
+        Language(code: "de", remove: "entfern", wait: "zehn Sekunden", reopen: "App-Umschalter", openAgain: "öffne es erneut", pendingShares: "„Ausstehende Freigaben“"),
+        Language(code: "es", remove: "elimina", wait: "diez segundos", reopen: "selector de aplicaciones", openAgain: "vuelve a abrirla", pendingShares: "\"Comparticiones pendientes\""),
+        Language(code: "zh-Hans", remove: "移除", wait: "等待十秒", reopen: "应用切换器", openAgain: "重新打开", pendingShares: "“待处理共享”"),
     ]
 
     /// The question every removal passes, and the notice left on screen once
@@ -109,16 +107,6 @@ struct Issue316ReopenBeforeAcceptTests {
         for language in Self.languages {
             let text = try #require(try TestSupport.localizedStrings(language.code)[key], "\(language.code) has no text for: \(key)")
             try Self.expectWaitReopenAccept(text, from: text.startIndex, language)
-        }
-    }
-
-    @Test("The merge question's example of a vault's own earlier notes reopens VaultSync between removing and accepting")
-    func mergeQuestionExample() throws {
-        let key = "The folder \"%@\" already contains files. If you accept, those files and the contents of the shared vault \"%@\" will be combined and synced to the other devices sharing this vault. Accept only if this folder holds this vault's own earlier notes — for example after removing the vault, reopening VaultSync and accepting its share again. If it is a different vault or unrelated files, cancel and use \"Choose Vault…\" to pick a different location."
-        for language in Self.languages {
-            let text = try #require(try TestSupport.localizedStrings(language.code)[key], "\(language.code) has no merge question")
-            #expect(text.contains(language.reopenedInExample), "\(language.code): \(text)")
-            #expect(text.components(separatedBy: "%@").count - 1 == 2)
         }
     }
 }

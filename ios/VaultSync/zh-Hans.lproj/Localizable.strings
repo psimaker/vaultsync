@@ -193,7 +193,6 @@
 "Reconnect Obsidian access or adjust folder permissions on the host device." = "重新连接 Obsidian 访问权限，或在主机设备上调整文件夹权限。";
 "Reconnect devices or add missing peers to restore continuous sync." = "重新连接设备或添加缺失的对端，以恢复持续同步。";
 "Reconnect your Obsidian folder access in VaultSync, then run a foreground rescan." = "在 VaultSync 中重新连接 Obsidian 文件夹访问权限，然后执行一次前台重新扫描。";
-"Recreate or reselect the folder, then trigger a rescan." = "重新创建或重新选择文件夹，然后触发重新扫描。";
 "Registered" = "已注册";
 "Relay Backend" = "Relay 后端";
 "Relay Diagnostics" = "Relay 诊断";
@@ -655,7 +654,8 @@
 "Note" = "提示";
 "Sync into a folder that already contains files?" = "同步到已包含文件的文件夹？";
 "Merge and Sync" = "合并并同步";
-"The folder \"%@\" already contains files. If you accept, those files and the contents of the shared vault \"%@\" will be combined and synced to the other devices sharing this vault. Accept only if this folder holds this vault's own earlier notes — for example after removing the vault, reopening VaultSync and accepting its share again. If it is a different vault or unrelated files, cancel and use \"Choose Vault…\" to pick a different location." = "文件夹“%@”已包含文件。如果接受，这些文件将与共享 Vault“%@”的内容合并，并同步到共享此 Vault 的其他设备。仅当此文件夹存放的正是该 Vault 之前的笔记时才接受——例如移除 Vault、重新打开 VaultSync 后再次接受其共享。如果是其他 Vault 或无关文件，请取消，并使用“选择 Vault…”另选位置。";
+"The folder \"%@\" already contains files. If you accept, those files and the contents of the shared vault \"%@\" will be combined and synced to the other devices sharing this vault. Accept only if this is the folder this vault synced in on this iPhone, unchanged since and not a copy put in its place, or if it holds notes you want to add to this vault. Never combine a copy of this vault: where a copy holds an older version of a note, the older version can replace the newer one on every device. For a copy, a different vault or unrelated files, cancel and use \"Choose Vault…\" to give this vault another folder name." = "文件夹“%@”已包含文件。如果接受，这些文件将与共享 Vault“%@”的内容合并，并同步到共享此 Vault 的其他设备。仅当这是该 Vault 在这台 iPhone 上同步所用的文件夹且此后未被改动、也不是放在其原位置的副本，或其中存放着你想加入该 Vault 的笔记时，才接受。切勿合并该 Vault 的副本：如果副本中存放着某条笔记的旧版本，旧版本可能会在所有设备上取代新版本。如果是副本、其他 Vault 或无关文件，请取消，并使用“选择 Vault…”为这个 Vault 另取一个文件夹名称。";
+"The folder \"%@\" lies in the folder you selected, which still holds the files of a vault that synced straight into it, so it is most likely part of that earlier copy. If you accept, its files will be combined with the shared vault \"%@\" and synced to the other devices sharing this vault: notes of the earlier copy can appear a second time, at the top level of the vault, and where it holds an older version of a note, the older version can replace the newer one on every device. Do not combine them: cancel and use \"Choose Vault…\" to give this vault another folder name." = "文件夹“%@”位于你选择的文件夹中，而该文件夹中仍存放着一个曾直接同步到其中的 Vault 的文件，因此它很可能属于那份之前的副本。如果接受，它的文件将与共享 Vault“%@”合并，并同步到共享此 Vault 的其他设备：之前副本中的笔记可能会在 Vault 的顶层再出现一次；如果其中存放着某条笔记的旧版本，旧版本可能会在所有设备上取代新版本。请不要合并：取消，并使用“选择 Vault…”为这个 Vault 另取一个文件夹名称。";
 "Folder Already Contains Files" = "文件夹已包含文件";
 "The folder \"%@\" already contains files. Accepting this share would combine its contents with the shared vault and sync the result to the other devices." = "文件夹“%@”已包含文件。接受此共享会将其内容与共享的 Vault 合并，并将结果同步到其他设备。";
 "Vault Folder Was Moved or Deleted" = "Vault 文件夹已被移动或删除";
