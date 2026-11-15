@@ -68,6 +68,9 @@ struct ContentView: View {
     @State private var showNotificationPrimerCard = false
     /// The pending rating-prompt check after a completed sync (#327).
     @State private var reviewPromptCheck: Task<Void, Never>?
+    /// When the scene last became active — the rating prompt waits until the
+    /// app has been in front for a while (#327).
+    @State private var activeSince: Date?
     @Environment(\.requestReview) private var requestReview
     @State private var syncPath: [SyncRoute] = []
     @State private var devicesPath: [DeviceRoute] = []
@@ -320,6 +323,13 @@ struct ContentView: View {
         .onChange(of: subscriptionManager.isRelaySubscribed) { _, _ in
             maybePresentRelayUpsell()
         }
+        .onChange(of: scenePhase, initial: true) { _, phase in
+            activeSince = phase == .active ? Date() : nil
+        }
+        .onDisappear {
+            reviewPromptCheck?.cancel()
+            reviewPromptCheck = nil
+        }
         #if DEBUG
         .onAppear(perform: applyUIAuditFixture)
         .sheet(item: $uiAuditDetailFixture) { fixture in
@@ -507,32 +517,42 @@ struct ContentView: View {
 
     // MARK: - Rating Prompt (#327)
 
-    /// No ask from the unit-test host or a seeded fixture: neither is a user
-    /// whose sync worked, and a development build shows the prompt every time.
+    /// No ask from the unit-test host, a seeded fixture or a development
+    /// build: none is a user whose sync worked, and a development build shows
+    /// the prompt on every call — over a UI-test driver's taps too. A Debug
+    /// build asks only when launched with `-review-prompt-in-debug YES`.
     private static var reviewPromptDisabled: Bool {
         if TestHost.isActive { return true }
         #if DEBUG
         if UIAuditFixture.isActive { return true }
-        #endif
+        return !UserDefaults.standard.bool(forKey: "review-prompt-in-debug")
+        #else
         return false
+        #endif
     }
 
     private func recordReviewSyncDay(_ date: Date?) {
         guard let date, !Self.reviewPromptDisabled else { return }
         let store = ReviewPromptStore()
         let record = store.load()
-        let updated = ReviewPromptGate.recording(syncCompletedAt: date, into: record, calendar: .current)
+        let updated = ReviewPromptGate.recording(
+            syncCompletedAt: date,
+            into: record,
+            calendar: ReviewPromptGate.dayCalendar()
+        )
         if updated != record { store.save(updated) }
     }
 
     /// Asks a few seconds after the completion, once the poll that moved
-    /// `lastSyncTime` has settled the rest of the dashboard — and only if it
-    /// is still calm then. A newer completion restarts the wait.
+    /// `lastSyncTime` has settled the rest of the dashboard, and not before
+    /// the app has been in front for a while — only if it is still calm
+    /// then. A newer completion restarts the wait.
     private func scheduleReviewPromptCheck() {
         guard !Self.reviewPromptDisabled else { return }
         reviewPromptCheck?.cancel()
+        let delay = ReviewPromptGate.checkDelay(activeSince: activeSince, now: Date())
         reviewPromptCheck = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(3))
+            try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled else { return }
             maybeRequestReview()
         }
@@ -542,6 +562,7 @@ struct ContentView: View {
         let store = ReviewPromptStore()
         let record = store.load()
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+        let now = Date()
         let unreachableIDs = unreachableFolderIDs
         let rows = vaultRows
         guard ReviewPromptGate.shouldRequest(.init(
@@ -559,34 +580,32 @@ struct ContentView: View {
                 vaultState($0, unreachableIDs: unreachableIDs).label == .upToDate
             },
             somethingInFront: isAnythingInFrontOfSyncTab,
-            otherAskVisible: showRelayUpsellCard || showNotificationPrimerCard
+            otherAskVisible: showRelayUpsellCard || showNotificationPrimerCard,
+            activeSince: activeSince,
+            now: now
         )), let version else { return }
         // Recorded before the call: iOS reports nothing back, and a process
         // ended between the two must not lead to a second ask in this version.
-        store.save(ReviewPromptGate.afterRequest(version: version, record: record))
+        store.save(ReviewPromptGate.afterRequest(
+            version: version,
+            day: ReviewPromptGate.dayKey(now, calendar: ReviewPromptGate.dayCalendar()),
+            record: record
+        ))
         requestReview()
     }
 
     /// Anything that would put the system prompt over something else: the
-    /// app in the background, another tab, a pushed screen, or any sheet or
-    /// alert this view presents — above all a consent question.
+    /// app in the background, another tab, a pushed screen, a pairing link
+    /// about to open, or any sheet or alert — this view's (the list the Hub
+    /// link waits on) and a child view's, which only UIKit sees. Above all
+    /// a consent question.
     private var isAnythingInFrontOfSyncTab: Bool {
         scenePhase != .active
             || selectedTab != .sync
             || !syncPath.isEmpty
-            || showAlert
-            || showInfoAlert
-            || showAddDevice
-            || addHubRequest != nil
-            || showSettings
-            || showSetupChecklist
-            || showObsidianPicker
-            || showDeviceAddedHint
-            || pendingChecklistAction != nil
-            || shareTargetPickerFolder != nil
-            || pendingFilterSheetFolder != nil
-            || vaultPendingRemoval != nil
-            || shareAccept.pendingMergeConfirmation != nil
+            || hubLinkRouter.pending != nil
+            || !canPresentHubLink
+            || HubLinkGate.somethingIsPresented()
     }
 
     // MARK: - Checklist Actions
