@@ -41,7 +41,7 @@ struct Issue316ReopenBeforeAcceptTests {
     /// names the removal as a step of its own, so the order is checked from
     /// the start of the text.
     static let removalQuestion = "“%@” will stop syncing on this iPhone. Files already on your other devices are not deleted. To sync it here again later: wait ten seconds, close VaultSync in the app switcher and open it again, and accept it under Pending Shares once it shows there."
-    static let noticeAfterTheRemoval = "Tap Select Obsidian's Folder, choose \"On My iPhone\" → \"Obsidian\" and tap Open there, without opening one of your vaults. If \"Obsidian\" is missing, open Obsidian and create a vault with \"Store in iCloud\" turned off first. Vaults you stopped syncing here are offered again after that: wait ten seconds, close VaultSync in the app switcher and open it again, and accept them under Pending Shares once they show there."
+    static let noticeAfterTheRemoval = "Tap Select Obsidian's Folder. In the picker, tap Browse at the bottom, then \"On My iPhone\" → \"Obsidian\", and tap Open there, without opening one of your vaults. If two folders there are named \"Obsidian\", Obsidian's own is the one that holds the vault you created in Obsidian, and it may carry Obsidian's icon; the other was made by hand. If no \"Obsidian\" there holds a vault you created in Obsidian, open Obsidian and create one with \"Store in iCloud\" turned off first. Vaults you stopped syncing here are offered again after that: wait ten seconds, close VaultSync in the app switcher and open it again, and accept them under Pending Shares once they show there."
 
     /// From `start` on: the wait, then the reopen, and Pending Shares only
     /// after both. Pending Shares named before the reopen would be an accept

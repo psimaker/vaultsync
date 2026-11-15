@@ -991,13 +991,13 @@ struct ContentView: View {
                     .font(.footnote)
             }
 
-            Text(L10n.tr("In the picker, choose \"On My iPhone\" → \"Obsidian\", then tap Open."))
+            Text(L10n.tr("In the picker, tap Browse at the bottom, then \"On My iPhone\" → \"Obsidian\", and tap Open there."))
                 .font(.footnote)
                 .foregroundStyle(Color.vaultSecondaryLabel)
                 .fixedSize(horizontal: false, vertical: true)
 
             DisclosureGroup(L10n.tr("Can't find the Obsidian folder?")) {
-                Text(L10n.tr("Open Obsidian and create a vault with \"Store in iCloud\" turned off — any name will do. The Obsidian folder appears under \"On My iPhone\" as soon as it holds a vault. Do not create a folder named \"Obsidian\" yourself: Obsidian cannot open vaults from it."))
+                Text(L10n.tr("Open Obsidian and create a vault with \"Store in iCloud\" turned off — any name will do. The Obsidian folder appears under \"On My iPhone\" as soon as it holds a vault. Do not create a folder named \"Obsidian\" yourself: Obsidian cannot open vaults from it. If you already made one, \"On My iPhone\" then shows two folders named \"Obsidian\": Obsidian's own is the one that holds the vault you created in Obsidian, and it may carry Obsidian's icon."))
                     .font(.footnote)
                     .foregroundStyle(Color.vaultSecondaryLabel)
                     .fixedSize(horizontal: false, vertical: true)

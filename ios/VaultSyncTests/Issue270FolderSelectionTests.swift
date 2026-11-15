@@ -146,8 +146,9 @@ struct Issue270FolderSelectionLiveTests {
         #expect(message.contains("not Obsidian's own folder"))
         #expect(message.contains("\"On My iPhone\" → \"Obsidian\""))
         // The folder is missing under "On My iPhone" until Obsidian holds a
-        // vault there — the guidance has to say how to make it appear.
-        #expect(message.contains("create a vault"))
+        // vault there — the guidance has to say how to make it appear (#317
+        // words it as "create one", after "a vault you created in Obsidian").
+        #expect(message.contains("create one with \"Store in iCloud\" turned off"))
 
         #expect(VaultManager.liveValidationError(for: folder, mode: .existingInstall) == nil)
     }
