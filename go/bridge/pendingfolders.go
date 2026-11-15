@@ -2,7 +2,6 @@
 package bridge
 
 import (
-	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -92,12 +91,15 @@ type pendingOffer struct {
 
 // pendingFolderInfo builds a folder's row from its offers, which arrive in
 // map order: the engine keeps the offers of one folder in a map keyed by
-// device. The devices are put in the order of the names the app shows for
-// them, and the folder takes the label of the first of them that gives one —
-// so neither the list nor the label changes from one call to the next (#342).
+// device. The devices are put in the order of their device IDs, and the
+// folder takes the label of the first of them that gives one, so neither the
+// list nor the label changes from one call to the next (#342). Not by the
+// devices' names: the engine fills in a name when a device connects, and the
+// user can edit it, and the label — which names the folder a share is
+// accepted into — would then change with it.
 func pendingFolderInfo(folderID string, offers []pendingOffer) PendingFolderInfo {
 	slices.SortFunc(offers, func(a, b pendingOffer) int {
-		return compareShownNames(a.device.Name, a.device.DeviceID, b.device.Name, b.device.DeviceID)
+		return strings.Compare(a.device.DeviceID, b.device.DeviceID)
 	})
 	info := PendingFolderInfo{ID: folderID, OfferedBy: make([]PendingDeviceInfo, 0, len(offers))}
 	for _, o := range offers {
@@ -109,30 +111,16 @@ func pendingFolderInfo(folderID string, offers []pendingOffer) PendingFolderInfo
 	return info
 }
 
-// sortPendingFolders puts the pending folders in the order of the names the
-// app shows for them. The engine hands them out as a map, whose order differs
-// from one call to the next; the app lists them as they come and runs its
-// automatic accept pass on every change of the list, so unsorted, the rows
-// swapped places between two polls — a tap aimed at one share could land on
-// another — and every swap ran the pass again (#342).
+// sortPendingFolders puts the pending folders in the order of their IDs. The
+// engine hands them out as a map, whose order differs from one call to the
+// next; unsorted, the app's rows swapped places between two polls and every
+// swap ran its automatic accept pass again (#342). The app lists them by name
+// in the user's language (SyncthingManager.pendingFoldersInDisplayOrder),
+// which Go cannot sort by without a collation library.
 func sortPendingFolders(infos []PendingFolderInfo) {
 	slices.SortFunc(infos, func(a, b PendingFolderInfo) int {
-		return compareShownNames(a.Label, a.ID, b.Label, b.ID)
+		return strings.Compare(a.ID, b.ID)
 	})
-}
-
-// compareShownNames orders two entries by the name the app shows for each —
-// the name, or the ID when the name is empty — without regard to case, then
-// by that name's exact spelling, then by ID. IDs are unique within a list, so
-// no two entries compare equal and the order does not depend on the order
-// they arrived in.
-func compareShownNames(nameA, idA, nameB, idB string) int {
-	shownA, shownB := cmp.Or(nameA, idA), cmp.Or(nameB, idB)
-	return cmp.Or(
-		cmp.Compare(strings.ToLower(shownA), strings.ToLower(shownB)),
-		cmp.Compare(shownA, shownB),
-		cmp.Compare(idA, idB),
-	)
 }
 
 // AcceptPendingFolder creates a new SendReceive folder with the given ID and

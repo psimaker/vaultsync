@@ -21,6 +21,11 @@ import (
 // one share landing on the other — and every swap ran the pass again. The
 // devices that offer one share came in map order too, and the label of the
 // share was the first label among them, so it could change between polls.
+//
+// The bridge now answers in the order of the IDs, which never change: the
+// folders by folder ID, the devices of each by device ID, and the label is
+// the first one in that device order. The app sorts the folders by name for
+// display (Issue342PendingShareOrderTests on the Swift side).
 
 const issue342Shared = "issue342-shared"
 
@@ -52,8 +57,9 @@ func issue342Rows(t *testing.T) []issue342Row {
 
 // Two real peers offer four shares; one of them is offered by both, under a
 // different label from each. Every call returns the shares, and the devices
-// of each, in one order — the order of the names a row shows, without regard
-// to case — and the shared folder keeps the label of the first device listed.
+// of each, in one order — the order of their IDs — and the shared folder
+// keeps the label of the device with the lower ID, also once the devices are
+// renamed.
 func TestIssue342_PendingSharesComeInOneOrderOnEveryCall(t *testing.T) {
 	bin := peerBinary(t)
 	peerA := startPeer(t, bin, "issue342-peer-a")
@@ -79,14 +85,14 @@ func TestIssue342_PendingSharesComeInOneOrderOnEveryCall(t *testing.T) {
 	}
 	bridgeID := DeviceID()
 
-	// The device with the higher ID is named "alpha", the other "Beta": the
-	// order by name without regard to case is then neither the order by
-	// device ID nor the order by the bytes of the name.
+	// The device with the higher ID is named "alpha", the other "beta": an
+	// order by name, with or without regard to case, would list them the
+	// other way round than the order by device ID.
 	first, second := peerA, peerB
 	if first.id < second.id {
 		first, second = second, first
 	}
-	names := map[*peerInstance]string{first: "alpha", second: "Beta"}
+	names := map[*peerInstance]string{first: "alpha", second: "beta"}
 	for _, peer := range []*peerInstance{peerA, peerB} {
 		if errMsg := AddDevice(peer.id, names[peer]); errMsg != "" {
 			t.Fatalf("AddDevice(%s) = %q", names[peer], errMsg)
@@ -110,8 +116,7 @@ func TestIssue342_PendingSharesComeInOneOrderOnEveryCall(t *testing.T) {
 		}, nil)
 	}
 
-	// The labels sort as banana, Cherry, date, Shared… without regard to
-	// case; by bytes, and by folder ID, they sort otherwise.
+	// By label the folders would sort otherwise than by folder ID.
 	offer := func(peer *peerInstance, folderID, label string) {
 		t.Helper()
 		path := filepath.Join(peer.home, folderID)
@@ -132,7 +137,7 @@ func TestIssue342_PendingSharesComeInOneOrderOnEveryCall(t *testing.T) {
 	offer(first, "issue342-a", "Cherry")
 	offer(first, "issue342-b", "date")
 	offer(first, issue342Shared, "Shared as alpha names it")
-	offer(second, issue342Shared, "Shared as Beta names it")
+	offer(second, issue342Shared, "Shared as beta names it")
 
 	waitFor(t, "both peers connected", 60*time.Second, func() bool {
 		return bridgeConnected(peerA.id) && bridgeConnected(peerB.id)
@@ -150,11 +155,13 @@ func TestIssue342_PendingSharesComeInOneOrderOnEveryCall(t *testing.T) {
 		return true
 	})
 
-	want := []issue342Row{
-		{ID: "issue342-c", Label: "banana", Devices: []string{first.id + " alpha"}},
-		{ID: "issue342-a", Label: "Cherry", Devices: []string{first.id + " alpha"}},
-		{ID: "issue342-b", Label: "date", Devices: []string{first.id + " alpha"}},
-		{ID: issue342Shared, Label: "Shared as alpha names it", Devices: []string{first.id + " alpha", second.id + " Beta"}},
+	want := func(firstName, secondName string) []issue342Row {
+		return []issue342Row{
+			{ID: "issue342-a", Label: "Cherry", Devices: []string{first.id + " " + firstName}},
+			{ID: "issue342-b", Label: "date", Devices: []string{first.id + " " + firstName}},
+			{ID: "issue342-c", Label: "banana", Devices: []string{first.id + " " + firstName}},
+			{ID: issue342Shared, Label: "Shared as beta names it", Devices: []string{second.id + " " + secondName, first.id + " " + firstName}},
+		}
 	}
 	const calls = 100
 	seen := map[string]int{}
@@ -172,28 +179,44 @@ func TestIssue342_PendingSharesComeInOneOrderOnEveryCall(t *testing.T) {
 		}
 		t.Fatalf("%d calls returned the pending shares in %d different orders, want one", calls, len(orders))
 	}
-	if got := issue342Rows(t); !reflect.DeepEqual(got, want) {
+	if got, want := issue342Rows(t), want("alpha", "beta"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("every call returned the pending shares as\n%+v\nwant\n%+v", got, want)
+	}
+
+	// A device's name can change — the user edits it, or the engine fills it
+	// in when the device connects — and the label, which names the folder a
+	// share is accepted into, must not change with it. Renamed so that an
+	// order by name would now put the other device first, the list keeps its
+	// order and the shared folder its label.
+	if errMsg := RenameDevice(second.id, "zulu"); errMsg != "" {
+		t.Fatalf("RenameDevice(beta) = %q", errMsg)
+	}
+	waitFor(t, "the new name in the pending shares", 30*time.Second, func() bool {
+		rows := issue342Rows(t)
+		return len(rows) == 4 && reflect.DeepEqual(rows[3].Devices, want("alpha", "zulu")[3].Devices)
+	})
+	if got, want := issue342Rows(t), want("alpha", "zulu"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("after the rename the pending shares came as\n%+v\nwant\n%+v", got, want)
 	}
 }
 
 // The order without an engine: whichever order the offers and the folders
-// arrive in, the same list comes out. Names that differ only in case keep one
-// order by their spelling, equal names by their ID, and an entry without a
-// name sorts by its ID, which is what the app shows for it.
+// arrive in, the same list comes out, ordered by ID — never by a name or a
+// label, which can change.
 func TestIssue342_TheOrderDoesNotDependOnTheOrderOffersArriveIn(t *testing.T) {
 	dev := func(id, name string) PendingDeviceInfo { return PendingDeviceInfo{DeviceID: id, Name: name} }
 	offers := []pendingOffer{
 		{device: dev("DEV-C", "mac"), label: "Notes from the mac"},
 		{device: dev("DEV-A", ""), label: ""},
-		{device: dev("DEV-B", "Hub"), label: "Notes on the Hub"},
+		{device: dev("DEV-B", "Zulu Hub"), label: "Notes on the Hub"},
 		{device: dev("DEV-D", "Mac"), label: "Notes from the Mac"},
 	}
 	wantFolder := PendingFolderInfo{
 		ID: "notes",
-		// DEV-A is listed first but gives no label; the Hub is next.
+		// DEV-A comes first but gives no label; DEV-B is next, although its
+		// name would sort last.
 		Label:     "Notes on the Hub",
-		OfferedBy: []PendingDeviceInfo{dev("DEV-A", ""), dev("DEV-B", "Hub"), dev("DEV-D", "Mac"), dev("DEV-C", "mac")},
+		OfferedBy: []PendingDeviceInfo{dev("DEV-A", ""), dev("DEV-B", "Zulu Hub"), dev("DEV-C", "mac"), dev("DEV-D", "Mac")},
 	}
 	for _, perm := range issue342Permutations(offers) {
 		if got := pendingFolderInfo("notes", perm); !reflect.DeepEqual(got, wantFolder) {
@@ -208,7 +231,7 @@ func TestIssue342_TheOrderDoesNotDependOnTheOrderOffersArriveIn(t *testing.T) {
 		{ID: "archive-id", Label: ""},
 		{ID: "id-0", Label: "Zettel"},
 	}
-	wantIDs := []string{"archive-id", "id-3", "id-1", "id-2", "id-0"}
+	wantIDs := []string{"archive-id", "id-0", "id-1", "id-2", "id-3"}
 	for _, perm := range issue342Permutations(folders) {
 		in := fmt.Sprintf("%+v", perm)
 		sortPendingFolders(perm)
