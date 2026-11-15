@@ -257,10 +257,13 @@ private struct VaultSyncWidgetEntryView: View {
             }
             .frame(width: 28, height: 28)
             .accessibilityHidden(true)
+            // "Needs Attention" is wider than the small widget's column
+            // beside the well: it shrinks a little instead of ending in "…".
             Text(entry.snapshot.statusLabel)
                 .font(.headline)
                 .foregroundStyle(Color.vaultLabel)
                 .lineLimit(1)
+                .minimumScaleFactor(0.7)
         }
     }
 
