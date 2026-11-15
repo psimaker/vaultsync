@@ -4,7 +4,7 @@ struct SyncActivityView: View {
     let events: [SyncEventItem]
 
     var body: some View {
-        List {
+        VaultList {
             if events.isEmpty {
                 ContentUnavailableView(
                     "No Activity Yet",
@@ -39,7 +39,6 @@ struct SyncActivityView: View {
                 }
             }
         }
-        .vaultListBackground()
         .navigationTitle("Sync Activity")
         .navigationBarTitleDisplayMode(.inline)
     }

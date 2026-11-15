@@ -12,7 +12,7 @@ struct IgnorePatternsView: View {
     @State private var filtersUnavailable = false
 
     var body: some View {
-        List {
+        VaultList {
             if filtersUnavailable {
                 unavailableSection
             } else {
@@ -25,7 +25,6 @@ struct IgnorePatternsView: View {
             }
             footerSection
         }
-        .vaultListBackground()
         .navigationTitle(L10n.tr("Sync Filters"))
         .navigationBarTitleDisplayMode(.inline)
         .task { await initialLoad() }

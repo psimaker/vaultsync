@@ -22,7 +22,7 @@ struct ControlledDiagnosticsView: View {
     }
 
     var body: some View {
-        List {
+        VaultList {
             explanationSection
             if controller.notice == .recoveryRequired {
                 recoverySection
@@ -31,7 +31,6 @@ struct ControlledDiagnosticsView: View {
             newPairingSection
             compatibilitySection
         }
-        .vaultListBackground()
         .navigationTitle(L10n.tr("Controlled Diagnostics"))
         .navigationBarTitleDisplayMode(.inline)
         .task {
@@ -639,7 +638,7 @@ private struct DiagnosticsCredentialMaintenanceView: View {
     @State private var showRevocationConfirmation = false
 
     var body: some View {
-        List {
+        VaultList {
             Section {
                 Button(L10n.tr("Rotate App Signing Key")) {
                     showAppRotationConfirmation = true
@@ -713,7 +712,6 @@ private struct DiagnosticsCredentialMaintenanceView: View {
                 Text(L10n.tr("Revocation and recovery"))
             }
         }
-        .vaultListBackground()
         .navigationTitle(L10n.tr("Credential Maintenance"))
         .navigationBarTitleDisplayMode(.inline)
         .alert(L10n.tr("Rotate the app signing key?"), isPresented: $showAppRotationConfirmation) {

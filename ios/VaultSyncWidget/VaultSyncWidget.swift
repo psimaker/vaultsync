@@ -50,6 +50,14 @@ private struct VaultSyncWidgetSnapshot: Codable, Equatable {
 
     var statusColor: Color { syncStatus.tint }
 
+    /// The status's color role: the well's wash and glyph color, as in the
+    /// app's status hero (#201).
+    var statusTone: VaultTone { syncStatus.tone }
+
+    /// The bare glyph for the round well (the `.circle.fill` symbols would
+    /// draw a circle in a circle).
+    var statusWellSymbol: String { syncStatus.wellSymbolName }
+
     var lastSyncDescription: String {
         guard let lastSyncDate else { return VaultSyncWidgetL10n.tr("widget_no_sync_yet") }
         return VaultSyncWidgetDateFormatters.relativeDescription(for: lastSyncDate)
@@ -138,23 +146,27 @@ private struct VaultSyncWidgetEntryView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(VaultSyncWidgetL10n.tr("widget_last_sync"))
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.vaultSecondaryLabel)
                 Text(entry.snapshot.lastSyncDescription)
                     .font(.headline)
+                    .foregroundStyle(Color.vaultLabel)
                     .lineLimit(1)
                 Text(VaultSyncWidgetL10n.fmt("widget_files_synced_format", entry.snapshot.filesSynced))
                     .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.vaultLabel)
+                // Accent text on the accent wash, the app's tinted-button
+                // pair: the brand teal itself is too light for text (#201).
                 Text(buttonLabel)
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.vaultAccent)
+                    .foregroundStyle(Color.vaultAccentText)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
-                    .background(Color.vaultAccent.opacity(0.12), in: Capsule())
+                    .background(Color.vaultAccentFill, in: Capsule())
             }
             Spacer(minLength: 0)
         }
         .widgetURL(VaultSyncWidgetConstants.syncURL)
-        .containerBackground(.fill.tertiary, for: .widget)
+        .containerBackground(Color.vaultSurface, for: .widget)
         .accessibilityElement(children: .combine)
     }
 
@@ -184,24 +196,28 @@ private struct VaultSyncWidgetEntryView: View {
 
                 Text(durationLabel)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.vaultSecondaryLabel)
                     .multilineTextAlignment(.trailing)
 
+                // The app's primary button pair: white on the brand teal
+                // measured 4.3:1, `vaultOnAccent` on `vaultAccentProminent`
+                // clears 4.8:1 (#201).
                 Link(destination: VaultSyncWidgetConstants.syncURL) {
                     Label(buttonLabel, systemImage: "arrow.triangle.2.circlepath")
                         .font(.subheadline.weight(.semibold))
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
                         .frame(maxWidth: .infinity)
-                        .background(Color.vaultAccent, in: Capsule())
-                        .foregroundStyle(.white)
+                        .background(Color.vaultAccentProminent, in: Capsule())
+                        .foregroundStyle(Color.vaultOnAccent)
                 }
                 .buttonStyle(.plain)
             }
+            .foregroundStyle(Color.vaultLabel)
             .frame(maxWidth: 110)
         }
         .widgetURL(VaultSyncWidgetConstants.syncURL)
-        .containerBackground(.fill.tertiary, for: .widget)
+        .containerBackground(Color.vaultSurface, for: .widget)
         .accessibilityElement(children: .combine)
     }
 
@@ -228,14 +244,26 @@ private struct VaultSyncWidgetEntryView: View {
         .accessibilityElement(children: .combine)
     }
 
+    /// The status in a round well on its own wash, as in the app's status
+    /// hero (#201). The label carries the status; the well is decoration.
     private var statusRow: some View {
         HStack(spacing: 8) {
-            Image(systemName: entry.snapshot.statusSymbol)
-                .foregroundStyle(entry.snapshot.statusColor)
-                .accessibilityHidden(true)
+            ZStack {
+                Circle()
+                    .fill(entry.snapshot.statusTone.fill)
+                Image(systemName: entry.snapshot.statusWellSymbol)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(entry.snapshot.statusTone.tint)
+            }
+            .frame(width: 28, height: 28)
+            .accessibilityHidden(true)
+            // "Needs Attention" is wider than the small widget's column
+            // beside the well: it shrinks a little instead of ending in "…".
             Text(entry.snapshot.statusLabel)
                 .font(.headline)
+                .foregroundStyle(Color.vaultLabel)
                 .lineLimit(1)
+                .minimumScaleFactor(0.6)
         }
     }
 
@@ -243,9 +271,10 @@ private struct VaultSyncWidgetEntryView: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label)
                 .font(.caption2)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.vaultSecondaryLabel)
             Text(value)
                 .font(.body.weight(.semibold))
+                .foregroundStyle(Color.vaultLabel)
                 .lineLimit(1)
         }
     }

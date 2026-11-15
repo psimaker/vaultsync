@@ -43,7 +43,7 @@ struct ShareTargetPickerView: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            VaultList {
                 Section {
                     Text(L10n.fmt("Choose where \"%@\" syncs on this iPhone. The share keeps its name on your other devices.", shareLabel))
                         .font(.callout)
@@ -102,7 +102,6 @@ struct ShareTargetPickerView: View {
                     }
                 }
             }
-            .vaultListBackground()
             .navigationTitle(L10n.tr("Choose Vault"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

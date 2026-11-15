@@ -760,4 +760,29 @@ extension View {
         scrollContentBackground(.hidden)
             .background(Color.vaultBackground.ignoresSafeArea())
     }
+
+    /// Gives the rows of a system `List`/`Form` the card surface (#201).
+    /// The system row is `#1C1C1E` in dark, next to `#171D20` cards on
+    /// every other screen. `listRowBackground` is a row trait: it acts on
+    /// the rows and sections it is applied to, never on the `List` itself.
+    func vaultListRows() -> some View {
+        listRowBackground(Color.vaultSurface)
+    }
+}
+
+/// A system `List` on the vault page with card-surface rows (#201): for the
+/// secondary screens that keep system rows (filters, diagnostics, setup
+/// guides, the activity log).
+struct VaultList<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        List {
+            Group {
+                content
+            }
+            .vaultListRows()
+        }
+        .vaultListBackground()
+    }
 }
