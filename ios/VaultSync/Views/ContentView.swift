@@ -1,3 +1,4 @@
+import StoreKit
 import SwiftUI
 import UserNotifications
 
@@ -65,6 +66,9 @@ struct ContentView: View {
     @State private var vaultPendingRemoval: VaultRemovalTarget?
     @State private var showRelayUpsellCard = false
     @State private var showNotificationPrimerCard = false
+    /// The pending rating-prompt check after a completed sync (#327).
+    @State private var reviewPromptCheck: Task<Void, Never>?
+    @Environment(\.requestReview) private var requestReview
     @State private var syncPath: [SyncRoute] = []
     @State private var devicesPath: [DeviceRoute] = []
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -298,9 +302,14 @@ struct ContentView: View {
             alertMessage = message
             showAlert = true
         }
-        .onChange(of: syncthingManager.lastSyncTime, initial: true) { _, _ in
+        .onChange(of: syncthingManager.lastSyncTime, initial: true) { old, new in
             maybePresentRelayUpsell()
             maybePresentNotificationPrimer()
+            // Every completion date counts for its day, the one loaded at
+            // launch too; only a sync completed while the app runs is a
+            // moment to ask in (#327).
+            recordReviewSyncDay(new)
+            if old != new { scheduleReviewPromptCheck() }
         }
         .onChange(of: hasAnySyncedContent) { _, _ in
             // The #94 content floor can become true in a poll that does not
@@ -494,6 +503,90 @@ struct ContentView: View {
         if enable {
             Task { await BackgroundSyncService.requestNotificationPermission() }
         }
+    }
+
+    // MARK: - Rating Prompt (#327)
+
+    /// No ask from the unit-test host or a seeded fixture: neither is a user
+    /// whose sync worked, and a development build shows the prompt every time.
+    private static var reviewPromptDisabled: Bool {
+        if TestHost.isActive { return true }
+        #if DEBUG
+        if UIAuditFixture.isActive { return true }
+        #endif
+        return false
+    }
+
+    private func recordReviewSyncDay(_ date: Date?) {
+        guard let date, !Self.reviewPromptDisabled else { return }
+        let store = ReviewPromptStore()
+        let record = store.load()
+        let updated = ReviewPromptGate.recording(syncCompletedAt: date, into: record, calendar: .current)
+        if updated != record { store.save(updated) }
+    }
+
+    /// Asks a few seconds after the completion, once the poll that moved
+    /// `lastSyncTime` has settled the rest of the dashboard — and only if it
+    /// is still calm then. A newer completion restarts the wait.
+    private func scheduleReviewPromptCheck() {
+        guard !Self.reviewPromptDisabled else { return }
+        reviewPromptCheck?.cancel()
+        reviewPromptCheck = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            maybeRequestReview()
+        }
+    }
+
+    private func maybeRequestReview() {
+        let store = ReviewPromptStore()
+        let record = store.load()
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+        let unreachableIDs = unreachableFolderIDs
+        let rows = vaultRows
+        guard ReviewPromptGate.shouldRequest(.init(
+            record: record,
+            appVersion: version,
+            engineRunning: syncthingManager.isRunning,
+            hasEngineError: currentSyncError != nil,
+            vaultAccessible: vaultManager.isAccessible,
+            hasSyncFolders: !syncthingManager.folders.isEmpty,
+            hasUnresolvedIssues: !syncthingManager.unresolvedIssues.isEmpty,
+            hasUnreachableFolders: !syncthingManager.unreachableFolders.isEmpty,
+            hasPendingShares: !syncthingManager.pendingFolders.isEmpty,
+            isSyncing: isSyncing,
+            allVaultsUpToDate: !rows.isEmpty && rows.allSatisfy {
+                vaultState($0, unreachableIDs: unreachableIDs).label == .upToDate
+            },
+            somethingInFront: isAnythingInFrontOfSyncTab,
+            otherAskVisible: showRelayUpsellCard || showNotificationPrimerCard
+        )), let version else { return }
+        // Recorded before the call: iOS reports nothing back, and a process
+        // ended between the two must not lead to a second ask in this version.
+        store.save(ReviewPromptGate.afterRequest(version: version, record: record))
+        requestReview()
+    }
+
+    /// Anything that would put the system prompt over something else: the
+    /// app in the background, another tab, a pushed screen, or any sheet or
+    /// alert this view presents — above all a consent question.
+    private var isAnythingInFrontOfSyncTab: Bool {
+        scenePhase != .active
+            || selectedTab != .sync
+            || !syncPath.isEmpty
+            || showAlert
+            || showInfoAlert
+            || showAddDevice
+            || addHubRequest != nil
+            || showSettings
+            || showSetupChecklist
+            || showObsidianPicker
+            || showDeviceAddedHint
+            || pendingChecklistAction != nil
+            || shareTargetPickerFolder != nil
+            || pendingFilterSheetFolder != nil
+            || vaultPendingRemoval != nil
+            || shareAccept.pendingMergeConfirmation != nil
     }
 
     // MARK: - Checklist Actions
