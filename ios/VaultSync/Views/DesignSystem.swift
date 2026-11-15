@@ -29,6 +29,7 @@ struct StatusTag: View {
     var filled: Bool = false
 
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
     var body: some View {
         Text(text)
@@ -39,20 +40,33 @@ struct StatusTag: View {
             .background(filled ? tint : tint.opacity(0.15), in: Capsule())
     }
 
-    /// Black or white — whichever has more WCAG contrast against the tint as
-    /// resolved for the current scheme. Break-even is relative luminance
-    /// ~0.179: above it black always yields the higher contrast ratio.
     private var filledForeground: Color {
-        let resolved = UIColor(tint).resolvedColor(
-            with: UITraitCollection(userInterfaceStyle: colorScheme == .dark ? .dark : .light)
-        )
+        Self.prefersBlackText(
+            on: tint,
+            dark: colorScheme == .dark,
+            increasedContrast: colorSchemeContrast == .increased
+        ) ? .black : .white
+    }
+
+    /// Black or white — whichever has more WCAG contrast against the tint as
+    /// resolved for the current scheme AND contrast setting. Break-even is
+    /// relative luminance ~0.179: above it black always yields the higher
+    /// contrast ratio. The contrast trait matters because the fill itself
+    /// resolves its Increase Contrast variant: resolved without it, the
+    /// deeper light teal kept black text at 3.4:1 (#199).
+    nonisolated static func prefersBlackText(on tint: Color, dark: Bool, increasedContrast: Bool) -> Bool {
+        let traits = UITraitCollection { traits in
+            traits.userInterfaceStyle = dark ? .dark : .light
+            traits.accessibilityContrast = increasedContrast ? .high : .normal
+        }
+        let resolved = UIColor(tint).resolvedColor(with: traits)
         var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0
-        guard resolved.getRed(&red, green: &green, blue: &blue, alpha: nil) else { return .black }
+        guard resolved.getRed(&red, green: &green, blue: &blue, alpha: nil) else { return true }
         func linear(_ channel: CGFloat) -> CGFloat {
             channel <= 0.03928 ? channel / 12.92 : pow((channel + 0.055) / 1.055, 2.4)
         }
         let luminance = 0.2126 * linear(red) + 0.7152 * linear(green) + 0.0722 * linear(blue)
-        return luminance > 0.179 ? .black : .white
+        return luminance > 0.179
     }
 }
 
