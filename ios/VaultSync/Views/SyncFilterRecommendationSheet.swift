@@ -13,7 +13,7 @@ struct SyncFilterRecommendationSheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            VaultList {
                 Section {
                     Text(L10n.tr("Skip these on this iPhone? You can change this anytime in Sync Filters."))
                         .font(.callout)
@@ -34,7 +34,6 @@ struct SyncFilterRecommendationSheet: View {
                     }
                 }
             }
-            .vaultListBackground()
             .navigationTitle(L10n.tr("Sync Filters"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

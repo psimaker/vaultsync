@@ -11,7 +11,7 @@ struct RelayDiagnosticsView: View {
     @State private var syncPathCheck = SyncPathCheckController()
     @Environment(\.scenePhase) private var scenePhase
     var body: some View {
-        List {
+        VaultList {
             relayHealthSection
             apnsSection
             provisioningSection
@@ -21,7 +21,6 @@ struct RelayDiagnosticsView: View {
             actionSection
             troubleshootingSection
         }
-        .vaultListBackground()
         .navigationTitle("Relay Diagnostics")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: subscriptionManager.relayStatusPollViewState) {

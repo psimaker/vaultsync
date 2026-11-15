@@ -50,7 +50,7 @@ struct RelayServerSetupView: View {
     }
 
     var body: some View {
-        List {
+        VaultList {
             if isDelivering {
                 Section {
                     Label(L10n.tr("Your server helper is running — wake-ups are being delivered."), systemImage: "checkmark.seal.fill")
@@ -119,7 +119,6 @@ struct RelayServerSetupView: View {
                 }
             }
         }
-        .vaultListBackground()
         .navigationTitle(L10n.tr("Set Up Your Server"))
         .navigationBarTitleDisplayMode(.inline)
     }

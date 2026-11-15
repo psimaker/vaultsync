@@ -40,9 +40,11 @@ struct AddDeviceSheet: View {
                         Label("Scan QR Code", systemImage: "qrcode.viewfinder")
                     }
                 }
+                .vaultListRows()
                 Section("Name (optional)") {
                     TextField("e.g. My Laptop", text: $name)
                 }
+                .vaultListRows()
             }
             .sheet(isPresented: $showQRScanner, onDismiss: {
                 // From onDismiss: an alert raised while the scanner sheet is
