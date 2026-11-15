@@ -231,7 +231,7 @@ struct OnboardingView: View {
             number: 1,
             isComplete: obsidianConnected,
             title: L10n.tr("Connect your Obsidian folder"),
-            description: L10n.tr("Give VaultSync one-time access to your Obsidian folder so it can sync your notes. In the picker, tap Browse at the bottom, then \"On My iPhone\" → \"Obsidian\". That folder appears once Obsidian holds a vault on this iPhone; if two folders there are named \"Obsidian\", Obsidian's own is the one with that vault."),
+            description: L10n.tr("Give VaultSync one-time access to your Obsidian folder so it can sync your notes. In the picker, tap Browse at the bottom, then \"On My iPhone\" → \"Obsidian\". That folder appears once Obsidian holds a vault on this iPhone: if you have none, create one in Obsidian first, with \"Store in iCloud\" turned off. If two folders there are named \"Obsidian\", Obsidian's own is the one that holds the vault you created in Obsidian on this iPhone."),
             actionTitle: L10n.tr("Connect Obsidian Folder"),
             action: { showObsidianPicker = true }
         )

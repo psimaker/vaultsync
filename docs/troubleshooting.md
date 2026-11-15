@@ -174,12 +174,12 @@ you're subscribed but wake-ups never arrive; or per-device provisioning says
 **Fix:**
 1. Open Obsidian and create a vault with **Store in iCloud** turned off. Any name will do.
 2. In VaultSync tap **Connect Obsidian Folder**.
-3. In the picker tap **Browse** at the bottom, then **On My iPhone → Obsidian**, and tap **Open** there, without going into one of your vaults. The picker opens where it was last left — after a declined folder, inside that folder — and **Browse** leads back to the list of locations from anywhere.
+3. In the picker tap **Browse** at the bottom, then **On My iPhone → Obsidian**, and tap **Open** there, without going into one of your vaults. During setup the picker opens where it was last left — after a declined folder, inside that folder — and **Browse** leads back to the list of locations from anywhere.
 4. Return to VaultSync and confirm it lists detected vaults or pending shares.
 
 Do not create a folder named "Obsidian" yourself. A vault synced into such a folder arrives in full, but Obsidian never shows it.
 
-**Two folders named "Obsidian"?** If you made one yourself, "On My iPhone" shows two once Obsidian holds a vault: Obsidian's own folder and yours. They can look the same. Obsidian's own is the one that holds the vault you created in Obsidian in step 1 (open a folder to look inside; **Open** applies to the folder you are in), and it may carry Obsidian's icon. The other was made by hand, and VaultSync declines it. If only one "Obsidian" is there and it holds no vault you created in Obsidian, it is yours: go back to step 1.
+**Two folders named "Obsidian"?** If you made one yourself, "On My iPhone" shows two once Obsidian holds a vault: Obsidian's own folder and yours. They can look the same. Obsidian's own is the one that holds the vault you created in Obsidian on this iPhone in step 1 (open a folder to look inside; **Open** applies to the folder you are in), and it may carry Obsidian's icon. The other was made by hand, and during setup VaultSync declines it. If no "Obsidian" there holds a vault you created in Obsidian on this iPhone, go back to step 1.
 
 These steps are for the first setup. If vaults already sync on this iPhone and VaultSync asks you to reconnect, select the folder they sync in again, whatever it is called — see [Bookmark Access Expired](#bookmark-access-expired). Another folder would cut those vaults off from their files.
 
@@ -199,9 +199,9 @@ Syncing continues either way, and VaultSync never moves a vault on its own. Befo
 3. Under **Pending Shares**, accept the vault again. It now gets a folder of its own, and Obsidian lists it once the notes have arrived. If the share says that its folder already holds files, that folder is most likely part of the earlier copy: do not combine them — tap **Choose Vault…** and give the vault another folder name.
 
 **Fix — "Obsidian Cannot Show Vaults From This Folder"** (VaultSync is connected to a folder that is not Obsidian's own):
-1. Open Obsidian and create a vault with **Store in iCloud** turned off, if there is none on the iPhone yet. Without one, Obsidian's own folder does not appear under "On My iPhone" — a folder named "Obsidian" there without such a vault is one made by hand.
+1. Open Obsidian and create a vault with **Store in iCloud** turned off, if there is none on the iPhone yet. Without one, Obsidian's own folder does not appear under "On My iPhone", and a vault you create in Obsidian on this iPhone is how you recognize that folder in step 3.
 2. In VaultSync, remove the vaults that sync in this folder. This only stops syncing them on this iPhone.
-3. The notice now offers **Select Obsidian's Folder**. Tap it, tap **Browse** at the bottom of the picker, then **On My iPhone → Obsidian**, and tap **Open** there, without going into one of your vaults. If two folders there are named "Obsidian", Obsidian's own is the one that holds the vault you created in Obsidian, and it may carry Obsidian's icon; the other was made by hand — most likely the one VaultSync was connected to, which still holds the copies that arrived earlier.
+3. The notice now offers **Select Obsidian's Folder**. Tap it, tap **Browse** at the bottom of the picker, then **On My iPhone → Obsidian**, and tap **Open** there, without going into one of your vaults. If two folders there are named "Obsidian", Obsidian's own is the one that holds the vault you created in Obsidian on this iPhone, and it may carry Obsidian's icon; the other was made by hand — most likely the one VaultSync was connected to, which still holds the copies that arrived earlier.
 4. Wait ten seconds, then close VaultSync in the app switcher and open it again. Only then are the vaults offered again, as soon as the devices that share them are connected.
 5. Under **Pending Shares**, accept the vaults again. They arrive in Obsidian's folder, and Obsidian lists them.
 
