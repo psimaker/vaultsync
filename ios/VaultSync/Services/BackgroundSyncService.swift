@@ -752,7 +752,10 @@ enum BackgroundSyncService {
             case .noBookmarkAccess:
                 return L10n.tr("Reconnect your Obsidian folder access in VaultSync, then run a foreground rescan.")
             case .noFoldersConfigured:
-                return L10n.tr("Accept or create a shared vault before relying on background sync.")
+                // True for all three ways of finding none (#210): before
+                // the first vault, and when the engine was stopped or its
+                // list unreadable while the vaults are there.
+                return L10n.tr("If this iPhone has no vault yet, accept or create a shared vault. If your vaults are there, open VaultSync — this goes away once it lists them.")
             case .bridgeStartFailed:
                 return L10n.tr("Open VaultSync once to restart Syncthing, then retry.")
             case .notIdleBeforeDeadline:
@@ -945,8 +948,8 @@ enum BackgroundSyncService {
             trace("Bridge start requested for background-owned sync.")
         }
 
-        let folderAvailability = await waitForAnyFolders(maxWait: 3)
-        if Task.isCancelled {
+        let waitedFolderAvailability = await waitForAnyFolders(maxWait: 3)
+        guard let folderAvailability = waitedFolderAvailability, !Task.isCancelled else {
             let completion = completeCancelledSync(
                 reason: reason,
                 startedAt: syncStartedAt,
@@ -1080,8 +1083,8 @@ enum BackgroundSyncService {
                 trace("Forced restart succeeded. Background now owns lifecycle=\(ownsLifecycle).")
                 trace("Silent push local-progress tracking reset after forced restart.")
 
-                let recoveredFolders = await waitForAnyFolders(maxWait: 3)
-                if Task.isCancelled {
+                let waitedRecoveredFolders = await waitForAnyFolders(maxWait: 3)
+                guard let recoveredFolders = waitedRecoveredFolders, !Task.isCancelled else {
                     let completion = completeCancelledSync(
                         reason: reason,
                         startedAt: syncStartedAt,
@@ -1093,13 +1096,18 @@ enum BackgroundSyncService {
                 trace("Post-restart folder availability: \(recoveredFolders).")
                 trace("Managed security-scoped access retained after restart.")
                 traceFolderStatuses(label: "post-forced-restart")
-                if let stoppedOrUnreadableDetail = recoveredFolders.noVaultsDetail {
-                    // The restart's own wording names the verified-empty
-                    // case; a stopped engine or an unreadable list says
-                    // which it was (#210).
-                    let detail = recoveredFolders == .verifiedEmpty
-                        ? L10n.tr("No folders were available after forced silent-push restart.")
-                        : stoppedOrUnreadableDetail
+                // The restart's own wording names the verified-empty case; a
+                // stopped engine or an unreadable list says which it was (#210).
+                let restartNoVaultsDetail: String?
+                switch recoveredFolders {
+                case .configured:
+                    restartNoVaultsDetail = nil
+                case .verifiedEmpty:
+                    restartNoVaultsDetail = L10n.tr("No folders were available after forced silent-push restart.")
+                case .engineStopped, .unreadable:
+                    restartNoVaultsDetail = recoveredFolders.noVaultsDetail
+                }
+                if let detail = restartNoVaultsDetail {
                     let completion = completeSync(
                         reason: reason,
                         result: .noFoldersConfigured,
@@ -1608,22 +1616,24 @@ enum BackgroundSyncService {
     // MARK: - Helpers
 
     /// Wait up to `maxWait` for the engine to list a vault and report what
-    /// the last read showed (#210). A stopped engine ends the wait at once.
-    /// The window stays at its length: a running engine's empty list is
-    /// already its loaded configuration, so waiting longer would not turn
-    /// one into a vault before a share is accepted.
-    private static func waitForAnyFolders(maxWait: TimeInterval) async -> FolderAvailability {
+    /// the last read showed (#210); nil when the task was cancelled. Only
+    /// an engine that is down after a read ends the wait early — one that
+    /// was restarted during the read is read again, as before. The window
+    /// keeps its length (#210 did not change it): for a running engine's
+    /// empty list it rarely changes the answer — that list is the loaded
+    /// configuration, not a start-up gap — but a share accepted in the
+    /// foreground meanwhile still counts.
+    private static func waitForAnyFolders(maxWait: TimeInterval) async -> FolderAvailability? {
         let deadline = Date(timeIntervalSinceNow: maxWait)
         while Date() < deadline {
-            if Task.isCancelled { return .engineStopped }
-            let availability = readFolderAvailability()
-            if availability == .configured || availability == .engineStopped {
-                return availability
-            }
+            if Task.isCancelled { return nil }
+            let read = readFolderAvailability()
+            if read.availability == .configured { return .configured }
+            if !read.engineUpAfterRead { return .engineStopped }
             try? await Task.sleep(for: .milliseconds(250))
         }
-        if Task.isCancelled { return .engineStopped }
-        return readFolderAvailability()
+        if Task.isCancelled { return nil }
+        return readFolderAvailability().availability
     }
 
     /// What one read of the engine's folder list showed (#210). The run's
@@ -1639,8 +1649,8 @@ enum BackgroundSyncService {
         /// (`StartSyncthing` holds its lock through the load), so this is
         /// no start-up gap.
         case verifiedEmpty
-        /// No engine, or not the same one, was up for the read: the empty
-        /// answer says nothing about the vaults.
+        /// No engine, or not the same one, was up for the whole read: the
+        /// empty answer says nothing about the vaults.
         case engineStopped
         /// The engine ran, but its answer could not be read as a list.
         case unreadable
@@ -1674,13 +1684,16 @@ enum BackgroundSyncService {
         return engineRunningAcrossRead ? .verifiedEmpty : .engineStopped
     }
 
-    private static func readFolderAvailability() -> FolderAvailability {
+    private static func readFolderAvailability() -> (availability: FolderAvailability, engineUpAfterRead: Bool) {
         let generationBefore = SyncBridgeService.eventStreamGeneration()
         let json = SyncBridgeService.getFoldersJSON()
         let generationAfter = SyncBridgeService.eventStreamGeneration()
-        return folderAvailability(
-            foldersJSON: json,
-            engineRunningAcrossRead: generationBefore != 0 && generationBefore == generationAfter
+        return (
+            folderAvailability(
+                foldersJSON: json,
+                engineRunningAcrossRead: generationBefore != 0 && generationBefore == generationAfter
+            ),
+            generationAfter != 0
         )
     }
 

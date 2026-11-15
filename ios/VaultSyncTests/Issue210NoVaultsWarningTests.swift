@@ -56,7 +56,12 @@ struct Issue210NoVaultsWarningTests {
         manager.unresolvedIssues.first { $0.kind == .backgroundSync }
     }
 
-    private static let afterOutcome = outcomeTime.addingTimeInterval(5)
+    /// A read time on the monotonic clock, relative to when the manager
+    /// first held its current outcome.
+    @MainActor
+    private static func seen(_ manager: SyncthingManager, _ offset: TimeInterval) -> TimeInterval {
+        manager._testBackgroundOutcomeSeenAt() + offset
+    }
 
     // MARK: - The manager
 
@@ -68,7 +73,7 @@ struct Issue210NoVaultsWarningTests {
 
         manager._testApplyPolledFolderRead(
             json: Self.oneVaultJSON,
-            readStartedAt: Self.afterOutcome,
+            readStartedAt: Self.seen(manager, 5),
             engineRunningAcrossRead: true
         )
 
@@ -84,7 +89,7 @@ struct Issue210NoVaultsWarningTests {
 
         manager._testApplyPolledFolderRead(
             json: Self.oneVaultJSON,
-            readStartedAt: Self.afterOutcome,
+            readStartedAt: Self.seen(manager, 5),
             engineRunningAcrossRead: true
         )
 
@@ -107,13 +112,13 @@ struct Issue210NoVaultsWarningTests {
         let manager = makeManager(outcome: Self.outcome(.noFoldersConfigured))
         manager._testApplyPolledFolderRead(
             json: Self.oneVaultJSON,
-            readStartedAt: Self.outcomeTime.addingTimeInterval(-1),
+            readStartedAt: Self.seen(manager, -1),
             engineRunningAcrossRead: true
         )
         #expect(backgroundIssue(manager) != nil)
         manager._testApplyPolledFolderRead(
             json: Self.oneVaultJSON,
-            readStartedAt: Self.outcomeTime,
+            readStartedAt: Self.seen(manager, 0),
             engineRunningAcrossRead: true
         )
         #expect(backgroundIssue(manager) != nil)
@@ -123,15 +128,15 @@ struct Issue210NoVaultsWarningTests {
     @Test("An empty read, an unreadable read or a stopped engine never retires it")
     func emptyUnreadableOrStoppedReadsDoNotRetireIt() {
         let manager = makeManager(outcome: Self.outcome(.noFoldersConfigured))
-        manager._testApplyPolledFolderRead(json: "[]", readStartedAt: Self.afterOutcome, engineRunningAcrossRead: true)
+        manager._testApplyPolledFolderRead(json: "[]", readStartedAt: Self.seen(manager, 5), engineRunningAcrossRead: true)
         #expect(backgroundIssue(manager) != nil)
-        manager._testApplyPolledFolderRead(json: "not json", readStartedAt: Self.afterOutcome, engineRunningAcrossRead: true)
+        manager._testApplyPolledFolderRead(json: "not json", readStartedAt: Self.seen(manager, 5), engineRunningAcrossRead: true)
         #expect(backgroundIssue(manager) != nil)
-        manager._testApplyPolledFolderRead(json: "", readStartedAt: Self.afterOutcome, engineRunningAcrossRead: true)
+        manager._testApplyPolledFolderRead(json: "", readStartedAt: Self.seen(manager, 5), engineRunningAcrossRead: true)
         #expect(backgroundIssue(manager) != nil)
         manager._testApplyPolledFolderRead(
             json: Self.oneVaultJSON,
-            readStartedAt: Self.afterOutcome,
+            readStartedAt: Self.seen(manager, 5),
             engineRunningAcrossRead: false
         )
         #expect(backgroundIssue(manager) != nil)
@@ -141,7 +146,7 @@ struct Issue210NoVaultsWarningTests {
     @Test("A newer no-vaults outcome surfaces again until a read after it")
     func newerNoVaultsOutcomeSurfacesAgain() {
         let manager = makeManager(outcome: Self.outcome(.noFoldersConfigured))
-        manager._testApplyPolledFolderRead(json: Self.oneVaultJSON, readStartedAt: Self.afterOutcome, engineRunningAcrossRead: true)
+        manager._testApplyPolledFolderRead(json: Self.oneVaultJSON, readStartedAt: Self.seen(manager, 5), engineRunningAcrossRead: true)
         #expect(backgroundIssue(manager) == nil)
 
         let newer = Self.outcome(.noFoldersConfigured, at: Self.outcomeTime.addingTimeInterval(60))
@@ -150,16 +155,18 @@ struct Issue210NoVaultsWarningTests {
         // nothing about the newer outcome.
         #expect(backgroundIssue(manager) != nil)
 
+        // A read that began before the newer outcome was seen does not
+        // answer it.
         manager._testApplyPolledFolderRead(
             json: Self.oneVaultJSON,
-            readStartedAt: Self.outcomeTime.addingTimeInterval(30),
+            readStartedAt: Self.seen(manager, -1),
             engineRunningAcrossRead: true
         )
         #expect(backgroundIssue(manager) != nil)
 
         manager._testApplyPolledFolderRead(
             json: Self.oneVaultJSON,
-            readStartedAt: Self.outcomeTime.addingTimeInterval(61),
+            readStartedAt: Self.seen(manager, 1),
             engineRunningAcrossRead: true
         )
         #expect(backgroundIssue(manager) == nil)
@@ -169,14 +176,14 @@ struct Issue210NoVaultsWarningTests {
     @Test("A newer failure of another kind surfaces in full")
     func newerFailureSurfaces() {
         let manager = makeManager(outcome: Self.outcome(.noFoldersConfigured))
-        manager._testApplyPolledFolderRead(json: Self.oneVaultJSON, readStartedAt: Self.afterOutcome, engineRunningAcrossRead: true)
+        manager._testApplyPolledFolderRead(json: Self.oneVaultJSON, readStartedAt: Self.seen(manager, 5), engineRunningAcrossRead: true)
 
         manager._testSetLastBackgroundSyncOutcome(
             Self.outcome(.bridgeStartFailed, at: Self.outcomeTime.addingTimeInterval(60))
         )
         manager._testApplyPolledFolderRead(
             json: Self.oneVaultJSON,
-            readStartedAt: Self.outcomeTime.addingTimeInterval(120),
+            readStartedAt: Self.seen(manager, 5),
             engineRunningAcrossRead: true
         )
         let issue = backgroundIssue(manager)
@@ -189,7 +196,7 @@ struct Issue210NoVaultsWarningTests {
     func otherOutcomesAreNotRetired() {
         for result: BackgroundSyncService.SyncResult in [.notIdleBeforeDeadline, .bridgeStartFailed, .noBookmarkAccess, .failed] {
             let manager = makeManager(outcome: Self.outcome(result))
-            manager._testApplyPolledFolderRead(json: Self.oneVaultJSON, readStartedAt: Self.afterOutcome, engineRunningAcrossRead: true)
+            manager._testApplyPolledFolderRead(json: Self.oneVaultJSON, readStartedAt: Self.seen(manager, 5), engineRunningAcrossRead: true)
             #expect(backgroundIssue(manager) != nil, "result \(result.rawValue)")
         }
     }
@@ -199,7 +206,7 @@ struct Issue210NoVaultsWarningTests {
     func relaunchShowsTheWarningUntilAFreshRead() {
         let persisted = Self.outcome(.noFoldersConfigured)
         let first = makeManager(outcome: persisted)
-        first._testApplyPolledFolderRead(json: Self.oneVaultJSON, readStartedAt: Self.afterOutcome, engineRunningAcrossRead: true)
+        first._testApplyPolledFolderRead(json: Self.oneVaultJSON, readStartedAt: Self.seen(first, 5), engineRunningAcrossRead: true)
         #expect(backgroundIssue(first) == nil)
 
         // The resolution lives in memory only: the persisted outcome is the
@@ -210,7 +217,7 @@ struct Issue210NoVaultsWarningTests {
 
         relaunched._testApplyPolledFolderRead(
             json: Self.oneVaultJSON,
-            readStartedAt: Self.outcomeTime.addingTimeInterval(3600),
+            readStartedAt: Self.seen(relaunched, 5),
             engineRunningAcrossRead: true
         )
         #expect(backgroundIssue(relaunched) == nil)
@@ -220,7 +227,7 @@ struct Issue210NoVaultsWarningTests {
     @Test("Other issues stay after the warning is retired")
     func otherIssuesStay() {
         let manager = makeManager(outcome: Self.outcome(.noFoldersConfigured))
-        manager._testApplyPolledFolderRead(json: Self.oneVaultJSON, readStartedAt: Self.afterOutcome, engineRunningAcrossRead: true)
+        manager._testApplyPolledFolderRead(json: Self.oneVaultJSON, readStartedAt: Self.seen(manager, 5), engineRunningAcrossRead: true)
         manager._testSetFolderStatuses(["vault-a": SyncthingManager.FolderStatusInfo(payload: .init(
             state: "error",
             stateChanged: "2026-11-15T10:00:00Z",
@@ -254,11 +261,24 @@ struct Issue210NoVaultsWarningTests {
         manager._testWriteWidgetSnapshot()
         #expect(manager._testLastWrittenWidgetSnapshot()?.status == SyncStatus.attention.wireValue)
 
-        manager._testApplyPolledFolderRead(json: Self.oneVaultJSON, readStartedAt: Self.afterOutcome, engineRunningAcrossRead: true)
+        manager._testApplyPolledFolderRead(json: Self.oneVaultJSON, readStartedAt: Self.seen(manager, 5), engineRunningAcrossRead: true)
         manager._testWriteWidgetSnapshot()
         #expect(manager._testLastWrittenWidgetSnapshot()?.status == SyncStatus.synced.wireValue)
         // The background-sync kind never reached the floor; it still does not.
         #expect(manager._testLastWrittenIssueFloor() == WidgetSnapshotStore.IssueFloor.none)
+    }
+
+    @MainActor
+    @Test("A wall clock set back does not hold the warning: the order is the monotonic clock's")
+    func wallClockSetBackDoesNotHoldTheWarning() {
+        // Recorded while the clock ran a day ahead, read after it was set back.
+        let manager = makeManager(outcome: Self.outcome(.noFoldersConfigured, at: Date().addingTimeInterval(86_400)))
+        manager._testApplyPolledFolderRead(
+            json: Self.oneVaultJSON,
+            readStartedAt: Self.seen(manager, 1),
+            engineRunningAcrossRead: true
+        )
+        #expect(backgroundIssue(manager) == nil)
     }
 
     // MARK: - The pure rule
@@ -268,12 +288,13 @@ struct Issue210NoVaultsWarningTests {
         let noVaults = Self.outcome(.noFoldersConfigured)
         func resolves(
             _ outcome: BackgroundSyncService.SyncOutcome = noVaults,
-            readAt: Date = Self.afterOutcome,
+            readAt: TimeInterval = 105,
             running: Bool = true,
             count: Int = 1
         ) -> Bool {
             SyncthingManager.freshFolderReadResolves(
                 outcome: outcome,
+                outcomeSeenAt: 100,
                 readStartedAt: readAt,
                 engineRunningAcrossRead: running,
                 folderCount: count
@@ -282,8 +303,8 @@ struct Issue210NoVaultsWarningTests {
         #expect(resolves())
         #expect(!resolves(count: 0))
         #expect(!resolves(running: false))
-        #expect(!resolves(readAt: Self.outcomeTime))
-        #expect(!resolves(readAt: Self.outcomeTime.addingTimeInterval(-60)))
+        #expect(!resolves(readAt: 100))
+        #expect(!resolves(readAt: 40))
         for other: BackgroundSyncService.SyncResult in [
             .synced, .alreadyIdle, .noBookmarkAccess, .bridgeStartFailed,
             .notIdleBeforeDeadline, .failed, .settledWithFolderError,
@@ -315,6 +336,14 @@ struct Issue210NoVaultsWarningTests {
         #expect(Availability.verifiedEmpty.noVaultsDetail == L10n.tr("No folders were available for background sync."))
         #expect(Availability.engineStopped.noVaultsDetail == L10n.tr("The sync engine stopped before its vaults could be read."))
         #expect(Availability.unreadable.noVaultsDetail == L10n.tr("The sync engine's vault list could not be read."))
+    }
+
+    @Test("The remediation holds for every way of finding no vaults")
+    func remediationHoldsForEveryWay() {
+        #expect(
+            BackgroundSyncService.SyncResult.noFoldersConfigured.remediation
+                == L10n.tr("If this iPhone has no vault yet, accept or create a shared vault. If your vaults are there, open VaultSync — this goes away once it lists them.")
+        )
     }
 
     @Test("Background completion severity and the issue floor are unchanged")

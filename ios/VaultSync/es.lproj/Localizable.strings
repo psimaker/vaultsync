@@ -529,7 +529,7 @@
 "No folders were available after forced silent-push restart." = "No había carpetas disponibles tras el reinicio forzado por push silencioso.";
 "No folders were available for background sync." = "No había carpetas disponibles para la sincronización en segundo plano.";
 "No security-scoped bookmark access was available." = "No había acceso disponible mediante marcador de ámbito de seguridad.";
-"Accept or create a shared vault before relying on background sync." = "Acepta o crea un Vault compartido antes de depender de la sincronización en segundo plano.";
+"If this iPhone has no vault yet, accept or create a shared vault. If your vaults are there, open VaultSync — this goes away once it lists them." = "Si este iPhone aún no tiene ningún Vault, acepta o crea un Vault compartido. Si tus Vaults ya están, abre VaultSync: este aviso desaparece en cuanto los muestra.";
 "Retry from the app and review relay/background diagnostics in Settings." = "Reintenta desde la app y revisa el diagnóstico de relay/segundo plano en Ajustes.";
 "Silent push restarted Syncthing, but no real sync progress was observed before the app returned to idle." = "El push silencioso reinició Syncthing, pero no se observó ningún progreso real de sincronización antes de que la app volviera al estado inactivo.";
 "Sync did not reach idle before %ds deadline." = "La sincronización no alcanzó el estado inactivo antes del plazo de %ds.";
