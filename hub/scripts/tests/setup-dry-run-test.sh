@@ -1470,12 +1470,19 @@ $(cat "$SANDBOX/results/run.log")"
 [ ! -e "$AGENT_SELF" ] || fail "an agent ran on macOS 11"
 [ -z "$(ls -A "$APPS")" ] || fail "a setup on macOS 11 installed something: $(ls -A "$APPS")"
 [ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "a setup on macOS 11 left temporary files: $(ls -A "$SANDBOX/tmp")"
+# An exported SYSTEM_VERSION_COMPAT=1 does not hide macOS 11 behind 10.16.
+if out=$(PATH="$SW_VERS_BIN:$PATH" SYSTEM_VERSION_COMPAT=1 FAKE_MACOS=11.7.10 mac_setup --dry-run 2>&1); then
+	fail "SYSTEM_VERSION_COMPAT=1 hid macOS 11:
+$out"
+fi
+printf '%s\n' "$out" | grep -q "this Mac has macOS 11.7.10\." || fail "SYSTEM_VERSION_COMPAT=1 changed the version named:
+$out"
 pass "on a Mac older than macOS 12 the setup stops before the release lookup and says why"
 
-# It refuses only on proof: macOS 12 and later, a version it cannot read, a
-# failed sw_vers, and an exported SYSTEM_VERSION_COMPAT=1 on a newer Mac all
+# It refuses only on proof: macOS 12 and later, a version it cannot read
+# (10.16 is the compatibility answer of macOS 11 and later), a failed sw_vers, and an exported SYSTEM_VERSION_COMPAT=1 on a newer Mac all
 # go on; on Linux sw_vers is never asked.
-for v in 12.0 12 26.5 27.2.1 "" "unknown" "abc.1"; do
+for v in 12.0 12 26.5 27.2.1 10.16 10.16.1 99999999999999999999.0 011.0 "" "unknown" "abc.1"; do
 	out=$(PATH="$SW_VERS_BIN:$PATH" FAKE_MACOS=$v mac_setup --dry-run 2>&1) ||
 		fail "the setup stopped on macOS '$v':
 $out"

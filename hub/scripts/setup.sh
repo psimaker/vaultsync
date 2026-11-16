@@ -342,19 +342,24 @@ detect_asset() {
 # or downloaded: VaultSync for Mac (LSMinimumSystemVersion 12.0) and the bare
 # agent (Go's floor) do not run there, and macOS 11's plutil cannot read the
 # app's identifier, so the setup would call a valid download not VaultSync
-# for Mac. It refuses only on proof: a version whose major part is a number
-# below 12. No sw_vers, a failed one or a version it cannot read lets the
-# setup go on — the agent and macOS still refuse what they cannot run.
-# SYSTEM_VERSION_COMPAT=0: with 1 exported, macOS 11 and later can report 10.16.
+# for Mac. It refuses only on proof: a major version of 0 to 11. No sw_vers,
+# a failed one or a version it cannot read lets the setup go on — the agent
+# and macOS still refuse what they cannot run. SYSTEM_VERSION_COMPAT=0
+# overrides an exported 1, with which macOS 11 and later answer 10.16; that
+# answer is no version of its own and lets the setup go on, whatever turned
+# compatibility mode on. Nothing is compared as a number, so no answer can
+# make a comparison fail.
 check_macos() {
 	command -v sw_vers >/dev/null 2>&1 || return 0
 	macos=$(SYSTEM_VERSION_COMPAT=0 sw_vers -productVersion 2>/dev/null) || macos=""
-	major=${macos%%.*}
-	case "$major" in
-		'' | *[!0-9]*) return 0 ;;
+	case "$macos" in
+		10.16 | 10.16.*) return 0 ;;
 	esac
-	[ "$major" -ge 12 ] ||
-		fail "VaultSync for Mac needs macOS 12 or newer; this Mac has macOS $macos. Nothing was installed."
+	case "${macos%%.*}" in
+		[0-9] | 1[01])
+			fail "VaultSync for Mac needs macOS 12 or newer; this Mac has macOS $macos. Nothing was installed."
+			;;
+	esac
 }
 
 # latest_stable_tag PREFIX prints the newest stable release tagged PREFIX<x.y.z>:

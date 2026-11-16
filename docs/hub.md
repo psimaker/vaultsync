@@ -71,10 +71,10 @@ on — it installs the app **VaultSync for Mac** into Applications (into
 account's copy is there) and runs the setup from there; an app of that name
 that is not VaultSync for Mac is never replaced — the setup stops and says
 so. With an older release (no app in it) it installs the bare agent, as
-before. VaultSync for Mac and the agent need macOS 12 or newer; on an older
-Mac the setup stops before it downloads anything. Nothing else needs to be installed; a Syncthing you
-already run is never touched. Scripts pass everything after `--` to the
-agent:
+before. VaultSync for Mac and the agent need macOS 12 or newer; on an
+older Mac the setup stops before it downloads anything. Nothing else needs
+to be installed; a Syncthing you already run is never touched. Scripts pass
+everything after `--` to the agent:
 
 ```sh
 # the first computer: start Notes as a new vault on the Hub from this folder
@@ -118,7 +118,8 @@ there offers **Add Hub** instead.
 
 `vaultsync` is one program that turns a Mac or a Linux computer into a
 VaultSync device: it installs its own Syncthing, pairs with your Hub by code
-and keeps your Obsidian vaults in sync in the background. Windows follows.
+and keeps your Obsidian vaults in sync in the background. It and VaultSync
+for Mac need macOS 12 or newer. Windows follows.
 
 The setup link does all of this (**1) Obsidian device** above). By hand: get
 it from the newest `desktop-v*` release on GitHub (`vaultsync_darwin_arm64`,
