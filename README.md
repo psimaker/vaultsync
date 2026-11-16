@@ -18,8 +18,18 @@ Your notes sync peer-to-peer over Syncthing, straight into Obsidian's iOS sandbo
 [![iOS 18+](https://img.shields.io/badge/iOS-18%2B-007AFF?style=flat-square&logo=apple&logoColor=white)](https://developer.apple.com/ios/)
 [![CI](https://img.shields.io/github/actions/workflow/status/psimaker/vaultsync/ci.yml?style=flat-square&logo=github-actions&logoColor=white&label=Build)](https://github.com/psimaker/vaultsync/actions/workflows/ci.yml)
 
-<img src="docs/images/screenshot-welcome.png" width="30%" alt="VaultSync welcome screen">
-<img src="docs/images/screenshot-home.png" width="30%" alt="VaultSync home screen">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/screenshot-home-dark.png">
+  <img src="docs/images/screenshot-home-light.png" width="30%" alt="VaultSync home screen: one status card, the vaults below it">
+</picture>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/screenshot-add-hub-dark.png">
+  <img src="docs/images/screenshot-add-hub-light.png" width="30%" alt="Add Hub: type the code your Hub printed, or scan its QR code">
+</picture>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/screenshot-conflict-dark.png">
+  <img src="docs/images/screenshot-conflict-light.png" width="30%" alt="A note changed on two devices: compare both versions side by side">
+</picture>
 
 </div>
 
@@ -29,7 +39,7 @@ Your notes sync peer-to-peer over Syncthing, straight into Obsidian's iOS sandbo
 
 - **Peer-to-peer & private** — syncs directly between your own devices over [Syncthing](https://syncthing.net/). No note cloud, no account, no tracking.
 - **Lands in Obsidian** — files sync into Obsidian's iOS sandbox, where the app already looks for them.
-- **Pair by QR, resolve conflicts** — connect your server in seconds; settle Markdown conflicts with side-by-side diffs.
+- **Pair with a code, resolve conflicts** — add your VaultSync Hub by the short code it prints or its QR code, or any Syncthing device by its Device ID; settle Markdown conflicts with side-by-side diffs.
 - **Server changes can wake your iPhone** — optional Cloud Relay asks iOS to wake the app after the helper observes a server change. The activity timeline shows local sync activity, while Diagnostics keeps Relay, delivery, and local-data evidence separate.
 
 *VoiceOver and Dynamic Type throughout. Localized in English, German, Spanish, and Simplified Chinese. Independent project — not affiliated with Obsidian or Syncthing.*
@@ -54,7 +64,7 @@ Syncthing runs on a machine you keep on; VaultSync joins as a peer and syncs int
 ## 🚀 Quick start
 
 1. **Install** VaultSync from the [App Store](https://apps.apple.com/de/app/vaultsync-for-obsidian/id6761845197).
-2. **Pair your server** — scan its Syncthing Device ID by QR (or paste it), then accept the connection in that Syncthing instance.
+2. **Pair your server** — with a [VaultSync Hub](#-vaultsync-hub-one-link-no-web-ui), tap **Add Hub** and type the code it printed or scan its QR code. With your own Syncthing, scan its Device ID by QR (or paste it), then accept the connection in that Syncthing instance.
 3. **Sync your vault** — VaultSync detects your Obsidian vaults, connects the share, and runs the first sync. Open Obsidian; your notes are there.
 4. **(Optional)** Enable **Cloud Relay** for faster server→iPhone updates — see below.
 
