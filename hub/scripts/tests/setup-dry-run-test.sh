@@ -1427,6 +1427,81 @@ done
 [ -z "$(ls -A "$APPS")" ] || fail "a refused root setup installed something: $(ls -A "$APPS")"
 pass "the device path refuses to run as root"
 
+# A Mac older than macOS 12 (#269): neither VaultSync for Mac nor the bare
+# agent runs there, and macOS 11's plutil called a valid download not
+# VaultSync for Mac. The setup stops before the release lookup with the
+# reason. The sw_vers stand-in sits in a folder of its own, used only here:
+# every other case meets the real one on a Mac and none on Linux, where CI
+# runs the branch without sw_vers. With SYSTEM_VERSION_COMPAT=1 it answers
+# 10.16, as macOS does from 11 on.
+SW_VERS_BIN="$SANDBOX/sw_vers-bin"
+mkdir -p "$SW_VERS_BIN"
+cat >"$SW_VERS_BIN/sw_vers" <<'SHIM'
+#!/usr/bin/env sh
+[ "$*" = "-productVersion" ] || exit 2
+[ -z "${FAKE_MACOS_FAILS:-}" ] || exit 1
+if [ "${SYSTEM_VERSION_COMPAT:-}" = 1 ]; then
+	echo 10.16
+	exit 0
+fi
+printf '%s\n' "$FAKE_MACOS"
+SHIM
+chmod +x "$SW_VERS_BIN/sw_vers"
+for v in 11.7.10 10.15.7 11; do
+	if out=$(PATH="$SW_VERS_BIN:$PATH" FAKE_MACOS=$v mac_setup --dry-run 2>&1); then
+		fail "the setup went on on macOS $v:
+$out"
+	fi
+	printf '%s\n' "$out" | grep -q "VaultSync for Mac needs macOS 12 or newer; this Mac has macOS $v\. Nothing was installed\.\$" ||
+		fail "the refusal on macOS $v does not say why:
+$out"
+	if printf '%s\n' "$out" | grep -q -e "VaultSync for Mac and Linux" -e "would download"; then
+		fail "the setup looked up or planned a release on macOS $v:
+$out"
+	fi
+done
+rm -f "$AGENT_SELF"
+# A subshell: assignments before a shell function outlive the call in sh.
+if (PATH="$SW_VERS_BIN:$PATH" FAKE_MACOS=11.7.10 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+	fail "a real setup went on on macOS 11"
+fi
+grep -q "needs macOS 12 or newer" "$SANDBOX/results/run.log" || fail "the real refusal on macOS 11 does not say why:
+$(cat "$SANDBOX/results/run.log")"
+[ ! -e "$AGENT_SELF" ] || fail "an agent ran on macOS 11"
+[ -z "$(ls -A "$APPS")" ] || fail "a setup on macOS 11 installed something: $(ls -A "$APPS")"
+[ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "a setup on macOS 11 left temporary files: $(ls -A "$SANDBOX/tmp")"
+# An exported SYSTEM_VERSION_COMPAT=1 does not hide macOS 11 behind 10.16.
+if out=$(PATH="$SW_VERS_BIN:$PATH" SYSTEM_VERSION_COMPAT=1 FAKE_MACOS=11.7.10 mac_setup --dry-run 2>&1); then
+	fail "SYSTEM_VERSION_COMPAT=1 hid macOS 11:
+$out"
+fi
+printf '%s\n' "$out" | grep -q "this Mac has macOS 11.7.10\." || fail "SYSTEM_VERSION_COMPAT=1 changed the version named:
+$out"
+pass "on a Mac older than macOS 12 the setup stops before the release lookup and says why"
+
+# It refuses only on proof: macOS 12 and later, a version it cannot read
+# (10.16 is the compatibility answer of macOS 11 and later), a failed sw_vers, and an exported SYSTEM_VERSION_COMPAT=1 on a newer Mac all
+# go on; on Linux sw_vers is never asked.
+for v in 12.0 12 26.5 27.2.1 10.16 10.16.1 99999999999999999999.0 011.0 "" "unknown" "abc.1"; do
+	out=$(PATH="$SW_VERS_BIN:$PATH" FAKE_MACOS=$v mac_setup --dry-run 2>&1) ||
+		fail "the setup stopped on macOS '$v':
+$out"
+	printf '%s\n' "$out" | grep -q "would run: $installed/Contents/MacOS/vaultsync setup --code <code>\$" ||
+		fail "the setup on macOS '$v' does not plan the setup:
+$out"
+done
+out=$(PATH="$SW_VERS_BIN:$PATH" FAKE_MACOS_FAILS=1 mac_setup --dry-run 2>&1) ||
+	fail "a failed sw_vers stopped the setup:
+$out"
+out=$(PATH="$SW_VERS_BIN:$PATH" SYSTEM_VERSION_COMPAT=1 FAKE_MACOS=14.6 mac_setup --dry-run 2>&1) ||
+	fail "SYSTEM_VERSION_COMPAT=1 stopped the setup on macOS 14:
+$out"
+out=$(PATH="$SW_VERS_BIN:$PATH" FAKE_MACOS=11.0 sh "$SETUP_SH" --device --dry-run 2>&1) ||
+	fail "a sw_vers saying 11 stopped the setup on Linux:
+$out"
+[ -z "$(ls -A "$APPS")" ] || fail "a dry run installed something: $(ls -A "$APPS")"
+pass "macOS 12 and later, an unreadable version, a failed sw_vers and Linux go on"
+
 # A release without the app (desktop-v0.1.0): the bare agent, as before.
 rm -f "$MAC_RELEASE/VaultSync_darwin_arm64.zip"
 if command -v sha256sum >/dev/null 2>&1; then

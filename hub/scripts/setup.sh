@@ -338,6 +338,30 @@ detect_asset() {
 	printf '%s_%s_%s\n' "$1" "$goos" "$goarch"
 }
 
+# check_macos stops on a Mac older than macOS 12, before anything is looked up
+# or downloaded: VaultSync for Mac (LSMinimumSystemVersion 12.0) and the bare
+# agent (Go's floor) do not run there, and macOS 11's plutil cannot read the
+# app's identifier, so the setup would call a valid download not VaultSync
+# for Mac. It refuses only on proof: a major version of 0 to 11. No sw_vers,
+# a failed one or a version it cannot read lets the setup go on — the agent
+# and macOS still refuse what they cannot run. SYSTEM_VERSION_COMPAT=0
+# overrides an exported 1, with which macOS 11 and later answer 10.16; that
+# answer is no version of its own and lets the setup go on, whatever turned
+# compatibility mode on. Nothing is compared as a number, so no answer can
+# make a comparison fail.
+check_macos() {
+	command -v sw_vers >/dev/null 2>&1 || return 0
+	macos=$(SYSTEM_VERSION_COMPAT=0 sw_vers -productVersion 2>/dev/null) || macos=""
+	case "$macos" in
+		10.16 | 10.16.*) return 0 ;;
+	esac
+	case "${macos%%.*}" in
+		[0-9] | 1[01])
+			fail "VaultSync for Mac needs macOS 12 or newer; this Mac has macOS $macos. Nothing was installed."
+			;;
+	esac
+}
+
 # latest_stable_tag PREFIX prints the newest stable release tagged PREFIX<x.y.z>:
 # no draft, no pre-release, no "-rc" style suffix, compared as versions —
 # GitHub lists releases by their commit date, not by version, and 100 per
@@ -928,6 +952,9 @@ setup_device() {
 	[ "$(id -u)" != 0 ] || fail "Run the setup link as the account that uses Obsidian, without sudo — VaultSync runs as that account."
 	command -v curl >/dev/null 2>&1 || fail "curl is required."
 	asset=$(detect_asset vaultsync)
+	case "$asset" in
+		vaultsync_darwin_*) check_macos ;;
+	esac
 	tag=$(latest_stable_tag desktop-v) || tag=""
 	[ -n "$tag" ] || fail "Could not find a VaultSync release for Mac and Linux on GitHub ($REPO). Check your network."
 	app_asset=""
