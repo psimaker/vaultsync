@@ -71,7 +71,8 @@ on — it installs the app **VaultSync for Mac** into Applications (into
 account's copy is there) and runs the setup from there; an app of that name
 that is not VaultSync for Mac is never replaced — the setup stops and says
 so. With an older release (no app in it) it installs the bare agent, as
-before. Nothing else needs to be installed; a Syncthing you
+before. VaultSync for Mac and the agent need macOS 12 or newer; on an older
+Mac the setup stops before it downloads anything. Nothing else needs to be installed; a Syncthing you
 already run is never touched. Scripts pass everything after `--` to the
 agent:
 
