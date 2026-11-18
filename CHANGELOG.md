@@ -8,7 +8,7 @@ VaultSync for Mac and Linux (the desktop agent and its menu-bar app, `desktop-vX
 
 ## [Unreleased]
 
-## [3.0.0] — 2026-11-17
+## [3.0.0] — 2026-11-18
 
 ### Added
 
