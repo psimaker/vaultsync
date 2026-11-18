@@ -57,6 +57,21 @@ Two safety nets compensate:
   its own error variable. Unfixed upstream as of v2.1.6-rc.4: carry it
   across a bump, and drop it only once upstream changes the closure and
   `TestIssue152_*` stays green under `-race`. Worth reporting upstream.
+- `syncthing/006-ignores-only-into-the-folders-own-directory.patch` — the
+  engine's `setIgnores` writes `.stignore` only while the folder's
+  `CheckPath` passes and returns its error otherwise. Upstream makes a
+  missing folder root (`CreateRoot`, a `MkdirAll`) and writes into a
+  directory without the marker, which brought a moved or deleted vault's
+  folder back at its old place on the next launch (#371, decision 069). The
+  bridge refuses the same before it calls the engine; the patch also covers
+  a folder taken away between that check and the write, and any writer that
+  reaches `SetIgnores` without the bridge. The engine's other caller, its own
+  auto-accept of a folder (`handleAutoAccepts` in `lib/model/model.go`),
+  makes the folder's directory but not its marker before it writes the
+  default patterns, so with the patch an auto-accepted folder never gets
+  them; the bridge never enables auto-accept. VaultSync doctrine, not for
+  upstreaming; `TestIssue371_TheEnginesOwnWriteMakesNoFolder` fails without
+  it.
 - `go-stun/001-nil-safe-host-methods.patch` — nil-safe host methods.
 
 ## Before each release

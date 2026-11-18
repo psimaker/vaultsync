@@ -1,0 +1,21 @@
+--- a/lib/model/model.go	2026-11-18 07:47:53
++++ b/lib/model/model.go	2026-11-18 07:47:53
+@@ -2233,14 +2233,10 @@
+ }
+ 
+ func (m *model) setIgnores(cfg config.FolderConfiguration, content []string) error {
+-	err := cfg.CheckPath()
+-	if errors.Is(err, config.ErrPathMissing) {
+-		if err = cfg.CreateRoot(); err != nil {
+-			return fmt.Errorf("failed to create folder root: %w", err)
+-		}
+-		err = cfg.CheckPath()
+-	}
+-	if err != nil && !errors.Is(err, config.ErrMarkerMissing) {
++	// VaultSync: write only into the folder's own directory. Making a missing
++	// root, or writing into a directory without the marker, brings a moved or
++	// deleted vault's folder back at its old place (#371, decision 069).
++	if err := cfg.CheckPath(); err != nil {
+ 		return err
+ 	}
+ 

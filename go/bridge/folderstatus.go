@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/syncthing/syncthing/lib/config"
@@ -42,6 +43,18 @@ func getInternals() *syncthing.Internals {
 		return nil
 	}
 	return stApp.Internals
+}
+
+// getFolderConfig returns one folder's configuration. running is false while
+// no engine runs; exists is false when the engine has no such folder.
+func getFolderConfig(folderID string) (folder config.FolderConfiguration, running, exists bool) {
+	mu.Lock()
+	defer mu.Unlock()
+	if !engineUpLocked() || stCfg == nil {
+		return config.FolderConfiguration{}, false, false
+	}
+	folder, exists = stCfg.Folder(folderID)
+	return folder, true, exists
 }
 
 // getFolderConfigs returns configured folders keyed by folder ID.
@@ -231,11 +244,89 @@ func SetFolderIgnores(folderID, ignoresJSON string) string {
 		return fmt.Sprintf("invalid JSON: %v", err)
 	}
 
+	folder, running, exists := getFolderConfig(folderID)
+	if !running {
+		return "syncthing not running"
+	}
+	if !exists {
+		return "folder not found"
+	}
+	if refusal := folderDirectoryRefusal(folder); refusal != "" {
+		return refusal
+	}
+
 	if err := internals.SetIgnores(folderID, lines); err != nil {
-		return fmt.Sprintf("set ignores: %v", err)
+		return ignoresWriteError(err)
 	}
 
 	return ""
+}
+
+// folderDirectoryRefusal returns "" when the folder's directory exists and
+// holds its marker — the state in which the engine syncs it — and a refusal
+// otherwise. Every bridge write of a folder's `.stignore` asks it first: the
+// engine's write makes the folder's directory when it is missing and writes
+// into a directory without the marker, so a vault whose folder was moved or
+// deleted would get an empty folder of its name back at its old place. The
+// engine then reports the marker missing instead of the path missing, and
+// the path reconcile takes the new directory for the vault's own (#371,
+// decision 069). VaultSync never makes a folder's directory once the folder
+// exists (decision 002).
+//
+// The rule is the engine's own CheckPath, the marker entry in the directory,
+// so a folder the engine syncs is never refused. Every refusal of a missing
+// directory or marker contains "marker missing", which the app shows as a
+// vault whose folder was moved or deleted; no refusal carries the path. A
+// path with a file in place of one of its directories (ENOTDIR) is gone too.
+//
+// The engine's write asks the same again (patch 006), so a folder taken away
+// between this check and the write is not made either, and its refusal reads
+// the same (ignoresWriteError); this check also holds if the patch is lost.
+func folderDirectoryRefusal(folder config.FolderConfiguration) string {
+	err := folder.CheckPath()
+	if err == nil {
+		return ""
+	}
+	if refusal := directoryRefusal(err); refusal != "" {
+		return refusal
+	}
+	return fmt.Sprintf("check the folder's directory: %v", withoutPath(err))
+}
+
+// directoryRefusal returns the refusal for an error that says a folder's
+// directory is gone or holds no marker — the bridge's own check's or the
+// engine's — and "" for any other error.
+func directoryRefusal(err error) string {
+	const missing = "folder directory or marker missing: "
+	switch {
+	case errors.Is(err, config.ErrPathMissing), errors.Is(err, syscall.ENOTDIR):
+		return missing + "the folder's directory is gone"
+	case errors.Is(err, config.ErrMarkerMissing):
+		return missing + "the directory holds no folder marker"
+	case errors.Is(err, config.ErrPathNotDirectory):
+		return missing + "the folder's path is not a directory"
+	default:
+		return ""
+	}
+}
+
+// ignoresWriteError is the text for a write of `.stignore` the engine did
+// not make: its refusal of a folder whose directory is gone reads like the
+// bridge's own (#371), and no text carries the path.
+func ignoresWriteError(err error) string {
+	if refusal := directoryRefusal(err); refusal != "" {
+		return refusal
+	}
+	return fmt.Sprintf("set ignores: %v", withoutPath(err))
+}
+
+// withoutPath drops the path an *os.PathError carries.
+func withoutPath(err error) error {
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		return pathErr.Err
+	}
+	return err
 }
 
 // EnsureDefaultIgnores merges the given default ignore patterns into a folder's
@@ -247,8 +338,11 @@ func SetFolderIgnores(folderID, ignoresJSON string) string {
 // .stignore yet" (safe to create) from "could not read .stignore" (a transient
 // error). On any read error other than not-exist it ABORTS without writing, so
 // a momentary read failure can never overwrite a populated `.stignore` with
-// just the defaults. Returns empty string on success — including the no-op case
-// where every default is already present — or an error message on failure.
+// just the defaults. A missing `.stignore` is safe to create only in the
+// folder's own directory: a folder whose directory is gone, or no longer holds
+// its marker, is refused before anything is read (#371). Returns empty string
+// on success — including the no-op case where every default is already
+// present — or an error message on failure.
 func EnsureDefaultIgnores(folderID, defaultsJSON string) string {
 	var defaults []string
 	if err := json.Unmarshal([]byte(defaultsJSON), &defaults); err != nil {
@@ -260,13 +354,15 @@ func EnsureDefaultIgnores(folderID, defaultsJSON string) string {
 		return "syncthing not running"
 	}
 
-	folders := getFolderConfigs()
-	if folders == nil {
+	folder, running, exists := getFolderConfig(folderID)
+	if !running {
 		return "syncthing not running"
 	}
-	folder, exists := folders[folderID]
 	if !exists {
 		return "folder not found"
+	}
+	if refusal := folderDirectoryRefusal(folder); refusal != "" {
+		return refusal
 	}
 
 	// Read existing lines directly from disk with precise error handling:
@@ -305,7 +401,7 @@ func EnsureDefaultIgnores(folderID, defaultsJSON string) string {
 	}
 
 	if err := internals.SetIgnores(folderID, merged); err != nil {
-		return fmt.Sprintf("set ignores: %v", err)
+		return ignoresWriteError(err)
 	}
 	return ""
 }
