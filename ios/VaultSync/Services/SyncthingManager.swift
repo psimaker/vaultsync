@@ -1436,9 +1436,14 @@ final class SyncthingManager {
     /// Swift-side read could see a momentary empty/unreadable result and
     /// overwrite a populated `.stignore` with just the defaults — this avoids
     /// that data-loss path entirely.
+    /// A vault whose folder was moved or deleted, or no longer holds its
+    /// marker, is refused there and in the engine, at the path the folder
+    /// has at the moment of the write: nothing is made at its old place
+    /// (#371, decision 069). The refusal is only logged.
     /// `nonisolated` so callers can run the bridge read-merge-write off the main
     /// actor — it touches no main-actor state, only the bridge and the logger.
-    private nonisolated static func applyDefaultIgnoresIfNeeded(folderID: String) {
+    /// Not private: `Issue371DefaultIgnoresTests` runs it against the engine.
+    nonisolated static func applyDefaultIgnoresIfNeeded(folderID: String) {
         guard let data = try? JSONEncoder().encode(defaultIgnorePatterns),
               let json = String(data: data, encoding: .utf8) else { return }
 
