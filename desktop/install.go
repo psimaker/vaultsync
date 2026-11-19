@@ -24,7 +24,7 @@ import (
 // files.
 
 const (
-	maxArchiveBytes = 128 << 20 // the 2.1.6 archives are 11–13 MB
+	maxArchiveBytes = 128 << 20 // the 2.1.7 archives are 13–15 MB
 	maxBinaryBytes  = 256 << 20
 )
 

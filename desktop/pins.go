@@ -13,7 +13,7 @@ import (
 // checksums from the release's signed sha256sum.txt.asc cross-checked against
 // GitHub's asset digests, and a green Desktop Syncthing E2E on the new
 // archive (the engine's generated config.xml shape is pinned with it).
-const syncthingVersion = "v2.1.6"
+const syncthingVersion = "v2.1.7"
 
 // engineNewer: Syncthing version a (vX.Y.Z — a suffix such as -rc.1 aside)
 // is newer than b. A version that does not read as one is not newer.
@@ -77,23 +77,23 @@ type syncthingPin struct {
 
 var syncthingPins = map[string]syncthingPin{
 	"darwin/amd64": {
-		archive: "syncthing-macos-amd64-v2.1.6.zip",
-		sha256:  "d1464be24a7157440dfb52e2d84939f83caf89c129761945abcdd4956e09ffb1",
-		binary:  "syncthing-macos-amd64-v2.1.6/syncthing",
+		archive: "syncthing-macos-amd64-v2.1.7.zip",
+		sha256:  "b8be90176d0f24daebae7b5aaddac52ebfae395df6d99f5e0e54656db00868cb",
+		binary:  "syncthing-macos-amd64-v2.1.7/syncthing",
 	},
 	"darwin/arm64": {
-		archive: "syncthing-macos-arm64-v2.1.6.zip",
-		sha256:  "f86bfa0bdbb5b1b13229a7e5643e898e3c4e017a4fff6dd525994ebaf28ff6e2",
-		binary:  "syncthing-macos-arm64-v2.1.6/syncthing",
+		archive: "syncthing-macos-arm64-v2.1.7.zip",
+		sha256:  "2df075b463231a307c91da657157beaed06383a941ba7ea04d33d536e3c4af38",
+		binary:  "syncthing-macos-arm64-v2.1.7/syncthing",
 	},
 	"linux/amd64": {
-		archive: "syncthing-linux-amd64-v2.1.6.tar.gz",
-		sha256:  "524ef4e1df1850b719e2378c8369956f4e5f2ab9a46fdf7f45f2b925012147aa",
-		binary:  "syncthing-linux-amd64-v2.1.6/syncthing",
+		archive: "syncthing-linux-amd64-v2.1.7.tar.gz",
+		sha256:  "2edc416e7ed136b7c858ed5f3f02a3b8316589605e54c380228ceea7acbf0142",
+		binary:  "syncthing-linux-amd64-v2.1.7/syncthing",
 	},
 	"linux/arm64": {
-		archive: "syncthing-linux-arm64-v2.1.6.tar.gz",
-		sha256:  "f054de02462d5d58bd126908f2f92b63aba74f162a5be85e50e96d656e7db47d",
-		binary:  "syncthing-linux-arm64-v2.1.6/syncthing",
+		archive: "syncthing-linux-arm64-v2.1.7.tar.gz",
+		sha256:  "48e456690cd2b97e7d26b02b5ac35f62a3b36172267b144cfeaf02c993ab955c",
+		binary:  "syncthing-linux-arm64-v2.1.7/syncthing",
 	},
 }
