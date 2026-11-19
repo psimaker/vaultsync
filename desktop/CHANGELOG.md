@@ -17,7 +17,7 @@ The desktop agent `vaultsync`, VaultSync for Mac and the menu-bar app, released 
 ### Changed
 
 - **Updated the Go runtime the desktop agent is built with** — Go 1.26.10 → 1.26.11 with the latest standard-library security fix; the [root changelog](../CHANGELOG.md) names it.
-- **VaultSync installs Syncthing 2.1.7** — `setup` installs Syncthing 2.1.7 instead of 2.1.6, only if it matches the checksum built into VaultSync, as before; an update through the setup link moves an installed 2.1.6 to it. 2.1.7 brings eight fixes from Syncthing, among them: data from another device that does not read right ends that connection with an error instead of stopping the engine, and a local change is checked before a shortcut for metadata-only changes is taken ([release notes](https://github.com/syncthing/syncthing/releases/tag/v2.1.7)).
+- **VaultSync installs Syncthing 2.1.7** — `setup` installs Syncthing 2.1.7 instead of 2.1.6, only if it matches the checksum built into VaultSync, as before; an update through the setup link moves an installed 2.1.6 to it. Once it is set up, a VaultSync from 0.2.0 — a VaultSync for Mac you kept elsewhere, or a downloaded `vaultsync` — no longer runs on this computer: it stops and says to run the setup link instead of putting 2.1.6 back (decision 054). 2.1.7 brings eight fixes from Syncthing, among them: data from another device that does not read right ends that connection with an error instead of stopping the engine, and a local change is checked before a shortcut for metadata-only changes is taken ([release notes](https://github.com/syncthing/syncthing/releases/tag/v2.1.7)).
 
 ### Fixed
 
