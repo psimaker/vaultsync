@@ -27,6 +27,8 @@ Only the **latest release** of each component receives security fixes. If you ar
 | Component | Supported version |
 |---|---|
 | VaultSync iOS app | Latest App Store release (currently 3.0.0) |
+| VaultSync Hub (`vaultsync-hub`) | Latest `hub-v*` release (currently 0.3.1) |
+| VaultSync for Mac and Linux (`vaultsync` desktop agent) | Latest `desktop-v*` release (currently 0.3.0) |
 | `vaultsync-notify` server helper | Latest `notify-v*` release (currently 2.0.2) |
 | Cloud Relay (hosted service) | The currently deployed version (1.4.0) — operated by the maintainer, no user action needed |
 
@@ -35,9 +37,11 @@ Only the **latest release** of each component receives security fixes. If you ar
 In scope:
 
 - The **iOS app** (`ios/`), including the embedded Go sync bridge (`go/bridge/`)
+- The **VaultSync Hub** (`hub/`): the pairing coordinator and the Docker Compose stack it runs in
+- **VaultSync for Mac and Linux** (`desktop/`): the desktop agent and its menu-bar app
 - The **`vaultsync-notify` server helper** (`notify/`)
-- The **installer script** (`notify/scripts/install.sh`, served at `https://vaultsync.eu/notify.sh`)
-- **Release artifacts**: the Docker image and prebuilt helper binaries
+- The **installer scripts**: `hub/scripts/setup.sh` (served at `https://vaultsync.eu/setup.sh`), `notify/scripts/install.sh` and `notify/scripts/install.ps1` (served at `https://vaultsync.eu/notify.sh` and `https://vaultsync.eu/notify.ps1`)
+- **Release artifacts**: the Docker images of the Hub and the helper, and the prebuilt binaries of the Hub, the helper and the desktop agent, including VaultSync for Mac
 - The **Cloud Relay service** at `relay.vaultsync.eu` — the code lives in a separate repository, but the service is operated by the maintainer, so reports about its protocol or behavior are welcome here
 
 Strict limits for the hosted Relay:
