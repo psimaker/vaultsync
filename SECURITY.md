@@ -30,7 +30,7 @@ Only the **latest release** of each component receives security fixes. If you ar
 | VaultSync Hub (`vaultsync-hub`) | Latest `hub-v*` release (currently 0.3.1) |
 | VaultSync for Mac and Linux (`vaultsync` desktop agent) | Latest `desktop-v*` release (currently 0.3.0) |
 | `vaultsync-notify` server helper | Latest `notify-v*` release (currently 2.0.2) |
-| Cloud Relay (hosted service) | The currently deployed version (1.4.0) — operated by the maintainer, no user action needed |
+| Cloud Relay (hosted service) | The currently deployed version (1.4.1) — operated by the maintainer, no user action needed |
 
 ## Scope
 
