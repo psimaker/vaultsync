@@ -118,6 +118,9 @@ Device ID:   XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX
   New code any time:  cd /srv/vaultsync && docker compose exec hub vaultsync-hub code
 ```
 
+If your user needs `sudo` for Docker on that server, put `sudo` in front of
+`docker compose` in these commands.
+
 ## ☁️ Cloud Relay (optional)
 
 Without it, VaultSync syncs server changes when you open the app. **With it, Cloud Relay can request a background wake-up after your server changes** — iOS still decides whether and when to run the app.
