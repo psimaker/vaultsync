@@ -4,8 +4,8 @@
 
 # [VaultSync](https://apps.apple.com/app/vaultsync/id6761845197)
 
-**Self-hosted Obsidian vault sync for iPhone and iPad.**<br>
-Your notes sync peer-to-peer over Syncthing, straight into Obsidian's iOS sandbox — no note cloud, no account, no tracking.
+**Obsidian on your iPhone and iPad, in sync with your own devices.**<br>
+Your notes sync device to device — between your iPhone, your computer and your own server or NAS — straight into Obsidian's folder. No iCloud, no note cloud, no account, no tracking.
 
 <a href="https://apps.apple.com/de/app/vaultsync-for-obsidian/id6761845197">
   <img src="https://developer.apple.com/assets/elements/badges/download-on-the-app-store.svg" height="44" alt="Download on the App Store">
