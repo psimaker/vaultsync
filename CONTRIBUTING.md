@@ -37,7 +37,7 @@ An honest picture of what you can build where:
 # VaultSync for Mac and Linux (the desktop agent and its menu-bar app)
 (cd desktop && go test ./... -race && go vet ./...)
 
-# Sync bridge (applies the Syncthing patches first; ~1 min, starts real Syncthing instances)
+# Sync bridge (applies the Syncthing patches first; about 3 min with a warm build cache, longer on a first run; starts real Syncthing instances)
 (cd go && make patch && go test -tags noassets ./bridge)
 ```
 
