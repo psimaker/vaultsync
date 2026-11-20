@@ -25,17 +25,23 @@ Reading the decision records before proposing a change in those areas will save 
 
 An honest picture of what you can build where:
 
-**Go components — Linux or macOS, Go 1.26+:**
+**Go components — Linux or macOS, Go 1.26+.** Each is its own Go module:
 
 ```bash
-# Server helper (its own Go module)
+# Server helper
 (cd notify && go test ./... && go vet ./...)
+
+# VaultSync Hub (the pairing coordinator; setup.sh lives in hub/scripts)
+(cd hub && go test ./... -race && go vet ./...)
+
+# VaultSync for Mac and Linux (the desktop agent and its menu-bar app)
+(cd desktop && go test ./... -race && go vet ./...)
 
 # Sync bridge (applies the Syncthing patches first; ~1 min, starts real Syncthing instances)
 (cd go && make patch && go test -tags noassets ./bridge)
 ```
 
-`gofmt` is enforced by CI for both modules.
+`gofmt` is enforced by CI for `go/bridge`, `notify`, `hub` and `desktop`: `gofmt -l go/bridge notify hub desktop` should print nothing. The end-to-end runs with real Syncthing binaries, and the checks for `setup.sh`, are in [`hub/README.md`](hub/README.md#run-the-tests) and [`desktop/README.md`](desktop/README.md#run-the-tests).
 
 **iOS app — macOS only**, with Xcode 26+, XcodeGen, gomobile, and Make:
 
