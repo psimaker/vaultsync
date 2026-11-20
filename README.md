@@ -85,6 +85,39 @@ keeps every conflict copy and 30 days of versions, and never merges, deletes or
 moves anything on its own. Details, ports and commands: [docs/hub.md](docs/hub.md).
 "Bring your own Syncthing" keeps working unchanged.
 
+On a new server it looks like this (shortened; your Device ID, code and
+address differ):
+
+```text
+$ curl -fsSL https://vaultsync.eu/setup.sh | sh
+
+  VaultSync setup
+
+  1) Obsidian device   — this computer edits notes and syncs them with your Hub
+  2) Hub               — a server or NAS that keeps every vault (set up once)
+
+  Choice [1]: 2
+Hub directory: /srv/vaultsync (vaults live in /srv/vaultsync/vaults)
+Starting the Hub (this pulls three images on first run)...
+…
+✓ Hub is running.
+Device ID:   XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX
+
+  Pairing code (valid 24 hours, on this network only):
+
+      TULIP-ANCHOR-42
+
+  On the next device:  curl -fsSL https://vaultsync.eu/setup.sh | sh
+  In VaultSync on iPhone: Add Hub, then enter this code or scan the QR code:
+
+  [QR code]
+
+  Pairing link: vaultsync://pair?code=TULIP-ANCHOR-42&hub=192.168.1.20%3A8390
+
+  Web UI (advanced):  ssh -L 8384:127.0.0.1:8384 <this host>, then http://127.0.0.1:8384
+  New code any time:  cd /srv/vaultsync && docker compose exec hub vaultsync-hub code
+```
+
 ## ☁️ Cloud Relay (optional)
 
 Without it, VaultSync syncs server changes when you open the app. **With it, Cloud Relay can request a background wake-up after your server changes** — iOS still decides whether and when to run the app.
