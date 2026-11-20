@@ -121,6 +121,13 @@ Device ID:   XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX
 If your user needs `sudo` for Docker on that server, put `sudo` in front of
 `docker compose` in these commands.
 
+### 💻 VaultSync for Mac and Linux (preview)
+
+Run the same command on a Mac or Linux computer and choose **1) Obsidian
+device**: it installs VaultSync for Mac and Linux, pairs with your Hub by code
+and keeps your Obsidian vaults in sync in the background. On a Mac it needs
+macOS 12 or newer. Details: [docs/hub.md](docs/hub.md#desktop-agent-macos-and-linux).
+
 ## ☁️ Cloud Relay (optional)
 
 Without it, VaultSync syncs server changes when you open the app. **With it, Cloud Relay can request a background wake-up after your server changes** — iOS still decides whether and when to run the app.
@@ -160,6 +167,7 @@ The installer finds your Syncthing config, sets the right permissions, and start
 | iPhone / iPad | iOS / iPadOS 18 or later |
 | Obsidian | Installed on iOS / iPadOS |
 | Syncthing | Running on a Mac, Linux machine, NAS, or homeserver |
+| VaultSync for Mac and Linux | Optional preview — macOS 12 or newer, or Linux |
 | Cloud Relay | Optional — monthly or yearly in-app subscription |
 | vaultsync-notify | Optional Docker sidecar for server-side wake-ups |
 
@@ -193,6 +201,8 @@ Full build, signing, and test steps: [docs/setup.md](docs/setup.md).
 | Doc | What it covers |
 |---|---|
 | [docs/hub.md](docs/hub.md) | VaultSync Hub: one-link server stack, pairing codes, guarantees |
+| [hub/README.md](hub/README.md) | The Hub's coordinator: its parts, tests, environment and releases |
+| [desktop/README.md](desktop/README.md) | VaultSync for Mac and Linux: the desktop agent and its menu-bar app — parts, tests and releases |
 | [docs/setup.md](docs/setup.md) | Build and development setup |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Common failures and exact fixes |
 | [docs/architecture.md](docs/architecture.md) | Codebase structure and sync strategy |
