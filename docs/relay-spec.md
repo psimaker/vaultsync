@@ -6,7 +6,7 @@
 
 Push-notification service that forwards Syncthing file-change events to iOS devices via APNs. It solves the core iOS limitation — no real-time background sync — by waking the app on demand instead of polling.
 
-The **Cloud Relay** tab → **Relay health & diagnostics** keeps backend reachability, per-homeserver Relay observation, and wake-ups received locally on this iPhone as separate evidence. That support shipped in VaultSync 2.0.0, and none of those fields alone proves APNs delivery, background execution, or synchronization.
+The **Plus** tab → **Relay health & diagnostics** keeps backend reachability, per-homeserver Relay observation, and wake-ups received locally on this iPhone as separate evidence. That support shipped in VaultSync 2.0.0, and none of those fields alone proves APNs delivery, background execution, or synchronization.
 
 ---
 
@@ -330,7 +330,7 @@ The released iOS client implements the relay flow described below; see `AppDeleg
 - **Background modes** — `UIBackgroundModes` includes `remote-notification` alongside `fetch` and `processing`.
 - **Subscription management** — StoreKit 2 auto-renewable subscription; status, price, and a Manage Subscription link live in the Plus tab. The price is read from StoreKit at runtime and never hard-coded.
 
-Cloud Relay is configured from its own **Cloud Relay** tab, not onboarding.
+Cloud Relay is configured from the app's **Plus** tab, not onboarding.
 
 The app models StoreKit verification, verified provisioning, backend
 reachability, per-homeserver Relay observation, local silent-push receipt,

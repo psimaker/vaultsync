@@ -83,7 +83,7 @@ struct RelayHomeView: View {
             }
             .buttonStyle(.vaultLink)
             .popover(isPresented: $showPrivacyInfo) {
-                Text(L10n.tr("Your vault already syncs free and peer-to-peer. Background Sync only removes the “open the app to sync” wait — it isn’t cloud storage."))
+                Text(L10n.tr("Your vault already syncs free and peer-to-peer. VaultSync Plus only removes the “open the app to sync” wait — it isn’t cloud storage."))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.leading)
@@ -252,7 +252,7 @@ struct RelayHomeView: View {
         }
     }
 
-    /// The Relay's own words carry the meaning: each title ("Cloud Relay
+    /// The Relay's own words carry the meaning: each title ("Background Sync
     /// active", "Connected", the waiting titles) already says what the state
     /// is. The sync status only picks the well's tone — its spoken label
     /// ("All Synced", "Paused") would claim something a wake-up does not

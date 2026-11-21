@@ -538,7 +538,7 @@
 "relay network: %@" = "relay network: %@";
 
 /* Cloud Relay activation (2026-05-31): honest server-setup + conversion */
-"Background Sync is off. Without it, incoming changes arrive when you open VaultSync." = "Background Sync is off. Without it, incoming changes arrive when you open VaultSync.";
+"VaultSync Plus is not active. Without it, incoming changes arrive when you open VaultSync." = "VaultSync Plus is not active. Without it, incoming changes arrive when you open VaultSync.";
 "Get VaultSync Plus on the Plus tab if you want your server to wake VaultSync when it has changes." = "Get VaultSync Plus on the Plus tab if you want your server to wake VaultSync when it has changes.";
 "Background Sync — finish server setup" = "Background Sync — finish server setup";
 "You’re subscribed, but no recent wake-up has arrived. Make sure the vaultsync-notify helper is running on your server." = "You’re subscribed, but no recent wake-up has arrived. Make sure the vaultsync-notify helper is running on your server.";
@@ -595,7 +595,7 @@
 "Your local version is kept, and the other device’s version is added under a new name. Nothing is discarded." = "Your local version is kept, and the other device’s version is added under a new name. Nothing is discarded.";
 "Your notes never touch our servers. When your server has changes, Background Sync sends a tiny wake-up, and VaultSync syncs in the background once iOS delivers it — usually within moments. iOS decides when a wake-up arrives, and after you force-quit the app, wake-ups resume once you open it again." = "Your notes never touch our servers. When your server has changes, Background Sync sends a tiny wake-up, and VaultSync syncs in the background once iOS delivers it — usually within moments. iOS decides when a wake-up arrives, and after you force-quit the app, wake-ups resume once you open it again.";
 "One-step setup: a single line on your server." = "One-step setup: a single line on your server.";
-"Your vault already syncs free and peer-to-peer. Background Sync only removes the “open the app to sync” wait — it isn’t cloud storage." = "Your vault already syncs free and peer-to-peer. Background Sync only removes the “open the app to sync” wait — it isn’t cloud storage.";
+"Your vault already syncs free and peer-to-peer. VaultSync Plus only removes the “open the app to sync” wait — it isn’t cloud storage." = "Your vault already syncs free and peer-to-peer. VaultSync Plus only removes the “open the app to sync” wait — it isn’t cloud storage.";
 
 /* Folder path resilience (#25) */
 "Remove Vault" = "Remove Vault";

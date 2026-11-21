@@ -854,7 +854,7 @@ struct ContentView: View {
         if relayDashboardState == .active {
             // "active" means a REAL wake-up has actually reached this device
             // — not merely "provisioned + reachable" (K1). Same words as the
-            // Relay tab's steady state, so the two screens never disagree.
+            // Plus tab's steady state, so the two screens never disagree.
             StatusChip(
                 text: L10n.tr("Background Sync active"),
                 tone: .accent,

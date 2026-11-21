@@ -7,9 +7,12 @@
 - **"VaultSync Plus"** names the plan wherever something is offered, bought, restored or approved:
   - the tab, now "Plus", and the page title;
   - the card after the first sync, the card on the home screen and the onboarding hint;
-  - the restore and Ask to Buy texts, and the notice that no subscription is active.
-- **"Background Sync"** (de „Hintergrund-Sync“) names the feature the plan adds: the server wakes this iPhone, and VaultSync syncs once iOS delivers the wake-up. It stands wherever the feature's state is shown or set up: "Background Sync active", "went quiet", the server-helper setup.
+  - the restore and Ask to Buy texts, and the notice that no subscription is active;
+  - every text a person without the plan reads about what they do not have: "VaultSync Plus is not active", "VaultSync Plus only removes the wait". What is off is the plan, never syncing in the background, which iOS also does for them now and then.
+- **"Background Sync"** (de „Hintergrund-Sync“) names the feature the plan adds: the server wakes this iPhone, and VaultSync syncs once iOS delivers the wake-up. It stands wherever the feature's state is shown or set up: "Background Sync active", "went quiet", the server-helper setup. It also stands where the page that sells it says what it does.
+  - Spanish and Chinese keep "Background Sync" as a proper name, as they kept "Cloud Relay": their plain words for it are the everyday phrase for syncing in the background, which a free text uses too.
 - **"Cloud Relay" and "Relay"** stay where diagnostics and the relay service's own errors describe the mechanism: Relay Diagnostics, "Relay Unreachable", provisioning errors and the push-token error.
+  - They also stay on the Plus page's status card while it reports where a wake-up is in the chain: "Checking Relay status", "Server reached the Relay". Those steps are the mechanism's.
 
 Every run in the background is a **"Background Run …"** (de „Hintergrundlauf …“), for the runs iOS starts on its own and for those a wake-up starts alike. No text a person without the plan sees uses the feature's name for something they already have.
 
@@ -17,7 +20,9 @@ Every run in the background is a **"Background Run …"** (de „Hintergrundlauf
 - an exact list of the English keys still allowed to say "Cloud Relay";
 - no "Relay tab", and the tab named "Plus" in every language;
 - every run titled "Background Run";
-- the plan's name the same in every language.
+- the plan's name the same in every language;
+- the feature's name in German, Spanish and Chinese;
+- no run text naming the feature, in any language.
 
 Product IDs, StoreKit logic, the relay's API and the stored state keep their names.
 

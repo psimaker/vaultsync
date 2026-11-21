@@ -521,7 +521,7 @@
 "The background run ended with an unexpected failure." = "Der Hintergrundlauf endete mit einem unerwarteten Fehler.";
 "The background run found the folders already idle." = "Der Hintergrundlauf fand die Ordner bereits im Leerlauf vor.";
 "Forced silent-push restart failed." = "Erzwungener Neustart per Silent Push fehlgeschlagen.";
-"No Syncthing folders were available to sync in the background." = "Es waren keine Syncthing-Ordner für den Hintergrund-Sync verfügbar.";
+"No Syncthing folders were available to sync in the background." = "Es waren keine Syncthing-Ordner für den Hintergrundlauf verfügbar.";
 "No folders were available after forced silent-push restart." = "Nach dem erzwungenen Silent-Push-Neustart waren keine Ordner verfügbar.";
 "No folders were available for a background run." = "Für den Hintergrundlauf waren keine Ordner verfügbar.";
 "No security-scoped bookmark access was available." = "Es war kein Security-Scoped-Bookmark-Zugriff verfügbar.";
@@ -538,7 +538,7 @@
 "relay network: %@" = "Relay-Netzwerk: %@";
 
 /* Cloud Relay activation (2026-05-31): honest server-setup + conversion */
-"Background Sync is off. Without it, incoming changes arrive when you open VaultSync." = "Der Hintergrund-Sync ist aus. Ohne ihn kommen eingehende Änderungen an, wenn du VaultSync öffnest.";
+"VaultSync Plus is not active. Without it, incoming changes arrive when you open VaultSync." = "VaultSync Plus ist nicht aktiv. Ohne VaultSync Plus kommen eingehende Änderungen an, wenn du VaultSync öffnest.";
 "Get VaultSync Plus on the Plus tab if you want your server to wake VaultSync when it has changes." = "Hol dir VaultSync Plus im Plus-Tab, wenn dein Server VaultSync wecken soll, sobald sich etwas ändert.";
 "Background Sync — finish server setup" = "Hintergrund-Sync – Server-Einrichtung abschließen";
 "You’re subscribed, but no recent wake-up has arrived. Make sure the vaultsync-notify helper is running on your server." = "Du hast ein Abo, aber es ist noch kein aktuelles Weck-Signal angekommen. Stelle sicher, dass der Helfer „vaultsync-notify“ auf deinem Server läuft.";
@@ -595,7 +595,7 @@
 "Your local version is kept, and the other device’s version is added under a new name. Nothing is discarded." = "Deine lokale Version bleibt erhalten, und die Version des anderen Geräts wird unter einem neuen Namen hinzugefügt. Es wird nichts verworfen.";
 "Your notes never touch our servers. When your server has changes, Background Sync sends a tiny wake-up, and VaultSync syncs in the background once iOS delivers it — usually within moments. iOS decides when a wake-up arrives, and after you force-quit the app, wake-ups resume once you open it again." = "Deine Notizen erreichen nie unsere Server. Wenn sich auf deinem Server etwas ändert, sendet der Hintergrund-Sync ein winziges Weck-Signal, und VaultSync synchronisiert im Hintergrund, sobald iOS es zustellt — meist nach wenigen Augenblicken. Wann ein Weck-Signal ankommt, entscheidet iOS; hast du die App im App-Umschalter weggewischt, kommen Weck-Signale erst wieder an, wenn du sie öffnest.";
 "One-step setup: a single line on your server." = "Einrichtung in einem Schritt: eine einzige Zeile auf deinem Server.";
-"Your vault already syncs free and peer-to-peer. Background Sync only removes the “open the app to sync” wait — it isn’t cloud storage." = "Dein Vault synchronisiert bereits kostenlos und Peer-to-Peer. Der Hintergrund-Sync beseitigt nur die Wartezeit „zum Synchronisieren die App öffnen“ – es ist kein Cloud-Speicher.";
+"Your vault already syncs free and peer-to-peer. VaultSync Plus only removes the “open the app to sync” wait — it isn’t cloud storage." = "Dein Vault synchronisiert bereits kostenlos und Peer-to-Peer. VaultSync Plus beseitigt nur die Wartezeit „zum Synchronisieren die App öffnen“ – es ist kein Cloud-Speicher.";
 
 /* Folder path resilience (#25) */
 "Remove Vault" = "Vault entfernen";

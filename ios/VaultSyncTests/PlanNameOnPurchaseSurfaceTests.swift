@@ -60,6 +60,44 @@ struct PlanNameOnPurchaseSurfaceTests {
         }
     }
 
+    /// The feature's name per language. Spanish and Chinese keep the English
+    /// name: their plain words for it are the everyday phrase for syncing in
+    /// the background, which free texts use too.
+    static let featureName = ["en": "Background Sync", "de": "Hintergrund-Sync", "es": "Background Sync", "zh-Hans": "Background Sync"]
+
+    @Test("The feature keeps its own name in every language")
+    func featureNameIsDistinct() throws {
+        let english = try TestSupport.localizedStrings("en")
+        let featureKeys = english.keys.filter { $0.contains("Background Sync") }
+        #expect(!featureKeys.isEmpty)
+        for language in Self.languages {
+            let table = try TestSupport.localizedStrings(language)
+            let name = try #require(Self.featureName[language])
+            for key in featureKeys {
+                let text = try #require(table[key], "\(language) has no text for: \(key)")
+                #expect(text.contains(name), "\(language) does not name the feature as \(name): \(text)")
+            }
+        }
+    }
+
+    @Test("No text of a background run names the feature, in any language")
+    func runTextsNeverNameTheFeature() throws {
+        let results: [BackgroundSyncService.SyncResult] = [
+            .synced, .alreadyIdle, .noBookmarkAccess, .noFoldersConfigured,
+            .bridgeStartFailed, .notIdleBeforeDeadline, .failed, .settledWithFolderError,
+        ]
+        // The test run is pinned to English, where each text is its own key.
+        let keys = Set(results.flatMap { [$0.issueTitle, $0.issueMessage] })
+        for language in Self.languages {
+            let table = try TestSupport.localizedStrings(language)
+            let name = try #require(Self.featureName[language])
+            for key in keys {
+                let text = try #require(table[key], "\(language) has no text for: \(key)")
+                #expect(!text.contains(name), "\(language) run text names the feature: \(text)")
+            }
+        }
+    }
+
     @Test("The plan's name stays the same in every language")
     func planNameIsNotTranslated() throws {
         let english = try TestSupport.localizedStrings("en")

@@ -237,7 +237,7 @@ final class SetupChecklistViewModel {
             return ChecklistItem(
                 requirement: .relayConfigured,
                 title: L10n.tr("VaultSync Plus"),
-                description: L10n.tr("Background Sync is off. Without it, incoming changes arrive when you open VaultSync."),
+                description: L10n.tr("VaultSync Plus is not active. Without it, incoming changes arrive when you open VaultSync."),
                 remediation: L10n.tr("Get VaultSync Plus on the Plus tab if you want your server to wake VaultSync when it has changes."),
                 isOptional: true,
                 isComplete: false,
