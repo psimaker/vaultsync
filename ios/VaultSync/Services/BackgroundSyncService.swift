@@ -712,17 +712,17 @@ enum BackgroundSyncService {
         var issueTitle: String {
             switch self {
             case .noBookmarkAccess:
-                return L10n.tr("Background Sync Could Not Access Obsidian")
+                return L10n.tr("Background Run Could Not Access Obsidian")
             case .noFoldersConfigured:
-                return L10n.tr("Background Sync Found No Vaults")
+                return L10n.tr("Background Run Found No Vaults")
             case .bridgeStartFailed:
-                return L10n.tr("Background Sync Could Not Start")
+                return L10n.tr("Background Run Could Not Start")
             case .notIdleBeforeDeadline:
-                return L10n.tr("Background Sync Timed Out")
+                return L10n.tr("Background Run Timed Out")
             case .failed:
-                return L10n.tr("Background Sync Failed")
+                return L10n.tr("Background Run Failed")
             case .synced, .alreadyIdle, .settledWithFolderError:
-                return L10n.tr("Background Sync Completed")
+                return L10n.tr("Background Run Completed")
             }
         }
 
@@ -733,17 +733,17 @@ enum BackgroundSyncService {
             case .noFoldersConfigured:
                 return L10n.tr("No Syncthing folders were available to sync in the background.")
             case .bridgeStartFailed:
-                return L10n.tr("The embedded Syncthing bridge did not start for a background sync.")
+                return L10n.tr("The embedded Syncthing bridge did not start for a background run.")
             case .notIdleBeforeDeadline:
-                return L10n.tr("Background sync did not reach an idle folder state before the iOS deadline.")
+                return L10n.tr("The background run did not reach an idle folder state before the iOS deadline.")
             case .failed:
-                return L10n.tr("Background sync ended with an unexpected failure.")
+                return L10n.tr("The background run ended with an unexpected failure.")
             case .synced:
-                return L10n.tr("Background sync completed and reached idle.")
+                return L10n.tr("The background run completed and reached idle.")
             case .alreadyIdle:
-                return L10n.tr("Background sync ran, but folders were already idle.")
+                return L10n.tr("The background run found the folders already idle.")
             case .settledWithFolderError:
-                return L10n.tr("Background sync settled with at least one folder in an error state.")
+                return L10n.tr("The background run settled with at least one folder in an error state.")
             }
         }
 
@@ -1225,7 +1225,7 @@ enum BackgroundSyncService {
             // but don't report a clean success either (the widget should still
             // reflect the error, not a green idle state).
             result = .settledWithFolderError
-            detail = L10n.tr("Background sync settled with at least one folder in an error state.")
+            detail = L10n.tr("The background run settled with at least one folder in an error state.")
         } else {
             result = .notIdleBeforeDeadline
             detail = L10n.fmt("Sync did not reach idle before %ds deadline.", Int(maxDuration))
@@ -1662,7 +1662,7 @@ enum BackgroundSyncService {
             case .configured:
                 return nil
             case .verifiedEmpty:
-                return L10n.tr("No folders were available for background sync.")
+                return L10n.tr("No folders were available for a background run.")
             case .engineStopped:
                 return L10n.tr("The sync engine stopped before its vaults could be read.")
             case .unreadable:

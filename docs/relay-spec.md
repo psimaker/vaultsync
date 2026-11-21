@@ -56,7 +56,7 @@ The **Cloud Relay** tab → **Relay health & diagnostics** keeps backend reachab
 - Configurable debounce (default: 5s) to batch rapid changes into one push
 - Auto-detects the Syncthing API key and URL from `config.xml` — no key to copy (override via env if needed)
 - Reads its Syncthing Device ID from `/rest/system/status` at startup
-- **Startup-announce** (`STARTUP_ANNOUNCE`, default on): sends one wake-up the moment it starts, so a freshly-subscribed device flips to "Cloud Relay active" without waiting for the next change
+- **Startup-announce** (`STARTUP_ANNOUNCE`, default on): sends one wake-up the moment it starts, so a freshly-subscribed device flips to "Background Sync active" without waiting for the next change
 - **Stale-peer sweep** (`STALE_RETRIGGER_SECONDS`, default 6 h): while any unpaused peer still reports outstanding `need{Items,Bytes,Deletes}` via `/rest/db/completion`, re-sends a wake-up on a slow cadence. This recovers a phone that missed its push (APNs expiry is ~1 h) without waiting for the next vault change
 - No persistent storage required — stateless except for config
 
@@ -328,7 +328,7 @@ The released iOS client implements the relay flow described below; see `AppDeleg
 - **Observation status** — only while Relay waiting/diagnostics is visible, the app presents its current locally verified active JWS to `POST /status` for each verified homeserver mapping. The first check is immediate, retries use 15/30/60/120-second delays, and the finite poll stops after five attempts, view exit, local wake-up, inactive/unverified entitlement, or rate limiting. Multi-homeserver results remain independent and are not persisted as subscription state.
 - **Push reception** — a silent push restores the vault bookmarks, starts Syncthing via the Go bridge, polls for completion within the ~30s background budget, then stops Syncthing and releases the bookmarks. This shares the `BGAppRefreshTask` code path.
 - **Background modes** — `UIBackgroundModes` includes `remote-notification` alongside `fetch` and `processing`.
-- **Subscription management** — StoreKit 2 auto-renewable subscription; status, price, and a Manage Subscription link live in the Cloud Relay tab. The price is read from StoreKit at runtime and never hard-coded.
+- **Subscription management** — StoreKit 2 auto-renewable subscription; status, price, and a Manage Subscription link live in the Plus tab. The price is read from StoreKit at runtime and never hard-coded.
 
 Cloud Relay is configured from its own **Cloud Relay** tab, not onboarding.
 

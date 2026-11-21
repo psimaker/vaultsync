@@ -12,12 +12,12 @@
 "App Refresh" = "App-Aktualisierung";
 "Applying…" = "Wird angewendet…";
 "Authentication Error" = "Authentifizierungsfehler";
-"Background Sync Completed" = "Hintergrund-Sync abgeschlossen";
-"Background Sync Could Not Access Obsidian" = "Hintergrund-Sync konnte nicht auf Obsidian zugreifen";
-"Background Sync Could Not Start" = "Hintergrund-Sync konnte nicht starten";
-"Background Sync Failed" = "Hintergrund-Sync fehlgeschlagen";
-"Background Sync Found No Vaults" = "Hintergrund-Sync fand keine Vaults";
-"Background Sync Timed Out" = "Zeitüberschreitung beim Hintergrund-Sync";
+"Background Run Completed" = "Hintergrundlauf abgeschlossen";
+"Background Run Could Not Access Obsidian" = "Hintergrundlauf konnte nicht auf Obsidian zugreifen";
+"Background Run Could Not Start" = "Hintergrundlauf konnte nicht starten";
+"Background Run Failed" = "Hintergrundlauf fehlgeschlagen";
+"Background Run Found No Vaults" = "Hintergrundlauf fand keine Vaults";
+"Background Run Timed Out" = "Zeitüberschreitung beim Hintergrundlauf";
 "Camera Access Required" = "Kamerazugriff erforderlich";
 "Can't find the Obsidian folder?" = "Den Obsidian-Ordner nicht gefunden?";
 "Cancel" = "Abbrechen";
@@ -25,16 +25,16 @@
 "Check folder sharing, connectivity, and permissions, then retry." = "Prüfe Ordnerfreigabe, Verbindung und Berechtigungen und versuche es dann erneut.";
 "Check internet connectivity and retry provisioning." = "Prüfe die Internetverbindung und versuche das Provisioning erneut.";
 "Check your connection and retry." = "Prüfe deine Verbindung und versuche es erneut.";
-"Check your internet connection and try the relay health check again on the Relay tab." = "Prüfe deine Internetverbindung und führe den Relay-Health-Check im Relay-Tab erneut aus.";
-"Check your subscription status on the Relay tab and retry. If this persists, restart VaultSync." = "Prüfe deinen Abostatus im Relay-Tab und versuche es erneut. Wenn das Problem bleibt, starte VaultSync neu.";
+"Check your internet connection and try the relay health check again on the Plus tab." = "Prüfe deine Internetverbindung und führe den Relay-Health-Check im Plus-Tab erneut aus.";
+"Check your subscription status on the Plus tab and retry. If this persists, restart VaultSync." = "Prüfe deinen Abostatus im Plus-Tab und versuche es erneut. Wenn das Problem bleibt, starte VaultSync neu.";
 "Choose Vault" = "Vault wählen";
 "Choose Vault…" = "Vault wählen…";
 "Choose where \"%@\" syncs on this iPhone. The share keeps its name on your other devices." = "Wähle, wohin „%@“ auf diesem iPhone synchronisiert wird. Auf deinen anderen Geräten behält die Freigabe ihren Namen.";
 "Close and reopen VaultSync to restart syncing." = "Schließe VaultSync und öffne es erneut, um die Synchronisierung neu zu starten.";
-"Cloud Relay" = "Cloud Relay";
-"Cloud Relay active" = "Cloud Relay aktiv";
-"Cloud Relay is not currently subscribed. Push-triggered wake-ups are disabled until the subscription is active." = "Cloud Relay ist derzeit nicht abonniert. Push-ausgelöste Weck-Signale sind deaktiviert, bis das Abo aktiv ist.";
-"Cloud Relay is not subscribed. Start a subscription first." = "Cloud Relay ist nicht abonniert. Starte zuerst ein Abo.";
+"VaultSync Plus" = "VaultSync Plus";
+"Background Sync active" = "Hintergrund-Sync aktiv";
+"VaultSync Plus is not currently active. Push-triggered wake-ups are disabled until the subscription is active." = "VaultSync Plus ist derzeit nicht aktiv. Push-ausgelöste Weck-Signale sind deaktiviert, bis das Abo aktiv ist.";
+"VaultSync Plus is not active. Start a subscription first." = "VaultSync Plus ist nicht aktiv. Starte zuerst ein Abo.";
 "Cloud Relay provisioning could not contact the relay backend." = "Cloud Relay-Provisioning konnte das Relay-Backend nicht erreichen.";
 "Cloud Relay provisioning did not complete." = "Cloud Relay-Provisioning wurde nicht abgeschlossen.";
 "Cloud Relay provisioning is temporarily rate limited." = "Cloud Relay-Provisioning ist vorübergehend rate-limitiert.";
@@ -163,7 +163,7 @@
 "onboarding.cta.finishLater" = "Einrichtung später abschließen";
 "Only vaults without any notes yet can be linked to a share." = "Nur Vaults, die noch keine Notizen enthalten, können mit einer Freigabe verknüpft werden.";
 "Open Settings" = "Einstellungen öffnen";
-"Open the Relay tab" = "Relay-Tab öffnen";
+"Open the Plus tab" = "Plus-Tab öffnen";
 "Open VaultSync" = "VaultSync öffnen";
 "Open VaultSync once to restart Syncthing, then retry." = "Öffne VaultSync einmal, um Syncthing neu zu starten, und versuche es dann erneut.";
 "Open VaultSync to allow a longer foreground sync session." = "Öffne VaultSync, um eine längere Sync-Sitzung im Vordergrund zu erlauben.";
@@ -248,7 +248,7 @@
 "The target folder \"%@\" is already synced by another vault — the same folder, or one above or inside it. Choose a different folder, or remove the vault that syncs there first." = "Der Zielordner „%@“ wird bereits von einem anderen Vault synchronisiert – derselbe Ordner oder einer darüber oder darin. Wähle einen anderen Ordner oder entferne zuerst den Vault, der dorthin synchronisiert.";
 "This share is set to sync into \"%@\", but that location now overlaps a folder another vault already syncs. Tap \"Choose Vault…\" on the share to pick a new location, or remove the vault that syncs there, then accept the share again." = "Diese Freigabe soll nach „%@“ synchronisieren, aber dieser Ort überlappt jetzt einen Ordner, den ein anderer Vault bereits synchronisiert. Tippe bei der Freigabe auf „Vault wählen…“, um einen neuen Ort zu wählen, oder entferne den Vault, der dorthin synchronisiert, und nimm die Freigabe erneut an.";
 "Up to Date" = "Aktuell";
-"View Cloud Relay" = "Cloud Relay ansehen";
+"View VaultSync Plus" = "VaultSync Plus ansehen";
 "XXXXXXX-XXXXXXX-..." = "XXXXXXX-XXXXXXX-...";
 "Retry APNs Registration" = "APNs-Registrierung erneut versuchen";
 "Retry Provisioning" = "Provisioning erneut versuchen";
@@ -296,7 +296,7 @@
 "Syncthing no longer has this folder configured." = "Syncthing hat diesen Ordner nicht mehr konfiguriert.";
 "Terms of Use" = "Nutzungsbedingungen";
 "The device will be disconnected and removed from all shared folders." = "Das Gerät wird getrennt und aus allen geteilten Ordnern entfernt.";
-"The embedded Syncthing bridge did not start for a background sync." = "Die eingebettete Syncthing-Bridge ist für einen Hintergrund-Sync nicht gestartet.";
+"The embedded Syncthing bridge did not start for a background run." = "Die eingebettete Syncthing-Bridge ist für einen Hintergrundlauf nicht gestartet.";
 "The file '%@' was kept as your local version. The other device's version was discarded." = "Die Datei „%@“ wurde als lokale Version behalten. Die Version des anderen Geräts wurde verworfen.";
 "The file '%@' was overwritten with the version from the other device." = "Die Datei „%@“ wurde mit der Version des anderen Geräts überschrieben.";
 "The folder path no longer exists%@." = "Der Ordnerpfad existiert nicht mehr%@.";
@@ -381,7 +381,7 @@
 "VaultSync cannot access your local Obsidian folder." = "VaultSync kann nicht auf deinen lokalen Obsidian-Ordner zugreifen.";
 "Connect your Obsidian folder from the VaultSync home screen." = "Verbinde deinen Obsidian-Ordner auf dem VaultSync-Startbildschirm.";
 "Computer or server added" = "Computer oder Server hinzugefügt";
-"Your first sync is done. When your server has changes, Cloud Relay sends this iPhone a wake-up, and VaultSync syncs in the background once iOS delivers it — usually within moments. iOS decides when a wake-up arrives, and after you force-quit the app, wake-ups resume once you open it again." = "Dein erster Sync ist geschafft. Wenn sich auf deinem Server etwas ändert, sendet Cloud Relay diesem iPhone ein Weck-Signal, und VaultSync synchronisiert im Hintergrund, sobald iOS es zustellt — meist nach wenigen Augenblicken. Wann ein Weck-Signal ankommt, entscheidet iOS; hast du die App im App-Umschalter weggewischt, kommen Weck-Signale erst wieder an, wenn du sie öffnest.";
+"Your first sync is done. When your server has changes, VaultSync Plus sends this iPhone a wake-up, and VaultSync syncs in the background once iOS delivers it — usually within moments. iOS decides when a wake-up arrives, and after you force-quit the app, wake-ups resume once you open it again." = "Dein erster Sync ist geschafft. Wenn sich auf deinem Server etwas ändert, sendet VaultSync Plus diesem iPhone ein Weck-Signal, und VaultSync synchronisiert im Hintergrund, sobald iOS es zustellt — meist nach wenigen Augenblicken. Wann ein Weck-Signal ankommt, entscheidet iOS; hast du die App im App-Umschalter weggewischt, kommen Weck-Signale erst wieder an, wenn du sie öffnest.";
 "Your iPhone is paired with at least one Syncthing device." = "Dein iPhone ist mit mindestens einem Syncthing-Gerät gekoppelt.";
 "Your iPhone is not paired with a Syncthing device yet." = "Dein iPhone ist noch nicht mit einem Syncthing-Gerät gekoppelt.";
 "Add your computer or server from the Devices section on the home screen." = "Füge deinen Computer oder Server im Bereich „Geräte“ auf dem Startbildschirm hinzu.";
@@ -453,7 +453,7 @@
 /* Issue #10 — conflict-notifications toggle (Settings) */
 "Notifications" = "Mitteilungen";
 "Conflict Notifications" = "Konflikt-Mitteilungen";
-"Show a banner when sync conflicts are detected. Turning this off does not affect Cloud Relay or background sync — your vault keeps syncing." = "Zeigt ein Banner an, wenn Sync-Konflikte erkannt werden. Das Ausschalten betrifft weder Cloud Relay noch den Hintergrund-Sync – dein Vault synchronisiert weiter.";
+"Show a banner when sync conflicts are detected. Turning this off does not affect syncing in the background — your vault keeps syncing." = "Zeigt ein Banner an, wenn Sync-Konflikte erkannt werden. Das Ausschalten betrifft das Synchronisieren im Hintergrund nicht – dein Vault synchronisiert weiter.";
 
 /* Issue #10 — relay/alert decoupling (Relay Diagnostics) */
 "Alert Banners" = "Hinweis-Banner";
@@ -465,10 +465,9 @@
 "APNs registration failed. Check your internet connection and retry registration. Silent push does not require notification banners to be enabled." = "APNs-Registrierung fehlgeschlagen. Prüfe deine Internetverbindung und wiederhole die Registrierung. Silent Push benötigt keine aktivierten Hinweis-Banner.";
 
 /* Issue #10 — background-sync reliability (error-settled outcome) */
-"Background sync settled with at least one folder in an error state." = "Hintergrund-Sync beendet – mindestens ein Ordner ist im Fehlerzustand.";
+"The background run settled with at least one folder in an error state." = "Hintergrundlauf beendet – mindestens ein Ordner ist im Fehlerzustand.";
 
 /* Issue #10 — relay reachable (vs delivering) */
-"Cloud Relay looks reachable" = "Cloud Relay scheint erreichbar";
 
 /* Subscription period units */
 "month" = "Monat";
@@ -490,8 +489,6 @@
 "Your contribution means a lot and directly supports VaultSync development. Thank you!" = "Deine Unterstützung bedeutet viel und fließt direkt in die Entwicklung von VaultSync. Danke!";
 "VaultSync is an independent, open-source app (MPL-2.0). A one-time contribution keeps it independent, ad-free, and moving forward — it unlocks nothing, and the app stays fully functional without it." = "VaultSync ist eine unabhängige Open-Source-App (MPL-2.0). Eine einmalige Unterstützung hält sie unabhängig, werbefrei und in Entwicklung – sie schaltet nichts frei, und die App bleibt auch ohne sie voll funktionsfähig.";
 /* Cloud Relay price (localized via StoreKit) */
-"Cloud Relay — %@" = "Cloud Relay – %@";
-"Cloud Relay subscription" = "Cloud-Relay-Abo";
 
 /* Issue #10 pre-merge polish — added missing localization keys */
 "Not available" = "Nicht verfügbar";
@@ -519,14 +516,14 @@
 "%@ connected" = "%@ verbunden";
 "%@ disconnected" = "%@ getrennt";
 "%d%% complete" = "%d %% abgeschlossen";
-"Background sync completed and reached idle." = "Hintergrund-Sync abgeschlossen und Leerlauf erreicht.";
-"Background sync did not reach an idle folder state before the iOS deadline." = "Hintergrund-Sync hat vor dem iOS-Zeitlimit keinen Leerlauf-Zustand der Ordner erreicht.";
-"Background sync ended with an unexpected failure." = "Hintergrund-Sync endete mit einem unerwarteten Fehler.";
-"Background sync ran, but folders were already idle." = "Hintergrund-Sync lief, aber die Ordner waren bereits im Leerlauf.";
+"The background run completed and reached idle." = "Hintergrundlauf abgeschlossen und Leerlauf erreicht.";
+"The background run did not reach an idle folder state before the iOS deadline." = "Der Hintergrundlauf hat vor dem iOS-Zeitlimit keinen Leerlauf-Zustand der Ordner erreicht.";
+"The background run ended with an unexpected failure." = "Der Hintergrundlauf endete mit einem unerwarteten Fehler.";
+"The background run found the folders already idle." = "Der Hintergrundlauf fand die Ordner bereits im Leerlauf vor.";
 "Forced silent-push restart failed." = "Erzwungener Neustart per Silent Push fehlgeschlagen.";
 "No Syncthing folders were available to sync in the background." = "Es waren keine Syncthing-Ordner für den Hintergrund-Sync verfügbar.";
 "No folders were available after forced silent-push restart." = "Nach dem erzwungenen Silent-Push-Neustart waren keine Ordner verfügbar.";
-"No folders were available for background sync." = "Für den Hintergrund-Sync waren keine Ordner verfügbar.";
+"No folders were available for a background run." = "Für den Hintergrundlauf waren keine Ordner verfügbar.";
 "No security-scoped bookmark access was available." = "Es war kein Security-Scoped-Bookmark-Zugriff verfügbar.";
 "If this iPhone has no vault yet, accept or create a shared vault. If your vaults are there, open VaultSync — this goes away once it lists them." = "Wenn auf diesem iPhone noch kein Vault ist, akzeptiere oder erstelle einen geteilten Vault. Sind deine Vaults da, öffne VaultSync – der Hinweis verschwindet, sobald es sie auflistet.";
 "Retry from the app and review relay/background diagnostics in Settings." = "Versuche es erneut in der App und prüfe die Relay-/Hintergrund-Diagnose in den Einstellungen.";
@@ -541,15 +538,15 @@
 "relay network: %@" = "Relay-Netzwerk: %@";
 
 /* Cloud Relay activation (2026-05-31): honest server-setup + conversion */
-"Cloud Relay is not enabled. Without it, incoming changes arrive when you open VaultSync." = "Cloud Relay ist nicht aktiviert. Ohne Cloud Relay kommen eingehende Änderungen an, wenn du VaultSync öffnest.";
-"Enable Cloud Relay on the Relay tab if you want your server to wake VaultSync when it has changes." = "Aktiviere Cloud Relay im Relay-Tab, wenn dein Server VaultSync wecken soll, sobald sich etwas ändert.";
-"Cloud Relay — finish server setup" = "Cloud Relay – Server-Einrichtung abschließen";
+"Background Sync is off. Without it, incoming changes arrive when you open VaultSync." = "Der Hintergrund-Sync ist aus. Ohne ihn kommen eingehende Änderungen an, wenn du VaultSync öffnest.";
+"Get VaultSync Plus on the Plus tab if you want your server to wake VaultSync when it has changes." = "Hol dir VaultSync Plus im Plus-Tab, wenn dein Server VaultSync wecken soll, sobald sich etwas ändert.";
+"Background Sync — finish server setup" = "Hintergrund-Sync – Server-Einrichtung abschließen";
 "You’re subscribed, but no recent wake-up has arrived. Make sure the vaultsync-notify helper is running on your server." = "Du hast ein Abo, aber es ist noch kein aktuelles Weck-Signal angekommen. Stelle sicher, dass der Helfer „vaultsync-notify“ auf deinem Server läuft.";
-"Set up the server helper from the Relay tab → Set Up Your Server." = "Richte den Server-Helfer unter Relay-Tab → „Server einrichten“ ein.";
+"Set up the server helper from the Plus tab → Set Up Your Server." = "Richte den Server-Helfer unter Plus-Tab → „Server einrichten“ ein.";
 "Wake-ups are being delivered — incoming changes sync in the background, usually within moments." = "Weck-Signale werden zugestellt — eingehende Änderungen synchronisieren im Hintergrund, meist nach wenigen Augenblicken.";
 "Your server helper is running — wake-ups are being delivered." = "Dein Server-Helfer läuft – Weck-Signale werden zugestellt.";
 "Why this step" = "Warum dieser Schritt";
-"Cloud Relay needs a small helper on your server. It watches Syncthing for changes and sends VaultSync a wake-up signal — it never sees your notes. Without it, the subscription has nothing to wake the app with." = "Cloud Relay braucht einen kleinen Helfer auf deinem Server. Er beobachtet Syncthing auf Änderungen und sendet VaultSync ein Weck-Signal – deine Notizen sieht er nie. Ohne ihn hat das Abo nichts, womit es die App wecken könnte.";
+"Background Sync needs a small helper on your server. It watches Syncthing for changes and sends VaultSync a wake-up signal — it never sees your notes. Without it, the subscription has nothing to wake the app with." = "Der Hintergrund-Sync braucht einen kleinen Helfer auf deinem Server. Er beobachtet Syncthing auf Änderungen und sendet VaultSync ein Weck-Signal – deine Notizen sieht er nie. Ohne ihn hat das Abo nichts, womit es die App wecken könnte.";
 "Copy Command" = "Befehl kopieren";
 "Full setup guide (Docker Compose, prebuilt binaries, NAS notes)" = "Vollständige Anleitung (Docker Compose, vorkompilierte Binaries, NAS-Hinweise)";
 "Prefer Docker Compose, a NAS package, or a plain binary? The full guide covers them all." = "Lieber Docker Compose, ein NAS-Setup oder ein einfaches Binary? Die vollständige Anleitung deckt alles ab.";
@@ -557,14 +554,14 @@
 "Server setup command" = "Server-Einrichtungsbefehl";
 "Installer command" = "Installer-Befehl";
 "One step — run this on your server" = "Ein Schritt – führe dies auf deinem Server aus";
-"That’s the whole setup — nothing to edit, no API key to copy. The installer finds your Syncthing config, sets the right permissions, and starts the helper. The helper then wakes this iPhone once on its own, and VaultSync flips to “Cloud Relay active” as soon as that first wake-up arrives. Keep it running on a machine that stays on (server or NAS)." = "Das ist schon die ganze Einrichtung – nichts zu bearbeiten, kein API-Schlüssel zu kopieren. Der Installer findet deine Syncthing-Konfiguration, setzt die richtigen Berechtigungen und startet den Helfer. Der Helfer weckt dieses iPhone dann einmal von selbst, und VaultSync wechselt zu „Cloud Relay aktiv“, sobald dieses erste Weck-Signal eintrifft. Lass ihn auf einem dauerhaft laufenden Gerät (Server oder NAS) laufen.";
+"That’s the whole setup — nothing to edit, no API key to copy. The installer finds your Syncthing config, sets the right permissions, and starts the helper. The helper then wakes this iPhone once on its own, and VaultSync flips to “Background Sync active” as soon as that first wake-up arrives. Keep it running on a machine that stays on (server or NAS)." = "Das ist schon die ganze Einrichtung – nichts zu bearbeiten, kein API-Schlüssel zu kopieren. Der Installer findet deine Syncthing-Konfiguration, setzt die richtigen Berechtigungen und startet den Helfer. Der Helfer weckt dieses iPhone dann einmal von selbst, und VaultSync wechselt zu „Hintergrund-Sync aktiv“, sobald dieses erste Weck-Signal eintrifft. Lass ihn auf einem dauerhaft laufenden Gerät (Server oder NAS) laufen.";
 "Manual & advanced setup" = "Manuelle & erweiterte Einrichtung";
 "The installer is open source — add --dry-run to preview every action without changing anything. Prefer to run the container yourself? Use this command:" = "Der Installer ist Open Source – mit --dry-run siehst du vorab jede Aktion, ohne dass etwas verändert wird. Lieber den Container selbst starten? Nutze diesen Befehl:";
 "Last wake-up" = "Letztes Weck-Signal";
 "Auto-renews until canceled. Cancel anytime in Settings → Subscriptions." = "Verlängert sich automatisch bis zur Kündigung. Jederzeit kündbar unter Einstellungen → Abonnements.";
 "Cancel anytime in Settings → Subscriptions" = "Jederzeit kündbar unter Einstellungen → Abonnements";
 "Get faster updates" = "Schnellere Updates erhalten";
-"Turn on Cloud Relay" = "Cloud Relay aktivieren";
+"With VaultSync Plus" = "Mit VaultSync Plus";
 
 /* Redesign (Vault OS) strings — added in branch redesign/vault-os-foundation */
 "%1$@ — %2$@" = "%1$@ – %2$@";
@@ -572,7 +569,7 @@
 "(%d%%)" = "(%d %%)";
 "Add your server first" = "Füge zuerst deinen Server hinzu";
 "Best value" = "Bestes Angebot";
-"Cloud Relay wakes a specific device. Pair the computer or server that hosts your vault on the Devices tab, then come back to subscribe." = "Cloud Relay weckt ein bestimmtes Gerät. Verbinde im Tab „Geräte“ den Computer oder Server, der deinen Vault bereitstellt, und komm dann zum Abonnieren zurück.";
+"Background Sync wakes a specific device. Pair the computer or server that hosts your vault on the Devices tab, then come back to subscribe." = "Der Hintergrund-Sync weckt ein bestimmtes Gerät. Verbinde im Tab „Geräte“ den Computer oder Server, der deinen Vault bereitstellt, und komm dann zum Abonnieren zurück.";
 "Connect your Obsidian folder" = "Deinen Obsidian-Ordner verbinden";
 "Double tap to copy" = "Zum Kopieren doppeltippen";
 "Give VaultSync one-time access to your Obsidian folder so it can sync your notes. In the picker, tap Browse at the bottom, then \"On My iPhone\" → \"Obsidian\". That folder appears once Obsidian holds a vault on this iPhone: if you have none, create one in Obsidian first, with \"Store in iCloud\" turned off. If two folders there are named \"Obsidian\", Obsidian's own is the one that holds the vault you created in Obsidian on this iPhone." = "Gib VaultSync einmaligen Zugriff auf deinen Obsidian-Ordner, damit es deine Notizen synchronisieren kann. Tippe im Picker unten auf „Durchsuchen“, dann auf „Auf meinem iPhone“ → „Obsidian“. Der Ordner erscheint dort, sobald Obsidian auf diesem iPhone einen Vault enthält: Hast du keinen, lege zuerst in Obsidian einen an, der auf dem iPhone gespeichert wird (nicht in iCloud). Heißen dort zwei Ordner „Obsidian“, ist Obsidians eigener der, in dem der Vault liegt, den du auf diesem iPhone in Obsidian angelegt hast.";
@@ -583,8 +580,8 @@
 "Manage" = "Verwalten";
 "Monthly" = "Monatlich";
 "One step left to activate" = "Noch ein Schritt bis zur Aktivierung";
-"Optional: turn on Cloud Relay later for faster updates — you’ll find it on the Relay tab." = "Optional: Aktiviere Cloud Relay später für schnellere Updates — du findest es im Relay-Tab.";
-"Relay" = "Relay";
+"Optional: get VaultSync Plus later for faster updates — you’ll find it on the Plus tab." = "Optional: Hol dir später VaultSync Plus für schnellere Updates — du findest es im Plus-Tab.";
+"Plus" = "Plus";
 "Relay health & diagnostics" = "Relay-Status & Diagnose";
 "One step left: run a single line on your server and it starts waking this iPhone. The helper only sends a wake-up — it never sees your notes." = "Noch ein Schritt: Führe eine einzige Zeile auf deinem Server aus, dann beginnt er, dieses iPhone zu wecken. Der Helfer sendet nur ein Weck-Signal — deine Notizen sieht er nie.";
 "Save %d%%" = "%d %% sparen";
@@ -596,10 +593,9 @@
 "Wake-ups are being delivered — changes from your other devices arrive instantly." = "Weck-Signale werden zugestellt – Änderungen von deinen anderen Geräten kommen sofort an.";
 "Yearly" = "Jährlich";
 "Your local version is kept, and the other device’s version is added under a new name. Nothing is discarded." = "Deine lokale Version bleibt erhalten, und die Version des anderen Geräts wird unter einem neuen Namen hinzugefügt. Es wird nichts verworfen.";
-"Your notes never touch our servers. When your server has changes, Cloud Relay sends a tiny wake-up, and VaultSync syncs in the background once iOS delivers it — usually within moments. iOS decides when a wake-up arrives, and after you force-quit the app, wake-ups resume once you open it again." = "Deine Notizen erreichen nie unsere Server. Wenn sich auf deinem Server etwas ändert, sendet Cloud Relay ein winziges Weck-Signal, und VaultSync synchronisiert im Hintergrund, sobald iOS es zustellt — meist nach wenigen Augenblicken. Wann ein Weck-Signal ankommt, entscheidet iOS; hast du die App im App-Umschalter weggewischt, kommen Weck-Signale erst wieder an, wenn du sie öffnest.";
+"Your notes never touch our servers. When your server has changes, Background Sync sends a tiny wake-up, and VaultSync syncs in the background once iOS delivers it — usually within moments. iOS decides when a wake-up arrives, and after you force-quit the app, wake-ups resume once you open it again." = "Deine Notizen erreichen nie unsere Server. Wenn sich auf deinem Server etwas ändert, sendet der Hintergrund-Sync ein winziges Weck-Signal, und VaultSync synchronisiert im Hintergrund, sobald iOS es zustellt — meist nach wenigen Augenblicken. Wann ein Weck-Signal ankommt, entscheidet iOS; hast du die App im App-Umschalter weggewischt, kommen Weck-Signale erst wieder an, wenn du sie öffnest.";
 "One-step setup: a single line on your server." = "Einrichtung in einem Schritt: eine einzige Zeile auf deinem Server.";
-"Your vault already syncs free and peer-to-peer. Relay only removes the “open the app to sync” wait — it isn’t cloud storage." = "Dein Vault synchronisiert bereits kostenlos und Peer-to-Peer. Relay beseitigt nur die Wartezeit „zum Synchronisieren die App öffnen“ – es ist kein Cloud-Speicher.";
-"You’re subscribed, but no wake-up has arrived yet. Cloud Relay only delivers once the helper is running on your server." = "Du hast abonniert, aber es ist noch kein Weck-Signal angekommen. Cloud Relay liefert erst, wenn der Helfer auf deinem Server läuft.";
+"Your vault already syncs free and peer-to-peer. Background Sync only removes the “open the app to sync” wait — it isn’t cloud storage." = "Dein Vault synchronisiert bereits kostenlos und Peer-to-Peer. Der Hintergrund-Sync beseitigt nur die Wartezeit „zum Synchronisieren die App öffnen“ – es ist kein Cloud-Speicher.";
 
 /* Folder path resilience (#25) */
 "Remove Vault" = "Vault entfernen";
@@ -617,10 +613,10 @@
 
 /* Cloud Relay activation (lab → wave 1; es/zh-Hans need a native review) */
 "Could not accept share '%@'.\n\n%@" = "Freigabe „%@“ konnte nicht angenommen werden.\n\n%@";
-"Finish activating Cloud Relay" = "Cloud-Relay-Aktivierung abschließen";
+"Finish setting up Background Sync" = "Einrichtung des Hintergrund-Syncs abschließen";
 "You’re subscribed, but your server has never woken this iPhone. One step finishes setup." = "Du hast ein Abo, aber dein Server hat dieses iPhone noch nie geweckt. Ein Schritt schließt die Einrichtung ab.";
-"Opens Cloud Relay setup." = "Öffnet die Cloud-Relay-Einrichtung.";
-"Cloud Relay went quiet" = "Cloud Relay ist verstummt";
+"Opens Background Sync setup." = "Öffnet die Einrichtung des Hintergrund-Syncs.";
+"Background Sync went quiet" = "Der Hintergrund-Sync ist verstummt";
 "Your server just reached this iPhone. Incoming changes now sync the moment they happen." = "Dein Server hat dieses iPhone gerade erreicht. Eingehende Änderungen synchronisieren jetzt im selben Moment.";
 "Great" = "Super";
 "Not active yet" = "Noch nicht aktiv";
@@ -700,10 +696,10 @@
 "The subscription plans could not be loaded. This is usually a brief network or App Store hiccup." = "Die Abo-Optionen konnten nicht geladen werden. Meist ist das ein kurzer Netzwerk- oder App-Store-Aussetzer.";
 "Try Again" = "Erneut versuchen";
 "Waiting for approval" = "Wartet auf Genehmigung";
-"This purchase needs approval (Ask to Buy). Cloud Relay activates automatically once it is approved. If it was declined, you can simply subscribe again." = "Dieser Kauf braucht eine Genehmigung (Vor Kauf fragen). Cloud Relay wird automatisch aktiviert, sobald er genehmigt ist. Wurde er abgelehnt, kannst du einfach erneut abonnieren.";
+"This purchase needs approval (Ask to Buy). VaultSync Plus activates automatically once it is approved. If it was declined, you can simply subscribe again." = "Dieser Kauf braucht eine Genehmigung (Vor Kauf fragen). VaultSync Plus wird automatisch aktiviert, sobald er genehmigt ist. Wurde er abgelehnt, kannst du einfach erneut abonnieren.";
 "Dismiss" = "Ausblenden";
 "No Purchases Found" = "Keine Käufe gefunden";
-"No Cloud Relay subscription was found for this Apple Account. If you subscribed with a different account, sign in with it in the App Store and try again." = "Für diesen Apple Account wurde kein Cloud-Relay-Abo gefunden. Falls du mit einem anderen Account abonniert hast, melde dich im App Store mit diesem an und versuche es erneut.";
+"No VaultSync Plus subscription was found for this Apple Account. If you subscribed with a different account, sign in with it in the App Store and try again." = "Für diesen Apple Account wurde kein VaultSync-Plus-Abo gefunden. Falls du mit einem anderen Account abonniert hast, melde dich im App Store mit diesem an und versuche es erneut.";
 "Purchase Could Not Be Verified" = "Kauf konnte nicht überprüft werden";
 "Restore Failed" = "Wiederherstellen fehlgeschlagen";
 "The App Store could not be reached to restore purchases. Check your internet connection and try again." = "Der App Store war zum Wiederherstellen der Käufe nicht erreichbar. Prüfe deine Internetverbindung und versuche es erneut.";
@@ -729,7 +725,7 @@
 "Checking Relay status" = "Relay-Status wird geprüft";
 "Checking whether your server has reached the Relay." = "Es wird geprüft, ob dein Server das Relay erreicht hat.";
 "Last signal observed by Relay" = "Zuletzt vom Relay beobachtetes Signal";
-"Last background sync start" = "Letzter Start des Hintergrund-Syncs";
+"Last background run start" = "Letzter Start eines Hintergrundlaufs";
 "Last observed sync progress" = "Zuletzt beobachteter Sync-Fortschritt";
 "No recent activity" = "Keine kürzliche Aktivität";
 "No server devices available yet." = "Noch keine Servergeräte verfügbar.";
@@ -938,7 +934,7 @@
 "Sync filters are unavailable" = "Sync-Filter sind nicht verfügbar";
 "The filter file for this vault could not be read. Make sure the vault is still accessible, then try again." = "Die Filterdatei dieses Vaults konnte nicht gelesen werden. Stell sicher, dass der Vault noch erreichbar ist, und versuch es dann erneut.";
 "Sync Engine Still Stopping" = "Sync-Engine wird noch beendet";
-"A background sync is still shutting the engine down." = "Eine Hintergrund-Synchronisation fährt die Engine gerade noch herunter.";
+"A background run is still shutting the engine down." = "Ein Hintergrundlauf fährt die Engine gerade noch herunter.";
 "Wait a moment, then reopen VaultSync or pull to refresh." = "Warte einen Moment, öffne VaultSync dann erneut oder zieh zum Aktualisieren.";
 "Too Large to Compare" = "Zu groß zum Vergleichen";
 "This note is %@ — above the %@ VaultSync loads for a comparison. Compare the versions in Obsidian, then choose which one to keep below." = "Diese Notiz ist %@ groß — mehr als die %@, die VaultSync für einen Vergleich lädt. Vergleich die Versionen in Obsidian und wähl dann unten, welche du behalten willst.";

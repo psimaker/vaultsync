@@ -8,6 +8,15 @@ VaultSync for Mac and Linux (the desktop agent and its menu-bar app, `desktop-vX
 
 ## [Unreleased]
 
+### Changed
+
+- **The subscription is now called VaultSync Plus, and what it adds is called Background Sync**
+  - **Where the new names show:** the Relay tab is now the Plus tab. The page, the card after your first sync, the card on the home screen and the setup checklist name the plan or the feature: "Background Sync active", "Finish setting up Background Sync", "With VaultSync Plus".
+  - **What stays the same:** your subscription and what it does. When your server has changes, this iPhone gets a wake-up, and VaultSync syncs in the background once iOS delivers it.
+  - **Diagnostics:** Relay Diagnostics and the relay service's errors still call the service Cloud Relay.
+  - **Activity history:** a run in the background is now titled "Background Run …", whatever started it. Before, it read "Background Sync …" for everyone.
+  - Recorded in decision 070.
+
 ## [3.0.0] — 2026-11-18
 
 ### Added
