@@ -42,7 +42,12 @@ struct Issue208DefaultTintTests {
     func assetMatchesTextToken(appearance: Appearance) throws {
         let asset = try #require(UIColor(named: "AccentColor", in: .main, compatibleWith: nil))
         let assetChannels = Self.channels(asset, appearance)
-        let tokenChannels = Self.channels(UIColor(Color.vaultAccentText), appearance)
+        // Read per appearance: converted to `UIColor` once, the token resolves
+        // light in every appearance on iOS 18 (#369).
+        let token = ThemeColorReader.uiColor(
+            .vaultAccentText, dark: appearance.dark, increasedContrast: appearance.increasedContrast
+        )
+        let tokenChannels = Self.channels(token, appearance)
         for (assetValue, tokenValue) in zip(assetChannels, tokenChannels) {
             #expect(abs(assetValue - tokenValue) < 0.005, "\(appearance): asset \(assetChannels), token \(tokenChannels)")
         }
