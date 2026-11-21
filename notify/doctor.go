@@ -163,7 +163,7 @@ func runPreflight(ctx context.Context, cfg Config, mode preflightMode) (int, err
 			// an all-passed doctor and be stuck; make the state visible (#88).
 			WarnOn: func(err error) (string, bool) {
 				if isSubscriptionInactive(err) {
-					return "relay reports no active subscription for this device — wake-up delivery is off until it is active. Right after setup this is normal (subscribe in the VaultSync app, Relay tab). If you ARE subscribed, open VaultSync on the iPhone once so it re-provisions this device, and verify this server's Syncthing is paired with that iPhone.", true
+					return "relay reports no active subscription for this device — wake-up delivery is off until it is active. Right after setup this is normal (subscribe in the VaultSync app on the Plus tab — the Relay tab before VaultSync 3.0.1). If you ARE subscribed, open VaultSync on the iPhone once so it re-provisions this device, and verify this server's Syncthing is paired with that iPhone.", true
 				}
 				return "", false
 			},

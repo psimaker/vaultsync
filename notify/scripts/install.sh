@@ -677,6 +677,7 @@ if [ "$DRY_RUN" = 1 ]; then
 	info "Dry run complete — nothing was changed. Re-run without --dry-run to install."
 else
 	info "Done. The helper has sent a first wake-up — within a minute, VaultSync on"
-	info "your iPhone shows \"Cloud Relay active\" (Relay tab). Nothing but your"
-	info "Syncthing Device ID ever leaves this machine."
+	info "your iPhone shows \"Background Sync active\" on the Plus tab (before"
+	info "VaultSync 3.0.1: \"Cloud Relay active\" on the Relay tab). Nothing but"
+	info "your Syncthing Device ID ever leaves this machine."
 fi

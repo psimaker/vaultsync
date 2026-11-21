@@ -214,6 +214,7 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Info ''
 Write-Info 'Done. The helper has sent a first wake-up — within a minute, VaultSync on'
-Write-Info 'your iPhone shows "Cloud Relay active" (Relay tab). Nothing but your'
-Write-Info 'Syncthing Device ID ever leaves this machine.'
+Write-Info 'your iPhone shows "Background Sync active" on the Plus tab (before'
+Write-Info 'VaultSync 3.0.1: "Cloud Relay active" on the Relay tab). Nothing but'
+Write-Info 'your Syncthing Device ID ever leaves this machine.'
 Write-Info "Logs: $LogPath  |  Self-check any time: & '$ExePath' --doctor"
