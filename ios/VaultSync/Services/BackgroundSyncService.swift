@@ -1221,7 +1221,7 @@ enum BackgroundSyncService {
         } else if settledWithError {
             // Stopped because a folder is in a terminal error state, not because
             // we ran out of time. The folder error surfaces via the in-app Sync
-            // Issues panel; don't raise a misleading "Background Sync Timed Out",
+            // Issues panel; don't raise a misleading "Background Run Timed Out",
             // but don't report a clean success either (the widget should still
             // reflect the error, not a green idle state).
             result = .settledWithFolderError
