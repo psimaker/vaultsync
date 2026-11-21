@@ -27,6 +27,7 @@ struct SubscribePlanPicker: View {
     /// falls back to the recommended yearly plan so the Subscribe button is
     /// never armed against an undefined plan.
     @State private var selectedPlanID: Product.ID?
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private var selectedProduct: Product? {
         let available = [subscriptionManager.monthlyProduct, subscriptionManager.yearlyProduct]
@@ -216,12 +217,18 @@ struct SubscribePlanPicker: View {
     /// job), and nothing here starts a purchase (#70).
     private func planCard(product: Product, title: String, recommended: Bool) -> some View {
         let isSelected = selectedProduct?.id == product.id
+        // The savings tag sits beside the title, and below it once Dynamic
+        // Type reaches the accessibility sizes: side by side, the two broke
+        // each other into syllables (#352).
+        let titleRow = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: VaultSpacing.xs))
+            : AnyLayout(HStackLayout(spacing: VaultSpacing.s))
         return Button {
             selectedPlanID = product.id
         } label: {
             HStack(spacing: VaultSpacing.m) {
                 VStack(alignment: .leading, spacing: VaultSpacing.xs) {
-                    HStack(spacing: VaultSpacing.s) {
+                    titleRow {
                         Text(title)
                             .font(.headline)
                         if recommended, let savings = yearlySavingsText {

@@ -28,9 +28,14 @@ struct StatusTag: View {
         Text(text)
             .font(.caption2.weight(.bold))
             .foregroundStyle(Color.vaultOnAccent)
+            // Wraps instead of cutting off: at the accessibility text sizes
+            // a cut tag lost its number ("Ahorra…", #352). The corner radius
+            // is clamped to half the height, so one line still reads as a
+            // capsule; two lines keep their corners clear of the text.
+            .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, VaultSpacing.s)
             .padding(.vertical, VaultSpacing.xxs)
-            .background(Color.vaultAccentProminent, in: Capsule())
+            .background(Color.vaultAccentProminent, in: RoundedRectangle(cornerRadius: VaultRadius.control, style: .continuous))
     }
 }
 
