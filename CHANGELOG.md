@@ -10,7 +10,7 @@ VaultSync for Mac and Linux (the desktop agent and its menu-bar app, `desktop-vX
 
 ### Changed
 
-- **The wake-up helper's installer and self-check point to the Plus tab** — when the installer finishes (Linux, macOS, Windows), it says the iPhone shows "Background Sync active" on the Plus tab, or "Cloud Relay active" on the Relay tab in VaultSync 3.0.0. `vaultsync-notify --doctor` sends a device without a subscription to the Plus tab (the Relay tab in VaultSync 3.0.0). The installer's change is live once merged, because the install link serves the main branch; the self-check's arrives with the helper's next release.
+- **The wake-up helper's installer and self-check point to the Plus tab** — when the installer finishes (Linux, macOS, Windows), it says the iPhone shows "Background Sync active" on the Plus tab, or "Cloud Relay active" on the Relay tab in VaultSync 3.0.0 and earlier. `vaultsync-notify --doctor` sends a device without a subscription to the Plus tab (the Relay tab in VaultSync 3.0.0 and earlier). The installer's change is live once merged, because the install link serves the main branch; the self-check's arrives with the helper's next release.
 
 ## [3.0.0] — 2026-11-18
 

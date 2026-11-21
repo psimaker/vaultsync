@@ -678,6 +678,6 @@ if [ "$DRY_RUN" = 1 ]; then
 else
 	info "Done. The helper has sent a first wake-up — within a minute, VaultSync on"
 	info "your iPhone shows \"Background Sync active\" on the Plus tab — or"
-	info "\"Cloud Relay active\" on the Relay tab in VaultSync 3.0.0. Nothing but"
-	info "your Syncthing Device ID ever leaves this machine."
+	info "\"Cloud Relay active\" on the Relay tab in VaultSync 3.0.0 and earlier."
+	info "Nothing but your Syncthing Device ID ever leaves this machine."
 fi

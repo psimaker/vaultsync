@@ -38,7 +38,7 @@ services:
       # The relay this helper wakes. Defaults to the production relay, so a plain
       # `docker compose up` sends ONE wake-up to it right away — the intended
       # self-activation that flips the iPhone to "Background Sync active" ("Cloud
-      # Relay active" in VaultSync 3.0.0). Override it
+      # Relay active" in VaultSync 3.0.0 and earlier). Override it
       # when testing against a local/mock relay so you never hit production.
       RELAY_URL: ${RELAY_URL:-https://relay.vaultsync.eu}
       # On by default: send that one startup wake-up. Set false to suppress it
