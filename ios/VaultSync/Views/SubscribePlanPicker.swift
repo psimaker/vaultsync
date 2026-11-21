@@ -304,11 +304,7 @@ struct SubscribePlanPicker: View {
     private var yearlySavingsText: String? {
         guard let monthly = subscriptionManager.monthlyProduct,
               let yearly = subscriptionManager.yearlyProduct else { return nil }
-        let monthlyAnnual = monthly.price * 12
-        guard monthlyAnnual > 0 else { return nil }
-        let fraction = (monthlyAnnual - yearly.price) / monthlyAnnual
-        let percent = NSDecimalNumber(decimal: fraction * 100).intValue
-        guard percent > 0 else { return nil }
+        guard let percent = PlanSavings.yearlyPercent(monthly: monthly.price, yearly: yearly.price) else { return nil }
         return L10n.fmt("Save %d%%", percent)
     }
 
