@@ -64,8 +64,8 @@ targets:
     info:
       path: VaultSync/Info.plist
       properties:
-        CFBundleShortVersionString: "3.0.0"
-        CFBundleVersion: "40"
+        CFBundleShortVersionString: "3.0.1"
+        CFBundleVersion: "41"
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
@@ -138,8 +138,8 @@ targets:
     info:
       path: VaultSyncWidget/Info.plist
       properties:
-        CFBundleShortVersionString: "3.0.0"
-        CFBundleVersion: "40"
+        CFBundleShortVersionString: "3.0.1"
+        CFBundleVersion: "41"
         CFBundleDisplayName: VaultSync Widget
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
