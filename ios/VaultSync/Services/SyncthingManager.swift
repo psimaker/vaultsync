@@ -947,7 +947,7 @@ final class SyncthingManager {
             userError = SyncUserError(
                 category: .syncthingNotRunning,
                 title: L10n.tr("Sync Engine Still Stopping"),
-                message: L10n.tr("A background sync is still shutting the engine down."),
+                message: L10n.tr("A background run is still shutting the engine down."),
                 remediation: L10n.tr("Wait a moment, then reopen VaultSync or pull to refresh."),
                 technicalDetails: nil
             )

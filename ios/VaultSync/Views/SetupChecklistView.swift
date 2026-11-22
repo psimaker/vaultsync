@@ -143,7 +143,7 @@ struct SetupChecklistView: View {
         case .addDevice:
             return L10n.tr("Add Device")
         case .openRelayTab:
-            return L10n.tr("Open the Relay tab")
+            return L10n.tr("Open the Plus tab")
         }
     }
 

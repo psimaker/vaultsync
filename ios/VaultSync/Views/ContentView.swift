@@ -124,7 +124,7 @@ struct ContentView: View {
 
             relayTab
                 .tabItem {
-                    Label(L10n.tr("Relay"), systemImage: "antenna.radiowaves.left.and.right")
+                    Label(L10n.tr("Plus"), systemImage: "antenna.radiowaves.left.and.right")
                 }
                 .tag(Tab.relay)
         }
@@ -854,9 +854,9 @@ struct ContentView: View {
         if relayDashboardState == .active {
             // "active" means a REAL wake-up has actually reached this device
             // — not merely "provisioned + reachable" (K1). Same words as the
-            // Relay tab's steady state, so the two screens never disagree.
+            // Plus tab's steady state, so the two screens never disagree.
             StatusChip(
-                text: L10n.tr("Cloud Relay active"),
+                text: L10n.tr("Background Sync active"),
                 tone: .accent,
                 systemImage: "antenna.radiowaves.left.and.right"
             )
@@ -1003,8 +1003,8 @@ struct ContentView: View {
         askCard(
             systemImage: "antenna.radiowaves.left.and.right",
             title: L10n.tr("Get faster updates"),
-            message: L10n.tr("Your first sync is done. When your server has changes, Cloud Relay sends this iPhone a wake-up, and VaultSync syncs in the background once iOS delivers it — usually within moments. iOS decides when a wake-up arrives, and after you force-quit the app, wake-ups resume once you open it again."),
-            confirmTitle: L10n.tr("View Cloud Relay"),
+            message: L10n.tr("Your first sync is done. When your server has changes, VaultSync Plus sends this iPhone a wake-up, and VaultSync syncs in the background once iOS delivers it — usually within moments. iOS decides when a wake-up arrives, and after you force-quit the app, wake-ups resume once you open it again."),
+            confirmTitle: L10n.tr("View VaultSync Plus"),
             onConfirm: { dismissRelayUpsell(openRelay: true) },
             onDecline: { dismissRelayUpsell(openRelay: false) }
         )
@@ -1326,15 +1326,15 @@ struct ContentView: View {
         switch relayDashboardState {
         case .needsReactivation:
             relayNavCard(
-                title: L10n.tr("Finish activating Cloud Relay"),
+                title: L10n.tr("Finish setting up Background Sync"),
                 subtitle: L10n.tr("You’re subscribed, but your server has never woken this iPhone. One step finishes setup."),
                 systemImage: "antenna.radiowaves.left.and.right.slash",
                 tone: .attention,
-                hint: L10n.tr("Opens Cloud Relay setup.")
+                hint: L10n.tr("Opens Background Sync setup.")
             )
         case .wentQuiet:
             relayNavCard(
-                title: L10n.tr("Cloud Relay went quiet"),
+                title: L10n.tr("Background Sync went quiet"),
                 subtitle: L10n.tr("No wake-up in a while. If nothing changed in your vault, that can be normal — otherwise check that your server is on."),
                 systemImage: "antenna.radiowaves.left.and.right",
                 tone: .attention
@@ -1356,7 +1356,7 @@ struct ContentView: View {
         if relayDashboardState == .promo {
             relayNavCard(
                 title: L10n.tr("Get faster updates"),
-                subtitle: L10n.tr("Turn on Cloud Relay"),
+                subtitle: L10n.tr("With VaultSync Plus"),
                 systemImage: "antenna.radiowaves.left.and.right",
                 tone: nil
             )
