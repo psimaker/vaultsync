@@ -15,6 +15,9 @@ private let logger = Logger(subsystem: "eu.vaultsync.app", category: "tipjar")
 final class TipJarManager {
 
     static let smallProductID = "eu.vaultsync.app.contribution.small"
+    /// The store's ID for the larger contribution is `.large`, not `.big`:
+    /// asked under `.big`, StoreKit dropped it without an error (#391).
+    /// App Store Connect cannot rename a product ID.
     static let bigProductID = "eu.vaultsync.app.contribution.large"
 
     /// Loaded contribution products, ordered cheapest → most expensive so the

@@ -35,10 +35,11 @@ struct Issue391ContributionProductIDTests {
             try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
         )
         let products = try #require(root["products"] as? [[String: Any]])
-        let consumables = Set(products.compactMap { product -> String? in
+        // A list, not a set, so a duplicated entry fails too.
+        let consumables = products.compactMap { product -> String? in
             guard product["type"] as? String == "Consumable" else { return nil }
             return product["productID"] as? String
-        })
-        #expect(consumables == Self.storeIDs)
+        }
+        #expect(consumables.sorted() == Self.storeIDs.sorted())
     }
 }
