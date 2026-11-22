@@ -9,7 +9,7 @@ A name that begins `.syncthing.` or `~syncthing~` is never scanned and never sen
 **Decision.**
 
 1. **Who writes.** The save runs in the service, which also owns the engine (decisions 046, 049). It never runs in the window. Two reasons: the recovery in (4) must run before the engine starts, and the check in (6) reads the engine's index. The save writes the note open in edit mode and nothing else in the vault, apart from its own temporary files of (4). The engine neither scans nor sends those, and they do not outlive a save. The one other write is a new note that holds the person's text, made only when the person chooses it in (7).
-2. **The baseline.** When edit mode is entered, the note's bytes are read once and their SHA-256 is kept as the baseline. The baseline is the version the person starts editing, not the one first shown. A version on disk equals the baseline when its bytes do. Modification time and size never decide this, because a newer version can arrive with an older time and the same size.
+2. **The baseline.** When edit mode is entered, the note's bytes are read once and their SHA-256 is kept as the baseline. The baseline is the version the person starts editing, not the one first shown. A save that has passed its check in (4) makes the saved text the new baseline, and edit mode stays open after Cmd-S or Ctrl-S. A version on disk equals the baseline when its bytes do. Modification time and size never decide this, because a newer version can arrive with an older time and the same size.
 3. **When it saves.** A note is saved when the person leaves edit mode, presses Cmd-S or Ctrl-S, or closes the note or the window. It is never saved while the person types. While they type, the text goes every few seconds to a draft in VaultSync's own folder, outside the vault (mode 0600, as `agent.json`), so a crash or a power cut loses nothing. Nothing in the vault changes before a save. Leaving edit mode without a change writes nothing.
 4. **The write.**
    - **The new text.** It goes into a new file in the note's directory, named with the engine's temporary prefix and a random part that is no note's temporary name (`.syncthing.` plus the random part plus `.tmp`). The engine neither scans nor sends such a file. The file takes the note's permission bits and extended attributes (Finder tags) and is flushed to disk.
@@ -18,11 +18,14 @@ A name that begins `.syncthing.` or `~syncthing~` is never scanned and never sen
    - **The check.** After the exchange, the temporary name holds exactly the version the save replaced, and it is hashed:
      - **Equal to the baseline:** the save took the place of the version the person opened. The replaced version is deleted.
      - **Different:** a newer version arrived between the open and the save. The exchange is undone at once, which puts the newer version back in the note's place. The person's text stays in the window and in the draft.
-   - **After a crash.** A service that starts and finds such a record resolves it before it starts the engine. The person's text is in the draft in every case.
+   - **After a crash.** A service that starts and finds such a record resolves it before it starts the engine. On Linux the kernel stops the engine when the service dies (`Pdeathsig`, `desktop/child_linux.go`); on a Mac launchd stops the service's process group with it (`desktop/child_other.go`). The person's text is in the draft in every case. Recovery hashes the temporary file before it deletes it, and deletes it only when it equals the new text (the draft holds it) or the baseline (the version the person's save replaced).
      - **The note holds the new text:** the exchange happened.
        - A temporary file equal to the baseline is deleted, and the save goes on to (6).
-       - A temporary file that differs is a displaced newer version. The exchange is undone, and the temporary file, which then holds the person's text, is deleted. The person gets the choice of (7) when the note opens next.
-     - **The note does not hold the new text:** the exchange never happened, or was undone. The temporary file holds the person's text and is deleted.
+       - A temporary file that differs is a displaced newer version. The exchange is undone, and the temporary file, which then holds the new text, is deleted. The person gets the choice of (7) when the note opens next.
+     - **The note holds something else:**
+       - A temporary file equal to the new text means the exchange never happened, or was undone. It is deleted.
+       - A temporary file equal to the baseline means the exchange happened and the note was written again afterwards. The save counts as overwritten, as in (6); the temporary file is deleted, and the person gets the choice of (7).
+       - A temporary file equal to neither is copied into VaultSync's own folder, outside the vault, and only then deleted. The person is told where it is.
      - **The temporary file is gone while the note holds the new text:** what the save replaced cannot be checked, and the person is told so.
      - Recovery never publishes anything as a new note, and the engine never runs while a displaced version lies under a name it deletes.
    - **The modification time** is the time of the save. The old time is never restored, because the engine notices a change by it.
@@ -66,6 +69,7 @@ A name that begins `.syncthing.` or `~syncthing~` is never scanned and never sen
 - **The engine's own window.** A save that lands between the engine's check and its rename is replaced by the engine. The save cannot prevent that; (6) notices it and the person's text is kept.
 - **A displaced newer version.** It lies under the temporary name between the exchange and its undo. A scan that passes in that instant deletes it if its modification time is 24 hours old. The engine also deletes it at any age when it deletes the note's directory for a change from another device in that instant. The undo then fails, and the person's text stands in the note's place as a successor. The person is told. The other devices receive that text and replace the newer version too. Only a Hub in the folder's set keeps it, for 30 days (decision 035), or a device whose folder has versioning of its own.
 - **Another app that holds the note open** and writes into the file it opened after the exchange writes into the replaced version. The check in (4) catches that only if the write comes before the hash.
+- **A service started by hand on a Mac,** outside launchd. If it dies, its engine may outlive it, and the recovery in (4) can then run while that engine still runs.
 - **Windows**, until #217's package record names its exchange.
 
 **Read, not measured.** Nothing here was run; there is no prototype.
@@ -74,6 +78,7 @@ A name that begins `.syncthing.` or `~syncthing~` is never scanned and never sen
   - which file systems offer it (APFS, ext4, btrfs and XFS are expected to; exFAT, SMB, NFS and FUSE are not);
   - that it keeps each file's own mode and extended attributes.
 - **Obsidian.** Whether Obsidian, open on the same note, follows the note's new file is not known.
+- **The engine stopping with the service.** That it stops with the service on a Mac is taken from the code's comment on launchd's process group, not measured.
 
 To measure before the first line of code:
 - the exchange on each of those file systems;
