@@ -40,7 +40,7 @@ Your notes sync device to device — between your iPhone, your computer and your
 - **Peer-to-peer & private** — syncs directly between your own devices over [Syncthing](https://syncthing.net/). No note cloud, no account, no tracking.
 - **Lands in Obsidian** — files sync into Obsidian's iOS sandbox, where the app already looks for them.
 - **Pair with a code, resolve conflicts** — add your VaultSync Hub by the short code it prints or its QR code, or any Syncthing device by its Device ID; settle Markdown conflicts with side-by-side diffs.
-- **Server changes can wake your iPhone** — optional Cloud Relay asks iOS to wake the app after the helper observes a server change. The activity timeline shows local sync activity, while Diagnostics keeps Relay, delivery, and local-data evidence separate.
+- **Server changes can wake your iPhone** — Background Sync, with the optional VaultSync Plus subscription, asks iOS to wake the app after the helper observes a server change. The activity timeline shows local sync activity, while Diagnostics keeps Relay, delivery, and local-data evidence separate.
 
 *VoiceOver and Dynamic Type throughout. Localized in English, German, Spanish, and Simplified Chinese. Independent project — not affiliated with Obsidian or Syncthing.*
 
@@ -66,7 +66,7 @@ Syncthing runs on a machine you keep on; VaultSync joins as a peer and syncs int
 1. **Install** VaultSync from the [App Store](https://apps.apple.com/de/app/vaultsync-for-obsidian/id6761845197).
 2. **Pair your server** — with a [VaultSync Hub](#-vaultsync-hub-one-link-no-web-ui), tap **Add Hub** and type the code it printed or scan its QR code. With your own Syncthing, scan its Device ID by QR (or paste it), then accept the connection in that Syncthing instance.
 3. **Sync your vault** — VaultSync detects your Obsidian vaults, connects the share, and runs the first sync. Open Obsidian; your notes are there.
-4. **(Optional)** Enable **Cloud Relay** for faster server→iPhone updates — see below.
+4. **(Optional)** Turn on **Background Sync** with VaultSync Plus for faster server→iPhone updates — see below.
 
 ---
 
@@ -128,9 +128,9 @@ device**: it installs VaultSync for Mac and Linux, pairs with your Hub by code
 and keeps your Obsidian vaults in sync in the background. On a Mac it needs
 macOS 12 or newer. Details: [docs/hub.md](docs/hub.md#desktop-agent-macos-and-linux).
 
-## ☁️ Cloud Relay (optional)
+## ☁️ VaultSync Plus (optional)
 
-Without it, VaultSync syncs server changes when you open the app. **With it, Cloud Relay can request a background wake-up after your server changes** — iOS still decides whether and when to run the app.
+Without it, VaultSync syncs server changes when you open the app. **With it, Background Sync can request a background wake-up after your server changes**, through our Cloud Relay — iOS still decides whether and when to run the app.
 
 ### ⚡ One-step setup
 
@@ -168,7 +168,7 @@ The installer finds your Syncthing config, sets the right permissions, and start
 | Obsidian | Installed on iOS / iPadOS |
 | Syncthing | Running on a Mac, Linux machine, NAS, or homeserver |
 | VaultSync for Mac and Linux | Optional preview — macOS 12 or newer, or Linux |
-| Cloud Relay | Optional — monthly or yearly in-app subscription |
+| VaultSync Plus | Optional — monthly or yearly in-app subscription for Background Sync |
 | vaultsync-notify | Optional Docker sidecar for server-side wake-ups |
 
 ---
@@ -213,7 +213,7 @@ Full build, signing, and test steps: [docs/setup.md](docs/setup.md).
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute — setup, tests, and PR conventions |
 | [SECURITY.md](SECURITY.md) · [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Vulnerability reporting and community standards |
 
-Filing a bug? Include your iOS and VaultSync versions, your server's Syncthing version, whether Cloud Relay and `vaultsync-notify` are running, and relevant logs or screenshots.
+Filing a bug? Include your iOS and VaultSync versions, your server's Syncthing version, whether VaultSync Plus is active and `vaultsync-notify` is running, and relevant logs or screenshots.
 
 ---
 
