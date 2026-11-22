@@ -1,7 +1,7 @@
 import StoreKit
 import SwiftUI
 
-/// The single canonical Cloud Relay subscription picker. Monthly is listed first
+/// The single canonical VaultSync Plus plan picker. Monthly is listed first
 /// (the low-commitment entry point — leading with the small price avoids the
 /// "annual sticker shock" that makes people reach for a full cloud-sync product
 /// instead); yearly follows, framed as savings and marked as the best value.
