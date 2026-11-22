@@ -42,14 +42,14 @@ The window has to run on macOS 12 and later, and on Linux for amd64 and arm64. O
 **Why.**
 - **One person, one language for the programs.** The interface is written once and runs in the web view each system already maintains and updates. Every program stays Go, with Go's tests, its dependency audit (govulncheck) and the CI that exists. The page is JavaScript, a second language any web view needs.
 - **The editor.** A web view brings the one editor that holds Markdown text well, CodeMirror, and HTML that a screen reader can read, both without drawing text by hand.
-- **Wails 3.** It is the Go toolkit that spans all three systems. It can also build an MSIX package, but the Store package's manifest is VaultSync's own (074, "VaultSync for Windows ships as one MSIX package …"), so that helps the build and decides nothing. 048 rejected it for a menu-bar icon as "still beta, a WebView for a status menu". Both reasons have gone: v3.0.0 has been stable since 2026-10-26, and a window that shows HTML needs a web view.
+- **Wails 3.** It is the Go toolkit that spans all three systems. It can also build an MSIX package. The Windows Store package's manifest is VaultSync's own (#217), so that is a build convenience, not a reason. 048 rejected it for a menu-bar icon as "still beta, a WebView for a status menu". Both reasons have gone: v3.0.0 has been stable since 2026-10-26, and a window that shows HTML needs a web view.
 - **What Wails 3 costs.** It has had less than a month of stable releases at this writing, and it brings out a minor release every week. The way out stays open. The page is plain HTML and JavaScript, and the Go side only renders and relays, so another host for the same page replaces that thin layer and not the interface.
 - **WebKitGTK 6.0** is packaged by Ubuntu 24.04 (and by 22.04 in its updates), Debian 12 and 13, Fedora 43 to 45 and Arch, and it is Wails 3's default. The 4.0 API has left the current ones, and 4.1 is the GTK 3 line Wails plans to drop.
 - **The service owns the files** (decision 073). That gives the save rule one home, and on a Mac no further program needs access to the vaults.
 
 **Rejected alternatives.**
-- *Wails 2:* critical updates only, by v3's release notes; linked to WebKitGTK 4.0 by default (gone from Ubuntu 24.04, Debian 13 and Fedora 40 on); and no documented MSIX.
-- *Tauri 2:* a third language and toolchain (Rust) beside Go and the page's JavaScript, which 048 also weighed. It makes no MSIX: the Store takes it only as an EXE or MSI installer.
+- *Wails 2:* critical updates only, by v3's release notes; linked to WebKitGTK 4.0 by default (gone from Ubuntu 24.04, Debian 13 and Fedora 40 on); and no documented MSIX packaging, which would only be a build convenience (#217).
+- *Tauri 2:* a third language and toolchain (Rust) beside Go and the page's JavaScript, which 048 also weighed. It has no MSIX packaging of its own, a build convenience only, since its program could go into a package built by hand (#217).
 - *webview/webview and its Go binding:* C++, no release since 2024-09, a Go binding without a commit since 2024-08, and one window.
 - *Fyne or Gio:* they draw their own text. Fyne's screen-reader support is experimental and absent on Linux, and Gio's serves Android only. Neither has an editor or a renderer close to what decision 072 needs.
 - *Electron:* a Chromium in every release, 115 to 150 MiB zipped per platform, and a new major version every eight weeks with three supported.
