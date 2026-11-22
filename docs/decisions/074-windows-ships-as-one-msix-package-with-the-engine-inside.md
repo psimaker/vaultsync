@@ -102,6 +102,7 @@ This record sets up no build target and no CI job.
 
 What the documentation leaves open, and what is measured before the first line of code:
 - whether a child process started from the package keeps its identity and its AppData redirection;
+- that a write to the package's `LocalState` by its real path is itself outside the redirection, for the agent and for the engine (4);
 - whether the package's data folder is removed at uninstall for a full-trust app;
 - what a Store update does to the running agent and engine, and whether they come back without a new sign-in (10);
 - whether a startup task is turned on for an entry never opened, and whether it passes arguments (3);
