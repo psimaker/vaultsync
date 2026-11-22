@@ -1,7 +1,7 @@
 import StoreKit
 import SwiftUI
 
-/// The single canonical Cloud Relay subscription picker. Monthly is listed first
+/// The single canonical VaultSync Plus plan picker. Monthly is listed first
 /// (the low-commitment entry point — leading with the small price avoids the
 /// "annual sticker shock" that makes people reach for a full cloud-sync product
 /// instead); yearly follows, framed as savings and marked as the best value.
@@ -119,7 +119,7 @@ struct SubscribePlanPicker: View {
                         break
                     case .nothingToRestore:
                         alertTitle = L10n.tr("No Purchases Found")
-                        alertMessage = L10n.tr("No Cloud Relay subscription was found for this Apple Account. If you subscribed with a different account, sign in with it in the App Store and try again.")
+                        alertMessage = L10n.tr("No VaultSync Plus subscription was found for this Apple Account. If you subscribed with a different account, sign in with it in the App Store and try again.")
                         showAlert = true
                     case .foundButUnverified:
                         alertTitle = L10n.tr("Purchase Could Not Be Verified")
@@ -169,7 +169,7 @@ struct SubscribePlanPicker: View {
             VStack(alignment: .leading, spacing: VaultSpacing.xxs) {
                 Text(L10n.tr("Add your server first"))
                     .font(.headline)
-                Text(L10n.tr("Cloud Relay wakes a specific device. Pair the computer or server that hosts your vault on the Devices tab, then come back to subscribe."))
+                Text(L10n.tr("Background Sync wakes a specific device. Pair the computer or server that hosts your vault on the Devices tab, then come back to subscribe."))
                     .font(.subheadline)
                     .foregroundStyle(Color.vaultSecondaryLabel)
                     .fixedSize(horizontal: false, vertical: true)
@@ -191,7 +191,7 @@ struct SubscribePlanPicker: View {
             VStack(alignment: .leading, spacing: VaultSpacing.xxs) {
                 Text(L10n.tr("Waiting for approval"))
                     .font(.headline)
-                Text(L10n.tr("This purchase needs approval (Ask to Buy). Cloud Relay activates automatically once it is approved. If it was declined, you can simply subscribe again."))
+                Text(L10n.tr("This purchase needs approval (Ask to Buy). VaultSync Plus activates automatically once it is approved. If it was declined, you can simply subscribe again."))
                     .font(.subheadline)
                     .foregroundStyle(Color.vaultSecondaryLabel)
                     .fixedSize(horizontal: false, vertical: true)

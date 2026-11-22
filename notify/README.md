@@ -22,7 +22,7 @@ curl -fsSL https://vaultsync.eu/notify.sh | sh
 
 The installer ([`scripts/install.sh`](scripts/install.sh)) finds your `config.xml`, runs the helper as the uid:gid that owns it (the #1 setup failure), and starts it — as a Docker container when Docker is available, otherwise as a prebuilt binary behind a systemd service (Linux) or launchd agent (macOS). It ends with the helper's own `--doctor` preflight, so a misconfiguration fails loudly with the fix spelled out.
 
-The moment the helper starts it sends one wake-up, and VaultSync flips to **Cloud Relay active** on its own.
+The moment the helper starts it sends one wake-up, and VaultSync flips to **Background Sync active** (**Cloud Relay active** before 3.0.1) on its own.
 
 - Skeptical of `curl | sh`? Append `-s -- --dry-run` to preview every action without changing anything, or read the script first.
 - Config in a non-standard place? `curl -fsSL https://vaultsync.eu/notify.sh | SYNCTHING_CONFIG=/path/to/config.xml sh` — the variable must prefix `sh` (the installer), not `curl`. Synology/QNAP/Unraid host layouts are probed automatically.

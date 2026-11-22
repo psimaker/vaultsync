@@ -293,7 +293,7 @@ extension Color {
 /// color, which wash, and which text-on-wash color belong together, so no
 /// call site can pair a wash with a text color that fails contrast on it.
 /// Status views map through `SyncStatus.tone`; everything else (an accent
-/// "Cloud Relay active" chip, a neutral vault count) picks a tone directly.
+/// "Background Sync active" chip, a neutral vault count) picks a tone directly.
 enum VaultTone: Sendable {
     case neutral
     case accent
