@@ -15,7 +15,7 @@ private let logger = Logger(subsystem: "eu.vaultsync.app", category: "tipjar")
 final class TipJarManager {
 
     static let smallProductID = "eu.vaultsync.app.contribution.small"
-    static let bigProductID = "eu.vaultsync.app.contribution.big"
+    static let bigProductID = "eu.vaultsync.app.contribution.large"
 
     /// Loaded contribution products, ordered cheapest → most expensive so the
     /// UI lists "Small" before "Big" regardless of fetch order.

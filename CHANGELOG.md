@@ -8,6 +8,10 @@ VaultSync for Mac and Linux (the desktop agent and its menu-bar app, `desktop-vX
 
 ## [Unreleased]
 
+### Fixed
+
+- **Settings offers the larger contribution too** ([#391](https://github.com/psimaker/vaultsync/issues/391)) — Support VaultSync showed only the smaller one-time contribution, because the app asked the App Store for the larger one under a product ID the store does not have. It now asks under the store's ID, so both appear. Nothing else changes: contributions still unlock nothing, and the subscription is not affected.
+
 ## [3.0.0] — 2026-11-18
 
 ### Added

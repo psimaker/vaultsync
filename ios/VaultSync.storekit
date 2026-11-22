@@ -28,7 +28,7 @@
           "locale" : "en_US"
         }
       ],
-      "productID" : "eu.vaultsync.app.contribution.big",
+      "productID" : "eu.vaultsync.app.contribution.large",
       "referenceName" : "Big Contribution",
       "type" : "Consumable"
     }
