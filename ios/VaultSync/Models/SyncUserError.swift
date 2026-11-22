@@ -113,7 +113,7 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
                 category: .relayUnreachable,
                 title: L10n.tr("Relay Unreachable"),
                 message: L10n.tr("VaultSync could not reach the Cloud Relay service."),
-                remediation: L10n.tr("Check your internet connection and try the relay health check again on the Relay tab."),
+                remediation: L10n.tr("Check your internet connection and try the relay health check again on the Plus tab."),
                 technicalDetails: rawMessage
             )
         }
@@ -143,7 +143,7 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
                 category: .auth,
                 title: L10n.tr("Authentication Error"),
                 message: L10n.tr("VaultSync could not verify this request."),
-                remediation: L10n.tr("Check your subscription status on the Relay tab and retry. If this persists, restart VaultSync."),
+                remediation: L10n.tr("Check your subscription status on the Plus tab and retry. If this persists, restart VaultSync."),
                 technicalDetails: rawMessage
             )
         }

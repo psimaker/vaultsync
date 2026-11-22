@@ -47,8 +47,8 @@ body:
   - type: dropdown
     id: cloud_relay
     attributes:
-      label: Is Cloud Relay active?
-      description: Settings → Cloud Relay in the app.
+      label: Is VaultSync Plus (Background Sync) active?
+      description: The Plus tab in the app (the Relay tab before 3.0.1).
       options:
         - "Yes"
         - "No"

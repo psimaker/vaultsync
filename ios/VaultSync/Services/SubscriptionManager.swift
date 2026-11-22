@@ -859,7 +859,7 @@ final class SubscriptionManager {
                 markStoreKitVerificationRequired(for: allDeviceIDs)
                 errorMessage = L10n.tr("Your purchase must be confirmed again.")
             } else {
-                errorMessage = L10n.tr("Cloud Relay is not subscribed. Start a subscription first.")
+                errorMessage = L10n.tr("VaultSync Plus is not active. Start a subscription first.")
             }
             return
         }

@@ -317,7 +317,7 @@ struct RelayDiagnosticsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            LabeledContent(L10n.tr("Last background sync start")) {
+            LabeledContent(L10n.tr("Last background run start")) {
                 if let startedAt = subscriptionManager.relayBackgroundSyncStartedAt {
                     Text(startedAt, style: .relative)
                 } else {
@@ -600,7 +600,7 @@ struct RelayDiagnosticsView: View {
         var hints: [String] = []
 
         if !subscriptionManager.isRelaySubscribed {
-            hints.append(L10n.tr("Cloud Relay is not currently subscribed. Push-triggered wake-ups are disabled until the subscription is active."))
+            hints.append(L10n.tr("VaultSync Plus is not currently active. Push-triggered wake-ups are disabled until the subscription is active."))
         }
 
         if !subscriptionManager.hasAPNsToken {

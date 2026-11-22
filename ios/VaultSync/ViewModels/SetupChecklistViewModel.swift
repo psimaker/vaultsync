@@ -236,9 +236,9 @@ final class SetupChecklistViewModel {
         case .notSubscribed:
             return ChecklistItem(
                 requirement: .relayConfigured,
-                title: L10n.tr("Cloud Relay"),
-                description: L10n.tr("Cloud Relay is not enabled. Without it, incoming changes arrive when you open VaultSync."),
-                remediation: L10n.tr("Enable Cloud Relay on the Relay tab if you want your server to wake VaultSync when it has changes."),
+                title: L10n.tr("VaultSync Plus"),
+                description: L10n.tr("VaultSync Plus is not active. Without it, incoming changes arrive when you open VaultSync."),
+                remediation: L10n.tr("Get VaultSync Plus on the Plus tab if you want your server to wake VaultSync when it has changes."),
                 isOptional: true,
                 isComplete: false,
                 action: .openRelayTab
@@ -246,9 +246,9 @@ final class SetupChecklistViewModel {
         case .awaitingDelivery:
             return ChecklistItem(
                 requirement: .relayConfigured,
-                title: L10n.tr("Cloud Relay — finish server setup"),
+                title: L10n.tr("Background Sync — finish server setup"),
                 description: L10n.tr("You’re subscribed, but no recent wake-up has arrived. Make sure the vaultsync-notify helper is running on your server."),
-                remediation: L10n.tr("Set up the server helper from the Relay tab → Set Up Your Server."),
+                remediation: L10n.tr("Set up the server helper from the Plus tab → Set Up Your Server."),
                 isOptional: true,
                 isComplete: false,
                 action: .openRelayTab
@@ -256,7 +256,7 @@ final class SetupChecklistViewModel {
         case .delivering:
             return ChecklistItem(
                 requirement: .relayConfigured,
-                title: L10n.tr("Cloud Relay active"),
+                title: L10n.tr("Background Sync active"),
                 description: L10n.tr("Wake-ups are being delivered — incoming changes sync in the background, usually within moments."),
                 remediation: "",
                 isOptional: true,

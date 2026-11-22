@@ -1,7 +1,7 @@
 import StoreKit
 import SwiftUI
 
-/// The single canonical Cloud Relay subscription picker. Monthly is listed first
+/// The single canonical VaultSync Plus plan picker. Monthly is listed first
 /// (the low-commitment entry point — leading with the small price avoids the
 /// "annual sticker shock" that makes people reach for a full cloud-sync product
 /// instead); yearly follows, framed as savings and marked as the best value.
@@ -27,6 +27,7 @@ struct SubscribePlanPicker: View {
     /// falls back to the recommended yearly plan so the Subscribe button is
     /// never armed against an undefined plan.
     @State private var selectedPlanID: Product.ID?
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private var selectedProduct: Product? {
         let available = [subscriptionManager.monthlyProduct, subscriptionManager.yearlyProduct]
@@ -118,7 +119,7 @@ struct SubscribePlanPicker: View {
                         break
                     case .nothingToRestore:
                         alertTitle = L10n.tr("No Purchases Found")
-                        alertMessage = L10n.tr("No Cloud Relay subscription was found for this Apple Account. If you subscribed with a different account, sign in with it in the App Store and try again.")
+                        alertMessage = L10n.tr("No VaultSync Plus subscription was found for this Apple Account. If you subscribed with a different account, sign in with it in the App Store and try again.")
                         showAlert = true
                     case .foundButUnverified:
                         alertTitle = L10n.tr("Purchase Could Not Be Verified")
@@ -168,7 +169,7 @@ struct SubscribePlanPicker: View {
             VStack(alignment: .leading, spacing: VaultSpacing.xxs) {
                 Text(L10n.tr("Add your server first"))
                     .font(.headline)
-                Text(L10n.tr("Cloud Relay wakes a specific device. Pair the computer or server that hosts your vault on the Devices tab, then come back to subscribe."))
+                Text(L10n.tr("Background Sync wakes a specific device. Pair the computer or server that hosts your vault on the Devices tab, then come back to subscribe."))
                     .font(.subheadline)
                     .foregroundStyle(Color.vaultSecondaryLabel)
                     .fixedSize(horizontal: false, vertical: true)
@@ -190,7 +191,7 @@ struct SubscribePlanPicker: View {
             VStack(alignment: .leading, spacing: VaultSpacing.xxs) {
                 Text(L10n.tr("Waiting for approval"))
                     .font(.headline)
-                Text(L10n.tr("This purchase needs approval (Ask to Buy). Cloud Relay activates automatically once it is approved. If it was declined, you can simply subscribe again."))
+                Text(L10n.tr("This purchase needs approval (Ask to Buy). VaultSync Plus activates automatically once it is approved. If it was declined, you can simply subscribe again."))
                     .font(.subheadline)
                     .foregroundStyle(Color.vaultSecondaryLabel)
                     .fixedSize(horizontal: false, vertical: true)
@@ -216,12 +217,18 @@ struct SubscribePlanPicker: View {
     /// job), and nothing here starts a purchase (#70).
     private func planCard(product: Product, title: String, recommended: Bool) -> some View {
         let isSelected = selectedProduct?.id == product.id
+        // The savings tag sits beside the title, and below it once Dynamic
+        // Type reaches the accessibility sizes: side by side, the two broke
+        // each other into syllables (#352).
+        let titleRow = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: VaultSpacing.xs))
+            : AnyLayout(HStackLayout(spacing: VaultSpacing.s))
         return Button {
             selectedPlanID = product.id
         } label: {
             HStack(spacing: VaultSpacing.m) {
                 VStack(alignment: .leading, spacing: VaultSpacing.xs) {
-                    HStack(spacing: VaultSpacing.s) {
+                    titleRow {
                         Text(title)
                             .font(.headline)
                         if recommended, let savings = yearlySavingsText {
@@ -304,11 +311,7 @@ struct SubscribePlanPicker: View {
     private var yearlySavingsText: String? {
         guard let monthly = subscriptionManager.monthlyProduct,
               let yearly = subscriptionManager.yearlyProduct else { return nil }
-        let monthlyAnnual = monthly.price * 12
-        guard monthlyAnnual > 0 else { return nil }
-        let fraction = (monthlyAnnual - yearly.price) / monthlyAnnual
-        let percent = NSDecimalNumber(decimal: fraction * 100).intValue
-        guard percent > 0 else { return nil }
+        guard let percent = PlanSavings.yearlyPercent(monthly: monthly.price, yearly: yearly.price) else { return nil }
         return L10n.fmt("Save %d%%", percent)
     }
 
