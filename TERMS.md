@@ -94,11 +94,12 @@ entirely optional.
 - **Type:** Auto-renewable subscription, billed through your Apple Account
 - **Duration:** 1 month (renews monthly) or 1 year (renews yearly), as you choose
   at purchase
-- **What it does:** While subscribed, when files change on your home server a
-  silent push notification wakes VaultSync so that server-to-iPhone
-  synchronization happens promptly, without you having to open the app. The
-  relay transmits only an anonymous wake-up signal; it never receives the
-  contents, names, or metadata of your notes or files.
+- **What it does:** While subscribed, when files change on your home server,
+  VaultSync Plus sends your iPhone a wake-up, and VaultSync syncs in the
+  background once iOS delivers it — usually within moments. iOS decides when a
+  wake-up arrives, and after you force-quit the app, wake-ups resume once you
+  open it again. The relay transmits only an anonymous wake-up signal; it never
+  receives the contents, names, or metadata of your notes or files.
 - **Price:** The price is shown to you in the App Store and inside the app before
   you purchase, localized to your storefront and currency. From 1 December 2026,
   the price of a new subscription in the United States storefront is USD 2.99
