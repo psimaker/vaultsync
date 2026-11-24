@@ -66,7 +66,7 @@ Syncthing runs on a machine you keep on; VaultSync joins as a peer and syncs int
 1. **Install** VaultSync from the [App Store](https://apps.apple.com/de/app/vaultsync-for-obsidian/id6761845197).
 2. **Pair your server** — with a [VaultSync Hub](#-vaultsync-hub-one-link-no-web-ui), tap **Add Hub** and type the code it printed or scan its QR code. With your own Syncthing, scan its Device ID by QR (or paste it), then accept the connection in that Syncthing instance.
 3. **Sync your vault** — VaultSync detects your Obsidian vaults, connects the share, and runs the first sync. Open Obsidian; your notes are there.
-4. **(Optional)** Turn on **Background Sync** with VaultSync Plus for faster server→iPhone updates — see below.
+4. **(Optional)** Get **VaultSync Plus** on the **Plus** tab and set up Background Sync for faster server→iPhone updates — see below.
 
 ---
 

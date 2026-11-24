@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Effective date:** August 27, 2026
+**Effective date:** December 1, 2026
 
 VaultSync is designed to keep your data on your devices. This policy explains what information is — and isn't — collected.
 
