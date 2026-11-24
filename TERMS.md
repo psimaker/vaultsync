@@ -103,12 +103,12 @@ entirely optional.
   you purchase, localized to your storefront and currency. From 1 December 2026,
   the price of a new subscription in the United States storefront is USD 2.99
   per month or USD 19.99 per year; the price applicable to you is always the
-  price displayed at the time of purchase. A subscription that was already
-  running before 1 December 2026 is not affected by this change: it keeps
-  renewing at the price it had while it stays on the same plan. A switch to the
-  other plan, or a subscription started again after one has ended, may be
-  charged the price shown at that time. Your renewal price is always shown in
-  your Account Settings on the App Store.
+  price displayed at the time of purchase. These prices do not apply to the
+  renewals of a subscription that was already running before 1 December 2026
+  and stays on the same plan. A switch to the other plan, or a subscription
+  started again after one has ended, may be charged the price shown at that
+  time. Your renewal price is always shown in your Account Settings on the App
+  Store.
 
 **Auto-renewal terms:**
 
