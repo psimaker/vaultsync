@@ -46,15 +46,15 @@
         {
           "adHocOffers" : [],
           "codeOffers" : [],
-          "displayPrice" : "1.99",
+          "displayPrice" : "2.99",
           "familyShareable" : false,
           "groupNumber" : 2,
           "internalID" : "2002",
           "introductoryOffer" : null,
           "localizations" : [
             {
-              "description" : "Silent push wake-ups for faster server-to-iPhone sync.",
-              "displayName" : "Cloud Relay",
+              "description" : "Wake-ups from your server for faster sync",
+              "displayName" : "VaultSync Plus (Monthly)",
               "locale" : "en_US"
             }
           ],
@@ -67,15 +67,15 @@
         {
           "adHocOffers" : [],
           "codeOffers" : [],
-          "displayPrice" : "14.99",
+          "displayPrice" : "19.99",
           "familyShareable" : false,
           "groupNumber" : 1,
           "internalID" : "2003",
           "introductoryOffer" : null,
           "localizations" : [
             {
-              "description" : "Silent push wake-ups for faster server-to-iPhone sync. Best value, billed yearly.",
-              "displayName" : "Cloud Relay (Yearly)",
+              "description" : "Wake-ups from your server for faster sync",
+              "displayName" : "VaultSync Plus (Yearly)",
               "locale" : "en_US"
             }
           ],
