@@ -26,7 +26,7 @@ Only the **latest release** of each component receives security fixes. If you ar
 
 | Component | Supported version |
 |---|---|
-| VaultSync iOS app | Latest App Store release (currently 3.0.0) |
+| VaultSync iOS app | Latest App Store release (currently 3.0.1) |
 | VaultSync Hub (`vaultsync-hub`) | Latest `hub-v*` release (currently 0.3.1) |
 | VaultSync for Mac and Linux (`vaultsync` desktop agent) | Latest `desktop-v*` release (currently 0.3.0) |
 | `vaultsync-notify` server helper | Latest `notify-v*` release (currently 2.0.2) |
