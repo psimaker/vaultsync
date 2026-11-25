@@ -69,7 +69,7 @@ struct Issue210NoVaultsWarningTests {
     @Test("Empty, then a vault: a fresh read after the outcome retires the warning")
     func freshReadWithVaultsRetiresTheWarning() {
         let manager = makeManager(outcome: Self.outcome(.noFoldersConfigured))
-        #expect(backgroundIssue(manager)?.title == L10n.tr("Background Sync Found No Vaults"))
+        #expect(backgroundIssue(manager)?.title == L10n.tr("Background Run Found No Vaults"))
 
         manager._testApplyPolledFolderRead(
             json: Self.oneVaultJSON,
@@ -188,7 +188,7 @@ struct Issue210NoVaultsWarningTests {
         )
         let issue = backgroundIssue(manager)
         #expect(issue?.severity == .critical)
-        #expect(issue?.title == L10n.tr("Background Sync Could Not Start"))
+        #expect(issue?.title == L10n.tr("Background Run Could Not Start"))
     }
 
     @MainActor
@@ -366,7 +366,7 @@ struct Issue210NoVaultsWarningTests {
     func backgroundOutcomeDetails() {
         typealias Availability = BackgroundSyncService.FolderAvailability
         #expect(Availability.configured.noVaultsDetail == nil)
-        #expect(Availability.verifiedEmpty.noVaultsDetail == L10n.tr("No folders were available for background sync."))
+        #expect(Availability.verifiedEmpty.noVaultsDetail == L10n.tr("No folders were available for a background run."))
         #expect(Availability.engineStopped.noVaultsDetail == L10n.tr("The sync engine stopped before its vaults could be read."))
         #expect(Availability.unreadable.noVaultsDetail == L10n.tr("The sync engine's vault list could not be read."))
     }

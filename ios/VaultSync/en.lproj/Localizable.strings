@@ -12,12 +12,12 @@
 "App Refresh" = "App Refresh";
 "Applying…" = "Applying…";
 "Authentication Error" = "Authentication Error";
-"Background Sync Completed" = "Background Sync Completed";
-"Background Sync Could Not Access Obsidian" = "Background Sync Could Not Access Obsidian";
-"Background Sync Could Not Start" = "Background Sync Could Not Start";
-"Background Sync Failed" = "Background Sync Failed";
-"Background Sync Found No Vaults" = "Background Sync Found No Vaults";
-"Background Sync Timed Out" = "Background Sync Timed Out";
+"Background Run Completed" = "Background Run Completed";
+"Background Run Could Not Access Obsidian" = "Background Run Could Not Access Obsidian";
+"Background Run Could Not Start" = "Background Run Could Not Start";
+"Background Run Failed" = "Background Run Failed";
+"Background Run Found No Vaults" = "Background Run Found No Vaults";
+"Background Run Timed Out" = "Background Run Timed Out";
 "Camera Access Required" = "Camera Access Required";
 "Can't find the Obsidian folder?" = "Can't find the Obsidian folder?";
 "Cancel" = "Cancel";
@@ -25,16 +25,16 @@
 "Check folder sharing, connectivity, and permissions, then retry." = "Check folder sharing, connectivity, and permissions, then retry.";
 "Check internet connectivity and retry provisioning." = "Check internet connectivity and retry provisioning.";
 "Check your connection and retry." = "Check your connection and retry.";
-"Check your internet connection and try the relay health check again on the Relay tab." = "Check your internet connection and try the relay health check again on the Relay tab.";
-"Check your subscription status on the Relay tab and retry. If this persists, restart VaultSync." = "Check your subscription status on the Relay tab and retry. If this persists, restart VaultSync.";
+"Check your internet connection and try the relay health check again on the Plus tab." = "Check your internet connection and try the relay health check again on the Plus tab.";
+"Check your subscription status on the Plus tab and retry. If this persists, restart VaultSync." = "Check your subscription status on the Plus tab and retry. If this persists, restart VaultSync.";
 "Choose Vault" = "Choose Vault";
 "Choose Vault…" = "Choose Vault…";
 "Choose where \"%@\" syncs on this iPhone. The share keeps its name on your other devices." = "Choose where \"%@\" syncs on this iPhone. The share keeps its name on your other devices.";
 "Close and reopen VaultSync to restart syncing." = "Close and reopen VaultSync to restart syncing.";
-"Cloud Relay" = "Cloud Relay";
-"Cloud Relay active" = "Cloud Relay active";
-"Cloud Relay is not currently subscribed. Push-triggered wake-ups are disabled until the subscription is active." = "Cloud Relay is not currently subscribed. Push-triggered wake-ups are disabled until the subscription is active.";
-"Cloud Relay is not subscribed. Start a subscription first." = "Cloud Relay is not subscribed. Start a subscription first.";
+"VaultSync Plus" = "VaultSync Plus";
+"Background Sync active" = "Background Sync active";
+"VaultSync Plus is not currently active. Push-triggered wake-ups are disabled until the subscription is active." = "VaultSync Plus is not currently active. Push-triggered wake-ups are disabled until the subscription is active.";
+"VaultSync Plus is not active. Start a subscription first." = "VaultSync Plus is not active. Start a subscription first.";
 "Cloud Relay provisioning could not contact the relay backend." = "Cloud Relay provisioning could not contact the relay backend.";
 "Cloud Relay provisioning did not complete." = "Cloud Relay provisioning did not complete.";
 "Cloud Relay provisioning is temporarily rate limited." = "Cloud Relay provisioning is temporarily rate limited.";
@@ -163,7 +163,7 @@
 "onboarding.cta.finishLater" = "Finish Setup Later";
 "Only vaults without any notes yet can be linked to a share." = "Only vaults without any notes yet can be linked to a share.";
 "Open Settings" = "Open Settings";
-"Open the Relay tab" = "Open the Relay tab";
+"Open the Plus tab" = "Open the Plus tab";
 "Open VaultSync" = "Open VaultSync";
 "Open VaultSync once to restart Syncthing, then retry." = "Open VaultSync once to restart Syncthing, then retry.";
 "Open VaultSync to allow a longer foreground sync session." = "Open VaultSync to allow a longer foreground sync session.";
@@ -248,7 +248,7 @@
 "The target folder \"%@\" is already synced by another vault — the same folder, or one above or inside it. Choose a different folder, or remove the vault that syncs there first." = "The target folder \"%@\" is already synced by another vault — the same folder, or one above or inside it. Choose a different folder, or remove the vault that syncs there first.";
 "This share is set to sync into \"%@\", but that location now overlaps a folder another vault already syncs. Tap \"Choose Vault…\" on the share to pick a new location, or remove the vault that syncs there, then accept the share again." = "This share is set to sync into \"%@\", but that location now overlaps a folder another vault already syncs. Tap \"Choose Vault…\" on the share to pick a new location, or remove the vault that syncs there, then accept the share again.";
 "Up to Date" = "Up to Date";
-"View Cloud Relay" = "View Cloud Relay";
+"View VaultSync Plus" = "View VaultSync Plus";
 "XXXXXXX-XXXXXXX-..." = "XXXXXXX-XXXXXXX-...";
 "Retry APNs Registration" = "Retry APNs Registration";
 "Retry Provisioning" = "Retry Provisioning";
@@ -296,7 +296,7 @@
 "Syncthing no longer has this folder configured." = "Syncthing no longer has this folder configured.";
 "Terms of Use" = "Terms of Use";
 "The device will be disconnected and removed from all shared folders." = "The device will be disconnected and removed from all shared folders.";
-"The embedded Syncthing bridge did not start for a background sync." = "The embedded Syncthing bridge did not start for a background sync.";
+"The embedded Syncthing bridge did not start for a background run." = "The embedded Syncthing bridge did not start for a background run.";
 "The file '%@' was kept as your local version. The other device's version was discarded." = "The file '%@' was kept as your local version. The other device's version was discarded.";
 "The file '%@' was overwritten with the version from the other device." = "The file '%@' was overwritten with the version from the other device.";
 "The folder path no longer exists%@." = "The folder path no longer exists%@.";
@@ -381,7 +381,7 @@
 "VaultSync cannot access your local Obsidian folder." = "VaultSync cannot access your local Obsidian folder.";
 "Connect your Obsidian folder from the VaultSync home screen." = "Connect your Obsidian folder from the VaultSync home screen.";
 "Computer or server added" = "Computer or server added";
-"Your first sync is done. When your server has changes, Cloud Relay sends this iPhone a wake-up, and VaultSync syncs in the background once iOS delivers it — usually within moments. iOS decides when a wake-up arrives, and after you force-quit the app, wake-ups resume once you open it again." = "Your first sync is done. When your server has changes, Cloud Relay sends this iPhone a wake-up, and VaultSync syncs in the background once iOS delivers it — usually within moments. iOS decides when a wake-up arrives, and after you force-quit the app, wake-ups resume once you open it again.";
+"Your first sync is done. When your server has changes, VaultSync Plus sends this iPhone a wake-up, and VaultSync syncs in the background once iOS delivers it — usually within moments. iOS decides when a wake-up arrives, and after you force-quit the app, wake-ups resume once you open it again." = "Your first sync is done. When your server has changes, VaultSync Plus sends this iPhone a wake-up, and VaultSync syncs in the background once iOS delivers it — usually within moments. iOS decides when a wake-up arrives, and after you force-quit the app, wake-ups resume once you open it again.";
 "Your iPhone is paired with at least one Syncthing device." = "Your iPhone is paired with at least one Syncthing device.";
 "Your iPhone is not paired with a Syncthing device yet." = "Your iPhone is not paired with a Syncthing device yet.";
 "Add your computer or server from the Devices section on the home screen." = "Add your computer or server from the Devices section on the home screen.";
@@ -453,7 +453,7 @@
 /* Issue #10 — conflict-notifications toggle (Settings) */
 "Notifications" = "Notifications";
 "Conflict Notifications" = "Conflict Notifications";
-"Show a banner when sync conflicts are detected. Turning this off does not affect Cloud Relay or background sync — your vault keeps syncing." = "Show a banner when sync conflicts are detected. Turning this off does not affect Cloud Relay or background sync — your vault keeps syncing.";
+"Show a banner when sync conflicts are detected. Turning this off does not affect syncing in the background — your vault keeps syncing." = "Show a banner when sync conflicts are detected. Turning this off does not affect syncing in the background — your vault keeps syncing.";
 
 /* Issue #10 — relay/alert decoupling (Relay Diagnostics) */
 "Alert Banners" = "Alert Banners";
@@ -465,10 +465,9 @@
 "APNs registration failed. Check your internet connection and retry registration. Silent push does not require notification banners to be enabled." = "APNs registration failed. Check your internet connection and retry registration. Silent push does not require notification banners to be enabled.";
 
 /* Issue #10 — background-sync reliability (error-settled outcome) */
-"Background sync settled with at least one folder in an error state." = "Background sync settled with at least one folder in an error state.";
+"The background run settled with at least one folder in an error state." = "The background run settled with at least one folder in an error state.";
 
 /* Issue #10 — relay reachable (vs delivering) */
-"Cloud Relay looks reachable" = "Cloud Relay looks reachable";
 
 /* Subscription period units */
 "month" = "month";
@@ -490,8 +489,6 @@
 "Your contribution means a lot and directly supports VaultSync development. Thank you!" = "Your contribution means a lot and directly supports VaultSync development. Thank you!";
 "VaultSync is an independent, open-source app (MPL-2.0). A one-time contribution keeps it independent, ad-free, and moving forward — it unlocks nothing, and the app stays fully functional without it." = "VaultSync is an independent, open-source app (MPL-2.0). A one-time contribution keeps it independent, ad-free, and moving forward — it unlocks nothing, and the app stays fully functional without it.";
 /* Cloud Relay price (localized via StoreKit) */
-"Cloud Relay — %@" = "Cloud Relay — %@";
-"Cloud Relay subscription" = "Cloud Relay subscription";
 
 /* Issue #10 pre-merge polish — added missing localization keys */
 "Not available" = "Not available";
@@ -519,14 +516,14 @@
 "%@ connected" = "%@ connected";
 "%@ disconnected" = "%@ disconnected";
 "%d%% complete" = "%d%% complete";
-"Background sync completed and reached idle." = "Background sync completed and reached idle.";
-"Background sync did not reach an idle folder state before the iOS deadline." = "Background sync did not reach an idle folder state before the iOS deadline.";
-"Background sync ended with an unexpected failure." = "Background sync ended with an unexpected failure.";
-"Background sync ran, but folders were already idle." = "Background sync ran, but folders were already idle.";
+"The background run completed and reached idle." = "The background run completed and reached idle.";
+"The background run did not reach an idle folder state before the iOS deadline." = "The background run did not reach an idle folder state before the iOS deadline.";
+"The background run ended with an unexpected failure." = "The background run ended with an unexpected failure.";
+"The background run found the folders already idle." = "The background run found the folders already idle.";
 "Forced silent-push restart failed." = "Forced silent-push restart failed.";
 "No Syncthing folders were available to sync in the background." = "No Syncthing folders were available to sync in the background.";
 "No folders were available after forced silent-push restart." = "No folders were available after forced silent-push restart.";
-"No folders were available for background sync." = "No folders were available for background sync.";
+"No folders were available for a background run." = "No folders were available for a background run.";
 "No security-scoped bookmark access was available." = "No security-scoped bookmark access was available.";
 "If this iPhone has no vault yet, accept or create a shared vault. If your vaults are there, open VaultSync — this goes away once it lists them." = "If this iPhone has no vault yet, accept or create a shared vault. If your vaults are there, open VaultSync — this goes away once it lists them.";
 "Retry from the app and review relay/background diagnostics in Settings." = "Retry from the app and review relay/background diagnostics in Settings.";
@@ -541,15 +538,15 @@
 "relay network: %@" = "relay network: %@";
 
 /* Cloud Relay activation (2026-05-31): honest server-setup + conversion */
-"Cloud Relay is not enabled. Without it, incoming changes arrive when you open VaultSync." = "Cloud Relay is not enabled. Without it, incoming changes arrive when you open VaultSync.";
-"Enable Cloud Relay on the Relay tab if you want your server to wake VaultSync when it has changes." = "Enable Cloud Relay on the Relay tab if you want your server to wake VaultSync when it has changes.";
-"Cloud Relay — finish server setup" = "Cloud Relay — finish server setup";
+"VaultSync Plus is not active. Without it, incoming changes arrive when you open VaultSync." = "VaultSync Plus is not active. Without it, incoming changes arrive when you open VaultSync.";
+"Get VaultSync Plus on the Plus tab if you want your server to wake VaultSync when it has changes." = "Get VaultSync Plus on the Plus tab if you want your server to wake VaultSync when it has changes.";
+"Background Sync — finish server setup" = "Background Sync — finish server setup";
 "You’re subscribed, but no recent wake-up has arrived. Make sure the vaultsync-notify helper is running on your server." = "You’re subscribed, but no recent wake-up has arrived. Make sure the vaultsync-notify helper is running on your server.";
-"Set up the server helper from the Relay tab → Set Up Your Server." = "Set up the server helper from the Relay tab → Set Up Your Server.";
+"Set up the server helper from the Plus tab → Set Up Your Server." = "Set up the server helper from the Plus tab → Set Up Your Server.";
 "Wake-ups are being delivered — incoming changes sync in the background, usually within moments." = "Wake-ups are being delivered — incoming changes sync in the background, usually within moments.";
 "Your server helper is running — wake-ups are being delivered." = "Your server helper is running — wake-ups are being delivered.";
 "Why this step" = "Why this step";
-"Cloud Relay needs a small helper on your server. It watches Syncthing for changes and sends VaultSync a wake-up signal — it never sees your notes. Without it, the subscription has nothing to wake the app with." = "Cloud Relay needs a small helper on your server. It watches Syncthing for changes and sends VaultSync a wake-up signal — it never sees your notes. Without it, the subscription has nothing to wake the app with.";
+"Background Sync needs a small helper on your server. It watches Syncthing for changes and sends VaultSync a wake-up signal — it never sees your notes. Without it, the subscription has nothing to wake the app with." = "Background Sync needs a small helper on your server. It watches Syncthing for changes and sends VaultSync a wake-up signal — it never sees your notes. Without it, the subscription has nothing to wake the app with.";
 "Copy Command" = "Copy Command";
 "Full setup guide (Docker Compose, prebuilt binaries, NAS notes)" = "Full setup guide (Docker Compose, prebuilt binaries, NAS notes)";
 "Prefer Docker Compose, a NAS package, or a plain binary? The full guide covers them all." = "Prefer Docker Compose, a NAS package, or a plain binary? The full guide covers them all.";
@@ -557,14 +554,14 @@
 "Server setup command" = "Server setup command";
 "Installer command" = "Installer command";
 "One step — run this on your server" = "One step — run this on your server";
-"That’s the whole setup — nothing to edit, no API key to copy. The installer finds your Syncthing config, sets the right permissions, and starts the helper. The helper then wakes this iPhone once on its own, and VaultSync flips to “Cloud Relay active” as soon as that first wake-up arrives. Keep it running on a machine that stays on (server or NAS)." = "That’s the whole setup — nothing to edit, no API key to copy. The installer finds your Syncthing config, sets the right permissions, and starts the helper. The helper then wakes this iPhone once on its own, and VaultSync flips to “Cloud Relay active” as soon as that first wake-up arrives. Keep it running on a machine that stays on (server or NAS).";
+"That’s the whole setup — nothing to edit, no API key to copy. The installer finds your Syncthing config, sets the right permissions, and starts the helper. The helper then wakes this iPhone once on its own, and VaultSync flips to “Background Sync active” as soon as that first wake-up arrives. Keep it running on a machine that stays on (server or NAS)." = "That’s the whole setup — nothing to edit, no API key to copy. The installer finds your Syncthing config, sets the right permissions, and starts the helper. The helper then wakes this iPhone once on its own, and VaultSync flips to “Background Sync active” as soon as that first wake-up arrives. Keep it running on a machine that stays on (server or NAS).";
 "Manual & advanced setup" = "Manual & advanced setup";
 "The installer is open source — add --dry-run to preview every action without changing anything. Prefer to run the container yourself? Use this command:" = "The installer is open source — add --dry-run to preview every action without changing anything. Prefer to run the container yourself? Use this command:";
 "Last wake-up" = "Last wake-up";
 "Auto-renews until canceled. Cancel anytime in Settings → Subscriptions." = "Auto-renews until canceled. Cancel anytime in Settings → Subscriptions.";
 "Cancel anytime in Settings → Subscriptions" = "Cancel anytime in Settings → Subscriptions";
 "Get faster updates" = "Get faster updates";
-"Turn on Cloud Relay" = "Turn on Cloud Relay";
+"With VaultSync Plus" = "With VaultSync Plus";
 
 /* Redesign (Vault OS) strings — added in branch redesign/vault-os-foundation */
 "%1$@ — %2$@" = "%1$@ — %2$@";
@@ -572,7 +569,7 @@
 "(%d%%)" = "(%d%%)";
 "Add your server first" = "Add your server first";
 "Best value" = "Best value";
-"Cloud Relay wakes a specific device. Pair the computer or server that hosts your vault on the Devices tab, then come back to subscribe." = "Cloud Relay wakes a specific device. Pair the computer or server that hosts your vault on the Devices tab, then come back to subscribe.";
+"Background Sync wakes a specific device. Pair the computer or server that hosts your vault on the Devices tab, then come back to subscribe." = "Background Sync wakes a specific device. Pair the computer or server that hosts your vault on the Devices tab, then come back to subscribe.";
 "Connect your Obsidian folder" = "Connect your Obsidian folder";
 "Double tap to copy" = "Double tap to copy";
 "Give VaultSync one-time access to your Obsidian folder so it can sync your notes. In the picker, tap Browse at the bottom, then \"On My iPhone\" → \"Obsidian\". That folder appears once Obsidian holds a vault on this iPhone: if you have none, create one in Obsidian first, with \"Store in iCloud\" turned off. If two folders there are named \"Obsidian\", Obsidian's own is the one that holds the vault you created in Obsidian on this iPhone." = "Give VaultSync one-time access to your Obsidian folder so it can sync your notes. In the picker, tap Browse at the bottom, then \"On My iPhone\" → \"Obsidian\". That folder appears once Obsidian holds a vault on this iPhone: if you have none, create one in Obsidian first, with \"Store in iCloud\" turned off. If two folders there are named \"Obsidian\", Obsidian's own is the one that holds the vault you created in Obsidian on this iPhone.";
@@ -583,8 +580,8 @@
 "Manage" = "Manage";
 "Monthly" = "Monthly";
 "One step left to activate" = "One step left to activate";
-"Optional: turn on Cloud Relay later for faster updates — you’ll find it on the Relay tab." = "Optional: turn on Cloud Relay later for faster updates — you’ll find it on the Relay tab.";
-"Relay" = "Relay";
+"Optional: get VaultSync Plus later for faster updates — you’ll find it on the Plus tab." = "Optional: get VaultSync Plus later for faster updates — you’ll find it on the Plus tab.";
+"Plus" = "Plus";
 "Relay health & diagnostics" = "Relay health & diagnostics";
 "One step left: run a single line on your server and it starts waking this iPhone. The helper only sends a wake-up — it never sees your notes." = "One step left: run a single line on your server and it starts waking this iPhone. The helper only sends a wake-up — it never sees your notes.";
 "Save %d%%" = "Save %d%%";
@@ -596,10 +593,9 @@
 "Wake-ups are being delivered — changes from your other devices arrive instantly." = "Wake-ups are being delivered — changes from your other devices arrive instantly.";
 "Yearly" = "Yearly";
 "Your local version is kept, and the other device’s version is added under a new name. Nothing is discarded." = "Your local version is kept, and the other device’s version is added under a new name. Nothing is discarded.";
-"Your notes never touch our servers. When your server has changes, Cloud Relay sends a tiny wake-up, and VaultSync syncs in the background once iOS delivers it — usually within moments. iOS decides when a wake-up arrives, and after you force-quit the app, wake-ups resume once you open it again." = "Your notes never touch our servers. When your server has changes, Cloud Relay sends a tiny wake-up, and VaultSync syncs in the background once iOS delivers it — usually within moments. iOS decides when a wake-up arrives, and after you force-quit the app, wake-ups resume once you open it again.";
+"Your notes never touch our servers. When your server has changes, Background Sync sends a tiny wake-up, and VaultSync syncs in the background once iOS delivers it — usually within moments. iOS decides when a wake-up arrives, and after you force-quit the app, wake-ups resume once you open it again." = "Your notes never touch our servers. When your server has changes, Background Sync sends a tiny wake-up, and VaultSync syncs in the background once iOS delivers it — usually within moments. iOS decides when a wake-up arrives, and after you force-quit the app, wake-ups resume once you open it again.";
 "One-step setup: a single line on your server." = "One-step setup: a single line on your server.";
-"Your vault already syncs free and peer-to-peer. Relay only removes the “open the app to sync” wait — it isn’t cloud storage." = "Your vault already syncs free and peer-to-peer. Relay only removes the “open the app to sync” wait — it isn’t cloud storage.";
-"You’re subscribed, but no wake-up has arrived yet. Cloud Relay only delivers once the helper is running on your server." = "You’re subscribed, but no wake-up has arrived yet. Cloud Relay only delivers once the helper is running on your server.";
+"Your vault already syncs free and peer-to-peer. VaultSync Plus only removes the “open the app to sync” wait — it isn’t cloud storage." = "Your vault already syncs free and peer-to-peer. VaultSync Plus only removes the “open the app to sync” wait — it isn’t cloud storage.";
 
 /* Folder path resilience (#25) */
 "Remove Vault" = "Remove Vault";
@@ -617,10 +613,10 @@
 
 /* Cloud Relay activation (lab → wave 1; es/zh-Hans need a native review) */
 "Could not accept share '%@'.\n\n%@" = "Could not accept share '%@'.\n\n%@";
-"Finish activating Cloud Relay" = "Finish activating Cloud Relay";
+"Finish setting up Background Sync" = "Finish setting up Background Sync";
 "You’re subscribed, but your server has never woken this iPhone. One step finishes setup." = "You’re subscribed, but your server has never woken this iPhone. One step finishes setup.";
-"Opens Cloud Relay setup." = "Opens Cloud Relay setup.";
-"Cloud Relay went quiet" = "Cloud Relay went quiet";
+"Opens Background Sync setup." = "Opens Background Sync setup.";
+"Background Sync went quiet" = "Background Sync went quiet";
 "Your server just reached this iPhone. Incoming changes now sync the moment they happen." = "Your server just reached this iPhone. Incoming changes now sync the moment they happen.";
 "Great" = "Great";
 "Not active yet" = "Not active yet";
@@ -700,10 +696,10 @@
 "The subscription plans could not be loaded. This is usually a brief network or App Store hiccup." = "The subscription plans could not be loaded. This is usually a brief network or App Store hiccup.";
 "Try Again" = "Try Again";
 "Waiting for approval" = "Waiting for approval";
-"This purchase needs approval (Ask to Buy). Cloud Relay activates automatically once it is approved. If it was declined, you can simply subscribe again." = "This purchase needs approval (Ask to Buy). Cloud Relay activates automatically once it is approved. If it was declined, you can simply subscribe again.";
+"This purchase needs approval (Ask to Buy). VaultSync Plus activates automatically once it is approved. If it was declined, you can simply subscribe again." = "This purchase needs approval (Ask to Buy). VaultSync Plus activates automatically once it is approved. If it was declined, you can simply subscribe again.";
 "Dismiss" = "Dismiss";
 "No Purchases Found" = "No Purchases Found";
-"No Cloud Relay subscription was found for this Apple Account. If you subscribed with a different account, sign in with it in the App Store and try again." = "No Cloud Relay subscription was found for this Apple Account. If you subscribed with a different account, sign in with it in the App Store and try again.";
+"No VaultSync Plus subscription was found for this Apple Account. If you subscribed with a different account, sign in with it in the App Store and try again." = "No VaultSync Plus subscription was found for this Apple Account. If you subscribed with a different account, sign in with it in the App Store and try again.";
 "Purchase Could Not Be Verified" = "Purchase Could Not Be Verified";
 "Restore Failed" = "Restore Failed";
 "The App Store could not be reached to restore purchases. Check your internet connection and try again." = "The App Store could not be reached to restore purchases. Check your internet connection and try again.";
@@ -729,7 +725,7 @@
 "Checking Relay status" = "Checking Relay status";
 "Checking whether your server has reached the Relay." = "Checking whether your server has reached the Relay.";
 "Last signal observed by Relay" = "Last signal observed by Relay";
-"Last background sync start" = "Last background sync start";
+"Last background run start" = "Last background run start";
 "Last observed sync progress" = "Last observed sync progress";
 "No recent activity" = "No recent activity";
 "No server devices available yet." = "No server devices available yet.";
@@ -938,7 +934,7 @@
 "Sync filters are unavailable" = "Sync filters are unavailable";
 "The filter file for this vault could not be read. Make sure the vault is still accessible, then try again." = "The filter file for this vault could not be read. Make sure the vault is still accessible, then try again.";
 "Sync Engine Still Stopping" = "Sync Engine Still Stopping";
-"A background sync is still shutting the engine down." = "A background sync is still shutting the engine down.";
+"A background run is still shutting the engine down." = "A background run is still shutting the engine down.";
 "Wait a moment, then reopen VaultSync or pull to refresh." = "Wait a moment, then reopen VaultSync or pull to refresh.";
 "Too Large to Compare" = "Too Large to Compare";
 "This note is %@ — above the %@ VaultSync loads for a comparison. Compare the versions in Obsidian, then choose which one to keep below." = "This note is %@ — above the %@ VaultSync loads for a comparison. Compare the versions in Obsidian, then choose which one to keep below.";

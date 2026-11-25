@@ -71,7 +71,7 @@ How to read `--doctor`: a relay rate-limit (HTTP 429) counts as **success** — 
 
 The doctor also reports **peer state**, always as a `WARN` (the check name, then an indented reason) and never as a failure — a device that is off or away is everyday life, not a setup error, so the exit code stays 0. `WARN Syncthing remote device connected` means no remote device is connected right now (or none is paired at all): open the Syncthing Web UI and check the device is added, resumed, and online on both sides. `WARN Syncthing folders shared with connected devices` means devices are connected but no folder is shared with any of them, so changes on the server cannot reach them: open the Syncthing Web UI, folder → Edit → Sharing, tick the device, then accept the share on the other device. If the doctor cannot read peer state at all (an older Syncthing, a momentary API error), the same checks print a `could not evaluate` WARN instead of failing. `--healthcheck` deliberately skips peer state — a legitimately offline peer never makes the container unhealthy.
 
-In the app: **Cloud Relay** tab → **Relay health & diagnostics** → **Check Relay Status**. A green health check means the relay is *reachable*. **Last signal observed by Relay** confirms that the relay accepted a server signal; only **Last Wake-up Received** confirms delivery to this iPhone.
+In the app: **Plus** tab (**Relay** before 3.0.1) → **Relay health & diagnostics** → **Check Relay Status**. A green health check means the relay is *reachable*. **Last signal observed by Relay** confirms that the relay accepted a server signal; only **Last Wake-up Received** confirms delivery to this iPhone.
 
 ---
 
@@ -118,7 +118,7 @@ In the app: **Cloud Relay** tab → **Relay health & diagnostics** → **Check R
    ```bash
    curl -fsSL https://relay.vaultsync.eu/api/v1/health
    ```
-5. In the app: **Cloud Relay** tab → **Relay health & diagnostics** → **Check Relay Status**.
+5. In the app: **Plus** tab (**Relay** before 3.0.1) → **Relay health & diagnostics** → **Check Relay Status**.
 6. Once reachable, trigger a file change and confirm **Last signal observed by Relay** updates, then check **Last Wake-up Received** separately for delivery to this iPhone.
 
 ---
@@ -160,7 +160,7 @@ you're subscribed but wake-ups never arrive; or per-device provisioning says
    is already current but provisioning still fails, include both versions in a
    bug report: a relay/app provisioning-contract mismatch needs an app or hosted
    relay fix, not a homeserver change.
-3. Open **Cloud Relay** tab → **Relay health & diagnostics**.
+3. Open **Plus** tab (**Relay** before 3.0.1) → **Relay health & diagnostics**.
 4. Tap **Retry APNs Registration** and confirm an **APNs Token** appears.
 5. Tap **Retry Provisioning** to rebind the token to your device IDs (shown while subscribed).
 6. Trigger a file change on your server and verify **Last signal observed by Relay** updates, then check **Last Wake-up Received** separately.

@@ -60,7 +60,7 @@ struct RelayServerSetupView: View {
             }
 
             Section {
-                Text(L10n.tr("Cloud Relay needs a small helper on your server. It watches Syncthing for changes and sends VaultSync a wake-up signal — it never sees your notes. Without it, the subscription has nothing to wake the app with."))
+                Text(L10n.tr("Background Sync needs a small helper on your server. It watches Syncthing for changes and sends VaultSync a wake-up signal — it never sees your notes. Without it, the subscription has nothing to wake the app with."))
                     .font(.subheadline)
             } header: {
                 Text(L10n.tr("Why this step"))
@@ -72,7 +72,7 @@ struct RelayServerSetupView: View {
             } header: {
                 Text(L10n.tr("One step — run this on your server"))
             } footer: {
-                Text(L10n.tr("That’s the whole setup — nothing to edit, no API key to copy. The installer finds your Syncthing config, sets the right permissions, and starts the helper. The helper then wakes this iPhone once on its own, and VaultSync flips to “Cloud Relay active” as soon as that first wake-up arrives. Keep it running on a machine that stays on (server or NAS)."))
+                Text(L10n.tr("That’s the whole setup — nothing to edit, no API key to copy. The installer finds your Syncthing config, sets the right permissions, and starts the helper. The helper then wakes this iPhone once on its own, and VaultSync flips to “Background Sync active” as soon as that first wake-up arrives. Keep it running on a machine that stays on (server or NAS)."))
             }
 
             // The manual path stays collapsed by default: the one-liner above is

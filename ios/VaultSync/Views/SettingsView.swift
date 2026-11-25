@@ -179,7 +179,7 @@ struct SettingsView: View {
             .padding(.horizontal, VaultSpacing.l)
             .frame(minHeight: VaultMetrics.rowMinHeight)
         }
-        footnote(L10n.tr("Show a banner when sync conflicts are detected. Turning this off does not affect Cloud Relay or background sync — your vault keeps syncing."))
+        footnote(L10n.tr("Show a banner when sync conflicts are detected. Turning this off does not affect syncing in the background — your vault keeps syncing."))
     }
 
     // MARK: - About Section
