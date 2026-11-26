@@ -329,6 +329,26 @@ func TestIssue276_ABinThatIsTheirOwnLinkIsNoTraceOfARemoval(t *testing.T) {
 	}
 }
 
+// serviceLogOf runs f with os.Stderr — where the service logs — written to
+// a file, and returns what f wrote there.
+func serviceLogOf(t *testing.T, f func()) string {
+	t.Helper()
+	file, err := os.CreateTemp(t.TempDir(), "stderr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	saved := os.Stderr
+	os.Stderr = file
+	defer func() { os.Stderr = saved }()
+	f()
+	data, err := os.ReadFile(file.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
 // stateHere makes a's folder one row of the table below (#276): the record
 // — none, one naming no engine, or one naming the engine whose program
 // changed since, so that setup and run would install it again — the
@@ -451,6 +471,21 @@ func TestIssue276_TheStateDecidesSetupRunAndStatus(t *testing.T) {
 					t.Fatalf("run: %v", err)
 				}
 				unchangedFolder(t, "a refused run", before, snapshot(t, a.lay.Base))
+				// As the service it parks, and its log says the state in a
+				// fixed line with no path: the service log carries none.
+				stderrIsTerminal = func() bool { return false }
+				parked, stop := context.WithTimeout(context.Background(), 300*time.Millisecond)
+				logged := serviceLogOf(t, func() {
+					if err := a.run(parked, nil); err != nil {
+						t.Errorf("the service did not park: %v", err)
+					}
+				})
+				stop()
+				serviceMode, stderrIsTerminal = false, func() bool { return true }
+				if !strings.Contains(logged, c.says) || strings.Contains(logged, a.home) || strings.Contains(logged, tildePath(a.home, a.lay.Home)) {
+					t.Fatalf("the service's log line:\n%s", logged)
+				}
+				unchangedFolder(t, "a parked service", before, snapshot(t, a.lay.Base))
 			}
 
 			a.out = &bytes.Buffer{}
