@@ -166,13 +166,15 @@ release_env_edit() {
 # leaves in COMPOSE_OVERRIDE — so a pull given them with -f reads what the
 # later `up -d` reads (#368). Not when COMPOSE_FILE lists the files (in the
 # environment, or any line of .env that names it — an .env setup cannot
-# read counts, Compose may read it through sudo), when COMPOSE_ENV_FILES
-# points Compose at other env files, when another base file lies beside it
-# (Compose may prefer it), or when more than one override does.
+# read counts, Compose may read it through sudo), when COMPOSE_ENV_FILES or
+# COMPOSE_DISABLE_ENV_FILE has Compose read other env files than .env, when
+# another base file lies beside it (Compose may prefer it), or when more
+# than one override does.
 compose_files_nameable() {
 	COMPOSE_OVERRIDE=""
 	[ -z "${COMPOSE_FILE:-}" ] || return 1
 	[ -z "${COMPOSE_ENV_FILES:-}" ] || return 1
+	[ -z "${COMPOSE_DISABLE_ENV_FILE:-}" ] || return 1
 	env_grep=0
 	grep -qs 'COMPOSE_FILE' "$1/.env" || env_grep=$?
 	[ "$env_grep" -eq 1 ] || return 1
@@ -221,7 +223,7 @@ interrupted_hub_edits() {
 	fi
 	release_env_edit
 	if [ -n "$interrupted_note" ]; then
-		printf '%s\n  Run the setup again, or update by hand (docs/hub.md → Update the Hub).\n' "$interrupted_note" >&2 || true
+		printf '%s\n  Run the setup again: it brings the whole stack (docs/hub.md → Update the Hub).\n' "$interrupted_note" >&2 || true
 	fi
 	exit "$1"
 }
@@ -288,6 +290,12 @@ offer_newer_hub_image() {
 	esac
 	new_ver=${HUB_IMAGE#"$official"}
 	is_release "$new_ver" || return 0
+	# Compose told to read other env files reads neither the .env setup
+	# would edit nor the staged one the pull would read (#368).
+	if [ -n "${COMPOSE_ENV_FILES:-}" ] || [ -n "${COMPOSE_DISABLE_ENV_FILE:-}" ]; then
+		info "Compose reads other env files than $env_file here (COMPOSE_ENV_FILES or COMPOSE_DISABLE_ENV_FILE), so setup does not move the Hub's image. Set VAULTSYNC_HUB_IMAGE=$HUB_IMAGE where Compose reads it, then run docker compose pull && docker compose up -d."
+		return 0
+	fi
 	if [ "$DRY_RUN" = 1 ]; then
 		offer_newer_hub_image_locked "$env_file"
 		return 0
@@ -818,7 +826,7 @@ write_hub_files() {
 	elif [ -f "$env_file" ] && [ -f "$compose" ]; then
 		hold_hub_edits
 		if ! COMPOSE_STAGED=$(mktemp "$compose.setup.XXXXXX") || ! cp -p "$compose" "$COMPOSE_STAGED"; then
-			fail "Could not update $compose; nothing was changed. Run the setup again, or update by hand (docs/hub.md → Update the Hub)."
+			fail "Could not update $compose; nothing was changed. Run the setup again: it brings the whole stack (docs/hub.md → Update the Hub)."
 		fi
 		compose="$COMPOSE_STAGED"
 	fi
@@ -958,10 +966,10 @@ install_staged_hub_files() {
 	if [ -n "$COMPOSE_STAGED" ]; then
 		if [ -L "$compose" ]; then
 			cat "$COMPOSE_STAGED" >"$compose" ||
-				fail "Could not update $compose through its link; the images are pulled, .env is unchanged. Update by hand (docs/hub.md → Update the Hub)."
+				fail "Could not update $compose through its link; the images are pulled, .env is unchanged. Run the setup again once the link can be written (docs/hub.md → Update the Hub)."
 		else
 			mv -f "$COMPOSE_STAGED" "$compose" ||
-				fail "Could not update $compose; nothing was changed. Run the setup again, or update by hand (docs/hub.md → Update the Hub)."
+				fail "Could not update $compose; nothing was changed. Run the setup again: it brings the whole stack (docs/hub.md → Update the Hub)."
 			COMPOSE_STAGED=""
 		fi
 	fi
@@ -1052,7 +1060,7 @@ setup_hub() {
 			else
 				info "  $HUB_DIR/.env is as it was, and so are the Hub's containers. docker-compose.yml was written before the pull and may name images this host has not downloaded."
 			fi
-			info "  Run the setup again once the registry can be reached, or update by hand (docs/hub.md → Update the Hub)."
+			info "  Run the setup again once the registry can be reached: it brings the whole stack (docs/hub.md → Update the Hub)."
 			fail "The update stopped before the stack was restarted."
 		fi
 		fail "The images could not be pulled (the message above says why). Run the setup again once the registry can be reached."

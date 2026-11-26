@@ -1098,6 +1098,32 @@ unnameable "a compose.yaml beside it" "printf 'services: {}\\n' >'$EXISTING/comp
 unnameable "COMPOSE_FILE in .env" "printf 'COMPOSE_FILE=docker-compose.yml:extra.yml\\n' >>'$EXISTING/.env'"
 unnameable "COMPOSE_FILE in the environment" ":" COMPOSE_FILE=docker-compose.yml
 unnameable "COMPOSE_ENV_FILES in the environment" ":" COMPOSE_ENV_FILES=/elsewhere/hub.env
+unnameable "COMPOSE_DISABLE_ENV_FILE in the environment" ":" COMPOSE_DISABLE_ENV_FILE=1
+
+# Compose told to read other env files reads neither .env nor a staged one:
+# setup does not offer the image move there, and the pull reads what the
+# later `up -d` reads.
+other_env_files() { # NAME ENV=VALUE
+	existing_compose_fixture
+	plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
+	cp "$EXISTING/.env" "$SANDBOX/results/env-before"
+	out=$(existing_update "$2") || fail "$1: an update exited non-zero:
+$out"
+	printf '%s\n' "$out" | grep -q "so setup does not move the Hub's image" || fail "$1: setup does not say why it leaves the image:
+$out"
+	if printf '%s\n' "$out" | grep -q "Move it to"; then
+		fail "$1: the move was offered:
+$out"
+	fi
+	cmp -s "$EXISTING/.env" "$SANDBOX/results/env-before" || fail "$1: .env was changed"
+	if grep " pull --quiet" "$COMPOSE_LOG" | grep -q -e " -f " -e "--env-file"; then
+		fail "$1: the pull read other files than the later up -d:
+$(cat "$COMPOSE_LOG")"
+	fi
+	pass "$1: no image move is offered, and the pull reads what up -d reads (#368)"
+}
+other_env_files "COMPOSE_ENV_FILES" COMPOSE_ENV_FILES=/elsewhere/hub.env
+other_env_files "COMPOSE_DISABLE_ENV_FILE" COMPOSE_DISABLE_ENV_FILE=1
 
 # An .env setup cannot read may name COMPOSE_FILE for a Compose run through
 # sudo: setup cannot name the files. (Root reads any file: non-root only.)
