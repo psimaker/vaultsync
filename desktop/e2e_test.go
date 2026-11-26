@@ -255,7 +255,7 @@ func TestIssue175_E2EFreshHomeInstallsPairsAndSyncs(t *testing.T) {
 		t.Fatal(err)
 	}
 	in.baseURL = serveArchive(t, in.pin.archive, data).URL
-	got, err := in.install(ctx)
+	got, err := in.install(ctx, nil)
 	if err != nil {
 		t.Fatalf("installing the pinned Syncthing: %v", err)
 	}

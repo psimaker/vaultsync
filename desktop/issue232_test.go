@@ -22,7 +22,13 @@ func installedApp(t *testing.T, goos string, run *fakeRunner) *app {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(svc.lay.Home, "config.xml"), "<configuration><gui><address>127.0.0.1:"+strconv.Itoa(port)+"</address><apikey>k</apikey></gui></configuration>\n")
-	if err := saveState(svc.lay.State, agentState{GUIPort: port}); err != nil {
+	// A set-up computer: the engine's program, its data, and the record
+	// naming it — without one of the three it is #276's case, not an
+	// installed VaultSync.
+	writeFile(t, svc.lay.Syncthing, "the engine")
+	installed := agentState{GUIPort: port}
+	installed.Syncthing.Version = syncthingVersion
+	if err := saveState(svc.lay.State, installed); err != nil {
 		t.Fatal(err)
 	}
 	writeFile(t, mustUnitPath(t, svc), "installed\n")

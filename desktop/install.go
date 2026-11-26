@@ -42,7 +42,9 @@ type installer struct {
 	client  *http.Client
 }
 
-func newInstaller(binDir, goos, goarch string) (installer, error) {
+// newInstaller is a variable so that a test can install from its own
+// server.
+var newInstaller = func(binDir, goos, goarch string) (installer, error) {
 	pin, ok := syncthingPins[goos+"/"+goarch]
 	if !ok {
 		return installer{}, fmt.Errorf("%w (%s/%s)", ErrNoPin, goos, goarch)
@@ -74,8 +76,11 @@ type installedEngine struct {
 
 func (in installer) binaryPath() string { return filepath.Join(in.binDir, "syncthing") }
 
-// install downloads, verifies and installs the pinned Syncthing.
-func (in installer) install(ctx context.Context) (installedEngine, error) {
+// install downloads, verifies and installs the pinned Syncthing. replace,
+// when set, is asked with the verified binary's checksum before anything is
+// replaced (#276): an error from it installs nothing, and the staged files
+// go with the deferred removals.
+func (in installer) install(ctx context.Context, replace func(binSum string) error) (installedEngine, error) {
 	if err := os.MkdirAll(in.binDir, 0o700); err != nil {
 		return installedEngine{}, err
 	}
@@ -109,6 +114,11 @@ func (in installer) install(ctx context.Context) (installedEngine, error) {
 	}
 	if err := os.Chmod(stagedPath, 0o755); err != nil {
 		return installedEngine{}, err
+	}
+	if replace != nil {
+		if err := replace(binSum); err != nil {
+			return installedEngine{}, err
+		}
 	}
 	if err := os.Rename(stagedPath, in.binaryPath()); err != nil {
 		return installedEngine{}, err

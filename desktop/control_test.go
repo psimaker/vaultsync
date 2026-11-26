@@ -43,6 +43,13 @@ func shortDir(t *testing.T) string {
 
 // agentApp is an app whose engine is the fake (config.xml and agent.json
 // point at it) and whose control socket has a short address.
+// recorded is st as a setup leaves it: with the engine it installed. A
+// record without one beside the engine's data is #276's case.
+func recorded(st agentState) agentState {
+	st.Syncthing.Version = syncthingVersion
+	return st
+}
+
 func agentApp(t *testing.T, eng *fakeEngine) *app {
 	t.Helper()
 	tmp, err := filepath.EvalSymlinks(t.TempDir())
@@ -57,8 +64,11 @@ func agentApp(t *testing.T, eng *fakeEngine) *app {
 	_, port, _ := net.SplitHostPort(eng.addr)
 	n, _ := strconv.Atoi(port)
 	writeFile(t, filepath.Join(lay.Home, "config.xml"), "<configuration><gui><address>"+eng.addr+"</address><apikey>engine-key</apikey></gui></configuration>\n")
+	// The engine's program beside its data and record, as setup leaves it
+	// (#276).
+	writeFile(t, lay.Syncthing, "the engine")
 	// A recorded shell with none of the guard variables set.
-	if err := saveState(lay.State, agentState{GUIPort: n, Env: map[string]string{}}); err != nil {
+	if err := saveState(lay.State, recorded(agentState{GUIPort: n, Env: map[string]string{}})); err != nil {
 		t.Fatal(err)
 	}
 	lay.Socket = filepath.Join(shortDir(t), "agent.sock")
@@ -678,7 +688,8 @@ func terminalApp(t *testing.T, socket string) *app {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(svc.lay.Home, "config.xml"), "<configuration><gui><address>127.0.0.1:"+strconv.Itoa(port)+"</address><apikey>k</apikey></gui></configuration>\n")
-	if err := saveState(svc.lay.State, agentState{GUIPort: port, ControlSocket: socket}); err != nil {
+	writeFile(t, svc.lay.Syncthing, "the engine") // beside its data and record (#276)
+	if err := saveState(svc.lay.State, recorded(agentState{GUIPort: port, ControlSocket: socket})); err != nil {
 		t.Fatal(err)
 	}
 	writeFile(t, mustUnitPath(t, svc), "installed\n")
@@ -1276,7 +1287,7 @@ func TestIssue176_SocketPairingLooksWhereTheShellLooks(t *testing.T) {
 func TestIssue176_StateUpdatesNeverLoseEachOthersFields(t *testing.T) {
 	eng := newFakeEngine(t)
 	a := agentApp(t, eng)
-	if err := saveState(a.lay.State, agentState{GUIPort: 0, ControlSocket: "/tmp/x/agent.sock", Env: map[string]string{"XDG_STATE_HOME": "/data/state"}}); err != nil {
+	if err := saveState(a.lay.State, recorded(agentState{GUIPort: 0, ControlSocket: "/tmp/x/agent.sock", Env: map[string]string{"XDG_STATE_HOME": "/data/state"}})); err != nil {
 		t.Fatal(err)
 	}
 	var wg sync.WaitGroup
@@ -1937,7 +1948,7 @@ func TestIssue176_ARefusedOrResetConnectIsNobodyListening(t *testing.T) {
 	}()
 	t.Cleanup(func() { resetting.Close() })
 	writeFile(t, filepath.Join(a.lay.Home, "config.xml"), "<configuration><gui><address>"+resetting.Addr().String()+"</address><apikey>engine-key</apikey></gui></configuration>\n")
-	if err := saveState(a.lay.State, agentState{GUIPort: resetting.Addr().(*net.TCPAddr).Port, Env: map[string]string{}}); err != nil {
+	if err := saveState(a.lay.State, recorded(agentState{GUIPort: resetting.Addr().(*net.TCPAddr).Port, Env: map[string]string{}})); err != nil {
 		t.Fatal(err)
 	}
 	client := serveControl(t, a)

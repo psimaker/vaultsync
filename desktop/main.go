@@ -284,23 +284,37 @@ func (a *app) setup(ctx context.Context, args []string) error {
 	t.blank()
 
 	// One setup at a time: two would install and generate the engine's
-	// identity over each other.
-	unlockSetup, err := lockFile(filepath.Join(a.lay.Base, "setup.lock"))
+	// identity over each other. Taken as pair takes its lock: a setup that
+	// stops before its engine is in place takes back what the taking made
+	// (#276) — never a lock file that was there before.
+	setupLock := filepath.Join(a.lay.Base, "setup.lock")
+	_, setupLockErr := os.Stat(setupLock)
+	setupLockWasThere := setupLockErr == nil
+	setupHandle, undoSetupLock, err := lockHandleMaking(setupLock)
 	if errors.Is(err, ErrEngineRunning) {
 		return refuse("Another vaultsync setup is running on this computer — wait for it to finish.")
 	}
 	if err != nil {
 		return err
 	}
+	unlockSetup := setupHandle.Release
+	// What the taking made goes again; a lock file that was there stays
+	// (the undo would discard it too).
+	giveBackSetupLock := func() {
+		if !setupLockWasThere {
+			undoSetupLock()
+		}
+		unlockSetup()
+	}
 	// Also without the service: the copy and the command would follow this
 	// other build.
 	if err := a.refuseBesideAnotherBuild(); err != nil {
-		unlockSetup()
+		giveBackSetupLock()
 		return err
 	}
 	st, engineChanged, err := a.ensureEngine(ctx, t)
 	if err != nil {
-		unlockSetup()
+		giveBackSetupLock()
 		return err
 	}
 	// The copy as soon as its engine is in place, before the steps that
@@ -633,13 +647,20 @@ func (a *app) installCommand(t *term, exe string) string {
 			_ = os.Symlink(exe, link)
 		}
 	}
-	// "vaultsync" alone only when it reaches this very program.
+	return a.commandFor(exe)
+}
+
+// commandFor is how a shell runs exe: "vaultsync" alone only when it
+// reaches this very program, the command link where that leads to it,
+// otherwise exe by its path.
+func (a *app) commandFor(exe string) string {
 	if found, err := exec.LookPath("vaultsync"); err == nil {
 		agent, aerr := filepath.EvalSymlinks(exe)
 		if r, err := filepath.EvalSymlinks(found); err == nil && aerr == nil && r == agent {
 			return "vaultsync"
 		}
 	}
+	link := commandLink(a.home)
 	if target, err := os.Readlink(link); err == nil && target == exe {
 		return tildePath(a.home, link)
 	}
@@ -753,6 +774,36 @@ func (a *app) ensureEngine(ctx context.Context, t *term) (agentState, bool, erro
 	if err != nil {
 		return st, false, err
 	}
+	// The engine's folder holds data without its engine (#276). With no
+	// engine recorded, which engine wrote it cannot be told, and an older
+	// one must never run on a newer one's data: only this build's own
+	// engine is taken back — its program and its config both there, the
+	// program the very one the pin installs, compared with the verified
+	// download before anything is replaced. With the recorded engine's
+	// program gone, it is what a removal that stopped midway left, which
+	// no engine may start on. Everything else changes nothing.
+	//
+	// A record whose engine's program and data are both gone leaves
+	// nothing of an engine to protect: setup sets VaultSync up anew there,
+	// as on a fresh computer — 054's check above still applies — and the
+	// computer pairs again.
+	var replace func(binSum string) error
+	switch state := engineDataStateOf(a.lay, st); state {
+	case engineDataUnrecorded:
+		_, binErr := os.Stat(a.lay.Syncthing)
+		_, cfgErr := os.Stat(filepath.Join(a.lay.Home, "config.xml"))
+		if binErr != nil || cfgErr != nil {
+			return st, false, refuse("%s", a.unrecordedEngineNote(state))
+		}
+		replace = func(binSum string) error {
+			if have, err := fileSHA256(a.lay.Syncthing); err != nil || have != binSum {
+				return refuse("%s", a.unrecordedEngineNote(state))
+			}
+			return nil
+		}
+	case engineDataWithoutProgram:
+		return st, false, refuse("%s", a.unrecordedEngineNote(state))
+	}
 	if st.Syncthing.Version == syncthingVersion && st.Syncthing.BinarySHA256 != "" {
 		if sum, err := fileSHA256(a.lay.Syncthing); err == nil && sum == st.Syncthing.BinarySHA256 {
 			t.say("✓ Sync engine ready (Syncthing %s)", strings.TrimPrefix(syncthingVersion, "v"))
@@ -764,9 +815,17 @@ func (a *app) ensureEngine(ctx context.Context, t *term) (agentState, bool, erro
 		return st, false, refuse("VaultSync has no sync engine for this computer (%s/%s) yet.", a.goos, runtime.GOARCH)
 	}
 	fmt.Fprintf(t.out, "  Downloading Syncthing %s from github.com… ", strings.TrimPrefix(syncthingVersion, "v"))
-	got, err := in.install(ctx)
+	got, err := in.install(ctx, replace)
 	if err != nil {
 		t.blank()
+		if errors.As(err, new(*refusal)) {
+			return st, false, err
+		}
+		if replace != nil && !errors.Is(err, ErrChecksumMismatch) {
+			// Whether the engine there is this VaultSync's own is told only
+			// against its download (#276).
+			return st, false, refuse("VaultSync's folder holds a sync engine's data (%s), but agent.json records no engine; whether the engine there is this VaultSync's own is told by comparing it with the engine this VaultSync installs, and installing that failed (%v). Nothing was changed. Run vaultsync setup again once that is fixed.", tildePath(a.home, a.lay.Home), err)
+		}
 		if errors.Is(err, ErrChecksumMismatch) {
 			return st, false, refuse("The sync engine download failed its integrity check and was not installed. Run vaultsync setup again. If it fails again, report it at https://github.com/psimaker/vaultsync/issues.")
 		}
@@ -1123,6 +1182,8 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 		take = lockFileNoCreate
 	}
 	removedMeanwhile := refuse("VaultSync was removed from this computer while this run waited; run vaultsync setup to set it up again.")
+	_, setupLockErr := os.Stat(setupLock)
+	setupLockWasThere := setupLockErr == nil
 	setupHandle, err := waitForLock(ctx, setupLock, 2*time.Minute, take)
 	if err != nil {
 		if hadState && errors.Is(err, os.ErrNotExist) {
@@ -1131,6 +1192,15 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 		return err
 	}
 	unlockSetup := setupHandle.Release
+	// A run that changes nothing takes back the lock file it made; one that
+	// was there before — a stopped removal's — stays (#276).
+	leaveSetupLock := func() {
+		if setupLockWasThere {
+			setupHandle.Release()
+			return
+		}
+		_, _ = setupHandle.Discard()
+	}
 	if _, err := os.Stat(a.lay.State); hadState && errors.Is(err, os.ErrNotExist) {
 		// Set up when this run began, gone while it waited for the lock:
 		// an uninstall took VaultSync's folder apart (its lock held the
@@ -1160,6 +1230,18 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 		unlockSetup()
 		return err
 	}
+	// The engine's folder holds data without its engine, or the record
+	// names an engine whose program and data are both gone (#276): nothing
+	// is installed or started — before the engine lock, so a run refused
+	// here owns nothing. setup takes back this build's own engine where
+	// none is recorded, and sets VaultSync up anew over a record alone; a
+	// run, unattended, does neither — not behind a removal that stopped.
+	// The state is read after the wait, so a run that waited through such
+	// a removal stops too.
+	if state := engineDataStateOf(a.lay, st); state != engineDataOK {
+		leaveSetupLock()
+		return parkOrRefuse(ctx, logf, a.unrecordedEngineNote(state), engineDataLogLine(state))
+	}
 	eng := a.engine()
 	// The engine lock makes this process the engine's only owner — and the
 	// control socket's: a socket file found now belongs to an agent that is
@@ -1187,7 +1269,7 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 			unlockSetup()
 			return err
 		}
-		got, err := in.install(ctx)
+		got, err := in.install(ctx, nil)
 		if err != nil {
 			unlockSetup()
 			return err
@@ -1294,6 +1376,133 @@ func olderThanSetUp(st agentState, loadErr error) bool {
 		return true
 	}
 	return loadErr == nil && recordedEngineNewer(st.Syncthing.Version)
+}
+
+// engineDataState is what VaultSync's folder holds of its sync engine where
+// that is not a recorded engine with its program in place (#276).
+type engineDataState int
+
+const (
+	// engineDataOK: an engine recorded with its program there (whatever its
+	// state — a changed program is reinstalled), or nothing of an engine.
+	engineDataOK engineDataState = iota
+	// engineDataUnrecorded: no engine recorded, and the engine's folder
+	// holds data or cannot be read — which engine wrote it cannot be told
+	// without the record, and decision 054 says not from content either.
+	engineDataUnrecorded
+	// engineDataWithoutProgram: an engine recorded, its program not there,
+	// its data there — what a removal that stopped midway leaves (the
+	// program goes first); an engine started on it could take a new
+	// identity or bring back notes the other devices deleted.
+	engineDataWithoutProgram
+	// engineRecordOnly: an engine recorded, neither its program nor its
+	// data there — a removal that stopped after both went.
+	engineRecordOnly
+)
+
+// engineDataStateOf reads that state. Keyed on the recorded engine, not on
+// agent.json itself, which a record without an engine may stand for. The
+// program is "there" by Lstat: a removal takes it away, a link at its
+// place as a link, so only no entry at all is a removal's trace — a link
+// whose target cannot be reached (a disk not mounted) is the person's own
+// layout, which 046 (1) heals by installing the pin over it, as before.
+// So is a bin that is a link: a removal takes it away whole, so a program
+// missing behind it is no trace of one.
+func engineDataStateOf(lay layout, st agentState) engineDataState {
+	entries, err := os.ReadDir(lay.Home)
+	hasData := err == nil && len(entries) > 0 || err != nil && !errors.Is(err, fs.ErrNotExist)
+	if st.Syncthing.Version == "" {
+		if hasData {
+			return engineDataUnrecorded
+		}
+		return engineDataOK
+	}
+	if _, err := os.Lstat(lay.Syncthing); !errors.Is(err, fs.ErrNotExist) {
+		return engineDataOK
+	}
+	if info, err := os.Lstat(lay.Bin); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return engineDataOK
+	}
+	if hasData {
+		return engineDataWithoutProgram
+	}
+	return engineRecordOnly
+}
+
+// engineDataWhat says what is there, for the notes below (#276).
+func (a *app) engineDataWhat(state engineDataState) string {
+	home := tildePath(a.home, a.lay.Home)
+	switch state {
+	case engineDataUnrecorded:
+		return fmt.Sprintf("VaultSync's folder holds a sync engine's data (%s), but agent.json records no engine, so which engine wrote it cannot be told — and an older engine must never run on a newer one's data.", home)
+	case engineDataWithoutProgram:
+		return fmt.Sprintf("VaultSync's folder holds its sync engine's data (%s), but not the engine's program: an uninstall --remove-data most likely stopped midway, and an engine started on what it left could bring back notes your other devices deleted.", home)
+	default:
+		return "VaultSync's record names its sync engine, but neither the engine's program nor its data is there: an uninstall --remove-data most likely stopped midway."
+	}
+}
+
+// engineDataWayOut is the way out of each state, and what it costs: each
+// way leads to a state setup goes ahead in (#276).
+func (a *app) engineDataWayOut(state engineDataState) string {
+	home := tildePath(a.home, a.lay.Home)
+	switch state {
+	case engineDataWithoutProgram:
+		return fmt.Sprintf("Finish the removal with vaultsync uninstall --remove-data, or move %s aside and run vaultsync setup again: this computer then pairs with your Hub again, and your vault files stay where they are.", home)
+	case engineRecordOnly:
+		return "Finish the removal with vaultsync uninstall --remove-data, or set VaultSync up anew with vaultsync setup: this computer then pairs with your Hub again."
+	}
+	way := fmt.Sprintf("Move %s aside, then run vaultsync setup again: this computer then pairs with your Hub again, and your vault files stay where they are.", home)
+	if _, err := os.Stat(a.lay.State); err == nil {
+		// The removal refuses a folder without agent.json as not
+		// VaultSync's own: offered only where that is there.
+		way += " To remove VaultSync instead, run vaultsync uninstall --remove-data."
+	}
+	return way
+}
+
+// engineDataLogLine is the one line the service logs when it parks in
+// such a state: fixed, with no path or name, as every line of the service
+// log (main); vaultsync status gives the whole note (#276).
+func engineDataLogLine(state engineDataState) string {
+	switch state {
+	case engineDataUnrecorded:
+		return "VaultSync's folder holds a sync engine's data, but agent.json records no engine — nothing was started; vaultsync status says how to go on"
+	case engineDataWithoutProgram:
+		return "VaultSync's folder holds its sync engine's data, but not the engine's program — nothing was started; vaultsync status says how to go on"
+	}
+	return "VaultSync's record names its sync engine, but neither the engine's program nor its data is there — nothing was started; vaultsync status says how to go on"
+}
+
+// unrecordedEngineNote says why setup or run changed nothing (#276).
+func (a *app) unrecordedEngineNote(state engineDataState) string {
+	return a.engineDataWhat(state) + " Nothing was changed. " + a.engineDataWayOut(state)
+}
+
+// unrecordedEngineStatus is what status says of it: what setup and the
+// background service will do.
+func (a *app) unrecordedEngineStatus(state engineDataState) string {
+	switch state {
+	case engineDataUnrecorded:
+		return fmt.Sprintf("%s vaultsync setup takes it back only over this VaultSync's own engine (Syncthing %s) and otherwise changes nothing, as the background service does. %s", a.engineDataWhat(state), strings.TrimPrefix(syncthingVersion, "v"), a.engineDataWayOut(state))
+	case engineRecordOnly:
+		return a.engineDataWhat(state) + " The background service changes nothing here. " + a.engineDataWayOut(state)
+	}
+	return a.engineDataWhat(state) + " vaultsync setup and the background service change nothing there. " + a.engineDataWayOut(state)
+}
+
+// parkOrRefuse ends a run that must not go on: in a terminal it says why;
+// as the service it logs logged once — a fixed line, as the service log
+// carries no path or name — and parks: launchd would only start an exiting
+// one again every 10 s, until it is stopped or its program is replaced
+// (decision 054's pattern).
+func parkOrRefuse(ctx context.Context, logf func(string, ...any), why, logged string) error {
+	if !serviceMode {
+		return refuse("%s", why)
+	}
+	logf("%s", logged)
+	<-ctx.Done()
+	return nil
 }
 
 // olderBuild: olderThanSetUp, by a look at agent.json now.

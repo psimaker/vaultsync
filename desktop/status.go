@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/psimaker/vaultsync/desktop/internal/control"
+	"github.com/psimaker/vaultsync/desktop/internal/lock"
 	"github.com/psimaker/vaultsync/hub/syncthing"
 )
 
@@ -105,6 +106,29 @@ func (a *app) status(ctx context.Context) error {
 	older := olderThanSetUp(rec, recErr)
 	if older {
 		fmt.Fprintln(w, "Note: "+a.olderNote(rec, recErr))
+	}
+	// VaultSync's folder holds its engine's data without the engine, or a
+	// record whose engine is gone (#276): status says what setup and the
+	// service will do, then the service's state as a plain fact — the
+	// remedies of the lines below would contradict the note, and a parked
+	// service counts as running to the service manager.
+	if !older && recErr == nil {
+		if state := engineDataStateOf(a.lay, rec); state != engineDataOK {
+			fmt.Fprintln(w, "Note: "+a.unrecordedEngineStatus(state))
+			switch {
+			case !a.svc.installed():
+				fmt.Fprintln(w, "Background service: not installed")
+			case a.backgroundEngine() && engineLockHeld(a.lay):
+				// Its engine started before this state arose — a program
+				// removed under it — and runs on.
+				fmt.Fprintln(w, "Background service: running, and a sync engine still runs here — stop VaultSync with vaultsync stop before you follow the note")
+			case a.backgroundEngine():
+				fmt.Fprintln(w, "Background service: running, but it starts no sync engine here (see the note)")
+			default:
+				fmt.Fprintln(w, "Background service: stopped")
+			}
+			return nil
+		}
 	}
 	if !eng.prepared() {
 		if !older {
@@ -538,4 +562,11 @@ func (a *app) printAttempts(w io.Writer, configured map[string]bool) []attemptSt
 		fmt.Fprintf(w, "  %-14s %s (%s)\n", at.Vault, what, when)
 	}
 	return out
+}
+
+// engineLockHeld: a vaultsync run holds the engine lock, so its engine
+// runs or is starting (#276).
+func engineLockHeld(lay layout) bool {
+	held, err := lock.Probe(lay.Lock)
+	return err == nil && held
 }

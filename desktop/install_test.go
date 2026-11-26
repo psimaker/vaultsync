@@ -148,7 +148,7 @@ func TestIssue175_ChecksumMismatchInstallsNothing(t *testing.T) {
 
 			// A real, well-formed archive whose checksum does not match the
 			// pin is refused before anything is unpacked.
-			_, err := in.install(context.Background())
+			_, err := in.install(context.Background(), nil)
 			if !errors.Is(err, ErrChecksumMismatch) {
 				t.Fatalf("expected a checksum refusal, got %v", err)
 			}
@@ -158,7 +158,7 @@ func TestIssue175_ChecksumMismatchInstallsNothing(t *testing.T) {
 
 			// The same archive with its true checksum installs.
 			in.pin.sha256 = sum(data)
-			got, err := in.install(context.Background())
+			got, err := in.install(context.Background(), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -175,7 +175,7 @@ func TestIssue175_ChecksumMismatchInstallsNothing(t *testing.T) {
 
 			// A later refused download leaves the installed engine untouched.
 			in.pin.sha256 = wrong
-			if _, err := in.install(context.Background()); !errors.Is(err, ErrChecksumMismatch) {
+			if _, err := in.install(context.Background(), nil); !errors.Is(err, ErrChecksumMismatch) {
 				t.Fatalf("expected a checksum refusal, got %v", err)
 			}
 			if again, _ := os.ReadFile(got.Path); !bytes.Equal(again, fakeBinary) {
@@ -205,14 +205,14 @@ func TestIssue175_RealArchiveChecksumAbort(t *testing.T) {
 	}
 	srv := serveArchive(t, pin.pin.archive, data)
 	in := testInstaller(t, srv.URL, pin.pin.archive, strings.Repeat("f", 64), pin.pin.binary)
-	if _, err := in.install(context.Background()); !errors.Is(err, ErrChecksumMismatch) {
+	if _, err := in.install(context.Background(), nil); !errors.Is(err, ErrChecksumMismatch) {
 		t.Fatalf("expected a checksum refusal, got %v", err)
 	}
 	if names := dirEntries(t, in.binDir); len(names) != 0 {
 		t.Fatalf("a refused download left files behind: %v", names)
 	}
 	in.pin = pin.pin // the pin compiled into this binary
-	if _, err := in.install(context.Background()); err != nil {
+	if _, err := in.install(context.Background(), nil); err != nil {
 		t.Fatalf("the pinned archive does not match the pinned checksum: %v", err)
 	}
 }
@@ -223,7 +223,7 @@ func TestIssue175_InstallRefusesWhatIsNotTheEngine(t *testing.T) {
 		data := realTarGz(t, top, nil)
 		srv := serveArchive(t, top+".tar.gz", data)
 		in := testInstaller(t, srv.URL, top+".tar.gz", sum(data), top+"/syncthing")
-		if _, err := in.install(context.Background()); err == nil || !strings.Contains(err.Error(), "holds no") {
+		if _, err := in.install(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "holds no") {
 			t.Fatalf("got %v", err)
 		}
 		if names := dirEntries(t, in.binDir); len(names) != 0 {
@@ -233,7 +233,7 @@ func TestIssue175_InstallRefusesWhatIsNotTheEngine(t *testing.T) {
 	t.Run("HTTP error", func(t *testing.T) {
 		srv := serveArchive(t, "other", nil)
 		in := testInstaller(t, srv.URL, top+".tar.gz", strings.Repeat("0", 64), top+"/syncthing")
-		if _, err := in.install(context.Background()); err == nil || !strings.Contains(err.Error(), "HTTP 404") {
+		if _, err := in.install(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "HTTP 404") {
 			t.Fatalf("got %v", err)
 		}
 	})
@@ -246,7 +246,7 @@ func TestIssue175_InstallRefusesWhatIsNotTheEngine(t *testing.T) {
 		in := testInstaller(t, tlsSrv.URL, top+".tar.gz", strings.Repeat("0", 64), top+"/syncthing")
 		in.client = downloadClient()
 		in.client.Transport = tlsSrv.Client().Transport
-		if _, err := in.install(context.Background()); err == nil || !strings.Contains(err.Error(), "refusing a redirect") {
+		if _, err := in.install(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "refusing a redirect") {
 			t.Fatalf("got %v", err)
 		}
 	})
