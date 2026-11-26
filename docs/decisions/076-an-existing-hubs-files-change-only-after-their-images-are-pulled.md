@@ -16,7 +16,7 @@
 **Not covered.**
 - **Files setup cannot name.** The compose file is written in place before the pull, as before, and setup says so, in these cases:
   - `COMPOSE_FILE` is set in the environment or in `.env`, or `.env` cannot be read;
-  - `COMPOSE_ENV_FILES` or `COMPOSE_DISABLE_ENV_FILE` is set. Compose then does not read the Hub's `.env` as setup writes it, so setup does not offer the image move either; it says so and where to set the image instead;
+  - `COMPOSE_ENV_FILES` or `COMPOSE_DISABLE_ENV_FILE` is set. Compose then does not read the Hub's `.env` as setup writes it, so setup does not offer the image move either. It says so, and, for a Hub on an older release than it ships, where to set the image instead;
   - another base file such as `compose.yaml` lies beside the compose file;
   - more than one override lies beside it.
 

@@ -1111,6 +1111,8 @@ other_env_files() { # NAME ENV=VALUE
 $out"
 	printf '%s\n' "$out" | grep -q "so setup does not move the Hub's image" || fail "$1: setup does not say why it leaves the image:
 $out"
+	printf '%s\n' "$out" | grep -q "If your Hub runs an older vaultsync-hub release than" || fail "$1: the hint where to set the image is not conditional:
+$out"
 	if printf '%s\n' "$out" | grep -q "Move it to"; then
 		fail "$1: the move was offered:
 $out"

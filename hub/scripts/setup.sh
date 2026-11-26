@@ -293,7 +293,9 @@ offer_newer_hub_image() {
 	# Compose told to read other env files reads neither the .env setup
 	# would edit nor the staged one the pull would read (#368).
 	if [ -n "${COMPOSE_ENV_FILES:-}" ] || [ -n "${COMPOSE_DISABLE_ENV_FILE:-}" ]; then
-		info "Compose reads other env files than $env_file here (COMPOSE_ENV_FILES or COMPOSE_DISABLE_ENV_FILE), so setup does not move the Hub's image. Set VAULTSYNC_HUB_IMAGE=$HUB_IMAGE where Compose reads it, then run docker compose pull && docker compose up -d."
+		info "Compose reads other env files than $env_file here (COMPOSE_ENV_FILES or COMPOSE_DISABLE_ENV_FILE), so setup does not move the Hub's image."
+		info "  If your Hub runs an older vaultsync-hub release than $new_ver, set VAULTSYNC_HUB_IMAGE=$HUB_IMAGE where Compose reads it,"
+		info "  then run docker compose pull && docker compose up -d there (docs/hub.md → Update the Hub)."
 		return 0
 	fi
 	if [ "$DRY_RUN" = 1 ]; then
