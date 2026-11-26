@@ -1240,7 +1240,7 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 	// a removal stops too.
 	if state := engineDataStateOf(a.lay, st); state != engineDataOK {
 		leaveSetupLock()
-		return parkOrRefuse(ctx, logf, a.unrecordedEngineNote(state))
+		return parkOrRefuse(ctx, logf, a.unrecordedEngineNote(state), engineDataLogLine(state))
 	}
 	eng := a.engine()
 	// The engine lock makes this process the engine's only owner — and the
@@ -1461,6 +1461,19 @@ func (a *app) engineDataWayOut(state engineDataState) string {
 	return way
 }
 
+// engineDataLogLine is the one line the service logs when it parks in
+// such a state: fixed, with no path or name, as every line of the service
+// log (main); vaultsync status gives the whole note (#276).
+func engineDataLogLine(state engineDataState) string {
+	switch state {
+	case engineDataUnrecorded:
+		return "VaultSync's folder holds a sync engine's data, but agent.json records no engine — nothing was started; vaultsync status says how to go on"
+	case engineDataWithoutProgram:
+		return "VaultSync's folder holds its sync engine's data, but not the engine's program — nothing was started; vaultsync status says how to go on"
+	}
+	return "VaultSync's record names its sync engine, but neither the engine's program nor its data is there — nothing was started; vaultsync status says how to go on"
+}
+
 // unrecordedEngineNote says why setup or run changed nothing (#276).
 func (a *app) unrecordedEngineNote(state engineDataState) string {
 	return a.engineDataWhat(state) + " Nothing was changed. " + a.engineDataWayOut(state)
@@ -1479,14 +1492,15 @@ func (a *app) unrecordedEngineStatus(state engineDataState) string {
 }
 
 // parkOrRefuse ends a run that must not go on: in a terminal it says why;
-// as the service it says it once in its log and parks — launchd would only
-// start an exiting one again every 10 s — until it is stopped or its
-// program is replaced (decision 054's pattern).
-func parkOrRefuse(ctx context.Context, logf func(string, ...any), why string) error {
+// as the service it logs logged once — a fixed line, as the service log
+// carries no path or name — and parks: launchd would only start an exiting
+// one again every 10 s, until it is stopped or its program is replaced
+// (decision 054's pattern).
+func parkOrRefuse(ctx context.Context, logf func(string, ...any), why, logged string) error {
 	if !serviceMode {
 		return refuse("%s", why)
 	}
-	logf("%s", why)
+	logf("%s", logged)
 	<-ctx.Done()
 	return nil
 }

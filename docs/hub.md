@@ -199,8 +199,9 @@ background service starts no engine there, and `vaultsync setup` changes
 nothing while the engine's data is left. The same holds wherever the engine's
 data is there without a record of its engine; only setup takes back the very
 engine this VaultSync installs, where none is recorded. Each says how to go
-on: finish the removal, move the engine's folder aside, or, with nothing of
-the engine left, set VaultSync up anew. The computer then pairs with your Hub
+on: finish the removal (where `agent.json` is there; the removal refuses a
+folder without it), move the engine's folder aside, or, with nothing of the
+engine left, set VaultSync up anew. The computer then pairs with your Hub
 again, and vault files stay where they are.
 
 `vaultsync uninstall --remove-data` refuses while a `vaultsync run`, `pair`
