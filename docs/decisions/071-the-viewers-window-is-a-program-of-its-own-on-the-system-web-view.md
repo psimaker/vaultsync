@@ -32,7 +32,8 @@ The window has to run on macOS 12 and later, and on Linux for amd64 and arm64. O
    - **What the socket lends.** The socket's rule stays: the same account only, checked by the kernel (decision 049).
      - **On Linux and Windows** a program of that account can read and write such a file without the service.
      - **On a Mac it may not.** The Files & Folders question is answered per program. A service let into Desktop, Documents or Downloads would read and save files there for any program of the account that asks it to. The first draft lent only the synced folders.
-     - **A possible remedy** is a check of which program connects, such as its code signature. It is left open and settled before the first line of code. A lend that no such check closes is a reason to revisit (3), as is the double question below.
+     - **The condition.** On a Mac the service reads and saves a file for the window only when VaultSync's own program connects, checked by its code signature. Whether macOS lets the service tell which program connects is measured before the first line of code.
+     - **The way out.** If the check cannot be made, or a Mac asks the person twice for one folder (below), the window saves the files outside the synced folders itself, an alternative rejected below for its two homes of the save rule. The service then touches only the synced folders, as in the first draft.
 4. **Files are untrusted.** Four measures keep a file's content inert:
    - **The page.** It runs under a Content Security Policy that allows scripts and styles only from the program itself, images only from its own scheme (served by the window's Go side, from inside the root), and no connections, frames or forms. CodeMirror inserts its styles while it runs. Whether they pass this policy, by a nonce or otherwise, is read before the first line of code.
    - **Rendered HTML.** It carries no script, no event handler, no `style` attribute and no outside address (decision 072, point 3).
@@ -80,7 +81,7 @@ The window has to run on macOS 12 and later, and on Linux for amd64 and arm64. O
 - *A browser tab served on loopback:* a TCP port that any account on the computer can reach (decision 049 rejected it), and a browser whose extensions read every page and whose sync may send its history out.
 - *The window inside the menu-bar app:* two main loops in one process, and a window that fails takes the menu with it.
 - *The service reading for the window as well* (this record's first draft): nothing would open while the service is stopped, and the service would read every file the person opens. On a Mac it would lend its reads as (3) lends its saves. It would keep the question for the person's folders with one program. Whether two programs mean two questions is measured (below).
-- *The window saving the files outside the synced folders itself:* the save rule and its recovery would have two homes, and a folder that starts to sync during an edit would be saved by a program that does not know it. It would lend nothing outside the synced folders, since the service would touch only those.
+- *The window saving the files outside the synced folders itself:* the save rule and its recovery would have two homes, and a folder that starts to sync during an edit would be saved by a program that does not know it. It would lend nothing outside the synced folders, since the service would touch only those, and it is the way out of (3) if the check there cannot be made.
 - *A look like Obsidian's, with panes, a ribbon and a status bar:* a second Obsidian, which decision 072 rules out.
 - *The system's plain text view alone:* what any standard viewer shows.
 
@@ -126,6 +127,6 @@ To measure before the first line of code:
   - what a save meets when the answer was no;
   - whether the service can tell which program connects to its socket.
 
-  Two questions for one file, or a lend that no such check closes, are reasons to revisit (3).
+  Two questions for one file, or a check that cannot be made, take the way out of (3).
 
 **Links.** #347, #217; decisions 044, 046, 048, 049, 050, 052, 053, 057; 072 ("What the viewer shows and writes …"), 073 ("The viewer saves a note only over the version it opened …").
