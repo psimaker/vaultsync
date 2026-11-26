@@ -255,6 +255,15 @@ var recordLockWait = 2 * time.Second
 // again — also where nothing was left to remove before the record (#276).
 var errRecordBusy = refuse("VaultSync's record (agent.json) was being written the whole time, so the removal stopped before it and kept it.")
 
+// leadsNowhere: a look at the command link's end failed because nothing is
+// there, or can be — no entry, a file where a folder should be, a loop. A
+// failure to read it (EACCES, EIO) may hide a program that is there, such
+// as VaultSync for Mac's agent behind a folder that cannot be read, so the
+// link stays (#276).
+func leadsNowhere(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) || errors.Is(err, syscall.ELOOP)
+}
+
 // againCommand is how a removal that stopped is run again (#276): by one of
 // VaultSync's own programs that is still there — its copy, the program its
 // command link leads to, the copy behind a linked bin, VaultSync for Mac's
@@ -469,7 +478,7 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 	// how the removal is run again; one that leads nowhere for a moment —
 	// a disk not mounted — stays where nothing was removed (#276).
 	_, linkErr := os.Stat(commandLink(a.home))
-	if err == nil || tookSomething && linkErr != nil {
+	if err == nil || tookSomething && leadsNowhere(linkErr) {
 		if link, ok := a.removeCommandLink(); ok {
 			removed = append(removed, link)
 		}

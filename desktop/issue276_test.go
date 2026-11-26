@@ -1062,3 +1062,40 @@ func TestIssue276_ASecondRemovalThatTakesTheCopyPartwayCountsIt(t *testing.T) {
 		t.Fatalf("the record went: %v", err)
 	}
 }
+
+// A command link whose end cannot be read for the moment — VaultSync for
+// Mac's Contents/MacOS unreadable — does not lead nowhere: a removal that
+// stops keeps it, though VaultSync's copy is gone (#276).
+func TestIssue276_AStoppedRemovalKeepsALinkItCannotRead(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads what a permission keeps")
+	}
+	a, link := uninstallable(t)
+	app := fakeMacApp(t, filepath.Join(a.home, "Applications"), appBundleName, shippedInfoPlist(t))
+	appAgent := filepath.Join(app, "Contents", "MacOS", "vaultsync")
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(appAgent, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(a.lay.Agent); err != nil {
+		t.Fatal(err)
+	}
+	stuck := filepath.Join(a.lay.Home, "index-v2")
+	if err := os.Chmod(stuck, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(stuck, 0o700) })
+	macOS := filepath.Dir(appAgent)
+	if err := os.Chmod(macOS, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(macOS, 0o755) })
+	if err := a.uninstall(context.Background(), []string{"--remove-data", "--yes"}); err == nil {
+		t.Fatal("the removal did not stop")
+	}
+	if target, err := os.Readlink(link); err != nil || target != appAgent {
+		t.Fatalf("a link whose end cannot be read went with a stopped removal: %q %v", target, err)
+	}
+}
