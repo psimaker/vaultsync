@@ -6,6 +6,10 @@ The desktop agent `vaultsync`, VaultSync for Mac and the menu-bar app, released 
 
 ## [Unreleased]
 
+### Fixed
+
+- **No sync engine is installed or started over data it may not belong to** ([#276](https://github.com/psimaker/vaultsync/issues/276)) — VaultSync's record (`agent.json`) can be lost while the engine's data stays — after a `vaultsync uninstall --remove-data` that stopped midway, for example — and the engine's program, or the program and its data, can be gone while the record stays. `setup` and the background service took each of these for a fresh start: an older VaultSync could put an older Syncthing over a newer one's data, and an engine could start on data whose program was gone and bring back notes your other devices deleted. Now the background service changes nothing in any of these cases. `setup` takes the engine back only when no engine is recorded and the one there is the very one this VaultSync installs, and sets VaultSync up anew only where nothing of the engine is left. Otherwise it changes nothing. Both say how to go on: remove VaultSync's files, move the engine's folder aside, or set VaultSync up anew. This computer then pairs with your Hub again, and your vault files stay where they are. `vaultsync status` says the same. A missing engine program beside its data is no longer reinstalled by itself. Recorded in decision 077.
+
 ## [0.3.0] — 2026-11-19
 
 ### Added

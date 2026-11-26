@@ -614,9 +614,9 @@ func TestIssue264_EveryTakeoverMovesTheFormat(t *testing.T) {
 			t.Fatal(err)
 		}
 		asV010(t, a.lay.State)
-		if err := os.Remove(a.lay.Syncthing); err != nil {
-			t.Fatal(err)
-		}
+		// A changed program is reinstalled; a missing one beside the
+		// engine's data is #276's case, which changes nothing.
+		writeFile(t, a.lay.Syncthing, "a changed engine")
 		serveEngineLocally(t, a.goos, binary)
 		stop := inBackground(t, func(ctx context.Context) error { return a.run(ctx, nil) })
 		untilTheRunServes(t, a)
@@ -635,9 +635,9 @@ func TestIssue264_EveryTakeoverMovesTheFormat(t *testing.T) {
 			t.Fatal(err)
 		}
 		asV010(t, a.lay.State)
-		if err := os.Remove(a.lay.Syncthing); err != nil {
-			t.Fatal(err)
-		}
+		// A changed program is reinstalled; a missing one beside the
+		// engine's data is #276's case, which changes nothing.
+		writeFile(t, a.lay.Syncthing, "a changed engine")
 		serveEngineLocally(t, a.goos, binary)
 		orig := ttyPath
 		ttyPath = filepath.Join(t.TempDir(), "no-tty")
@@ -689,9 +689,9 @@ func TestIssue264_ARunRefusedAtTheEngineLockTouchesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(a.lay.Syncthing); err != nil {
-		t.Fatal(err)
-	}
+	// A changed program is reinstalled; a missing one beside the
+	// engine's data is #276's case, which changes nothing.
+	writeFile(t, a.lay.Syncthing, "a changed engine")
 	serveEngineLocally(t, a.goos, binary)
 	unlock, err := lockFile(a.lay.Lock)
 	if err != nil {
@@ -707,8 +707,8 @@ func TestIssue264_ARunRefusedAtTheEngineLockTouchesNothing(t *testing.T) {
 	if err := a.run(ctx, nil); !strings.Contains(refusalText(err), "already running") {
 		t.Fatalf("a run beside the lock's holder: %v", err)
 	}
-	if _, err := os.Stat(a.lay.Syncthing); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("a refused run installed its engine: %v", err)
+	if have, _ := os.ReadFile(a.lay.Syncthing); string(have) != "a changed engine" {
+		t.Fatalf("a refused run installed its engine: %q", have)
 	}
 	if after, _ := os.ReadFile(a.lay.State); !bytes.Equal(before, after) {
 		t.Fatalf("a refused run wrote agent.json:\n%s", after)
