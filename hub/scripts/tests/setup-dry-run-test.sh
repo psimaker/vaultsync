@@ -56,7 +56,7 @@ esac
 if [ -n "${ALLOW_COMPOSE:-}" ]; then
 	printf 'docker %s (VAULTSYNC_HUB_IMAGE=%s) (VAULTSYNC_HUB_SYNCTHING_IMAGE=%s)\n' "$*" "${VAULTSYNC_HUB_IMAGE-unset}" "${VAULTSYNC_HUB_SYNCTHING_IMAGE-unset}" >>"$COMPOSE_LOG"
 	case "$*" in
-		"compose --project-directory "*" pull --quiet") exit 0 ;;
+		"compose --project-directory "*" pull --quiet") [ -z "${FAIL_COMPOSE_PULL:-}" ] || { echo "Error response from daemon: test pull failure" >&2; exit 1; }; exit 0 ;;
 		"compose --project-directory "*" up -d") [ -z "${FAIL_COMPOSE_UP:-}" ] || exit 1; exit 0 ;;
 		"compose --project-directory "*" logs --tail 30 "*) echo "syncthing log: test"; exit 0 ;;
 		"compose --project-directory "*" exec -T hub vaultsync-hub status") printf 'VaultSync Hub test\nDevice ID:   TEST\n'; exit 0 ;;
@@ -770,6 +770,25 @@ $(cat "$COMPOSE_LOG")"
 	grep -q "^VAULTSYNC_HUB_IMAGE=ghcr.io/psimaker/vaultsync-hub:0.1.0$" "$EXISTING/.env" || fail "the override edited .env"
 	pass "an exported image override never reaches Compose for an existing Hub"
 
+	# A yes, then a pull that fails (#368): the Hub stays where it was —
+	# .env names the image it named before, the stack is not restarted —
+	# and the setup says so and names the manual step.
+	plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
+	cp "$EXISTING/.env" "$SANDBOX/results/env-before"
+	if out=$(FAIL_COMPOSE_PULL=1 existing_hub_run y); then
+		fail "a failed pull after a yes did not stop the setup:
+$out"
+	fi
+	cmp -s "$EXISTING/.env" "$SANDBOX/results/env-before" || fail "a failed pull after a yes left .env naming an image this host did not pull:
+$(diff -u "$SANDBOX/results/env-before" "$EXISTING/.env" || true)"
+	if grep -q " up -d" "$COMPOSE_LOG"; then
+		fail "the stack was restarted after a failed pull:
+$(cat "$COMPOSE_LOG")"
+	fi
+	printf '%s\n' "$out" | grep -q "docs/hub.md" || fail "a failed pull after a yes does not name the manual step:
+$out"
+	pass "a failed pull after a yes leaves .env as it was and names the manual step (#368)"
+
 	grep -v '^chown ' "$SANDBOX/results/violations-existing.log" | grep -q . && fail "an existing-Hub setup ran a privileged or network-changing command:
 $(cat "$SANDBOX/results/violations-existing.log")"
 else
@@ -787,6 +806,34 @@ $out"
 else
 	pass "existing-Hub no-terminal case skipped (no setsid on this platform)"
 fi
+
+# The same through the compose file (#368): setup writes docker-compose.yml
+# anew on every run, and the helper's image is named there, so a release of
+# the helper moves every existing Hub that runs the link again. A pull that
+# fails leaves the compose file as it was, so the next `docker compose up -d`
+# still finds the images this host has, and the setup says so.
+mkdir -p "$EXISTING"
+plain_env "$SHIPPED" >"$EXISTING/.env"
+sed 's|vaultsync-notify:[0-9][0-9.]*|vaultsync-notify:0.0.1|' "$COMPOSE" >"$EXISTING/docker-compose.yml"
+grep -q 'vaultsync-notify:0.0.1' "$EXISTING/docker-compose.yml" || fail "test setup: the older helper tag was not written"
+cp "$EXISTING/docker-compose.yml" "$SANDBOX/results/compose-before"
+cp "$EXISTING/.env" "$SANDBOX/results/env-before"
+: >"$COMPOSE_LOG"
+if out=$(VAULTSYNC_HUB_DIR="$EXISTING" VIOLATIONS="$SANDBOX/results/violations-existing.log" ALLOW_COMPOSE=1 FAIL_COMPOSE_PULL=1 sh "$SETUP_SH" --hub </dev/null 2>&1); then
+	fail "a failed pull did not stop the setup:
+$out"
+fi
+cmp -s "$EXISTING/docker-compose.yml" "$SANDBOX/results/compose-before" || fail "a failed pull left docker-compose.yml naming images this host did not pull:
+$(diff -u "$SANDBOX/results/compose-before" "$EXISTING/docker-compose.yml" || true)"
+cmp -s "$EXISTING/.env" "$SANDBOX/results/env-before" || fail "a failed pull changed .env:
+$(diff -u "$SANDBOX/results/env-before" "$EXISTING/.env" || true)"
+if grep -q " up -d" "$COMPOSE_LOG"; then
+	fail "the stack was restarted after a failed pull:
+$(cat "$COMPOSE_LOG")"
+fi
+printf '%s\n' "$out" | grep -q "docs/hub.md" || fail "a failed pull does not name the manual step:
+$out"
+pass "a failed pull leaves docker-compose.yml as it was and names the manual step (#368)"
 
 # --- 3. Device path ----------------------------------------------------------
 
