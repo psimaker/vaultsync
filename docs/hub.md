@@ -191,13 +191,16 @@ vaultsync uninstall    # remove the background service; vaults stay
                        #  never vault files)
 ```
 
-Wherever the sync engine's data is there without a record of its engine
-(`agent.json`), or without the engine's program, the background service
-starts no engine there, and `vaultsync setup` changes nothing; only setup
-takes back the very engine this VaultSync installs, where none is recorded.
-Each says how to go on: remove VaultSync's files with `vaultsync uninstall
---remove-data`, move the engine's folder aside, or, with nothing of the
-engine left, set VaultSync up anew. The computer then pairs with your Hub
+`vaultsync uninstall --remove-data` takes the sync engine's program and data
+first, and VaultSync's own copy and its record (`agent.json`) last: a removal
+that stops midway — a file it cannot remove — says so and names the command
+that runs it again, which finishes it once that is fixed. Until then the
+background service starts no engine there, and `vaultsync setup` changes
+nothing while the engine's data is left. The same holds wherever the engine's
+data is there without a record of its engine; only setup takes back the very
+engine this VaultSync installs, where none is recorded. Each says how to go
+on: finish the removal, move the engine's folder aside, or, with nothing of
+the engine left, set VaultSync up anew. The computer then pairs with your Hub
 again, and vault files stay where they are.
 
 `vaultsync uninstall --remove-data` refuses while a `vaultsync run`, `pair`
