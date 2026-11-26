@@ -12,7 +12,7 @@ Decision 048 (4) planned Windows as an unsigned portable zip through winget, wit
 - **Services and elevation.** MSIX supports no per-user Windows service, and the Store takes no app that needs elevation.
 - **Full trust.** A desktop program in a package runs as the user once it declares the restricted capability `runFullTrust`.
 
-Two decisions left a question here. Decision 073 left the call that replaces a note on Windows, and 071 left WebView2 in a Store package.
+Three decisions left a question here. Decision 073 left the call that replaces a note on Windows, 071 left WebView2 in a Store package, and 072 has the viewer open any Markdown file, which a package declares in its manifest.
 
 **Decision.**
 
@@ -20,7 +20,7 @@ Two decisions left a question here. Decision 073 left the call that replaces a n
    - **What it holds:** one MSIX package per architecture (x64 and arm64), offered together as a bundle. It carries the agent, the menu-bar app, the viewer and the pinned Syncthing.
    - **How it runs:** it declares `runFullTrust` and nothing that needs elevation. The Store signs it.
    - **What there is not:** no installer of our own, no Windows service, no winget package.
-   - **The manifest.** Its capabilities, startup tasks and firewall rules are written for VaultSync. A tool that packages one program, such as Wails 3's MSIX packaging, builds parts of the package but does not decide them.
+   - **The manifest.** Its capabilities, startup tasks, firewall rules and file types are written for VaultSync. A tool that packages one program, such as Wails 3's MSIX packaging, builds parts of the package but does not decide them.
 2. **The engine is inside the package.**
    - **At release.** The release job downloads the pinned archive, compares it with the SHA-256 in `desktop/pins.go`, and only then puts the binary into the package. The pin stays the reviewed input of decision 046.
    - **The pin's Windows entries.** `desktop/pins.go` has none yet. The pin bump that adds them gives, for each Windows archive, the archive's SHA-256 from the release's signed `sha256sum.txt.asc` (decision 046) and the SHA-256 of the binary inside it. The release job checks both.
@@ -47,18 +47,22 @@ Two decisions left a question here. Decision 073 left the call that replaces a n
    - **The socket.** It stays HTTP over an `AF_UNIX` stream socket (decision 049), in the state folder of (4). Whether that folder's path fits `AF_UNIX`'s address limit is measured. Decision 049's fallback for a folder that is too deep has no Windows form yet.
    - **Who may connect.** Access is ruled by that folder's permissions, which are the person's alone. Decision 049 also asks the kernel whose a connection is. Whether Windows lets the agent ask the same is read before code; until then the folder's permissions are the check.
 7. **The viewer and WebView2.**
+   - **Files.** The viewer reads the files it shows itself and saves through the agent (decision 071, point 3). As a full-trust program it reads and writes the person's files as the person does, like the vaults in (4).
    - **The runtime.** The viewer uses the Evergreen WebView2 runtime, which is part of Windows 11 and present on most Windows 10 computers.
    - **When it is missing.** Microsoft documents a declared dependency on the runtime only for installs through App Installer, not for the Store. So the viewer checks for the runtime when it starts, and without it says so and names Microsoft's installer. Sync does not depend on it.
    - **Rejected:** shipping a fixed runtime. It adds more than 250 MB.
 8. **Saving a note on Windows (decision 073).** Windows documents no exchange of two files.
    - **The candidate.** `ReplaceFileW` with a backup name. It puts the new text in the note's place and the replaced version under the backup name, which carries the engine's temporary prefix like 073's temporary file. 073's check can hash it there, and an undo is the same call again with the displaced version as the replacement. Its documented failures leave each file under a name the check can read.
-   - **Recovery needs the engine to stop with the service.** 073's recovery after a crash runs before the engine starts again, and on Windows neither of the two ways 073 names exists. Their counterpart belongs to #217's lock and process-group story, and until it stands, edit mode stays off on Windows too.
+   - **Recovery needs the engine to stop with the service.** 073's recovery after a crash runs before the engine starts again, and on Windows neither of the two ways 073 names exists. Their counterpart belongs to #217's lock and process-group story, and until it stands, edit mode stays off on Windows for the notes the engine syncs. A note outside the engine's folders has no engine to come first (decision 073, point 1), so it can be edited once `ReplaceFileW` holds up.
    - **What is not documented.** Microsoft does not call it atomic. Whether another writer's rename can land between its steps is measured before the viewer's code for Windows.
    - **If it can,** decision 073 (5) applies: edit mode stays off on Windows, and the viewer only reads.
 9. **Cloud folders** stay refused (decision 046). How the agent recognises them on Windows, and the guided way out of OneDrive, are on #217's list, not part of this record. One signal was read on the way: `CfGetSyncRootInfoByPath` fails for a path that is under no cloud sync root.
 10. **Updates.** What a Store update does to a running package is not documented. If it closes the agent and the engine, sync stops until the person opens VaultSync again or signs in anew, because startup tasks run only at sign-in, and the other devices show this computer as disconnected.
     - **On Windows 11 24H2 and later** the package declares `uap17:UpdateWhileInUse` "defer", so an update waits for the next restart.
     - **On earlier versions** it is measured first. If the gap is real, the first release either says so or does not support them.
+11. **Markdown files** (decision 072, point 1).
+    - **Open with.** The package declares `.md` and `.markdown` as file types the viewer opens (`uap:FileTypeAssociation`). Explorer then lists it under Open with.
+    - **Never the default.** The association sets `desktop2:AllowSilentDefaultTakeOver`, with which, by Microsoft's page, the app will "appear in an 'Open With' list, but it won't be the default app for the file type". The person makes the viewer the default in Windows' own settings, if they want to.
 
 This record sets up no build target and no CI job.
 
@@ -68,6 +72,7 @@ This record sets up no build target and no CI job.
 - **Startup tasks** are the package's own way to start at sign-in. They leave with the package and leave the switch with the person.
 - **The real data folder** keeps the agent and the engine on the same files, whatever Windows does with a child's identity.
 - **The firewall rules and the WebView2 check** turn a prompt or a failure into something the package says, without needing elevation.
+- **The file types** put the viewer where people open Markdown files, and leave the default with the person.
 
 **Rejected alternatives.**
 - *An unsigned portable zip through winget (048 (4)):* an unknown-publisher warning on every download, and no updates.
@@ -85,7 +90,7 @@ This record sets up no build target and no CI job.
 - The Store listing.
 - Whether the first release supports Windows 10.
 
-**Read, not measured.** Nothing here was built or installed; all of it was read on 2026-11-22 in Microsoft's documentation:
+**Read, not measured.** Nothing here was built or installed; all of it was read in Microsoft's documentation, on 2026-11-22 unless another day is named:
 - the Microsoft Store Policies (v7.20, 2026-09-15; 10.2.2 re-read verbatim);
 - App capability declarations;
 - "How packaged desktop apps run on Windows";
@@ -98,7 +103,8 @@ This record sets up no build target and no CI job.
 - WebView2 distribution and `win32dependencies:ExternalDependency`;
 - `ReplaceFileW`, `MoveFileExW` and the TxF deprecation note;
 - the cloud files API (`CfGetSyncRootInfoByPath`);
-- Microsoft's post on `AF_UNIX`.
+- Microsoft's post on `AF_UNIX`;
+- on 2026-11-26, `uap:FileTypeAssociation` with `desktop2:AllowSilentDefaultTakeOver`, and the page on the extensions of packaged desktop apps.
 
 What the documentation leaves open, and what is measured before the first line of code:
 - whether a child process started from the package keeps its identity and its AppData redirection;
@@ -111,6 +117,7 @@ What the documentation leaves open, and what is measured before the first line o
 - `AF_UNIX` between packaged processes, and whether the agent can learn whose a connection is;
 - `ReplaceFileW` against a concurrent rename (8);
 - which package of the bundle an arm64 computer takes;
-- the cloud sync-root check on OneDrive, Dropbox and iCloud for Windows.
+- the cloud sync-root check on OneDrive, Dropbox and iCloud for Windows;
+- what Windows shows the first time a Markdown file is opened after the package is installed, and that the viewer stays off the default (11).
 
-**Links.** #217, #325, #347; decisions 046, 048 (whose (4) this replaces), 049, 053, 054, 057; 071 ("The viewer's window …"), 073 ("The viewer saves a note only over the version it opened …").
+**Links.** #217, #325, #347; decisions 046, 048 (whose (4) this replaces), 049, 053, 054, 057; 071 ("The viewer's window …"), 072 ("What the viewer shows and writes …"), 073 ("The viewer saves a note only over the version it opened …").
