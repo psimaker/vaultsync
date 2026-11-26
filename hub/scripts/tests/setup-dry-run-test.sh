@@ -894,6 +894,34 @@ $(cat "$COMPOSE_LOG")"
 	done
 	pass "a failed rename onto .env after the compose file moved keeps .env and restarts nothing (#368)"
 
+	# A yes with one override: one pull names the staged compose file, the
+	# override and the staged .env.
+	plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
+	sed 's|vaultsync-notify:[0-9][0-9.]*|vaultsync-notify:0.0.1|' "$COMPOSE" >"$EXISTING/docker-compose.yml"
+	printf 'services: {}\n' >"$EXISTING/docker-compose.override.yml"
+	out=$(existing_hub_run y) || fail "existing-hub setup (yes, one override) exited non-zero:
+$out"
+	grep " pull --quiet" "$COMPOSE_LOG" | grep -q -- "-f $EXISTING/docker-compose.yml.setup.* -f $EXISTING/docker-compose.override.yml --env-file $EXISTING/.env.setup." || fail "a yes with one override did not pull the staged compose file, the override and the staged .env at once:
+$(cat "$COMPOSE_LOG")"
+	cmp -s "$EXISTING/.env" "$SANDBOX/results/env-expected" || fail "a yes with one override did not move the image line"
+	pass "a yes with one override pulls the staged files and the override in one pull (#368)"
+
+	# A yes where setup cannot name the files: the compose file is written
+	# before the pull, the staged .env still waits for it, without -f.
+	plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
+	printf 'services: {}\n' >"$EXISTING/compose.override.yml"
+	out=$(existing_hub_run y) || fail "existing-hub setup (yes, two overrides) exited non-zero:
+$out"
+	grep " pull --quiet" "$COMPOSE_LOG" | grep -q -- "--env-file $EXISTING/.env.setup." || fail "a yes with two overrides did not pull with the staged .env:
+$(cat "$COMPOSE_LOG")"
+	if grep " pull --quiet" "$COMPOSE_LOG" | grep -q -- " -f "; then
+		fail "a yes with two overrides named files Compose may not read:
+$(cat "$COMPOSE_LOG")"
+	fi
+	cmp -s "$EXISTING/.env" "$SANDBOX/results/env-expected" || fail "a yes with two overrides did not move the image line after the pull"
+	rm -f "$EXISTING/docker-compose.override.yml" "$EXISTING/compose.override.yml"
+	pass "a yes where setup cannot name the files pulls with the staged .env, without -f (#368)"
+
 	grep -v '^chown ' "$SANDBOX/results/violations-existing.log" | grep -q . && fail "an existing-Hub setup ran a privileged or network-changing command:
 $(cat "$SANDBOX/results/violations-existing.log")"
 else
@@ -1013,6 +1041,21 @@ cmp -s "$EXISTING/docker-compose.override.yml" "$SANDBOX/results/override-before
 cmp -s "$EXISTING/docker-compose.yml" "$COMPOSE" || fail "the compose file did not move after a pull that worked (one override)"
 pass "one override is pulled with the staged compose file and left as it is (#368)"
 
+# An override that is a link to nothing: Compose skips it, and so does setup.
+existing_compose_fixture
+ln -s "$SANDBOX/results/no-such-override.yml" "$EXISTING/docker-compose.override.yml"
+out=$(existing_update) || fail "an update with a dangling override link exited non-zero:
+$out"
+grep " pull --quiet" "$COMPOSE_LOG" | grep -q -- "-f $EXISTING/docker-compose.yml.setup." || fail "the compose file was not staged beside a dangling override link:
+$(cat "$COMPOSE_LOG")"
+if grep " pull --quiet" "$COMPOSE_LOG" | grep -q -- "docker-compose.override.yml"; then
+	fail "the pull named an override that is a link to nothing:
+$(cat "$COMPOSE_LOG")"
+fi
+[ -L "$EXISTING/docker-compose.override.yml" ] || fail "setup touched the dangling override link"
+rm -f "$EXISTING/docker-compose.override.yml"
+pass "an override that is a link to nothing is skipped, as Compose skips it (#368)"
+
 # Where setup cannot name the files Compose reads, the compose file is
 # written before the pull, as before, and setup says so; a failed pull then
 # does not claim the compose file is unchanged.
@@ -1050,6 +1093,22 @@ unnameable "two overrides" "printf 'services: {}\\n' >'$EXISTING/docker-compose.
 unnameable "a compose.yaml beside it" "printf 'services: {}\\n' >'$EXISTING/compose.yaml'"
 unnameable "COMPOSE_FILE in .env" "printf 'COMPOSE_FILE=docker-compose.yml:extra.yml\\n' >>'$EXISTING/.env'"
 unnameable "COMPOSE_FILE in the environment" ":" COMPOSE_FILE=docker-compose.yml
+unnameable "COMPOSE_ENV_FILES in the environment" ":" COMPOSE_ENV_FILES=/elsewhere/hub.env
+
+# An .env setup cannot read may name COMPOSE_FILE for a Compose run through
+# sudo: setup cannot name the files. (Root reads any file: non-root only.)
+if [ "$(id -u)" != 0 ]; then
+	existing_compose_fixture
+	chmod 000 "$EXISTING/.env"
+	out=$(existing_update) || { chmod 644 "$EXISTING/.env"; fail "an update with an unreadable .env exited non-zero:
+$out"; }
+	chmod 644 "$EXISTING/.env"
+	printf '%s\n' "$out" | grep -q "written before the pull" || fail "an unreadable .env was taken for one without COMPOSE_FILE:
+$out"
+	pass "an .env setup cannot read leaves the compose file unstaged (#368)"
+else
+	pass "unreadable-.env case skipped (root reads every file)"
+fi
 
 # --- 3. Device path ----------------------------------------------------------
 

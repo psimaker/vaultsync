@@ -165,25 +165,29 @@ release_env_edit() {
 # the Hub in DIR — docker-compose.yml and at most one override, which it
 # leaves in COMPOSE_OVERRIDE — so a pull given them with -f reads what the
 # later `up -d` reads (#368). Not when COMPOSE_FILE lists the files (in the
-# environment, or any line of .env that names it), when another base file
-# lies beside it (Compose would prefer it), or when more than one override
-# does.
+# environment, or any line of .env that names it — an .env setup cannot
+# read counts, Compose may read it through sudo), when COMPOSE_ENV_FILES
+# points Compose at other env files, when another base file lies beside it
+# (Compose may prefer it), or when more than one override does.
 compose_files_nameable() {
 	COMPOSE_OVERRIDE=""
 	[ -z "${COMPOSE_FILE:-}" ] || return 1
-	if grep -qs 'COMPOSE_FILE' "$1/.env"; then
-		return 1
-	fi
+	[ -z "${COMPOSE_ENV_FILES:-}" ] || return 1
+	env_grep=0
+	grep -qs 'COMPOSE_FILE' "$1/.env" || env_grep=$?
+	[ "$env_grep" -eq 1 ] || return 1
 	for f in compose.yaml compose.yml docker-compose.yaml; do
 		if [ -e "$1/$f" ] || [ -L "$1/$f" ]; then
 			return 1
 		fi
 	done
+	# An override Compose loads is a file. A link to nothing it skips, and
+	# so does setup; anything else under the name setup cannot name.
 	for f in compose.override.yml compose.override.yaml docker-compose.override.yml docker-compose.override.yaml; do
-		if [ -e "$1/$f" ] || [ -L "$1/$f" ]; then
-			[ -z "$COMPOSE_OVERRIDE" ] || return 1
-			COMPOSE_OVERRIDE="$1/$f"
-		fi
+		[ -e "$1/$f" ] || continue
+		[ -f "$1/$f" ] || return 1
+		[ -z "$COMPOSE_OVERRIDE" ] || return 1
+		COMPOSE_OVERRIDE="$1/$f"
 	done
 	return 0
 }
@@ -772,6 +776,13 @@ write_hub_files() {
 	env_file="$HUB_DIR/.env"
 	if [ "$DRY_RUN" = 1 ]; then
 		info "[dry-run] would write: $compose and $env_file (PUID=$PUID PGID=$PGID SYNC_PORT=$SYNC_PORT GUI_PORT=$GUI_PORT)"
+		if [ -f "$env_file" ] && [ -f "$compose" ]; then
+			if compose_files_nameable "$HUB_DIR"; then
+				info "[dry-run] the stack would be written beside $compose, pulled from there and put in its place only after a pull that worked"
+			else
+				info "[dry-run] $compose would be written before the pull: setup cannot tell which files Compose reads here"
+			fi
+		fi
 		if [ ! -f "$env_file" ]; then
 			syncthing_image=$(syncthing_image_for_new_env)
 			info "[dry-run] the new $env_file would name VAULTSYNC_HUB_SYNCTHING_IMAGE=$syncthing_image"
@@ -900,8 +911,10 @@ ENV
 # the staged files name, before they take the places of the files in place.
 # With a staged compose file the pull names it and the override Compose
 # would load beside it; without one, Compose finds the files as the later
-# `up -d` does. A staged .env is the env file either way (Compose also reads
-# COMPOSE_FILE from it).
+# `up -d` does. A staged .env is the env file either way; without a staged
+# compose file Compose also reads COMPOSE_FILE from it, as `up -d` will from
+# .env (with -f, COMPOSE_FILE is not read, and the staged path is taken only
+# when no COMPOSE_FILE is set).
 pull_hub_images() {
 	set -- --project-directory "$HUB_DIR"
 	if [ -n "$COMPOSE_STAGED" ]; then
@@ -998,7 +1011,11 @@ setup_hub() {
 
 	info "Starting the Hub (this pulls three images on first run)..."
 	if [ "$DRY_RUN" = 1 ]; then
-		info "[dry-run] would run: $DOCKER compose --project-directory $HUB_DIR pull"
+		if [ -f "$HUB_DIR/.env" ] && [ -f "$HUB_DIR/docker-compose.yml" ] && compose_files_nameable "$HUB_DIR"; then
+			info "[dry-run] would run: $DOCKER compose --project-directory $HUB_DIR -f <the staged docker-compose.yml>${COMPOSE_OVERRIDE:+ -f $COMPOSE_OVERRIDE} pull (with --env-file <the staged .env> if the move is taken)"
+		else
+			info "[dry-run] would run: $DOCKER compose --project-directory $HUB_DIR pull"
+		fi
 		info "[dry-run] would run: $DOCKER compose --project-directory $HUB_DIR up -d"
 		info "[dry-run] would run: $DOCKER compose --project-directory $HUB_DIR exec -T hub vaultsync-hub code"
 		return 0
