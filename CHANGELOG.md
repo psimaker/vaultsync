@@ -14,7 +14,7 @@ VaultSync for Mac and Linux (the desktop agent and its menu-bar app, `desktop-vX
 
 ### Fixed
 
-- **Updating a Hub with the setup link no longer leaves it unable to start when an image cannot be downloaded** — run again on an existing Hub, the setup link now downloads the images first and changes `.env` and `docker-compose.yml` only after that worked. Before, a download that failed left both files naming images the server did not have, and the next `docker compose up -d` failed. The change is live once merged, because the setup link serves the main branch. (#368)
+- **Updating a Hub with the setup link no longer leaves it unable to start when an image cannot be downloaded** — run again on an existing Hub, the setup link now downloads the images first and changes `.env` and `docker-compose.yml` only after that worked. Before, a download that failed left the compose file, and `.env` after a yes to the move, naming images the server had not downloaded, so a later `docker compose up -d` failed while the registry could not be reached. The change is live once merged, because the setup link serves the main branch. (#368)
 - **A change is on disk before the sync engine has stopped** — VaultSync stops its sync engine at the end of a background run, and iOS can suspend the app right after. The stop now ends only once the engine's last configuration change is written to disk. Before, that write came about 10 milliseconds after the stop had ended (measured on a Mac), so a change made in that run could miss the file the next start reads. (#302)
 
 ## [3.0.1] — 2026-11-24

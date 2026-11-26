@@ -449,7 +449,13 @@ its control); it keeps your ports and names and never touches a custom
 image. It changes `.env` and `docker-compose.yml` only after the images they
 name are downloaded: when the download fails or is interrupted, both stay as
 they were, the Hub keeps the containers it runs, and setup says so — run it
-again once the registry can be reached, or move by hand as above.
+again once the registry can be reached, or move by hand as above. If the
+Hub's Compose files are listed in `COMPOSE_FILE`, or another compose file or
+more than one override lies beside `docker-compose.yml`, setup cannot tell
+which files Compose reads and writes `docker-compose.yml` first, as it always
+did. A run cut off during the download in a way it cannot catch (power loss,
+`kill -9`) leaves its lock `.env.setup-lock` behind; the next run says so, and
+removing that directory clears it.
 Without a terminal, or on an `.env` you reshaped by hand, it tells you to
 change the line yourself instead. As on every run, it prints a new
 pairing code at the end.

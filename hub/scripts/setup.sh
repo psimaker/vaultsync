@@ -145,6 +145,8 @@ ENV_EDIT_OUT=""
 # file a failed or refused staging left half made.
 ENV_STAGED=""
 COMPOSE_STAGED=""
+COMPOSE_OVERRIDE=""
+HUB_EXISTED=""
 release_env_edit() {
 	for f in "$ENV_EDIT_TMP" "$ENV_EDIT_OUT" "$COMPOSE_STAGED"; do
 		[ -z "$f" ] || rm -f "$f" 2>/dev/null || true
@@ -157,6 +159,41 @@ release_env_edit() {
 	ENV_STAGED=""
 	COMPOSE_STAGED=""
 	ENV_EDIT_LOCK=""
+}
+
+# compose_files_nameable DIR: setup can name the files Compose reads for
+# the Hub in DIR — docker-compose.yml and at most one override, which it
+# leaves in COMPOSE_OVERRIDE — so a pull given them with -f reads what the
+# later `up -d` reads (#368). Not when COMPOSE_FILE lists the files (in the
+# environment, or any line of .env that names it), when another base file
+# lies beside it (Compose would prefer it), or when more than one override
+# does.
+compose_files_nameable() {
+	COMPOSE_OVERRIDE=""
+	[ -z "${COMPOSE_FILE:-}" ] || return 1
+	if grep -qs 'COMPOSE_FILE' "$1/.env"; then
+		return 1
+	fi
+	for f in compose.yaml compose.yml docker-compose.yaml; do
+		if [ -e "$1/$f" ] || [ -L "$1/$f" ]; then
+			return 1
+		fi
+	done
+	for f in compose.override.yml compose.override.yaml docker-compose.override.yml docker-compose.override.yaml; do
+		if [ -e "$1/$f" ] || [ -L "$1/$f" ]; then
+			[ -z "$COMPOSE_OVERRIDE" ] || return 1
+			COMPOSE_OVERRIDE="$1/$f"
+		fi
+	done
+	return 0
+}
+
+# same_text A B: both files can be read and hold the same text. cat only: a
+# NAS's shell may have no cmp.
+same_text() {
+	same_text_a=$(cat "$1" && echo .) || return 1
+	same_text_b=$(cat "$2" && echo .) || return 1
+	[ "$same_text_a" = "$same_text_b" ]
 }
 
 hold_hub_edits() {
@@ -744,8 +781,11 @@ write_hub_files() {
 	fi
 	# On an existing Hub the stack is written beside the compose file in
 	# place, with that file's mode, and takes its place only after the pull
-	# (#368); a new Hub gets it in place.
-	if [ -f "$env_file" ] && [ -f "$compose" ]; then
+	# (#368) — when setup can name the files Compose reads; otherwise, and on
+	# a new Hub, it is written in place before the pull.
+	if [ -f "$env_file" ] && [ -f "$compose" ] && ! compose_files_nameable "$HUB_DIR"; then
+		info "docker-compose.yml is written before the pull: setup cannot tell which files Compose reads here (COMPOSE_FILE, another compose file or more than one override beside it)."
+	elif [ -f "$env_file" ] && [ -f "$compose" ]; then
 		hold_hub_edits
 		if ! COMPOSE_STAGED=$(mktemp "$compose.setup.XXXXXX") || ! cp -p "$compose" "$COMPOSE_STAGED"; then
 			fail "Could not update $compose; nothing was changed. Run the setup again, or update by hand (docs/hub.md → Update the Hub)."
@@ -858,16 +898,18 @@ ENV
 
 # pull_hub_images: pulls what the stack will run — on an existing Hub what
 # the staged files name, before they take the places of the files in place.
+# With a staged compose file the pull names it and the override Compose
+# would load beside it; without one, Compose finds the files as the later
+# `up -d` does. A staged .env is the env file either way (Compose also reads
+# COMPOSE_FILE from it).
 pull_hub_images() {
-	if [ -n "$COMPOSE_STAGED" ] && [ -n "$ENV_STAGED" ]; then
-		$DOCKER compose --project-directory "$HUB_DIR" -f "$COMPOSE_STAGED" --env-file "$ENV_EDIT_OUT" pull --quiet
-	elif [ -n "$COMPOSE_STAGED" ]; then
-		$DOCKER compose --project-directory "$HUB_DIR" -f "$COMPOSE_STAGED" pull --quiet
-	elif [ -n "$ENV_STAGED" ]; then
-		$DOCKER compose --project-directory "$HUB_DIR" --env-file "$ENV_EDIT_OUT" pull --quiet
-	else
-		$DOCKER compose --project-directory "$HUB_DIR" pull --quiet
+	set -- --project-directory "$HUB_DIR"
+	if [ -n "$COMPOSE_STAGED" ]; then
+		set -- "$@" -f "$COMPOSE_STAGED"
+		[ -z "$COMPOSE_OVERRIDE" ] || set -- "$@" -f "$COMPOSE_OVERRIDE"
 	fi
+	[ -z "$ENV_STAGED" ] || set -- "$@" --env-file "$ENV_EDIT_OUT"
+	$DOCKER compose "$@" pull --quiet
 }
 
 # install_staged_hub_files: after the pull, the staged files take their
@@ -878,7 +920,7 @@ pull_hub_images() {
 install_staged_hub_files() {
 	env_file="$HUB_DIR/.env"
 	compose="$HUB_DIR/docker-compose.yml"
-	if [ -n "$ENV_STAGED" ] && ! cmp -s "$env_file" "$ENV_EDIT_TMP"; then
+	if [ -n "$ENV_STAGED" ] && ! same_text "$env_file" "$ENV_EDIT_TMP"; then
 		fail "$env_file changed while setup was pulling; nothing was changed. Check its VAULTSYNC_HUB_IMAGE line, then run the setup again."
 	fi
 	if [ -n "$COMPOSE_STAGED" ]; then
@@ -921,6 +963,7 @@ setup_hub() {
 	SYNC_PORT=22000
 	GUI_PORT=8384
 	if [ -d "$HUB_DIR" ] && [ -f "$HUB_DIR/.env" ]; then
+		HUB_EXISTED=1
 		info "Existing Hub found in $HUB_DIR — updating it (your .env is kept)."
 		# The hints below must name the ports this Hub actually uses.
 		existing_sync=$(sed -n 's/^SYNC_PORT=//p' "$HUB_DIR/.env" | tail -1)
@@ -961,13 +1004,20 @@ setup_hub() {
 		return 0
 	fi
 	if ! pull_hub_images; then
-		# An existing Hub's files were staged, not written: nothing changed.
-		if [ -n "$COMPOSE_STAGED$ENV_STAGED" ]; then
-			end_hub_edits
-			info "The images could not be pulled (the message above says why). Nothing was changed:"
-			info "  $HUB_DIR/.env and docker-compose.yml are as they were, and so are the Hub's containers."
+		# What the message says follows what was staged: a staged file is
+		# unchanged, a compose file written in place may name images this
+		# host has not downloaded.
+		compose_was_staged="$COMPOSE_STAGED"
+		end_hub_edits
+		if [ -n "$HUB_EXISTED" ]; then
+			info "The images could not be pulled (the message above says why)."
+			if [ -n "$compose_was_staged" ]; then
+				info "  Nothing was changed: $HUB_DIR/.env and docker-compose.yml are as they were, and so are the Hub's containers."
+			else
+				info "  $HUB_DIR/.env is as it was, and so are the Hub's containers. docker-compose.yml was written before the pull and may name images this host has not downloaded."
+			fi
 			info "  Run the setup again once the registry can be reached, or update by hand (docs/hub.md → Update the Hub)."
-			fail "The update stopped before anything was changed."
+			fail "The update stopped before the stack was restarted."
 		fi
 		fail "The images could not be pulled (the message above says why). Run the setup again once the registry can be reached."
 	fi
