@@ -57,7 +57,7 @@ A name that begins `.syncthing.` or `~syncthing~` is never scanned and never sen
 - **Decisions 002 and 007.** A version the person did not see is never replaced without their decision, and nothing is merged.
 - **The exchange.** It turns the last check into a fact about the very file it replaced. A check before a rename only describes a file that may already be gone.
 - **The draft.** The engine has a window of its own between its check and its rename, which no writer outside the engine can close. The draft turns that window from a loss into a question the person answers.
-- **Saving at the end of an edit.** Every save of a synced note is a version that every device receives. Saving at the end of an edit keeps half a sentence off the phone and opens the windows of (4) and (6) once per edit, not once per pause in typing.
+- **Saving at the end of an edit.** Every save of a synced note can become a version that every device receives. Saving at the end of an edit keeps half a sentence off the phone and opens the windows of (4) and (6) once per edit, not once per pause in typing.
 - **The temporary name.** It keeps the new text and a displaced version away from every other device. Any other name inside a synced folder is scanned and sent within seconds.
 - **Recovery before the engine.** The engine deletes a temporary file by its age, and a displaced version keeps its own, possibly old, time.
 - **One home for every save.** A note outside the engine's folders needs neither the recovery's order nor the index. Saving it in the same place keeps one rule and one recovery, and a folder that starts to sync is saved under the engine's rule from its next save on.
@@ -65,7 +65,7 @@ A name that begins `.syncthing.` or `~syncthing~` is never scanned and never sen
 **Rejected alternatives.**
 - *Check, then rename over the note:* the engine's rename can land between the check and the rename, and the version it brought is lost on every device without a sign. Decision 027 rejected the same for Keep Both. It is also rejected as a fallback where the exchange is missing (5).
 - *Writing into the note in place:* a reader, whether the engine's scanner or another app, can see half a note, and a crash leaves half a note that syncs.
-- *Saving while the person types, as Obsidian does:* in a synced note, every pause would become a version on every device.
+- *Saving while the person types, as Obsidian does:* in a synced note, every pause could become a version on every device.
 - *Keeping both under the engine's conflict name:* the iPhone's conflict list would show it, but the engine and the iPhone app delete conflict copies by their own rules. The only copy of the person's text must not lie under such a name.
 - *A choice that replaces the newer version with the person's text:* #347 rules it out. Bringing the text back over the opened newer version does the same with that version seen.
 - *Merging the two versions line by line:* decision 002.
