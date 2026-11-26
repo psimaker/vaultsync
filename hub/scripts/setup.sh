@@ -131,14 +131,22 @@ plain_env_file() {
 }
 
 # The edit of .env holds a lock from the first read to the rename, so two
-# setups cannot read the same old line and write in turns. release_env_edit
-# removes the lock and the temporary files; the traps run it on exit and on
-# an interruption, which then ends the setup (129/130/143).
+# setups cannot read the same old line and write in turns. On an existing
+# Hub the new .env and the new compose file are staged beside the files in
+# place and take their places only after the images they name are pulled
+# (#368): a pull that fails or is interrupted leaves both as they were.
+# release_env_edit removes the lock and every temporary and staged file; the
+# traps run it on exit and on an interruption, which then ends the setup
+# (129/130/143).
 ENV_EDIT_LOCK=""
 ENV_EDIT_TMP=""
 ENV_EDIT_OUT=""
+# Set only once stage_env_image has finished: ENV_EDIT_OUT alone may name a
+# file a failed or refused staging left half made.
+ENV_STAGED=""
+COMPOSE_STAGED=""
 release_env_edit() {
-	for f in "$ENV_EDIT_TMP" "$ENV_EDIT_OUT"; do
+	for f in "$ENV_EDIT_TMP" "$ENV_EDIT_OUT" "$COMPOSE_STAGED"; do
 		[ -z "$f" ] || rm -f "$f" 2>/dev/null || true
 		[ -z "$f" ] || [ ! -e "$f" ] || warn "Could not remove the temporary file $f."
 	done
@@ -146,22 +154,37 @@ release_env_edit() {
 	[ -z "$ENV_EDIT_LOCK" ] || [ ! -d "$ENV_EDIT_LOCK" ] || warn "Could not remove the lock $ENV_EDIT_LOCK."
 	ENV_EDIT_TMP=""
 	ENV_EDIT_OUT=""
+	ENV_STAGED=""
+	COMPOSE_STAGED=""
 	ENV_EDIT_LOCK=""
+}
+
+hold_hub_edits() {
+	trap 'release_env_edit' EXIT
+	trap 'release_env_edit; exit 129' HUP
+	trap 'release_env_edit; exit 130' INT
+	trap 'release_env_edit; exit 143' TERM
+}
+
+end_hub_edits() {
+	release_env_edit
+	trap - EXIT HUP INT TERM
 }
 
 env_image_line() {
 	sed -n 's/^VAULTSYNC_HUB_IMAGE=//p' "$1"
 }
 
-# replace_env_image FILE EXPECTED: the VAULTSYNC_HUB_IMAGE line becomes
-# $HUB_IMAGE. A snapshot of FILE (mktemp reserves the names; cp -p keeps the
-# mode) is checked as a whole — plain shape, the image line still EXPECTED —
-# and transformed into a second file whose image line is checked in turn;
-# that file takes FILE's place in one rename, so FILE is whole at every
-# instant. Returns 2 when the snapshot is not what was offered, 1 when a
-# step fails; what it created is removed by release_env_edit, which reports
-# anything it could not remove.
-replace_env_image() {
+# stage_env_image FILE EXPECTED: a second file whose VAULTSYNC_HUB_IMAGE
+# line is $HUB_IMAGE, left in ENV_EDIT_OUT. A snapshot of FILE (mktemp
+# reserves the names; cp -p keeps the mode) is checked as a whole — plain
+# shape, the image line still EXPECTED — and transformed into that file,
+# whose image line is checked in turn. It takes FILE's place in one rename
+# once its images are pulled (install_staged_hub_files), so FILE is whole
+# at every instant. Returns 2 when the snapshot is not what was offered, 1
+# when a step fails; what it created is removed by release_env_edit, which
+# reports anything it could not remove.
+stage_env_image() {
 	file="$1"
 	expected="$2"
 	ENV_EDIT_TMP=$(mktemp "$file.setup.XXXXXX") || return 1
@@ -175,10 +198,9 @@ replace_env_image() {
 	cp -p "$ENV_EDIT_TMP" "$ENV_EDIT_OUT" || return 1
 	sed "s|^VAULTSYNC_HUB_IMAGE=$literal\$|VAULTSYNC_HUB_IMAGE=$HUB_IMAGE|" "$ENV_EDIT_TMP" >"$ENV_EDIT_OUT" || return 1
 	[ "$(env_image_line "$ENV_EDIT_OUT")" = "$HUB_IMAGE" ] || return 1
-	mv -f "$ENV_EDIT_OUT" "$file" || return 1
-	ENV_EDIT_OUT=""
-	# The snapshot stays tracked: release_env_edit removes it and reports
-	# a removal that fails.
+	# Both stay tracked: the snapshot to check FILE against before the
+	# rename, the staged file to rename; release_env_edit removes what is
+	# left and reports a removal that fails.
 	return 0
 }
 
@@ -221,13 +243,11 @@ offer_newer_hub_image() {
 		fail "Could not create the lock $lock next to $env_file; nothing was changed."
 	fi
 	ENV_EDIT_LOCK="$lock"
-	trap 'release_env_edit' EXIT
-	trap 'release_env_edit; exit 129' HUP
-	trap 'release_env_edit; exit 130' INT
-	trap 'release_env_edit; exit 143' TERM
+	hold_hub_edits
 	offer_newer_hub_image_locked "$env_file"
-	release_env_edit
-	trap - EXIT HUP INT TERM
+	# A staged .env keeps the lock and the traps until it takes its place
+	# after the pull, or is removed with the lock.
+	[ -n "$ENV_STAGED" ] || end_hub_edits
 	return 0
 }
 
@@ -261,8 +281,9 @@ offer_newer_hub_image_locked() {
 			[yY]*)
 				# As a condition, so that set -e does not end the script on a
 				# failed step before it is reported.
-				if replace_env_image "$env_file" "$current"; then
-					info "  .env now names $HUB_IMAGE; the stack restarts on it below."
+				if stage_env_image "$env_file" "$current"; then
+					ENV_STAGED=1
+					info "  .env will name $HUB_IMAGE once its images are pulled below."
 					return 0
 				elif [ $? -eq 2 ]; then
 					info "  $env_file changed while setup was asking; nothing was changed. Check its VAULTSYNC_HUB_IMAGE line, then run the setup again."
@@ -721,6 +742,15 @@ write_hub_files() {
 		fi
 		return 0
 	fi
+	# On an existing Hub the stack is written beside the compose file in
+	# place, with that file's mode, and takes its place only after the pull
+	# (#368); a new Hub gets it in place.
+	if [ -f "$env_file" ] && [ -f "$compose" ]; then
+		hold_hub_edits
+		COMPOSE_STAGED=$(mktemp "$compose.setup.XXXXXX") && cp -p "$compose" "$COMPOSE_STAGED" ||
+			fail "Could not update $compose; nothing was changed. Run the setup again, or update by hand (docs/hub.md → Update the Hub)."
+		compose="$COMPOSE_STAGED"
+	fi
 	cat >"$compose" <<'COMPOSE'
 # VaultSync Hub — the self-hosted stack `setup.sh` installs.
 #
@@ -825,6 +855,50 @@ ENV
 	fi
 }
 
+# pull_hub_images: pulls what the stack will run — on an existing Hub what
+# the staged files name, before they take the places of the files in place.
+pull_hub_images() {
+	if [ -n "$COMPOSE_STAGED" ] && [ -n "$ENV_STAGED" ]; then
+		$DOCKER compose --project-directory "$HUB_DIR" -f "$COMPOSE_STAGED" --env-file "$ENV_EDIT_OUT" pull --quiet
+	elif [ -n "$COMPOSE_STAGED" ]; then
+		$DOCKER compose --project-directory "$HUB_DIR" -f "$COMPOSE_STAGED" pull --quiet
+	elif [ -n "$ENV_STAGED" ]; then
+		$DOCKER compose --project-directory "$HUB_DIR" --env-file "$ENV_EDIT_OUT" pull --quiet
+	else
+		$DOCKER compose --project-directory "$HUB_DIR" pull --quiet
+	fi
+}
+
+# install_staged_hub_files: after the pull, the staged files take their
+# places. .env is checked against the snapshot the staged one was made from
+# first: changed meanwhile, neither file moves. A compose file that is a
+# symbolic link is written through, as setup always has; any other moves in
+# one rename.
+install_staged_hub_files() {
+	env_file="$HUB_DIR/.env"
+	compose="$HUB_DIR/docker-compose.yml"
+	if [ -n "$ENV_STAGED" ] && ! cmp -s "$env_file" "$ENV_EDIT_TMP"; then
+		fail "$env_file changed while setup was pulling; nothing was changed. Check its VAULTSYNC_HUB_IMAGE line, then run the setup again."
+	fi
+	if [ -n "$COMPOSE_STAGED" ]; then
+		if [ -L "$compose" ]; then
+			cat "$COMPOSE_STAGED" >"$compose" ||
+				fail "Could not update $compose through its link; the images are pulled, .env is unchanged. Update by hand (docs/hub.md → Update the Hub)."
+		else
+			mv -f "$COMPOSE_STAGED" "$compose" ||
+				fail "Could not update $compose; nothing was changed. Run the setup again, or update by hand (docs/hub.md → Update the Hub)."
+			COMPOSE_STAGED=""
+		fi
+	fi
+	if [ -n "$ENV_STAGED" ]; then
+		mv -f "$ENV_EDIT_OUT" "$env_file" ||
+			fail "Could not update $env_file; its old image line stays. Change its VAULTSYNC_HUB_IMAGE line by hand, then run docker compose pull && docker compose up -d."
+		ENV_EDIT_OUT=""
+		ENV_STAGED=""
+		info "  .env now names $HUB_IMAGE; the stack restarts on it below."
+	fi
+}
+
 setup_hub() {
 	[ "$(uname -s)" = "Linux" ] ||
 		fail "The Hub runs on a Linux server or NAS with Docker. On this computer choose 1) Obsidian device."
@@ -885,7 +959,19 @@ setup_hub() {
 		info "[dry-run] would run: $DOCKER compose --project-directory $HUB_DIR exec -T hub vaultsync-hub code"
 		return 0
 	fi
-	$DOCKER compose --project-directory "$HUB_DIR" pull --quiet
+	if ! pull_hub_images; then
+		# An existing Hub's files were staged, not written: nothing changed.
+		if [ -n "$COMPOSE_STAGED$ENV_STAGED" ]; then
+			end_hub_edits
+			info "The images could not be pulled (the message above says why). Nothing was changed:"
+			info "  $HUB_DIR/.env and docker-compose.yml are as they were, and so are the Hub's containers."
+			info "  Run the setup again once the registry can be reached, or update by hand (docs/hub.md → Update the Hub)."
+			fail "The update stopped before anything was changed."
+		fi
+		fail "The images could not be pulled (the message above says why). Run the setup again once the registry can be reached."
+	fi
+	install_staged_hub_files
+	end_hub_edits
 	if ! $DOCKER compose --project-directory "$HUB_DIR" up -d; then
 		$DOCKER compose --project-directory "$HUB_DIR" logs --tail 30 syncthing >&2 || true
 		syncthing_start_hint
