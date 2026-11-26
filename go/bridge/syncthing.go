@@ -52,6 +52,13 @@ var (
 
 	// Early service supervisor for evLogger and config wrapper.
 	stEarlyCancel context.CancelFunc
+	// stEarlyDone receives once, when the early supervisor has stopped its
+	// services. The config wrapper writes the configuration as its Serve
+	// loop returns, so a stop that has received from it has the last commit
+	// on disk (#302) — unless a service outlasted suture's stop timeout
+	// (svcutil.ServiceTimeout, 10 s), which the supervisor returns without.
+	// stopEngineLocked is its only receiver.
+	stEarlyDone <-chan error
 )
 
 // singleConnectionPerDevice pins every peer to one connection (#185): the
@@ -73,8 +80,10 @@ var lifecycleTimeouts = struct {
 	configCommit time.Duration
 	// Event subscription on the early supervisor's event loop.
 	subscribe time.Duration
-	// App.Stop. Upstream bounds it at roughly 20 s (services, then the
-	// database); this is the backstop when it does not.
+	// App.Stop, then the early supervisor's stop with the config wrapper's
+	// last save (#302). Upstream bounds the first at roughly 20 s
+	// (services, then the database), suture the second at 10 s; this is
+	// the backstop when they do not.
 	stop time.Duration
 }{
 	configCommit: 30 * time.Second,
@@ -230,7 +239,7 @@ func StartSyncthing(configDir string) string {
 	ctx, cancel := context.WithCancel(context.Background())
 	stEarlyCancel = cancel
 	earlySvc := suture.New("early", svcutil.SpecWithDebugLogger())
-	earlySvc.ServeBackground(ctx)
+	stEarlyDone = earlySvc.ServeBackground(ctx)
 
 	// Create and register event logger.
 	stEvLogger = events.NewLogger()
@@ -381,8 +390,8 @@ func configurePrivacySafeLogging() {
 // stStopPending keeps StartSyncthing from starting a second one until it has.
 // Returns "" on success, otherwise the timeout text.
 func stopEngineLocked() string {
-	app, sdb, earlyCancel := stApp, stDB, stEarlyCancel
-	stApp, stDB, stEarlyCancel = nil, nil, nil
+	app, sdb, earlyCancel, earlyDone := stApp, stDB, stEarlyCancel, stEarlyDone
+	stApp, stDB, stEarlyCancel, stEarlyDone = nil, nil, nil, nil
 	stStorageAnchor, stStorageAnchorErr = 0, nil
 	stEventSub = nil
 	stRunning = false
@@ -391,36 +400,43 @@ func stopEngineLocked() string {
 
 	// Order matters: the App's services still use the config wrapper and
 	// the event logger while they shut down, so the early supervisor is
-	// canceled only after the App has stopped.
+	// canceled only after the App has stopped. Its config wrapper writes the
+	// configuration as it stops, and the stop returns only once the early
+	// supervisor has stopped it, the write done, within suture's stop
+	// timeout: a stop that returned before it left the last commit off disk,
+	// for a process iOS suspends or ends right after the stop, and for a
+	// start that read config.xml first (#302). earlyDone receives once, so
+	// this is its only receive; a cancel without a channel leaves nothing to
+	// wait for.
 	release := func() {
 		if sdb != nil {
 			sdb.Close()
 		}
 		if earlyCancel != nil {
 			earlyCancel()
+			if earlyDone != nil {
+				<-earlyDone
+			}
 		}
 	}
-	if app == nil {
-		release()
-		return ""
-	}
 
+	// One bounded wait for the whole stop, the save included, so no wait
+	// under mu is unbounded (#181). On expiry the stop finishes in the
+	// background, and stStopPending keeps the next start from reading
+	// config.xml before the save has landed.
+	stopped := make(chan struct{})
 	err := awaitWithin("stop", lifecycleTimeouts.stop, func() error {
-		app.Stop(svcutil.ExitSuccess)
+		defer close(stopped)
+		if app != nil {
+			app.Stop(svcutil.ExitSuccess)
+		}
+		release()
 		return nil
 	})
 	if err == nil {
-		release()
 		return ""
 	}
-
-	pending := make(chan struct{})
-	stStopPending = pending
-	go func() {
-		app.Wait()
-		release()
-		close(pending)
-	}()
+	stStopPending = stopped
 	return err.Error()
 }
 

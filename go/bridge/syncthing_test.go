@@ -18,10 +18,20 @@ func testConfigDir(t *testing.T) string {
 	}
 	t.Cleanup(func() {
 		StopSyncthing()
-		// Allow Syncthing's async config flush to complete before
-		// removing the temp directory — avoids "rename config.xml"
-		// log noise during test teardown.
-		time.Sleep(100 * time.Millisecond)
+		// The stop returns with the configuration saved (#302), but a stop
+		// that overran its deadline still finishes in the background, its
+		// save included: wait for it before removing the directory, so it
+		// does not write into a directory that is going away.
+		mu.Lock()
+		pending := stStopPending
+		mu.Unlock()
+		if pending != nil {
+			select {
+			case <-pending:
+			case <-time.After(30 * time.Second):
+				t.Errorf("a stop that overran its deadline was still pending after 30 s")
+			}
+		}
 		os.RemoveAll(dir)
 	})
 	return dir

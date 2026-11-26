@@ -122,7 +122,6 @@ func TestIssue181_ConfigCommitWaitHasDeadline(t *testing.T) {
 	}
 
 	StopSyncthing()
-	time.Sleep(100 * time.Millisecond)
 	os.RemoveAll(configDir)
 }
 
