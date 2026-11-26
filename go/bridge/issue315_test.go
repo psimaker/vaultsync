@@ -242,19 +242,19 @@ func issue315Record(t *testing.T, folderID string) (folderStorageRecord, bool) {
 	return record, found
 }
 
-// issue315StopWithConfigOnDisk stops the engine and waits until its
+// issue315StopWithConfigOnDisk stops the engine and checks that its
 // configuration file holds text. The engine saves on a timer and once more
-// as it stops, and StopSyncthing does not wait for that last write: an
-// engine started before it is done starts without the change.
+// as it stops, and StopSyncthing returns only once that last write is on
+// disk (#302), so the engine the test starts next loads the change.
 func issue315StopWithConfigOnDisk(t *testing.T, configDir, text string) {
 	t.Helper()
 	if errMsg := StopSyncthing(); errMsg != "" {
 		t.Fatalf("StopSyncthing() = %q", errMsg)
 	}
-	waitFor(t, "the change in the configuration on disk", 30*time.Second, func() bool {
-		data, err := os.ReadFile(filepath.Join(configDir, "config.xml"))
-		return err == nil && strings.Contains(string(data), text)
-	})
+	data, err := os.ReadFile(filepath.Join(configDir, "config.xml"))
+	if err != nil || !strings.Contains(string(data), text) {
+		t.Fatalf("config.xml right after StopSyncthing lacks the change (read error: %v)", err)
+	}
 }
 
 // issue315FolderPath returns the path a folder is configured at.
