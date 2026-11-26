@@ -56,7 +56,14 @@ esac
 if [ -n "${ALLOW_COMPOSE:-}" ]; then
 	printf 'docker %s (VAULTSYNC_HUB_IMAGE=%s) (VAULTSYNC_HUB_SYNCTHING_IMAGE=%s)\n' "$*" "${VAULTSYNC_HUB_IMAGE-unset}" "${VAULTSYNC_HUB_SYNCTHING_IMAGE-unset}" >>"$COMPOSE_LOG"
 	case "$*" in
-		"compose --project-directory "*" pull --quiet") exit 0 ;;
+		"compose --project-directory "*" pull --quiet")
+			[ -z "${FAIL_COMPOSE_PULL:-}" ] || { echo "Error response from daemon: test pull failure" >&2; exit 1; }
+			# The setup's trap runs once this command is done: the sleep
+			# keeps it waiting until the signal has arrived.
+			[ -z "${TERM_COMPOSE_PULL:-}" ] || { kill -TERM "$PPID"; sleep 1; exit 1; }
+			# Another hand editing .env while the images download.
+			[ -z "${MUTATE_DURING_PULL:-}" ] || sh -c "$MUTATE_DURING_PULL"
+			exit 0 ;;
 		"compose --project-directory "*" up -d") [ -z "${FAIL_COMPOSE_UP:-}" ] || exit 1; exit 0 ;;
 		"compose --project-directory "*" logs --tail 30 "*) echo "syncthing log: test"; exit 0 ;;
 		"compose --project-directory "*" exec -T hub vaultsync-hub status") printf 'VaultSync Hub test\nDevice ID:   TEST\n'; exit 0 ;;
@@ -216,6 +223,10 @@ SHIM
 cat >"$SANDBOX/bin/mv" <<SHIM
 #!/usr/bin/env sh
 [ -z "\${FAIL_MV:-}" ] || exit 1
+# FAIL_MV_ENV: only the rename onto an .env fails (the compose file moved);
+# the destination is the last argument (mv -f SOURCE DEST).
+for mv_last in "\$@"; do :; done
+case "\$mv_last" in */.env) [ -z "\${FAIL_MV_ENV:-}" ] || exit 1 ;; esac
 if [ -n "\${FAIL_MV_UNPACKED:-}" ]; then
 	case "\$1" in */unpacked/*) exit 1 ;; esac
 fi
@@ -543,14 +554,26 @@ if command -v python3 >/dev/null 2>&1; then
 	rm -rf "$EXISTING"; mkdir -p "$EXISTING"
 	plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
 	plain_env "$SHIPPED" >"$SANDBOX/results/env-expected"
+	# An existing Hub has the compose file an earlier setup wrote.
+	sed 's|vaultsync-notify:[0-9][0-9.]*|vaultsync-notify:0.0.1|' "$COMPOSE" >"$EXISTING/docker-compose.yml"
 	out=$(existing_hub_run y) || fail "existing-hub setup (yes) exited non-zero:
 $out"
+	cmp -s "$EXISTING/docker-compose.yml" "$COMPOSE" || fail "a yes did not bring the compose file to the stack setup ships:
+$(diff -u "$COMPOSE" "$EXISTING/docker-compose.yml" || true)"
 	printf '%s\n' "$out" | grep -q ".env now names $SHIPPED" || fail "a yes is not reported:
 $out"
 	cmp -s "$EXISTING/.env" "$SANDBOX/results/env-expected" || fail "a yes changed more than the image line:
 $(diff -u "$SANDBOX/results/env-expected" "$EXISTING/.env" || true)"
 	if ! grep -q "pull --quiet" "$COMPOSE_LOG" || ! grep -q " up -d" "$COMPOSE_LOG"; then
 		fail "the stack was not pulled and restarted after a yes:
+$(cat "$COMPOSE_LOG")"
+	fi
+	# The pull reads the staged files, the start reads the files in place
+	# (#368).
+	grep " pull --quiet" "$COMPOSE_LOG" | grep -q -- "-f $EXISTING/docker-compose.yml.setup.* --env-file $EXISTING/.env.setup." || fail "the pull after a yes did not read the staged compose file and .env:
+$(cat "$COMPOSE_LOG")"
+	if grep " up -d" "$COMPOSE_LOG" | grep -q -e " -f " -e "--env-file"; then
+		fail "the start after a yes read a staged file:
 $(cat "$COMPOSE_LOG")"
 	fi
 	pass "a yes moves exactly the image line of .env and restarts the stack"
@@ -663,9 +686,19 @@ $out"
 $out"
 		fi
 		cmp -s "$EXISTING/.env" "$SANDBOX/results/env-before" || fail "$1 changed .env"
-		[ ! -s "$COMPOSE_LOG" ] || fail "$1 still restarted the stack:
+		# The files move into place only after their images are pulled
+		# (#368): a rename that fails comes after the pull, never before an
+		# up -d; every other step fails before Compose is called at all.
+		if [ "$2" = FAIL_MV ]; then
+			if grep -q " up -d" "$COMPOSE_LOG"; then
+				fail "$1 still restarted the stack:
 $(cat "$COMPOSE_LOG")"
-		for leftover in "$EXISTING"/.env.setup.*; do
+			fi
+		else
+			[ ! -s "$COMPOSE_LOG" ] || fail "$1 still called Compose:
+$(cat "$COMPOSE_LOG")"
+		fi
+		for leftover in "$EXISTING"/.env.setup.* "$EXISTING"/docker-compose.yml.setup.*; do
 			[ ! -e "$leftover" ] || fail "$1 left a temporary file: $leftover"
 		done
 		[ ! -d "$EXISTING/.env.setup-lock" ] || fail "$1 left the lock behind"
@@ -770,6 +803,129 @@ $(cat "$COMPOSE_LOG")"
 	grep -q "^VAULTSYNC_HUB_IMAGE=ghcr.io/psimaker/vaultsync-hub:0.1.0$" "$EXISTING/.env" || fail "the override edited .env"
 	pass "an exported image override never reaches Compose for an existing Hub"
 
+	# A yes, then a pull that fails (#368): the Hub stays where it was —
+	# .env names the image it named before, the stack is not restarted —
+	# and the setup says so and names the manual step.
+	plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
+	cp "$EXISTING/.env" "$SANDBOX/results/env-before"
+	if out=$(FAIL_COMPOSE_PULL=1 existing_hub_run y); then
+		fail "a failed pull after a yes did not stop the setup:
+$out"
+	fi
+	cmp -s "$EXISTING/.env" "$SANDBOX/results/env-before" || fail "a failed pull after a yes left .env naming an image this host did not pull:
+$(diff -u "$SANDBOX/results/env-before" "$EXISTING/.env" || true)"
+	if grep -q " up -d" "$COMPOSE_LOG"; then
+		fail "the stack was restarted after a failed pull:
+$(cat "$COMPOSE_LOG")"
+	fi
+	printf '%s\n' "$out" | grep -q "docs/hub.md" || fail "a failed pull after a yes does not name the manual step:
+$out"
+	[ ! -d "$EXISTING/.env.setup-lock" ] || fail "a failed pull after a yes left the lock behind"
+	for leftover in "$EXISTING"/.env.setup.* "$EXISTING"/docker-compose.yml.setup.*; do
+		[ ! -e "$leftover" ] || fail "a failed pull after a yes left a staged file: $leftover"
+	done
+	pass "a failed pull after a yes leaves .env as it was and names the manual step (#368)"
+
+	# A yes, then a pull that is interrupted (TERM, as when the session
+	# ends): the Hub stays where it was and nothing is left behind.
+	plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
+	cp "$EXISTING/.env" "$SANDBOX/results/env-before"
+	if out=$(TERM_COMPOSE_PULL=1 existing_hub_run y); then
+		fail "a TERM during the pull did not end the setup:
+$out"
+	fi
+	cmp -s "$EXISTING/.env" "$SANDBOX/results/env-before" || fail "a TERM during the pull changed .env"
+	if grep -q " up -d" "$COMPOSE_LOG"; then
+		fail "the stack was restarted after an interrupted pull:
+$(cat "$COMPOSE_LOG")"
+	fi
+	[ ! -d "$EXISTING/.env.setup-lock" ] || fail "a TERM during the pull left the lock behind"
+	for leftover in "$EXISTING"/.env.setup.* "$EXISTING"/docker-compose.yml.setup.*; do
+		[ ! -e "$leftover" ] || fail "a TERM during the pull left a staged file: $leftover"
+	done
+	if ! printf '%s\n' "$out" | grep -q "Setup was interrupted. Nothing was changed" || ! printf '%s\n' "$out" | grep -q "docs/hub.md"; then
+		fail "an interrupted pull does not say what it leaves and the manual step:
+$out"
+	fi
+	pass "an interrupted pull after a yes leaves .env as it was and nothing behind, and says so (#368)"
+
+	# .env changed by another hand while the images downloaded: the staged
+	# files were made from what it held before, so neither moves.
+	plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
+	sed 's|vaultsync-notify:[0-9][0-9.]*|vaultsync-notify:0.0.1|' "$COMPOSE" >"$EXISTING/docker-compose.yml"
+	cp "$EXISTING/docker-compose.yml" "$SANDBOX/results/compose-before"
+	if out=$(MUTATE_DURING_PULL="printf 'GUI_PORT=9999\\n' >>'$EXISTING/.env'" existing_hub_run y); then
+		fail "a change of .env during the pull did not stop the setup:
+$out"
+	fi
+	printf '%s\n' "$out" | grep -q "changed while setup was pulling" || fail "a change of .env during the pull is not reported:
+$out"
+	grep -q '^GUI_PORT=9999$' "$EXISTING/.env" || fail "the change made during the pull was overwritten:
+$(cat "$EXISTING/.env")"
+	grep -q '^VAULTSYNC_HUB_IMAGE=ghcr.io/psimaker/vaultsync-hub:0.1.0$' "$EXISTING/.env" || fail "the image line moved although .env changed during the pull"
+	cmp -s "$EXISTING/docker-compose.yml" "$SANDBOX/results/compose-before" || fail "the compose file moved although .env changed during the pull"
+	if grep -q " up -d" "$COMPOSE_LOG"; then
+		fail "the stack was restarted although .env changed during the pull:
+$(cat "$COMPOSE_LOG")"
+	fi
+	[ ! -d "$EXISTING/.env.setup-lock" ] || fail "a change during the pull left the lock behind"
+	for leftover in "$EXISTING"/.env.setup.* "$EXISTING"/docker-compose.yml.setup.*; do
+		[ ! -e "$leftover" ] || fail "a change during the pull left a staged file: $leftover"
+	done
+	pass "a change of .env during the pull moves neither file (#368)"
+
+	# The compose file moved, then the rename onto .env fails: .env keeps its
+	# old line, which names an image this host has, and the stack is not
+	# restarted.
+	plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
+	cp "$EXISTING/.env" "$SANDBOX/results/env-before"
+	sed 's|vaultsync-notify:[0-9][0-9.]*|vaultsync-notify:0.0.1|' "$COMPOSE" >"$EXISTING/docker-compose.yml"
+	if out=$(FAIL_MV_ENV=1 existing_hub_run y); then
+		fail "a failed rename onto .env did not stop the setup:
+$out"
+	fi
+	printf '%s\n' "$out" | grep -q "Could not update $EXISTING/.env" || fail "a failed rename onto .env is not reported:
+$out"
+	cmp -s "$EXISTING/.env" "$SANDBOX/results/env-before" || fail "a failed rename onto .env changed .env"
+	cmp -s "$EXISTING/docker-compose.yml" "$COMPOSE" || fail "the compose file did not move before the failed rename onto .env"
+	if grep -q " up -d" "$COMPOSE_LOG"; then
+		fail "the stack was restarted after a failed rename onto .env:
+$(cat "$COMPOSE_LOG")"
+	fi
+	[ ! -d "$EXISTING/.env.setup-lock" ] || fail "a failed rename onto .env left the lock behind"
+	for leftover in "$EXISTING"/.env.setup.* "$EXISTING"/docker-compose.yml.setup.*; do
+		[ ! -e "$leftover" ] || fail "a failed rename onto .env left a staged file: $leftover"
+	done
+	pass "a failed rename onto .env after the compose file moved keeps .env and restarts nothing (#368)"
+
+	# A yes with one override: one pull names the staged compose file, the
+	# override and the staged .env.
+	plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
+	sed 's|vaultsync-notify:[0-9][0-9.]*|vaultsync-notify:0.0.1|' "$COMPOSE" >"$EXISTING/docker-compose.yml"
+	printf 'services: {}\n' >"$EXISTING/docker-compose.override.yml"
+	out=$(existing_hub_run y) || fail "existing-hub setup (yes, one override) exited non-zero:
+$out"
+	grep " pull --quiet" "$COMPOSE_LOG" | grep -q -- "-f $EXISTING/docker-compose.yml.setup.* -f $EXISTING/docker-compose.override.yml --env-file $EXISTING/.env.setup." || fail "a yes with one override did not pull the staged compose file, the override and the staged .env at once:
+$(cat "$COMPOSE_LOG")"
+	cmp -s "$EXISTING/.env" "$SANDBOX/results/env-expected" || fail "a yes with one override did not move the image line"
+	pass "a yes with one override pulls the staged files and the override in one pull (#368)"
+
+	# A yes where setup cannot name the files: the compose file is written
+	# before the pull, the staged .env still waits for it, without -f.
+	plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
+	printf 'services: {}\n' >"$EXISTING/compose.override.yml"
+	out=$(existing_hub_run y) || fail "existing-hub setup (yes, two overrides) exited non-zero:
+$out"
+	grep " pull --quiet" "$COMPOSE_LOG" | grep -q -- "--env-file $EXISTING/.env.setup." || fail "a yes with two overrides did not pull with the staged .env:
+$(cat "$COMPOSE_LOG")"
+	if grep " pull --quiet" "$COMPOSE_LOG" | grep -q -- " -f "; then
+		fail "a yes with two overrides named files Compose may not read:
+$(cat "$COMPOSE_LOG")"
+	fi
+	cmp -s "$EXISTING/.env" "$SANDBOX/results/env-expected" || fail "a yes with two overrides did not move the image line after the pull"
+	rm -f "$EXISTING/docker-compose.override.yml" "$EXISTING/compose.override.yml"
+	pass "a yes where setup cannot name the files pulls with the staged .env, without -f (#368)"
+
 	grep -v '^chown ' "$SANDBOX/results/violations-existing.log" | grep -q . && fail "an existing-Hub setup ran a privileged or network-changing command:
 $(cat "$SANDBOX/results/violations-existing.log")"
 else
@@ -786,6 +942,204 @@ $out"
 	pass "without a terminal .env is kept and the manual step named"
 else
 	pass "existing-Hub no-terminal case skipped (no setsid on this platform)"
+fi
+
+# The same through the compose file (#368): setup writes docker-compose.yml
+# anew on every run, and the helper's image is named there, so a release of
+# the helper moves every existing Hub that runs the link again. A pull that
+# fails leaves the compose file as it was, so the next `docker compose up -d`
+# still finds the images this host has, and the setup says so.
+mkdir -p "$EXISTING"
+plain_env "$SHIPPED" >"$EXISTING/.env"
+sed 's|vaultsync-notify:[0-9][0-9.]*|vaultsync-notify:0.0.1|' "$COMPOSE" >"$EXISTING/docker-compose.yml"
+grep -q 'vaultsync-notify:0.0.1' "$EXISTING/docker-compose.yml" || fail "test setup: the older helper tag was not written"
+cp "$EXISTING/docker-compose.yml" "$SANDBOX/results/compose-before"
+cp "$EXISTING/.env" "$SANDBOX/results/env-before"
+: >"$COMPOSE_LOG"
+if out=$(VAULTSYNC_HUB_DIR="$EXISTING" VIOLATIONS="$SANDBOX/results/violations-existing.log" ALLOW_COMPOSE=1 FAIL_COMPOSE_PULL=1 sh "$SETUP_SH" --hub </dev/null 2>&1); then
+	fail "a failed pull did not stop the setup:
+$out"
+fi
+cmp -s "$EXISTING/docker-compose.yml" "$SANDBOX/results/compose-before" || fail "a failed pull left docker-compose.yml naming images this host did not pull:
+$(diff -u "$SANDBOX/results/compose-before" "$EXISTING/docker-compose.yml" || true)"
+cmp -s "$EXISTING/.env" "$SANDBOX/results/env-before" || fail "a failed pull changed .env:
+$(diff -u "$SANDBOX/results/env-before" "$EXISTING/.env" || true)"
+if grep -q " up -d" "$COMPOSE_LOG"; then
+	fail "the stack was restarted after a failed pull:
+$(cat "$COMPOSE_LOG")"
+fi
+printf '%s\n' "$out" | grep -q "docs/hub.md" || fail "a failed pull does not name the manual step:
+$out"
+for leftover in "$EXISTING"/.env.setup.* "$EXISTING"/docker-compose.yml.setup.*; do
+	[ ! -e "$leftover" ] || fail "a failed pull left a staged file: $leftover"
+done
+pass "a failed pull leaves docker-compose.yml as it was and names the manual step (#368)"
+
+# The pull reads the staged compose file; after it the file takes the old
+# one's place with the mode that one had (a temporary file starts at 0600).
+sed 's|vaultsync-notify:[0-9][0-9.]*|vaultsync-notify:0.0.1|' "$COMPOSE" >"$EXISTING/docker-compose.yml"
+chmod 640 "$EXISTING/docker-compose.yml"
+: >"$COMPOSE_LOG"
+out=$(VAULTSYNC_HUB_DIR="$EXISTING" VIOLATIONS="$SANDBOX/results/violations-existing.log" ALLOW_COMPOSE=1 sh "$SETUP_SH" --hub </dev/null 2>&1) || fail "an existing-Hub update exited non-zero:
+$out"
+cmp -s "$EXISTING/docker-compose.yml" "$COMPOSE" || fail "an existing Hub's compose file is not the stack setup ships after a pull that worked:
+$(diff -u "$COMPOSE" "$EXISTING/docker-compose.yml" || true)"
+[ -n "$(find "$EXISTING/docker-compose.yml" -perm 0640)" ] || fail "the compose file did not keep its mode 0640"
+grep " pull --quiet" "$COMPOSE_LOG" | grep -q -- "-f $EXISTING/docker-compose.yml.setup." || fail "the pull did not read the staged compose file:
+$(cat "$COMPOSE_LOG")"
+if grep " pull --quiet" "$COMPOSE_LOG" | grep -q -- "--env-file"; then
+	fail "the pull read a staged .env although nothing was moved:
+$(cat "$COMPOSE_LOG")"
+fi
+if grep " up -d" "$COMPOSE_LOG" | grep -q -e " -f " -e "--env-file"; then
+	fail "the start read a staged file:
+$(cat "$COMPOSE_LOG")"
+fi
+for leftover in "$EXISTING"/docker-compose.yml.setup.*; do
+	[ ! -e "$leftover" ] || fail "an update left a staged file: $leftover"
+done
+pass "an existing Hub's compose file moves only after the pull, with its mode (#368)"
+
+# A compose file that is a symbolic link stays one: setup writes through it,
+# as it always has — only after a pull that worked.
+mkdir -p "$SANDBOX/results/linked"
+sed 's|vaultsync-notify:[0-9][0-9.]*|vaultsync-notify:0.0.1|' "$COMPOSE" >"$SANDBOX/results/linked/compose.yml"
+cp "$SANDBOX/results/linked/compose.yml" "$SANDBOX/results/compose-before"
+rm -f "$EXISTING/docker-compose.yml"
+ln -s "$SANDBOX/results/linked/compose.yml" "$EXISTING/docker-compose.yml"
+if out=$(VAULTSYNC_HUB_DIR="$EXISTING" VIOLATIONS="$SANDBOX/results/violations-existing.log" ALLOW_COMPOSE=1 FAIL_COMPOSE_PULL=1 sh "$SETUP_SH" --hub </dev/null 2>&1); then
+	fail "a failed pull did not stop the setup (linked compose file):
+$out"
+fi
+[ -L "$EXISTING/docker-compose.yml" ] || fail "a failed pull replaced the linked compose file"
+cmp -s "$SANDBOX/results/linked/compose.yml" "$SANDBOX/results/compose-before" || fail "a failed pull wrote through the linked compose file"
+out=$(VAULTSYNC_HUB_DIR="$EXISTING" VIOLATIONS="$SANDBOX/results/violations-existing.log" ALLOW_COMPOSE=1 sh "$SETUP_SH" --hub </dev/null 2>&1) || fail "an existing-Hub update exited non-zero (linked compose file):
+$out"
+[ -L "$EXISTING/docker-compose.yml" ] || fail "an update replaced the linked compose file with a file of its own"
+cmp -s "$SANDBOX/results/linked/compose.yml" "$COMPOSE" || fail "an update did not write the stack through the linked compose file"
+for leftover in "$EXISTING"/docker-compose.yml.setup.*; do
+	[ ! -e "$leftover" ] || fail "an update left a staged file beside the link: $leftover"
+done
+rm -f "$EXISTING/docker-compose.yml"
+pass "a linked compose file stays a link, written through only after a pull that worked (#368)"
+
+# One override beside the compose file: the pull names it after the staged
+# file, as Compose would load it for the later `up -d`; setup never writes it.
+existing_compose_fixture() { # the Hub as an earlier setup left it, no move offered
+	rm -rf "$EXISTING"; mkdir -p "$EXISTING"
+	plain_env "$SHIPPED" >"$EXISTING/.env"
+	sed 's|vaultsync-notify:[0-9][0-9.]*|vaultsync-notify:0.0.1|' "$COMPOSE" >"$EXISTING/docker-compose.yml"
+}
+existing_update() { # [ENV=VALUE…]: a non-dry-run update without a terminal
+	: >"$COMPOSE_LOG"
+	env VAULTSYNC_HUB_DIR="$EXISTING" VIOLATIONS="$SANDBOX/results/violations-existing.log" ALLOW_COMPOSE=1 "$@" sh "$SETUP_SH" --hub </dev/null 2>&1
+}
+existing_compose_fixture
+printf 'services:\n  notify:\n    environment:\n      EXTRA: "1"\n' >"$EXISTING/docker-compose.override.yml"
+cp "$EXISTING/docker-compose.override.yml" "$SANDBOX/results/override-before"
+out=$(existing_update) || fail "an update with one override exited non-zero:
+$out"
+grep " pull --quiet" "$COMPOSE_LOG" | grep -q -- "-f $EXISTING/docker-compose.yml.setup.* -f $EXISTING/docker-compose.override.yml " || fail "the pull did not name the override after the staged compose file:
+$(cat "$COMPOSE_LOG")"
+cmp -s "$EXISTING/docker-compose.override.yml" "$SANDBOX/results/override-before" || fail "setup changed the override"
+cmp -s "$EXISTING/docker-compose.yml" "$COMPOSE" || fail "the compose file did not move after a pull that worked (one override)"
+pass "one override is pulled with the staged compose file and left as it is (#368)"
+
+# An override that is a link to nothing: Compose skips it, and so does setup.
+existing_compose_fixture
+ln -s "$SANDBOX/results/no-such-override.yml" "$EXISTING/docker-compose.override.yml"
+out=$(existing_update) || fail "an update with a dangling override link exited non-zero:
+$out"
+grep " pull --quiet" "$COMPOSE_LOG" | grep -q -- "-f $EXISTING/docker-compose.yml.setup." || fail "the compose file was not staged beside a dangling override link:
+$(cat "$COMPOSE_LOG")"
+if grep " pull --quiet" "$COMPOSE_LOG" | grep -q -- "docker-compose.override.yml"; then
+	fail "the pull named an override that is a link to nothing:
+$(cat "$COMPOSE_LOG")"
+fi
+[ -L "$EXISTING/docker-compose.override.yml" ] || fail "setup touched the dangling override link"
+rm -f "$EXISTING/docker-compose.override.yml"
+pass "an override that is a link to nothing is skipped, as Compose skips it (#368)"
+
+# Where setup cannot name the files Compose reads, the compose file is
+# written before the pull, as before, and setup says so; a failed pull then
+# does not claim the compose file is unchanged.
+unnameable() { # NAME SETUP-STEP [ENV=VALUE…]
+	name=$1; step=$2; shift 2
+	existing_compose_fixture
+	sh -c "$step"
+	out=$(existing_update "$@") || fail "$name: an update exited non-zero:
+$out"
+	printf '%s\n' "$out" | grep -q "written before the pull" || fail "$name: setup does not say the compose file is written before the pull:
+$out"
+	if grep " pull --quiet" "$COMPOSE_LOG" | grep -q -- " -f "; then
+		fail "$name: the pull named files Compose may not read:
+$(cat "$COMPOSE_LOG")"
+	fi
+	cmp -s "$EXISTING/docker-compose.yml" "$COMPOSE" || fail "$name: the compose file was not written"
+	existing_compose_fixture
+	sh -c "$step"
+	if out=$(existing_update FAIL_COMPOSE_PULL=1 "$@"); then
+		fail "$name: a failed pull did not stop the setup:
+$out"
+	fi
+	if printf '%s\n' "$out" | grep -q "Nothing was changed"; then
+		fail "$name: a failed pull claims nothing was changed although the compose file was written:
+$out"
+	fi
+	printf '%s\n' "$out" | grep -q "may name images this host has not downloaded" || fail "$name: a failed pull does not say what the compose file may name:
+$out"
+	for leftover in "$EXISTING"/docker-compose.yml.setup.*; do
+		[ ! -e "$leftover" ] || fail "$name: a staged file was left: $leftover"
+	done
+	pass "$name: the compose file is written before the pull, and said so (#368)"
+}
+unnameable "two overrides" "printf 'services: {}\\n' >'$EXISTING/docker-compose.override.yml'; printf 'services: {}\\n' >'$EXISTING/compose.override.yml'"
+unnameable "a compose.yaml beside it" "printf 'services: {}\\n' >'$EXISTING/compose.yaml'"
+unnameable "COMPOSE_FILE in .env" "printf 'COMPOSE_FILE=docker-compose.yml:extra.yml\\n' >>'$EXISTING/.env'"
+unnameable "COMPOSE_FILE in the environment" ":" COMPOSE_FILE=docker-compose.yml
+unnameable "COMPOSE_ENV_FILES in the environment" ":" COMPOSE_ENV_FILES=/elsewhere/hub.env
+unnameable "COMPOSE_DISABLE_ENV_FILE in the environment" ":" COMPOSE_DISABLE_ENV_FILE=1
+
+# Compose told to read other env files reads neither .env nor a staged one:
+# setup does not offer the image move there, and the pull reads what the
+# later `up -d` reads.
+other_env_files() { # NAME ENV=VALUE
+	existing_compose_fixture
+	plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
+	cp "$EXISTING/.env" "$SANDBOX/results/env-before"
+	out=$(existing_update "$2") || fail "$1: an update exited non-zero:
+$out"
+	printf '%s\n' "$out" | grep -q "so setup does not move the Hub's image" || fail "$1: setup does not say why it leaves the image:
+$out"
+	printf '%s\n' "$out" | grep -q "If your Hub runs an older vaultsync-hub release than" || fail "$1: the hint where to set the image is not conditional:
+$out"
+	if printf '%s\n' "$out" | grep -q "Move it to"; then
+		fail "$1: the move was offered:
+$out"
+	fi
+	cmp -s "$EXISTING/.env" "$SANDBOX/results/env-before" || fail "$1: .env was changed"
+	if grep " pull --quiet" "$COMPOSE_LOG" | grep -q -e " -f " -e "--env-file"; then
+		fail "$1: the pull read other files than the later up -d:
+$(cat "$COMPOSE_LOG")"
+	fi
+	pass "$1: no image move is offered, and the pull reads what up -d reads (#368)"
+}
+other_env_files "COMPOSE_ENV_FILES" COMPOSE_ENV_FILES=/elsewhere/hub.env
+other_env_files "COMPOSE_DISABLE_ENV_FILE" COMPOSE_DISABLE_ENV_FILE=1
+
+# An .env setup cannot read may name COMPOSE_FILE for a Compose run through
+# sudo: setup cannot name the files. (Root reads any file: non-root only.)
+if [ "$(id -u)" != 0 ]; then
+	existing_compose_fixture
+	chmod 000 "$EXISTING/.env"
+	out=$(existing_update) || { chmod 644 "$EXISTING/.env"; fail "an update with an unreadable .env exited non-zero:
+$out"; }
+	chmod 644 "$EXISTING/.env"
+	printf '%s\n' "$out" | grep -q "written before the pull" || fail "an unreadable .env was taken for one without COMPOSE_FILE:
+$out"
+	pass "an .env setup cannot read leaves the compose file unstaged (#368)"
+else
+	pass "unreadable-.env case skipped (root reads every file)"
 fi
 
 # --- 3. Device path ----------------------------------------------------------

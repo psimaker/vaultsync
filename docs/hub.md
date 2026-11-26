@@ -446,7 +446,20 @@ quoted values), reads the line again after your yes and writes the file
 in one piece, so `.env` is never half-written and never moved backwards
 by setup (another program editing `.env` at that very moment is outside
 its control); it keeps your ports and names and never touches a custom
-image.
+image. It changes `.env` and `docker-compose.yml` only after the images they
+name are downloaded: when the download fails or is interrupted, both stay as
+they were, the Hub keeps the containers it runs, and setup says so — run it
+again once the registry can be reached. Moving by hand as above changes only
+the Hub's own image; the helper and the rest of the stack come with the next
+run of the setup link. If `COMPOSE_FILE`, `COMPOSE_ENV_FILES` or
+`COMPOSE_DISABLE_ENV_FILE` decides which files Compose reads, or another
+compose file or more than one override lies beside `docker-compose.yml`,
+setup cannot tell which files Compose reads and writes `docker-compose.yml`
+first, as it always did; with `COMPOSE_ENV_FILES` or
+`COMPOSE_DISABLE_ENV_FILE` it also does not offer the image move, since
+Compose does not read `.env` there. A run cut off during the download in a way it cannot catch (power loss,
+`kill -9`) leaves its lock `.env.setup-lock` behind; the next run says so, and
+removing that directory clears it.
 Without a terminal, or on an `.env` you reshaped by hand, it tells you to
 change the line yourself instead. As on every run, it prints a new
 pairing code at the end.
