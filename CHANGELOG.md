@@ -14,7 +14,7 @@ VaultSync for Mac and Linux (the desktop agent and its menu-bar app, `desktop-vX
 
 ### Fixed
 
-- **A change is on disk before the sync engine has stopped** — VaultSync stops its sync engine at the end of a background run, and iOS can suspend the app right after. The stop now ends only once the last change to the engine's settings, such as a vault or device added or removed, is written to disk. Before, that write came about 10 milliseconds after the stop had ended (measured on a Mac), so a change made in that run could miss the file the next start reads. (#302)
+- **A change is on disk before the sync engine has stopped** — VaultSync stops its sync engine at the end of a background run, and iOS can suspend the app right after. The stop now ends only once the engine's last configuration change is written to disk. Before, that write came about 10 milliseconds after the stop had ended (measured on a Mac), so a change made in that run could miss the file the next start reads. (#302)
 
 ## [3.0.1] — 2026-11-24
 
