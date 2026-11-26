@@ -45,7 +45,7 @@ Three decisions left a question here. Decision 073 left the call that replaces a
    - **Without an inbound rule** the engine still dials out to the Hub and to other devices, and reaches them through relays. Only connections that other devices start, and local discovery's answers, fail. This is read from the engine's design, not measured.
 6. **The control socket.**
    - **The socket.** It stays HTTP over an `AF_UNIX` stream socket (decision 049), in the state folder of (4). Whether that folder's path fits `AF_UNIX`'s address limit is measured. Decision 049's fallback for a folder that is too deep has no Windows form yet.
-   - **Who may connect.** Access is ruled by that folder's permissions, which are the person's alone. Decision 049 also asks the kernel whose a connection is. Whether Windows lets the agent ask the same is read before code; until then the folder's permissions are the check.
+   - **Who may connect.** Access is ruled by that folder's permissions, which are the person's alone. Decision 049 also asks the kernel whose a connection is. Whether Windows lets the agent ask the same is read before code; until then the folder's permissions are the check. With the viewer the socket also reads and saves files for the window wherever the person opens one (decision 071, point 3), so the same check guards those saves.
 7. **The viewer and WebView2.**
    - **Files.** The viewer reads the files it shows itself and saves through the agent (decision 071, point 3). As a full-trust program it reads and writes the person's files as the person does, like the vaults in (4).
    - **The runtime.** The viewer uses the Evergreen WebView2 runtime, which is part of Windows 11 and present on most Windows 10 computers.
@@ -62,7 +62,7 @@ Three decisions left a question here. Decision 073 left the call that replaces a
     - **On earlier versions** it is measured first. If the gap is real, the first release either says so or does not support them.
 11. **Markdown files** (decision 072, point 1).
     - **Open with.** The package declares `.md` and `.markdown` as file types the viewer opens (`uap:FileTypeAssociation`). Explorer then lists it under Open with.
-    - **Never the default.** The association sets `desktop2:AllowSilentDefaultTakeOver`, with which, by Microsoft's page, the app will "appear in an 'Open With' list, but it won't be the default app for the file type". The person makes the viewer the default in Windows' own settings, if they want to.
+    - **Never the default.** The association sets `desktop2:AllowSilentDefaultTakeOver` to `true`. By Microsoft's page on the element, the app then will "appear in an 'Open With' list, but it won't be the default app for the file type". Its page on the registry value of that name says the same: Windows "should ignore this ProgID when determining a default handler". The person makes the viewer the default in Windows' own settings, if they want to.
 
 This record sets up no build target and no CI job.
 
@@ -104,7 +104,10 @@ This record sets up no build target and no CI job.
 - `ReplaceFileW`, `MoveFileExW` and the TxF deprecation note;
 - the cloud files API (`CfGetSyncRootInfoByPath`);
 - Microsoft's post on `AF_UNIX`;
-- on 2026-11-26, `uap:FileTypeAssociation` with `desktop2:AllowSilentDefaultTakeOver`, and the page on the extensions of packaged desktop apps.
+- on 2026-11-26:
+  - `uap:FileTypeAssociation` with `desktop2:AllowSilentDefaultTakeOver`, in its source (`MicrosoftDocs/winrt-related`, commit `95a2ee7e`);
+  - the page on ProgIDs, for the registry value of that name;
+  - the page on the extensions of packaged desktop apps.
 
 What the documentation leaves open, and what is measured before the first line of code:
 - whether a child process started from the package keeps its identity and its AppData redirection;
