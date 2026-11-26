@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -13,6 +14,104 @@ import (
 	"testing"
 	"time"
 )
+
+// A removal of VaultSync's own data that stops midway keeps agent.json — the
+// record that this is VaultSync's folder and which engine it ran — so a
+// second uninstall --remove-data can finish it, and an older VaultSync meets
+// the record instead of a folder it would take for a fresh one (#276). The
+// engine goes first (bin, then the engine's folder), the record last.
+func TestIssue276_ARemovalThatStopsKeepsTheRecordAndFinishesTheSecondTime(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root removes what a permission keeps")
+	}
+	lay, _ := ownedFixture(t)
+	stuck := filepath.Join(lay.Home, "index-v2")
+	if err := os.Chmod(stuck, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(stuck, 0o700) })
+
+	if _, _, err := removeOwnData(lay, nil, "darwin"); err == nil {
+		t.Fatal("a removal that cannot remove the engine's database reported success")
+	}
+	if _, err := os.Stat(lay.State); err != nil {
+		t.Fatalf("a removal that stopped took agent.json away (%v): the folder is no longer VaultSync's to the next removal, and a fresh one to an older VaultSync", err)
+	}
+	if _, err := os.Lstat(lay.Syncthing); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the engine's program was not removed before its data (%v)", err)
+	}
+	if _, err := os.Stat(lay.Agent); err != nil {
+		t.Fatalf("VaultSync's own copy went before the record: the vaultsync command to run the removal again is gone (%v)", err)
+	}
+
+	if err := os.Chmod(stuck, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := removeOwnData(lay, nil, "darwin"); err != nil {
+		t.Fatalf("the second removal did not finish what the first one began: %v", err)
+	}
+	for _, gone := range []string{"bin", "syncthing", "agent.json", "state.lock"} {
+		if _, err := os.Lstat(filepath.Join(lay.Base, gone)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s survived the second removal", gone)
+		}
+	}
+}
+
+// A write of agent.json that starts while the removal holds state.lock — a
+// parked service noting the app, VaultSync for Mac keeping its copy — waits
+// for that lock, looks at agent.json again and finds it gone: it writes
+// nothing, and leaves no file behind (#276).
+func TestIssue276_AWriteDuringTheRemovalWritesNothing(t *testing.T) {
+	lay, _ := ownedFixture(t)
+	done := make(chan error, 1)
+	recordLockTakenHook = func(l layout) {
+		go func() { done <- updateStateIfSetUp(l.State, func(s *agentState) { s.GUIPort = 99 }) }()
+		time.Sleep(200 * time.Millisecond)
+	}
+	defer func() { recordLockTakenHook = nil }()
+	if _, _, err := removeOwnData(lay, nil, "darwin"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a write of agent.json during the removal reported success")
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("the write never ended")
+	}
+	if _, err := os.Lstat(lay.State); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("agent.json came back: %v", err)
+	}
+	entries, _ := os.ReadDir(lay.Base)
+	for _, e := range entries {
+		if ownTempFile(e.Name()) || e.Name() == "state.lock" {
+			t.Errorf("left behind: %s", e.Name())
+		}
+	}
+}
+
+// A write that holds state.lock longer than the removal waits stops the
+// removal before the record: agent.json stays, and the removal says to run
+// it again (#276).
+func TestIssue276_ARecordBeingWrittenStopsTheRemovalBeforeIt(t *testing.T) {
+	lay, _ := ownedFixture(t)
+	saved := recordLockWait
+	recordLockWait = 200 * time.Millisecond
+	defer func() { recordLockWait = saved }()
+	unlock, err := lockFile(filepath.Join(lay.Base, "state.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	_, _, err = removeOwnData(lay, nil, "darwin")
+	if !strings.Contains(refusalText(err), "stopped before it and kept it") {
+		t.Fatalf("a removal that could not have state.lock: %v", err)
+	}
+	if _, err := os.Stat(lay.State); err != nil {
+		t.Fatalf("the record went although its lock was held: %v", err)
+	}
+}
 
 // unrecordedHere makes a's folder #276's case: the engine's data there,
 // and agent.json gone (record false) or naming no engine (record true).
@@ -273,6 +372,260 @@ func TestIssue276_RunStopsWhenItsEngineWentWhileItWaited(t *testing.T) {
 	}
 }
 
+// uninstallable is a set-up Linux computer as uninstall meets it: VaultSync's
+// own copy, the engine and its data, a record naming the engine, a real
+// install's lock files and the command link (#276).
+func uninstallable(t *testing.T) (*app, string) {
+	t.Helper()
+	tmp, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(tmp, "home")
+	lay, err := layoutFor("linux", home, envOf(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, lay.Agent, "agent")
+	writeFile(t, lay.Syncthing, "engine")
+	writeFile(t, filepath.Join(lay.Home, "config.xml"), "<configuration/>")
+	writeFile(t, filepath.Join(lay.Home, "index-v2", "db"), "the engine's database")
+	withInstallLocks(t, lay)
+	st := agentState{GUIPort: 1}
+	st.Syncthing.Version = syncthingVersion
+	if err := saveState(lay.State, st); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{goos: "linux", home: home, getenv: envOf(nil), lay: lay, out: io.Discard,
+		svc: service{goos: "linux", home: home, uid: 1000, getenv: envOf(nil), lay: lay, run: &fakeRunner{}}}
+	a.installCommand(&term{out: io.Discard}, lay.Agent)
+	link := filepath.Join(home, ".local", "bin", "vaultsync")
+	if target, err := os.Readlink(link); err != nil || target != lay.Agent {
+		t.Fatalf("no command link: %q %v", target, err)
+	}
+	return a, link
+}
+
+// keptForAgain: what a stopped removal keeps for running it again — the
+// record, VaultSync's own copy and the command link to it (#276).
+func keptForAgain(t *testing.T, a *app, link string) {
+	t.Helper()
+	for _, kept := range []string{a.lay.State, a.lay.Agent} {
+		if _, err := os.Stat(kept); err != nil {
+			t.Errorf("a stopped removal took %s: %v", kept, err)
+		}
+	}
+	if target, err := os.Readlink(link); err != nil || target != a.lay.Agent {
+		t.Errorf("a stopped removal took the command link: %q %v", target, err)
+	}
+}
+
+// finishedBy: the removal run again finishes — VaultSync's folder and the
+// command link gone (#276).
+func finishedBy(t *testing.T, a *app, link string) {
+	t.Helper()
+	if err := a.uninstall(context.Background(), []string{"--remove-data", "--yes"}); err != nil {
+		t.Fatalf("the removal run again: %v", err)
+	}
+	for _, gone := range []string{a.lay.Base, link} {
+		if _, err := os.Lstat(gone); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s survived the removal run again", gone)
+		}
+	}
+}
+
+// A removal stopped by a file it cannot remove keeps the vaultsync command
+// and VaultSync's own copy, says — in the words main prints — that running
+// it again finishes it once that is fixed, and the second run does (#276).
+func TestIssue276_AStoppedUninstallKeepsTheCommandAndSaysToRunItAgain(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root removes what a permission keeps")
+	}
+	a, link := uninstallable(t)
+	stuck := filepath.Join(a.lay.Home, "index-v2")
+	if err := os.Chmod(stuck, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(stuck, 0o700) })
+	err := a.uninstall(context.Background(), []string{"--remove-data", "--yes"})
+	// The command as a shell reaches the copy: this home's bin is on no
+	// PATH, so by its link.
+	if err == nil || !strings.Contains(err.Error(), "~/.local/bin/vaultsync uninstall --remove-data run again finishes the removal once that is fixed") {
+		t.Fatalf("a stopped removal: %v", err)
+	}
+	keptForAgain(t, a, link)
+	if _, err := os.Lstat(a.lay.Syncthing); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the engine's program stayed: %v", err)
+	}
+	if err := os.Chmod(stuck, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	finishedBy(t, a, link)
+}
+
+// A removal stopped at the record — a write of agent.json held its lock the
+// whole wait — says to run it again, also when it is the second one and
+// nothing was left to remove before the record (#276).
+func TestIssue276_ARemovalStoppedAtTheRecordSaysToRunItAgain(t *testing.T) {
+	a, link := uninstallable(t)
+	saved := recordLockWait
+	recordLockWait = 200 * time.Millisecond
+	defer func() { recordLockWait = saved }()
+	unlock, err := lockFile(filepath.Join(a.lay.Base, "state.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, which := range []string{"the first removal", "the second, with nothing left before the record"} {
+		err := a.uninstall(context.Background(), []string{"--remove-data", "--yes"})
+		if got := refusalText(err); !strings.Contains(got, "only partly removed") || !strings.Contains(got, "Run ~/.local/bin/vaultsync uninstall --remove-data again once that write is done") {
+			t.Fatalf("%s: %q", which, got)
+		}
+		keptForAgain(t, a, link)
+	}
+	unlock()
+	finishedBy(t, a, link)
+}
+
+// A refusal in the middle of a removal — something from another disk in
+// the engine's folder — keeps what it says and gains, as main prints it,
+// that running the removal again finishes it once that is fixed (#276).
+func TestIssue276_ARefusalMidRemovalSaysToRunItAgain(t *testing.T) {
+	a, link := uninstallable(t)
+	saved := onSameFileSystem
+	defer func() { onSameFileSystem = saved }()
+	onSameFileSystem = func(root *os.Root, name string, base os.FileInfo) error {
+		if name == "syncthing" {
+			return errors.New("a disk mounted there")
+		}
+		return saved(root, name, base)
+	}
+	got := refusalText(a.uninstall(context.Background(), []string{"--remove-data", "--yes"}))
+	if !strings.Contains(got, "holds something from another disk") || !strings.Contains(got, "run again finishes the removal once that is fixed") {
+		t.Fatalf("a removal refused midway, as main prints it: %q", got)
+	}
+	keptForAgain(t, a, link)
+	onSameFileSystem = saved
+	finishedBy(t, a, link)
+}
+
+// A removal that fails after VaultSync's copy and record went — a lock file
+// it cannot remove — takes the command link too: a link to nothing would
+// only fail (#276).
+func TestIssue276_ARemovalThatFailsPastTheRecordLeavesNoDanglingCommand(t *testing.T) {
+	a, link := uninstallable(t)
+	saved := ownEntriesRemovedHook
+	defer func() { ownEntriesRemovedHook = saved }()
+	ownEntriesRemovedHook = func(lay layout) {
+		inTheWay := filepath.Join(lay.Base, "setup.lock")
+		_ = os.Remove(inTheWay)
+		writeFile(t, filepath.Join(inTheWay, "in-the-way"), "x")
+	}
+	if err := a.uninstall(context.Background(), []string{"--remove-data", "--yes"}); err == nil {
+		t.Fatal("the removal did not fail")
+	}
+	if _, err := os.Lstat(a.lay.State); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the record stayed: %v", err)
+	}
+	if _, err := os.Lstat(link); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the command link stayed, leading to a copy that is gone: %v", err)
+	}
+}
+
+// A bin that is a link to a folder elsewhere goes first, as a link: a
+// removal that stops after it leaves data no engine starts on, names the
+// copy behind the link to run it again with — the command's link leads
+// nowhere now and goes — and the removal run again works, the folder the
+// link led to keeping its files (#276).
+func TestIssue276_ABinThatIsALinkGoesFirstAsALink(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root removes what a permission keeps")
+	}
+	a, link := uninstallable(t)
+	elsewhere := filepath.Join(t.TempDir(), "bin")
+	if err := os.Rename(a.lay.Bin, elsewhere); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, a.lay.Bin); err != nil {
+		t.Fatal(err)
+	}
+	stuck := filepath.Join(a.lay.Home, "index-v2")
+	if err := os.Chmod(stuck, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(stuck, 0o700) })
+	err := a.uninstall(context.Background(), []string{"--remove-data", "--yes"})
+	want := shellPath(a.home, filepath.Join(elsewhere, "vaultsync")) + " uninstall --remove-data run again finishes the removal"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("a removal stopped past the link: %v", err)
+	}
+	if _, err := os.Lstat(link); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the command link to nothing stayed: %v", err)
+	}
+	st, err := loadState(a.lay.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := engineDataStateOf(a.lay, st); got != engineDataWithoutProgram {
+		t.Fatalf("a removal stopped past the link leaves state %d, not the engine's data without its program", got)
+	}
+	if err := os.Chmod(stuck, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := removeOwnData(a.lay, nil, "linux"); err != nil {
+		t.Fatalf("the removal run again, bin a link: %v", err)
+	}
+	if _, err := os.Lstat(a.lay.Base); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("VaultSync's folder stayed: %v", err)
+	}
+	for name, want := range map[string]string{"syncthing": "engine", "vaultsync": "agent"} {
+		if got, err := os.ReadFile(filepath.Join(elsewhere, name)); err != nil || string(got) != want {
+			t.Errorf("the folder the link led to lost %s: %q %v", name, got, err)
+		}
+	}
+}
+
+// A removal that stops keeps a command link that still leads to a program —
+// here into VaultSync for Mac, VaultSync's own copy gone — for running it
+// again; the removal that finishes takes it, as ever (#276).
+func TestIssue276_AStoppedRemovalKeepsALinkThatStillLeadsSomewhere(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root removes what a permission keeps")
+	}
+	a, link := uninstallable(t)
+	app := fakeMacApp(t, filepath.Join(a.home, "Applications"), appBundleName, shippedInfoPlist(t))
+	appAgent := filepath.Join(app, "Contents", "MacOS", "vaultsync")
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(appAgent, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(a.lay.Agent); err != nil {
+		t.Fatal(err)
+	}
+	stuck := filepath.Join(a.lay.Home, "index-v2")
+	if err := os.Chmod(stuck, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(stuck, 0o700) })
+	err := a.uninstall(context.Background(), []string{"--remove-data", "--yes"})
+	if err == nil || !strings.Contains(err.Error(), "vaultsync uninstall --remove-data run again finishes the removal") {
+		t.Fatalf("a stopped removal: %v", err)
+	}
+	if target, err := os.Readlink(link); err != nil || target != appAgent {
+		t.Fatalf("the link into the app went with a stopped removal: %q %v", target, err)
+	}
+	if err := os.Chmod(stuck, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.uninstall(context.Background(), []string{"--remove-data", "--yes"}); err != nil {
+		t.Fatalf("the removal run again: %v", err)
+	}
+	if _, err := os.Lstat(link); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the link into the app stayed after the removal finished: %v", err)
+	}
+}
+
 // status in such a state with the service installed and running says that
 // it starts no engine here: a parked service counts as running (#276).
 func TestIssue276_StatusSaysARunningServiceStartsNoEngine(t *testing.T) {
@@ -293,6 +646,58 @@ func TestIssue276_StatusSaysARunningServiceStartsNoEngine(t *testing.T) {
 	defer unlock()
 	if out := statusText(t, a); !strings.Contains(out, "Background service: running, and a sync engine still runs here") {
 		t.Fatalf("status with an engine running:\n%s", out)
+	}
+}
+
+// A removal that stops once no program of VaultSync's is left — its copy
+// gone, bin holding something the removal cannot remove — names no gone
+// command but a vaultsync from a desktop release, and takes the command
+// link that leads nowhere (#276).
+func TestIssue276_AStopWithNoProgramLeftNamesARelease(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root removes what a permission keeps")
+	}
+	a, link := uninstallable(t)
+	if err := os.Remove(a.lay.Agent); err != nil {
+		t.Fatal(err)
+	}
+	stuck := filepath.Join(a.lay.Bin, "stuck")
+	writeFile(t, filepath.Join(stuck, "x"), "x")
+	if err := os.Chmod(stuck, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(stuck, 0o700) })
+	err := a.uninstall(context.Background(), []string{"--remove-data", "--yes"})
+	if err == nil || !strings.Contains(err.Error(), "uninstall --remove-data run with a vaultsync from a desktop release") || strings.Contains(err.Error(), "vaultsync uninstall --remove-data run again") {
+		t.Fatalf("a stop with no program left: %v", err)
+	}
+	if _, err := os.Stat(a.lay.State); err != nil {
+		t.Fatalf("the record went: %v", err)
+	}
+	if _, err := os.Lstat(link); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the command link to nothing stayed: %v", err)
+	}
+}
+
+// A removal refused before it removed anything keeps the command link,
+// also one that leads nowhere for the moment — bin a link to a disk not
+// mounted: once the disk is back, so is the command (#276).
+func TestIssue276_ARefusalBeforeAnythingKeepsTheCommandLink(t *testing.T) {
+	a, link := uninstallable(t)
+	if err := os.RemoveAll(a.lay.Bin); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(t.TempDir(), "not-mounted", "bin"), a.lay.Bin); err != nil {
+		t.Fatal(err)
+	}
+	saved := mountPoints
+	defer func() { mountPoints = saved }()
+	mountPoints = func() ([]string, error) { return nil, errors.New("no mount table") }
+	if err := a.uninstall(context.Background(), []string{"--remove-data", "--yes"}); !strings.Contains(refusalText(err), "could not list this computer's mounts") {
+		t.Fatalf("a removal refused before anything: %v", err)
+	}
+	if _, err := os.Lstat(link); err != nil {
+		t.Fatalf("a removal refused before anything took the command link: %v", err)
 	}
 }
 
@@ -326,6 +731,58 @@ func TestIssue276_ABinThatIsTheirOwnLinkIsNoTraceOfARemoval(t *testing.T) {
 				t.Fatalf("status calls the person's own link a removal's trace:\n%s", out)
 			}
 		})
+	}
+}
+
+// The two halves together: a removal stops in the engine's data; setup, run
+// and status meet what it left — the record, no program, half the data —
+// and change not a byte, saying how to finish or start over; the second
+// removal finishes (#276).
+func TestIssue276_WhatAStoppedRemovalLeavesIsNeitherSetUpNorStarted(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root removes what a permission keeps")
+	}
+	origMode, origTerm := serviceMode, stderrIsTerminal
+	defer func() { serviceMode, stderrIsTerminal = origMode, origTerm }()
+	serviceMode = false
+	stderrIsTerminal = func() bool { return true }
+	noDownloads(t)
+
+	a, _ := runFixture(t)
+	withInstallLocks(t, a.lay)
+	writeFile(t, filepath.Join(a.lay.Home, "index-v2", "db"), "the engine's database")
+	stuck := filepath.Join(a.lay.Home, "index-v2")
+	if err := os.Chmod(stuck, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(stuck, 0o700) })
+	if _, _, err := removeOwnData(a.lay, nil, "linux"); err == nil {
+		t.Fatal("the removal did not stop")
+	}
+
+	before := snapshot(t, a.lay.Base)
+	if err := a.setup(context.Background(), nil); !strings.Contains(refusalText(err), "but not the engine's program") || !strings.Contains(refusalText(err), "uninstall --remove-data") {
+		t.Fatalf("setup over what a stopped removal left: %v", err)
+	}
+	unchangedFolder(t, "setup", before, snapshot(t, a.lay.Base))
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := a.run(ctx, nil); !strings.Contains(refusalText(err), "but not the engine's program") {
+		t.Fatalf("a run over what a stopped removal left: %v", err)
+	}
+	unchangedFolder(t, "run", before, snapshot(t, a.lay.Base))
+	if out := statusText(t, a); !strings.Contains(out, "but not the engine's program") || !strings.Contains(out, "change nothing there") {
+		t.Fatalf("status over what a stopped removal left:\n%s", out)
+	}
+
+	if err := os.Chmod(stuck, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := removeOwnData(a.lay, nil, "linux"); err != nil {
+		t.Fatalf("the second removal: %v", err)
+	}
+	if _, err := os.Lstat(a.lay.State); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the record survived the second removal: %v", err)
 	}
 }
 
@@ -529,5 +986,116 @@ func TestIssue276_TheStateDecidesSetupRunAndStatus(t *testing.T) {
 				t.Fatalf("setup after the way out: %v", err)
 			}
 		})
+	}
+}
+
+// A vaultsync of someone else's at the command link's place is never named
+// to run a stopped removal again, nor taken (#276).
+func TestIssue276_AStoppedRemovalNamesNoOneElsesVaultsync(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root removes what a permission keeps")
+	}
+	a, link := uninstallable(t)
+	other := filepath.Join(t.TempDir(), "vaultsync")
+	writeFile(t, other, "someone else's")
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(other, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(a.lay.Agent); err != nil {
+		t.Fatal(err)
+	}
+	stuck := filepath.Join(a.lay.Home, "index-v2")
+	if err := os.Chmod(stuck, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(stuck, 0o700) })
+	err := a.uninstall(context.Background(), []string{"--remove-data", "--yes"})
+	if err == nil || strings.Contains(err.Error(), "~/.local/bin/vaultsync uninstall") || !strings.Contains(err.Error(), "a vaultsync from a desktop release") {
+		t.Fatalf("a stopped removal beside someone else's vaultsync: %v", err)
+	}
+	if target, err := os.Readlink(link); err != nil || target != other {
+		t.Fatalf("someone else's link was taken: %q %v", target, err)
+	}
+}
+
+// A second removal that finds nothing left before bin, and whose removal of
+// bin takes VaultSync's copy and then fails on something else, took
+// something all the same: the command link that now leads nowhere goes, and
+// the text says how to run the removal again (#276).
+func TestIssue276_ASecondRemovalThatTakesTheCopyPartwayCountsIt(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root removes what a permission keeps")
+	}
+	a, link := uninstallable(t)
+	saved := recordLockWait
+	recordLockWait = 200 * time.Millisecond
+	defer func() { recordLockWait = saved }()
+	unlock, err := lockFile(filepath.Join(a.lay.Base, "state.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.uninstall(context.Background(), []string{"--remove-data", "--yes"}); !strings.Contains(refusalText(err), "stopped before it and kept it") {
+		t.Fatalf("the first removal: %v", err)
+	}
+	unlock()
+	keptForAgain(t, a, link)
+	stuck := filepath.Join(a.lay.Bin, "stuck")
+	writeFile(t, filepath.Join(stuck, "x"), "x")
+	if err := os.Chmod(stuck, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(stuck, 0o700) })
+	err = a.uninstall(context.Background(), []string{"--remove-data", "--yes"})
+	if _, statErr := os.Lstat(a.lay.Agent); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("the removal of bin did not take VaultSync's copy before it failed (%v), so this test does not test the case", statErr)
+	}
+	if err == nil || !strings.Contains(err.Error(), "a vaultsync from a desktop release") {
+		t.Fatalf("a second removal that took the copy partway: %v", err)
+	}
+	if _, err := os.Lstat(link); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the command link to the gone copy stayed: %v", err)
+	}
+	if _, err := os.Stat(a.lay.State); err != nil {
+		t.Fatalf("the record went: %v", err)
+	}
+}
+
+// A command link whose end cannot be read for the moment — VaultSync for
+// Mac's Contents/MacOS unreadable — does not lead nowhere: a removal that
+// stops keeps it, though VaultSync's copy is gone (#276).
+func TestIssue276_AStoppedRemovalKeepsALinkItCannotRead(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads what a permission keeps")
+	}
+	a, link := uninstallable(t)
+	app := fakeMacApp(t, filepath.Join(a.home, "Applications"), appBundleName, shippedInfoPlist(t))
+	appAgent := filepath.Join(app, "Contents", "MacOS", "vaultsync")
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(appAgent, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(a.lay.Agent); err != nil {
+		t.Fatal(err)
+	}
+	stuck := filepath.Join(a.lay.Home, "index-v2")
+	if err := os.Chmod(stuck, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(stuck, 0o700) })
+	macOS := filepath.Dir(appAgent)
+	if err := os.Chmod(macOS, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(macOS, 0o755) })
+	if err := a.uninstall(context.Background(), []string{"--remove-data", "--yes"}); err == nil {
+		t.Fatal("the removal did not stop")
+	}
+	if target, err := os.Readlink(link); err != nil || target != appAgent {
+		t.Fatalf("a link whose end cannot be read went with a stopped removal: %q %v", target, err)
 	}
 }

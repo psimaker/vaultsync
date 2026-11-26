@@ -287,9 +287,10 @@ func TestIssue176_RemoveDataGuards(t *testing.T) {
 			if _, err := lock.Take(l.TrayLock()); !errors.Is(err, lock.ErrHeld) {
 				t.Errorf("the menu-bar app starting mid-removal: %v", err)
 			}
-			// agent.json went first: the app's second look finds it gone.
+			// The entries are gone by now, the record last of them (#276):
+			// from here on the app's look at agent.json finds it gone.
 			if _, err := os.Stat(l.State); !errors.Is(err, os.ErrNotExist) {
-				t.Errorf("agent.json still there while the entries go: %v", err)
+				t.Errorf("agent.json still there once the entries went: %v", err)
 			}
 		}
 		defer func() { ownEntriesRemovedHook = nil }()
@@ -297,10 +298,16 @@ func TestIssue176_RemoveDataGuards(t *testing.T) {
 		if err != nil || kept != nil || !slices.Contains(removed, lay.Base) {
 			t.Fatalf("got %v %v %v", removed, kept, err)
 		}
-		// agent.json is the first entry to go — before the engine's
-		// database, which may take a while.
-		if len(removed) == 0 || removed[0] != lay.State {
-			t.Fatalf("agent.json is not the first to go: %v", removed)
+		// The engine goes first, its program before its data, and the
+		// record last of the entries, then its lock (#276): a removal that
+		// stops keeps the record, and leaves no program to start on what
+		// is left of the data.
+		at := func(path string) int { return slices.Index(removed, path) }
+		if len(removed) == 0 || removed[0] != lay.Syncthing {
+			t.Fatalf("the engine's program is not the first to go: %v", removed)
+		}
+		if lockAt := at(filepath.Join(lay.Base, "state.lock")); at(lay.Home) < 0 || at(lay.Home) > at(lay.Bin) || at(lay.Bin) > at(lay.State) || at(lay.State) > lockAt {
+			t.Fatalf("not the engine's data, then bin with VaultSync's copy, then the record, then its lock: %v", removed)
 		}
 		for _, name := range []string{"agent.lock", "pair.lock", "setup.lock"} {
 			if slices.Contains(removed, filepath.Join(lay.Base, name)) {

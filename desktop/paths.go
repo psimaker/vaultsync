@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -106,10 +107,20 @@ func updateStateIfSetUp(path string, fn func(*agentState)) error {
 	if err != nil {
 		return err
 	}
-	defer h.Release()
 	if _, err := os.Stat(path); err != nil {
+		// Gone while this waited: an uninstall --remove-data removed the
+		// record, under this very lock, after everything else (#276). The
+		// taking may have made the lock's file anew; it goes again, so the
+		// removal leaves nothing behind. A record that is there but cannot
+		// be looked at keeps its lock's file.
+		if errors.Is(err, fs.ErrNotExist) {
+			_, _ = h.Discard()
+		} else {
+			h.Release()
+		}
 		return err
 	}
+	defer h.Release()
 	st, err := loadState(path)
 	if err != nil {
 		return err

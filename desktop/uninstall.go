@@ -216,6 +216,9 @@ func ownLock(root *os.Root, name, held string) (func(), error) {
 var (
 	ownEntriesRemovedHook func(lay layout)
 	lockFilesRemovedHook  func(lay layout)
+	// recordLockTakenHook runs once the removal holds state.lock, before
+	// the record goes; a test starts a write of agent.json there.
+	recordLockTakenHook func(lay layout)
 )
 
 // removeRetryWait is the pause between tries at removing the folder
@@ -226,11 +229,86 @@ var removeRetryWait = 50 * time.Millisecond
 // takes the menu-bar app's file away there.
 var removeTryHook func()
 
-// ownedEntries are the names VaultSync creates in its directory.
-// agent.json goes first: the menu-bar app keys its lock on it, so its
-// second look at a held lock finds it gone and holds nothing — before
-// the engine's database, which may take a while to remove.
-var ownedEntries = []string{"agent.json", "bin", "syncthing", "pairing.json", "last-error.txt", "agent.lock", "pair.lock", "setup.lock", "agent.sock", "control-socket.log", "control-socket-error.txt", "state.lock", "tray.lock"}
+// ownedEntries are the names VaultSync creates in its directory (top level
+// only: allOwnEntries reads them). A removal takes them in this order
+// (#276): the engine's program (bin/syncthing) first and its data next —
+// a removal that stops in the data leaves no program, and setup and run
+// change nothing over data whose engine's program is not there — then the
+// rest; and last, under state.lock (removeOwnData), bin with VaultSync's
+// own copy, then the record. A removal that stops keeps the record and the
+// vaultsync command, so running the removal again finishes it.
+var ownedEntries = []string{"syncthing", "pairing.json", "last-error.txt", "agent.lock", "pair.lock", "setup.lock", "agent.sock", "control-socket.log", "control-socket-error.txt", "tray.lock", "bin", recordName, recordLockName}
+
+// recordName and recordLockName: VaultSync's record and the lock every
+// write of it holds (updateState, updateStateIfSetUp).
+const (
+	recordName     = "agent.json"
+	recordLockName = "state.lock"
+)
+
+// recordLockWait is how long a removal waits for state.lock, which a write
+// of agent.json holds for an instant (#276).
+var recordLockWait = 2 * time.Second
+
+// errRecordBusy stops a removal before the record: a write of agent.json
+// held state.lock the whole wait. uninstall adds how to run the removal
+// again — also where nothing was left to remove before the record (#276).
+var errRecordBusy = refuse("VaultSync's record (agent.json) was being written the whole time, so the removal stopped before it and kept it.")
+
+// leadsNowhere: a look at the command link's end failed because nothing is
+// there, or can be — no entry, a file where a folder should be, a loop. A
+// failure to read it (EACCES, EIO) may hide a program that is there, such
+// as VaultSync for Mac's agent behind a folder that cannot be read, so the
+// link stays (#276).
+func leadsNowhere(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) || errors.Is(err, syscall.ELOOP)
+}
+
+// againCommand is how a removal that stopped is run again (#276): by one of
+// VaultSync's own programs that is still there — its copy, the program its
+// command link leads to, the copy behind a linked bin, VaultSync for Mac's
+// agent — as a shell reaches it (commandFor); "" where none is. Never a
+// vaultsync of someone else's that the command link's place may hold.
+func (a *app) againCommand(linkedCopy string) string {
+	exes := []string{a.lay.Agent}
+	if target, err := os.Readlink(commandLink(a.home)); err == nil && a.ownCommandTarget(target) {
+		exes = append(exes, target)
+	}
+	exes = append(exes, linkedCopy)
+	env := a.appEnv
+	if env.readFile == nil {
+		env = liveAppEnv(a.goos, a.home)
+	}
+	for _, app := range installedApps(env) {
+		exes = append(exes, app.Agent)
+	}
+	for _, exe := range exes {
+		if exe == "" {
+			continue
+		}
+		if info, err := os.Stat(exe); err == nil && info.Mode().IsRegular() {
+			return a.commandFor(exe)
+		}
+	}
+	return ""
+}
+
+// takeRecordLock takes state.lock for the record's removal, waiting a
+// moment for a write in progress. One that outlasts the wait stops the
+// removal with the record kept.
+func takeRecordLock(root *os.Root) (func(), error) {
+	deadline := time.Now().Add(recordLockWait)
+	for {
+		unlock, err := takeOwnLock(root, recordLockName)
+		if !errors.Is(err, ErrEngineRunning) {
+			return unlock, err
+		}
+		if time.Now().After(deadline) {
+			return nil, errRecordBusy
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
 
 func (a *app) uninstall(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("uninstall", flag.ContinueOnError)
@@ -375,9 +453,35 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 		}
 		vaults = append(vaults, us.Folders...)
 	}
+	// A bin that is a link goes first, and VaultSync's copy behind it out
+	// of reach (#276): where it led names the copy a removal that stops
+	// is run again with.
+	var linkedCopy string
+	if to, err := os.Readlink(a.lay.Bin); err == nil {
+		if !filepath.IsAbs(to) {
+			to = filepath.Join(filepath.Dir(a.lay.Bin), to)
+		}
+		linkedCopy = filepath.Join(to, "vaultsync")
+	}
+	_, agentErr := os.Lstat(a.lay.Agent)
+	agentWasThere := agentErr == nil
 	removed, kept, err := removeOwnData(a.lay, vaults, a.goos)
-	if link, ok := a.removeCommandLink(); ok {
-		removed = append(removed, link)
+	// What this removal took: the entries it removed, and VaultSync's own
+	// copy where a removal of bin that failed partway took it — removed
+	// then lists nothing, and the copy is gone all the same (#276).
+	_, agentErr = os.Lstat(a.lay.Agent)
+	tookSomething := len(removed) > 0 || agentWasThere && errors.Is(agentErr, fs.ErrNotExist)
+	// The command link goes with the program it leads to: after a removal
+	// that finished, as ever; after one that stopped, only a link that
+	// leads nowhere, and only where this removal took something. One that
+	// still leads to a program, VaultSync's copy or VaultSync for Mac, is
+	// how the removal is run again; one that leads nowhere for a moment —
+	// a disk not mounted — stays where nothing was removed (#276).
+	_, linkErr := os.Stat(commandLink(a.home))
+	if err == nil || tookSomething && leadsNowhere(linkErr) {
+		if link, ok := a.removeCommandLink(); ok {
+			removed = append(removed, link)
+		}
 	}
 	for _, r := range removed {
 		t.say("  removed %s", tildePath(a.home, r))
@@ -387,6 +491,32 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 	} else if kept != nil && (!kept.failed || err != nil) {
 		// A note; or a failure the error returned below would hide.
 		t.say("  kept %s — %s", tildePath(a.home, kept.path), kept.why)
+	}
+	if _, statErr := os.Stat(a.lay.State); err != nil && statErr == nil && (tookSomething || errors.Is(err, errRecordBusy)) {
+		// Stopped midway with the record still there — it goes last
+		// (#276): a second removal finishes what this one began. A refusal
+		// keeps what it carries; only its words grow. A stop at the record
+		// says so also where this run found nothing left before it.
+		// It names a program of VaultSync's that is still there, as a
+		// shell reaches it; where none is, a desktop release's.
+		var again string
+		switch command, busy := a.againCommand(linkedCopy), errors.Is(err, errRecordBusy); {
+		case command == "" && busy:
+			again = "VaultSync's files are only partly removed, and its vaultsync program is gone with them. Once that write is done, uninstall --remove-data run with a vaultsync from a desktop release (github.com/psimaker/vaultsync/releases) finishes the removal."
+		case command == "":
+			again = "VaultSync's files are only partly removed, and its vaultsync program is gone with them; its record stays. Once that is fixed, uninstall --remove-data run with a vaultsync from a desktop release (github.com/psimaker/vaultsync/releases) finishes the removal."
+		case busy:
+			again = fmt.Sprintf("VaultSync's files are only partly removed. Run %s uninstall --remove-data again once that write is done.", command)
+		default:
+			again = fmt.Sprintf("VaultSync's files are only partly removed; its record stays, so %s uninstall --remove-data run again finishes the removal once that is fixed.", command)
+		}
+		var r *refusal
+		if errors.As(err, &r) {
+			extended := *r
+			extended.msg = r.msg + " " + again
+			return &extended
+		}
+		return fmt.Errorf("%w — %s", err, again)
 	}
 	if err != nil {
 		return err
@@ -577,9 +707,11 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 	// whether a `vaultsync run`, `pair` or `setup` still does — or the
 	// menu-bar app. Each is held through the whole removal and its file
 	// goes last, so a run, pair, setup or menu-bar app starting meanwhile
-	// meets a held lock and stops; the app's second look then finds
-	// agent.json gone and holds nothing. The lock files the taking makes
-	// (none was there) are not reported as removed.
+	// meets a held lock and stops; the app, which looks at agent.json
+	// first and finds it there until the end (#276), takes the held lock
+	// for another instance and quits, making nothing in the folder. The
+	// lock files the taking makes (none was there) are not reported as
+	// removed.
 	preexisting := map[string]bool{}
 	var taken []ownLockEntry
 	for _, l := range ownLocks(lay) {
@@ -612,32 +744,72 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 		lockNames[filepath.Base(l.path)] = true
 	}
 	var removed []string
-	for _, name := range ownedEntries {
-		if lockNames[name] {
-			continue
-		}
+	// removeEntry removes one own entry: a link as a link (what it points
+	// to stays), anything else only while it is on this folder's disk.
+	removeEntry := func(name string) error {
 		entry, err := root.Lstat(name)
 		if errors.Is(err, fs.ErrNotExist) {
-			continue
+			return nil
 		}
 		if err != nil {
-			return removed, nil, err
+			return err
 		}
 		if entry.Mode()&os.ModeSymlink != 0 {
-			// A link is removed as a link; what it points to stays.
 			if err := root.Remove(name); err != nil {
-				return removed, nil, err
+				return err
 			}
 			removed = append(removed, filepath.Join(lay.Base, name))
-			continue
+			return nil
 		}
-		if err := sameFileSystem(root, name, base); err != nil {
-			return removed, nil, refuse("%s holds something from another disk (%v), so VaultSync stopped removing its files there.", filepath.Join(lay.Base, name), err)
+		if err := onSameFileSystem(root, name, base); err != nil {
+			return refuse("%s holds something from another disk (%v), so VaultSync stopped removing its files there.", filepath.Join(lay.Base, name), err)
 		}
 		if err := root.RemoveAll(name); err != nil {
-			return removed, nil, err
+			return err
 		}
 		removed = append(removed, filepath.Join(lay.Base, name))
+		return nil
+	}
+	// The engine's program first (#276): a removal that stops after it
+	// leaves data no engine may start on (engineDataStateOf). Inside a bin
+	// that is a folder, the program alone — VaultSync's own copy stays for
+	// running the removal again. A bin that is anything else, a link to a
+	// folder elsewhere, goes first as it is: the program stays visible
+	// through a link, and the link's folder is not VaultSync's to empty.
+	switch info, err := root.Lstat("bin"); {
+	case errors.Is(err, fs.ErrNotExist):
+	case err != nil:
+		return removed, nil, err
+	case info.IsDir():
+		if err := removeEntry(filepath.Join("bin", "syncthing")); err != nil {
+			return removed, nil, err
+		}
+	default:
+		if err := removeEntry("bin"); err != nil {
+			return removed, nil, err
+		}
+	}
+	for _, name := range ownedEntries {
+		if lockNames[name] || name == "bin" || name == recordName || name == recordLockName {
+			continue
+		}
+		if err := removeEntry(name); err != nil {
+			return removed, nil, err
+		}
+	}
+	// The record last (#276), under state.lock: a writer that looks at
+	// agent.json again once it holds that lock (updateStateIfSetUp) finds it
+	// gone and writes nothing. state.lock's file goes with the record, the
+	// lock still held; a file the taking made is not reported as removed.
+	_, recordLockErr := root.Lstat(recordLockName)
+	recordLockWasThere := recordLockErr == nil
+	unlockRecord, err := takeRecordLock(root)
+	if err != nil {
+		return removed, nil, err
+	}
+	defer unlockRecord()
+	if recordLockTakenHook != nil {
+		recordLockTakenHook(lay)
 	}
 	// Temporary files an interrupted write may have left: writeFileAtomic
 	// writes ".<name>.<random>" beside any of the own entries.
@@ -647,6 +819,20 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 				_ = root.Remove(e.Name())
 			}
 		}
+	}
+	// VaultSync's own copy goes with the record: until then the vaultsync
+	// command is there to run the removal again.
+	if err := removeEntry("bin"); err != nil {
+		return removed, nil, err
+	}
+	if err := removeEntry(recordName); err != nil {
+		return removed, nil, err
+	}
+	if err := root.Remove(recordLockName); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return removed, nil, err
+	}
+	if recordLockWasThere {
+		removed = append(removed, filepath.Join(lay.Base, recordLockName))
 	}
 	if ownEntriesRemovedHook != nil {
 		ownEntriesRemovedHook(lay)
@@ -665,6 +851,10 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 	if lockFilesRemovedHook != nil {
 		lockFilesRemovedHook(lay)
 	}
+	// A write of agent.json that waited on state.lock may take it anew in
+	// the instant after it went; it finds the record gone and discards the
+	// file a moment later — waited for like the lock files (#276).
+	lockNames[recordLockName] = true
 	// The menu-bar app may have made a fresh tray.lock just now (its look
 	// at agent.json came before the removal); it removes that file itself
 	// the moment it sees agent.json gone — so a folder holding that file
@@ -860,6 +1050,10 @@ func openOwnedDir(dir string, vaults []string, goos string) (*os.Root, os.FileIn
 	}
 	return root, opened, nil
 }
+
+// onSameFileSystem is sameFileSystem; a test puts another disk in a
+// place no test can mount one.
+var onSameFileSystem = sameFileSystem
 
 // sameFileSystem walks name inside root and refuses an entry on another
 // device: RemoveAll would otherwise descend into whatever is mounted there.
