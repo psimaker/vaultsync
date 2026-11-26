@@ -310,9 +310,9 @@ The container reads its own Syncthing Device ID automatically from `/rest/system
 | Tier | Price | What's included |
 |---|---|---|
 | **VaultSync App** | Free | Full sync, background refresh, all features |
-| **Cloud Relay** | Monthly or yearly subscription | Push notifications via relay.vaultsync.eu |
+| **VaultSync Plus** | Monthly or yearly subscription | Push notifications via relay.vaultsync.eu |
 
-- Cloud Relay subscription managed via App Store (StoreKit 2, auto-renewable; monthly or yearly). The price is set in App Store Connect and shown in the user's local currency at runtime via StoreKit — never hard-coded (USD reference: ~$1.99/month or ~$14.99/year). No free trial.
+- VaultSync Plus subscription managed via App Store (StoreKit 2, auto-renewable; monthly or yearly). The price is set in App Store Connect and shown in the user's local currency at runtime via StoreKit — never hard-coded (USD reference for a new subscription from 2026-12-01: ~$2.99/month or ~$19.99/year; these prices do not apply to the renewals of a subscription that was already running before that date and stays on the same plan). No free trial.
 - App provisions the relay after successful purchase using the StoreKit signed transaction (JWS)
 - No feature gates in the container itself — the gate is the central relay accepting provisioned Device IDs
 

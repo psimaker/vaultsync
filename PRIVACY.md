@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Effective date:** August 27, 2026
+**Effective date:** December 1, 2026
 
 VaultSync is designed to keep your data on your devices. This policy explains what information is — and isn't — collected.
 
@@ -10,7 +10,7 @@ VaultSync does not collect note content, usage analytics, advertising identifier
 
 ## Cloud Relay
 
-If you subscribe to the optional Cloud Relay service, the following data is stored on the relay server (`relay.vaultsync.eu`):
+If you subscribe to the optional VaultSync Plus, which wakes VaultSync through the Cloud Relay service, the following data is stored on the relay server (`relay.vaultsync.eu`):
 
 - **Syncthing Device ID** — used to route push notifications to your device
 - **APNs device token and a one-way token hash** — the token is used to deliver silent push notifications through Apple Push Notification service; the hash prevents duplicate registrations
@@ -19,7 +19,7 @@ If you subscribe to the optional Cloud Relay service, the following data is stor
 
 VaultSync sends the StoreKit signed transaction when registering Cloud Relay. The relay verifies it locally against Apple's certificate chain and retains only the verification fields listed above, not the complete signed transaction.
 
-Apple notifies the relay when a Cloud Relay subscription renews, is refunded, or is revoked (App Store Server Notifications), so that wake-ups continue after a renewal without the app having to be opened. The relay verifies Apple's signature on each notification and uses it only to keep the subscription expiry and the verification time in the verification record current. A notification also carries details of the purchase such as its price and storefront country; the relay neither stores nor logs them.
+Apple notifies the relay when a VaultSync Plus subscription renews, is refunded, or is revoked (App Store Server Notifications), so that wake-ups continue after a renewal without the app having to be opened. The relay verifies Apple's signature on each notification and uses it only to keep the subscription expiry and the verification time in the verification record current. A notification also carries details of the purchase such as its price and storefront country; the relay neither stores nor logs them.
 
 That's it. **No file content, file names, folder names, or any other metadata ever leaves your homeserver.** The relay receives only a wake-up signal containing the Device ID.
 
@@ -301,7 +301,7 @@ Subscription billing is handled entirely by Apple through StoreKit. VaultSync do
 
 ## Third-Party Services
 
-VaultSync uses **no tracking SDKs, no analytics, and no advertising**. Cloud Relay subscriptions use Apple's App Store/StoreKit for purchase confirmation, Apple's App Store Server Notifications for renewals, refunds, and revocations, and Apple Push Notification service (APNs) for silent wake-ups.
+VaultSync uses **no tracking SDKs, no analytics, and no advertising**. VaultSync Plus subscriptions use Apple's App Store/StoreKit for purchase confirmation, Apple's App Store Server Notifications for renewals, refunds, and revocations, and Apple Push Notification service (APNs) for silent wake-ups.
 
 ## Your Rights (GDPR)
 

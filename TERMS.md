@@ -1,7 +1,7 @@
 # VaultSync for Obsidian — End User License Agreement (EULA) and Terms of Use
 
 **Effective date:** 31 May 2026
-**Last updated:** 31 May 2026
+**Last updated:** 1 December 2026
 
 > This is the VaultSync End User License Agreement and Terms of Use. The same
 > text is provided as the custom **License Agreement** on the VaultSync App Store
@@ -84,37 +84,45 @@ described in Sections 5 and 6. VaultSync also incorporates third-party component
 open-source licenses; nothing in this Agreement limits your rights, or adds to
 your obligations, under those licenses with respect to those components.
 
-## 5. Cloud Relay — Optional Auto-Renewable Subscription
+## 5. VaultSync Plus — Optional Auto-Renewable Subscription
 
-VaultSync offers an optional auto-renewable subscription called "Cloud Relay".
-VaultSync remains fully functional without it; the subscription is entirely
-optional.
+VaultSync offers an optional auto-renewable subscription called "VaultSync
+Plus". VaultSync remains fully functional without it; the subscription is
+entirely optional.
 
-- **Title:** Cloud Relay
+- **Title:** VaultSync Plus
 - **Type:** Auto-renewable subscription, billed through your Apple Account
-- **Duration:** 1 month (recurring monthly)
-- **What it does:** While subscribed, when files change on your home server a
-  silent push notification wakes VaultSync so that server-to-iPhone
-  synchronization happens promptly, without you having to open the app. The
-  relay transmits only an anonymous wake-up signal; it never receives the
-  contents, names, or metadata of your notes or files.
+- **Duration:** 1 month (renews monthly) or 1 year (renews yearly), as you choose
+  at purchase
+- **What it does:** While subscribed, when files change on your home server,
+  VaultSync Plus sends your iPhone a wake-up, and VaultSync syncs in the
+  background once iOS delivers it — usually within moments. iOS decides when a
+  wake-up arrives, and after you force-quit the app, wake-ups resume once you
+  open it again. The relay transmits only an anonymous wake-up signal; it never
+  receives the contents, names, or metadata of your notes or files.
 - **Price:** The price is shown to you in the App Store and inside the app before
-  you purchase, localized to your storefront and currency. As of the effective
-  date, the price in the United States storefront is USD 0.99 per month; the
-  price applicable to you is always the price displayed at the time of purchase.
+  you purchase, localized to your storefront and currency. From 1 December 2026,
+  the price of a new subscription in the United States storefront is USD 2.99
+  per month or USD 19.99 per year; the price applicable to you is always the
+  price displayed at the time of purchase. These prices do not apply to the
+  renewals of a subscription that was already running before 1 December 2026
+  and stays on the same plan. A switch to the other plan, or a subscription
+  started again after one has ended, may be charged the price shown at that
+  time. Your renewal price is always shown in your Account Settings on the App
+  Store.
 
 **Auto-renewal terms:**
 
 - Payment will be charged to your Apple Account at confirmation of purchase.
-- The subscription automatically renews for successive one-month periods at the
-  price shown, unless it is canceled at least 24 hours before the end of the
-  current period.
+- The subscription automatically renews for successive periods of the length
+  you chose (one month or one year) at the price shown, unless it is canceled at
+  least 24 hours before the end of the current period.
 - Your Apple Account will be charged for renewal within 24 hours prior to the end
   of the current period, at the price shown.
 - You can manage your subscription, view the renewal price, and turn off
   auto-renewal at any time in your Account Settings on the App Store after
   purchase. Cancellation takes effect at the end of the current billing period;
-  you keep access to Cloud Relay until then.
+  you keep access to VaultSync Plus until then.
 - If a free trial or introductory offer is ever offered and you accept it, any
   unused portion of that free trial period will be forfeited when you purchase
   the subscription, and the trial duration and the price charged after the trial
@@ -150,13 +158,13 @@ the Developer.
   applicable to you is the price displayed at the time of purchase, localized to
   your storefront.
 
-The Contributions are separate from, and unrelated to, the Cloud Relay
+The Contributions are separate from, and unrelated to, the VaultSync Plus
 subscription in Section 5. Making a Contribution does not grant, extend, or
 affect any subscription.
 
 ## 7. Purchases, Billing, Taxes, and Refunds
 
-All purchases within VaultSync — both the Cloud Relay subscription and the
+All purchases within VaultSync — both the VaultSync Plus subscription and the
 Contributions — are made exclusively through Apple's In-App Purchase system.
 Apple acts as the merchant and seller of record for these purchases. Billing is
 handled by Apple through your Apple Account, and applicable taxes are included or
@@ -183,7 +191,7 @@ available at: <https://github.com/psimaker/vaultsync/blob/main/PRIVACY.md>
 
 VaultSync is designed to keep your data on your own devices. The Application
 itself does not collect personal data, and it uses no third-party analytics,
-tracking, or advertising. Only if you choose to use the optional Cloud Relay
+tracking, or advertising. Only if you choose to use the optional VaultSync Plus
 subscription does VaultSync process the minimal routing information described in
 the Privacy Policy (your Syncthing Device ID, your Apple Push Notification
 service device token, and your App Store transaction ID), which is used solely to
