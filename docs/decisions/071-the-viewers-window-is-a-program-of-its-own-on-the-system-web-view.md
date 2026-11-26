@@ -28,7 +28,11 @@ The window has to run on macOS 12 and later, and on Linux for amd64 and arm64. O
    - **With the service stopped,** a file still opens in Preview. The switch to edit mode says that editing needs VaultSync running and names the menu-bar app's Start (decision 057).
    - **Where the service may not write,** because the folder refuses it or the system keeps the service out (on a Mac, a Files & Folders question answered with no), the file stays in Preview and the window says why, as for a file system without the exchange (decision 073, point 5).
    - **No path from the page.** The page names no path. A path comes only from the system's open event, the open dialog, a file dropped on the window, or an entry of the sidebar's own list. Links and embeds are resolved on the Go side inside the file's root, and no link is followed out of it, a symbolic link included.
-   - **Writes are not confined to a root.** The service writes the file that entered edit mode and, when the person keeps both versions, one new file beside it, and nothing else. The person chose that file, and the page cannot name another. The socket's rule stays: the same account only, checked by the kernel. A process that reaches the socket is the person's own and could write that file without the service.
+   - **Writes are not confined to a root.** The service writes the file that entered edit mode and, when the person keeps both versions, one new file beside it, and nothing else. The person chose that file, and the page cannot name another.
+   - **What the socket lends.** The socket's rule stays: the same account only, checked by the kernel (decision 049).
+     - **On Linux and Windows** a program of that account can read and write such a file without the service.
+     - **On a Mac it may not.** The Files & Folders question is answered per program. A service let into Desktop, Documents or Downloads would read and save files there for any program of the account that asks it to. The first draft lent only the synced folders.
+     - **A possible remedy** is a check of which program connects, such as its code signature. It is left open and settled before the first line of code. A lend that no such check closes is a reason to revisit (3), as is the double question below.
 4. **Files are untrusted.** Four measures keep a file's content inert:
    - **The page.** It runs under a Content Security Policy that allows scripts and styles only from the program itself, images only from its own scheme (served by the window's Go side, from inside the root), and no connections, frames or forms. CodeMirror inserts its styles while it runs. Whether they pass this policy, by a nonce or otherwise, is read before the first line of code.
    - **Rendered HTML.** It carries no script, no event handler, no `style` attribute and no outside address (decision 072, point 3).
@@ -39,11 +43,11 @@ The window has to run on macOS 12 and later, and on Linux for amd64 and arm64. O
 5. **What each platform's release carries.**
    - **macOS.** A third program in `VaultSync for Mac.app`, built on the macOS runner like the menu-bar app and signed and notarized with it. That changes `make-app.sh`, `sign.sh`, `verify.sh` and the bundle checks of decision 053 (`checkApp`), so the first code PR changes the signing path of decision 052.
      - **A Dock icon and a menu bar.** Two ways can give the window both inside an LSUIElement bundle: an app bundle of its own inside VaultSync for Mac, or the viewer switching its activation policy while a window is open.
-     - **Open With leans to the first.** A program is listed under Open With by the document types its bundle declares in its `Info.plist`. VaultSync for Mac's executable is the menu-bar app (`desktop/macos/Info.plist`), so a file opened with that bundle would reach the menu-bar app. Whether macOS lists a bundle nested inside VaultSync for Mac under Open With is measured with the code, and settles it.
+     - **Open With leans to the first.** The document types a program opens are declared in its bundle's `Info.plist` (`CFBundleDocumentTypes`, "the document types supported by the bundle" in Apple's summary). VaultSync for Mac's executable is the menu-bar app (`desktop/macos/Info.plist`), so a file opened with that bundle would reach the menu-bar app. Two things are measured with the code, and they settle it: that macOS lists a program under Open With by these types, and whether it lists a bundle nested inside VaultSync for Mac.
      - **The Markdown type.** Apple's API names it (`UTType.markdown`, `net.daringfireball.markdown`) from macOS 27. Whether older systems know it without the viewer declaring it is measured, and the viewer declares it where they do not.
      - **Never the default.** The viewer declares the type with a rank (`LSHandlerRank`) that leaves the default to the person. Apple's page names the values Owner, Default, Alternate and None without saying what each does, so which one does that is measured.
    - **Linux.** A program built with cgo against the distribution's WebKitGTK 6.0 and GTK 4, for each architecture on a runner of that architecture or a cross toolchain. Unlike the agent and the menu-bar app it is not static, so it has a floor: the oldest C library it is built against, and WebKitGTK 6.0. A computer below that floor keeps syncing, and the menu-bar app names what the viewer needs.
-     - **Open With.** Setup installs a desktop entry for the viewer that lists `text/markdown`, so the file manager offers it under Open With. The viewer writes no default of its own. Where no program is set as the default, the freedesktop specification lets the desktop pick its most preferred program among those that list the type, and that can be the viewer.
+     - **Open With.** Setup installs a desktop entry for the viewer that lists `text/markdown`, the type freedesktop's shared MIME database gives `*.md`, `*.mkd` and `*.markdown`, so the file manager offers it under Open With. The viewer writes no default of its own. Where no program is set as the default, the freedesktop specification lets the desktop pick its most preferred program among those that list the type, and that can be the viewer.
    - **Windows.** In the Store package of #217, on WebView2. The package declares the Markdown file types (#217's package record).
 6. **What the window looks like.** Plain, and much nicer than a standard viewer. Two writing apps are its models: Apostrophe, on GNOME, and Omawrite. Nothing is taken from either: no code, no styles, no fonts and no images. The viewer's are its own.
    - **One column of text,** centred at a reading width, with wide margins and generous line spacing. Nothing else is in view but the header bar and, once the person opens it, the sidebar (decision 072, point 2).
@@ -75,8 +79,8 @@ The window has to run on macOS 12 and later, and on Linux for amd64 and arm64. O
 - *A native interface per platform* (AppKit or SwiftUI, GTK, WinUI): three interfaces for one person.
 - *A browser tab served on loopback:* a TCP port that any account on the computer can reach (decision 049 rejected it), and a browser whose extensions read every page and whose sync may send its history out.
 - *The window inside the menu-bar app:* two main loops in one process, and a window that fails takes the menu with it.
-- *The service reading for the window as well* (this record's first draft): nothing would open while the service is stopped, and the service would read every file the person opens. It would keep the question for the person's folders on a Mac with one program. Whether two programs mean two questions is measured (below).
-- *The window saving the files outside the synced folders itself:* the save rule and its recovery would have two homes, and a folder that starts to sync during an edit would be saved by a program that does not know it.
+- *The service reading for the window as well* (this record's first draft): nothing would open while the service is stopped, and the service would read every file the person opens. On a Mac it would lend its reads as (3) lends its saves. It would keep the question for the person's folders with one program. Whether two programs mean two questions is measured (below).
+- *The window saving the files outside the synced folders itself:* the save rule and its recovery would have two homes, and a folder that starts to sync during an edit would be saved by a program that does not know it. It would lend nothing outside the synced folders, since the service would touch only those.
 - *A look like Obsidian's, with panes, a ribbon and a status bar:* a second Obsidian, which decision 072 rules out.
 - *The system's plain text view alone:* what any standard viewer shows.
 
@@ -96,12 +100,15 @@ The window has to run on macOS 12 and later, and on Linux for amd64 and arm64. O
 - **Obsidian:** its blog post on CodeMirror 6.
 - **goldmark:** its README, and on 2026-11-26 the README of its v2.
 - **The models, on 2026-11-26:** the READMEs and screenshots of Apostrophe (`World/apostrophe` on GNOME's GitLab, commit `7fe8f1d6`) and of Omawrite (`omacom/omawrite` on GitHub, commit `1c09d424`).
-- **Opening files, on 2026-11-26:** Apple's pages on `CFBundleDocumentTypes`, `LSHandlerRank` and `UTType.markdown`, and freedesktop's specifications of desktop entries and of how a program is chosen for a type (`mime-apps`).
+- **Opening files, on 2026-11-26:**
+  - Apple's pages on `CFBundleDocumentTypes`, `LSHandlerRank` and `UTType.markdown`;
+  - freedesktop's specifications of desktop entries and of how a program is chosen for a type (`mime-apps`);
+  - the `text/markdown` entry of its shared MIME database (`xdg/shared-mime-info`, commit `831f1e16`).
 
 What these sources leave open:
 - Wails' docs name Debian 12 and Ubuntu 22.04 as lacking WebKitGTK 6.0, which by the package data carry it (22.04 in its updates).
 - Its docs say the GTK 3 tag goes in v3.1 while its v3.1.0 code still has it.
-- Apple documents no statement that WKWebView content reaches VoiceOver, and its page on `LSHandlerRank` does not say what each value does.
+- Apple documents no statement that WKWebView content reaches VoiceOver. Its page on `LSHandlerRank` does not say what each value does, and its page on `CFBundleDocumentTypes` gives only a one-line summary.
 - Microsoft's sentence on WebView2 as a package dependency covers App Installer, not the Store.
 
 To measure before the first line of code:
@@ -113,6 +120,12 @@ To measure before the first line of code:
 - the window's start time and memory on each system;
 - the Dock icon and menu bar inside VaultSync for Mac, and whether macOS lists a bundle nested there under Open With;
 - whether macOS before 27 knows the Markdown type, and which `LSHandlerRank` keeps the viewer from becoming the default;
-- on a Mac, which program the Files & Folders question names when the window reads a file in Desktop, Documents or Downloads and when the service saves one there, whether the person is asked twice for one folder, and what a save meets when the answer was no. Two questions for one file are a reason to revisit (3).
+- on a Mac, the Files & Folders question:
+  - which program it names when the window reads a file in Desktop, Documents or Downloads, and when the service saves one there;
+  - whether the person is asked twice for one folder;
+  - what a save meets when the answer was no;
+  - whether the service can tell which program connects to its socket.
+
+  Two questions for one file, or a lend that no such check closes, are reasons to revisit (3).
 
 **Links.** #347, #217; decisions 044, 046, 048, 049, 050, 052, 053, 057; 072 ("What the viewer shows and writes …"), 073 ("The viewer saves a note only over the version it opened …").
