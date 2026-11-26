@@ -843,7 +843,11 @@ $(cat "$COMPOSE_LOG")"
 	for leftover in "$EXISTING"/.env.setup.* "$EXISTING"/docker-compose.yml.setup.*; do
 		[ ! -e "$leftover" ] || fail "a TERM during the pull left a staged file: $leftover"
 	done
-	pass "an interrupted pull after a yes leaves .env as it was and nothing behind (#368)"
+	if ! printf '%s\n' "$out" | grep -q "Setup was interrupted. Nothing was changed" || ! printf '%s\n' "$out" | grep -q "docs/hub.md"; then
+		fail "an interrupted pull does not say what it leaves and the manual step:
+$out"
+	fi
+	pass "an interrupted pull after a yes leaves .env as it was and nothing behind, and says so (#368)"
 
 	# .env changed by another hand while the images downloaded: the staged
 	# files were made from what it held before, so neither moves.

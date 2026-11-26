@@ -202,9 +202,28 @@ same_text() {
 
 hold_hub_edits() {
 	trap 'release_env_edit' EXIT
-	trap 'release_env_edit; exit 129' HUP
-	trap 'release_env_edit; exit 130' INT
-	trap 'release_env_edit; exit 143' TERM
+	trap 'interrupted_hub_edits 129' HUP
+	trap 'interrupted_hub_edits 130' INT
+	trap 'interrupted_hub_edits 143' TERM
+}
+
+# An interruption ends the setup: what was staged goes with the lock, and
+# setup says what that leaves — after the cleanup and never fatally, since a
+# closed terminal cannot show it. Interrupted before anything was staged
+# (while asking), there is nothing to say.
+interrupted_hub_edits() {
+	if [ -n "$COMPOSE_STAGED" ]; then
+		interrupted_note="Setup was interrupted. Nothing was changed: $HUB_DIR/.env and docker-compose.yml are as they were."
+	elif [ -n "$ENV_STAGED" ]; then
+		interrupted_note="Setup was interrupted. $HUB_DIR/.env is as it was; docker-compose.yml was written before the pull."
+	else
+		interrupted_note=""
+	fi
+	release_env_edit
+	if [ -n "$interrupted_note" ]; then
+		printf '%s\n  Run the setup again, or update by hand (docs/hub.md → Update the Hub).\n' "$interrupted_note" >&2 || true
+	fi
+	exit "$1"
 }
 
 end_hub_edits() {
