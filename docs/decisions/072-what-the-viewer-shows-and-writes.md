@@ -1,6 +1,6 @@
 # 072 — What the viewer shows and writes: any Markdown file with the files beside it, Obsidian's common syntax, and only the file being edited
 
-**Context.** #347 gives the desktop apps a window to read and edit Markdown files. A file opens in Preview, and one switch on top turns it into its Markdown text to edit. The window opens any Markdown file on the computer, and the notes VaultSync syncs are among them. It is a viewer with an edit mode, not a second Obsidian. Today, reading a note or changing a line in it needs another app (#347). Most folders VaultSync syncs today are Obsidian vaults, written in Obsidian's syntax: wikilinks, embeds, callouts, properties and tags. Some are plain Markdown folders, and many Markdown files lie in no vault at all, such as a README or a few notes in a folder of their own. A write in a synced folder lands on every device (decision 073). Every byte the window shows comes from a file that another device, a download or a mail may have written.
+**Context.** #347 gives the desktop apps a window to read and edit Markdown files. A file opens in Preview, and one switch on top turns it into its Markdown text to edit. The window opens any Markdown file on the computer, and the notes VaultSync syncs are among them. It is a viewer with an edit mode, not a second Obsidian. Today, reading a note or changing a line in it needs another app (#347). Most folders VaultSync syncs today are Obsidian vaults, written in Obsidian's syntax: wikilinks, embeds, callouts, properties and tags. Some are plain Markdown folders, and many Markdown files lie in no vault at all, such as a README or a few notes in a folder of their own. A write to a file the engine syncs lands on every device (decision 073), while one its folder's ignore patterns leave out stays on this computer. Every byte the window shows comes from a file that another device, a download or a mail may have written.
 
 **Decision.**
 
@@ -11,6 +11,7 @@
      - from the menu-bar app, whose Open Viewer opens the last file the viewer showed, or the open dialog when there is none;
      - from the sidebar (point 2) or a link in the open file (point 5).
    - **One window per file.** A file opened from outside the viewer opens in a window of its own. The sidebar and a link change the file in the same window. A file that is already open brings its window to the front, so no file is open twice.
+   - **A change of file in edit mode** closes the open file, which saves it (decision 073, point 3). When that save meets a version that changed since it was opened, the window stays on the open file until the person has made the choice of decision 073, point 7. No edit is dropped by a change of file.
    - **Preview first.** Every file opens in Preview (point 7).
 2. **The sidebar.** On the left, a sidebar the person folds open and closed lists the Markdown files in the open file's folder, by name, sorted as the system's file manager sorts them. Picking one opens it in the same window. It starts folded, and the window remembers whether the person opened it.
    - **One folder.** It lists only the open file's own folder: not the folders below it and not the one above.
