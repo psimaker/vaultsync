@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -91,6 +92,45 @@ func TestIssue302_ARemovedVaultIsGoneFromDiskWhenTheStopReturns(t *testing.T) {
 	t.Logf("slowest round: config.xml held the change %v after StopSyncthing returned", slowest)
 	if late > 0 {
 		t.Fatalf("%d of %d rounds: config.xml still held the vault removed just before StopSyncthing returned (the save came later)", late, issue302Rounds)
+	}
+}
+
+// A stop that overran its deadline finishes in the background, and the next
+// start waits for it (#181). The save belongs to that finish: once the
+// pending stop has released, the change is on disk, so the start that waited
+// for it loads the change.
+func TestIssue302_AStopThatOverranItsDeadlineSavesBeforeItReleases(t *testing.T) {
+	configDir := testConfigDir(t)
+	if errMsg := StartSyncthing(configDir); errMsg != "" {
+		t.Fatalf("StartSyncthing() = %q", errMsg)
+	}
+	const id = "issue302-overrun"
+	if errMsg := AddFolder(id, "Vault", filepath.Join(configDir, id)); errMsg != "" {
+		t.Fatalf("AddFolder() = %q", errMsg)
+	}
+
+	restore := overrideLifecycleTimeouts(t)
+	// A zero deadline expires at once: the stop is reported as overrun
+	// while the real stop runs on in the background.
+	lifecycleTimeouts.stop = 0
+	errMsg := StopSyncthing()
+	restore()
+	if !strings.Contains(errMsg, "stop: timed out") {
+		t.Fatalf("StopSyncthing() = %q, want a stop timeout", errMsg)
+	}
+	mu.Lock()
+	pending := stStopPending
+	mu.Unlock()
+	if pending == nil {
+		t.Fatal("no pending stop after an overrun stop")
+	}
+	select {
+	case <-pending:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the pending stop never released")
+	}
+	if !issue302Persisted(configDir, id) {
+		t.Fatal("config.xml lacked the vault added before the stop when the pending stop released")
 	}
 }
 
