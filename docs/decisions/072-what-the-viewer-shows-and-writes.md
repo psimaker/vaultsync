@@ -67,7 +67,7 @@
 - **Width.** The window has to show the notes people already have, and most of those are Obsidian's. Wikilinks and embeds shown as raw brackets would make it useless for them, while callouts and properties cost little once the links work.
 - **The cut-off.** Everything past that line is what Obsidian does, and it is left to Obsidian: plugins, canvases, the graph, live preview. Each piece would be new surface that writes or runs code.
 - **A plain text editor.** It is the only editor that keeps the bytes the person did not touch (decision 073, point 10). A rich-text or live-preview editor writes the Markdown out again, in its own form.
-- **No network.** A fetched image tells its server when a note was opened and from which address. No note content leaves the computer, and the window counts nothing.
+- **No network.** A fetched image tells its server when a note was opened and from which address. The window itself sends no note content anywhere, and it counts nothing. A note leaves the computer only through the sync the person set up, or in a web link the person clicks.
 - **Preview writes nothing.** That way the one mode that writes is the one the person switched on.
 - **The root.** Links work as they do in Obsidian inside a vault, VaultSync's or not, and nothing a file names reaches past the folder it was written for.
 
