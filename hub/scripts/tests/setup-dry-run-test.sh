@@ -897,7 +897,7 @@ out=$(VAULTSYNC_HUB_DIR="$EXISTING" VIOLATIONS="$SANDBOX/results/violations-exis
 $out"
 cmp -s "$EXISTING/docker-compose.yml" "$COMPOSE" || fail "an existing Hub's compose file is not the stack setup ships after a pull that worked:
 $(diff -u "$COMPOSE" "$EXISTING/docker-compose.yml" || true)"
-[ "$(ls -l "$EXISTING/docker-compose.yml" | cut -c1-10)" = "-rw-r-----" ] || fail "the compose file did not keep its mode: $(ls -l "$EXISTING/docker-compose.yml")"
+[ -n "$(find "$EXISTING/docker-compose.yml" -perm 0640)" ] || fail "the compose file did not keep its mode 0640"
 grep " pull --quiet" "$COMPOSE_LOG" | grep -q -- "-f $EXISTING/docker-compose.yml.setup." || fail "the pull did not read the staged compose file:
 $(cat "$COMPOSE_LOG")"
 if grep " pull --quiet" "$COMPOSE_LOG" | grep -q -- "--env-file"; then

@@ -446,7 +446,10 @@ quoted values), reads the line again after your yes and writes the file
 in one piece, so `.env` is never half-written and never moved backwards
 by setup (another program editing `.env` at that very moment is outside
 its control); it keeps your ports and names and never touches a custom
-image.
+image. It changes `.env` and `docker-compose.yml` only after the images they
+name are downloaded: when the download fails or is interrupted, both stay as
+they were, the Hub keeps the containers it runs, and setup says so — run it
+again once the registry can be reached, or move by hand as above.
 Without a terminal, or on an `.env` you reshaped by hand, it tells you to
 change the line yourself instead. As on every run, it prints a new
 pairing code at the end.

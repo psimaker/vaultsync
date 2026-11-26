@@ -747,8 +747,9 @@ write_hub_files() {
 	# (#368); a new Hub gets it in place.
 	if [ -f "$env_file" ] && [ -f "$compose" ]; then
 		hold_hub_edits
-		COMPOSE_STAGED=$(mktemp "$compose.setup.XXXXXX") && cp -p "$compose" "$COMPOSE_STAGED" ||
+		if ! COMPOSE_STAGED=$(mktemp "$compose.setup.XXXXXX") || ! cp -p "$compose" "$COMPOSE_STAGED"; then
 			fail "Could not update $compose; nothing was changed. Run the setup again, or update by hand (docs/hub.md → Update the Hub)."
+		fi
 		compose="$COMPOSE_STAGED"
 	fi
 	cat >"$compose" <<'COMPOSE'
