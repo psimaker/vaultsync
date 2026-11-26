@@ -1020,3 +1020,45 @@ func TestIssue276_AStoppedRemovalNamesNoOneElsesVaultsync(t *testing.T) {
 		t.Fatalf("someone else's link was taken: %q %v", target, err)
 	}
 }
+
+// A second removal that finds nothing left before bin, and whose removal of
+// bin takes VaultSync's copy and then fails on something else, took
+// something all the same: the command link that now leads nowhere goes, and
+// the text says how to run the removal again (#276).
+func TestIssue276_ASecondRemovalThatTakesTheCopyPartwayCountsIt(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root removes what a permission keeps")
+	}
+	a, link := uninstallable(t)
+	saved := recordLockWait
+	recordLockWait = 200 * time.Millisecond
+	defer func() { recordLockWait = saved }()
+	unlock, err := lockFile(filepath.Join(a.lay.Base, "state.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.uninstall(context.Background(), []string{"--remove-data", "--yes"}); !strings.Contains(refusalText(err), "stopped before it and kept it") {
+		t.Fatalf("the first removal: %v", err)
+	}
+	unlock()
+	keptForAgain(t, a, link)
+	stuck := filepath.Join(a.lay.Bin, "stuck")
+	writeFile(t, filepath.Join(stuck, "x"), "x")
+	if err := os.Chmod(stuck, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(stuck, 0o700) })
+	err = a.uninstall(context.Background(), []string{"--remove-data", "--yes"})
+	if _, statErr := os.Lstat(a.lay.Agent); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("the removal of bin did not take VaultSync's copy before it failed (%v), so this test does not test the case", statErr)
+	}
+	if err == nil || !strings.Contains(err.Error(), "a vaultsync from a desktop release") {
+		t.Fatalf("a second removal that took the copy partway: %v", err)
+	}
+	if _, err := os.Lstat(link); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the command link to the gone copy stayed: %v", err)
+	}
+	if _, err := os.Stat(a.lay.State); err != nil {
+		t.Fatalf("the record went: %v", err)
+	}
+}

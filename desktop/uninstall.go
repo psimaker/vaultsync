@@ -454,8 +454,14 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 		}
 		linkedCopy = filepath.Join(to, "vaultsync")
 	}
+	_, agentErr := os.Lstat(a.lay.Agent)
+	agentWasThere := agentErr == nil
 	removed, kept, err := removeOwnData(a.lay, vaults, a.goos)
-	ownRemoved := len(removed)
+	// What this removal took: the entries it removed, and VaultSync's own
+	// copy where a removal of bin that failed partway took it — removed
+	// then lists nothing, and the copy is gone all the same (#276).
+	_, agentErr = os.Lstat(a.lay.Agent)
+	tookSomething := len(removed) > 0 || agentWasThere && errors.Is(agentErr, fs.ErrNotExist)
 	// The command link goes with the program it leads to: after a removal
 	// that finished, as ever; after one that stopped, only a link that
 	// leads nowhere, and only where this removal took something. One that
@@ -463,7 +469,7 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 	// how the removal is run again; one that leads nowhere for a moment —
 	// a disk not mounted — stays where nothing was removed (#276).
 	_, linkErr := os.Stat(commandLink(a.home))
-	if err == nil || ownRemoved > 0 && linkErr != nil {
+	if err == nil || tookSomething && linkErr != nil {
 		if link, ok := a.removeCommandLink(); ok {
 			removed = append(removed, link)
 		}
@@ -477,7 +483,7 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 		// A note; or a failure the error returned below would hide.
 		t.say("  kept %s — %s", tildePath(a.home, kept.path), kept.why)
 	}
-	if _, statErr := os.Stat(a.lay.State); err != nil && statErr == nil && (ownRemoved > 0 || errors.Is(err, errRecordBusy)) {
+	if _, statErr := os.Stat(a.lay.State); err != nil && statErr == nil && (tookSomething || errors.Is(err, errRecordBusy)) {
 		// Stopped midway with the record still there — it goes last
 		// (#276): a second removal finishes what this one began. A refusal
 		// keeps what it carries; only its words grow. A stop at the record
