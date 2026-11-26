@@ -12,6 +12,10 @@ VaultSync for Mac and Linux (the desktop agent and its menu-bar app, `desktop-vX
 
 - **The wake-up helper's installer and self-check point to the Plus tab** — when the installer finishes (Linux, macOS, Windows), it says the iPhone shows "Background Sync active" on the Plus tab, or "Cloud Relay active" on the Relay tab in VaultSync 3.0.0 and earlier. `vaultsync-notify --doctor` sends a device without a subscription to the Plus tab (the Relay tab in VaultSync 3.0.0 and earlier). The installer's change is live once merged, because the install link serves the main branch; the self-check's arrives with the helper's next release.
 
+### Fixed
+
+- **A change is on disk before the sync engine has stopped** — VaultSync stops its sync engine at the end of a background run, and iOS can suspend the app right after. The stop now ends only once the last change to the engine's settings, such as a vault or device added or removed, is written to disk. Before, that write came about 10 milliseconds after the stop had ended (measured on a Mac), so a change made in that run could miss the file the next start reads. (#302)
+
 ## [3.0.1] — 2026-11-24
 
 ### Changed

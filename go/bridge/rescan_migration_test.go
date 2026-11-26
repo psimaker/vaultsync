@@ -3,7 +3,6 @@ package bridge
 import (
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/syncthing/syncthing/lib/config"
 )
@@ -56,8 +55,10 @@ func TestStart_MigratesLegacy3600(t *testing.T) {
 	}
 	waiter.Wait()
 
-	StopSyncthing()
-	time.Sleep(100 * time.Millisecond) // allow async config flush
+	// The stop returns with the change on disk (#302); the restart reads it.
+	if errMsg := StopSyncthing(); errMsg != "" {
+		t.Fatalf("StopSyncthing() = %q", errMsg)
+	}
 
 	if errMsg := StartSyncthing(configDir); errMsg != "" {
 		t.Fatalf("second StartSyncthing() failed: %s", errMsg)
@@ -98,8 +99,9 @@ func TestStart_PreservesCustomInterval(t *testing.T) {
 	}
 	waiter.Wait()
 
-	StopSyncthing()
-	time.Sleep(100 * time.Millisecond)
+	if errMsg := StopSyncthing(); errMsg != "" {
+		t.Fatalf("StopSyncthing() = %q", errMsg)
+	}
 
 	if errMsg := StartSyncthing(configDir); errMsg != "" {
 		t.Fatalf("second StartSyncthing() failed: %s", errMsg)

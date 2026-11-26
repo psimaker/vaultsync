@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/syncthing/syncthing/lib/config"
 )
@@ -49,16 +48,14 @@ func TestIssue185_OneConnectionPerDevice(t *testing.T) {
 	if errMsg := StopSyncthing(); errMsg != "" {
 		t.Fatalf("StopSyncthing() = %q", errMsg)
 	}
-	// The config wrapper saves asynchronously and StopSyncthing does not
-	// wait for the flush (tracked in #151 as configuration durability).
-	// Waiting for the device ID alone is not enough: AddDevice already
-	// wrote it with the pin, so the restart could read numConnections=1
-	// and the assertion below would pass without the migration ever
-	// running. Wait for the legacy value to reach the file.
-	waitFor(t, "config.xml to hold the legacy connection count", 10*time.Second, func() bool {
-		n, ok := persistedNumConnections(t, configDir, peer)
-		return ok && n == 0
-	})
+	// StopSyncthing returns once the configuration wrapper's last save is on
+	// disk (#302). Check the legacy value, not only the device ID: AddDevice
+	// already wrote the device with the pin, so a restart that read
+	// numConnections=1 would pass the assertion below without the migration
+	// ever running.
+	if n, ok := persistedNumConnections(t, configDir, peer); !ok || n != 0 {
+		t.Fatalf("config.xml after the stop: numConnections=%d (readable %t), want the legacy 0", n, ok)
+	}
 
 	if errMsg := StartSyncthing(configDir); errMsg != "" {
 		t.Fatalf("restart StartSyncthing() failed: %s", errMsg)

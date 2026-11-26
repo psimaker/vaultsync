@@ -22,7 +22,8 @@ import (
 // Each round reads config.xml the moment StopSyncthing returns, then waits
 // for the file to settle before the next start, so a late save and a lost
 // one tell apart and no round starts over the previous one's pending write.
-const issue302Rounds = 10
+// Three rounds: before the fix every round failed, 10 of 10 on the Mac.
+const issue302Rounds = 3
 
 func TestIssue302_AnAddedVaultIsOnDiskWhenTheStopReturns(t *testing.T) {
 	configDir := testConfigDir(t)
