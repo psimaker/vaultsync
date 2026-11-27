@@ -551,7 +551,9 @@ func TestIssue267_StatusFromAnOlderVaultsyncPromisesNoDowngrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := a.out.(*bytes.Buffer).String()
-	if strings.Contains(out, "runs from the service's next start") || strings.Contains(out, "the installed Syncthing "+strings.TrimPrefix(syncthingVersion, "v")) {
+	// The agent runs the engine the record names: the line is the plain
+	// one, with no other engine set against it.
+	if !strings.Contains(out, "Sync engine: running\n") || strings.Contains(out, "the installed one is") || strings.Contains(out, "next start") {
 		t.Fatalf("status from an older vaultsync beside a newer service:\n%s", out)
 	}
 }
