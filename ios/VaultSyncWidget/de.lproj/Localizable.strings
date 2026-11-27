@@ -1,8 +1,12 @@
-// Status labels reused from the main app
+// Status labels: the same keys and translations as the main app's (#360)
 "Idle" = "Leerlauf";
 "Needs Attention" = "Aktion nötig";
 "Open VaultSync" = "VaultSync öffnen";
 "Syncing" = "Wird synchronisiert";
+"All Synced" = "Alles synchron";
+"Starting" = "Startet";
+"Sync Error" = "Sync-Fehler";
+"Paused" = "Pausiert";
 
 // Metric labels
 "widget_last_sync" = "Letzter Sync";
