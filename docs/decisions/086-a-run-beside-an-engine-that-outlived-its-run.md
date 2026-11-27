@@ -12,27 +12,33 @@ On a Mac, a run outside the service — `vaultsync run` in a terminal, or `setup
 `status` then asked the moved port, where nothing answered, and called the engine not running. After a crash under launchd, a respawned run can meet the dying engine's lock for about a second, with the same result for one start.
 
 **Decision.**
-1. **The run keeps the recorded port while a Syncthing holds the lock on the engine's home (`syncthing.lock`), or while that lock cannot be looked at.** The run holds the engine lock, so that Syncthing is an engine an earlier run left; no Syncthing of VaultSync's starts while a run holds the engine lock. `setup` keeps the port by the same look (decision 079, point 2).
-2. **It starts no engine while Syncthing holds that lock.**
+1. **The run keeps the recorded port only while a Syncthing is seen to hold the lock on the engine's home (`syncthing.lock`).** The run holds the engine lock, so that Syncthing is an engine an earlier run left; no Syncthing of VaultSync's starts while a run holds the engine lock. A lock that cannot be looked at keeps nothing: the run moves off a taken port, as before.
+2. **It starts no engine while Syncthing is seen to hold that lock.**
    - It says so once in its log and looks again every second.
-   - Once the lock is free, it starts its own engine, on the same port unless another program took it meanwhile.
+   - Once the lock is free, it starts its own engine, on the same port unless the port was taken meanwhile.
    - A lock that cannot be looked at is not waited for: the engine is started, and Syncthing's own lock decides.
    - `setup`'s engine does the same.
-3. **It neither signals nor asks the earlier engine.** That engine syncs on, with this computer's configuration.
-4. **`status` says what is true.** The engine that answers is the one an earlier run left, it syncs, and VaultSync starts its own once it has ended. The control socket carries this as `earlierRun`. It names no Syncthing version, since this run did not start that engine.
+3. **Nothing asks the recorded port while the run waits.** The run has started no engine, so it has none to ask, and it neither signals nor asks the earlier engine.
+   - `status` and the menu say what is known without asking: an engine an earlier run left behind still holds the engine's folder and may still sync, and VaultSync starts its own once that one has ended. They give no report on the vaults in that state.
+   - `pause`, `resume` and a pairing, through the agent or `vaultsync pair`, answer that the engine is not ready yet and to try again shortly. Nothing is done to the earlier engine.
+   - `setup` waits for an engine its run or its agent has started, and asks no port before.
+   - The control socket carries this as `earlierRun`. It names no Syncthing version, since this run did not start that engine.
+4. **Until a run has started its own engine, its socket asks no port.** Status says the engine is starting, and the requests above are answered as not ready yet. This holds from the socket's first moment, before the run knows whether it waits.
 
 **Why.**
-- That engine is VaultSync's own and syncs this computer's vaults. Moving its port leaves `agent.json` naming a port nothing answers on.
+- That engine is VaultSync's own and may sync this computer's vaults. Moving its port leaves `agent.json` naming a port nothing answers on.
 - A second engine on the same folder can only stop, so the run waits instead of failing every ten seconds.
+- The run knows of no engine of its own until it has started one, so it says what it knows and asks nothing.
 
 **Rejected alternatives.**
 - **Ending the run and leaving the restart to the service manager.** That is the loop of starts above, without the port move.
-- **Asking the earlier engine to shut down through its API.** That sends a request to the recorded port on the word of a lock, which says nothing about who holds the port (below).
+- **Asking the earlier engine to shut down through its API.** The run asks no port before it has started its own engine, and nothing it holds ties the recorded port to that engine.
 - **Ending it by a signal to its process.** Nothing records which process it is. Telling it by its command line is new machinery for a case that ends by itself.
+- **Reporting through the earlier engine while the run waits.** For the same reason, the run asks it nothing.
 
 **Not covered.**
-- **A held home lock does not prove who holds the recorded port.** It proves that a Syncthing runs on the engine's folder, not that this Syncthing holds the recorded port rather than another program. The case is narrow: a run moves off a taken port before it starts its engine, so that engine got the recorded port as it started, unless another program took the port in the instant between the run's look and the engine's bind.
-- **`vaultsync stop` ends the waiting run, not the earlier engine,** which syncs on until it stops by itself.
+- **`vaultsync stop` ends the waiting run, not the earlier engine,** which may sync on until it stops by itself.
+- **A run that waits without its control socket.** A command that finds no agent answering looks at the locks as decision 079 says.
 - **A run of an older build** moves the port and starts a second engine as before.
 
-**Links.** #419; decisions 077, 079.
+**Links.** #419; decisions 077, 079, 085.

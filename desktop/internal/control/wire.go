@@ -11,9 +11,10 @@ type Status struct {
 	// agent is up and bringing it up.
 	Engine string `json:"engine"`
 	// EarlierRun: the agent waits for an engine an earlier vaultsync run
-	// left to end before it starts its own (#419). That engine syncs, and
-	// when it answers, Engine is "running" and the report is its; Syncthing
-	// is then empty, since the agent did not start it.
+	// left behind to end before it starts its own (#419). That engine still
+	// holds the engine's folder and may still sync; the agent asks it
+	// nothing. Engine is "starting", the report has no vaults, and
+	// Syncthing is empty, since the agent did not start that engine.
 	EarlierRun bool `json:"earlierRun,omitempty"`
 	Report
 }

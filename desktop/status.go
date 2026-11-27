@@ -196,16 +196,12 @@ func (a *app) status(ctx context.Context) error {
 	cs, aerr := a.controlClient(st).Status(actx)
 	cancel()
 	switch {
-	case aerr == nil && cs.EarlierRun && cs.Engine == "running":
-		// The run waits for an engine an earlier run left (#419): that one
-		// answers and syncs, and the report is its.
-		fmt.Fprintln(w, "Sync engine: running — the one an earlier vaultsync run left behind; it syncs, and VaultSync starts its own engine once it has ended")
-		_, err := io.WriteString(w, cs.Text)
-		return err
 	case aerr == nil && cs.EarlierRun:
-		fmt.Fprintln(w, "Sync engine: starting — VaultSync waits for the engine an earlier vaultsync run left to end, then starts its own")
-		_, err := io.WriteString(w, cs.Text)
-		return err
+		// The run waits for an engine an earlier run left behind (#419,
+		// decision 086): said as the agent knows it, with nothing asked of
+		// that engine and no report on the vaults.
+		fmt.Fprintln(w, earlierEngineLine)
+		return nil
 	case aerr == nil && cs.Engine != "running":
 		fmt.Fprintln(w, "Sync engine: starting — VaultSync is bringing it up")
 		_, err := io.WriteString(w, cs.Text)
@@ -242,7 +238,7 @@ func (a *app) status(ctx context.Context) error {
 	// VaultSync's may run, and then the one agent.json records now, both
 	// read under state.lock (#413, #419). A record that cannot be read, or
 	// names no port, leaves nothing to ask: never the port read before.
-	may, now, err := engineMayRunAtItsPort(a.lay)
+	may, now, err := engineMayRunAtItsPort(ctx, a.lay)
 	var lookErr *lockLookError
 	switch {
 	case errors.As(err, &lookErr):
@@ -413,6 +409,10 @@ func connectionState(state string) bool {
 }
 
 // emptyReport is a report with every list present (never null in JSON).
+// earlierEngineLine is what status says while the run waits for an engine
+// an earlier run left behind (#419, decision 086).
+const earlierEngineLine = "Sync engine: starting — an engine an earlier vaultsync run left behind still holds the engine's folder and may still sync; VaultSync starts its own once that one has ended"
+
 func emptyReport() statusReport {
 	return statusReport{Hubs: []hubStatus{}, Vaults: []vaultStatus{}, Waiting: []waitingStatus{}, Attempts: []attemptStatus{}}
 }

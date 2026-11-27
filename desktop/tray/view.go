@@ -165,6 +165,11 @@ func Render(st Status, err error, o Options) View {
 	if st.Engine != "running" {
 		v.Glyph = GlyphSyncing
 		v.Headline = "Starting the sync engine…"
+		if st.EarlierRun {
+			// The agent waits for an engine an earlier run left behind, and
+			// asks it nothing (#419, decision 086).
+			v.Detail = "An engine an earlier vaultsync run left behind still holds the engine's folder and may still sync; VaultSync starts its own once that one has ended"
+		}
 		return v
 	}
 	v.Pause.Enabled = true

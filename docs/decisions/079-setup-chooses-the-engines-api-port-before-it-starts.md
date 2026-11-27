@@ -34,6 +34,7 @@
 
 **Not covered.**
 - The instant between the choice and the engine's bind.
+- A setup that read the recorded port before a run moved off it between two of its starts: it writes the port from before the move back.
 - A service still on an older build. It waits for no grace, and it leaves a taken port only as it starts its engine, after its install.
 - A run of an older build beside an engine that outlived its run moves the recorded port; the commands then ask the moved port. A run of this build keeps it and waits for that engine (#419, decision 086).
 

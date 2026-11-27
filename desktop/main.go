@@ -30,7 +30,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -507,7 +506,11 @@ func (a *app) setup(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := waitEngine(ctx, client, 60*time.Second, temporary); err != nil {
+	gate := a.agentNotReadyYet
+	if temporary != nil {
+		gate = temporary.notReadyYet
+	}
+	if err := waitEngine(ctx, client, 60*time.Second, temporary, gate); err != nil {
 		return fmt.Errorf("the sync engine did not start: %w — see %s", err, a.logHint())
 	}
 	noServiceNote := func() {
@@ -729,21 +732,60 @@ func ownProgram(env appEnv) ([]byte, error) {
 }
 
 // supervision is an engine supervisor running in the background; done is
-// closed when it returned, err holds what it returned.
+// closed when it returned, err holds what it returned, and rs says whether
+// it has started its engine yet.
 type supervision struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 	err    error
+	rs     *runState
 }
 
 func superviseInBackground(ctx context.Context, eng engine, st agentState) *supervision {
 	runCtx, cancel := context.WithCancel(ctx)
-	s := &supervision{cancel: cancel, done: make(chan struct{})}
+	s := &supervision{cancel: cancel, done: make(chan struct{}), rs: &runState{}}
 	go func() {
-		s.err = eng.supervise(runCtx, st, func(string, ...any) {})
+		s.err = eng.superviseWith(runCtx, st, func(string, ...any) {}, s.rs)
 		close(s.done)
 	}()
 	return s
+}
+
+// notReadyYet says why the engine's port is not to be asked yet, or nil:
+// the supervisor has not started its engine — it waits for one an earlier
+// run left behind, or is about to start its own (#419, decision 086).
+func (s *supervision) notReadyYet(context.Context) error {
+	switch {
+	case s.rs.waitsForAnEarlierEngine():
+		return errEarlierEngine
+	case !s.rs.engineStarted():
+		return errEngineNotStarted
+	}
+	return nil
+}
+
+// agentNotReadyYet asks the background service's agent, briefly, whether
+// it has started its engine: an agent that answers that it has not says
+// why, and the engine's port is not asked (#419, decision 086). No agent,
+// an older one, one busy asking its engine, or any other failure: nil, and
+// the port is asked as before.
+func (a *app) agentNotReadyYet(ctx context.Context) error {
+	st, err := loadState(a.lay.State)
+	if err != nil {
+		return nil
+	}
+	actx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	cs, err := a.controlClient(st).Status(actx)
+	switch {
+	case err != nil:
+		return nil
+	case cs.EarlierRun:
+		return errEarlierEngine
+	case cs.Engine != "running":
+		return errEngineNotStarted
+	}
+	return nil
 }
 
 // stop ends the engine and waits for it (at most grace).
@@ -757,12 +799,14 @@ func (s *supervision) stop(grace time.Duration) {
 
 // waitEngine waits for the engine's API — and stops waiting when the
 // supervisor that should start it has already given up (nil: no supervisor
-// of ours, the background service starts it).
-func waitEngine(ctx context.Context, c *syncthing.Client, timeout time.Duration, sup *supervision) error {
+// of ours, the background service starts it). The port is asked only once
+// the supervisor, or the service's agent, has started its engine (gate,
+// #419).
+func waitEngine(ctx context.Context, c *syncthing.Client, timeout time.Duration, sup *supervision, gate func(context.Context) error) error {
 	ready := make(chan error, 1)
 	wctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	go func() { ready <- waitReady(wctx, c, timeout) }()
+	go func() { ready <- waitReadyGated(wctx, c, timeout, gate) }()
 	var gaveUp <-chan struct{}
 	if sup != nil {
 		gaveUp = sup.done
@@ -1133,6 +1177,14 @@ func (a *app) pair(ctx context.Context, args []string) error {
 	case !may:
 		return refuse("The sync engine is not running. Start it with vaultsync start (or vaultsync setup), then try again.")
 	}
+	// A run that has not started its own engine yet asks no port, and nor
+	// does pair: its agent says so (#419, decision 086).
+	switch err := a.agentNotReadyYet(ctx); {
+	case errors.Is(err, errEarlierEngine):
+		return refuse("The sync engine is not ready yet: an engine an earlier vaultsync run left behind still holds the engine's folder, and VaultSync starts its own once that one has ended. Try again shortly; vaultsync status says more.")
+	case err != nil:
+		return refuse("VaultSync is still starting its sync engine. Try again in a moment; vaultsync status says more.")
+	}
 	client, err := eng.client(st)
 	if err != nil {
 		return err
@@ -1478,7 +1530,7 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 	// it, before anything slow such as a pin's download, under state.lock:
 	// a command that sees the engine lock reads the port this run's engine
 	// answers on, never the one from before the move (#413, #419).
-	unlock, err := eng.takeEngineLockLeavingATakenPort(&st, logf)
+	unlock, err := eng.takeEngineLockLeavingATakenPort(ctx, &st, logf)
 	if errors.Is(err, ErrEngineRunning) {
 		unlockSetup()
 		return refuse("VaultSync is already running on this computer (the background service). See vaultsync status.")
@@ -1531,8 +1583,8 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 		unlockSetup()
 		return err
 	}
-	var earlierEngine atomic.Bool
-	ctl := &controlServer{a: a, eng: eng, logf: logf, background: a.backgroundEngine(), engineVersion: st.Syncthing.Version, earlierEngine: &earlierEngine}
+	rs := &runState{}
+	ctl := &controlServer{a: a, eng: eng, logf: logf, background: a.backgroundEngine(), engineVersion: st.Syncthing.Version, rs: rs}
 	// The record of a socket that could not be made or kept at an earlier
 	// start no longer holds — and it goes before this start's own attempt,
 	// so a fresh record that attempt may write (a socket that stops
@@ -1589,7 +1641,7 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 	}
 	unlockSetup()
 	logf("vaultsync %s: running the sync engine", version)
-	return eng.superviseLocked(ctx, st, logf, &earlierEngine)
+	return eng.superviseLocked(ctx, st, logf, rs)
 }
 
 // errParked is what a service that does not sync beside VaultSync for Mac

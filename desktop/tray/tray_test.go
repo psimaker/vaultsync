@@ -51,6 +51,9 @@ func TestIssue176_TrayShowsWhatTheAgentReports(t *testing.T) {
 		{"two vaults paused on the Hub's side", withVaults(base, "paused on your Hub", "paused on your Hub"), GlyphPaused, "2 vaults paused", "", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}, "Quit"},
 		{"one of two Hubs paused, the other away", withVaults(Status{Engine: "running", Report: Report{Hubs: []Hub{{Name: "Office", State: "paused on this computer", Kind: control.KindPaused, Remedy: "vaultsync resume starts syncing again"}, {Name: "Home", State: "not connected", Kind: control.KindWaiting}}}}, "waiting for your Hub"), GlyphPaused, "1 of 2 Hubs paused", "vaultsync resume in a terminal resumes it", Action{"Pause Syncing", true}, Action{"Pair a Vault…", true}, "Quit"},
 		{"engine starting", Status{Engine: "starting", Report: Report{Vaults: []Vault{{Label: "Notes", Path: "/home/me/Notes", State: "not syncing — the engine is stopped", Kind: control.KindOffline}}}}, GlyphSyncing, "Starting the sync engine…", "", Action{"Pause Syncing", false}, Action{"Pair a Vault…", false}, "Quit"},
+		// The agent waits for an engine an earlier run left behind and asks
+		// it nothing: no vault report, and the menu says why (#419).
+		{"waiting for an engine an earlier run left behind", Status{Engine: "starting", EarlierRun: true}, GlyphSyncing, "Starting the sync engine…", "An engine an earlier vaultsync run left behind still holds the engine's folder and may still sync; VaultSync starts its own once that one has ended", Action{"Pause Syncing", false}, Action{"Pair a Vault…", false}, "Quit"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
