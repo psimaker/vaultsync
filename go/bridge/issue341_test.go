@@ -11,11 +11,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/events"
+	"github.com/syncthing/syncthing/lib/model"
 	"github.com/syncthing/syncthing/lib/protocol"
 )
 
@@ -732,4 +734,212 @@ func TestIssue341_ARemovalThatOutlastsTheWaitIsOfferedOnceItLands(t *testing.T) 
 			t.Fatal("the removal did not land")
 		}
 	})
+}
+
+// A device can stop sharing a vault while this side replays its offer: its
+// new cluster config arrives between the replay's read of the old one and
+// the replay's write. The handler of that cluster config lists the device's
+// pending entries and expires those its new announcement does not hold; had
+// it listed them before the replay wrote, the replayed offer would outlive
+// the announcement that dropped it. The replay and the handler take one lock
+// for that span (decision 088). Two hooks put the new announcement into
+// exactly that gap: the replay waits there until the handler has reached
+// the lock — or, without the lock, has handled the cluster config already.
+func TestIssue341_AnAnnouncementInTheReplaysGapIsTheOneThatCounts(t *testing.T) {
+	if testing.Short() {
+		t.Skip("real peer process; skipped in -short")
+	}
+	r := newIssue341Rig(t, "removed", "kept")
+	removedID := issue341ID("removed")
+	peer, err := protocol.DeviceIDFromString(r.peer.id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	atLock := make(chan struct{}, 8)
+	lockHook := func(device protocol.DeviceID) {
+		if device == peer {
+			select {
+			case atLock <- struct{}{}:
+			default:
+			}
+		}
+	}
+	var replayed atomic.Bool
+	var unshareErr error
+	replayHook := func(folderID string, device protocol.DeviceID) {
+		if folderID != removedID || device != peer || replayed.Swap(true) {
+			return
+		}
+		mark := r.ev.count()
+		// The peer stops sharing the vault with this side now.
+		var folderCfg map[string]any
+		if unshareErr = r.peer.do(http.MethodGet, "/rest/config/folders/"+removedID, nil, &folderCfg); unshareErr != nil {
+			return
+		}
+		folderCfg["devices"] = []map[string]any{{"deviceID": r.peer.id}}
+		if unshareErr = r.peer.do(http.MethodPut, "/rest/config/folders/"+removedID, folderCfg, nil); unshareErr != nil {
+			return
+		}
+		deadline := time.Now().Add(20 * time.Second)
+		for time.Now().Before(deadline) {
+			select {
+			case <-atLock:
+				return // the handler waits for the replay
+			default:
+			}
+			if len(r.ev.about(mark, events.ClusterConfigReceived, "", r.peer.id)) > 0 {
+				return // the handler did not wait
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	model.TestHookAnnouncementsLocking.Store(&lockHook)
+	model.TestHookReplayRead.Store(&replayHook)
+	t.Cleanup(func() {
+		model.TestHookAnnouncementsLocking.Store(nil)
+		model.TestHookReplayRead.Store(nil)
+	})
+
+	mark := r.ev.count()
+	if errMsg := RemoveFolder(removedID); errMsg != "" {
+		t.Fatalf("RemoveFolder() = %q", errMsg)
+	}
+	if !replayed.Load() {
+		t.Fatal("the replay never read the peer's announcement")
+	}
+	if unshareErr != nil {
+		t.Fatalf("the peer did not stop sharing: %v", unshareErr)
+	}
+	r.waitClusterConfig(t, mark, "the peer's cluster config without the vault")
+	if r.offered("removed") {
+		t.Fatal("the vault is offered again although the peer stopped sharing it in the replay's gap")
+	}
+	now := issue341PendingSnapshot(t)
+	if fresh := r.pendingAfterAFreshConnection(t, "kept"); now != fresh {
+		t.Fatalf("pending differs from what a fresh connection shows:\n  now:   %s\n  fresh: %s", now, fresh)
+	}
+}
+
+// The replay writes what an announcement writes for a folder this side does
+// not have, and nothing more: no index handler starts for the removed
+// folder, so its database, dropped with the removal, is not made again
+// before an accept. Without the removal forgetting the folder's state in the
+// connection's registry (patch 009), the replay's start info started a
+// handler at once, and the handler made the database again.
+func TestIssue341_TheRemovedFoldersDatabaseIsNotMadeAgain(t *testing.T) {
+	if testing.Short() {
+		t.Skip("real peer process; skipped in -short")
+	}
+	r := newIssue341Rig(t, "removed", "kept")
+	r.removeAndExpectTheOffer(t, "removed")
+	mu.Lock()
+	lister, ok := stDB.(interface{ ListFolders() ([]string, error) })
+	mu.Unlock()
+	if !ok {
+		t.Fatal("the engine's database no longer lists its folders: adjust the test")
+	}
+	folders, err := lister.ListFolders()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(folders, issue341ID("removed")) {
+		t.Fatalf("the engine made the removed folder's database again (%v): an index handler runs for a folder that is not configured", folders)
+	}
+	if !slices.Contains(folders, issue341ID("kept")) {
+		t.Fatalf("the database lists %v, without the kept vault: the check reads the wrong thing", folders)
+	}
+}
+
+// commitRemovingTheVault removes the vault and applies change in the same
+// configuration change.
+func (r *issue341Rig) commitRemovingTheVault(t *testing.T, vault string, change func(cfg *config.Configuration, peer protocol.DeviceID)) {
+	t.Helper()
+	peer, err := protocol.DeviceIDFromString(r.peer.id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	err = commitConfigLocked(func(cfg *config.Configuration) {
+		change(cfg, peer)
+		kept := cfg.Folders[:0]
+		for _, f := range cfg.Folders {
+			if f.ID != issue341ID(vault) {
+				kept = append(kept, f)
+			}
+		}
+		cfg.Folders = kept
+	})
+	mu.Unlock()
+	if err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+}
+
+// A device paused here in the change that removes the vault has no
+// connection anymore — the pause closes it — so upstream would write nothing
+// from it; the replay must not either.
+func TestIssue341_ADevicePausedInTheSameChangeIsNotReplayed(t *testing.T) {
+	if testing.Short() {
+		t.Skip("real peer process; skipped in -short")
+	}
+	r := newIssue341Rig(t, "removed", "kept")
+	r.commitRemovingTheVault(t, "removed", func(cfg *config.Configuration, peer protocol.DeviceID) {
+		for i := range cfg.Devices {
+			if cfg.Devices[i].DeviceID == peer {
+				cfg.Devices[i].Paused = true
+			}
+		}
+	})
+	if r.offered("removed") {
+		t.Fatal("the vault is offered again by a device paused in the same change")
+	}
+}
+
+// A device removed in the change that removes the vault offers nothing.
+func TestIssue341_ADeviceRemovedInTheSameChangeIsNotReplayed(t *testing.T) {
+	if testing.Short() {
+		t.Skip("real peer process; skipped in -short")
+	}
+	r := newIssue341Rig(t, "removed", "kept")
+	r.commitRemovingTheVault(t, "removed", func(cfg *config.Configuration, peer protocol.DeviceID) {
+		kept := cfg.Devices[:0]
+		for _, d := range cfg.Devices {
+			if d.DeviceID != peer {
+				kept = append(kept, d)
+			}
+		}
+		cfg.Devices = kept
+	})
+	if r.offered("removed") {
+		t.Fatal("the vault is offered again by a device removed in the same change")
+	}
+}
+
+// A folder this side ignores for the device is not offered by it: the
+// replay skips it as the arrival of a cluster config does, and a fresh
+// connection shows the same.
+func TestIssue341_AFolderIgnoredForTheDeviceIsNotReplayed(t *testing.T) {
+	if testing.Short() {
+		t.Skip("real peer process; skipped in -short")
+	}
+	r := newIssue341Rig(t, "removed", "kept")
+	r.commitRemovingTheVault(t, "removed", func(cfg *config.Configuration, peer protocol.DeviceID) {
+		for i := range cfg.Devices {
+			if cfg.Devices[i].DeviceID == peer {
+				cfg.Devices[i].IgnoredFolders = append(cfg.Devices[i].IgnoredFolders, config.ObservedFolder{
+					Time:  time.Now().Truncate(time.Second),
+					ID:    issue341ID("removed"),
+					Label: "removed",
+				})
+			}
+		}
+	})
+	if r.offered("removed") {
+		t.Fatal("the vault is offered again although it is ignored for the device")
+	}
+	now := issue341PendingSnapshot(t)
+	if fresh := r.pendingAfterAFreshConnection(t, "kept"); now != fresh {
+		t.Fatalf("pending differs from what a fresh connection shows:\n  now:   %s\n  fresh: %s", now, fresh)
+	}
 }

@@ -1,6 +1,6 @@
 --- a/lib/model/indexhandler.go
 +++ b/lib/model/indexhandler.go
-@@ -500,9 +500,49 @@
+@@ -500,9 +500,57 @@
  	indexHandlers *serviceMap[string, *indexHandler]
  	startInfos    map[string]*clusterConfigDeviceInfo
  	folderStates  map[string]*indexHandlerFolderState
@@ -10,8 +10,16 @@
 +	// whole, and it ends with the connection.
 +	announced map[string]announcedFolder
 +	mut       sync.Mutex
++	// VaultSync (#341): held by the cluster config handler from before it
++	// lists the device's pending entries until it has expired them, and by
++	// the replay of a removed folder from its read of the announcement until
++	// its write. Taken before mut, never while mut is held.
++	announceMut sync.Mutex
  }
  
++func (r *indexHandlerRegistry) lockAnnouncements()   { r.announceMut.Lock() }
++func (r *indexHandlerRegistry) unlockAnnouncements() { r.announceMut.Unlock() }
++
 +// announcedFolder is what a device's cluster config says about one folder:
 +// what ccHandleFolders writes for a folder this side does not have.
 +type announcedFolder struct {
@@ -51,7 +59,7 @@
  type indexHandlerFolderState struct {
  	cfg    config.FolderConfiguration
  	runner service
-@@ -517,6 +557,7 @@
+@@ -517,6 +565,7 @@
  		indexHandlers: newServiceMap[string, *indexHandler](evLogger),
  		startInfos:    make(map[string]*clusterConfigDeviceInfo),
  		folderStates:  make(map[string]*indexHandlerFolderState),
@@ -71,14 +79,24 @@
  		return nil
  	})
  
-@@ -1400,6 +1401,22 @@
- 		slog.Warn("Failed to list pending folders for cleanup", slogutil.Error(err))
- 	}
- 	of := db.ObservedFolder{Time: time.Now().Truncate(time.Second)}
+@@ -1395,6 +1396,32 @@
+ 	seenFolders := make(map[string]remoteFolderState, len(folders))
+ 	updatedPending := make([]updatedPendingFolder, 0, len(folders))
+ 	deviceID := deviceCfg.DeviceID
++	// VaultSync (#341): the replay of a removed folder (offerRemovedFoldersAgain)
++	// reads the device's announcement and writes its pending entry under the
++	// same lock this handler holds from before it lists the device's pending
++	// entries until it has expired those not announced again. Either the
++	// replay comes first, and this handler expires an entry its announcement
++	// no longer holds, or it comes after, and reads this announcement.
++	if hook := TestHookAnnouncementsLocking.Load(); hook != nil {
++		(*hook)(deviceID)
++	}
++	indexHandlers.lockAnnouncements()
++	defer indexHandlers.unlockAnnouncements()
 +	// VaultSync (#341): keep what this cluster config announces with the
 +	// connection, so that a folder removed here later is offered again from
-+	// it (offerRemovedFoldersAgain). Noted before any pending entry is
-+	// written, so a removal that discards one finds a note at least as new.
++	// it.
 +	announced := make(map[string]announcedFolder, len(folders))
 +	for _, folder := range folders {
 +		info := ccDeviceInfos[folder.ID]
@@ -91,10 +109,10 @@
 +		}
 +	}
 +	indexHandlers.noteAnnounced(announced)
- 	for _, folder := range folders {
- 		seenFolders[folder.ID] = remoteFolderValid
- 
-@@ -3111,6 +3128,9 @@
+ 	expiredPending, err := m.observed.PendingFoldersForDevice(deviceID)
+ 	if err != nil {
+ 		slog.Warn("Failed to list pending folders for cleanup", slogutil.Error(err))
+@@ -3111,6 +3138,9 @@
  
  	ignoredDevices := observedDeviceSet(to.IgnoredDevices)
  	m.cleanPending(toDevices, toFolders, ignoredDevices, removedFolders)
@@ -104,10 +122,12 @@
  
  	m.globalRequestLimiter.SetCapacity(1024 * to.Options.MaxConcurrentIncomingRequestKiB())
  	m.folderIOLimiter.SetCapacity(to.Options.MaxFolderConcurrency())
-@@ -3126,6 +3146,75 @@
- 	return true
- }
+@@ -3124,8 +3154,106 @@
+ 	}
  
+ 	return true
++}
++
 +// offerRemovedFoldersAgain makes a removed folder pending again for every
 +// connected device that announced it in its last cluster config on the
 +// connection that is up (VaultSync, #341). A device that goes on sharing a
@@ -139,35 +159,16 @@
 +	var offered []updatedPendingFolder
 +	for folderID := range removedFolders {
 +		for _, c := range registries {
++			// Not for a device removed or paused in this change — a paused
++			// device has no connection, so no announcement upstream would
++			// write from — nor for one that ignores the folder.
 +			dev, ok := existingDevices[c.device]
-+			if !ok || dev.IgnoredFolder(folderID) {
++			if !ok || dev.Paused || dev.IgnoredFolder(folderID) {
 +				continue
 +			}
-+			a, ok := c.registry.announcedFolder(folderID)
-+			if !ok {
-+				continue
++			if o, ok := m.offerRemovedFolderAgain(folderID, c.device, c.registry, now); ok {
++				offered = append(offered, o)
 +			}
-+			of := db.ObservedFolder{
-+				Time:             now,
-+				Label:            a.label,
-+				ReceiveEncrypted: a.receiveEncrypted,
-+				RemoteEncrypted:  a.remoteEncrypted,
-+			}
-+			if err := m.observed.AddOrUpdatePendingFolder(folderID, of, c.device); err != nil {
-+				slog.Warn("Failed to persist pending folder entry to database", slogutil.Error(err))
-+				continue
-+			}
-+			if a.running {
-+				c.registry.AddIndexInfo(folderID, a.info)
-+			}
-+			l.Debugf("Removed folder %s is offered again by %v from its last cluster config", folderID, c.device.Short())
-+			offered = append(offered, updatedPendingFolder{
-+				FolderID:         folderID,
-+				FolderLabel:      a.label,
-+				DeviceID:         c.device,
-+				ReceiveEncrypted: a.receiveEncrypted,
-+				RemoteEncrypted:  a.remoteEncrypted,
-+			})
 +		}
 +	}
 +	if len(offered) > 0 {
@@ -176,6 +177,54 @@
 +		})
 +	}
 +}
++
++// offerRemovedFolderAgain writes one device's offer of a removed folder from
++// its announcement, under the lock its cluster config handler holds from its
++// listing of the device's pending entries to their expiry (ccHandleFolders):
++// an announcement that no longer holds the folder either comes first and is
++// read here, or comes after and expires what was written.
++func (m *model) offerRemovedFolderAgain(folderID string, device protocol.DeviceID, r *indexHandlerRegistry, now time.Time) (updatedPendingFolder, bool) {
++	r.lockAnnouncements()
++	defer r.unlockAnnouncements()
++	a, ok := r.announcedFolder(folderID)
++	if !ok {
++		return updatedPendingFolder{}, false
++	}
++	if hook := TestHookReplayRead.Load(); hook != nil {
++		(*hook)(folderID, device)
++	}
++	of := db.ObservedFolder{
++		Time:             now,
++		Label:            a.label,
++		ReceiveEncrypted: a.receiveEncrypted,
++		RemoteEncrypted:  a.remoteEncrypted,
++	}
++	if err := m.observed.AddOrUpdatePendingFolder(folderID, of, device); err != nil {
++		slog.Warn("Failed to persist pending folder entry to database", slogutil.Error(err))
++		return updatedPendingFolder{}, false
++	}
++	if a.running {
++		r.AddIndexInfo(folderID, a.info)
++	}
++	l.Debugf("Removed folder %s is offered again by %v from its last cluster config", folderID, device.Short())
++	return updatedPendingFolder{
++		FolderID:         folderID,
++		FolderLabel:      a.label,
++		DeviceID:         device,
++		ReceiveEncrypted: a.receiveEncrypted,
++		RemoteEncrypted:  a.remoteEncrypted,
++	}, true
+ }
+ 
++// VaultSync (#341): hooks for the bridge's tests, nil in the app. The first
++// runs in a replay between its read of a device's announcement and its write;
++// the second in a cluster config handler right before it takes the lock the
++// replay holds there. Together they let a test put a newer announcement into
++// exactly that gap.
++var (
++	TestHookReplayRead           atomic.Pointer[func(folderID string, device protocol.DeviceID)]
++	TestHookAnnouncementsLocking atomic.Pointer[func(device protocol.DeviceID)]
++)
 +
  func (m *model) setConnRequestLimitersLocked(cfg config.DeviceConfiguration) {
  	// Touches connRequestLimiters which is protected by the mutex.
