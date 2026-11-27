@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 @testable import VaultSync
 
@@ -53,6 +54,44 @@ enum TestSupport {
         }
         defaults.removePersistentDomain(forName: suiteName)
         return defaults
+    }
+
+    /// The file in a folder's `.stfolder` the engine writes to mark the
+    /// directory as the folder's, named after the folder's ID: what the
+    /// bridge reads the folder's directory by (#315).
+    static func folderMarkerFile(folderID: String, in directory: URL) -> URL {
+        let hash = SHA256.hash(data: Data(folderID.utf8)).prefix(3).map { String(format: "%02x", $0) }.joined()
+        return directory
+            .appendingPathComponent(".stfolder", isDirectory: true)
+            .appendingPathComponent("syncthing-folder-\(hash).txt")
+    }
+
+    /// Waits until the engine has started a folder a test has just added:
+    /// its directory holds the folder's marker. Returns false if that takes
+    /// longer than `timeout`.
+    ///
+    /// The add returns once every part of the engine that follows the
+    /// configuration has taken the change, and the part that starts folders
+    /// makes the marker as it does. Right after an engine start that part may
+    /// not follow the configuration yet; it then starts the folder a moment
+    /// later, from its first look at the configuration. Until then a write of
+    /// the folder's filters is refused as "marker missing" (#398, #225), and
+    /// the add has written no record of the directory the folder syncs in
+    /// (#373). A test that acts on a folder right after adding it waits here
+    /// first.
+    static func waitForFolderMarker(
+        folderID: String,
+        in directory: URL,
+        timeout: Duration = .seconds(10)
+    ) async -> Bool {
+        let marker = folderMarkerFile(folderID: folderID, in: directory).path
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while !FileManager.default.fileExists(atPath: marker) {
+            guard clock.now < deadline else { return false }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        return true
     }
 
     /// The config directory the live app uses (`SyncthingManager.configDirectory()`
