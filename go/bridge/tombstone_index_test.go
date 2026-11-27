@@ -343,18 +343,26 @@ func startPeer(t *testing.T, bin, name string) *peerInstance {
 		"--gui-address="+p.gui,
 		"--no-browser", "--no-restart", "--no-upgrade", "--no-port-probing",
 	)
-	cmd.Env = append(os.Environ(), "STNODEFAULTFOLDER=1", "STNOUPGRADE=1", "STGUIAPIKEY="+p.apiKey)
+	// STMONITORED=yes runs the engine in this process instead of in a child
+	// of a monitor (#334): killing the monitor left the engine running with
+	// its ports held and its home deleted, and on Linux the engine moves to a
+	// process group of its own, out of reach of the monitor's. The monitor
+	// only restarts the engine and copies its output, and --no-restart
+	// already turned the restarts off.
+	cmd.Env = append(os.Environ(), "STMONITORED=yes", "STNODEFAULTFOLDER=1", "STNOUPGRADE=1", "STGUIAPIKEY="+p.apiKey)
 	logFile, err := os.Create(filepath.Join(home, "stdout.log"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	cmd.Stdout, cmd.Stderr = logFile, logFile
-	if err := cmd.Start(); err != nil {
+	stop, err := startPeerProcess(cmd)
+	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
+		if left := stop(); len(left) > 0 {
+			t.Errorf("%s left processes behind after its cleanup (#334):\n  %s", name, strings.Join(left, "\n  "))
+		}
 		logFile.Close()
 		if t.Failed() {
 			data, _ := os.ReadFile(filepath.Join(home, "stdout.log"))
