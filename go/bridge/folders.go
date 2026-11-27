@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/protocol"
@@ -397,12 +399,26 @@ func GetFoldersJSON() string {
 			DeviceIDs: deviceIDs,
 		})
 	}
+	sortFolderInfos(infos)
 
 	data, err := json.Marshal(infos)
 	if err != nil {
 		return "[]"
 	}
 	return string(data)
+}
+
+// sortFolderInfos puts the folders in the order of their IDs. The engine
+// hands them out as a map, whose order differs from one call to the next;
+// unsorted, the app's vault rows could swap places between two polls (#345).
+// A folder's own device list is a slice in the configuration and keeps its
+// order. The app lists the folders by name in the user's language
+// (SyncthingManager.foldersInDisplayOrder), which Go cannot sort by without
+// a collation library.
+func sortFolderInfos(infos []FolderInfo) {
+	slices.SortFunc(infos, func(a, b FolderInfo) int {
+		return strings.Compare(a.ID, b.ID)
+	})
 }
 
 // ShareFolderWithDevice shares an existing folder with a peer device.
