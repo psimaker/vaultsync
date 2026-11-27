@@ -205,6 +205,9 @@ func StartSyncthing(configDir string) string {
 	}
 	stExited = false
 	stExitReason = ""
+	// An accept the previous engine never took from its queue is gone with
+	// it (#341): the share may be accepted again.
+	forgetAcceptsInFlight()
 
 	// Set base directories so locations.Get() resolves correctly.
 	if err := locations.SetBaseDir(locations.ConfigBaseDir, configDir); err != nil {

@@ -268,6 +268,22 @@ final class ShareAcceptCoordinator {
                 )
             }
 
+        case .notConfirmed(let note):
+            // The accept is queued in the engine and may still land (#341).
+            // The row says so, which also keeps the automatic pass from
+            // trying again; the entry goes once the share is no longer
+            // pending. A tap gets the note at once.
+            pendingShareFailures[folder.id] = SyncUserError(
+                category: .config,
+                title: L10n.tr("Accept Not Confirmed Yet"),
+                message: note,
+                remediation: "",
+                technicalDetails: nil
+            )
+            if source == .manual {
+                alertMessage = note
+            }
+
         case .accepted:
             pendingShareFailures.removeValue(forKey: folder.id)
             // A future refusal after a successful accept is a new situation —

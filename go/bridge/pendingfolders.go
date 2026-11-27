@@ -3,11 +3,13 @@ package bridge
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/protocol"
@@ -155,6 +157,13 @@ func AcceptPendingFolder(folderID, label, path, root string, allowNonEmpty bool)
 	if _, exists := stCfg.Folders()[folderID]; exists {
 		return "folder already exists"
 	}
+	// An accept of this share the bridge handed to the engine earlier and has
+	// not seen reach the configuration is still queued: queueing a second
+	// one could configure the share twice, or in another place than the one
+	// the first accept chose (#341). Nothing is created or queued for it.
+	if acceptInFlight(folderID) {
+		return folderAcceptNotConfirmed
+	}
 
 	// Reject any path that is not a direct subfolder of the selected folder.
 	// The client maps every share to `root/<name>`; this floor holds even if
@@ -233,14 +242,82 @@ func AcceptPendingFolder(folderID, label, path, root string, allowNonEmpty bool)
 		Devices:          devices,
 	}
 
-	if err := commitConfigLocked(func(cfg *config.Configuration) {
+	markAcceptInFlight(folderID)
+	err = commitConfigLocked(func(cfg *config.Configuration) {
+		// Runs on the engine's configuration loop when the change is taken
+		// from its queue: from here on the folder is configured, or the
+		// engine refuses the change — a second folder of one ID among them.
+		clearAcceptInFlight(folderID)
 		cfg.Folders = append(cfg.Folders, newFolder)
-	}); err != nil {
-		return fmt.Sprintf("modify config: %v", err)
+	})
+	// The engine takes a change into its configuration first and then waits
+	// for its services: an accept that reached the configuration before the
+	// wait ended is accepted, whatever the services still do (#341, as for
+	// a removal in #343).
+	if _, ok := stCfg.Folder(folderID); ok {
+		noteFolderStorageLocked(newFolder)
+		return ""
 	}
-	noteFolderStorageLocked(newFolder)
+	if err == nil {
+		// Applied and gone again, or never applied: nothing to confirm.
+		return "accept did not reach the configuration"
+	}
+	if errors.Is(err, errWaitTimedOut) {
+		// Still queued behind another change. It lands once that one is
+		// through, or the engine refuses it, or the engine stops first and
+		// it never lands. Until then every accept of it gets this answer.
+		return folderAcceptNotConfirmed
+	}
+	clearAcceptInFlight(folderID)
+	return fmt.Sprintf("modify config: %v", err)
+}
 
-	return ""
+// folderAcceptNotConfirmed is how AcceptPendingFolder answers an accept it
+// handed to the engine and did not see reach the configuration within its
+// wait, and every further accept of that share until it has (#341).
+const folderAcceptNotConfirmed = "folder accept not confirmed yet"
+
+// FolderAcceptNotConfirmedError returns the text AcceptPendingFolder answers
+// such an accept with. The app tells it from a refusal — the accept may
+// still land — and reads the text here instead of keeping a copy of it.
+func FolderAcceptNotConfirmedError() string {
+	return folderAcceptNotConfirmed
+}
+
+// The shares whose accept the bridge handed to the engine and has not seen
+// taken from the engine's queue. Guarded by its own lock, not mu: the
+// engine's configuration loop clears an entry while a later bridge call may
+// hold mu and wait for that same loop.
+var (
+	acceptsInFlightMu sync.Mutex
+	acceptsInFlight   = map[string]struct{}{}
+)
+
+func acceptInFlight(folderID string) bool {
+	acceptsInFlightMu.Lock()
+	defer acceptsInFlightMu.Unlock()
+	_, ok := acceptsInFlight[folderID]
+	return ok
+}
+
+func markAcceptInFlight(folderID string) {
+	acceptsInFlightMu.Lock()
+	acceptsInFlight[folderID] = struct{}{}
+	acceptsInFlightMu.Unlock()
+}
+
+func clearAcceptInFlight(folderID string) {
+	acceptsInFlightMu.Lock()
+	delete(acceptsInFlight, folderID)
+	acceptsInFlightMu.Unlock()
+}
+
+// forgetAcceptsInFlight drops every entry: a new engine has an empty queue,
+// and an accept the last one never took is gone with it.
+func forgetAcceptsInFlight() {
+	acceptsInFlightMu.Lock()
+	acceptsInFlight = map[string]struct{}{}
+	acceptsInFlightMu.Unlock()
 }
 
 // offeringDevicesFor lists the devices currently offering folderID. A

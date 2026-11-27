@@ -189,6 +189,15 @@ struct SyncBridgeService {
         BridgeFolderRemovalNotConfirmedError()
     }
 
+    /// What `acceptPendingFolder` answers for an accept the engine has not
+    /// confirmed within the bridge's wait, and for every further accept of
+    /// that share until it has: it may still land, and no second accept of
+    /// it is queued (#341). Read from the bridge, so the two cannot drift
+    /// apart.
+    static var folderAcceptNotConfirmedError: String {
+        BridgeFolderAcceptNotConfirmedError()
+    }
+
     /// What `removeFolder` answers for a folder that is not configured —
     /// also once a removal the engine had not confirmed has landed (#343).
     /// Read from the bridge, so the two cannot drift apart.

@@ -553,6 +553,13 @@ final class VaultManager {
             root: basePath,
             allowNonEmpty: manualTargetConsented || mergeConfirmed
         ) {
+            if let note = SyncthingManager.acceptNotConfirmedNote(forAnswer: err) {
+                // Not a refusal: the accept may still land (#341). What only
+                // a confirmed accept records — the chosen name, the path
+                // mapping — is left out; the launch reconcile fills in the
+                // mapping for a folder that landed.
+                return .notConfirmed(note: note)
+            }
             return .refused(message: Self.presentable(engineRefusal: err))
         }
 
@@ -1008,7 +1015,10 @@ final class VaultManager {
                 root: basePath,
                 allowNonEmpty: false
             ) {
-                return Self.presentable(engineRefusal: err)
+                // Shown in the picker as it is, a note and not a refusal
+                // (#341); nothing is recorded for a target not confirmed.
+                return SyncthingManager.acceptNotConfirmedNote(forAnswer: err)
+                    ?? Self.presentable(engineRefusal: err)
             }
             // Only a successful accept records the choice — a failed one must
             // not pin future auto-accepts to a target that never materialized.
@@ -1264,6 +1274,9 @@ enum PendingShareAcceptOutcome: Equatable, Sendable {
     case accepted
     case refused(message: String)
     case needsMergeConfirmation(targetName: String)
+    /// Handed to the engine and not confirmed within the bridge's wait: it
+    /// may still land, and is not sent again meanwhile (#341).
+    case notConfirmed(note: String)
 }
 
 /// Sidecar: the local folder name the user manually picked for a share

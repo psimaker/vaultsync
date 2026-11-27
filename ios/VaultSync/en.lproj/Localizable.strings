@@ -1050,3 +1050,7 @@
 
 /* Remove Vault: the engine has not confirmed the removal yet (#343) */
 "VaultSync has asked the sync engine to stop syncing this vault on this iPhone, and the engine has not confirmed it yet. If the vault is still listed in a minute, remove it again. If its share is offered again, VaultSync does not accept it by itself." = "VaultSync has asked the sync engine to stop syncing this vault on this iPhone, and the engine has not confirmed it yet. If the vault is still listed in a minute, remove it again. If its share is offered again, VaultSync does not accept it by itself.";
+
+/* Accept: the engine has not confirmed the accept yet (#341) */
+"Accept Not Confirmed Yet" = "Accept Not Confirmed Yet";
+"VaultSync has asked the sync engine to sync this vault on this iPhone, and the engine has not confirmed it yet. The vault shows in the list once it has; accepting it again meanwhile changes nothing. If it is not listed in a minute, accept it again." = "VaultSync has asked the sync engine to sync this vault on this iPhone, and the engine has not confirmed it yet. The vault shows in the list once it has; accepting it again meanwhile changes nothing. If it is not listed in a minute, accept it again.";

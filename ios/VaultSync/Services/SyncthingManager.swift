@@ -1249,6 +1249,23 @@ final class SyncthingManager {
         return L10n.tr("VaultSync has asked the sync engine to stop syncing this vault on this iPhone, and the engine has not confirmed it yet. If the vault is still listed in a minute, remove it again. If its share is offered again, VaultSync does not accept it by itself.")
     }
 
+    /// The note shown for an accept the engine has not confirmed yet, or nil
+    /// for every other answer of `acceptPendingFolder` (#341). It is no
+    /// failure: the accept may still land, and the bridge queues no second
+    /// accept of the share meanwhile.
+    static func acceptNotConfirmedNote(forAnswer answer: String) -> String? {
+        guard answer == SyncBridgeService.folderAcceptNotConfirmedError else { return nil }
+        return L10n.tr("VaultSync has asked the sync engine to sync this vault on this iPhone, and the engine has not confirmed it yet. The vault shows in the list once it has; accepting it again meanwhile changes nothing. If it is not listed in a minute, accept it again.")
+    }
+
+    /// The bridge's accept, or what a test put in its place (#341).
+    private func bridgeAcceptPendingFolder(_ folderID: String, _ label: String, _ path: String, _ root: String, _ allowNonEmpty: Bool) -> String? {
+        #if DEBUG
+        if let accept = _testAccept { return accept(folderID) }
+        #endif
+        return SyncBridgeService.acceptPendingFolder(folderID: folderID, label: label, path: path, root: root, allowNonEmpty: allowNonEmpty)
+    }
+
     /// The bridge's removal, or what a test put in its place (#343).
     private func bridgeRemoveFolder(_ id: String) -> String? {
         #if DEBUG
@@ -1350,7 +1367,17 @@ final class SyncthingManager {
     /// `root` is the selected Obsidian folder: the Go hard floor accepts only
     /// into a direct subfolder of it (#270).
     func acceptPendingFolder(folderID: String, label: String, path: String, root: String, allowNonEmpty: Bool) -> String? {
-        let result = SyncBridgeService.acceptPendingFolder(folderID: folderID, label: label, path: path, root: root, allowNonEmpty: allowNonEmpty)
+        let result = bridgeAcceptPendingFolder(folderID, label, path, root, allowNonEmpty)
+        if result == SyncBridgeService.folderAcceptNotConfirmedError {
+            // Still queued in the engine (#341): it lands later, or never if
+            // the engine stops first. Nothing that only follows a confirmed
+            // accept runs — the record of a removal stays until then, so the
+            // automatic pass still leaves the share alone — and the lists
+            // show whatever is already there.
+            refreshFolders()
+            refreshPendingFolders()
+            return result
+        }
         if result == nil {
             // An explicit accept supersedes an earlier removal — lift the
             // auto-accept suppression for this folder ID (#52).
@@ -3016,6 +3043,15 @@ final class SyncthingManager {
     func _testUseRemoval(bridge: @escaping (String) -> String?, defaults: UserDefaults) {
         _testRemoval = (bridge, defaults)
         userRemovedFolderIDs = Self.loadUserRemovedFolderIDs(from: defaults)
+    }
+
+    /// What `_testUseAccept` put in the place of the bridge's accept.
+    /// Compiled for tests only.
+    @ObservationIgnored private var _testAccept: ((String) -> String?)?
+
+    /// Answers every accept with `bridge` instead of the engine (#341).
+    func _testUseAccept(bridge: @escaping (String) -> String?) {
+        _testAccept = bridge
     }
 
     func _testApplyDeviceList(_ newDevices: [DeviceInfo]) {
