@@ -618,3 +618,22 @@ func TestIssue413_PairSaysWhatTheEngineDoesWhenItDoesNotAnswer(t *testing.T) {
 		}
 	})
 }
+
+// The port is the one agent.json records when the engine is asked. A record
+// that, read again then, names no port leaves nothing to ask, and never the
+// port read before (#413).
+func TestIssue413_ARecordReadAgainWithoutAPortAsksNothing(t *testing.T) {
+	a, asked := anotherProgramAtTheRecordedPort(t)
+	holdLock(t, a.lay.Lock)
+	before, err := loadState(a.lay.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := updateState(a.lay.State, func(s *agentState) { s.GUIPort = 0 }); err != nil {
+		t.Fatal(err)
+	}
+	err = a.noAgentForPause(context.Background(), before, true)
+	if n := asked.Load(); n > 0 || !strings.Contains(refusalText(err), "could not confirm whether the sync engine runs") {
+		t.Fatalf("asked %d times: %v", n, err)
+	}
+}

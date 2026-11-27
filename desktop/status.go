@@ -241,10 +241,14 @@ func (a *app) status(ctx context.Context) error {
 		_, err := io.WriteString(w, a.offlineReport().Text)
 		return err
 	}
-	if now, err := loadState(a.lay.State); err == nil && now.GUIPort > 0 {
-		if client, err = eng.client(now); err != nil {
-			return err
-		}
+	// The port agent.json records now. A record that cannot be read, or
+	// names no port, leaves nothing to ask: never the port read before.
+	now, err := loadState(a.lay.State)
+	if err != nil {
+		return err
+	}
+	if client, err = eng.client(now); err != nil {
+		return err
 	}
 	pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	up := client.Ping(pctx) == nil

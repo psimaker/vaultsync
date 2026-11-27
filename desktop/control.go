@@ -713,7 +713,11 @@ func (a *app) noAgentForPause(ctx context.Context, st agentState, pause bool) er
 		case !may:
 			return nothingSyncs()
 		default:
-			if now, lerr := loadState(a.lay.State); lerr == nil && now.GUIPort > 0 {
+			// The port agent.json records now. A record that cannot be read,
+			// or names no port, is not known either way: never the port read
+			// before.
+			var now agentState
+			if now, err = loadState(a.lay.State); err == nil {
 				client, err = a.engine().client(now)
 			}
 		}
