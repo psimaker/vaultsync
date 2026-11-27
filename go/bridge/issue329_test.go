@@ -36,6 +36,75 @@ const (
 	issue329Unchecked       = "folder_directory_unchecked"
 )
 
+// issue329Record301 mirrors folderStorageRecord as released in VaultSync
+// 3.0.1 (tag v3.0.1, go/bridge/folderstorage.go): the record before it held
+// the file number of the marker's directory. It stands for every version
+// that does not know that field.
+type issue329Record301 struct {
+	Marker uint64 `json:"marker"`
+	Index  uint64 `json:"index"`
+	Anchor uint64 `json:"anchor"`
+}
+
+// issue329PutRecord301 stores record as 3.0.1 wrote it, without the field.
+func issue329PutRecord301(t *testing.T, folderID string, record folderStorageRecord) {
+	t.Helper()
+	value, err := json.Marshal(issue329Record301{Marker: record.Marker, Index: record.Index, Anchor: record.Anchor})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := issue315Store(t).PutKV(folderStorageKeyPrefix+folderID, value); err != nil {
+		t.Fatalf("PutKV: %v", err)
+	}
+}
+
+// issue329RawRecord returns a folder's record as the engine's database holds
+// it, byte for byte.
+func issue329RawRecord(t *testing.T, folderID string) []byte {
+	t.Helper()
+	value, err := issue315Store(t).GetKV(folderStorageKeyPrefix + folderID)
+	if err != nil {
+		t.Fatalf("GetKV: %v", err)
+	}
+	return value
+}
+
+// issue329MakeMarkerAnew writes the folder's marker file anew inside its own
+// `.stfolder`: the same content under another file number. The new one is
+// written before the old one goes, so it cannot be handed the old number.
+func issue329MakeMarkerAnew(t *testing.T, folderID, dir string) {
+	t.Helper()
+	marker := folderMarkerPath(config.FolderConfiguration{ID: folderID}, dir)
+	content, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := issue315MarkerNumber(t, folderID, dir)
+	if err := os.WriteFile(marker+".new", content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(marker); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(marker+".new", marker); err != nil {
+		t.Fatal(err)
+	}
+	if after := issue315MarkerNumber(t, folderID, dir); after == before {
+		t.Fatalf("the marker made anew has its old file number (%d)", after)
+	}
+}
+
+// issue329CheckPath asks the engine's CheckPath for a folder as the engine
+// has it configured now.
+func issue329CheckPath(t *testing.T, folderID string) error {
+	t.Helper()
+	folder, running, exists := getFolderConfig(folderID)
+	if !running || !exists {
+		t.Fatalf("no running engine with folder %s", folderID)
+	}
+	return folder.CheckPath()
+}
+
 // issue329Rig is #315's rig with an earlier copy of the vault made by hand
 // under another folder, and sync gone on after it: one note changed, one is
 // new. The copy holds what the vault held when it was made, its hidden
@@ -68,6 +137,12 @@ func issue329PutInPlace(t *testing.T, folderID, own, copied string) string {
 	t.Helper()
 	before := issue315MarkerNumber(t, folderID, own)
 	aside := filepath.Join(filepath.Dir(filepath.Dir(own)), "recently-deleted", filepath.Base(own))
+	for i := 2; ; i++ {
+		if _, err := os.Lstat(aside); os.IsNotExist(err) {
+			break
+		}
+		aside = filepath.Join(filepath.Dir(filepath.Dir(own)), "recently-deleted", fmt.Sprintf("%s %d", filepath.Base(own), i))
+	}
 	if err := os.MkdirAll(filepath.Dir(aside), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -411,6 +486,229 @@ func TestIssue329_TheRecordChangesOnlyWithAnAct(t *testing.T) {
 	}
 }
 
+// The vault's own directory with its marker file made anew, or gone, is not a
+// copy: the directory that holds the marker is the one the record names
+// (decision 084). The reconcile writes the marker's new number, so the
+// repair, which holds a folder to its marker, still re-points the folder when
+// it moves with its container.
+func TestIssue329_AMarkerMadeAnewInTheFoldersOwnDirectoryIsNoCopy(t *testing.T) {
+	const folderID = "issue329-marker-anew"
+	e, own := newIssue315Engine(t, folderID)
+	defer StopSyncthing()
+	first := e.expectRecord(own)
+
+	issue329MakeMarkerAnew(t, folderID, own)
+	if err := issue329CheckPath(t, folderID); err != nil {
+		t.Fatalf("CheckPath with the marker made anew in the folder's own .stfolder = %v, want nil", err)
+	}
+	if errMsg := RescanFolder(folderID); errMsg != "" {
+		t.Fatalf("RescanFolder = %q", errMsg)
+	}
+	NoteFolderStorage()
+	noted := e.expectRecord(own)
+	if noted.Stfolder != first.Stfolder || noted.Marker == first.Marker {
+		t.Fatalf("after the reconcile the record is %+v, want the new marker under the same .stfolder as %+v", noted, first)
+	}
+
+	// Moved with its container, the folder is re-pointed by its new marker.
+	container := filepath.Join(e.base, "selected-1-after-the-move")
+	if err := os.Rename(filepath.Dir(own), container); err != nil {
+		t.Fatal(err)
+	}
+	moved := filepath.Join(container, "Vault")
+	if errMsg := SetFolderPath(folderID, moved); errMsg != "" {
+		t.Fatalf("SetFolderPath after the container move = %q, want ''", errMsg)
+	}
+
+	// The marker file gone from its own .stfolder: still the folder's own,
+	// and nothing is written.
+	if err := os.Remove(folderMarkerPath(config.FolderConfiguration{ID: folderID}, moved)); err != nil {
+		t.Fatal(err)
+	}
+	if err := issue329CheckPath(t, folderID); err != nil {
+		t.Fatalf("CheckPath with the marker file gone from the folder's own .stfolder = %v, want nil", err)
+	}
+	if errMsg := RescanFolder(folderID); errMsg != "" {
+		t.Fatalf("RescanFolder = %q", errMsg)
+	}
+	NoteFolderStorage()
+	if got, _ := issue315Record(t, folderID); got != noted {
+		t.Fatalf("the record changed although no marker was there to read: %+v, was %+v", got, noted)
+	}
+}
+
+// A check reads; it never writes. The engine asks it before every scan, and
+// a marker made anew changes nothing stored until the reconcile writes it.
+func TestIssue329_TheEnginesCheckNeverWritesTheRecord(t *testing.T) {
+	const folderID = "issue329-reads-only"
+	e, own := newIssue315Engine(t, folderID)
+	defer StopSyncthing()
+	e.expectRecord(own)
+	before := issue329RawRecord(t, folderID)
+
+	issue329MakeMarkerAnew(t, folderID, own)
+	for i := 0; i < 3; i++ {
+		if err := issue329CheckPath(t, folderID); err != nil {
+			t.Fatalf("CheckPath = %v", err)
+		}
+		if errMsg := RescanFolder(folderID); errMsg != "" {
+			t.Fatalf("RescanFolder = %q", errMsg)
+		}
+	}
+	if after := issue329RawRecord(t, folderID); string(after) != string(before) {
+		t.Fatalf("the check changed the stored record: %s, was %s", after, before)
+	}
+}
+
+// Another .stfolder refuses whatever marker it holds. A marker file whose
+// number was carried into a copy's .stfolder — a hard link to the original's
+// — matches the record's marker, and the copy is still not the directory the
+// folder synced in.
+func TestIssue329_AMarkerCarriedIntoAnotherStfolderIsRefused(t *testing.T) {
+	const folderID = "issue329-carried-marker"
+	e, own := newIssue315Engine(t, folderID)
+	defer StopSyncthing()
+	first := e.expectRecord(own)
+
+	copied := filepath.Join(e.base, "elsewhere", "Vault")
+	issue315CopyTree(t, own, copied)
+	folder := config.FolderConfiguration{ID: folderID}
+	if err := os.Remove(folderMarkerPath(folder, copied)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(folderMarkerPath(folder, own), folderMarkerPath(folder, copied)); err != nil {
+		t.Fatal(err)
+	}
+	if n := issue315MarkerNumber(t, folderID, copied); n != first.Marker {
+		t.Fatalf("the linked marker has number %d, the record %d — the test no longer builds the state it is about", n, first.Marker)
+	}
+	if err := os.Rename(own, own+"-aside"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(copied, own); err != nil {
+		t.Fatal(err)
+	}
+	if err := issue329CheckPath(t, folderID); !errors.Is(err, errFolderNotItsDirectory) {
+		t.Fatalf("CheckPath over a copy whose .stfolder holds the original's marker = %v, want %q", err, folderNotItsDirectory)
+	}
+	NoteFolderStorage()
+	if got, _ := issue315Record(t, folderID); got != first {
+		t.Fatalf("the record followed the copy: %+v, was %+v", got, first)
+	}
+}
+
+// A symbolic link in .stfolder's place is never followed. The engine makes
+// .stfolder as a directory and never syncs it, so no peer can put a link
+// there; a person can. Whatever the link leads to — here the folder's own
+// .stfolder, moved beside the vault — the check refuses, and the reconcile
+// writes nothing.
+func TestIssue329_AStfolderThatIsALinkIsNotTheFoldersDirectory(t *testing.T) {
+	const folderID = "issue329-linked-stfolder"
+	e, own := newIssue315Engine(t, folderID)
+	defer StopSyncthing()
+	first := e.expectRecord(own)
+
+	elsewhere := filepath.Join(e.base, "stfolder-elsewhere")
+	if err := os.Rename(filepath.Join(own, config.DefaultMarkerName), elsewhere); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, filepath.Join(own, config.DefaultMarkerName)); err != nil {
+		t.Fatal(err)
+	}
+	if err := issue329CheckPath(t, folderID); !errors.Is(err, errFolderNotItsDirectory) {
+		t.Fatalf("CheckPath with a link in .stfolder's place = %v, want %q", err, folderNotItsDirectory)
+	}
+	NoteFolderStorage()
+	if got, _ := issue315Record(t, folderID); got != first {
+		t.Fatalf("the record changed for a link in .stfolder's place: %+v, was %+v", got, first)
+	}
+}
+
+// The repair holds a record from before the field to its marker, as 3.0.1
+// did: a folder whose directory is gone is not re-pointed at a copy.
+func TestIssue329_ARecordFromBeforeTheFieldIsHeldToItsMarkerByTheRepair(t *testing.T) {
+	const folderID = "issue329-old-record-repair"
+	e, own := newIssue315Engine(t, folderID)
+	defer StopSyncthing()
+	issue329PutRecord301(t, folderID, e.expectRecord(own))
+	if record, _ := issue315Record(t, folderID); record.Stfolder != 0 {
+		t.Fatalf("the record still carries the field: %+v", record)
+	}
+
+	copied := e.copyAndRemove(own)
+	if errMsg := SetFolderPath(folderID, copied); errMsg != FolderStorageMismatchError() {
+		t.Fatalf("SetFolderPath onto a copy, with a record from before the field = %q, want %q", errMsg, FolderStorageMismatchError())
+	}
+}
+
+// What the update costs, once. A record from before the field cannot tell a
+// copy put in the folder's place before the update from the folder's own
+// directory with a marker made anew: the check lets the folder go on, and
+// the reconcile records what is there, as 3.0.x recorded it at every
+// reconcile. From then on the field is there, and the next copy is refused.
+func TestIssue329_ARecordFromBeforeTheFieldOnlyWaitsForTheNextReconcile(t *testing.T) {
+	const folderID = "issue329-old-record-live"
+	e, own := newIssue315Engine(t, folderID)
+	defer StopSyncthing()
+	first := e.expectRecord(own)
+
+	copied := filepath.Join(e.base, "elsewhere", "Vault")
+	issue315CopyTree(t, own, copied)
+	issue329PutInPlace(t, folderID, own, copied)
+	issue329PutRecord301(t, folderID, first)
+	if err := issue329CheckPath(t, folderID); err != nil {
+		t.Fatalf("CheckPath with a record from before the field = %v, want nil: the update must not refuse what it cannot tell", err)
+	}
+	NoteFolderStorage()
+	taken := e.expectRecord(own)
+	if taken.Stfolder == 0 || taken.Marker == first.Marker {
+		t.Fatalf("the reconcile recorded %+v, want the directory there with its .stfolder", taken)
+	}
+
+	another := filepath.Join(e.base, "elsewhere-2", "Vault")
+	issue315CopyTree(t, own, another)
+	issue329PutInPlace(t, folderID, own, another)
+	if err := issue329CheckPath(t, folderID); !errors.Is(err, errFolderNotItsDirectory) {
+		t.Fatalf("CheckPath over a copy once the field is written = %v, want %q", err, folderNotItsDirectory)
+	}
+}
+
+// A version that does not know the field reads the record as it always did
+// and drops the field on its next write; the update after it writes the
+// field again, never refusing on the way, and two reconciles in a row leave
+// the same record.
+func TestIssue329_AVersionThatDoesNotKnowTheFieldReadsAndDropsIt(t *testing.T) {
+	const folderID = "issue329-field"
+	e, own := newIssue315Engine(t, folderID)
+	defer StopSyncthing()
+	full := e.expectRecord(own)
+	if full.Stfolder == 0 {
+		t.Fatalf("the record written at the add has no .stfolder number: %+v", full)
+	}
+
+	var old issue329Record301
+	if err := json.Unmarshal(issue329RawRecord(t, folderID), &old); err != nil {
+		t.Fatalf("3.0.1's record type cannot read the record: %v", err)
+	}
+	if old != (issue329Record301{Marker: full.Marker, Index: full.Index, Anchor: full.Anchor}) {
+		t.Fatalf("3.0.1's record type reads %+v from %+v", old, full)
+	}
+
+	issue329PutRecord301(t, folderID, full)
+	if err := issue329CheckPath(t, folderID); err != nil {
+		t.Fatalf("CheckPath after a version without the field wrote the record = %v, want nil", err)
+	}
+	NoteFolderStorage()
+	if got := e.expectRecord(own); got != full {
+		t.Fatalf("the reconcile wrote %+v, want %+v", got, full)
+	}
+	once := issue329RawRecord(t, folderID)
+	NoteFolderStorage()
+	if twice := issue329RawRecord(t, folderID); string(twice) != string(once) {
+		t.Fatalf("a second reconcile changed the record: %s, was %s", twice, once)
+	}
+}
+
 // A read that fails refuses (decision 039), and is no finding about the
 // directory: its reason is its own, nobody is told the folder is a copy, and
 // the next check asks again.
@@ -450,7 +748,7 @@ func TestIssue329_AReadThatFailsIsNoCopy(t *testing.T) {
 	if chmodErr := os.Chmod(stfolder, 0o755); chmodErr != nil {
 		t.Fatal(chmodErr)
 	}
-	expectUnchecked("the marker's file number", err)
+	expectUnchecked("the marker's directory", err)
 	if err := issue329Check(database, anchor, nil).answer(folder); err != nil {
 		t.Fatalf("the check once everything reads = %v, want nil", err)
 	}
@@ -579,7 +877,7 @@ func TestIssue329_NoRefusalCarriesAPath(t *testing.T) {
 	pathErr := func(name string) error {
 		return &os.PathError{Op: "lstat", Path: filepath.Join(dir, name), Err: syscall.EACCES}
 	}
-	value, err := json.Marshal(folderStorageRecord{Marker: 1, Index: index, Anchor: anchor})
+	value, err := json.Marshal(folderStorageRecord{Marker: 1, Index: index, Anchor: anchor, Stfolder: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -606,7 +904,7 @@ func TestIssue329_NoRefusalCarriesAPath(t *testing.T) {
 		{"the record", issue329FakeStore{kvErr: pathErr("index-v2")}, nil},
 		{"the anchor", good, pathErr(storageAnchorName)},
 		{"the index ID", issue329FakeStore{record: value, indexErr: pathErr("index-v2")}, nil},
-		{"the marker's file number", good, nil},
+		{"the marker and its directory", good, nil},
 	}
 	var texts []string
 	for _, c := range cases {
@@ -642,9 +940,11 @@ func TestIssue329_NoRefusalCarriesAPath(t *testing.T) {
 
 // The false alarm the check must never raise: the vault's own folder,
 // through what an install does with it — pulls from a peer, notes written on
-// this iPhone, filter writes, the reconcile's note, stops and starts, and a
-// container move with the re-point that follows. The check is asked all
-// along and never refuses, and the record never changes.
+// this iPhone, filter writes, the reconcile's note, stops and starts, its
+// marker file made anew, a container move with the re-point that follows,
+// and its marker file gone. The check is asked all along and never refuses,
+// and the record changes only where the reconcile writes the marker's new
+// number.
 func TestIssue329_TheVaultsOwnFolderIsNeverRefused(t *testing.T) {
 	if testing.Short() {
 		t.Skip("real peer process; skipped in -short")
@@ -712,6 +1012,24 @@ func TestIssue329_TheVaultsOwnFolderIsNeverRefused(t *testing.T) {
 		expectOwn(step + ", after a restart")
 	}
 
+	// The marker file made anew in the folder's own .stfolder: the check lets
+	// the folder go on, and the reconcile writes the marker's new number
+	// under the same .stfolder.
+	issue329MakeMarkerAnew(t, issue315FolderID, dir)
+	if errMsg := RescanFolder(issue315FolderID); errMsg != "" {
+		t.Fatalf("RescanFolder after the marker was made anew = %q", errMsg)
+	}
+	NoteFolderStorage()
+	renoted, _ := issue315Record(t, issue315FolderID)
+	if renoted.Stfolder != record.Stfolder || renoted.Marker == record.Marker {
+		t.Fatalf("after the marker was made anew the record is %+v, want the new marker under the same .stfolder as %+v", renoted, record)
+	}
+	record = renoted
+	expectOwn("the marker made anew")
+	restart("the marker made anew, after a restart")
+	rig.waitBridgeHolds(t, dir, want)
+	expectOwn("the marker made anew, after a restart")
+
 	// A container move while VaultSync is closed (#25): the folder's parent
 	// gets another name, and the reconcile re-points the folder there.
 	issue315StopWithConfigOnDisk(t, rig.configDir, issue315FolderID)
@@ -736,6 +1054,18 @@ func TestIssue329_TheVaultsOwnFolderIsNeverRefused(t *testing.T) {
 	rig.waitBridgeHolds(t, dir, want)
 	NoteFolderStorage()
 	expectOwn("after the container move and the re-point")
+
+	// The marker file gone from the folder's own .stfolder: nothing makes it
+	// again, the folder goes on, and nothing is written.
+	if err := os.Remove(folderMarkerPath(config.FolderConfiguration{ID: issue315FolderID}, dir)); err != nil {
+		t.Fatal(err)
+	}
+	restart("the marker file gone, after a restart")
+	want["marker-gone.md"] = "# Marker gone\n\nwritten on the peer\n"
+	rig.writePeer(t, "marker-gone.md", want["marker-gone.md"])
+	rig.peer.scanAndSettle(t, issue315FolderID)
+	rig.waitBridgeHolds(t, dir, want)
+	expectOwn("the marker file gone, after a restart")
 
 	if asked := len(answers.asked(issue315FolderID)); asked == 0 {
 		t.Fatal("the engine never asked the check: the test proves nothing")

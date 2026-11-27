@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/syncthing/syncthing/lib/config"
@@ -19,11 +20,12 @@ import (
 // hand carries it (#315). What a copy cannot carry is the marker's file
 // number: a copy is a new file, a directory that was moved or whose parent
 // was renamed holds the same one. So while a folder's directory is there the
-// bridge writes down the file number of its marker, a folder whose directory
-// is gone is re-pointed only at the directory that has it, and the engine
-// syncs a folder only while the directory at its path has it (#329). No
-// content is read, so whatever changed in that directory while the engine
-// did not look goes out as the change it is.
+// bridge writes down the file number of its marker and of the `.stfolder`
+// that holds it, a folder whose directory is gone is re-pointed only at the
+// directory that has that marker, and the engine syncs a folder only while
+// the `.stfolder` at its path is that one (#329). No content is read, so
+// whatever changed in that directory while the engine did not look goes out
+// as the change it is.
 //
 // A file number means something on the file system it was read from, in the
 // index it was read for, and nowhere else. A restore or a migration creates
@@ -64,11 +66,29 @@ type folderStorageRecord struct {
 	Index uint64 `json:"index"`
 	// Anchor is the file number of this install's anchor when Marker was read.
 	Anchor uint64 `json:"anchor"`
+	// Stfolder is the file number of the directory that holds the marker,
+	// read through one handle with Marker (#329, decision 084). 0 in a record
+	// written before it existed: VaultSync 3.0.x wrote none, and a version
+	// that does not know it drops it on its next write. Such a record is read
+	// as before, and the next reconcile that finds the folder's own marker
+	// adds the field.
+	Stfolder uint64 `json:"stfolder,omitempty"`
 }
 
 // folderStorageKeyPrefix names the records in the engine's key-value store.
-// The 1 is the format's version.
+// The 1 is the format's version. Stfolder joined it without a new version:
+// a reader that does not know the field reads the rest as it always did.
 const folderStorageKeyPrefix = "vaultsync/folder-storage/1/"
+
+// markerReading is what markerNumbers read: the file number of the
+// directory that holds a folder's marker, and the marker's, read through one
+// handle of that directory. markerErr is the marker's own read; it leaves
+// the directory's number standing.
+type markerReading struct {
+	dir       uint64
+	marker    uint64
+	markerErr error
+}
 
 // storageAnchorName is the anchor's file in the configuration directory.
 const storageAnchorName = "vaultsync-storage-anchor"
@@ -126,12 +146,13 @@ func ensureStorageAnchor(configDir string) (uint64, error) {
 }
 
 // NoteFolderStorage writes down, for every folder whose directory is there
-// with its marker and that has no record that applies, which directory the
-// folder syncs in. A folder whose directory is gone keeps the record it has:
-// that record is what its directory is known by when it shows up again. And
-// so does a folder whose record applies: the record names the directory the
-// folder synced in, also when another directory has been put in its place
-// since (#329, decision 084).
+// with its marker, which directory the folder syncs in — where it has no
+// record that applies, where its record was written before the marker's
+// directory was recorded, and where the marker file was made anew inside the
+// directory the record names. A folder whose directory is gone keeps the
+// record it has: that record is what its directory is known by when it shows
+// up again. A folder with another directory in its place keeps it too: the
+// record names the directory the folder synced in (#329, decision 084).
 //
 // The app calls this at the start of every path reconcile — after an engine
 // start, after another folder was selected, in a background run — so a
@@ -147,13 +168,13 @@ func NoteFolderStorage() {
 	}
 }
 
-// folderMarkers is what one pass over the configured folders read: the file
-// number of each marker that was there, and which configuration it was read
-// for.
+// folderMarkers is what one pass over the configured folders read: for each
+// folder whose marker was there, the file numbers of the marker and of the
+// directory that holds it, and which configuration they were read for.
 type folderMarkers struct {
-	commits uint64
-	folders map[string]config.FolderConfiguration
-	numbers map[string]uint64
+	commits  uint64
+	folders  map[string]config.FolderConfiguration
+	readings map[string]markerReading
 }
 
 func readFolderMarkers() (folderMarkers, bool) {
@@ -162,29 +183,41 @@ func readFolderMarkers() (folderMarkers, bool) {
 		mu.Unlock()
 		return folderMarkers{}, false
 	}
-	seen := folderMarkers{commits: stConfigCommits, folders: stCfg.Folders(), numbers: make(map[string]uint64)}
+	seen := folderMarkers{commits: stConfigCommits, folders: stCfg.Folders(), readings: make(map[string]markerReading)}
 	mu.Unlock()
 
 	for id, folder := range seen.folders {
-		if number, err := fileNumber(folderMarkerPath(folder, folder.Path)); err == nil {
-			seen.numbers[id] = number
+		if reading, err := markerNumbers(folderMarkerPath(folder, folder.Path)); err == nil && reading.markerErr == nil {
+			seen.readings[id] = reading
 		}
 	}
 	return seen, true
 }
 
-// record writes a record for each folder that has none that applies, unless
-// the configuration has changed since the markers were read: a folder that
-// was removed, added again or moved meanwhile is another folder than the one
-// whose marker was read, and the call that changed it has noted it itself.
+// record writes what was read, unless the configuration has changed since:
+// a folder that was removed, added again or moved meanwhile is another
+// folder than the one whose marker was read, and the call that changed it
+// has noted it itself. For each folder:
 //
-// A record that applies is never written over here. It names the directory
-// the folder synced in, and a live folder whose marker has another number
-// now has another directory in its place — a copy, most likely (#329). The
-// engine refuses that directory (folderDirectoryCheck), and writing the new
-// number down would let the next scan take it. A record that applies
-// changes only with an act on the folder: an add, an accept, a re-point
-// (decision 084). What cannot be read is not written over either.
+//   - No record that applies: the directory there is recorded (063).
+//   - A record from before the marker's directory was recorded: this read
+//     writes it whole. Where its marker is the recorded one, that adds the
+//     directory's number, read through one handle with the marker. Where it
+//     is not, nothing can tell a copy put in place before the update from
+//     the folder's own directory with a marker made anew, and the directory
+//     there is recorded, as 3.0.x recorded it at every reconcile; this is
+//     what the update costs once (decision 084).
+//   - The directory the record names, with a marker file made anew in it:
+//     only the marker's number is written. The repair (SetFolderPath)
+//     compares markers, and a marker read inside that directory is still the
+//     marker of the directory the folder synced in.
+//   - Another directory in the folder's place, or what the record already
+//     says: nothing. The engine refuses the other directory
+//     (folderDirectoryCheck), and writing it down would let the next scan
+//     take it.
+//
+// What cannot be read is not written over. The engine's check never writes:
+// a record changes here, and with an add, an accept or a re-point.
 func (m folderMarkers) record() {
 	mu.Lock()
 	defer mu.Unlock()
@@ -194,12 +227,15 @@ func (m folderMarkers) record() {
 	if stDB == nil {
 		return
 	}
-	for id, number := range m.numbers {
-		folder := m.folders[id]
-		if _, applies, unread := applyingRecord(stDB, stStorageAnchor, stStorageAnchorErr, id); applies || unread != "" {
-			continue
+	for id, reading := range m.readings {
+		existing, applies, unread := applyingRecord(stDB, stStorageAnchor, stStorageAnchorErr, id)
+		switch {
+		case unread != "":
+		case !applies, existing.Stfolder == 0:
+			writeFolderStorageLocked(m.folders[id], reading)
+		case existing.Stfolder == reading.dir && existing.Marker != reading.marker:
+			writeFolderStorageLocked(m.folders[id], reading)
 		}
-		writeFolderStorageLocked(folder, number)
 	}
 }
 
@@ -210,14 +246,15 @@ func noteFolderStorageLocked(folder config.FolderConfiguration) {
 	if stStorageAnchor == 0 {
 		return
 	}
-	if marker, err := fileNumber(folderMarkerPath(folder, folder.Path)); err == nil {
-		writeFolderStorageLocked(folder, marker)
+	if reading, err := markerNumbers(folderMarkerPath(folder, folder.Path)); err == nil && reading.markerErr == nil {
+		writeFolderStorageLocked(folder, reading)
 	}
 }
 
-// writeFolderStorageLocked records marker as the file number of the folder's
-// marker, for the index and the anchor the engine has now. Caller holds mu.
-func writeFolderStorageLocked(folder config.FolderConfiguration, marker uint64) {
+// writeFolderStorageLocked records what reading read — the marker's file
+// number and its directory's — for the index and the anchor the engine has
+// now. Caller holds mu.
+func writeFolderStorageLocked(folder config.FolderConfiguration, reading markerReading) {
 	if stDB == nil || stStorageAnchor == 0 {
 		return
 	}
@@ -225,7 +262,7 @@ func writeFolderStorageLocked(folder config.FolderConfiguration, marker uint64) 
 	if err != nil {
 		return
 	}
-	record := folderStorageRecord{Marker: marker, Index: uint64(index), Anchor: stStorageAnchor}
+	record := folderStorageRecord{Marker: reading.marker, Index: uint64(index), Anchor: stStorageAnchor, Stfolder: reading.dir}
 	if existing, found, err := readFolderStorage(stDB, folder.ID); err == nil && found && existing == record {
 		return
 	}
@@ -278,8 +315,9 @@ const (
 	// storageOwn: a record applies, and the directory's marker has the
 	// recorded file number. The directory the folder synced in.
 	storageOwn
-	// storageOther: a record applies, and the directory's marker has another
-	// file number. A directory made from the folder's own, a copy.
+	// storageOther: a record applies, and the directory has another marker
+	// (folderStorageVerdict) or another directory holding its marker
+	// (liveDirectoryVerdict). A directory made from the folder's own, a copy.
 	storageOther
 	// storageNoMarker: a record applies, and the directory holds no marker
 	// file for the folder. Not the directory the folder synced in, which had
@@ -376,6 +414,12 @@ func folderStorageRefusalLocked(folder config.FolderConfiguration, newPath strin
 // nothing in that directory reaches another device. Nothing is paused,
 // moved or re-pointed, and the folder goes on by itself once its own
 // directory is back in its place.
+//
+// The engine's question is about the directory that holds the marker, not
+// the marker itself: a marker file made anew or gone inside the folder's own
+// `.stfolder` does not make the folder a copy, and a copy carries a
+// `.stfolder` of its own whatever marker it holds. The repair keeps asking
+// the marker (folderStorageVerdict), for every record.
 
 // folderNotItsDirectory is the engine's refusal of a folder whose path holds
 // another directory than the one the folder synced in: a copy, most likely.
@@ -424,13 +468,52 @@ func (a *anchorReading) get() (uint64, error) {
 // while the bridge may hold mu and wait for the engine.
 func (c folderDirectoryCheck) answer(folder config.FolderConfiguration) error {
 	anchor, anchorErr := c.anchor.get()
-	switch verdict, unread := folderStorageVerdict(c.store, anchor, anchorErr, folder, folder.Path); verdict {
-	case storageOther, storageNoMarker:
+	switch verdict, unread := liveDirectoryVerdict(c.store, anchor, anchorErr, folder); verdict {
+	case storageOther:
 		return errFolderNotItsDirectory
 	case storageUnread:
 		return fmt.Errorf("%s: %s", folderDirectoryUnchecked, unread)
 	default:
 		return nil
+	}
+}
+
+// liveDirectoryVerdict is the engine's question about a folder it is about
+// to scan or pull at the path it has: is the directory that holds the marker
+// there (`.stfolder`) the one the record names? It reads; it never writes.
+//
+//   - A record that applies and carries that directory's number, and the
+//     directory at the path has it: the folder's own, whatever its marker
+//     file is now — made anew or missing. The record's marker follows at
+//     the next reconcile.
+//   - The directory there has another number, or a link or a file stands in
+//     its place: not the directory the folder synced in. A copy carries its
+//     own `.stfolder`, so a marker file whose number was carried over into
+//     it does not make it the folder's.
+//   - No record, one that does not apply, or one written before the
+//     directory was recorded: nothing to hold the directory against, and
+//     the folder goes on as it did before. Only here, and only until the
+//     next reconcile writes the field; the repair still holds such a record
+//     to its marker (folderStorageVerdict).
+//   - What cannot be read refuses (039).
+func liveDirectoryVerdict(store storageRecords, anchor uint64, anchorErr error, folder config.FolderConfiguration) (verdict storageVerdict, unread string) {
+	record, applies, unread := applyingRecord(store, anchor, anchorErr, folder.ID)
+	if unread != "" {
+		return storageUnread, unread
+	}
+	if !applies || record.Stfolder == 0 {
+		return storageUnknown, ""
+	}
+	reading, err := markerNumbers(folderMarkerPath(folder, folder.Path))
+	switch {
+	case errors.Is(err, syscall.ELOOP), errors.Is(err, syscall.ENOTDIR):
+		return storageOther, ""
+	case err != nil:
+		return storageUnread, "read the file number of the marker's directory"
+	case reading.dir != record.Stfolder:
+		return storageOther, ""
+	default:
+		return storageOwn, ""
 	}
 }
 

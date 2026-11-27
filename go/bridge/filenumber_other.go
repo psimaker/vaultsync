@@ -7,3 +7,8 @@ package bridge
 func fileNumber(string) (uint64, error) {
 	return 0, errNoFileNumbers
 }
+
+// markerNumbers has no answer here either (#329).
+func markerNumbers(string) (markerReading, error) {
+	return markerReading{}, errNoFileNumbers
+}
