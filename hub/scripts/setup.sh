@@ -982,6 +982,163 @@ syncthing_start_hint() {
 	info "  in $HUB_DIR/.env and run the setup again ($SYNCTHING_LINE_DOC)."
 }
 
+# The page section on moving a Hub to 2.x, for the messages about a
+# conversion.
+SYNCTHING_MOVE_DOC="https://github.com/psimaker/vaultsync/blob/main/docs/hub.md#move-your-hub-to-syncthing-2x"
+
+# show_log SERVICE: the last 30 lines a container of the stack wrote, on
+# stderr, without control characters — an escape sequence in a log line
+# must not act on the terminal. Tabs and line ends stay.
+show_log() {
+	$DOCKER compose --project-directory "$HUB_DIR" logs --no-color --tail 30 "$1" 2>&1 |
+		LC_ALL=C tr -d '\000-\010\013-\037\177' >&2 || true
+}
+
+# syncthing_health: the first line of the Hub's Syncthing's answer to its
+# health endpoint, in HEALTH_FIRST; fails when it cannot be asked (stopped,
+# restarting, an image without curl). Asked inside the container with the
+# curl its healthcheck uses. While Syncthing 2.x converts a 1.x database it
+# answers every request with HTTP 200 and a body whose first line is
+# SYNCTHING_CONVERTING, its log after it; 1.30.0 has no such state, and both
+# lines answer with JSON otherwise (decision 090). Nothing else of the
+# answer is kept.
+SYNCTHING_CONVERTING="*** Database migration in progress ***"
+syncthing_health() {
+	HEALTH_FIRST=""
+	health=$($DOCKER compose --project-directory "$HUB_DIR" exec -T syncthing \
+		curl -fsS -m 10 http://127.0.0.1:8384/rest/noauth/health 2>/dev/null) || return 1
+	HEALTH_FIRST=$(printf '%s\n' "$health" | sed -n 1p)
+}
+
+# syncthing_started: whether the Hub's Syncthing container runs, and since
+# when — one line that changes when it stops or starts again.
+syncthing_started() {
+	st_id=$($DOCKER compose --project-directory "$HUB_DIR" ps -q syncthing 2>/dev/null) || return 1
+	[ -n "$st_id" ] || return 1
+	$DOCKER inspect -f '{{.State.Running}} {{.State.StartedAt}}' "$st_id" 2>/dev/null
+}
+
+# conversion_progress: the file count in Syncthing's latest "Still migrating
+# folder" line — digits only, nothing else of its log reaches the terminal.
+conversion_progress() {
+	$DOCKER compose --project-directory "$HUB_DIR" logs --no-color --tail 20 syncthing 2>/dev/null |
+		sed -n 's/.*Still migrating folder (.* files=\([0-9][0-9]*\) .*/\1/p' | tail -1
+}
+
+# epoch_now: seconds since 1970, or nothing where date cannot say.
+epoch_now() {
+	epoch=$(date +%s 2>/dev/null) || epoch=""
+	case "$epoch" in "" | *[!0-9]*) epoch="" ;; esac
+	printf '%s' "$epoch"
+}
+
+# How long the wait follows a conversion: an hour. The slowest conversion
+# measured took 11 min 51 s (50,204 files, Syncthing held to a fiftieth of
+# a CPU); an hour is five times that, and still an end for a run nobody
+# watches (a script, a dropped session).
+CONVERSION_WAIT_LIMIT=3600
+
+# The ways a wait during a conversion ends without the Hub answering. None
+# names the 1.x-on-2.x hint: Syncthing runs 2.x here.
+conversion_stopped() {
+	trap - HUP INT TERM
+	show_log syncthing
+	info "Syncthing stopped or started again while it converted this Hub's database to 2.x. The log above says why; a full disk reads \"database or disk is full\"."
+	info "  Syncthing keeps the 1.x database until the conversion is complete: once the cause is fixed, run the setup again, and the conversion starts over."
+	info "  What else you can do, going back to 1.x among it: $SYNCTHING_MOVE_DOC"
+	fail "The Hub did not become ready."
+}
+
+conversion_wait_ended() {
+	trap - HUP INT TERM
+	info "Syncthing is still converting this Hub's database after $((CONVERSION_WAIT_LIMIT / 60)) minutes. Nothing has gone wrong so far: it goes on in its container, and the Hub answers once it is done."
+	info "  Where it stands:  cd $HUB_DIR && $DOCKER compose logs --tail 3 syncthing"
+	info "  Run the setup again later: it waits for the conversion again, or finds the Hub ready and prints a pairing code."
+	fail "Setup stopped waiting for the conversion."
+}
+
+conversion_wait_interrupted() {
+	trap - HUP INT TERM
+	printf '%s\n' \
+		"Setup stopped waiting. Syncthing goes on converting this Hub's database in its container, and the Hub answers once it is done." \
+		"  Where it stands:  cd $HUB_DIR && $DOCKER compose logs --tail 3 syncthing" \
+		"  Run the setup again later for a pairing code." >&2 || true
+	exit "$1"
+}
+
+# wait_for_hub: until the Hub answers `vaultsync-hub status`, 45 tries.
+# While Syncthing converts a 1.x database (decision 090) the Hub cannot
+# answer, for minutes on a slow machine; those looks are not tries. The
+# conversion begins with the first answer that is SYNCTHING_CONVERTING and
+# lasts until an answer that is not (one that cannot be asked meanwhile
+# changes nothing). Meanwhile setup says what happens, shows how far it is
+# every third look, and stops waiting when Syncthing's container stops or
+# starts again, or after CONVERSION_WAIT_LIMIT; Ctrl-C ends the wait, not
+# the conversion. Any other answer, or none, is a try as before. A Hub that
+# never answers is explained by the hub's own log: Syncthing passed its
+# healthcheck before the hub started, and the 1.x-on-2.x hint belongs to a
+# failed start (#364).
+wait_for_hub() {
+	tries=0
+	conv_looks=0 # looks since this conversion was seen; 0: none going on
+	conv_seen=""
+	conv_started=""
+	conv_t0=""
+	until $DOCKER compose --project-directory "$HUB_DIR" exec -T hub vaultsync-hub status >/dev/null 2>&1; do
+		if [ "$conv_looks" -gt 0 ] && [ -n "$conv_started" ] &&
+			[ "$(syncthing_started || echo gone)" != "$conv_started" ]; then
+			conversion_stopped
+		fi
+		if syncthing_health; then
+			answered=1
+		else
+			answered=""
+		fi
+		if [ "$HEALTH_FIRST" = "$SYNCTHING_CONVERTING" ] || { [ "$conv_looks" -gt 0 ] && [ -z "$answered" ]; }; then
+			conv_looks=$((conv_looks + 1))
+			if [ "$conv_looks" = 1 ]; then
+				conv_seen=1
+				conv_started=$(syncthing_started) || conv_started=""
+				conv_t0=$(epoch_now)
+				trap 'conversion_wait_interrupted 129' HUP
+				trap 'conversion_wait_interrupted 130' INT
+				trap 'conversion_wait_interrupted 143' TERM
+				info "Syncthing 2.x is converting this Hub's database from 1.x. The Hub answers once that is done, and setup waits for it."
+				info "  On a large vault or a slow machine this takes minutes. Ctrl-C ends the wait, not the conversion."
+			else
+				# Without a clock, each look counts as the 2 s it sleeps at
+				# least, so the bound errs on the long side.
+				conv_now=$(epoch_now)
+				if [ -n "$conv_t0" ] && [ -n "$conv_now" ]; then
+					conv_waited=$((conv_now - conv_t0))
+				else
+					conv_waited=$((conv_looks * 2))
+				fi
+				[ "$conv_waited" -lt "$CONVERSION_WAIT_LIMIT" ] || conversion_wait_ended
+				if [ $((conv_looks % 3)) = 0 ]; then
+					conv_files=$(conversion_progress) || conv_files=""
+					info "  Still converting${conv_files:+: $conv_files files so far in the vault it is on}."
+				fi
+			fi
+		else
+			if [ "$conv_looks" -gt 0 ]; then
+				conv_looks=0
+				trap - HUP INT TERM
+			fi
+			tries=$((tries + 1))
+			if [ "$tries" -ge 45 ]; then
+				show_log hub
+				fail "The Hub did not become ready. The log above explains why; fix it and re-run."
+			fi
+		fi
+		sleep 2
+	done
+	trap - HUP INT TERM
+	# The Hub answers only once Syncthing's own API does, so the conversion
+	# is over.
+	[ -z "$conv_seen" ] || info "Syncthing has finished converting."
+}
+
 write_hub_files() {
 	compose="$HUB_DIR/docker-compose.yml"
 	env_file="$HUB_DIR/.env"
@@ -1252,21 +1409,11 @@ setup_hub() {
 	install_staged_hub_files
 	end_hub_edits
 	if ! $DOCKER compose --project-directory "$HUB_DIR" up -d; then
-		$DOCKER compose --project-directory "$HUB_DIR" logs --tail 30 syncthing >&2 || true
+		show_log syncthing
 		syncthing_start_hint
 		fail "The Hub did not start. The log above explains why; fix it and re-run."
 	fi
-
-	i=0
-	until $DOCKER compose --project-directory "$HUB_DIR" exec -T hub vaultsync-hub status >/dev/null 2>&1; do
-		i=$((i + 1))
-		[ "$i" -lt 45 ] || {
-			$DOCKER compose --project-directory "$HUB_DIR" logs --tail 30 syncthing hub >&2 || true
-			syncthing_start_hint
-			fail "The Hub did not become ready. The log above explains why; fix it and re-run."
-		}
-		sleep 2
-	done
+	wait_for_hub
 
 	info ""
 	info "✓ Hub is running."

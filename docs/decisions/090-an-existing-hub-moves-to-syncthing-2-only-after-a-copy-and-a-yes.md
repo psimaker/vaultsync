@@ -42,4 +42,4 @@
 - *Setup restoring the copy after a failed conversion by itself:* the doctrine is pause, explain, let the owner act (decision 002); a failed conversion leaves the 1.x database untouched, and a new run converts again.
 - *A `[y/N]` like the image offer:* it follows a `[y/N]` one line above, and this answer cannot be undone by running setup again.
 
-**Links.** #363, #301, #216, #368, #364; decisions 002, 068, 076; `docs/hub.md` → Which Syncthing your Hub runs, Move your Hub to Syncthing 2.x; `hub/scripts/setup.sh`; `hub/scripts/tests/setup-dry-run-test.sh`.
+**Links.** #363, #301, #216, #368, #364 (point 6 in the setup link's readiness wait); decisions 002, 068, 076; `docs/hub.md` → Which Syncthing your Hub runs, Move your Hub to Syncthing 2.x; `hub/scripts/setup.sh`; `hub/scripts/tests/setup-dry-run-test.sh`.
