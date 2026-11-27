@@ -496,8 +496,9 @@ docker compose exec syncthing syncthing --version
 
 Re-running the setup never adds or changes that line. The reason: Syncthing 2.x
 converts a 1.x Hub's database on its first start, and 1.x does not start on it
-again, so the move cannot be undone. A Hub on 1.x keeps working as it does. A
-tested step for moving it is not published yet.
+again, so the move is one way unless you keep a copy. A Hub on 1.x keeps
+working as it does. To move yours, follow
+[Move your Hub to Syncthing 2.x](#move-your-hub-to-syncthing-2x).
 
 If you already moved your Hub's Syncthing to 2.x by hand in
 `docker-compose.yml`, add `VAULTSYNC_HUB_SYNCTHING_IMAGE=syncthing/syncthing:2`
@@ -505,6 +506,147 @@ to `.env`. The setup writes `docker-compose.yml` anew on every run, and without
 that line it would start 1.x again. 1.x refuses a 2.x database: the Hub's
 Syncthing stops with "config file version … is newer than supported", and
 nothing is lost.
+
+### Move your Hub to Syncthing 2.x
+
+This is for a Hub that follows the 1.x line (above). Syncthing 2.x converts
+the Hub's database on its first start, and 1.x cannot open the converted one,
+so the step copies the Hub's Syncthing first: that copy is your way back.
+Vaults, their folder settings and ignore patterns, devices, ports, the
+device ID and an open pairing code carry over, and devices connect again by
+themselves. Run the commands on the Hub, in its directory. Where your user is
+not in the `docker` group, put `sudo` in front of each `docker`.
+
+1. Check that the step is for your Hub:
+
+   ```sh
+   cd /srv/vaultsync
+   docker compose exec syncthing syncthing --version     # syncthing v1.30.0 …
+   grep VAULTSYNC_HUB_SYNCTHING_IMAGE .env                # prints nothing
+   grep VAULTSYNC_HUB_SYNCTHING_IMAGE docker-compose.yml  # prints the image line
+   ```
+
+   If the last command prints nothing, your `docker-compose.yml` was written
+   before new Hubs moved to 2.x: it names `syncthing/syncthing:1` itself, and
+   the line the step adds to `.env` would change nothing. Run the setup link
+   once first (**2) Hub**): it writes the current file and keeps your Hub on
+   1.x. Then start again at this step.
+
+2. Check that the disk has room for a copy of `syncthing/` and for a new
+   database up to three times the size of the old one (for a vault of 50,000
+   notes the old database took 20 MB and the new one 50 MB):
+
+   ```sh
+   sudo du -sh syncthing
+   df -h .
+   ```
+
+3. Download Syncthing 2.x. Nothing on the Hub changes yet, so if this fails
+   you can stop here:
+
+   ```sh
+   docker pull syncthing/syncthing:2
+   ```
+
+4. Stop the Hub, copy its Syncthing, and name 2.x in `.env`. The Hub must be
+   stopped for the copy: a copy taken while Syncthing writes may not be whole.
+
+   ```sh
+   docker compose stop
+   sudo cp -a syncthing syncthing-1.x-backup
+   echo 'VAULTSYNC_HUB_SYNCTHING_IMAGE=syncthing/syncthing:2' >> .env
+   ```
+
+5. Start the Hub and watch the conversion:
+
+   ```sh
+   docker compose up -d
+   docker compose logs -f syncthing
+   ```
+
+   Syncthing logs `Migrating old-style database to SQLite`, then
+   `Still migrating folder … files=…` every 10 seconds, and
+   `Migration complete` at the end. Press Ctrl-C then; closing the log does
+   not stop the conversion.
+
+6. Check that the Hub runs 2.x and answers:
+
+   ```sh
+   docker compose exec syncthing syncthing --version     # syncthing v2.…
+   docker compose exec hub vaultsync-hub status
+   ```
+
+**How long it takes.** Measured with Syncthing 2.1.7, one vault: 309 files
+converted in under a tenth of a second, and 50,204 files in 9 to 14
+seconds on a 16-core server. The same 50,204 files took 1 minute 49 seconds
+with Syncthing held to a tenth of a CPU, and 11 minutes 51 seconds held to a
+fiftieth. A small board, or a disk slower than the server's, takes longer,
+and several vaults convert one after another. While Syncthing converts:
+
+- `docker compose up -d` returns within seconds and calls Syncthing healthy:
+  until the conversion ends, Syncthing answers on its port with
+  `*** Database migration in progress ***`, and its health check accepts that.
+- `vaultsync-hub status` fails with `syncthing not reachable after 10s:
+  decode /rest/system/ping: invalid character '*' …`, and the Hub cannot
+  pair a device until it is done.
+- The Hub's own service waits two minutes for Syncthing, stops, and is started
+  again by Docker, as often as it takes (five times during the 12-minute
+  conversion). It answers seconds after the conversion ends.
+- Devices show the Hub as disconnected, and connect again by themselves once
+  it is done. The device of the 50,204-file vault was in sync again about 20
+  seconds after the conversion ended.
+- Leave the setup link alone until `Migration complete`: run while Syncthing
+  converts, it can give up after about nine minutes with a hint meant for
+  another case.
+
+**If the conversion stops halfway** (the Hub was stopped, the power went, the
+disk filled up), the 1.x database stays as it was. Make room if the log says
+`database or disk is full` (Docker restarts Syncthing until there is room, and
+calls it healthy meanwhile), then run `docker compose up -d` again: the
+conversion starts over from the beginning. 1.x alone no longer starts on that
+directory, because the configuration is already 2.x's; to go back, use the
+copy.
+
+**The copy** is only your way back. Remove it (`sudo rm -rf
+syncthing-1.x-backup`) once every device syncs with the Hub on 2.x and you no
+longer want to go back.
+
+**Back to 1.x with the copy.** Notes added, changed or deleted since the move
+stay as they are on the Hub and on your devices: Syncthing 1.x scans the
+vaults again and keeps them.
+
+```sh
+cd /srv/vaultsync
+docker compose stop
+sudo mv syncthing syncthing-2.x
+sudo mv syncthing-1.x-backup syncthing
+sed -i '/^VAULTSYNC_HUB_SYNCTHING_IMAGE=/d' .env
+docker compose up -d
+```
+
+Remove `syncthing-2.x` once the Hub syncs again.
+
+**Back to 1.x without a copy**, if you moved without one. Syncthing 2.x keeps
+the 1.x database as `syncthing/config/index-v0.14.0.db-migrated` and the 1.x
+configuration as `syncthing/config/config.xml.v37`. When it starts, it deletes
+the database once it is more than 14 days old, counted from when 1.x last
+wrote to it, which can be before the move, and the configuration after 30
+days: go back soon, or not this way. Both must still be there; if the first
+command does not list both, this way back is closed and the Hub stays on 2.x.
+Then put both back and move the 2.x database aside. Do not forget the third
+move: left in place, the 2.x database is what Syncthing takes up again at a
+later move to 2.x, as it was on the day of this one.
+
+```sh
+cd /srv/vaultsync
+sudo ls -d syncthing/config/index-v0.14.0.db-migrated syncthing/config/config.xml.v37
+docker compose stop
+sudo mv syncthing/config/index-v0.14.0.db-migrated syncthing/config/index-v0.14.0.db
+sudo cp -p syncthing/config/config.xml.v37 syncthing/config/config.xml
+sudo mv syncthing/config/index-v2 syncthing/config/index-v2.moved-aside
+sed -i '/^VAULTSYNC_HUB_SYNCTHING_IMAGE=/d' .env
+docker compose up -d
+```
 
 ## Troubleshooting
 
