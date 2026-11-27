@@ -208,6 +208,70 @@ func TestIssue419_ARunWaitsForAnEngineAnEarlierRunLeft(t *testing.T) {
 	})
 }
 
+// vaultsync start on a Mac, while the service's run waits for an engine an
+// earlier run left (#419, decisions 085 and 086): that run holds the engine
+// lock and serves its socket, so start leaves it alone and says it is
+// already running, which is true; status says that the earlier engine
+// syncs and that VaultSync starts its own once it has ended. The waiting
+// run goes on waiting, and starts its engine once the earlier one is gone.
+func TestIssue419_StartLeavesARunThatWaitsForAnEarlierEngineAlone(t *testing.T) {
+	saved := earlierEngineLook
+	earlierEngineLook = 50 * time.Millisecond
+	t.Cleanup(func() { earlierEngineLook = saved })
+	quickAnswerWait(t)
+	asTheService(t)
+	a, _ := runFixture(t)
+	st, err := loadState(a.lay.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, earlier := fakeEngineAt(t, a.lay, st.GUIPort)
+	homeLock, err := lockFile(filepath.Join(a.lay.Home, syncthingHomeLock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	let := sync.OnceFunc(homeLock)
+	t.Cleanup(let)
+	stop := inBackground(t, func(ctx context.Context) error { return a.run(ctx, nil) })
+	e2eWait(t, "the run to wait beside the earlier engine", 15*time.Second, func() bool {
+		return strings.Contains(statusBeside(a), "the one an earlier vaultsync run left behind")
+	})
+
+	// The service on a Mac, as launchd shows it: its job loaded from the
+	// LaunchAgent, which names VaultSync's own copy, this very build.
+	run := &fakeRunner{}
+	s := &app{goos: "darwin", home: a.home, getenv: envOf(nil), lay: a.lay, out: &bytes.Buffer{},
+		svc: service{goos: "darwin", home: a.home, uid: 501, getenv: envOf(nil), lay: a.lay, run: run, pause: func(time.Duration) {}}}
+	data, err := s.svc.unitFile(s.lay.Agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, mustUnitPath(t, s.svc), string(data))
+	runsAs(t, s, s.lay.Agent, "this build")
+	run.loaded, run.loadedProgram = true, s.lay.Agent
+	if err := s.startService(); err != nil {
+		t.Fatalf("start beside the waiting run: %v\n%s", err, startText(s))
+	}
+	if calls := strings.Join(run.calls, "\n"); strings.Contains(calls, "launchctl bootout") || strings.Contains(calls, "launchctl bootstrap") {
+		t.Fatalf("start loaded the waiting run afresh:\n%s", calls)
+	}
+	if out := startText(s); out != "✓ VaultSync is already running.\n" {
+		t.Fatalf("start beside the waiting run says:\n%s", out)
+	}
+	if said := statusBeside(a); !strings.Contains(said, "Sync engine: running — the one an earlier vaultsync run left behind; it syncs, and VaultSync starts its own engine once it has ended") {
+		t.Fatalf("status after start:\n%s", said)
+	}
+	if pids := fakeEnginePIDs(t, a.lay); len(pids) > 0 || !engineLockHeld(a.lay) {
+		t.Fatalf("after start: engines %v, engine lock held %v", pids, engineLockHeld(a.lay))
+	}
+	earlier.Close()
+	let()
+	e2eWait(t, "the run to start its own engine", 10*time.Second, func() bool { return len(fakeEnginePIDs(t, a.lay)) > 0 })
+	if err := stop(); err != nil {
+		t.Fatalf("the run ended with %v", err)
+	}
+}
+
 // holdTheRunAtItsEngineLock makes the next take of lay's engine lock hold
 // that lock and wait there until the returned release is called: a run is
 // held in the instant after its engine lock, before anything it does next.
