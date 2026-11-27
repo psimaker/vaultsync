@@ -970,7 +970,8 @@ func (a *app) pair(ctx context.Context, args []string) error {
 	// VaultSync's may run, and then the port agent.json records at that
 	// moment. A run records a port it moved to as it takes the engine lock
 	// (#413). pair waits for a lock as long as it waited for the engine
-	// before, and the wait for the engine's API shares that deadline.
+	// before. The wait for the engine's API shares that deadline, and gets
+	// at least three seconds once a lock is seen.
 	deadline := time.Now().Add(pairEngineWait)
 	may, err := waitEngineMayRun(ctx, a.lay, deadline)
 	switch {
@@ -991,7 +992,14 @@ func (a *app) pair(ctx context.Context, args []string) error {
 		return err
 	}
 	if err := waitReady(ctx, client, max(time.Until(deadline), 3*time.Second)); err != nil {
-		return refuse("VaultSync is still starting its sync engine. Try again in a moment; vaultsync status says more.")
+		switch {
+		case ctx.Err() != nil:
+			return ctx.Err()
+		case nobodyListens(err):
+			// A lock is held, and nothing listens yet: a run still starting.
+			return refuse("VaultSync is still starting its sync engine. Try again in a moment; vaultsync status says more.")
+		}
+		return refuse("The sync engine does not answer (%s). vaultsync status says more.", redactPaths(err.Error()))
 	}
 	t, closeTerm := openTerm(a.out)
 	defer closeTerm()

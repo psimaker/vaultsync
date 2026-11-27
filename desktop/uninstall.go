@@ -88,10 +88,11 @@ type ownLockEntry struct {
 
 // ownLocks is the one list of VaultSync's own locks, for the probe before
 // the service goes and for the removal after it. The engine's lock comes
-// last: a service at its start holds setup.lock and takes agent.lock
-// once, without waiting — the probe's instant hold on agent.lock in that
-// moment would make it exit as "already running"; found by setup.lock
-// first, agent.lock is never touched then.
+// last: a service at its start holds setup.lock as it takes agent.lock,
+// and found by setup.lock first, agent.lock is never touched then. A run
+// of this build waits a moment for agent.lock (engineLockGrace, #413), but
+// one of an older build takes it once, without waiting, and the probe's
+// instant hold on it would make that run exit as "already running".
 func ownLocks(lay layout) []ownLockEntry {
 	return []ownLockEntry{
 		{filepath.Join(lay.Base, "setup.lock"), ownerRunningRefusal + serviceGone, busyRefusal, false, false},

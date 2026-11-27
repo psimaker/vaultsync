@@ -682,9 +682,10 @@ func eachCause(err error) []error {
 // noAgentForPause: no agent answers on the socket — which does not prove
 // that the engine is stopped. An agent without a control socket (an older
 // VaultSync, or a socket that could not be made) runs it all the same, so
-// the engine is asked, and the refusal says what is known: it runs and was
-// not paused; nobody listens on its port, so nothing syncs; or neither
-// could be told, so syncing may continue.
+// the engine is asked where a lock says an engine of VaultSync's may run
+// (#413), and the refusal says what is known: it runs and was not paused;
+// no lock is held or nobody listens on its port, so nothing syncs; or
+// neither could be told, so syncing may continue.
 func (a *app) noAgentForPause(ctx context.Context, st agentState, pause bool) error {
 	if st.GUIPort == 0 {
 		return refuse("VaultSync is not set up on this computer yet. Run vaultsync setup.")

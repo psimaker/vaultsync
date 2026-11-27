@@ -266,10 +266,20 @@ func TestIssue413_E2EAnEngineLocksItsHome(t *testing.T) {
 // VaultSync's engine holds: it answers every request and counts them.
 func anotherProgramAtTheRecordedPort(t *testing.T) (*app, *atomic.Int32) {
 	t.Helper()
+	a, asked, _ := aProgramAtTheRecordedPort(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"ping":"pong"}`)
+	})
+	return a, asked
+}
+
+// aProgramAtTheRecordedPort is anotherProgramAtTheRecordedPort answering
+// with h, and its server.
+func aProgramAtTheRecordedPort(t *testing.T, h http.HandlerFunc) (*app, *atomic.Int32, *httptest.Server) {
+	t.Helper()
 	var asked atomic.Int32
 	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		asked.Add(1)
-		_, _ = io.WriteString(w, `{"ping":"pong"}`)
+		h(w, r)
 	}))
 	t.Cleanup(other.Close)
 	tmp, err := filepath.EvalSymlinks(t.TempDir())
@@ -291,7 +301,7 @@ func anotherProgramAtTheRecordedPort(t *testing.T) (*app, *atomic.Int32) {
 	}
 	lay.Socket = filepath.Join(shortDir(t), "agent.sock")
 	return &app{goos: "linux", home: home, getenv: envOf(nil), lay: lay, out: &bytes.Buffer{},
-		svc: service{goos: "linux", home: home, getenv: envOf(nil), lay: lay, run: &fakeRunner{}}}, &asked
+		svc: service{goos: "linux", home: home, getenv: envOf(nil), lay: lay, run: &fakeRunner{}}}, &asked, other
 }
 
 // vaultsync pair, and status, pause and resume where no agent answers, ask
@@ -360,6 +370,10 @@ func TestIssue413_CommandsWithoutAnAgentAskOnlyARunningEngine(t *testing.T) {
 					if want := l.says(c); !strings.Contains(said, want) {
 						t.Fatalf("want %q in:\n%s", want, said)
 					}
+				}
+				// Not known is not stopped: no vault is called so.
+				if l.says != nil && l.says(c) == c.notKnown && strings.Contains(said, "the engine is stopped") {
+					t.Fatalf("not known, but called stopped:\n%s", said)
 				}
 			})
 		}
@@ -564,6 +578,43 @@ func TestIssue413_TakeEngineLockWaitsOnlyItsGrace(t *testing.T) {
 		}
 		if took := time.Since(start); took < engineLockGrace || took > engineLockGrace+time.Second {
 			t.Fatalf("refused after %s, the grace is %s", took.Round(time.Millisecond), engineLockGrace)
+		}
+	})
+}
+
+// With a lock held, pair says what the engine does when it does not answer
+// (#413): nothing listening yet is a run still starting; an answer that is
+// no engine's is said as the engine not answering; a Ctrl-C ends the wait.
+func TestIssue413_PairSaysWhatTheEngineDoesWhenItDoesNotAnswer(t *testing.T) {
+	saved := pairEngineWait
+	pairEngineWait = 300 * time.Millisecond
+	t.Cleanup(func() { pairEngineWait = saved })
+	pair := func(ctx context.Context, a *app) error {
+		return a.pair(ctx, []string{"--code", "TULIP-ANCHOR-42", "--hub", "127.0.0.1:1"})
+	}
+	t.Run("nothing listens yet", func(t *testing.T) {
+		a, _, other := aProgramAtTheRecordedPort(t, func(http.ResponseWriter, *http.Request) {})
+		other.Close()
+		holdLock(t, a.lay.Lock)
+		if err := pair(context.Background(), a); !strings.Contains(refusalText(err), "still starting its sync engine") {
+			t.Fatalf("nothing listens: %v", err)
+		}
+	})
+	t.Run("an answer that is no engine's", func(t *testing.T) {
+		a, _, _ := aProgramAtTheRecordedPort(t, func(w http.ResponseWriter, r *http.Request) { http.Error(w, "forbidden", http.StatusForbidden) })
+		holdLock(t, a.lay.Lock)
+		if err := pair(context.Background(), a); !strings.Contains(refusalText(err), "The sync engine does not answer") || strings.Contains(refusalText(err), "still starting") {
+			t.Fatalf("a refused answer: %v", err)
+		}
+	})
+	t.Run("a Ctrl-C", func(t *testing.T) {
+		a, _, other := aProgramAtTheRecordedPort(t, func(http.ResponseWriter, *http.Request) {})
+		other.Close()
+		holdLock(t, a.lay.Lock)
+		ctx, cancel := context.WithCancel(context.Background())
+		time.AfterFunc(500*time.Millisecond, cancel)
+		if err := pair(ctx, a); !errors.Is(err, context.Canceled) {
+			t.Fatalf("a Ctrl-C during the wait: %v", err)
 		}
 	})
 }

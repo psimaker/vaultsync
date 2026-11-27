@@ -17,7 +17,7 @@
    - **The engine lock free:** Syncthing's lock on the engine's home tells an engine that outlived its run. Syncthing tries that lock once as it starts and exits when it is taken, and a look holds it for an instant. So it is looked at only while no run holds the engine lock, when no Syncthing of VaultSync's can be starting.
    - **Neither lock held:** nothing of VaultSync's runs the engine, and nothing is asked.
    - **A lock that cannot be looked at:** that is not known either way. The lock file is named, and nothing is asked.
-   - **`pair` waits** up to ten seconds for a lock and the engine's answer, under one deadline. A lock with no answer by then is a run still starting. No lock while the background service runs is a service whose engine does not start.
+   - **`pair` waits** up to ten seconds for a lock and the engine's answer, under one deadline. Once a lock is seen, the engine's answer gets at least three seconds. A lock with nothing listening by then is a run still starting, and any other failure is said as the engine not answering. No lock while the background service runs is a service whose engine does not start.
    - **A run waits a quarter of a second for the engine lock** (`takeEngineLock`). A look at the lock holds it for an instant, and that must not refuse a run of this build that starts in that instant.
 
 **Why.**
