@@ -285,6 +285,7 @@ func TestE2EIssue224_TheOldIdentityGoesAndTheVaultStaysAsItWas(t *testing.T) {
 
 	// uninstall --remove-data: the engine stops, its identity and database go.
 	oldDev.stop()
+	waitUntil(t, "the Hub to lose the old identity's connection", 30*time.Second, func() bool { return !connectedTo(ctx, hub.st, oldDev.id) })
 	if err := os.RemoveAll(oldDev.home); err != nil {
 		t.Fatal(err)
 	}

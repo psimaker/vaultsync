@@ -119,7 +119,11 @@ func startSyncthing(t *testing.T, bin, name string) *stInstance {
 		"--gui-address="+inst.gui,
 		"--no-browser", "--no-restart", "--no-upgrade", probing,
 	)
-	cmd.Env = append(os.Environ(), "STNODEFAULTFOLDER=1", "STNOUPGRADE=1", "STGUIAPIKEY="+inst.apiKey)
+	// STMONITORED: the engine runs without its monitor process, so the
+	// process started here is the engine itself. Killing a monitor leaves
+	// its child syncing until its next log line meets the closed pipe
+	// (--no-restart keeps the monitor).
+	cmd.Env = append(os.Environ(), "STNODEFAULTFOLDER=1", "STNOUPGRADE=1", "STMONITORED=1", "STGUIAPIKEY="+inst.apiKey)
 	logFile, err := os.Create(filepath.Join(home, "stdout.log"))
 	if err != nil {
 		t.Fatal(err)
