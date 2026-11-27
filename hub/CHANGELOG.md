@@ -8,6 +8,10 @@ What the setup link's **2) Hub** and the Hub's compose stack (`hub/scripts/setup
 
 ## [Unreleased]
 
+### Fixed
+
+- **`vaultsync-hub pair` prints an answer that is no proper HTTP as one short line, and nothing sent outside an answer** ([#323](https://github.com/psimaker/vaultsync/issues/323)) — when something at the Hub's address answers with what is not HTTP, the command printed what the HTTP library said about it, which quotes what came, as long as it came. Bytes sent behind an answer, or before the request, were written by the library to the terminal as a line of their own. The library's message is now one line of at most 300 bytes, and nothing sent outside an answer reaches the terminal. Pairing reads at most 64 KiB of an answer's head and opens a connection of its own for each step. A failure is told apart as before. Recorded in decision 062.
+
 ## [0.3.1] — 2026-11-16
 
 ### Changed
