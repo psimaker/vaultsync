@@ -282,6 +282,13 @@ extension EngineBridgeSuites {
                     withIntermediateDirectories: true
                 )
                 #expect(manager.addFolder(id: folderID, label: "Vault", path: own.path) == nil)
+                // Right after an engine start the folder can get its marker a
+                // moment after the add, and the add then wrote no record of
+                // the directory the folder syncs in: a copy would be taken
+                // for it (#373). Every reconcile writes that record first, as
+                // here, once the marker is there.
+                try #require(await TestSupport.waitForFolderMarker(folderID: folderID, in: own))
+                SyncBridgeService.noteFolderStorage()
                 FolderPathReconciler.setRel(wholeFolder ? "" : "Vault", forFolder: folderID)
                 try write("first version\n", to: "note.md")
                 try write("goes away while VaultSync does not look\n", to: "deleted.md")
@@ -311,8 +318,16 @@ extension EngineBridgeSuites {
                 Issue.record("the folder never indexed \(files) file(s)")
             }
 
+            /// The folder's path as the engine has it. Not the manager's
+            /// `folders`: the manager's poll refreshes that copy, and a poll
+            /// that read the folders before a reconcile moved this one can
+            /// write what it read after the reconcile's own refresh (#373).
             func configuredPath() -> String? {
-                manager.folders.first { $0.id == folderID }.map { FolderPathReconciler.canonical($0.path) }
+                guard let data = SyncBridgeService.getFoldersJSON().data(using: .utf8),
+                      let folders = try? JSONDecoder().decode([SyncthingManager.FolderInfo].self, from: data) else {
+                    return nil
+                }
+                return folders.first { $0.id == folderID }.map { FolderPathReconciler.canonical($0.path) }
             }
 
             /// A copy made by hand, hidden entries included, and then the
@@ -370,6 +385,28 @@ extension EngineBridgeSuites {
             await rig.manager.reconcileFolderPaths(obsidianRoot: rig.secondRoot.path).value
 
             #expect(rig.manager.foldersWithoutTheirStorage.isEmpty)
+            #expect(rig.configuredPath() == FolderPathReconciler.canonical(rig.secondRoot.path))
+        }
+
+        @MainActor
+        @Test("The path these tests read is the engine's, also when a poll writes what it read before the reconcile after it (#373)")
+        func configuredPathIsTheEngines() async throws {
+            let rig = try await Rig(wholeFolder: true)
+            defer { rig.tearDown() }
+
+            // A poll that read the folders before the folder moved...
+            let readBefore = SyncBridgeService.getFoldersJSON()
+            let readStartedAt = SyncthingManager.monotonicNow()
+            try FileManager.default.moveItem(at: rig.own, to: rig.other)
+            await rig.manager.reconcileFolderPaths(obsidianRoot: rig.secondRoot.path).value
+            // ...and writes it after the reconcile's own refresh, as one did
+            // on the CI runner: the manager's copy names the old place.
+            rig.manager._testApplyPolledFolderRead(json: readBefore, readStartedAt: readStartedAt, engineRunningAcrossRead: true)
+            try #require(
+                rig.manager.folders.first { $0.id == rig.folderID }.map { FolderPathReconciler.canonical($0.path) }
+                    == FolderPathReconciler.canonical(rig.firstRoot.path)
+            )
+
             #expect(rig.configuredPath() == FolderPathReconciler.canonical(rig.secondRoot.path))
         }
 
