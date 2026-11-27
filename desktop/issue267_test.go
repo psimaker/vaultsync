@@ -140,13 +140,18 @@ func TestIssue267_AStopDuringTheDownloadEndsTheRun(t *testing.T) {
 	})
 	a, _ := runFixture(t)
 	olderEngineHere(t, a, "v2.1.6")
-	stop := inBackground(t, func(ctx context.Context) error { return a.run(ctx, nil) })
-	select {
-	case <-asked:
-	case <-time.After(10 * time.Second):
-		t.Fatal("the run never asked for its pin")
+	logged := serviceLogOf(t, func() {
+		stop := inBackground(t, func(ctx context.Context) error { return a.run(ctx, nil) })
+		select {
+		case <-asked:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the run never asked for its pin")
+		}
+		_ = stop()
+	})
+	if strings.Contains(logged, "runs on") {
+		t.Fatalf("a stop during the download kept the engine:\n%s", logged)
 	}
-	_ = stop()
 	if pids := fakeEnginePIDs(t, a.lay); len(pids) > 0 {
 		t.Fatalf("a stop during the download started the engine: %v", pids)
 	}
@@ -194,8 +199,10 @@ func TestIssue267_ARunKeepsNoEngineItCannotTrust(t *testing.T) {
 			c.setUp(t, a)
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
-			if err := a.run(ctx, nil); err == nil {
-				t.Fatal("the run went on without its pin")
+			var err error
+			logged := serviceLogOf(t, func() { err = a.run(ctx, nil) })
+			if err == nil || strings.Contains(logged, "runs on") {
+				t.Fatalf("the run went on without its pin: %v\n%s", err, logged)
 			}
 			if st, err := loadState(a.lay.State); err != nil || st.ControlSocket != "" {
 				t.Fatalf("the run served: %+v %v", st, err)
@@ -310,8 +317,10 @@ func TestIssue267_AProgramChangedDuringTheAttemptIsNotKept(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	if err := a.run(ctx, nil); err == nil {
-		t.Fatal("the run kept a program changed during the attempt")
+	var err error
+	logged := serviceLogOf(t, func() { err = a.run(ctx, nil) })
+	if err == nil || strings.Contains(logged, "runs on") {
+		t.Fatalf("the run kept a program changed during the attempt: %v\n%s", err, logged)
 	}
 	if st, err := loadState(a.lay.State); err != nil || st.ControlSocket != "" {
 		t.Fatalf("the run served: %+v %v", st, err)
