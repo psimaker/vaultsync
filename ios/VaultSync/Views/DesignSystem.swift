@@ -679,6 +679,9 @@ struct VaultButtonStyle: ButtonStyle {
 
     var kind: Kind
     var compact = false
+    /// A button whose action runs: its caller keeps it disabled, and the
+    /// style still draws it at full strength (#354).
+    var busy = false
 
     @Environment(\.isEnabled) private var isEnabled
 
@@ -695,8 +698,14 @@ struct VaultButtonStyle: ButtonStyle {
             )
             .background(background, in: RoundedRectangle(cornerRadius: VaultRadius.button, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: VaultRadius.button, style: .continuous))
-            .opacity(isEnabled ? (configuration.isPressed ? 0.7 : 1) : 0.4)
+            .opacity(Self.opacity(isEnabled: isEnabled, busy: busy, isPressed: configuration.isPressed))
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+
+    /// The strength a button is drawn at: a disabled one is dimmed to 40 %.
+    static func opacity(isEnabled: Bool, busy: Bool, isPressed: Bool) -> Double {
+        guard isEnabled else { return 0.4 }
+        return isPressed ? 0.7 : 1
     }
 
     private var foreground: Color {
@@ -719,8 +728,8 @@ struct VaultButtonStyle: ButtonStyle {
 }
 
 extension ButtonStyle where Self == VaultButtonStyle {
-    static func vault(_ kind: VaultButtonStyle.Kind, compact: Bool = false) -> VaultButtonStyle {
-        VaultButtonStyle(kind: kind, compact: compact)
+    static func vault(_ kind: VaultButtonStyle.Kind, compact: Bool = false, busy: Bool = false) -> VaultButtonStyle {
+        VaultButtonStyle(kind: kind, compact: compact, busy: busy)
     }
 }
 
