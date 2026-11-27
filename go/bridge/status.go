@@ -388,6 +388,14 @@ func parseFolderErrorEntries(raw interface{}) []folderErrorEntry {
 func classifyFolderErrorReason(message string) string {
 	msg := strings.ToLower(message)
 	switch {
+	// The engine's refusals of a folder's directory by its record (#329,
+	// decision 084), before the words a read error inside them may carry. A
+	// read that failed is no finding about the directory and has a reason of
+	// its own.
+	case strings.Contains(msg, folderNotItsDirectory):
+		return "folder_not_its_directory"
+	case strings.Contains(msg, folderDirectoryUnchecked):
+		return "folder_directory_unchecked"
 	case strings.Contains(msg, "permission denied"),
 		strings.Contains(msg, "operation not permitted"),
 		strings.Contains(msg, "access denied"):

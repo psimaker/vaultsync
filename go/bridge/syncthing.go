@@ -321,12 +321,24 @@ func StartSyncthing(configDir string) string {
 		return fmt.Sprintf("database: %v", err)
 	}
 
+	// What this install's records of folder directories are tied to (#315).
+	// The directories themselves are read by NoteFolderStorage and by the
+	// engine's own CheckPath, not here: nothing in a start leaves the app's
+	// own container.
+	anchor, anchorErr := readStorageAnchor(configDir)
+
+	// From the first scan on, the engine syncs a folder only in the
+	// directory its record names (#329, decision 084). Installed before the
+	// engine starts its folders: a folder's first scan begins inside Start.
+	directoryCheck := installDirectoryCheckLocked(sdb, anchor, anchorErr)
+
 	// Create and start Syncthing.
 	opts := syncthing.Options{
 		NoUpgrade: true,
 	}
 	stApp, err = syncthing.New(stCfg, sdb, stEvLogger, stCert, opts)
 	if err != nil {
+		removeDirectoryCheck(directoryCheck)
 		sdb.Close()
 		cancel()
 		return fmt.Sprintf("create app: %v", err)
@@ -334,6 +346,7 @@ func StartSyncthing(configDir string) string {
 
 	// Synchronous startup work, not a wait — see lifecycleTimeouts.
 	if err := stApp.Start(); err != nil {
+		removeDirectoryCheck(directoryCheck)
 		sdb.Close()
 		cancel()
 		stApp = nil
@@ -341,13 +354,11 @@ func StartSyncthing(configDir string) string {
 	}
 
 	stDB = sdb
+	stDirectoryCheck = directoryCheck
 	stRunning = true
 	go watchEngine(stApp)
 
-	// What this install's records of folder directories are tied to (#315).
-	// The directories themselves are read by NoteFolderStorage, not here:
-	// nothing in a start leaves the app's own container.
-	stStorageAnchor, stStorageAnchorErr = readStorageAnchor(configDir)
+	stStorageAnchor, stStorageAnchorErr = anchor, anchorErr
 
 	// Create a buffered event subscription for the bridge.
 	var sub events.Subscription
@@ -391,7 +402,9 @@ func configurePrivacySafeLogging() {
 // Returns "" on success, otherwise the timeout text.
 func stopEngineLocked() string {
 	app, sdb, earlyCancel, earlyDone := stApp, stDB, stEarlyCancel, stEarlyDone
+	directoryCheck := stDirectoryCheck
 	stApp, stDB, stEarlyCancel, stEarlyDone = nil, nil, nil, nil
+	stDirectoryCheck = nil
 	stStorageAnchor, stStorageAnchorErr = 0, nil
 	stEventSub = nil
 	stRunning = false
@@ -409,6 +422,9 @@ func stopEngineLocked() string {
 	// this is its only receive; a cancel without a channel leaves nothing to
 	// wait for.
 	release := func() {
+		// The engine's folders have stopped: nothing asks the check of
+		// this run any more, and its database closes next (#329).
+		removeDirectoryCheck(directoryCheck)
 		if sdb != nil {
 			sdb.Close()
 		}

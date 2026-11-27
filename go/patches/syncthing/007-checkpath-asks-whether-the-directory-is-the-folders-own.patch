@@ -1,0 +1,37 @@
+--- a/lib/config/folderconfiguration.go
++++ b/lib/config/folderconfiguration.go
+@@ -18,6 +18,7 @@
+ 	"path/filepath"
+ 	"slices"
+ 	"strings"
++	"sync/atomic"
+ 	"time"
+ 
+ 	"github.com/shirou/gopsutil/v4/disk"
+@@ -208,9 +209,25 @@
+ 	return buf.Bytes()
+ }
+ 
++// VaultSync: DirectoryCheck, when set, is asked by CheckPath once the
++// folder's directory and its marker entry are there, and its error is
++// CheckPath's. A directory that carries the folder's marker can still be a
++// copy of the folder's own, put in its place by hand, and a scan of it would
++// send every difference out as a change (#329, decision 084). The check must
++// not block on anything the engine holds while it calls CheckPath.
++var DirectoryCheck atomic.Pointer[func(FolderConfiguration) error]
++
+ // CheckPath returns nil if the folder root exists and contains the marker file
+ func (f *FolderConfiguration) CheckPath() error {
+-	return f.checkFilesystemPath(f.Filesystem(), ".")
++	if err := f.checkFilesystemPath(f.Filesystem(), "."); err != nil {
++		return err
++	}
++	// VaultSync: every scan, pull, commit of scan results and write of the
++	// ignores asks here first (#329, decision 084).
++	if check := DirectoryCheck.Load(); check != nil {
++		return (*check)(*f)
++	}
++	return nil
+ }
+ 
+ func (f *FolderConfiguration) checkFilesystemPath(ffs fs.Filesystem, path string) error {
