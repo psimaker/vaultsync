@@ -133,23 +133,31 @@ func (e *AnswerError) Error() string { return e.words }
 // account may not open, one served by another account, a connection made and
 // then dropped, an answer cut short on the way — as it is.
 func (c *Client) Do(ctx context.Context, method, path string, in, out any) error {
+	_, err := c.Ask(ctx, method, path, in, out)
+	return err
+}
+
+// Ask is Do, and also says which build answered: BuildHeader as the agent
+// sent it with whatever it answered — a 404 and an error included — and ""
+// where it sent none or nothing answered.
+func (c *Client) Ask(ctx context.Context, method, path string, in, out any) (build string, err error) {
 	// A socket address too long for this system cannot be served by anyone
 	// — the agent fell back elsewhere, or runs without a socket — so it is
 	// no agent, not an error of its own.
 	if len(c.path) >= peer.SunPathMax {
-		return ErrNoAgent
+		return "", ErrNoAgent
 	}
 	var body io.Reader
 	if in != nil {
 		b, err := json.Marshal(in)
 		if err != nil {
-			return err
+			return "", err
 		}
 		body = bytes.NewReader(b)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, "http://vaultsync"+path, body)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -164,13 +172,14 @@ func (c *Client) Do(ctx context.Context, method, path string, in, out any) error
 		}
 		var ne *net.OpError
 		if errors.As(err, &ne) && ne.Op == "dial" && (errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED)) {
-			return ErrNoAgent
+			return "", ErrNoAgent
 		}
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
+	build = resp.Header.Get(BuildHeader)
 	if resp.StatusCode == http.StatusNotFound {
-		return c.notFound
+		return build, c.notFound
 	}
 	if resp.StatusCode >= 400 {
 		var e struct {
@@ -180,20 +189,20 @@ func (c *Client) Do(ctx context.Context, method, path string, in, out any) error
 		if e.Error == "" {
 			e.Error = resp.Status
 		}
-		return &AnswerError{e.Error}
+		return build, &AnswerError{e.Error}
 	}
 	if out == nil {
-		return nil
+		return build, nil
 	}
 	// Read to its end first: an answer cut short on the way (the request's
 	// time ran out, the connection dropped) is not one that cannot be read,
 	// and its cause stays what it is for the caller to tell.
 	answer, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
-		return err
+		return build, err
 	}
 	if err := json.Unmarshal(answer, out); err != nil {
-		return &AnswerError{err.Error()}
+		return build, &AnswerError{err.Error()}
 	}
-	return nil
+	return build, nil
 }

@@ -251,35 +251,40 @@ func TestIssue264_AParkedOlderAppEndsWhenItsProgramIsReplaced(t *testing.T) {
 }
 
 // runsAs makes this program the file at self (with what), as os.Executable
-// would say it.
+// would say it, and what its build mark: the build compiled into it, which
+// stays what it is when the file is replaced (decision 093).
 func runsAs(t *testing.T, a *app, self, what string) {
 	t.Helper()
 	writeFile(t, self, what)
+	a.build = what
 	a.appEnv = appEnv{goos: a.goos, home: a.home,
 		executable: func() (string, error) { return self, nil },
 		resolve:    filepath.EvalSymlinks, readFile: os.ReadFile, lstat: os.Lstat, owned: ownedByMe}
 }
 
 // start judges the background service only when it runs this very build:
-// then what this program knows of itself holds (older: it does not sync;
-// current: running again). For another build this program's pin says
-// nothing — a newer service syncs, an older one parks — so start claims
-// neither and leaves it to status, which asks the running agent. An older
-// download's start must not say "does not sync" beside a newer service that
-// syncs (the person would delete in that belief, and the deletions reach
-// every device), nor the current build's start "running again" beside an
-// older one that parks.
+// then what this program knows of itself holds (current: running again).
+// For another build this program's pin says nothing — a newer service
+// syncs, an older one parks — so start claims neither and leaves it to
+// status, which asks the running agent. An older download's start must not
+// say "does not sync" beside a newer service that syncs (the person would
+// delete in that belief, and the deletions reach every device), nor the
+// current build's start "running again" beside an older one that parks.
+// Since #416 which build runs is what the running agent says; a parked run
+// never answers, so beside one start names no build.
 func TestIssue264_StartJudgesTheServiceByWhatItRuns(t *testing.T) {
 	// systemd says the started unit runs (and, since #290, that it was not
 	// running before the start).
 	active := func() *fakeRunner { return &fakeRunner{systemd: true} }
 	text := func(a *app) string { return a.out.(*bytes.Buffer).String() }
+	quickAnswerWait(t)
 
-	// This very build, older than what is set up: it does not sync.
+	// This very build, older than what is set up: its service parks and
+	// does not answer. start says what holds whichever build runs.
 	a := installedApp(t, "linux", active())
 	newerEngineHere(t, a.lay)
 	runsAs(t, a, a.lay.Agent, "this build")
-	if err := a.startService(); !strings.Contains(refusalText(err), "runs, but it does not sync: this VaultSync is older") {
+	if err := a.startService(); !strings.Contains(refusalText(err), "runs, but it does not answer: this VaultSync is older") || !strings.Contains(refusalText(err), "A background service of this build does not sync") {
 		t.Fatalf("start of an older build that the service runs: %v", err)
 	}
 	// This very build, current: running again, once its agent answers
@@ -296,6 +301,7 @@ func TestIssue264_StartJudgesTheServiceByWhatItRuns(t *testing.T) {
 	writeFile(t, a.lay.Agent, "the newer build the service runs")
 	newerEngineHere(t, a.lay)
 	runsAs(t, a, filepath.Join(t.TempDir(), "vaultsync"), "an older download")
+	agentOfBuild(t, a, "the newer build the service runs")
 	if err := a.startService(); err != nil {
 		t.Fatalf("start beside a newer service: %v", err)
 	}
@@ -303,15 +309,15 @@ func TestIssue264_StartJudgesTheServiceByWhatItRuns(t *testing.T) {
 		t.Fatalf("start beside a newer service:\n%s", out)
 	}
 
-	// The current build beside an older service, which parks: no
-	// "running again".
+	// The current build beside an older service, which parks and does not
+	// answer: no "running again".
 	a = installedApp(t, "linux", active())
 	writeFile(t, a.lay.Agent, "an older build the service runs")
 	runsAs(t, a, filepath.Join(t.TempDir(), "vaultsync"), "the current build")
 	if err := a.startService(); err != nil {
 		t.Fatalf("start beside an older service: %v", err)
 	}
-	if out := text(a); strings.Contains(out, "running again") || !strings.Contains(out, "vaultsync status says whether it syncs") {
+	if out := text(a); strings.Contains(out, "running again") || !strings.Contains(out, "vaultsync status says") {
 		t.Fatalf("start beside an older service:\n%s", out)
 	}
 }

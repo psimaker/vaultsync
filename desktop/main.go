@@ -28,6 +28,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"syscall"
@@ -42,6 +43,48 @@ import (
 
 // version is stamped by the release build.
 var version = "dev"
+
+// buildMarkOf is what makes two programs one build for start and status
+// (decision 093): what is compiled into a program, read from its memory,
+// never from the file at its path, which can be replaced while it runs.
+// The version a build was stamped with (-X main.version: a release, its
+// release candidate, a pull request's "dev-<commit>"); for one stamped with
+// none, the commit a clean checkout built it from. A release's build
+// information names neither (-trimpath leaves out -ldflags, -buildvcs=false
+// the commit), so it cannot serve alone. Anything else has no mark, and is
+// one build with nothing.
+func buildMarkOf(version string, info *debug.BuildInfo) string {
+	if version != "dev" {
+		return version
+	}
+	if info == nil {
+		return ""
+	}
+	settings := map[string]string{}
+	for _, s := range info.Settings {
+		settings[s.Key] = s.Value
+	}
+	if rev := settings["vcs.revision"]; rev != "" && settings["vcs.modified"] == "false" {
+		return "dev+" + rev
+	}
+	return ""
+}
+
+// buildMark is this program's mark. A mark that cannot travel as a header
+// value — empty, or with a space or a control character — counts as none.
+func buildMark() string {
+	info, _ := debug.ReadBuildInfo()
+	return headerSafe(buildMarkOf(version, info))
+}
+
+func headerSafe(mark string) string {
+	for _, r := range mark {
+		if r < 0x21 || r > 0x7e {
+			return ""
+		}
+	}
+	return mark
+}
 
 func main() {
 	if err := runCLI(os.Args[1:]); err != nil {
@@ -255,6 +298,10 @@ type app struct {
 	// appEnv is where setup looks for VaultSync for Mac around this
 	// program (appbundle.go); the zero value finds none.
 	appEnv appEnv
+	// build is this program's build mark (buildMark): the control socket
+	// says it, and start and status hold the running agent's against it
+	// (decision 093). "" where a test sets none.
+	build string
 	// discover replaces the search for Hubs on this network; a test sets it.
 	discover func(context.Context) ([]pairing.DiscoveredHub, error)
 }
@@ -268,7 +315,7 @@ func newApp() (*app, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &app{goos: runtime.GOOS, home: home, getenv: os.Getenv, lay: lay, out: os.Stdout, appEnv: liveAppEnv(runtime.GOOS, home)}
+	a := &app{goos: runtime.GOOS, home: home, getenv: os.Getenv, lay: lay, out: os.Stdout, appEnv: liveAppEnv(runtime.GOOS, home), build: buildMark()}
 	a.svc = service{goos: a.goos, home: home, uid: os.Getuid(), getenv: os.Getenv, lay: lay, run: execRunner{}}
 	return a, nil
 }
@@ -1909,20 +1956,6 @@ func (a *app) startService() error {
 	if prog, gone := a.svc.programGone(); gone {
 		return refuse("The background service cannot start: %s.", a.programGoneNote(prog))
 	}
-	// Whether the service runs this very build is judged before it starts
-	// and again after it, and taken only where both agree (#290). A run of
-	// VaultSync for Mac puts its own build in the copy's place as it comes
-	// up, so a copy started by its path, judged after the start alone,
-	// compared the service with the build that had just replaced it. And
-	// launchd runs whatever is at the program's path once it starts, so an
-	// app replaced meanwhile makes the look before the start alone stale.
-	// Either way a newer service that syncs was called one that does not;
-	// where the two looks differ, start says only that another build runs.
-	// Both compare the service with this build as it was when start began,
-	// read once: by the look after the start, the file at this program's
-	// path may be the newer build too.
-	self, selfErr := ownProgram(a.appEnv)
-	before := selfErr == nil && a.serviceRunsThisBuild(self)
 	left, err := a.svc.start()
 	if err != nil {
 		return err
@@ -1940,16 +1973,11 @@ func (a *app) startService() error {
 	}
 	st, err := loadState(a.lay.State)
 	older := olderThanSetUp(st, err)
-	thisBuild := before && a.serviceRunsThisBuild(self)
-	if thisBuild && older {
-		// What this program knows of itself holds for the service.
-		return refuse("The background service runs, but it does not sync: %s", a.olderNote(st, err))
-	}
 	// The service manager counts a run as running from its first moment;
 	// its agent answers only once it has come up, which a pin's download
 	// can delay for minutes, and a run that ends before then never does.
 	// So "running" is said only on an answer (#290, decision 085).
-	answered := a.agentAnswers()
+	answered, build := a.agentAnswers()
 	if left && !answered {
 		// A run left alone that gave no answer is looked at once more: one
 		// that is gone or no longer running is loaded afresh and waited for
@@ -1964,28 +1992,42 @@ func (a *app) startService() error {
 			if !a.svc.waitRunning() {
 				return notRunning()
 			}
-			answered = a.agentAnswers()
+			answered, build = a.agentAnswers()
 		}
 	}
-	if thisBuild {
-		switch {
-		case !answered:
-			fmt.Fprintln(a.out, a.noAnswerYet())
-		case left:
+	// Which build the service runs is what its agent says (#416, decision
+	// 093): the files at this program's path and at the service's can be
+	// replaced while the programs started from them run on — a newer
+	// VaultSync for Mac's run puts its build in the copy's place as it comes
+	// up, and a run left alone above may be one whose program was replaced
+	// since. Without an answer start does not know, and names no build.
+	switch a.runningBuildOf(answered, build) {
+	case buildThis:
+		if left {
 			fmt.Fprintln(a.out, "✓ VaultSync is already running.")
-		default:
+		} else {
 			fmt.Fprintln(a.out, "✓ VaultSync is running again.")
 		}
-		return nil
-	}
-	// The service runs another build, of which this program's pin says
-	// nothing — a newer one syncs, an older one parks (#264). start says
-	// only what it knows, and leaves whether it syncs to status, which
-	// asks the running agent.
-	if answered {
+	case buildAnother:
+		// Of another build this program's pin says nothing — a newer one
+		// syncs, an older one parks (#264): whether it syncs is status's
+		// to tell, which asks the running agent. A run left alone whose
+		// program was replaced since is such a build too, and stays as it
+		// is (decision 085).
 		fmt.Fprintln(a.out, "✓ The background service is running. It runs another VaultSync build than this vaultsync — vaultsync status says whether it syncs.")
-	} else {
-		fmt.Fprintln(a.out, "The background service runs, but it does not answer yet. It runs another VaultSync build than this vaultsync — vaultsync status says whether it syncs.")
+	default:
+		if answered {
+			fmt.Fprintln(a.out, "✓ The background service is running. vaultsync status says whether it syncs.")
+			break
+		}
+		if older {
+			// A service of this build parks, and a parked run never
+			// answers; whether this build is the one that runs, start
+			// cannot tell — a newer one on its way up does not answer
+			// yet either. So it says what holds either way.
+			return refuse("The background service runs, but it does not answer: %s A background service of this build does not sync — run the setup link to get the current VaultSync; vaultsync status says whether the service syncs.", a.olderFact(st, err))
+		}
+		fmt.Fprintln(a.out, a.noAnswerYet())
 	}
 	if older {
 		fmt.Fprintln(a.out, "Note: "+a.olderFact(st, err))
@@ -2005,20 +2047,4 @@ func (a *app) noAnswerYet() string {
 		return fmt.Sprintf("VaultSync's background service runs, but it does not answer on its control socket: it recorded that it could not open it (%s says why). vaultsync status asks the sync engine directly and says whether it syncs.", tildePath(a.home, a.lay.SocketErrorFile()))
 	}
 	return fmt.Sprintf("VaultSync's background service runs, but it does not answer yet — it may still be installing its sync engine. vaultsync status says where it stands; if it stays so, run vaultsync stop, then vaultsync start (its log: %s).", a.logHint())
-}
-
-// serviceRunsThisBuild: the background service runs this very build — the
-// program its LaunchAgent names on a Mac, VaultSync's own copy on Linux
-// (the only one setup gives the unit), byte for byte or by its code
-// directory. Either one not to be read: not known to be this build.
-func (a *app) serviceRunsThisBuild(self []byte) bool {
-	prog := a.lay.Agent
-	if a.goos == "darwin" {
-		prog = a.svc.program()
-	}
-	if prog == "" {
-		return false
-	}
-	have, err := a.appEnv.readFile(prog)
-	return err == nil && sameBuild(have, self)
 }

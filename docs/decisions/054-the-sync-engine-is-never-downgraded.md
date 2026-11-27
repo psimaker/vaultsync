@@ -8,4 +8,6 @@
 
 **Rejected alternatives.** Installing the older pin as before (the hazard). Raising the format only with the first pin bump past v2.1.6: a step a bump can forget, and until then a kept v0.1.0 would still move the service beside the app (decision 053). Running the newer installed engine from the older agent: the agent edits the engine's config in the shape its own pin generates, and that shape may differ (#267 keeps the installed engine only in the other direction, a newer agent whose pin could not be downloaded).
 
+**Amended.** By decision 093 (#416): `start` judges whether the service runs this very build by what its running agent says, not by the files at the programs' paths; without an answer it names no build, and where this vaultsync is older it refuses without claiming which build runs.
+
 **Links.** #264, #254 (PR #260), #267; decisions 046, 053.
