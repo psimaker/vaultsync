@@ -714,22 +714,19 @@ func (a *app) noAgentForPause(ctx context.Context, st agentState, pause bool) er
 	}
 	if err == nil {
 		// The engine's port is asked only while a lock says an engine of
-		// VaultSync's may run, and then the one agent.json records now
-		// (#413). Neither lock held: nothing syncs. A lock that cannot be
-		// looked at is not known either way, and nothing is asked.
+		// VaultSync's may run, and then the one agent.json records now,
+		// both read under state.lock (#413, #419). Neither lock held:
+		// nothing syncs. A lock that cannot be looked at, a record that
+		// cannot be read or names no port, is not known either way: never
+		// the port read before.
 		var may bool
-		switch may, err = engineMayRun(a.lay); {
+		var now agentState
+		switch may, now, err = engineMayRunAtItsPort(a.lay); {
 		case err != nil:
 		case !may:
 			return nothingSyncs()
 		default:
-			// The port agent.json records now. A record that cannot be read,
-			// or names no port, is not known either way: never the port read
-			// before.
-			var now agentState
-			if now, err = loadState(a.lay.State); err == nil {
-				client, err = a.engine().client(now)
-			}
+			client, err = a.engine().client(now)
 		}
 	}
 	if err == nil {

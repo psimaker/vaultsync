@@ -265,7 +265,7 @@ const exitRestart = 3
 // and returns an error when the engine stops on its own — the service
 // manager then restarts the agent after its throttle interval.
 func (e engine) supervise(ctx context.Context, st agentState, logf func(string, ...any)) error {
-	unlock, err := takeEngineLock(e.lay.Lock)
+	unlock, err := e.takeEngineLockLeavingATakenPort(&st, logf)
 	if err != nil {
 		return err
 	}
@@ -305,12 +305,18 @@ func (e engine) superviseLocked(ctx context.Context, st agentState, logf func(st
 
 // leaveATakenPort moves the engine's API port off one another program took
 // while the engine was down, and records the new one in agent.json. A run
-// calls it as it takes the engine lock and before each start of its
-// engine. From the lock on, agent.json names the port the run's engine
-// answers on (#413). An engine an earlier run left keeps its port
-// (engineHomeKeepsPort, #419): the run holds the engine lock, so no
-// Syncthing of VaultSync's is starting while it looks.
+// calls it as it takes the engine lock (takeEngineLockLeavingATakenPort)
+// and before each start of its engine. From the lock on, agent.json names
+// the port the run's engine answers on (#413). An engine an earlier run
+// left keeps its port (engineHomeKeepsPort, #419): the run holds the
+// engine lock, so no Syncthing of VaultSync's is starting while it looks.
 func (e engine) leaveATakenPort(st *agentState, logf func(string, ...any)) error {
+	return e.leaveATakenPortWith(st, logf, updateState)
+}
+
+// leaveATakenPortWith is leaveATakenPort recording the move with write:
+// updateState, or updateStateHeld for a caller that holds state.lock.
+func (e engine) leaveATakenPortWith(st *agentState, logf func(string, ...any), write func(string, func(*agentState)) error) error {
 	if st.GUIPort <= 0 || portFree(st.GUIPort) || engineHomeKeepsPort(e.lay) {
 		return nil
 	}
@@ -320,7 +326,32 @@ func (e engine) leaveATakenPort(st *agentState, logf func(string, ...any)) error
 	}
 	logf("the engine's API port was taken; moving it to %d", port)
 	st.GUIPort = port
-	return updateState(e.lay.State, func(s *agentState) { s.GUIPort = port })
+	return write(e.lay.State, func(s *agentState) { s.GUIPort = port })
+}
+
+// takeEngineLockLeavingATakenPort takes the engine lock and leaves a port
+// another program took, both under state.lock: taken just before the
+// engine lock and let go once the port is recorded. A command looks at the
+// engine lock and reads the port under state.lock too
+// (engineMayRunAtItsPort), so it does not read the recorded port in the
+// instant a run moves off it (#419). The engine lock still comes before
+// anything slow, a pin's download among them. A refusal at the engine
+// lock is ErrEngineRunning, and the run then owns nothing.
+func (e engine) takeEngineLockLeavingATakenPort(st *agentState, logf func(string, ...any)) (func(), error) {
+	unlockState, err := lockFileWait(stateLockOf(e.lay.State))
+	if err != nil {
+		return nil, err
+	}
+	defer unlockState()
+	unlock, err := takeEngineLock(e.lay.Lock)
+	if err != nil {
+		return nil, err
+	}
+	if err := e.leaveATakenPortWith(st, logf, updateStateHeld); err != nil {
+		unlock()
+		return nil, err
+	}
+	return unlock, nil
 }
 
 // earlierEngineLook is how often a run looks again at an engine an earlier
@@ -515,25 +546,85 @@ func engineMayRun(lay layout) (bool, error) {
 	return held, nil
 }
 
-// waitEngineMayRun is engineMayRun, asked again until an engine of
+// stateLockWait is how long a command waits for state.lock before it looks
+// at the engine (engineMayRunAtItsPort): a run holds it for a moment as it
+// takes the engine lock. A variable for the tests.
+var stateLockWait = 2 * time.Second
+
+// errStateLockHeld: state.lock stayed held for all of stateLockWait.
+var errStateLockHeld = errors.New("another VaultSync process held it throughout")
+
+// engineMayRunAtItsPort is engineMayRun, with the agent.json read when an
+// engine of VaultSync's may run — both under state.lock, which a run holds
+// from just before its engine lock until it has recorded the port it moves
+// to. A command that sees a run's engine lock then reads the port that
+// run's engine answers on, never the recorded port in the instant the run
+// moves off it (#419). The lock is waited for at most stateLockWait; one
+// held longer, or one that cannot be looked at, is a *lockLookError: not
+// known either way. VaultSync's folder is never made: none there, or a
+// record gone meanwhile (a removal), is nothing of VaultSync's that runs,
+// and a lock file the look made where the record is gone goes again. An
+// agent.json that cannot be read is returned as that error.
+func engineMayRunAtItsPort(lay layout) (bool, agentState, error) {
+	path := stateLockOf(lay.State)
+	h, err := takeStateLockBriefly(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, agentState{}, nil
+	}
+	if err != nil {
+		return false, agentState{}, &lockLookError{path: path, err: err}
+	}
+	if _, err := os.Stat(lay.State); errors.Is(err, fs.ErrNotExist) {
+		_, _ = h.Discard()
+		return false, agentState{}, nil
+	}
+	defer h.Release()
+	may, err := engineMayRun(lay)
+	if err != nil || !may {
+		return false, agentState{}, err
+	}
+	st, err := loadState(lay.State)
+	if err != nil {
+		return false, agentState{}, err
+	}
+	return true, st, nil
+}
+
+// takeStateLockBriefly takes state.lock without making VaultSync's folder,
+// waiting at most stateLockWait for a holder to let go.
+func takeStateLockBriefly(path string) (*lock.Handle, error) {
+	deadline := time.Now().Add(stateLockWait)
+	for {
+		h, err := lockFileNoCreate(path)
+		if !errors.Is(err, ErrEngineRunning) {
+			return h, err
+		}
+		if time.Now().After(deadline) {
+			return nil, errStateLockHeld
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// waitEngineMayRun is engineMayRunAtItsPort, asked again until an engine of
 // VaultSync's may run or the deadline passes: a run takes the engine lock a
 // moment after it starts.
-func waitEngineMayRun(ctx context.Context, lay layout, deadline time.Time) (bool, error) {
+func waitEngineMayRun(ctx context.Context, lay layout, deadline time.Time) (bool, agentState, error) {
 	for {
-		may, err := engineMayRun(lay)
+		may, st, err := engineMayRunAtItsPort(lay)
 		if err != nil || may || time.Now().After(deadline) {
-			return may, err
+			return may, st, err
 		}
 		select {
 		case <-ctx.Done():
-			return false, ctx.Err()
+			return false, agentState{}, ctx.Err()
 		case <-time.After(200 * time.Millisecond):
 		}
 	}
 }
 
 // lockLookError is a lock of VaultSync's that cannot be looked at: a link
-// or a permission in its place.
+// or a permission in its place, or state.lock held past stateLockWait.
 type lockLookError struct {
 	path string
 	err  error

@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -205,6 +206,173 @@ func TestIssue419_ARunWaitsForAnEngineAnEarlierRunLeft(t *testing.T) {
 			t.Fatalf("an engine started (%v)", pids)
 		}
 	})
+}
+
+// holdTheRunAtItsEngineLock makes the next take of lay's engine lock hold
+// that lock and wait there until the returned release is called: a run is
+// held in the instant after its engine lock, before anything it does next.
+// held is closed once the lock is taken.
+func holdTheRunAtItsEngineLock(t *testing.T, lay layout) (held <-chan struct{}, release func()) {
+	t.Helper()
+	reached, let := make(chan struct{}), make(chan struct{})
+	var once, letOnce sync.Once
+	orig := takeLockFile
+	takeLockFile = func(path string) (*lock.Handle, error) {
+		h, err := orig(path)
+		if err == nil && path == lay.Lock {
+			once.Do(func() {
+				close(reached)
+				<-let
+			})
+		}
+		return h, err
+	}
+	release = func() { letOnce.Do(func() { close(let) }) }
+	// Registered before the run's own cleanup: the run is stopped first.
+	t.Cleanup(func() { takeLockFile = orig })
+	t.Cleanup(release)
+	return reached, release
+}
+
+// A command that looks while a run has taken the engine lock but not yet
+// recorded the port it moves to asks nothing at the port from before the
+// move, which another program holds (#419): a run and setup's engine alike.
+// The run is held in that instant at its take of the engine lock. Let go
+// within the command's wait, the command reads the port the run moved to;
+// held past it, the command says it cannot tell and asks nothing.
+func TestIssue419_ACommandAsksNoPortARunIsMovingOff(t *testing.T) {
+	saved, savedWait := pairEngineWait, stateLockWait
+	pairEngineWait, stateLockWait = 300*time.Millisecond, 500*time.Millisecond
+	t.Cleanup(func() { pairEngineWait, stateLockWait = saved, savedWait })
+	commands := []struct {
+		name string
+		run  func(a *app) error
+		// what it says when it cannot tell whether the engine runs
+		notKnown string
+	}{
+		{"status", func(a *app) error { return a.status(context.Background()) }, "Sync engine: not known"},
+		{"pause", func(a *app) error { return a.pauseSync(context.Background(), true) }, "could not confirm whether the sync engine runs"},
+		{"resume", func(a *app) error { return a.pauseSync(context.Background(), false) }, "could not confirm whether the sync engine runs"},
+		{"pair", func(a *app) error {
+			return a.pair(context.Background(), []string{"--code", "TULIP-ANCHOR-42", "--hub", "127.0.0.1:1"})
+		}, "could not tell whether its sync engine runs"},
+	}
+	starters := []struct {
+		name  string
+		start func(a *app) func(ctx context.Context) error
+	}{
+		{"a run", func(a *app) func(ctx context.Context) error {
+			return func(ctx context.Context) error { return a.run(ctx, nil) }
+		}},
+		{"setup's engine", func(a *app) func(ctx context.Context) error {
+			eng := a.engine()
+			st, _ := loadState(a.lay.State)
+			return func(ctx context.Context) error { return eng.supervise(ctx, st, func(string, ...any) {}) }
+		}},
+	}
+	for _, s := range starters {
+		for _, c := range commands {
+			for _, letGoWithin := range []bool{true, false} {
+				name := s.name + ", " + c.name + ", held past the wait"
+				if letGoWithin {
+					name = s.name + ", " + c.name + ", let go within the wait"
+				}
+				t.Run(name, func(t *testing.T) {
+					a, _ := runFixture(t)
+					st, err := loadState(a.lay.State)
+					if err != nil {
+						t.Fatal(err)
+					}
+					// Another program takes the recorded port while no engine runs.
+					var asked atomic.Int32
+					l, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(st.GUIPort))
+					if err != nil {
+						t.Fatal(err)
+					}
+					other := &httptest.Server{Listener: l, Config: &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						asked.Add(1)
+						_, _ = io.WriteString(w, `{"ping":"pong"}`)
+					})}}
+					other.Start()
+					t.Cleanup(other.Close)
+					// Held between its engine lock and its record of the port
+					// it moves to.
+					held, let := holdTheRunAtItsEngineLock(t, a.lay)
+					stop := inBackground(t, s.start(a))
+					select {
+					case <-held:
+					case <-time.After(10 * time.Second):
+						t.Fatal("the run never took the engine lock")
+					}
+					done := make(chan string, 1)
+					go func() { done <- withCopy(a, c.run) }()
+					if letGoWithin {
+						time.Sleep(100 * time.Millisecond)
+						let()
+					}
+					var said string
+					select {
+					case said = <-done:
+					case <-time.After(30 * time.Second):
+						t.Fatal("the command did not end")
+					}
+					n := asked.Load()
+					let()
+					_ = stop()
+					if n > 0 {
+						t.Fatalf("%s asked the port another program holds %d times:\n%s", c.name, n, said)
+					}
+					if !letGoWithin && !strings.Contains(said, c.notKnown) {
+						t.Fatalf("held past the wait, want %q in:\n%s", c.notKnown, said)
+					}
+					if letGoWithin {
+						if now, err := loadState(a.lay.State); err != nil || now.GUIPort == st.GUIPort {
+							t.Fatalf("the run did not record its move: port %d (%v)", now.GUIPort, err)
+						}
+						if strings.Contains(said, c.notKnown) {
+							t.Fatalf("let go within the wait, yet:\n%s", said)
+						}
+					}
+				})
+			}
+		}
+	}
+}
+
+// With state.lock held past the wait, by whatever holds it, a command
+// cannot tell whether the engine runs, says so, and asks nothing (#419).
+func TestIssue419_ACommandMeetingAHeldStateLockAsksNothing(t *testing.T) {
+	saved, savedWait := pairEngineWait, stateLockWait
+	pairEngineWait, stateLockWait = 300*time.Millisecond, 200*time.Millisecond
+	t.Cleanup(func() { pairEngineWait, stateLockWait = saved, savedWait })
+	for _, c := range []struct {
+		name, says string
+		run        func(a *app) error
+	}{
+		{"status", "Sync engine: not known — its lock file", func(a *app) error { return a.status(context.Background()) }},
+		{"pause", "could not confirm whether the sync engine runs", func(a *app) error { return a.pauseSync(context.Background(), true) }},
+		{"pair", "could not tell whether its sync engine runs: its lock file", func(a *app) error {
+			return a.pair(context.Background(), []string{"--code", "TULIP-ANCHOR-42", "--hub", "127.0.0.1:1"})
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			a, asked := anotherProgramAtTheRecordedPort(t)
+			holdLock(t, a.lay.Lock)
+			holdLock(t, stateLockOf(a.lay.State))
+			start := time.Now()
+			done := make(chan string, 1)
+			go func() { done <- withCopy(a, c.run) }()
+			var said string
+			select {
+			case said = <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatalf("still waiting for state.lock after %s; the wait is %s", time.Since(start).Round(time.Millisecond), stateLockWait)
+			}
+			if n := asked.Load(); n > 0 || !strings.Contains(said, c.says) || !strings.Contains(said, "state.lock") {
+				t.Fatalf("asked %d times after %s:\n%s", n, time.Since(start).Round(time.Millisecond), said)
+			}
+		})
+	}
 }
 
 // A run beside an engine that outlived its run, with the real engine

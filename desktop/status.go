@@ -239,22 +239,22 @@ func (a *app) status(ctx context.Context) error {
 		return err
 	}
 	// The engine's port is asked only while a lock says an engine of
-	// VaultSync's may run, and then the one agent.json records now (#413).
-	switch may, err := engineMayRun(a.lay); {
-	case err != nil:
+	// VaultSync's may run, and then the one agent.json records now, both
+	// read under state.lock (#413, #419). A record that cannot be read, or
+	// names no port, leaves nothing to ask: never the port read before.
+	may, now, err := engineMayRunAtItsPort(a.lay)
+	var lookErr *lockLookError
+	switch {
+	case errors.As(err, &lookErr):
 		// Not known either way: the vaults are listed, not called stopped.
 		fmt.Fprintf(w, "Sync engine: not known — %s; once that is fixed, run vaultsync status again\n", a.lockLookNote(err))
 		_, err := io.WriteString(w, a.configuredReport("Vaults (whether they sync right now is not known)", "not known whether it syncs").Text)
 		return err
+	case err != nil:
+		return err
 	case !may:
 		fmt.Fprintln(w, "Sync engine: not running — nothing syncs right now")
 		_, err := io.WriteString(w, a.offlineReport().Text)
-		return err
-	}
-	// The port agent.json records now. A record that cannot be read, or
-	// names no port, leaves nothing to ask: never the port read before.
-	now, err := loadState(a.lay.State)
-	if err != nil {
 		return err
 	}
 	if client, err = eng.client(now); err != nil {

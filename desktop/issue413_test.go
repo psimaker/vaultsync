@@ -407,18 +407,25 @@ func TestIssue413_PairWaitsForARunAndAsksThePortItRecords(t *testing.T) {
 	t.Cleanup(engine.Close)
 	_, p, _ := net.SplitHostPort(strings.TrimPrefix(engine.URL, "http://"))
 	moved, _ := strconv.Atoi(p)
-	// The run, in its order: the engine lock, then the moved port's record.
-	// Its look at the lock is retried, as pair's look holds it for an
-	// instant. It acts between two of pair's looks, 200 ms apart.
+	// The run, in its order: state.lock, the engine lock, the moved port's
+	// record, then state.lock let go (#419). Its take of the engine lock is
+	// retried, as a look holds it for an instant. It acts between two of
+	// pair's looks, 200 ms apart.
 	held := make(chan func(), 1)
 	go func() {
 		time.Sleep(300 * time.Millisecond)
 		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+			unlockState, err := lockFileWait(stateLockOf(a.lay.State))
+			if err != nil {
+				break
+			}
 			if unlock, err := lockFile(a.lay.Lock); err == nil {
-				_ = updateState(a.lay.State, func(s *agentState) { s.GUIPort = moved })
+				_ = updateStateHeld(a.lay.State, func(s *agentState) { s.GUIPort = moved })
+				unlockState()
 				held <- unlock
 				return
 			}
+			unlockState()
 		}
 		held <- func() {}
 	}()

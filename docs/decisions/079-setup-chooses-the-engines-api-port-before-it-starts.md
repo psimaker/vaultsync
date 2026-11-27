@@ -12,7 +12,7 @@
 
    A lock that cannot be looked at keeps the port too. `TestIssue413_E2EAnEngineLocksItsHome` fails when a Syncthing bump moves Syncthing's lock.
 3. **The supervisor's move stays.** A run still moves off a port taken between two of its starts. Every reader of the port follows `agent.json`, as the control server does.
-4. **The commands that ask the engine itself do so only while a lock says an engine of VaultSync's may run**, and at the port `agent.json` records at that moment (`engineMayRun`). `vaultsync pair` always asks the engine itself, so it checks every time. `status`, `pause` and `resume` check where no agent answers.
+4. **The commands that ask the engine itself do so only while a lock says an engine of VaultSync's may run**, and at the port `agent.json` records at that moment (`engineMayRunAtItsPort`). `vaultsync pair` always asks the engine itself, so it checks every time. `status`, `pause` and `resume` check where no agent answers. A command does not read the recorded port in the instant a run moves off it (#419).
    - **The engine lock held:** a run of VaultSync's owns the engine. A run leaves a port another program took as it takes that lock, before anything slow such as a pin's download (`leaveATakenPort`). `agent.json`, read then, names the port its engine answers on.
    - **The engine lock free:** Syncthing's lock on the engine's home tells an engine that outlived its run. Syncthing tries that lock once as it starts and exits when it is taken, and a look holds it for an instant. So it is looked at only while no run holds the engine lock, when no Syncthing of VaultSync's can be starting.
    - **Neither lock held:** nothing of VaultSync's runs the engine, and nothing is asked.
@@ -33,7 +33,6 @@
 - **Asking the holder of the port whether it is this engine.** That sends a request to whatever holds the port, which this decision avoids, and the two locks tell the same.
 
 **Not covered.**
-- The instant between a run's engine lock and its record of a moved port: a command or a setup that looks then reads the port from before the move.
 - The instant between the choice and the engine's bind.
 - A service still on an older build. It waits for no grace, and it leaves a taken port only as it starts its engine, after its install.
 - A run of an older build beside an engine that outlived its run moves the recorded port; the commands then ask the moved port. A run of this build keeps it and waits for that engine (#419, decision 086).
