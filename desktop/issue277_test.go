@@ -29,7 +29,7 @@ func TestIssue277_TheVersionLineIsTheFormTheSetupLinkReads(t *testing.T) {
 	pin := strings.TrimPrefix(syncthingVersion, "v")
 	for _, tc := range []struct {
 		name, stamp, want string
-		release          bool
+		release           bool
 	}{
 		{"a release", "0.4.0", "vaultsync 0.4.0 (Syncthing " + pin + ")", true},
 		{"a release candidate", "0.4.0-rc.1", "vaultsync 0.4.0-rc.1 (Syncthing " + pin + ")", true},
