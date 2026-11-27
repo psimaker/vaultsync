@@ -512,7 +512,7 @@ func (a *app) setup(ctx context.Context, args []string) error {
 	if temporary != nil {
 		gate = temporary.notReadyYet
 	}
-	if err := waitEngine(ctx, client, 60*time.Second, temporary, gate); err != nil {
+	if err := waitEngine(ctx, client, setupEngineWait, temporary, gate); err != nil {
 		return fmt.Errorf("the sync engine did not start: %w — see %s", err, a.logHint())
 	}
 	noServiceNote := func() {
@@ -1245,6 +1245,10 @@ func (a *app) lockLookNote(err error) string {
 // VaultSync's and its answer: as long as it waited for the engine's API
 // before (#413).
 var pairEngineWait = 10 * time.Second
+
+// setupEngineWait is how long setup waits for its engine to answer. A
+// variable for the tests.
+var setupEngineWait = 60 * time.Second
 
 // errNotSetUpAnymore: no agent.json — never set up, or removed since.
 var errNotSetUpAnymore = refuse("VaultSync is not set up on this computer (anymore). Run vaultsync setup.")

@@ -1501,9 +1501,22 @@ func TestIssue254_ASetupThatFailsBeforeTheEngineLeavesTheCopy(t *testing.T) {
 	}
 }
 
+// quickEngineWaitBeside shortens setup's wait for its engine. In
+// macSetupFixture the fake engine holds the lock on the engine's home, so
+// the engine setup --no-service starts takes it for one an earlier run left
+// behind and waits, and setup asks no port (#419): what the tests that call
+// this check comes before that wait.
+func quickEngineWaitBeside(t *testing.T) {
+	t.Helper()
+	saved := setupEngineWait
+	setupEngineWait = 500 * time.Millisecond
+	t.Cleanup(func() { setupEngineWait = saved })
+}
+
 // setup --no-service from the copy also removes a start at login whose app
 // is gone: it does not depend on the service.
 func TestIssue254_SetupWithoutTheServiceDropsAStaleStartAtLogin(t *testing.T) {
+	quickEngineWaitBeside(t)
 	a, run, app := macSetupFixture(t)
 	if err := a.svc.installTray(filepath.Join(app, "Contents", "MacOS", "vaultsync-tray"), true); err != nil {
 		t.Fatal(err)
@@ -1732,6 +1745,7 @@ func TestIssue254_UninstallKeepsTheCommandOnTheAppWhenTheCopyCannotFollow(t *tes
 // setup --no-service run from the app also removes a start at login whose
 // program is gone (the app moved from one Applications folder to the other).
 func TestIssue254_SetupWithoutTheServiceFromTheAppDropsAStaleStartAtLogin(t *testing.T) {
+	quickEngineWaitBeside(t)
 	a, run, _ := macSetupFixture(t)
 	gone := filepath.Join(t.TempDir(), "Applications", appBundleName, "Contents", "MacOS", "vaultsync-tray")
 	if err := a.svc.installTray(gone, true); err != nil {
