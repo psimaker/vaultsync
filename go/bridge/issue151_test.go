@@ -383,6 +383,24 @@ func TestIssue151_AnEntryChangedBetweenTheLookAndTheOpenIsRefused(t *testing.T) 
 		issue144AssertFileBytes(t, filepath.Join(folder, "moved.md"), []byte("issue-151-copy"))
 	})
 
+	t.Run("keep the other version", func(t *testing.T) {
+		const folderID = "issue151changedkeepother"
+		folder := issue151Folder(t, base, folderID)
+		issue151Write(t, filepath.Join(folder, "Notes", "target.md"), "issue-151-target")
+		issue151Write(t, filepath.Join(folder, issue151OriginalName), "issue-151-original")
+		issue151Write(t, filepath.Join(folder, issue151ConflictName), "issue-151-copy")
+		replaceAfterLook(t, issue151ConflictName, filepath.Join("Notes", "target.md"), "moved.md")
+
+		if errMsg := ResolveConflict(folderID, issue151ConflictName, true); errMsg != conflictNotRegularError {
+			t.Errorf("ResolveConflict(keepConflict: true) = %q, want %q", errMsg, conflictNotRegularError)
+		}
+		issue144AssertFileBytes(t, filepath.Join(folder, issue151OriginalName), []byte("issue-151-original"))
+		issue144AssertFileBytes(t, filepath.Join(folder, "Notes", "target.md"), []byte("issue-151-target"))
+		issue144AssertFileBytes(t, filepath.Join(folder, "moved.md"), []byte("issue-151-copy"))
+		issue151AssertLink(t, filepath.Join(folder, issue151ConflictName), filepath.Join("Notes", "target.md"))
+		issue143AssertNoOperationTemps(t, folder)
+	})
+
 	t.Run("directory", func(t *testing.T) {
 		const folderID = "issue151changeddir"
 		folder := issue151Folder(t, base, folderID)
