@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+	"unicode"
 )
 
 // #224: a computer that runs `vaultsync uninstall --remove-data` and is set up
@@ -78,6 +81,33 @@ func deviceRows(out, name string) []string {
 	return rows
 }
 
+// testDeviceID is a device ID whose groups all read like group, so its short
+// ID is group itself.
+func testDeviceID(group string) string {
+	return strings.TrimSuffix(strings.Repeat(group+"-", 8), "-")
+}
+
+// runStatus runs `status` against the fake and returns what it printed.
+func runStatus(t *testing.T, fake *fakeSyncthing, srvURL string) string {
+	t.Helper()
+	cfg := statusConfig(t, srvURL, fake.apiKey, "")
+	out, err := captureStdout(t, func() error { return cmdStatus(context.Background(), cfg) })
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	return out
+}
+
+// deviceSection returns the rows below "Devices (".
+func deviceSection(out string) []string {
+	_, after, ok := strings.Cut(out, "Devices (")
+	if !ok {
+		return nil
+	}
+	lines := strings.Split(strings.TrimRight(after, "\n"), "\n")
+	return lines[1:]
+}
+
 func TestIssue224_StatusTellsTwoDevicesOfOneNameApart(t *testing.T) {
 	fake, srv := newFakeSyncthing(t, fakeHubID)
 	fake.devices = append(fake.devices,
@@ -85,31 +115,110 @@ func TestIssue224_StatusTellsTwoDevicesOfOneNameApart(t *testing.T) {
 		deviceConfig{DeviceID: fakeOtherDeviceID, Name: "hermes"},
 	)
 	fake.connected[fakeOtherDeviceID] = true
+	seen := time.Date(2026, 10, 7, 14, 2, 0, 0, time.UTC)
+	fake.lastSeen[fakeDeviceID] = seen
+	fake.lastSeen[fakeOtherDeviceID] = time.Now()
 	fake.folders = []folderConfig{{
 		ID: "vs-000000000001", Label: "Notes", Path: "/var/syncthing/vaults/notes",
 		Devices: []folderDevice{{DeviceID: fakeHubID}, {DeviceID: fakeDeviceID}, {DeviceID: fakeOtherDeviceID}},
 	}}
-	cfg := statusConfig(t, srv.URL, fake.apiKey, "")
 
-	out, err := captureStdout(t, func() error { return cmdStatus(context.Background(), cfg) })
-	if err != nil {
-		t.Fatalf("status: %v\n%s", err, out)
-	}
+	out := runStatus(t, fake, srv.URL)
 	rows := deviceRows(out, "hermes")
 	if len(rows) != 2 {
 		t.Fatalf("status lists %d rows for hermes, want 2:\n%s", len(rows), out)
 	}
 	// The first group of a device ID is what Syncthing shows as its short ID;
-	// it is what tells one "hermes" from the other.
-	for _, short := range []string{"BBBBBBB", "CCCCCCC"} {
-		n := 0
-		for _, row := range rows {
-			if strings.Contains(row, short) {
-				n++
-			}
+	// it begins the row and tells one "hermes" from the other.
+	want := []string{
+		fmt.Sprintf("  BBBBBBB  %-32s offline, last seen %s", "hermes", seen.Local().Format("2006-01-02 15:04")),
+		fmt.Sprintf("  CCCCCCC  %-32s connected", "hermes"),
+	}
+	for i := range want {
+		if rows[i] != want[i] {
+			t.Errorf("row %d:\n got %q\nwant %q\n%s", i, rows[i], want[i], out)
 		}
-		if n != 1 {
-			t.Errorf("%d rows name the device %s, want 1:\n%s", n, short, out)
+	}
+}
+
+func TestIssue224_StatusSaysWhenAnOfflineDeviceWasLastSeen(t *testing.T) {
+	fake, srv := newFakeSyncthing(t, fakeHubID)
+	seen := time.Date(2026, 11, 2, 9, 30, 0, 0, time.UTC)
+	ids := map[string]string{
+		"connected": testDeviceID("CCCCCCC"),
+		"seen":      testDeviceID("DDDDDDD"),
+		"never":     testDeviceID("EEEEEEE"),
+		"unlisted":  testDeviceID("FFFFFFF"),
+	}
+	for _, name := range []string{"connected", "seen", "never", "unlisted"} {
+		fake.devices = append(fake.devices, deviceConfig{DeviceID: ids[name], Name: name})
+	}
+	fake.connected[ids["connected"]] = true
+	fake.lastSeen[ids["connected"]] = seen
+	fake.lastSeen[ids["seen"]] = seen
+	// What Syncthing reports for a device it has never seen.
+	fake.lastSeen[ids["never"]] = time.Unix(0, 0)
+
+	rows := deviceSection(runStatus(t, fake, srv.URL))
+	want := []string{
+		fmt.Sprintf("  CCCCCCC  %-32s connected", "connected"),
+		fmt.Sprintf("  DDDDDDD  %-32s offline, last seen %s", "seen", seen.Local().Format("2006-01-02 15:04")),
+		fmt.Sprintf("  EEEEEEE  %-32s offline, never seen", "never"),
+		fmt.Sprintf("  FFFFFFF  %-32s offline", "unlisted"),
+	}
+	if strings.Join(rows, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("rows:\n%s\nwant:\n%s", strings.Join(rows, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// setup.sh waits until status answers and then prints its second line, the
+// Hub's device ID: neither may hang on the device statistics.
+func TestIssue224_StatusAnswersWithoutTheDeviceStatistics(t *testing.T) {
+	fake, srv := newFakeSyncthing(t, fakeHubID)
+	fake.devices = append(fake.devices, deviceConfig{DeviceID: fakeDeviceID, Name: "hermes"})
+	fake.lastSeen[fakeDeviceID] = time.Now()
+	fake.statsFail = true
+
+	out := runStatus(t, fake, srv.URL)
+	if lines := strings.Split(out, "\n"); len(lines) < 2 || lines[1] != "Device ID:   "+fakeHubID {
+		t.Errorf("the second line must be the Hub's device ID, for setup.sh:\n%s", out)
+	}
+	if rows := deviceSection(out); len(rows) != 1 || rows[0] != fmt.Sprintf("  BBBBBBB  %-32s offline", "hermes") {
+		t.Errorf("rows without statistics: %q", rows)
+	}
+}
+
+// A device's name is set by the device, and in Syncthing's Web UI by anyone
+// who has it: in the row it is cleaned like every name the Hub keeps, so it
+// can neither break the row nor move the short ID that begins it (061).
+func TestIssue224_ANameCanNeitherBreakNorMoveItsRow(t *testing.T) {
+	fake, srv := newFakeSyncthing(t, fakeHubID)
+	names := []struct{ group, name, shown string }{
+		{"DDDDDDD", "two\u2028lines", "twolines"},
+		{"EEEEEEE", "\u202Eesrever", "esrever"},
+		{"FFFFFFF", "car\rriage", "carriage"},
+		{"GGGGGGG", "csi\u009b2J", "csi2J"},
+		{"HHHHHHH", "\u05e9\u05dc\u05d5\u05dd 12", "\u05e9\u05dc\u05d5\u05dd 12"},
+		{"IIIIIII", "\u200b\u200e", "(unnamed)"},
+	}
+	for _, n := range names {
+		fake.devices = append(fake.devices, deviceConfig{DeviceID: testDeviceID(n.group), Name: n.name})
+	}
+
+	out := runStatus(t, fake, srv.URL)
+	rows := deviceSection(out)
+	if len(rows) != len(names) {
+		t.Fatalf("%d rows for %d devices:\n%s", len(rows), len(names), out)
+	}
+	for i, n := range names {
+		if want := fmt.Sprintf("  %s  %-32s offline", n.group, n.shown); rows[i] != want {
+			t.Errorf("row %d:\n got %q\nwant %q", i, rows[i], want)
+		}
+	}
+	for _, r := range out {
+		hidden := r != '\n' && unicode.In(r, unicode.Cc, unicode.Cf, unicode.Zl, unicode.Zp)
+		if hidden {
+			t.Errorf("status printed U+%04X", r)
 		}
 	}
 }

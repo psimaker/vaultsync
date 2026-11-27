@@ -304,8 +304,25 @@ func TestE2EIssue224_TheOldIdentityGoesAndTheVaultStaysAsItWas(t *testing.T) {
 		t.Fatalf("status: %v\n%s", err, out)
 	}
 	t.Logf("vaultsync-hub status with both identities:\n%s", out)
-	if rows := deviceRows(out, "hermes"); len(rows) != 2 {
+	rows := deviceRows(out, "hermes")
+	if len(rows) != 2 {
 		t.Fatalf("status lists %d rows for hermes, want 2:\n%s", len(rows), out)
+	}
+	// Each row begins with its device's short ID, and the engine's statistics
+	// say when the old identity was last seen (#224, decision 094).
+	for _, row := range rows {
+		switch {
+		case strings.HasPrefix(row, "  "+shortDeviceID(oldDev.id)+"  hermes "):
+			if !strings.Contains(row, " offline, last seen 20") {
+				t.Errorf("the old identity's row: %q", row)
+			}
+		case strings.HasPrefix(row, "  "+shortDeviceID(newDev.id)+"  hermes "):
+			if !strings.HasSuffix(row, " connected") {
+				t.Errorf("the new identity's row: %q", row)
+			}
+		default:
+			t.Errorf("a row that begins with neither identity's short ID: %q", row)
+		}
 	}
 
 	// The removal: the engine forgets the old identity.
