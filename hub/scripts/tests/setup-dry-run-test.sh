@@ -197,6 +197,7 @@ SHIM
 # Every root guard below reads the real account, never the shim: it answers
 # 4242 for root, so a guard on it would let root into a case root cannot
 # run (#365).
+# shellcheck disable=SC2016 # the $(…) and $REAL_ID are the text, not expansions
 if grep -n '\[ "$(id -u)" !*= 0 \]' "$SCRIPT_DIR/setup-dry-run-test.sh"; then
 	fail 'a root guard reads the id shim: use "$REAL_ID" -u (#365)'
 fi
