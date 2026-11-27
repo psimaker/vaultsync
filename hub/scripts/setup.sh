@@ -902,16 +902,27 @@ install_app() {
 		# one there says the move went inside something that took the
 		# app's place after the checks above — another setup at the same
 		# time, say. The update stops, and the app set aside stays where
-		# it is. Taken back out only when it carries this run's inode (it
-		# then goes with the unpack folder); one that cannot be told to be
-		# this run's is left as it is. Nothing at that name: the move put
+		# it is. Taken back out only when it carries this run's inode; one
+		# that cannot be told to be this run's is left as it is. Nothing at that name: the move put
 		# this app at the place, as it reported, and the update goes on —
 		# also when the look at the place cannot tell whose the app there
 		# is: one not known to be this run's is only never removed.
 		nested=$(inode_of "$APP/$APP_NAME") || nested=""
 		if [ -n "$nested" ] && [ "$nested" = "$NEW_INODE" ]; then
-			mv "$APP/$APP_NAME" "$new" 2>/dev/null ||
+			# Taken out into a folder of its own beside the place — never
+			# into the unpack folder, which the exit removes — and removed
+			# only once it carries this run's inode there: what another hand
+			# put at that name in the instant since the look stays there,
+			# and is named.
+			held=$(mktemp -d "$2/.$APP_NAME.held.XXXXXXXX") || held=""
+			if [ -z "$held" ] || ! mv "$APP/$APP_NAME" "$held/$APP_NAME" 2>/dev/null; then
+				[ -z "$held" ] || rmdir "$held" 2>/dev/null || true
 				warn "The new VaultSync for Mac could not be taken back out of $APP — it is at $APP/$APP_NAME."
+			elif [ "$(inode_of "$held/$APP_NAME" || echo none)" = "$NEW_INODE" ]; then
+				rm -rf "$held"
+			else
+				warn "What was at $APP/$APP_NAME when this setup took its app back out is not known to be that app — it was kept at $held/$APP_NAME."
+			fi
 		else
 			warn "What is at $APP/$APP_NAME is not known to be the VaultSync for Mac this setup was installing — it was left as it is."
 		fi

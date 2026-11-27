@@ -332,6 +332,18 @@ case "\$1" in
 		fi
 		;;
 esac
+# SWAP_AT_TAKEBACK=DIR: as the setup takes its app back out of something at
+# the place, another hand has just moved that app to DIR and put a folder of
+# its own at that name, so the take-back moves that folder.
+case "\$1" in
+	*/VaultSync\ for\ Mac.app/VaultSync\ for\ Mac.app)
+		if [ -n "\${SWAP_AT_TAKEBACK:-}" ]; then
+			"$REAL_MV" "\$1" "\$SWAP_AT_TAKEBACK" || exit 1
+			mkdir -p "\$1"
+			printf 'slipped in\\n' >"\$1/marker"
+		fi
+		;;
+esac
 exec "$REAL_MV" "\$@"
 SHIM
 REAL_MKTEMP=$(command -v mktemp)
@@ -1787,6 +1799,31 @@ grep -qF "The VaultSync for Mac installed before is at $kept/VaultSync for Mac.a
 $(cat "$SANDBOX/results/run.log")"
 rm -rf "$installed" "$kept"
 pass "a move that went inside something at the place, with an unreadable inode there, stops and removes nothing"
+
+# The take-back of this run's nested app moves it into a folder of its own
+# and removes it only once its inode there is this run's: what another hand
+# put at that name in the instant since the look is kept there, and named —
+# never removed with the unpack folder.
+rm -rf "$SANDBOX/taken-away"
+make_app "$APPS" eu.vaultsync.desktop installed-268-takeback 0.10.0
+release_with offered-268-takeback "" 0.10.0
+if (APPEAR_AT_APP=1 SWAP_AT_TAKEBACK="$SANDBOX/taken-away" mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+	fail "an update whose move went inside something at the place must stop"
+fi
+held=$(find "$APPS" -maxdepth 1 -name '.VaultSync for Mac.app.held.*')
+{ [ -n "$held" ] && [ "$(cat "$held/VaultSync for Mac.app/marker" 2>/dev/null)" = "slipped in" ]; } ||
+	fail "what another hand put at the take-back's name was removed, or not kept:
+$(find "$APPS" 2>&1 | head -20)
+$(cat "$SANDBOX/results/run.log")"
+grep -qF "it was kept at $held/VaultSync for Mac.app" "$SANDBOX/results/run.log" || fail "the setup does not say where it kept it:
+$(cat "$SANDBOX/results/run.log")"
+grep -q "build: vaultsync offered-268-takeback\$" "$SANDBOX/taken-away/Contents/MacOS/vaultsync" || fail "this run's app the other hand moved away was changed"
+kept=$(find "$APPS" -maxdepth 1 -name '.VaultSync for Mac.app.replaced.*')
+{ [ -n "$kept" ] && grep -q "build: vaultsync installed-268-takeback\$" "$kept/VaultSync for Mac.app/Contents/MacOS/vaultsync"; } ||
+	fail "the app installed before is not kept where it was set aside:
+$(find "$APPS" 2>&1 | head -20)"
+rm -rf "$installed" "$held" "$kept" "$SANDBOX/taken-away"
+pass "a take-back moves this run's nested app into a folder of its own and keeps anything else there"
 
 # The set-aside rename fails, or Ctrl-C comes before it happened: what
 # stands at the place is the app installed before, as it was — the setup
