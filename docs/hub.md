@@ -560,14 +560,24 @@ not in the `docker` group, put `sudo` in front of each `docker`.
    docker pull syncthing/syncthing:2
    ```
 
-4. Stop the Hub, copy its Syncthing, and name 2.x in `.env`. The Hub must be
-   stopped for the copy: a copy taken while Syncthing writes may not be whole.
+4. Stop the Hub, copy its Syncthing, and name 2.x in `.env`:
 
    ```sh
-   docker compose stop
-   sudo cp -a syncthing syncthing-1.x-backup
-   echo 'VAULTSYNC_HUB_SYNCTHING_IMAGE=syncthing/syncthing:2' >> .env
+   test ! -e syncthing-1.x-backup &&
+     docker compose stop &&
+     sudo cp -a syncthing syncthing-1.x-backup &&
+     printf '\nVAULTSYNC_HUB_SYNCTHING_IMAGE=syncthing/syncthing:2\n' >> .env
    ```
+
+   The Hub must be stopped for the copy: a copy taken while Syncthing writes
+   may not be whole. The setting starts with a newline, so it gets a line of
+   its own even when `.env` does not end in one (a blank line in `.env` is
+   harmless). Each command runs only when the one before it worked, so a
+   copy that fails never leads to the move. If `syncthing-1.x-backup` already
+   exists from an earlier try, nothing runs: if the Hub still runs 1.x, that
+   copy may be incomplete, so remove it (`sudo rm -rf syncthing-1.x-backup`)
+   and run the commands again; if it runs 2.x, that copy is your way back,
+   so keep it.
 
 5. Start the Hub and watch the conversion:
 
@@ -629,36 +639,45 @@ vaults again and keeps them.
 
 ```sh
 cd /srv/vaultsync
-docker compose stop
-sudo mv syncthing syncthing-2.x
-sudo mv syncthing-1.x-backup syncthing
-sed -i '/^VAULTSYNC_HUB_SYNCTHING_IMAGE=/d' .env
-docker compose up -d
+test -d syncthing-1.x-backup && test ! -e syncthing-2.x &&
+  docker compose stop &&
+  sudo mv syncthing syncthing-2.x &&
+  sudo mv syncthing-1.x-backup syncthing &&
+  sed -i '/^VAULTSYNC_HUB_SYNCTHING_IMAGE=/d' .env &&
+  docker compose up -d
 ```
 
-Remove `syncthing-2.x` once the Hub syncs again.
+Each command runs only when the one before it worked. Without a
+`syncthing-1.x-backup`, or with a `syncthing-2.x` left from an earlier way
+back, nothing runs and the Hub keeps running as it is; run a second time,
+the commands do nothing. Remove `syncthing-2.x` once the Hub syncs again.
 
 **Back to 1.x without a copy**, if you moved without one. Syncthing 2.x keeps
 the 1.x database as `syncthing/config/index-v0.14.0.db-migrated` and the 1.x
 configuration as `syncthing/config/config.xml.v37`. When it starts, it deletes
 the database once it is more than 14 days old, counted from when 1.x last
 wrote to it, which can be before the move, and the configuration after 30
-days: go back soon, or not this way. Both must still be there; if the first
-command does not list both, this way back is closed and the Hub stays on 2.x.
-Then put both back and move the 2.x database aside. Do not forget the third
-move: left in place, the 2.x database is what Syncthing takes up again at a
-later move to 2.x, as it was on the day of this one.
+days: go back soon, or not this way. The commands put both back and move the
+2.x database aside. Do not forget the third move if you do it by hand: left in
+place, the 2.x database is what Syncthing takes up again at a later move to
+2.x, as it was on the day of this one.
 
 ```sh
 cd /srv/vaultsync
-sudo ls -d syncthing/config/index-v0.14.0.db-migrated syncthing/config/config.xml.v37
-docker compose stop
-sudo mv syncthing/config/index-v0.14.0.db-migrated syncthing/config/index-v0.14.0.db
-sudo cp -p syncthing/config/config.xml.v37 syncthing/config/config.xml
-sudo mv syncthing/config/index-v2 syncthing/config/index-v2.moved-aside
-sed -i '/^VAULTSYNC_HUB_SYNCTHING_IMAGE=/d' .env
-docker compose up -d
+sudo test -e syncthing/config/index-v0.14.0.db-migrated &&
+  sudo test -e syncthing/config/config.xml.v37 &&
+  docker compose stop &&
+  sudo mv syncthing/config/index-v0.14.0.db-migrated syncthing/config/index-v0.14.0.db &&
+  sudo cp -p syncthing/config/config.xml.v37 syncthing/config/config.xml &&
+  sudo mv syncthing/config/index-v2 syncthing/config/index-v2.moved-aside &&
+  sed -i '/^VAULTSYNC_HUB_SYNCTHING_IMAGE=/d' .env &&
+  docker compose up -d
 ```
+
+The two `test` lines are the check: when either leftover is gone, nothing
+runs, this way back is closed, and the Hub stays on 2.x. Each command runs
+only when the one before it worked; run a second time, the commands do
+nothing.
 
 ## Troubleshooting
 
