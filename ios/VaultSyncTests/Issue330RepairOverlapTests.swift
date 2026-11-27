@@ -449,7 +449,7 @@ extension EngineBridgeSuites {
 
         @MainActor
         @Test("A vault's own folder moved into another vault's folder is held by the reconcile and refused by the bridge")
-        func overlapIsRefused() throws {
+        func overlapIsRefused() async throws {
             TestSupport.resetSyncthingState()
             let sandbox = FileManager.default.temporaryDirectory
                 .appendingPathComponent("issue330-\(UUID().uuidString)", isDirectory: true)
@@ -466,7 +466,12 @@ extension EngineBridgeSuites {
             let innerID = "issue330-inner-\(UUID().uuidString)"
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             #expect(SyncBridgeService.addFolder(id: outerID, label: "Outer", path: outer.path) == nil)
+            try #require(await TestSupport.waitForFolderMarker(folderID: outerID, in: outer))
             #expect(SyncBridgeService.addFolder(id: innerID, label: "Inner", path: own.path) == nil)
+            try #require(await TestSupport.waitForFolderMarker(folderID: innerID, in: own))
+            // The record of the inner folder's directory, read once its
+            // marker is there (#315).
+            SyncBridgeService.noteFolderStorage()
 
             // A move keeps the marker's file number: the directory is the
             // folder's own, and only the overlap is left to refuse it.
