@@ -1592,7 +1592,11 @@ func (a *app) startService() error {
 	// app replaced meanwhile makes the look before the start alone stale.
 	// Either way a newer service that syncs was called one that does not;
 	// where the two looks differ, start says only that another build runs.
-	before := a.serviceRunsThisBuild()
+	// Both compare the service with this build as it was when start began,
+	// read once: by the look after the start, the file at this program's
+	// path may be the newer build too.
+	self, selfErr := ownProgram(a.appEnv)
+	before := selfErr == nil && a.serviceRunsThisBuild(self)
 	if err := a.svc.start(); err != nil {
 		return err
 	}
@@ -1606,7 +1610,7 @@ func (a *app) startService() error {
 	}
 	st, err := loadState(a.lay.State)
 	older := olderThanSetUp(st, err)
-	if before && a.serviceRunsThisBuild() {
+	if before && a.serviceRunsThisBuild(self) {
 		// What this program knows of itself holds for the service.
 		if older {
 			return refuse("The background service runs, but it does not sync: %s", a.olderNote(st, err))
@@ -1629,13 +1633,12 @@ func (a *app) startService() error {
 // program its LaunchAgent names on a Mac, VaultSync's own copy on Linux
 // (the only one setup gives the unit), byte for byte or by its code
 // directory. Either one not to be read: not known to be this build.
-func (a *app) serviceRunsThisBuild() bool {
+func (a *app) serviceRunsThisBuild(self []byte) bool {
 	prog := a.lay.Agent
 	if a.goos == "darwin" {
 		prog = a.svc.program()
 	}
-	self, err := ownProgram(a.appEnv)
-	if prog == "" || err != nil {
+	if prog == "" {
 		return false
 	}
 	have, err := a.appEnv.readFile(prog)
