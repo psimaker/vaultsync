@@ -70,7 +70,13 @@ func issue380App(t *testing.T, syncs bool) (*app, *fakeEngine, *atomic.Int32) {
 		f.Devices = []syncthing.FolderDevice{folderDeviceOf(testMyID), folderDeviceOf(testHubID)}
 		eng.folders = append(eng.folders, f)
 	}
-	writeFile(t, lay.Syncthing, "the engine")
+	// A program that runs until it is stopped: setup --no-service starts it
+	// as its temporary engine, and the fake answers in its place. A file
+	// that cannot run would end that engine before the fake's answer counts.
+	writeFile(t, lay.Syncthing, "#!/bin/sh\nexec sleep 120\n")
+	if err := os.Chmod(lay.Syncthing, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	sum, err := fileSHA256(lay.Syncthing)
 	if err != nil {
 		t.Fatal(err)
@@ -206,9 +212,11 @@ func TestIssue380_AnInterruptEndsEveryQuestion(t *testing.T) {
 
 			// The line the person types next goes to the next question.
 			go func() { _, _ = io.WriteString(pw, "yes\n") }()
-			a, err := tm.ask(context.Background(), "Next: ")
+			next, stop := context.WithTimeout(context.Background(), 5*time.Second)
+			defer stop()
+			a, err := tm.ask(next, "Next: ")
 			if err != nil || a != "yes" {
-				t.Fatalf("the next question got %q, %v", a, err)
+				t.Fatalf("the next question got %q, %v — its line went to another read", a, err)
 			}
 		})
 	}
@@ -293,5 +301,181 @@ func TestIssue380_AnInterruptIsNeverGoBack(t *testing.T) {
 	hub.mu.Unlock()
 	if provisions != 0 || eng.folderCount() != 0 {
 		t.Fatalf("the Hub was asked %d times, %d folders were added", provisions, eng.folderCount())
+	}
+}
+
+// noTerminal makes a command find no terminal to ask on.
+func noTerminal(t *testing.T) {
+	t.Helper()
+	orig := ttyPath
+	ttyPath = filepath.Join(t.TempDir(), "no-tty")
+	t.Cleanup(func() { ttyPath = orig })
+}
+
+const issue380NothingToPair = "✓ VaultSync is set up, and this computer syncs “Notes” with your Hub — there is nothing to pair."
+
+// setup with no flags — the setup link run again to update — on a computer
+// that already syncs a vault with a Hub ends once VaultSync is current: it
+// neither searches for the Hub nor asks for a code, with a terminal or
+// without one, also with --no-service; it says what syncs and names
+// vaultsync pair for another vault or Hub, and succeeds (#380, decision
+// 081).
+func TestIssue380_SetupOnAComputerThatSyncsAsksForNoCode(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		terminal bool
+		args     []string
+	}{
+		{"without a terminal", false, nil},
+		{"in a terminal", true, nil},
+		{"without a terminal, --no-service", false, []string{"--no-service"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			a, _, searched := issue380App(t, true)
+			typeLine := func(string) {}
+			if c.terminal {
+				typeLine = fifoTerminal(t)
+			} else {
+				noTerminal(t)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			out, done := printingInBackground(a, func() error { return a.setup(ctx, c.args) })
+			asked, ended, err := waitFor(out, done, issue380CodeQuestion, 30*time.Second)
+			if asked || !ended {
+				// Let the question go: an interrupt, then a line.
+				cancel()
+				typeLine("TULIP-ANCHOR-42")
+				<-done
+				t.Fatalf("setup on a computer that syncs asked for the code (or never ended); searched for the Hub %d times:\n%s", searched.Load(), out)
+			}
+			if err != nil || searched.Load() != 0 {
+				t.Fatalf("setup on a computer that syncs: %v, searched for the Hub %d times\n%s", err, searched.Load(), out)
+			}
+			for _, want := range []string{issue380NothingToPair, "Check on it any time:", "Another vault, or another Hub:  ~/.local/bin/vaultsync pair"} {
+				if !strings.Contains(out.String(), want) {
+					t.Fatalf("setup on a computer that syncs does not say %q:\n%s", want, out)
+				}
+			}
+			if noService := strings.Contains(out.String(), "VaultSync has no background service on this computer"); noService != (c.args != nil) {
+				t.Fatalf("the line for a setup without the service: %v\n%s", noService, out)
+			}
+			if strings.Contains(out.String(), "Syncing is paused") || strings.Contains(out.String(), "is sharing") {
+				t.Fatalf("setup says what is not so:\n%s", out)
+			}
+		})
+	}
+}
+
+// A pairing flag asks for a pairing: setup goes on to it as before, also on
+// a computer that already syncs — a script that sets up a second vault, or
+// runs its setup again with the same flags (#228), meets what it met before
+// (#380, decision 081).
+func TestIssue380_SetupWithAPairingFlagPairsAsBefore(t *testing.T) {
+	for _, args := range [][]string{
+		{"--code", "TULIP-ANCHOR-42"},
+		{"--hub", "127.0.0.1:1"},
+		{"--vault", "Notes"},
+		{"--create"},
+		{"--path", "~/Vaults/Work"},
+		{"--yes"},
+		{"--name", "Work laptop"},
+	} {
+		t.Run(args[0], func(t *testing.T) {
+			a, _, searched := issue380App(t, true)
+			noTerminal(t)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			out, done := printingInBackground(a, func() error { return a.setup(ctx, args) })
+			err := <-done
+			if strings.Contains(out.String(), "nothing to pair") || !isRefusal(err) {
+				t.Fatalf("setup %v on a computer that syncs: %v, searched for the Hub %d times\n%s", args, err, searched.Load(), out)
+			}
+			if args[0] != "--hub" && searched.Load() != 1 {
+				t.Fatalf("setup %v searched for the Hub %d times", args, searched.Load())
+			}
+		})
+	}
+}
+
+// A computer that syncs nothing with a Hub yet still pairs: set up but
+// never paired, a Hub paired whose vault is not set up here, a folder
+// shared with no other device — and where the engine's configuration
+// cannot be read, nothing is decided on it (#380, decision 081).
+func TestIssue380_SetupOnAComputerThatSyncsNothingYetPairs(t *testing.T) {
+	syncingFolder := func(home string) syncthing.FolderConfig {
+		f := syncthingFolder("vs-notes", "Notes", filepath.Join(home, "Vaults", "Notes"))
+		f.Devices = []syncthing.FolderDevice{folderDeviceOf(testMyID), folderDeviceOf(testHubID)}
+		return f
+	}
+	hubDevice := syncthing.DeviceConfig{DeviceID: testHubID, Name: "Test Hub"}
+	for _, c := range []struct {
+		name    string
+		prepare func(eng *fakeEngine, home string)
+	}{
+		{"never paired", func(*fakeEngine, string) {}},
+		{"a Hub, no vault", func(eng *fakeEngine, home string) {
+			eng.devices = append(eng.devices, hubDevice)
+		}},
+		{"a folder shared with no other device", func(eng *fakeEngine, home string) {
+			f := syncthingFolder("vs-notes", "Notes", filepath.Join(home, "Vaults", "Notes"))
+			f.Devices = []syncthing.FolderDevice{folderDeviceOf(testMyID)}
+			eng.folders = append(eng.folders, f)
+		}},
+		{"the configuration cannot be read", func(eng *fakeEngine, home string) {
+			eng.devices = append(eng.devices, hubDevice)
+			eng.folders = append(eng.folders, syncingFolder(home))
+			eng.failFolders = true
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			a, eng, searched := issue380App(t, false)
+			eng.mu.Lock()
+			c.prepare(eng, a.home)
+			eng.mu.Unlock()
+			noTerminal(t)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			out, done := printingInBackground(a, func() error { return a.setup(ctx, nil) })
+			err := <-done
+			var r *refusal
+			if !errors.As(err, &r) || r.needs != "code" || searched.Load() != 1 || strings.Contains(out.String(), "nothing to pair") {
+				t.Fatalf("setup on a computer that syncs nothing yet: %v, searched for the Hub %d times\n%s", err, searched.Load(), out)
+			}
+		})
+	}
+}
+
+// What setup says beside it on a computer that syncs: how many vaults, that
+// syncing is paused here, and each share the Hub sends that is not set up
+// yet, with the command for it — and it still asks nothing (#380).
+func TestIssue380_SetupSaysWhatIsPausedAndWhatWaits(t *testing.T) {
+	a, eng, searched := issue380App(t, true)
+	eng.mu.Lock()
+	for i := range eng.devices {
+		if eng.devices[i].DeviceID == testHubID {
+			eng.devices[i].Paused = true
+		}
+	}
+	f := syncthingFolder("vs-work", "Work", filepath.Join(a.home, "Vaults", "Work"))
+	f.Devices = []syncthing.FolderDevice{folderDeviceOf(testMyID), folderDeviceOf(testHubID)}
+	eng.folders = append(eng.folders, f)
+	eng.mu.Unlock()
+	eng.offer("vs-diary", testHubID, "Diary")
+	noTerminal(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	out, done := printingInBackground(a, func() error { return a.setup(ctx, nil) })
+	if err := <-done; err != nil || searched.Load() != 0 {
+		t.Fatalf("setup: %v, searched for the Hub %d times\n%s", err, searched.Load(), out)
+	}
+	for _, want := range []string{
+		"✓ VaultSync is set up, and this computer syncs 2 vaults with your Hub — there is nothing to pair.",
+		"Syncing is paused on this computer: ~/.local/bin/vaultsync resume starts it again.",
+		"Your Hub “Test Hub” is sharing “Diary” with this computer, but it is not set up here yet: ~/.local/bin/vaultsync pair sets it up.",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("setup does not say %q:\n%s", want, out)
+		}
 	}
 }

@@ -1,0 +1,22 @@
+# 081 — setup on a computer that already syncs pairs only when asked, and Ctrl-C ends every question
+
+**Context.** The setup link is how the desktop agent is updated. `vaultsync status`, `vaultsync start` and an older build's refusal all say to run it. It runs the new build's `vaultsync setup`, which installed the engine, the service and VaultSync's own copy and then always paired: it searched for the Hub and asked for the code. Without a terminal it stopped with "Pass the code your Hub printed". Someone updating has no code at hand, and nothing said the update was already done. Ctrl-C at that question did not help either: the command turned Ctrl-C into a cancelled context, but the question read the terminal without looking at it and waited for Return (#380).
+
+**Decision.**
+1. **setup run without a pairing flag, on a computer that already syncs a vault with a Hub, ends once VaultSync is in place.** The engine, the service, the copy and the command are set up as before. Then setup says that VaultSync is set up and what this computer syncs, and names `vaultsync pair` for another vault or another Hub. It also says when syncing is paused here, and names each share the Hub sends that is not set up here yet. It exits 0. It neither searches for a Hub nor asks anything.
+2. **The engine's own configuration proves it.** At least one folder must be shared with a device other than this computer, read through the engine's API once setup has waited for the engine. Every other device in VaultSync's engine is a Hub a pairing added; the agent adds none as an introducer. A configuration that cannot be read decides nothing: setup pairs as before.
+3. **A pairing flag asks for a pairing.** `--code`, `--hub`, `--vault`, `--create`, `--path`, `--yes` and `--name` each mean a pairing only. With any of them, setup pairs exactly as before, so a script that sets up a second vault, or runs its setup again (#228), meets what it met before. `--no-service` is not a pairing flag. `vaultsync pair` does not change.
+4. **A computer that syncs nothing with a Hub yet pairs as before.** That covers one set up but never paired, a Hub paired whose vault is not set up here, and a folder shared with no other device. There, the pairing is the step that is left.
+5. **Ctrl-C ends every question in the terminal.** `ask` and `confirm` return `errInterrupted` as soon as the command's context ends. A read still waiting is handed to the next question, so two reads never share the terminal. An interrupt is never an answer, and never the "go back" an empty answer can be: it ends the command. Every question comes before the Hub is asked to share or start a vault, and before the engine changes. So `setup` and `pair` say "Nothing was paired." and what stays installed. The command exits 130.
+
+**Why.** The update path must end without a decision nobody updating can make, and fail to nothing: skipping a pairing changes nothing on this computer or the Hub. What syncs is what the engine's configuration holds, and nothing else on this computer says it as truly. Ctrl-C is the first way out a person tries, and a question that ignores it leaves only Return, which feeds the question an answer.
+
+**Rejected alternatives.**
+- *The pairing journal (`pairing.json`) as the proof.* It records attempts and never authorizes anything. It keeps the newest ten. An accepted entry can name a vault that was removed since.
+- *Any Hub device in the engine as the proof.* A Hub paired whose vault was never set up here still needs the pairing.
+- *An `--update` flag that the setup link passes.* The setup link is live at merge and runs the new build's setup, so the rule in the agent reaches every update path once that build is released. A flag would also leave an older setup link's run, and `vaultsync setup` typed by hand, asking.
+- *A question such as "Pair another vault? [y/N]".* It is a question again on the update path, and without a terminal it needs a flag again. `vaultsync pair` is that way.
+
+**Not covered.** A computer whose Hub was replaced, so that its engine still lists the old one, gets the same end. Its text names `vaultsync pair`. An interrupt outside a question, such as during the search for a Hub, the handshake or the wait for a share, ends with the context's error as before. Released builds still ask on their own setup. The rule reaches a computer with the release that carries it, which the setup link installs before it runs the setup.
+
+**Links.** #380, #228, #175; decisions 045, 046, 053.

@@ -143,8 +143,10 @@ func usage(w io.Writer) {
 	fmt.Fprint(w, `vaultsync — keeps your Obsidian vaults in sync with your VaultSync Hub
 
   vaultsync setup        install the sync engine and the background service,
-                         pair with your Hub and choose a vault
-  vaultsync pair         sync another vault, or pair with another Hub
+                         pair with your Hub and choose a vault; run again on
+                         a computer that syncs, it updates VaultSync and pairs
+                         only when a flag below asks
+  vaultsync pair       sync another vault, or pair with another Hub
   vaultsync status       what syncs where, and whether your Hub is connected
   vaultsync pause        pause syncing on this computer (until vaultsync resume)
   vaultsync resume       resume it
@@ -475,11 +477,25 @@ func (a *app) setup(ctx context.Context, args []string) error {
 	if err := waitEngine(ctx, client, 60*time.Second, temporary); err != nil {
 		return fmt.Errorf("the sync engine did not start: %w — see %s", err, a.logHint())
 	}
-	_, err = a.pairWith(ctx, t, opts, client, pairOrigin{})
-	if *noService {
-		t.blank()
-		t.say("VaultSync has no background service on this computer: run %s run to keep syncing.", command)
+	noServiceNote := func() {
+		if *noService {
+			t.blank()
+			t.say("VaultSync has no background service on this computer: run %s run to keep syncing.", command)
+		}
 	}
+	// The setup link, run again, is how VaultSync is updated, and nobody
+	// updating has a code at hand: on a computer that already syncs a vault
+	// with a Hub, setup ends here, unless a flag asks for a pairing.
+	// vaultsync pair syncs another vault or Hub (#380, decision 081).
+	if !opts.asksToPair() {
+		if synced, ok := syncedWithAHub(ctx, client); ok {
+			synced.say(t, command)
+			noServiceNote()
+			return nil
+		}
+	}
+	_, err = a.pairWith(ctx, t, opts, client, pairOrigin{})
+	noServiceNote()
 	// Every question comes before the Hub is asked to share or start a
 	// vault, and before this computer's engine changes: an interrupt
 	// there, like a cancel, leaves nothing paired.
@@ -501,6 +517,77 @@ func (a *app) setup(ctx context.Context, args []string) error {
 		t.say("  Next device: run the same setup link, or in VaultSync on iPhone tap Add Hub.")
 	}
 	return err
+}
+
+// asksToPair: a flag of the pairing was given — the code, a Hub, a vault, a
+// folder, a name or the consent. Each means a pairing only, so setup then
+// pairs, also on a computer that already syncs (decision 081).
+func (o pairOptions) asksToPair() bool { return o != pairOptions{} }
+
+// syncedHere is what this computer's engine syncs with a Hub, for setup run
+// again on a computer that already syncs (decision 081).
+type syncedHere struct {
+	vaults  []string // the vaults' names, as this computer's engine has them
+	paused  bool     // syncing is paused on this computer
+	waiting []pendingShare
+}
+
+// syncedWithAHub reads what the engine's own configuration syncs with a
+// Hub: its folders shared with a device other than this computer — every
+// other device in VaultSync's engine is a Hub a pairing added, never an
+// introducer's. ok is false when no folder is, or when the configuration
+// cannot be read: setup then pairs as it did before. Nothing else decides —
+// not the pairing journal, which records attempts.
+func syncedWithAHub(ctx context.Context, c *syncthing.Client) (syncedHere, bool) {
+	myID, err := c.MyID(ctx)
+	if err != nil {
+		return syncedHere{}, false
+	}
+	folders, err := c.Folders(ctx)
+	if err != nil {
+		return syncedHere{}, false
+	}
+	var s syncedHere
+	for _, f := range folders {
+		for _, d := range f.Devices {
+			if d.DeviceID != myID {
+				name := pairing.SanitizeName(f.Label)
+				if name == "" {
+					name = f.ID
+				}
+				s.vaults = append(s.vaults, name)
+				break
+			}
+		}
+	}
+	if len(s.vaults) == 0 {
+		return syncedHere{}, false
+	}
+	// Said beside it, never decided on: a look that fails leaves its line
+	// out.
+	s.paused, _ = pausedHere(ctx, c)
+	s.waiting, _ = pendingFromHubs(ctx, c, myID)
+	return s, true
+}
+
+// say tells the person updating that VaultSync is set up and what it syncs,
+// and the commands for what they may want next.
+func (s syncedHere) say(t *term, command string) {
+	what := quoted(s.vaults[0])
+	if len(s.vaults) > 1 {
+		what = fmt.Sprintf("%d vaults", len(s.vaults))
+	}
+	t.blank()
+	t.say("✓ VaultSync is set up, and this computer syncs %s with your Hub — there is nothing to pair.", what)
+	if s.paused {
+		t.say("  Syncing is paused on this computer: %s resume starts it again.", command)
+	}
+	for _, w := range s.waiting {
+		t.say("  Your Hub %s is sharing %s with this computer, but it is not set up here yet: %s pair sets it up.", quoted(pairing.SanitizeName(w.hub)), quoted(pairing.SanitizeName(w.label)), command)
+	}
+	t.blank()
+	t.say("  Check on it any time:  %s status", command)
+	t.say("  Another vault, or another Hub:  %s pair", command)
 }
 
 // programGoneNote says what to do when the service's program is gone —
