@@ -326,6 +326,17 @@ func StartSyncthing(configDir string) string {
 		return fmt.Sprintf("database: %v", err)
 	}
 
+	// What this install's records of folder directories are tied to (#315).
+	// The directories themselves are read by NoteFolderStorage and by the
+	// engine's own CheckPath, not here: nothing in a start leaves the app's
+	// own container.
+	anchor, anchorErr := readStorageAnchor(configDir)
+
+	// From the first scan on, the engine syncs a folder only in the
+	// directory its record names (#329, decision 084). Installed before the
+	// engine starts its folders: a folder's first scan begins inside Start.
+	directoryCheck, indexes := installDirectoryCheckLocked(sdb, configDir, anchor, anchorErr)
+
 	// Create and start Syncthing.
 	opts := syncthing.Options{
 		NoUpgrade: true,
@@ -333,26 +344,30 @@ func StartSyncthing(configDir string) string {
 	stApp, err = syncthing.New(stCfg, sdb, stEvLogger, stCert, opts)
 	if err != nil {
 		sdb.Close()
+		removeDirectoryCheck(directoryCheck)
 		cancel()
 		return fmt.Sprintf("create app: %v", err)
 	}
 
-	// Synchronous startup work, not a wait — see lifecycleTimeouts.
+	// Synchronous startup work, not a wait — see lifecycleTimeouts. A Start
+	// that fails stops its services without waiting for them. The database
+	// closes first, so a folder still starting meets a check that cannot
+	// read and refuses; once the check is gone, it is the closed database
+	// that fails that folder's commits and reads (#329).
 	if err := stApp.Start(); err != nil {
 		sdb.Close()
+		removeDirectoryCheck(directoryCheck)
 		cancel()
 		stApp = nil
 		return fmt.Sprintf("start: %v", err)
 	}
 
 	stDB = sdb
+	stDirectoryCheck, stIndexes = directoryCheck, indexes
 	stRunning = true
 	go watchEngine(stApp)
 
-	// What this install's records of folder directories are tied to (#315).
-	// The directories themselves are read by NoteFolderStorage, not here:
-	// nothing in a start leaves the app's own container.
-	stStorageAnchor, stStorageAnchorErr = readStorageAnchor(configDir)
+	stStorageAnchor, stStorageAnchorErr = anchor, anchorErr
 
 	// Create a buffered event subscription for the bridge.
 	var sub events.Subscription
@@ -396,7 +411,9 @@ func configurePrivacySafeLogging() {
 // Returns "" on success, otherwise the timeout text.
 func stopEngineLocked() string {
 	app, sdb, earlyCancel, earlyDone := stApp, stDB, stEarlyCancel, stEarlyDone
+	directoryCheck := stDirectoryCheck
 	stApp, stDB, stEarlyCancel, stEarlyDone = nil, nil, nil, nil
+	stDirectoryCheck, stIndexes = nil, nil
 	stStorageAnchor, stStorageAnchorErr = 0, nil
 	stEventSub = nil
 	stRunning = false
@@ -414,9 +431,15 @@ func stopEngineLocked() string {
 	// this is its only receive; a cancel without a channel leaves nothing to
 	// wait for.
 	release := func() {
+		// The database closes before the check goes. A folder service the
+		// supervisor gave up on after its stop timeout, still running, meets
+		// a check that cannot read and refuses while the check is there;
+		// once it is gone, it is the closed database that fails that
+		// service's commits and reads (#329).
 		if sdb != nil {
 			sdb.Close()
 		}
+		removeDirectoryCheck(directoryCheck)
 		if earlyCancel != nil {
 			earlyCancel()
 			if earlyDone != nil {

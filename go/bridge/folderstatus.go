@@ -294,8 +294,9 @@ func folderDirectoryRefusal(folder config.FolderConfiguration) string {
 }
 
 // directoryRefusal returns the refusal for an error that says a folder's
-// directory is gone or holds no marker — the bridge's own check's or the
-// engine's — and "" for any other error.
+// directory is gone, holds no marker, or is not the directory the folder
+// synced in — the bridge's own check's or the engine's — and "" for any
+// other error.
 func directoryRefusal(err error) string {
 	const missing = "folder directory or marker missing: "
 	switch {
@@ -305,6 +306,10 @@ func directoryRefusal(err error) string {
 		return missing + "the directory holds no folder marker"
 	case errors.Is(err, config.ErrPathNotDirectory):
 		return missing + "the folder's path is not a directory"
+	case errors.Is(err, errFolderNotItsDirectory):
+		// A copy in the folder's place is no moved or deleted folder, and
+		// its filters are not the folder's (#329).
+		return folderNotItsDirectory
 	default:
 		return ""
 	}

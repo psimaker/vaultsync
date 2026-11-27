@@ -72,6 +72,19 @@ Two safety nets compensate:
   them; the bridge never enables auto-accept. VaultSync doctrine, not for
   upstreaming; `TestIssue371_TheEnginesOwnWriteMakesNoFolder` fails without
   it.
+- `syncthing/007-checkpath-asks-whether-the-directory-is-the-folders-own.patch`
+  — `CheckPath`, once it has found the folder's directory and its marker
+  entry, asks a check the bridge installs (`config.DirectoryCheck`) whether
+  that directory is the one the folder synced in, and returns its error.
+  Upstream takes any directory with a `.stfolder` entry for the folder's, so
+  a copy put in a vault's own place was scanned as the vault and its
+  differences went out as changes (#329, decision 084). Every scan, pull,
+  commit of scan results and write of the ignores (patch 006) asks
+  `CheckPath` first. With no check installed it answers as upstream. The
+  check must not wait for anything the engine holds while it calls
+  `CheckPath`; the bridge's takes no lock. VaultSync doctrine, not for
+  upstreaming; `TestIssue329_TheEnginesCheckPathAsksTheRecords` fails
+  without it.
 - `syncthing/010-natpmp-result-after-cancel.patch` — the NAT-PMP device runs
   its blocking requests (`AddPortMapping`, `GetExternalIPv4Address`) through
   `svcutil.CallWithContext` too, and upstream read the request's result after

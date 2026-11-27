@@ -530,7 +530,13 @@ func (e *issue315Engine) expectRecord(dir string) folderStorageRecord {
 	mu.Lock()
 	anchor := stStorageAnchor
 	mu.Unlock()
-	want := folderStorageRecord{Marker: issue315MarkerNumber(e.t, e.folderID, dir), Index: uint64(index), Anchor: anchor}
+	// Since #329 a record also holds the file number of the directory that
+	// holds the marker, read through one handle with the marker's.
+	reading, err := markerNumbers(folderMarkerPath(config.FolderConfiguration{ID: e.folderID}, dir))
+	if err != nil || reading.markerErr != nil {
+		e.t.Fatalf("read the marker and its directory in %s: %v, %v", dir, err, reading.markerErr)
+	}
+	want := folderStorageRecord{Marker: reading.marker, Index: uint64(index), Anchor: anchor, Stfolder: reading.dir, Strict: true}
 	if !found || record != want || anchor == 0 {
 		e.t.Fatalf("the folder's record is %+v (found %v), want %+v with an anchor", record, found, want)
 	}
