@@ -307,10 +307,12 @@ func aProgramAtTheRecordedPort(t *testing.T, h http.HandlerFunc) (*app, *atomic.
 // vaultsync pair, and status, pause and resume where no agent answers, ask
 // the engine's port only while a lock says an engine of VaultSync's may run
 // (#413, decision 079): a run holds the engine lock, or, with that lock
-// free, a Syncthing that outlived its run holds the engine's home. With the
-// engine lock held, Syncthing's lock is not looked at: a link in its place
-// changes nothing. With neither held, nothing is asked; a lock that cannot
-// be looked at asks nothing either.
+// free, a Syncthing that outlived its run holds the engine's home. A run
+// that holds the engine lock while no agent answers is on its way up, and
+// nothing is asked unless it recorded that it could not make its control
+// socket (#419, decision 086). With the engine lock held, Syncthing's lock
+// is not looked at: a link in its place changes nothing. With neither held,
+// nothing is asked; a lock that cannot be looked at asks nothing either.
 func TestIssue413_CommandsWithoutAnAgentAskOnlyARunningEngine(t *testing.T) {
 	saved := pairEngineWait
 	pairEngineWait = 300 * time.Millisecond
@@ -318,28 +320,32 @@ func TestIssue413_CommandsWithoutAnAgentAskOnlyARunningEngine(t *testing.T) {
 	type command struct {
 		name string
 		run  func(a *app) (string, error)
-		// what each says with no lock held, and with a lock it cannot look at
-		notRunning, notKnown string
+		// what each says with no lock held, with a lock it cannot look at,
+		// and beside a run on its way up
+		notRunning, notKnown, starting string
 	}
 	commands := []command{
 		{"pair", func(a *app) (string, error) {
 			err := a.pair(context.Background(), []string{"--code", "TULIP-ANCHOR-42", "--hub", "127.0.0.1:1"})
 			return a.out.(*bytes.Buffer).String(), err
-		}, "The sync engine is not running", "could not tell whether its sync engine runs"},
+		}, "The sync engine is not running", "could not tell whether its sync engine runs", "VaultSync is still starting its sync engine"},
 		{"status", func(a *app) (string, error) {
 			err := a.status(context.Background())
 			return a.out.(*bytes.Buffer).String(), err
-		}, "Sync engine: not running", "Sync engine: not known"},
+		}, "Sync engine: not running", "Sync engine: not known", startingLine},
 		{"pause", func(a *app) (string, error) {
 			err := a.pauseSync(context.Background(), true)
 			return a.out.(*bytes.Buffer).String(), err
-		}, "nothing syncs while it is not running", "could not confirm whether the sync engine runs"},
+		}, "nothing syncs while it is not running", "could not confirm whether the sync engine runs", "still starting its sync engine, and nothing was paused"},
 		{"resume", func(a *app) (string, error) {
 			err := a.pauseSync(context.Background(), false)
 			return a.out.(*bytes.Buffer).String(), err
-		}, "vaultsync start resumes the background service", "could not confirm whether the sync engine runs"},
+		}, "vaultsync start resumes the background service", "could not confirm whether the sync engine runs", "still starting its sync engine, and nothing was resumed"},
 	}
 	home := func(lay layout) string { return filepath.Join(lay.Home, syncthingHomeLock) }
+	noSocket := func(t *testing.T, lay layout) {
+		writeFile(t, lay.SocketErrorFile(), "listen unix: bind: address already in use\n")
+	}
 	locks := []struct {
 		name  string
 		set   func(t *testing.T, lay layout)
@@ -347,9 +353,18 @@ func TestIssue413_CommandsWithoutAnAgentAskOnlyARunningEngine(t *testing.T) {
 		says  func(c command) string
 	}{
 		{"no lock held", func(*testing.T, layout) {}, false, func(c command) string { return c.notRunning }},
-		{"a run holds the engine lock", func(t *testing.T, lay layout) { holdLock(t, lay.Lock) }, true, nil},
+		{"a run holds the engine lock", func(t *testing.T, lay layout) { holdLock(t, lay.Lock) }, false, func(c command) string { return c.starting }},
 		{"a run holds the engine lock, a link in place of Syncthing's", func(t *testing.T, lay layout) {
 			holdLock(t, lay.Lock)
+			linkInPlaceOf(t, home(lay))
+		}, false, func(c command) string { return c.starting }},
+		{"a run without its control socket holds the engine lock", func(t *testing.T, lay layout) {
+			holdLock(t, lay.Lock)
+			noSocket(t, lay)
+		}, true, nil},
+		{"a run without its control socket holds the engine lock, a link in place of Syncthing's", func(t *testing.T, lay layout) {
+			holdLock(t, lay.Lock)
+			noSocket(t, lay)
 			linkInPlaceOf(t, home(lay))
 		}, true, nil},
 		{"a Syncthing that outlived its run holds its home", func(t *testing.T, lay layout) { holdLock(t, home(lay)) }, true, nil},
@@ -396,9 +411,18 @@ func linkInPlaceOf(t *testing.T, path string) {
 
 // pair waits for a run to take the engine lock, then asks the port the run
 // records: a run moves off a recorded port another program holds as it
-// takes that lock, and the old port is never asked (#413).
+// takes that lock, and the old port is never asked (#413). The run's agent
+// says its engine runs once the run has recorded its port, as a run's
+// socket answers only after that (#419).
 func TestIssue413_PairWaitsForARunAndAsksThePortItRecords(t *testing.T) {
 	a, other := anotherProgramAtTheRecordedPort(t)
+	var running atomic.Bool
+	agentSaying(t, a, func() controlStatus {
+		if running.Load() {
+			return controlStatus{Engine: "running"}
+		}
+		return controlStatus{Engine: "starting"}
+	})
 	var engineAsked atomic.Int32
 	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		engineAsked.Add(1)
@@ -407,18 +431,26 @@ func TestIssue413_PairWaitsForARunAndAsksThePortItRecords(t *testing.T) {
 	t.Cleanup(engine.Close)
 	_, p, _ := net.SplitHostPort(strings.TrimPrefix(engine.URL, "http://"))
 	moved, _ := strconv.Atoi(p)
-	// The run, in its order: the engine lock, then the moved port's record.
-	// Its look at the lock is retried, as pair's look holds it for an
-	// instant. It acts between two of pair's looks, 200 ms apart.
+	// The run, in its order: state.lock, the engine lock, the moved port's
+	// record, then state.lock let go (#419). Its take of the engine lock is
+	// retried, as a look holds it for an instant. It acts between two of
+	// pair's looks, 200 ms apart.
 	held := make(chan func(), 1)
 	go func() {
 		time.Sleep(300 * time.Millisecond)
 		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+			unlockState, err := lockFileWait(stateLockOf(a.lay.State))
+			if err != nil {
+				break
+			}
 			if unlock, err := lockFile(a.lay.Lock); err == nil {
-				_ = updateState(a.lay.State, func(s *agentState) { s.GUIPort = moved })
+				_ = updateStateHeld(a.lay.State, func(s *agentState) { s.GUIPort = moved })
+				unlockState()
+				running.Store(true)
 				held <- unlock
 				return
 			}
+			unlockState()
 		}
 		held <- func() {}
 	}()
@@ -584,7 +616,9 @@ func TestIssue413_TakeEngineLockWaitsOnlyItsGrace(t *testing.T) {
 
 // With a lock held, pair says what the engine does when it does not answer
 // (#413): nothing listening yet is a run still starting; an answer that is
-// no engine's is said as the engine not answering; a Ctrl-C ends the wait.
+// no engine's, beside a run that could not make its control socket and
+// is asked as before (#419), is said as the engine not answering; a Ctrl-C
+// ends the wait.
 func TestIssue413_PairSaysWhatTheEngineDoesWhenItDoesNotAnswer(t *testing.T) {
 	saved := pairEngineWait
 	pairEngineWait = 300 * time.Millisecond
@@ -603,6 +637,7 @@ func TestIssue413_PairSaysWhatTheEngineDoesWhenItDoesNotAnswer(t *testing.T) {
 	t.Run("an answer that is no engine's", func(t *testing.T) {
 		a, _, _ := aProgramAtTheRecordedPort(t, func(w http.ResponseWriter, r *http.Request) { http.Error(w, "forbidden", http.StatusForbidden) })
 		holdLock(t, a.lay.Lock)
+		writeFile(t, a.lay.SocketErrorFile(), "listen unix: bind: address already in use\n")
 		if err := pair(context.Background(), a); !strings.Contains(refusalText(err), "The sync engine does not answer") || strings.Contains(refusalText(err), "still starting") {
 			t.Fatalf("a refused answer: %v", err)
 		}
@@ -625,6 +660,9 @@ func TestIssue413_PairSaysWhatTheEngineDoesWhenItDoesNotAnswer(t *testing.T) {
 func TestIssue413_ARecordReadAgainWithoutAPortAsksNothing(t *testing.T) {
 	a, asked := anotherProgramAtTheRecordedPort(t)
 	holdLock(t, a.lay.Lock)
+	// A run without its control socket: one on its way up would be asked
+	// nothing anyway (#419).
+	writeFile(t, a.lay.SocketErrorFile(), "listen unix: bind: address already in use\n")
 	before, err := loadState(a.lay.State)
 	if err != nil {
 		t.Fatal(err)

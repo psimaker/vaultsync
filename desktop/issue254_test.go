@@ -701,6 +701,7 @@ func macSetupFixture(t *testing.T) (*app, *fakeRunner, string) {
 // whose app is gone is removed, the link follows.
 func TestIssue254_SetupFromTheAppRunsTheServiceFromIt(t *testing.T) {
 	a, run, app := macSetupFixture(t)
+	theServicesRunAnswers(t, a)
 	t.Setenv("PATH", "/usr/bin:/bin")
 	orig := ttyPath
 	ttyPath = filepath.Join(t.TempDir(), "no-tty")
@@ -871,6 +872,7 @@ func restarts(calls []string) []string {
 // restarts nothing.
 func TestIssue254_ASetupThatStoppedEarlyStillRestartsOntoTheNewBuild(t *testing.T) {
 	a, run, app := macSetupFixture(t)
+	theServicesRunAnswers(t, a)
 	t.Setenv("PATH", "/usr/bin:/bin")
 	orig := ttyPath
 	ttyPath = filepath.Join(t.TempDir(), "no-tty")
@@ -1364,6 +1366,7 @@ func TestIssue254_AnAppInAnApplicationsOnlyAnAdminMayChangeCounts(t *testing.T) 
 // person must know that the app's trip to the Trash will not stop it.
 func TestIssue254_SetupSaysWhyTheServiceRunsTheCopy(t *testing.T) {
 	a, _, app := macSetupFixture(t)
+	theServicesRunAnswers(t, a)
 	downloads := filepath.Join(a.home, "Downloads")
 	if err := os.MkdirAll(downloads, 0o755); err != nil {
 		t.Fatal(err)
@@ -1501,9 +1504,22 @@ func TestIssue254_ASetupThatFailsBeforeTheEngineLeavesTheCopy(t *testing.T) {
 	}
 }
 
+// quickEngineWaitBeside shortens setup's wait for its engine. In
+// macSetupFixture the fake engine holds the lock on the engine's home, so
+// the engine setup --no-service starts takes it for one an earlier run left
+// behind and waits, and setup asks no port (#419): what the tests that call
+// this check comes before that wait.
+func quickEngineWaitBeside(t *testing.T) {
+	t.Helper()
+	saved := setupEngineWait
+	setupEngineWait = 500 * time.Millisecond
+	t.Cleanup(func() { setupEngineWait = saved })
+}
+
 // setup --no-service from the copy also removes a start at login whose app
 // is gone: it does not depend on the service.
 func TestIssue254_SetupWithoutTheServiceDropsAStaleStartAtLogin(t *testing.T) {
+	quickEngineWaitBeside(t)
 	a, run, app := macSetupFixture(t)
 	if err := a.svc.installTray(filepath.Join(app, "Contents", "MacOS", "vaultsync-tray"), true); err != nil {
 		t.Fatal(err)
@@ -1732,6 +1748,7 @@ func TestIssue254_UninstallKeepsTheCommandOnTheAppWhenTheCopyCannotFollow(t *tes
 // setup --no-service run from the app also removes a start at login whose
 // program is gone (the app moved from one Applications folder to the other).
 func TestIssue254_SetupWithoutTheServiceFromTheAppDropsAStaleStartAtLogin(t *testing.T) {
+	quickEngineWaitBeside(t)
 	a, run, _ := macSetupFixture(t)
 	gone := filepath.Join(t.TempDir(), "Applications", appBundleName, "Contents", "MacOS", "vaultsync-tray")
 	if err := a.svc.installTray(gone, true); err != nil {
@@ -1790,6 +1807,7 @@ func TestIssue254_TheCommandFollowsBeforeTheEngineIsWaitedFor(t *testing.T) {
 // cannot be removed is said as well.
 func TestIssue254_TheStartAtLoginGoesWhenTheServiceRunsTheCopy(t *testing.T) {
 	a, run, app := macSetupFixture(t)
+	theServicesRunAnswers(t, a)
 	if out, err := setupFrom(t, a); !strings.Contains(refusalText(err)+fmt.Sprint(err), "did not answer") || !run.trayLoaded {
 		t.Fatalf("setup from the app: %v\n%s", err, out)
 	}
@@ -1905,6 +1923,7 @@ func TestIssue254_StatusAndStartSayAParkedServiceDoesNotSync(t *testing.T) {
 // from the app, or the person chose the copy with no app.
 func TestIssue254_SetupEndsAPark(t *testing.T) {
 	a, _, _ := macSetupFixture(t)
+	theServicesRunAnswers(t, a)
 	if err := updateState(a.lay.State, func(s *agentState) { s.ParkedBesideApp = "/Applications/" + appBundleName }); err != nil {
 		t.Fatal(err)
 	}
@@ -1923,6 +1942,7 @@ func TestIssue254_SetupEndsAPark(t *testing.T) {
 // program did not change.
 func TestIssue254_TheCopysOwnSetupEndsAPark(t *testing.T) {
 	a, run, app := macSetupFixture(t)
+	theServicesRunAnswers(t, a)
 	if err := os.RemoveAll(app); err != nil {
 		t.Fatal(err)
 	}

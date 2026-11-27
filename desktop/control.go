@@ -82,6 +82,10 @@ type controlServer struct {
 	// a run kept because the pin could not be installed (#267). Empty: the
 	// pin.
 	engineVersion string
+	// rs is what the run's supervisor tells: until it has started its own
+	// engine, no port is asked (client), and status says why (#419,
+	// decision 086). Nil: no run supervises the engine here.
+	rs *runState
 	// ctx is the agent's lifetime: a pairing runs on it, not on the request
 	// that asked for it, so a caller that goes away mid-way does not abort
 	// an accept.
@@ -410,12 +414,42 @@ func peerUIDOf(c *net.UnixConn) (int, error) {
 	return control.PeerUID(c)
 }
 
+// errEngineNotStarted: the run has not started its own engine yet, so no
+// port is asked (#419, decision 086).
+var errEngineNotStarted = errors.New("the sync engine is not ready yet: VaultSync is still starting it")
+
+// errEarlierEngine: the run waits for an engine an earlier run left behind
+// to end before it starts its own (#419, decision 086).
+var errEarlierEngine = errors.New("the sync engine is not ready yet: an engine an earlier vaultsync run left behind still holds the engine's folder, and VaultSync starts its own once that one has ended")
+
+// notReadyAnswer is what the socket answers a request it refuses before
+// the run's own engine was started: nothing was done, and it may be asked
+// again shortly.
+func notReadyAnswer(err error) error {
+	return fmt.Errorf("%w — try again shortly; nothing was changed", err)
+}
+
+// client is the run's engine's REST client — none before the run has
+// started its own engine: until then the recorded port is no engine this
+// run knows of, and nothing is asked there (#419, decision 086).
 func (c *controlServer) client() (*syncthing.Client, error) {
+	switch {
+	case c.rs.waitsForAnEarlierEngine():
+		return nil, errEarlierEngine
+	case !c.rs.engineStarted():
+		return nil, errEngineNotStarted
+	}
 	st, err := loadState(c.a.lay.State)
 	if err != nil {
 		return nil, err
 	}
 	return c.eng.client(st)
+}
+
+// notReady says whether err is client's refusal before the run's own
+// engine was started: a request may simply be made again shortly.
+func notReady(err error) bool {
+	return errors.Is(err, errEngineNotStarted) || errors.Is(err, errEarlierEngine)
 }
 
 func (c *controlServer) status(w http.ResponseWriter, r *http.Request) {
@@ -433,6 +467,19 @@ func (c *controlServer) currentStatus(ctx context.Context) (controlStatus, error
 		running = syncthingVersion
 	}
 	cs := controlStatus{Version: version, Syncthing: strings.TrimPrefix(running, "v"), Engine: "starting", Report: emptyReport()}
+	switch {
+	case c.rs.waitsForAnEarlierEngine():
+		// An engine an earlier run left behind holds the engine's folder:
+		// said without asking anything, and with no report on the vaults
+		// (#419, decision 086). Which Syncthing it is, this agent did not
+		// start and does not know.
+		cs.EarlierRun, cs.Syncthing = true, ""
+		return cs, nil
+	case !c.rs.engineStarted():
+		// The run has not started its engine yet: starting, nothing asked.
+		cs.Report = c.a.offlineReport()
+		return cs, nil
+	}
 	client, err := c.client()
 	if err != nil {
 		return cs, err
@@ -482,6 +529,10 @@ func (c *controlServer) setPaused(w http.ResponseWriter, r *http.Request, paused
 	}
 	defer unlock()
 	client, err := c.client()
+	if notReady(err) {
+		fail(w, http.StatusServiceUnavailable, notReadyAnswer(err))
+		return
+	}
 	if err != nil {
 		fail(w, http.StatusInternalServerError, err)
 		return
@@ -531,6 +582,10 @@ func (c *controlServer) pair(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	client, err := c.client()
+	if notReady(err) {
+		fail(w, http.StatusServiceUnavailable, notReadyAnswer(err))
+		return
+	}
 	if err != nil {
 		fail(w, http.StatusInternalServerError, err)
 		return
@@ -817,22 +872,26 @@ func (a *app) noAgentForPause(ctx context.Context, st agentState, pause bool) er
 	}
 	if err == nil {
 		// The engine's port is asked only while a lock says an engine of
-		// VaultSync's may run, and then the one agent.json records now
-		// (#413). Neither lock held: nothing syncs. A lock that cannot be
-		// looked at is not known either way, and nothing is asked.
-		var may bool
-		switch may, err = engineMayRun(a.lay); {
+		// VaultSync's may run, and then the one agent.json records now,
+		// both read under state.lock (#413, #419). Neither lock held:
+		// nothing syncs. A lock that cannot be looked at, a record that
+		// cannot be read or names no port, is not known either way: never
+		// the port read before.
+		var look engineLook
+		switch look, err = lookAtTheEngine(ctx, a.lay); {
 		case err != nil:
-		case !may:
+		case !look.may:
 			return nothingSyncs()
-		default:
-			// The port agent.json records now. A record that cannot be read,
-			// or names no port, is not known either way: never the port read
-			// before.
-			var now agentState
-			if now, err = loadState(a.lay.State); err == nil {
-				client, err = a.engine().client(now)
+		case look.starting:
+			// A run holds the engine lock and its agent does not answer
+			// yet: it is on its way up, and no port is asked (#419,
+			// decision 086).
+			if pause {
+				return refuse("VaultSync is still starting its sync engine, and nothing was paused. Try again in a moment; vaultsync status says more.")
 			}
+			return refuse("VaultSync is still starting its sync engine, and nothing was resumed. Try again in a moment; vaultsync status says more.")
+		default:
+			client, err = a.engine().client(look.st)
 		}
 	}
 	if err == nil {

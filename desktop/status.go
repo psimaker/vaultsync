@@ -201,8 +201,14 @@ func (a *app) status(ctx context.Context) error {
 	cs, aerr := a.controlClient(st).Status(actx)
 	cancel()
 	switch {
+	case aerr == nil && cs.EarlierRun:
+		// The run waits for an engine an earlier run left behind (#419,
+		// decision 086): said as the agent knows it, with nothing asked of
+		// that engine and no report on the vaults.
+		fmt.Fprintln(w, earlierEngineLine)
+		return nil
 	case aerr == nil && cs.Engine != "running":
-		fmt.Fprintln(w, "Sync engine: starting — VaultSync is bringing it up")
+		fmt.Fprintln(w, startingLine)
 		_, err := io.WriteString(w, cs.Text)
 		return err
 	case aerr == nil:
@@ -234,25 +240,34 @@ func (a *app) status(ctx context.Context) error {
 		return err
 	}
 	// The engine's port is asked only while a lock says an engine of
-	// VaultSync's may run, and then the one agent.json records now (#413).
-	switch may, err := engineMayRun(a.lay); {
-	case err != nil:
+	// VaultSync's may run, and then the one agent.json records now, both
+	// read under state.lock (#413, #419). A record that cannot be read, or
+	// names no port, leaves nothing to ask: never the port read before.
+	look, err := lookAtTheEngine(ctx, a.lay)
+	var lookErr *lockLookError
+	switch {
+	case errors.As(err, &lookErr):
 		// Not known either way: the vaults are listed, not called stopped.
 		fmt.Fprintf(w, "Sync engine: not known — %s; once that is fixed, run vaultsync status again\n", a.lockLookNote(err))
 		_, err := io.WriteString(w, a.configuredReport("Vaults (whether they sync right now is not known)", "not known whether it syncs").Text)
 		return err
-	case !may:
+	case err != nil:
+		return err
+	case !look.may:
 		fmt.Fprintln(w, "Sync engine: not running — nothing syncs right now")
 		_, err := io.WriteString(w, a.offlineReport().Text)
 		return err
-	}
-	// The port agent.json records now. A record that cannot be read, or
-	// names no port, leaves nothing to ask: never the port read before.
-	now, err := loadState(a.lay.State)
-	if err != nil {
+	case look.starting:
+		// A run holds the engine lock and its agent does not answer yet: it
+		// is on its way up, its engine perhaps not started — a pin to
+		// install, or an engine an earlier run left behind to wait for. No
+		// port is asked (#419, decision 086); the vaults are listed from the
+		// engine's config, not called stopped.
+		fmt.Fprintln(w, startingLine)
+		_, err := io.WriteString(w, a.configuredReport("Vaults (whether they sync right now is not known)", "not known whether it syncs").Text)
 		return err
 	}
-	if client, err = eng.client(now); err != nil {
+	if client, err = eng.client(look.st); err != nil {
 		return err
 	}
 	pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
@@ -406,6 +421,15 @@ func (a *app) report(ctx context.Context, c *syncthing.Client, background bool) 
 func connectionState(state string) bool {
 	return state == "up to date" || state == "paused on your Hub" || strings.HasPrefix(state, "waiting for your Hub") || strings.HasPrefix(state, "uploading to your Hub")
 }
+
+// earlierEngineLine is what status says while the run waits for an engine
+// an earlier run left behind (#419, decision 086).
+const earlierEngineLine = "Sync engine: starting — an engine an earlier vaultsync run left behind still holds the engine's folder and may still sync; VaultSync starts its own once that one has ended"
+
+// startingLine is what status says while the run has not started its
+// engine yet: its agent says so, or no agent answers yet while a run holds
+// the engine lock (#419, decision 086).
+const startingLine = "Sync engine: starting — VaultSync is bringing it up"
 
 // emptyReport is a report with every list present (never null in JSON).
 func emptyReport() statusReport {

@@ -26,7 +26,7 @@ func TestIssue175_SetupNoticesAFailedTemporaryEngine(t *testing.T) {
 	defer unlock()
 	start := time.Now()
 	sup := superviseInBackground(context.Background(), eng, st)
-	err = waitEngine(context.Background(), syncthing.NewClient("http://127.0.0.1:1", "k"), time.Minute, sup)
+	err = waitEngine(context.Background(), syncthing.NewClient("http://127.0.0.1:1", "k"), time.Minute, sup, sup.notReadyYet)
 	if !errors.Is(err, ErrEngineRunning) {
 		t.Fatalf("got %v", err)
 	}

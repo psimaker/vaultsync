@@ -81,11 +81,18 @@ func recordGuardEnv(getenv func(string) string) map[string]string {
 // moving the engine's port, pair recording the shell) never write an older
 // copy over each other's fields.
 func updateState(path string, fn func(*agentState)) error {
-	unlock, err := lockFileWait(filepath.Join(filepath.Dir(path), "state.lock"))
+	unlock, err := lockFileWait(stateLockOf(path))
 	if err != nil {
 		return err
 	}
 	defer unlock()
+	return updateStateHeld(path, fn)
+}
+
+// updateStateHeld is updateState for a caller that holds state.lock
+// already (takeEngineLockLeavingATakenPort): taken again, the lock would
+// wait for its own holder.
+func updateStateHeld(path string, fn func(*agentState)) error {
 	st, err := loadState(path)
 	if err != nil {
 		return err
@@ -93,6 +100,11 @@ func updateState(path string, fn func(*agentState)) error {
 	fn(&st)
 	return saveState(path, st)
 }
+
+// stateLockOf is state.lock, beside agent.json at path: the lock its
+// writers take, and that a run holds from just before the engine lock
+// until it has recorded the port it moves to (#419).
+func stateLockOf(path string) string { return filepath.Join(filepath.Dir(path), "state.lock") }
 
 // updateStateIfSetUp is updateState for a note that only adds to a setup
 // that is there — what setup started the jobs with: it makes neither
@@ -104,7 +116,7 @@ func updateStateIfSetUp(path string, fn func(*agentState)) error {
 	}
 	// The lock, and the write, without making the folder: one an uninstall
 	// took apart meanwhile stays gone.
-	h, err := waitForLock(context.Background(), filepath.Join(filepath.Dir(path), "state.lock"), 10*time.Second, lockFileNoCreate)
+	h, err := waitForLock(context.Background(), stateLockOf(path), 10*time.Second, lockFileNoCreate)
 	if err != nil {
 		return err
 	}
