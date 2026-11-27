@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -40,8 +41,27 @@ type stInstance struct {
 	home   string
 	gui    string
 	listen string
+	apiKey string
 	client *SyncthingClient
 	id     string
+	// stop ends the instance (also run at the test's end); its home stays.
+	stop func()
+}
+
+// portProbingFlag is how a Syncthing binary is told not to probe for free
+// ports: 2.x calls it --no-port-probing, 1.x --skip-port-probing. Hubs run
+// either line (decision 068); the flag is read from the binary's own help, so
+// a build without a version stamp is told apart too.
+func portProbingFlag(t *testing.T, bin string) string {
+	t.Helper()
+	out, err := exec.Command(bin, "generate", "--help").CombinedOutput()
+	if err != nil {
+		t.Fatalf("syncthing generate --help: %v\n%s", err, out)
+	}
+	if strings.Contains(string(out), "--no-port-probing") {
+		return "--no-port-probing"
+	}
+	return "--skip-port-probing"
 }
 
 func startSyncthing(t *testing.T, bin, name string) *stInstance {
@@ -56,11 +76,15 @@ func startSyncthing(t *testing.T, bin, name string) *stInstance {
 		home:   home,
 		gui:    "127.0.0.1:" + strconv.Itoa(guiPort),
 		listen: "tcp://127.0.0.1:" + strconv.Itoa(listenPort),
+		apiKey: "e2e-" + name,
 	}
+	probing := portProbingFlag(t, bin)
 	// Generate the identity and config first and pin the instance to loopback
 	// *before* it ever starts: no default listener on :22000, no discovery
 	// announcement, no relay — the test must not touch a real network.
-	gen := exec.Command(bin, "generate", "--home="+home, "--no-port-probing")
+	gen := exec.Command(bin, "generate", "--home="+home, probing)
+	// 1.x makes its "Default Folder" (~/Sync) when it generates a config.
+	gen.Env = append(os.Environ(), "STNODEFAULTFOLDER=1")
 	if out, err := gen.CombinedOutput(); err != nil {
 		t.Fatalf("syncthing generate: %v\n%s", err, out)
 	}
@@ -93,9 +117,9 @@ func startSyncthing(t *testing.T, bin, name string) *stInstance {
 	cmd := exec.Command(bin, "serve",
 		"--home="+home,
 		"--gui-address="+inst.gui,
-		"--no-browser", "--no-restart", "--no-upgrade", "--no-port-probing",
+		"--no-browser", "--no-restart", "--no-upgrade", probing,
 	)
-	cmd.Env = append(os.Environ(), "STNODEFAULTFOLDER=1", "STNOUPGRADE=1", "STGUIAPIKEY=e2e-"+name)
+	cmd.Env = append(os.Environ(), "STNODEFAULTFOLDER=1", "STNOUPGRADE=1", "STGUIAPIKEY="+inst.apiKey)
 	logFile, err := os.Create(filepath.Join(home, "stdout.log"))
 	if err != nil {
 		t.Fatal(err)
@@ -104,9 +128,15 @@ func startSyncthing(t *testing.T, bin, name string) *stInstance {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
+	var stopOnce sync.Once
+	inst.stop = func() {
+		stopOnce.Do(func() {
+			_ = cmd.Process.Kill()
+			_, _ = cmd.Process.Wait()
+		})
+	}
 	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
+		inst.stop()
 		logFile.Close()
 		if t.Failed() {
 			data, _ := os.ReadFile(filepath.Join(home, "stdout.log"))
@@ -114,7 +144,7 @@ func startSyncthing(t *testing.T, bin, name string) *stInstance {
 		}
 	})
 
-	inst.client = NewSyncthingClient("http://"+inst.gui, "e2e-"+name)
+	inst.client = NewSyncthingClient("http://"+inst.gui, inst.apiKey)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	for {
