@@ -189,7 +189,7 @@ func TestIssue320_ARunAgainFindsTheVaultAnEarlierVaultSyncMadeUnderTheCutName(t 
 	t.Run("not set up here: refused, with the Hub's name", func(t *testing.T) {
 		eng, hub, s, out := session(t, "~/Vaults/New")
 		err := s.run(ctx)
-		if !strings.Contains(refusalText(err), has+". Download it as the vault on your Hub") {
+		if !strings.Contains(refusalText(err), has+". Download it as the vault on your Hub under that name (in a terminal: --vault “"+issue320Earlier+"”, without --create)") {
 			t.Fatalf("%v\n%s", err, out)
 		}
 		if got := createsAsked(hub); len(got) != 0 || eng.folderCount() != 0 {
@@ -205,6 +205,23 @@ func TestIssue320_ARunAgainFindsTheVaultAnEarlierVaultSyncMadeUnderTheCutName(t 
 		}
 		if got := createsAsked(hub); len(got) != 0 || eng.folderCount() != 1 {
 			t.Fatalf("the Hub was asked to start %q, or a folder was added", got)
+		}
+	})
+	t.Run("without --create the name selects only a vault of that name", func(t *testing.T) {
+		eng, hub, s, out := session(t, "~/Vaults/New")
+		s.opts.create = false
+		err := s.run(ctx)
+		if !strings.Contains(refusalText(err), "Your Hub has no vault named “"+issue320Whole+"”.") {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if hub.provisionCount(id) != 0 || eng.folderCount() != 0 {
+			t.Fatal("the vault under the cut name was set up")
+		}
+		// Its name on the Hub is the way to it.
+		eng, hub, s, out = session(t, "~/Vaults/New")
+		s.opts.create, s.opts.vault = false, issue320Earlier
+		if err := s.run(ctx); err != nil || hub.provisionCount(id) != 1 || eng.folderCount() != 1 {
+			t.Fatalf("--vault with the Hub's name: %v\n%s", err, out)
 		}
 	})
 	t.Run("the terminal's question", func(t *testing.T) {

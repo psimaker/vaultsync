@@ -1221,9 +1221,15 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 				if earlier != "" {
 					has = fmt.Sprintf("Your Hub already has this vault, under the name %s an earlier VaultSync made from yours", quoted(pairing.CleanLabel(v.Label)))
 				}
+				download := "Download it as the vault on your Hub (in a terminal: without --create)"
+				if earlier != "" {
+					// Without --create a name selects only the vault of that
+					// name: the way to it is the name the Hub has.
+					download = fmt.Sprintf("Download it as the vault on your Hub under that name (in a terminal: --vault %s, without --create)", quoted(pairing.CleanLabel(v.Label)))
+				}
 				switch {
 				case configured == nil:
-					return plan{}, refuse("%s. Download it as the vault on your Hub (in a terminal: without --create), or choose another name for a new vault.", has)
+					return plan{}, refuse("%s. %s, or choose another name for a new vault.", has, download)
 				case !sameFolder(resolveExistingPrefix(path), configured.Path):
 					return plan{}, refuse("%s, and it is set up to sync at %s on this computer. Choose another name for a new vault.", has, tildePath(s.env.home, configured.Path))
 				}
