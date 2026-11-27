@@ -4,12 +4,12 @@
 
 **Decision.**
 1. **The measure is the release each app's agent names.** Both agents are asked `vaultsync version` before anything is set aside: the download's, which the link already runs to see that it runs on this Mac, and the installed one's. The line reads `vaultsync X.Y.Z (Syncthing A.B.C)`, with a suffix such as `-rc.1` for a release candidate. The release workflow stamps the version from the tag (`-X main.version`).
-2. **How the link reads it.** X.Y.Z is compared as three numbers, a suffix set aside (as `engineVersion` does for Syncthing). Where the installed app's release is the higher, the link stops with exit 1. It changes nothing, runs no agent, names both versions and the command for the installed app's own setup.
+2. **How the link reads it.** X.Y.Z is compared as three numbers, a suffix set aside (as `engineVersion` does for Syncthing). Where the installed app's release is the higher, the link stops with exit 1. It changes nothing, runs no agent, and names both versions and the command for the installed app's own setup, with the arguments this run was given, each quoted for the shell. It names no way to the older release: an older agent over a newer install is what this decision prevents.
 3. **The other cases:**
    - Another build of the same release (a release candidate, a rebuild), or an older release, is replaced as before.
    - An installed app whose line names no release is never replaced. That is `dev` from a local build, `dev-<commit>` from a pull request's build, or any other form. A download whose line names none replaces nothing. The link says to move the installed app to the Trash and run the link again to install the release.
-   - An installed app whose agent is no plain executable file, or does not run, is replaced as before: nothing runs from it. Such an agent is never run; a link may lead anywhere.
-4. **The line is a contract between the agent and the setup link.** `TestIssue277_TheVersionLineIsTheFormTheSetupLinkReads` builds the agent as the release job does and holds its line to the form `release_of` in `hub/scripts/setup.sh` reads. A change of the line changes both in one pull request.
+   - An installed app whose agent is no plain executable file, has a link on the way to it (the app, `Contents`, `Contents/MacOS` or the agent itself), or does not run, is replaced as before: nothing runs from it, and the agent's own `checkApp` passes over such an app. An agent with a link on the way to it is never run; a link may lead anywhere.
+4. **The line is a contract between the agent and the setup link.** `TestIssue277_TheVersionLineIsTheFormTheSetupLinkReads` builds the agent as the release job does and holds its line to the form `release_of` in `hub/scripts/setup.sh` reads. The test carries that rule as a copy (`setupLinkRelease`), checked on the same examples as the dry-run test. A change of the line, or of the rule, changes both in one pull request.
 
 **Why.**
 - The link's question is which of two builds of the app stays: an app against an app. Every pin bump and every new `agent.json` format ships in a higher release (decision 054: a pin only moves forward). So wherever the agent's own guard would refuse the older build, the installed release is the higher one too.
@@ -25,7 +25,7 @@
 
 **Not covered.**
 - The bare agent and Linux. There the downloaded agent is only the installer, and its setup replaces VaultSync's copy only after its engine check (`ensureEngine` before `installAgentCopy`). Where the newer build moved the pin or `agent.json`'s format, the older one refuses before anything changes, and the newer copy keeps running (decision 054). Otherwise it puts an older build in place that runs on the same engine and state, so nothing parks.
-- A dry run, which unpacks nothing. It says the app is replaced "unless it is already this build, or may be a newer one".
+- A dry run, which unpacks nothing and runs no agent. It says the app is replaced unless it is already this build, or that the setup stops and changes nothing where the installed one is a newer release or does not say which release it is.
 - Something put at the app's place between this check and the set-aside (#268).
 
 **Links.** #277, #264, #268; decisions 002, 053 (6), 054.

@@ -1542,17 +1542,42 @@ $(cat "$SANDBOX/results/run.log")"
 	[ ! -e "$AGENT_ARGS" ] || fail "an agent ran beside VaultSync for Mac $have"
 	[ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "keeping VaultSync for Mac $have left temporary files: $(ls -A "$SANDBOX/tmp")"
 done
-grep -q "To set up a vault with it, run: \"$installed/Contents/MacOS/vaultsync\" setup\$" "$SANDBOX/results/run.log" ||
+grep -q "To set up a vault with it, run: '$installed/Contents/MacOS/vaultsync' setup --code tulip-anchor-07\$" "$SANDBOX/results/run.log" ||
 	fail "keeping a newer VaultSync for Mac does not name its own setup:
 $(cat "$SANDBOX/results/run.log")"
-pass "a VaultSync for Mac newer than the release is never replaced, and the setup says so"
+# That command carries this run's arguments, each one word for sh: run as
+# printed, it gives the kept app's agent exactly them.
+rm -rf "$installed"
+make_app "$APPS" eu.vaultsync.desktop installed-args 0.11.0
+release_with offered-args "" 0.10.0
+# shellcheck disable=SC2016 # the $ is literal text, part of an argument the command must carry
+if mac_setup -- --vault "Bob's Notes" --path '/tmp/a $b' >"$SANDBOX/results/run.log" 2>&1; then
+	fail "release 0.10.0 replaced VaultSync for Mac 0.11.0 (with arguments)"
+fi
+named=$(sed -n 's/^ERROR: .*To set up a vault with it, run: //p' "$SANDBOX/results/run.log")
+[ -n "$named" ] || fail "keeping a newer app with arguments names no command:
+$(cat "$SANDBOX/results/run.log")"
+rm -f "$AGENT_ARGS" "$AGENT_SELF"
+sh -c "$named" || fail "the named command does not run: $named"
+[ "$(cat "$AGENT_SELF")" = "$installed/Contents/MacOS/vaultsync" ] || fail "the named command runs another program: $named"
+[ "$(cat "$AGENT_ARGS")" = "[setup]
+[--code]
+[tulip-anchor-07]
+[--vault]
+[Bob's Notes]
+[--path]
+[/tmp/a \$b]" ] || fail "the named command gives the agent other arguments: $named
+$(cat "$AGENT_ARGS")"
+pass "a VaultSync for Mac newer than the release is never replaced, and the setup names its own setup with this run's arguments"
 
 # An installed VaultSync for Mac whose agent names no release — a
 # development build ("dev", or "dev-<commit>" from a pull request's build),
-# or a version of another form — has no place in the order: it is never
-# replaced (and removed), and the setup says how to install the release.
-# Nor is any app replaced by a download whose line names no release.
-for case in dev dev-abc1234 0.11 v0.11.0 offered-dev; do
+# or a version of another form, such as one whose suffix ends in "-" — has
+# no place in the order: it is never replaced (and removed), and the setup
+# says how to install the release. Nor is any app replaced by a download
+# whose line names no release. (desktop/issue277_test.go holds the same
+# examples against its copy of the rule.)
+for case in dev dev-abc1234 0.11 v0.11.0 0.11.0-rc- offered-dev; do
 	rm -rf "$installed"
 	if [ "$case" = offered-dev ]; then
 		make_app "$APPS" eu.vaultsync.desktop "installed-$case" 0.9.1
@@ -1597,9 +1622,7 @@ done
 pass "an older release, another build of the same one and an app that does not run are replaced"
 
 # An installed app that is not whole (no menu-bar app) but whose agent says a
-# newer release is kept as well: that agent may have set up its engine. One
-# whose agent is a link is never asked — the link may lead anywhere — and is
-# replaced as before.
+# newer release is kept as well: that agent may have set up its engine.
 rm -rf "$installed"
 make_app "$APPS" eu.vaultsync.desktop installed-no-tray 0.11.0
 rm "$installed/Contents/MacOS/vaultsync-tray"
@@ -1611,24 +1634,43 @@ fi
 [ "$before" = "$(tree "$APPS")" ] || fail "an app without its menu-bar app was changed"
 grep -q "is 0.11.0, newer than this release (0.10.0)" "$SANDBOX/results/run.log" || fail "keeping an app without its menu-bar app does not say why:
 $(cat "$SANDBOX/results/run.log")"
-rm -rf "$installed" "$SANDBOX/linked-agent"
-mkdir -p "$SANDBOX/linked-agent"
-cat >"$SANDBOX/linked-agent/vaultsync" <<AGENT
+pass "an app without its menu-bar app that says it is newer stays"
+
+# An installed agent reached through a link — the agent itself,
+# Contents/MacOS or Contents (the app itself is check_app_place's) — is never
+# asked: the link may lead anywhere. The app is replaced as before, and what
+# the link leads to is left as it is.
+for level in agent MacOS Contents; do
+	rm -rf "$installed" "$SANDBOX/linked"
+	mkdir -p "$SANDBOX/linked/Contents/MacOS"
+	sed -e "s/@VERSION@/9.9.9/" "$REPO_ROOT/desktop/macos/Info.plist" >"$SANDBOX/linked/Contents/Info.plist"
+	cat >"$SANDBOX/linked/Contents/MacOS/vaultsync" <<AGENT
 #!/usr/bin/env sh
 : >"$SANDBOX/results/linked-agent-ran"
 echo "vaultsync 9.9.9 (Syncthing 2.1.7)"
 AGENT
-chmod 755 "$SANDBOX/linked-agent/vaultsync"
-rm -f "$SANDBOX/results/linked-agent-ran"
-make_app "$APPS" eu.vaultsync.desktop installed-linked-agent 0.11.0
-ln -sf "$SANDBOX/linked-agent/vaultsync" "$installed/Contents/MacOS/vaultsync"
-release_with offered-over-linked-agent "" 0.10.0
-mac_setup >"$SANDBOX/results/run.log" 2>&1 || fail "release 0.10.0 did not replace an app whose agent is a link:
+	printf '#!/bin/sh\n' >"$SANDBOX/linked/Contents/MacOS/vaultsync-tray"
+	chmod 755 "$SANDBOX/linked/Contents/MacOS/vaultsync" "$SANDBOX/linked/Contents/MacOS/vaultsync-tray"
+	make_app "$APPS" eu.vaultsync.desktop "installed-linked-$level" 0.11.0
+	case "$level" in
+		agent) ln -sf "$SANDBOX/linked/Contents/MacOS/vaultsync" "$installed/Contents/MacOS/vaultsync" ;;
+		MacOS) rm -rf "$installed/Contents/MacOS" && ln -s "$SANDBOX/linked/Contents/MacOS" "$installed/Contents/MacOS" ;;
+		Contents) rm -rf "$installed/Contents" && ln -s "$SANDBOX/linked/Contents" "$installed/Contents" ;;
+	esac
+	linked_before=$(tree "$SANDBOX/linked")
+	rm -f "$SANDBOX/results/linked-agent-ran"
+	release_with "offered-over-linked-$level" "" 0.10.0
+	mac_setup >"$SANDBOX/results/run.log" 2>&1 || fail "release 0.10.0 did not replace an app whose $level is a link:
 $(cat "$SANDBOX/results/run.log")"
-[ ! -e "$SANDBOX/results/linked-agent-ran" ] || fail "the setup ran an installed agent that is a link"
-grep -q "build: vaultsync offered-over-linked-agent\$" "$installed/Contents/MacOS/vaultsync" || fail "release 0.10.0 is not in the place of an app whose agent is a link"
-rm -rf "$SANDBOX/linked-agent"
-pass "an app without its menu-bar app that says it is newer stays; an agent that is a link is never run"
+	[ ! -e "$SANDBOX/results/linked-agent-ran" ] || fail "the setup ran an installed agent through a link ($level)"
+	grep -q "build: vaultsync offered-over-linked-$level\$" "$installed/Contents/MacOS/vaultsync" ||
+		fail "release 0.10.0 is not in the place of an app whose $level is a link"
+	{ [ ! -L "$installed/Contents" ] && [ ! -L "$installed/Contents/MacOS" ] && [ ! -L "$installed/Contents/MacOS/vaultsync" ]; } ||
+		fail "the app in place still leads through a link ($level)"
+	[ "$linked_before" = "$(tree "$SANDBOX/linked")" ] || fail "what the link ($level) leads to was changed"
+done
+rm -rf "$SANDBOX/linked"
+pass "an installed agent reached through a link at any level is never run, and the app is replaced"
 
 # Never replaced: a bundle of that name with another identifier, or a link —
 # even one to a VaultSync for Mac kept elsewhere (another disk, say): the
@@ -1782,7 +1824,7 @@ esac
 [ "$(ls -A "$APPS")" = "VaultSync for Mac.app" ] || fail "the unpacking left something beside the app: $(ls -A "$APPS")"
 out=$(mac_setup --dry-run 2>&1) || fail "the dry run beside the installed app failed:
 $out"
-printf '%s\n' "$out" | grep -q "would replace VaultSync for Mac in $APPS, unless it is already this build, or may be a newer one$" ||
+printf '%s\n' "$out" | grep -q "would replace VaultSync for Mac in $APPS, unless it is already this build — or stop and change nothing where the one there is a newer release, or does not say which release it is (a development build)$" ||
 	fail "the dry run does not say that the same build, or a newer one, stays:
 $out"
 pass "the new app is unpacked beside its place and moved there in one rename"

@@ -689,11 +689,42 @@ same_app() {
 	done
 }
 
+# sh_quote WORD prints WORD as one word for sh: as it is when it holds only
+# characters no shell treats specially, else in single quotes, a single
+# quote in it as '\''. No sed: BSD sed ends its output with a newline the
+# input did not have.
+sh_quote() {
+	case "$1" in
+		"" | *[!A-Za-z0-9_./:=@%+,-]*) ;;
+		*)
+			printf '%s' "$1"
+			return 0
+			;;
+	esac
+	quote_rest=$1
+	printf "'"
+	while :; do
+		case "$quote_rest" in
+			*\'*)
+				quote_part=${quote_rest%%\'*}
+				printf "%s'\\\\''" "$quote_part"
+				quote_rest=${quote_rest#*\'}
+				;;
+			*)
+				printf "%s'" "$quote_rest"
+				return 0
+				;;
+		esac
+	done
+}
+
 # release_of LINE prints the release a `vaultsync version` line names —
 # 0.3.0 for "vaultsync 0.3.0 (Syncthing 2.1.7)", 0.3.0-rc.1 for a release
 # candidate's — and fails for any other line: a build of no release says
 # "dev" or "dev-<commit>". The line is the agent's (desktop/main.go), and a
-# test there holds it to this form (decision 080).
+# test there holds it to this form (decision 080). That test carries this
+# rule as a copy of its own (setupLinkRelease in desktop/issue277_test.go):
+# the two move together.
 release_of() {
 	case "$1" in
 		"vaultsync "*) ;;
@@ -722,19 +753,25 @@ release_of() {
 # aside, so another build of the same release is replaced. An app whose
 # line names no release (a development build), or a download whose line
 # names none, has no place in that order: nothing is replaced. An installed
-# app whose agent is no plain executable file (never run: a link may lead
-# anywhere), or whose agent does not run, is replaced as before: nothing
-# runs from it.
+# app whose agent is no plain executable file or is reached through a link
+# — the app, Contents, Contents/MacOS or the agent itself (never run: a link
+# may lead anywhere) — or whose agent does not run, is replaced as before:
+# nothing runs from it, and the agent's checkApp passes over such an app.
+# The command named for a newer app's own setup carries this run's
+# arguments (SETUP_ARGS_QUOTED).
 keep_newer_app() {
 	have_agent="$APP/Contents/MacOS/vaultsync"
-	{ [ -f "$have_agent" ] && [ ! -L "$have_agent" ] && [ -x "$have_agent" ]; } || return 0
+	for link_part in "$APP" "$APP/Contents" "$APP/Contents/MacOS" "$have_agent"; do
+		[ ! -L "$link_part" ] || return 0
+	done
+	{ [ -f "$have_agent" ] && [ -x "$have_agent" ]; } || return 0
 	have_line=$("$have_agent" version 2>/dev/null) || return 0
 	have=$(release_of "$have_line") ||
 		fail "VaultSync for Mac in $1 does not say which release it is (a development build, say), so the setup link cannot tell whether this release is newer — it was not replaced, and nothing was changed. To install this release, move it to the Trash, then run the setup link again."
 	offered=$(release_of "$2") ||
 		fail "The downloaded VaultSync for Mac does not say which release it is, so the setup link cannot tell whether it is newer than the one in $1 — that one was not replaced, and nothing was changed."
 	if version_newer "${have%%-*}" "${offered%%-*}"; then
-		fail "VaultSync for Mac in $1 is $have, newer than this release ($offered), so it was not replaced — nothing was changed. To set up a vault with it, run: \"$APP/Contents/MacOS/vaultsync\" setup"
+		fail "VaultSync for Mac in $1 is $have, newer than this release ($offered), so it was not replaced — nothing was changed. To set up a vault with it, run: $(sh_quote "$have_agent")$SETUP_ARGS_QUOTED"
 	fi
 }
 
@@ -1209,6 +1246,11 @@ setup_device() {
 		info "  https://github.com/$REPO/blob/main/docs/hub.md (vaultsync-hub pair)."
 	fi
 	set -- setup ${CODE:+--code "$CODE"} "$@"
+	# The same arguments, quoted for sh: the command keep_newer_app names.
+	SETUP_ARGS_QUOTED=""
+	for a in "$@"; do
+		SETUP_ARGS_QUOTED="$SETUP_ARGS_QUOTED $(sh_quote "$a")"
+	done
 	if [ "$DRY_RUN" = 1 ]; then
 		program="<temporary folder>/vaultsync"
 		if [ -n "$app_asset" ]; then
@@ -1216,7 +1258,7 @@ setup_device() {
 			check_app_place "$dir/$APP_NAME"
 			download_binary "$app_asset" "$tag" "<temporary folder>/$app_asset" ""
 			if [ -e "$dir/$APP_NAME" ]; then
-				info "[dry-run] would replace VaultSync for Mac in $dir, unless it is already this build, or may be a newer one"
+				info "[dry-run] would replace VaultSync for Mac in $dir, unless it is already this build — or stop and change nothing where the one there is a newer release, or does not say which release it is (a development build)"
 			else
 				info "[dry-run] would install VaultSync for Mac into $dir"
 			fi
