@@ -1,0 +1,26 @@
+--- a/lib/pmp/pmp.go
++++ b/lib/pmp/pmp.go
+@@ -110,7 +110,11 @@
+ 		return err
+ 	})
+ 	port := 0
+-	if result != nil {
++	// VaultSync (#195): a canceled CallWithContext returns while the closure
++	// keeps running and may still assign result, so read result only when
++	// the call completed, which is when CallWithContext returns nil. The
++	// client never returns a result together with an error.
++	if err == nil && result != nil {
+ 		port = int(result.MappedExternalPort)
+ 	}
+ 	return port, err
+@@ -135,7 +139,9 @@
+ 		return err
+ 	})
+ 	ip := net.IPv4zero
+-	if result != nil {
++	// VaultSync (#195): read result only when the call completed, as in
++	// AddPortMapping.
++	if err == nil && result != nil {
+ 		ip = net.IPv4(
+ 			result.ExternalIPAddress[0],
+ 			result.ExternalIPAddress[1],

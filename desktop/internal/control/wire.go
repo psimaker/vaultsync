@@ -3,6 +3,12 @@ package control
 // What the agent answers on the socket (decision 049) — the one definition
 // the agent encodes and the terminal and the menu-bar app decode.
 
+// BuildHeader carries, on every answer of an agent, the build that answers:
+// the mark compiled into it (decision 093). An agent whose build has no
+// mark sends none, and so does every agent before desktop releases carried
+// it: an answer without it comes from another build than one that has one.
+const BuildHeader = "VaultSync-Build"
+
 // Status is GET /v1/status.
 type Status struct {
 	Version   string `json:"version"`   // the agent's

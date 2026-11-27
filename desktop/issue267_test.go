@@ -348,8 +348,8 @@ func TestIssue267_AProgramChangedDuringTheAttemptIsNotKept(t *testing.T) {
 }
 
 // status says what installs the pin by what the service runs: this very
-// build tries it at its next start — vaultsync stop, then vaultsync start
-// (#267).
+// build — as its agent says (#416) — tries it at its next start — vaultsync
+// stop, then vaultsync start (#267).
 func TestIssue267_StatusNamesStopThenStartWhereTheServiceRunsThisBuild(t *testing.T) {
 	a := installedApp(t, "linux", &fakeRunner{answers: map[string]string{"systemctl --user is-active vaultsync.service": "active"}})
 	sum, err := fileSHA256(a.lay.Syncthing)
@@ -360,6 +360,7 @@ func TestIssue267_StatusNamesStopThenStartWhereTheServiceRunsThisBuild(t *testin
 		t.Fatal(err)
 	}
 	runsAs(t, a, a.lay.Agent, "this very build")
+	answeringAgent(t, a)
 	if out := statusText(t, a); !strings.Contains(out, "which its background service tries to install at its next start — vaultsync stop, then vaultsync start") {
 		t.Fatalf("status where the service runs this build:\n%s", out)
 	}
