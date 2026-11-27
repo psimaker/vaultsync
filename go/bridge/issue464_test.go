@@ -133,7 +133,7 @@ func TestIssue464_NoAnswerNamesAPath(t *testing.T) {
 	}
 	answer := acceptAsDirectChild("issue464-offers", "Offers", filepath.Join(root, "Offers"), false)
 	if answer != "read pending folder offers: input/output error" || namesAPath(answer) {
-		t.Fatalf("accept on a failed read of the offers = %q, want the error without its path", answer)
+		t.Errorf("accept on a failed read of the offers = %q, want the error without its path", answer)
 	}
 	offeringDevicesFor = saved
 
@@ -143,7 +143,7 @@ func TestIssue464_NoAnswerNamesAPath(t *testing.T) {
 	}
 	answer = acceptAsDirectChild("issue464-file", "File", filepath.Join(root, "File"), false)
 	if !strings.HasPrefix(answer, "read folder path: ") || namesAPath(answer) {
-		t.Fatalf("accept into a file = %q, want the read error without its path", answer)
+		t.Errorf("accept into a file = %q, want the read error without its path", answer)
 	}
 
 	// The accept's creation of the target, in a folder it may not write.
@@ -158,6 +158,6 @@ func TestIssue464_NoAnswerNamesAPath(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
 	answer = AcceptPendingFolder("issue464-locked", "Locked", filepath.Join(locked, "Vault"), locked, false)
 	if !strings.HasPrefix(answer, "create folder path: ") || namesAPath(answer) {
-		t.Fatalf("accept into a folder it may not write = %q, want the creation error without its path", answer)
+		t.Errorf("accept into a folder it may not write = %q, want the creation error without its path", answer)
 	}
 }
