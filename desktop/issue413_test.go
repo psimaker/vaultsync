@@ -339,8 +339,15 @@ func TestIssue413_CommandsWithoutAnAgentAskOnlyARunningEngine(t *testing.T) {
 			t.Run(c.name+", "+l.name, func(t *testing.T) {
 				a, asked := anotherProgramAtTheRecordedPort(t)
 				l.set(t, a.lay)
+				start := time.Now()
 				out, err := c.run(a)
+				took := time.Since(start)
 				said := out + refusalText(err) + fmt.Sprint(err)
+				// With no background service running, nothing is waited for:
+				// the answer comes at once, not after pair's ten seconds.
+				if !l.asked && took > 3*time.Second {
+					t.Fatalf("took %s to say:\n%s", took.Round(time.Millisecond), said)
+				}
 				if n := asked.Load(); (n > 0) != l.asked {
 					t.Fatalf("the program at the recorded port was asked %d times:\n%s", n, said)
 				}
