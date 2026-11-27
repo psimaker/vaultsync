@@ -103,7 +103,7 @@ func (c *controlServer) handler() http.Handler {
 	// included — so start and status learn which build runs from the run
 	// itself, never from the file at its program's path (#416, decision
 	// 093).
-	build := c.a.build
+	build := c.a.mark()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if build != "" {
 			w.Header().Set(control.BuildHeader, build)
@@ -686,7 +686,7 @@ func (a *app) agentAnswers() (answered bool, build string) {
 		if i > 0 {
 			a.svc.wait(startAnswerEvery)
 		}
-		answered, timedOut, build := a.askAgent(startAskTimeout)
+		answered, timedOut, build := a.askAgent(context.Background(), startAskTimeout)
 		if answered {
 			return true, build
 		}
@@ -699,13 +699,14 @@ func (a *app) agentAnswers() (answered bool, build string) {
 
 // askAgent asks the agent once for startAskPath — at the place agent.json
 // records now — and says whether it answered, whether the ask ran out of
-// time instead, and the build mark it answered with.
-func (a *app) askAgent(timeout time.Duration) (answered, timedOut bool, build string) {
+// time instead, and the build mark it answered with. It ends with parent,
+// and after timeout at the latest.
+func (a *app) askAgent(parent context.Context, timeout time.Duration) (answered, timedOut bool, build string) {
 	path := a.lay.Socket
 	if st, err := loadState(a.lay.State); err == nil && st.ControlSocket != "" {
 		path = st.ControlSocket
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	build, err := control.New(path, errAgentAnswered).Ask(ctx, http.MethodGet, startAskPath, nil, nil)
 	var said *control.AnswerError
@@ -732,9 +733,9 @@ const (
 // an answer, or with no mark on either side, it is not known.
 func (a *app) runningBuildOf(answered bool, build string) runningBuild {
 	switch {
-	case !answered || (a.build == "" && build == ""):
+	case !answered || (a.mark() == "" && build == ""):
 		return buildNotKnown
-	case build == a.build:
+	case build == a.mark():
 		return buildThis
 	default:
 		return buildAnother
@@ -743,8 +744,8 @@ func (a *app) runningBuildOf(answered bool, build string) runningBuild {
 
 // serviceSaysThisBuild: the background service's agent, asked once, says it
 // runs this very build. No answer, or no mark, is not this build.
-func (a *app) serviceSaysThisBuild() bool {
-	answered, _, build := a.askAgent(serviceBuildAskTimeout)
+func (a *app) serviceSaysThisBuild(ctx context.Context) bool {
+	answered, _, build := a.askAgent(ctx, serviceBuildAskTimeout)
 	return a.runningBuildOf(answered, build) == buildThis
 }
 

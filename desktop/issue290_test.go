@@ -208,7 +208,7 @@ func holdEngineLock(t *testing.T, a *app) {
 func answeringAgent(t *testing.T, a *app) *fakeAgent {
 	t.Helper()
 	f := newFakeAgent(t)
-	f.build = a.build
+	f.build = a.mark()
 	recordSocket(t, a, f.path)
 	return f
 }
@@ -364,7 +364,7 @@ func TestIssue290_StartSaysRunningOnlyOnceTheAgentAnswers(t *testing.T) {
 			if err != nil || strings.Contains(out, "running again") || strings.Contains(out, "✓") {
 				t.Fatalf("start with no agent answering: %v\n%s", err, out)
 			}
-			for _, want := range []string{"does not answer yet", "vaultsync status says where it stands", "run vaultsync stop, then vaultsync start", a.logHint()} {
+			for _, want := range []string{"does not answer yet", "vaultsync status says what it does", "run vaultsync stop, then vaultsync start", "run the setup link, which brings the current VaultSync to the service", a.logHint()} {
 				if !strings.Contains(out, want) {
 					t.Fatalf("%q missing:\n%s", want, out)
 				}
@@ -401,7 +401,9 @@ func TestIssue290_StartHearsAnAgentThatComesUpWhileItWaits(t *testing.T) {
 	}
 }
 
-// serveSocket serves h on a control socket at the place agent.json records.
+// serveSocket serves h on a control socket at the place agent.json records,
+// as an agent of a's build: every answer says a's mark unless h sets
+// another or removes it (decision 093).
 func serveSocket(t *testing.T, a *app, h http.Handler) {
 	t.Helper()
 	path := filepath.Join(shortDir(t), "agent.sock")
@@ -409,7 +411,7 @@ func serveSocket(t *testing.T, a *app, h http.Handler) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := &http.Server{Handler: h}
+	srv := &http.Server{Handler: ofBuild(a.mark(), h)}
 	go func() { _ = srv.Serve(l) }()
 	t.Cleanup(func() { _ = srv.Close() })
 	recordSocket(t, a, path)
@@ -427,7 +429,7 @@ func TestIssue290_AnyAnswerOfTheAgentCounts(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			a, _ := linuxServiceOfThisBuild(t)
-			serveSocket(t, a, ofBuild(a.build, h))
+			serveSocket(t, a, h)
 			if err := a.startService(); err != nil || !strings.Contains(startText(a), "✓ VaultSync is running again.") {
 				t.Fatalf("%v\n%s", err, startText(a))
 			}
@@ -454,7 +456,7 @@ func TestIssue290_StartDoesNotWaitForTheEngine(t *testing.T) {
 		case <-r.Context().Done():
 		}
 	})
-	serveSocket(t, a, ofBuild(a.build, mux))
+	serveSocket(t, a, mux)
 	orig := startAskTimeout
 	startAskTimeout = 2 * time.Second
 	defer func() { startAskTimeout = orig }()

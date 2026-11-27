@@ -653,14 +653,15 @@ type fakeAgent struct {
 	srv    *http.Server
 	// broken: the agent answers status with an error.
 	broken bool
-	// build is the build mark it says on every answer (decision 093); ""
-	// says none, as an agent before desktop releases carried it.
+	// build is the build mark it says on every answer (decision 093): this
+	// build's by default; noBuildMark says none, as an agent of a build
+	// without a mark, or one from before builds said theirs.
 	build string
 }
 
 func newFakeAgent(t *testing.T) *fakeAgent {
 	t.Helper()
-	f := &fakeAgent{path: filepath.Join(shortDir(t), "agent.sock")}
+	f := &fakeAgent{path: filepath.Join(shortDir(t), "agent.sock"), build: defaultBuildMark}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
 		if f.broken {
@@ -678,7 +679,7 @@ func newFakeAgent(t *testing.T) *fakeAgent {
 		t.Fatal(err)
 	}
 	f.srv = &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if f.build != "" {
+		if f.build != "" && f.build != noBuildMark {
 			w.Header().Set(control.BuildHeader, f.build)
 		}
 		mux.ServeHTTP(w, r)

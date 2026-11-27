@@ -79,6 +79,28 @@ func buildMark() string {
 	return headerSafe(buildMarkOf(version, info))
 }
 
+// defaultBuildMark is the mark of an app nothing gave one: newApp always
+// sets this program's own, so in the program it is never read. The tests
+// set it, so that every app they build — by a helper or by hand — is this
+// build unless the test says otherwise, as the program would be.
+var defaultBuildMark = ""
+
+// noBuildMark, as an app's build, says it has no mark (buildMark never
+// gives it: it cannot travel as a header value).
+const noBuildMark = "\x00"
+
+// mark is this program's build mark: the app's own, or the default where
+// nothing set one; "" for a build without one (decision 093).
+func (a *app) mark() string {
+	switch a.build {
+	case noBuildMark:
+		return ""
+	case "":
+		return defaultBuildMark
+	}
+	return a.build
+}
+
 func headerSafe(mark string) string {
 	for _, r := range mark {
 		if r < 0x21 || r > 0x7e {
@@ -1835,16 +1857,19 @@ func (a *app) olderNote(st agentState, loadErr error) string {
 // themselves (they never write it). Nothing is changed, locked or asked. The way on names
 // the program that holds the VaultSync set up here, with the command and
 // the arguments this run was given; only where none is found, the setup
-// link. Where the background service runs this very build, it parks (054):
-// nothing syncs, and only the setup link brings a current build to the
-// service — uninstall can still go through another program. uninstall and
-// pause say how syncing stops now, where that is known.
+// link. A background service of this very build parks (054): nothing
+// syncs, and only the setup link brings a current build to the service.
+// Whether the service runs this build, no look tells: a parked run never
+// answers, and the file at a program's path may have been replaced since
+// the program started (decision 093). So the refusal claims neither: where
+// the program it names is not the one the service starts, or it names none,
+// pair, pause and resume say what holds if the service runs this build.
+// uninstall and pause say how syncing stops now, where that is known.
 func (a *app) olderRefusal(command string, args []string, st agentState, loadErr error) error {
 	self, selfErr := ownProgram(a.appEnv)
 	installed := a.svc.installed()
-	serviceIsThis := selfErr == nil && installed && a.serviceRunsThisBuild(self)
 	prog, found := "", false
-	if selfErr == nil && (command == "uninstall" || !serviceIsThis) {
+	if selfErr == nil {
 		prog, found = a.setUpProgram(self, st, loadErr)
 	}
 	line := command + shellArgs(args)
@@ -1859,8 +1884,6 @@ func (a *app) olderRefusal(command string, args []string, st agentState, loadErr
 	}
 	msg := a.olderFact(st, loadErr) + " Nothing was changed — " + way
 	switch {
-	case serviceIsThis:
-		msg += " Nothing syncs here meanwhile: the background service runs this VaultSync too."
 	case command != "uninstall" && command != "pause":
 	case installed:
 		// stop is no command an older build refuses: this very program, by
@@ -1875,7 +1898,20 @@ func (a *app) olderRefusal(command string, args []string, st agentState, loadErr
 		// is stopped where it runs.
 		msg += " No background service is installed here, so stop stops nothing: a vaultsync run started by hand, in a terminal or at login, syncs until it is stopped there."
 	}
+	if installed && command != "uninstall" && (!found || prog != a.serviceProgramPath()) {
+		msg += " Where the background service runs this VaultSync too, nothing syncs until the setup link brings the current one to it."
+	}
 	return refuse("%s", msg)
+}
+
+// serviceProgramPath is the program the background service starts: the one
+// its LaunchAgent names on a Mac, VaultSync's own copy on Linux (the only
+// one setup gives the unit).
+func (a *app) serviceProgramPath() string {
+	if a.goos == "darwin" {
+		return a.svc.program()
+	}
+	return a.lay.Agent
 }
 
 // ownCommand is how a shell runs this very program (commandFor), by the
@@ -2144,8 +2180,6 @@ func (a *app) startService() error {
 	if note := a.parkedNote(); note != "" {
 		return refuse("The background service runs, but it does not sync: %s", note)
 	}
-	st, err := loadState(a.lay.State)
-	older := olderThanSetUp(st, err)
 	// The service manager counts a run as running from its first moment;
 	// its agent answers only once it has come up, which a pin's download
 	// can delay for minutes, and a run that ends before then never does.
@@ -2168,6 +2202,9 @@ func (a *app) startService() error {
 			answered, build = a.agentAnswers()
 		}
 	}
+	// Read after the wait: a newer run records its engine as it comes up.
+	st, err := loadState(a.lay.State)
+	older := olderThanSetUp(st, err)
 	// Which build the service runs is what its agent says (#416, decision
 	// 093): the files at this program's path and at the service's can be
 	// replaced while the programs started from them run on — a newer
@@ -2180,6 +2217,13 @@ func (a *app) startService() error {
 			fmt.Fprintln(a.out, "✓ VaultSync is already running.")
 		} else {
 			fmt.Fprintln(a.out, "✓ VaultSync is running again.")
+		}
+		if older {
+			// A run of this build that answers passed its own check at its
+			// start, so it runs; what was set up since is newer, and the
+			// run parks at its next start (054). The way out goes with it.
+			fmt.Fprintln(a.out, "Note: "+a.olderFact(st, err)+" Run the setup link to get the current VaultSync.")
+			return nil
 		}
 	case buildAnother:
 		// Of another build this program's pin says nothing — a newer one
@@ -2210,7 +2254,10 @@ func (a *app) startService() error {
 
 // noAnswerYet is start's word for a service that runs and whose agent has
 // not answered: no refusal — it may be on its way up — and the way out for
-// one that stays so, which vaultsync stop ends however it hangs. A run that
+// one that stays so, which vaultsync stop ends however it hangs. A service
+// of an older build parks and never answers, and a stop and start runs the
+// same program again; the setup link brings the current build to it (054),
+// so the way ends there (#416). A run that
 // recorded that it could not open its control socket syncs on without one
 // and never answers there; a stop and start would only make the same
 // socket fail again, so that is said instead (control-socket-error.txt goes
@@ -2219,5 +2266,5 @@ func (a *app) noAnswerYet() string {
 	if _, err := os.Stat(a.lay.SocketErrorFile()); err == nil {
 		return fmt.Sprintf("VaultSync's background service runs, but it does not answer on its control socket: it recorded that it could not open it (%s says why). vaultsync status asks the sync engine directly and says whether it syncs.", tildePath(a.home, a.lay.SocketErrorFile()))
 	}
-	return fmt.Sprintf("VaultSync's background service runs, but it does not answer yet — it may still be installing its sync engine. vaultsync status says where it stands; if it stays so, run vaultsync stop, then vaultsync start (its log: %s).", a.logHint())
+	return fmt.Sprintf("VaultSync's background service runs, but it does not answer yet — it may still be installing its sync engine. vaultsync status says what it does. If it stays so, run vaultsync stop, then vaultsync start; where that changes nothing, run the setup link, which brings the current VaultSync to the service (its log: %s).", a.logHint())
 }

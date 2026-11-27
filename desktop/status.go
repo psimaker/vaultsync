@@ -110,7 +110,7 @@ func (a *app) status(ctx context.Context) error {
 		// this one. Which build runs is what the service's agent says, not
 		// the files at the programs' paths (#416, decision 093); without
 		// an answer, setup is what is sure to install it.
-		if a.svc.installed() && a.serviceSaysThisBuild() {
+		if a.svc.installed() && a.serviceSaysThisBuild(ctx) {
 			fmt.Fprintf(w, "Note: this VaultSync brings Syncthing %s, which its background service tries to install at its next start — vaultsync stop, then vaultsync start.\n", strings.TrimPrefix(syncthingVersion, "v"))
 		} else {
 			fmt.Fprintf(w, "Note: this VaultSync brings Syncthing %s, which vaultsync setup installs.\n", strings.TrimPrefix(syncthingVersion, "v"))

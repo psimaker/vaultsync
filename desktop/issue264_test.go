@@ -310,14 +310,16 @@ func TestIssue264_StartJudgesTheServiceByWhatItRuns(t *testing.T) {
 	}
 
 	// The current build beside an older service, which parks and does not
-	// answer: no "running again".
+	// answer: no "running again", and a way that ends — status, then stop
+	// and start, then the setup link, which brings the current build to the
+	// service (054).
 	a = installedApp(t, "linux", active())
 	writeFile(t, a.lay.Agent, "an older build the service runs")
 	runsAs(t, a, filepath.Join(t.TempDir(), "vaultsync"), "the current build")
 	if err := a.startService(); err != nil {
 		t.Fatalf("start beside an older service: %v", err)
 	}
-	if out := text(a); strings.Contains(out, "running again") || !strings.Contains(out, "vaultsync status says") {
+	if out := text(a); strings.Contains(out, "running again") || !strings.Contains(out, "vaultsync status says what it does. If it stays so, run vaultsync stop, then vaultsync start; where that changes nothing, run the setup link, which brings the current VaultSync to the service") {
 		t.Fatalf("start beside an older service:\n%s", out)
 	}
 }

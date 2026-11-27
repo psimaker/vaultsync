@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"path/filepath"
 	"runtime/debug"
@@ -23,6 +24,13 @@ import (
 // compiled into it, and the build that runs is what its agent says on the
 // control socket (decision 093).
 
+// Every app a test builds — by a helper or by hand — and every fake agent
+// is this build unless the test says otherwise, as in the program, where
+// newApp gives each app the program's own mark. A test of another build
+// sets the app's build, or the agent's; one of a build without a mark sets
+// noBuildMark.
+func init() { defaultBuildMark = "this build" }
+
 // ofBuild answers as h does, as an agent of build says it on every answer.
 func ofBuild(build string, h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -34,11 +42,19 @@ func ofBuild(build string, h http.Handler) http.Handler {
 }
 
 // agentOfBuild serves a control socket, at the place agent.json records,
-// whose agent says it runs build and answers every request with the 404 an
-// agent gives for a path it does not serve — the answer start waits for.
+// whose agent says it runs build (noBuildMark: says none) and answers every
+// request with the 404 an agent gives for a path it does not serve — the
+// answer start waits for.
 func agentOfBuild(t *testing.T, a *app, build string) {
 	t.Helper()
-	serveSocket(t, a, ofBuild(build, http.NotFoundHandler()))
+	serveSocket(t, a, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if build == noBuildMark {
+			w.Header().Del(control.BuildHeader)
+		} else {
+			w.Header().Set(control.BuildHeader, build)
+		}
+		http.NotFound(w, r)
+	}))
 }
 
 // An older copy of VaultSync, started by its path beside a newer VaultSync
@@ -199,6 +215,7 @@ func TestIssue416_TheAgentSaysItsBuildOnEveryAnswer(t *testing.T) {
 	}
 
 	b := agentApp(t, newFakeEngine(t))
+	b.build = noBuildMark
 	if build, err := serveControl(t, b).Ask(ctx, http.MethodGet, startAskPath, nil, nil); build != "" || !errors.Is(err, errNoAgent) {
 		t.Fatalf("a build without a mark: %q %v", build, err)
 	}
@@ -230,7 +247,9 @@ func TestIssue416_StartHearsTheRealAgentsBuild(t *testing.T) {
 // on the strength of the file at the service's path, which is this build.
 func TestIssue416_AnAnswerWithoutAMarkIsAnotherBuild(t *testing.T) {
 	a, _ := linuxServiceOfThisBuild(t)
-	newFakeAgent(t).recordedFor(t, a)
+	agent := newFakeAgent(t)
+	agent.build = noBuildMark
+	agent.recordedFor(t, a)
 	if err := a.startService(); err != nil {
 		t.Fatal(err)
 	}
@@ -245,8 +264,10 @@ func TestIssue416_AnAnswerWithoutAMarkIsAnotherBuild(t *testing.T) {
 // another build.
 func TestIssue416_ABuildWithoutAMarkNamesNoBuild(t *testing.T) {
 	a, _ := linuxServiceOfThisBuild(t)
-	a.build = ""
-	newFakeAgent(t).recordedFor(t, a)
+	a.build = noBuildMark
+	agent := newFakeAgent(t)
+	agent.build = noBuildMark
+	agent.recordedFor(t, a)
 	if err := a.startService(); err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +276,7 @@ func TestIssue416_ABuildWithoutAMarkNamesNoBuild(t *testing.T) {
 	}
 
 	a, _ = linuxServiceOfThisBuild(t)
-	a.build = ""
+	a.build = noBuildMark
 	agentOfBuild(t, a, "0.9.9")
 	if err := a.startService(); err != nil {
 		t.Fatal(err)
@@ -315,5 +336,155 @@ func TestIssue416_WhatABuildsMarkIs(t *testing.T) {
 	// mark, so it is one build with nothing.
 	if got := buildMark(); got != "" {
 		t.Errorf("a test binary's mark: %q", got)
+	}
+}
+
+// The default every test relies on: an app nothing marked is this build, and
+// so is a fake agent and the control server of such an app — start from one
+// such app beside the other's agent is "running again", as a test written
+// before marks existed expects (decision 093).
+func TestIssue416_AnAppNothingMarkedIsThisBuild(t *testing.T) {
+	quickAnswerWait(t)
+	byHand := &app{}
+	if byHand.mark() != defaultBuildMark || defaultBuildMark == "" {
+		t.Fatalf("an app built by hand carries %q", byHand.mark())
+	}
+	none := &app{build: noBuildMark}
+	if none.mark() != "" {
+		t.Fatalf("an app of a build without a mark carries %q", none.mark())
+	}
+	a := installedApp(t, "linux", &fakeRunner{systemd: true})
+	service := &app{goos: a.goos, home: a.home, getenv: a.getenv, lay: a.lay, svc: a.svc, out: &bytes.Buffer{}}
+	serveSocket(t, a, (&controlServer{a: service, eng: service.engine(), logf: t.Logf}).handler())
+	if err := a.startService(); err != nil || !strings.Contains(startText(a), "✓ VaultSync is running again.") {
+		t.Fatalf("start beside an agent of an app nothing marked: %v\n%s", err, startText(a))
+	}
+	a = installedApp(t, "linux", &fakeRunner{systemd: true})
+	answeringAgent(t, a)
+	if err := a.startService(); err != nil || !strings.Contains(startText(a), "✓ VaultSync is running again.") {
+		t.Fatalf("start beside a fake agent: %v\n%s", err, startText(a))
+	}
+}
+
+// An older copy refused at pair, whose file the newer build's setup
+// replaced in the instant before it read itself, while the service runs
+// that newer build and syncs: the refusal judged the service's build by the
+// files and said that nothing syncs. A parked service never answers, so no
+// look tells whether it runs this build: the refusal says what holds if it
+// does, and claims nothing (decision 093, decision 091).
+func TestIssue416_AnOlderRefusalClaimsNothingOfTheServicesBuild(t *testing.T) {
+	a := installedApp(t, "linux", &fakeRunner{})
+	newerEngineHere(t, a.lay)
+	runsAs(t, a, a.lay.Agent, "the older copy")
+	writeFile(t, a.lay.Agent, "the newer build its setup put in place")
+	got := refusalText(a.pair(context.Background(), nil))
+	if !strings.Contains(got, "this VaultSync is older") || strings.Contains(got, "Nothing syncs here meanwhile") {
+		t.Fatalf("an older refusal judged the service's build by files:\n%s", got)
+	}
+	if !strings.Contains(got, "Where the background service runs this VaultSync too, nothing syncs until the setup link brings the current one to it.") {
+		t.Fatalf("an older refusal does not say what holds if the service runs this build:\n%s", got)
+	}
+}
+
+// The current build's start beside an older service that parks and never
+// answers: the advice must end somewhere. stop, then start, runs the same
+// older program again; the setup link brings the current build to the
+// service (054). It still says the service may be installing its engine,
+// which a slow first start does.
+func TestIssue416_BesideAParkedOlderServiceStartNamesAWayThatEnds(t *testing.T) {
+	a, _ := linuxServiceOfThisBuild(t)
+	quickAnswerWait(t)
+	writeFile(t, a.lay.Agent, "an older build the service runs, which parks")
+	runsAs(t, a, filepath.Join(t.TempDir(), "vaultsync"), "the current build")
+	if err := a.startService(); err != nil {
+		t.Fatal(err)
+	}
+	want := "VaultSync's background service runs, but it does not answer yet — it may still be installing its sync engine. vaultsync status says what it does. If it stays so, run vaultsync stop, then vaultsync start; where that changes nothing, run the setup link, which brings the current VaultSync to the service (its log: journalctl --user -u vaultsync).\n"
+	if out := startText(a); out != want {
+		t.Fatalf("start beside a parked older service:\n%s", out)
+	}
+}
+
+// A run of this very build that answers while what is set up has become
+// newer passed its own check when it started, so it runs: start says so,
+// and the note names the way out, the setup link — a run of this build
+// parks at its next start (054). Before #416 this was the refusal "runs,
+// but it does not sync", the riskier claim of a run that syncs.
+func TestIssue416_ThisBuildAnsweringWhileOlderRunsAndNamesTheWayOut(t *testing.T) {
+	a, _ := linuxServiceOfThisBuild(t)
+	answeringAgent(t, a)
+	newerEngineHere(t, a.lay)
+	if err := a.startService(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	out := startText(a)
+	if !strings.HasPrefix(out, "✓ VaultSync is running again.\nNote: this VaultSync is older than the one set up on this computer") || !strings.HasSuffix(out, " Run the setup link to get the current VaultSync.\n") || strings.Contains(out, "does not sync") {
+		t.Fatalf("start beside a run of this build that is older than what is set up:\n%s", out)
+	}
+}
+
+// A newer run records its engine as it comes up, during start's wait: start
+// reads what is set up after the wait, so the older note is there beside
+// the newer service's answer.
+func TestIssue416_StartReadsWhatIsSetUpAfterTheWait(t *testing.T) {
+	a, _ := linuxServiceOfThisBuild(t)
+	sum, err := fileSHA256(a.lay.Syncthing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serveSocket(t, a, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := updateState(a.lay.State, func(s *agentState) { s.Syncthing.Version, s.Syncthing.BinarySHA256 = "v9.0.0", sum }); err != nil {
+			t.Error(err)
+		}
+		w.Header().Set(control.BuildHeader, "a newer build")
+		http.NotFound(w, r)
+	}))
+	if err := a.startService(); err != nil {
+		t.Fatal(err)
+	}
+	if out := startText(a); !strings.Contains(out, "runs another VaultSync build than this vaultsync") || !strings.Contains(out, "Note: this VaultSync is older") {
+		t.Fatalf("start read what is set up before the newer run recorded it:\n%s", out)
+	}
+}
+
+// status's one ask for the service's build ends with status's own context —
+// Ctrl-C, or a caller's deadline — not only after its 3 s.
+func TestIssue416_StatusAsksTheBuildWithinItsContext(t *testing.T) {
+	a, _ := linuxServiceOfThisBuild(t)
+	path := filepath.Join(shortDir(t), "agent.sock")
+	l, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	held := make(chan net.Conn, 8) // takes the request, never answers
+	t.Cleanup(func() {
+		l.Close()
+		for {
+			select {
+			case c := <-held:
+				c.Close()
+			default:
+				return
+			}
+		}
+	})
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			held <- c
+		}
+	}()
+	recordSocket(t, a, path)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	began := time.Now()
+	if a.serviceSaysThisBuild(ctx) {
+		t.Fatal("a silent socket said this build")
+	}
+	if took := time.Since(began); took > time.Second {
+		t.Fatalf("the ask outlived its context by %v", took)
 	}
 }
