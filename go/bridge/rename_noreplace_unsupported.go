@@ -2,6 +2,6 @@
 
 package bridge
 
-func renameNoReplace(_, _ string) error {
+func renameNoReplaceAt(_ int, _, _ string) error {
 	return errNoReplaceUnsupported
 }

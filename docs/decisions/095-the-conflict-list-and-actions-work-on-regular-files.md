@@ -1,0 +1,11 @@
+# 095 — The conflict list and the conflict actions work on regular files inside the vault's own folder
+
+**Context.** The conflict list, the comparison view's read and the actions on a conflict — keep this version, keep the other version, keep both, and the removal of an original's conflict copies when a file is skipped (`go/bridge/conflicts.go`) — work with a path relative to the vault's folder, which the app takes from the list.
+
+**Decision.** (1) The vault's folder is opened as a root (`os.OpenRoot`), and every read, write, rename and removal of these functions is done relative to it. (2) The directories on a path are opened one at a time: each must be a directory, and the one opened is the one checked. The work is then done by name in that directory, through its handle; Keep Both's rename that never replaces a file is done relative to it too. (3) The entry that is read or acted on must be a regular file. A file that is read is the one checked, and the read does not wait on what it opens. The original that "keep the other version" replaces must be a regular file or missing. A removal removes a file and never a directory, and "keep this version" removes only a file whose name is a conflict copy's. (4) The list reports regular files and enters only directories that are directories when they are read. It takes each entry's type from the directory read and looks again only at a name that matches a conflict copy's. (5) An entry that is refused is left as it is: nothing is removed, renamed or replaced to deal with it (002). It is not listed; an action on it is refused, and no answer carries a path or a name.
+
+**Why.** An action acts on the file the list showed, in the directory it was listed in.
+
+**Rejected alternatives.** *Resolving the path and comparing the result with the folder's path as text:* not taken, because it does not hold the rule. *Following links that stay inside the folder, as a root does by itself:* not taken, because it does not hold the rule. *Removing, renaming or replacing an entry that is refused:* recovery is the user's, never an automatic change of their files (002).
+
+**Links.** #151; #143, #144, #184; decision 002; `TestIssue151_…` in `go/bridge`.

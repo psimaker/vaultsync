@@ -320,11 +320,20 @@ func ignoresWriteError(err error) string {
 	return fmt.Sprintf("set ignores: %v", withoutPath(err))
 }
 
-// withoutPath drops the path an *os.PathError carries.
+// withoutPath drops the paths and names an error carries: those of an
+// *os.PathError, an *os.LinkError (a rename) and an *os.SyscallError.
 func withoutPath(err error) error {
 	var pathErr *os.PathError
 	if errors.As(err, &pathErr) {
 		return pathErr.Err
+	}
+	var linkErr *os.LinkError
+	if errors.As(err, &linkErr) {
+		return linkErr.Err
+	}
+	var syscallErr *os.SyscallError
+	if errors.As(err, &syscallErr) {
+		return syscallErr.Err
 	}
 	return err
 }
