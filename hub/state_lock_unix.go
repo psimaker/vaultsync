@@ -62,7 +62,7 @@ func lockStateFile(statePath string) (func(), error) {
 }
 
 // openStateLock opens the lock file read-only: flock needs no write access, so
-// a lock file another user made — root, through `docker compose exec -u root` —
+// a lock file another user made — root, through `docker compose exec -u 0` —
 // stays usable by the server. A new one is made 0644 past the umask: it is
 // empty, and everyone who may write the state must be able to open it.
 func openStateLock(lockPath string) (*os.File, error) {
