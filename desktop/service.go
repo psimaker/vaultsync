@@ -15,6 +15,7 @@ import (
 	"time"
 
 	layoutpkg "github.com/psimaker/vaultsync/desktop/internal/layout"
+	"github.com/psimaker/vaultsync/desktop/internal/lock"
 )
 
 // The background service: a launchd LaunchAgent on macOS, a systemd user unit
@@ -630,14 +631,18 @@ func (s service) stop() error {
 	return nil
 }
 
-// start resumes a stopped service.
-func (s service) start() error {
+// start resumes a stopped service. A service whose run is alive and holds
+// the engine lock is left as it is (left): it is on its way up — a pin's
+// download — or syncing, and loading it afresh would start that again from
+// the beginning (#290, decision 085). systemd leaves an active unit alone
+// by itself.
+func (s service) start() (left bool, err error) {
 	path, err := s.unitPath()
 	if err != nil {
-		return err
+		return false, err
 	}
 	if _, err := os.Stat(path); err != nil {
-		return errors.New("the background service is not installed — run vaultsync setup")
+		return false, errors.New("the background service is not installed — run vaultsync setup")
 	}
 	switch s.goos {
 	case "darwin":
@@ -645,32 +650,110 @@ func (s service) start() error {
 		// job, which would otherwise stay disabled — now and at every login.
 		if out, err := s.run.run("launchctl", "enable", s.launchdTarget()); err != nil {
 			if state, _ := s.session(); state == sessionAbsent {
-				return s.waitsForLogin()
+				return false, s.waitsForLogin()
 			}
-			return fmt.Errorf("launchctl enable: %v: %s", err, out)
+			return false, fmt.Errorf("launchctl enable: %v: %s", err, out)
 		}
-		if _, err := s.run.run("launchctl", "print", s.launchdTarget()); err == nil {
-			// Still loaded: idle, disabled while loaded, or on its way out
-			// after a stop that ran out of time — launchd shows all of them
-			// alike, so the job is loaded afresh. Its bootout may fail when
-			// it is already going; waiting for it to be gone settles both.
-			_, _ = s.run.run("launchctl", "bootout", s.launchdTarget())
-			if err := s.launchdGone(); err != nil {
-				return err
-			}
+		out, err := s.run.run("launchctl", "print", s.launchdTarget())
+		if err == nil && s.livingRun(out, path) {
+			return true, nil
 		}
-		if out, err := s.run.run("launchctl", "bootstrap", "gui/"+strconv.Itoa(s.uid), path); err != nil {
-			return fmt.Errorf("launchctl bootstrap: %v: %s", err, out)
-		}
+		// Still loaded, and no run of its own that lives: between two
+		// spawns, idle, disabled while loaded, on its way out after a stop
+		// that ran out of time, a run that parks or has not taken the
+		// engine lock yet, or an older definition — the job is loaded
+		// afresh.
+		return false, s.loadAfresh(path, err == nil)
 	case "linux":
+		// systemd leaves an active unit alone by itself; one look before
+		// says whether this start found one.
+		left = s.running()
 		if out, err := s.run.run("systemctl", "--user", "enable", "--now", systemdUnit); err != nil {
 			if state, _ := s.session(); state == sessionAbsent {
-				return s.waitsForLogin()
+				return false, s.waitsForLogin()
 			}
-			return fmt.Errorf("systemctl --user enable --now: %v: %s", err, out)
+			return false, fmt.Errorf("systemctl --user enable --now: %v: %s", err, out)
+		}
+		return left, nil
+	}
+	return false, nil
+}
+
+// loadAfresh boots the service's job out where launchd still has it
+// (loaded), waits until it is gone, and bootstraps it from plist. The
+// bootout may fail when the job is already going; waiting for it to be
+// gone settles both.
+func (s service) loadAfresh(plist string, loaded bool) error {
+	if loaded {
+		_, _ = s.run.run("launchctl", "bootout", s.launchdTarget())
+		if err := s.launchdGone(); err != nil {
+			return err
 		}
 	}
+	if out, err := s.run.run("launchctl", "bootstrap", "gui/"+strconv.Itoa(s.uid), plist); err != nil {
+		return fmt.Errorf("launchctl bootstrap: %v: %s", err, out)
+	}
 	return nil
+}
+
+// startAgainIfGone is the guard behind leaving a run alone (decision 085):
+// a job start left alone whose agent gave no answer is looked at once more,
+// and where launchd no longer shows it running — gone, between two spawns,
+// on its way out — it is loaded afresh, as start loads any other. launchd's
+// states were measured on macOS 12.7.6 and 27.2 only: a version that showed
+// a job a stop is still removing as running would otherwise leave the
+// service down until the next login (#175). systemd restarts a unit by
+// itself.
+func (s service) startAgainIfGone() (bool, error) {
+	if s.goos != "darwin" {
+		return false, nil
+	}
+	path, err := s.unitPath()
+	if err != nil {
+		return false, err
+	}
+	out, err := s.run.run("launchctl", "print", s.launchdTarget())
+	if err == nil {
+		if state, _ := launchdState(out); state == "running" {
+			return false, nil
+		}
+	}
+	return true, s.loadAfresh(path, err == nil)
+}
+
+// livingRun: launchd's print of the service's job shows a run that lives
+// right now, from the definition the file at plist names, and that run
+// holds the engine lock. On macOS 12.7.6 and 27.2 a job's own state is
+// `running` only while its process lives; between two spawns it is
+// `spawn scheduled`, and booted out with its process not ended yet
+// `SIGTERMed`. A run takes the engine lock before anything slow — a pin's
+// download — and every park comes before it, so the lock tells a run on
+// its way up or syncing from one that parks or has just been spawned.
+// The look holds the lock for an instant; a run of this build waits
+// engineLockGrace for it, and an older run that meets it refuses as
+// "already running" — but then the look found the lock free, and start
+// loads that very job afresh, as it did every running job before. A lock
+// that cannot be looked at is not held.
+func (s service) livingRun(print, plist string) bool {
+	if state, _ := launchdState(print); state != "running" {
+		return false
+	}
+	if have, ok := launchdProgram(print); ok && have != plistProgramOf(plist) {
+		return false
+	}
+	held, err := lock.Probe(s.lay.Lock)
+	return err == nil && held
+}
+
+// launchdState reads a job's own state out of `launchctl print`: the first
+// "state =" line (the ones nested further down are its endpoints').
+func launchdState(print string) (string, bool) {
+	for _, line := range strings.Split(print, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "state = "); ok {
+			return v, true
+		}
+	}
+	return "", false
 }
 
 // sessionState is what the service manager says about this user's session —

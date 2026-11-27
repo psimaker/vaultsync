@@ -5,6 +5,7 @@ package bridge
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -91,22 +92,26 @@ var lifecycleTimeouts = struct {
 	stop:         30 * time.Second,
 }
 
+// errWaitTimedOut is what awaitWithin's error wraps when the wait expired:
+// the work goes on, so a caller can tell it from a refusal (#343).
+var errWaitTimedOut = errors.New("timed out")
+
 // awaitWithin runs fn on its own goroutine and waits at most timeout for it.
 // On expiry fn keeps running to completion in the background — its work is
-// not cancelled, only no longer waited for — and the error names the phase.
-// A non-positive timeout expires immediately; tests use it to drive the
-// timeout path deterministically.
+// not cancelled, only no longer waited for — and the error names the phase
+// and wraps errWaitTimedOut. A non-positive timeout expires immediately;
+// tests use it to drive the timeout path deterministically.
 func awaitWithin(phase string, timeout time.Duration, fn func() error) error {
 	done := make(chan error, 1)
 	go func() { done <- fn() }()
 	if timeout <= 0 {
-		return fmt.Errorf("%s: timed out after %s", phase, timeout)
+		return fmt.Errorf("%s: %w after %s", phase, errWaitTimedOut, timeout)
 	}
 	select {
 	case err := <-done:
 		return err
 	case <-time.After(timeout):
-		return fmt.Errorf("%s: timed out after %s", phase, timeout)
+		return fmt.Errorf("%s: %w after %s", phase, errWaitTimedOut, timeout)
 	}
 }
 
