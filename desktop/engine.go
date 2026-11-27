@@ -264,7 +264,7 @@ const exitRestart = 3
 // and returns an error when the engine stops on its own — the service
 // manager then restarts the agent after its throttle interval.
 func (e engine) supervise(ctx context.Context, st agentState, logf func(string, ...any)) error {
-	unlock, err := lockFile(e.lay.Lock)
+	unlock, err := takeEngineLock(e.lay.Lock)
 	if err != nil {
 		return err
 	}
@@ -419,22 +419,70 @@ func apiPortForSetup(lay layout, recorded int) (int, error) {
 
 // engineMayRun says whether an engine of VaultSync's can be running here: a
 // vaultsync run holds the engine lock, or a Syncthing holds its lock on the
-// engine's home, one that outlived its run too (decision 079). A command
-// that finds no agent asks the engine's recorded port only then: with
+// engine's home, one that outlived its run too (decision 079). vaultsync
+// pair, which always asks the engine itself, and status, pause and resume
+// where no agent answers, ask the engine's recorded port only then: with
 // neither lock held, whatever answers there is not VaultSync's engine
-// (#413). A lock that cannot be looked at is an error, and nothing is
-// asked.
+// (#413). A lock that cannot be looked at is a *lockLookError, and nothing
+// is asked.
 func engineMayRun(lay layout) (bool, error) {
 	for _, l := range []string{lay.Lock, filepath.Join(lay.Home, syncthingHomeLock)} {
 		held, err := lock.Probe(l)
 		if err != nil {
-			return false, err
+			return false, &lockLookError{path: l, err: err}
 		}
 		if held {
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+// waitEngineMayRun is engineMayRun, asked again until an engine of
+// VaultSync's may run or timeout passes: a run takes the engine lock a
+// moment after it starts.
+func waitEngineMayRun(ctx context.Context, lay layout, timeout time.Duration) (bool, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		may, err := engineMayRun(lay)
+		if err != nil || may || time.Now().After(deadline) {
+			return may, err
+		}
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+}
+
+// lockLookError is a lock of VaultSync's that cannot be looked at: a link
+// or a permission in its place.
+type lockLookError struct {
+	path string
+	err  error
+}
+
+func (e *lockLookError) Error() string { return e.err.Error() }
+func (e *lockLookError) Unwrap() error { return e.err }
+
+// engineLockGrace is how long a run waits for the engine lock before it
+// takes it as another run's: a look at the lock (lock.Probe, by status,
+// pair, pause or resume) holds it for an instant, and must not refuse a run
+// that starts in that instant (#413).
+const engineLockGrace = 250 * time.Millisecond
+
+// takeEngineLock takes the engine lock, waiting engineLockGrace for a look
+// that holds it for an instant.
+func takeEngineLock(path string) (func(), error) {
+	deadline := time.Now().Add(engineLockGrace)
+	for {
+		unlock, err := lockFile(path)
+		if !errors.Is(err, ErrEngineRunning) || time.Now().After(deadline) {
+			return unlock, err
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // syncthingHomeLock is the file Syncthing locks in its home while it runs

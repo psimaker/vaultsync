@@ -967,10 +967,19 @@ func (a *app) pair(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	// No engine of VaultSync's runs: its port is not asked (#413).
-	switch may, err := engineMayRun(a.lay); {
+	// No engine of VaultSync's runs: its port is not asked (#413). A
+	// background service that runs takes the engine lock a moment after
+	// it starts — right after vaultsync start, or behind a setup — and is
+	// waited for as long as the engine was before.
+	may, err := engineMayRun(a.lay)
+	if err == nil && !may && a.backgroundEngine() {
+		may, err = waitEngineMayRun(ctx, a.lay, 10*time.Second)
+	}
+	switch {
+	case ctx.Err() != nil:
+		return ctx.Err()
 	case err != nil:
-		return refuse("VaultSync could not tell whether its sync engine runs (%s). Start it with vaultsync start (or vaultsync setup), then try again.", redactPaths(err.Error()))
+		return refuse("VaultSync could not tell whether its sync engine runs: %s. Put the lock file right, then try again.", a.lockLookNote(err))
 	case !may:
 		return refuse("The sync engine is not running. Start it with vaultsync start (or vaultsync setup), then try again.")
 	}
@@ -986,6 +995,16 @@ func (a *app) pair(ctx context.Context, args []string) error {
 		return nil
 	}
 	return err
+}
+
+// lockLookNote says which of VaultSync's locks could not be looked at, and
+// why, with no other path in its words.
+func (a *app) lockLookNote(err error) string {
+	var le *lockLookError
+	if errors.As(err, &le) {
+		return fmt.Sprintf("its lock file %s could not be looked at (%v) — a link or a permission in its place", tildePath(a.home, le.path), errnoOf(le.err))
+	}
+	return redactPaths(err.Error())
 }
 
 // errNotSetUpAnymore: no agent.json — never set up, or removed since.
@@ -1283,7 +1302,7 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 	// an engine that cannot have one still runs. It comes before anything
 	// is touched: a run refused here owns nothing, and leaves the engine
 	// and agent.json to the VaultSync that holds it, a desktop-v0.1.0 too.
-	unlock, err := lockFile(eng.lay.Lock)
+	unlock, err := takeEngineLock(eng.lay.Lock)
 	if errors.Is(err, ErrEngineRunning) {
 		unlockSetup()
 		return refuse("VaultSync is already running on this computer (the background service). See vaultsync status.")

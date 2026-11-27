@@ -12,7 +12,12 @@
 
    A lock that cannot be looked at keeps the port too. `TestIssue413_E2EAnEngineLocksItsHome` fails when a Syncthing bump moves Syncthing's lock.
 3. **The supervisor's move stays.** A run still moves off a port taken between two of its starts. Every reader of the port follows `agent.json`, as the control server does.
-4. **A command that finds no agent asks the engine only while one of the two locks is held.** This covers `vaultsync pair`, `status`, `pause` and `resume` (`engineMayRun`). With neither lock held, no engine of VaultSync's runs: they say so, and the recorded port is not asked. A lock that cannot be looked at is not known either way, and nothing is asked. With a lock held, such as an older agent without a control socket, the engine is asked as before.
+4. **The commands that ask the engine itself do so only while one of the two locks is held** (`engineMayRun`). `vaultsync pair` always asks the engine itself, so it checks the locks every time. `status`, `pause` and `resume` check them where no agent answers.
+   - With neither lock held, no engine of VaultSync's runs. They say so, and the recorded port is not asked.
+   - A lock that cannot be looked at is not known either way, and nothing is asked.
+   - With a lock held, such as an older agent without a control socket, the engine is asked as before.
+   - `pair` waits up to ten seconds for a lock while the background service runs, because its run takes the engine lock a moment after it starts.
+   - A run waits a quarter of a second for the engine lock (`takeEngineLock`). Another command's look at the lock holds it for an instant, and that must not refuse a run that starts in that instant.
 
 **Why.**
 - `setup` must wait where the engine runs.
@@ -29,6 +34,5 @@
 **Not covered.**
 - A run that holds the engine lock but has not bound its port yet, while another program holds the recorded one.
 - The instant between the choice and the engine's bind.
-- A run the service manager starts in the instant `setup` looks at the engine lock: it finds the lock taken and starts again after its throttle interval.
 
 **Links.** #413, #276; decision 077.

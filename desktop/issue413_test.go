@@ -331,16 +331,8 @@ func TestIssue413_CommandsWithoutAnAgentAskOnlyARunningEngine(t *testing.T) {
 		{"no lock held", func(*testing.T, layout) {}, false, func(nr, _ string) string { return nr }},
 		{"a run holds the engine lock", func(t *testing.T, lay layout) { holdLock(t, lay.Lock) }, true, nil},
 		{"a Syncthing holds its home", func(t *testing.T, lay layout) { holdLock(t, filepath.Join(lay.Home, syncthingHomeLock)) }, true, nil},
-		{"the engine lock cannot be looked at", func(t *testing.T, lay layout) {
-			target := filepath.Join(t.TempDir(), "elsewhere")
-			writeFile(t, target, "")
-			if err := os.MkdirAll(filepath.Dir(lay.Lock), 0o700); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Symlink(target, lay.Lock); err != nil {
-				t.Fatal(err)
-			}
-		}, false, func(_, nk string) string { return nk }},
+		{"the engine lock cannot be looked at", func(t *testing.T, lay layout) { linkInPlaceOf(t, lay.Lock) }, false, func(_, nk string) string { return nk }},
+		{"Syncthing's home lock cannot be looked at", func(t *testing.T, lay layout) { linkInPlaceOf(t, filepath.Join(lay.Home, syncthingHomeLock)) }, false, func(_, nk string) string { return nk }},
 	}
 	for _, c := range commands {
 		for _, l := range locks {
@@ -360,4 +352,80 @@ func TestIssue413_CommandsWithoutAnAgentAskOnlyARunningEngine(t *testing.T) {
 			})
 		}
 	}
+}
+
+// linkInPlaceOf puts a link where the lock at path goes: a lock that cannot
+// be looked at (lock.Probe opens it with O_NOFOLLOW).
+func linkInPlaceOf(t *testing.T, path string) {
+	t.Helper()
+	target := filepath.Join(t.TempDir(), "elsewhere")
+	writeFile(t, target, "")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// pair waits for a background service that runs to take the engine lock —
+// it does so a moment after it starts, right after vaultsync start — as
+// long as it waited for the engine before, then asks the engine (#413).
+func TestIssue413_PairWaitsWhileTheServiceStartsItsEngine(t *testing.T) {
+	a, asked := anotherProgramAtTheRecordedPort(t)
+	unit, err := a.svc.unitPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, unit, "[Service]\n")
+	a.svc.run.(*fakeRunner).answers = map[string]string{"systemctl --user is-active vaultsync.service": "active"}
+	took := make(chan func(), 1)
+	go func() {
+		time.Sleep(400 * time.Millisecond)
+		unlock, err := lockFile(a.lay.Lock)
+		if err != nil {
+			took <- func() {}
+			return
+		}
+		took <- unlock
+	}()
+	t.Cleanup(func() { (<-took)() })
+	start := time.Now()
+	err = a.pair(context.Background(), []string{"--code", "TULIP-ANCHOR-42", "--hub", "127.0.0.1:1"})
+	if asked.Load() == 0 || strings.Contains(refusalText(err), "The sync engine is not running") {
+		t.Fatalf("pair beside a service that is starting its engine (%s): asked %d, %v", time.Since(start).Round(time.Millisecond), asked.Load(), err)
+	}
+}
+
+// A look at the engine lock holds it for an instant: a run, and the
+// supervisor setup starts, that take it in that instant wait for it rather
+// than take it for another run's (#413).
+func TestIssue413_ARunTakesTheEngineLockALookHoldsForAnInstant(t *testing.T) {
+	t.Run("the supervisor", func(t *testing.T) {
+		eng, st := engineFixture(t)
+		fakeEngineBinary(t, eng.lay)
+		unlock, err := lockFile(eng.lay.Lock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		time.AfterFunc(50*time.Millisecond, unlock)
+		stop := inBackground(t, func(ctx context.Context) error { return eng.supervise(ctx, st, t.Logf) })
+		e2eWait(t, "the engine to start", 10*time.Second, func() bool { return len(fakeEnginePIDs(t, eng.lay)) > 0 })
+		if err := stop(); err != nil {
+			t.Fatalf("the supervisor: %v", err)
+		}
+	})
+	t.Run("a run", func(t *testing.T) {
+		a, _ := runFixture(t)
+		unlock, err := lockFile(a.lay.Lock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		time.AfterFunc(50*time.Millisecond, unlock)
+		stop := inBackground(t, func(ctx context.Context) error { return a.run(ctx, nil) })
+		e2eWait(t, "the engine to start", 10*time.Second, func() bool { return len(fakeEnginePIDs(t, a.lay)) > 0 })
+		if err := stop(); err != nil {
+			t.Fatalf("the run: %v", err)
+		}
+	})
 }
