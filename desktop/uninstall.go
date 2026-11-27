@@ -325,7 +325,7 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 	// program over the newer one's copy (decision 091). Before anything is
 	// asked or looked at.
 	if st, err := loadState(a.lay.State); olderThanSetUp(st, err) {
-		return a.olderRefusal("uninstall", st, err)
+		return a.olderRefusal("uninstall", args, st, err)
 	}
 	t, closeTerm := openTerm(a.out)
 	defer closeTerm()

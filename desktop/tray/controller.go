@@ -54,6 +54,8 @@ type UI interface {
 // the loop runs; tests give it fakes.
 type Controller struct {
 	Home string
+	// Mac: this is VaultSync for Mac's menu-bar app (Options.Mac).
+	Mac bool
 	// Layout is where the agent keeps its files on this computer.
 	Layout layout.Layout
 	UI     UI
@@ -357,6 +359,7 @@ func (c *Controller) render() {
 		CanStart: c.canStart,
 		Starting: c.starting || c.settling,
 		Notice:   notice,
+		Mac:      c.Mac,
 	})
 	c.UI.Render(c.view)
 }

@@ -26,9 +26,10 @@ const StateFormat = 2
 // ErrOlderApp: agent.json is in a newer format than this build knows, and
 // what a client reads of it cannot be read in this build's shape — a newer
 // VaultSync is set up on this computer, and this menu-bar app is older
-// (decisions 054, 091). Never "damaged": a person told the file is damaged
+// (decisions 054, 091). Its words name no system: the menu-bar app says
+// what it is on each (tray.Render). Never "damaged": a person told the file is damaged
 // may delete it.
-var ErrOlderApp = errors.New("this VaultSync for Mac is older than the VaultSync set up on this computer — run the setup link to update it")
+var ErrOlderApp = errors.New("this VaultSync is older than the one set up on this computer — run the setup link to update it")
 
 // socketState is the part of agent.json a client reads.
 type socketState struct {

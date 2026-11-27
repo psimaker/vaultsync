@@ -102,6 +102,9 @@ type Options struct {
 	CanStart bool
 	Starting bool
 	Notice   string
+	// Mac: this menu-bar app is VaultSync for Mac's; on Linux it is the
+	// VaultSync menu-bar app on its own. Said where the menu names itself.
+	Mac bool
 }
 
 // Render is the view for the agent's report, or for why there is none.
@@ -124,7 +127,10 @@ func Render(st Status, err error, o Options) View {
 		// agent.json is in a newer format than this app reads: the
 		// VaultSync set up here is newer — never "damaged" (#281).
 		v.Glyph = GlyphAttention
-		v.Headline = "This VaultSync for Mac is older than the one set up here"
+		v.Headline = "This VaultSync menu-bar app is older than the VaultSync set up here"
+		if o.Mac {
+			v.Headline = "This VaultSync for Mac is older than the one set up here"
+		}
 		v.Detail = "Run the setup link to update it"
 		return v
 	case errors.Is(err, ErrNoSocket):
