@@ -134,24 +134,39 @@ func AgentProgram(goos, home string, lay layout.Layout) func() string {
 }
 
 // startWait is how long vaultsync start may take: it waits for an old job
-// to go and the new one to run.
+// to go, the new one to run and its agent to answer — under a minute and a
+// half at most since #290 (decision 085), which leaves room.
 const startWait = 2 * time.Minute
 
 var errStartWaited = errors.New("it did not finish in two minutes — vaultsync status in a terminal tells where it stands")
 
-// Start runs vaultsync start with program and returns what it said, or its
-// refusal as the error.
-func Start(ctx context.Context, program string) (string, error) {
-	return startWith(startRunner)(ctx, program)
+// Start runs vaultsync start with program in VaultSync's folder stateDir —
+// the menu's own — and returns what it said, or its refusal as the error.
+func Start(ctx context.Context, program, stateDir string) (string, error) {
+	return startWith(startRunner)(ctx, program, stateDir)
 }
 
-func startWith(run runner) func(context.Context, string) (string, error) {
-	return func(_ context.Context, program string) (string, error) {
+// StartArgs is the command line of the menu's start for VaultSync's folder
+// stateDir ("" for none). The program inherits this app's environment, from
+// which it would take its folder otherwise: on Linux, a menu started with
+// --state-dir in a session whose XDG_STATE_HOME names another place made its
+// start read another agent.json than the menu and the service (#290).
+// desktop-v0.2.0 and v0.3.0 ignore every argument after start, so with them
+// it runs as it did.
+func StartArgs(stateDir string) []string {
+	if stateDir == "" {
+		return []string{"start"}
+	}
+	return []string{"start", "--state-dir", stateDir}
+}
+
+func startWith(run runner) func(context.Context, string, string) (string, error) {
+	return func(_ context.Context, program, stateDir string) (string, error) {
 		// Its own time, whatever the caller's: a start ended half-way may
 		// leave the service taken down and not loaded again.
 		ctx, cancel := context.WithTimeout(context.Background(), startWait)
 		defer cancel()
-		stdout, stderr, status, err := run(ctx, program, []string{"start"}, "")
+		stdout, stderr, status, err := run(ctx, program, StartArgs(stateDir), "")
 		if errors.Is(err, context.DeadlineExceeded) {
 			return "", errStartWaited
 		}

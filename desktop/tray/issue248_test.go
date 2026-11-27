@@ -29,9 +29,10 @@ func TestIssue248_TheStartItemIsThereOnlyWhenNoAgentAnswers(t *testing.T) {
 	if v.Start != (Action{"Starting VaultSync…", false}) {
 		t.Fatalf("while it starts: %+v", v.Start)
 	}
-	// Nothing to run: the terminal, as before.
+	// Nothing to run: no Start, and the setup link — a start cannot help
+	// where VaultSync's program is gone (#290).
 	v = Render(Status{}, ErrNoAgent, Options{})
-	if v.Start != (Action{}) || v.Detail != "Run vaultsync start in a terminal" {
+	if v.Start != (Action{}) || v.Detail != noProgramToStart {
 		t.Fatalf("no vaultsync to run: %+v", v)
 	}
 	// Not set up: never a start, which would point to setup; an agent that
@@ -48,14 +49,16 @@ func TestIssue248_TheStartItemIsThereOnlyWhenNoAgentAnswers(t *testing.T) {
 type fakeStart struct {
 	mu       sync.Mutex
 	programs []string
+	dirs     []string // the VaultSync folder each run was given
 	hold     chan struct{}
 	err      error
 	said     string
 }
 
-func (f *fakeStart) start(_ context.Context, program string) (string, error) {
+func (f *fakeStart) start(_ context.Context, program, stateDir string) (string, error) {
 	f.mu.Lock()
 	f.programs = append(f.programs, program)
+	f.dirs = append(f.dirs, stateDir)
 	hold, err, said := f.hold, f.err, f.said
 	f.mu.Unlock()
 	if hold != nil {
@@ -210,7 +213,7 @@ func TestIssue248_NothingToRunNoStart(t *testing.T) {
 	ui.send(Event{Kind: EventStart})
 	ui.click(EventOpened, 0)
 	v := ui.view(t, "without one", func(v View) bool { return v.Start == Action{} })
-	if v.Detail != "Run vaultsync start in a terminal" {
+	if v.Detail != noProgramToStart {
 		t.Fatalf("detail: %q", v.Detail)
 	}
 	if got := started.runs(); len(got) != 0 {
@@ -1109,7 +1112,7 @@ func TestIssue248_WhatStartSaysComesFromItsOutput(t *testing.T) {
 		// Whatever the caller's context: a quit must not end a start.
 		cancelled, cancel := context.WithCancel(context.Background())
 		cancel()
-		said, err := startWith(run)(cancelled, "/x/vaultsync")
+		said, err := startWith(run)(cancelled, "/x/vaultsync", "")
 		if strings.Join(args, " ") != "start" || ctxErr != nil {
 			t.Errorf("%s: ran %v, its context %v", name, args, ctxErr)
 		}
