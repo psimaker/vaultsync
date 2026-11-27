@@ -335,7 +335,7 @@ func StartSyncthing(configDir string) string {
 	// From the first scan on, the engine syncs a folder only in the
 	// directory its record names (#329, decision 084). Installed before the
 	// engine starts its folders: a folder's first scan begins inside Start.
-	directoryCheck := installDirectoryCheckLocked(sdb, anchor, anchorErr)
+	directoryCheck := installDirectoryCheckLocked(sdb, configDir, anchor, anchorErr)
 
 	// Create and start Syncthing.
 	opts := syncthing.Options{
@@ -343,16 +343,19 @@ func StartSyncthing(configDir string) string {
 	}
 	stApp, err = syncthing.New(stCfg, sdb, stEvLogger, stCert, opts)
 	if err != nil {
-		removeDirectoryCheck(directoryCheck)
 		sdb.Close()
+		removeDirectoryCheck(directoryCheck)
 		cancel()
 		return fmt.Sprintf("create app: %v", err)
 	}
 
-	// Synchronous startup work, not a wait — see lifecycleTimeouts.
+	// Synchronous startup work, not a wait — see lifecycleTimeouts. A Start
+	// that fails stops its services without waiting for them: the database
+	// closes before the check goes, so a folder still starting meets a
+	// check that cannot read and refuses, never no check at all (#329).
 	if err := stApp.Start(); err != nil {
-		removeDirectoryCheck(directoryCheck)
 		sdb.Close()
+		removeDirectoryCheck(directoryCheck)
 		cancel()
 		stApp = nil
 		return fmt.Sprintf("start: %v", err)
@@ -427,12 +430,14 @@ func stopEngineLocked() string {
 	// this is its only receive; a cancel without a channel leaves nothing to
 	// wait for.
 	release := func() {
-		// The engine's folders have stopped: nothing asks the check of
-		// this run any more, and its database closes next (#329).
-		removeDirectoryCheck(directoryCheck)
+		// The database closes before the check goes: a folder service the
+		// supervisor gave up on after its stop timeout, still running, then
+		// meets a check that cannot read and refuses — never no check at
+		// all (#329).
 		if sdb != nil {
 			sdb.Close()
 		}
+		removeDirectoryCheck(directoryCheck)
 		if earlyCancel != nil {
 			earlyCancel()
 			if earlyDone != nil {

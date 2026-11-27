@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/syncthing/syncthing/lib/config"
@@ -239,24 +240,26 @@ func writeFolderStorageLocked(folder config.FolderConfiguration, marker uint64) 
 // the engine has it now: written for this install's anchor and for the
 // folder's current index. A record with another anchor or another index ID
 // says nothing about any directory (decision 063). unread names what could
-// not be read, without a path, and then nothing is known.
+// not be read, and then nothing is known. It never carries a path: it ends
+// up in the folder's error and in refusals the app shows (safety rules 6 and
+// 10), and the anchor's error names the app's configuration directory.
 func applyingRecord(store storageRecords, anchor uint64, anchorErr error, folderID string) (record folderStorageRecord, applies bool, unread string) {
 	record, found, err := readFolderStorage(store, folderID)
 	if err != nil {
-		return folderStorageRecord{}, false, fmt.Sprintf("read the record: %v", err)
+		return folderStorageRecord{}, false, fmt.Sprintf("read the record: %v", withoutPath(err))
 	}
 	if !found {
 		return folderStorageRecord{}, false, ""
 	}
 	if anchorErr != nil {
-		return folderStorageRecord{}, false, fmt.Sprintf("read the anchor: %v", anchorErr)
+		return folderStorageRecord{}, false, fmt.Sprintf("read the anchor: %v", withoutPath(anchorErr))
 	}
 	if record.Anchor != anchor {
 		return folderStorageRecord{}, false, ""
 	}
 	index, err := store.GetIndexID(folderID, protocol.LocalDeviceID)
 	if err != nil {
-		return folderStorageRecord{}, false, fmt.Sprintf("read the index ID: %v", err)
+		return folderStorageRecord{}, false, fmt.Sprintf("read the index ID: %v", withoutPath(err))
 	}
 	if record.Index != uint64(index) {
 		return folderStorageRecord{}, false, ""
@@ -389,16 +392,39 @@ var errFolderNotItsDirectory = errors.New(folderNotItsDirectory)
 // folderDirectoryCheck answers the engine for one engine run, with the
 // database and the anchor of that run.
 type folderDirectoryCheck struct {
-	store     storageRecords
-	anchor    uint64
-	anchorErr error
+	store  storageRecords
+	anchor *anchorReading
+}
+
+// anchorReading is the anchor as one engine run's check knows it: what the
+// start read, and read again for as long as a read has failed. A read that
+// failed once must not stop every folder with a record for the rest of the
+// run; the next check asks again (decision 084).
+type anchorReading struct {
+	read func() (uint64, error)
+
+	mu     sync.Mutex
+	number uint64
+	err    error
+}
+
+// get returns the anchor's file number, reading it again while the last
+// read failed.
+func (a *anchorReading) get() (uint64, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.err != nil {
+		a.number, a.err = a.read()
+	}
+	return a.number, a.err
 }
 
 // answer is what CheckPath returns once the engine has found the folder's
 // directory and its marker entry. It takes no bridge lock: the engine asks
 // while the bridge may hold mu and wait for the engine.
 func (c folderDirectoryCheck) answer(folder config.FolderConfiguration) error {
-	switch verdict, unread := folderStorageVerdict(c.store, c.anchor, c.anchorErr, folder, folder.Path); verdict {
+	anchor, anchorErr := c.anchor.get()
+	switch verdict, unread := folderStorageVerdict(c.store, anchor, anchorErr, folder, folder.Path); verdict {
 	case storageOther, storageNoMarker:
 		return errFolderNotItsDirectory
 	case storageUnread:
@@ -414,9 +440,18 @@ var observeDirectoryCheck func(folderID string, err error, took time.Duration)
 
 // installDirectoryCheckLocked makes the engine's CheckPath ask the records in
 // store, for an engine that is about to start, and returns what to remove
-// once that engine has stopped. Caller holds mu.
-func installDirectoryCheckLocked(store storageRecords, anchor uint64, anchorErr error) *func(config.FolderConfiguration) error {
-	check := folderDirectoryCheck{store: store, anchor: anchor, anchorErr: anchorErr}
+// once that engine has stopped. anchor and anchorErr are what the start read
+// in configDir. Caller holds mu.
+func installDirectoryCheckLocked(store storageRecords, configDir string, anchor uint64, anchorErr error) *func(config.FolderConfiguration) error {
+	// The read is taken now, under mu: a test that swaps readStorageAnchor
+	// does so between engine runs, never under a running check.
+	read := readStorageAnchor
+	reading := &anchorReading{
+		read:   func() (uint64, error) { return read(configDir) },
+		number: anchor,
+		err:    anchorErr,
+	}
+	check := folderDirectoryCheck{store: store, anchor: reading}
 	ask := check.answer
 	if observe := observeDirectoryCheck; observe != nil {
 		ask = func(folder config.FolderConfiguration) error {

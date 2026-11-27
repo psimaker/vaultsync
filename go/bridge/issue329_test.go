@@ -9,10 +9,13 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/syncthing/syncthing/lib/config"
+	"github.com/syncthing/syncthing/lib/protocol"
 )
 
 // A copy put in a vault's own place, under the vault's own path (#329). In
@@ -436,19 +439,19 @@ func TestIssue329_AReadThatFailsIsNoCopy(t *testing.T) {
 		}
 		issue329ExpectCleanText(t, err.Error(), e.base)
 	}
-	expectUnchecked("the record", folderDirectoryCheck{store: failingKV, anchor: anchor}.answer(folder))
-	expectUnchecked("the index ID", folderDirectoryCheck{store: failingIndex, anchor: anchor}.answer(folder))
-	expectUnchecked("the anchor", folderDirectoryCheck{store: database, anchorErr: errors.New("disk I/O error")}.answer(folder))
+	expectUnchecked("the record", issue329Check(failingKV, anchor, nil).answer(folder))
+	expectUnchecked("the index ID", issue329Check(failingIndex, anchor, nil).answer(folder))
+	expectUnchecked("the anchor", issue329Check(database, 0, errors.New("disk I/O error")).answer(folder))
 	stfolder := filepath.Join(own, config.DefaultMarkerName)
 	if err := os.Chmod(stfolder, 0); err != nil {
 		t.Fatal(err)
 	}
-	err := folderDirectoryCheck{store: database, anchor: anchor}.answer(folder)
+	err := issue329Check(database, anchor, nil).answer(folder)
 	if chmodErr := os.Chmod(stfolder, 0o755); chmodErr != nil {
 		t.Fatal(chmodErr)
 	}
 	expectUnchecked("the marker's file number", err)
-	if err := (folderDirectoryCheck{store: database, anchor: anchor}).answer(folder); err != nil {
+	if err := issue329Check(database, anchor, nil).answer(folder); err != nil {
 		t.Fatalf("the check once everything reads = %v, want nil", err)
 	}
 
@@ -457,7 +460,7 @@ func TestIssue329_AReadThatFailsIsNoCopy(t *testing.T) {
 	swap := func(store storageRecords) {
 		mu.Lock()
 		defer mu.Unlock()
-		installed := installDirectoryCheckLocked(store, anchor, nil)
+		installed := installDirectoryCheckLocked(store, e.base, anchor, nil)
 		removeDirectoryCheck(stDirectoryCheck)
 		stDirectoryCheck = installed
 	}
@@ -472,6 +475,169 @@ func TestIssue329_AReadThatFailsIsNoCopy(t *testing.T) {
 		st := issue329Status(t, folderID)
 		return st.State == "idle" && st.ErrorReason == ""
 	})
+}
+
+// issue329Check is the engine's check over store, with an anchor that reads
+// as given every time.
+func issue329Check(store storageRecords, anchor uint64, anchorErr error) folderDirectoryCheck {
+	return folderDirectoryCheck{store: store, anchor: &anchorReading{
+		read:   func() (uint64, error) { return anchor, anchorErr },
+		number: anchor,
+		err:    anchorErr,
+	}}
+}
+
+// An anchor the start could not read stops no folder for the rest of the
+// engine run: the check reads it again while a read has failed, and the
+// folder goes on once it reads (decision 084).
+func TestIssue329_AnAnchorThatCouldNotBeReadIsReadAgain(t *testing.T) {
+	const folderID = "issue329-anchor"
+	e, own := newIssue315Engine(t, folderID)
+	e.expectRecord(own)
+	issue315StopWithConfigOnDisk(t, e.base, own)
+
+	var failing atomic.Bool
+	failing.Store(true)
+	readStorageAnchor = func(dir string) (uint64, error) {
+		if failing.Load() {
+			return 0, &os.PathError{Op: "lstat", Path: filepath.Join(dir, storageAnchorName), Err: syscall.EACCES}
+		}
+		return ensureStorageAnchor(dir)
+	}
+	defer func() { readStorageAnchor = ensureStorageAnchor }()
+	if errMsg := StartSyncthing(e.base); errMsg != "" {
+		t.Fatalf("StartSyncthing() failed: %s", errMsg)
+	}
+	defer StopSyncthing()
+
+	waitFor(t, "the folder to show that its check could not read the anchor", 30*time.Second, func() bool {
+		RescanFolder(folderID)
+		return issue329Status(t, folderID).ErrorReason == issue329Unchecked
+	})
+	issue329ExpectCleanText(t, issue329Status(t, folderID).ErrorMessage, e.base)
+
+	// The anchor reads again; no restart.
+	failing.Store(false)
+	waitFor(t, "the folder to go on once the anchor reads", 30*time.Second, func() bool {
+		RescanFolder(folderID)
+		st := issue329Status(t, folderID)
+		return st.State == "idle" && st.ErrorReason == ""
+	})
+}
+
+// The stop closes the engine's database before it takes the check away. A
+// check over a database that has closed refuses as a read that failed, so an
+// engine service still running after the stop's timeout meets a refusal,
+// never no check at all.
+func TestIssue329_ACheckOverAClosedDatabaseRefuses(t *testing.T) {
+	const folderID = "issue329-closed"
+	e, own := newIssue315Engine(t, folderID)
+	e.expectRecord(own)
+	folder, _, _ := getFolderConfig(folderID)
+	store := issue315Store(t)
+	mu.Lock()
+	anchor := stStorageAnchor
+	mu.Unlock()
+	if errMsg := StopSyncthing(); errMsg != "" {
+		t.Fatalf("StopSyncthing() = %q", errMsg)
+	}
+	err := issue329Check(store, anchor, nil).answer(folder)
+	if err == nil || !strings.HasPrefix(err.Error(), folderDirectoryUnchecked) {
+		t.Fatalf("the check over a closed database = %v, want a refusal that begins %q", err, folderDirectoryUnchecked)
+	}
+}
+
+// issue329FakeStore is the engine's database as far as the records ask it,
+// with reads that fail as told.
+type issue329FakeStore struct {
+	record          []byte
+	index           protocol.IndexID
+	kvErr, indexErr error
+}
+
+func (s issue329FakeStore) GetKV(string) ([]byte, error) {
+	if s.kvErr != nil {
+		return nil, s.kvErr
+	}
+	return s.record, nil
+}
+
+func (s issue329FakeStore) PutKV(string, []byte) error { return nil }
+
+func (s issue329FakeStore) GetIndexID(string, protocol.DeviceID) (protocol.IndexID, error) {
+	return s.index, s.indexErr
+}
+
+func (s issue329FakeStore) Close() error { return nil }
+
+// No refusal of this file carries a path (safety rules 6 and 10): each error
+// a read can fail with here names a path, and none of it may reach a text
+// the folder's error, a re-point or a write of the filters shows.
+func TestIssue329_NoRefusalCarriesAPath(t *testing.T) {
+	const anchor, index = 7, 11
+	dir := t.TempDir()
+	pathErr := func(name string) error {
+		return &os.PathError{Op: "lstat", Path: filepath.Join(dir, name), Err: syscall.EACCES}
+	}
+	value, err := json.Marshal(folderStorageRecord{Marker: 1, Index: index, Anchor: anchor})
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder := config.FolderConfiguration{ID: "issue329-texts", Path: filepath.Join(dir, "Vault")}
+	// A marker whose number cannot be read: its directory has no search
+	// permission.
+	if err := os.MkdirAll(filepath.Join(folder.Path, config.DefaultMarkerName), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(folderMarkerPath(folder, folder.Path), []byte("marker\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(folder.Path, config.DefaultMarkerName), 0); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(filepath.Join(folder.Path, config.DefaultMarkerName), 0o700)
+
+	good := issue329FakeStore{record: value, index: index}
+	cases := []struct {
+		name      string
+		store     issue329FakeStore
+		anchorErr error
+	}{
+		{"the record", issue329FakeStore{kvErr: pathErr("index-v2")}, nil},
+		{"the anchor", good, pathErr(storageAnchorName)},
+		{"the index ID", issue329FakeStore{record: value, indexErr: pathErr("index-v2")}, nil},
+		{"the marker's file number", good, nil},
+	}
+	var texts []string
+	for _, c := range cases {
+		verdict, unread := folderStorageVerdict(c.store, anchor, c.anchorErr, folder, folder.Path)
+		if verdict != storageUnread {
+			t.Fatalf("%s: verdict %d, want a read that failed", c.name, verdict)
+		}
+		texts = append(texts, unread, issue329Check(c.store, anchor, c.anchorErr).answer(folder).Error())
+
+		mu.Lock()
+		savedDB, savedAnchor, savedErr := stDB, stStorageAnchor, stStorageAnchorErr
+		stDB, stStorageAnchor, stStorageAnchorErr = c.store, anchor, c.anchorErr
+		refusal := folderStorageRefusalLocked(folder, folder.Path)
+		stDB, stStorageAnchor, stStorageAnchorErr = savedDB, savedAnchor, savedErr
+		mu.Unlock()
+		texts = append(texts, refusal)
+	}
+	texts = append(texts,
+		folderStorageMismatch,
+		errFolderNotItsDirectory.Error(),
+		directoryRefusal(errFolderNotItsDirectory),
+		ignoresWriteError(issue329Check(cases[1].store, anchor, cases[1].anchorErr).answer(folder)),
+	)
+	for _, text := range texts {
+		if text == "" {
+			t.Fatal("a refusal came out empty: the test no longer reaches every text")
+		}
+		if strings.Contains(text, "/") {
+			t.Errorf("the refusal %q carries a path", text)
+		}
+	}
 }
 
 // The false alarm the check must never raise: the vault's own folder,
@@ -634,7 +800,7 @@ func TestIssue329_WhatTheCheckCosts(t *testing.T) {
 	// own two looks at the disk and the answer — for comparison.
 	folder, _, _ := getFolderConfig(folderID)
 	mu.Lock()
-	check := folderDirectoryCheck{store: stDB, anchor: stStorageAnchor}
+	check := issue329Check(stDB, stStorageAnchor, nil)
 	mu.Unlock()
 	const rounds = 1000
 	began := time.Now()
