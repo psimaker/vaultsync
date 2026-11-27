@@ -68,10 +68,11 @@ if [ -n "${ALLOW_COMPOSE:-}" ]; then
 			[ -z "${MUTATE_DURING_PULL:-}" ] || sh -c "$MUTATE_DURING_PULL"
 			exit 0 ;;
 		"compose --project-directory "*" up -d") [ -z "${FAIL_COMPOSE_UP:-}" ] || exit 1; exit 0 ;;
-		# What a container wrote may carry escape sequences, which setup
-		# must not pass to the terminal (#364).
+		# What a container wrote may carry escape sequences, C1 controls,
+		# line separators and bidirectional controls, which setup must not
+		# pass to the terminal, beside characters it must keep (#364).
 		"compose --project-directory "*" logs --no-color --tail 30 "*)
-			printf '%s log: test \033[2J\033]0;title\007end\n' "${*##* }"; exit 0 ;;
+			printf '%s log: test \033[2J\033]0;title\007 \302\233 2J \302\200\302\205\302\237 \342\200\250\342\200\251 \330\234\342\200\216\342\200\217 \342\200\252\342\200\253\342\200\254\342\200\255\342\200\256 \342\201\246\342\201\247\342\201\250\342\201\251 kept: \342\202\254 \303\251 \344\270\255 end\n' "${*##* }"; exit 0 ;;
 		# Syncthing 2.x converting a 1.x database (decision 090): for its first
 		# CONVERTING_TRIES health checks it answers as 2.1.7 does then — HTTP
 		# 200, the migration text as the first line, a blank line, its log —
@@ -82,8 +83,18 @@ if [ -n "${ALLOW_COMPOSE:-}" ]; then
 		# "second" (the text on the second line). FAIL_HEALTH_EXEC: Syncthing
 		# cannot be asked (stopped, restarting); FAIL_HEALTH_EXEC_AT=N: only
 		# the Nth check cannot.
-		"compose --project-directory "*" logs --no-color --tail 20 syncthing")
-			printf 'vaultsync-hub-syncthing  | 2026-11-27 10:49:38 INF Still migrating folder (folder=vs-test files=%s000 blocks=1 duration=3m56s log.pkg=syncthing)\n' "$(cat "$CONVERSION_COUNTER" 2>/dev/null || echo 0)"
+		# Syncthing's log since its container started, as 2.1.7 writes it
+		# while it converts; with RESTART_INSIDE_AFTER=N, once N migration
+		# answers were given, the engine was killed inside the container and
+		# started again by Syncthing's monitor (measured on real Docker).
+		"compose --project-directory "*" logs --no-color --since 2026-11-27T10:"*" syncthing")
+			n=$(cat "$CONVERSION_COUNTER" 2>/dev/null || echo 0)
+			printf 'vaultsync-hub-syncthing  | 2026-11-27 10:00:01 INF Migrating old-style database to SQLite; this may take a while... (log.pkg=syncthing)\n'
+			if [ -n "${RESTART_INSIDE_AFTER:-}" ] && [ "$n" -ge "$RESTART_INSIDE_AFTER" ]; then
+				printf 'vaultsync-hub-syncthing  | 2026-11-27 10:04:00 INF Syncthing exited (error="signal: killed" log.pkg=main)\n'
+				printf 'vaultsync-hub-syncthing  | 2026-11-27 10:04:02 INF Migrating old-style database to SQLite; this may take a while... (log.pkg=syncthing)\n'
+			fi
+			printf 'vaultsync-hub-syncthing  | 2026-11-27 10:49:38 INF Still migrating folder (folder=vs-test files=%s000 blocks=1 duration=3m56s log.pkg=syncthing)\n' "$n"
 			exit 0 ;;
 		"compose --project-directory "*" exec -T syncthing curl -fsS -m 10 http://127.0.0.1:8384/rest/noauth/health")
 			asks=$(($(cat "$HEALTH_ASKS" 2>/dev/null || echo 0) + 1))
@@ -107,8 +118,10 @@ if [ -n "${ALLOW_COMPOSE:-}" ]; then
 			n=$(cat "$CONVERSION_COUNTER" 2>/dev/null || echo 0)
 			if [ -n "${CONVERTING_TRIES:-}" ] && [ "$n" -lt "$CONVERTING_TRIES" ]; then
 				# Ctrl-C while setup waits (it runs this command itself, so
-				# the parent is the setup); the sleep keeps it waiting until
-				# the trap has run.
+				# the parent is the setup). The shell runs its trap once this
+				# command has ended; the sleep is the sleep stub's, which
+				# under FAST_SLEEP returns at once, and the signal is already
+				# pending by then.
 				if [ -n "${INT_DURING_CONVERSION:-}" ] && [ "$n" -ge "$INT_DURING_CONVERSION" ]; then
 					kill -INT "$PPID"
 					sleep 1
@@ -119,7 +132,14 @@ if [ -n "${ALLOW_COMPOSE:-}" ]; then
 			printf 'VaultSync Hub test\nDevice ID:   TEST\n'; exit 0 ;;
 		# The Syncthing container, as Docker reports it: started again once
 		# RESTART_AFTER migration answers were given (a full disk restarts it).
-		"compose --project-directory "*" ps -q syncthing") echo "test-syncthing-id"; exit 0 ;;
+		# FAIL_LOOK_AT=N: Docker does not answer the Nth question for the
+		# container (LOOK_CALLS counts them); FAIL_LOOK: it never answers.
+		"compose --project-directory "*" ps -a -q syncthing")
+			looks=$(($(cat "$LOOK_CALLS" 2>/dev/null || echo 0) + 1))
+			echo "$looks" >"$LOOK_CALLS"
+			[ -z "${FAIL_LOOK:-}" ] || exit 1
+			[ "${FAIL_LOOK_AT:-0}" != "$looks" ] || exit 1
+			echo "test-syncthing-id"; exit 0 ;;
 		"inspect -f {{.State.Running}} {{.State.StartedAt}} test-syncthing-id")
 			n=$(cat "$CONVERSION_COUNTER" 2>/dev/null || echo 0)
 			if [ -n "${RESTART_AFTER:-}" ] && [ "$n" -ge "$RESTART_AFTER" ]; then
@@ -447,8 +467,9 @@ if [ "\$1" = -di ]; then
 fi
 exec "$REAL_LS" "\$@"
 SHIM
-# FAST_SLEEP: the readiness wait's pauses take no time (#364). The signal
-# shims above keep their real sleep: they wait for the trap to run.
+# FAST_SLEEP: every sleep returns at once (#364). It is set only for the
+# readiness-wait cases; the other cases, whose shims sleep so that a signal
+# arrives before they return, keep the real sleep.
 REAL_SLEEP=$(command -v sleep)
 cat >"$SANDBOX/bin/sleep" <<SHIM
 #!/usr/bin/env sh
@@ -456,12 +477,19 @@ cat >"$SANDBOX/bin/sleep" <<SHIM
 exec "$REAL_SLEEP" "\$@"
 SHIM
 # date +%s: FAKE_EPOCH_STEP=N makes each call N seconds later than the one
-# before (DATE_CALLS counts them); FAKE_DATE_FAILS: no clock at all (#364).
+# before (DATE_CALLS counts them); FAKE_EPOCH_JUMP: after the first call the
+# clock stands a day ahead; FAKE_DATE_FAILS: no clock at all (#364).
 REAL_DATE=$(command -v date)
 cat >"$SANDBOX/bin/date" <<SHIM
 #!/usr/bin/env sh
 if [ "\$*" = +%s ]; then
 	[ -z "\${FAKE_DATE_FAILS:-}" ] || exit 1
+	if [ -n "\${FAKE_EPOCH_JUMP:-}" ]; then
+		calls=\$((\$(cat "\$DATE_CALLS" 2>/dev/null || echo 0) + 1))
+		echo "\$calls" >"\$DATE_CALLS"
+		[ "\$calls" = 1 ] && echo 1800000000 || echo \$((1800000000 + 86400 + calls))
+		exit 0
+	fi
 	if [ -n "\${FAKE_EPOCH_STEP:-}" ]; then
 		calls=\$((\$(cat "\$DATE_CALLS" 2>/dev/null || echo 0) + 1))
 		echo "\$calls" >"\$DATE_CALLS"
@@ -575,6 +603,24 @@ $out"
 fi
 pass "a Hub whose .env names 2.x hears nothing about 1.x"
 
+# cleaned CASE: the output holds none of what show_log removes from a
+# container's log (C0 controls and DEL, the UTF-8 forms of the C1 controls,
+# the line and paragraph separators and the bidirectional controls), and
+# keeps the ordinary characters the stub's log line carries (#364).
+cleaned() {
+	for seq_364 in '\033' '\007' '\302\233' '\302\200' '\302\205' '\302\237' '\342\200\250' '\342\200\251' \
+		'\330\234' '\342\200\216' '\342\200\217' '\342\200\252' '\342\200\253' '\342\200\254' '\342\200\255' \
+		'\342\200\256' '\342\201\246' '\342\201\247' '\342\201\250' '\342\201\251'; do
+		# shellcheck disable=SC2059 # the format is the byte sequence
+		if printf '%s' "$out" | LC_ALL=C grep -q "$(printf "$seq_364")"; then
+			fail "$1: a log reaches the terminal with the bytes $seq_364 (#364):
+$out"
+		fi
+	done
+	printf '%s' "$out" | LC_ALL=C grep -q "$(printf 'kept: \342\202\254 \303\251 \344\270\255 end')" || fail "$1: a log loses its ordinary characters (#364):
+$out"
+}
+
 # A start that fails shows Syncthing's log and what a refused 2.x home means.
 rm -rf "$ST_HUB"
 if out=$(FAIL_COMPOSE_UP=1 new_env_run); then
@@ -587,10 +633,7 @@ printf '%s\n' "$out" | grep -q "syncthing log: test" || fail "a failed start doe
 $out"
 printf '%s\n' "$out" | grep -q "set VAULTSYNC_HUB_SYNCTHING_IMAGE=syncthing/syncthing:2" || fail "a failed start does not name the .env line:
 $out"
-if printf '%s' "$out" | LC_ALL=C grep -q "$(printf '\033')"; then
-	fail "a failed start passes the log's escape sequences to the terminal (#364):
-$out"
-fi
+cleaned "a failed start"
 pass "a failed start shows Syncthing's log, cleaned, and names the .env line"
 
 # The readiness wait (#364). Syncthing has passed its healthcheck by then
@@ -600,12 +643,19 @@ pass "a failed start shows Syncthing's log, cleaned, and names the .env line"
 CONVERSION_COUNTER="$SANDBOX/results/conversion-count"
 HEALTH_ASKS="$SANDBOX/results/health-asks"
 DATE_CALLS="$SANDBOX/results/date-calls"
-export CONVERSION_COUNTER HEALTH_ASKS DATE_CALLS
-fresh_364() { rm -rf "$ST_HUB"; rm -f "$CONVERSION_COUNTER" "$HEALTH_ASKS" "$DATE_CALLS"; }
+LOOK_CALLS="$SANDBOX/results/look-calls"
+export CONVERSION_COUNTER HEALTH_ASKS DATE_CALLS LOOK_CALLS
+fresh_364() { rm -rf "$ST_HUB"; rm -f "$CONVERSION_COUNTER" "$HEALTH_ASKS" "$DATE_CALLS" "$LOOK_CALLS"; }
 no_hint() { # CASE: the output holds no word of the 1.x-on-2.x hint
 	if printf '%s\n' "$out" | grep -q "VAULTSYNC_HUB_SYNCTHING_IMAGE"; then
 		fail "$1: the 1.x-on-2.x hint is given (#364):
 $out"
+	fi
+}
+no_syncthing_log() { # CASE: Syncthing's log was not shown
+	if grep " logs --no-color --tail" "$COMPOSE_LOG" | grep -q "syncthing"; then
+		fail "$1: Syncthing's log is shown (#364):
+$(cat "$COMPOSE_LOG")"
 	fi
 }
 never_ready() { # CASE: the Hub never answers and nothing converts
@@ -617,15 +667,9 @@ $out"
 $(cat "$COMPOSE_LOG")"
 	grep " logs " "$COMPOSE_LOG" | grep -q "logs --no-color --tail 30 hub (VAULTSYNC" || fail "$1: the hub's log is not shown (#364):
 $(cat "$COMPOSE_LOG")"
-	if grep " logs " "$COMPOSE_LOG" | grep -q "syncthing"; then
-		fail "$1: Syncthing's log is shown (#364):
-$(cat "$COMPOSE_LOG")"
-	fi
+	no_syncthing_log "$1"
 	no_hint "$1"
-	if printf '%s' "$out" | LC_ALL=C grep -q "$(printf '\033')"; then
-		fail "$1: a container's log reaches the terminal with its escape sequences (#364):
-$out"
-	fi
+	cleaned "$1"
 	printf '%s\n' "$out" | grep -q "hub log: test" || fail "$1: the hub's log is not shown (#364):
 $out"
 	printf '%s\n' "$out" | grep -q "The Hub did not become ready. The log above explains why" || fail "$1: not said (#364):
@@ -633,8 +677,9 @@ $out"
 }
 fresh_364
 # FAKE_EPOCH_STEP: an answer taken for a conversion by mistake ends the
-# wait within a few looks, and the case fails, instead of an hour's wait.
-if out=$(FAIL_STATUS=1 FAKE_EPOCH_STEP=600 FAST_SLEEP=1 new_env_run); then
+# wait after about an hour of the stub's clock, 61 looks, and the case
+# fails, instead of 360 looks.
+if out=$(FAIL_STATUS=1 FAKE_EPOCH_STEP=60 FAST_SLEEP=1 new_env_run); then
 	fail "a Hub that never answers must stop the setup:
 $out"
 fi
@@ -649,7 +694,7 @@ for case_364 in "FAIL_HEALTH_EXEC=1:a Syncthing that cannot be asked" \
 	"HEALTH_ANSWER=near:the migration text not alone on its line" \
 	"HEALTH_ANSWER=second:the migration text on the second line"; do
 	fresh_364
-	if out=$(export "${case_364%%:*}"; FAIL_STATUS=1 FAKE_EPOCH_STEP=600 FAST_SLEEP=1 new_env_run); then
+	if out=$(export "${case_364%%:*}"; FAIL_STATUS=1 FAKE_EPOCH_STEP=60 FAST_SLEEP=1 new_env_run); then
 		fail "${case_364#*:}: the setup did not stop:
 $out"
 	fi
@@ -666,13 +711,14 @@ out=$(CONVERTING_TRIES=60 FAST_SLEEP=1 new_env_run) || fail "a conversion longer
 $out"
 [ "$(cat "$CONVERSION_COUNTER")" = 60 ] || fail "the wait did not last the conversion (#364): $(cat "$CONVERSION_COUNTER") answers"
 no_hint "a conversion"
+no_syncthing_log "a conversion"
 printf '%s\n' "$out" | grep -q "Syncthing 2.x is converting this Hub's database from 1.x" || fail "the conversion is not said (#364):
 $out"
 [ "$(printf '%s\n' "$out" | grep -c "is converting this Hub's database")" = 1 ] || fail "the conversion is said more than once (#364):
 $out"
 printf '%s\n' "$out" | grep -q "Still converting: [0-9]*000 files so far in the vault it is on" || fail "the conversion's progress is not shown (#364):
 $out"
-if printf '%s\n' "$out" | grep -q -e "Hafnium" -e "vs-test"; then
+if printf '%s\n' "$out" | grep -q -e "Hafnium" -e "vs-test" -e "Migrating"; then
 	fail "more of Syncthing's answer or log than the file count reaches the terminal (#364):
 $out"
 fi
@@ -682,58 +728,104 @@ printf '%s\n' "$out" | grep -q "Hub is running" || fail "the Hub is not reported
 $out"
 pass "a conversion longer than the readiness wait is waited for, with its progress, without the 1.x-on-2.x hint (#364)"
 
-# A look that cannot ask Syncthing during the conversion changes nothing:
-# the conversion goes on until an answer says otherwise (#364).
+# A look that cannot ask Syncthing, or Docker about its container, is no
+# answer: the conversion goes on (#364). The first look at the container
+# failing only moves the base the later looks compare with to the next one.
+for case_364 in "FAIL_HEALTH_EXEC_AT=5:a health check" "FAIL_LOOK_AT=4:a question for the container" \
+	"FAIL_LOOK_AT=1:the first question for the container"; do
+	fresh_364
+	out=$(export "${case_364%%:*}"; CONVERTING_TRIES=60 FAST_SLEEP=1 new_env_run) || fail "${case_364#*:} that Docker did not answer ended the wait for the conversion (#364):
+$out"
+	[ "$(cat "$CONVERSION_COUNTER")" = 60 ] || fail "${case_364#*:}: the wait did not last the conversion (#364): $(cat "$CONVERSION_COUNTER") answers"
+	[ "$(printf '%s\n' "$out" | grep -c "is converting this Hub's database")" = 1 ] || fail "${case_364#*:}: the conversion ended, and a new one began (#364):
+$out"
+done
 fresh_364
-out=$(CONVERTING_TRIES=60 FAIL_HEALTH_EXEC_AT=5 FAST_SLEEP=1 new_env_run) || fail "a look that could not ask Syncthing ended the wait for the conversion (#364):
+if out=$(FAIL_LOOK_AT=1 RESTART_AFTER=5 CONVERTING_TRIES=60 FAST_SLEEP=1 new_env_run); then
+	fail "a restart after a first look Docker did not answer went unseen (#364):
 $out"
-[ "$(cat "$CONVERSION_COUNTER")" = 60 ] || fail "the wait did not last the conversion (#364): $(cat "$CONVERSION_COUNTER") answers"
-[ "$(printf '%s\n' "$out" | grep -c "is converting this Hub's database")" = 1 ] || fail "a look that could not ask Syncthing ended the conversion, and a new one began (#364):
+fi
+printf '%s\n' "$out" | grep -q "Syncthing's container stopped or started again" || fail "a restart after a first look Docker did not answer is not said (#364):
 $out"
-pass "a look that cannot ask Syncthing during a conversion does not end it (#364)"
+pass "a look Docker does not answer is no answer, also the first one (#364)"
+fresh_364
+if out=$(FAIL_LOOK=1 CONVERTING_TRIES=60 FAST_SLEEP=1 new_env_run); then
+	fail "a Docker that never answers about the container did not end the wait (#364):
+$out"
+fi
+[ "$(cat "$CONVERSION_COUNTER")" -lt 5 ] || fail "a Docker that never answers was waited for (#364): $(cat "$CONVERSION_COUNTER") answers"
+printf '%s\n' "$out" | grep -q "Docker could not be asked about Syncthing's container, three times in a row" || fail "a Docker that never answers is not said (#364):
+$out"
+if printf '%s\n' "$out" | grep -q "stopped or started again"; then
+	fail "a Docker that never answers is said as a stop (#364):
+$out"
+fi
+no_syncthing_log "a Docker that never answers"
+no_hint "a Docker that never answers"
+pass "a Docker that never answers about the container ends the wait as that, never as a stop (#364)"
 
-# Syncthing that starts again mid-conversion (a full disk restarts it) begins
-# it again from the 1.x database: setup stops waiting, with Syncthing's log
-# and what to do, never the 1.x-on-2.x hint (#364).
-fresh_364
-if out=$(CONVERTING_TRIES=60 RESTART_AFTER=5 FAST_SLEEP=1 new_env_run); then
-	fail "a Syncthing that started again mid-conversion did not stop the setup (#364):
+# Syncthing's container that starts again mid-conversion (a full disk makes
+# Docker restart it), and an engine that ends inside it and is started
+# again by Syncthing's monitor (killed for want of memory, or a failed
+# migration), each begin the conversion again from the 1.x database: setup
+# stops waiting, with Syncthing's log and what to do, never the 1.x-on-2.x
+# hint (#364).
+for case_364 in "RESTART_AFTER=5:Syncthing's container stopped or started again" \
+	"RESTART_INSIDE_AFTER=5:Syncthing's engine ended inside its container"; do
+	fresh_364
+	if out=$(export "${case_364%%:*}"; CONVERTING_TRIES=60 FAST_SLEEP=1 new_env_run); then
+		fail "${case_364#*:}: the setup did not stop (#364):
 $out"
-fi
-[ "$(cat "$CONVERSION_COUNTER")" -lt 10 ] || fail "the restart was not seen at once (#364): $(cat "$CONVERSION_COUNTER") answers"
-grep -q "logs --no-color --tail 30 syncthing" "$COMPOSE_LOG" || fail "a restart mid-conversion does not show Syncthing's log (#364):
+	fi
+	[ "$(cat "$CONVERSION_COUNTER")" -lt 10 ] || fail "${case_364#*:}: not seen at once (#364): $(cat "$CONVERSION_COUNTER") answers"
+	grep -q "logs --no-color --tail 30 syncthing" "$COMPOSE_LOG" || fail "${case_364#*:}: Syncthing's log is not shown (#364):
 $(cat "$COMPOSE_LOG")"
-printf '%s\n' "$out" | grep -q "Syncthing stopped or started again while it converted" || fail "a restart mid-conversion is not said (#364):
+	printf '%s\n' "$out" | grep -q "${case_364#*:}" || fail "${case_364#*:}: not said (#364):
 $out"
-printf '%s\n' "$out" | grep -q "the conversion starts over" || fail "a restart mid-conversion does not say what to do (#364):
+	printf '%s\n' "$out" | grep -q "once the cause is fixed, run the setup again" || fail "${case_364#*:}: what to do is not said (#364):
 $out"
-no_hint "a restart mid-conversion"
-if printf '%s' "$out" | LC_ALL=C grep -q "$(printf '\033')"; then
-	fail "Syncthing's log reaches the terminal with its escape sequences (#364):
-$out"
-fi
-pass "a Syncthing that starts again mid-conversion stops the wait with its log and what to do (#364)"
+	no_hint "${case_364#*:}"
+	cleaned "${case_364#*:}"
+done
+pass "a conversion that starts over, in a new container or inside it, stops the wait with Syncthing's log and what to do (#364)"
 
 # An end for a run nobody watches: after an hour of conversion setup stops
-# waiting and says that nothing has gone wrong so far; without a clock each
-# look counts as the 2 s it sleeps, never less (#364).
+# waiting, says that the conversion had not finished, where to see it, and
+# to run the setup again; no word that all is well stands before ERROR:.
+# The clock decides where it moves as looks can: one that jumps ahead ends
+# nothing at once; without a clock the count of looks ends it (#364).
 fresh_364
-if out=$(CONVERTING_TRIES=1000 FAKE_EPOCH_STEP=600 FAST_SLEEP=1 new_env_run); then
+if out=$(CONVERTING_TRIES=1000 FAKE_EPOCH_STEP=30 FAST_SLEEP=1 new_env_run); then
 	fail "a conversion longer than an hour did not end the wait (#364):
 $out"
 fi
-[ "$(cat "$CONVERSION_COUNTER")" -lt 12 ] || fail "the wait went on past an hour (#364): $(cat "$CONVERSION_COUNTER") answers"
-printf '%s\n' "$out" | grep -q "still converting this Hub's database after 60 minutes. Nothing has gone wrong so far" || fail "the end of the wait is not said (#364):
+looks_364=$(cat "$CONVERSION_COUNTER")
+[ "$looks_364" -ge 115 ] && [ "$looks_364" -le 130 ] || fail "the wait did not end at the clock's hour (#364): $looks_364 answers"
+printf '%s\n' "$out" | grep -q "Syncthing had not finished converting this Hub's database after 60 minutes\.$" || fail "the end of the wait is not said (#364):
 $out"
 printf '%s\n' "$out" | grep -q "Where it stands:  cd $ST_HUB && docker compose logs --tail 3 syncthing" || fail "the end of the wait does not say where to look (#364):
 $out"
 printf '%s\n' "$out" | grep -q "Run the setup again later" || fail "the end of the wait does not say to run the setup again (#364):
 $out"
-no_hint "the end of the wait"
-fresh_364
-out=$(CONVERTING_TRIES=60 FAKE_DATE_FAILS=1 FAST_SLEEP=1 new_env_run) || fail "without a clock the wait ended before the conversion (#364):
+if printf '%s\n' "$out" | grep -q -i -e "nothing has gone wrong" -e "goes on in its container"; then
+	fail "the end of the wait says more than setup knows (#364):
 $out"
-pass "a conversion is waited for an hour at most, then the setup says it goes on (#364)"
+fi
+no_hint "the end of the wait"
+no_syncthing_log "the end of the wait"
+fresh_364
+out=$(CONVERTING_TRIES=10 FAKE_EPOCH_JUMP=1 FAST_SLEEP=1 new_env_run) || fail "a clock that jumped ahead ended the wait at once (#364):
+$out"
+fresh_364
+if out=$(CONVERTING_TRIES=1000 FAKE_DATE_FAILS=1 FAST_SLEEP=1 new_env_run); then
+	fail "without a clock a conversion longer than an hour did not end the wait (#364):
+$out"
+fi
+looks_364=$(cat "$CONVERSION_COUNTER")
+[ "$looks_364" -ge 355 ] && [ "$looks_364" -le 365 ] || fail "without a clock the wait did not end at its count of looks (#364): $looks_364 answers"
+printf '%s\n' "$out" | grep -q "Syncthing had not finished converting this Hub's database after 60 minutes\.$" || fail "without a clock the end of the wait is not said (#364):
+$out"
+pass "a conversion is waited for an hour, by the clock or by the count of looks, then the setup says it had not finished (#364)"
 
 # Ctrl-C during the conversion ends the wait, not the conversion, and says
 # so (#364).
@@ -745,9 +837,10 @@ set -e
 [ "$rc_364" = 130 ] || fail "Ctrl-C during the conversion exits $rc_364, not 130 (#364):
 $out"
 [ "$(cat "$CONVERSION_COUNTER")" -lt 10 ] || fail "the wait went on after Ctrl-C (#364): $(cat "$CONVERSION_COUNTER") answers"
-printf '%s\n' "$out" | grep -q "Setup stopped waiting. Syncthing goes on converting" || fail "Ctrl-C during the conversion is not said (#364):
+printf '%s\n' "$out" | grep -q "Setup stopped waiting. That does not stop Syncthing: it goes on converting" || fail "Ctrl-C during the conversion is not said (#364):
 $out"
 no_hint "Ctrl-C during the conversion"
+no_syncthing_log "Ctrl-C during the conversion"
 pass "Ctrl-C during a conversion ends the wait and says the conversion goes on (#364)"
 
 lost_env() { # NAME EXPECTED-IMAGE: a Hub directory without .env, as prepared
@@ -1020,14 +1113,15 @@ $out"
 		cmp -s "$EXISTING/.env" "$SANDBOX/results/env-before" || fail "$1 changed .env"
 		# The files move into place only after their images are pulled
 		# (#368): a rename that fails comes after the pull, never before an
-		# up -d; every other step fails before Compose is called at all.
+		# up -d; every other step fails before Compose is asked anything but
+		# the read-only question whether Syncthing converts (#364).
 		if [ "$2" = FAIL_MV ]; then
 			if grep -q " up -d" "$COMPOSE_LOG"; then
 				fail "$1 still restarted the stack:
 $(cat "$COMPOSE_LOG")"
 			fi
-		else
-			[ ! -s "$COMPOSE_LOG" ] || fail "$1 still called Compose:
+		elif grep -v " exec -T syncthing curl -fsS -m 10 http://127.0.0.1:8384/rest/noauth/health " "$COMPOSE_LOG" | grep -q .; then
+			fail "$1 still called Compose:
 $(cat "$COMPOSE_LOG")"
 		fi
 		for leftover in "$EXISTING"/.env.setup.* "$EXISTING"/docker-compose.yml.setup.*; do
@@ -1473,6 +1567,31 @@ $out"
 else
 	pass "unreadable-.env case skipped (root reads every file)"
 fi
+
+# The setup link run again while the Hub's Syncthing converts changes
+# nothing on the stack: no file, no pull, no up -d, which would recreate a
+# container whose image or service changed and start the conversion over
+# (decision 090). It waits for the conversion and ends as a run does (#364).
+existing_compose_fixture
+cp "$EXISTING/.env" "$SANDBOX/results/env-before"
+cp "$EXISTING/docker-compose.yml" "$SANDBOX/results/compose-before"
+rm -f "$CONVERSION_COUNTER" "$HEALTH_ASKS" "$DATE_CALLS" "$LOOK_CALLS"
+out=$(existing_update CONVERTING_TRIES=5 FAST_SLEEP=1) || fail "a run during a conversion exited non-zero (#364):
+$out"
+if grep -q -e " pull" -e " up -d" "$COMPOSE_LOG"; then
+	fail "a run during a conversion pulled or restarted the stack (#364):
+$(cat "$COMPOSE_LOG")"
+fi
+cmp -s "$EXISTING/.env" "$SANDBOX/results/env-before" || fail "a run during a conversion changed .env (#364)"
+cmp -s "$EXISTING/docker-compose.yml" "$SANDBOX/results/compose-before" || fail "a run during a conversion changed docker-compose.yml (#364)"
+for leftover in "$EXISTING"/.env.setup.* "$EXISTING"/docker-compose.yml.setup.* "$EXISTING/.env.setup-lock"; do
+	[ ! -e "$leftover" ] || fail "a run during a conversion left $leftover (#364)"
+done
+printf '%s\n' "$out" | grep -q "Setup changes nothing on this Hub while its Syncthing converts the database" || fail "a run during a conversion does not say it changes nothing (#364):
+$out"
+printf '%s\n' "$out" | grep -q "TULIP-ANCHOR-42" || fail "a run during a conversion does not end with a pairing code (#364):
+$out"
+pass "a run during a conversion changes nothing on the stack and waits for it (#364)"
 
 # --- 3. Device path ----------------------------------------------------------
 
