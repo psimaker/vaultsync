@@ -2,17 +2,18 @@ package bridge
 
 import (
 	"encoding/json"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
 // The conflict list, the comparison view's read and the actions on a
-// conflict work on regular files inside the vault's own folder (#151). An
-// entry that is not a regular file is not listed and not acted on, and
-// neither is a file reached through an entry, between the folder and the
-// file, that is not a directory.
+// conflict work on regular files inside the vault's own folder (#151): an
+// entry that is not a regular file is not listed and not acted on.
 
 const (
 	issue151ConflictName = "doc.sync-conflict-20260406-100000-DEF5678.md"
@@ -118,8 +119,7 @@ func TestIssue151_TheConflictListHoldsOnlyRegularFiles(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(folder, "dir.sync-conflict-20260406-100000-CCC3333.md"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	// A directory reached through a link is not walked: its copies are not
-	// the folder's own entries.
+	// Only directories are entered.
 	issue151Write(t, filepath.Join(folder, "Real", "nested.sync-conflict-20260406-100000-DDD4444.md"), "issue-151-nested-copy")
 	issue151Link(t, "Real", filepath.Join(folder, "Linked"))
 
@@ -174,8 +174,8 @@ func TestIssue151_AConflictReadReadsOnlyARegularFile(t *testing.T) {
 func TestIssue151_AConflictActionActsOnlyOnARegularFile(t *testing.T) {
 	base := issue151Engine(t)
 
-	// setup makes a folder with a regular original, a link with the conflict
-	// copy's name and the file the link names.
+	// setup makes a folder with a regular original, and an entry under the
+	// conflict copy's name that is not a regular file.
 	setup := func(t *testing.T, folderID string) (folder, target string) {
 		t.Helper()
 		folder = issue151Folder(t, base, folderID)
@@ -235,7 +235,7 @@ func TestIssue151_AConflictActionActsOnlyOnARegularFile(t *testing.T) {
 		assertUntouched(t, folder, target)
 	})
 
-	t.Run("keep the other version over an original that is a link", func(t *testing.T) {
+	t.Run("keep the other version over an original that is not a regular file", func(t *testing.T) {
 		const folderID = "issue151originallink"
 		folder := issue151Folder(t, base, folderID)
 		target := filepath.Join(folder, "Notes", "target.md")
@@ -253,14 +253,12 @@ func TestIssue151_AConflictActionActsOnlyOnARegularFile(t *testing.T) {
 	})
 }
 
-// A directory that held a listed conflict copy can be a link by the time the
-// user acts on it. The read and every action then refuse, and nothing in the
-// directory the link names changes.
+// The read and every action work only in directories of the folder: a path
+// whose directory is not a directory is refused, and nothing changes.
 func TestIssue151_AConflictActionActsOnlyInADirectoryOfTheFolder(t *testing.T) {
 	base := issue151Engine(t)
 
-	// setup lists a conflict copy in Sub, then puts a link to Other in Sub's
-	// place. Other holds an original and a conflict copy of the same names.
+	// setup lists a conflict copy in Sub; then Sub is not a directory.
 	setup := func(t *testing.T, folderID string) (folder string) {
 		t.Helper()
 		folder = issue151Folder(t, base, folderID)
@@ -339,42 +337,61 @@ func TestIssue151_AConflictActionActsOnlyInADirectoryOfTheFolder(t *testing.T) {
 	})
 }
 
-// The root a conflict function works in follows a link whose target lies
-// inside the folder. What it opens is therefore held to what it looked at: a
-// file, or a directory on the way to it, that is replaced by a link between
-// the look and the open is refused.
-func TestIssue151_AnEntryChangedBetweenTheLookAndTheOpenIsRefused(t *testing.T) {
-	base := issue151Engine(t)
+// issue151ChangeAfterCheck calls change with the entry's path once the
+// conflict functions have checked name for the first time.
+func issue151ChangeAfterCheck(t *testing.T, name string, change func(path string)) {
+	t.Helper()
+	check := lstatInFolder
+	t.Cleanup(func() { lstatInFolder = check })
+	changed := false
+	lstatInFolder = func(dir *os.Root, entry string) (os.FileInfo, error) {
+		info, err := check(dir, entry)
+		if entry == name && !changed {
+			changed = true
+			change(filepath.Join(dir.Name(), entry))
+		}
+		return info, err
+	}
+}
 
-	// replaceAfterLook puts a link to target in name's place, right after the
-	// conflict functions first look at name. The entry that was there is
-	// renamed to moved.
-	replaceAfterLook := func(t *testing.T, name, target, moved string) {
-		t.Helper()
-		look := lstatInFolder
-		t.Cleanup(func() { lstatInFolder = look })
-		replaced := false
-		lstatInFolder = func(dir *os.Root, entry string) (os.FileInfo, error) {
-			info, err := look(dir, entry)
-			if entry == name && !replaced {
-				replaced = true
-				if err := os.Rename(filepath.Join(dir.Name(), entry), filepath.Join(dir.Name(), moved)); err != nil {
-					t.Errorf("rename %q: %v", entry, err)
-				}
-				if err := os.Symlink(target, filepath.Join(dir.Name(), entry)); err != nil {
-					t.Errorf("link %q: %v", entry, err)
-				}
-			}
-			return info, err
+// issue151MoveAndLink renames the entry at path to moved, in its directory,
+// and puts a link to target in its place.
+func issue151MoveAndLink(t *testing.T, target, moved string) func(path string) {
+	return func(path string) {
+		if err := os.Rename(path, filepath.Join(filepath.Dir(path), moved)); err != nil {
+			t.Errorf("rename %q: %v", filepath.Base(path), err)
+		}
+		if err := os.Symlink(target, path); err != nil {
+			t.Errorf("link %q: %v", filepath.Base(path), err)
 		}
 	}
+}
+
+// issue151MoveAndMkdir renames the entry at path to moved, in its directory,
+// and puts an empty directory in its place.
+func issue151MoveAndMkdir(t *testing.T, moved string) func(path string) {
+	return func(path string) {
+		if err := os.Rename(path, filepath.Join(filepath.Dir(path), moved)); err != nil {
+			t.Errorf("rename %q: %v", filepath.Base(path), err)
+		}
+		if err := os.Mkdir(path, 0o700); err != nil {
+			t.Errorf("mkdir %q: %v", filepath.Base(path), err)
+		}
+	}
+}
+
+// The entry opened is the entry checked: the file read must be the one
+// checked, and so must every directory on the way. A removal removes a file
+// and never a directory.
+func TestIssue151_TheEntryOpenedIsTheEntryChecked(t *testing.T) {
+	base := issue151Engine(t)
 
 	t.Run("file", func(t *testing.T) {
 		const folderID = "issue151changedfile"
 		folder := issue151Folder(t, base, folderID)
 		issue151Write(t, filepath.Join(folder, "Notes", "target.md"), "issue-151-target")
 		issue151Write(t, filepath.Join(folder, issue151ConflictName), "issue-151-copy")
-		replaceAfterLook(t, issue151ConflictName, filepath.Join("Notes", "target.md"), "moved.md")
+		issue151ChangeAfterCheck(t, issue151ConflictName, issue151MoveAndLink(t, filepath.Join("Notes", "target.md"), "moved.md"))
 
 		if got := ReadFileContent(folderID, issue151ConflictName); got != "error:not a regular file" {
 			t.Errorf("ReadFileContent = %q, want the refusal of an entry that is not a regular file", got)
@@ -389,7 +406,7 @@ func TestIssue151_AnEntryChangedBetweenTheLookAndTheOpenIsRefused(t *testing.T) 
 		issue151Write(t, filepath.Join(folder, "Notes", "target.md"), "issue-151-target")
 		issue151Write(t, filepath.Join(folder, issue151OriginalName), "issue-151-original")
 		issue151Write(t, filepath.Join(folder, issue151ConflictName), "issue-151-copy")
-		replaceAfterLook(t, issue151ConflictName, filepath.Join("Notes", "target.md"), "moved.md")
+		issue151ChangeAfterCheck(t, issue151ConflictName, issue151MoveAndLink(t, filepath.Join("Notes", "target.md"), "moved.md"))
 
 		if errMsg := ResolveConflict(folderID, issue151ConflictName, true); errMsg != conflictNotRegularError {
 			t.Errorf("ResolveConflict(keepConflict: true) = %q, want %q", errMsg, conflictNotRegularError)
@@ -406,7 +423,7 @@ func TestIssue151_AnEntryChangedBetweenTheLookAndTheOpenIsRefused(t *testing.T) 
 		folder := issue151Folder(t, base, folderID)
 		issue151Write(t, filepath.Join(folder, "Sub", issue151ConflictName), "issue-151-sub-copy")
 		issue151Write(t, filepath.Join(folder, "Other", issue151ConflictName), "issue-151-other-copy")
-		replaceAfterLook(t, "Sub", "Other", "Moved")
+		issue151ChangeAfterCheck(t, "Sub", issue151MoveAndLink(t, "Other", "Moved"))
 
 		if got := ReadFileContent(folderID, filepath.Join("Sub", issue151ConflictName)); got != "error:not a regular file" {
 			t.Errorf("ReadFileContent = %q, want the refusal of an entry that is not a regular file", got)
@@ -414,4 +431,195 @@ func TestIssue151_AnEntryChangedBetweenTheLookAndTheOpenIsRefused(t *testing.T) 
 		issue144AssertFileBytes(t, filepath.Join(folder, "Other", issue151ConflictName), []byte("issue-151-other-copy"))
 		issue144AssertFileBytes(t, filepath.Join(folder, "Moved", issue151ConflictName), []byte("issue-151-sub-copy"))
 	})
+
+	t.Run("keep this version", func(t *testing.T) {
+		const folderID = "issue151changedkeepthis"
+		folder := issue151Folder(t, base, folderID)
+		issue151Write(t, filepath.Join(folder, issue151ConflictName), "issue-151-copy")
+		issue151ChangeAfterCheck(t, issue151ConflictName, issue151MoveAndMkdir(t, "moved.md"))
+
+		if errMsg := ResolveConflict(folderID, issue151ConflictName, false); !strings.HasPrefix(errMsg, "delete conflict file: ") {
+			t.Errorf("ResolveConflict(keepConflict: false) = %q, want the removal refused", errMsg)
+		}
+		if info, err := os.Lstat(filepath.Join(folder, issue151ConflictName)); err != nil || !info.IsDir() {
+			t.Errorf("the directory in the copy's place is gone or changed: %v", err)
+		}
+		issue144AssertFileBytes(t, filepath.Join(folder, "moved.md"), []byte("issue-151-copy"))
+	})
+
+	t.Run("remove the copies of an original", func(t *testing.T) {
+		const folderID = "issue151changedremovecopies"
+		folder := issue151Folder(t, base, folderID)
+		issue151Write(t, filepath.Join(folder, issue151OriginalName), "issue-151-original")
+		issue151Write(t, filepath.Join(folder, issue151ConflictName), "issue-151-copy")
+		issue151ChangeAfterCheck(t, issue151ConflictName, issue151MoveAndMkdir(t, "moved.md"))
+
+		result := issue151RemoveCopies(t, folderID, issue151OriginalName)
+		if result.Removed != 0 || !strings.HasPrefix(result.Error, "remove conflict copy: ") {
+			t.Errorf("RemoveConflictFilesForOriginal = %+v, want the removal refused", result)
+		}
+		if info, err := os.Lstat(filepath.Join(folder, issue151ConflictName)); err != nil || !info.IsDir() {
+			t.Errorf("the directory in the copy's place is gone or changed: %v", err)
+		}
+		issue144AssertFileBytes(t, filepath.Join(folder, issue151OriginalName), []byte("issue-151-original"))
+	})
+}
+
+// "Keep this version" removes a conflict copy only: a name that is not a
+// conflict copy's is refused, and the file stays.
+func TestIssue151_KeepThisVersionRemovesOnlyAConflictCopy(t *testing.T) {
+	base := issue151Engine(t)
+	const folderID = "issue151keepthisname"
+	folder := issue151Folder(t, base, folderID)
+	issue151Write(t, filepath.Join(folder, issue151OriginalName), "issue-151-original")
+	issue151Write(t, filepath.Join(folder, "Notes", "note.md"), "issue-151-note")
+
+	for _, relPath := range []string{issue151OriginalName, filepath.Join("Notes", "note.md")} {
+		if errMsg := ResolveConflict(folderID, relPath, false); errMsg != "invalid conflict filename" {
+			t.Errorf("ResolveConflict(%q, keepConflict: false) = %q, want %q", relPath, errMsg, "invalid conflict filename")
+		}
+	}
+	issue144AssertFileBytes(t, filepath.Join(folder, issue151OriginalName), []byte("issue-151-original"))
+	issue144AssertFileBytes(t, filepath.Join(folder, "Notes", "note.md"), []byte("issue-151-note"))
+}
+
+// The list takes each entry's type from the directory read and looks again
+// only at a name that matches a conflict copy's, and at each directory it
+// enters.
+func TestIssue151_TheListLooksAgainOnlyAtConflictCopiesAndDirectories(t *testing.T) {
+	base := issue151Engine(t)
+	const folderID = "issue151listlooks"
+	folder := issue151Folder(t, base, folderID)
+	for i := 0; i < 30; i++ {
+		issue151Write(t, filepath.Join(folder, fmt.Sprintf("note%02d.md", i)), "issue-151-note")
+		issue151Write(t, filepath.Join(folder, "Sub", fmt.Sprintf("note%02d.md", i)), "issue-151-note")
+	}
+	issue151Write(t, filepath.Join(folder, issue151ConflictName), "issue-151-copy")
+	issue151Write(t, filepath.Join(folder, "Sub", issue151ConflictName), "issue-151-copy")
+
+	directories := 0
+	if err := filepath.WalkDir(folder, func(path string, d fs.DirEntry, err error) error {
+		if err == nil && d.IsDir() && path != folder {
+			directories++
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	check := lstatInFolder
+	t.Cleanup(func() { lstatInFolder = check })
+	looks := 0
+	lstatInFolder = func(dir *os.Root, entry string) (os.FileInfo, error) {
+		looks++
+		return check(dir, entry)
+	}
+
+	if conflicts := issue151Conflicts(t, folderID); len(conflicts) != 2 {
+		t.Fatalf("listed %d conflicts, want 2: %+v", len(conflicts), conflicts)
+	}
+	if want := directories + 2; looks != want {
+		t.Errorf("the list looked at %d entries again, want %d (%d directories and 2 conflict copies)", looks, want, directories)
+	}
+}
+
+// No answer of the conflict functions carries a path or a name, whatever kind
+// of error the file system gives.
+func TestIssue151_NoAnswerCarriesAPathOrAName(t *testing.T) {
+	const name = "Secret Note.md"
+	const path = "/Vault/Secret Note.md"
+	kinds := map[string]error{
+		"path":    &os.PathError{Op: "openat", Path: path, Err: syscall.EIO},
+		"link":    &os.LinkError{Op: "renameat", Old: name, New: path, Err: syscall.EIO},
+		"syscall": &os.SyscallError{Syscall: "unlinkat " + path, Err: syscall.EIO},
+		"wrapped": fmt.Errorf("step %s: %w", name, &os.PathError{Op: "openat", Path: path, Err: syscall.EIO}),
+	}
+	assertClean := func(t *testing.T, where, answer string) {
+		t.Helper()
+		if answer == "" {
+			t.Errorf("%s: no answer, want a failure", where)
+		}
+		if strings.Contains(answer, "Secret") || strings.Contains(answer, "/Vault") {
+			t.Errorf("%s: answer %q carries a path or a name", where, answer)
+		}
+	}
+
+	for kind, injected := range kinds {
+		t.Run(kind, func(t *testing.T) {
+			assertClean(t, "conflictEntryError", conflictEntryError(injected))
+			assertClean(t, "readEntryError", readEntryError(injected))
+
+			keepBoth := issue143NewFileFixture(t)
+			ops := systemKeepBothFileOperations(issue143Root(t, keepBoth.dir))
+			lstatFails := ops
+			lstatFails.lstat = func(string) (os.FileInfo, error) { return nil, injected }
+			assertClean(t, "keep both, check", keepBothConflictFile(filepath.Base(keepBoth.conflictPath), lstatFails))
+			renameFails := ops
+			renameFails.renameNoReplace = func(string, string) error { return injected }
+			assertClean(t, "keep both, rename", keepBothConflictFile(filepath.Base(keepBoth.conflictPath), renameFails))
+
+			faults := map[string]func(*conflictFileOperations){
+				"read": func(ops *conflictFileOperations) {
+					ops.readFile = func(string) ([]byte, error) { return nil, injected }
+				},
+				"lstat": func(ops *conflictFileOperations) {
+					ops.lstat = func(string) (os.FileInfo, error) { return nil, injected }
+				},
+				"create": func(ops *conflictFileOperations) {
+					ops.createTemp = func(string) (conflictTempFile, error) { return nil, injected }
+				},
+				"write": func(ops *conflictFileOperations) {
+					issue143InjectTempFault(ops, func(file *issue143FaultingTempFile) {
+						file.write = func([]byte) (int, error) { return 0, injected }
+					})
+				},
+				"chmod": func(ops *conflictFileOperations) {
+					issue143InjectTempFault(ops, func(file *issue143FaultingTempFile) {
+						file.chmod = func(os.FileMode) error { return injected }
+					})
+				},
+				"sync": func(ops *conflictFileOperations) {
+					issue143InjectTempFault(ops, func(file *issue143FaultingTempFile) {
+						file.sync = func() error { return injected }
+					})
+				},
+				"close": func(ops *conflictFileOperations) {
+					issue143InjectTempFault(ops, func(file *issue143FaultingTempFile) {
+						file.close = func() error {
+							file.conflictTempFile.Close()
+							return injected
+						}
+					})
+				},
+				"rename": func(ops *conflictFileOperations) { ops.rename = func(string, string) error { return injected } },
+				"remove": func(ops *conflictFileOperations) { ops.remove = func(string) error { return injected } },
+			}
+			for step, inject := range faults {
+				fixture := issue143NewFileFixture(t)
+				ops := systemConflictFileOperations(issue143Root(t, fixture.dir))
+				inject(&ops)
+				err := replaceConflictAndRemoveSource(filepath.Base(fixture.conflictPath), filepath.Base(fixture.originalPath), ops)
+				if err == nil {
+					t.Errorf("keep the other version, %s: no error", step)
+					continue
+				}
+				assertClean(t, "keep the other version, "+step, err.Error())
+			}
+
+			copies := issue143NewFileFixture(t)
+			copyOps := systemConflictCopyOperations(issue143Root(t, copies.dir))
+			readDirFails := copyOps
+			readDirFails.readDir = func() ([]os.DirEntry, error) { return nil, injected }
+			_, answer := removeConflictCopies(filepath.Base(copies.originalPath), readDirFails)
+			assertClean(t, "remove copies, read", answer)
+			lstatCopyFails := copyOps
+			lstatCopyFails.lstat = func(string) (os.FileInfo, error) { return nil, injected }
+			_, answer = removeConflictCopies(filepath.Base(copies.originalPath), lstatCopyFails)
+			assertClean(t, "remove copies, check", answer)
+			removeCopyFails := copyOps
+			removeCopyFails.remove = func(string) error { return injected }
+			_, answer = removeConflictCopies(filepath.Base(copies.originalPath), removeCopyFails)
+			assertClean(t, "remove copies, removal", answer)
+		})
+	}
 }

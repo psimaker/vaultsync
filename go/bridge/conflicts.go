@@ -16,11 +16,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -32,11 +32,11 @@ var (
 	errNoReplaceUnsupported = errors.New("atomic no-replace rename is not supported by this filesystem")
 
 	// errNotRegularFile: the entry a path names is not a regular file, or is
-	// no longer the one that was looked at.
+	// not the one that was checked.
 	errNotRegularFile = errors.New("not a regular file")
 
-	// errNotDirectory: a directory on a path is not a directory, or is no
-	// longer the one that was looked at.
+	// errNotDirectory: a directory on a path is not a directory, or is not
+	// the one that was checked.
 	errNotDirectory = errors.New("not a directory")
 )
 
@@ -68,7 +68,8 @@ const keepBothTargetExistsError = "keep both target already exists"
 // Syncthing's fs.IsTemporary recognizes the .syncthing. prefix, so the scanner
 // ignores these short-lived files instead of publishing them as vault content.
 // Keep the pattern independent of the user filename to stay below conservative
-// filesystem filename limits; os.CreateTemp appends the exclusive random suffix.
+// filesystem filename limits; createTempIn puts a random number in place of
+// the "*" and creates the name exclusively.
 const conflictResolveTempPattern = ".syncthing.vaultsync-resolve-*"
 
 type conflictTempFile interface {
@@ -101,7 +102,9 @@ func systemConflictFileOperations(dir *os.Root) conflictFileOperations {
 			return createTempIn(dir, pattern)
 		},
 		rename: dir.Rename,
-		remove: dir.Remove,
+		remove: func(name string) error {
+			return removeFileIn(dir, name)
+		},
 	}
 }
 
@@ -123,9 +126,8 @@ func systemKeepBothFileOperations(dir *os.Root) keepBothFileOperations {
 	}
 }
 
-// lstatInFolder is dir.Lstat: it looks at an entry itself, not at what a link
-// there names. A variable, so a test can change an entry between the look
-// and the open that follows it.
+// lstatInFolder is dir.Lstat. A variable, so a test can change an entry after
+// it was checked.
 var lstatInFolder = func(dir *os.Root, name string) (os.FileInfo, error) {
 	return dir.Lstat(name)
 }
@@ -135,7 +137,7 @@ var lstatInFolder = func(dir *os.Root, name string) (os.FileInfo, error) {
 // single path element. cleanedPath is what safePath returned for it. The
 // folder is opened as a root and each directory on the way is opened one at a
 // time: it must be a directory, and the directory opened must be the one
-// looked at. A path that names the folder itself has no entry and is refused
+// checked. A path that names the folder itself has no entry and is refused
 // as errNotRegularFile. The caller closes the directory.
 func openFolderEntry(folderPath, cleanedPath string) (*os.Root, string, error) {
 	rel, err := filepath.Rel(folderPath, cleanedPath)
@@ -158,9 +160,8 @@ func openFolderEntry(folderPath, cleanedPath string) (*os.Root, string, error) {
 	return dir, parts[len(parts)-1], nil
 }
 
-// openDirectoryIn opens the directory name inside dir. A root follows a link
-// whose target lies inside it, so the directory opened is held to the one
-// looked at: a link, or a directory replaced by one in between, is refused.
+// openDirectoryIn opens the directory name inside dir. It must be a
+// directory, and the directory opened must be the one checked.
 func openDirectoryIn(dir *os.Root, name string) (*os.Root, error) {
 	looked, err := lstatInFolder(dir, name)
 	if err != nil {
@@ -197,15 +198,16 @@ func lstatRegularFile(dir *os.Root, name string) (os.FileInfo, error) {
 	return info, nil
 }
 
-// openRegularFile opens name in dir for reading if it is a regular file. A
-// root follows a link whose target lies inside it, so the file opened is held
-// to the one looked at: an entry replaced by a link in between is refused.
+// openRegularFile opens name in dir for reading if it is a regular file. It
+// must be a regular file, and the file opened must be the one checked. The
+// open does not wait (O_NONBLOCK), and the type is checked on the opened file
+// before anything is read from it; reads then block as usual.
 func openRegularFile(dir *os.Root, name string) (*os.File, os.FileInfo, error) {
 	looked, err := lstatRegularFile(dir, name)
 	if err != nil {
 		return nil, nil, err
 	}
-	file, err := dir.Open(name)
+	file, err := dir.OpenFile(name, os.O_RDONLY|openNoBlock, 0)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -217,6 +219,10 @@ func openRegularFile(dir *os.Root, name string) (*os.File, os.FileInfo, error) {
 	if !opened.Mode().IsRegular() || !os.SameFile(looked, opened) {
 		file.Close()
 		return nil, nil, errNotRegularFile
+	}
+	if err := clearNoBlock(file); err != nil {
+		file.Close()
+		return nil, nil, err
 	}
 	return file, opened, nil
 }
@@ -232,7 +238,7 @@ func readRegularFile(dir *os.Root, name string) ([]byte, error) {
 
 // createTempIn creates a new file in dir the way os.CreateTemp does: the
 // pattern's last "*" becomes a random number, and a name that is taken is
-// never opened (O_EXCL, which does not follow a link either).
+// never opened (O_EXCL).
 func createTempIn(dir *os.Root, pattern string) (*os.File, error) {
 	prefix, suffix := pattern, ""
 	if i := strings.LastIndexByte(pattern, '*'); i >= 0 {
@@ -250,9 +256,15 @@ func createTempIn(dir *os.Root, pattern string) (*os.File, error) {
 }
 
 // renameNoReplaceIn renames oldName to newName inside dir and fails when
-// newName is taken. Both are single path elements, looked up from dir's
-// handle, never from the folder's path again.
+// newName is taken. Both are single path elements, looked up in dir.
 func renameNoReplaceIn(dir *os.Root, oldName, newName string) error {
+	return withDirectoryHandle(dir, func(fd int) error {
+		return renameNoReplaceAt(fd, oldName, newName)
+	})
+}
+
+// withDirectoryHandle calls act with a descriptor of dir, open for the call.
+func withDirectoryHandle(dir *os.Root, act func(fd int) error) error {
 	handle, err := dir.Open(".")
 	if err != nil {
 		return err
@@ -262,13 +274,13 @@ func renameNoReplaceIn(dir *os.Root, oldName, newName string) error {
 	if err != nil {
 		return err
 	}
-	var renameErr error
+	var actErr error
 	if err := conn.Control(func(fd uintptr) {
-		renameErr = renameNoReplaceAt(int(fd), oldName, newName)
+		actErr = act(int(fd))
 	}); err != nil {
 		return err
 	}
-	return renameErr
+	return actErr
 }
 
 // conflictEntryError is the answer of an action for a conflict entry it could
@@ -286,8 +298,7 @@ func conflictEntryError(err error) string {
 
 // GetConflictFilesJSON scans the folder's directory for .sync-conflict-* files.
 // Returns a JSON array of ConflictFile objects. Stops after scanning maxConflictScan files.
-// Only regular files are listed: the walk goes through the folder opened as a
-// root and does not enter a link (#151).
+// Only regular files are listed, and only directories are entered (#151).
 func GetConflictFilesJSON(folderID string) string {
 	folders := getFolderConfigs()
 	if folders == nil {
@@ -305,31 +316,69 @@ func GetConflictFilesJSON(folderID string) string {
 	}
 	defer root.Close()
 
-	var conflicts []ConflictFile
-	scanned := 0
+	scan := conflictScan{conflicts: []ConflictFile{}}
+	scan.walk(root, "")
 
-	fs.WalkDir(root.FS(), ".", func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
+	data, err := json.Marshal(scan.conflicts)
+	if err != nil {
+		return "[]"
+	}
+	return string(data)
+}
+
+// conflictScan collects the conflict copies of one folder.
+type conflictScan struct {
+	conflicts []ConflictFile
+	scanned   int
+}
+
+// walk lists dir, whose path inside the folder is rel ("" for the folder
+// itself), in name order, and returns false once maxConflictScan files have
+// been scanned. An entry's type is the one the directory read gives; only a
+// name that matches the conflict pattern is checked again. A subdirectory is
+// entered through openDirectoryIn: it is a directory when it is opened, and
+// the directory read is the one that was checked. A directory that cannot be
+// read is skipped.
+func (s *conflictScan) walk(dir *os.Root, rel string) bool {
+	entries, err := readDirectoryIn(dir)
+	if err != nil {
+		return true
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() {
+			sub, err := openDirectoryIn(dir, name)
+			if err != nil {
+				continue
+			}
+			goOn := s.walk(sub, filepath.Join(rel, name))
+			sub.Close()
+			if !goOn {
+				return false
+			}
+			continue
 		}
 
-		scanned++
-		if scanned > maxConflictScan {
-			return filepath.SkipAll
+		s.scanned++
+		if s.scanned > maxConflictScan {
+			return false
 		}
 
-		name := d.Name()
 		if !strings.Contains(name, ".sync-conflict-") {
-			return nil
+			continue
 		}
-
 		matches := conflictPattern.FindStringSubmatch(name)
 		if matches == nil {
-			return nil
+			continue
 		}
 		// A conflict copy the app shows and acts on is a regular file.
-		if !d.Type().IsRegular() {
-			return nil
+		if !entry.Type().IsRegular() {
+			continue
+		}
+		if _, err := lstatRegularFile(dir, name); err != nil {
+			continue
 		}
 
 		baseName := matches[1]
@@ -337,33 +386,14 @@ func GetConflictFilesJSON(folderID string) string {
 		shortID := matches[3]
 		ext := matches[4]
 
-		relPath := filepath.FromSlash(path)
-		dir := filepath.Dir(relPath)
-
-		originalRel := baseName + ext
-		if dir != "." {
-			originalRel = filepath.Join(dir, originalRel)
-		}
-
-		conflicts = append(conflicts, ConflictFile{
-			OriginalPath:  originalRel,
-			ConflictPath:  relPath,
+		s.conflicts = append(s.conflicts, ConflictFile{
+			OriginalPath:  filepath.Join(rel, baseName+ext),
+			ConflictPath:  filepath.Join(rel, name),
 			ConflictDate:  date,
 			DeviceShortID: shortID,
 		})
-
-		return nil
-	})
-
-	if conflicts == nil {
-		conflicts = []ConflictFile{}
 	}
-
-	data, err := json.Marshal(conflicts)
-	if err != nil {
-		return "[]"
-	}
-	return string(data)
+	return true
 }
 
 // safePath validates that relPath stays within folderRoot after cleaning.
@@ -425,6 +455,8 @@ func keepBothConflictFile(conflictName string, ops keepBothFileOperations) strin
 	// Build new name: baseName.conflict-shortID.ext
 	newName := matches[1] + ".conflict-" + matches[3] + matches[4]
 
+	// At the check the copy is a regular file. The rename moves the name
+	// within the directory and never replaces what newName holds.
 	if err := ops.renameNoReplace(conflictName, newName); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return keepBothTargetExistsError
@@ -519,6 +551,7 @@ func readEntryError(err error) string {
 // conflictFileName is the relative path of the conflict file within the folder.
 // If keepConflict is true, the conflict version replaces the original.
 // If keepConflict is false, the conflict file is simply deleted.
+// Either way the name must be a conflict copy's, and the entry a regular file.
 // Returns empty string on success, error message on failure.
 func ResolveConflict(folderID, conflictFileName string, keepConflict bool) string {
 	folders := getFolderConfigs()
@@ -545,12 +578,12 @@ func ResolveConflict(folderID, conflictFileName string, keepConflict bool) strin
 		return conflictEntryError(err)
 	}
 
-	if keepConflict {
-		matches := conflictPattern.FindStringSubmatch(name)
-		if matches == nil {
-			return "invalid conflict filename"
-		}
+	matches := conflictPattern.FindStringSubmatch(name)
+	if matches == nil {
+		return "invalid conflict filename"
+	}
 
+	if keepConflict {
 		originalName := matches[1] + matches[4]
 
 		if err := replaceConflictAndRemoveSource(name, originalName, systemConflictFileOperations(dir)); err != nil {
@@ -565,7 +598,9 @@ func ResolveConflict(folderID, conflictFileName string, keepConflict bool) strin
 		return ""
 	}
 
-	if err := dir.Remove(name); err != nil {
+	// At the check the entry was a regular file. The removal removes the name
+	// and never a directory.
+	if err := removeFileIn(dir, name); err != nil {
 		return fmt.Sprintf("delete conflict file: %v", withoutPath(err))
 	}
 
@@ -582,6 +617,8 @@ func replaceConflictAndRemoveSource(conflictName, originalName string, ops confl
 	if err := replaceConflictOriginal(conflictName, originalName, ops); err != nil {
 		return err
 	}
+	// At the read the copy was a regular file. The removal removes the name
+	// and never a directory.
 	if err := ops.remove(conflictName); err != nil {
 		return fmt.Errorf("delete conflict file: %w", withoutPath(err))
 	}
@@ -660,8 +697,10 @@ func closeConflictTempAfterError(tempFile conflictTempFile, operation string, op
 //
 // Possible error envelopes: "syncthing not running", "folder not found",
 // "invalid path: outside folder root", "the original's directory is not a
-// directory", or "remove conflict copy: <err>" if an individual deletion
-// failed mid-loop. None carries a path or a name.
+// directory", "open the original's directory: <err>", "read dir: <err>", or,
+// with the count removed so far, "inspect conflict copy: <err>" or
+// "remove conflict copy: <err>" if an individual copy failed mid-loop. None
+// carries a path or a name.
 //
 // Symmetric with GetConflictFilesJSON's JSON-return style — keeps the gomobile
 // surface uniform (no tuple returns across the bridge).
@@ -715,15 +754,47 @@ func RemoveConflictFilesForOriginal(folderID, originalPath string) string {
 		}
 	}
 	defer dir.Close()
+
+	removed, errMsg := removeConflictCopies(baseName, systemConflictCopyOperations(dir))
+	return emit(result{Removed: removed, Error: errMsg})
+}
+
+// conflictCopyOperations are the file operations of the removal of an
+// original's conflict copies, in the original's directory.
+type conflictCopyOperations struct {
+	readDir func() ([]os.DirEntry, error)
+	lstat   func(name string) (os.FileInfo, error)
+	remove  func(name string) error
+}
+
+func systemConflictCopyOperations(dir *os.Root) conflictCopyOperations {
+	return conflictCopyOperations{
+		readDir: func() ([]os.DirEntry, error) {
+			return readDirectoryIn(dir)
+		},
+		lstat: func(name string) (os.FileInfo, error) {
+			return lstatInFolder(dir, name)
+		},
+		remove: func(name string) error {
+			return removeFileIn(dir, name)
+		},
+	}
+}
+
+// removeConflictCopies removes the conflict copies of the original named
+// baseName that are regular files, and answers how many it removed and, if a
+// copy failed, the error without a path or a name.
+func removeConflictCopies(baseName string, ops conflictCopyOperations) (int, string) {
 	ext := filepath.Ext(baseName)
 	stem := strings.TrimSuffix(baseName, ext)
 	// Common prefix of every conflict copy of this file.
 	conflictPrefix := stem + ".sync-conflict-"
 
-	entries, err := fs.ReadDir(dir.FS(), ".")
+	entries, err := ops.readDir()
 	if err != nil {
-		return emit(result{Error: fmt.Sprintf("read dir: %v", withoutPath(err))})
+		return 0, fmt.Sprintf("read dir: %v", withoutPath(err))
 	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
 
 	removed := 0
 	for _, e := range entries {
@@ -746,21 +817,26 @@ func RemoveConflictFilesForOriginal(folderID, originalPath string) string {
 		if matches[4] != ext {
 			continue
 		}
-		// Only a copy that is a regular file is removed; anything else under
-		// a conflict copy's name is left as it is.
-		if _, err := lstatRegularFile(dir, name); err != nil {
-			if errors.Is(err, errNotRegularFile) || errors.Is(err, os.ErrNotExist) {
-				continue
-			}
-			return emit(result{Removed: removed, Error: fmt.Sprintf("inspect conflict copy: %v", withoutPath(err))})
+		// At the check the copy is a regular file; anything else under a
+		// conflict copy's name is left as it is. The removal removes the name
+		// and never a directory.
+		info, err := ops.lstat(name)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
 		}
-		if err := dir.Remove(name); err != nil {
-			return emit(result{Removed: removed, Error: fmt.Sprintf("remove conflict copy: %v", withoutPath(err))})
+		if err != nil {
+			return removed, fmt.Sprintf("inspect conflict copy: %v", withoutPath(err))
+		}
+		if !info.Mode().IsRegular() {
+			continue
+		}
+		if err := ops.remove(name); err != nil {
+			return removed, fmt.Sprintf("remove conflict copy: %v", withoutPath(err))
 		}
 		removed++
 	}
 
-	return emit(result{Removed: removed})
+	return removed, ""
 }
 
 // AutoResolveStateConflicts is retained for gomobile ABI compatibility but no
