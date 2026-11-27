@@ -8,6 +8,10 @@ What the setup link's **2) Hub** and the Hub's compose stack (`hub/scripts/setup
 
 ## [Unreleased]
 
+### Changed
+
+- **`vaultsync-hub status` tells devices apart** ([#224](https://github.com/psimaker/vaultsync/issues/224)) — a computer that runs `vaultsync uninstall --remove-data` and is set up again pairs under a new device identity, and `status` listed the old identity and the new one under the same name, with nothing to tell them apart. Each device's row now begins with its short ID, the first group of its device ID as Syncthing shows it, then its name, then "connected", or "offline" with when the Hub last saw it, with its time zone ("never seen" for a device that never connected). A device's name and a vault's name are shown cleaned like every name the Hub keeps, so neither can break its row or move the short ID. `status` waits at most a few seconds for when each device was last seen. Recorded in decision 094.
+
 ### Fixed
 
 - **A change to the Hub's pairing state is no longer lost when the server and a command write it at the same moment** ([#490](https://github.com/psimaker/vaultsync/issues/490)) — the Hub keeps its pairing state in one file, which the server changes when it records a pairing or a failed attempt, and `vaultsync-hub code` changes when it opens a new code. Each read the file, changed it and wrote it back, ordered only within one process, so when both wrote at once the later write undid the other: a new code could be replaced by the old one, a pairing the server had just recorded could vanish from the file, or a failed attempt's count could be lost. Every such write now holds one lock that all of them share, from its read to its write; one that cannot get it within five seconds fails and says so, and none goes on without it. A failed attempt is counted also when the Hub's state cannot be written, and a pairing whose record cannot be written is refused and shares nothing. Recorded in decision 097.
