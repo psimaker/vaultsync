@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -269,16 +270,21 @@ func (e engine) supervise(ctx context.Context, st agentState, logf func(string, 
 		return err
 	}
 	defer unlock()
-	return e.superviseLocked(ctx, st, logf)
+	return e.superviseLocked(ctx, st, logf, nil)
 }
 
 // superviseLocked is supervise for a caller that holds the engine lock
 // already (run, which serves the control socket under the same lock).
-func (e engine) superviseLocked(ctx context.Context, st agentState, logf func(string, ...any)) error {
+// waiting, when not nil, is true while it waits for an engine an earlier
+// run left (waitForAnEarlierEngine): the control socket says so.
+func (e engine) superviseLocked(ctx context.Context, st agentState, logf func(string, ...any), waiting *atomic.Bool) error {
 	if st.GUIPort <= 0 {
 		return errors.New("the sync engine is not set up yet — run vaultsync setup")
 	}
 	for {
+		if !e.waitForAnEarlierEngine(ctx, logf, waiting) {
+			return nil
+		}
 		if err := e.leaveATakenPort(&st, logf); err != nil {
 			return err
 		}
@@ -301,9 +307,11 @@ func (e engine) superviseLocked(ctx context.Context, st agentState, logf func(st
 // while the engine was down, and records the new one in agent.json. A run
 // calls it as it takes the engine lock and before each start of its
 // engine. From the lock on, agent.json names the port the run's engine
-// answers on (#413).
+// answers on (#413). An engine an earlier run left keeps its port
+// (engineHomeKeepsPort, #419): the run holds the engine lock, so no
+// Syncthing of VaultSync's is starting while it looks.
 func (e engine) leaveATakenPort(st *agentState, logf func(string, ...any)) error {
-	if st.GUIPort <= 0 || portFree(st.GUIPort) {
+	if st.GUIPort <= 0 || portFree(st.GUIPort) || engineHomeKeepsPort(e.lay) {
 		return nil
 	}
 	port, err := freeLoopbackPort()
@@ -313,6 +321,49 @@ func (e engine) leaveATakenPort(st *agentState, logf func(string, ...any)) error
 	logf("the engine's API port was taken; moving it to %d", port)
 	st.GUIPort = port
 	return updateState(e.lay.State, func(s *agentState) { s.GUIPort = port })
+}
+
+// earlierEngineLook is how often a run looks again at an engine an earlier
+// run left (waitForAnEarlierEngine). A variable for the tests.
+var earlierEngineLook = time.Second
+
+// waitForAnEarlierEngine waits while a Syncthing holds the lock on the
+// engine's home, although this run, which holds the engine lock, has
+// started none: an engine an earlier run left, which outlived that run
+// (#419, decision 086). That engine syncs on. This run starts no second
+// engine on the same home, which would stop on that lock at once, and
+// looks again every earlierEngineLook; it neither signals nor asks that
+// engine. A look holds Syncthing's lock for an instant, which no Syncthing
+// of VaultSync's meets: none starts while this run holds the engine lock.
+// A lock that cannot be looked at is not waited for: the engine is
+// started, and Syncthing's own lock decides. waiting, when not nil, is
+// true while it waits. It returns false when ctx ends first.
+func (e engine) waitForAnEarlierEngine(ctx context.Context, logf func(string, ...any), waiting *atomic.Bool) bool {
+	home := filepath.Join(e.lay.Home, syncthingHomeLock)
+	said := false
+	if waiting != nil {
+		defer waiting.Store(false)
+	}
+	for {
+		if held, err := lock.Probe(home); err != nil || !held {
+			if said {
+				logf("the sync engine an earlier vaultsync run left has ended; this run starts its own")
+			}
+			return true
+		}
+		if waiting != nil {
+			waiting.Store(true)
+		}
+		if !said {
+			said = true
+			logf("a sync engine an earlier vaultsync run left still runs and syncs; this run starts its own once that one has ended")
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(earlierEngineLook):
+		}
+	}
 }
 
 // runOnce starts the engine and waits for it to exit (or stops it when ctx
@@ -410,20 +461,32 @@ func portFree(port int) bool {
 // recorded one, unless another program holds it — the engine started next
 // would move off it, and setup would wait at the old one. VaultSync's own
 // engine keeps its port: one a vaultsync run holds the engine lock for, and
-// one that outlived its run (macOS stops no child when its parent dies),
-// told by the lock Syncthing holds on its home while it runs. Neither is
-// told by asking the port. A lock that cannot be looked at keeps the port
-// too. No port recorded is left to prepare, which picks one.
+// one an earlier run left (engineHomeKeepsPort). Neither is told by asking
+// the port. A lock that cannot be looked at keeps the port too. No port
+// recorded is left to prepare, which picks one.
 func apiPortForSetup(lay layout, recorded int) (int, error) {
 	if recorded <= 0 || portFree(recorded) {
 		return recorded, nil
 	}
-	for _, held := range []string{lay.Lock, filepath.Join(lay.Home, syncthingHomeLock)} {
-		if h, err := lock.Probe(held); err != nil || h {
-			return recorded, nil
-		}
+	if held, err := lock.Probe(lay.Lock); err != nil || held || engineHomeKeepsPort(lay) {
+		return recorded, nil
 	}
 	return freeLoopbackPort()
+}
+
+// engineHomeKeepsPort says whether a Syncthing holds the lock on the
+// engine's home, or that lock cannot be looked at: the recorded API port
+// then stays (#413, #419). With no vaultsync run holding the engine lock,
+// a Syncthing there is an engine an earlier run left. Under the background
+// service none outlives its run: launchd ends the job's process group and
+// systemd its control group. A run in a terminal on a Mac, ended by a kill
+// or a crash, leaves its engine running until that engine stops by itself.
+// Looked at only while this process holds the engine lock, or no run does:
+// Syncthing tries that lock once as it starts, and a look holds it for an
+// instant (decision 079).
+func engineHomeKeepsPort(lay layout) bool {
+	held, err := lock.Probe(filepath.Join(lay.Home, syncthingHomeLock))
+	return err != nil || held
 }
 
 // engineMayRun says whether an engine of VaultSync's may run here, told by

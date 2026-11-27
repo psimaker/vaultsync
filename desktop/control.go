@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -82,6 +83,10 @@ type controlServer struct {
 	// a run kept because the pin could not be installed (#267). Empty: the
 	// pin.
 	engineVersion string
+	// earlierEngine is true while the run waits for an engine an earlier
+	// run left before it starts its own (#419): the engine that answers is
+	// that one. Nil: no run supervises the engine here.
+	earlierEngine *atomic.Bool
 	// ctx is the agent's lifetime: a pairing runs on it, not on the request
 	// that asked for it, so a caller that goes away mid-way does not abort
 	// an accept.
@@ -423,6 +428,11 @@ func (c *controlServer) currentStatus(ctx context.Context) (controlStatus, error
 		running = syncthingVersion
 	}
 	cs := controlStatus{Version: version, Syncthing: strings.TrimPrefix(running, "v"), Engine: "starting", Report: emptyReport()}
+	if c.earlierEngine != nil && c.earlierEngine.Load() {
+		// Which Syncthing that engine is, this agent did not start and
+		// does not know.
+		cs.EarlierRun, cs.Syncthing = true, ""
+	}
 	client, err := c.client()
 	if err != nil {
 		return cs, err

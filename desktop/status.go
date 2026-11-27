@@ -196,6 +196,16 @@ func (a *app) status(ctx context.Context) error {
 	cs, aerr := a.controlClient(st).Status(actx)
 	cancel()
 	switch {
+	case aerr == nil && cs.EarlierRun && cs.Engine == "running":
+		// The run waits for an engine an earlier run left (#419): that one
+		// answers and syncs, and the report is its.
+		fmt.Fprintln(w, "Sync engine: running — the one an earlier vaultsync run left behind; it syncs, and VaultSync starts its own engine once it has ended")
+		_, err := io.WriteString(w, cs.Text)
+		return err
+	case aerr == nil && cs.EarlierRun:
+		fmt.Fprintln(w, "Sync engine: starting — VaultSync waits for the engine an earlier vaultsync run left to end, then starts its own")
+		_, err := io.WriteString(w, cs.Text)
+		return err
 	case aerr == nil && cs.Engine != "running":
 		fmt.Fprintln(w, "Sync engine: starting — VaultSync is bringing it up")
 		_, err := io.WriteString(w, cs.Text)

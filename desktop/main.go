@@ -30,6 +30,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -1383,7 +1384,8 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 		unlockSetup()
 		return err
 	}
-	ctl := &controlServer{a: a, eng: eng, logf: logf, background: a.backgroundEngine(), engineVersion: st.Syncthing.Version}
+	var earlierEngine atomic.Bool
+	ctl := &controlServer{a: a, eng: eng, logf: logf, background: a.backgroundEngine(), engineVersion: st.Syncthing.Version, earlierEngine: &earlierEngine}
 	// The record of a socket that could not be made or kept at an earlier
 	// start no longer holds — and it goes before this start's own attempt,
 	// so a fresh record that attempt may write (a socket that stops
@@ -1440,7 +1442,7 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 	}
 	unlockSetup()
 	logf("vaultsync %s: running the sync engine", version)
-	return eng.superviseLocked(ctx, st, logf)
+	return eng.superviseLocked(ctx, st, logf, &earlierEngine)
 }
 
 // errParked is what a service that does not sync beside VaultSync for Mac
