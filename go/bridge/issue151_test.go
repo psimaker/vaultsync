@@ -526,8 +526,8 @@ func TestIssue151_TheListLooksAgainOnlyAtConflictCopiesAndDirectories(t *testing
 // No answer of the conflict functions carries a path or a name, whatever kind
 // of error the file system gives.
 func TestIssue151_NoAnswerCarriesAPathOrAName(t *testing.T) {
-	const name = "Secret Note.md"
-	const path = "/Vault/Secret Note.md"
+	const name = "Weekly Plan.md"
+	const path = "/Vault/Weekly Plan.md"
 	kinds := map[string]error{
 		"path":    &os.PathError{Op: "openat", Path: path, Err: syscall.EIO},
 		"link":    &os.LinkError{Op: "renameat", Old: name, New: path, Err: syscall.EIO},
@@ -539,7 +539,7 @@ func TestIssue151_NoAnswerCarriesAPathOrAName(t *testing.T) {
 		if answer == "" {
 			t.Errorf("%s: no answer, want a failure", where)
 		}
-		if strings.Contains(answer, "Secret") || strings.Contains(answer, "/Vault") {
+		if strings.Contains(answer, "Weekly") || strings.Contains(answer, "/Vault") {
 			t.Errorf("%s: answer %q carries a path or a name", where, answer)
 		}
 	}
