@@ -703,7 +703,11 @@ struct VaultButtonStyle: ButtonStyle {
     }
 
     /// The strength a button is drawn at: a disabled one is dimmed to 40 %.
+    /// A busy one is disabled by its caller but drawn at full strength: its
+    /// spinner and text are the only sign that something runs, and dimmed
+    /// they fell to about 1.3:1 on the fill (#354).
     static func opacity(isEnabled: Bool, busy: Bool, isPressed: Bool) -> Double {
+        if busy { return 1 }
         guard isEnabled else { return 0.4 }
         return isPressed ? 0.7 : 1
     }
