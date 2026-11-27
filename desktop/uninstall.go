@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -325,7 +326,7 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 		if *yes {
 			return true, nil
 		}
-		ok, err := t.confirm(q)
+		ok, err := t.confirm(ctx, q)
 		if errors.Is(err, errNoTerminal) {
 			return false, refuse("Pass --yes to confirm — there is no terminal to ask on.")
 		}
@@ -354,12 +355,14 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 		t.say("Your vaults stay where they are: %s.", strings.Join(shown, ", "))
 	}
 	ok, err := confirm("Remove the background service?")
-	if err != nil {
+	if err != nil && !errors.Is(err, errInterrupted) {
 		return err
 	}
 	if !ok {
+		// No, or Ctrl-C at the question: the same words, and an interrupt
+		// then exits 130 (#380).
 		t.say("Nothing was changed.")
-		return nil
+		return err
 	}
 	// The menu-bar app's start at login goes first, and is waited for: the
 	// app it ran lets go of tray.lock as it ends.
@@ -432,12 +435,13 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 	t.say("This also removes VaultSync's settings, its pairing identity and the sync database on this computer. Your vault files stay.")
 	t.say("This computer will have to pair again, and folders that hold files will not reconnect by themselves.")
 	ok, err = confirm("Remove them?")
-	if err != nil {
+	if err != nil && !errors.Is(err, errInterrupted) {
 		return err
 	}
 	if !ok {
+		// No, or Ctrl-C at the question (#380), as above.
 		t.say("Kept %s.", tildePath(a.home, a.lay.Base))
-		return nil
+		return err
 	}
 	// Every folder anything syncs on this computer must lie outside what is
 	// removed — and when a list cannot be read, nothing is removed.
@@ -762,8 +766,31 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 			removed = append(removed, filepath.Join(lay.Base, name))
 			return nil
 		}
-		if err := onSameFileSystem(root, name, base); err != nil {
+		// Only a mount the walk found is called another disk: a folder it
+		// may not look into, or could not for another reason, is named as
+		// that, with its path — the wrong words send a person looking for
+		// a disk that is not there (#278). Each stops the removal here.
+		switch err := onSameFileSystem(root, name, base); {
+		case err == nil:
+		case errors.Is(err, errOnAnotherDisk):
 			return refuse("%s holds something from another disk (%v), so VaultSync stopped removing its files there.", filepath.Join(lay.Base, name), err)
+		default:
+			folder := filepath.Join(lay.Base, name)
+			var le *lookError
+			if errors.As(err, &le) {
+				folder = filepath.Join(lay.Base, filepath.FromSlash(le.folder))
+			}
+			switch {
+			case errors.Is(err, syscall.EACCES):
+				// The folder's own permissions: the person can put them right.
+				return refuse("VaultSync may not look into %s (%v), so it stopped removing its files there; give your user access to that folder.", folder, errnoOf(err))
+			case errors.Is(err, syscall.EPERM):
+				// The system keeps the program out — macOS's privacy
+				// protection, a sandbox — which no change of the folder's
+				// permissions undoes: no advice that would be false.
+				return refuse("The system does not let VaultSync look into %s (%v), so it stopped removing its files there.", folder, errnoOf(err))
+			}
+			return refuse("VaultSync could not look into %s (%v), so it stopped removing its files there.", folder, errnoOf(err))
 		}
 		if err := root.RemoveAll(name); err != nil {
 			return err
@@ -1056,22 +1083,56 @@ func openOwnedDir(dir string, vaults []string, goos string) (*os.Root, os.FileIn
 // place no test can mount one.
 var onSameFileSystem = sameFileSystem
 
+// errOnAnotherDisk: the walk found an entry on another device than
+// VaultSync's folder — something mounted there.
+var errOnAnotherDisk = errors.New("is a mount point")
+
+// lookError: a folder the walk could not look into, by its slash-separated
+// path in VaultSync's folder — the error's own path may be spelled another
+// way (os.Root names some absolute) — and why.
+type lookError struct {
+	folder string
+	err    error
+}
+
+func (e *lookError) Error() string { return e.folder + ": " + e.err.Error() }
+func (e *lookError) Unwrap() error { return e.err }
+
+// lookFailed is the walk's one answer to a look that failed in folder. An
+// entry gone meanwhile is passed over: what is gone holds nothing from
+// another disk, and RemoveAll takes a missing entry as removed. It never
+// reaches removeEntry, which would otherwise skip a whole entry while the
+// record goes after it (decision 077).
+func lookFailed(folder string, err error) error {
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	return &lookError{folder: folder, err: err}
+}
+
 // sameFileSystem walks name inside root and refuses an entry on another
 // device: RemoveAll would otherwise descend into whatever is mounted there.
+// What it cannot look into stops it too, as a lookError (#278).
 func sameFileSystem(root *os.Root, name string, base os.FileInfo) error {
 	return fs.WalkDir(root.FS(), name, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return err
+			// With d, the folder p could not be read; without, p itself
+			// could not be looked at, in the folder it is in.
+			if d == nil {
+				return lookFailed(path.Dir(p), err)
+			}
+			return lookFailed(p, err)
 		}
 		if !d.IsDir() {
 			return nil
 		}
 		info, err := root.Lstat(p)
 		if err != nil {
-			return err
+			// A look at an entry needs the folder it is in searchable.
+			return lookFailed(path.Dir(p), err)
 		}
 		if !sameDevice(info, base) {
-			return fmt.Errorf("%s is a mount point", p)
+			return fmt.Errorf("%s %w", p, errOnAnotherDisk)
 		}
 		return nil
 	})

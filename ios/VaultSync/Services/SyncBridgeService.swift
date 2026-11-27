@@ -188,6 +188,21 @@ struct SyncBridgeService {
     static var folderPathOverlapError: String {
         BridgeFolderPathOverlapError()
     }
+
+    /// What `removeFolder` answers for a removal the engine has not
+    /// confirmed within the bridge's wait: it may still land (#343). Read
+    /// from the bridge, so the two cannot drift apart.
+    static var folderRemovalNotConfirmedError: String {
+        BridgeFolderRemovalNotConfirmedError()
+    }
+
+    /// What `removeFolder` answers for a folder that is not configured —
+    /// also once a removal the engine had not confirmed has landed (#343).
+    /// Read from the bridge, so the two cannot drift apart.
+    static var folderNotFoundError: String {
+        BridgeFolderNotFoundError()
+    }
+
     /// Pause or resume a configured folder. A paused folder is neither scanned
     /// nor exchanged with peers — the non-destructive way to halt a folder that
     /// shares a local path with another and is merging into it (issue #45).

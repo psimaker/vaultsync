@@ -349,7 +349,7 @@ func (s *pairSession) findHub(ctx context.Context) error {
 	}
 	var choose func([]pairing.DiscoveredHub) (int, error)
 	if s.t.interactive() {
-		choose = s.chooseHub
+		choose = func(hubs []pairing.DiscoveredHub) (int, error) { return s.chooseHub(ctx, hubs) }
 	}
 	hub, err := join.PickHub(hubs, choose)
 	var several *join.SeveralHubsError
@@ -370,12 +370,12 @@ func (s *pairSession) findHub(ctx context.Context) error {
 // chooseHub lists the Hubs that answered, each by its address first
 // (join.HubRow); there is no default — an empty answer never sends the code
 // to the first responder.
-func (s *pairSession) chooseHub(hubs []pairing.DiscoveredHub) (int, error) {
+func (s *pairSession) chooseHub(ctx context.Context, hubs []pairing.DiscoveredHub) (int, error) {
 	for i, h := range hubs {
 		s.t.say("    %d) %s", i+1, join.HubRow(hostOf(h.Address), hubName(h)))
 	}
 	for {
-		a, err := s.t.ask("  Which Hub printed your code? Enter a number: ")
+		a, err := s.t.ask(ctx, "  Which Hub printed your code? Enter a number: ")
 		if err != nil {
 			return 0, err
 		}
@@ -405,7 +405,7 @@ func (s *pairSession) connect(ctx context.Context) error {
 	code := s.opts.code
 	for {
 		if code == "" {
-			a, err := s.t.ask("  The code your Hub printed (like TULIP-ANCHOR-42): ")
+			a, err := s.t.ask(ctx, "  The code your Hub printed (like TULIP-ANCHOR-42): ")
 			if errors.Is(err, errNoTerminal) {
 				return refuseNeeding("code", "Pass the code your Hub printed: --code WORD-WORD-NN — there is no terminal to ask on.")
 			}
@@ -786,7 +786,7 @@ func (s *pairSession) choose(ctx context.Context) (plan, error) {
 			return plan{}, err
 		}
 		s.printMenu(m)
-		a, err := s.t.ask("Choice: ")
+		a, err := s.t.ask(ctx, "Choice: ")
 		if err != nil {
 			return plan{}, err
 		}
@@ -796,7 +796,7 @@ func (s *pairSession) choose(ctx context.Context) (plan, error) {
 		case "Q":
 			return plan{}, errCancelled
 		case "R":
-			if _, err := s.t.ask("  Open your vault in Obsidian once, then press Enter to look again."); err != nil {
+			if _, err := s.t.ask(ctx, "  Open your vault in Obsidian once, then press Enter to look again."); err != nil {
 				return plan{}, err
 			}
 			continue
@@ -873,8 +873,14 @@ func (s *pairSession) printMenu(m vaultMenu) {
 }
 
 func (s *pairSession) chooseOtherFolder(ctx context.Context) (plan, error) {
-	a, err := s.t.ask("  Folder on this computer (Enter to go back): ")
+	a, err := s.t.ask(ctx, "  Folder on this computer (Enter to go back): ")
+	if err != nil && ctx.Err() != nil {
+		// The command's context ended — Ctrl-C, a stop: the pairing ends,
+		// never back to the menu.
+		return plan{}, err
+	}
 	if err != nil || a == "" {
+		// An empty answer, or an end of input, goes back to the menu.
 		return plan{}, errCancelled
 	}
 	path, err := expandPath(s.env.home, a)
@@ -908,11 +914,11 @@ func (s *pairSession) planForLocal(ctx context.Context, path string) (plan, erro
 		return plan{}, cannotRead(s.env.goos, s.env.home, path, err, s.env.background)
 	}
 	p.hadFiles = !empty
-	if p.name, err = s.askHubName(filepath.Base(path), p.hadFiles); err != nil {
+	if p.name, err = s.askHubName(ctx, filepath.Base(path), p.hadFiles); err != nil {
 		return plan{}, err
 	}
 	if p.hadFiles {
-		if err := s.askConsent(p.name, path); err != nil {
+		if err := s.askConsent(ctx, p.name, path); err != nil {
 			return plan{}, err
 		}
 	}
@@ -957,7 +963,7 @@ func (s *pairSession) consentLines(name, path string) []string {
 
 // askConsent is rule 7's explicit consent for a folder that holds files,
 // naming the consequence; the default is No.
-func (s *pairSession) askConsent(name, path string) error {
+func (s *pairSession) askConsent(ctx context.Context, name, path string) error {
 	lines := s.consentLines(name, path)
 	for i, l := range lines {
 		if i == len(lines)-3 {
@@ -965,7 +971,7 @@ func (s *pairSession) askConsent(name, path string) error {
 		}
 		s.t.say("  %s", l)
 	}
-	ok, err := s.t.confirm("  Start syncing?")
+	ok, err := s.t.confirm(ctx, "  Start syncing?")
 	if err != nil {
 		return err
 	}
@@ -979,10 +985,10 @@ func (s *pairSession) askConsent(name, path string) error {
 // askHubName asks for the vault's name on the Hub. A name the Hub already
 // uses is never reused for a folder that holds files: the Hub would share
 // its existing vault instead of starting a new one.
-func (s *pairSession) askHubName(def string, hasFiles bool) (string, error) {
+func (s *pairSession) askHubName(ctx context.Context, def string, hasFiles bool) (string, error) {
 	def = safeVaultName(def)
 	for {
-		a, err := s.t.ask(fmt.Sprintf("  Name on your Hub [%s]: ", def))
+		a, err := s.t.ask(ctx, fmt.Sprintf("  Name on your Hub [%s]: ", def))
 		if err != nil {
 			return "", err
 		}
@@ -1036,7 +1042,7 @@ func (s *pairSession) planForHub(ctx context.Context, v pairing.VaultInfo) (plan
 	}
 	def := s.defaultFolder(v)
 	for {
-		a, err := s.t.ask(fmt.Sprintf("  Where should %s go on this computer? [%s]: ", quoted(pairing.SanitizeName(v.Label)), tildePath(s.env.home, def)))
+		a, err := s.t.ask(ctx, fmt.Sprintf("  Where should %s go on this computer? [%s]: ", quoted(pairing.SanitizeName(v.Label)), tildePath(s.env.home, def)))
 		if err != nil {
 			return plan{}, err
 		}
@@ -1216,7 +1222,7 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 				folder:  folderToken(p.dir),
 			}
 		}
-		if err := s.askConsent(name, path); err != nil {
+		if err := s.askConsent(ctx, name, path); err != nil {
 			return plan{}, err
 		}
 		if err := s.stillTheSame(p); err != nil {
@@ -1583,7 +1589,7 @@ func (s *pairSession) resumePending(ctx context.Context) (bool, error) {
 	}
 	for _, w := range waiting {
 		s.t.say("Your Hub %s is sharing %s with this computer, but it is not set up here yet.", quoted(w.hub), quoted(w.label))
-		ok, err := s.t.confirm("Set it up now?")
+		ok, err := s.t.confirm(ctx, "Set it up now?")
 		if err != nil {
 			return false, err
 		}

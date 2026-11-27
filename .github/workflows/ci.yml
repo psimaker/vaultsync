@@ -372,7 +372,7 @@ jobs:
           shellcheck -s sh notify/tests/runtime-packaging/run-linux-host.sh
           shellcheck -s sh hub/scripts/setup.sh hub/scripts/tests/setup-dry-run-test.sh
           shellcheck -s sh desktop/macos/make-app.sh desktop/macos/install-rcodesign.sh
-          shellcheck -s sh desktop/scripts/release-assets.sh
+          shellcheck -s sh desktop/scripts/release-assets.sh desktop/scripts/release-notes.sh desktop/scripts/tests/release-notes-test.sh
           shellcheck -s bash desktop/macos/sign.sh desktop/macos/verify.sh desktop/macos/tests/sign-release-test.sh desktop/macos/tests/verify-team-test.sh
 
       - name: install.sh --dry-run smoke test
@@ -386,6 +386,13 @@ jobs:
         # print the right owner and plan, and the compose text embedded in the
         # one-link script is byte-identical to hub/docker-compose.yml.
         run: hub/scripts/tests/setup-dry-run-test.sh
+
+      - name: desktop release text test
+        # A desktop release's text is its desktop/CHANGELOG.md section
+        # (#283): the script's cases on GNU tools, and every released
+        # section must give a text, so a heading in another form fails here
+        # instead of stopping a tag.
+        run: desktop/scripts/tests/release-notes-test.sh
 
       - name: install.ps1 parse check
         # A syntax error in the Windows installer (#90) would otherwise only
