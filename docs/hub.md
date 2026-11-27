@@ -287,7 +287,7 @@ Open Log and Quit — and, from `desktop-v0.3.0` on, **Start VaultSync** (the
 same as `vaultsync start`; what that says shows in the menu). It offers no
 start when the service has recorded that it could not open its socket, or for
 about 15 seconds after a start from the menu; where no program of VaultSync's
-is there to start the service with, it says so and points to the setup link.
+can be started for the service, it says so and points to the setup link.
 **Pair a Vault…** asks for the
 code, then which Hub if several answered (from `desktop-v0.3.0` on from a
 list; before, by its address), then which vault, then — for a folder on this

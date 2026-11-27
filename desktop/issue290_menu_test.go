@@ -90,8 +90,8 @@ func TestIssue290_AnOlderMenusBareStartIsAsBefore(t *testing.T) {
 	}
 }
 
-// start refuses what it does not know, as every other command does — until
-// #290 it ignored every argument — and a folder that is not absolute.
+// start refuses what it does not know, as setup, pair, uninstall and run do —
+// until #290 it ignored every argument — and a folder that is not absolute.
 func TestIssue290_StartRefusesStrayArguments(t *testing.T) {
 	for _, args := range [][]string{{"now"}, {"--yes"}, {"--state-dir", "relative/vaultsync"}, {"--state-dir"}} {
 		_, child := menuStartChild(t)

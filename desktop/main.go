@@ -2155,8 +2155,9 @@ var beforeSocketPublish func()
 // Linux, a menu started with --state-dir in a session whose XDG_STATE_HOME
 // names another place made start read another agent.json than the menu and
 // the service, and wait its whole answer wait on a socket nobody serves
-// (#290). Any other argument is refused, as by every other command; until
-// then start ignored all of them, and released builds still do.
+// (#290). Any other argument is refused, as setup, pair, uninstall and run
+// refuse theirs; until then start ignored all of them, and released builds
+// still do. (status, pause, resume and stop still ignore theirs.)
 func (a *app) startCommand(args []string) error {
 	fs := flag.NewFlagSet("start", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)

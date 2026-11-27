@@ -2,6 +2,9 @@ package tray
 
 import (
 	"context"
+	"errors"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -15,7 +18,10 @@ import (
 // answer its status, and what it says when there is nothing to start.
 
 // heldNoLonger is how soon a click that waits for no status ask takes effect.
-const heldNoLonger = 700 * time.Millisecond
+// A click held behind the ask waited for the menu's status timeout, 5 s here
+// (controllerFor): a bound of half that tells the two apart on a loaded
+// runner too.
+const heldNoLonger = 2500 * time.Millisecond
 
 // longWait bounds a wait for something that should happen.
 const longWait = 6 * time.Second
@@ -186,26 +192,63 @@ func pauseReached(t *testing.T, agent *fakeAgent) {
 // removal of VaultSync's files that stopped after the copy (#276) leaves that:
 // its record, no copy, no service, and the vaultsync command gone with the
 // copy. start, where a vaultsync is still there to run it, says that the
-// service is not installed (#290, point 7).
+// service is not installed. A copy that lost its execute bit, or one a look
+// at fails, is no program to start either, and the line holds for all three:
+// it cannot be started, and the setup link puts it right (#290, point 7).
 func TestIssue290_NothingToStartNamesNoCommandThatIsGone(t *testing.T) {
-	for _, goos := range []string{"darwin", "linux"} {
-		t.Run(goos, func(t *testing.T) {
-			agent := newFakeAgent(t) // agent.json with its port: set up
-			agent.stop()
-			home := t.TempDir()
-			ui := newFakeUI(t)
-			controllerFor(t, agent, ui, &Controller{
-				StartProgram: AgentProgram(goos, home, agent.layout),
-				Start:        (&fakeStart{}).start,
+	for _, c := range []struct {
+		name string
+		copy func(t *testing.T, program string)
+	}{
+		{"gone", func(*testing.T, string) {}},
+		{"not runnable", func(t *testing.T, program string) {
+			if err := os.MkdirAll(filepath.Dir(program), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(program, []byte("#!/bin/sh\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"cannot be looked at", func(t *testing.T, program string) {
+			if os.Geteuid() == 0 {
+				t.Skip("root looks into a folder without permissions")
+			}
+			bin := filepath.Dir(program)
+			if err := os.MkdirAll(bin, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(program, []byte("#!/bin/sh\n"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(bin, 0); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(bin, 0o700) })
+			if _, err := os.Stat(program); !errors.Is(err, fs.ErrPermission) {
+				t.Fatalf("the look at the copy: %v, so this case tests nothing", err)
+			}
+		}},
+	} {
+		for _, goos := range []string{"darwin", "linux"} {
+			t.Run(c.name+"/"+goos, func(t *testing.T) {
+				agent := newFakeAgent(t) // agent.json with its port: set up
+				agent.stop()
+				c.copy(t, agent.layout.Agent)
+				home := t.TempDir()
+				ui := newFakeUI(t)
+				controllerFor(t, agent, ui, &Controller{
+					StartProgram: AgentProgram(goos, home, agent.layout),
+					Start:        (&fakeStart{}).start,
+				})
+				v := ui.view(t, "not running", notRunning)
+				if v.Start.Enabled {
+					t.Fatalf("a Start with nothing to run: %+v", v)
+				}
+				if v.Detail != noProgramToStart || strings.Contains(v.Detail, "vaultsync start") {
+					t.Fatalf("no program of VaultSync's can be started (%s), and the menu says %q", filepath.Base(agent.layout.Agent), v.Detail)
+				}
 			})
-			v := ui.view(t, "not running", notRunning)
-			if v.Start.Enabled {
-				t.Fatalf("a Start with nothing to run: %+v", v)
-			}
-			if strings.Contains(v.Detail, "vaultsync start") {
-				t.Fatalf("no program of VaultSync's is there to start it (%s), and the menu names vaultsync start: %q", filepath.Base(agent.layout.Agent), v.Detail)
-			}
-		})
+		}
 	}
 }
 
