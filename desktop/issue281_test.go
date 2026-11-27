@@ -453,6 +453,9 @@ func TestIssue281_AnOlderPauseOrResumeWithNoAgentAsksNothing(t *testing.T) {
 			a := terminalApp(t, socket)
 			var before []byte
 			if how == "a newer format whose socket's place does not read" {
+				// The agent listens at the layout's own place too: a guess
+				// there would reach it.
+				a.lay.Socket = f.path
 				writeFile(t, a.lay.State, `{"version": 3, "guiPort": 8384, "controlSocket": {"path": `+jsonString(f.path)+`}}`+"\n")
 				before = mustRead(t, a.lay.State)
 			} else {
