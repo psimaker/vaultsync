@@ -107,6 +107,11 @@ type Options struct {
 	Mac bool
 }
 
+// noProgramToStart is the line under "VaultSync is not running" when there
+// is no program to start the service with (AgentProgram finds none): none
+// there, one there that cannot be run, or one a look at fails.
+const noProgramToStart = "VaultSync's program cannot be started — run the setup link to set VaultSync up again"
+
 // Render is the view for the agent's report, or for why there is none.
 func Render(st Status, err error, o Options) View {
 	v := View{
@@ -148,7 +153,13 @@ func Render(st Status, err error, o Options) View {
 		case o.CanStart:
 			v.Start = Action{Title: "Start VaultSync", Enabled: true}
 		default:
-			v.Detail = "Run vaultsync start in a terminal"
+			// No program of VaultSync's to start it with: neither the one
+			// the service names nor VaultSync's own copy is there and can
+			// be run — a removal that stopped after the copy leaves this,
+			// with the vaultsync command gone too, and so does a copy that
+			// lost its execute bit or cannot be looked at. A start cannot
+			// help then; setup can (#290).
+			v.Detail = noProgramToStart
 		}
 		return v
 	case errors.Is(err, ErrOldAgent):

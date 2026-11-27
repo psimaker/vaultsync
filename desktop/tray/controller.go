@@ -65,10 +65,11 @@ type Controller struct {
 	// Open opens a folder or a file with the desktop.
 	Open func(ctx context.Context, path string) error
 	// StartProgram says which vaultsync the Start item runs, "" for none;
-	// Start runs it and returns what it said, or why it refused. Without
-	// them the menu points to a terminal.
+	// Start runs it in VaultSync's folder (Layout.Base, the menu's own) and
+	// returns what it said, or why it refused. Without them the menu offers
+	// no start.
 	StartProgram func() string
-	Start        func(ctx context.Context, program string) (string, error)
+	Start        func(ctx context.Context, program, stateDir string) (string, error)
 	// StartWaits replaces the seconds between asking the agent again after
 	// a start; a test shortens them.
 	StartWaits []time.Duration
@@ -118,6 +119,37 @@ type Controller struct {
 	// logPath is the service's log when there is one to open, looked at
 	// once per refresh.
 	logPath string
+
+	// The status asks run off the loop (#290), one at a time: an agent slow
+	// to answer held every click behind each ask. Every field below is the
+	// loop goroutine's alone; an ask's goroutine has only its own copies
+	// and the channel its answer comes back on.
+	//
+	// asking: an ask is out. again: another is wanted once it is answered —
+	// what asks for one meanwhile (a poll, the menu opening, a pause, a
+	// pairing's end) is folded into it. asks: how many have begun, the
+	// number of the last.
+	asking bool
+	again  bool
+	asks   int
+	// startFrom, pairFrom, waitFrom: the first ask whose answer a click on
+	// Start, a click on Pair, or the wait after a start acts on — one begun
+	// after the click or the timer; 0 for none.
+	startFrom int
+	pairFrom  int
+	waitFrom  int
+	// shownFrom: answers of asks numbered below it are not shown. A pause
+	// sets it: an ask begun before its request returned may tell the state
+	// from before it, and the Pause item would offer to pause again.
+	shownFrom int
+	asked     chan askOutcome
+}
+
+// askOutcome is a status ask's answer: seq is the ask's number.
+type askOutcome struct {
+	seq int
+	st  Status
+	err error
 }
 
 // LockHandle is a held one-instance lock (*Lock).
@@ -155,13 +187,15 @@ func (c *Controller) Run(ctx context.Context) error {
 	pairDone := make(chan string, 1)
 	openDone := make(chan openOutcome, 8)
 	startDone := make(chan startOutcome, 1)
+	// One ask is out at a time, so one answer fits.
+	c.asked = make(chan askOutcome, 1)
 	// The agent is asked again in the seconds after a start: the service
 	// runs by then, but its socket comes a moment later, its engine after
 	// that, and the next poll is up to half a minute away. nil when no start
 	// is being followed.
 	var askAgain <-chan time.Time
 	var waits []time.Duration
-	if err := c.refresh(ctx); err != nil {
+	if _, err := c.look(ctx); err != nil {
 		return err
 	}
 	for {
@@ -170,28 +204,44 @@ func (c *Controller) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			err = c.refresh(ctx)
+			_, err = c.look(ctx)
+		case out := <-c.asked:
+			var due dueActs
+			if due, err = c.landed(ctx, out); err != nil {
+				break
+			}
+			if due.wait {
+				askAgain, waits = c.afterAsk(ctx, waits)
+			}
+			if due.start {
+				c.beginStart(startDone)
+			}
+			if due.pair {
+				c.beginPairing(ctx, pairDone)
+			}
+			if c.again {
+				c.again = false
+				_, err = c.look(ctx)
+			}
 		case out := <-startDone:
 			c.starting = false
 			c.notice, c.startNotice = out.notice, out.notice
 			c.owed = !out.failed
 			if out.failed {
 				c.notify(ctx, out.notice)
+				_, err = c.look(ctx)
 			} else {
 				c.settling = true
 				waits = c.startWaits()
-			}
-			if err = c.refresh(ctx); err == nil && c.settling {
-				askAgain, waits = c.afterAsk(ctx, waits)
+				c.waitFrom, err = c.look(ctx)
 			}
 		case <-askAgain:
-			if err = c.refresh(ctx); err == nil {
-				askAgain, waits = c.afterAsk(ctx, waits)
-			}
+			askAgain = nil
+			c.waitFrom, err = c.look(ctx)
 		case line := <-pairDone:
 			c.pairing = false
 			c.notice = line
-			err = c.refresh(ctx)
+			_, err = c.look(ctx)
 		case out := <-openDone:
 			switch {
 			case out.notice != "":
@@ -210,17 +260,17 @@ func (c *Controller) Run(ctx context.Context) error {
 			case EventQuit:
 				return nil
 			case EventOpened:
-				err = c.refresh(ctx)
+				_, err = c.look(ctx)
 			case EventOpenVault:
 				c.openVault(ctx, ev.Path, openDone)
 			case EventOpenLog:
 				c.openLog(ctx, openDone)
 			case EventStart:
-				err = c.startService(ctx, startDone)
+				err = c.startService(ctx)
 			case EventPause:
 				err = c.setPaused(ctx, ev.Pause)
 			case EventPair:
-				err = c.startPairing(ctx, pairDone)
+				err = c.startPairing(ctx)
 			}
 		}
 		if err != nil {
@@ -293,27 +343,79 @@ func (c *Controller) notify(ctx context.Context, text string) {
 	}
 }
 
-// refresh asks the agent and renders the answer, or why there is none.
-func (c *Controller) refresh(ctx context.Context) error {
+// look asks the agent for its status, off the loop: the answer comes back on
+// c.asked, and the loop shows it (landed). With an ask already out, another
+// is asked for once that one is answered — any number of these meanwhile are
+// one. It returns the number of the ask that answers this look: the one it
+// began, or the one to come. The one-instance lock is taken as each ask
+// begins, so a second instance ends the loop before anything is asked.
+func (c *Controller) look(ctx context.Context) (int, error) {
+	if c.asking {
+		c.again = true
+		return c.asks + 1, nil
+	}
 	if err := c.takeLock(); err != nil {
-		return err
+		return 0, err
 	}
 	timeout := c.StatusTimeout
 	if timeout <= 0 {
 		timeout = defaultTimeout
 	}
-	var st Status
+	c.asks++
+	c.asking = true
+	seq, answers := c.asks, c.asked
 	cl, err := c.client()
-	if err == nil {
-		sctx, cancel := context.WithTimeout(ctx, timeout)
-		st, err = cl.Status(sctx)
-		cancel()
-	}
+	go func() {
+		var st Status
+		if err == nil {
+			sctx, cancel := context.WithTimeout(ctx, timeout)
+			st, err = cl.Status(sctx)
+			cancel()
+		}
+		if ctx.Err() != nil {
+			// Quit, or the system ending the app: nobody waits for it.
+			return
+		}
+		// Never blocks: one ask is out at a time, and its answer is taken
+		// before the next begins.
+		answers <- askOutcome{seq: seq, st: st, err: err}
+	}()
+	return seq, nil
+}
+
+// dueActs says what waited for an answer that has just been shown.
+type dueActs struct{ wait, start, pair bool }
+
+// landed shows an ask's answer and says what waited for it: the wait after a
+// start, a click on Start, a click on Pair — each acts on the first answer
+// of an ask begun after it. An answer from before a pause is not shown, and
+// what waits goes on waiting: a pause always asks again.
+func (c *Controller) landed(ctx context.Context, out askOutcome) (dueActs, error) {
+	c.asking = false
 	if ctx.Err() != nil {
 		// Quit, or the system ending the app: a request cut short is not
 		// a state to show on the way out.
-		return ctx.Err()
+		return dueActs{}, ctx.Err()
 	}
+	if out.seq < c.shownFrom {
+		return dueActs{}, nil
+	}
+	c.apply(ctx, out.st, out.err)
+	var due dueActs
+	if c.waitFrom != 0 && out.seq >= c.waitFrom {
+		c.waitFrom, due.wait = 0, true
+	}
+	if c.startFrom != 0 && out.seq >= c.startFrom {
+		c.startFrom, due.start = 0, true
+	}
+	if c.pairFrom != 0 && out.seq >= c.pairFrom {
+		c.pairFrom, due.pair = 0, true
+	}
+	return due, nil
+}
+
+// apply renders a status ask's answer, or why there is none.
+func (c *Controller) apply(ctx context.Context, st Status, err error) {
 	if errors.Is(err, ErrNoAgent) && control.SocketErrorRecorded(c.Layout) {
 		err = ErrNoSocket
 	}
@@ -336,7 +438,6 @@ func (c *Controller) refresh(ctx context.Context) error {
 	}
 	c.startVerdict(ctx)
 	c.render()
-	return nil
 }
 
 // render shows the last refresh's outcome again, with whatever changed
@@ -445,40 +546,50 @@ type startOutcome struct {
 	failed bool
 }
 
-// startService runs vaultsync start off the loop: it takes seconds, and up
-// to half a minute when an old job is on its way out. It decides nothing
-// itself — whether the service may start and what that means is the
-// agent's, and the menu shows what it said.
-func (c *Controller) startService(ctx context.Context, done chan<- startOutcome) error {
-	if !c.view.Start.Enabled {
+// startService answers a click on Start: the agent is asked first, and the
+// start begins only on that ask's answer (beginStart) — a start would restart
+// one that has come up since the last poll. What ends a poll's look ends this
+// one. A second click while that ask is out does nothing.
+func (c *Controller) startService(ctx context.Context) error {
+	if !c.view.Start.Enabled || c.startFrom != 0 {
 		return nil
 	}
-	// The agent is asked first: a start would restart one that has come
-	// up since the last poll. What ends a poll's refresh ends this one.
-	if err := c.refresh(ctx); err != nil {
+	seq, err := c.look(ctx)
+	if err != nil {
 		return err
 	}
+	c.startFrom = seq
+	return nil
+}
+
+// beginStart runs vaultsync start off the loop, in the menu's own VaultSync
+// folder, where the look after the click still offers a start: it takes
+// seconds, about ten more where the agent does not answer (decision 085),
+// and up to half a minute when an old job is on its way out. It decides
+// nothing itself — whether the service may start and what that means is the
+// agent's, and the menu shows what it said.
+func (c *Controller) beginStart(done chan<- startOutcome) {
 	if !c.view.Start.Enabled {
-		return nil
+		return
 	}
 	program := c.StartProgram()
 	if program == "" {
-		return nil
+		return
 	}
 	c.starting = true
 	c.notice = ""
 	c.render()
+	start, stateDir := c.Start, c.Layout.Base
 	go func() {
 		// Not the menu's context: a quit must not end the start between
 		// taking the old job down and loading it again.
-		said, err := c.Start(context.Background(), program)
+		said, err := start(context.Background(), program, stateDir)
 		if err != nil {
 			done <- startOutcome{notice: "Could not start VaultSync: " + err.Error(), failed: true}
 			return
 		}
 		done <- startOutcome{notice: said}
 	}()
-	return nil
 }
 
 // startWaits is how long to wait before each time the agent is asked again
@@ -511,8 +622,9 @@ func answered(err error) bool {
 
 // afterAsk arms the next ask of the wait after a start, or ends the wait:
 // when its asks are used up, or when the last one got no answer in its time.
-// Something is there then, each ask is on the menu's loop for as long as it
-// takes, and the next poll asks again.
+// Something is there then that takes a request and says nothing, another ask
+// would only make the wait as long again, and the next poll asks again. (The
+// asks no longer hold the menu's loop, #290; the wait is still its asks.)
 func (c *Controller) afterAsk(ctx context.Context, waits []time.Duration) (<-chan time.Time, []time.Duration) {
 	if len(waits) == 0 || errors.Is(c.lastErr, errNoAnswer) {
 		c.endOfWait(ctx)
@@ -580,33 +692,49 @@ func (c *Controller) setPaused(ctx context.Context, pause bool) error {
 	default:
 		c.notice = ""
 	}
-	return c.refresh(ctx)
+	// An ask begun before the request returned may tell the state from
+	// before it: only the ones from here on are shown.
+	c.shownFrom = c.asks + 1
+	_, err = c.look(ctx)
+	return err
 }
 
-// startPairing runs the conversation in the background: a pairing takes
-// minutes, and the menu keeps showing the agent's status meanwhile. The
-// agent runs the pairing on its own lifetime, so quitting the menu-bar
-// app mid-way does not abort an accept (decision 049).
-func (c *Controller) startPairing(ctx context.Context, done chan<- string) error {
-	if c.pairing || c.Asker == nil || !c.view.Pair.Enabled {
+// startPairing answers a click on Pair: the agent is asked for its status
+// first, and the pairing begins only on that ask's answer (beginPairing) —
+// one gone since the last poll is said then, before the person types a code
+// for nobody. What ends a poll's look — a second instance, a quit — ends
+// this one. A second click while that ask is out does nothing.
+func (c *Controller) startPairing(ctx context.Context) error {
+	if c.pairing || c.Asker == nil || !c.view.Pair.Enabled || c.pairFrom != 0 {
 		return nil
 	}
-	// The agent is asked for its status first: one gone since the last
-	// poll is said now, before the person types a code for nobody. What
-	// ends a poll's refresh — a second instance, a quit — ends this one.
-	if err := c.refresh(ctx); err != nil {
+	seq, err := c.look(ctx)
+	if err != nil {
 		return err
 	}
-	// Known means the refresh reached the agent through c.cl.
-	cl := c.cl
-	if !c.known || !c.view.Pair.Enabled || cl == nil {
-		return nil
+	c.pairFrom = seq
+	return nil
+}
+
+// beginPairing runs the conversation in the background, where the look after
+// the click still offers it: a pairing takes minutes, and the menu keeps
+// showing the agent's status meanwhile. The agent runs the pairing on its own
+// lifetime, so quitting the menu-bar app mid-way does not abort an accept
+// (decision 049).
+func (c *Controller) beginPairing(ctx context.Context, done chan<- string) {
+	// Known means the answer just shown reached the agent: c.cl is the
+	// client it went through (no ask has begun since, one at a time; a
+	// pause makes a new client only for a socket agent.json moved, and
+	// asks from before a pause are not shown).
+	cl, asker := c.cl, c.Asker
+	if c.pairing || !c.known || !c.view.Pair.Enabled || cl == nil {
+		return
 	}
 	c.pairing = true
 	c.notice = ""
 	c.render()
 	go func() {
-		line, err := Pair(ctx, cl, c.Asker)
+		line, err := Pair(ctx, cl, asker)
 		if err != nil && !errors.Is(err, context.Canceled) {
 			// The fact for the log; the words — which may name a vault or
 			// a folder — go to the menu's notice and the dialog. A quit is
@@ -621,7 +749,6 @@ func (c *Controller) startPairing(ctx context.Context, done chan<- string) error
 		}
 		done <- line
 	}()
-	return nil
 }
 
 // errNoAnswer: the agent took longer than the request's limit — busy, or
