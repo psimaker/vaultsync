@@ -290,13 +290,18 @@ func TestIssue281_TheWayOnNamesTheVaultSyncSetUpHere(t *testing.T) {
 		}
 		writeFile(t, mustUnitPath(t, a.svc), string(data))
 		copyCmd := shellQuote(a.lay.Agent)
+		// Whether the service runs this older build, no look tells: a
+		// parked run never answers, and the files may have been replaced
+		// since the programs started (decision 093). The refusal claims
+		// nothing of it, names the copy, and says what holds if it does.
 		refused(t, a.uninstall(context.Background(), []string{"--remove-data", "--yes"}),
 			"to remove VaultSync, run "+copyCmd+" uninstall --remove-data --yes, the VaultSync set up here.",
-			"Nothing syncs here meanwhile: the background service runs this VaultSync too.",
-			"!setup link", "!stop")
+			copyCmd+" stop stops syncing now.",
+			"!Nothing syncs here", "!setup link")
 		refused(t, a.pair(context.Background(), nil),
-			"run the setup link to get the current VaultSync, then vaultsync pair.",
-			"Nothing syncs here meanwhile: the background service runs this VaultSync too.")
+			"run "+copyCmd+" pair, the VaultSync set up here.",
+			"Where the background service runs this VaultSync too, nothing syncs until the setup link brings the current one to it.",
+			"!Nothing syncs here")
 	})
 
 	t.Run("an older download beside the app the service runs", func(t *testing.T) {
@@ -365,7 +370,8 @@ func TestIssue281_TheWayOnNamesTheVaultSyncSetUpHere(t *testing.T) {
 		runsAs(t, a, a.lay.Agent, "the older copy")
 		refused(t, a.pauseSync(context.Background(), false),
 			"run the setup link to get the current VaultSync, then vaultsync resume.",
-			"Nothing syncs here meanwhile: the background service runs this VaultSync too.")
+			"Where the background service runs this VaultSync too, nothing syncs until the setup link brings the current one to it.",
+			"!Nothing syncs here")
 	})
 }
 

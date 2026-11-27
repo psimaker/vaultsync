@@ -8,4 +8,4 @@
 
 **Rejected alternative:** Enforcing only in the Swift mapping — the proven failure mode; a bug there would silently re-open the hole with no backstop.
 
-**Links:** #45, PR #47 (same-folder merge, 1.7.1), PR #51 (nesting, 1.7.2).
+**Links:** #45, PR #47 (same-folder merge, 1.7.1), PR #51 (nesting, 1.7.2). Since 082 (#330) the path repair holds the floor too: `SetFolderPath` refuses a path that overlaps another folder's, and the reconcile holds both folders of a pair whose new paths would overlap.

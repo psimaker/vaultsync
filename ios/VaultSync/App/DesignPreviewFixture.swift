@@ -25,6 +25,10 @@ enum DesignPreviewFixture {
         /// selected folder (#315): the card that says so and names the way
         /// on.
         case earlierCopy = "earlier-copy"
+        /// A vault whose folder is gone, with its own folder found where
+        /// another vault syncs it (#330): the card that says so and names
+        /// the way on.
+        case overlappingVault = "overlapping-vault"
         /// One vault mid-transfer.
         case syncing
         case devices
@@ -133,7 +137,7 @@ enum DesignPreviewFixture {
         switch screen {
         case .syncing:
             workStatus = status(state: "syncing", pct: 63, files: 307, bytes: 9_437_184, need: 3)
-        case .earlierCopy:
+        case .earlierCopy, .overlappingVault:
             workStatus = status(state: "error", pct: 100, files: 310, bytes: 9_437_184, need: 0, errorReason: "folder_path_missing")
         default:
             workStatus = status(state: "idle", pct: 100, files: 310, bytes: 9_437_184, need: 0)
@@ -147,6 +151,10 @@ enum DesignPreviewFixture {
             // ever looked for there, so the card comes with its mapping.
             FolderPathReconciler._previewSetRel([workID: "Work"])
             syncthingManager._testSetFoldersWithoutTheirStorage([workID])
+        }
+        if screen == .overlappingVault {
+            FolderPathReconciler._previewSetRel([workID: "Work"])
+            syncthingManager._testSetFoldersOverlappingAnotherFolder([workID])
         }
         syncthingManager._testApplyDeviceList(devices)
         let now = Date()
