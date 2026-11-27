@@ -15,6 +15,14 @@ import (
 // archive (the engine's generated config.xml shape is pinned with it).
 const syncthingVersion = "v2.1.7"
 
+// keepEngineFrom is the oldest Syncthing a run keeps running when this pin
+// cannot be installed (#267, decision 078): one whose config and REST API
+// this agent can drive — the Desktop Syncthing E2E with that version's
+// archive under this agent passed. A bump that changes the engine's config
+// shape or the API the agent uses raises it to the new pin, which keeps no
+// older engine at all.
+const keepEngineFrom = "v2.1.6"
+
 // engineNewer: Syncthing version a (vX.Y.Z — a suffix such as -rc.1 aside)
 // is newer than b. A version that does not read as one is not newer.
 func engineNewer(a, b string) bool {

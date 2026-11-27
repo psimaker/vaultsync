@@ -243,13 +243,27 @@ jobs:
             "https://github.com/syncthing/syncthing/releases/download/${version}/${archive}"
           echo "VAULTSYNC_DESKTOP_SYNCTHING_ARCHIVE=/tmp/${archive}" >> "$GITHUB_ENV"
 
+      # The oldest release a run keeps when its pin cannot be installed
+      # (keepEngineFrom, decision 078). Not checked here either: the test
+      # installs it against the checksums it holds from that release.
+      - name: Download the Syncthing archive a run keeps
+        run: |
+          version="$(sed -n 's/^const keepEngineFrom = "\(v[0-9.]*\)"$/\1/p' desktop/pins.go)"
+          test -n "$version"
+          archive="syncthing-linux-amd64-${version}.tar.gz"
+          curl -fsSL --retry 3 -o "/tmp/${archive}" \
+            "https://github.com/syncthing/syncthing/releases/download/${version}/${archive}"
+          echo "VAULTSYNC_DESKTOP_SYNCTHING_KEPT_ARCHIVE=/tmp/${archive}" >> "$GITHUB_ENV"
+
       # A fresh home directory: the agent installs Syncthing from that
       # archive, pairs with the real vaultsync-hub (built from hub/) by code,
       # and a vault syncs both ways through two Syncthing instances pinned
       # to loopback; a target folder that already holds files is refused.
+      # And an engine a run keeps, at keepEngineFrom, pairs and syncs under
+      # this agent with a Hub on the pin (#267).
       - name: Prove install, pairing and sync through two loopback instances
         working-directory: desktop
-        run: go test . -run '^TestIssue175_(E2E|RealArchive)' -count=1 -v -timeout 10m
+        run: go test . -run '^TestIssue175_(E2E|RealArchive)|^TestIssue267_E2E' -count=1 -v -timeout 10m
 
   m4-docker-confinement:
     name: M4 Docker Confinement

@@ -59,8 +59,12 @@ go vet ./...
 # two Syncthing instances on loopback (~15 s).
 v=$(sed -n 's/^const syncthingVersion = "\(v[0-9.]*\)"$/\1/p' pins.go)
 curl -fsSLO "https://github.com/syncthing/syncthing/releases/download/$v/syncthing-linux-amd64-$v.tar.gz"
+# And the engine a run keeps when its pin cannot be installed (decision 078).
+k=$(sed -n 's/^const keepEngineFrom = "\(v[0-9.]*\)"$/\1/p' pins.go)
+curl -fsSLO "https://github.com/syncthing/syncthing/releases/download/$k/syncthing-linux-amd64-$k.tar.gz"
 VAULTSYNC_DESKTOP_SYNCTHING_ARCHIVE=$PWD/syncthing-linux-amd64-$v.tar.gz \
-  go test . -run '^TestIssue175_(E2E|RealArchive)' -count=1 -v
+VAULTSYNC_DESKTOP_SYNCTHING_KEPT_ARCHIVE=$PWD/syncthing-linux-amd64-$k.tar.gz \
+  go test . -run '^TestIssue175_(E2E|RealArchive)|^TestIssue267_E2E' -count=1 -v
 ```
 
 On a Mac, use `syncthing-macos-arm64-$v.zip` (or `-amd64`).
@@ -160,7 +164,13 @@ uninstall) — so a kept v0.1.0 download never puts its Syncthing
 2.1.6 over a newer engine's state, and a bump needs no format change. A
 release that adds a field an older build must not drop raises
 `agentStateVersion` (and lets `loadState` read the older format). Change `syncthingVersion` and the four entries in
-`pins.go`. First verify
+`pins.go`. A bump that changes the engine's config shape or the REST API the
+agent uses also raises `keepEngineFrom` to the new pin (decision 078): a run
+then keeps no older engine when the new pin cannot be installed. Otherwise
+`keepEngineFrom` stays at a version whose archive passed
+`TestIssue267_E2EAKeptOlderEnginePairsAndSyncs`
+(`VAULTSYNC_DESKTOP_SYNCTHING_KEPT_ARCHIVE`; CI's Desktop Syncthing E2E fetches
+that version's archive from `keepEngineFrom`). First verify
 the release's `sha256sum.txt.asc` with Syncthing's release key
 (`curl -fsSL https://syncthing.net/release-key.txt | gpg --import`, then
 `gpg --verify sha256sum.txt.asc`). From v2.1.6 on the file is signed by

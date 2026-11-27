@@ -96,13 +96,31 @@ func (a *app) parkedNote() string {
 
 func (a *app) status(ctx context.Context) error {
 	w := a.out
-	fmt.Fprintf(w, "VaultSync %s — sync engine Syncthing %s\n", version, strings.TrimPrefix(syncthingVersion, "v"))
+	rec, recErr := loadState(a.lay.State)
+	// The engine named is the one that runs: an older one recorded, its
+	// program and config there, is what a run keeps where this build's pin
+	// could not be installed, and what runs until the next start does
+	// (#267, decision 078).
+	installed := strings.TrimPrefix(syncthingVersion, "v")
+	if recErr == nil && a.engineToKeep(rec) {
+		installed = strings.TrimPrefix(rec.Syncthing.Version, "v")
+		fmt.Fprintf(w, "VaultSync %s — sync engine Syncthing %s\n", version, installed)
+		// What installs the pin depends on what the service runs: this
+		// build tries it at its next start; anything else needs setup with
+		// this one.
+		if self, err := ownProgram(a.appEnv); err == nil && a.svc.installed() && a.serviceRunsThisBuild(self) {
+			fmt.Fprintf(w, "Note: this VaultSync brings Syncthing %s, which its background service tries to install at its next start — vaultsync stop, then vaultsync start.\n", strings.TrimPrefix(syncthingVersion, "v"))
+		} else {
+			fmt.Fprintf(w, "Note: this VaultSync brings Syncthing %s, which vaultsync setup installs.\n", strings.TrimPrefix(syncthingVersion, "v"))
+		}
+	} else {
+		fmt.Fprintf(w, "VaultSync %s — sync engine Syncthing %s\n", version, strings.TrimPrefix(syncthingVersion, "v"))
+	}
 	eng := a.engine()
 	// This program is older than the VaultSync set up here (#264): it would
 	// not run the engine, and its service parks. Said first — with no
 	// engine config either, "run vaultsync setup" would point to a setup
 	// that refuses.
-	rec, recErr := loadState(a.lay.State)
 	older := olderThanSetUp(rec, recErr)
 	if older {
 		fmt.Fprintln(w, "Note: "+a.olderNote(rec, recErr))
@@ -183,7 +201,17 @@ func (a *app) status(ctx context.Context) error {
 		_, err := io.WriteString(w, cs.Text)
 		return err
 	case aerr == nil:
-		fmt.Fprintln(w, "Sync engine: running")
+		// The agent runs another Syncthing than agent.json names as
+		// installed — a service not started again since setup installed its
+		// pin (#267): what runs is said by the agent that runs it, held
+		// against the record, never this build's pin, which may be the
+		// older one (#264). What a next start runs depends on the build the
+		// service runs, so nothing is promised of it.
+		if recorded := strings.TrimPrefix(st.Syncthing.Version, "v"); recorded != "" && cs.Syncthing != "" && cs.Syncthing != recorded {
+			fmt.Fprintf(w, "Sync engine: running Syncthing %s — the installed one is Syncthing %s\n", cs.Syncthing, recorded)
+		} else {
+			fmt.Fprintln(w, "Sync engine: running")
+		}
 		_, err := io.WriteString(w, cs.Text)
 		return err
 	case !errors.Is(aerr, errNoAgent):

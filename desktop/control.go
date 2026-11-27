@@ -78,6 +78,10 @@ type controlServer struct {
 	// service) rather than to a vaultsync run in a terminal; the remedies
 	// status names differ. Fixed for the agent's lifetime.
 	background bool
+	// engineVersion is the Syncthing that runs: the pin, or the older engine
+	// a run kept because the pin could not be installed (#267). Empty: the
+	// pin.
+	engineVersion string
 	// ctx is the agent's lifetime: a pairing runs on it, not on the request
 	// that asked for it, so a caller that goes away mid-way does not abort
 	// an accept.
@@ -414,7 +418,11 @@ func (c *controlServer) status(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *controlServer) currentStatus(ctx context.Context) (controlStatus, error) {
-	cs := controlStatus{Version: version, Syncthing: strings.TrimPrefix(syncthingVersion, "v"), Engine: "starting", Report: emptyReport()}
+	running := c.engineVersion
+	if running == "" {
+		running = syncthingVersion
+	}
+	cs := controlStatus{Version: version, Syncthing: strings.TrimPrefix(running, "v"), Engine: "starting", Report: emptyReport()}
 	client, err := c.client()
 	if err != nil {
 		return cs, err

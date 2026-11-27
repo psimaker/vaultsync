@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -312,7 +313,54 @@ func TestIssue175_E2EFreshHomeInstallsPairsAndSyncs(t *testing.T) {
 		t.Fatalf("a second engine owner was not refused: %v", err)
 	}
 
-	hub := startE2EHub(t, ctx, got.Path)
+	hub, newSession, code := e2ePairAndSync(t, ctx, home, lay, client, got.Path)
+
+	// A folder that already holds files never joins the Hub's populated
+	// vault: nothing is asked of the Hub, nothing is added, nothing changes.
+	other := filepath.Join(home, "Other")
+	mkVault(t, other)
+	before, _ := client.Folders(ctx)
+	err = newSession(pairOptions{vault: "Notes", path: other}).run(ctx)
+	if !strings.Contains(refusalText(err), "only into a new or empty folder") {
+		t.Fatalf("expected a refusal, got %v", err)
+	}
+	after, _ := client.Folders(ctx)
+	if len(after) != len(before) {
+		t.Fatal("a folder was added")
+	}
+	assertUntouched(t, other)
+
+	// A new vault from a folder with files needs consent; without it the
+	// Hub is not asked to start anything.
+	third := filepath.Join(home, "Third")
+	mkVault(t, third)
+	err = newSession(pairOptions{vault: "Third", create: true, path: third}).run(ctx)
+	if !strings.Contains(refusalText(err), "--yes") {
+		t.Fatalf("expected the consent refusal, got %v", err)
+	}
+	if fs, _ := hub.client.Folders(ctx); len(fs) != 1 {
+		t.Fatalf("the Hub started a vault without consent: %+v", fs)
+	}
+	assertUntouched(t, third)
+
+	logMu.Lock()
+	logged := serviceLog.String()
+	logMu.Unlock()
+	for _, secret := range []string{"Notes", "Third", "Other", home, code} {
+		if strings.Contains(logged, secret) {
+			t.Errorf("the agent's own log names %q:\n%s", secret, logged)
+		}
+	}
+}
+
+// e2ePairAndSync pairs this computer's engine — client, whoever runs it —
+// with a fresh Hub running binary: an existing vault becomes "Notes" on the
+// Hub with consent, and a note crosses each way. Pairing is where the agent
+// edits the engine's config (#175, #267). It returns the Hub, a maker of
+// sessions with the Hub's pairing code, and that code.
+func e2ePairAndSync(t *testing.T, ctx context.Context, home string, lay layout, client *syncthing.Client, binary string) (*e2eHub, func(pairOptions) *pairSession, string) {
+	t.Helper()
+	hub := startE2EHub(t, ctx, binary)
 	code := hub.issueCode(t)
 
 	newSession := func(opts pairOptions) *pairSession {
@@ -363,43 +411,7 @@ func TestIssue175_E2EFreshHomeInstallsPairsAndSyncs(t *testing.T) {
 		b, err := os.ReadFile(filepath.Join(notes, "from-hub.md"))
 		return err == nil && string(b) == "# from the hub\n"
 	})
-
-	// A folder that already holds files never joins the Hub's populated
-	// vault: nothing is asked of the Hub, nothing is added, nothing changes.
-	other := filepath.Join(home, "Other")
-	mkVault(t, other)
-	before, _ := client.Folders(ctx)
-	err = newSession(pairOptions{vault: "Notes", path: other}).run(ctx)
-	if !strings.Contains(refusalText(err), "only into a new or empty folder") {
-		t.Fatalf("expected a refusal, got %v", err)
-	}
-	after, _ := client.Folders(ctx)
-	if len(after) != len(before) {
-		t.Fatal("a folder was added")
-	}
-	assertUntouched(t, other)
-
-	// A new vault from a folder with files needs consent; without it the
-	// Hub is not asked to start anything.
-	third := filepath.Join(home, "Third")
-	mkVault(t, third)
-	err = newSession(pairOptions{vault: "Third", create: true, path: third}).run(ctx)
-	if !strings.Contains(refusalText(err), "--yes") {
-		t.Fatalf("expected the consent refusal, got %v", err)
-	}
-	if fs, _ := hub.client.Folders(ctx); len(fs) != 1 {
-		t.Fatalf("the Hub started a vault without consent: %+v", fs)
-	}
-	assertUntouched(t, third)
-
-	logMu.Lock()
-	logged := serviceLog.String()
-	logMu.Unlock()
-	for _, secret := range []string{"Notes", "Third", "Other", home, code} {
-		if strings.Contains(logged, secret) {
-			t.Errorf("the agent's own log names %q:\n%s", secret, logged)
-		}
-	}
+	return hub, newSession, code
 }
 
 // testWriter sends the agent's output to the test log.
@@ -408,4 +420,157 @@ type testWriter struct{ t *testing.T }
 func (w *testWriter) Write(p []byte) (int, error) {
 	w.t.Log(strings.TrimRight(string(p), "\n"))
 	return len(p), nil
+}
+
+// keptEnginePins are desktop-v0.2.0's pins — Syncthing at keepEngineFrom —
+// for the E2E of an engine a run keeps (#267). The checksums are that
+// release's, from Syncthing's signed sha256sum.txt.asc.
+var keptEnginePins = map[string]syncthingPin{
+	"darwin/amd64": {archive: "syncthing-macos-amd64-v2.1.6.zip", sha256: "d1464be24a7157440dfb52e2d84939f83caf89c129761945abcdd4956e09ffb1", binary: "syncthing-macos-amd64-v2.1.6/syncthing"},
+	"darwin/arm64": {archive: "syncthing-macos-arm64-v2.1.6.zip", sha256: "f86bfa0bdbb5b1b13229a7e5643e898e3c4e017a4fff6dd525994ebaf28ff6e2", binary: "syncthing-macos-arm64-v2.1.6/syncthing"},
+	"linux/amd64":  {archive: "syncthing-linux-amd64-v2.1.6.tar.gz", sha256: "524ef4e1df1850b719e2378c8369956f4e5f2ab9a46fdf7f45f2b925012147aa", binary: "syncthing-linux-amd64-v2.1.6/syncthing"},
+	"linux/arm64":  {archive: "syncthing-linux-arm64-v2.1.6.tar.gz", sha256: "f054de02462d5d58bd126908f2f92b63aba74f162a5be85e50e96d656e7db47d", binary: "syncthing-linux-arm64-v2.1.6/syncthing"},
+}
+
+// The older engine a run keeps — Syncthing at keepEngineFrom — runs under
+// this agent as its own: the service starts it where this build's pin cannot
+// be installed, and it pairs with a Hub on the current pin's engine and syncs
+// both ways, the agent editing its config through the engine's API as
+// pairing does (#267). Set VAULTSYNC_DESKTOP_SYNCTHING_KEPT_ARCHIVE to that
+// version's archive for this platform, and VAULTSYNC_DESKTOP_SYNCTHING_ARCHIVE
+// to the pinned one.
+func TestIssue267_E2EAKeptOlderEnginePairsAndSyncs(t *testing.T) {
+	archivePath := os.Getenv("VAULTSYNC_DESKTOP_SYNCTHING_KEPT_ARCHIVE")
+	pinArchivePath := os.Getenv("VAULTSYNC_DESKTOP_SYNCTHING_ARCHIVE")
+	if archivePath == "" || pinArchivePath == "" {
+		t.Skip("set VAULTSYNC_DESKTOP_SYNCTHING_KEPT_ARCHIVE to the Syncthing " + keepEngineFrom + " archive for this platform, and VAULTSYNC_DESKTOP_SYNCTHING_ARCHIVE to the pinned one")
+	}
+	if keepEngineFrom == syncthingVersion {
+		t.Skip("this build keeps no older engine: keepEngineFrom is the pin")
+	}
+	pin, ok := keptEnginePins[runtime.GOOS+"/"+runtime.GOARCH]
+	if !ok {
+		t.Skipf("no Syncthing %s archive known for %s/%s", keepEngineFrom, runtime.GOOS, runtime.GOARCH)
+	}
+	if !strings.Contains(pin.archive, keepEngineFrom) {
+		t.Fatalf("keptEnginePins names %s, keepEngineFrom is %s: the E2E must run on the version kept", pin.archive, keepEngineFrom)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	defer cancel()
+	asTheService(t)
+
+	tmp, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(tmp, "home")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	lay, err := layoutFor(runtime.GOOS, home, envOf(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// What an earlier VaultSync installed: the older engine, from its
+	// verified archive, recorded.
+	data, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := installer{baseURL: serveArchive(t, pin.archive, data).URL, pin: pin, binDir: lay.Bin, client: downloadClient()}
+	got, err := in.install(ctx, nil)
+	if err != nil {
+		t.Fatalf("installing Syncthing %s: %v", keepEngineFrom, err)
+	}
+	var st agentState
+	st.Syncthing.Version, st.Syncthing.BinarySHA256 = keepEngineFrom, got.SHA256
+	// Its home prepared loopback-only first: the run keeps that config, so
+	// the real engine never leaves the loopback.
+	prep := engine{lay: lay, opts: engineOptions{loopbackOnly: true, listenPort: e2eFreePort(t)}}
+	if err := prep.prepare(ctx, &st); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveState(lay.State, st); err != nil {
+		t.Fatal(err)
+	}
+
+	// The Hub runs the current pin's engine, as a Hub in the field does:
+	// only this computer's engine is the kept one.
+	hubIn, err := newInstaller(filepath.Join(tmp, "hub-bin"), runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinData, err := os.ReadFile(pinArchivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hubIn.baseURL = serveArchive(t, hubIn.pin.archive, pinData).URL
+	hubEngine, err := hubIn.install(ctx, nil)
+	if err != nil {
+		t.Fatalf("installing the pinned Syncthing for the Hub: %v", err)
+	}
+
+	// This build's pin cannot be installed; the service keeps the older
+	// engine.
+	pinServedBy(t, http.NotFound)
+	runtimeDir := shortDir(t)
+	env := envOf(map[string]string{"XDG_RUNTIME_DIR": runtimeDir})
+	lay.Socket = filepath.Join(lay.Base, strings.Repeat("d", 120), "agent.sock")
+	a := &app{goos: runtime.GOOS, home: home, getenv: env, lay: lay, out: io.Discard,
+		svc: service{goos: runtime.GOOS, home: home, getenv: env, lay: lay, run: &fakeRunner{}}}
+	var stop func() error
+	logged := serviceLogOf(t, func() {
+		stop = inBackground(t, func(ctx context.Context) error { return a.run(ctx, nil) })
+		untilTheRunServes(t, a)
+	})
+	t.Cleanup(func() {
+		if err := stop(); err != nil {
+			t.Errorf("the run ended with %v", err)
+		}
+		if t.Failed() {
+			data, _ := os.ReadFile(filepath.Join(lay.Home, "syncthing.log"))
+			t.Logf("--- kept engine log ---\n%s", data)
+		}
+	})
+	if !strings.Contains(logged, "the installed Syncthing "+strings.TrimPrefix(keepEngineFrom, "v")+" runs on") {
+		t.Fatalf("the run did not keep the older engine:\n%s", logged)
+	}
+	client, err := prep.client(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := waitReady(ctx, client, 60*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	// The engine that answers is the older one, by its own word.
+	if v := e2eEngineVersion(t, ctx, prep, st); v != keepEngineFrom {
+		t.Fatalf("the engine that runs is Syncthing %s, not the kept %s", v, keepEngineFrom)
+	}
+	e2ePairAndSync(t, ctx, home, lay, client, hubEngine.Path)
+}
+
+// e2eEngineVersion asks the engine on its loopback API which Syncthing it is.
+func e2eEngineVersion(t *testing.T, ctx context.Context, e engine, st agentState) string {
+	t.Helper()
+	key, err := e.apiKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:"+strconv.Itoa(st.GUIPort)+"/rest/system/version", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-API-Key", key)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var v struct {
+		Version string `json:"version"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
+		t.Fatal(err)
+	}
+	return v.Version
 }
