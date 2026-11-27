@@ -297,6 +297,13 @@ struct ContentView: View {
                 shareAccept.runAutomaticPass()
             }
         }
+        .onChange(of: syncthingManager.pendingFoldersUnreadable) { _, unreadable in
+            // The offers are read again: run the pass that was held while
+            // they could not be (#464) — the list may be the same as before.
+            if !unreadable {
+                shareAccept.runAutomaticPass()
+            }
+        }
         .onChange(of: shareAccept.alertMessage) { _, message in
             // The coordinator is host-agnostic (#92): whichever view is
             // mounted routes its one-shot messages into its own alert.
@@ -574,7 +581,7 @@ struct ContentView: View {
             hasSyncFolders: !syncthingManager.folders.isEmpty,
             hasUnresolvedIssues: !syncthingManager.unresolvedIssues.isEmpty,
             hasUnreachableFolders: !syncthingManager.unreachableFolders.isEmpty,
-            hasPendingShares: !syncthingManager.pendingFolders.isEmpty,
+            hasPendingShares: syncthingManager.pendingSharesNeedAttention,
             isSyncing: isSyncing,
             allVaultsUpToDate: !rows.isEmpty && rows.allSatisfy {
                 vaultState($0, unreachableIDs: unreachableIDs).label == .upToDate
@@ -1392,7 +1399,7 @@ struct ContentView: View {
     private var pendingSharesSection: some View {
         let pendingFolders = syncthingManager.actionablePendingFolders
         let ignoredFolders = syncthingManager.ignoredPendingFolders
-        if !pendingFolders.isEmpty || !ignoredFolders.isEmpty {
+        if !pendingFolders.isEmpty || !ignoredFolders.isEmpty || syncthingManager.pendingFoldersUnreadable {
             VaultSectionHeader(L10n.tr("Pending Shares"))
             PendingSharesView(
                 pendingFolders: pendingFolders,
@@ -1401,6 +1408,7 @@ struct ContentView: View {
                 destinationByFolderID: pendingShareDestinationLines,
                 inFlightFolderIDs: shareAccept.pendingShareInFlight,
                 obsidianAccessible: vaultManager.isAccessible,
+                listUnreadable: syncthingManager.pendingFoldersUnreadable,
                 onAccept: { folder in
                     shareAccept.accept(folder, source: .manual)
                 },

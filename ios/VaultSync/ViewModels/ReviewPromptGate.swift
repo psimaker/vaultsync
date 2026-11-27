@@ -61,7 +61,8 @@ enum ReviewPromptGate {
         /// Folders on a dead path or whose folder turned out to be a copy.
         var hasUnreachableFolders: Bool
         /// Any pending share, including one the user set aside: it still
-        /// waits for a decision.
+        /// waits for a decision. Also while the offers could not be read,
+        /// when whether one waits is not known (#464).
         var hasPendingShares: Bool
         var isSyncing: Bool
         /// Every vault row reads "Up to date" — none paused, in error,

@@ -289,7 +289,7 @@ Minimal API exported via gomobile. Only primitives + `string` + `[]byte` cross t
 - **Devices:** `AddDevice`, `RemoveDevice`, `RenameDevice`, `GetDevicesJSON` — every peer is pinned to one connection (`numConnections = 1`, migrated on start; decision 042)
 - **Folders:** `AddFolder`, `RemoveFolder`, `RescanFolder`, `GetFoldersJSON`, `ShareFolderWithDevice`, `UnshareFolderFromDevice`
 - **Status & config:** `GetFolderStatusJSON`, `GetConnectionsJSON`, `GetConfigJSON`, `SetDiscoveryEnabled`
-- **Pending shares:** `GetPendingFoldersJSON`, `AcceptPendingFolder`
+- **Pending shares:** `GetPendingFoldersJSON` (a stopped engine or a failed read answers `{"error": …}`, never an empty list — decision 039), `AcceptPendingFolder`
 - **Conflicts:** `GetConflictFilesJSON`, `ResolveConflict`, `KeepBothConflict`, `ReadFileContent`, `RemoveConflictFilesForOriginal`
 - **Filters:** `GetFolderIgnores` (a failed read answers `{"error": …}`, never an empty list — decision 039), `SetFolderIgnores`, `ScanFolderForKnownPatterns`
 - **Events:** `GetEventsSince`, `EventStreamGeneration`

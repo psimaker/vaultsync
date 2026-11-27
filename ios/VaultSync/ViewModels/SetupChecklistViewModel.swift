@@ -191,6 +191,19 @@ final class SetupChecklistViewModel {
             )
         }
 
+        // Whether a share is offered is not known while the offers cannot be
+        // read: the advice below would say that none is (#464).
+        if syncthingManager.pendingFoldersUnreadable {
+            return ChecklistItem(
+                requirement: .firstShareDetectedOrAccepted,
+                title: L10n.tr("Vault syncing"),
+                description: SyncthingManager.pendingFoldersUnreadableNote,
+                remediation: "",
+                isOptional: false,
+                isComplete: false
+            )
+        }
+
         if syncthingManager.hasSeenPendingFolderOffer {
             return ChecklistItem(
                 requirement: .firstShareDetectedOrAccepted,

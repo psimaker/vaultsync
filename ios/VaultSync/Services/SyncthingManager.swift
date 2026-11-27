@@ -166,6 +166,13 @@ final class SyncthingManager {
     /// seconds; the findings are read again when either changes.
     private var obsidianVisibilityInputs: [String] = []
     private(set) var hasSeenPendingFolderOffer = false
+    /// The last read of the offered shares failed while the engine ran and
+    /// this manager polls it (#464, decision 039): the list and the shares
+    /// set aside stay as they were, nothing is accepted from the rows last
+    /// read, and every place that shows the list says it could not be read
+    /// and that the poll reads it again. Cleared by the next list, and by a
+    /// stop or a reset — an engine known not to run has its own card.
+    private(set) var pendingFoldersUnreadable = false
     private(set) var lastSyncTime: Date?
     private(set) var lastSyncTimeByFolder: [String: Date] = [:]
     private(set) var syncActivity: [SyncEventItem] = []
@@ -195,6 +202,11 @@ final class SyncthingManager {
     }
 
     private var pollTask: Task<Void, Never>?
+    /// Raised by every stop and every reset of this manager's engine: a
+    /// poll's read of the offered shares that began before one is not
+    /// applied after it (#464). The manager's own count, so the poll's apply
+    /// on the main actor compares without asking the bridge.
+    private var engineAttachment = 0
     private var rescanTask: Task<Void, Never>?
     /// True once this externally initiated engine generation has used its one
     /// automatic restart after a detected engine death (#61). Reset by every
@@ -432,6 +444,13 @@ final class SyncthingManager {
         userRemoved: Set<String>
     ) -> [PendingFolderInfo] {
         actionable.filter { !userRemoved.contains($0.id) }
+    }
+
+    /// A share waits for a decision — one set aside too — or whether one
+    /// does is not known, because the offers could not be read (#464): the
+    /// rating prompt waits either way (decision 067).
+    var pendingSharesNeedAttention: Bool {
+        !pendingFolders.isEmpty || pendingFoldersUnreadable
     }
 
     var ignoredPendingFolders: [PendingFolderInfo] {
@@ -1179,6 +1198,7 @@ final class SyncthingManager {
     /// Stop the running Syncthing instance.
     func stop() {
         stopPolling()
+        engineAttachment += 1
         if let stopError = SyncBridgeService.stopSyncthing() {
             // The engine finishes stopping in the background and the bridge
             // refuses a new start until it has (#181). Bridge-constant text,
@@ -1195,6 +1215,7 @@ final class SyncthingManager {
         folderStatuses = [:]
         conflictFiles = [:]
         pendingFolders = []
+        pendingFoldersUnreadable = false
         // New generation: accepts hold until the next start's reconcile
         // completes, and a still-running reconcile's late outcome is ignored
         // (#56).
@@ -1316,6 +1337,18 @@ final class SyncthingManager {
         return nil
     }
 
+    /// What every place that lists the offered shares says while they could
+    /// not be read (#464) — never that nothing is offered.
+    static var pendingFoldersUnreadableNote: String {
+        L10n.tr("VaultSync could not read the shares offered to this iPhone just now. It tries again in a moment.")
+    }
+
+    /// What a tap on a share gets while the offers cannot be read (#464):
+    /// nothing is accepted from the rows last read, and it is no failure.
+    static var pendingFoldersUnreadableTapNote: String {
+        L10n.tr("VaultSync could not read the shares offered to this iPhone just now. Try again in a moment.")
+    }
+
     /// The note shown for a removal the engine has not confirmed yet, or nil
     /// for every other answer of `removeFolder` (#343). It is no failure: the
     /// removal may still land, and the vault is already recorded as removed.
@@ -1330,6 +1363,15 @@ final class SyncthingManager {
         if let removal = _testRemoval { return removal.bridge(id) }
         #endif
         return SyncBridgeService.removeFolder(id: id)
+    }
+
+    /// The bridge's list of offered shares for `refreshPendingFolders`, which
+    /// runs after an accept, or what a test put in its place (#464).
+    private func bridgePendingFoldersJSON() -> String {
+        #if DEBUG
+        if let read = _testPendingRead { return read() }
+        #endif
+        return SyncBridgeService.getPendingFoldersJSON()
     }
 
     /// Where the record of removed folders is kept: the standard defaults,
@@ -1466,6 +1508,7 @@ final class SyncthingManager {
     /// (e.g., by a BGTask expiration handler). Does NOT call the bridge.
     func resetForRestart() {
         stopPolling()
+        engineAttachment += 1
         BackgroundSyncService.lifecycleLock.withLock { $0.releaseForeground() }
         isRunning = false
         deviceID = ""
@@ -1476,6 +1519,7 @@ final class SyncthingManager {
         folderStatuses = [:]
         conflictFiles = [:]
         pendingFolders = []
+        pendingFoldersUnreadable = false
         // New generation, same as stop(): the restarted engine's paths count
         // as unsettled until its own reconcile completes (#56).
         pathSettlement.reset()
@@ -1593,7 +1637,8 @@ final class SyncthingManager {
     /// Run bridge calls off the main thread, then update @MainActor properties.
     private func pollBridgeState() async {
         let currentEventCursor = lastBridgeEventID
-        let snapshot: (String, String, String, String, FolderRead)? = await Task.detached {
+        let attachment = engineAttachment
+        let snapshot: (String, String, PendingFolderRead, String, FolderRead)? = await Task.detached {
             // Taken before anything is read: a background outcome seen
             // after this moment is not answered by this poll (#210).
             let readStartedAt = SyncthingManager.monotonicNow()
@@ -1603,11 +1648,21 @@ final class SyncthingManager {
             // never poll empty JSON into a healthy-looking "Ready" display
             // (#61). Detect it here, before decoding.
             guard SyncBridgeService.isRunning() else { return nil }
+            #if DEBUG
+            SyncthingManager._testAfterPollCheck.withLock { $0 }?()
+            #endif
             let devicesJSON = SyncBridgeService.getDevicesJSON()
             let generationBeforeFolders = SyncBridgeService.eventStreamGeneration()
             let foldersJSON = SyncBridgeService.getFoldersJSON()
             let generationAfterFolders = SyncBridgeService.eventStreamGeneration()
+            // The engine can stop between the check above and this read —
+            // a background run ends, or the engine exits (#464).
             let pendingJSON = SyncBridgeService.getPendingFoldersJSON()
+            let pendingRead = SyncthingManager.pendingFolderRead(
+                generationBefore: generationAfterFolders,
+                json: pendingJSON,
+                generationAfter: SyncBridgeService.eventStreamGeneration()
+            )
             let eventsJSON = SyncBridgeService.getEventsSince(lastID: currentEventCursor)
             let folderRead = FolderRead(
                 startedAt: readStartedAt,
@@ -1616,7 +1671,7 @@ final class SyncthingManager {
                 engineRunningAcrossRead: generationBeforeFolders != 0
                     && generationBeforeFolders == generationAfterFolders
             )
-            return (devicesJSON, foldersJSON, pendingJSON, eventsJSON, folderRead)
+            return (devicesJSON, foldersJSON, pendingRead, eventsJSON, folderRead)
         }.value
 
         guard let snapshot else {
@@ -1654,14 +1709,7 @@ final class SyncthingManager {
             }
         }
 
-        if let data = snapshot.2.data(using: .utf8),
-           let decoded = try? JSONDecoder().decode([PendingFolderInfo].self, from: data) {
-            pendingFolders = Self.pendingFoldersInDisplayOrder(decoded)
-            if !decoded.isEmpty {
-                markPendingShareSeen()
-            }
-            pruneIgnoredPendingFolders(availableFolderIDs: Set(decoded.map(\.id)))
-        }
+        applyPendingFolderRead(snapshot.2, attachment: attachment)
 
         let bridgeEvents = decodeBridgeEvents(snapshot.3)
         if let latestEventID = bridgeEvents.map(\.id).max() {
@@ -1930,16 +1978,78 @@ final class SyncthingManager {
     }
 
     private func refreshPendingFolders() {
-        let json = SyncBridgeService.getPendingFoldersJSON()
+        let generationBefore = SyncBridgeService.eventStreamGeneration()
+        let json = bridgePendingFoldersJSON()
+        let generationAfter = SyncBridgeService.eventStreamGeneration()
+        applyPendingFolderRead(
+            Self.pendingFolderRead(generationBefore: generationBefore, json: json, generationAfter: generationAfter),
+            attachment: engineAttachment
+        )
+    }
+
+    /// What one read of the offered shares found (#464, decision 039).
+    enum PendingFolderRead: Equatable, Sendable {
+        /// The list, read in full by one engine that ran for the whole read.
+        case list([PendingFolderInfo])
+        /// That engine could not read its offers.
+        case unreadable
+        /// No one engine ran for the whole read: nothing is known.
+        case noEngine
+    }
+
+    /// What a read of the offered shares found, from the engine's
+    /// generation read before and after it (#464). Only an answer of one
+    /// engine that ran for the whole read counts — the same generation, not
+    /// zero, on both sides — and of that only a list is the list: the bridge
+    /// answers a stopped engine and a failed read with an error. The check
+    /// also holds an empty list apart that was read while an engine stopped
+    /// or started. Pure, so the rule is pinned by tests.
+    nonisolated static func pendingFolderRead(
+        generationBefore: Int64,
+        json: String,
+        generationAfter: Int64
+    ) -> PendingFolderRead {
+        guard generationBefore != 0, generationBefore == generationAfter else { return .noEngine }
         guard let data = json.data(using: .utf8),
               let decoded = try? JSONDecoder().decode([PendingFolderInfo].self, from: data) else {
-            return
+            return .unreadable
         }
-        pendingFolders = Self.pendingFoldersInDisplayOrder(decoded)
-        if !decoded.isEmpty {
-            markPendingShareSeen()
+        return .list(decoded)
+    }
+
+    /// Apply a read of the offered shares — the poll's or
+    /// `refreshPendingFolders` — taken while `attachment` was this manager's
+    /// engine attachment (#464, decision 039). Only a list changes the list,
+    /// and only a list cuts the record of shares set aside with "Ignore for
+    /// Now": a share no longer in it is taken by the automatic accept once
+    /// it is listed again. An unreadable list keeps both and says so; a read
+    /// no one engine answered changes nothing; and a poll's read that began
+    /// before a stop or a reset is not applied after it, whatever it found.
+    /// The refresh reads and applies in one step on the main actor, so no
+    /// stop or reset comes between.
+    private func applyPendingFolderRead(_ read: PendingFolderRead, attachment: Int) {
+        guard attachment == engineAttachment else { return }
+        switch read {
+        case .list(let decoded):
+            if pendingFoldersUnreadable {
+                pendingFoldersUnreadable = false
+                logger.info("The offered shares can be read again (#464)")
+            }
+            pendingFolders = Self.pendingFoldersInDisplayOrder(decoded)
+            if !decoded.isEmpty {
+                markPendingShareSeen()
+            }
+            pruneIgnoredPendingFolders(availableFolderIDs: Set(decoded.map(\.id)))
+        case .unreadable:
+            // Said only while the poll runs and reads again: a manager that
+            // does not poll has nothing that would end the notice.
+            if isRunning, !pendingFoldersUnreadable {
+                pendingFoldersUnreadable = true
+                logger.warning("The offered shares could not be read: the list and the shares set aside stay as they were (#464)")
+            }
+        case .noEngine:
+            break
         }
-        pruneIgnoredPendingFolders(availableFolderIDs: Set(decoded.map(\.id)))
     }
 
     private func decodeBridgeEvents(_ json: String) -> [BridgeEventInfo] {
@@ -3135,6 +3245,32 @@ final class SyncthingManager {
     func _testUseRemoval(bridge: @escaping (String) -> String?, defaults: UserDefaults) {
         _testRemoval = (bridge, defaults)
         userRemovedFolderIDs = Self.loadUserRemovedFolderIDs(from: defaults)
+    }
+
+    /// What `_testUsePendingRead` put in the place of the bridge's list of
+    /// pending shares. Compiled for tests only.
+    @ObservationIgnored private var _testPendingRead: (() -> String)?
+
+    /// Reads the offered shares from `read` instead of the engine when the
+    /// manager refreshes them itself after an accept (#464).
+    func _testUsePendingRead(_ read: @escaping () -> String) {
+        _testPendingRead = read
+    }
+
+    /// Runs in the poll right after it found the engine running and before
+    /// it reads anything, on the poll's own thread: a test stops the engine
+    /// there, as the end of a background run can (#464). Compiled for tests
+    /// only.
+    nonisolated static let _testAfterPollCheck = OSAllocatedUnfairLock<(@Sendable () -> Void)?>(initialState: nil)
+
+    /// Applies `read` the way the poll does (#464); `attachment` stands for
+    /// a read that began under an earlier attachment.
+    func _testApplyPolledPendingRead(_ read: PendingFolderRead, attachment: Int? = nil) {
+        applyPendingFolderRead(read, attachment: attachment ?? engineAttachment)
+    }
+
+    func _testEngineAttachment() -> Int {
+        engineAttachment
     }
 
     func _testApplyDeviceList(_ newDevices: [DeviceInfo]) {

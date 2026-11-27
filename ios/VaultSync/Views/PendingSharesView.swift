@@ -8,6 +8,9 @@ struct PendingSharesView: View {
     var destinationByFolderID: [String: PendingShareDestination.Line] = [:]
     let inFlightFolderIDs: Set<String>
     let obsidianAccessible: Bool
+    /// The offered shares could not be read (#464): the rows below are the
+    /// last ones read, and an empty list is not "nothing is offered".
+    var listUnreadable: Bool = false
     var onAccept: (SyncthingManager.PendingFolderInfo) -> Void
     var onRetry: (SyncthingManager.PendingFolderInfo) -> Void
     var onIgnore: (SyncthingManager.PendingFolderInfo) -> Void
@@ -27,7 +30,9 @@ struct PendingSharesView: View {
                 )
             }
 
-            if pendingFolders.isEmpty {
+            if listUnreadable {
+                PendingSharesUnreadableNotice()
+            } else if pendingFolders.isEmpty {
                 Label(L10n.tr("No active pending shares"), systemImage: "checkmark.circle")
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(Color.vaultSecondaryLabel)
@@ -196,5 +201,17 @@ struct PendingSharesView: View {
             return L10n.tr("Shared by an unknown device")
         }
         return L10n.fmt("Shared by: %@", names.joined(separator: ", "))
+    }
+}
+
+/// What every place that lists the offered shares shows while they could not
+/// be read (#464): the Sync tab's Pending Shares and the onboarding's offers.
+struct PendingSharesUnreadableNotice: View {
+    var body: some View {
+        VaultNotice(
+            systemImage: "exclamationmark.triangle",
+            text: SyncthingManager.pendingFoldersUnreadableNote,
+            tone: .attention
+        )
     }
 }

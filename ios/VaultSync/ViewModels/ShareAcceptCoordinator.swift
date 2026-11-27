@@ -66,6 +66,9 @@ final class ShareAcceptCoordinator {
         /// The selected folder still holds a vault's earlier copy
         /// (`ObsidianVisibility.holdsEarlierCopy`, #308).
         var selectedFolderHoldsEarlierCopy: @MainActor () -> Bool = { false }
+        /// The offers could not be read (#464): the rows shown are the last
+        /// ones read, and nothing is accepted from them until a list is read.
+        var offersUnreadable: @MainActor () -> Bool = { false }
 
         static func live(
             syncthingManager: SyncthingManager,
@@ -98,7 +101,8 @@ final class ShareAcceptCoordinator {
                 selectedFolderHidesVaults: { syncthingManager.selectedFolderHidesVaultsFromObsidian },
                 selectedFolderHoldsEarlierCopy: {
                     ObsidianVisibility.selectedFolderHoldsEarlierCopy(vaultManager.obsidianBasePath)
-                }
+                },
+                offersUnreadable: { syncthingManager.pendingFoldersUnreadable }
             )
         }
     }
@@ -141,6 +145,12 @@ final class ShareAcceptCoordinator {
         // pre-reconcile folder paths — stale exactly after a container move.
         // Held passes re-fire from the hosts' settled onChange triggers.
         guard environment.settled() else { return }
+
+        // Not from rows the last read left (#464): the bridge would read the
+        // offers again and refuse each, and every refusal would put a failure
+        // card beside the notice that the list could not be read. The hosts
+        // run the pass again once a list is read.
+        guard !environment.offersUnreadable() else { return }
 
         guard environment.vaultAccessible() else { return }
 
@@ -193,6 +203,15 @@ final class ShareAcceptCoordinator {
         guard environment.settled() else {
             if source == .manual {
                 alertMessage = L10n.tr("Vault locations are still being checked. Try again in a moment.")
+            }
+            return
+        }
+        // Nothing is accepted from rows the last read left while the offers
+        // cannot be read (#464); a tap is told to try again, no failure is
+        // recorded.
+        guard !environment.offersUnreadable() else {
+            if source == .manual {
+                alertMessage = SyncthingManager.pendingFoldersUnreadableTapNote
             }
             return
         }
@@ -289,6 +308,9 @@ final class ShareAcceptCoordinator {
         // same occupied-path set the reconcile is still rewriting.
         guard environment.settled() else {
             return L10n.tr("Vault locations are still being checked. Try again in a moment.")
+        }
+        guard !environment.offersUnreadable() else {
+            return SyncthingManager.pendingFoldersUnreadableTapNote
         }
 
         pendingShareInFlight.insert(folder.id)
