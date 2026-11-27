@@ -96,13 +96,22 @@ func (a *app) parkedNote() string {
 
 func (a *app) status(ctx context.Context) error {
 	w := a.out
-	fmt.Fprintf(w, "VaultSync %s — sync engine Syncthing %s\n", version, strings.TrimPrefix(syncthingVersion, "v"))
+	rec, recErr := loadState(a.lay.State)
+	// The engine named is the one that runs: an older one recorded, its
+	// program and config there, is what a run keeps where this build's pin
+	// could not be installed, and what runs until the next start does
+	// (#267, decision 078).
+	if recErr == nil && a.engineToKeep(rec) {
+		fmt.Fprintf(w, "VaultSync %s — sync engine Syncthing %s\n", version, strings.TrimPrefix(rec.Syncthing.Version, "v"))
+		fmt.Fprintf(w, "Note: this VaultSync brings Syncthing %s, which the next start of VaultSync tries to install — vaultsync stop, then vaultsync start.\n", strings.TrimPrefix(syncthingVersion, "v"))
+	} else {
+		fmt.Fprintf(w, "VaultSync %s — sync engine Syncthing %s\n", version, strings.TrimPrefix(syncthingVersion, "v"))
+	}
 	eng := a.engine()
 	// This program is older than the VaultSync set up here (#264): it would
 	// not run the engine, and its service parks. Said first — with no
 	// engine config either, "run vaultsync setup" would point to a setup
 	// that refuses.
-	rec, recErr := loadState(a.lay.State)
 	older := olderThanSetUp(rec, recErr)
 	if older {
 		fmt.Fprintln(w, "Note: "+a.olderNote(rec, recErr))

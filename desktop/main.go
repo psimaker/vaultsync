@@ -824,12 +824,12 @@ func (a *app) ensureEngine(ctx context.Context, t *term) (agentState, bool, erro
 		if replace != nil && !errors.Is(err, ErrChecksumMismatch) {
 			// Whether the engine there is this VaultSync's own is told only
 			// against its download (#276).
-			return st, false, refuse("VaultSync's folder holds a sync engine's data (%s), but agent.json records no engine; whether the engine there is this VaultSync's own is told by comparing it with the engine this VaultSync installs, and installing that failed (%v). Nothing was changed. Run vaultsync setup again once that is fixed.", tildePath(a.home, a.lay.Home), err)
+			return st, false, refuse("VaultSync's folder holds a sync engine's data (%s), but agent.json records no engine; whether the engine there is this VaultSync's own is told by comparing it with the engine this VaultSync installs, and installing that failed (%v). Nothing was changed. Run %s again once that is fixed.", tildePath(a.home, a.lay.Home), err, a.setupAgain())
 		}
 		if errors.Is(err, ErrChecksumMismatch) {
-			return st, false, refuse("The sync engine download failed its integrity check and was not installed. Run vaultsync setup again. If it fails again, report it at https://github.com/psimaker/vaultsync/issues.")
+			return st, false, refuse("The sync engine download failed its integrity check and was not installed. Run %s again. If it fails again, report it at https://github.com/psimaker/vaultsync/issues.", a.setupAgain())
 		}
-		return st, false, refuse("Could not download Syncthing %s (%v). No new sync engine was installed. Check your internet connection, then run vaultsync setup again.", strings.TrimPrefix(syncthingVersion, "v"), err)
+		return st, false, refuse("Could not download Syncthing %s (%v). No new sync engine was installed. Check your internet connection, then run %s again.", strings.TrimPrefix(syncthingVersion, "v"), err, a.setupAgain())
 	}
 	t.say("done")
 	st.Syncthing.Version = syncthingVersion
@@ -1264,18 +1264,29 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 		// Missing, another version, or changed since it was installed:
 		// install the pinned one again (verified against the checksum).
 		logf("vaultsync %s: installing Syncthing %s", version, syncthingVersion)
-		in, err := newInstaller(a.lay.Bin, a.goos, runtime.GOARCH)
-		if err != nil {
-			unlockSetup()
-			return err
+		// An older engine its record names, unchanged and with its config,
+		// runs on should the pin fail to install (#267, decision 078):
+		// nothing syncs while the attempt runs, so it is bounded then.
+		keep := a.engineToKeep(st)
+		ictx, cancel := ctx, context.CancelFunc(func() {})
+		if keep {
+			ictx, cancel = context.WithTimeout(ctx, keepEngineInstallWait)
 		}
-		got, err := in.install(ctx, nil)
-		if err != nil {
-			unlockSetup()
-			return err
-		}
-		st.Syncthing.Version, st.Syncthing.BinarySHA256 = syncthingVersion, got.SHA256
-		if err := updateState(a.lay.State, func(s *agentState) { s.Syncthing = st.Syncthing; raiseStateFormat(s) }); err != nil {
+		got, err := a.installPin(ictx)
+		cancel()
+		switch {
+		case err == nil:
+			st.Syncthing.Version, st.Syncthing.BinarySHA256 = syncthingVersion, got.SHA256
+			if err := updateState(a.lay.State, func(s *agentState) { s.Syncthing = st.Syncthing; raiseStateFormat(s) }); err != nil {
+				unlockSetup()
+				return err
+			}
+		case keep && ctx.Err() == nil && !errors.Is(err, ErrNoPin) && a.engineToKeep(st):
+			// Not stopped, no build missing for this computer, and the
+			// engine hashed again — a failed install leaves it as it was,
+			// and only that very engine runs on. The record stays.
+			logf("vaultsync %s: Syncthing %s could not be installed — %s; the installed Syncthing %s runs on, and the next start tries again (vaultsync stop, then vaultsync start)", version, strings.TrimPrefix(syncthingVersion, "v"), installFailureSummary(err), strings.TrimPrefix(st.Syncthing.Version, "v"))
+		default:
 			unlockSetup()
 			return err
 		}
@@ -1288,7 +1299,7 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 		unlockSetup()
 		return err
 	}
-	ctl := &controlServer{a: a, eng: eng, logf: logf, background: a.backgroundEngine()}
+	ctl := &controlServer{a: a, eng: eng, logf: logf, background: a.backgroundEngine(), engineVersion: st.Syncthing.Version}
 	// The record of a socket that could not be made or kept at an earlier
 	// start no longer holds — and it goes before this start's own attempt,
 	// so a fresh record that attempt may write (a socket that stops
@@ -1514,6 +1525,67 @@ func (a *app) olderBuild() bool {
 // olderNote says so for a person, with the versions where they are known.
 func (a *app) olderNote(st agentState, loadErr error) string {
 	return a.olderFact(st, loadErr) + " Nothing was changed — run the setup link to get the current VaultSync."
+}
+
+// keepEngineInstallWait bounds a run's attempt to install its pin where an
+// engine is there to keep (#267, decision 078): the download client waits up
+// to ten minutes on a connection that never answers, and no engine runs
+// meanwhile. A test shortens it.
+var keepEngineInstallWait = 2 * time.Minute
+
+// installPin installs this build's pinned Syncthing into bin.
+func (a *app) installPin(ctx context.Context) (installedEngine, error) {
+	in, err := newInstaller(a.lay.Bin, a.goos, runtime.GOARCH)
+	if err != nil {
+		return installedEngine{}, err
+	}
+	return in.install(ctx, nil)
+}
+
+// engineToKeep: the engine agent.json records may run on should this build's
+// pin fail to install (#267, decision 078) — older than the pin, at or above
+// keepEngineFrom, its program the very one recorded (hashed now; a record
+// with no checksum keeps nothing), and its config there: without one,
+// prepare would make it with the older engine and edit it in the pin's
+// shape (054).
+func (a *app) engineToKeep(st agentState) bool {
+	rec := st.Syncthing.Version
+	if st.Syncthing.BinarySHA256 == "" || !engineNewer(syncthingVersion, rec) || engineNewer(keepEngineFrom, rec) {
+		return false
+	}
+	if sum, err := fileSHA256(a.lay.Syncthing); err != nil || sum != st.Syncthing.BinarySHA256 {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(a.lay.Home, "config.xml"))
+	return err == nil
+}
+
+// installFailureSummary is why a pin could not be installed, in fixed words
+// with no path or address, for the line a run logs when it keeps its engine
+// (#267).
+func installFailureSummary(err error) string {
+	var pe *fs.PathError
+	var le *os.LinkError
+	var se *os.SyscallError
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "the download did not finish within " + keepEngineInstallWait.String()
+	case errors.Is(err, ErrChecksumMismatch), errors.As(err, &pe), errors.As(err, &le), errors.As(err, &se):
+		return serviceSummary(err)
+	}
+	return "the download did not get through"
+}
+
+// setupAgain is how a refused setup is run again (#267): by VaultSync for
+// Mac's agent where setup runs as that agent — the vaultsync command may
+// still lead to an older copy — and as vaultsync setup otherwise; the setup
+// link runs a vaultsync from a folder it removes, so naming that path would
+// lead nowhere.
+func (a *app) setupAgain() string {
+	if agent, ok := ownAppAgent(a.appEnv); ok {
+		return a.commandFor(agent) + " setup"
+	}
+	return "vaultsync setup"
 }
 
 // olderFact is what olderNote says of the two builds, without what it

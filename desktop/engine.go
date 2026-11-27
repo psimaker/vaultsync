@@ -290,7 +290,7 @@ func (e engine) superviseLocked(ctx context.Context, st agentState, logf func(st
 				return err
 			}
 		}
-		code, err := e.runOnce(ctx, st.GUIPort, logf)
+		code, err := e.runOnce(ctx, st.GUIPort, st.Syncthing.Version, logf)
 		if ctx.Err() != nil {
 			return nil
 		}
@@ -307,7 +307,12 @@ func (e engine) superviseLocked(ctx context.Context, st agentState, logf func(st
 
 // runOnce starts the engine and waits for it to exit (or stops it when ctx
 // ends). It returns the engine's exit code.
-func (e engine) runOnce(ctx context.Context, guiPort int, logf func(string, ...any)) (int, error) {
+// runOnce runs the engine once; running is the Syncthing that runs — the
+// pin, or the older engine a run kept (#267) — for the log. Empty: the pin.
+func (e engine) runOnce(ctx context.Context, guiPort int, running string, logf func(string, ...any)) (int, error) {
+	if running == "" {
+		running = syncthingVersion
+	}
 	cmd := exec.Command(e.lay.Syncthing, "serve",
 		"--home="+e.lay.Home,
 		"--gui-address=http://127.0.0.1:"+strconv.Itoa(guiPort),
@@ -330,7 +335,7 @@ func (e engine) runOnce(ctx context.Context, guiPort int, logf func(string, ...a
 	if err := cmd.Start(); err != nil {
 		return -1, err
 	}
-	logf("sync engine started (Syncthing %s, pid %d)", syncthingVersion, cmd.Process.Pid)
+	logf("sync engine started (Syncthing %s, pid %d)", strings.TrimPrefix(running, "v"), cmd.Process.Pid)
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	select {
