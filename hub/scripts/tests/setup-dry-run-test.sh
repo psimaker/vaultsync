@@ -686,6 +686,8 @@ fresh_364
 out=$(CONVERTING_TRIES=60 FAIL_HEALTH_EXEC_AT=5 FAST_SLEEP=1 new_env_run) || fail "a look that could not ask Syncthing ended the wait for the conversion (#364):
 $out"
 [ "$(cat "$CONVERSION_COUNTER")" = 60 ] || fail "the wait did not last the conversion (#364): $(cat "$CONVERSION_COUNTER") answers"
+[ "$(printf '%s\n' "$out" | grep -c "is converting this Hub's database")" = 1 ] || fail "a look that could not ask Syncthing ended the conversion, and a new one began (#364):
+$out"
 pass "a look that cannot ask Syncthing during a conversion does not end it (#364)"
 
 # Syncthing that starts again mid-conversion (a full disk restarts it) begins
