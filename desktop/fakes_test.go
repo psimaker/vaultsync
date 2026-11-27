@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -257,6 +258,9 @@ type fakeHub struct {
 	// what the agent's checks after the wait meet, whatever the machine's
 	// speed.
 	beforeOffer func()
+	// trailing is sent behind every answer on the same connection, which
+	// is closed after it, as a service that is not the Hub may send it.
+	trailing string
 }
 
 type fakeHubSession struct {
@@ -277,10 +281,36 @@ func newFakeHub(t *testing.T, engine *fakeEngine, vaults ...pairing.VaultInfo) *
 	mux.HandleFunc("POST /v1/pair/start", h.start)
 	mux.HandleFunc("POST /v1/pair/finish", h.finish)
 	mux.HandleFunc("POST /v1/pair/provision", h.provision)
-	srv := httptest.NewServer(mux)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.mu.Lock()
+		trailing := h.trailing
+		h.mu.Unlock()
+		if trailing == "" {
+			mux.ServeHTTP(w, r)
+			return
+		}
+		answerThenTrail(w, r, mux, trailing)
+	}))
 	t.Cleanup(srv.Close)
 	h.addr = strings.TrimPrefix(srv.URL, "http://")
 	return h
+}
+
+// answerThenTrail answers r as mux does, by hand on the bare connection, and
+// sends trailing behind the answer.
+func answerThenTrail(w http.ResponseWriter, r *http.Request, mux http.Handler, trailing string) {
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, r)
+	_, _ = io.Copy(io.Discard, r.Body)
+	conn, buf, err := http.NewResponseController(w).Hijack()
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	fmt.Fprintf(buf, "HTTP/1.1 %d %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n", rec.Code, http.StatusText(rec.Code), rec.Body.Len())
+	_, _ = buf.Write(rec.Body.Bytes())
+	_, _ = buf.WriteString(trailing)
+	_ = buf.Flush()
 }
 
 func (h *fakeHub) fail(w http.ResponseWriter, status int, msg string) {
