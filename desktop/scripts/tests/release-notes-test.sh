@@ -80,7 +80,7 @@ The [root changelog](../CHANGELOG.md).
 ### Added
 
 - **Links** ([#1](https://github.com/psimaker/vaultsync/issues/1)) — the [root changelog](../CHANGELOG.md), [a page](../docs/hub.md#update-the-hub), [the README](README.md), [the same](./README.md), [the root](/SECURITY.md), [an anchor](#added), [mail](mailto:a@example.org), [two](../CHANGELOG.md) on [one line](README.md) and [none]().
-- **Paths** — [up and back](../docs/../CHANGELOG.md), [down and back](sub/../README.md), [dots](./a/./b.md), [a query](../docs/hub.md?plain=1#update), [parentheses](../a(b).md), [a host](//vaultsync.eu/x) and [a definition][r].
+- **Paths** — [up and back](../docs/../CHANGELOG.md), [down and back](sub/../README.md), [dots](./a/./b.md), [a query](../docs/hub.md?plain=1#update), [a query with dots](README.md?path=../../x), [parentheses](../a(b).md), [a host](//vaultsync.eu/x) and [a definition][r].
 - **Code and images** — `a[0](b)` and ``x ` [y](z)`` stay, [`code`](README.md) is a link, ![remote](https://example.org/a.png), [![remote](https://example.org/a.png)](README.md) and [angled](<https://example.org/a b>).
 - **A lone backtick** — a ` and [after it](README.md).
 
@@ -114,7 +114,7 @@ want() { # VERSION — the expected text of 1.2.1 at that tag
 ### Added
 
 - **Links** ([#1](https://github.com/psimaker/vaultsync/issues/1)) — the [root changelog](@B@/CHANGELOG.md), [a page](@B@/docs/hub.md#update-the-hub), [the README](@B@/desktop/README.md), [the same](@B@/desktop/README.md), [the root](@B@/SECURITY.md), [an anchor](#added), [mail](mailto:a@example.org), [two](@B@/CHANGELOG.md) on [one line](@B@/desktop/README.md) and [none]().
-- **Paths** — [up and back](@B@/CHANGELOG.md), [down and back](@B@/desktop/README.md), [dots](@B@/desktop/a/b.md), [a query](@B@/docs/hub.md?plain=1#update), [parentheses](@B@/a(b).md), [a host](//vaultsync.eu/x) and [a definition][r].
+- **Paths** — [up and back](@B@/CHANGELOG.md), [down and back](@B@/desktop/README.md), [dots](@B@/desktop/a/b.md), [a query](@B@/docs/hub.md?plain=1#update), [a query with dots](@B@/desktop/README.md?path=../../x), [parentheses](@B@/a(b).md), [a host](//vaultsync.eu/x) and [a definition][r].
 - **Code and images** — `a[0](b)` and ``x ` [y](z)`` stay, [`code`](@B@/desktop/README.md) is a link, ![remote](https://example.org/a.png), [![remote](https://example.org/a.png)](@B@/desktop/README.md) and [angled](<https://example.org/a b>).
 - **A lone backtick** — a ` and [after it](@B@/desktop/README.md).
 
