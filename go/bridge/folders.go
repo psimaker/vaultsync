@@ -152,8 +152,11 @@ func RemoveFolder(id string) string {
 	// The engine takes a change into its configuration first and then waits
 	// for its services: the model stops the folder and drops its database.
 	// When that outlasts the wait, the folder is already gone from the
-	// configuration, and the removal the user asked for has happened.
+	// configuration, and the removal the user asked for has happened. It can
+	// also have landed after the wait ended, and then nothing has written it
+	// yet: write it before answering that it is done (#465).
 	if _, still := stCfg.Folder(id); !still {
+		_ = stConfigWrites.write()
 		return ""
 	}
 	if errors.Is(err, errWaitTimedOut) {

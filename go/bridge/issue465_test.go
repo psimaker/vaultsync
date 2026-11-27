@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -314,9 +315,10 @@ func TestIssue465_AStartCompletesARemovalTheFileNamesBeforeTheDatabaseDropsIt(t 
 }
 
 // A write that fails leaves a change the engine has taken live, and the
-// answer says so (#343): the wrapper's timer writes the file again. The one
-// log line names neither the path nor the vault.
-func TestIssue465_AFailedWriteKeepsTheAnswerAndTheTimerWritesItAgain(t *testing.T) {
+// answer says so (#343). The one log line names neither the path nor the
+// vault. FlushConfiguration tells a caller that must know whether the change
+// is on disk, and the next change writes again, even one that alters nothing.
+func TestIssue465_AFailedWriteKeepsTheAnswerAndIsWrittenAgain(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("a read-only directory does not stop root")
 	}
@@ -349,23 +351,177 @@ func TestIssue465_AFailedWriteKeepsTheAnswerAndTheTimerWritesItAgain(t *testing.
 	if !strings.Contains(line, "config.xml was not written (permission denied)") {
 		t.Fatalf("log = %q, want the one line that config.xml was not written, with the error's kind", line)
 	}
-	for _, private := range []string{configDir, root, label, issue465Added} {
-		if strings.Contains(line, private) {
-			t.Fatalf("log = %q names %q", line, private)
-		}
-	}
 	if n := strings.Count(line, "\n"); n != 1 {
 		t.Fatalf("log has %d lines, want 1: %q", n, line)
+	}
+
+	const failed = "config.xml was not written: permission denied"
+	if answer := FlushConfiguration(); answer != failed {
+		t.Fatalf("FlushConfiguration() with config.xml not writable = %q, want %q", answer, failed)
+	}
+	for _, private := range []string{configDir, root, label, issue465Added} {
+		if strings.Contains(logged.String(), private) {
+			t.Fatalf("log = %q names %q", logged.String(), private)
+		}
 	}
 
 	if err := os.Chmod(configDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	writable := time.Now()
-	issue465Poll(t, "the wrapper's timer to write the folder", 15*time.Second, func() bool {
-		return issue302Persisted(configDir, issue465Added)
+	// The start turned both kinds of discovery on: asking for that again
+	// alters nothing, and writes because the last write failed.
+	if errMsg := SetDiscoveryEnabled(true, true); errMsg != "" {
+		t.Fatalf("SetDiscoveryEnabled(true, true) = %q", errMsg)
+	}
+	if !issue302Persisted(configDir, issue465Added) {
+		t.Fatal("the change after the failed write did not write config.xml again")
+	}
+	if answer := FlushConfiguration(); answer != "" {
+		t.Fatalf("FlushConfiguration() = %q, want \"\" once config.xml is written", answer)
+	}
+
+	if errMsg := StopSyncthing(); errMsg != "" {
+		t.Fatalf("StopSyncthing() = %q", errMsg)
+	}
+	if answer := FlushConfiguration(); answer != "syncthing not running" {
+		t.Fatalf("FlushConfiguration() with no engine = %q, want %q", answer, "syncthing not running")
+	}
+}
+
+// A change still queued when the bridge's wait ends is written when the
+// engine takes it, also while another call holds the bridge's lock — as
+// another call does for its whole wait. A removal that lands then has its
+// folder's database dropped by the model at once, and the other call can
+// answer "" before it releases the lock.
+func TestIssue465_ALateChangeIsWrittenWhileAnotherCallHoldsTheLock(t *testing.T) {
+	configDir := testConfigDir(t)
+	issue465StartWithVaultOnDisk(t, configDir, issue465Removed, filepath.Join(configDir, "Vaults", "Kept"))
+	held := issue465HoldTheConfigurationLoop(t)
+
+	defer overrideLifecycleTimeouts(t)()
+	lifecycleTimeouts.configCommit = 300 * time.Millisecond
+	if answer := RemoveFolder(issue465Removed); answer != FolderRemovalNotConfirmedError() {
+		t.Fatalf("RemoveFolder() = %q, want %q", answer, FolderRemovalNotConfirmedError())
+	}
+
+	mu.Lock()
+	cfg := stCfg
+	locked := true
+	unlock := func() {
+		if locked {
+			locked = false
+			mu.Unlock()
+		}
+	}
+	defer unlock()
+
+	held.let()
+	issue465Poll(t, "the queued removal to land", 10*time.Second, func() bool {
+		_, still := cfg.Folder(issue465Removed)
+		return !still
 	})
-	t.Logf("the timer wrote config.xml %v after its directory was writable again", time.Since(writable))
+	landed := time.Now()
+	const bound = 2500 * time.Millisecond
+	for !issue302PersistedWithout(configDir, issue465Removed) {
+		if time.Since(landed) > bound {
+			unlock()
+			t.Fatalf("config.xml still named the vault %v after its removal landed, while another call held the bridge's lock", bound)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	unlock()
+	t.Logf("config.xml lacked the vault %v after its removal landed", time.Since(landed))
+}
+
+// A removal that lands in the instant after the bridge's wait ended is
+// answered as done (#343). It is on disk when that answer comes: the
+// engine's writer for late changes is held here, so only RemoveFolder's own
+// write can have written it.
+func TestIssue465_ARemovalThatLandsAsTheWaitEndsIsOnDiskWhenAnsweredDone(t *testing.T) {
+	configDir := testConfigDir(t)
+	issue465StartWithVaultOnDisk(t, configDir, issue465Removed, filepath.Join(configDir, "Vaults", "Kept"))
+	held := issue465HoldTheConfigurationLoop(t)
+
+	mu.Lock()
+	cfg, writes := stCfg, stConfigWrites
+	mu.Unlock()
+	writes.mu.Lock()
+	writerHeld := true
+	letWriter := func() {
+		if writerHeld {
+			writerHeld = false
+			writes.mu.Unlock()
+		}
+	}
+	defer letWriter()
+
+	saved := commitDeadlinePassed
+	t.Cleanup(func() { commitDeadlinePassed = saved })
+	commitDeadlinePassed = func() {
+		held.let()
+		issue465Poll(t, "the removal to land as the wait ends", 10*time.Second, func() bool {
+			_, still := cfg.Folder(issue465Removed)
+			return !still
+		})
+	}
+
+	defer overrideLifecycleTimeouts(t)()
+	lifecycleTimeouts.configCommit = 300 * time.Millisecond
+	answer := RemoveFolder(issue465Removed)
+	onDisk := issue302PersistedWithout(configDir, issue465Removed)
+	letWriter()
+	if answer != "" {
+		t.Fatalf("RemoveFolder() = %q for a removal that landed as the wait ended, want success", answer)
+	}
+	if !onDisk {
+		t.Fatal("RemoveFolder() answered the removal done while config.xml still named the vault")
+	}
+}
+
+// The writer that waits for a change still queued when the bridge's wait
+// ended ends with its engine: a change the engine never takes, because it
+// stopped first, leaves no goroutine of the writer behind. The writer ends as
+// the stop begins, before the engine stops. (While a commit's subscriber is
+// held, a stop runs into suture's ten-second stop timeout, on main too; the
+// held commit is let go once the writer is gone.)
+func TestIssue465_ALateWriterEndsWithItsEngine(t *testing.T) {
+	configDir := testConfigDir(t)
+	issue465StartWithVaultOnDisk(t, configDir, issue465Removed, filepath.Join(configDir, "Vaults", "Kept"))
+	held := issue465HoldTheConfigurationLoop(t)
+
+	defer overrideLifecycleTimeouts(t)()
+	lifecycleTimeouts.configCommit = 300 * time.Millisecond
+	before := issue465LateWriters()
+	if answer := RemoveFolder(issue465Removed); answer != FolderRemovalNotConfirmedError() {
+		t.Fatalf("RemoveFolder() = %q, want %q", answer, FolderRemovalNotConfirmedError())
+	}
+	issue465Poll(t, "the writer for the queued removal", 2*time.Second, func() bool {
+		return issue465LateWriters() == before+1
+	})
+
+	stopped := make(chan string, 1)
+	stopping := time.Now()
+	go func() { stopped <- StopSyncthing() }()
+	deadline := stopping.Add(5 * time.Second)
+	for issue465LateWriters() != before {
+		if time.Now().After(deadline) {
+			held.let()
+			<-stopped
+			t.Fatalf("%d writers still wait for a change the stopping engine never took, want %d", issue465LateWriters(), before)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	gone := time.Since(stopping)
+	select {
+	case errMsg := <-stopped:
+		t.Fatalf("the stop returned (%q) before the held commit was let go: the check above proves nothing", errMsg)
+	default:
+	}
+	held.let()
+	if errMsg := <-stopped; errMsg != "" {
+		t.Fatalf("StopSyncthing() = %q", errMsg)
+	}
+	t.Logf("the writer was gone %v after the stop began, while the engine was still stopping", gone)
 }
 
 // A call that changes nothing writes nothing: a start over a current
@@ -631,6 +787,24 @@ func issue465IndexID(t *testing.T, id string) protocol.IndexID {
 		t.Fatalf("GetIndexID: %v", err)
 	}
 	return index
+}
+
+// issue465LateWriters counts the goroutines that wait to write a late
+// change, from a dump of every goroutine (as #152's tests read one).
+func issue465LateWriters() int {
+	buf := make([]byte, 1<<16)
+	n := runtime.Stack(buf, true)
+	for n == len(buf) {
+		buf = make([]byte, 2*len(buf))
+		n = runtime.Stack(buf, true)
+	}
+	count := 0
+	for _, g := range strings.Split(string(buf[:n]), "\n\n") {
+		if strings.Contains(g, ".(*configWrites).writeWhenTaken(") {
+			count++
+		}
+	}
+	return count
 }
 
 func issue465FileNumber(t *testing.T, path string) uint64 {

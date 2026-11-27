@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -152,13 +153,14 @@ type configTaken struct {
 // started from a file that still named the folder: the engine took it for a
 // new one and synced its directory again. A file ahead of the services is
 // completed by the next start; a file behind them is not. A change that
-// alters nothing writes nothing, and a failed write does not change the
-// answer: the change is live, and the wrapper's timer writes it again.
+// alters nothing writes nothing, unless the last write failed, and a failed
+// write does not change the answer: the change is live.
 //
 // A change still queued when the wait ends may land later; the caller has
-// reported the wait's end, and the change is written when it lands.
+// reported the wait's end, and the engine's writer writes the change when it
+// lands, without mu (configWrites).
 func commitConfigLocked(fn config.ModifyFunction) error {
-	cfg := stCfg
+	cfg, writes := stCfg, stConfigWrites
 	stConfigCommits++
 	timeout := lifecycleTimeouts.configCommit
 	timedOut := fmt.Errorf("config commit: %w after %s", errWaitTimedOut, timeout)
@@ -181,7 +183,7 @@ func commitConfigLocked(fn config.ModifyFunction) error {
 	}()
 
 	if timeout <= 0 {
-		go writeConfigWhenTaken(cfg, taken)
+		go writes.writeWhenTaken(taken)
 		return timedOut
 	}
 	deadline := time.NewTimer(timeout)
@@ -191,11 +193,12 @@ func commitConfigLocked(fn config.ModifyFunction) error {
 		if t.err != nil {
 			return t.err
 		}
-		if t.altered {
-			writeConfigLocked(cfg)
+		if t.altered || writes.unwritten() {
+			_ = writes.write()
 		}
 	case <-deadline.C:
-		go writeConfigWhenTaken(cfg, taken)
+		commitDeadlinePassed()
+		go writes.writeWhenTaken(taken)
 		return timedOut
 	}
 	select {
@@ -206,43 +209,134 @@ func commitConfigLocked(fn config.ModifyFunction) error {
 	}
 }
 
-// configWriteLog says that config.xml could not be written. A logger of the
-// bridge's own: the engine's log output is discarded at the process boundary
-// (configurePrivacySafeLogging), and this line names no path and no vault.
-var configWriteLog = log.New(os.Stderr, "vaultsync bridge: ", 0)
+// commitDeadlinePassed runs when the bridge's wait ends before the engine has
+// taken the change. Tests use it to let the change land in that instant.
+var commitDeadlinePassed = func() {}
 
-// writeConfigLocked writes the configuration the engine runs with to
-// config.xml, through the wrapper's own Save: a temporary file in the same
-// directory, synced and renamed over the old one, under the wrapper's lock.
-// Caller holds mu, so no stop or start runs meanwhile and cfg is the running
-// engine's.
-func writeConfigLocked(cfg config.Wrapper) {
-	if err := cfg.Save(); err != nil {
-		// The error names the file's path; only its kind is logged.
-		kind := "write failed"
-		var errno syscall.Errno
-		if errors.As(err, &errno) {
-			kind = errno.Error()
-		}
-		configWriteLog.Printf("config.xml was not written (%s); the engine's save timer writes it again", kind)
+// stConfigWrites writes config.xml for the running engine. Guarded by mu; nil
+// while no engine runs.
+var stConfigWrites *configWrites
+
+// configWrites writes one engine's configuration to config.xml (#465).
+//
+// A change still queued when the bridge's wait ends is written when the
+// engine takes it, by writeWhenTaken, and not under mu: another call can hold
+// mu for its whole wait while the model already drops a removed folder's
+// database. Its own lock keeps that write to the engine's life: the stop ends
+// the writer before it stops the engine, after a write in progress, so no
+// late write runs once a stop has begun, and the stop's own last write comes
+// after it (#302). A start that fails cancels the early services without a
+// stop, and the writer ends with them.
+type configWrites struct {
+	cfg   config.Wrapper
+	mu    sync.Mutex
+	live  bool          // guarded by mu
+	ended chan struct{} // closed when live turns false
+	// failed records that the last write did not reach the disk: the next
+	// change writes again, altered or not.
+	failed atomic.Bool
+}
+
+func newConfigWrites(ctx context.Context, cfg config.Wrapper) *configWrites {
+	w := &configWrites{cfg: cfg, live: true, ended: make(chan struct{})}
+	go func() {
+		<-ctx.Done()
+		w.end()
+	}()
+	return w
+}
+
+// end stops the writer: no late write begins after it returns. It waits for
+// a write in progress.
+func (w *configWrites) end() {
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.live {
+		w.live = false
+		close(w.ended)
 	}
 }
 
-// writeConfigWhenTaken writes config.xml for a change that was still queued
-// when the bridge's wait ended, once the engine takes it — only while cfg is
-// still the running engine's. A stop has written whatever its engine took
-// (#302); a change it never took never lands, and this waits with it.
-func writeConfigWhenTaken(cfg config.Wrapper, taken <-chan configTaken) {
-	t := <-taken
-	if t.err != nil || !t.altered {
+func (w *configWrites) unwritten() bool {
+	return w != nil && w.failed.Load()
+}
+
+// write writes the configuration the engine runs with to config.xml through
+// the wrapper's own Save: a temporary file in the same directory, synced and
+// renamed over the old one, under the wrapper's lock. The caller holds mu, or
+// w.mu with w live, so the engine is the running one. A write that fails logs
+// one line with the error's kind — never the path, which the error names —
+// and the next change writes again.
+func (w *configWrites) write() error {
+	if w == nil {
+		return errors.New("syncthing not running")
+	}
+	err := w.cfg.Save()
+	w.failed.Store(err != nil)
+	if err != nil {
+		configWriteLog.Printf("config.xml was not written (%s); the next change, the engine's save timer or a stop writes it again", configWriteErrorKind(err))
+	}
+	return err
+}
+
+// writeWhenTaken writes config.xml for a change that was still queued when
+// the bridge's wait ended, as soon as the engine takes it. It ends with its
+// engine: a change the engine never takes leaves nothing waiting here.
+func (w *configWrites) writeWhenTaken(taken <-chan configTaken) {
+	if w == nil {
 		return
 	}
+	var t configTaken
+	select {
+	case t = <-taken:
+	case <-w.ended:
+		return
+	}
+	if t.err != nil || (!t.altered && !w.failed.Load()) {
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.live {
+		_ = w.write()
+	}
+}
+
+// configWriteLog says that config.xml could not be written. A logger of the
+// bridge's own: the engine's log output is discarded at the process boundary
+// (configurePrivacySafeLogging), and this line names no path and no vault.
+// The bridge has no log the app keeps; FlushConfiguration's answer carries
+// the same text to a caller that asks.
+var configWriteLog = log.New(os.Stderr, "vaultsync bridge: ", 0)
+
+// configWriteErrorKind names what went wrong with a write without its path.
+func configWriteErrorKind(err error) string {
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		return errno.Error()
+	}
+	return "write failed"
+}
+
+// FlushConfiguration writes the configuration the engine runs with to
+// config.xml now. It answers "" once the file holds it, or why not — the
+// error's kind, never a path (#465, decision 096). For a caller that must know
+// a change is on disk before it records that the change was made: a change's
+// own answer stays success when its write fails, because the change is live.
+func FlushConfiguration() string {
 	mu.Lock()
 	defer mu.Unlock()
-	if stCfg != cfg || !engineUpLocked() {
-		return
+
+	if !engineUpLocked() || stConfigWrites == nil {
+		return "syncthing not running"
 	}
-	writeConfigLocked(cfg)
+	if err := stConfigWrites.write(); err != nil {
+		return "config.xml was not written: " + configWriteErrorKind(err)
+	}
+	return ""
 }
 
 // engineUpLocked reports whether the engine can serve calls: an instance is
@@ -359,6 +453,9 @@ func StartSyncthing(configDir string) string {
 		return fmt.Sprintf("config: %v", err)
 	}
 	earlySvc.Add(stCfg)
+	// Writes config.xml for this engine's changes (#465); ends with the
+	// early services, so with every failed start below.
+	stConfigWrites = newConfigWrites(ctx, stCfg)
 
 	// Configure for embedded iOS use.
 	err = commitConfigLocked(func(cfg *config.Configuration) {
@@ -500,6 +597,12 @@ func stopEngineLocked() string {
 	stRunning = false
 	stExited = false
 	stExitReason = ""
+
+	// No late write of config.xml begins once the stop has begun, and one in
+	// progress finishes first: the stop's own last write below comes after it
+	// (#465).
+	stConfigWrites.end()
+	stConfigWrites = nil
 
 	// Order matters: the App's services still use the config wrapper and
 	// the event logger while they shut down, so the early supervisor is
