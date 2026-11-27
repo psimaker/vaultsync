@@ -270,10 +270,9 @@ func runsAs(t *testing.T, a *app, self, what string) {
 // every device), nor the current build's start "running again" beside an
 // older one that parks.
 func TestIssue264_StartJudgesTheServiceByWhatItRuns(t *testing.T) {
-	// systemd says the started unit runs.
-	active := func() *fakeRunner {
-		return &fakeRunner{answers: map[string]string{"systemctl --user is-active vaultsync.service": "active"}}
-	}
+	// systemd says the started unit runs (and, since #290, that it was not
+	// running before the start).
+	active := func() *fakeRunner { return &fakeRunner{systemd: true} }
 	text := func(a *app) string { return a.out.(*bytes.Buffer).String() }
 
 	// This very build, older than what is set up: it does not sync.
@@ -283,9 +282,11 @@ func TestIssue264_StartJudgesTheServiceByWhatItRuns(t *testing.T) {
 	if err := a.startService(); !strings.Contains(refusalText(err), "runs, but it does not sync: this VaultSync is older") {
 		t.Fatalf("start of an older build that the service runs: %v", err)
 	}
-	// This very build, current: running again.
+	// This very build, current: running again, once its agent answers
+	// (#290).
 	a = installedApp(t, "linux", active())
 	runsAs(t, a, a.lay.Agent, "this build")
+	answeringAgent(t, a)
 	if err := a.startService(); err != nil || !strings.Contains(text(a), "running again") {
 		t.Fatalf("start of the build the service runs: %v\n%s", err, text(a))
 	}

@@ -50,6 +50,14 @@ func main() {
 		switch {
 		case errors.Is(err, errCancelled):
 			os.Exit(2)
+		case errors.Is(err, errInterrupted):
+			// Ctrl-C at a question: the terminal shows it, and the command
+			// said what stays (#380). 128 + SIGINT, as a shell reports it.
+			os.Exit(130)
+		case errors.Is(err, errTerminated):
+			// A termination signal at a question: nobody is there to read
+			// words. 128 + SIGTERM.
+			os.Exit(143)
 		case serviceMode:
 			// A log or the journal: a fixed summary per cause that carries
 			// no path or name; the whole message stays in VaultSync's own
@@ -140,7 +148,9 @@ func usage(w io.Writer) {
 	fmt.Fprint(w, `vaultsync — keeps your Obsidian vaults in sync with your VaultSync Hub
 
   vaultsync setup        install the sync engine and the background service,
-                         pair with your Hub and choose a vault
+                         pair with your Hub and choose a vault; run again on
+                         a computer that syncs, it updates VaultSync and pairs
+                         only when a flag below other than --no-service is given
   vaultsync pair         sync another vault, or pair with another Hub
   vaultsync status       what syncs where, and whether your Hub is connected
   vaultsync pause        pause syncing on this computer (until vaultsync resume)
@@ -183,7 +193,7 @@ func runCLI(args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signalContext()
 	defer stop()
 	switch cmd {
 	case "setup":
@@ -208,6 +218,33 @@ func runCLI(args []string) error {
 	usage(os.Stderr)
 	return fmt.Errorf("unknown command %q", cmd)
 }
+
+// signalContext is a command's context: it ends on Ctrl-C (SIGINT) or a
+// termination signal (SIGTERM), with the signal as its cause, so that a
+// question can tell the person's interrupt from a stop (#380). Like
+// signal.NotifyContext, which names the signal only in an unexported error:
+// later signals are caught too, until stop.
+func signalContext() (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		select {
+		case s := <-ch:
+			cancel(stoppedBy{s})
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, func() {
+		cancel(nil)
+		signal.Stop(ch)
+	}
+}
+
+// stoppedBy is the cause of a command's context that a signal ended.
+type stoppedBy struct{ sig os.Signal }
+
+func (e stoppedBy) Error() string { return e.sig.String() + " signal received" }
 
 // app is the live environment: this computer, this user.
 type app struct {
@@ -285,6 +322,7 @@ func (a *app) setup(ctx context.Context, args []string) error {
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
+	asksToPair := pairingFlagGiven(fs)
 	t, closeTerm := openTerm(a.out)
 	defer closeTerm()
 	t.blank()
@@ -472,17 +510,37 @@ func (a *app) setup(ctx context.Context, args []string) error {
 	if err := waitEngine(ctx, client, 60*time.Second, temporary); err != nil {
 		return fmt.Errorf("the sync engine did not start: %w — see %s", err, a.logHint())
 	}
-	_, err = a.pairWith(ctx, t, opts, client, pairOrigin{})
-	if *noService {
-		t.blank()
-		t.say("VaultSync has no background service on this computer: run %s run to keep syncing.", command)
+	noServiceNote := func() {
+		if *noService {
+			t.blank()
+			t.say("VaultSync has no background service on this computer: run %s run to keep syncing.", command)
+		}
 	}
-	if errors.Is(err, errCancelled) {
+	// The setup link, run again, is how VaultSync is updated, and nobody
+	// updating has a code at hand: on a computer that already syncs a vault
+	// with a Hub, setup ends here, unless a flag asks for a pairing.
+	// vaultsync pair syncs another vault or Hub (#380, decision 081).
+	if !asksToPair {
+		if synced, ok := syncedWithAHub(ctx, client); ok {
+			synced.say(t, command)
+			noServiceNote()
+			return nil
+		}
+	}
+	_, err = a.pairWith(ctx, t, opts, client, pairOrigin{})
+	noServiceNote()
+	// Every question comes before the Hub is asked to share or start a
+	// vault, and before this computer's engine changes: an interrupt
+	// there, like a cancel, leaves nothing paired.
+	if errors.Is(err, errCancelled) || errors.Is(err, errInterrupted) {
 		t.blank()
 		if *noService {
 			t.say("Nothing was paired. Run vaultsync pair any time.")
 		} else {
 			t.say("Nothing was paired. The sync engine and the background service stay installed: run vaultsync pair any time, or vaultsync uninstall to remove the background service.")
+		}
+		if errors.Is(err, errInterrupted) {
+			return err
 		}
 		return nil
 	}
@@ -492,6 +550,92 @@ func (a *app) setup(ctx context.Context, args []string) error {
 		t.say("  Next device: run the same setup link, or in VaultSync on iPhone tap Add Hub.")
 	}
 	return err
+}
+
+// pairingFlagGiven: a flag of the pairing was given — the code, a Hub, a
+// vault, a folder, a name or the consent — whatever its value. Each means a
+// pairing only, so setup then pairs, also on a computer that already syncs,
+// and an empty value (--code "") meets what it met before (decision 081).
+// --no-service is setup's own.
+func pairingFlagGiven(fs *flag.FlagSet) bool {
+	given := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name != "no-service" {
+			given = true
+		}
+	})
+	return given
+}
+
+// syncedHere is what this computer's engine syncs with a Hub, for setup run
+// again on a computer that already syncs (decision 081).
+type syncedHere struct {
+	vaults  []string // the vaults' names, as this computer's engine has them
+	paused  bool     // syncing is paused on this computer
+	waiting []pendingShare
+}
+
+// syncedWithAHub reads what the engine's own configuration syncs with a
+// Hub: its folders shared with a device other than this computer — every
+// other device in VaultSync's engine is a Hub a pairing added, never an
+// introducer's. ok is false when no folder is, or when the configuration
+// cannot be read: setup then pairs as it did before. Nothing else decides —
+// not the pairing journal, which records attempts.
+func syncedWithAHub(ctx context.Context, c *syncthing.Client) (syncedHere, bool) {
+	myID, err := c.MyID(ctx)
+	if err != nil {
+		return syncedHere{}, false
+	}
+	folders, err := c.Folders(ctx)
+	if err != nil {
+		return syncedHere{}, false
+	}
+	var s syncedHere
+	for _, f := range folders {
+		for _, d := range f.Devices {
+			if d.DeviceID != myID {
+				name := pairing.SanitizeName(f.Label)
+				if name == "" {
+					name = f.ID
+				}
+				s.vaults = append(s.vaults, name)
+				break
+			}
+		}
+	}
+	if len(s.vaults) == 0 {
+		return syncedHere{}, false
+	}
+	// Said beside it, never decided on: a look that fails leaves its line
+	// out.
+	s.paused, _ = pausedHere(ctx, c)
+	s.waiting, _ = pendingFromHubs(ctx, c, myID)
+	return s, true
+}
+
+// say tells the person updating that VaultSync is set up and what it syncs,
+// and the commands for what they may want next.
+func (s syncedHere) say(t *term, command string) {
+	what := quoted(s.vaults[0])
+	if len(s.vaults) > 1 {
+		what = fmt.Sprintf("%d vaults", len(s.vaults))
+	}
+	t.blank()
+	t.say("✓ VaultSync is set up, and this computer syncs %s with your Hub — there is nothing to pair.", what)
+	if s.paused {
+		t.say("  Syncing is paused on this computer: %s resume starts it again.", command)
+	}
+	// pair refuses while syncing is paused here: the way is resume first.
+	way := command + " pair sets it up"
+	if s.paused {
+		way = fmt.Sprintf("run %s resume, then %s pair, to set it up", command, command)
+	}
+	for _, w := range s.waiting {
+		t.say("  Your Hub %s is sharing %s with this computer, but it is not set up here yet: %s.", quoted(pairing.SanitizeName(w.hub)), quoted(pairing.SanitizeName(w.label)), way)
+	}
+	t.blank()
+	t.say("  Check on it any time:  %s status", command)
+	t.say("  Another vault, or another Hub:  %s pair", command)
 }
 
 // programGoneNote says what to do when the service's program is gone —
@@ -1006,9 +1150,12 @@ func (a *app) pair(ctx context.Context, args []string) error {
 	t, closeTerm := openTerm(a.out)
 	defer closeTerm()
 	_, err = a.pairWith(ctx, t, opts, client, pairOrigin{})
-	if errors.Is(err, errCancelled) {
+	if errors.Is(err, errCancelled) || errors.Is(err, errInterrupted) {
 		t.blank()
 		t.say("Nothing was paired.")
+		if errors.Is(err, errInterrupted) {
+			return err
+		}
 		return nil
 	}
 	return err
@@ -1778,12 +1925,16 @@ func (a *app) startService() error {
 	// path may be the newer build too.
 	self, selfErr := ownProgram(a.appEnv)
 	before := selfErr == nil && a.serviceRunsThisBuild(self)
-	if err := a.svc.start(); err != nil {
+	left, err := a.svc.start()
+	if err != nil {
 		return err
 	}
 	// Say "running" only for a service that runs.
-	if !a.svc.waitRunning() {
+	notRunning := func() error {
 		return refuse("VaultSync asked the system to start its background service, but it is not running. See %s, or run vaultsync setup again.", a.logHint())
+	}
+	if !a.svc.waitRunning() {
+		return notRunning()
 	}
 	// Nor "running again" for one that runs but does not sync.
 	if note := a.parkedNote(); note != "" {
@@ -1791,23 +1942,71 @@ func (a *app) startService() error {
 	}
 	st, err := loadState(a.lay.State)
 	older := olderThanSetUp(st, err)
-	if before && a.serviceRunsThisBuild(self) {
+	thisBuild := before && a.serviceRunsThisBuild(self)
+	if thisBuild && older {
 		// What this program knows of itself holds for the service.
-		if older {
-			return refuse("The background service runs, but it does not sync: %s", a.olderNote(st, err))
+		return refuse("The background service runs, but it does not sync: %s", a.olderNote(st, err))
+	}
+	// The service manager counts a run as running from its first moment;
+	// its agent answers only once it has come up, which a pin's download
+	// can delay for minutes, and a run that ends before then never does.
+	// So "running" is said only on an answer (#290, decision 085).
+	answered := a.agentAnswers()
+	if left && !answered {
+		// A run left alone that gave no answer is looked at once more: one
+		// that is gone or no longer running is loaded afresh and waited for
+		// once more, so a job launchd was still removing is never left
+		// down until the next login (decision 085's guard).
+		again, err := a.svc.startAgainIfGone()
+		if err != nil {
+			return err
 		}
-		fmt.Fprintln(a.out, "✓ VaultSync is running again.")
+		if again {
+			left = false
+			if !a.svc.waitRunning() {
+				return notRunning()
+			}
+			answered = a.agentAnswers()
+		}
+	}
+	if thisBuild {
+		switch {
+		case !answered:
+			fmt.Fprintln(a.out, a.noAnswerYet())
+		case left:
+			fmt.Fprintln(a.out, "✓ VaultSync is already running.")
+		default:
+			fmt.Fprintln(a.out, "✓ VaultSync is running again.")
+		}
 		return nil
 	}
 	// The service runs another build, of which this program's pin says
 	// nothing — a newer one syncs, an older one parks (#264). start says
 	// only what it knows, and leaves whether it syncs to status, which
 	// asks the running agent.
-	fmt.Fprintln(a.out, "✓ The background service is running. It runs another VaultSync build than this vaultsync — vaultsync status says whether it syncs.")
+	if answered {
+		fmt.Fprintln(a.out, "✓ The background service is running. It runs another VaultSync build than this vaultsync — vaultsync status says whether it syncs.")
+	} else {
+		fmt.Fprintln(a.out, "The background service runs, but it does not answer yet. It runs another VaultSync build than this vaultsync — vaultsync status says whether it syncs.")
+	}
 	if older {
 		fmt.Fprintln(a.out, "Note: "+a.olderFact(st, err))
 	}
 	return nil
+}
+
+// noAnswerYet is start's word for a service that runs and whose agent has
+// not answered: no refusal — it may be on its way up — and the way out for
+// one that stays so, which vaultsync stop ends however it hangs. A run that
+// recorded that it could not open its control socket syncs on without one
+// and never answers there; a stop and start would only make the same
+// socket fail again, so that is said instead (control-socket-error.txt goes
+// once a run serves its socket, and with a clean stop).
+func (a *app) noAnswerYet() string {
+	if _, err := os.Stat(a.lay.SocketErrorFile()); err == nil {
+		return fmt.Sprintf("VaultSync's background service runs, but it does not answer on its control socket: it recorded that it could not open it (%s says why). vaultsync status asks the sync engine directly and says whether it syncs.", tildePath(a.home, a.lay.SocketErrorFile()))
+	}
+	return fmt.Sprintf("VaultSync's background service runs, but it does not answer yet — it may still be installing its sync engine. vaultsync status says where it stands; if it stays so, run vaultsync stop, then vaultsync start (its log: %s).", a.logHint())
 }
 
 // serviceRunsThisBuild: the background service runs this very build — the

@@ -43,6 +43,7 @@ service and the menu-bar app's start at login from VaultSync for Mac).
 | `cmd/vaultsync-tray/` | the `vaultsync-tray` binary: `fyne.io/systray` glue (Cocoa through cgo on macOS, StatusNotifierItem over DBus on Linux) and the GNOME hint |
 | `macos/` | VaultSync for Mac (decision 052): `Info.plist` and `make-app.sh` (the tray as the bundle's executable, the agent beside it), `sign.sh` (Developer ID and notarization on a tag, ad hoc on a pull request), `verify.sh` (Apple's checks of the result), `install-rcodesign.sh` (the pinned signer), `tests/` (the release path against a stand-in, the team checks against a signed fixture) |
 | `scripts/release-assets.sh` | a release's assets and `SHA256SUMS`, run by the release job and by every pull request |
+| `scripts/release-notes.sh` | a release's text: the version's section of `CHANGELOG.md`, checked on every desktop tag before anything is signed; `scripts/tests/` holds it to its cases and to every released section |
 
 The pairing protocol, the Syncthing REST client and the device-side accept
 guard come from the Hub's module (`hub/pairing`, `hub/syncthing`, `hub/join`)
@@ -72,9 +73,15 @@ On a Mac, use `syncthing-macos-arm64-$v.zip` (or `-amd64`).
 ## Release
 
 What a person meets of this agent goes into [CHANGELOG.md](CHANGELOG.md), one
-`## [X.Y.Z] — date` section per release. The repository's root changelog is
-the iOS app's, the Hub's and the helper's; a change that spans every component
-goes there, with one line here.
+`## [X.Y.Z] — YYYY-MM-DD` section per release. The repository's root changelog
+is the iOS app's, the Hub's and the helper's; a change that spans every
+component goes there, with one line here. That section is the GitHub
+release's text, as written: `scripts/release-notes.sh` points its relative
+links at the release's tag and adds the link to the whole changelog and a
+paragraph on the assets. Every desktop tag needs it, a candidate's too —
+`desktop-vX.Y.Z-rc.N` reads the section of `X.Y.Z`, because the final tag goes
+on the candidate's commit: without it, or with a heading in another form, the
+run stops in its build job, before anything is signed.
 
 Tag `desktop-vX.Y.Z` on `main`. `desktop-release.yml` publishes a GitHub
 release (not marked Latest — that stays the iOS app's release) with
@@ -127,9 +134,11 @@ stand-in for Apple with every flag checked against the pinned rcodesign
 (`macos/tests/sign-release-test.sh`), `macos/verify.sh` without a team —
 which checks each binary's architecture and starts both architectures'
 agent and menu-bar app, the Intel ones under Rosetta — its team checks
-against a binary someone else signed (`macos/tests/verify-team-test.sh`)
-and `release-assets.sh` over its own build. Locally:
-`desktop/macos/tests/sign-release-test.sh` (any OS) and
+against a binary someone else signed (`macos/tests/verify-team-test.sh`),
+`release-assets.sh` over its own build and `release-notes.sh` against its
+cases and every released section (`scripts/tests/release-notes-test.sh`).
+Locally: `desktop/macos/tests/sign-release-test.sh` (any OS),
+`desktop/scripts/tests/release-notes-test.sh` (any OS) and
 `desktop/macos/tests/verify-team-test.sh` (macOS). The real Developer ID, Apple's verdict, the secrets step and
 the release job first run on a tag: before a release, push
 `desktop-vX.Y.Z-rc.1` — it runs all of it into a draft that `setup.sh` never
