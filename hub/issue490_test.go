@@ -35,8 +35,12 @@ func seedCode(t *testing.T, store *stateStore) {
 	}
 }
 
+// The writers pause a moment between writes, as the server and a command
+// do; back to back, one could take the lock again before the other's next
+// look, and the test would measure fairness instead of lost changes.
 func countFailures(store *stateStore, n int) error {
 	for i := 0; i < n; i++ {
+		time.Sleep(time.Millisecond)
 		if _, err := store.update(func(st *hubState) error {
 			st.Pairing.Failures++
 			return nil
@@ -49,6 +53,7 @@ func countFailures(store *stateStore, n int) error {
 
 func recordDevices(store *stateStore, n int) error {
 	for i := 0; i < n; i++ {
+		time.Sleep(time.Millisecond)
 		if _, err := store.update(func(st *hubState) error {
 			st.recordDevice(pairedDevice{DeviceID: fmt.Sprintf("D%04d", i), Name: "d"})
 			return nil

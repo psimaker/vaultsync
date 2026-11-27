@@ -64,7 +64,7 @@ func lockStateFile(statePath string) (func(), error) {
 			f.Close()
 			return nil, fmt.Errorf("the Hub's state is busy: its lock %s has been held for %s, by another vaultsync-hub or another program on this host; nothing was changed", lockPath, stateLockWait)
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(2 * time.Millisecond)
 	}
 }
 
