@@ -192,17 +192,17 @@ func TestIssue195_TheMirrorGuardFailsClosed(t *testing.T) {
 	}
 	src := string(original)
 
-	for _, c := range []struct{ name, old, new, extraFile string }{
-		{name: "the NAT-PMP library under another import path", old: `natpmp "github.com/jackpal/go-nat-pmp"`, new: `natpmp "github.com/jackpal/go-nat-pmp/v2"`},
-		{name: "a package qualifier no import names", old: `natpmp "github.com/jackpal/go-nat-pmp"`, new: `"github.com/jackpal/go-nat-pmp"`},
-		{name: "a dot import", old: `"github.com/syncthing/syncthing/lib/nat"`, new: `"github.com/syncthing/syncthing/lib/nat"` + "\n\t. \"strconv\""},
-		{name: "fields reordered", old: "\tlocalIP   net.IP\n\tgatewayIP net.IP\n", new: "\tgatewayIP net.IP\n\tlocalIP   net.IP\n"},
-		{name: "a field's type changed", old: "\trenewal   time.Duration\n", new: "\trenewal   int64\n"},
-		{name: "an embedded field", old: "\tclient    *natpmp.Client\n}", new: "\tclient    *natpmp.Client\n\tnatpmp.Client\n}"},
-		{name: "a changed signature", old: "GetExternalIPv4Address(ctx context.Context) (net.IP, error) {", new: "GetExternalIPv4Address(ctx context.Context) (net.IP, int, error) {"},
-		{name: "a value receiver", old: "func (w *wrapper) AddPortMapping(", new: "func (w wrapper) AddPortMapping("},
-		{name: "the type declared twice", extraFile: "package pmp\n\ntype wrapper struct{}\n"},
-		{name: "a method declared twice", extraFile: "package pmp\n\nimport \"context\"\n\nfunc (w *wrapper) GetExternalIPv4Address(ctx context.Context) {}\n"},
+	for _, c := range []struct{ name, old, new, extraFile, want string }{
+		{name: "the NAT-PMP library under another import path", old: `natpmp "github.com/jackpal/go-nat-pmp"`, new: `natpmp "github.com/jackpal/go-nat-pmp/v2"`, want: "go-nat-pmp/v2.Client"},
+		{name: "a package qualifier no import names", old: `natpmp "github.com/jackpal/go-nat-pmp"`, new: `"github.com/jackpal/go-nat-pmp"`, want: `no import names the package "natpmp"`},
+		{name: "a dot import", old: `"github.com/syncthing/syncthing/lib/nat"`, new: `"github.com/syncthing/syncthing/lib/nat"` + "\n\t. \"strconv\"", want: "dot import"},
+		{name: "fields reordered", old: "\tlocalIP   net.IP\n\tgatewayIP net.IP\n", new: "\tgatewayIP net.IP\n\tlocalIP   net.IP\n", want: "update pmpDevice"},
+		{name: "a field's type changed", old: "\trenewal   time.Duration\n", new: "\trenewal   int64\n", want: "renewal int64"},
+		{name: "an embedded field", old: "\tclient    *natpmp.Client\n}", new: "\tclient    *natpmp.Client\n\tnatpmp.Client\n}", want: "(embedded) github.com/jackpal/go-nat-pmp.Client"},
+		{name: "a changed signature", old: "GetExternalIPv4Address(ctx context.Context) (net.IP, error) {", new: "GetExternalIPv4Address(ctx context.Context) (net.IP, int, error) {", want: "(*wrapper).GetExternalIPv4Address is"},
+		{name: "a value receiver", old: "func (w *wrapper) AddPortMapping(", new: "func (w wrapper) AddPortMapping(", want: "(*wrapper).AddPortMapping is []"},
+		{name: "the type declared twice", extraFile: "package pmp\n\ntype wrapper struct{}\n", want: "declares its wrapper type 2 times"},
+		{name: "a method declared twice", extraFile: "package pmp\n\nimport \"context\"\n\nfunc (w *wrapper) GetExternalIPv4Address(ctx context.Context) {}\n", want: "(*wrapper).GetExternalIPv4Address is"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			changed := src
@@ -221,15 +221,20 @@ func TestIssue195_TheMirrorGuardFailsClosed(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := pmpMirrorMismatch(tmp); err == nil {
+			err := pmpMirrorMismatch(tmp)
+			if err == nil {
 				t.Fatal("the guard accepted it")
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("the guard refused it for another reason: %v (want %q)", err, c.want)
 			}
 		})
 	}
 
 	t.Run("a source it cannot read", func(t *testing.T) {
-		if err := pmpMirrorMismatch(filepath.Join(t.TempDir(), "missing")); err == nil {
-			t.Fatal("the guard accepted a directory that does not exist")
+		err := pmpMirrorMismatch(filepath.Join(t.TempDir(), "missing"))
+		if err == nil || !strings.Contains(err.Error(), "read lib/pmp") {
+			t.Fatalf("pmpMirrorMismatch(a missing directory) = %v, want a read error", err)
 		}
 	})
 }
