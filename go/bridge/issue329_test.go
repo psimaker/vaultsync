@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -709,6 +710,265 @@ func TestIssue329_AVersionThatDoesNotKnowTheFieldReadsAndDropsIt(t *testing.T) {
 	}
 }
 
+// The first reconcile after the update writes every record from 3.0.x in
+// this version's shape, whatever the folder's state, and a second reconcile
+// changes nothing. The folder there — with the recorded marker, with another
+// one, or without one — is never refused on the way.
+func TestIssue329_ARecordFromBeforeTheFieldTakesThisShapeAtTheFirstReconcile(t *testing.T) {
+	const folderID = "issue329-convert-there"
+	e, own := newIssue315Engine(t, folderID)
+	defer StopSyncthing()
+	full := e.expectRecord(own)
+	twice := func(step string) folderStorageRecord {
+		t.Helper()
+		if err := issue329CheckPath(t, folderID); err != nil {
+			t.Fatalf("%s: CheckPath before the reconcile = %v, want nil", step, err)
+		}
+		NoteFolderStorage()
+		once := issue329RawRecord(t, folderID)
+		NoteFolderStorage()
+		if again := issue329RawRecord(t, folderID); string(again) != string(once) {
+			t.Fatalf("%s: a second reconcile changed the record: %s, was %s", step, again, once)
+		}
+		if err := issue329CheckPath(t, folderID); err != nil {
+			t.Fatalf("%s: CheckPath after the reconcile = %v, want nil", step, err)
+		}
+		record, _ := issue315Record(t, folderID)
+		return record
+	}
+
+	// Its directory with the recorded marker: .stfolder's number is added.
+	issue329PutRecord301(t, folderID, full)
+	if got := twice("the recorded marker"); got != full {
+		t.Fatalf("the reconcile wrote %+v, want %+v", got, full)
+	}
+
+	// Its directory with another marker: what is there is recorded, once.
+	issue329PutRecord301(t, folderID, full)
+	issue329MakeMarkerAnew(t, folderID, own)
+	anew := twice("another marker")
+	if anew != e.expectRecord(own) || anew.Stfolder != full.Stfolder || anew.Marker == full.Marker {
+		t.Fatalf("the reconcile wrote %+v, want the marker there under %+v's .stfolder", anew, full)
+	}
+
+	// Its directory without a marker file: .stfolder's number is recorded
+	// with the marker the record had.
+	issue329PutRecord301(t, folderID, anew)
+	if err := os.Remove(folderMarkerPath(config.FolderConfiguration{ID: folderID}, own)); err != nil {
+		t.Fatal(err)
+	}
+	if got := twice("no marker file"); got != anew {
+		t.Fatalf("the reconcile wrote %+v, want %+v", got, anew)
+	}
+}
+
+// A record from 3.0.x whose folder is not there at the first reconcile after
+// the update — moved in Files and not reconnected yet — takes this version's
+// shape without `.stfolder`'s number, and the folder is held to its marker
+// from then on: a copy that lands at its path later is refused, and only its
+// own directory, with the recorded marker, passes and completes the record.
+// A version that does not know the fields reads the record as one it knows,
+// and after it the same record is written again.
+func TestIssue329_ARecordOfAFolderThatIsNotThereIsHeldToItsMarker(t *testing.T) {
+	const folderID = "issue329-convert-gone"
+	e, own := newIssue315Engine(t, folderID)
+	defer StopSyncthing()
+	full := e.expectRecord(own)
+	issue329PutRecord301(t, folderID, full)
+	away := filepath.Join(e.base, "moved-away", "Vault")
+	if err := os.MkdirAll(filepath.Dir(away), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(own, away); err != nil {
+		t.Fatal(err)
+	}
+
+	NoteFolderStorage()
+	held := issue329RawRecord(t, folderID)
+	NoteFolderStorage()
+	if again := issue329RawRecord(t, folderID); string(again) != string(held) {
+		t.Fatalf("a second reconcile changed the record: %s, was %s", again, held)
+	}
+	want := folderStorageRecord{Marker: full.Marker, Index: full.Index, Anchor: full.Anchor, Strict: true}
+	if got, _ := issue315Record(t, folderID); got != want {
+		t.Fatalf("the reconcile wrote %+v, want %+v", got, want)
+	}
+
+	// VaultSync 3.0.1 decodes with json.Unmarshal into a type without these
+	// fields (v3.0.1, readFolderStorage): unknown fields are skipped, and an
+	// empty `.stfolder` number is not written at all.
+	var old issue329Record301
+	if err := json.Unmarshal(held, &old); err != nil {
+		t.Fatalf("3.0.1's record type cannot read the record: %v", err)
+	}
+	if old != (issue329Record301{Marker: full.Marker, Index: full.Index, Anchor: full.Anchor}) {
+		t.Fatalf("3.0.1's record type reads %+v from %s", old, held)
+	}
+	if strings.Contains(string(held), "stfolder") {
+		t.Fatalf("the record names an empty .stfolder number: %s", held)
+	}
+	issue329PutRecord301(t, folderID, full)
+	NoteFolderStorage()
+	if again := issue329RawRecord(t, folderID); string(again) != string(held) {
+		t.Fatalf("after a version without the fields wrote it, the reconcile wrote %s, want %s", again, held)
+	}
+
+	// A copy lands at the folder's path: refused, and nothing is recorded.
+	copied := filepath.Join(e.base, "elsewhere", "Vault")
+	issue315CopyTree(t, away, copied)
+	if err := os.Rename(copied, own); err != nil {
+		t.Fatal(err)
+	}
+	if err := issue329CheckPath(t, folderID); !errors.Is(err, errFolderNotItsDirectory) {
+		t.Fatalf("CheckPath over a copy at the path of a folder held to its marker = %v, want %q", err, folderNotItsDirectory)
+	}
+	NoteFolderStorage()
+	if again := issue329RawRecord(t, folderID); string(again) != string(held) {
+		t.Fatalf("the reconcile wrote the copy down: %s, was %s", again, held)
+	}
+
+	// The folder's own directory back in its place: it passes, and the
+	// reconcile completes the record.
+	if err := os.Rename(own, filepath.Join(e.base, "copy-moved-out")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(away, own); err != nil {
+		t.Fatal(err)
+	}
+	if err := issue329CheckPath(t, folderID); err != nil {
+		t.Fatalf("CheckPath once the folder's own directory is back = %v, want nil", err)
+	}
+	NoteFolderStorage()
+	if got := e.expectRecord(own); got != full {
+		t.Fatalf("the reconcile completed the record as %+v, want %+v", got, full)
+	}
+}
+
+// A record from 3.0.x could only let the folder through, so no read the
+// check would need for another record stops it: not the anchor's, not the
+// index ID's. "The update never refuses a vault" holds for a read that fails.
+func TestIssue329_AFailedReadNeverStopsAVaultWhoseRecordComesFromBeforeTheField(t *testing.T) {
+	const folderID = "issue329-old-record-unread"
+	e, own := newIssue315Engine(t, folderID)
+	defer StopSyncthing()
+	issue329PutRecord301(t, folderID, e.expectRecord(own))
+	folder, _, _ := getFolderConfig(folderID)
+	if err := issue329Check(issue315Store(t), 0, errors.New("disk I/O error"), nil).answer(folder); err != nil {
+		t.Fatalf("the check with a failed anchor read and an unknown index ID = %v, want nil", err)
+	}
+
+	// Through the engine: a start whose anchor cannot be read.
+	issue315StopWithConfigOnDisk(t, e.base, own)
+	realPeek := peekStorageAnchor
+	failing := func(string) (uint64, error) { return 0, errors.New("disk I/O error") }
+	readStorageAnchor, peekStorageAnchor = failing, failing
+	defer func() { readStorageAnchor, peekStorageAnchor = ensureStorageAnchor, realPeek }()
+	if errMsg := StartSyncthing(e.base); errMsg != "" {
+		t.Fatalf("StartSyncthing() failed: %s", errMsg)
+	}
+	defer StopSyncthing()
+	waitFor(t, "the folder to sync on while the anchor cannot be read", 30*time.Second, func() bool {
+		RescanFolder(folderID)
+		st := issue329Status(t, folderID)
+		return st.State == "idle" && st.ErrorReason == ""
+	})
+}
+
+// issue329WatchingStore is the engine's database with every call that can
+// write counted: PutKV, and GetIndexID, which makes an index ID where there
+// is none.
+type issue329WatchingStore struct {
+	inner      storageRecords
+	writes     int
+	indexReads int
+}
+
+func (s *issue329WatchingStore) GetKV(key string) ([]byte, error) { return s.inner.GetKV(key) }
+
+func (s *issue329WatchingStore) PutKV(key string, val []byte) error {
+	s.writes++
+	return s.inner.PutKV(key, val)
+}
+
+func (s *issue329WatchingStore) GetIndexID(folder string, device protocol.DeviceID) (protocol.IndexID, error) {
+	s.indexReads++
+	return s.inner.GetIndexID(folder, device)
+}
+
+// issue329Disk lists what a check could change on disk: every entry of dir
+// with its file number, and the anchor's file number or its absence.
+func issue329Disk(t *testing.T, dir, configDir string) string {
+	t.Helper()
+	var listing strings.Builder
+	err := filepath.WalkDir(dir, func(path string, _ fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		number, err := fileNumber(path)
+		fmt.Fprintf(&listing, "%s %d %v\n", path, number, err)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	number, err := fileNumber(filepath.Join(configDir, storageAnchorName))
+	fmt.Fprintf(&listing, "anchor %d %v\n", number, err)
+	return listing.String()
+}
+
+// A check reads, and writes nothing at all: not the record, not an index ID,
+// not the anchor, nothing in the folder. Where it cannot decide without a
+// write, it decides without: an index ID it does not know means no record
+// applies, and an anchor that is gone means no record applies, as at the
+// next start, which makes a new one.
+func TestIssue329_TheEnginesCheckWritesNothing(t *testing.T) {
+	const folderID = "issue329-writes-nothing"
+	e, own := newIssue315Engine(t, folderID)
+	defer StopSyncthing()
+	full := e.expectRecord(own)
+	folder, _, _ := getFolderConfig(folderID)
+	watching := &issue329WatchingStore{inner: issue315Store(t)}
+	known := map[string]uint64{folderID: full.Index}
+	anchorFile := filepath.Join(e.base, storageAnchorName)
+
+	ask := func(state string, check folderDirectoryCheck) {
+		t.Helper()
+		disk, record := issue329Disk(t, own, e.base), issue329RawRecord(t, folderID)
+		if err := check.answer(folder); err != nil {
+			t.Fatalf("%s: the check = %v, want nil", state, err)
+		}
+		if after := issue329Disk(t, own, e.base); after != disk {
+			t.Fatalf("%s: the check changed the disk:\n%s\nwas\n%s", state, after, disk)
+		}
+		if after := issue329RawRecord(t, folderID); string(after) != string(record) {
+			t.Fatalf("%s: the check changed the record: %s, was %s", state, after, record)
+		}
+		if watching.writes != 0 || watching.indexReads != 0 {
+			t.Fatalf("%s: the check wrote %d times and asked the engine for an index ID %d times", state, watching.writes, watching.indexReads)
+		}
+	}
+
+	issue329MakeMarkerAnew(t, folderID, own)
+	ask("a marker made anew", issue329Check(watching, full.Anchor, nil, known))
+	ask("an index ID the check does not know", issue329Check(watching, full.Anchor, nil, nil))
+
+	// The start's read of the anchor failed, and the file is gone now.
+	if err := os.Rename(anchorFile, anchorFile+".kept"); err != nil {
+		t.Fatal(err)
+	}
+	ask("an anchor that is gone", folderDirectoryCheck{
+		store:   watching,
+		anchor:  &anchorReading{read: func() (uint64, error) { return peekStorageAnchor(e.base) }, err: errors.New("disk I/O error")},
+		indexes: &indexSnapshot{ids: known},
+	})
+	if err := os.Rename(anchorFile+".kept", anchorFile); err != nil {
+		t.Fatal(err)
+	}
+
+	issue329PutRecord301(t, folderID, full)
+	ask("a record from before the field", issue329Check(watching, full.Anchor, nil, known))
+}
+
 // A read that fails refuses (decision 039), and is no finding about the
 // directory: its reason is its own, nobody is told the folder is a copy, and
 // the next check asks again.
@@ -722,10 +982,9 @@ func TestIssue329_AReadThatFailsIsNoCopy(t *testing.T) {
 	mu.Lock()
 	anchor := stStorageAnchor
 	mu.Unlock()
+	indexes := map[string]uint64{folderID: issue329Index(t, folderID)}
 	failingKV := issue315FailingStore{kvErr: errors.New("disk I/O error")}
 	failingKV.storageRecords, failingKV.Closer = database, database
-	failingIndex := issue315FailingStore{indexErr: errors.New("disk I/O error")}
-	failingIndex.storageRecords, failingIndex.Closer = database, database
 
 	expectUnchecked := func(what string, err error) {
 		t.Helper()
@@ -737,20 +996,24 @@ func TestIssue329_AReadThatFailsIsNoCopy(t *testing.T) {
 		}
 		issue329ExpectCleanText(t, err.Error(), e.base)
 	}
-	expectUnchecked("the record", issue329Check(failingKV, anchor, nil).answer(folder))
-	expectUnchecked("the index ID", issue329Check(failingIndex, anchor, nil).answer(folder))
-	expectUnchecked("the anchor", issue329Check(database, 0, errors.New("disk I/O error")).answer(folder))
+	expectUnchecked("the record", issue329Check(failingKV, anchor, nil, indexes).answer(folder))
+	expectUnchecked("the anchor", issue329Check(database, 0, errors.New("disk I/O error"), indexes).answer(folder))
 	stfolder := filepath.Join(own, config.DefaultMarkerName)
 	if err := os.Chmod(stfolder, 0); err != nil {
 		t.Fatal(err)
 	}
-	err := issue329Check(database, anchor, nil).answer(folder)
+	err := issue329Check(database, anchor, nil, indexes).answer(folder)
 	if chmodErr := os.Chmod(stfolder, 0o755); chmodErr != nil {
 		t.Fatal(chmodErr)
 	}
 	expectUnchecked("the marker's directory", err)
-	if err := issue329Check(database, anchor, nil).answer(folder); err != nil {
+	if err := issue329Check(database, anchor, nil, indexes).answer(folder); err != nil {
 		t.Fatalf("the check once everything reads = %v, want nil", err)
+	}
+	// An index ID the check does not know is one it cannot read without
+	// making it: the record does not apply, as far as the check can tell.
+	if err := issue329Check(database, anchor, nil, nil).answer(folder); err != nil {
+		t.Fatalf("the check without the folder's index ID = %v, want nil", err)
 	}
 
 	// Through the engine: the folder shows the read's reason, and once the
@@ -758,9 +1021,9 @@ func TestIssue329_AReadThatFailsIsNoCopy(t *testing.T) {
 	swap := func(store storageRecords) {
 		mu.Lock()
 		defer mu.Unlock()
-		installed := installDirectoryCheckLocked(store, e.base, anchor, nil)
+		installed, indexes := installDirectoryCheckLocked(store, e.base, anchor, nil)
 		removeDirectoryCheck(stDirectoryCheck)
-		stDirectoryCheck = installed
+		stDirectoryCheck, stIndexes = installed, indexes
 	}
 	swap(failingKV)
 	RescanFolder(folderID)
@@ -776,13 +1039,32 @@ func TestIssue329_AReadThatFailsIsNoCopy(t *testing.T) {
 }
 
 // issue329Check is the engine's check over store, with an anchor that reads
-// as given every time.
-func issue329Check(store storageRecords, anchor uint64, anchorErr error) folderDirectoryCheck {
-	return folderDirectoryCheck{store: store, anchor: &anchorReading{
-		read:   func() (uint64, error) { return anchor, anchorErr },
-		number: anchor,
-		err:    anchorErr,
-	}}
+// as given every time and the local index IDs given.
+func issue329Check(store recordReader, anchor uint64, anchorErr error, indexes map[string]uint64) folderDirectoryCheck {
+	snapshot := &indexSnapshot{ids: make(map[string]uint64)}
+	for id, index := range indexes {
+		snapshot.ids[id] = index
+	}
+	return folderDirectoryCheck{
+		store: store,
+		anchor: &anchorReading{
+			read:   func() (uint64, error) { return anchor, anchorErr },
+			number: anchor,
+			err:    anchorErr,
+		},
+		indexes: snapshot,
+	}
+}
+
+// issue329Index returns a folder's local index ID from the engine, which
+// makes one where there is none; the tests ask it for folders that have one.
+func issue329Index(t *testing.T, folderID string) uint64 {
+	t.Helper()
+	index, err := issue315Store(t).GetIndexID(folderID, protocol.LocalDeviceID)
+	if err != nil {
+		t.Fatalf("GetIndexID: %v", err)
+	}
+	return uint64(index)
 }
 
 // An anchor the start could not read stops no folder for the rest of the
@@ -796,13 +1078,23 @@ func TestIssue329_AnAnchorThatCouldNotBeReadIsReadAgain(t *testing.T) {
 
 	var failing atomic.Bool
 	failing.Store(true)
+	fail := func(dir string) error {
+		return &os.PathError{Op: "lstat", Path: filepath.Join(dir, storageAnchorName), Err: syscall.EACCES}
+	}
+	realPeek := peekStorageAnchor
 	readStorageAnchor = func(dir string) (uint64, error) {
 		if failing.Load() {
-			return 0, &os.PathError{Op: "lstat", Path: filepath.Join(dir, storageAnchorName), Err: syscall.EACCES}
+			return 0, fail(dir)
 		}
 		return ensureStorageAnchor(dir)
 	}
-	defer func() { readStorageAnchor = ensureStorageAnchor }()
+	peekStorageAnchor = func(dir string) (uint64, error) {
+		if failing.Load() {
+			return 0, fail(dir)
+		}
+		return realPeek(dir)
+	}
+	defer func() { readStorageAnchor, peekStorageAnchor = ensureStorageAnchor, realPeek }()
 	if errMsg := StartSyncthing(e.base); errMsg != "" {
 		t.Fatalf("StartSyncthing() failed: %s", errMsg)
 	}
@@ -836,10 +1128,11 @@ func TestIssue329_ACheckOverAClosedDatabaseRefuses(t *testing.T) {
 	mu.Lock()
 	anchor := stStorageAnchor
 	mu.Unlock()
+	indexes := map[string]uint64{folderID: issue329Index(t, folderID)}
 	if errMsg := StopSyncthing(); errMsg != "" {
 		t.Fatalf("StopSyncthing() = %q", errMsg)
 	}
-	err := issue329Check(store, anchor, nil).answer(folder)
+	err := issue329Check(store, anchor, nil, indexes).answer(folder)
 	if err == nil || !strings.HasPrefix(err.Error(), folderDirectoryUnchecked) {
 		t.Fatalf("the check over a closed database = %v, want a refusal that begins %q", err, folderDirectoryUnchecked)
 	}
@@ -877,7 +1170,7 @@ func TestIssue329_NoRefusalCarriesAPath(t *testing.T) {
 	pathErr := func(name string) error {
 		return &os.PathError{Op: "lstat", Path: filepath.Join(dir, name), Err: syscall.EACCES}
 	}
-	value, err := json.Marshal(folderStorageRecord{Marker: 1, Index: index, Anchor: anchor, Stfolder: 2})
+	value, err := json.Marshal(folderStorageRecord{Marker: 1, Index: index, Anchor: anchor, Stfolder: 2, Strict: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -912,7 +1205,7 @@ func TestIssue329_NoRefusalCarriesAPath(t *testing.T) {
 		if verdict != storageUnread {
 			t.Fatalf("%s: verdict %d, want a read that failed", c.name, verdict)
 		}
-		texts = append(texts, unread, issue329Check(c.store, anchor, c.anchorErr).answer(folder).Error())
+		texts = append(texts, unread, issue329Check(c.store, anchor, c.anchorErr, map[string]uint64{folder.ID: index}).answer(folder).Error())
 
 		mu.Lock()
 		savedDB, savedAnchor, savedErr := stDB, stStorageAnchor, stStorageAnchorErr
@@ -926,7 +1219,7 @@ func TestIssue329_NoRefusalCarriesAPath(t *testing.T) {
 		folderStorageMismatch,
 		errFolderNotItsDirectory.Error(),
 		directoryRefusal(errFolderNotItsDirectory),
-		ignoresWriteError(issue329Check(cases[1].store, anchor, cases[1].anchorErr).answer(folder)),
+		ignoresWriteError(issue329Check(cases[1].store, anchor, cases[1].anchorErr, map[string]uint64{folder.ID: index}).answer(folder)),
 	)
 	for _, text := range texts {
 		if text == "" {
@@ -1129,8 +1422,9 @@ func TestIssue329_WhatTheCheckCosts(t *testing.T) {
 	// One answer outside the engine, and the engine's whole CheckPath — its
 	// own two looks at the disk and the answer — for comparison.
 	folder, _, _ := getFolderConfig(folderID)
+	indexes := map[string]uint64{folderID: issue329Index(t, folderID)}
 	mu.Lock()
-	check := issue329Check(stDB, stStorageAnchor, nil)
+	check := issue329Check(stDB, stStorageAnchor, nil, indexes)
 	mu.Unlock()
 	const rounds = 1000
 	began := time.Now()

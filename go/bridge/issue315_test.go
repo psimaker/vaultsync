@@ -536,7 +536,7 @@ func (e *issue315Engine) expectRecord(dir string) folderStorageRecord {
 	if err != nil || reading.markerErr != nil {
 		e.t.Fatalf("read the marker and its directory in %s: %v, %v", dir, err, reading.markerErr)
 	}
-	want := folderStorageRecord{Marker: reading.marker, Index: uint64(index), Anchor: anchor, Stfolder: reading.dir}
+	want := folderStorageRecord{Marker: reading.marker, Index: uint64(index), Anchor: anchor, Stfolder: reading.dir, Strict: true}
 	if !found || record != want || anchor == 0 {
 		e.t.Fatalf("the folder's record is %+v (found %v), want %+v with an anchor", record, found, want)
 	}
