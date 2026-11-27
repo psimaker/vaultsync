@@ -145,10 +145,10 @@ final class SyncthingManager {
     private(set) var pendingFolders: [PendingFolderInfo] = []
     private(set) var ignoredPendingFolderIDs: Set<String> = []
     /// Folder IDs the user removed on this iPhone. While a peer still shares
-    /// such a folder, its offer reappears as pending once the peer announces
-    /// the folder again — when a connection to it is set up or the peer's
-    /// own configuration changes, not upon the removal (#316) — and
-    /// auto-accepting it would silently undo the removal. Re-adding is an explicit user
+    /// such a folder, its offer is pending again the moment the removal
+    /// lands (#341, decision 088), and at the next connection to a peer
+    /// that was not connected then — and auto-accepting it would silently
+    /// undo the removal. Re-adding is an explicit user
     /// decision (doctrine 002 / #52). Deliberately never pruned: the set
     /// stays tiny and an entry is only lifted by an explicit accept.
     private(set) var userRemovedFolderIDs: Set<String> = []
@@ -1250,17 +1250,14 @@ final class SyncthingManager {
     /// Remove a folder by ID.
     func removeFolder(id: String) -> String? {
         // Never auto-re-accept a share the user just removed: while a peer
-        // still shares the folder, its offer comes back once the peer
-        // announces the folder again, and silently pulling it back in
-        // would undo the removal (doctrine 002 / #52). The removal sends
-        // our configuration without the folder and discards its pending
-        // offer, but gives the peer no cause to send its own: the offer
-        // returns when a connection to the peer is set up or its own
-        // configuration changes — in practice once VaultSync was closed
-        // and opened again, which is why the texts that say to accept it
-        // again say to reopen VaultSync first (#316). The share then
-        // stays under Pending Shares until the user explicitly accepts
-        // it — which honours a manually chosen target.
+        // still shares the folder, its offer is back the moment the removal
+        // lands, and silently pulling it back in would undo the removal
+        // (doctrine 002 / #52). The engine writes that offer itself, inside
+        // the commit that removes the folder, from what each connected
+        // device announced on the connection that is up (#341, decision
+        // 088): no reconnect and no restart. The share then stays under
+        // Pending Shares until the user explicitly accepts it — which
+        // honours a manually chosen target.
         //
         // Recorded before the engine is asked, and kept whatever it answers
         // (#343, decision 006): a removal can go ahead after a failed
@@ -1297,6 +1294,10 @@ final class SyncthingManager {
         guard result == nil || result == SyncBridgeService.folderNotFoundError else { return result }
 
         refreshFolders()
+        // The share is pending again by now while a device that shares it
+        // is connected (#341): list it at once, not at the next poll. The
+        // record above keeps the automatic pass away from it.
+        refreshPendingFolders()
         folderStatuses.removeValue(forKey: id)
         // Drop the path mapping so a future folder reusing this ID does not
         // inherit a stale relative path.
@@ -1332,8 +1333,18 @@ final class SyncthingManager {
         return SyncBridgeService.removeFolder(id: id)
     }
 
+    /// The bridge's pending shares, or what a test put in their place (#341).
+    private func bridgePendingFoldersJSON() -> String {
+        #if DEBUG
+        if let read = _testPendingRead { return read() }
+        #endif
+        return SyncBridgeService.getPendingFoldersJSON()
+    }
+
     /// Where the record of removed folders is kept: the standard defaults,
-    /// or a test's own (#343).
+    /// or a test's own (#343). A test's own also take the note that a
+    /// pending share was seen, which a removal's refresh writes (#341), so
+    /// that no other suite reads it from the standard defaults.
     private var userRemovedRecordDefaults: UserDefaults {
         #if DEBUG
         if let removal = _testRemoval { return removal.defaults }
@@ -1930,7 +1941,7 @@ final class SyncthingManager {
     }
 
     private func refreshPendingFolders() {
-        let json = SyncBridgeService.getPendingFoldersJSON()
+        let json = bridgePendingFoldersJSON()
         guard let data = json.data(using: .utf8),
               let decoded = try? JSONDecoder().decode([PendingFolderInfo].self, from: data) else {
             return
@@ -2791,7 +2802,7 @@ final class SyncthingManager {
     private func markPendingShareSeen() {
         guard !hasSeenPendingFolderOffer else { return }
         hasSeenPendingFolderOffer = true
-        UserDefaults.standard.set(true, forKey: Self.hasSeenPendingOfferDefaultsKey)
+        userRemovedRecordDefaults.set(true, forKey: Self.hasSeenPendingOfferDefaultsKey)
     }
 
     private func pruneIgnoredPendingFolders(availableFolderIDs: Set<String>) {
@@ -3135,6 +3146,16 @@ final class SyncthingManager {
     func _testUseRemoval(bridge: @escaping (String) -> String?, defaults: UserDefaults) {
         _testRemoval = (bridge, defaults)
         userRemovedFolderIDs = Self.loadUserRemovedFolderIDs(from: defaults)
+    }
+
+    /// What `_testUsePendingRead` put in the place of the bridge's list of
+    /// pending shares. Compiled for tests only.
+    @ObservationIgnored private var _testPendingRead: (() -> String)?
+
+    /// Reads the pending shares from `read` instead of the engine when the
+    /// manager refreshes them itself, as after a removal (#341).
+    func _testUsePendingRead(_ read: @escaping () -> String) {
+        _testPendingRead = read
     }
 
     func _testApplyDeviceList(_ newDevices: [DeviceInfo]) {

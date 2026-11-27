@@ -72,6 +72,26 @@ Two safety nets compensate:
   them; the bridge never enables auto-accept. VaultSync doctrine, not for
   upstreaming; `TestIssue371_TheEnginesOwnWriteMakesNoFolder` fails without
   it.
+- `syncthing/009-a-removed-folder-is-offered-again-from-the-last-announcement.patch` —
+  a folder removed here is pending again at once for every connected device
+  whose last cluster config on the connection that is up announced it (#341,
+  decision 088). Upstream writes a pending entry only when a cluster config
+  arrives, and a device sends one when a connection is set up or when it
+  starts or stops sharing a folder, so a removed folder was offered again
+  only with the next connection. The connection's index-handler registry
+  keeps the last announcement; after `cleanPending`, `CommitConfiguration`
+  writes what that announcement writes for a folder this side does not have
+  — the pending entry, and the index start info where the folder runs on the
+  device — and a removal also forgets the folder's state in the registry.
+  Nothing is closed and nothing is written to the configuration. One lock
+  per connection covers the cluster config handler from its listing of the
+  device's pending entries to their expiry and the replay from its read to
+  its write, so a newer announcement in between always wins. Carry all of it
+  across a bump: `TestIssue341_ARemovedVaultsShareIsOfferedAgain` fails
+  without the replay, `TestIssue341_TheRemovedFoldersDatabaseIsNotMadeAgain`
+  without the removal forgetting the folder's state, and
+  `TestIssue341_AnAnnouncementInTheReplaysGapIsTheOneThatCounts` without the
+  lock. Worth reporting upstream.
 - `syncthing/010-natpmp-result-after-cancel.patch` — the NAT-PMP device runs
   its blocking requests (`AddPortMapping`, `GetExternalIPv4Address`) through
   `svcutil.CallWithContext` too, and upstream read the request's result after
