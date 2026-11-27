@@ -188,14 +188,6 @@ struct SyncBridgeService {
     static var folderPathOverlapError: String {
         BridgeFolderPathOverlapError()
     }
-
-    /// Whether `path` holds the marker of the configured folder — the first
-    /// thing `setFolderPath` asks of a directory. Reads one file's metadata:
-    /// call it off the main actor.
-    static func folderMarkerIsAt(folderID: String, path: String) -> Bool {
-        BridgeFolderMarkerIsAt(folderID, path)
-    }
-
     /// Pause or resume a configured folder. A paused folder is neither scanned
     /// nor exchanged with peers — the non-destructive way to halt a folder that
     /// shares a local path with another and is merging into it (issue #45).

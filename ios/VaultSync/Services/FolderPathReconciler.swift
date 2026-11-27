@@ -116,12 +116,6 @@ enum FolderPathReconciler {
         var dirExists: (String) -> Bool
         /// Apply a path change and say how the bridge answered.
         var setPath: (_ folderID: String, _ newPath: String) -> SetPathResult
-        /// Whether `path` holds the folder's marker — whether the bridge
-        /// would take it as the folder's directory at all. Decides which
-        /// repairs count when the reconcile holds an overlapping pair back
-        /// (#330). The default counts every target that exists, which can
-        /// only hold more folders back, never repair one more.
-        var hasMarker: (_ folderID: String, _ path: String) -> Bool = { _, _ in true }
     }
 
     /// The bridge's answer to a path change.
@@ -183,7 +177,9 @@ enum FolderPathReconciler {
     ///    (decision 082): before the bridge is asked for any repair, a
     ///    folder whose new path is, holds or lies in another folder's path is
     ///    held where it is, and where two new paths overlap both folders are
-    ///    — whatever order the folders come in (#330).
+    ///    — whatever order the folders come in (#330). One that overlaps only
+    ///    the old path of a folder moving away in the same pass waits for
+    ///    the next pass, without a finding.
     ///  - **no mapping but currently under the root**: backfill the sidecar
     ///    (no path change) — this adopts already-healthy folders on first launch
     ///    after the update.
@@ -245,11 +241,15 @@ enum FolderPathReconciler {
             }
         }
 
-        let held = heldRepairs(repairs, folders: folders, hasMarker: env.hasMarker)
+        let holds = heldRepairs(repairs, folders: folders)
         for repair in repairs {
-            if held.contains(repair.id) {
+            if holds.held.contains(repair.id) {
                 outcome.overlapsAnotherFolder.insert(repair.id)
                 logger.warning("Held a folder rebase back because the target overlaps another folder's directory")
+                continue
+            }
+            if holds.waiting.contains(repair.id) {
+                logger.info("Deferred a folder rebase until a folder in its target has moved away")
                 continue
             }
             switch env.setPath(repair.id, repair.target) {
@@ -275,44 +275,58 @@ enum FolderPathReconciler {
     /// overlapping pair still has its old path until its repair, so the
     /// floor alone takes whichever comes first.
     ///
-    /// Only a repair the bridge would take counts: its target carries the
-    /// folder's marker. A repair is held when its target is, holds or lies in
-    /// another folder's configured path — that folder stays there, or moves
-    /// away in this pass and frees the place for the next one. Where two
-    /// repairs' targets overlap, both are held: neither folder goes there,
-    /// and each keeps its old path until one of the two is removed.
+    /// Every repair counts whose target exists, whether or not the folder's
+    /// marker is there: an earlier version that put two folders into one
+    /// directory left a marker for the first only — the engine writes one
+    /// only where `.stfolder` is missing — and a pair must not come apart over
+    /// that.
+    ///
+    /// - **held**: where two repairs' targets overlap, both — neither folder
+    ///   goes there, and each keeps its old path, with the finding, until one
+    ///   of the two is removed. A repair whose target is, holds or lies in
+    ///   the configured path of a folder that is not being repaired: that
+    ///   folder stays there.
+    /// - **waiting**: a repair whose target overlaps only the old path of a
+    ///   folder that is itself being repaired in this pass. It is not asked
+    ///   for and gets no finding: the next pass repairs it once that folder
+    ///   has moved away.
     static func heldRepairs(
         _ repairs: [(id: String, target: String)],
-        folders: [(id: String, path: String)],
-        hasMarker: (_ folderID: String, _ path: String) -> Bool
-    ) -> Set<String> {
-        let counted = repairs.filter { hasMarker($0.id, $0.target) }
-        let keys = Dictionary(
-            counted.map { ($0.id, overlapKey($0.target)) },
+        folders: [(id: String, path: String)]
+    ) -> (held: Set<String>, waiting: Set<String>) {
+        let targets = Dictionary(
+            repairs.map { ($0.id, overlapKey($0.target)) },
             uniquingKeysWith: { first, _ in first }
         )
-        let configured = folders.map { (id: $0.id, key: overlapKey($0.path)) }
         var held = Set<String>()
-        for repair in counted {
-            guard let key = keys[repair.id] else { continue }
-            if configured.contains(where: { $0.id != repair.id && keysOverlap(key, $0.key) }) {
-                held.insert(repair.id)
+        var waiting = Set<String>()
+        for repair in repairs {
+            guard let key = targets[repair.id] else { continue }
+            for other in folders where other.id != repair.id && keysOverlap(key, overlapKey(other.path)) {
+                if targets[other.id] != nil {
+                    waiting.insert(repair.id)
+                } else {
+                    held.insert(repair.id)
+                }
             }
-            for other in counted where other.id != repair.id {
-                if let otherKey = keys[other.id], keysOverlap(key, otherKey) {
+            for other in repairs where other.id != repair.id {
+                if let otherKey = targets[other.id], keysOverlap(key, otherKey) {
                     held.insert(repair.id)
                     held.insert(other.id)
                 }
             }
         }
-        return held
+        return (held, waiting.subtracting(held))
     }
 
     /// A path in the form two paths are compared in for an overlap: canonical
     /// and lowercased, as `PathCollisionGuard` compares them — the iOS data
-    /// volume is case-folding APFS.
+    /// volume is case-folding APFS. `canonical` drops a leading `/private`
+    /// only from a path that exists; dropping it here too lets a folder's
+    /// old path, gone, compare in the same form as a target that exists.
     private static func overlapKey(_ path: String) -> String {
-        canonical(path).lowercased()
+        let key = canonical(path).lowercased()
+        return key.hasPrefix("/private/") ? String(key.dropFirst("/private".count)) : key
     }
 
     /// The same directory, or one inside the other. Boundary-aware: "/vaulta"
@@ -354,8 +368,7 @@ enum FolderPathReconciler {
                 var isDir: ObjCBool = false
                 return FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
             },
-            setPath: bridgeSetPath,
-            hasMarker: SyncBridgeService.folderMarkerIsAt
+            setPath: bridgeSetPath
         )
         return reconcile(folders: folders, env: env)
     }

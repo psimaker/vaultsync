@@ -87,13 +87,18 @@ func issue330WantRepaired(t *testing.T, folderID, target string) {
 
 // issue330AddPastTheFloor configures a folder the way an earlier version
 // could — without the overlap check AddFolder holds now — and records its
-// directory, as the bridge does for every folder it can reach. The marker
-// file is written here: the engine makes none for a folder whose directory
-// already has `.stfolder`, and without it the repair is refused for the
-// missing marker before the overlap is looked at.
-func issue330AddPastTheFloor(t *testing.T, folderID, path string) {
+// directory, as the bridge does for every folder it can reach. The engine
+// makes no marker file for a folder whose directory already has `.stfolder`
+// (TestIssue330_TheEngineMarksOnlyTheFirstFolderOfADirectory). With
+// writeMarker the file is written here, so that a repair reaches the overlap
+// check instead of being refused for the missing marker first.
+func issue330AddPastTheFloor(t *testing.T, folderID, path string, writeMarker bool) config.FolderConfiguration {
 	t.Helper()
-	writeFolderMarker(t, path, folderID)
+	if writeMarker {
+		writeFolderMarker(t, path, folderID)
+	} else if err := os.MkdirAll(path, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
 	mu.Lock()
 	folder := config.FolderConfiguration{
 		ID:               folderID,
@@ -116,9 +121,10 @@ func issue330AddPastTheFloor(t *testing.T, folderID, path string) {
 	if err != nil {
 		t.Fatalf("commit a folder past the floor: %v", err)
 	}
-	if _, err := os.Stat(folderMarkerPath(folder, path)); err != nil {
+	if _, err := os.Stat(folderMarkerPath(folder, path)); writeMarker && err != nil {
 		t.Fatalf("the folder added past the floor has no marker: %v", err)
 	}
+	return folder
 }
 
 // The folder's own directory, moved into another folder's directory: the
@@ -209,9 +215,11 @@ func TestIssue330_TheRepairRefusesAPathAroundAnotherFoldersMissingDirectory(t *t
 // re-points the first and refuses the second, because it sees only where the
 // other folder is now. The app never asks it this way: its reconcile knows
 // both new paths before it asks for either, and holds both folders of such a
-// pair where they are (decision 082, `FolderPathReconciler`). The marker
-// query it decides with says yes for both new paths. Nothing is paused,
-// moved or deleted for the folder the floor refuses.
+// pair where they are (decision 082, `FolderPathReconciler`). Both folders
+// carry their marker file here, so that the floor's overlap check is reached;
+// the engine itself leaves the second folder of one directory without one
+// (TestIssue330_TheEngineMarksOnlyTheFirstFolderOfADirectory). Nothing is
+// paused, moved or deleted for the folder the floor refuses.
 func TestIssue330_TheFloorAloneRefusesTheSecondOfALegacyPair(t *testing.T) {
 	type pair struct {
 		name          string
@@ -238,7 +246,7 @@ func TestIssue330_TheFloorAloneRefusesTheSecondOfALegacyPair(t *testing.T) {
 			if errMsg := AddFolder(id(p.viaAddFolder), p.viaAddFolder, filepath.Join(old, p.rel[p.viaAddFolder])); errMsg != "" {
 				t.Fatalf("AddFolder %s: %s", p.viaAddFolder, errMsg)
 			}
-			issue330AddPastTheFloor(t, id(past), filepath.Join(old, p.rel[past]))
+			issue330AddPastTheFloor(t, id(past), filepath.Join(old, p.rel[past]), true)
 
 			// While the pair does not move, nothing is written: a path that
 			// is already the configured one stays a no-op.
@@ -248,13 +256,6 @@ func TestIssue330_TheFloorAloneRefusesTheSecondOfALegacyPair(t *testing.T) {
 
 			moved := filepath.Join(root, "new")
 			issue330Rename(t, old, moved)
-
-			// The reconcile counts both as repairs the bridge would take.
-			for _, short := range []string{p.first, p.second} {
-				if !FolderMarkerIsAt(id(short), filepath.Join(moved, p.rel[short])) {
-					t.Fatalf("FolderMarkerIsAt(%s) at its new path = false, want true", short)
-				}
-			}
 
 			issue330WantRepaired(t, id(p.first), filepath.Join(moved, p.rel[p.first]))
 			issue330WantRefused(t, id(p.second), filepath.Join(moved, p.rel[p.second]), filepath.Join(old, p.rel[p.second]))
@@ -279,47 +280,28 @@ func TestIssue330_ARepairBesideAnotherFolderGoesThrough(t *testing.T) {
 	issue330WantRepaired(t, "issue330-vault", moved)
 }
 
-// The query the reconcile asks before it holds anything: is this folder's
-// marker at that path? Only a directory with the folder's own marker file
-// says yes; it writes nothing.
-func TestIssue330_FolderMarkerIsAtNamesOnlyTheFoldersOwnMarker(t *testing.T) {
-	configDir := testConfigDir(t)
-	if FolderMarkerIsAt("issue330-vault", configDir) {
-		t.Fatalf("FolderMarkerIsAt with the engine stopped = true, want false")
+// Two folders on one directory, as 1.6.0 to 1.7.0 left them: the engine
+// writes a folder's marker file only where `.stfolder` is missing, so only the
+// first folder has one. The second folder's repair onto the pair's new place
+// is refused for the missing marker before the overlap is looked at — and the
+// first one's would go through. That is why the reconcile holds every repair
+// whose new path exists, marker or not, against the others (decision 082).
+func TestIssue330_TheEngineMarksOnlyTheFirstFolderOfADirectory(t *testing.T) {
+	root := issue330Start(t)
+	old := filepath.Join(root, "old", "Vault")
+	if errMsg := AddFolder("issue330-a", "a", old); errMsg != "" {
+		t.Fatalf("AddFolder a: %s", errMsg)
 	}
-	if errMsg := StartSyncthing(configDir); errMsg != "" {
-		t.Fatalf("StartSyncthing() failed: %s", errMsg)
-	}
-	root := filepath.Join(configDir, "Obsidian")
-	own := filepath.Join(root, "Vault")
-	if errMsg := AddFolder("issue330-vault", "Vault", own); errMsg != "" {
-		t.Fatalf("AddFolder: %s", errMsg)
-	}
-	moved := filepath.Join(root, "Moved")
-	issue330Rename(t, own, moved)
-	foreign := filepath.Join(root, "Foreign")
-	writeFolderMarker(t, foreign, "some-other-folder")
-	empty := filepath.Join(root, "Empty")
-	if err := os.MkdirAll(empty, 0o700); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
+	second := issue330AddPastTheFloor(t, "issue330-b", old, false)
+	if _, err := os.Stat(folderMarkerPath(second, old)); !os.IsNotExist(err) {
+		t.Fatalf("the second folder's marker file: err = %v, want it missing", err)
 	}
 
-	cases := []struct {
-		folderID, path string
-		want           bool
-	}{
-		{"issue330-vault", moved, true},
-		{"issue330-vault", own, false},
-		{"issue330-vault", empty, false},
-		{"issue330-vault", foreign, false},
-		{"not-configured", moved, false},
+	moved := filepath.Join(root, "new", "Vault")
+	issue330Rename(t, filepath.Join(root, "old"), filepath.Join(root, "new"))
+
+	if errMsg := SetFolderPath("issue330-b", moved); errMsg != "target does not contain this folder's data (marker missing)" {
+		t.Errorf("SetFolderPath of the second folder = %q, want the marker-missing refusal", errMsg)
 	}
-	for _, c := range cases {
-		if got := FolderMarkerIsAt(c.folderID, c.path); got != c.want {
-			t.Errorf("FolderMarkerIsAt(%q, %q) = %v, want %v", c.folderID, c.path, got, c.want)
-		}
-	}
-	if got := issue330FolderPath(t, "issue330-vault"); got != own {
-		t.Errorf("the query moved the folder to %q, want it left at %q", got, own)
-	}
+	issue330WantRepaired(t, "issue330-a", moved)
 }

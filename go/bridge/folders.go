@@ -281,27 +281,6 @@ func verifyFolderMarker(folder config.FolderConfiguration, newPath string) strin
 	return ""
 }
 
-// FolderMarkerIsAt reports whether path holds the marker of the configured
-// folder folderID — the first thing SetFolderPath asks of a directory. The
-// path reconcile uses it to know which of its repairs the bridge would take
-// before it asks for any, so that it can hold back both folders of a pair
-// whose new paths would overlap (#330, decision 082). Reads one file's
-// metadata and writes nothing. False for a stopped engine or an unknown
-// folder.
-func FolderMarkerIsAt(folderID, path string) bool {
-	mu.Lock()
-	if !engineUpLocked() || stCfg == nil {
-		mu.Unlock()
-		return false
-	}
-	folder, exists := stCfg.Folders()[folderID]
-	mu.Unlock()
-	if !exists {
-		return false
-	}
-	return verifyFolderMarker(folder, path) == ""
-}
-
 // SetFolderPaused pauses or resumes an existing folder by ID. A paused folder is
 // neither scanned nor exchanged with peers, so pausing is the non-destructive way
 // to immediately halt an in-progress collision where two folders share one local
