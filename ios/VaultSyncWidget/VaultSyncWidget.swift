@@ -156,8 +156,12 @@ private struct VaultSyncWidgetEntryView: View {
                     .foregroundStyle(Color.vaultLabel)
                 // Accent text on the accent wash, the app's tinted-button
                 // pair: the brand teal itself is too light for text (#201).
+                // One line: a label a little too long for the column
+                // shrinks instead of ending in "…" (#360).
                 Text(buttonLabel)
                     .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
                     .foregroundStyle(Color.vaultAccentText)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
@@ -181,7 +185,7 @@ private struct VaultSyncWidgetEntryView: View {
 
             Spacer(minLength: 0)
 
-            VStack(alignment: .trailing, spacing: 12) {
+            VStack(alignment: .trailing, spacing: 8) {
                 if let lastSyncDate = entry.snapshot.lastSyncDate {
                     Text(lastSyncDate, style: .time)
                         .font(.title3.monospacedDigit())
@@ -201,20 +205,31 @@ private struct VaultSyncWidgetEntryView: View {
 
                 // The app's primary button pair: white on the brand teal
                 // measured 4.3:1, `vaultOnAccent` on `vaultAccentProminent`
-                // clears 4.8:1 (#201).
+                // clears 4.8:1 (#201). The label takes the first form that
+                // fits the column: on one line with its glyph, on one line
+                // without, else on two lines. In one form for every label,
+                // "Open VaultSync" broke inside a word (#360).
                 Link(destination: VaultSyncWidgetConstants.syncURL) {
-                    Label(buttonLabel, systemImage: "arrow.triangle.2.circlepath")
-                        .font(.subheadline.weight(.semibold))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .frame(maxWidth: .infinity)
-                        .background(Color.vaultAccentProminent, in: Capsule())
-                        .foregroundStyle(Color.vaultOnAccent)
+                    ViewThatFits(in: .horizontal) {
+                        Label(buttonLabel, systemImage: "arrow.triangle.2.circlepath")
+                            .lineLimit(1)
+                        Text(buttonLabel)
+                            .lineLimit(1)
+                        Text(buttonLabel)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.center)
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity)
+                    .background(Color.vaultAccentProminent, in: Capsule())
+                    .foregroundStyle(Color.vaultOnAccent)
                 }
                 .buttonStyle(.plain)
             }
             .foregroundStyle(Color.vaultLabel)
-            .frame(maxWidth: 110)
+            .frame(maxWidth: 120)
         }
         .widgetURL(VaultSyncWidgetConstants.syncURL)
         .containerBackground(Color.vaultSurface, for: .widget)

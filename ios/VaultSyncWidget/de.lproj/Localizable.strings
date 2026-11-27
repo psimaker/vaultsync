@@ -1,8 +1,12 @@
-// Status labels reused from the main app
+// Status labels: the same keys and translations as the main app's (#360)
 "Idle" = "Leerlauf";
 "Needs Attention" = "Aktion nötig";
 "Open VaultSync" = "VaultSync öffnen";
 "Syncing" = "Wird synchronisiert";
+"All Synced" = "Alles synchron";
+"Starting" = "Startet";
+"Sync Error" = "Sync-Fehler";
+"Paused" = "Pausiert";
 
 // Metric labels
 "widget_last_sync" = "Letzter Sync";
@@ -18,7 +22,7 @@
 "widget_files_tap_to_sync" = "%d Dateien • Zum Sync tippen";
 
 // Actions
-"widget_sync_now" = "Jetzt synchronisieren";
+"widget_sync_now" = "Sync starten";
 
 // Widget gallery
 "VaultSync" = "VaultSync";
