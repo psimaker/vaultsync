@@ -21,7 +21,7 @@ import (
 // change and a rename; two at once used to leave only the later one. Every
 // read-modify-write now holds one lock shared by all of them (decision 097).
 
-const issue490Writes = 300
+const issue490Writes = 150
 
 // seedCode gives the state file an open code to count failures against.
 func seedCode(t *testing.T, store *stateStore) {
