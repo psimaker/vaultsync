@@ -65,7 +65,7 @@ k=$(sed -n 's/^const keepEngineFrom = "\(v[0-9.]*\)"$/\1/p' pins.go)
 curl -fsSLO "https://github.com/syncthing/syncthing/releases/download/$k/syncthing-linux-amd64-$k.tar.gz"
 VAULTSYNC_DESKTOP_SYNCTHING_ARCHIVE=$PWD/syncthing-linux-amd64-$v.tar.gz \
 VAULTSYNC_DESKTOP_SYNCTHING_KEPT_ARCHIVE=$PWD/syncthing-linux-amd64-$k.tar.gz \
-  go test . -run '^TestIssue175_(E2E|RealArchive)|^TestIssue267_E2E|^TestIssue413_E2E' -count=1 -v
+  go test . -run '^TestIssue175_(E2E|RealArchive)|^TestIssue267_E2E|^TestIssue413_E2E|^TestIssue419_E2E' -count=1 -v
 ```
 
 On a Mac, use `syncthing-macos-arm64-$v.zip` (or `-amd64`).
