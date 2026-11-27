@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -119,8 +120,8 @@ func TestIssue343_ARemovalAppliedBeforeTheWaitEndsIsNotAFailure(t *testing.T) {
 
 // A removal queued behind another change has not reached the configuration
 // when the wait ends, and it lands once the change before it is through. The
-// bridge used to give that the same answer as a removal the engine refused
-// (#343).
+// bridge used to give that the same answer as a removal the engine refused;
+// it now says the removal is not confirmed yet (#343).
 func TestIssue343_ARemovalQueuedBehindAnotherCommitLandsLater(t *testing.T) {
 	const id = "issue343-queued"
 	startWithFolder(t, id)
@@ -156,11 +157,8 @@ func TestIssue343_ARemovalQueuedBehindAnotherCommitLandsLater(t *testing.T) {
 	if !configuredFolderIDs(t)[id] {
 		t.Fatal("the folder is gone although its removal was still queued")
 	}
-	if !strings.Contains(answer, "timed out") {
-		t.Fatalf("RemoveFolder() = %q for a queued removal, want the wait's timeout", answer)
-	}
-	if !strings.HasPrefix(answer, "folder removal not confirmed") {
-		t.Errorf("RemoveFolder() = %q for a removal that is still queued, want it told apart from a refusal", answer)
+	if answer != FolderRemovalNotConfirmedError() {
+		t.Errorf("RemoveFolder() = %q for a removal that is still queued, want %q", answer, FolderRemovalNotConfirmedError())
 	}
 
 	held.let()
@@ -170,4 +168,62 @@ func TestIssue343_ARemovalQueuedBehindAnotherCommitLandsLater(t *testing.T) {
 	waitFor(t, "the queued removal to land", 10*time.Second, func() bool {
 		return !configuredFolderIDs(t)[id]
 	})
+
+	// Asked again once it has landed, the bridge says the folder is not
+	// configured; the app takes exactly this text for a removal that is done.
+	if again := RemoveFolder(id); again != "folder not found" {
+		t.Fatalf("RemoveFolder() after the removal landed = %q, want %q", again, "folder not found")
+	}
+}
+
+// refusingVerifier rejects every change that removes its folder, the way the
+// engine refuses a configuration it cannot take: nothing changes.
+type refusingVerifier struct{ id string }
+
+func (r refusingVerifier) VerifyConfiguration(from, to config.Configuration) error {
+	if removesFolder(r.id)(from, to) {
+		return errors.New("issue343 refuses this removal")
+	}
+	return nil
+}
+
+func (refusingVerifier) CommitConfiguration(_, _ config.Configuration) bool { return true }
+
+func (refusingVerifier) String() string { return "issue343-refusing-verifier" }
+
+// A removal the engine refuses never lands: its answer stays the refusal,
+// not the text for a removal that may still land (#343).
+func TestIssue343_ARemovalTheEngineRefusesKeepsItsRefusal(t *testing.T) {
+	const id = "issue343-refused"
+	startWithFolder(t, id)
+	mu.Lock()
+	cfg := stCfg
+	mu.Unlock()
+	verifier := refusingVerifier{id: id}
+	cfg.Subscribe(verifier)
+	t.Cleanup(func() { cfg.Unsubscribe(verifier) })
+
+	answer := RemoveFolder(id)
+	if !strings.HasPrefix(answer, "modify config: ") || !strings.Contains(answer, "issue343 refuses this removal") {
+		t.Fatalf("RemoveFolder() = %q for a refused removal, want the engine's refusal", answer)
+	}
+	if !configuredFolderIDs(t)[id] {
+		t.Fatal("the folder is gone although the engine refused its removal")
+	}
+}
+
+// The wait's timeout keeps the text it always had, and callers can now tell
+// it from a refusal.
+func TestIssue343_TheWaitsTimeoutIsToldApart(t *testing.T) {
+	err := awaitWithin("probe", 0, func() error { return nil })
+	if err == nil || err.Error() != "probe: timed out after 0s" {
+		t.Fatalf("awaitWithin() = %v, want %q", err, "probe: timed out after 0s")
+	}
+	if !errors.Is(err, errWaitTimedOut) {
+		t.Fatalf("awaitWithin()'s timeout does not wrap errWaitTimedOut: %v", err)
+	}
+	refusal := errors.New("refused")
+	if err := awaitWithin("probe", time.Second, func() error { return refusal }); errors.Is(err, errWaitTimedOut) {
+		t.Fatalf("awaitWithin() passed a refusal on as a timeout: %v", err)
+	}
 }

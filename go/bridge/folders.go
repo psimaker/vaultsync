@@ -4,6 +4,7 @@ package bridge
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -89,8 +90,25 @@ func AddFolder(id, label, path string) string {
 	return ""
 }
 
+// folderRemovalNotConfirmed is how RemoveFolder answers a removal it handed
+// to the engine and did not see reach the configuration within its wait.
+// It is queued behind another change and lands once that one is through,
+// or never, if the engine stops first (#343).
+const folderRemovalNotConfirmed = "folder removal not confirmed yet"
+
+// FolderRemovalNotConfirmedError returns the text RemoveFolder answers such a
+// removal with. The app tells it from a refusal — the removal may still land
+// — and reads the text here instead of keeping a copy of it.
+func FolderRemovalNotConfirmedError() string {
+	return folderRemovalNotConfirmed
+}
+
 // RemoveFolder removes a folder by its ID.
-// Returns empty string on success, error message on failure.
+// Returns empty string once the folder is gone from the configuration,
+// folderRemovalNotConfirmed while the removal is still on its way, or the
+// reason the engine refused it (#343). "folder not found" means the folder
+// is not configured: also after a removal that was not confirmed and has
+// landed since.
 func RemoveFolder(id string) string {
 	mu.Lock()
 	defer mu.Unlock()
@@ -105,7 +123,7 @@ func RemoveFolder(id string) string {
 		return "folder not found"
 	}
 
-	if err := commitConfigLocked(func(cfg *config.Configuration) {
+	err := commitConfigLocked(func(cfg *config.Configuration) {
 		filtered := make([]config.FolderConfiguration, 0, len(cfg.Folders))
 		for _, f := range cfg.Folders {
 			if f.ID != id {
@@ -113,11 +131,21 @@ func RemoveFolder(id string) string {
 			}
 		}
 		cfg.Folders = filtered
-	}); err != nil {
-		return fmt.Sprintf("modify config: %v", err)
+	})
+	if err == nil {
+		return ""
 	}
-
-	return ""
+	// The engine takes a change into its configuration first and then waits
+	// for its services: the model stops the folder and drops its database.
+	// When that outlasts the wait, the folder is already gone from the
+	// configuration, and the removal the user asked for has happened.
+	if _, still := stCfg.Folder(id); !still {
+		return ""
+	}
+	if errors.Is(err, errWaitTimedOut) {
+		return folderRemovalNotConfirmed
+	}
+	return fmt.Sprintf("modify config: %v", err)
 }
 
 // SetFolderPath rewrites the on-disk path of an existing folder IN PLACE,
