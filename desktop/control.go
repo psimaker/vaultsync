@@ -851,17 +851,41 @@ func (a *app) noAgentForPause(ctx context.Context, st agentState, pause bool) er
 // --- pause / resume from the terminal ----------------------------------------
 
 func (a *app) pauseSync(ctx context.Context, pause bool) error {
-	st, err := loadState(a.lay.State)
-	if err != nil {
-		return err
+	command := "resume"
+	if pause {
+		command = "pause"
 	}
-	if st.GUIPort == 0 {
+	st, loadErr := loadState(a.lay.State)
+	// A build older than the one set up here pauses and resumes through a
+	// running agent, which does the pausing and writes what it writes; this
+	// program writes nothing. Where no agent answers, it refuses: it would
+	// read agent.json and ask the engine itself (decision 091).
+	older := olderThanSetUp(st, loadErr)
+	var client *control.Client
+	switch {
+	case older && loadErr != nil:
+		// A newer format: the agent is asked only where the place of its
+		// socket reads in this build's shape — the recorded place, or the
+		// layout's own where none is recorded — as the menu-bar app reads
+		// it (control.SocketPath). Nowhere else.
+		path, err := control.SocketPath(a.lay)
+		if err != nil {
+			return a.olderRefusal(command, nil, st, loadErr)
+		}
+		client = newControlClient(path)
+	case loadErr != nil:
+		return loadErr
+	case st.GUIPort == 0:
 		return refuse("VaultSync is not set up on this computer yet. Run vaultsync setup.")
+	default:
+		client = a.controlClient(st)
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	res, err := a.controlClient(st).SetPaused(ctx, pause)
+	res, err := client.SetPaused(ctx, pause)
 	switch {
+	case errors.Is(err, errNoAgent) && older:
+		return a.olderRefusal(command, nil, st, loadErr)
 	case errors.Is(err, errNoAgent):
 		return a.noAgentForPause(ctx, st, pause)
 	case err != nil:

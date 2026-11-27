@@ -15,6 +15,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -1120,6 +1122,12 @@ func (a *app) keepCopyAtAppBuild() error {
 	if _, err := os.Stat(a.lay.State); err != nil {
 		return nil
 	}
+	// An older build writes nothing (054): not its program over the newer
+	// one's copy, not agent.json (decision 091). Its run parks before this,
+	// and its uninstall refuses; this holds for every caller.
+	if a.olderBuild() {
+		return nil
+	}
 	if _, err := installAgentCopy(a.lay.Agent); err != nil {
 		return err
 	}
@@ -1143,6 +1151,13 @@ func (a *app) pair(ctx context.Context, args []string) error {
 	var opts pairOptions
 	if err := parseFlags(pairFlags("pair", &opts), args); err != nil {
 		return err
+	}
+	// A build older than the one set up here pairs nothing: it would write
+	// agent.json and the newer engine's configuration in its own shape,
+	// behind its own older checks (decision 091). Before any lock, any look
+	// at the engine and any question.
+	if st, err := loadState(a.lay.State); olderThanSetUp(st, err) {
+		return a.olderRefusal("pair", args, st, err)
 	}
 	st, err := loadState(a.lay.State)
 	if err != nil {
@@ -1815,6 +1830,164 @@ func (a *app) olderBuild() bool {
 // olderNote says so for a person, with the versions where they are known.
 func (a *app) olderNote(st agentState, loadErr error) string {
 	return a.olderFact(st, loadErr) + " Nothing was changed — run the setup link to get the current VaultSync."
+}
+
+// olderRefusal refuses a command of a build older than the one set up here
+// (decision 091): pair would pair through the newer engine in this build's
+// shape, behind its own older checks, and write agent.json in it; uninstall
+// would remove what the newer build set up with this build's knowledge of
+// it, and put this build's program over VaultSync's copy; pause and resume
+// come here only where no agent answers, or the place of its socket does not
+// read in this build's shape, and would read agent.json and ask the engine
+// themselves (they never write it). Nothing is changed, locked or asked. The way on names
+// the program that holds the VaultSync set up here, with the command and
+// the arguments this run was given; only where none is found, the setup
+// link. Where the background service runs this very build, it parks (054):
+// nothing syncs, and only the setup link brings a current build to the
+// service — uninstall can still go through another program. uninstall and
+// pause say how syncing stops now, where that is known.
+func (a *app) olderRefusal(command string, args []string, st agentState, loadErr error) error {
+	self, selfErr := ownProgram(a.appEnv)
+	installed := a.svc.installed()
+	serviceIsThis := selfErr == nil && installed && a.serviceRunsThisBuild(self)
+	prog, found := "", false
+	if selfErr == nil && (command == "uninstall" || !serviceIsThis) {
+		prog, found = a.setUpProgram(self, st, loadErr)
+	}
+	line := command + shellArgs(args)
+	var way string
+	switch {
+	case found && command == "uninstall":
+		way = fmt.Sprintf("to remove VaultSync, run %s %s, the VaultSync set up here.", a.commandFor(prog), line)
+	case found:
+		way = fmt.Sprintf("run %s %s, the VaultSync set up here.", a.commandFor(prog), line)
+	default:
+		way = fmt.Sprintf("run the setup link to get the current VaultSync, then vaultsync %s.", line)
+	}
+	msg := a.olderFact(st, loadErr) + " Nothing was changed — " + way
+	switch {
+	case serviceIsThis:
+		msg += " Nothing syncs here meanwhile: the background service runs this VaultSync too."
+	case command != "uninstall" && command != "pause":
+	case installed:
+		// stop is no command an older build refuses: this very program, by
+		// the path it runs from, where no other was found.
+		stopper := a.ownCommand()
+		if found {
+			stopper = a.commandFor(prog)
+		}
+		msg += fmt.Sprintf(" %s stop stops syncing now.", stopper)
+	default:
+		// stop stops the background service only; a run started by hand
+		// is stopped where it runs.
+		msg += " No background service is installed here, so stop stops nothing: a vaultsync run started by hand, in a terminal or at login, syncs until it is stopped there."
+	}
+	return refuse("%s", msg)
+}
+
+// ownCommand is how a shell runs this very program (commandFor), by the
+// path it runs from; "vaultsync" where that cannot be told.
+func (a *app) ownCommand() string {
+	if a.appEnv.executable == nil {
+		return "vaultsync"
+	}
+	self, err := a.appEnv.executable()
+	if err != nil {
+		return "vaultsync"
+	}
+	if a.appEnv.resolve != nil {
+		if resolved, err := a.appEnv.resolve(self); err == nil {
+			self = resolved
+		}
+	}
+	return a.commandFor(self)
+}
+
+// shellArgs is args as a shell reads them back, each one word after a
+// space: what this run was given, carried into the command a refusal
+// names, so the command pasted does what was asked for (decision 091).
+func shellArgs(args []string) string {
+	var b strings.Builder
+	for _, arg := range args {
+		b.WriteString(" ")
+		b.WriteString(shellWord(arg))
+	}
+	return b.String()
+}
+
+// shellWord is s as one shell word: as it is where it holds only
+// characters no shell reads specially, else in single quotes.
+func shellWord(s string) string {
+	plain := s != ""
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("-_./=:,@%+", r)) {
+			plain = false
+			break
+		}
+	}
+	if plain {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// setUpProgram is the program that holds the VaultSync set up here, for an
+// older build's way on (decision 091): the program the background service
+// runs (on a Mac, the one its LaunchAgent names) or VaultSync's own copy —
+// one that is not this build, and is the very program agent.json records
+// the last setup started the service with (Started.Service); failing that,
+// VaultSync's own copy where it is not this build, since every build that
+// takes over keeps the copy at its own (setup, and VaultSync for Mac's run
+// and uninstall). agent.json records no place, and a newer format is not
+// read for one. Each program is looked at and read through appEnv, as this
+// program is. None found: "", false.
+func (a *app) setUpProgram(self []byte, st agentState, loadErr error) (string, bool) {
+	env := a.appEnv
+	if env.resolve == nil || env.readFile == nil {
+		return "", false
+	}
+	lstat := env.lstat
+	if lstat == nil {
+		lstat = os.Lstat
+	}
+	// another reads the program at p — a regular file, also behind a link —
+	// where it is not this build.
+	another := func(p string) ([]byte, bool) {
+		resolved, err := env.resolve(p)
+		if err != nil {
+			return nil, false
+		}
+		if info, err := lstat(resolved); err != nil || !info.Mode().IsRegular() {
+			return nil, false
+		}
+		have, err := env.readFile(p)
+		if err != nil || sameBuild(have, self) {
+			return nil, false
+		}
+		return have, true
+	}
+	var candidates []string
+	if a.goos == "darwin" {
+		if prog := a.svc.program(); prog != "" {
+			candidates = append(candidates, prog)
+		}
+	}
+	candidates = append(candidates, a.lay.Agent)
+	if loadErr == nil && st.Started.Service != "" {
+		for _, p := range candidates {
+			have, ok := another(p)
+			if !ok {
+				continue
+			}
+			if sum := sha256.Sum256(have); hex.EncodeToString(sum[:]) == st.Started.Service {
+				return p, true
+			}
+		}
+	}
+	if _, ok := another(a.lay.Agent); ok {
+		return a.lay.Agent, true
+	}
+	return "", false
 }
 
 // keepEngineStallWait ends a run's attempt to install its pin where an
