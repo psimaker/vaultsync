@@ -453,7 +453,8 @@ docker compose pull && docker compose up -d
 The one-liner is for the `.env` setup wrote (one `NAME=value` per line, no
 quotes). If you reshaped `.env` by hand, change the `VAULTSYNC_HUB_IMAGE`
 line in an editor instead — a blind substitution would also hit a matching
-line inside a quoted value.
+line inside a quoted value. What each Hub release changed is in
+[hub/CHANGELOG.md](../hub/CHANGELOG.md).
 
 Vaults, paired devices and an open pairing code carry over unchanged.
 Running the setup link again on the Hub (**2) Hub**) offers this move when

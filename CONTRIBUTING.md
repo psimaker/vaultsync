@@ -59,7 +59,12 @@ The full build, signing, and test guide is [`docs/setup.md`](docs/setup.md). If 
 - **PR titles must be Conventional Commits** — CI enforces this, and since PRs are squash-merged, your title becomes the commit subject on `main`. Allowed types: `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `ci`, `perf`, `build`, `style`, `revert`. Example: `fix(notify): handle missing config path`.
 - **Small, focused PRs** — one concern per PR reviews faster and merges sooner.
 - **Behavior changes need tests.** Bug fixes should include a regression test that references the issue number.
-- User-facing changes get a `CHANGELOG.md` entry under `[Unreleased]`.
+- User-facing changes get an entry under `[Unreleased]` in the change log of what brings them to people:
+  - [`hub/CHANGELOG.md`](hub/CHANGELOG.md): the Hub's image and the `vaultsync-hub` program, built from the Go code in `hub/` and released as `hub-v*` tags.
+  - [`desktop/CHANGELOG.md`](desktop/CHANGELOG.md): VaultSync for Mac and Linux (`desktop/`, `desktop-v*` tags), and what the setup link's **1) Obsidian device** changes.
+  - [`CHANGELOG.md`](CHANGELOG.md): everything else, among it the iOS app, the wake-up helper, and what the setup link's **2) Hub** and the Hub's compose stack change (`hub/scripts/setup.sh`, `hub/docker-compose.yml`). The setup link serves `main`, so those reach Hub owners the moment they are merged, with no Hub release in between.
+
+  A change that reaches people in more than one of these ways gets a line in each. Two examples: a Hub release that the setup link then installs (what it brings in `hub/CHANGELOG.md`, the new default in `CHANGELOG.md`), and a fix in `hub/pairing`, which the iOS app, VaultSync for Mac and Linux and the Hub are all built with.
 
 ## Localization
 

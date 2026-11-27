@@ -4,6 +4,8 @@ All notable changes to VaultSync are documented here.
 
 VaultSync for Mac and Linux (the desktop agent and its menu-bar app, `desktop-vX.Y.Z` releases) has its own: [desktop/CHANGELOG.md](desktop/CHANGELOG.md).
 
+The VaultSync Hub (its image and the `vaultsync-hub` program, `hub-vX.Y.Z` releases) has its own too: [hub/CHANGELOG.md](hub/CHANGELOG.md). What the setup link's **2) Hub** and the Hub's compose stack change stays here, because the setup link serves the main branch: such a change reaches Hub owners the moment it is merged.
+
 ---
 
 ## [Unreleased]
