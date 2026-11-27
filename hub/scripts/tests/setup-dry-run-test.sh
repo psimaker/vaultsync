@@ -17,7 +17,8 @@
 #   5. On a Mac (uname pinned to Darwin) the device path installs VaultSync for
 #      Mac into Applications when the release has it and runs the setup from
 #      there, falls back to the bare agent when it has not, and never replaces
-#      a bundle that is not VaultSync for Mac.
+#      a bundle that is not VaultSync for Mac, nor a VaultSync for Mac newer
+#      than the release or one whose release it cannot tell (#277).
 set -eu
 
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -1541,7 +1542,59 @@ $(cat "$SANDBOX/results/run.log")"
 	[ ! -e "$AGENT_ARGS" ] || fail "an agent ran beside VaultSync for Mac $have"
 	[ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "keeping VaultSync for Mac $have left temporary files: $(ls -A "$SANDBOX/tmp")"
 done
+grep -q "To set up a vault with it, run: \"$installed/Contents/MacOS/vaultsync\" setup\$" "$SANDBOX/results/run.log" ||
+	fail "keeping a newer VaultSync for Mac does not name its own setup:
+$(cat "$SANDBOX/results/run.log")"
 pass "a VaultSync for Mac newer than the release is never replaced, and the setup says so"
+
+# An installed VaultSync for Mac whose agent names no release — a
+# development build ("dev", or "dev-<commit>" from a pull request's build),
+# or a version of another form — has no place in the order: it is never
+# replaced (and removed), and the setup says how to install the release.
+# Nor is any app replaced by a download whose line names no release.
+for case in dev dev-abc1234 0.11 v0.11.0 offered-dev; do
+	rm -rf "$installed"
+	if [ "$case" = offered-dev ]; then
+		make_app "$APPS" eu.vaultsync.desktop "installed-$case" 0.9.1
+		release_with "offered-$case" "" dev
+		said="The downloaded VaultSync for Mac does not say which release it is, so the setup link cannot tell whether it is newer than the one in $APPS"
+	else
+		make_app "$APPS" eu.vaultsync.desktop "installed-$case" "$case"
+		release_with "offered-$case" "" 0.10.0
+		said="VaultSync for Mac in $APPS does not say which release it is (a development build, say), so the setup link cannot tell whether this release is newer — it was not replaced, and nothing was changed. To install this release, move it to the Trash, then run the setup link again."
+	fi
+	before=$(tree "$APPS")
+	rm -f "$AGENT_ARGS"
+	if mac_setup >"$SANDBOX/results/run.log" 2>&1; then
+		fail "$case: the setup replaced an app whose release it cannot tell:
+$(cat "$SANDBOX/results/run.log")"
+	fi
+	[ "$before" = "$(tree "$APPS")" ] || fail "$case: the installed app was changed:
+$(find "$APPS" 2>&1 | head -20)"
+	grep -qF "$said" "$SANDBOX/results/run.log" || fail "$case: the refusal does not say why:
+$(cat "$SANDBOX/results/run.log")"
+	[ ! -e "$AGENT_ARGS" ] || fail "$case: an agent ran"
+	[ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "$case left temporary files: $(ls -A "$SANDBOX/tmp")"
+done
+pass "an app or a download whose release cannot be told replaces nothing"
+
+# Replaced as before: an older release (as numbers: 0.9.10 < 0.10.0),
+# another build of the same release (a release candidate, a rebuild), and an
+# installed app whose agent does not run — nothing runs from it.
+for pair in 0.9.10:0.10.0 0.10.0-rc.1:0.10.0 0.10.0:0.10.0 fails:0.10.0; do
+	have=${pair%%:*}
+	offered=${pair#*:}
+	rm -rf "$installed"
+	make_app "$APPS" eu.vaultsync.desktop "installed-$have" "$have"
+	release_with "offered-over-$have" "" "$offered"
+	mac_setup >"$SANDBOX/results/run.log" 2>&1 || fail "release $offered did not replace VaultSync for Mac $have:
+$(cat "$SANDBOX/results/run.log")"
+	[ "$(cat "$AGENT_MARK")" = "offered-over-$have" ] || fail "release $offered over $have ran another build: $(cat "$AGENT_MARK")"
+	grep -q "build: vaultsync offered-over-$have\$" "$installed/Contents/MacOS/vaultsync" || fail "release $offered is not in the app's place over $have"
+	[ "$(ls -A "$APPS")" = "VaultSync for Mac.app" ] || fail "the update over $have left more than the app: $(ls -A "$APPS")"
+	[ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "the update over $have left temporary files: $(ls -A "$SANDBOX/tmp")"
+done
+pass "an older release, another build of the same one and an app that does not run are replaced"
 
 # Never replaced: a bundle of that name with another identifier, or a link —
 # even one to a VaultSync for Mac kept elsewhere (another disk, say): the
@@ -1683,7 +1736,7 @@ fi
 # The new app is unpacked beside its place, so putting it there is a rename
 # within one folder — never a copy across disks that could stop halfway —
 # and nothing of the unpacking stays. A dry run with the app installed says
-# that the same build stays as it is.
+# that the same build, or one that may be newer, stays as it is.
 release_with sixth
 rm -f "$SANDBOX/results/mv-place"
 (MV_PLACE_LOG="$SANDBOX/results/mv-place" mac_setup) >"$SANDBOX/results/run.log" 2>&1 || fail "the update failed:
@@ -1695,8 +1748,8 @@ esac
 [ "$(ls -A "$APPS")" = "VaultSync for Mac.app" ] || fail "the unpacking left something beside the app: $(ls -A "$APPS")"
 out=$(mac_setup --dry-run 2>&1) || fail "the dry run beside the installed app failed:
 $out"
-printf '%s\n' "$out" | grep -q "would replace VaultSync for Mac in $APPS, unless it is already this build" ||
-	fail "the dry run does not say that the same build stays:
+printf '%s\n' "$out" | grep -q "would replace VaultSync for Mac in $APPS, unless it is already this build, or may be a newer one$" ||
+	fail "the dry run does not say that the same build, or a newer one, stays:
 $out"
 pass "the new app is unpacked beside its place and moved there in one rename"
 
