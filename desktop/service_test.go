@@ -21,9 +21,12 @@ type fakeRunner struct {
 	fail   map[string]error
 	// answers holds the output of a command (by its full text).
 	answers map[string]string
-	// Like launchd: a disabled job cannot be bootstrapped; a booted-out job
-	// still answers lingerAfterBootout prints before it is gone; an idle job
-	// is loaded without running; neverRuns keeps every job idle.
+	// Like launchd (measured on macOS 12.7.6 and 27.2, #290): a disabled job
+	// cannot be bootstrapped; a booted-out job whose process has not ended
+	// yet still answers lingerAfterBootout prints, as `state = SIGTERMed`,
+	// before it is gone; an idle job is loaded without running; neverRuns
+	// makes every run exit at once, so launchd shows the job between two
+	// spawns, `state = spawn scheduled`.
 	disabled           bool
 	idle, neverRuns    bool
 	lingerAfterBootout int
@@ -59,8 +62,8 @@ type fakeRunner struct {
 	// afresh), and bootout says so.
 	trayOverride, trayBootoutVanishes bool
 	// trayLingerAfterBootout: a booted-out job still answers that many
-	// prints, its app still running; the app ends (onTrayBootout) as
-	// launchd lets go of the job.
+	// prints, as `state = SIGTERMed`, its app still running; the app ends
+	// (onTrayBootout) as launchd lets go of the job.
 	trayLingerAfterBootout, trayLingering int
 	// loadedProgram is the program of the service's definition launchd
 	// loaded at its last bootstrap — which `launchctl print` names — kept
@@ -79,7 +82,7 @@ func (f *fakeRunner) trayJob(call string) (string, error) {
 			if f.trayLingering--; f.trayLingering == 0 && f.onTrayBootout != nil && !f.trayIdle {
 				f.onTrayBootout()
 			}
-			return "\tstate = running\n", nil // still on its way out
+			return "\tstate = SIGTERMed\n", nil // still on its way out
 		}
 		if !f.trayLoaded {
 			return "", errors.New("not loaded")
@@ -196,7 +199,7 @@ func (f *fakeRunner) run(name string, args ...string) (string, error) {
 	case strings.HasPrefix(call, "launchctl print"):
 		if f.lingering > 0 {
 			f.lingering--
-			return "\tstate = running\n", nil // still on its way out
+			return "\tstate = SIGTERMed\n", nil // still on its way out
 		}
 		if !f.loaded {
 			return "", errors.New("not loaded")
@@ -205,7 +208,10 @@ func (f *fakeRunner) run(name string, args ...string) (string, error) {
 		if f.loadedProgram != "" {
 			program = "\tprogram = " + f.loadedProgram + "\n"
 		}
-		if f.idle || f.neverRuns {
+		switch {
+		case f.neverRuns:
+			return "\tstate = spawn scheduled\n" + program, nil
+		case f.idle:
 			return "\tstate = not running\n" + program, nil
 		}
 		return "\tstate = running\n" + program, nil

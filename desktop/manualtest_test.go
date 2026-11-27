@@ -168,9 +168,11 @@ func TestIssue175_ReadRefusalNamesFilesAndFolders(t *testing.T) {
 	}
 }
 
-// A stop that ran out of time leaves a job that launchd is still removing;
-// launchd shows it like a running one. start loaded nothing, saw "running"
-// and reported success — then the job was gone.
+// A stop that ran out of time leaves a job that launchd is still removing:
+// `launchctl print` still finds it, as `state = SIGTERMed` (measured on
+// macOS 12.7.6 and 27.2, #290), until its process has ended. start found
+// the job still loaded, loaded nothing and reported success — then the job
+// was gone.
 func TestIssue175_StartAfterAStopThatRanOutOfTime(t *testing.T) {
 	run := &fakeRunner{lingerAfterBootout: 302} // longer than stop waits
 	svc, _ := testService(t, "darwin", run)
