@@ -10,11 +10,11 @@
 2. **What counts as failed:**
    - It counts: a download that did not get through or did not finish, a download that did not match its checksum, a file the install could not write.
    - It does not count: a stop, where `vaultsync stop` during the download ends the run like any stopped run; and a build with no pin for this computer (`ErrNoPin`), which is no passing trouble.
-3. **Where an engine is there to keep, a download that makes no progress ends:** no answer, or no byte, for `keepEngineStallWait` (30 s). No engine runs while the attempt does. Without that, the download client waits up to ten minutes on a connection that accepts and never answers, and 30 s on an address that drops packets (measured on 2026-11-27). A slow download that goes on finishes, so a slow link still installs its pin.
+3. **Where an engine is there to keep, a download that makes no progress ends:** no answer, or no byte, for `keepEngineStallWait` (30 s). No engine runs while the attempt does. Without that, the download client waits up to ten minutes on a connection that accepts and never answers, and 30 s on an address that drops packets (measured on 2026-11-27). A slow download that goes on finishes, so a slow link still installs its pin: an attempt under the watchdog uses the download client without its total timeout, which would also cut a slow download that goes on. Its redirect checks stay.
 4. **When it keeps the engine:**
    - One fixed line in the log says why (the cause in fixed words, with no address or path) and what tries again.
    - The record stays as it is. VaultSync's copy and `agent.json`'s format follow the app's build only once this build has taken over, its pin installed. So a record in desktop-v0.1.0's format stays in it, also beside VaultSync for Mac.
-   - The agent's status and the engine's start line name the engine that runs. `vaultsync status` names the installed one.
+   - The agent's status and the engine's start line name the engine that runs. `vaultsync status` names the installed one. Where the answering agent runs another, status says which runs and which `agent.json` names as installed, held against that record, never this build's pin, which may be the older one (#264). It promises nothing of the next start.
    - What installs the pin depends on what the service runs, and status says which. Where the service runs this build, its next start tries it again: `vaultsync stop`, then `vaultsync start`, on both systems. Otherwise `vaultsync setup` with this build installs it.
 5. **`keepEngineFrom`** names only a version that passed the E2E with its own archive under this agent (`TestIssue267_E2EAKeptOlderEnginePairsAndSyncs`): the service keeps it, it pairs with a Hub on the pin's engine, and a note crosses each way. CI's Desktop Syncthing E2E runs it with that version's linux-amd64 archive. A bump that changes the engine's config shape or the API the agent uses raises it to the new pin, which keeps no older engine.
 6. **`setup` keeps refusing** when the download fails, because a person is there to see it. So does `vaultsync run` in a terminal. Where setup runs as VaultSync for Mac's agent, its refusal names that agent to run it again, since the `vaultsync` command may still lead to an older copy. Elsewhere its words stay: the setup link's `vaultsync` lives in a folder the link removes.
@@ -34,6 +34,7 @@
 **Not covered.**
 - Released builds 0.1.0 to 0.3.0 still end at every start where their pin cannot be installed.
 - An engine kept for a long time: the next start tries again, and nothing tries in between.
+- A download that trickles, with a byte now and then, holds the start with no engine and no bound: the watchdog ends only one that makes no progress at all.
 - On Linux, `vaultsync start` leaves a running unit alone. `vaultsync stop`, then `vaultsync start`, is what starts it afresh.
 
 **Links.** #267, #264, #290; decisions 046 (1), 054 (lines 3 and 9), 077 (fourth row).

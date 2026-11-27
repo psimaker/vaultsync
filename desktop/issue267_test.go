@@ -534,7 +534,24 @@ func TestIssue267_StatusSaysWhichEngineRunsWhereTheAgentRunsAnother(t *testing.T
 		t.Fatal(err)
 	}
 	out := a.out.(*bytes.Buffer).String()
-	if !strings.Contains(out, "Sync engine: running Syncthing 2.1.6 — the installed Syncthing "+strings.TrimPrefix(syncthingVersion, "v")+" runs from the service's next start") {
+	if !strings.Contains(out, "Sync engine: running Syncthing 2.1.6 — the installed one is Syncthing "+strings.TrimPrefix(syncthingVersion, "v")+"\n") {
 		t.Fatalf("status where the agent runs another engine:\n%s", out)
+	}
+}
+
+// An older vaultsync beside a newer service names no downgrade: the agent's
+// engine is held against the one the record names, not this build's pin, and
+// nothing promises what the next start runs (#264, #267).
+func TestIssue267_StatusFromAnOlderVaultsyncPromisesNoDowngrade(t *testing.T) {
+	agent := newFakeAgent(t)
+	agent.status = controlStatus{Version: "9.9.9", Syncthing: "9.0.0", Engine: "running", Report: statusReport{Text: "\nVaults\n"}}
+	a := terminalApp(t, agent.path)
+	newerEngineHere(t, a.lay)
+	if err := a.status(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	out := a.out.(*bytes.Buffer).String()
+	if strings.Contains(out, "runs from the service's next start") || strings.Contains(out, "the installed Syncthing "+strings.TrimPrefix(syncthingVersion, "v")) {
+		t.Fatalf("status from an older vaultsync beside a newer service:\n%s", out)
 	}
 }

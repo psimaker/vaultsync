@@ -201,11 +201,14 @@ func (a *app) status(ctx context.Context) error {
 		_, err := io.WriteString(w, cs.Text)
 		return err
 	case aerr == nil:
-		if cs.Syncthing != "" && cs.Syncthing != installed {
-			// The agent runs another Syncthing than the one installed — a
-			// service not started again since setup installed its pin
-			// (#267): what runs is said by the agent that runs it.
-			fmt.Fprintf(w, "Sync engine: running Syncthing %s — the installed Syncthing %s runs from the service's next start\n", cs.Syncthing, installed)
+		// The agent runs another Syncthing than agent.json names as
+		// installed — a service not started again since setup installed its
+		// pin (#267): what runs is said by the agent that runs it, held
+		// against the record, never this build's pin, which may be the
+		// older one (#264). What a next start runs depends on the build the
+		// service runs, so nothing is promised of it.
+		if recorded := strings.TrimPrefix(st.Syncthing.Version, "v"); recorded != "" && cs.Syncthing != "" && cs.Syncthing != recorded {
+			fmt.Fprintf(w, "Sync engine: running Syncthing %s — the installed one is Syncthing %s\n", cs.Syncthing, recorded)
 		} else {
 			fmt.Fprintln(w, "Sync engine: running")
 		}

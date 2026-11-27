@@ -59,8 +59,12 @@ go vet ./...
 # two Syncthing instances on loopback (~15 s).
 v=$(sed -n 's/^const syncthingVersion = "\(v[0-9.]*\)"$/\1/p' pins.go)
 curl -fsSLO "https://github.com/syncthing/syncthing/releases/download/$v/syncthing-linux-amd64-$v.tar.gz"
+# And the engine a run keeps when its pin cannot be installed (decision 078).
+k=$(sed -n 's/^const keepEngineFrom = "\(v[0-9.]*\)"$/\1/p' pins.go)
+curl -fsSLO "https://github.com/syncthing/syncthing/releases/download/$k/syncthing-linux-amd64-$k.tar.gz"
 VAULTSYNC_DESKTOP_SYNCTHING_ARCHIVE=$PWD/syncthing-linux-amd64-$v.tar.gz \
-  go test . -run '^TestIssue175_(E2E|RealArchive)' -count=1 -v
+VAULTSYNC_DESKTOP_SYNCTHING_KEPT_ARCHIVE=$PWD/syncthing-linux-amd64-$k.tar.gz \
+  go test . -run '^TestIssue175_(E2E|RealArchive)|^TestIssue267_E2E' -count=1 -v
 ```
 
 On a Mac, use `syncthing-macos-arm64-$v.zip` (or `-amd64`).
