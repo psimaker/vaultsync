@@ -36,7 +36,7 @@ func TestIssue175_StopThenStartResumesTheLaunchAgent(t *testing.T) {
 	if run.loaded || !run.disabled {
 		t.Fatalf("stop returned before launchd let go of the job: loaded=%v disabled=%v %v", run.loaded, run.disabled, run.calls)
 	}
-	if err := svc.start(); err != nil {
+	if _, err := svc.start(); err != nil {
 		t.Fatal(err)
 	}
 	if !run.loaded || run.disabled {
@@ -54,7 +54,7 @@ func TestIssue175_StartEnablesALoadedJob(t *testing.T) {
 	}
 	run.disabled, run.idle = true, true
 	run.calls = nil
-	if err := svc.start(); err != nil {
+	if _, err := svc.start(); err != nil {
 		t.Fatal(err)
 	}
 	if run.disabled || run.idle {

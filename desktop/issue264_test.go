@@ -283,9 +283,11 @@ func TestIssue264_StartJudgesTheServiceByWhatItRuns(t *testing.T) {
 	if err := a.startService(); !strings.Contains(refusalText(err), "runs, but it does not sync: this VaultSync is older") {
 		t.Fatalf("start of an older build that the service runs: %v", err)
 	}
-	// This very build, current: running again.
+	// This very build, current: running again, once its agent answers
+	// (#290).
 	a = installedApp(t, "linux", active())
 	runsAs(t, a, a.lay.Agent, "this build")
+	answeringAgent(t, a)
 	if err := a.startService(); err != nil || !strings.Contains(text(a), "running again") {
 		t.Fatalf("start of the build the service runs: %v\n%s", err, text(a))
 	}

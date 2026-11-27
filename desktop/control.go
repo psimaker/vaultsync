@@ -640,6 +640,50 @@ func (a *app) controlClient(st agentState) *control.Client {
 	return newControlClient(path)
 }
 
+// How long start waits for the agent of the run it started, or left alone,
+// to answer: startAnswerLooks looks, startAnswerEvery apart, each ask with
+// startAskTimeout. A run of this build answers within a second of its
+// start where its engine is installed. Variables for the tests.
+var (
+	startAnswerLooks = 40
+	startAnswerEvery = 250 * time.Millisecond
+	startAskTimeout  = 10 * time.Second
+)
+
+// errAgentTooOld is what a 404 is to start: an agent answered, older than
+// the request — an answer all the same.
+var errAgentTooOld = errors.New("the running agent is older than this vaultsync")
+
+// agentAnswers waits for an agent to answer on the control socket — at the
+// place agent.json records at each look, which a run writes as it comes up.
+// An answer is its report, an error in its own words, or an older agent's
+// 404. An ask that gets no answer in its time ends the wait: something
+// takes the request and says nothing, and a second ask would only double
+// the wait (the menu-bar app does the same since #288).
+func (a *app) agentAnswers() bool {
+	for i := 0; i < startAnswerLooks; i++ {
+		if i > 0 {
+			a.svc.wait(startAnswerEvery)
+		}
+		path := a.lay.Socket
+		if st, err := loadState(a.lay.State); err == nil && st.ControlSocket != "" {
+			path = st.ControlSocket
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), startAskTimeout)
+		err := control.New(path, errAgentTooOld).Do(ctx, http.MethodGet, "/v1/status", nil, nil)
+		timedOut := ctx.Err() != nil
+		cancel()
+		var said *control.AnswerError
+		switch {
+		case err == nil, errors.Is(err, errAgentTooOld), errors.As(err, &said):
+			return true
+		case timedOut:
+			return false
+		}
+	}
+	return false
+}
+
 // logSocketError says in the service's log that there is no control socket
 // — without the error's words, which name paths (the log is read by
 // others; the folder is not) — and keeps the words in VaultSync's folder.

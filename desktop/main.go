@@ -1776,7 +1776,8 @@ func (a *app) startService() error {
 	// path may be the newer build too.
 	self, selfErr := ownProgram(a.appEnv)
 	before := selfErr == nil && a.serviceRunsThisBuild(self)
-	if err := a.svc.start(); err != nil {
+	left, err := a.svc.start()
+	if err != nil {
 		return err
 	}
 	// Say "running" only for a service that runs.
@@ -1789,23 +1790,47 @@ func (a *app) startService() error {
 	}
 	st, err := loadState(a.lay.State)
 	older := olderThanSetUp(st, err)
-	if before && a.serviceRunsThisBuild(self) {
+	thisBuild := before && a.serviceRunsThisBuild(self)
+	if thisBuild && older {
 		// What this program knows of itself holds for the service.
-		if older {
-			return refuse("The background service runs, but it does not sync: %s", a.olderNote(st, err))
+		return refuse("The background service runs, but it does not sync: %s", a.olderNote(st, err))
+	}
+	// The service manager counts a run as running from its first moment;
+	// its agent answers only once it has come up, which a pin's download
+	// can delay for minutes, and a run that ends before then never does.
+	// So "running" is said only on an answer (#290, decision 085).
+	answered := a.agentAnswers()
+	if thisBuild {
+		switch {
+		case !answered:
+			fmt.Fprintln(a.out, a.noAnswerYet())
+		case left:
+			fmt.Fprintln(a.out, "✓ VaultSync is already running.")
+		default:
+			fmt.Fprintln(a.out, "✓ VaultSync is running again.")
 		}
-		fmt.Fprintln(a.out, "✓ VaultSync is running again.")
 		return nil
 	}
 	// The service runs another build, of which this program's pin says
 	// nothing — a newer one syncs, an older one parks (#264). start says
 	// only what it knows, and leaves whether it syncs to status, which
 	// asks the running agent.
-	fmt.Fprintln(a.out, "✓ The background service is running. It runs another VaultSync build than this vaultsync — vaultsync status says whether it syncs.")
+	if answered {
+		fmt.Fprintln(a.out, "✓ The background service is running. It runs another VaultSync build than this vaultsync — vaultsync status says whether it syncs.")
+	} else {
+		fmt.Fprintln(a.out, "The background service runs, but it does not answer yet. It runs another VaultSync build than this vaultsync — vaultsync status says whether it syncs.")
+	}
 	if older {
 		fmt.Fprintln(a.out, "Note: "+a.olderFact(st, err))
 	}
 	return nil
+}
+
+// noAnswerYet is start's word for a service that runs and whose agent has
+// not answered: no refusal — it may be on its way up — and the way out for
+// one that stays so, which vaultsync stop ends however it hangs.
+func (a *app) noAnswerYet() string {
+	return fmt.Sprintf("VaultSync's background service runs, but it does not answer yet — it may still be installing its sync engine. vaultsync status says where it stands; if it stays so, run vaultsync stop, then vaultsync start (its log: %s).", a.logHint())
 }
 
 // serviceRunsThisBuild: the background service runs this very build — the

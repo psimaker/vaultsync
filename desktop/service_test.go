@@ -386,7 +386,7 @@ func TestIssue175_LaunchAgentInstallIsIdempotent(t *testing.T) {
 		t.Fatalf("stop: %v %v", err, run.calls)
 	}
 	run.calls = nil
-	if err := svc.start(); err != nil || strings.Join(run.calls, "|") != "launchctl enable gui/501/eu.vaultsync.agent|launchctl print gui/501/eu.vaultsync.agent|launchctl bootstrap gui/501 "+mustUnitPath(t, svc) {
+	if _, err := svc.start(); err != nil || strings.Join(run.calls, "|") != "launchctl enable gui/501/eu.vaultsync.agent|launchctl print gui/501/eu.vaultsync.agent|launchctl bootstrap gui/501 "+mustUnitPath(t, svc) {
 		t.Fatalf("start: %v %v", err, run.calls)
 	}
 
@@ -428,7 +428,7 @@ func TestIssue175_SystemdInstallIsIdempotent(t *testing.T) {
 		t.Fatalf("stop: %v %v", err, run.calls)
 	}
 	run.calls = nil
-	if err := svc.start(); err != nil || strings.Join(run.calls, "|") != "systemctl --user enable --now vaultsync.service" {
+	if _, err := svc.start(); err != nil || strings.Join(run.calls, "|") != "systemctl --user enable --now vaultsync.service" {
 		t.Fatalf("start: %v %v", err, run.calls)
 	}
 	run.calls = nil
