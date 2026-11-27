@@ -299,7 +299,7 @@
 "The embedded Syncthing bridge did not start for a background run." = "Die eingebettete Syncthing-Bridge ist für einen Hintergrundlauf nicht gestartet.";
 "The file '%@' was kept as your local version. The other device's version was discarded." = "Die Datei „%@“ wurde als lokale Version behalten. Die Version des anderen Geräts wurde verworfen.";
 "The file '%@' was overwritten with the version from the other device." = "Die Datei „%@“ wurde mit der Version des anderen Geräts überschrieben.";
-"The folder path no longer exists%@." = "Der Ordnerpfad existiert nicht mehr%@.";
+"The folder path no longer exists." = "Der Ordnerpfad existiert nicht mehr.";
 "The folder scan finished successfully." = "Der Ordnerscan wurde erfolgreich abgeschlossen.";
 "The sync engine stopped unexpectedly." = "Die Sync-Engine wurde unerwartet beendet.";
 "This Device" = "Dieses Gerät";
@@ -349,7 +349,7 @@
 "VaultSync can no longer read your Obsidian directory. Reconnect the folder to restore sync access." = "VaultSync kann dein Obsidian-Verzeichnis nicht mehr lesen. Verbinde den Ordner erneut, um den Sync-Zugriff wiederherzustellen.";
 "VaultSync can no longer resolve the saved Obsidian folder permission. Reconnect the Obsidian directory to continue syncing." = "VaultSync kann die gespeicherte Berechtigung für den Obsidian-Ordner nicht mehr auflösen. Verbinde das Obsidian-Verzeichnis erneut, um weiter zu synchronisieren.";
 "VaultSync cannot access the saved Obsidian folder anymore. Reconnect the Obsidian directory to continue syncing." = "VaultSync kann nicht mehr auf den gespeicherten Obsidian-Ordner zugreifen. Verbinde das Obsidian-Verzeichnis erneut, um weiter zu synchronisieren.";
-"VaultSync cannot access this folder%@." = "VaultSync kann auf diesen Ordner nicht zugreifen%@.";
+"VaultSync cannot access this folder." = "VaultSync kann auf diesen Ordner nicht zugreifen.";
 "VaultSync cannot read this folder. Reopen the picker, tap Browse at the bottom, then select \"On My iPhone\" → \"Obsidian\"." = "VaultSync kann diesen Ordner nicht lesen. Öffne den Picker erneut, tippe unten auf „Durchsuchen“ und wähle „Auf meinem iPhone“ → „Obsidian“.";
 "VaultSync cannot talk to Syncthing right now." = "VaultSync kann derzeit nicht mit Syncthing kommunizieren.";
 "VaultSync could not complete the request due to a network issue." = "VaultSync konnte die Anfrage wegen eines Netzwerkproblems nicht abschließen.";
@@ -655,7 +655,7 @@
 "Folder Already Contains Files" = "Ordner enthält bereits Dateien";
 "The folder \"%@\" already contains files. Accepting this share would combine its contents with the shared vault and sync the result to the other devices." = "Der Ordner „%@“ enthält bereits Dateien. Die Freigabe anzunehmen würde seinen Inhalt mit dem geteilten Vault zusammenführen und das Ergebnis mit den anderen Geräten synchronisieren.";
 "Vault Folder Was Moved or Deleted" = "Vault-Ordner wurde verschoben oder gelöscht";
-"VaultSync can no longer verify that this folder still holds this vault's data%@ — the folder was likely moved, renamed, replaced, or deleted outside VaultSync. Syncing has stopped to protect your notes." = "VaultSync kann nicht mehr überprüfen, ob dieser Ordner noch die Daten dieses Vaults enthält%@ — der Ordner wurde vermutlich außerhalb von VaultSync verschoben, umbenannt, ersetzt oder gelöscht. Die Synchronisierung wurde gestoppt, um deine Notizen zu schützen.";
+"VaultSync can no longer verify that this folder still holds this vault's data — the folder was likely moved, renamed, replaced, or deleted outside VaultSync. Syncing has stopped to protect your notes." = "VaultSync kann nicht mehr überprüfen, ob dieser Ordner noch die Daten dieses Vaults enthält — der Ordner wurde vermutlich außerhalb von VaultSync verschoben, umbenannt, ersetzt oder gelöscht. Die Synchronisierung wurde gestoppt, um deine Notizen zu schützen.";
 "If you moved or renamed the folder, move it back to its original place. If it is gone, remove this vault on this iPhone, wait ten seconds, close VaultSync in the app switcher and open it again, and accept the vault again under Pending Shares once it shows there. VaultSync never moves, recreates, or deletes folders on its own." = "Hast du den Ordner verschoben oder umbenannt, verschiebe ihn an seinen ursprünglichen Ort zurück. Ist er nicht mehr vorhanden, entferne diesen Vault auf diesem iPhone, warte zehn Sekunden, schließe VaultSync im App-Umschalter, öffne es erneut und nimm den Vault unter „Ausstehende Freigaben“ erneut an, sobald er dort erscheint. VaultSync verschiebt, erstellt oder löscht Ordner nie von selbst.";
 "Follow the recovery steps shown with the affected vault — rescanning cannot fix a vault folder that was moved or deleted." = "Folge den Wiederherstellungsschritten beim betroffenen Vault — ein erneuter Scan kann einen verschobenen oder gelöschten Vault-Ordner nicht reparieren.";
 "Offer “%@” received — accepting…" = "Angebot „%@“ erhalten — wird angenommen …";

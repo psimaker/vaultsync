@@ -771,6 +771,8 @@ struct ContentView: View {
             devicesPath = [.device(id: DesignPreviewFixture.serverID)]
         case .vault:
             syncPath = [.vault(id: notes)]
+        case .vaultFolderMissing:
+            syncPath = [.vault(id: DesignPreviewFixture.workID)]
         case .conflicts:
             syncPath = [.vault(id: notes), .conflicts(folderID: notes, pathPrefix: nil)]
         case .conflict:

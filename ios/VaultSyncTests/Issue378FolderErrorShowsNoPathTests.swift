@@ -81,6 +81,8 @@ struct Issue378FolderErrorShowsNoPathTests {
     /// The troubleshooting link is chosen by words in the error's text, so
     /// with the path in it a vault's own name chose the section: a vault
     /// called "Push Notifications" was sent to the push registration help.
+    /// Without the path in the card's text that case is gone; a name in the
+    /// engine's own text, which the link reads too, is #474.
     @Test("The troubleshooting link does not depend on the vault's path")
     func troubleshootingLinkIgnoresThePath() throws {
         let error = try error(reason: "permission_denied", message: "permission denied")

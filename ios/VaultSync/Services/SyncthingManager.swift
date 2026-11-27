@@ -2552,8 +2552,7 @@ final class SyncthingManager {
         }
         return SyncUserError.fromFolderStatus(
             reason: status.errorReason,
-            message: status.errorMessage,
-            path: status.errorPath
+            message: status.errorMessage
         )
     }
 

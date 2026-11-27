@@ -29,6 +29,10 @@ enum DesignPreviewFixture {
         /// another vault syncs it (#330): the card that says so and names
         /// the way on.
         case overlappingVault = "overlapping-vault"
+        /// The page of a vault whose folder is gone (#378): its "Folder
+        /// Path Missing" card, with the engine's path of the folder in the
+        /// status as on a device, and the Location row under it.
+        case vaultFolderMissing = "vault-folder-missing"
         /// One vault mid-transfer.
         case syncing
         case devices
@@ -139,6 +143,13 @@ enum DesignPreviewFixture {
             workStatus = status(state: "syncing", pct: 63, files: 307, bytes: 9_437_184, need: 3)
         case .earlierCopy, .overlappingVault:
             workStatus = status(state: "error", pct: 100, files: 310, bytes: 9_437_184, need: 0, errorReason: "folder_path_missing")
+        case .vaultFolderMissing:
+            workStatus = status(
+                state: "error", pct: 100, files: 310, bytes: 9_437_184, need: 0,
+                errorReason: "folder_path_missing",
+                errorMessage: "folder path missing",
+                errorPath: "\(root)/Work"
+            )
         default:
             workStatus = status(state: "idle", pct: 100, files: 310, bytes: 9_437_184, need: 0)
         }
@@ -151,6 +162,9 @@ enum DesignPreviewFixture {
             // ever looked for there, so the card comes with its mapping.
             FolderPathReconciler._previewSetRel([workID: "Work"])
             syncthingManager._testSetFoldersWithoutTheirStorage([workID])
+        }
+        if screen == .vaultFolderMissing {
+            FolderPathReconciler._previewSetRel([workID: "Work"])
         }
         if screen == .overlappingVault {
             FolderPathReconciler._previewSetRel([workID: "Work"])
@@ -242,7 +256,9 @@ enum DesignPreviewFixture {
         files: Int,
         bytes: Int64,
         need: Int,
-        errorReason: String? = nil
+        errorReason: String? = nil,
+        errorMessage: String? = nil,
+        errorPath: String? = nil
     ) -> SyncthingManager.FolderStatusInfo {
         SyncthingManager.FolderStatusInfo(payload: .init(
             state: state,
@@ -256,8 +272,8 @@ enum DesignPreviewFixture {
             needFiles: need,
             inProgressBytes: 0,
             errorReason: errorReason,
-            errorMessage: nil,
-            errorPath: nil,
+            errorMessage: errorMessage,
+            errorPath: errorPath,
             errorChanged: nil
         ))
     }
