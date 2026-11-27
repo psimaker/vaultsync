@@ -966,21 +966,21 @@ func (a *app) pair(ctx context.Context, args []string) error {
 	if _, err := eng.client(st); err != nil {
 		return err
 	}
-	// The engine's port is asked only once a Syncthing holds the engine's
-	// home: its run recorded the port before it started it (#413). A run
-	// that is starting its engine, or a background service on its way to
-	// one, is waited for, and the wait for the engine's API shares that
-	// deadline.
+	// The engine's port is asked only while a lock says an engine of
+	// VaultSync's may run, and then the port agent.json records at that
+	// moment. A run records a port it moved to as it takes the engine lock
+	// (#413). pair waits for a lock as long as it waited for the engine
+	// before, and the wait for the engine's API shares that deadline.
 	deadline := time.Now().Add(pairEngineWait)
-	state, err := waitEngineRuns(ctx, a.lay, deadline, a.svc.onItsWay())
+	may, err := waitEngineMayRun(ctx, a.lay, deadline)
 	switch {
 	case ctx.Err() != nil:
 		return ctx.Err()
 	case err != nil:
-		return refuse("VaultSync could not tell whether its sync engine runs: %s. Put it right, then try again.", a.lockLookNote(err))
-	case state != engineRuns && a.backgroundEngine():
+		return refuse("VaultSync could not tell whether its sync engine runs: %s. Once that is fixed, try again.", a.lockLookNote(err))
+	case !may && a.backgroundEngine():
 		return refuse("The background service runs, but its sync engine does not. vaultsync status says why.")
-	case state != engineRuns:
+	case !may:
 		return refuse("The sync engine is not running. Start it with vaultsync start (or vaultsync setup), then try again.")
 	}
 	if st, err = loadState(a.lay.State); err != nil {
@@ -991,7 +991,7 @@ func (a *app) pair(ctx context.Context, args []string) error {
 		return err
 	}
 	if err := waitReady(ctx, client, max(time.Until(deadline), 3*time.Second)); err != nil {
-		return refuse("The sync engine is not running. Start it with vaultsync start (or vaultsync setup), then try again.")
+		return refuse("VaultSync is still starting its sync engine. Try again in a moment; vaultsync status says more.")
 	}
 	t, closeTerm := openTerm(a.out)
 	defer closeTerm()
@@ -1009,13 +1009,14 @@ func (a *app) pair(ctx context.Context, args []string) error {
 func (a *app) lockLookNote(err error) string {
 	var le *lockLookError
 	if errors.As(err, &le) {
-		return fmt.Sprintf("its lock file %s could not be looked at (%v): something VaultSync cannot open stands in its place — a link, a directory, or a file it may not read", tildePath(a.home, le.path), errnoOf(le.err))
+		return fmt.Sprintf("its lock file %s could not be looked at (%v)", tildePath(a.home, le.path), errnoOf(le.err))
 	}
 	return redactPaths(err.Error())
 }
 
-// pairEngineWait is how long vaultsync pair waits for an engine that is
-// starting: as long as it waited for the engine's API before (#413).
+// pairEngineWait is how long vaultsync pair waits for an engine of
+// VaultSync's and its answer: as long as it waited for the engine's API
+// before (#413).
 var pairEngineWait = 10 * time.Second
 
 // errNotSetUpAnymore: no agent.json — never set up, or removed since.
@@ -1323,6 +1324,14 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 		return err
 	}
 	defer unlock()
+	// A port another program took while the engine was down is left now,
+	// before anything slow such as a pin's download. From the engine lock
+	// on, agent.json names the port this run's engine answers on, and a
+	// command that sees the lock asks that one (#413).
+	if err := eng.leaveATakenPort(&st, logf); err != nil {
+		unlockSetup()
+		return err
+	}
 	kept := false
 	sum, sumErr := fileSHA256(a.lay.Syncthing)
 	if st.Syncthing.Version != syncthingVersion || sumErr != nil || sum != st.Syncthing.BinarySHA256 {

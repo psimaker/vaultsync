@@ -702,17 +702,15 @@ func (a *app) noAgentForPause(ctx context.Context, st agentState, pause bool) er
 		return refuse("%s. vaultsync start resumes the background service.", errNoAgent)
 	}
 	if err == nil {
-		// The engine's port is asked only while a Syncthing holds the
-		// engine's home, and then the one agent.json records now (#413).
-		// Neither lock held: nothing syncs. A lock that cannot be looked at
-		// is not known either way, and nothing is asked.
-		var state engineLockState
-		switch state, err = engineLockStateOf(a.lay); {
+		// The engine's port is asked only while a lock says an engine of
+		// VaultSync's may run, and then the one agent.json records now
+		// (#413). Neither lock held: nothing syncs. A lock that cannot be
+		// looked at is not known either way, and nothing is asked.
+		var may bool
+		switch may, err = engineMayRun(a.lay); {
 		case err != nil:
-		case state == engineStopped:
+		case !may:
 			return nothingSyncs()
-		case state == engineStarting:
-			return refuse("VaultSync's sync engine is starting, and no agent answers on the control socket: syncing may begin in a moment, and nothing was changed. Try again in a moment; vaultsync status says more.")
 		default:
 			if now, lerr := loadState(a.lay.State); lerr == nil && now.GUIPort > 0 {
 				client, err = a.engine().client(now)

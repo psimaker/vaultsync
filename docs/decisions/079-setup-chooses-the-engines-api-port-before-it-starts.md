@@ -12,12 +12,12 @@
 
    A lock that cannot be looked at keeps the port too. `TestIssue413_E2EAnEngineLocksItsHome` fails when a Syncthing bump moves Syncthing's lock.
 3. **The supervisor's move stays.** A run still moves off a port taken between two of its starts. Every reader of the port follows `agent.json`, as the control server does.
-4. **The commands that ask the engine itself do so only while a Syncthing holds the engine's home** (`engineLockStateOf`). The port they ask is the one `agent.json` records then. A run records its port before it starts its engine, also a port it moved to. `vaultsync pair` always asks the engine itself, so it checks every time. `status`, `pause` and `resume` check where no agent answers.
-   - **A run holds only the engine lock:** it is starting its engine and may still move its port. They say it is starting and ask nothing.
-   - **Neither lock is held:** nothing of VaultSync's runs the engine. They say so, and nothing is asked.
-   - **A lock cannot be looked at:** that is not known either way. They name the lock file, and nothing is asked.
-   - **The home lock is held**, also by an older agent without a control socket: the engine is asked as before.
-   - **`pair` waits** for a run that is starting its engine, and for a background service on its way to a run (a loaded launchd job, a live systemd unit). The wait for the engine's API shares the same ten seconds, with a few seconds left for the API at the end. A service that runs but whose engine never starts, because it is parked, is named as that.
+4. **The commands that ask the engine itself do so only while a lock says an engine of VaultSync's may run**, and at the port `agent.json` records at that moment (`engineMayRun`). `vaultsync pair` always asks the engine itself, so it checks every time. `status`, `pause` and `resume` check where no agent answers.
+   - **The engine lock held:** a run of VaultSync's owns the engine. A run leaves a port another program took as it takes that lock, before anything slow such as a pin's download (`leaveATakenPort`). `agent.json`, read then, names the port its engine answers on.
+   - **The engine lock free:** Syncthing's lock on the engine's home tells an engine that outlived its run. Syncthing tries that lock once as it starts and exits when it is taken, and a look holds it for an instant. So it is looked at only while no run holds the engine lock, when no Syncthing of VaultSync's can be starting.
+   - **Neither lock held:** nothing of VaultSync's runs the engine, and nothing is asked.
+   - **A lock that cannot be looked at:** that is not known either way. The lock file is named, and nothing is asked.
+   - **`pair` waits** up to ten seconds for a lock and the engine's answer, under one deadline. A lock with no answer by then is a run still starting. No lock while the background service runs is a service whose engine does not start.
    - **A run waits a quarter of a second for the engine lock** (`takeEngineLock`). A look at the lock holds it for an instant, and that must not refuse a run of this build that starts in that instant.
 
 **Why.**
@@ -33,9 +33,9 @@
 - **Asking the holder of the port whether it is this engine.** That sends a request to whatever holds the port, which this decision avoids, and the two locks tell the same.
 
 **Not covered.**
-- A run that holds the engine lock but has not bound its port yet, while another program holds the recorded one.
+- The instant between a run's engine lock and its record of a moved port: a command or a setup that looks then reads the port from before the move.
 - The instant between the choice and the engine's bind.
-- A service that still runs a build from before the grace: a look in the instant its run takes the engine lock refuses that run, which starts again after its throttle interval.
+- A service still on an older build. It waits for no grace, and it leaves a taken port only as it starts its engine, after its install.
 - An engine that outlived its run, after a later run moved the recorded port (#419): the commands ask the moved port.
 
 **Links.** #413, #276; decision 077.
