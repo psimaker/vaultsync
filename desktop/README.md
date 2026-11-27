@@ -73,9 +73,14 @@ On a Mac, use `syncthing-macos-arm64-$v.zip` (or `-amd64`).
 ## Release
 
 What a person meets of this agent goes into [CHANGELOG.md](CHANGELOG.md), one
-`## [X.Y.Z] — YYYY-MM-DD` section per release. The repository's root changelog
-is the iOS app's, the Hub's and the helper's; a change that spans every
-component goes there, with one line here. That section is the GitHub
+`## [X.Y.Z] — YYYY-MM-DD` section per release, and so does what the setup
+link's **1) Obsidian device** changes, with the note that it is live once
+merged: the setup link serves `main`. The repository's root changelog is the
+iOS app's, the helper's and that of the setup link's **2) Hub**, and
+[hub/CHANGELOG.md](../hub/CHANGELOG.md) that of the Hub's releases. A change
+that spans every component goes into the root changelog, with one line here
+and one in the Hub's when a Hub release ships it too, as a fix in
+`hub/pairing` or a new Go runtime does. A release's section is the GitHub
 release's text, as written: `scripts/release-notes.sh` points its relative
 links at the release's tag and adds the link to the whole changelog and a
 paragraph on the assets. Every desktop tag needs it, a candidate's too —
