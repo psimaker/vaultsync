@@ -228,6 +228,28 @@ func (a *app) status(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// The engine's port is asked only while a lock says an engine of
+	// VaultSync's may run, and then the one agent.json records now (#413).
+	switch may, err := engineMayRun(a.lay); {
+	case err != nil:
+		// Not known either way: the vaults are listed, not called stopped.
+		fmt.Fprintf(w, "Sync engine: not known — %s; once that is fixed, run vaultsync status again\n", a.lockLookNote(err))
+		_, err := io.WriteString(w, a.configuredReport("Vaults (whether they sync right now is not known)", "not known whether it syncs").Text)
+		return err
+	case !may:
+		fmt.Fprintln(w, "Sync engine: not running — nothing syncs right now")
+		_, err := io.WriteString(w, a.offlineReport().Text)
+		return err
+	}
+	// The port agent.json records now. A record that cannot be read, or
+	// names no port, leaves nothing to ask: never the port read before.
+	now, err := loadState(a.lay.State)
+	if err != nil {
+		return err
+	}
+	if client, err = eng.client(now); err != nil {
+		return err
+	}
 	pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	up := client.Ping(pctx) == nil
 	cancel()
@@ -517,6 +539,12 @@ func localNetworkRefused(sys systemStatusView) bool {
 // from the engine's config file, and the pairings that did not finish —
 // the same for the terminal and the control socket.
 func (a *app) offlineReport() statusReport {
+	return a.configuredReport("Vaults (not syncing while the engine is stopped)", "not syncing — the engine is stopped")
+}
+
+// configuredReport is that report under heading, each vault in state: for
+// an engine that is stopped, and one that may run or not (#413).
+func (a *app) configuredReport(heading, state string) statusReport {
 	r := emptyReport()
 	var text strings.Builder
 	w := &text
@@ -532,13 +560,13 @@ func (a *app) offlineReport() statusReport {
 		}
 		if xml.NewDecoder(io.LimitReader(f, 16<<20)).Decode(&cfg) == nil {
 			fmt.Fprintln(w)
-			fmt.Fprintln(w, "Vaults (not syncing while the engine is stopped)")
+			fmt.Fprintln(w, heading)
 			if len(cfg.Folders) == 0 {
 				fmt.Fprintln(w, "  none yet")
 			}
 			for _, fo := range cfg.Folders {
 				configured[fo.ID] = true
-				r.Vaults = append(r.Vaults, vaultStatus{ID: fo.ID, Label: fo.Label, Path: fo.Path, State: "not syncing — the engine is stopped", Kind: control.KindOffline})
+				r.Vaults = append(r.Vaults, vaultStatus{ID: fo.ID, Label: fo.Label, Path: fo.Path, State: state, Kind: control.KindOffline})
 				fmt.Fprintf(w, "  %-14s %s\n", fo.Label, tildePath(a.home, fo.Path))
 			}
 		}

@@ -264,7 +264,7 @@ const exitRestart = 3
 // and returns an error when the engine stops on its own — the service
 // manager then restarts the agent after its throttle interval.
 func (e engine) supervise(ctx context.Context, st agentState, logf func(string, ...any)) error {
-	unlock, err := lockFile(e.lay.Lock)
+	unlock, err := takeEngineLock(e.lay.Lock)
 	if err != nil {
 		return err
 	}
@@ -279,17 +279,8 @@ func (e engine) superviseLocked(ctx context.Context, st agentState, logf func(st
 		return errors.New("the sync engine is not set up yet — run vaultsync setup")
 	}
 	for {
-		if !portFree(st.GUIPort) {
-			// Someone else took the API port while the engine was down: move.
-			port, err := freeLoopbackPort()
-			if err != nil {
-				return err
-			}
-			logf("the engine's API port was taken; moving it to %d", port)
-			st.GUIPort = port
-			if err := updateState(e.lay.State, func(s *agentState) { s.GUIPort = port }); err != nil {
-				return err
-			}
+		if err := e.leaveATakenPort(&st, logf); err != nil {
+			return err
 		}
 		code, err := e.runOnce(ctx, st.GUIPort, st.Syncthing.Version, logf)
 		if ctx.Err() != nil {
@@ -304,6 +295,24 @@ func (e engine) superviseLocked(ctx context.Context, st agentState, logf func(st
 		}
 		return errEngineStoppedOnItsOwn
 	}
+}
+
+// leaveATakenPort moves the engine's API port off one another program took
+// while the engine was down, and records the new one in agent.json. A run
+// calls it as it takes the engine lock and before each start of its
+// engine. From the lock on, agent.json names the port the run's engine
+// answers on (#413).
+func (e engine) leaveATakenPort(st *agentState, logf func(string, ...any)) error {
+	if st.GUIPort <= 0 || portFree(st.GUIPort) {
+		return nil
+	}
+	port, err := freeLoopbackPort()
+	if err != nil {
+		return err
+	}
+	logf("the engine's API port was taken; moving it to %d", port)
+	st.GUIPort = port
+	return updateState(e.lay.State, func(s *agentState) { s.GUIPort = port })
 }
 
 // runOnce starts the engine and waits for it to exit (or stops it when ctx
@@ -415,6 +424,80 @@ func apiPortForSetup(lay layout, recorded int) (int, error) {
 		}
 	}
 	return freeLoopbackPort()
+}
+
+// engineMayRun says whether an engine of VaultSync's may run here, told by
+// its locks and never by asking its port (#413, decision 079):
+//   - a vaultsync run holds the engine lock;
+//   - with that lock free, a Syncthing that outlived its run holds its lock
+//     on the engine's home.
+//
+// Syncthing's lock is looked at only while no run holds the engine lock.
+// Syncthing tries that lock once as it starts and exits if it is taken,
+// and a look holds it for an instant. With no run holding the engine lock,
+// no Syncthing of VaultSync's can be starting. A lock that cannot be looked
+// at is a *lockLookError.
+func engineMayRun(lay layout) (bool, error) {
+	held, err := lock.Probe(lay.Lock)
+	if err != nil {
+		return false, &lockLookError{path: lay.Lock, err: err}
+	}
+	if held {
+		return true, nil
+	}
+	home := filepath.Join(lay.Home, syncthingHomeLock)
+	if held, err = lock.Probe(home); err != nil {
+		return false, &lockLookError{path: home, err: err}
+	}
+	return held, nil
+}
+
+// waitEngineMayRun is engineMayRun, asked again until an engine of
+// VaultSync's may run or the deadline passes: a run takes the engine lock a
+// moment after it starts.
+func waitEngineMayRun(ctx context.Context, lay layout, deadline time.Time) (bool, error) {
+	for {
+		may, err := engineMayRun(lay)
+		if err != nil || may || time.Now().After(deadline) {
+			return may, err
+		}
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+}
+
+// lockLookError is a lock of VaultSync's that cannot be looked at: a link
+// or a permission in its place.
+type lockLookError struct {
+	path string
+	err  error
+}
+
+func (e *lockLookError) Error() string { return e.err.Error() }
+func (e *lockLookError) Unwrap() error { return e.err }
+
+// engineLockGrace is how long a run waits for the engine lock before it
+// takes it as another run's. A look at the lock holds it for an instant:
+// lock.Probe from setup's port choice, status, pair, pause, resume and
+// uninstall. That look must not refuse a run of this build that starts in
+// the same instant (#413). A service that still runs an older build waits
+// for nothing. A variable for the tests.
+var engineLockGrace = 250 * time.Millisecond
+
+// takeEngineLock takes the engine lock, waiting engineLockGrace for a look
+// that holds it for an instant.
+func takeEngineLock(path string) (func(), error) {
+	deadline := time.Now().Add(engineLockGrace)
+	for {
+		unlock, err := lockFile(path)
+		if !errors.Is(err, ErrEngineRunning) || time.Now().After(deadline) {
+			return unlock, err
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // syncthingHomeLock is the file Syncthing locks in its home while it runs

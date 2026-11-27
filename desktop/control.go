@@ -682,9 +682,10 @@ func eachCause(err error) []error {
 // noAgentForPause: no agent answers on the socket — which does not prove
 // that the engine is stopped. An agent without a control socket (an older
 // VaultSync, or a socket that could not be made) runs it all the same, so
-// the engine is asked, and the refusal says what is known: it runs and was
-// not paused; nobody listens on its port, so nothing syncs; or neither
-// could be told, so syncing may continue.
+// the engine is asked where a lock says an engine of VaultSync's may run
+// (#413), and the refusal says what is known: it runs and was not paused;
+// no lock is held or nobody listens on its port, so nothing syncs; or
+// neither could be told, so syncing may continue.
 func (a *app) noAgentForPause(ctx context.Context, st agentState, pause bool) error {
 	if st.GUIPort == 0 {
 		return refuse("VaultSync is not set up on this computer yet. Run vaultsync setup.")
@@ -694,6 +695,32 @@ func (a *app) noAgentForPause(ctx context.Context, st agentState, pause bool) er
 		// No config.xml: nothing was ever set up. Any other failure to
 		// read it is not that, and is reported below.
 		return refuse("VaultSync is not set up on this computer yet. Run vaultsync setup.")
+	}
+	nothingSyncs := func() error {
+		if pause {
+			return refuse("%s — nothing syncs while it is not running, so there is nothing to pause. See vaultsync status.", errNoAgent)
+		}
+		return refuse("%s. vaultsync start resumes the background service.", errNoAgent)
+	}
+	if err == nil {
+		// The engine's port is asked only while a lock says an engine of
+		// VaultSync's may run, and then the one agent.json records now
+		// (#413). Neither lock held: nothing syncs. A lock that cannot be
+		// looked at is not known either way, and nothing is asked.
+		var may bool
+		switch may, err = engineMayRun(a.lay); {
+		case err != nil:
+		case !may:
+			return nothingSyncs()
+		default:
+			// The port agent.json records now. A record that cannot be read,
+			// or names no port, is not known either way: never the port read
+			// before.
+			var now agentState
+			if now, err = loadState(a.lay.State); err == nil {
+				client, err = a.engine().client(now)
+			}
+		}
 	}
 	if err == nil {
 		pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
@@ -710,14 +737,16 @@ func (a *app) noAgentForPause(ctx context.Context, st agentState, pause bool) er
 	case nobodyListens(err):
 		// Nobody listens on the engine's port: the one positive sign that
 		// nothing syncs.
-		if pause {
-			return refuse("%s — nothing syncs while it is not running, so there is nothing to pause. See vaultsync status.", errNoAgent)
-		}
-		return refuse("%s. vaultsync start resumes the background service.", errNoAgent)
+		return nothingSyncs()
 	}
-	// Refused, timed out, or the engine's config could not be read: not
-	// known either way.
-	return refuse("VaultSync could not confirm whether the sync engine runs (%s), and no agent answers on the control socket: syncing may continue, and nothing was changed. See vaultsync status; vaultsync stop stops the background service.", redactPaths(err.Error()))
+	// Refused, timed out, a lock that cannot be looked at, or the engine's
+	// config could not be read: not known either way.
+	cause := redactPaths(err.Error())
+	var le *lockLookError
+	if errors.As(err, &le) {
+		cause = a.lockLookNote(err)
+	}
+	return refuse("VaultSync could not confirm whether the sync engine runs (%s), and no agent answers on the control socket: syncing may continue, and nothing was changed. See vaultsync status; vaultsync stop stops the background service.", cause)
 }
 
 // --- pause / resume from the terminal ----------------------------------------
