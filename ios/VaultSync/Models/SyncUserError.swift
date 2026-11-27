@@ -12,6 +12,7 @@ enum SyncUserErrorCategory: String, Sendable {
     case fileAccess = "file_access"
     case folderMarkerMissing = "folder_marker_missing"
     case folderIsACopy = "folder_is_a_copy"
+    case folderOverlapsAnotherFolder = "folder_overlaps_another_folder"
     case unknown
 }
 
@@ -62,6 +63,23 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
         SyncUserError(
             category: .folderIsACopy,
             title: L10n.tr("The Folder Found Is a Copy"),
+            message: explanation,
+            remediation: "",
+            technicalDetails: nil
+        )
+    }
+
+    /// The troubleshooting section for a vault whose own folder overlaps
+    /// another vault's (#330).
+    static let folderOverlapsAnotherFolderAnchor = "the-folder-found-overlaps-another-vault"
+
+    /// A vault whose folder is gone, with its own folder found where
+    /// another vault syncs it, a folder inside it or one around it (#330):
+    /// the words of its card, and the link to the section with the rest.
+    static func folderOverlapsAnotherFolder(explanation: String) -> SyncUserError {
+        SyncUserError(
+            category: .folderOverlapsAnotherFolder,
+            title: L10n.tr("The Folder Found Overlaps Another Vault"),
             message: explanation,
             remediation: "",
             technicalDetails: nil
@@ -362,6 +380,8 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
             anchor = "vault-folder-was-moved-or-deleted"
         case .folderIsACopy:
             anchor = folderIsACopyAnchor
+        case .folderOverlapsAnotherFolder:
+            anchor = folderOverlapsAnotherFolderAnchor
         case .config, .validation:
             // A missing folder is routed by its title, not by words in its
             // text: its way on names Pending Shares (#308).

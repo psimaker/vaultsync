@@ -762,7 +762,7 @@ struct ContentView: View {
     private func openDesignPreviewScreen() {
         let notes = DesignPreviewFixture.notesID
         switch DesignPreviewFixture.screen {
-        case .home, .attention, .outsideObsidian, .earlierCopy, .syncing, .onboarding, .onboardingShare:
+        case .home, .attention, .outsideObsidian, .earlierCopy, .overlappingVault, .syncing, .onboarding, .onboardingShare:
             break
         case .devices:
             selectedTab = .devices
@@ -1235,7 +1235,7 @@ struct ContentView: View {
                     .font(.footnote)
             }
             VaultButtonRow {
-                if folder.hasObsidianMapping {
+                if folder.offersReconnect {
                     Button(L10n.tr("Reconnect to Obsidian")) {
                         showObsidianPicker = true
                     }
@@ -1988,8 +1988,14 @@ struct ContentView: View {
     private func removeVault(id: String) {
         vaultPendingRemoval = nil
         if let err = syncthingManager.removeFolder(id: id) {
-            alertMessage = mappedError(err, fallbackTitle: L10n.tr("Could Not Remove Vault")).userVisibleDescription
-            showAlert = true
+            if let note = SyncthingManager.removalNotConfirmedNote(forAnswer: err) {
+                // Not a failure: the removal may still land (#343).
+                infoMessage = note
+                showInfoAlert = true
+            } else {
+                alertMessage = mappedError(err, fallbackTitle: L10n.tr("Could Not Remove Vault")).userVisibleDescription
+                showAlert = true
+            }
         } else if syncPath.contains(.vault(id: id)) {
             // Its screen could only say "no longer synced" now.
             syncPath.removeAll()
