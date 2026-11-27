@@ -1215,12 +1215,12 @@ final class SyncthingManager {
         }
 
         let result = bridgeRemoveFolder(id)
-        // "folder not found": the folder is not configured, which is what
-        // the user asked for — after a removal the engine had not confirmed
-        // and that has landed since, this is the answer to asking again.
-        // Every other answer leaves the folder possibly configured, and
-        // what describes it stays (#343).
-        guard result == nil || result == "folder not found" else { return result }
+        // A folder that is not configured is what the user asked for —
+        // after a removal the engine had not confirmed and that has landed
+        // since, this is the answer to asking again. Every other answer
+        // leaves the folder possibly configured, and what describes it
+        // stays (#343).
+        guard result == nil || result == SyncBridgeService.folderNotFoundError else { return result }
 
         refreshFolders()
         folderStatuses.removeValue(forKey: id)

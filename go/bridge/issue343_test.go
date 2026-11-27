@@ -171,8 +171,21 @@ func TestIssue343_ARemovalQueuedBehindAnotherCommitLandsLater(t *testing.T) {
 
 	// Asked again once it has landed, the bridge says the folder is not
 	// configured; the app takes exactly this text for a removal that is done.
-	if again := RemoveFolder(id); again != "folder not found" {
-		t.Fatalf("RemoveFolder() after the removal landed = %q, want %q", again, "folder not found")
+	if again := RemoveFolder(id); again != FolderNotFoundError() {
+		t.Fatalf("RemoveFolder() after the removal landed = %q, want %q", again, FolderNotFoundError())
+	}
+}
+
+// The app tells a removal that is done by the text the bridge exports for a
+// folder that is not configured, so RemoveFolder must answer with exactly
+// that text (#343).
+func TestIssue343_AFolderThatIsNotConfiguredIsAnsweredWithTheExportedText(t *testing.T) {
+	startWithFolder(t, "issue343-configured")
+	if answer := RemoveFolder("issue343-never-configured"); answer != FolderNotFoundError() {
+		t.Fatalf("RemoveFolder() for a folder that is not configured = %q, want %q", answer, FolderNotFoundError())
+	}
+	if FolderNotFoundError() == "" || FolderNotFoundError() == FolderRemovalNotConfirmedError() {
+		t.Fatalf("FolderNotFoundError() = %q, want a text of its own", FolderNotFoundError())
 	}
 }
 

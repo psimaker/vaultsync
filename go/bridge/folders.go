@@ -92,9 +92,21 @@ func AddFolder(id, label, path string) string {
 
 // folderRemovalNotConfirmed is how RemoveFolder answers a removal it handed
 // to the engine and did not see reach the configuration within its wait.
-// It is queued behind another change and lands once that one is through,
-// or never, if the engine stops first (#343).
+// It is queued behind another change, and once that one is through it
+// lands, or the engine refuses it; if the engine stops first, it never
+// lands (#343).
 const folderRemovalNotConfirmed = "folder removal not confirmed yet"
+
+// folderNotFound is how RemoveFolder answers for a folder that is not
+// configured: also when a removal it could not confirm has landed since.
+const folderNotFound = "folder not found"
+
+// FolderNotFoundError returns the text RemoveFolder answers a folder that is
+// not configured with. The app takes it for a removal that is done, and
+// reads the text here instead of keeping a copy of it (#343).
+func FolderNotFoundError() string {
+	return folderNotFound
+}
 
 // FolderRemovalNotConfirmedError returns the text RemoveFolder answers such a
 // removal with. The app tells it from a refusal — the removal may still land
@@ -104,11 +116,12 @@ func FolderRemovalNotConfirmedError() string {
 }
 
 // RemoveFolder removes a folder by its ID.
-// Returns empty string once the folder is gone from the configuration,
-// folderRemovalNotConfirmed while the removal is still on its way, or the
-// reason the engine refused it (#343). "folder not found" means the folder
-// is not configured: also after a removal that was not confirmed and has
-// landed since.
+// Returns empty string once the folder is gone from the engine's
+// configuration in memory, folderRemovalNotConfirmed while the removal is
+// still on its way, folderNotFound for a folder that is not configured, or
+// the reason the engine refused it (#343). The configuration reaches
+// config.xml only once the engine's services are through with the change
+// (the wrapper's save timer, #151).
 func RemoveFolder(id string) string {
 	mu.Lock()
 	defer mu.Unlock()
@@ -120,7 +133,7 @@ func RemoveFolder(id string) string {
 	// Check if folder exists.
 	folders := stCfg.Folders()
 	if _, exists := folders[id]; !exists {
-		return "folder not found"
+		return folderNotFound
 	}
 
 	err := commitConfigLocked(func(cfg *config.Configuration) {

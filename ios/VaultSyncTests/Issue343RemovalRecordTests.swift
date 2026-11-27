@@ -131,7 +131,7 @@ struct Issue343RemovalRecordTests {
 
     @Test("Asked again once the removal has landed, the bridge finds no folder: the removal is done")
     func folderNotFoundCompletesTheRemoval() {
-        let rig = Rig(answer: "folder not found")
+        let rig = Rig(answer: SyncBridgeService.folderNotFoundError)
         defer { rig.tearDown() }
         rig.manager._testSetFoldersWithoutTheirStorage([rig.folderID])
         FolderPathReconciler.setRel("Vault", forFolder: rig.folderID)
@@ -185,7 +185,7 @@ struct Issue343RemovalRecordTests {
     func notConfirmedGetsANote() {
         let note = SyncthingManager.removalNotConfirmedNote(forAnswer: SyncBridgeService.folderRemovalNotConfirmedError)
         #expect(note == "VaultSync has asked the sync engine to stop syncing this vault on this iPhone, and the engine has not confirmed it yet. If the vault is still listed in a minute, remove it again. If its share is offered again, VaultSync does not accept it by itself.")
-        for answer in ["syncthing not running", "folder not found", "modify config: config commit: timed out after 30s", ""] {
+        for answer in ["syncthing not running", SyncBridgeService.folderNotFoundError, "modify config: config commit: timed out after 30s", ""] {
             #expect(SyncthingManager.removalNotConfirmedNote(forAnswer: answer) == nil)
         }
     }
