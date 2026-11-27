@@ -224,7 +224,7 @@ extension EngineBridgeSuites {
         @Test("While the list cannot be read, nothing is accepted from the rows last read, and a tap is told to try again")
         func nothingIsAcceptedFromTheLastRowsRead() {
             let offer = Self.offer("issue464-\(UUID().uuidString)")
-            var unreadable = true
+            let unreadable = OSAllocatedUnfairLock(initialState: true)
             var accepted: [String] = []
             let coordinator = ShareAcceptCoordinator(environment: ShareAcceptCoordinator.Environment(
                 settled: { true },
@@ -241,7 +241,7 @@ extension EngineBridgeSuites {
                 },
                 unignorePendingFolder: { _ in },
                 ignorePendingFolder: { _ in },
-                offersUnreadable: { unreadable }
+                offersUnreadable: { unreadable.withLock { $0 } }
             ))
 
             coordinator.runAutomaticPass()
@@ -257,7 +257,7 @@ extension EngineBridgeSuites {
             #expect(coordinator.pendingShareFailures.isEmpty, "no failure card beside the notice")
 
             // A list is read again: the pass goes on.
-            unreadable = false
+            unreadable.withLock { $0 = false }
             coordinator.runAutomaticPass()
             #expect(accepted == [offer.id])
         }
