@@ -355,14 +355,10 @@ func startPeer(t *testing.T, bin, name string) *peerInstance {
 		t.Fatal(err)
 	}
 	cmd.Stdout, cmd.Stderr = logFile, logFile
-	stop, err := startPeerProcess(cmd)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Registered before the start, so a start that fails still closes the
+	// log and shows its tail; cleanups run last in, first out, so the stop
+	// below runs first and the tail also shows its verdict.
 	t.Cleanup(func() {
-		if left := stop(); len(left) > 0 {
-			t.Errorf("%s left processes behind after its cleanup (#334):\n  %s", name, strings.Join(left, "\n  "))
-		}
 		logFile.Close()
 		if t.Failed() {
 			data, _ := os.ReadFile(filepath.Join(home, "stdout.log"))
@@ -370,6 +366,15 @@ func startPeer(t *testing.T, bin, name string) *peerInstance {
 				data = data[len(data)-8000:]
 			}
 			t.Logf("--- %s log (tail) ---\n%s", name, data)
+		}
+	})
+	stop, err := startPeerProcess(cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if left := stop(); len(left) > 0 {
+			t.Errorf("%s left processes behind after its cleanup (#334):\n  %s", name, strings.Join(left, "\n  "))
 		}
 	})
 	waitFor(t, name+" API", 60*time.Second, func() bool {
