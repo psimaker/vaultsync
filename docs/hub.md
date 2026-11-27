@@ -70,8 +70,10 @@ on — it installs the app **VaultSync for Mac** into Applications (into
 `~/Applications` when your account cannot write to Applications or another
 account's copy is there) and runs the setup from there; an app of that name
 that is not VaultSync for Mac is never replaced — the setup stops and says
-so. With an older release (no app in it) it installs the bare agent, as
-before. VaultSync for Mac and the agent need macOS 12 or newer; on an
+so. Nor is a VaultSync for Mac newer than the release the link offers, or
+one that does not say which release it is (a development build): the setup
+stops, changes nothing, and says so and how to go on. With an older release
+(no app in it) it installs the bare agent, as before. VaultSync for Mac and the agent need macOS 12 or newer; on an
 older Mac the setup stops before it downloads anything. Nothing else needs
 to be installed; a Syncthing you already run is never touched. Scripts pass
 everything after `--` to the agent:
