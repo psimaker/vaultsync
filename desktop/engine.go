@@ -396,6 +396,19 @@ func portFree(port int) bool {
 	return true
 }
 
+// apiPortForSetup is the API port setup starts the engine on (#413): the
+// recorded one, unless another program holds it while no vaultsync run
+// holds the engine lock — the engine started next would move off it, and
+// setup would wait at the old one. A run that holds the lock holds its
+// engine's port itself, and the port stays. No port recorded is left to
+// prepare, which picks one.
+func apiPortForSetup(lay layout, recorded int) (int, error) {
+	if recorded <= 0 || portFree(recorded) || engineLockHeld(lay) {
+		return recorded, nil
+	}
+	return freeLoopbackPort()
+}
+
 // freeSyncPort finds a sync port next to Syncthing's default, free for TCP
 // and UDP (QUIC), so the user's own Syncthing keeps 22000.
 func freeSyncPort() (int, error) {

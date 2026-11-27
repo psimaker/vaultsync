@@ -263,7 +263,7 @@ jobs:
       # this agent with a Hub on the pin (#267).
       - name: Prove install, pairing and sync through two loopback instances
         working-directory: desktop
-        run: go test . -run '^TestIssue175_(E2E|RealArchive)|^TestIssue267_E2E' -count=1 -v -timeout 10m
+        run: go test . -run '^TestIssue175_(E2E|RealArchive)|^TestIssue267_E2E|^TestIssue413_E2E' -count=1 -v -timeout 10m
 
   m4-docker-confinement:
     name: M4 Docker Confinement

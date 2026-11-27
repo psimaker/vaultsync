@@ -240,9 +240,16 @@ func (a *app) userSyncthing() (userSyncthing, bool) {
 	return findUserSyncthing(a.goos, a.home, a.getenv)
 }
 
+// engineOptionsFor sets up the engine an app runs: Syncthing's own ports,
+// off 22000 beside the person's own Syncthing. A variable so the end-to-end
+// tests can pin the engine setup makes to loopback.
+var engineOptionsFor = func(hasUserSyncthing bool) engineOptions {
+	return engineOptions{avoidDefaultPorts: hasUserSyncthing}
+}
+
 func (a *app) engine() engine {
 	_, hasUser := a.userSyncthing()
-	return engine{lay: a.lay, opts: engineOptions{avoidDefaultPorts: hasUser}}
+	return engine{lay: a.lay, opts: engineOptionsFor(hasUser)}
 }
 
 func pairFlags(name string, opts *pairOptions) *flag.FlagSet {
@@ -329,6 +336,15 @@ func (a *app) setup(ctx context.Context, args []string) error {
 		return fmt.Errorf("could not install VaultSync into %s: %w", tildePath(a.home, a.lay.Bin), err)
 	}
 	eng := a.engine()
+	// The engine started below moves off an API port another program
+	// holds, and this setup would wait at the old one (#413): the port is
+	// chosen here, so a fresh config gets it and agent.json records it.
+	port, err := apiPortForSetup(a.lay, st.GUIPort)
+	if err != nil {
+		unlockSetup()
+		return fmt.Errorf("could not set up the sync engine: %w", err)
+	}
+	st.GUIPort = port
 	if err := eng.prepare(ctx, &st); err != nil {
 		unlockSetup()
 		return fmt.Errorf("could not set up the sync engine: %w", err)
