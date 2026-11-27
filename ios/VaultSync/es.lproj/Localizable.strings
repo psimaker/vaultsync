@@ -1047,3 +1047,6 @@
 "On My iPhone" = "En mi iPhone";
 "iCloud Drive" = "iCloud Drive";
 "App Folder" = "Carpeta de la app";
+
+/* Remove Vault: the engine has not confirmed the removal yet (#343) */
+"VaultSync has asked the sync engine to stop syncing this vault on this iPhone, and the engine has not confirmed it yet. If the vault is still listed in a minute, remove it again. If its share is offered again, it waits under Pending Shares until you accept it." = "VaultSync ha pedido al motor de sincronización que deje de sincronizar este Vault en este iPhone, y el motor aún no lo ha confirmado. Si el Vault sigue en la lista dentro de un minuto, elimínalo de nuevo. Si su compartición se vuelve a ofrecer, espera en \"Comparticiones pendientes\" hasta que la aceptes.";

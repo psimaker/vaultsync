@@ -181,6 +181,15 @@ struct Issue343RemovalRecordTests {
         #expect(ManualShareTargetStore.consentRoot(forFolder: rig.folderID) == "/issue343-root")
     }
 
+    @Test("A removal the engine has not confirmed is told in a note, every other answer as before")
+    func notConfirmedGetsANote() {
+        let note = SyncthingManager.removalNotConfirmedNote(forAnswer: SyncBridgeService.folderRemovalNotConfirmedError)
+        #expect(note == "VaultSync has asked the sync engine to stop syncing this vault on this iPhone, and the engine has not confirmed it yet. If the vault is still listed in a minute, remove it again. If its share is offered again, it waits under Pending Shares until you accept it.")
+        for answer in ["syncthing not running", "folder not found", "modify config: config commit: timed out after 30s", ""] {
+            #expect(SyncthingManager.removalNotConfirmedNote(forAnswer: answer) == nil)
+        }
+    }
+
     @Test("While the paths are not settled, the consent is dropped before the engine is asked")
     func unsettledDropsTheConsentFirst() {
         let rig = Rig(answer: SyncBridgeService.folderRemovalNotConfirmedError)

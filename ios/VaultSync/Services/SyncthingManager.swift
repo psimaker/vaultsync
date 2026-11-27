@@ -1180,49 +1180,73 @@ final class SyncthingManager {
 
     /// Remove a folder by ID.
     func removeFolder(id: String) -> String? {
-        let result = bridgeRemoveFolder(id)
-        if result == nil {
-            refreshFolders()
-            folderStatuses.removeValue(forKey: id)
-            // Drop the path mapping so a future folder reusing this ID does not
-            // inherit a stale relative path.
-            FolderPathReconciler.removeRel(forFolder: id)
-            // Nor what the last reconcile found for the folder that had it.
-            // If that was a copy in its place, a folder name remembered for
-            // its share stops standing for consent: the directory of that
-            // name is the copy, and accepting the share into it has to ask
-            // (#315, decision 007). The same while a reconcile is still
-            // under way: what it is about to find is not known yet, and a
-            // question too many costs less than a copy combined unasked.
-            let copyFound = foldersWithoutTheirStorage.remove(id) != nil
-            if copyFound || !pathSettlement.settled {
-                ManualShareTargetStore.forgetConsent(forFolder: id)
-            }
-            // Forget any #45 auto-pause record so a future folder reusing this
-            // ID can be paused again if it collides (removing a colliding vault
-            // is the sanctioned recovery; accepting the returning share re-adds
-            // it unpaused into its own folder).
-            PathCollisionGuard.clearAutoPaused(id)
-            // Never auto-re-accept a share the user just removed: while a peer
-            // still shares the folder, its offer comes back once the peer
-            // announces the folder again, and silently pulling it back in
-            // would undo the removal (doctrine 002 / #52). The removal sends
-            // our configuration without the folder and discards its pending
-            // offer, but gives the peer no cause to send its own: the offer
-            // returns when a connection to the peer is set up or its own
-            // configuration changes — in practice once VaultSync was closed
-            // and opened again, which is why the texts that say to accept it
-            // again say to reopen VaultSync first (#316). The share then
-            // stays under Pending Shares until the user explicitly accepts
-            // it — which honours a manually chosen target.
-            userRemovedFolderIDs.insert(id)
-            persistUserRemovedFolderIDs()
-            // What was kept or reported belongs to the folder that was
-            // removed (#270): a later folder with this ID is judged afresh.
-            ObsidianVisibility.forget(folderID: id)
-            refreshObsidianVisibility()
+        // Never auto-re-accept a share the user just removed: while a peer
+        // still shares the folder, its offer comes back once the peer
+        // announces the folder again, and silently pulling it back in
+        // would undo the removal (doctrine 002 / #52). The removal sends
+        // our configuration without the folder and discards its pending
+        // offer, but gives the peer no cause to send its own: the offer
+        // returns when a connection to the peer is set up or its own
+        // configuration changes — in practice once VaultSync was closed
+        // and opened again, which is why the texts that say to accept it
+        // again say to reopen VaultSync first (#316). The share then
+        // stays under Pending Shares until the user explicitly accepts
+        // it — which honours a manually chosen target.
+        //
+        // Recorded before the engine is asked, and kept whatever it answers
+        // (#343, decision 006): a removal can go ahead after a failed
+        // answer — the engine takes the change into its configuration first
+        // and then waits for its services, while the bridge waits at most
+        // 30 seconds — and an app ended during that wait must not leave a
+        // removal on disk without its record. A record for a removal that
+        // never landed costs nothing: a configured folder is not offered as
+        // a new share.
+        userRemovedFolderIDs.insert(id)
+        persistUserRemovedFolderIDs()
+        // If a copy was found in the folder's place, a folder name
+        // remembered for its share stops standing for consent: the
+        // directory of that name is the copy, and accepting the share into
+        // it has to ask (#315, decision 007). The same while a reconcile is
+        // still under way: what it is about to find is not known yet, and a
+        // question too many costs less than a copy combined unasked. Before
+        // the engine is asked too, since it only adds a question.
+        if foldersWithoutTheirStorage.contains(id) || !pathSettlement.settled {
+            ManualShareTargetStore.forgetConsent(forFolder: id)
         }
-        return result
+
+        let result = bridgeRemoveFolder(id)
+        // "folder not found": the folder is not configured, which is what
+        // the user asked for — after a removal the engine had not confirmed
+        // and that has landed since, this is the answer to asking again.
+        // Every other answer leaves the folder possibly configured, and
+        // what describes it stays (#343).
+        guard result == nil || result == "folder not found" else { return result }
+
+        refreshFolders()
+        folderStatuses.removeValue(forKey: id)
+        // Drop the path mapping so a future folder reusing this ID does not
+        // inherit a stale relative path.
+        FolderPathReconciler.removeRel(forFolder: id)
+        // Nor what the last reconcile found for the folder that had it.
+        foldersWithoutTheirStorage.remove(id)
+        // Forget any #45 auto-pause record so a future folder reusing this
+        // ID can be paused again if it collides (removing a colliding vault
+        // is the sanctioned recovery; accepting the returning share re-adds
+        // it unpaused into its own folder).
+        PathCollisionGuard.clearAutoPaused(id)
+        // What was kept or reported belongs to the folder that was
+        // removed (#270): a later folder with this ID is judged afresh.
+        ObsidianVisibility.forget(folderID: id)
+        refreshObsidianVisibility()
+        return nil
+    }
+
+    /// The note shown for a removal the engine has not confirmed yet, or nil
+    /// for every other answer of `removeFolder` (#343). It is no failure: the
+    /// removal may still land, and the vault is already recorded as removed.
+    static func removalNotConfirmedNote(forAnswer answer: String) -> String? {
+        guard answer == SyncBridgeService.folderRemovalNotConfirmedError else { return nil }
+        return L10n.tr("VaultSync has asked the sync engine to stop syncing this vault on this iPhone, and the engine has not confirmed it yet. If the vault is still listed in a minute, remove it again. If its share is offered again, it waits under Pending Shares until you accept it.")
     }
 
     /// The bridge's removal, or what a test put in its place (#343).
