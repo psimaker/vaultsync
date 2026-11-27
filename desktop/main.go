@@ -1545,8 +1545,8 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 	// an engine that cannot have one still runs. It comes before anything
 	// is touched: a run refused here owns nothing, and leaves the engine
 	// and agent.json to the VaultSync that holds it, a desktop-v0.1.0 too.
-	// A port another program took while the engine was down is left with
-	// it, before anything slow such as a pin's download, under state.lock:
+	// A port taken while the engine was down is left with it, before
+	// anything slow such as a pin's download, under state.lock:
 	// a command that sees the engine lock reads the port this run's engine
 	// answers on, never the one from before the move (#413, #419).
 	unlock, err := eng.takeEngineLockLeavingATakenPort(ctx, &st, logf)
