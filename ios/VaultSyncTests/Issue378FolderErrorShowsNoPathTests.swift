@@ -56,6 +56,9 @@ struct Issue378FolderErrorShowsNoPathTests {
         #expect(error.title == L10n.tr("Folder Path Missing"))
         #expect(error.message == L10n.tr("The folder path no longer exists."))
         #expect(error.remediation == SyncUserError.vaultFolderGoneRemediation)
+        // Where the original place is shown, also on the Sync tab, which has
+        // no Location row.
+        #expect(error.remediation.contains("That place is shown under Location on the vault's page."))
         #expect(error.technicalDetails == "folder path missing")
         expectNoPath(error)
     }
@@ -78,15 +81,29 @@ struct Issue378FolderErrorShowsNoPathTests {
         expectNoPath(error)
     }
 
-    /// The troubleshooting link is chosen by words in the error's text, so
-    /// with the path in it a vault's own name chose the section: a vault
-    /// called "Push Notifications" was sent to the push registration help.
-    /// Without the path in the card's text that case is gone; a name in the
-    /// engine's own text, which the link reads too, is #474.
-    @Test("The troubleshooting link does not depend on the vault's path")
-    func troubleshootingLinkIgnoresThePath() throws {
+    /// The troubleshooting link is chosen by words in the error's message,
+    /// its way on and its technical details. With the path in the message,
+    /// the card's own text named the vault, so its name could choose the
+    /// section. This pins that the card's own text no longer does.
+    @Test("The card's own text no longer steers the troubleshooting link")
+    func cardTextDoesNotSteerTheLink() throws {
         let error = try error(reason: "permission_denied", message: "permission denied")
         let url = try #require(SyncUserError.troubleshootingURL(for: error))
         #expect(url.absoluteString.hasSuffix("#bookmark-access-expired"))
+    }
+
+    /// The engine's own text for a folder it may not read names the full
+    /// path, and the link reads it in the technical details: a vault named
+    /// "Push Notifications" still gets the push registration help. This
+    /// pins today's wrong section and turns red when #474 fixes it.
+    @Test("The engine's own text still steers the link: today's wrong section, until #474")
+    func engineTextStillSteersTheLink() throws {
+        let error = try error(
+            reason: "permission_denied",
+            message: "stat \(Self.vaultPath): operation not permitted"
+        )
+        expectNoPath(error)
+        let url = try #require(SyncUserError.troubleshootingURL(for: error))
+        #expect(url.absoluteString.hasSuffix("#apns-not-registered"), "#474: \(url.absoluteString)")
     }
 }

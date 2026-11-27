@@ -300,9 +300,11 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
     /// it, by design), and recreating or re-pointing anything automatically
     /// risks propagating the loss to every peer (safety rule 3).
     /// The way on for a vault whose folder was moved, deleted or replaced —
-    /// one text for both cards, so they cannot drift apart (#308).
+    /// one text for both cards, so they cannot drift apart (#308). The card
+    /// names no path (#378), and the Sync tab shows no Location row, so the
+    /// text says where the original place is shown.
     static var vaultFolderGoneRemediation: String {
-        L10n.tr("If you moved or renamed the folder, move it back to its original place. If it is gone, remove this vault on this iPhone, wait ten seconds, close VaultSync in the app switcher and open it again, and accept the vault again under Pending Shares once it shows there. VaultSync never moves, recreates, or deletes folders on its own.")
+        L10n.tr("If you moved or renamed the folder, move it back to its original place. That place is shown under Location on the vault's page. If it is gone, remove this vault on this iPhone, wait ten seconds, close VaultSync in the app switcher and open it again, and accept the vault again under Pending Shares once it shows there. VaultSync never moves, recreates, or deletes folders on its own.")
     }
 
     private static func folderMarkerMissing(detail: String) -> SyncUserError {
