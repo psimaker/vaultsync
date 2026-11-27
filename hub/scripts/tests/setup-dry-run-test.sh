@@ -203,6 +203,7 @@ SHIM
 # under another name checks itself.
 shim_root_guards() {
 	sg_rc=0
+	# shellcheck disable=SC2016 # the pattern names $(…) and backquotes, it expands nothing
 	sg_out=$(grep -nE '(\[|test )[^]]*(\$\(id -u\)|`id -u`)' "$1") || sg_rc=$?
 	[ "$sg_rc" -le 1 ] || return 2
 	printf '%s\n' "$sg_out" | grep -v '^[0-9]*:[[:space:]]*#' | grep . || true
