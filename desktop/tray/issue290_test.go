@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,16 +14,14 @@ import (
 // #290, points 6 and 7: what the menu does while the agent is slow to
 // answer its status, and what it says when there is nothing to start.
 
-// slowStatus is how long the agent takes to answer each status in these
-// tests: inside the menu's limit (StatusTimeout below), and long enough that
-// a click held behind it is told from one that is not.
-const slowStatus = 2 * time.Second
-
 // heldNoLonger is how soon a click that waits for no status ask takes effect.
 const heldNoLonger = 700 * time.Millisecond
 
+// longWait bounds a wait for something that should happen.
+const longWait = 6 * time.Second
+
 // syncingAgent is an agent with a Hub and a vault that answers each status
-// at once, until slow is called.
+// at once, until its status is held.
 func syncingAgent(t *testing.T) *fakeAgent {
 	t.Helper()
 	agent := newFakeAgent(t)
@@ -36,14 +35,29 @@ func syncingAgent(t *testing.T) *fakeAgent {
 
 func upToDate(v View) bool { return v.Headline == "Up to date" }
 
-// askInFlight makes every later status take slowStatus, opens the menu (a
-// refresh) and returns once that ask has reached the agent.
-func askInFlight(t *testing.T, agent *fakeAgent, ui *fakeUI) {
+// holdStatus keeps every status request the agent takes from here on waiting
+// until release is called, or the test ends: an ask stays out for as long as
+// the test needs it, however late the test's own goroutine runs.
+func holdStatus(t *testing.T, agent *fakeAgent) (release func()) {
+	t.Helper()
+	hold := make(chan struct{})
+	var once sync.Once
+	release = func() { once.Do(func() { close(hold) }) }
+	t.Cleanup(release)
+	agent.set(func(f *fakeAgent) { f.statusHold = hold })
+	return release
+}
+
+// askInFlight holds every status request from here on, opens the menu (a
+// look) and returns once that ask has reached the agent.
+func askInFlight(t *testing.T, agent *fakeAgent, ui *fakeUI) (release func()) {
 	t.Helper()
 	var asks int
-	agent.set(func(f *fakeAgent) { f.statusDelay, asks = slowStatus, f.statusAsks })
+	agent.set(func(f *fakeAgent) { asks = f.statusAsks })
+	release = holdStatus(t, agent)
 	ui.click(EventOpened, 0)
 	agent.asked(asks + 1)
+	return release
 }
 
 // An agent that answers each status slowly, inside the limit, held the menu's
@@ -62,18 +76,7 @@ func TestIssue290_ASlowStatusHoldsNoClick(t *testing.T) {
 			waitFor(t, opened, "the vault was not opened")
 		}},
 		"Pause": {Event{Kind: EventPause, Pause: true}, func(t *testing.T, agent *fakeAgent, _ chan string) {
-			deadline := time.Now().Add(2 * slowStatus)
-			for {
-				var calls int
-				agent.set(func(f *fakeAgent) { calls = len(f.calls) })
-				if calls == 1 {
-					return
-				}
-				if time.Now().After(deadline) {
-					t.Fatal("the pause did not reach the agent")
-				}
-				time.Sleep(5 * time.Millisecond)
-			}
+			pauseReached(t, agent)
 		}},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -114,8 +117,9 @@ func TestIssue290_TheAsksAfterAStartHoldNoClick(t *testing.T) {
 	ui.send(Event{Kind: EventStart})
 	ui.view(t, "starting", func(v View) bool { return v.Start == Action{"Starting VaultSync…", false} })
 	// The service runs and its agent answers, slowly: its engine has just
-	// started (up to 8 s on a macOS VM with two cores, #290).
-	agent.set(func(f *fakeAgent) { f.statusDelay = slowStatus })
+	// started (up to 8 s on a macOS VM with two cores, #290). Here it answers
+	// once the test is done.
+	holdStatus(t, agent)
 	agent.serveAgain()
 	close(started.hold)
 	agent.asked(1)
@@ -141,7 +145,8 @@ func TestIssue290_PairsLookHoldsNoOtherClick(t *testing.T) {
 	})
 	ui.view(t, "up to date", upToDate)
 	var asks int
-	agent.set(func(f *fakeAgent) { f.statusDelay, asks = slowStatus, f.statusAsks })
+	agent.set(func(f *fakeAgent) { asks = f.statusAsks })
+	holdStatus(t, agent)
 	ui.send(Event{Kind: EventPair})
 	agent.asked(asks + 1)
 	began := time.Now()
@@ -156,8 +161,23 @@ func waitFor(t *testing.T, ch chan string, why string) {
 	t.Helper()
 	select {
 	case <-ch:
-	case <-time.After(3 * slowStatus):
+	case <-time.After(longWait):
 		t.Fatal(why)
+	}
+}
+
+// pauseReached waits until the agent has taken one pause request.
+func pauseReached(t *testing.T, agent *fakeAgent) {
+	t.Helper()
+	for deadline := time.Now().Add(longWait); ; time.Sleep(time.Millisecond) {
+		var calls int
+		agent.set(func(f *fakeAgent) { calls = len(f.calls) })
+		if calls == 1 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the pause did not reach the agent")
+		}
 	}
 }
 
@@ -208,18 +228,15 @@ func TestIssue290_OneAskAtATime(t *testing.T) {
 	ui := newFakeUI(t)
 	controllerFor(t, agent, ui, &Controller{})
 	ui.view(t, "up to date", upToDate)
-	askInFlight(t, agent, ui)
+	release := askInFlight(t, agent, ui)
 	for i := 0; i < 5; i++ {
 		ui.click(EventOpened, 0)
 	}
-	// The one out, then the one the five were folded into.
-	agent.asked(3)
-	time.Sleep(slowStatus + slowStatus/2)
-	agent.set(func(f *fakeAgent) {
-		if f.statusAsks != 3 {
-			t.Fatalf("asked %d times: the menu opened five times while an ask was out", f.statusAsks)
-		}
-	})
+	release()
+	// The one out, then the one the five were folded into: an answer each.
+	ui.view(t, "the answer to the ask that was out", upToDate)
+	ui.view(t, "the answer to the one more", upToDate)
+	asksStayAt(t, agent, 3)
 }
 
 // An answer to an ask begun before a pause's request returned may tell the
@@ -231,15 +248,17 @@ func TestIssue290_APauseShowsNoAnswerFromBeforeIt(t *testing.T) {
 	ui := newFakeUI(t)
 	controllerFor(t, agent, ui, &Controller{})
 	ui.view(t, "up to date", upToDate)
-	askInFlight(t, agent, ui)
+	release := askInFlight(t, agent, ui) // its answer: not paused
 	drain(ui)
 	ui.send(Event{Kind: EventPause, Pause: true})
+	pauseReached(t, agent)
+	release()
 	select {
 	case v := <-ui.views:
 		if !v.Paused || v.Pause.Title != "Resume Syncing" {
 			t.Fatalf("the first view after the pause is from before it: %+v", v)
 		}
-	case <-time.After(4 * slowStatus):
+	case <-time.After(longWait):
 		t.Fatal("no view after the pause")
 	}
 }
@@ -257,13 +276,20 @@ func TestIssue290_PairActsOnALookBegunAfterTheClick(t *testing.T) {
 	if v := ui.view(t, "up to date", upToDate); !v.Pair.Enabled {
 		t.Fatalf("no Pair to click: %+v", v)
 	}
-	askInFlight(t, agent, ui) // answers "not paused"
+	release := askInFlight(t, agent, ui) // its answer: not paused
 	agent.set(func(f *fakeAgent) { f.status.Paused = true })
 	ui.send(Event{Kind: EventPair})
-	ui.view(t, "paused", func(v View) bool { return v.Paused })
-	time.Sleep(100 * time.Millisecond)
+	release()
+	// Every view up to the answer to Pair's own look: a pairing begun on the
+	// answer before it would show "Pairing…" in one of them.
+	ui.view(t, "the answer to Pair's look", func(v View) bool {
+		if v.Pair.Title == "Pairing…" {
+			t.Fatalf("a pairing began on an answer from before the click: %+v", v)
+		}
+		return v.Paused
+	})
 	if asked := asker.sequence(); len(asked) != 0 {
-		t.Fatalf("a pairing began on an answer from before the click: %v", asked)
+		t.Fatalf("the person was asked: %v", asked)
 	}
 }
 
