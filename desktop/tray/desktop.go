@@ -28,6 +28,20 @@ func execRunner(ctx context.Context, name string, args []string, stdin string) (
 	return runCommand(ctx, exec.CommandContext(ctx, name, args...), stdin)
 }
 
+// envRunner is execRunner with extra entries in the program's environment:
+// this app's own environment, then extra, whose entries win over the same
+// names before them. Without extra it is execRunner.
+func envRunner(extra []string) runner {
+	if len(extra) == 0 {
+		return execRunner
+	}
+	return func(ctx context.Context, name string, args []string, stdin string) (string, string, int, error) {
+		cmd := exec.CommandContext(ctx, name, args...)
+		cmd.Env = append(os.Environ(), extra...)
+		return runCommand(ctx, cmd, stdin)
+	}
+}
+
 // startRunner is execRunner for a program that must outlive this one: it
 // finishes what it started after a quit, with nobody left to read what it
 // says.
