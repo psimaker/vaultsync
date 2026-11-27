@@ -214,7 +214,9 @@ private struct HubCodeStep: View {
                     }
                 }
             }
-            .buttonStyle(.vault(.primary))
+            // Busy, not dimmed: the spinner and "Pairing…" are the only sign
+            // that the Hub is being asked (#354). `canPair` still disables it.
+            .buttonStyle(.vault(.primary, busy: model.isWorking))
             .disabled(!model.canPair)
             .padding(.top, VaultSpacing.xs)
 
@@ -533,7 +535,7 @@ private struct HubVaultStep: View {
                         }
                     }
                 }
-                .buttonStyle(.vault(.primary))
+                .buttonStyle(.vault(.primary, busy: model.isWorking))
                 .disabled(!model.canReconnect)
                 .padding(.top, VaultSpacing.xs)
             } else {
@@ -557,7 +559,7 @@ private struct HubVaultStep: View {
                     }
                 }
             }
-            .buttonStyle(.vault(.primary))
+            .buttonStyle(.vault(.primary, busy: model.isWorking))
             .disabled(!model.canSync)
             .padding(.top, VaultSpacing.xs)
     }
