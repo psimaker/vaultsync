@@ -8,7 +8,7 @@
 3. **The other cases:**
    - Another build of the same release (a release candidate, a rebuild), or an older release, is replaced as before.
    - An installed app whose line names no release is never replaced. That is `dev` from a local build, `dev-<commit>` from a pull request's build, or any other form. A download whose line names none replaces nothing. The link says to move the installed app to the Trash and run the link again to install the release.
-   - An installed app that the agent would not run the service from (`app_complete`), or whose agent does not run, is replaced as before: nothing runs from it.
+   - An installed app whose agent is no plain executable file, or does not run, is replaced as before: nothing runs from it. Such an agent is never run; a link may lead anywhere.
 4. **The line is a contract between the agent and the setup link.** `TestIssue277_TheVersionLineIsTheFormTheSetupLinkReads` builds the agent as the release job does and holds its line to the form `release_of` in `hub/scripts/setup.sh` reads. A change of the line changes both in one pull request.
 
 **Why.**

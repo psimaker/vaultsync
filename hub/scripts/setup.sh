@@ -722,11 +722,13 @@ release_of() {
 # aside, so another build of the same release is replaced. An app whose
 # line names no release (a development build), or a download whose line
 # names none, has no place in that order: nothing is replaced. An installed
-# app the agent would not run the service from (app_complete), or whose
-# agent does not run, is replaced as before: nothing runs from it.
+# app whose agent is no plain executable file (never run: a link may lead
+# anywhere), or whose agent does not run, is replaced as before: nothing
+# runs from it.
 keep_newer_app() {
-	app_complete "$APP" || return 0
-	have_line=$("$APP/Contents/MacOS/vaultsync" version 2>/dev/null) || return 0
+	have_agent="$APP/Contents/MacOS/vaultsync"
+	{ [ -f "$have_agent" ] && [ ! -L "$have_agent" ] && [ -x "$have_agent" ]; } || return 0
+	have_line=$("$have_agent" version 2>/dev/null) || return 0
 	have=$(release_of "$have_line") ||
 		fail "VaultSync for Mac in $1 does not say which release it is (a development build, say), so the setup link cannot tell whether this release is newer — it was not replaced, and nothing was changed. To install this release, move it to the Trash, then run the setup link again."
 	offered=$(release_of "$2") ||

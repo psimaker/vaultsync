@@ -1596,6 +1596,40 @@ $(cat "$SANDBOX/results/run.log")"
 done
 pass "an older release, another build of the same one and an app that does not run are replaced"
 
+# An installed app that is not whole (no menu-bar app) but whose agent says a
+# newer release is kept as well: that agent may have set up its engine. One
+# whose agent is a link is never asked — the link may lead anywhere — and is
+# replaced as before.
+rm -rf "$installed"
+make_app "$APPS" eu.vaultsync.desktop installed-no-tray 0.11.0
+rm "$installed/Contents/MacOS/vaultsync-tray"
+release_with offered-beside-no-tray "" 0.10.0
+before=$(tree "$APPS")
+if mac_setup >"$SANDBOX/results/run.log" 2>&1; then
+	fail "release 0.10.0 replaced a VaultSync for Mac 0.11.0 without its menu-bar app"
+fi
+[ "$before" = "$(tree "$APPS")" ] || fail "an app without its menu-bar app was changed"
+grep -q "is 0.11.0, newer than this release (0.10.0)" "$SANDBOX/results/run.log" || fail "keeping an app without its menu-bar app does not say why:
+$(cat "$SANDBOX/results/run.log")"
+rm -rf "$installed" "$SANDBOX/linked-agent"
+mkdir -p "$SANDBOX/linked-agent"
+cat >"$SANDBOX/linked-agent/vaultsync" <<AGENT
+#!/usr/bin/env sh
+: >"$SANDBOX/results/linked-agent-ran"
+echo "vaultsync 9.9.9 (Syncthing 2.1.7)"
+AGENT
+chmod 755 "$SANDBOX/linked-agent/vaultsync"
+rm -f "$SANDBOX/results/linked-agent-ran"
+make_app "$APPS" eu.vaultsync.desktop installed-linked-agent 0.11.0
+ln -sf "$SANDBOX/linked-agent/vaultsync" "$installed/Contents/MacOS/vaultsync"
+release_with offered-over-linked-agent "" 0.10.0
+mac_setup >"$SANDBOX/results/run.log" 2>&1 || fail "release 0.10.0 did not replace an app whose agent is a link:
+$(cat "$SANDBOX/results/run.log")"
+[ ! -e "$SANDBOX/results/linked-agent-ran" ] || fail "the setup ran an installed agent that is a link"
+grep -q "build: vaultsync offered-over-linked-agent\$" "$installed/Contents/MacOS/vaultsync" || fail "release 0.10.0 is not in the place of an app whose agent is a link"
+rm -rf "$SANDBOX/linked-agent"
+pass "an app without its menu-bar app that says it is newer stays; an agent that is a link is never run"
+
 # Never replaced: a bundle of that name with another identifier, or a link —
 # even one to a VaultSync for Mac kept elsewhere (another disk, say): the
 # link is the person's, and replacing it would delete it.
