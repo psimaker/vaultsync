@@ -79,7 +79,11 @@ Two safety nets compensate:
   could still assign it — a data race on every engine stop during a request
   to a gateway that speaks NAT-PMP (#195, decision 043). The result is now
   read only when the call returned nil, which it does only after the request
-  completed; every value the methods return is unchanged. Unfixed upstream as
+  completed. A completed call returns what it returned before; a canceled
+  call now returns 0 or `0.0.0.0` with its error even when the answer arrived
+  at the same moment, where upstream could return that answer with the
+  error. Both callers in `lib/nat` discard the value whenever the call reports
+  an error, so the NAT service behaves as before. Unfixed upstream as
   of v2.1.7: carry it across a bump, and drop it only once upstream changes
   both reads and `TestIssue195_*` stays green under `-race`. The test calls
   the unexported device by its linker names and first checks its copy of the
