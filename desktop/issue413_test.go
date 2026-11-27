@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -292,47 +293,53 @@ func anotherProgramAtTheRecordedPort(t *testing.T) (*app, *atomic.Int32) {
 		svc: service{goos: "linux", home: home, getenv: envOf(nil), lay: lay, run: &fakeRunner{}}}, &asked
 }
 
-// A command that finds no agent asks the engine's recorded port only while
-// an engine of VaultSync's may run there: a run holds the engine lock, or a
-// Syncthing holds its lock on the engine's home (#413, decision 079). With
-// neither, it says the engine is not running, and nothing is asked; a lock
-// that cannot be looked at asks nothing either. With a lock held — an
-// older agent without a control socket — the engine is asked as before.
+// vaultsync pair, and status, pause and resume where no agent answers, ask
+// the engine's port only while a Syncthing holds the engine's home (#413,
+// decision 079). A run holding only the engine lock is starting its engine
+// and may still move its port: they say so and ask nothing. With neither
+// lock held, nothing runs the engine, and nothing is asked. A lock that
+// cannot be looked at asks nothing either. With the home lock held, also by
+// an older agent without a control socket, the engine is asked as before.
 func TestIssue413_CommandsWithoutAnAgentAskOnlyARunningEngine(t *testing.T) {
-	commands := []struct {
+	saved := pairEngineWait
+	pairEngineWait = 300 * time.Millisecond
+	t.Cleanup(func() { pairEngineWait = saved })
+	type command struct {
 		name string
 		run  func(a *app) (string, error)
-		// what each says with no lock held, and with a lock it cannot look at
-		notRunning, notKnown string
-	}{
+		// what each says with no lock held, while a run starts its engine,
+		// and with a lock it cannot look at
+		notRunning, starting, notKnown string
+	}
+	commands := []command{
 		{"pair", func(a *app) (string, error) {
 			err := a.pair(context.Background(), []string{"--code", "TULIP-ANCHOR-42", "--hub", "127.0.0.1:1"})
 			return a.out.(*bytes.Buffer).String(), err
-		}, "The sync engine is not running", "could not tell whether its sync engine runs"},
+		}, "The sync engine is not running", "The sync engine is not running", "could not tell whether its sync engine runs"},
 		{"status", func(a *app) (string, error) {
 			err := a.status(context.Background())
 			return a.out.(*bytes.Buffer).String(), err
-		}, "Sync engine: not running", "Sync engine: not known"},
+		}, "Sync engine: not running", "Sync engine: starting", "Sync engine: not known"},
 		{"pause", func(a *app) (string, error) {
 			err := a.pauseSync(context.Background(), true)
 			return a.out.(*bytes.Buffer).String(), err
-		}, "nothing syncs while it is not running", "could not confirm whether the sync engine runs"},
+		}, "nothing syncs while it is not running", "sync engine is starting", "could not confirm whether the sync engine runs"},
 		{"resume", func(a *app) (string, error) {
 			err := a.pauseSync(context.Background(), false)
 			return a.out.(*bytes.Buffer).String(), err
-		}, "vaultsync start resumes the background service", "could not confirm whether the sync engine runs"},
+		}, "vaultsync start resumes the background service", "sync engine is starting", "could not confirm whether the sync engine runs"},
 	}
 	locks := []struct {
 		name  string
 		set   func(t *testing.T, lay layout)
 		asked bool
-		says  func(notRunning, notKnown string) string
+		says  func(c command) string
 	}{
-		{"no lock held", func(*testing.T, layout) {}, false, func(nr, _ string) string { return nr }},
-		{"a run holds the engine lock", func(t *testing.T, lay layout) { holdLock(t, lay.Lock) }, true, nil},
+		{"no lock held", func(*testing.T, layout) {}, false, func(c command) string { return c.notRunning }},
+		{"a run holds the engine lock", func(t *testing.T, lay layout) { holdLock(t, lay.Lock) }, false, func(c command) string { return c.starting }},
 		{"a Syncthing holds its home", func(t *testing.T, lay layout) { holdLock(t, filepath.Join(lay.Home, syncthingHomeLock)) }, true, nil},
-		{"the engine lock cannot be looked at", func(t *testing.T, lay layout) { linkInPlaceOf(t, lay.Lock) }, false, func(_, nk string) string { return nk }},
-		{"Syncthing's home lock cannot be looked at", func(t *testing.T, lay layout) { linkInPlaceOf(t, filepath.Join(lay.Home, syncthingHomeLock)) }, false, func(_, nk string) string { return nk }},
+		{"the engine lock cannot be looked at", func(t *testing.T, lay layout) { linkInPlaceOf(t, lay.Lock) }, false, func(c command) string { return c.notKnown }},
+		{"Syncthing's home lock cannot be looked at", func(t *testing.T, lay layout) { linkInPlaceOf(t, filepath.Join(lay.Home, syncthingHomeLock)) }, false, func(c command) string { return c.notKnown }},
 	}
 	for _, c := range commands {
 		for _, l := range locks {
@@ -343,8 +350,8 @@ func TestIssue413_CommandsWithoutAnAgentAskOnlyARunningEngine(t *testing.T) {
 				out, err := c.run(a)
 				took := time.Since(start)
 				said := out + refusalText(err) + fmt.Sprint(err)
-				// With no background service running, nothing is waited for:
-				// the answer comes at once, not after pair's ten seconds.
+				// With no background service running, nothing is waited for
+				// but pair's wait for a starting engine, shortened here.
 				if !l.asked && took > 3*time.Second {
 					t.Fatalf("took %s to say:\n%s", took.Round(time.Millisecond), said)
 				}
@@ -352,7 +359,7 @@ func TestIssue413_CommandsWithoutAnAgentAskOnlyARunningEngine(t *testing.T) {
 					t.Fatalf("the program at the recorded port was asked %d times:\n%s", n, said)
 				}
 				if l.says != nil {
-					if want := l.says(c.notRunning, c.notKnown); !strings.Contains(said, want) {
+					if want := l.says(c); !strings.Contains(said, want) {
 						t.Fatalf("want %q in:\n%s", want, said)
 					}
 				}
@@ -375,32 +382,78 @@ func linkInPlaceOf(t *testing.T, path string) {
 	}
 }
 
-// pair waits for a background service that runs to take the engine lock —
-// it does so a moment after it starts, right after vaultsync start — as
-// long as it waited for the engine before, then asks the engine (#413).
+// pair waits for a background service on its way to a run, and for a run
+// that is starting its engine, then asks the port that run recorded: a run
+// moves off a recorded port another program holds before it starts its
+// engine, and the old port is never asked (#413).
 func TestIssue413_PairWaitsWhileTheServiceStartsItsEngine(t *testing.T) {
-	a, asked := anotherProgramAtTheRecordedPort(t)
+	for _, systemd := range []string{"active", "activating"} {
+		t.Run("systemd says "+systemd, func(t *testing.T) {
+			a, other := anotherProgramAtTheRecordedPort(t)
+			unit, err := a.svc.unitPath()
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, unit, "[Service]\n")
+			a.svc.run.(*fakeRunner).answers = map[string]string{"systemctl --user is-active vaultsync.service": systemd}
+			var engineAsked atomic.Int32
+			engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				engineAsked.Add(1)
+				_, _ = io.WriteString(w, `{"ping":"pong"}`)
+			}))
+			t.Cleanup(engine.Close)
+			_, p, _ := net.SplitHostPort(strings.TrimPrefix(engine.URL, "http://"))
+			moved, _ := strconv.Atoi(p)
+			// The run: it takes the engine lock, records the port it moves
+			// to, and starts its engine, which takes its home.
+			held := make(chan func(), 2)
+			go func() {
+				time.Sleep(200 * time.Millisecond)
+				if unlock, err := lockFile(a.lay.Lock); err == nil {
+					held <- unlock
+				}
+				_ = updateState(a.lay.State, func(s *agentState) { s.GUIPort = moved })
+				time.Sleep(200 * time.Millisecond)
+				if unlock, err := lockFile(filepath.Join(a.lay.Home, syncthingHomeLock)); err == nil {
+					held <- unlock
+				}
+			}()
+			t.Cleanup(func() {
+				for i := 0; i < 2; i++ {
+					select {
+					case unlock := <-held:
+						unlock()
+					case <-time.After(2 * time.Second):
+					}
+				}
+			})
+			start := time.Now()
+			err = a.pair(context.Background(), []string{"--code", "TULIP-ANCHOR-42", "--hub", "127.0.0.1:1"})
+			took := time.Since(start)
+			if took < 350*time.Millisecond || other.Load() > 0 || engineAsked.Load() == 0 || strings.Contains(refusalText(err), "not running") {
+				t.Fatalf("pair beside a service starting its engine: took %s, the old port asked %d, the engine %d: %v", took.Round(time.Millisecond), other.Load(), engineAsked.Load(), err)
+			}
+		})
+	}
+}
+
+// A service that runs but whose run never takes a lock (parked: an older
+// build than the one set up, or engine data without its engine) is waited
+// for, then named: vaultsync start would change nothing (#413).
+func TestIssue413_PairSaysWhenTheServiceRunsButItsEngineDoesNot(t *testing.T) {
+	saved := pairEngineWait
+	pairEngineWait = 300 * time.Millisecond
+	t.Cleanup(func() { pairEngineWait = saved })
+	a, other := anotherProgramAtTheRecordedPort(t)
 	unit, err := a.svc.unitPath()
 	if err != nil {
 		t.Fatal(err)
 	}
 	writeFile(t, unit, "[Service]\n")
 	a.svc.run.(*fakeRunner).answers = map[string]string{"systemctl --user is-active vaultsync.service": "active"}
-	took := make(chan func(), 1)
-	go func() {
-		time.Sleep(400 * time.Millisecond)
-		unlock, err := lockFile(a.lay.Lock)
-		if err != nil {
-			took <- func() {}
-			return
-		}
-		took <- unlock
-	}()
-	t.Cleanup(func() { (<-took)() })
-	start := time.Now()
 	err = a.pair(context.Background(), []string{"--code", "TULIP-ANCHOR-42", "--hub", "127.0.0.1:1"})
-	if asked.Load() == 0 || strings.Contains(refusalText(err), "The sync engine is not running") {
-		t.Fatalf("pair beside a service that is starting its engine (%s): asked %d, %v", time.Since(start).Round(time.Millisecond), asked.Load(), err)
+	if !strings.Contains(refusalText(err), "The background service runs, but its sync engine does not") || other.Load() > 0 {
+		t.Fatalf("pair beside a service whose engine does not run: asked %d, %v", other.Load(), err)
 	}
 }
 
@@ -428,11 +481,57 @@ func TestIssue413_ARunTakesTheEngineLockALookHoldsForAnInstant(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		time.AfterFunc(50*time.Millisecond, unlock)
 		stop := inBackground(t, func(ctx context.Context) error { return a.run(ctx, nil) })
+		// The run holds setup.lock up to its look at the engine lock, a few
+		// milliseconds later: the engine lock goes only once the run holds
+		// setup.lock, and well inside the run's grace, so its look falls
+		// while the lock is held.
+		for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+			if held, err := lock.Probe(filepath.Join(a.lay.Base, "setup.lock")); err == nil && held {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("the run never held setup.lock")
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+		unlock()
 		e2eWait(t, "the engine to start", 10*time.Second, func() bool { return len(fakeEnginePIDs(t, a.lay)) > 0 })
 		if err := stop(); err != nil {
 			t.Fatalf("the run: %v", err)
+		}
+	})
+}
+
+// takeEngineLock waits engineLockGrace for a lock a look holds for an
+// instant, and takes a lock still held after it for another run's (#413).
+func TestIssue413_TakeEngineLockWaitsOnlyItsGrace(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.lock")
+	t.Run("a look lets go inside the grace", func(t *testing.T) {
+		unlock, err := lockFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		time.AfterFunc(100*time.Millisecond, unlock)
+		start := time.Now()
+		release, err := takeEngineLock(path)
+		if err != nil {
+			t.Fatalf("after %s: %v", time.Since(start).Round(time.Millisecond), err)
+		}
+		release()
+	})
+	t.Run("another run holds it", func(t *testing.T) {
+		unlock, err := lockFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer unlock()
+		start := time.Now()
+		if _, err := takeEngineLock(path); !errors.Is(err, ErrEngineRunning) {
+			t.Fatalf("a lock held throughout: %v", err)
+		}
+		if took := time.Since(start); took < engineLockGrace || took > engineLockGrace+time.Second {
+			t.Fatalf("refused after %s, the grace is %s", took.Round(time.Millisecond), engineLockGrace)
 		}
 	})
 }

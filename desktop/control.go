@@ -702,12 +702,21 @@ func (a *app) noAgentForPause(ctx context.Context, st agentState, pause bool) er
 		return refuse("%s. vaultsync start resumes the background service.", errNoAgent)
 	}
 	if err == nil {
-		// Neither lock held: no engine of VaultSync's runs, so nothing
-		// syncs, and its port is not asked (#413). A lock that cannot be
-		// looked at is not known either way, and nothing is asked.
-		var may bool
-		if may, err = engineMayRun(a.lay); err == nil && !may {
+		// The engine's port is asked only while a Syncthing holds the
+		// engine's home, and then the one agent.json records now (#413).
+		// Neither lock held: nothing syncs. A lock that cannot be looked at
+		// is not known either way, and nothing is asked.
+		var state engineLockState
+		switch state, err = engineLockStateOf(a.lay); {
+		case err != nil:
+		case state == engineStopped:
 			return nothingSyncs()
+		case state == engineStarting:
+			return refuse("VaultSync's sync engine is starting, and no agent answers on the control socket: syncing may begin in a moment, and nothing was changed. Try again in a moment; vaultsync status says more.")
+		default:
+			if now, lerr := loadState(a.lay.State); lerr == nil && now.GUIPort > 0 {
+				client, err = a.engine().client(now)
+			}
 		}
 	}
 	if err == nil {
@@ -727,9 +736,14 @@ func (a *app) noAgentForPause(ctx context.Context, st agentState, pause bool) er
 		// nothing syncs.
 		return nothingSyncs()
 	}
-	// Refused, timed out, or the engine's config could not be read: not
-	// known either way.
-	return refuse("VaultSync could not confirm whether the sync engine runs (%s), and no agent answers on the control socket: syncing may continue, and nothing was changed. See vaultsync status; vaultsync stop stops the background service.", redactPaths(err.Error()))
+	// Refused, timed out, a lock that cannot be looked at, or the engine's
+	// config could not be read: not known either way.
+	cause := redactPaths(err.Error())
+	var le *lockLookError
+	if errors.As(err, &le) {
+		cause = a.lockLookNote(err)
+	}
+	return refuse("VaultSync could not confirm whether the sync engine runs (%s), and no agent answers on the control socket: syncing may continue, and nothing was changed. See vaultsync status; vaultsync stop stops the background service.", cause)
 }
 
 // --- pause / resume from the terminal ----------------------------------------

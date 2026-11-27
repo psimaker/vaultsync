@@ -228,16 +228,27 @@ func (a *app) status(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	// No engine of VaultSync's runs: its port is not asked (#413).
-	switch may, err := engineMayRun(a.lay); {
+	// The engine's port is asked only while a Syncthing holds the engine's
+	// home, and then the one agent.json records now: its run recorded the
+	// port before it started it (#413).
+	switch state, err := engineLockStateOf(a.lay); {
 	case err != nil:
 		fmt.Fprintf(w, "Sync engine: not known — %s; put it right, then run vaultsync status again\n", a.lockLookNote(err))
 		_, err := io.WriteString(w, a.offlineReport().Text)
 		return err
-	case !may:
+	case state == engineStarting:
+		fmt.Fprintln(w, "Sync engine: starting — VaultSync is bringing it up")
+		_, err := io.WriteString(w, a.offlineReport().Text)
+		return err
+	case state == engineStopped:
 		fmt.Fprintln(w, "Sync engine: not running — nothing syncs right now")
 		_, err := io.WriteString(w, a.offlineReport().Text)
 		return err
+	}
+	if now, err := loadState(a.lay.State); err == nil && now.GUIPort > 0 {
+		if client, err = eng.client(now); err != nil {
+			return err
+		}
 	}
 	pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	up := client.Ping(pctx) == nil

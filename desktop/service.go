@@ -782,6 +782,20 @@ func (s service) unitAlive() bool {
 	return false
 }
 
+// onItsWay: the service manager has the service in hand — running, or about
+// to run it again. That is a launchd job that is loaded (also one waiting
+// out its throttle interval) or a systemd unit in any live state.
+func (s service) onItsWay() bool {
+	switch s.goos {
+	case "darwin":
+		_, err := s.run.run("launchctl", "print", s.launchdTarget())
+		return err == nil
+	case "linux":
+		return s.unitAlive()
+	}
+	return false
+}
+
 // running asks the service manager whether the service is up.
 func (s service) running() bool {
 	switch s.goos {

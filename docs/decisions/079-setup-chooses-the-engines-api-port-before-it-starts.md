@@ -12,12 +12,13 @@
 
    A lock that cannot be looked at keeps the port too. `TestIssue413_E2EAnEngineLocksItsHome` fails when a Syncthing bump moves Syncthing's lock.
 3. **The supervisor's move stays.** A run still moves off a port taken between two of its starts. Every reader of the port follows `agent.json`, as the control server does.
-4. **The commands that ask the engine itself do so only while one of the two locks is held** (`engineMayRun`). `vaultsync pair` always asks the engine itself, so it checks the locks every time. `status`, `pause` and `resume` check them where no agent answers.
-   - With neither lock held, no engine of VaultSync's runs. They say so, and the recorded port is not asked.
-   - A lock that cannot be looked at is not known either way, and nothing is asked.
-   - With a lock held, such as an older agent without a control socket, the engine is asked as before.
-   - `pair` waits up to ten seconds for a lock while the background service runs, because its run takes the engine lock a moment after it starts.
-   - A run waits a quarter of a second for the engine lock (`takeEngineLock`). Another command's look at the lock holds it for an instant, and that must not refuse a run that starts in that instant.
+4. **The commands that ask the engine itself do so only while a Syncthing holds the engine's home** (`engineLockStateOf`). The port they ask is the one `agent.json` records then. A run records its port before it starts its engine, also a port it moved to. `vaultsync pair` always asks the engine itself, so it checks every time. `status`, `pause` and `resume` check where no agent answers.
+   - **A run holds only the engine lock:** it is starting its engine and may still move its port. They say it is starting and ask nothing.
+   - **Neither lock is held:** nothing of VaultSync's runs the engine. They say so, and nothing is asked.
+   - **A lock cannot be looked at:** that is not known either way. They name the lock file, and nothing is asked.
+   - **The home lock is held**, also by an older agent without a control socket: the engine is asked as before.
+   - **`pair` waits** for a run that is starting its engine, and for a background service on its way to a run (a loaded launchd job, a live systemd unit). The wait for the engine's API shares the same ten seconds, with a few seconds left for the API at the end. A service that runs but whose engine never starts, because it is parked, is named as that.
+   - **A run waits a quarter of a second for the engine lock** (`takeEngineLock`). A look at the lock holds it for an instant, and that must not refuse a run of this build that starts in that instant.
 
 **Why.**
 - `setup` must wait where the engine runs.
@@ -34,5 +35,7 @@
 **Not covered.**
 - A run that holds the engine lock but has not bound its port yet, while another program holds the recorded one.
 - The instant between the choice and the engine's bind.
+- A service that still runs a build from before the grace: a look in the instant its run takes the engine lock refuses that run, which starts again after its throttle interval.
+- An engine that outlived its run, after a later run moved the recorded port (#419): the commands ask the moved port.
 
 **Links.** #413, #276; decision 077.
