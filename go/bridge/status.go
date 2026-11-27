@@ -64,6 +64,7 @@ func GetConnectionsJSON() string {
 			Paused:    dev.Paused,
 		})
 	}
+	sortDeviceInfos(conns)
 
 	data, err := json.Marshal(conns)
 	if err != nil {
