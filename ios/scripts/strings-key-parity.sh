@@ -9,6 +9,8 @@
 #   2. All four files carry exactly the same key SET (not just the same count —
 #      an added key in one file plus a dropped key in another cancels out in a
 #      bare count comparison).
+# and the same for the widget extension's own four files, plus
+#   3. Every key the widget looks up is in them (#360).
 #
 # Keys are extracted with an escape-aware pattern (backslash escapes like \" are
 # part of the key), so keys containing escaped quotes do not false-positive the
@@ -63,8 +65,56 @@ for locale in de es zh-Hans; do
   fi
 done
 
+# The widget's own strings (#360). The extension resolves its text from its
+# own bundle, never from the app's: a key its files lack shows the English
+# key in every language. Its four files must carry the same key set without
+# duplicates, and every key it looks up: VaultSyncWidgetL10n.tr/fmt in its
+# sources, and String(localized:) in Theme.swift, which it compiles too
+# (project.yml, the VaultSyncWidget target's sources).
+for locale in "${LOCALES[@]}"; do
+  file="$ROOT/VaultSyncWidget/$locale.lproj/Localizable.strings"
+  [ -f "$file" ] || { echo "❌ Missing $file"; exit 1; }
+
+  extract_keys "$file" | sort >"$tmpdir/widget-$locale.keys"
+
+  dupes="$(uniq -d <"$tmpdir/widget-$locale.keys")"
+  if [ -n "$dupes" ]; then
+    echo "❌ Duplicate keys in VaultSyncWidget/$locale.lproj/Localizable.strings:"
+    echo "$dupes"
+    status=1
+  fi
+done
+
+for locale in de es zh-Hans; do
+  if ! diff -u "$tmpdir/widget-en.keys" "$tmpdir/widget-$locale.keys" >"$tmpdir/widget-diff.$locale"; then
+    echo "❌ Key set of VaultSyncWidget/$locale.lproj differs from its en.lproj (missing keys fall back to English silently):"
+    grep -E '^[+-]"?' "$tmpdir/widget-diff.$locale" | grep -vE '^(\+\+\+|---)' | head -40
+    status=1
+  fi
+done
+
+{
+  grep -ohE 'VaultSyncWidgetL10n\.(tr|fmt)\("(\\.|[^"\\])*"' "$ROOT"/VaultSyncWidget/*.swift \
+    | sed -E 's/^VaultSyncWidgetL10n\.(tr|fmt)\("//; s/"$//'
+  grep -ohE 'String\(localized: "(\\.|[^"\\])*"' "$ROOT/VaultSync/Resources/Theme.swift" \
+    | sed -E 's/^String\(localized: "//; s/"$//'
+} | sort -u >"$tmpdir/widget-used.keys"
+
+if [ ! -s "$tmpdir/widget-used.keys" ]; then
+  echo "❌ Found no key the widget looks up — the extraction no longer matches its sources."
+  status=1
+fi
+
+missing="$(comm -23 "$tmpdir/widget-used.keys" "$tmpdir/widget-en.keys")"
+if [ -n "$missing" ]; then
+  echo "❌ Keys the widget looks up that its Localizable.strings lack (shown in English in every language):"
+  echo "$missing"
+  status=1
+fi
+
 if [ "$status" -eq 0 ]; then
   count="$(wc -l <"$tmpdir/en.keys")"
-  echo "✅ Strings key parity passed — $count keys, identical across en/de/es/zh-Hans, no duplicates."
+  widget_count="$(wc -l <"$tmpdir/widget-en.keys")"
+  echo "✅ Strings key parity passed — $count keys, identical across en/de/es/zh-Hans, no duplicates; widget: $widget_count keys, identical, every key it looks up present."
 fi
 exit "$status"
