@@ -208,7 +208,10 @@ func SetFolderPath(folderID, newPath string) string {
 	// the bridge cannot tell which was there, and the shield that pauses an
 	// overlap runs after this, never twice for a folder and not in a
 	// background run (#330, decision 082). Dead paths count, as they do when
-	// a folder is added: a directory that comes back would overlap.
+	// a folder is added: a directory that comes back would overlap. The floor
+	// sees only where the other folders are now, not where a repair in the
+	// same pass is about to put them: the app's reconcile holds both folders
+	// of such a pair back before it asks for either.
 	for id, other := range folders {
 		if id != folderID && folderPathOverlapError(other.Path, newPath) != "" {
 			return folderPathOverlap
@@ -276,6 +279,27 @@ func verifyFolderMarker(folder config.FolderConfiguration, newPath string) strin
 		return fmt.Sprintf("stat folder marker: %v", err)
 	}
 	return ""
+}
+
+// FolderMarkerIsAt reports whether path holds the marker of the configured
+// folder folderID — the first thing SetFolderPath asks of a directory. The
+// path reconcile uses it to know which of its repairs the bridge would take
+// before it asks for any, so that it can hold back both folders of a pair
+// whose new paths would overlap (#330, decision 082). Reads one file's
+// metadata and writes nothing. False for a stopped engine or an unknown
+// folder.
+func FolderMarkerIsAt(folderID, path string) bool {
+	mu.Lock()
+	if !engineUpLocked() || stCfg == nil {
+		mu.Unlock()
+		return false
+	}
+	folder, exists := stCfg.Folders()[folderID]
+	mu.Unlock()
+	if !exists {
+		return false
+	}
+	return verifyFolderMarker(folder, path) == ""
 }
 
 // SetFolderPaused pauses or resumes an existing folder by ID. A paused folder is

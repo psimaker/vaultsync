@@ -205,22 +205,25 @@ func TestIssue330_TheRepairRefusesAPathAroundAnotherFoldersMissingDirectory(t *t
 
 // A pair an earlier version set up — two folders on one directory (1.6.0 to
 // 1.7.0), or one inside the other (1.7.1) — whose paths change together with
-// the container. The repair re-points the first folder it reaches and refuses
-// the second, in either order: the pair overlapped before, and every overlap
-// is refused all the same (decision 082). The second stays at its old path;
-// nothing is paused, moved or deleted for it.
-func TestIssue330_ALegacyPairIsNotRepairedBackIntoItsOverlap(t *testing.T) {
+// the container. This is the floor alone: asked for both, in either order, it
+// re-points the first and refuses the second, because it sees only where the
+// other folder is now. The app never asks it this way: its reconcile knows
+// both new paths before it asks for either, and holds both folders of such a
+// pair where they are (decision 082, `FolderPathReconciler`). The marker
+// query it decides with says yes for both new paths. Nothing is paused,
+// moved or deleted for the folder the floor refuses.
+func TestIssue330_TheFloorAloneRefusesTheSecondOfALegacyPair(t *testing.T) {
 	type pair struct {
 		name          string
-		first, second string            // folder IDs, in the order of the repair
+		first, second string            // folder IDs, in the order the floor is asked
 		rel           map[string]string // each folder's directory under the old parent
 		viaAddFolder  string            // the folder AddFolder adds; the other goes past the floor
 	}
 	nested := map[string]string{"outer": "Vault", "inner": "Vault/Inner"}
 	pairs := []pair{
-		{name: "nested, the inner one first", first: "inner", second: "outer", rel: nested, viaAddFolder: "outer"},
-		{name: "nested, the outer one first", first: "outer", second: "inner", rel: nested, viaAddFolder: "outer"},
-		{name: "one directory", first: "a", second: "b", rel: map[string]string{"a": "Vault", "b": "Vault"}, viaAddFolder: "a"},
+		{name: "the floor alone, nested, the inner one first", first: "inner", second: "outer", rel: nested, viaAddFolder: "outer"},
+		{name: "the floor alone, nested, the outer one first", first: "outer", second: "inner", rel: nested, viaAddFolder: "outer"},
+		{name: "the floor alone, one directory", first: "a", second: "b", rel: map[string]string{"a": "Vault", "b": "Vault"}, viaAddFolder: "a"},
 	}
 	for _, p := range pairs {
 		t.Run(p.name, func(t *testing.T) {
@@ -246,6 +249,13 @@ func TestIssue330_ALegacyPairIsNotRepairedBackIntoItsOverlap(t *testing.T) {
 			moved := filepath.Join(root, "new")
 			issue330Rename(t, old, moved)
 
+			// The reconcile counts both as repairs the bridge would take.
+			for _, short := range []string{p.first, p.second} {
+				if !FolderMarkerIsAt(id(short), filepath.Join(moved, p.rel[short])) {
+					t.Fatalf("FolderMarkerIsAt(%s) at its new path = false, want true", short)
+				}
+			}
+
 			issue330WantRepaired(t, id(p.first), filepath.Join(moved, p.rel[p.first]))
 			issue330WantRefused(t, id(p.second), filepath.Join(moved, p.rel[p.second]), filepath.Join(old, p.rel[p.second]))
 		})
@@ -267,4 +277,49 @@ func TestIssue330_ARepairBesideAnotherFolderGoesThrough(t *testing.T) {
 	issue330Rename(t, own, moved)
 
 	issue330WantRepaired(t, "issue330-vault", moved)
+}
+
+// The query the reconcile asks before it holds anything: is this folder's
+// marker at that path? Only a directory with the folder's own marker file
+// says yes; it writes nothing.
+func TestIssue330_FolderMarkerIsAtNamesOnlyTheFoldersOwnMarker(t *testing.T) {
+	configDir := testConfigDir(t)
+	if FolderMarkerIsAt("issue330-vault", configDir) {
+		t.Fatalf("FolderMarkerIsAt with the engine stopped = true, want false")
+	}
+	if errMsg := StartSyncthing(configDir); errMsg != "" {
+		t.Fatalf("StartSyncthing() failed: %s", errMsg)
+	}
+	root := filepath.Join(configDir, "Obsidian")
+	own := filepath.Join(root, "Vault")
+	if errMsg := AddFolder("issue330-vault", "Vault", own); errMsg != "" {
+		t.Fatalf("AddFolder: %s", errMsg)
+	}
+	moved := filepath.Join(root, "Moved")
+	issue330Rename(t, own, moved)
+	foreign := filepath.Join(root, "Foreign")
+	writeFolderMarker(t, foreign, "some-other-folder")
+	empty := filepath.Join(root, "Empty")
+	if err := os.MkdirAll(empty, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	cases := []struct {
+		folderID, path string
+		want           bool
+	}{
+		{"issue330-vault", moved, true},
+		{"issue330-vault", own, false},
+		{"issue330-vault", empty, false},
+		{"issue330-vault", foreign, false},
+		{"not-configured", moved, false},
+	}
+	for _, c := range cases {
+		if got := FolderMarkerIsAt(c.folderID, c.path); got != c.want {
+			t.Errorf("FolderMarkerIsAt(%q, %q) = %v, want %v", c.folderID, c.path, got, c.want)
+		}
+	}
+	if got := issue330FolderPath(t, "issue330-vault"); got != own {
+		t.Errorf("the query moved the folder to %q, want it left at %q", got, own)
+	}
 }

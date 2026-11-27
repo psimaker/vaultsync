@@ -15,7 +15,7 @@ Find your symptom, jump to the fix. After each fix, retry from the app to confir
 | The vault syncs, but Obsidian does not show it | [Vault Syncs but Never Appears in Obsidian](#vault-syncs-but-never-appears-in-obsidian) |
 | "Vault Folder Was Moved or Deleted" on a vault | [Vault Folder Was Moved or Deleted](#vault-folder-was-moved-or-deleted) |
 | A vault's card says the folder that was found is a copy | [The Folder Found Is a Copy](#the-folder-found-is-a-copy) |
-| A vault's card says another vault already syncs its folder, a folder inside it, or a folder around it | [The Folder Found Overlaps Another Vault](#the-folder-found-overlaps-another-vault) |
+| A vault's card says its folder is another vault's folder too, or lies inside or around one | [The Folder Found Overlaps Another Vault](#the-folder-found-overlaps-another-vault) |
 | "Cannot access this folder" / reconnect needed | [Bookmark Access Expired](#bookmark-access-expired) |
 | Syncs in foreground but not when closed | [Background Sync Not Working](#background-sync-not-working) |
 | "Required device disconnected" | [Required Device Disconnected](#required-device-disconnected) |
@@ -251,11 +251,11 @@ VaultSync does not go on in a copy. A copy holds what the vault held when it was
 
 ## The Folder Found Overlaps Another Vault
 
-**Looks like:** under **Sync Issues**, a vault's card says that the vault's folder was found, but that another vault already syncs that folder, a folder inside it, or a folder around it. The vault's folder is no longer where VaultSync had it — iOS moves an app's storage after a restore or a move to another iPhone, for one — and where it is now, it overlaps another vault's folder. That happens to two vaults an early version of VaultSync (before 1.7.2) put into one folder or one inside the other, and to a vault whose folder another vault was set up in while VaultSync could not reach it.
+**Looks like:** under **Sync Issues**, a vault's card says that the vault's folder was found, but that it is another vault's folder too, or lies inside or around another vault's folder. The vault's folder is no longer where VaultSync had it — iOS moves an app's storage after a restore or a move to another iPhone, for one — and where it is now, it overlaps another vault's folder. That happens to a vault whose folder another vault was set up in while VaultSync could not reach it. And it happens to two vaults an early version of VaultSync (before 1.7.2) put into one folder or one inside the other: then both get this card, and "Two Vaults Are Sharing One Folder" or "One Vault Is Nested Inside Another" shows beside them.
 
-VaultSync never lets two vaults sync in one place: the outer vault would send the inner vault's notes to its own devices as its own, and deleting that stray copy on any of them would delete those notes from the inner vault everywhere. So VaultSync goes on with the other vault and leaves this one where it is. Nothing was moved or deleted.
+VaultSync never lets two vaults sync in one place: the outer vault would send the inner vault's notes to its own devices as its own, and deleting that stray copy on any of them would delete those notes from the inner vault everywhere. So VaultSync leaves this vault where it is — and the other one too, if its folder moved with it. When one of the two is removed, the other goes on in its folder the next time VaultSync opens. Nothing was moved or deleted.
 
-**Fix:** tap **Remove This Vault**, wait ten seconds, close VaultSync in the app switcher and open it again, and accept the vault again under **Pending Shares** once it shows there. If the share says that its folder already holds files, do not combine them — tap **Choose Vault…** and give the vault another folder name. The vault then arrives in a folder of its own, complete, from your other devices.
+**Fix:** tap **Remove This Vault** on the card — if both vaults of a pair have it and one lies inside the other, on the inner one's — wait ten seconds, close VaultSync in the app switcher and open it again, and accept the removed vault again under **Pending Shares** once it shows there. If the share says that its folder already holds files, do not combine them — tap **Choose Vault…** and give the vault another folder name. The vault then arrives in a folder of its own, complete, from your other devices, and the vault you kept goes on where it is.
 
 **Afterwards:**
 - The vault's old folder stays where it is, untouched. Notes written on this iPhone and never synced before its storage moved may exist only there: compare by hand, then copy over in the Files app only the notes the vault's new folder does not have.

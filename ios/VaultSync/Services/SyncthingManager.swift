@@ -2552,6 +2552,14 @@ final class SyncthingManager {
         /// inside it or one around it (#330).
         var foundDirectoryOverlapsAnotherFolder = false
 
+        /// Whether the card offers to select the Obsidian folder again. Not
+        /// for an overlap: the vault's own folder was found, so no other
+        /// selection holds it, and a reconnect only repeats the refusal. The
+        /// card's way on is the one its text names (#330).
+        var offersReconnect: Bool {
+            hasObsidianMapping && !foundDirectoryOverlapsAnotherFolder
+        }
+
         /// What the vault's card says is wrong. A directory that was found
         /// and refused gets its own text: "storage no longer exists" would
         /// send the user looking for a folder they can see.
@@ -2580,11 +2588,13 @@ final class SyncthingManager {
         }
 
         /// What was found and the way on, for a vault whose own folder
-        /// overlaps another vault's (#330, decision 082). Removing this
-        /// vault changes nothing on disk; accepted again, it arrives in a
-        /// folder of its own — never combined with what a folder holds.
+        /// overlaps another vault's — where that one is, or where it would
+        /// have been repaired to with this one (#330, decision 082). Removing
+        /// either vault lets the other go on at the next reconcile; removing
+        /// this one changes nothing on disk, and accepted again it arrives
+        /// in a folder of its own — never combined with what a folder holds.
         static var overlapExplanation: String {
-            L10n.tr("This vault's folder was found, but another vault already syncs that folder, a folder inside it, or a folder around it. Two vaults never sync in one place, so VaultSync does not continue this vault there. Remove this vault, wait ten seconds, close VaultSync in the app switcher and open it again, and accept the vault again under Pending Shares once it shows there — it gets a folder of its own. If the share then says that its folder already holds files, do not combine them: tap \"Choose Vault…\" and give the vault another folder name.")
+            L10n.tr("This vault's folder was found, but it is another vault's folder too, or lies inside or around another vault's folder. Two vaults never sync in one place, so VaultSync does not continue this vault there; when one of the two is removed, the other goes on there. To bring this vault back, remove it, wait ten seconds, close VaultSync in the app switcher and open it again, and accept the vault again under Pending Shares once it shows there — it gets a folder of its own. If the share then says that its folder already holds files, do not combine them: tap \"Choose Vault…\" and give the vault another folder name.")
         }
 
         /// What was found and the way on. Never to combine the share with

@@ -3,10 +3,12 @@ import Testing
 @testable import VaultSync
 
 /// The path repair never re-points a folder where it would overlap another
-/// folder's (#330, decision 082). The bridge refuses; the reconciler passes
-/// the refusal on, and the vault's card and page say what was found instead
-/// of "storage no longer exists". No test here reads or writes the stored
-/// folder mappings: every mapping is handed in.
+/// folder's (#330, decision 082). The reconcile holds such a repair back
+/// before it asks the bridge — both folders of a pair whose new paths
+/// overlap, in whatever order they come — and the bridge's floor refuses
+/// whatever it is asked anyway. The vault's card and page say what was found
+/// instead of "storage no longer exists". No test here reads or writes the
+/// stored folder mappings: every mapping is handed in.
 @Suite("The path repair never makes two folders overlap (#330)")
 struct Issue330RepairOverlapTests {
 
@@ -38,6 +40,141 @@ struct Issue330RepairOverlapTests {
         #expect(result.outcome == FolderPathReconciler.Outcome(overlapsAnotherFolder: ["f1"]))
         #expect(result.asked == [FolderPathReconciler.canonical("/new/Obsidian/Vault")])
         #expect(result.rel == ["f1": "Vault"])
+    }
+
+    /// One reconcile pass under `/new/Obsidian`. `existing` lists the
+    /// directories that exist; a folder in `withoutMarker` has no marker at
+    /// its target, and the bridge refuses it as the bridge would.
+    private func pass(
+        _ folders: [(id: String, path: String)],
+        rel: [String: String],
+        existing: Set<String>,
+        withoutMarker: Set<String> = []
+    ) -> (outcome: FolderPathReconciler.Outcome, asked: [String]) {
+        let existingCanon = Set(existing.map(FolderPathReconciler.canonical))
+        var asked: [String] = []
+        var rel = rel
+        let env = FolderPathReconciler.Environment(
+            obsidianRoot: "/new/Obsidian",
+            loadRel: { rel },
+            recordRel: { id, value in rel[id] = value },
+            dirExists: { existingCanon.contains(FolderPathReconciler.canonical($0)) },
+            setPath: { id, _ in
+                asked.append(id)
+                return withoutMarker.contains(id) ? .failed : .moved
+            },
+            hasMarker: { id, _ in !withoutMarker.contains(id) }
+        )
+        return (FolderPathReconciler.reconcile(folders: folders, env: env), asked)
+    }
+
+    @Test("Both folders of a nested pair stay where they are, whichever comes first")
+    func nestedPairIsHeldInEitherOrder() {
+        let outer = (id: "outer", path: "/old/Obsidian/Vault")
+        let inner = (id: "inner", path: "/old/Obsidian/Vault/Inner")
+        let rel = ["outer": "Vault", "inner": "Vault/Inner"]
+        let existing: Set<String> = ["/new/Obsidian/Vault", "/new/Obsidian/Vault/Inner"]
+        for folders in [[outer, inner], [inner, outer]] {
+            let result = pass(folders, rel: rel, existing: existing)
+            #expect(result.asked.isEmpty)
+            #expect(result.outcome == FolderPathReconciler.Outcome(overlapsAnotherFolder: ["outer", "inner"]))
+        }
+    }
+
+    @Test("Both folders on one directory stay where they are, whichever comes first")
+    func sameDirectoryPairIsHeldInEitherOrder() {
+        let a = (id: "a", path: "/old/Obsidian/Vault")
+        let b = (id: "b", path: "/old/Obsidian/Vault")
+        let rel = ["a": "Vault", "b": "Vault"]
+        for folders in [[a, b], [b, a]] {
+            let result = pass(folders, rel: rel, existing: ["/new/Obsidian/Vault"])
+            #expect(result.asked.isEmpty)
+            #expect(result.outcome == FolderPathReconciler.Outcome(overlapsAnotherFolder: ["a", "b"]))
+        }
+    }
+
+    @Test("Of a pair, a folder the bridge would not take does not hold the other back")
+    func onlyRealRepairsHold() {
+        let outer = (id: "outer", path: "/old/Obsidian/Vault")
+        let inner = (id: "inner", path: "/old/Obsidian/Vault/Inner")
+        let rel = ["outer": "Vault", "inner": "Vault/Inner"]
+
+        // The inner vault's folder is not there: only the outer one moves.
+        let missing = pass([inner, outer], rel: rel, existing: ["/new/Obsidian/Vault"])
+        #expect(missing.asked == ["outer"])
+        #expect(missing.outcome == FolderPathReconciler.Outcome())
+
+        // A directory of its name is there without its marker: the bridge
+        // refuses it for that, and the outer vault moves.
+        let unmarked = pass(
+            [inner, outer],
+            rel: rel,
+            existing: ["/new/Obsidian/Vault", "/new/Obsidian/Vault/Inner"],
+            withoutMarker: ["inner"]
+        )
+        #expect(Set(unmarked.asked) == ["outer", "inner"])
+        #expect(unmarked.outcome == FolderPathReconciler.Outcome())
+    }
+
+    @Test("Of three folders, the two that overlap stay where they are and the third is repaired")
+    func thirdFolderIsRepaired() {
+        let result = pass(
+            [
+                (id: "outer", path: "/old/Obsidian/Vault"),
+                (id: "other", path: "/old/Obsidian/Other"),
+                (id: "inner", path: "/old/Obsidian/Vault/Inner"),
+            ],
+            rel: ["outer": "Vault", "inner": "Vault/Inner", "other": "Other"],
+            existing: ["/new/Obsidian/Vault", "/new/Obsidian/Vault/Inner", "/new/Obsidian/Other"]
+        )
+        #expect(result.asked == ["other"])
+        #expect(result.outcome == FolderPathReconciler.Outcome(overlapsAnotherFolder: ["outer", "inner"]))
+    }
+
+    @Test("Once one of a pair is removed, the next pass repairs the other")
+    func removingOneLetsTheOtherGoOn() {
+        let outer = (id: "outer", path: "/old/Obsidian/Vault")
+        let inner = (id: "inner", path: "/old/Obsidian/Vault/Inner")
+        let rel = ["outer": "Vault", "inner": "Vault/Inner"]
+        let existing: Set<String> = ["/new/Obsidian/Vault", "/new/Obsidian/Vault/Inner"]
+        #expect(pass([outer, inner], rel: rel, existing: existing).asked.isEmpty)
+
+        let afterRemovingInner = pass([outer], rel: ["outer": "Vault"], existing: existing)
+        #expect(afterRemovingInner.asked == ["outer"])
+        #expect(afterRemovingInner.outcome == FolderPathReconciler.Outcome())
+
+        let afterRemovingOuter = pass([inner], rel: ["inner": "Vault/Inner"], existing: existing)
+        #expect(afterRemovingOuter.asked == ["inner"])
+    }
+
+    @Test("A repair onto a folder that stays where it is is held, and that folder is left alone")
+    func repairOntoALiveFolderIsHeld() {
+        // The share accepted into this vault's folder while it could not be
+        // reached: that vault syncs there now.
+        let result = pass(
+            [(id: "here", path: "/new/Obsidian/Notes"), (id: "gone", path: "/old/Obsidian/Notes")],
+            rel: ["here": "Notes", "gone": "Notes"],
+            existing: ["/new/Obsidian/Notes"]
+        )
+        #expect(result.asked.isEmpty)
+        #expect(result.outcome == FolderPathReconciler.Outcome(overlapsAnotherFolder: ["gone"]))
+    }
+
+    @Test("A repair around another folder's old path waits one pass while that folder moves away")
+    func repairWaitsForAFolderMovingAway() {
+        // `leaving` is configured inside the folder `waiting` is about to be
+        // repaired to, but its own repair takes it elsewhere.
+        let waiting = (id: "waiting", path: "/old/Obsidian/Vault")
+        let rel = ["waiting": "Vault", "leaving": "Elsewhere"]
+        let existing: Set<String> = ["/new/Obsidian/Vault", "/new/Obsidian/Elsewhere"]
+
+        let first = pass([waiting, (id: "leaving", path: "/new/Obsidian/Vault/Sub")], rel: rel, existing: existing)
+        #expect(first.asked == ["leaving"])
+        #expect(first.outcome == FolderPathReconciler.Outcome(overlapsAnotherFolder: ["waiting"]))
+
+        let next = pass([waiting, (id: "leaving", path: "/new/Obsidian/Elsewhere")], rel: rel, existing: existing)
+        #expect(next.asked == ["waiting"])
+        #expect(next.outcome == FolderPathReconciler.Outcome())
     }
 
     @Test("Neither a copy nor another refusal is taken for an overlap")
@@ -74,11 +211,16 @@ struct Issue330RepairOverlapTests {
     func cardExplainsTheOverlap() {
         let text = card(overlap: true).explanation
         #expect(text == SyncthingManager.UnreachableFolder.overlapExplanation)
-        #expect(text.contains("another vault already syncs that folder, a folder inside it, or a folder around it"))
+        // Also true where both vaults of a pair are held where they were:
+        // neither syncs there now, but each one's folder is the other's.
+        #expect(text.contains("it is another vault's folder too, or lies inside or around another vault's folder"))
+        #expect(!text.contains("already syncs"))
         #expect(text.contains("Two vaults never sync in one place"))
+        // Two such cards each name one way on: removing either one is enough.
+        #expect(text.contains("when one of the two is removed, the other goes on there"))
         // The share of a removed vault is offered again only after a new
         // start of VaultSync (#316).
-        #expect(text.contains("Remove this vault, wait ten seconds, close VaultSync in the app switcher and open it again, and accept the vault again under Pending Shares"))
+        #expect(text.contains("remove it, wait ten seconds, close VaultSync in the app switcher and open it again, and accept the vault again under Pending Shares"))
         // Never combined with what a folder holds (#331).
         #expect(text.contains("If the share then says that its folder already holds files, do not combine them"))
         #expect(card(overlap: true).troubleshootingURL?.fragment == "the-folder-found-overlaps-another-vault")
@@ -88,6 +230,15 @@ struct Issue330RepairOverlapTests {
         #expect(card(overlap: false).troubleshootingURL == nil)
         // The copy keeps its own text and section.
         #expect(card(overlap: false, copy: true).troubleshootingURL?.fragment == "the-folder-found-is-a-copy")
+    }
+
+    @Test("The overlap card does not offer to reconnect; the other cards still do")
+    func overlapCardOffersNoReconnect() {
+        // The vault's own folder was found: no other selection holds it,
+        // and a reconnect would only repeat the refusal.
+        #expect(!card(overlap: true).offersReconnect)
+        #expect(card(overlap: false).offersReconnect)
+        #expect(card(overlap: false, copy: true).offersReconnect)
     }
 
     @Test("The card's text and its title are in every language")
@@ -179,8 +330,10 @@ struct Issue330RepairOverlapTests {
         let manager = SyncthingManager()
         #expect(manager.recheckCopiesFound(obsidianRoot: "/new/Obsidian") == nil)
         manager._testSetFoldersOverlappingAnotherFolder(["f1"])
-        // The engine is not running here, so the reconcile it starts ends at
-        // once; that one is started is what counts.
+        // The engine is not running here, so `reconcileFolderPaths` returns
+        // at once without reconciling anything. What this shows is the
+        // recheck's own guard: an overlap finding alone lets the call through
+        // to the reconcile, as a copy finding does.
         #expect(manager.recheckCopiesFound(obsidianRoot: "/new/Obsidian") != nil)
     }
 
@@ -203,10 +356,10 @@ struct Issue330RepairOverlapTests {
 
 extension EngineBridgeSuites {
     /// #330 against the real engine, in the framework the app links: the
-    /// refusal and its text are the bridge's, so only a run against it shows
-    /// that the app tells the refusal from the others. The mapping is handed
-    /// to the reconcile, not stored.
-    @Suite("The path repair against the real engine refuses a vault's folder inside another vault's (#330)")
+    /// marker query, the floor's refusal and its text are the bridge's, so
+    /// only a run against it shows that the app reads them right. The
+    /// mapping is handed to the reconcile, not stored.
+    @Suite("The path repair against the real engine keeps a vault's folder out of another vault's (#330)")
     struct Issue330RepairOverlapThroughTheBridgeTests {
 
         private struct BridgeFolder: Decodable {
@@ -221,7 +374,7 @@ extension EngineBridgeSuites {
         }
 
         @MainActor
-        @Test("A vault's own folder moved into another vault's folder is refused, and the reconcile says why")
+        @Test("A vault's own folder moved into another vault's folder is held by the reconcile and refused by the bridge")
         func overlapIsRefused() throws {
             TestSupport.resetSyncthingState()
             let sandbox = FileManager.default.temporaryDirectory
@@ -245,8 +398,12 @@ extension EngineBridgeSuites {
             // folder's own, and only the overlap is left to refuse it.
             let moved = outer.appendingPathComponent("Inner", isDirectory: true)
             try FileManager.default.moveItem(at: own, to: moved)
+            #expect(SyncBridgeService.folderMarkerIsAt(folderID: innerID, path: moved.path))
+            #expect(!SyncBridgeService.folderMarkerIsAt(folderID: innerID, path: outer.path))
+            #expect(!SyncBridgeService.folderMarkerIsAt(folderID: outerID, path: moved.path))
 
             var rel = [outerID: "Outer", innerID: "Outer/Inner"]
+            var asked: [String] = []
             let env = FolderPathReconciler.Environment(
                 obsidianRoot: root.path,
                 loadRel: { rel },
@@ -255,14 +412,23 @@ extension EngineBridgeSuites {
                     var isDirectory: ObjCBool = false
                     return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
                 },
-                setPath: FolderPathReconciler.bridgeSetPath
+                setPath: { folderID, newPath in
+                    asked.append(folderID)
+                    return FolderPathReconciler.bridgeSetPath(folderID: folderID, newPath: newPath)
+                },
+                hasMarker: SyncBridgeService.folderMarkerIsAt
             )
             let outcome = FolderPathReconciler.reconcile(
                 folders: [(id: outerID, path: outer.path), (id: innerID, path: own.path)],
                 env: env
             )
 
+            // The reconcile holds the repair before it asks the bridge.
+            #expect(asked.isEmpty)
             #expect(outcome == FolderPathReconciler.Outcome(overlapsAnotherFolder: [innerID]))
+            // Asked anyway, the bridge's floor refuses it with the text the
+            // app tells from the others.
+            #expect(FolderPathReconciler.bridgeSetPath(folderID: innerID, newPath: moved.path) == .overlapsAnotherFolder)
             #expect(configuredPath(innerID) == FolderPathReconciler.canonical(own.path))
             #expect(configuredPath(outerID) == FolderPathReconciler.canonical(outer.path))
         }

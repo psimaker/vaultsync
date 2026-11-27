@@ -1235,7 +1235,7 @@ struct ContentView: View {
                     .font(.footnote)
             }
             VaultButtonRow {
-                if folder.hasObsidianMapping {
+                if folder.offersReconnect {
                     Button(L10n.tr("Reconnect to Obsidian")) {
                         showObsidianPicker = true
                     }
