@@ -194,6 +194,45 @@ if [ "\$1" = -u ] && [ -n "\${FAKE_UID:-}" ]; then
 fi
 exec "$REAL_ID" "\$@"
 SHIM
+# Every root guard in this file reads the real account, never the shim: it
+# answers 4242 for root, so a guard on it would let root into a case root
+# cannot run (#365). shim_root_guards FILE prints the lines of FILE, comment
+# lines aside, that ask `id -u` inside a [ ] or test, in any spelling (with
+# $(…) or backquotes, quoted or not, either operand, any operator). It
+# fails when grep cannot read FILE. This file is read through $0, so a copy
+# under another name checks itself.
+shim_root_guards() {
+	sg_rc=0
+	# shellcheck disable=SC2016 # the pattern names $(…) and backquotes, it expands nothing
+	sg_out=$(grep -nE '(\[|test )[^]]*(\$\(id -u\)|`id -u`)' "$1") || sg_rc=$?
+	[ "$sg_rc" -le 1 ] || return 2
+	printf '%s\n' "$sg_out" | grep -v '^[0-9]*:[[:space:]]*#' | grep . || true
+}
+GUARD_DIR="$SANDBOX/results/root-guards"
+mkdir -p "$GUARD_DIR"
+# The fixtures spell `i''d` so that the shell joins them, and this file's
+# own text never holds what the check looks for.
+# shellcheck disable=SC2016 # each fixture is shell text, not an expansion
+for guard_fixture in '[ "$(i''d -u)" = 0 ]' '[ "$(i''d -u)" != 0 ]' 'if [ "$(i''d -u)" -ne 0 ]; then' \
+	'[ $(i''d -u) != 0 ]' '[ "$(i''d -u)" != "0" ]' '[ 0 != "$(i''d -u)" ]' 'test "$(i''d -u)" != 0' \
+	'[ "`i''d -u`" -eq 0 ]'; do
+	printf '%s\n' "$guard_fixture" >"$GUARD_DIR/guard"
+	[ -n "$(shim_root_guards "$GUARD_DIR/guard")" ] || fail "the root-guard check misses: $guard_fixture (#365)"
+done
+# shellcheck disable=SC2016 # each fixture is shell text, not an expansion
+printf '%s\n' 'expected_owner="$(id -u):$(id -g)"' 'grep -q "PUID=$(id -u) PGID=$(id -g)"' \
+	'[ "$("$REAL_ID" -u)" != 0 ]' '# [ "$(i''d -u)" = 0 ] in a comment' >"$GUARD_DIR/allowed"
+[ -z "$(shim_root_guards "$GUARD_DIR/allowed")" ] || fail "the root-guard check flags what is allowed (#365):
+$(shim_root_guards "$GUARD_DIR/allowed")"
+if shim_root_guards "$GUARD_DIR/missing" >/dev/null 2>&1; then
+	fail "the root-guard check passes a file it cannot read (#365)"
+fi
+SELF="$SCRIPT_DIR/$(basename -- "$0")"
+guards_rc=0
+guard_hits=$(shim_root_guards "$SELF" 2>&1) || guards_rc=$?
+[ "$guards_rc" = 0 ] || fail "the root-guard check cannot read $SELF (#365): $guard_hits"
+[ -z "$guard_hits" ] || fail "a root guard reads the id shim; use \"\$REAL_ID\" -u (#365):
+$guard_hits"
 # Port probes are read-only: answer "nothing listening".
 for probe in ss netstat; do
 	printf '#!/usr/bin/env sh\nexit 0\n' >"$SANDBOX/bin/$probe"
@@ -426,6 +465,9 @@ fi
 export VIOLATIONS
 export PATH="$SANDBOX/bin:$PATH"
 export HOME="$SANDBOX/home"
+# Run through sudo, setup would take the sudo caller for the Hub's owner;
+# the cases expect the account the id shim answers (#365).
+unset SUDO_UID SUDO_GID
 
 # --- 1+2. Hub path -----------------------------------------------------------
 
@@ -738,23 +780,31 @@ $out"
 	cmp -s "$EXISTING/.env" "$SANDBOX/results/env-before" || fail "a custom shipped image edited .env"
 	pass "a custom shipped image offers nothing"
 
-	# A write that fails stops the setup with .env untouched.
-	plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
-	cp "$EXISTING/.env" "$SANDBOX/results/env-before"
-	chmod a-w "$EXISTING"
-	if out=$(existing_hub_run y); then
+	# A write that fails stops the setup with .env untouched. A folder
+	# without write access does not stop root, which writes anywhere: the
+	# real account decides, not the id shim (#365). For every account, root
+	# too: a temporary file that cannot be reserved is the case below, and a
+	# lock that cannot be made the one after the terminal cases.
+	if [ "$("$REAL_ID" -u)" != 0 ]; then
+		plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
+		cp "$EXISTING/.env" "$SANDBOX/results/env-before"
+		chmod a-w "$EXISTING"
+		if out=$(existing_hub_run y); then
+			chmod u+w "$EXISTING"
+			fail "a write that cannot happen must stop the setup:
+$out"
+		fi
 		chmod u+w "$EXISTING"
-		fail "a write that cannot happen must stop the setup:
+		printf '%s\n' "$out" | grep -q -e "Could not update" -e "Could not create the lock" || fail "a failed write is not reported:
 $out"
+		cmp -s "$EXISTING/.env" "$SANDBOX/results/env-before" || fail "a failed write changed .env"
+		for leftover in "$EXISTING"/.env.setup.*; do
+			[ ! -e "$leftover" ] || fail "a failed write left a temporary file: $leftover"
+		done
+		pass "a write that fails stops the setup and leaves .env whole"
+	else
+		pass "the read-only Hub folder case skipped (root writes anywhere; the lock that cannot be made runs below) (#365)"
 	fi
-	chmod u+w "$EXISTING"
-	printf '%s\n' "$out" | grep -q -e "Could not update" -e "Could not create the lock" || fail "a failed write is not reported:
-$out"
-	cmp -s "$EXISTING/.env" "$SANDBOX/results/env-before" || fail "a failed write changed .env"
-	for leftover in "$EXISTING"/.env.setup.*; do
-		[ ! -e "$leftover" ] || fail "a failed write left a temporary file: $leftover"
-	done
-	pass "a write that fails stops the setup and leaves .env whole"
 
 	# A failure midway — sed with partial output, or the rename — stops the
 	# setup the same way: original bytes, no success line, no Compose, no
@@ -1018,6 +1068,24 @@ $(cat "$SANDBOX/results/violations-existing.log")"
 else
 	pass "existing-Hub yes/no cases skipped (no python3 for a pseudo-terminal)"
 fi
+# A lock that cannot be made stops the setup before anything changes. A file
+# where the lock goes cannot become its folder, for root too (#365).
+plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
+cp "$EXISTING/.env" "$SANDBOX/results/env-before"
+: >"$EXISTING/.env.setup-lock"
+if out=$(existing_hub_run none); then
+	rm -f "$EXISTING/.env.setup-lock"
+	fail "a lock that cannot be made must stop the setup (#365):
+$out"
+fi
+rm -f "$EXISTING/.env.setup-lock"
+printf '%s\n' "$out" | grep -q "Could not create the lock" || fail "a lock that cannot be made is not reported (#365):
+$out"
+cmp -s "$EXISTING/.env" "$SANDBOX/results/env-before" || fail "a lock that cannot be made changed .env (#365)"
+for leftover in "$EXISTING"/.env.setup.*; do
+	[ ! -e "$leftover" ] || fail "a lock that cannot be made left a temporary file: $leftover (#365)"
+done
+pass "a lock that cannot be made stops the setup and leaves .env whole, for every account (#365)"
 if command -v setsid >/dev/null 2>&1; then
 	plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
 	cp "$EXISTING/.env" "$SANDBOX/results/env-before"
@@ -1215,8 +1283,10 @@ other_env_files "COMPOSE_ENV_FILES" COMPOSE_ENV_FILES=/elsewhere/hub.env
 other_env_files "COMPOSE_DISABLE_ENV_FILE" COMPOSE_DISABLE_ENV_FILE=1
 
 # An .env setup cannot read may name COMPOSE_FILE for a Compose run through
-# sudo: setup cannot name the files. (Root reads any file: non-root only.)
-if [ "$(id -u)" != 0 ]; then
+# sudo: setup cannot name the files. (Root reads any file: non-root only —
+# the real account decides, not the id shim, which answers 4242 for root,
+# #365.)
+if [ "$("$REAL_ID" -u)" != 0 ]; then
 	existing_compose_fixture
 	chmod 000 "$EXISTING/.env"
 	out=$(existing_update) || { chmod 644 "$EXISTING/.env"; fail "an update with an unreadable .env exited non-zero:
@@ -1226,7 +1296,7 @@ $out"; }
 $out"
 	pass "an .env setup cannot read leaves the compose file unstaged (#368)"
 else
-	pass "unreadable-.env case skipped (root reads every file)"
+	pass "unreadable-.env case skipped (root reads every file) (#365)"
 fi
 
 # --- 3. Device path ----------------------------------------------------------
@@ -1363,18 +1433,192 @@ cp "$SANDBOX/results/sums" "$FAKE_RELEASE/SHA256SUMS"
 unset FAKE_RELEASE
 pass "a checksum mismatch runs nothing and leaves nothing behind"
 
+# --- 4. Embedded compose = reviewed compose ----------------------------------
+
+awk '/^\tcat >"\$compose" <<'"'"'COMPOSE'"'"'$/{flag=1; next} /^COMPOSE$/{flag=0} flag' "$SETUP_SH" >"$SANDBOX/embedded.yml"
+if ! cmp -s "$SANDBOX/embedded.yml" "$COMPOSE"; then
+	diff -u "$COMPOSE" "$SANDBOX/embedded.yml" >&2 || true
+	fail "compose embedded in setup.sh differs from hub/docker-compose.yml"
+fi
+pass "embedded compose matches hub/docker-compose.yml"
+
+# --- Menu without a terminal must not hang or guess ---------------------------
+
+# setsid detaches from the controlling terminal so `ask` cannot read /dev/tty;
+# without it (macOS) the check would block on a developer's terminal, so skip.
+if command -v setsid >/dev/null 2>&1; then
+	if out=$(setsid sh "$SETUP_SH" --dry-run </dev/null 2>&1); then
+		fail "menu without a terminal must fail instead of guessing:
+$out"
+	fi
+	printf '%s\n' "$out" | grep -q -- "--device or --hub" || fail "no-terminal case does not name the flags:
+$out"
+	pass "menu without a terminal names --device/--hub and stops"
+else
+	pass "menu-without-terminal check skipped (no setsid on this platform)"
+fi
+
 # --- 5. On a Mac: VaultSync for Mac ----------------------------------------
+
+# In two parts. The first runs for every account, root too: the cases that
+# do not depend on who owns an app (the root refusal, the macOS floor, a
+# release without the app). The second tests which account an app belongs
+# to, and a root run ends at its head (#365). A new case that does not
+# depend on who owns an app goes into the first part: nothing after the
+# second part's head runs as root.
+MAC_RELEASE="$SANDBOX/mac-release"
+APPS="$SANDBOX/Applications"
+mkdir -p "$MAC_RELEASE" "$APPS"
+FAKE_RELEASE_BARE="$SANDBOX/release/vaultsync_linux_amd64"
+mac_setup() {
+	FAKE_OS=Darwin FAKE_ARCH=arm64 FAKE_RELEASE="$MAC_RELEASE" VAULTSYNC_APPLICATIONS_DIR="$APPS" TMPDIR="$SANDBOX/tmp" \
+		sh "$SETUP_SH" --device --code tulip-anchor-07 "$@"
+}
+installed="$APPS/VaultSync for Mac.app"
+# The release for the first part, made without zip: the bare agent, and a
+# line for VaultSync_darwin_arm64.zip, which a dry run plans but never
+# downloads.
+cp "$FAKE_RELEASE_BARE" "$MAC_RELEASE/vaultsync_darwin_arm64"
+if command -v sha256sum >/dev/null 2>&1; then
+	(cd "$MAC_RELEASE" && sha256sum vaultsync_darwin_arm64 >SHA256SUMS)
+else
+	(cd "$MAC_RELEASE" && shasum -a 256 vaultsync_darwin_arm64 >SHA256SUMS)
+fi
+printf '%064d  VaultSync_darwin_arm64.zip\n' 0 >>"$MAC_RELEASE/SHA256SUMS"
+
+# As root (sudo) the device path stops before anything: the service is the
+# account's that uses Obsidian, and as root every check of whose an app is
+# would pass.
+for os in Darwin Linux; do
+	if (FAKE_UID=0 FAKE_OS=$os FAKE_ARCH=arm64 FAKE_RELEASE="$MAC_RELEASE" VAULTSYNC_APPLICATIONS_DIR="$APPS" TMPDIR="$SANDBOX/tmp" \
+		sh "$SETUP_SH" --device --code tulip-anchor-07) >"$SANDBOX/results/run.log" 2>&1; then
+		fail "the device path ran as root on $os"
+	fi
+	grep -q "without sudo" "$SANDBOX/results/run.log" || fail "the root refusal on $os does not say why:
+$(cat "$SANDBOX/results/run.log")"
+done
+[ -z "$(ls -A "$APPS")" ] || fail "a refused root setup installed something: $(ls -A "$APPS")"
+pass "the device path refuses to run as root"
+
+# A Mac older than macOS 12 (#269): neither VaultSync for Mac nor the bare
+# agent runs there, and macOS 11's plutil called a valid download not
+# VaultSync for Mac. The setup stops before the release lookup with the
+# reason. The sw_vers stand-in sits in a folder of its own, used only here:
+# every other case meets the real one on a Mac and none on Linux, where CI
+# runs the branch without sw_vers. With SYSTEM_VERSION_COMPAT=1 it answers
+# 10.16, as macOS does from 11 on.
+SW_VERS_BIN="$SANDBOX/sw_vers-bin"
+mkdir -p "$SW_VERS_BIN"
+cat >"$SW_VERS_BIN/sw_vers" <<'SHIM'
+#!/usr/bin/env sh
+[ "$*" = "-productVersion" ] || exit 2
+[ -z "${FAKE_MACOS_FAILS:-}" ] || exit 1
+if [ "${SYSTEM_VERSION_COMPAT:-}" = 1 ]; then
+	echo 10.16
+	exit 0
+fi
+printf '%s\n' "$FAKE_MACOS"
+SHIM
+chmod +x "$SW_VERS_BIN/sw_vers"
+for v in 11.7.10 10.15.7 11; do
+	if out=$(PATH="$SW_VERS_BIN:$PATH" FAKE_MACOS=$v mac_setup --dry-run 2>&1); then
+		fail "the setup went on on macOS $v:
+$out"
+	fi
+	printf '%s\n' "$out" | grep -q "VaultSync for Mac needs macOS 12 or newer; this Mac has macOS $v\. Nothing was installed\.\$" ||
+		fail "the refusal on macOS $v does not say why:
+$out"
+	if printf '%s\n' "$out" | grep -q -e "VaultSync for Mac and Linux" -e "would download"; then
+		fail "the setup looked up or planned a release on macOS $v:
+$out"
+	fi
+done
+rm -f "$AGENT_SELF"
+# A subshell: assignments before a shell function outlive the call in sh.
+if (PATH="$SW_VERS_BIN:$PATH" FAKE_MACOS=11.7.10 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+	fail "a real setup went on on macOS 11"
+fi
+grep -q "needs macOS 12 or newer" "$SANDBOX/results/run.log" || fail "the real refusal on macOS 11 does not say why:
+$(cat "$SANDBOX/results/run.log")"
+[ ! -e "$AGENT_SELF" ] || fail "an agent ran on macOS 11"
+[ -z "$(ls -A "$APPS")" ] || fail "a setup on macOS 11 installed something: $(ls -A "$APPS")"
+[ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "a setup on macOS 11 left temporary files: $(ls -A "$SANDBOX/tmp")"
+# An exported SYSTEM_VERSION_COMPAT=1 does not hide macOS 11 behind 10.16.
+if out=$(PATH="$SW_VERS_BIN:$PATH" SYSTEM_VERSION_COMPAT=1 FAKE_MACOS=11.7.10 mac_setup --dry-run 2>&1); then
+	fail "SYSTEM_VERSION_COMPAT=1 hid macOS 11:
+$out"
+fi
+printf '%s\n' "$out" | grep -q "this Mac has macOS 11.7.10\." || fail "SYSTEM_VERSION_COMPAT=1 changed the version named:
+$out"
+pass "on a Mac older than macOS 12 the setup stops before the release lookup and says why"
+
+# It refuses only on proof: macOS 12 and later, a version it cannot read
+# (10.16 is the compatibility answer of macOS 11 and later), a failed sw_vers, and an exported SYSTEM_VERSION_COMPAT=1 on a newer Mac all
+# go on; on Linux sw_vers is never asked.
+for v in 12.0 12 26.5 27.2.1 10.16 10.16.1 99999999999999999999.0 011.0 "" "unknown" "abc.1"; do
+	out=$(PATH="$SW_VERS_BIN:$PATH" FAKE_MACOS=$v mac_setup --dry-run 2>&1) ||
+		fail "the setup stopped on macOS '$v':
+$out"
+	printf '%s\n' "$out" | grep -q "would run: $installed/Contents/MacOS/vaultsync setup --code <code>\$" ||
+		fail "the setup on macOS '$v' does not plan the setup:
+$out"
+done
+out=$(PATH="$SW_VERS_BIN:$PATH" FAKE_MACOS_FAILS=1 mac_setup --dry-run 2>&1) ||
+	fail "a failed sw_vers stopped the setup:
+$out"
+out=$(PATH="$SW_VERS_BIN:$PATH" SYSTEM_VERSION_COMPAT=1 FAKE_MACOS=14.6 mac_setup --dry-run 2>&1) ||
+	fail "SYSTEM_VERSION_COMPAT=1 stopped the setup on macOS 14:
+$out"
+out=$(PATH="$SW_VERS_BIN:$PATH" FAKE_MACOS=11.0 sh "$SETUP_SH" --device --dry-run 2>&1) ||
+	fail "a sw_vers saying 11 stopped the setup on Linux:
+$out"
+[ -z "$(ls -A "$APPS")" ] || fail "a dry run installed something: $(ls -A "$APPS")"
+pass "macOS 12 and later, an unreadable version, a failed sw_vers and Linux go on"
+
+# A release without the app (desktop-v0.1.0): the bare agent, as before.
+rm -f "$MAC_RELEASE/VaultSync_darwin_arm64.zip"
+if command -v sha256sum >/dev/null 2>&1; then
+	(cd "$MAC_RELEASE" && sha256sum vaultsync_darwin_arm64 >SHA256SUMS)
+else
+	(cd "$MAC_RELEASE" && shasum -a 256 vaultsync_darwin_arm64 >SHA256SUMS)
+fi
+out=$(mac_setup --dry-run 2>&1) || fail "Mac dry-run without the app exited non-zero:
+$out"
+printf '%s\n' "$out" | grep -q "would download: $release/vaultsync_darwin_arm64 " ||
+	fail "without the app the Mac dry-run does not plan the bare agent:
+$out"
+printf '%s\n' "$out" | grep -q "would run: <temporary folder>/vaultsync setup --code <code>\$" ||
+	fail "without the app the Mac dry-run does not plan the setup from the download:
+$out"
+rm -f "$AGENT_ARGS" "$AGENT_SELF"
+mac_setup >"$SANDBOX/results/run.log" 2>&1 || fail "the bare-agent Mac setup failed:
+$(cat "$SANDBOX/results/run.log")"
+[ ! -e "$(cat "$AGENT_SELF")" ] || fail "the bare installer is still there: $(cat "$AGENT_SELF")"
+[ -z "$(ls -A "$APPS")" ] || fail "an app appeared without one in the release: $(ls -A "$APPS")"
+[ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "the bare-agent Mac setup left temporary files: $(ls -A "$SANDBOX/tmp")"
+pass "a release without VaultSync for Mac sets up with the bare agent"
+
+# --- 5b. On a Mac: whose app it is -----------------------------------------
+
+# These cases test which account an app belongs to (own_app, decision 053).
+# As root the id shim says 4242 while every app setup unpacks is root's, so
+# no app would be this account's; and the setup link never runs as root on
+# a Mac. A root run ends here (#365): a case below this line never runs as
+# root, so one that does not depend on who owns an app goes into part 5.
+if [ "$("$REAL_ID" -u)" = 0 ]; then
+	pass "the VaultSync for Mac cases of who owns an app skipped (they run as an ordinary account, not as root) (#365)"
+	echo "setup.sh dry-run smoke test: all checks passed"
+	exit 0
+fi
 
 # The release has VaultSync for Mac zipped the way the release job zips it
 # (zip -qry -X), beside the bare agent; the app's agent is a stand-in that
 # records its arguments, where it ran from and which build it is. APPS
 # stands in for /Applications.
 command -v zip >/dev/null 2>&1 || fail "the VaultSync for Mac cases need zip"
-MAC_RELEASE="$SANDBOX/mac-release"
-APPS="$SANDBOX/Applications"
 AGENT_MARK="$SANDBOX/results/agent-mark"
 export AGENT_MARK
-mkdir -p "$MAC_RELEASE" "$APPS" "$SANDBOX/zipwork"
+mkdir -p "$SANDBOX/zipwork"
 # make_app DIR ID MARK [VERSION] puts a VaultSync for Mac.app with bundle
 # identifier ID into DIR, its agent marked MARK (the cases look for the line
 # "# build: vaultsync MARK" in it) and saying, asked for its version, what
@@ -1418,12 +1662,6 @@ release_with() {
 		(cd "$MAC_RELEASE" && shasum -a 256 VaultSync_darwin_arm64.zip vaultsync_darwin_arm64 >SHA256SUMS)
 	fi
 }
-FAKE_RELEASE_BARE="$SANDBOX/release/vaultsync_linux_amd64"
-mac_setup() {
-	FAKE_OS=Darwin FAKE_ARCH=arm64 FAKE_RELEASE="$MAC_RELEASE" VAULTSYNC_APPLICATIONS_DIR="$APPS" TMPDIR="$SANDBOX/tmp" \
-		sh "$SETUP_SH" --device --code tulip-anchor-07 "$@"
-}
-installed="$APPS/VaultSync for Mac.app"
 release_with first "" 0.9.1
 
 # A dry run plans the app, the place and the setup from there — and makes
@@ -1586,29 +1824,25 @@ pass "an old app that cannot be put back is kept and named"
 # This run's app, in place when Ctrl-C comes, cannot be removed: the old app
 # is not moved into it — it stays where it was set aside, whole, and the
 # setup says where both are.
-if [ "$("$REAL_ID" -u)" != 0 ]; then
-	release_with stuck
-	if (INT_AFTER_PLACE=1 STUCK_PLACED=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
-		chmod -R u+w "$APPS"
-		fail "a failed update must stop the setup"
-	fi
+release_with stuck
+if (INT_AFTER_PLACE=1 STUCK_PLACED=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
 	chmod -R u+w "$APPS"
-	kept=$(find "$APPS" -maxdepth 1 -name '.VaultSync for Mac.app.replaced.*')
-	{ [ -n "$kept" ] && grep -q "vaultsync second" "$kept/VaultSync for Mac.app/Contents/MacOS/vaultsync"; } ||
-		fail "the old app is not kept where it was set aside:
-$(find "$APPS" 2>&1 | head -20)"
-	[ -z "$(find "$installed" -mindepth 1 -name 'VaultSync for Mac.app' 2>/dev/null)" ] || fail "the old app was moved into the app that stayed:
-$(find "$APPS" 2>&1 | head -20)"
-	grep -qF "could not be removed from $installed" "$SANDBOX/results/run.log" || fail "the setup does not say that this run's app stays:
-$(cat "$SANDBOX/results/run.log")"
-	grep -qF "is not free. It is at $kept/VaultSync for Mac.app" "$SANDBOX/results/run.log" || fail "the setup does not say where the old app is:
-$(cat "$SANDBOX/results/run.log")"
-	rm -rf "$installed"
-	mv "$kept/VaultSync for Mac.app" "$installed" && rmdir "$kept"
-	pass "an old app is never moved into the new one that stayed"
-else
-	pass "the app-that-stayed case skipped (root removes anything)"
+	fail "a failed update must stop the setup"
 fi
+chmod -R u+w "$APPS"
+kept=$(find "$APPS" -maxdepth 1 -name '.VaultSync for Mac.app.replaced.*')
+{ [ -n "$kept" ] && grep -q "vaultsync second" "$kept/VaultSync for Mac.app/Contents/MacOS/vaultsync"; } ||
+	fail "the old app is not kept where it was set aside:
+$(find "$APPS" 2>&1 | head -20)"
+[ -z "$(find "$installed" -mindepth 1 -name 'VaultSync for Mac.app' 2>/dev/null)" ] || fail "the old app was moved into the app that stayed:
+$(find "$APPS" 2>&1 | head -20)"
+grep -qF "could not be removed from $installed" "$SANDBOX/results/run.log" || fail "the setup does not say that this run's app stays:
+$(cat "$SANDBOX/results/run.log")"
+grep -qF "is not free. It is at $kept/VaultSync for Mac.app" "$SANDBOX/results/run.log" || fail "the setup does not say where the old app is:
+$(cat "$SANDBOX/results/run.log")"
+rm -rf "$installed"
+mv "$kept/VaultSync for Mac.app" "$installed" && rmdir "$kept"
+pass "an old app is never moved into the new one that stayed"
 
 # An interrupted or failed update removes only what this run put at the
 # app's place (#268). Another setup at the same time puts its app there once
@@ -2162,41 +2396,33 @@ pass "a first install that cannot be moved into place, or is interrupted right a
 # An app another account installed (its owner another — the id stand-in
 # makes this account another one): left alone, and this account's goes into
 # ~/Applications.
-if [ "$("$REAL_ID" -u)" != 0 ]; then
-	release_with theirs
-	make_app "$APPS" eu.vaultsync.desktop another-accounts
-	chmod 555 "$installed/Contents/MacOS" "$installed/Contents" "$installed"
-	before=$(tree "$APPS")
-	(FAKE_UID=4243 mac_setup) >"$SANDBOX/results/run.log" 2>&1 || { chmod -R u+w "$APPS"; fail "the setup beside another account's app failed:
+release_with theirs
+make_app "$APPS" eu.vaultsync.desktop another-accounts
+chmod 555 "$installed/Contents/MacOS" "$installed/Contents" "$installed"
+before=$(tree "$APPS")
+(FAKE_UID=4243 mac_setup) >"$SANDBOX/results/run.log" 2>&1 || { chmod -R u+w "$APPS"; fail "the setup beside another account's app failed:
 $(cat "$SANDBOX/results/run.log")"; }
-	[ "$before" = "$(tree "$APPS")" ] || { chmod -R u+w "$APPS"; fail "another account's app was touched"; }
-	chmod -R u+w "$APPS"
-	[ "$(cat "$AGENT_SELF")" = "$HOME/Applications/VaultSync for Mac.app/Contents/MacOS/vaultsync" ] || fail "not run from ~/Applications beside another account's app: $(cat "$AGENT_SELF")"
-	rm -rf "$installed" "$HOME/Applications"
-	pass "an app this account cannot replace stays, and this account's goes into ~/Applications"
-else
-	pass "the other-account case skipped (root writes anywhere)"
-fi
+[ "$before" = "$(tree "$APPS")" ] || { chmod -R u+w "$APPS"; fail "another account's app was touched"; }
+chmod -R u+w "$APPS"
+[ "$(cat "$AGENT_SELF")" = "$HOME/Applications/VaultSync for Mac.app/Contents/MacOS/vaultsync" ] || fail "not run from ~/Applications beside another account's app: $(cat "$AGENT_SELF")"
+rm -rf "$installed" "$HOME/Applications"
+pass "an app this account cannot replace stays, and this account's goes into ~/Applications"
 
 # Applications this account may not write to: ~/Applications. An app already
 # in ~/Applications is updated there even when Applications is writable.
-if [ "$("$REAL_ID" -u)" != 0 ]; then
-	release_with fourth
-	chmod 555 "$APPS"
-	mac_setup >"$SANDBOX/results/run.log" 2>&1 || { chmod 755 "$APPS"; fail "the setup into ~/Applications failed:
+release_with fourth
+chmod 555 "$APPS"
+mac_setup >"$SANDBOX/results/run.log" 2>&1 || { chmod 755 "$APPS"; fail "the setup into ~/Applications failed:
 $(cat "$SANDBOX/results/run.log")"; }
-	chmod 755 "$APPS"
-	[ "$(cat "$AGENT_SELF")" = "$HOME/Applications/VaultSync for Mac.app/Contents/MacOS/vaultsync" ] || fail "not run from ~/Applications: $(cat "$AGENT_SELF")"
-	release_with fifth
-	mac_setup >"$SANDBOX/results/run.log" 2>&1 || fail "the update in ~/Applications failed:
+chmod 755 "$APPS"
+[ "$(cat "$AGENT_SELF")" = "$HOME/Applications/VaultSync for Mac.app/Contents/MacOS/vaultsync" ] || fail "not run from ~/Applications: $(cat "$AGENT_SELF")"
+release_with fifth
+mac_setup >"$SANDBOX/results/run.log" 2>&1 || fail "the update in ~/Applications failed:
 $(cat "$SANDBOX/results/run.log")"
-	[ "$(cat "$AGENT_MARK")" = fifth ] || fail "the app in ~/Applications was not updated: $(cat "$AGENT_MARK")"
-	[ -z "$(ls -A "$APPS")" ] || fail "the update went into Applications instead: $(ls -A "$APPS")"
-	rm -rf "$HOME/Applications"
-	pass "without write access to Applications the app goes into ~/Applications, and is updated there"
-else
-	pass "the ~/Applications case skipped (root writes anywhere)"
-fi
+[ "$(cat "$AGENT_MARK")" = fifth ] || fail "the app in ~/Applications was not updated: $(cat "$AGENT_MARK")"
+[ -z "$(ls -A "$APPS")" ] || fail "the update went into Applications instead: $(ls -A "$APPS")"
+rm -rf "$HOME/Applications"
+pass "without write access to Applications the app goes into ~/Applications, and is updated there"
 
 # The new app is unpacked beside its place, so putting it there is a rename
 # within one folder — never a copy across disks that could stop halfway —
@@ -2250,208 +2476,63 @@ pass "an unusable TMPDIR does not stop the setup"
 # VaultSync for Mac in ~/Applications that this account cannot replace
 # (locked), with Applications not writable: the setup stops and says why,
 # instead of running an app the agent passes over.
-if [ "$("$REAL_ID" -u)" != 0 ]; then
-	release_with eighth
-	mkdir -p "$HOME/Applications"
-	mv "$installed" "$HOME/Applications/VaultSync for Mac.app"
-	locked="$HOME/Applications/VaultSync for Mac.app"
-	chmod 555 "$locked/Contents/MacOS" "$locked/Contents" "$locked"
-	chmod 555 "$APPS"
-	before=$(tree "$HOME/Applications")
-	if mac_setup >"$SANDBOX/results/run.log" 2>&1; then
-		chmod 755 "$APPS"
-		chmod -R u+w "$HOME/Applications"
-		fail "a setup beside a locked app must stop"
-	fi
+release_with eighth
+mkdir -p "$HOME/Applications"
+mv "$installed" "$HOME/Applications/VaultSync for Mac.app"
+locked="$HOME/Applications/VaultSync for Mac.app"
+chmod 555 "$locked/Contents/MacOS" "$locked/Contents" "$locked"
+chmod 555 "$APPS"
+before=$(tree "$HOME/Applications")
+if mac_setup >"$SANDBOX/results/run.log" 2>&1; then
 	chmod 755 "$APPS"
-	[ "$before" = "$(tree "$HOME/Applications")" ] || { chmod -R u+w "$HOME/Applications"; fail "the locked app was touched"; }
 	chmod -R u+w "$HOME/Applications"
-	grep -q "is locked (Finder → Get Info → Locked). Unlock it" "$SANDBOX/results/run.log" || fail "the refusal does not say why:
-$(cat "$SANDBOX/results/run.log")"
-	rm -rf "$HOME/Applications"
-	pass "a locked app in ~/Applications stops the setup with the reason"
-
-	# The same app locked in an Applications folder this account may change:
-	# it stops too — never a second app in ~/Applications that would take the
-	# service away from it.
-	release_with tenth
-	make_app "$APPS" eu.vaultsync.desktop locked-own
-	chmod 555 "$installed/Contents/MacOS" "$installed/Contents" "$installed"
-	before=$(tree "$APPS")
-	if mac_setup >"$SANDBOX/results/run.log" 2>&1; then
-		chmod -R u+w "$APPS"
-		fail "a setup beside a locked app of this account's must stop"
-	fi
-	[ "$before" = "$(tree "$APPS")" ] || { chmod -R u+w "$APPS"; fail "the locked app was touched"; }
-	chmod -R u+w "$APPS"
-	grep -q "is locked (Finder → Get Info → Locked). Unlock it" "$SANDBOX/results/run.log" || fail "the refusal does not say why:
-$(cat "$SANDBOX/results/run.log")"
-	[ ! -e "$HOME/Applications/VaultSync for Mac.app" ] || fail "a second app went into ~/Applications beside a locked one"
-	rm -rf "$installed" "$HOME/Applications"
-	pass "a locked app of this account's stops the setup in either Applications folder"
-else
-	pass "the locked-app case skipped (root writes anywhere)"
+	fail "a setup beside a locked app must stop"
 fi
+chmod 755 "$APPS"
+[ "$before" = "$(tree "$HOME/Applications")" ] || { chmod -R u+w "$HOME/Applications"; fail "the locked app was touched"; }
+chmod -R u+w "$HOME/Applications"
+grep -q "is locked (Finder → Get Info → Locked). Unlock it" "$SANDBOX/results/run.log" || fail "the refusal does not say why:
+$(cat "$SANDBOX/results/run.log")"
+rm -rf "$HOME/Applications"
+pass "a locked app in ~/Applications stops the setup with the reason"
+
+# The same app locked in an Applications folder this account may change:
+# it stops too — never a second app in ~/Applications that would take the
+# service away from it.
+release_with tenth
+make_app "$APPS" eu.vaultsync.desktop locked-own
+chmod 555 "$installed/Contents/MacOS" "$installed/Contents" "$installed"
+before=$(tree "$APPS")
+if mac_setup >"$SANDBOX/results/run.log" 2>&1; then
+	chmod -R u+w "$APPS"
+	fail "a setup beside a locked app of this account's must stop"
+fi
+[ "$before" = "$(tree "$APPS")" ] || { chmod -R u+w "$APPS"; fail "the locked app was touched"; }
+chmod -R u+w "$APPS"
+grep -q "is locked (Finder → Get Info → Locked). Unlock it" "$SANDBOX/results/run.log" || fail "the refusal does not say why:
+$(cat "$SANDBOX/results/run.log")"
+[ ! -e "$HOME/Applications/VaultSync for Mac.app" ] || fail "a second app went into ~/Applications beside a locked one"
+rm -rf "$installed" "$HOME/Applications"
+pass "a locked app of this account's stops the setup in either Applications folder"
 
 # This account's app in an Applications folder only an administrator may
 # change: the setup cannot replace it there and stops with the reason —
 # never a second app in ~/Applications, which would take the service away
 # from the one the person knows.
-if [ "$("$REAL_ID" -u)" != 0 ]; then
-	release_with ninth
-	make_app "$APPS" eu.vaultsync.desktop own-in-admin-folder
-	chmod 555 "$APPS"
-	before=$(tree "$APPS")
-	if mac_setup >"$SANDBOX/results/run.log" 2>&1; then
-		chmod 755 "$APPS"
-		fail "a setup beside its own app in an admin-only folder must stop"
-	fi
+release_with ninth
+make_app "$APPS" eu.vaultsync.desktop own-in-admin-folder
+chmod 555 "$APPS"
+before=$(tree "$APPS")
+if mac_setup >"$SANDBOX/results/run.log" 2>&1; then
 	chmod 755 "$APPS"
-	grep -q "is yours, but only an administrator may change that folder" "$SANDBOX/results/run.log" || fail "the refusal does not say why:
+	fail "a setup beside its own app in an admin-only folder must stop"
+fi
+chmod 755 "$APPS"
+grep -q "is yours, but only an administrator may change that folder" "$SANDBOX/results/run.log" || fail "the refusal does not say why:
 $(cat "$SANDBOX/results/run.log")"
-	[ "$before" = "$(tree "$APPS")" ] || fail "the app in the admin-only folder was touched"
-	[ ! -e "$HOME/Applications/VaultSync for Mac.app" ] || fail "a second app went into ~/Applications"
-	rm -rf "$installed" "$HOME/Applications"
-	pass "this account's app where only an administrator may replace it stops the setup with the reason"
-else
-	pass "the admin-only-folder case skipped (root writes anywhere)"
-fi
-
-# As root (sudo) the device path stops before anything: the service is the
-# account's that uses Obsidian, and as root every check of whose an app is
-# would pass.
-for os in Darwin Linux; do
-	if (FAKE_UID=0 FAKE_OS=$os FAKE_ARCH=arm64 FAKE_RELEASE="$MAC_RELEASE" VAULTSYNC_APPLICATIONS_DIR="$APPS" TMPDIR="$SANDBOX/tmp" \
-		sh "$SETUP_SH" --device --code tulip-anchor-07) >"$SANDBOX/results/run.log" 2>&1; then
-		fail "the device path ran as root on $os"
-	fi
-	grep -q "without sudo" "$SANDBOX/results/run.log" || fail "the root refusal on $os does not say why:
-$(cat "$SANDBOX/results/run.log")"
-done
-[ -z "$(ls -A "$APPS")" ] || fail "a refused root setup installed something: $(ls -A "$APPS")"
-pass "the device path refuses to run as root"
-
-# A Mac older than macOS 12 (#269): neither VaultSync for Mac nor the bare
-# agent runs there, and macOS 11's plutil called a valid download not
-# VaultSync for Mac. The setup stops before the release lookup with the
-# reason. The sw_vers stand-in sits in a folder of its own, used only here:
-# every other case meets the real one on a Mac and none on Linux, where CI
-# runs the branch without sw_vers. With SYSTEM_VERSION_COMPAT=1 it answers
-# 10.16, as macOS does from 11 on.
-SW_VERS_BIN="$SANDBOX/sw_vers-bin"
-mkdir -p "$SW_VERS_BIN"
-cat >"$SW_VERS_BIN/sw_vers" <<'SHIM'
-#!/usr/bin/env sh
-[ "$*" = "-productVersion" ] || exit 2
-[ -z "${FAKE_MACOS_FAILS:-}" ] || exit 1
-if [ "${SYSTEM_VERSION_COMPAT:-}" = 1 ]; then
-	echo 10.16
-	exit 0
-fi
-printf '%s\n' "$FAKE_MACOS"
-SHIM
-chmod +x "$SW_VERS_BIN/sw_vers"
-for v in 11.7.10 10.15.7 11; do
-	if out=$(PATH="$SW_VERS_BIN:$PATH" FAKE_MACOS=$v mac_setup --dry-run 2>&1); then
-		fail "the setup went on on macOS $v:
-$out"
-	fi
-	printf '%s\n' "$out" | grep -q "VaultSync for Mac needs macOS 12 or newer; this Mac has macOS $v\. Nothing was installed\.\$" ||
-		fail "the refusal on macOS $v does not say why:
-$out"
-	if printf '%s\n' "$out" | grep -q -e "VaultSync for Mac and Linux" -e "would download"; then
-		fail "the setup looked up or planned a release on macOS $v:
-$out"
-	fi
-done
-rm -f "$AGENT_SELF"
-# A subshell: assignments before a shell function outlive the call in sh.
-if (PATH="$SW_VERS_BIN:$PATH" FAKE_MACOS=11.7.10 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
-	fail "a real setup went on on macOS 11"
-fi
-grep -q "needs macOS 12 or newer" "$SANDBOX/results/run.log" || fail "the real refusal on macOS 11 does not say why:
-$(cat "$SANDBOX/results/run.log")"
-[ ! -e "$AGENT_SELF" ] || fail "an agent ran on macOS 11"
-[ -z "$(ls -A "$APPS")" ] || fail "a setup on macOS 11 installed something: $(ls -A "$APPS")"
-[ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "a setup on macOS 11 left temporary files: $(ls -A "$SANDBOX/tmp")"
-# An exported SYSTEM_VERSION_COMPAT=1 does not hide macOS 11 behind 10.16.
-if out=$(PATH="$SW_VERS_BIN:$PATH" SYSTEM_VERSION_COMPAT=1 FAKE_MACOS=11.7.10 mac_setup --dry-run 2>&1); then
-	fail "SYSTEM_VERSION_COMPAT=1 hid macOS 11:
-$out"
-fi
-printf '%s\n' "$out" | grep -q "this Mac has macOS 11.7.10\." || fail "SYSTEM_VERSION_COMPAT=1 changed the version named:
-$out"
-pass "on a Mac older than macOS 12 the setup stops before the release lookup and says why"
-
-# It refuses only on proof: macOS 12 and later, a version it cannot read
-# (10.16 is the compatibility answer of macOS 11 and later), a failed sw_vers, and an exported SYSTEM_VERSION_COMPAT=1 on a newer Mac all
-# go on; on Linux sw_vers is never asked.
-for v in 12.0 12 26.5 27.2.1 10.16 10.16.1 99999999999999999999.0 011.0 "" "unknown" "abc.1"; do
-	out=$(PATH="$SW_VERS_BIN:$PATH" FAKE_MACOS=$v mac_setup --dry-run 2>&1) ||
-		fail "the setup stopped on macOS '$v':
-$out"
-	printf '%s\n' "$out" | grep -q "would run: $installed/Contents/MacOS/vaultsync setup --code <code>\$" ||
-		fail "the setup on macOS '$v' does not plan the setup:
-$out"
-done
-out=$(PATH="$SW_VERS_BIN:$PATH" FAKE_MACOS_FAILS=1 mac_setup --dry-run 2>&1) ||
-	fail "a failed sw_vers stopped the setup:
-$out"
-out=$(PATH="$SW_VERS_BIN:$PATH" SYSTEM_VERSION_COMPAT=1 FAKE_MACOS=14.6 mac_setup --dry-run 2>&1) ||
-	fail "SYSTEM_VERSION_COMPAT=1 stopped the setup on macOS 14:
-$out"
-out=$(PATH="$SW_VERS_BIN:$PATH" FAKE_MACOS=11.0 sh "$SETUP_SH" --device --dry-run 2>&1) ||
-	fail "a sw_vers saying 11 stopped the setup on Linux:
-$out"
-[ -z "$(ls -A "$APPS")" ] || fail "a dry run installed something: $(ls -A "$APPS")"
-pass "macOS 12 and later, an unreadable version, a failed sw_vers and Linux go on"
-
-# A release without the app (desktop-v0.1.0): the bare agent, as before.
-rm -f "$MAC_RELEASE/VaultSync_darwin_arm64.zip"
-if command -v sha256sum >/dev/null 2>&1; then
-	(cd "$MAC_RELEASE" && sha256sum vaultsync_darwin_arm64 >SHA256SUMS)
-else
-	(cd "$MAC_RELEASE" && shasum -a 256 vaultsync_darwin_arm64 >SHA256SUMS)
-fi
-out=$(mac_setup --dry-run 2>&1) || fail "Mac dry-run without the app exited non-zero:
-$out"
-printf '%s\n' "$out" | grep -q "would download: $release/vaultsync_darwin_arm64 " ||
-	fail "without the app the Mac dry-run does not plan the bare agent:
-$out"
-printf '%s\n' "$out" | grep -q "would run: <temporary folder>/vaultsync setup --code <code>\$" ||
-	fail "without the app the Mac dry-run does not plan the setup from the download:
-$out"
-rm -f "$AGENT_ARGS" "$AGENT_SELF"
-mac_setup >"$SANDBOX/results/run.log" 2>&1 || fail "the bare-agent Mac setup failed:
-$(cat "$SANDBOX/results/run.log")"
-[ ! -e "$(cat "$AGENT_SELF")" ] || fail "the bare installer is still there: $(cat "$AGENT_SELF")"
-[ -z "$(ls -A "$APPS")" ] || fail "an app appeared without one in the release: $(ls -A "$APPS")"
-[ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "the bare-agent Mac setup left temporary files: $(ls -A "$SANDBOX/tmp")"
-pass "a release without VaultSync for Mac sets up with the bare agent"
-
-# --- 4. Embedded compose = reviewed compose ----------------------------------
-
-awk '/^\tcat >"\$compose" <<'"'"'COMPOSE'"'"'$/{flag=1; next} /^COMPOSE$/{flag=0} flag' "$SETUP_SH" >"$SANDBOX/embedded.yml"
-if ! cmp -s "$SANDBOX/embedded.yml" "$COMPOSE"; then
-	diff -u "$COMPOSE" "$SANDBOX/embedded.yml" >&2 || true
-	fail "compose embedded in setup.sh differs from hub/docker-compose.yml"
-fi
-pass "embedded compose matches hub/docker-compose.yml"
-
-# --- Menu without a terminal must not hang or guess ---------------------------
-
-# setsid detaches from the controlling terminal so `ask` cannot read /dev/tty;
-# without it (macOS) the check would block on a developer's terminal, so skip.
-if command -v setsid >/dev/null 2>&1; then
-	if out=$(setsid sh "$SETUP_SH" --dry-run </dev/null 2>&1); then
-		fail "menu without a terminal must fail instead of guessing:
-$out"
-	fi
-	printf '%s\n' "$out" | grep -q -- "--device or --hub" || fail "no-terminal case does not name the flags:
-$out"
-	pass "menu without a terminal names --device/--hub and stops"
-else
-	pass "menu-without-terminal check skipped (no setsid on this platform)"
-fi
+[ "$before" = "$(tree "$APPS")" ] || fail "the app in the admin-only folder was touched"
+[ ! -e "$HOME/Applications/VaultSync for Mac.app" ] || fail "a second app went into ~/Applications"
+rm -rf "$installed" "$HOME/Applications"
+pass "this account's app where only an administrator may replace it stops the setup with the reason"
 
 echo "setup.sh dry-run smoke test: all checks passed"
