@@ -194,6 +194,12 @@ if [ "\$1" = -u ] && [ -n "\${FAKE_UID:-}" ]; then
 fi
 exec "$REAL_ID" "\$@"
 SHIM
+# Every root guard below reads the real account, never the shim: it answers
+# 4242 for root, so a guard on it would let root into a case root cannot
+# run (#365).
+if grep -n '\[ "$(id -u)" !*= 0 \]' "$SCRIPT_DIR/setup-dry-run-test.sh"; then
+	fail 'a root guard reads the id shim: use "$REAL_ID" -u (#365)'
+fi
 # Port probes are read-only: answer "nothing listening".
 for probe in ss netstat; do
 	printf '#!/usr/bin/env sh\nexit 0\n' >"$SANDBOX/bin/$probe"
@@ -738,23 +744,30 @@ $out"
 	cmp -s "$EXISTING/.env" "$SANDBOX/results/env-before" || fail "a custom shipped image edited .env"
 	pass "a custom shipped image offers nothing"
 
-	# A write that fails stops the setup with .env untouched.
-	plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
-	cp "$EXISTING/.env" "$SANDBOX/results/env-before"
-	chmod a-w "$EXISTING"
-	if out=$(existing_hub_run y); then
+	# A write that fails stops the setup with .env untouched. A folder
+	# without write access does not stop root, which writes anywhere: the
+	# real account decides, not the id shim (#365). A temporary file that
+	# cannot be reserved is the case below, for every account.
+	if [ "$("$REAL_ID" -u)" != 0 ]; then
+		plain_env "ghcr.io/psimaker/vaultsync-hub:0.1.0" >"$EXISTING/.env"
+		cp "$EXISTING/.env" "$SANDBOX/results/env-before"
+		chmod a-w "$EXISTING"
+		if out=$(existing_hub_run y); then
+			chmod u+w "$EXISTING"
+			fail "a write that cannot happen must stop the setup:
+$out"
+		fi
 		chmod u+w "$EXISTING"
-		fail "a write that cannot happen must stop the setup:
+		printf '%s\n' "$out" | grep -q -e "Could not update" -e "Could not create the lock" || fail "a failed write is not reported:
 $out"
+		cmp -s "$EXISTING/.env" "$SANDBOX/results/env-before" || fail "a failed write changed .env"
+		for leftover in "$EXISTING"/.env.setup.*; do
+			[ ! -e "$leftover" ] || fail "a failed write left a temporary file: $leftover"
+		done
+		pass "a write that fails stops the setup and leaves .env whole"
+	else
+		pass "the read-only Hub folder case skipped (root writes anywhere) (#365)"
 	fi
-	chmod u+w "$EXISTING"
-	printf '%s\n' "$out" | grep -q -e "Could not update" -e "Could not create the lock" || fail "a failed write is not reported:
-$out"
-	cmp -s "$EXISTING/.env" "$SANDBOX/results/env-before" || fail "a failed write changed .env"
-	for leftover in "$EXISTING"/.env.setup.*; do
-		[ ! -e "$leftover" ] || fail "a failed write left a temporary file: $leftover"
-	done
-	pass "a write that fails stops the setup and leaves .env whole"
 
 	# A failure midway — sed with partial output, or the rename — stops the
 	# setup the same way: original bytes, no success line, no Compose, no
@@ -1215,8 +1228,10 @@ other_env_files "COMPOSE_ENV_FILES" COMPOSE_ENV_FILES=/elsewhere/hub.env
 other_env_files "COMPOSE_DISABLE_ENV_FILE" COMPOSE_DISABLE_ENV_FILE=1
 
 # An .env setup cannot read may name COMPOSE_FILE for a Compose run through
-# sudo: setup cannot name the files. (Root reads any file: non-root only.)
-if [ "$(id -u)" != 0 ]; then
+# sudo: setup cannot name the files. (Root reads any file: non-root only —
+# the real account decides, not the id shim, which answers 4242 for root,
+# #365.)
+if [ "$("$REAL_ID" -u)" != 0 ]; then
 	existing_compose_fixture
 	chmod 000 "$EXISTING/.env"
 	out=$(existing_update) || { chmod 644 "$EXISTING/.env"; fail "an update with an unreadable .env exited non-zero:
@@ -1226,7 +1241,7 @@ $out"; }
 $out"
 	pass "an .env setup cannot read leaves the compose file unstaged (#368)"
 else
-	pass "unreadable-.env case skipped (root reads every file)"
+	pass "unreadable-.env case skipped (root reads every file) (#365)"
 fi
 
 # --- 3. Device path ----------------------------------------------------------
@@ -1363,7 +1378,42 @@ cp "$SANDBOX/results/sums" "$FAKE_RELEASE/SHA256SUMS"
 unset FAKE_RELEASE
 pass "a checksum mismatch runs nothing and leaves nothing behind"
 
+# --- 4. Embedded compose = reviewed compose ----------------------------------
+
+awk '/^\tcat >"\$compose" <<'"'"'COMPOSE'"'"'$/{flag=1; next} /^COMPOSE$/{flag=0} flag' "$SETUP_SH" >"$SANDBOX/embedded.yml"
+if ! cmp -s "$SANDBOX/embedded.yml" "$COMPOSE"; then
+	diff -u "$COMPOSE" "$SANDBOX/embedded.yml" >&2 || true
+	fail "compose embedded in setup.sh differs from hub/docker-compose.yml"
+fi
+pass "embedded compose matches hub/docker-compose.yml"
+
+# --- Menu without a terminal must not hang or guess ---------------------------
+
+# setsid detaches from the controlling terminal so `ask` cannot read /dev/tty;
+# without it (macOS) the check would block on a developer's terminal, so skip.
+if command -v setsid >/dev/null 2>&1; then
+	if out=$(setsid sh "$SETUP_SH" --dry-run </dev/null 2>&1); then
+		fail "menu without a terminal must fail instead of guessing:
+$out"
+	fi
+	printf '%s\n' "$out" | grep -q -- "--device or --hub" || fail "no-terminal case does not name the flags:
+$out"
+	pass "menu without a terminal names --device/--hub and stops"
+else
+	pass "menu-without-terminal check skipped (no setsid on this platform)"
+fi
+
 # --- 5. On a Mac: VaultSync for Mac ----------------------------------------
+
+# These cases test which account an app belongs to (own_app, decision 053),
+# and the device path refuses root, so as root they run with the id shim's
+# 4242 while every file setup makes is root's: no app would be this
+# account's. The setup link never runs as root on a Mac (#365).
+if [ "$("$REAL_ID" -u)" = 0 ]; then
+	pass "the VaultSync for Mac cases skipped (they run as an ordinary account, not as root) (#365)"
+	echo "setup.sh dry-run smoke test: all checks passed"
+	exit 0
+fi
 
 # The release has VaultSync for Mac zipped the way the release job zips it
 # (zip -qry -X), beside the bare agent; the app's agent is a stand-in that
@@ -2428,30 +2478,5 @@ $(cat "$SANDBOX/results/run.log")"
 [ -z "$(ls -A "$APPS")" ] || fail "an app appeared without one in the release: $(ls -A "$APPS")"
 [ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "the bare-agent Mac setup left temporary files: $(ls -A "$SANDBOX/tmp")"
 pass "a release without VaultSync for Mac sets up with the bare agent"
-
-# --- 4. Embedded compose = reviewed compose ----------------------------------
-
-awk '/^\tcat >"\$compose" <<'"'"'COMPOSE'"'"'$/{flag=1; next} /^COMPOSE$/{flag=0} flag' "$SETUP_SH" >"$SANDBOX/embedded.yml"
-if ! cmp -s "$SANDBOX/embedded.yml" "$COMPOSE"; then
-	diff -u "$COMPOSE" "$SANDBOX/embedded.yml" >&2 || true
-	fail "compose embedded in setup.sh differs from hub/docker-compose.yml"
-fi
-pass "embedded compose matches hub/docker-compose.yml"
-
-# --- Menu without a terminal must not hang or guess ---------------------------
-
-# setsid detaches from the controlling terminal so `ask` cannot read /dev/tty;
-# without it (macOS) the check would block on a developer's terminal, so skip.
-if command -v setsid >/dev/null 2>&1; then
-	if out=$(setsid sh "$SETUP_SH" --dry-run </dev/null 2>&1); then
-		fail "menu without a terminal must fail instead of guessing:
-$out"
-	fi
-	printf '%s\n' "$out" | grep -q -- "--device or --hub" || fail "no-terminal case does not name the flags:
-$out"
-	pass "menu without a terminal names --device/--hub and stops"
-else
-	pass "menu-without-terminal check skipped (no setsid on this platform)"
-fi
 
 echo "setup.sh dry-run smoke test: all checks passed"
