@@ -1575,6 +1575,12 @@ func (a *app) startService() error {
 	if prog, gone := a.svc.programGone(); gone {
 		return refuse("The background service cannot start: %s.", a.programGoneNote(prog))
 	}
+	// Whether the service runs this very build is judged before it starts:
+	// a run of VaultSync for Mac puts its own build in the copy's place as
+	// it comes up, and a copy started by its path would then compare the
+	// service with the build that just replaced it — and call a newer
+	// service that syncs one that does not (#290).
+	thisBuild := a.serviceRunsThisBuild()
 	if err := a.svc.start(); err != nil {
 		return err
 	}
@@ -1588,7 +1594,7 @@ func (a *app) startService() error {
 	}
 	st, err := loadState(a.lay.State)
 	older := olderThanSetUp(st, err)
-	if a.serviceRunsThisBuild() {
+	if thisBuild {
 		// What this program knows of itself holds for the service.
 		if older {
 			return refuse("The background service runs, but it does not sync: %s", a.olderNote(st, err))
