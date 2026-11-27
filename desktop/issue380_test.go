@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -55,6 +56,15 @@ func (b *lockedBuffer) String() string {
 // search for Hubs finds the fake Hub, and is counted.
 func issue380App(t *testing.T, syncs bool) (*app, *fakeEngine, *atomic.Int32) {
 	t.Helper()
+	return issue380AppWith(t, syncs, true)
+}
+
+// issue380AppWith is issue380App; holdHome false holds no lock on the
+// engine's home, so the engine setup --no-service starts is not taken for
+// one an earlier run left behind (#419): servedWhereTheEngineListens then
+// answers on the port that engine was started on.
+func issue380AppWith(t *testing.T, syncs, holdHome bool) (*app, *fakeEngine, *atomic.Int32) {
+	t.Helper()
 	eng := newFakeEngine(t)
 	tmp, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -74,7 +84,7 @@ func issue380App(t *testing.T, syncs bool) (*app, *fakeEngine, *atomic.Int32) {
 	// A program that runs until it is stopped: setup --no-service starts it
 	// as its temporary engine, and the fake answers in its place. A file
 	// that cannot run would end that engine before the fake's answer counts.
-	writeFile(t, lay.Syncthing, "#!/bin/sh\nexec sleep 120\n")
+	writeFile(t, lay.Syncthing, "#!/bin/sh\necho \"$@\" > "+shWord(lay.Syncthing+".args")+"\nexec sleep 120\n")
 	if err := os.Chmod(lay.Syncthing, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +93,9 @@ func issue380App(t *testing.T, syncs bool) (*app, *fakeEngine, *atomic.Int32) {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(lay.Home, "config.xml"), "<configuration><gui><address>"+eng.addr+"</address><apikey>engine-key</apikey></gui></configuration>\n")
-	holdLock(t, filepath.Join(lay.Home, syncthingHomeLock))
+	if holdHome {
+		holdLock(t, filepath.Join(lay.Home, syncthingHomeLock))
+	}
 	_, port, _ := net.SplitHostPort(eng.addr)
 	n, _ := strconv.Atoi(port)
 	st := agentState{GUIPort: n, Env: map[string]string{}}
@@ -102,6 +114,35 @@ func issue380App(t *testing.T, syncs bool) (*app, *fakeEngine, *atomic.Int32) {
 		}}
 	t.Setenv("PATH", "/usr/bin:/bin")
 	return a, eng, searched
+}
+
+// servedWhereTheEngineListens serves eng on the port a's engine is started
+// on, once it is started: the fake answers in the engine's place where
+// setup waits for it.
+func servedWhereTheEngineListens(t *testing.T, a *app, eng *fakeEngine) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() {
+		for ctx.Err() == nil {
+			data, err := os.ReadFile(a.lay.Syncthing + ".args")
+			_, after, found := strings.Cut(string(data), "--gui-address=http://")
+			addr, _, _ := strings.Cut(after, " ")
+			if err != nil || !found || addr == "" {
+				time.Sleep(20 * time.Millisecond)
+				continue
+			}
+			l, err := net.Listen("tcp", addr)
+			if err != nil {
+				t.Errorf("serving the fake where the engine listens (%s): %v", addr, err)
+				return
+			}
+			srv := &http.Server{Handler: http.HandlerFunc(eng.serve)}
+			go func() { <-ctx.Done(); _ = srv.Close() }()
+			_ = srv.Serve(l)
+			return
+		}
+	}()
 }
 
 // fifoTerminal makes a named pipe the terminal a command asks on: nothing
@@ -482,7 +523,14 @@ func TestIssue380_SetupOnAComputerThatSyncsAsksForNoCode(t *testing.T) {
 		{"without a terminal, --no-service", false, []string{"--no-service"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			a, _, searched := issue380App(t, true)
+			// setup --no-service starts its own engine: no lock is held on the
+			// engine's home before it, and the fake answers where it listens
+			// (#419).
+			holdHome := c.args == nil
+			a, eng, searched := issue380AppWith(t, true, holdHome)
+			if !holdHome {
+				servedWhereTheEngineListens(t, a, eng)
+			}
 			typeLine := func(string) {}
 			if c.terminal {
 				typeLine = fifoTerminal(t)
