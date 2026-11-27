@@ -1,6 +1,6 @@
 # Changelog — VaultSync for Mac and Linux
 
-The desktop agent `vaultsync`, VaultSync for Mac and the menu-bar app, released as `desktop-vX.Y.Z` tags. The iOS app, the setup link's **2) Hub**, the wake-up helper and what spans all of them are in the [root changelog](../CHANGELOG.md); the Hub's image and `vaultsync-hub` in the [Hub's changelog](../hub/CHANGELOG.md).
+The desktop agent `vaultsync`, VaultSync for Mac and the menu-bar app, released as `desktop-vX.Y.Z` tags, and what the setup link's **1) Obsidian device** changes, which is live once merged. The iOS app, the setup link's **2) Hub**, the wake-up helper and what spans all of them are in the [root changelog](../CHANGELOG.md); the Hub's image and `vaultsync-hub` in the [Hub's changelog](../hub/CHANGELOG.md).
 
 ---
 

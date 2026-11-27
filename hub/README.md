@@ -65,7 +65,8 @@ before the tag, its `[Unreleased]` becomes that section. What `setup.sh`'s
 **2) Hub** and `docker-compose.yml` change goes into the
 [root changelog](../CHANGELOG.md), because the setup link serves `main` from
 the moment of a merge; what its **1) Obsidian device** changes goes into
-[desktop/CHANGELOG.md](../desktop/CHANGELOG.md).
+[desktop/CHANGELOG.md](../desktop/CHANGELOG.md). Either entry says that the
+change is live once merged.
 
 Tag `hub-vX.Y.Z` on `main`. `hub-docker.yml` publishes
 `ghcr.io/psimaker/vaultsync-hub:X.Y.Z` (+ `latest`) and a GitHub release with

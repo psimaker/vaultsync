@@ -64,7 +64,7 @@ The full build, signing, and test guide is [`docs/setup.md`](docs/setup.md). If 
   - [`desktop/CHANGELOG.md`](desktop/CHANGELOG.md): VaultSync for Mac and Linux (`desktop/`, `desktop-v*` tags), and what the setup link's **1) Obsidian device** changes.
   - [`CHANGELOG.md`](CHANGELOG.md): everything else, among it the iOS app, the wake-up helper, and what the setup link's **2) Hub** and the Hub's compose stack change (`hub/scripts/setup.sh`, `hub/docker-compose.yml`). The setup link serves `main`, so those reach Hub owners the moment they are merged, with no Hub release in between.
 
-  A change that reaches people in more than one of these ways gets a line in each. Two examples: a Hub release that the setup link then installs (what it brings in `hub/CHANGELOG.md`, the new default in `CHANGELOG.md`), and a fix in `hub/pairing`, which the iOS app, VaultSync for Mac and Linux and the Hub are all built with.
+  An entry for the setup link, either half, says that the change is live once merged, because the setup link serves `main`. A change that reaches people in more than one of these ways gets a line in each. Two examples: a Hub release that the setup link then installs (what it brings in `hub/CHANGELOG.md`, the new default in `CHANGELOG.md`), and a fix in `hub/pairing`, which the iOS app, VaultSync for Mac and Linux and the Hub are all built with.
 
 ## Localization
 

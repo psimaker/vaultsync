@@ -72,7 +72,9 @@ On a Mac, use `syncthing-macos-arm64-$v.zip` (or `-amd64`).
 ## Release
 
 What a person meets of this agent goes into [CHANGELOG.md](CHANGELOG.md), one
-`## [X.Y.Z] — date` section per release. The repository's root changelog is
+`## [X.Y.Z] — date` section per release, and so does what the setup link's
+**1) Obsidian device** changes, with the note that it is live once merged: the
+setup link serves `main`. The repository's root changelog is
 the iOS app's, the helper's and that of the setup link's **2) Hub**, and
 [hub/CHANGELOG.md](../hub/CHANGELOG.md) that of the Hub's releases; a change
 that spans every component goes into the root changelog, with one line here.
