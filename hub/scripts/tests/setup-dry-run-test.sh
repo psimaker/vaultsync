@@ -800,7 +800,9 @@ if out=$(CONVERTING_TRIES=1000 FAKE_EPOCH_STEP=30 FAST_SLEEP=1 new_env_run); the
 $out"
 fi
 looks_364=$(cat "$CONVERSION_COUNTER")
-[ "$looks_364" -ge 115 ] && [ "$looks_364" -le 130 ] || fail "the wait did not end at the clock's hour (#364): $looks_364 answers"
+if [ "$looks_364" -lt 115 ] || [ "$looks_364" -gt 130 ]; then
+	fail "the wait did not end at the clock's hour (#364): $looks_364 answers"
+fi
 printf '%s\n' "$out" | grep -q "Syncthing had not finished converting this Hub's database after 60 minutes\.$" || fail "the end of the wait is not said (#364):
 $out"
 printf '%s\n' "$out" | grep -q "Where it stands:  cd $ST_HUB && docker compose logs --tail 3 syncthing" || fail "the end of the wait does not say where to look (#364):
@@ -822,7 +824,9 @@ if out=$(CONVERTING_TRIES=1000 FAKE_DATE_FAILS=1 FAST_SLEEP=1 new_env_run); then
 $out"
 fi
 looks_364=$(cat "$CONVERSION_COUNTER")
-[ "$looks_364" -ge 355 ] && [ "$looks_364" -le 365 ] || fail "without a clock the wait did not end at its count of looks (#364): $looks_364 answers"
+if [ "$looks_364" -lt 355 ] || [ "$looks_364" -gt 365 ]; then
+	fail "without a clock the wait did not end at its count of looks (#364): $looks_364 answers"
+fi
 printf '%s\n' "$out" | grep -q "Syncthing had not finished converting this Hub's database after 60 minutes\.$" || fail "without a clock the end of the wait is not said (#364):
 $out"
 pass "a conversion is waited for an hour, by the clock or by the count of looks, then the setup says it had not finished (#364)"
