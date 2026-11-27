@@ -49,6 +49,10 @@ func main() {
 		switch {
 		case errors.Is(err, errCancelled):
 			os.Exit(2)
+		case errors.Is(err, errInterrupted):
+			// Ctrl-C at a question: the terminal shows it, and the command
+			// said what stays (#380). 128 + SIGINT, as a shell reports it.
+			os.Exit(130)
 		case serviceMode:
 			// A log or the journal: a fixed summary per cause that carries
 			// no path or name; the whole message stays in VaultSync's own
@@ -476,12 +480,18 @@ func (a *app) setup(ctx context.Context, args []string) error {
 		t.blank()
 		t.say("VaultSync has no background service on this computer: run %s run to keep syncing.", command)
 	}
-	if errors.Is(err, errCancelled) {
+	// Every question comes before the Hub is asked to share or start a
+	// vault, and before this computer's engine changes: an interrupt
+	// there, like a cancel, leaves nothing paired.
+	if errors.Is(err, errCancelled) || errors.Is(err, errInterrupted) {
 		t.blank()
 		if *noService {
 			t.say("Nothing was paired. Run vaultsync pair any time.")
 		} else {
 			t.say("Nothing was paired. The sync engine and the background service stay installed: run vaultsync pair any time, or vaultsync uninstall to remove the background service.")
+		}
+		if errors.Is(err, errInterrupted) {
+			return err
 		}
 		return nil
 	}
@@ -1004,9 +1014,12 @@ func (a *app) pair(ctx context.Context, args []string) error {
 	t, closeTerm := openTerm(a.out)
 	defer closeTerm()
 	_, err = a.pairWith(ctx, t, opts, client, pairOrigin{})
-	if errors.Is(err, errCancelled) {
+	if errors.Is(err, errCancelled) || errors.Is(err, errInterrupted) {
 		t.blank()
 		t.say("Nothing was paired.")
+		if errors.Is(err, errInterrupted) {
+			return err
+		}
 		return nil
 	}
 	return err

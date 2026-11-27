@@ -325,7 +325,7 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 		if *yes {
 			return true, nil
 		}
-		ok, err := t.confirm(q)
+		ok, err := t.confirm(ctx, q)
 		if errors.Is(err, errNoTerminal) {
 			return false, refuse("Pass --yes to confirm — there is no terminal to ask on.")
 		}

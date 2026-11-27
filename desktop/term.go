@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -15,11 +16,24 @@ import (
 // errNoTerminal means a question needs an answer and nobody can give one.
 var errNoTerminal = errors.New("no terminal to ask on")
 
+// errInterrupted: Ctrl-C (or a stop) came while a question waited for its
+// answer. It ends the command — it is never an answer, and never the "go
+// back" an empty answer can be (#380, decision 081).
+var errInterrupted = errors.New("interrupted")
+
 // term is the person at the terminal. Without one (in is nil) every
 // question that needs an answer becomes a refusal naming the flag to pass.
 type term struct {
 	out io.Writer
 	in  *bufio.Reader
+	// reading is a read an interrupted question left waiting for its line:
+	// the next question takes that line, so two reads never share in.
+	reading chan readResult
+}
+
+type readResult struct {
+	line string
+	err  error
 }
 
 // ttyPath is the controlling terminal; a test points it at nothing.
@@ -41,22 +55,45 @@ func (t *term) say(format string, a ...any) { fmt.Fprintf(t.out, format+"\n", a.
 
 func (t *term) blank() { fmt.Fprintln(t.out) }
 
-// ask prints prompt and returns the trimmed answer.
-func (t *term) ask(prompt string) (string, error) {
+// ask prints prompt and returns the trimmed answer. It returns
+// errInterrupted as soon as ctx ends — the command's context, which Ctrl-C
+// cancels — rather than wait for Return: a read of the terminal does not
+// look at ctx (#380).
+func (t *term) ask(ctx context.Context, prompt string) (string, error) {
 	if t.in == nil {
 		return "", errNoTerminal
 	}
-	fmt.Fprint(t.out, prompt)
-	line, err := t.in.ReadString('\n')
-	if err != nil && (!errors.Is(err, io.EOF) || line == "") {
-		return "", err
+	if ctx.Err() != nil {
+		return "", errInterrupted
 	}
-	return strings.TrimSpace(line), nil
+	fmt.Fprint(t.out, prompt)
+	read := t.reading
+	t.reading = nil
+	if read == nil {
+		read = make(chan readResult, 1)
+		go func(in *bufio.Reader) {
+			line, err := in.ReadString('\n')
+			read <- readResult{line, err}
+		}(t.in)
+	}
+	select {
+	case r := <-read:
+		if r.err != nil && (!errors.Is(r.err, io.EOF) || r.line == "") {
+			return "", r.err
+		}
+		return strings.TrimSpace(r.line), nil
+	case <-ctx.Done():
+		t.reading = read
+		// The terminal shows ^C after the prompt; what follows starts on a
+		// line of its own.
+		fmt.Fprintln(t.out)
+		return "", errInterrupted
+	}
 }
 
 // confirm asks a yes/no question whose default is No: only y or yes agree.
-func (t *term) confirm(prompt string) (bool, error) {
-	a, err := t.ask(prompt + " [y/N]: ")
+func (t *term) confirm(ctx context.Context, prompt string) (bool, error) {
+	a, err := t.ask(ctx, prompt+" [y/N]: ")
 	if err != nil {
 		return false, err
 	}
