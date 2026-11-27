@@ -495,7 +495,7 @@ func TestIssue276_ARefusalMidRemovalSaysToRunItAgain(t *testing.T) {
 	defer func() { onSameFileSystem = saved }()
 	onSameFileSystem = func(root *os.Root, name string, base os.FileInfo) error {
 		if name == "syncthing" {
-			return errors.New("a disk mounted there")
+			return fmt.Errorf("syncthing/disk %w", errOnAnotherDisk)
 		}
 		return saved(root, name, base)
 	}
