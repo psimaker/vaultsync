@@ -44,9 +44,12 @@ enum DesignPreviewFixture {
         /// from the computer is the next step.
         case onboardingShare = "onboarding-share"
         /// The Add Hub sheet (#174) over a first pairing — no device, no
-        /// vault yet. `-design-preview-add-hub-step code|code-found|code-keyboard|vault|done`
+        /// vault yet. `-design-preview-add-hub-step code|code-found|code-keyboard|scan|vault|done`
         /// picks the step (default: code, the search still running;
-        /// code-keyboard focuses the number field to show the number pad).
+        /// code-keyboard focuses the number field to show the number pad;
+        /// scan opens the QR scanner over the code step, in the camera state
+        /// `xcrun simctl privacy` gives the app — granted shows the camera
+        /// unavailable on a simulator, revoked shows the way to Settings).
         case addHub = "add-hub"
     }
 
@@ -62,6 +65,11 @@ enum DesignPreviewFixture {
     /// Done above it.
     static var addHubShowsKeyboard: Bool {
         addHubStep == "code-keyboard"
+    }
+
+    /// The code step with the QR scanner open over it (#353).
+    static var addHubShowsScanner: Bool {
+        addHubStep == "scan"
     }
 
     /// `-design-preview-line-diff YES` opens the resolve screen with the

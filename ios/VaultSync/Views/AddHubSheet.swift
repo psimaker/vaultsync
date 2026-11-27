@@ -91,6 +91,15 @@ struct AddHubSheet: View {
         .onAppear { model.start(link: link) }
         .onDisappear { model.stop() }
         .onChange(of: model.path) { _, _ in model.returnedToCode() }
+        #if DEBUG
+        .task {
+            // LAB: the design preview's scan step (#353).
+            guard UIAuditFixture.active == UIAuditFixture.designPreview,
+                  DesignPreviewFixture.addHubShowsScanner else { return }
+            try? await Task.sleep(for: .milliseconds(600))
+            showScanner = true
+        }
+        #endif
         .sheet(isPresented: $showScanner, onDismiss: applyScan) {
             QRScannerView(
                 title: L10n.tr("Scan Hub QR Code"),

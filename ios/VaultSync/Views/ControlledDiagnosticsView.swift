@@ -162,10 +162,12 @@ struct ControlledDiagnosticsView: View {
                 Text(fingerprint)
                     .font(.system(.title3, design: .monospaced).weight(.bold))
                     .accessibilityLabel(L10n.fmt("Pairing fingerprint %@", fingerprint))
+                // The kit's primary pair (#353): the system's prominent
+                // style draws white on the lifted dark-mode teal, 2.2:1.
                 Button(L10n.tr("Fingerprint Matches — Activate")) {
                     Task { await controller.confirmFingerprintAndActivate(recordID: record.id) }
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.vault(.primary, compact: true))
             }
 
             preparedPairingAction(record)
@@ -345,7 +347,7 @@ struct ControlledDiagnosticsView: View {
                     pendingUploadRecordID = record.id
                     showUploadConsent = true
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.vault(.primary, compact: true))
             } else {
                 Text(L10n.tr("Check authenticated capability immediately before starting an upload check."))
                     .font(.caption)
