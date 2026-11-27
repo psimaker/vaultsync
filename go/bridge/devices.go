@@ -4,6 +4,8 @@ package bridge
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/protocol"
@@ -165,10 +167,23 @@ func GetDevicesJSON() string {
 			Paused:    dev.Paused,
 		})
 	}
+	sortDeviceInfos(infos)
 
 	data, err := json.Marshal(infos)
 	if err != nil {
 		return "[]"
 	}
 	return string(data)
+}
+
+// sortDeviceInfos puts the devices in the order of their IDs, as text — the
+// form the app receives and breaks ties by. The engine hands them out as a
+// map, whose order differs from one call to the next; unsorted, the app's
+// device rows could swap places between two polls (#345). The app lists the
+// devices by name in the user's language
+// (SyncthingManager.devicesInDisplayOrder).
+func sortDeviceInfos(infos []DeviceInfo) {
+	slices.SortFunc(infos, func(a, b DeviceInfo) int {
+		return strings.Compare(a.DeviceID, b.DeviceID)
+	})
 }
