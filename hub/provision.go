@@ -30,7 +30,7 @@ import (
 
 const (
 	folderIDPrefix     = "vs-"
-	maxVaultNameLength = 64
+	maxVaultNameLength = pairing.MaxVaultName // characters (decision 089)
 	// Hub folders keep every conflict copy and version: disk on a NAS is the
 	// cheap resource, a user's lost edit is not.
 	hubMaxConflicts     = -1

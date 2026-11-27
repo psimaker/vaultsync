@@ -148,21 +148,41 @@ func broadcastTargets(port int) []net.Addr {
 	return targets
 }
 
-// SanitizeName keeps a Hub's or a device's name, and the name typed for a new
-// vault, printable and single-line for the wire, for terminals and for a list
-// that shows it beside an address, at most 64 bytes. A name comes from anyone
-// on the network (a discovery answer) or from the other end of a pairing, so
-// it loses what can hide or reorder the text around it (hides). It never
-// begins or ends with a space, and a name with nothing in it but spaces and
-// joiners is no name: the empty string.
+// SanitizeName keeps a Hub's or a device's name printable and single-line for
+// the wire, for terminals and for a list that shows it beside an address, at
+// most 64 bytes; a vault's name is CleanLabel's. A name comes from anyone on
+// the network (a discovery answer) or from the other end of a pairing, so it
+// loses what can hide or reorder the text around it (hides). It never begins
+// or ends with a space, and a name with nothing in it but spaces and joiners
+// is no name: the empty string.
 func SanitizeName(name string) string {
+	// At most 64 bytes: a discovery answer is read into 256 bytes by every
+	// released device. Trimmed again after the cut.
+	out := strings.TrimSpace(cutTo(CleanLabel(name), 64))
+	// What is left of a name may draw nothing, and "no name" is told by the
+	// empty string: every caller's fallback hangs on it.
+	if drawsNothing(out) {
+		return ""
+	}
+	return out
+}
+
+// MaxVaultName bounds a vault's name in characters — Unicode code points,
+// counted after CleanLabel. It is the Hub's limit for every name it starts a
+// vault under, since its first release (decision 089).
+const MaxVaultName = 64
+
+// CleanLabel keeps a vault's name — a label from a Hub, and the name typed
+// for a new vault — without what hides, as SanitizeName keeps a Hub's or a
+// device's name, and without spaces at either end. It cuts nothing: a
+// vault's name is counted against MaxVaultName and refused past it, never
+// shortened, so the name sent is the name that was typed (decision 089). A
+// name with nothing in it but spaces and joiners is the empty string.
+func CleanLabel(label string) string {
 	// Trimmed after the dropping, not before: what was dropped may have stood
 	// between the name and the spaces around it.
-	out := strings.TrimSpace(withoutHidden(name))
-	// At most 64 bytes.
-	out = strings.TrimSpace(cutTo(out, 64))
-	// Joiners draw nothing by themselves, and "no name" is told by the empty
-	// string: every caller's fallback hangs on it.
+	out := strings.TrimSpace(withoutHidden(label))
+	// Joiners draw nothing by themselves.
 	if drawsNothing(out) {
 		return ""
 	}

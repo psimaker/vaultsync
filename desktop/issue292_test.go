@@ -102,13 +102,14 @@ func TestIssue292_TheHubsOwnNameIsKeptWithoutWhatHides(t *testing.T) {
 // cleaned one. The catalogue was searched for the name as typed only: with a
 // character in it that cleaning drops — a control character, and now a
 // pasted zero-width space, a soft hyphen, a direction mark — or with more
-// than the 64 bytes cleaning keeps, an existing vault of the cleaned name
-// was not found here, the Hub found it, and an empty folder received a vault
-// nobody chose. The search goes by the cleaned name too (#292).
+// than 64 bytes, which an earlier VaultSync cut a name to, an existing vault
+// of the cleaned name was not found here, the Hub found it, and an empty
+// folder received a vault nobody chose. The search goes by the cleaned name
+// too (#292), and where that finds nothing, by the cut one (#320).
 func TestIssue292_CreateFindsAnExistingVaultByTheCleanedName(t *testing.T) {
 	ctx := context.Background()
 	const id = "vs-aaaaaaaaaaaa"
-	long := strings.Repeat("я", 32) // 64 bytes: all that is kept of a longer name
+	long := strings.Repeat("я", 32) // 64 bytes: what an earlier VaultSync kept of a longer name
 	for _, typed := range []string{"Notes\u200b", "No\u00adtes", "\ufeffNotes", "Notes\u200e", "notes\u2028", "Notes\x01", long + "2", long + " 2027"} {
 		label := "Notes"
 		if strings.HasPrefix(typed, long) {
@@ -123,7 +124,14 @@ func TestIssue292_CreateFindsAnExistingVaultByTheCleanedName(t *testing.T) {
 			t.Fatal(err)
 		}
 		err := s.run(ctx)
-		if !strings.Contains(refusalText(err), "Your Hub already has a vault named “"+label+"”.") {
+		want := "Your Hub already has a vault named “" + label + "”."
+		if label == long {
+			// Since #320 nothing is cut, so the name is not the vault's own;
+			// the vault is the one an earlier VaultSync made from it, under
+			// the cut name, and the refusal says so (decision 089).
+			want = "Your Hub already has this vault, under the name “" + long + "” an earlier VaultSync made from yours."
+		}
+		if !strings.Contains(refusalText(err), want) {
 			t.Errorf("--vault %+q --create: %v\n%s", typed, err, out)
 		}
 		if n := hub.provisionCount(label); n != 0 || eng.folderCount() != 0 {

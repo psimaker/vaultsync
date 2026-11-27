@@ -38,7 +38,6 @@ const (
 	// code was entered; past four, this side reconnects first.
 	hubSessionDeadline = 4 * time.Minute
 	defaultHubSyncPort = 22000
-	maxHubNameRunes    = 64
 	attemptsKept       = 10
 )
 
@@ -995,16 +994,31 @@ func (s *pairSession) askHubName(ctx context.Context, def string, hasFiles bool)
 		if a == "" {
 			a = def
 		}
-		name := pairing.SanitizeName(a)
+		// Counted in characters and never cut: the name sent is the one
+		// typed, or the default shown, less what hides. A default from a
+		// folder whose name holds a character that hides shows it in the
+		// brackets and is sent without it (safeVaultName keeps it; decision
+		// 089 point 8).
+		name := pairing.CleanLabel(a)
+		taken := name
+		if e := earlierName(a); s.catalogueMatches(name) == 0 && e != "" && s.catalogueMatches(e) > 0 {
+			// The vault an earlier VaultSync started from this name, under
+			// the name it cut it to (chooseFromFlags).
+			taken = e
+		}
 		switch {
-		case name == "" || utf8.RuneCountInString(name) > maxHubNameRunes:
-			s.t.say("  Use a name of 1 to %d characters.", maxHubNameRunes)
+		case name == "" || utf8.RuneCountInString(name) > pairing.MaxVaultName:
+			s.t.say("  Use a name of 1 to %d characters.", pairing.MaxVaultName)
 			continue
-		case s.catalogueMatches(name) > 0:
+		case s.catalogueMatches(taken) > 0:
+			has := fmt.Sprintf("Your Hub already has a vault named %s", quoted(taken))
+			if taken != name {
+				has = fmt.Sprintf("Your Hub already has this vault, under the name %s an earlier VaultSync made from yours", quoted(taken))
+			}
 			if hasFiles {
-				s.t.say("  Your Hub already has a vault named %s. Both folders may contain files, so VaultSync cannot connect them. Choose a different name on your Hub — or, to download your Hub’s %s, choose it under On your Hub with a new, empty folder.", quoted(name), quoted(name))
+				s.t.say("  %s. Both folders may contain files, so VaultSync cannot connect them. Choose a different name on your Hub — or, to download your Hub’s %s, choose it under On your Hub with a new, empty folder.", has, quoted(taken))
 			} else {
-				s.t.say("  Your Hub already has a vault named %s. To download it, choose it under On your Hub; to start a new one, choose a different name.", quoted(name))
+				s.t.say("  %s. To download it, choose it under On your Hub; to start a new one, choose a different name.", has)
 			}
 			continue
 		}
@@ -1016,6 +1030,27 @@ func (s *pairSession) askHubName(ctx context.Context, def string, hasFiles bool)
 // selector to: by ID, or by label without regard to case (findVaultByLabel).
 func (s *pairSession) catalogueMatches(selector string) int {
 	return catalogueMatchesIn(s.hello.Vaults, selector)
+}
+
+// earlierName is the name an earlier VaultSync sent the Hub for a new vault
+// typed as typed: up to desktop-v0.3.0 it was cut to 64 bytes
+// (SanitizeName). Empty when nothing was cut, or nothing is left.
+func earlierName(typed string) string {
+	if e := pairing.SanitizeName(typed); e != pairing.CleanLabel(typed) {
+		return e
+	}
+	return ""
+}
+
+// catalogueCount counts the catalogue vaults named picks.
+func catalogueCount(vaults []pairing.VaultInfo, named func(pairing.VaultInfo) bool) int {
+	n := 0
+	for _, v := range vaults {
+		if named(v) {
+			n++
+		}
+	}
+	return n
 }
 
 func catalogueMatchesIn(vaults []pairing.VaultInfo, selector string) int {
@@ -1140,15 +1175,21 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 	// pasted zero-width space, a direction mark) would otherwise pass here
 	// as new and join that vault on the Hub (#292).
 	named := func(v pairing.VaultInfo) bool { return matchesSelector(v, s.opts.vault) }
-	if cleaned := pairing.SanitizeName(s.opts.vault); s.opts.create && cleaned != "" {
+	if cleaned := pairing.CleanLabel(s.opts.vault); s.opts.create && cleaned != "" {
 		named = func(v pairing.VaultInfo) bool {
 			return matchesSelector(v, s.opts.vault) || matchesSelector(v, cleaned)
 		}
 	}
-	n := 0
-	for _, v := range s.hello.Vaults {
-		if named(v) {
-			n++
+	n := catalogueCount(s.hello.Vaults, named)
+	// A vault an earlier VaultSync started from this very name has it on
+	// the Hub cut to 64 bytes. Where no vault has the whole name, that
+	// vault is the one the same flags made: a command run again gets the
+	// vault it already has, never a second one beside it.
+	earlier := ""
+	if e := earlierName(s.opts.vault); n == 0 && s.opts.create && e != "" {
+		named = func(v pairing.VaultInfo) bool { return matchesSelector(v, e) }
+		if n = catalogueCount(s.hello.Vaults, named); n > 0 {
+			earlier = e
 		}
 	}
 	switch {
@@ -1174,11 +1215,26 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 					return plan{}, fmt.Errorf("the sync engine does not answer: %w", err)
 				}
 				configured := folderByID(folders, v.ID)
+				// The vault's name as the Hub has it, whole: it tells this
+				// vault from one under a shorter name.
+				has := fmt.Sprintf("Your Hub already has a vault named %s", quoted(pairing.CleanLabel(v.Label)))
+				if earlier != "" {
+					has = fmt.Sprintf("Your Hub already has this vault, under the name %s an earlier VaultSync made from yours", quoted(pairing.CleanLabel(v.Label)))
+				}
+				download := "Download it as the vault on your Hub (in a terminal: without --create)"
+				if earlier != "" {
+					// Without --create a name selects only the vault of that
+					// name: the way to it is the name the Hub has.
+					download = fmt.Sprintf("Download it as the vault on your Hub under that name (in a terminal: --vault %s, without --create)", quoted(pairing.CleanLabel(v.Label)))
+				}
 				switch {
 				case configured == nil:
-					return plan{}, refuse("Your Hub already has a vault named %s. Download it as the vault on your Hub (in a terminal: without --create), or choose another name for a new vault.", quoted(pairing.SanitizeName(v.Label)))
+					return plan{}, refuse("%s. %s, or choose another name for a new vault.", has, download)
 				case !sameFolder(resolveExistingPrefix(path), configured.Path):
-					return plan{}, refuse("Your Hub already has a vault named %s, and it is set up to sync at %s on this computer. Choose another name for a new vault.", quoted(pairing.SanitizeName(v.Label)), tildePath(s.env.home, configured.Path))
+					return plan{}, refuse("%s, and it is set up to sync at %s on this computer. Choose another name for a new vault.", has, tildePath(s.env.home, configured.Path))
+				}
+				if earlier != "" {
+					s.t.say("%s.", has)
 				}
 				return s.downloadPlanIn(ctx, v, path, folders)
 			}
@@ -1191,9 +1247,11 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 		}
 		return plan{}, refuseNeeding("create", "Your Hub has no vault named %s. Add --create to start it as a new vault.", quoted(s.opts.vault))
 	}
-	name := pairing.SanitizeName(s.opts.vault)
-	if name == "" || utf8.RuneCountInString(name) > maxHubNameRunes {
-		return plan{}, refuse("Use a vault name of 1 to %d characters.", maxHubNameRunes)
+	// Counted in characters and never cut: the Hub is asked for the name
+	// as it was typed, without what hides (decision 089).
+	name := pairing.CleanLabel(s.opts.vault)
+	if name == "" || utf8.RuneCountInString(name) > pairing.MaxVaultName {
+		return plan{}, refuse("Use a vault name of 1 to %d characters.", pairing.MaxVaultName)
 	}
 	enginePaths, err := s.enginePaths(ctx)
 	if err != nil {
@@ -1641,7 +1699,9 @@ func pendingFromHubs(ctx context.Context, c *syncthing.Client, myID string) ([]p
 			if !known {
 				continue
 			}
-			label := pairing.SanitizeName(offer.Label)
+			// Not cut: it becomes the label of the folder resumePending
+			// adds (decision 089).
+			label := pairing.CleanLabel(offer.Label)
 			if label == "" {
 				label = id
 			}
@@ -1667,7 +1727,7 @@ func safeVaultName(label string) string {
 	}
 	name := strings.Join(strings.Fields(b.String()), " ")
 	name = strings.TrimLeft(name, ". ")
-	for utf8.RuneCountInString(name) > maxHubNameRunes {
+	for utf8.RuneCountInString(name) > pairing.MaxVaultName {
 		_, size := utf8.DecodeLastRuneInString(name)
 		name = name[:len(name)-size]
 	}
