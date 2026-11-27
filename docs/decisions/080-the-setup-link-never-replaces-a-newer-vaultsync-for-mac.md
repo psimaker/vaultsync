@@ -26,6 +26,6 @@
 **Not covered.**
 - The bare agent and Linux. There the downloaded agent is only the installer, and its setup replaces VaultSync's copy only after its engine check (`ensureEngine` before `installAgentCopy`). Where the newer build moved the pin or `agent.json`'s format, the older one refuses before anything changes, and the newer copy keeps running (decision 054). Otherwise it puts an older build in place that runs on the same engine and state, so nothing parks.
 - A dry run, which unpacks nothing and runs no agent. It says the app is replaced unless it is already this build, or that the setup stops and changes nothing where the installed one is a newer release or does not say which release it is.
-- Something put at the app's place between this check and the set-aside (#268).
+- Another VaultSync for Mac put at the app's place in the instant between this check and the set-aside. Since #268 the setup looks at the place again right before the set-aside and checks what it set aside, so nothing that is not VaultSync for Mac is set aside. A VaultSync for Mac that arrived in that instant is replaced, as any VaultSync for Mac there would be.
 
 **Links.** #277, #264, #268; decisions 002, 053 (6), 054.
