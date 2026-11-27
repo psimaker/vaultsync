@@ -1,14 +1,17 @@
 #!/bin/sh
 # release-notes-test.sh — holds desktop/scripts/release-notes.sh (#283) to
 # the text a desktop release publishes: a section exactly as written, its
-# relative links pinned to the release's tag, the link to the whole
+# relative links pinned to the release's tag with their paths resolved,
+# code spans, //host and absolute links as written, the link to the whole
 # changelog and what the assets are; a candidate's text the same but for
-# its tag; 1.2.1 never the section of 1.2.10; and a refusal, with nothing
-# printed, for a missing, doubled or empty section, a heading in another
-# form, a link above the repository and a version that is not X.Y.Z or
-# X.Y.Z-<suffix>. Then every released section of the real
-# desktop/CHANGELOG.md must give a text, so a heading in another form fails
-# on its pull request instead of stopping a tag. Runs on Linux and macOS.
+# its tag; 1.2.1 never the section of 1.2.10. A refusal, with nothing
+# printed and the line named, for a missing or doubled section, one without
+# an entry, a heading in another form, a link that leaves the repository,
+# a relative image, a relative target in <...>, a link definition with a
+# relative target, and a version that is not X.Y.Z or X.Y.Z-<suffix>. Then
+# every released section of the real desktop/CHANGELOG.md must give a
+# text, so such a line fails on its pull request instead of stopping a
+# tag. Runs on Linux and macOS.
 set -eu
 
 here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -77,6 +80,13 @@ The [root changelog](../CHANGELOG.md).
 ### Added
 
 - **Links** ([#1](https://github.com/psimaker/vaultsync/issues/1)) — the [root changelog](../CHANGELOG.md), [a page](../docs/hub.md#update-the-hub), [the README](README.md), [the same](./README.md), [the root](/SECURITY.md), [an anchor](#added), [mail](mailto:a@example.org), [two](../CHANGELOG.md) on [one line](README.md) and [none]().
+- **Paths** — [up and back](../docs/../CHANGELOG.md), [down and back](sub/../README.md), [dots](./a/./b.md), [a query](../docs/hub.md?plain=1#update), [parentheses](../a(b).md), [a host](//vaultsync.eu/x) and [a definition][r].
+- **Code and images** — `a[0](b)` and ``x ` [y](z)`` stay, [`code`](README.md) is a link, ![remote](https://example.org/a.png), [![remote](https://example.org/a.png)](README.md) and [angled](<https://example.org/a b>).
+- **A lone backtick** — a ` and [after it](README.md).
+
+[r]: https://example.org/r
+   [s]: <https://example.org/s> "S"
+[^1]: A footnote.
 
 ### Fixed
 
@@ -98,13 +108,19 @@ EOF
 # 1.2.1: the section as written, its links at desktop-v<VERSION>, the
 # separator and blank lines before the next section left out.
 want() { # VERSION — the expected text of 1.2.1 at that tag
-	b="https://github.com/psimaker/vaultsync/blob/desktop-v$1"
-	cat <<EOF
+	sed "s#@B@#https://github.com/psimaker/vaultsync/blob/desktop-v$1#g" <<'EOF'
 ## [1.2.1] — 2026-12-01
 
 ### Added
 
-- **Links** ([#1](https://github.com/psimaker/vaultsync/issues/1)) — the [root changelog]($b/CHANGELOG.md), [a page]($b/docs/hub.md#update-the-hub), [the README]($b/desktop/README.md), [the same]($b/desktop/README.md), [the root]($b/SECURITY.md), [an anchor](#added), [mail](mailto:a@example.org), [two]($b/CHANGELOG.md) on [one line]($b/desktop/README.md) and [none]().
+- **Links** ([#1](https://github.com/psimaker/vaultsync/issues/1)) — the [root changelog](@B@/CHANGELOG.md), [a page](@B@/docs/hub.md#update-the-hub), [the README](@B@/desktop/README.md), [the same](@B@/desktop/README.md), [the root](@B@/SECURITY.md), [an anchor](#added), [mail](mailto:a@example.org), [two](@B@/CHANGELOG.md) on [one line](@B@/desktop/README.md) and [none]().
+- **Paths** — [up and back](@B@/CHANGELOG.md), [down and back](@B@/desktop/README.md), [dots](@B@/desktop/a/b.md), [a query](@B@/docs/hub.md?plain=1#update), [parentheses](@B@/a(b).md), [a host](//vaultsync.eu/x) and [a definition][r].
+- **Code and images** — `a[0](b)` and ``x ` [y](z)`` stay, [`code`](@B@/desktop/README.md) is a link, ![remote](https://example.org/a.png), [![remote](https://example.org/a.png)](@B@/desktop/README.md) and [angled](<https://example.org/a b>).
+- **A lone backtick** — a ` and [after it](@B@/desktop/README.md).
+
+[r]: https://example.org/r
+   [s]: <https://example.org/s> "S"
+[^1]: A footnote.
 
 ### Fixed
 
@@ -169,9 +185,28 @@ refused twice 1
 printf '%s\n' "## [2.0.0] — 2026-12-01" "" "---" "" "## [1.0.0] — 2026-11-01" "" "- **Older**." | fixture empty
 run empty 2.0.0 "$tmp/empty.md"
 refused empty 1
-printf '%s\n' "## [2.0.0] — 2026-12-01" "" "- [Out](../../elsewhere.md)." | fixture above
-run above 2.0.0 "$tmp/above.md"
-refused above 1
+printf '%s\n' "## [2.0.0] — 2026-12-01" "" "### Fixed" "" "---" "" "## [1.0.0] — 2026-11-01" "" "- **Older**." | fixture headings
+run headings 2.0.0 "$tmp/headings.md"
+refused headings 1
+grep -q -F 'line 1: the section of 2.0.0 holds no entry' "$tmp/headings.err" || fail "headings: the reason does not name the heading's line"
+
+# refusedat NAME LINE — a link refused, nothing printed, and its line named.
+refusedat() {
+	printf '%s\n' "## [2.0.0] — 2026-12-01" "" "- **One** — before." "$2" "" "## [1.0.0] — 2026-11-01" "" "- **Older**." | fixture "$1"
+	run "$1" 2.0.0 "$tmp/$1.md"
+	refused "$1" 1
+	grep -q -F "$1.md line 4: " "$tmp/$1.err" || { cat "$tmp/$1.err" >&2; fail "$1: the reason does not name line 4"; }
+}
+refusedat above "- [Out](../../elsewhere.md)."
+refusedat dot-above "- [Out](./../../elsewhere.md)."
+refusedat mid-above "- [Out](../docs/../../elsewhere.md)."
+refusedat root-above "- [Out](/../elsewhere.md)."
+refusedat image "- ![A picture](../docs/images/a.png)."
+refusedat image-inside "- [![A picture](images/a.png)](https://example.org)."
+refusedat angled "- [A file](<../a b.md>)."
+refusedat definition "[r]: ../CHANGELOG.md"
+refusedat definition-angled "  [r]: <../CHANGELOG.md> \"Root\""
+refusedat definition-empty "[r]:"
 
 # The real changelog: 0.3.0 as written, links aside, and only it.
 real="## [0.3.0] — 2026-11-19"

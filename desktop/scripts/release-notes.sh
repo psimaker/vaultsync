@@ -6,14 +6,20 @@
 # VERSION is the tag without desktop-v. A candidate's X.Y.Z-<suffix> reads
 # the section of X.Y.Z: its final tag goes on the same commit, so a section
 # missing there must stop the candidate's run, not the release's after the
-# signing and Apple's verdict. A relative link in the section points into
-# the repository at this tag, so a release's text keeps working when a file
-# moves later. It prints nothing and fails when VERSION is not
-# X.Y.Z[-suffix] (exit 2), or when the section is missing, given twice or
-# empty, its heading is not in that form, or a link points above the
-# repository (exit 1). The build job runs it on every desktop tag before
-# anything is signed; the release job writes the release's text with it.
-# CHANGELOG is for the tests.
+# signing and Apple's verdict.
+#
+# A relative link in the section points into the repository at this tag,
+# its path resolved, so a release's text keeps working when a file moves
+# later; code spans stay as written. What cannot become a working absolute
+# link is refused with its line, so it fails on the pull request that
+# writes it: a path that leaves the repository, an image or a target in
+# <...> that is relative, a link definition ([r]: …) with a relative target.
+#
+# It prints nothing and fails when VERSION is not X.Y.Z[-suffix] (exit 2),
+# or when the section is missing, given twice, holds no entry, its heading
+# is not in that form, or a link is refused (exit 1). The build job runs it
+# on every desktop tag before anything is signed; the release job writes
+# the release's text with it. CHANGELOG is for the tests.
 set -eu
 
 usage() {
@@ -46,30 +52,127 @@ function fail(msg) {
 	failed = 1
 	exit 1
 }
-# Where a link in desktop/CHANGELOG.md leads, at this tag: ../X is the
-# repository root, ./X, X the desktop folder; schemes and anchors stay.
-function target(t, line) {
-	if (t == "" || t ~ /^#/ || t ~ /^[A-Za-z][A-Za-z0-9+.-]*:/)
-		return t
-	if (t ~ /^\.\.\//) {
-		t = substr(t, 4)
-		if (t ~ /^\.\.\// || t ~ /^\//)
-			fail(file " line " line " links to ../" t ", above the repository")
-		return base t
-	}
-	if (t ~ /^\//)
-		return base substr(t, 2)
-	if (t ~ /^\.\//)
-		t = substr(t, 3)
-	return base "desktop/" t
+function refuse(line, msg) {
+	fail(file " line " line ": " msg)
 }
-function relink(s, line,    out) {
+# A target that needs no repository: none, an anchor, //host or a scheme.
+function absolute(t) {
+	return t == "" || t ~ /^#/ || t ~ /^\/\// || t ~ /^[A-Za-z][A-Za-z0-9+.-]*:/
+}
+# A relative target at this tag: /X from the repository root, anything
+# else from the desktop folder, . and .. resolved, ?query and #anchor kept.
+function resolve(t, line,    path, rest, parts, stack, n, k, i, out) {
+	rest = ""
+	path = t
+	if (match(t, /[?#]/)) {
+		rest = substr(t, RSTART)
+		path = substr(t, 1, RSTART - 1)
+	}
+	k = 0
+	if (path ~ /^\//)
+		path = substr(path, 2)
+	else
+		stack[++k] = "desktop"
+	n = split(path, parts, "/")
+	for (i = 1; i <= n; i++) {
+		if (parts[i] == "" || parts[i] == ".")
+			continue
+		if (parts[i] == "..") {
+			if (k == 0)
+				refuse(line, "the link " t " leads out of the repository")
+			k--
+			continue
+		}
+		stack[++k] = parts[i]
+	}
+	out = ""
+	for (i = 1; i <= k; i++)
+		out = out (i > 1 ? "/" : "") stack[i]
+	return base out rest
+}
+# Whether the [ that opens the ] at the end of pre is an image: ![.
+function image(pre,    i, d, c) {
+	d = 0
+	for (i = length(pre); i > 0; i--) {
+		c = substr(pre, i, 1)
+		if (c == "]")
+			d++
+		else if (c == "[") {
+			if (d == 0)
+				return i > 1 && substr(pre, i - 1, 1) == "!"
+			d--
+		}
+	}
+	return 0
+}
+function target(t, line, img,    u) {
+	u = t
+	if (u ~ /^</)
+		u = substr(u, 2)
+	if (absolute(u))
+		return t
+	if (t ~ /^</)
+		refuse(line, "the link target " t " is relative and in <...>; write it without the angle brackets, a space as %20")
+	if (img)
+		refuse(line, "the image " t " is relative; give it an https:// address")
+	return resolve(t, line)
+}
+# The inline links of s, a stretch outside code; ctx is the line before s.
+# match() sets RSTART and RLENGTH for everyone: each caller keeps its own.
+function links(s, line, ctx,    out, p, l, t) {
 	out = ""
 	while (match(s, /[]][(][^)]*[)]/)) {
-		out = out substr(s, 1, RSTART + 1) target(substr(s, RSTART + 2, RLENGTH - 3), line) ")"
-		s = substr(s, RSTART + RLENGTH)
+		p = RSTART
+		l = RLENGTH
+		t = target(substr(s, p + 2, l - 3), line, image(ctx out substr(s, 1, p - 1)))
+		out = out substr(s, 1, p + 1) t ")"
+		s = substr(s, p + l)
 	}
 	return out s
+}
+# Where in s the next run of exactly n backticks starts, or 0.
+function closing(s, n,    p) {
+	p = 0
+	while (match(s, /`+/)) {
+		if (RLENGTH == n)
+			return p + RSTART
+		p += RSTART + RLENGTH - 1
+		s = substr(s, RSTART + RLENGTH)
+	}
+	return 0
+}
+# A line with its links at this tag; a code span, from a run of backticks
+# to the next run as long, stays as written, and a run without one is text.
+function relink(s, line,    out, d, p, n, run, r) {
+	if (match(s, /^ ? ? ?[[][^]^][^]]*[]]:/)) {
+		d = substr(s, RLENGTH + 1)
+		sub(/^[ \t]+/, "", d)
+		sub(/[ \t].*/, "", d)
+		if (d ~ /^</) {
+			d = substr(d, 2)
+			sub(/>$/, "", d)
+		}
+		if (d == "")
+			refuse(line, "the link definition " s " has no target on its line; write the link inline")
+		if (!absolute(d))
+			refuse(line, "the link definition " s " has a relative target; write the link inline")
+	}
+	out = ""
+	while (match(s, /`+/)) {
+		p = RSTART
+		n = RLENGTH
+		out = out links(substr(s, 1, p - 1), line, out)
+		run = substr(s, p, n)
+		s = substr(s, p + n)
+		r = closing(s, n)
+		if (r == 0) {
+			out = out run
+			continue
+		}
+		out = out run substr(s, 1, r - 1 + n)
+		s = substr(s, r + n)
+	}
+	return out links(s, line, out)
 }
 BEGIN {
 	version = ENVIRON["RN_VERSION"]
@@ -102,8 +205,12 @@ END {
 	# The blank lines and a --- separator before the next section.
 	while (n > 1 && (lines[n] ~ /^[ \t]*$/ || lines[n] == "---"))
 		n--
-	if (n < 2)
-		fail(file " line " start ": the section of " core " is empty")
+	entries = 0
+	for (i = 2; i <= n; i++)
+		if (lines[i] !~ /^[ \t]*$/ && lines[i] !~ /^#/ && lines[i] != "---")
+			entries++
+	if (!entries)
+		refuse(start, "the section of " core " holds no entry")
 	for (i = 1; i <= n; i++)
 		out[i] = relink(lines[i], start + i - 1)
 	for (i = 1; i <= n; i++)
