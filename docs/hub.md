@@ -620,9 +620,15 @@ and several vaults convert one after another. While Syncthing converts:
 - Devices show the Hub as disconnected, and connect again by themselves once
   it is done. The device of the 50,204-file vault was in sync again about 20
   seconds after the conversion ended.
-- Leave the setup link alone until `Migration complete`: run while Syncthing
-  converts, it can give up after about nine minutes with a hint meant for
-  another case.
+- Run while Syncthing converts, the setup link changes nothing on the Hub,
+  so that the conversion does not start over, and waits until it is done.
+  It says how many files Syncthing has converted about every 40 seconds,
+  or about every 20 while Docker restarts the Hub's own service. It stops
+  waiting and shows Syncthing's log when Syncthing's container stops or
+  starts again, or when Syncthing's engine ends inside it and the
+  conversion starts over. After an hour it stops waiting, without the log,
+  and says how to see where the conversion stands. Ctrl-C ends the wait,
+  not the conversion. Run the setup link again later for a pairing code.
 
 **If the conversion stops halfway** (the Hub was stopped, the power went, the
 disk filled up), the 1.x database stays as it was. Make room if the log says

@@ -982,6 +982,257 @@ syncthing_start_hint() {
 	info "  in $HUB_DIR/.env and run the setup again ($SYNCTHING_LINE_DOC)."
 }
 
+# The page section on moving a Hub to 2.x, for the messages about a
+# conversion.
+SYNCTHING_MOVE_DOC="https://github.com/psimaker/vaultsync/blob/main/docs/hub.md#move-your-hub-to-syncthing-2x"
+
+# log_clean_sed: a sed script that deletes, byte for byte under LC_ALL=C,
+# the UTF-8 forms of what acts on a terminal or reorders what it shows,
+# beyond C0 and DEL (tr removes those): the C1 controls U+0080 to U+009F,
+# the line and paragraph separators U+2028 and U+2029, and the
+# bidirectional controls U+061C, U+200E, U+200F, U+202A to U+202E and
+# U+2066 to U+2069. Literal bytes, no ranges, so BSD, GNU and busybox sed
+# agree. A lone byte 0x80 to 0x9F stays: it is part of most multi-byte
+# characters, and a UTF-8 terminal does not act on it alone.
+log_clean_sed() {
+	lc_n=128
+	while [ "$lc_n" -le 159 ]; do
+		# shellcheck disable=SC2059 # the format is the byte sequence
+		printf "s/\\302\\$(printf '%03o' "$lc_n")//g\n"
+		lc_n=$((lc_n + 1))
+	done
+	for lc_seq in '\342\200\250' '\342\200\251' '\330\234' '\342\200\216' '\342\200\217' \
+		'\342\200\252' '\342\200\253' '\342\200\254' '\342\200\255' '\342\200\256' \
+		'\342\201\246' '\342\201\247' '\342\201\250' '\342\201\251'; do
+		# shellcheck disable=SC2059 # the format is the byte sequence
+		printf "s/$lc_seq//g\n"
+	done
+}
+
+# show_log SERVICE: the last 30 lines a container of the stack wrote, on
+# stderr, without the characters that act on a terminal or reorder what it
+# shows (log_clean_sed): a log line holds names people chose. Tabs and line
+# ends stay.
+show_log() {
+	$DOCKER compose --project-directory "$HUB_DIR" logs --no-color --tail 30 "$1" 2>&1 |
+		LC_ALL=C tr -d '\000-\010\013-\037\177' |
+		LC_ALL=C sed -e "$(log_clean_sed)" >&2 || true
+}
+
+# syncthing_health: the first line of the Hub's Syncthing's answer to its
+# health endpoint, in HEALTH_FIRST; fails when it cannot be asked (stopped,
+# restarting, an image without curl). Asked inside the container with the
+# curl its healthcheck uses. While Syncthing 2.x converts a 1.x database it
+# answers every request with HTTP 200 and a body whose first line is
+# SYNCTHING_CONVERTING, its log after it; 1.30.0 has no such state, and both
+# lines answer with JSON otherwise (decision 090). Nothing else of the
+# answer is kept.
+SYNCTHING_CONVERTING="*** Database migration in progress ***"
+syncthing_health() {
+	HEALTH_FIRST=""
+	health=$($DOCKER compose --project-directory "$HUB_DIR" exec -T syncthing \
+		curl -fsS -m 10 http://127.0.0.1:8384/rest/noauth/health 2>/dev/null) || return 1
+	HEALTH_FIRST=$(printf '%s\n' "$health" | sed -n 1p)
+}
+
+# syncthing_look: one look at the Hub's Syncthing container. Docker is asked
+# up to three times, a second apart; it fails only when it could not be
+# asked at all. It leaves in SYNCTHING_STATE whether the container runs and
+# since when ("gone" when there is none), and from the container's log since
+# that start: in SYNCTHING_TRIES how many times a conversion began, failed
+# or its engine exited, and in CONVERSION_FILES the file count of the latest
+# progress line, digits only. Syncthing's monitor starts an engine that
+# ended again inside the same container, which the start time does not
+# show: measured with 2.1.7, an engine killed with SIGKILL logs "Syncthing
+# exited", and the next one a second "Migrating old-style database".
+syncthing_look() {
+	sl_try=1
+	while :; do
+		if sl_id=$($DOCKER compose --project-directory "$HUB_DIR" ps -a -q syncthing 2>/dev/null); then
+			if [ -z "$sl_id" ]; then
+				SYNCTHING_STATE=gone
+				SYNCTHING_TRIES=0
+				CONVERSION_FILES=""
+				return 0
+			fi
+			if SYNCTHING_STATE=$($DOCKER inspect -f '{{.State.Running}} {{.State.StartedAt}}' "$sl_id" 2>/dev/null) &&
+				sl_log=$($DOCKER compose --project-directory "$HUB_DIR" logs --no-color --since "${SYNCTHING_STATE#* }" syncthing 2>/dev/null); then
+				SYNCTHING_TRIES=$(printf '%s\n' "$sl_log" | grep -c -e 'Migrating old-style database' -e 'Failed to migrate' -e 'Syncthing exited' || true)
+				CONVERSION_FILES=$(printf '%s\n' "$sl_log" | sed -n 's/.*Still migrating folder (.* files=\([0-9][0-9]*\) .*/\1/p' | tail -1)
+				return 0
+			fi
+		fi
+		[ "$sl_try" -lt 3 ] || return 1
+		sl_try=$((sl_try + 1))
+		sleep 1
+	done
+}
+
+# epoch_now: seconds since 1970, or nothing where date cannot say.
+epoch_now() {
+	epoch=$(date +%s 2>/dev/null) || epoch=""
+	case "$epoch" in "" | *[!0-9]*) epoch="" ;; esac
+	printf '%s' "$epoch"
+}
+
+# How long the wait follows a conversion: an hour. The slowest conversions
+# measured took 11 to 12 1/2 minutes (about 50,000 files, Syncthing held to
+# a fiftieth of a CPU); an hour is about five times that, and still an end
+# for a run nobody watches (a script, a dropped session). A look during a
+# conversion sleeps CONVERSION_LOOK_SLEEP, so CONVERSION_LOOKS_MAX looks
+# take an hour at least and, with what Docker takes to answer, about two at
+# most: the end without a usable clock. The clock ends the wait at the hour
+# where it moved as looks can (60 s each at most), so a clock that jumps
+# ahead ends nothing at once, and one that stands or goes back leaves the
+# end to the count.
+CONVERSION_WAIT_LIMIT=3600
+CONVERSION_LOOK_SLEEP=10
+CONVERSION_LOOKS_MAX=360
+
+# The ways a wait during a conversion ends without the Hub answering. None
+# names the 1.x-on-2.x hint: Syncthing runs 2.x here. Syncthing's log is
+# shown where Syncthing ended on the way, because it says why (decision 090
+# point 7), and nowhere else: not after the hour, on Ctrl-C or when Docker
+# cannot be asked.
+conversion_stopped() { # container | engine
+	trap - HUP INT TERM
+	show_log syncthing
+	if [ "$1" = engine ]; then
+		info "Syncthing's engine ended inside its container while it converted this Hub's database to 2.x, and the conversion starts over from the beginning. The log above says why: a full disk reads \"database or disk is full\", an engine killed for want of memory \"signal: killed\"."
+	else
+		info "Syncthing's container stopped or started again while Syncthing converted this Hub's database to 2.x. The log above says why; a full disk reads \"database or disk is full\"."
+	fi
+	info "  Syncthing keeps the 1.x database until a conversion is complete: once the cause is fixed, run the setup again."
+	info "  What else you can do, going back to 1.x among it: $SYNCTHING_MOVE_DOC"
+	fail "The Hub did not become ready."
+}
+
+# The command to see where a conversion stands, and what to do after it.
+conversion_where() {
+	info "  Where it stands:  cd $(sh_quote "$HUB_DIR") && $DOCKER compose logs --tail 3 syncthing"
+	info "  Run the setup again later: it waits for a conversion again, or finds the Hub ready and prints a pairing code."
+}
+
+conversion_wait_ended() {
+	trap - HUP INT TERM
+	info "Syncthing had not finished converting this Hub's database after $((CONVERSION_WAIT_LIMIT / 60)) minutes."
+	conversion_where
+	fail "Setup stopped waiting for the conversion."
+}
+
+conversion_docker_unasked() {
+	trap - HUP INT TERM
+	info "Docker could not be asked about Syncthing's container, three times in a row, while Syncthing converted this Hub's database."
+	conversion_where
+	fail "Setup stopped waiting for the conversion."
+}
+
+conversion_wait_interrupted() {
+	trap - HUP INT TERM
+	printf '%s\n' \
+		"Setup stopped waiting. That does not stop Syncthing: it goes on converting this Hub's database in its container." \
+		"  Where it stands:  cd $(sh_quote "$HUB_DIR") && $DOCKER compose logs --tail 3 syncthing" \
+		"  Run the setup again later for a pairing code." >&2 || true
+	exit "$1"
+}
+
+# wait_for_hub: until the Hub answers `vaultsync-hub status`, 45 tries, 2 s
+# apart. While Syncthing converts a 1.x database (decision 090) the Hub
+# cannot answer, for minutes on a slow machine; those looks are not tries.
+# The conversion begins with the first answer that is SYNCTHING_CONVERTING
+# and lasts until an answer that is not (one that cannot be asked meanwhile
+# changes nothing). Meanwhile each look also looks at Syncthing's container
+# (syncthing_look), setup says what happens, shows how far it is every
+# second look, and stops waiting when the container stops or starts again,
+# when an engine ended inside it, when Docker cannot be asked, or after the
+# hour; Ctrl-C ends the wait, not the conversion. Any other answer, or
+# none, is a try as before. A Hub that never answers is explained by the
+# hub's own log: Syncthing passed its healthcheck before the hub started,
+# and the 1.x-on-2.x hint belongs to a failed start (#364).
+wait_for_hub() {
+	tries=0
+	conv_looks=0 # looks since this conversion was seen; 0: none going on
+	conv_seen=""
+	conv_started="" # the container's state when the conversion was first seen
+	conv_tries=0
+	conv_t0=""
+	until $DOCKER compose --project-directory "$HUB_DIR" exec -T hub vaultsync-hub status >/dev/null 2>&1; do
+		if [ "$conv_looks" -gt 0 ]; then
+			syncthing_look || conversion_docker_unasked
+			if [ -z "$conv_started" ]; then
+				# The first look could not be read: this one is the base.
+				conv_started="$SYNCTHING_STATE"
+				conv_tries="$SYNCTHING_TRIES"
+			elif [ "$SYNCTHING_STATE" != "$conv_started" ]; then
+				conversion_stopped container
+			elif [ "$SYNCTHING_TRIES" -gt "$conv_tries" ]; then
+				conversion_stopped engine
+			fi
+		fi
+		if syncthing_health; then
+			answered=1
+		else
+			answered=""
+		fi
+		if [ "$HEALTH_FIRST" = "$SYNCTHING_CONVERTING" ] || { [ "$conv_looks" -gt 0 ] && [ -z "$answered" ]; }; then
+			conv_looks=$((conv_looks + 1))
+			if [ "$conv_looks" = 1 ]; then
+				conv_seen=1
+				conv_started=""
+				if syncthing_look; then
+					conv_started="$SYNCTHING_STATE"
+					conv_tries="$SYNCTHING_TRIES"
+				fi
+				conv_t0=$(epoch_now)
+				trap 'conversion_wait_interrupted 129' HUP
+				trap 'conversion_wait_interrupted 130' INT
+				trap 'conversion_wait_interrupted 143' TERM
+				info "Syncthing 2.x is converting this Hub's database from 1.x. The Hub answers once that is done, and setup waits for it."
+				info "  On a large vault or a slow machine this takes minutes. Ctrl-C ends the wait, not the conversion."
+			else
+				[ "$conv_looks" -lt "$CONVERSION_LOOKS_MAX" ] || conversion_wait_ended
+				conv_now=$(epoch_now)
+				if [ -n "$conv_t0" ] && [ -n "$conv_now" ] &&
+					[ $((conv_now - conv_t0)) -ge "$CONVERSION_WAIT_LIMIT" ] &&
+					[ $((conv_now - conv_t0)) -le $((conv_looks * 60)) ]; then
+					conversion_wait_ended
+				fi
+				if [ $((conv_looks % 2)) = 0 ]; then
+					info "  Still converting${CONVERSION_FILES:+: $CONVERSION_FILES files so far in the vault it is on}."
+				fi
+			fi
+			sleep "$CONVERSION_LOOK_SLEEP"
+		else
+			if [ "$conv_looks" -gt 0 ]; then
+				conv_looks=0
+				conv_started=""
+				trap - HUP INT TERM
+			fi
+			tries=$((tries + 1))
+			if [ "$tries" -ge 45 ]; then
+				show_log hub
+				fail "The Hub did not become ready. The log above explains why; fix it and re-run."
+			fi
+			sleep 2
+		fi
+	done
+	trap - HUP INT TERM
+	# The Hub answers only once Syncthing's own API does, so the conversion
+	# is over.
+	[ -z "$conv_seen" ] || info "Syncthing has finished converting."
+}
+
+# hub_ready_lines: what a Hub setup ends with once the Hub answers.
+hub_ready_lines() {
+	info ""
+	info "✓ Hub is running."
+	$DOCKER compose --project-directory "$HUB_DIR" exec -T hub vaultsync-hub status | sed -n '2p'
+	$DOCKER compose --project-directory "$HUB_DIR" exec -T hub vaultsync-hub code
+	info "  Web UI (advanced):  ssh -L $GUI_PORT:127.0.0.1:$GUI_PORT <this host>, then http://127.0.0.1:$GUI_PORT"
+	info "  New code any time:  cd $HUB_DIR && docker compose exec hub vaultsync-hub code"
+	info ""
+}
+
 write_hub_files() {
 	compose="$HUB_DIR/docker-compose.yml"
 	env_file="$HUB_DIR/.env"
@@ -1194,6 +1445,16 @@ setup_hub() {
 		existing_gui=$(sed -n 's/^GUI_PORT=//p' "$HUB_DIR/.env" | tail -1)
 		[ -z "$existing_sync" ] || SYNC_PORT="$existing_sync"
 		[ -z "$existing_gui" ] || GUI_PORT="$existing_gui"
+		# A run during a conversion changes nothing on the stack: a new image
+		# or a changed service would have up -d recreate Syncthing's
+		# container and start the conversion over (decision 090). It waits
+		# for the conversion instead, as a setup run ends.
+		if [ "$DRY_RUN" = 0 ] && syncthing_health && [ "$HEALTH_FIRST" = "$SYNCTHING_CONVERTING" ]; then
+			info "Setup changes nothing on this Hub while its Syncthing converts the database: a new start of its container would begin the conversion again."
+			wait_for_hub
+			hub_ready_lines
+			return 0
+		fi
 		offer_newer_hub_image "$HUB_DIR/.env"
 		if ! grep -qs '^VAULTSYNC_HUB_SYNCTHING_IMAGE=' "$HUB_DIR/.env"; then
 			info "Your Hub's Syncthing follows the 1.x line, which gets no more fixes. Setup leaves it there:"
@@ -1252,29 +1513,12 @@ setup_hub() {
 	install_staged_hub_files
 	end_hub_edits
 	if ! $DOCKER compose --project-directory "$HUB_DIR" up -d; then
-		$DOCKER compose --project-directory "$HUB_DIR" logs --tail 30 syncthing >&2 || true
+		show_log syncthing
 		syncthing_start_hint
 		fail "The Hub did not start. The log above explains why; fix it and re-run."
 	fi
-
-	i=0
-	until $DOCKER compose --project-directory "$HUB_DIR" exec -T hub vaultsync-hub status >/dev/null 2>&1; do
-		i=$((i + 1))
-		[ "$i" -lt 45 ] || {
-			$DOCKER compose --project-directory "$HUB_DIR" logs --tail 30 syncthing hub >&2 || true
-			syncthing_start_hint
-			fail "The Hub did not become ready. The log above explains why; fix it and re-run."
-		}
-		sleep 2
-	done
-
-	info ""
-	info "✓ Hub is running."
-	$DOCKER compose --project-directory "$HUB_DIR" exec -T hub vaultsync-hub status | sed -n '2p'
-	$DOCKER compose --project-directory "$HUB_DIR" exec -T hub vaultsync-hub code
-	info "  Web UI (advanced):  ssh -L $GUI_PORT:127.0.0.1:$GUI_PORT <this host>, then http://127.0.0.1:$GUI_PORT"
-	info "  New code any time:  cd $HUB_DIR && docker compose exec hub vaultsync-hub code"
-	info ""
+	wait_for_hub
+	hub_ready_lines
 }
 
 # --- 1) Obsidian device ------------------------------------------------------
