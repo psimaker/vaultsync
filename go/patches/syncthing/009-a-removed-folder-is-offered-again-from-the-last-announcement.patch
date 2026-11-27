@@ -1,0 +1,182 @@
+--- a/lib/model/indexhandler.go
++++ b/lib/model/indexhandler.go
+@@ -500,9 +500,49 @@
+ 	indexHandlers *serviceMap[string, *indexHandler]
+ 	startInfos    map[string]*clusterConfigDeviceInfo
+ 	folderStates  map[string]*indexHandlerFolderState
+-	mut           sync.Mutex
++	// VaultSync (#341): the folders the device announced in its last
++	// cluster config on this connection. Each cluster config replaces it
++	// whole, and it ends with the connection.
++	announced map[string]announcedFolder
++	mut       sync.Mutex
+ }
+ 
++// announcedFolder is what a device's cluster config says about one folder:
++// what ccHandleFolders writes for a folder this side does not have.
++type announcedFolder struct {
++	label            string
++	receiveEncrypted bool
++	remoteEncrypted  bool
++	running          bool
++	info             *clusterConfigDeviceInfo
++}
++
++// noteAnnounced replaces what the device announced on this connection.
++func (r *indexHandlerRegistry) noteAnnounced(announced map[string]announcedFolder) {
++	r.mut.Lock()
++	r.announced = announced
++	r.mut.Unlock()
++}
++
++// announcedFolder returns what the device's last cluster config on this
++// connection said about the folder, if it named it.
++func (r *indexHandlerRegistry) announcedFolder(folder string) (announcedFolder, bool) {
++	r.mut.Lock()
++	defer r.mut.Unlock()
++	a, ok := r.announced[folder]
++	return a, ok
++}
++
++// forgetFolder is Remove for a folder that is gone from the configuration:
++// its state goes too, so start info given later waits as a pending folder's
++// does instead of starting a handler for a folder that is not configured.
++func (r *indexHandlerRegistry) forgetFolder(folder string) {
++	r.Remove(folder)
++	r.mut.Lock()
++	delete(r.folderStates, folder)
++	r.mut.Unlock()
++}
++
+ type indexHandlerFolderState struct {
+ 	cfg    config.FolderConfiguration
+ 	runner service
+@@ -517,6 +557,7 @@
+ 		indexHandlers: newServiceMap[string, *indexHandler](evLogger),
+ 		startInfos:    make(map[string]*clusterConfigDeviceInfo),
+ 		folderStates:  make(map[string]*indexHandlerFolderState),
++		announced:     make(map[string]announcedFolder),
+ 		mut:           sync.Mutex{},
+ 	}
+ 	return r
+--- a/lib/model/model.go
++++ b/lib/model/model.go
+@@ -488,7 +488,8 @@
+ 
+ 	m.cleanupFolderLocked(cfg)
+ 	m.indexHandlers.Each(func(_ protocol.DeviceID, r *indexHandlerRegistry) error {
+-		r.Remove(cfg.ID)
++		// VaultSync (#341): the folder's state goes too.
++		r.forgetFolder(cfg.ID)
+ 		return nil
+ 	})
+ 
+@@ -1400,6 +1401,22 @@
+ 		slog.Warn("Failed to list pending folders for cleanup", slogutil.Error(err))
+ 	}
+ 	of := db.ObservedFolder{Time: time.Now().Truncate(time.Second)}
++	// VaultSync (#341): keep what this cluster config announces with the
++	// connection, so that a folder removed here later is offered again from
++	// it (offerRemovedFoldersAgain). Noted before any pending entry is
++	// written, so a removal that discards one finds a note at least as new.
++	announced := make(map[string]announcedFolder, len(folders))
++	for _, folder := range folders {
++		info := ccDeviceInfos[folder.ID]
++		announced[folder.ID] = announcedFolder{
++			label:            folder.Label,
++			receiveEncrypted: len(info.local.EncryptionPasswordToken) > 0,
++			remoteEncrypted:  len(info.remote.EncryptionPasswordToken) > 0,
++			running:          folder.IsRunning(),
++			info:             info,
++		}
++	}
++	indexHandlers.noteAnnounced(announced)
+ 	for _, folder := range folders {
+ 		seenFolders[folder.ID] = remoteFolderValid
+ 
+@@ -3111,6 +3128,9 @@
+ 
+ 	ignoredDevices := observedDeviceSet(to.IgnoredDevices)
+ 	m.cleanPending(toDevices, toFolders, ignoredDevices, removedFolders)
++	// VaultSync (#341): after cleanPending, which discards what was pending
++	// for a removed folder.
++	m.offerRemovedFoldersAgain(removedFolders, toDevices)
+ 
+ 	m.globalRequestLimiter.SetCapacity(1024 * to.Options.MaxConcurrentIncomingRequestKiB())
+ 	m.folderIOLimiter.SetCapacity(to.Options.MaxFolderConcurrency())
+@@ -3126,6 +3146,75 @@
+ 	return true
+ }
+ 
++// offerRemovedFoldersAgain makes a removed folder pending again for every
++// connected device that announced it in its last cluster config on the
++// connection that is up (VaultSync, #341). A device that goes on sharing a
++// folder removed here announces it only when a connection is set up or its
++// own configuration changes, so the offer used to come back only with the
++// next connection. What is written is what that cluster config writes for a
++// folder this side does not have (ccHandleFolders): the pending entry and,
++// where the folder runs on the device, the index start info, so that an
++// accept on this connection starts the index exchange instead of closing the
++// connection at the device's first index. Nothing is closed and nothing is
++// written to the configuration.
++func (m *model) offerRemovedFoldersAgain(removedFolders map[string]struct{}, existingDevices map[protocol.DeviceID]config.DeviceConfiguration) {
++	if len(removedFolders) == 0 {
++		return
++	}
++	type connected struct {
++		device   protocol.DeviceID
++		registry *indexHandlerRegistry
++	}
++	var registries []connected
++	m.mut.RLock()
++	m.indexHandlers.Each(func(device protocol.DeviceID, r *indexHandlerRegistry) error {
++		registries = append(registries, connected{device, r})
++		return nil
++	})
++	m.mut.RUnlock()
++
++	now := time.Now().Truncate(time.Second)
++	var offered []updatedPendingFolder
++	for folderID := range removedFolders {
++		for _, c := range registries {
++			dev, ok := existingDevices[c.device]
++			if !ok || dev.IgnoredFolder(folderID) {
++				continue
++			}
++			a, ok := c.registry.announcedFolder(folderID)
++			if !ok {
++				continue
++			}
++			of := db.ObservedFolder{
++				Time:             now,
++				Label:            a.label,
++				ReceiveEncrypted: a.receiveEncrypted,
++				RemoteEncrypted:  a.remoteEncrypted,
++			}
++			if err := m.observed.AddOrUpdatePendingFolder(folderID, of, c.device); err != nil {
++				slog.Warn("Failed to persist pending folder entry to database", slogutil.Error(err))
++				continue
++			}
++			if a.running {
++				c.registry.AddIndexInfo(folderID, a.info)
++			}
++			l.Debugf("Removed folder %s is offered again by %v from its last cluster config", folderID, c.device.Short())
++			offered = append(offered, updatedPendingFolder{
++				FolderID:         folderID,
++				FolderLabel:      a.label,
++				DeviceID:         c.device,
++				ReceiveEncrypted: a.receiveEncrypted,
++				RemoteEncrypted:  a.remoteEncrypted,
++			})
++		}
++	}
++	if len(offered) > 0 {
++		m.evLogger.Log(events.PendingFoldersChanged, map[string]interface{}{
++			"added": offered,
++		})
++	}
++}
++
+ func (m *model) setConnRequestLimitersLocked(cfg config.DeviceConfiguration) {
+ 	// Touches connRequestLimiters which is protected by the mutex.
+ 	// 0: default, <0: no limiting

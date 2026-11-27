@@ -309,7 +309,8 @@ func startPeer(t *testing.T, bin, name string) *peerInstance {
 		apiKey: "bridge-test-" + name,
 		client: &http.Client{Timeout: 30 * time.Second},
 	}
-	gen := exec.Command(bin, "generate", "--home="+home, "--no-port-probing")
+	noPortProbing := portProbingFlag(t, bin)
+	gen := exec.Command(bin, "generate", "--home="+home, noPortProbing)
 	if out, err := gen.CombinedOutput(); err != nil {
 		t.Fatalf("syncthing generate: %v\n%s", err, out)
 	}
@@ -341,7 +342,7 @@ func startPeer(t *testing.T, bin, name string) *peerInstance {
 	cmd := exec.Command(bin, "serve",
 		"--home="+home,
 		"--gui-address="+p.gui,
-		"--no-browser", "--no-restart", "--no-upgrade", "--no-port-probing",
+		"--no-browser", "--no-restart", "--no-upgrade", noPortProbing,
 	)
 	// STMONITORED=yes runs the engine in this process instead of in a child
 	// of a monitor (#334): killing the monitor left the engine running with
@@ -386,6 +387,26 @@ func startPeer(t *testing.T, bin, name string) *peerInstance {
 	p.mustDo(t, http.MethodGet, "/rest/system/status", nil, &status)
 	p.id = status.MyID
 	return p
+}
+
+// portProbingFlag returns the flag with which the peer binary skips probing
+// for free ports. Syncthing 2.x calls it --no-port-probing and 1.x
+// --skip-port-probing; a stock 1.x peer, as a Hub may still run, takes only
+// its own (#341). The binary's own help decides.
+func portProbingFlag(t *testing.T, bin string) string {
+	t.Helper()
+	out, err := exec.Command(bin, "generate", "--help").CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s generate --help: %v\n%s", bin, err, out)
+	}
+	if bytes.Contains(out, []byte("--no-port-probing")) {
+		return "--no-port-probing"
+	}
+	if bytes.Contains(out, []byte("--skip-port-probing")) {
+		return "--skip-port-probing"
+	}
+	t.Fatalf("%s generate names no flag to skip port probing — adjust the harness for this Syncthing version", bin)
+	return ""
 }
 
 func (p *peerInstance) do(method, path string, in, out any) error {
