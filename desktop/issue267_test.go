@@ -406,7 +406,9 @@ func slowly(data []byte, chunk int, gap time.Duration) http.HandlerFunc {
 // kept (#267).
 func TestIssue267_ASlowDownloadThatGoesOnInstallsThePin(t *testing.T) {
 	asTheService(t)
-	stallAt(t, 300*time.Millisecond)
+	// Ten times each gap: a loaded runner stretches a 100 ms gap, and the
+	// test must not mistake that for a stall.
+	stallAt(t, time.Second)
 	a, _ := runFixture(t)
 	olderEngineHere(t, a, "v2.1.6")
 	engineScript, err := os.ReadFile(a.lay.Syncthing)
