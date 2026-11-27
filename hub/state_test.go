@@ -32,9 +32,12 @@ func TestStateStoreRoundTripAndPermissions(t *testing.T) {
 			t.Fatalf("state file mode %v, want 0600", info.Mode().Perm())
 		}
 	}
+	// The state file and, beside it, its lock file (#490); no temp file.
 	entries, _ := os.ReadDir(filepath.Dir(path))
-	if len(entries) != 1 {
-		t.Fatalf("temp file left behind: %v", entries)
+	for _, e := range entries {
+		if e.Name() != filepath.Base(path) && e.Name() != filepath.Base(path)+".lock" {
+			t.Fatalf("temp file left behind: %v", entries)
+		}
 	}
 	again, err := store.load()
 	if err != nil {

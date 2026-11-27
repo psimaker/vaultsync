@@ -131,6 +131,15 @@ jobs:
         working-directory: hub
         run: go vet ./...
 
+      # The release builds vaultsync-hub for Windows too; files behind a
+      # build tag are otherwise compiled only when a hub-v* tag runs.
+      - name: Cross-compile and vet for Windows (hub)
+        working-directory: hub
+        env:
+          GOOS: windows
+          GOARCH: amd64
+        run: go build ./... && go vet ./...
+
   hub-syncthing-e2e:
     name: Hub Syncthing E2E
     runs-on: ubuntu-latest
