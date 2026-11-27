@@ -220,6 +220,7 @@ extension EngineBridgeSuites {
             return folders.first { $0.id == folderID }.map { FolderPathReconciler.canonical($0.path) }
         }
 
+        @MainActor
         @Test("A vault's own folder moved into another vault's folder is refused, and the reconcile says why")
         func overlapIsRefused() throws {
             TestSupport.resetSyncthingState()
