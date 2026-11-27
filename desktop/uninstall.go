@@ -325,7 +325,7 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 		if *yes {
 			return true, nil
 		}
-		ok, err := t.confirm(q)
+		ok, err := t.confirm(ctx, q)
 		if errors.Is(err, errNoTerminal) {
 			return false, refuse("Pass --yes to confirm — there is no terminal to ask on.")
 		}
@@ -354,12 +354,14 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 		t.say("Your vaults stay where they are: %s.", strings.Join(shown, ", "))
 	}
 	ok, err := confirm("Remove the background service?")
-	if err != nil {
+	if err != nil && !errors.Is(err, errInterrupted) {
 		return err
 	}
 	if !ok {
+		// No, or Ctrl-C at the question: the same words, and an interrupt
+		// then exits 130 (#380).
 		t.say("Nothing was changed.")
-		return nil
+		return err
 	}
 	// The menu-bar app's start at login goes first, and is waited for: the
 	// app it ran lets go of tray.lock as it ends.
@@ -432,12 +434,13 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 	t.say("This also removes VaultSync's settings, its pairing identity and the sync database on this computer. Your vault files stay.")
 	t.say("This computer will have to pair again, and folders that hold files will not reconnect by themselves.")
 	ok, err = confirm("Remove them?")
-	if err != nil {
+	if err != nil && !errors.Is(err, errInterrupted) {
 		return err
 	}
 	if !ok {
+		// No, or Ctrl-C at the question (#380), as above.
 		t.say("Kept %s.", tildePath(a.home, a.lay.Base))
-		return nil
+		return err
 	}
 	// Every folder anything syncs on this computer must lie outside what is
 	// removed — and when a list cannot be read, nothing is removed.

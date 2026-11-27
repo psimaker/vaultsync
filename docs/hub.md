@@ -75,8 +75,11 @@ one that does not say which release it is (a development build): the setup
 stops, changes nothing, and says so and how to go on. With an older release
 (no app in it) it installs the bare agent, as before. VaultSync for Mac and the agent need macOS 12 or newer; on an
 older Mac the setup stops before it downloads anything. Nothing else needs
-to be installed; a Syncthing you already run is never touched. Scripts pass
-everything after `--` to the agent:
+to be installed; a Syncthing you already run is never touched. Run the same
+link again to update VaultSync: on a computer that already syncs a vault
+with your Hub, it brings VaultSync up to date and ends without asking for a
+code. To sync another vault, or to pair this computer with another Hub, run
+`vaultsync pair`. Scripts pass everything after `--` to the agent:
 
 ```sh
 # the first computer: start Notes as a new vault on the Hub from this folder
@@ -171,6 +174,13 @@ allow it once under System Settings → Privacy & Security.
    a vault your Hub reports as new, empty and shared with this computer
    alone. Everything is checked again right before the folder starts
    syncing.
+
+Run again on a computer that already syncs a vault with a Hub, as the setup
+link does when it updates VaultSync, `setup` stops after step 2. It says
+what this computer syncs and asks for no code. `vaultsync pair` syncs another
+vault or pairs with another Hub. `setup`'s pairing flags (`--code`, `--hub`,
+`--vault`, `--create`, `--path`, `--yes`, `--name`) pair as before. Ctrl-C
+ends any question.
 
 VaultSync keeps its sync engine, settings and pairing identity in one folder —
 `~/Library/Application Support/VaultSync` on macOS,
