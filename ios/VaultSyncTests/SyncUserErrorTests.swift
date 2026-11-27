@@ -26,16 +26,14 @@ struct SyncUserErrorTests {
     func mapsFolderStatusReasons() {
         let permission = SyncUserError.fromFolderStatus(
             reason: "permission_denied",
-            message: "permission denied",
-            path: "/vaults/work"
+            message: "permission denied"
         )
         #expect(permission.category == .permission)
-        #expect(permission.message.contains("/vaults/work"))
+        #expect(permission.message == L10n.tr("VaultSync cannot access this folder."))
 
         let missing = SyncUserError.fromFolderStatus(
             reason: "folder_not_found",
-            message: "folder missing",
-            path: nil
+            message: "folder missing"
         )
         #expect(missing.category == .config)
         #expect(missing.title == L10n.tr("Folder Not Configured"))
@@ -100,14 +98,12 @@ struct FolderMarkerMissingMappingTests {
     func mapsFolderStatusMarkerMissing() {
         let error = SyncUserError.fromFolderStatus(
             reason: "unknown_error",
-            message: Self.rawEngineText,
-            path: "/vaults/Life"
+            message: Self.rawEngineText
         )
 
         #expect(error.category == .folderMarkerMissing)
         #expect(error.title == L10n.tr("Vault Folder Was Moved or Deleted"))
         #expect(!error.message.contains("search docs/forum"))
-        #expect(error.message.contains("/vaults/Life"))
         #expect(error.technicalDetails == Self.rawEngineText)
     }
 
@@ -115,8 +111,7 @@ struct FolderMarkerMissingMappingTests {
     func remediationAvoidsRescanMisdirection() {
         let error = SyncUserError.fromFolderStatus(
             reason: "unknown_error",
-            message: Self.rawEngineText,
-            path: nil
+            message: Self.rawEngineText
         )
 
         let guidance = error.remediation.lowercased()
@@ -139,8 +134,7 @@ struct FolderMarkerMissingMappingTests {
     func routesToDedicatedTroubleshootingAnchor() {
         let error = SyncUserError.fromFolderStatus(
             reason: "unknown_error",
-            message: Self.rawEngineText,
-            path: nil
+            message: Self.rawEngineText
         )
 
         let url = SyncUserError.troubleshootingURL(for: error)
@@ -151,8 +145,7 @@ struct FolderMarkerMissingMappingTests {
     func keepsGenericMappingForOtherErrors() {
         let error = SyncUserError.fromFolderStatus(
             reason: "unknown_error",
-            message: "database is locked",
-            path: nil
+            message: "database is locked"
         )
 
         #expect(error.title == L10n.tr("Folder Sync Error"))

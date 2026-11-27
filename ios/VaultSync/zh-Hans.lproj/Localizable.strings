@@ -299,7 +299,7 @@
 "The embedded Syncthing bridge did not start for a background run." = "嵌入式 Syncthing bridge 未能为后台运行启动。";
 "The file '%@' was kept as your local version. The other device's version was discarded." = "文件“%@”已保留为你的本地版本。另一台设备的版本已被丢弃。";
 "The file '%@' was overwritten with the version from the other device." = "文件“%@”已被另一台设备的版本覆盖。";
-"The folder path no longer exists%@." = "该文件夹路径已不存在%@。";
+"The folder path no longer exists." = "该文件夹路径已不存在。";
 "The folder scan finished successfully." = "文件夹扫描已成功完成。";
 "The sync engine stopped unexpectedly." = "同步引擎意外停止。";
 "This Device" = "此设备";
@@ -349,7 +349,7 @@
 "VaultSync can no longer read your Obsidian directory. Reconnect the folder to restore sync access." = "VaultSync 已无法读取你的 Obsidian 目录。请重新连接该文件夹以恢复同步访问。";
 "VaultSync can no longer resolve the saved Obsidian folder permission. Reconnect the Obsidian directory to continue syncing." = "VaultSync 已无法解析已保存的 Obsidian 文件夹权限。请重新连接 Obsidian 目录以继续同步。";
 "VaultSync cannot access the saved Obsidian folder anymore. Reconnect the Obsidian directory to continue syncing." = "VaultSync 已无法访问已保存的 Obsidian 文件夹。请重新连接 Obsidian 目录以继续同步。";
-"VaultSync cannot access this folder%@." = "VaultSync 无法访问此文件夹%@。";
+"VaultSync cannot access this folder." = "VaultSync 无法访问此文件夹。";
 "VaultSync cannot read this folder. Reopen the picker, tap Browse at the bottom, then select \"On My iPhone\" → \"Obsidian\"." = "VaultSync 无法读取此文件夹。请重新打开选择器，轻点底部的“浏览”，然后选择“在我的 iPhone 上” → “Obsidian”。";
 "VaultSync cannot talk to Syncthing right now." = "VaultSync 当前无法与 Syncthing 通信。";
 "VaultSync could not complete the request due to a network issue." = "由于网络问题，VaultSync 无法完成该请求。";
@@ -655,8 +655,8 @@
 "Folder Already Contains Files" = "文件夹已包含文件";
 "The folder \"%@\" already contains files. Accepting this share would combine its contents with the shared vault and sync the result to the other devices." = "文件夹“%@”已包含文件。接受此共享会将其内容与共享的 Vault 合并，并将结果同步到其他设备。";
 "Vault Folder Was Moved or Deleted" = "Vault 文件夹已被移动或删除";
-"VaultSync can no longer verify that this folder still holds this vault's data%@ — the folder was likely moved, renamed, replaced, or deleted outside VaultSync. Syncing has stopped to protect your notes." = "VaultSync 已无法确认此文件夹仍包含该 Vault 的数据%@——该文件夹可能在 VaultSync 之外被移动、重命名、替换或删除。同步已停止，以保护你的笔记。";
-"If you moved or renamed the folder, move it back to its original place. If it is gone, remove this vault on this iPhone, wait ten seconds, close VaultSync in the app switcher and open it again, and accept the vault again under Pending Shares once it shows there. VaultSync never moves, recreates, or deletes folders on its own." = "如果你移动或重命名了该文件夹，请将它移回原来的位置。如果它已不存在，请在此 iPhone 上移除该 Vault，等待十秒，在应用切换器中关闭 VaultSync 并重新打开，待它出现在“待处理共享”中后重新接受它。VaultSync 绝不会自行移动、重新创建或删除文件夹。";
+"VaultSync can no longer verify that this folder still holds this vault's data — the folder was likely moved, renamed, replaced, or deleted outside VaultSync. Syncing has stopped to protect your notes." = "VaultSync 已无法确认此文件夹仍包含该 Vault 的数据——该文件夹可能在 VaultSync 之外被移动、重命名、替换或删除。同步已停止，以保护你的笔记。";
+"If you moved or renamed the folder, move it back to its original place. That place is shown under Location on the vault's page. If it is gone, remove this vault on this iPhone, wait ten seconds, close VaultSync in the app switcher and open it again, and accept the vault again under Pending Shares once it shows there. VaultSync never moves, recreates, or deletes folders on its own." = "如果你移动或重命名了该文件夹，请将它移回原来的位置。原来的位置显示在此 Vault 页面的“位置”下。如果它已不存在，请在此 iPhone 上移除该 Vault，等待十秒，在应用切换器中关闭 VaultSync 并重新打开，待它出现在“待处理共享”中后重新接受它。VaultSync 绝不会自行移动、重新创建或删除文件夹。";
 "Follow the recovery steps shown with the affected vault — rescanning cannot fix a vault folder that was moved or deleted." = "请按照受影响 Vault 旁显示的恢复步骤操作——重新扫描无法修复已被移动或删除的 Vault 文件夹。";
 "Offer “%@” received — accepting…" = "已收到“%@”的共享邀请——正在接受…";
 "Offer “%@” received — connect your Obsidian folder first." = "已收到“%@”的共享邀请——请先连接你的 Obsidian 文件夹。";

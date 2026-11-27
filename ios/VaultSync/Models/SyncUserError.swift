@@ -103,7 +103,7 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
         // must never surface raw; matched here too so a failed rescan of an
         // affected folder maps the same way as its folder status (#65).
         if normalized.contains("marker missing") {
-            return folderMarkerMissing(detail: rawMessage, path: nil)
+            return folderMarkerMissing(detail: rawMessage)
         }
 
         if normalized.contains("keep both target already exists") {
@@ -235,20 +235,23 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
         from(rawMessage: error.localizedDescription, fallbackTitle: fallbackTitle)
     }
 
+    /// A folder's error in the words of its card. The engine's path of the
+    /// folder is not part of it: it is the app container's path with its
+    /// ID, which nobody finds in Files, and it lands in every screenshot of
+    /// the card (#378). The vault page's Location row names the place the
+    /// way Files does, with the full path below it.
     static func fromFolderStatus(
         reason: String?,
-        message: String?,
-        path: String?
+        message: String?
     ) -> SyncUserError {
         let normalizedReason = (reason ?? "").lowercased()
         let detail = message ?? L10n.tr("Folder is currently in an error state.")
-        let pathHint = path.map { L10n.fmt(" (%@)", $0) } ?? ""
 
         // The bridge classifies marker loss as "unknown_error", so it has to
         // be matched on the message — before the reason switch, or the raw
         // English engine text becomes the user-facing message (#65).
         if detail.lowercased().contains("marker missing") {
-            return folderMarkerMissing(detail: detail, path: path)
+            return folderMarkerMissing(detail: detail)
         }
 
         switch normalizedReason {
@@ -256,7 +259,7 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
             return SyncUserError(
                 category: .permission,
                 title: L10n.tr("Folder Permission Error"),
-                message: L10n.fmt("VaultSync cannot access this folder%@.", pathHint),
+                message: L10n.tr("VaultSync cannot access this folder."),
                 remediation: L10n.tr("Reconnect Obsidian access or adjust folder permissions on the host device."),
                 technicalDetails: detail
             )
@@ -264,7 +267,7 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
             return SyncUserError(
                 category: .config,
                 title: L10n.tr("Folder Path Missing"),
-                message: L10n.fmt("The folder path no longer exists%@.", pathHint),
+                message: L10n.tr("The folder path no longer exists."),
                 // Never "recreate the folder": one recreated at its old place
                 // from a copy is taken for the vault (#329), and combining
                 // with a copy can send older notes out as newer (#308).
@@ -297,20 +300,18 @@ struct SyncUserError: Identifiable, Equatable, Sendable {
     /// it, by design), and recreating or re-pointing anything automatically
     /// risks propagating the loss to every peer (safety rule 3).
     /// The way on for a vault whose folder was moved, deleted or replaced —
-    /// one text for both cards, so they cannot drift apart (#308).
+    /// one text for both cards, so they cannot drift apart (#308). The card
+    /// names no path (#378), and the Sync tab shows no Location row, so the
+    /// text says where the original place is shown.
     static var vaultFolderGoneRemediation: String {
-        L10n.tr("If you moved or renamed the folder, move it back to its original place. If it is gone, remove this vault on this iPhone, wait ten seconds, close VaultSync in the app switcher and open it again, and accept the vault again under Pending Shares once it shows there. VaultSync never moves, recreates, or deletes folders on its own.")
+        L10n.tr("If you moved or renamed the folder, move it back to its original place. That place is shown under Location on the vault's page. If it is gone, remove this vault on this iPhone, wait ten seconds, close VaultSync in the app switcher and open it again, and accept the vault again under Pending Shares once it shows there. VaultSync never moves, recreates, or deletes folders on its own.")
     }
 
-    private static func folderMarkerMissing(detail: String, path: String?) -> SyncUserError {
-        let pathHint = path.map { L10n.fmt(" (%@)", $0) } ?? ""
-        return SyncUserError(
+    private static func folderMarkerMissing(detail: String) -> SyncUserError {
+        SyncUserError(
             category: .folderMarkerMissing,
             title: L10n.tr("Vault Folder Was Moved or Deleted"),
-            message: L10n.fmt(
-                "VaultSync can no longer verify that this folder still holds this vault's data%@ — the folder was likely moved, renamed, replaced, or deleted outside VaultSync. Syncing has stopped to protect your notes.",
-                pathHint
-            ),
+            message: L10n.tr("VaultSync can no longer verify that this folder still holds this vault's data — the folder was likely moved, renamed, replaced, or deleted outside VaultSync. Syncing has stopped to protect your notes."),
             remediation: vaultFolderGoneRemediation,
             technicalDetails: detail
         )

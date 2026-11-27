@@ -299,7 +299,7 @@
 "The embedded Syncthing bridge did not start for a background run." = "The embedded Syncthing bridge did not start for a background run.";
 "The file '%@' was kept as your local version. The other device's version was discarded." = "The file '%@' was kept as your local version. The other device's version was discarded.";
 "The file '%@' was overwritten with the version from the other device." = "The file '%@' was overwritten with the version from the other device.";
-"The folder path no longer exists%@." = "The folder path no longer exists%@.";
+"The folder path no longer exists." = "The folder path no longer exists.";
 "The folder scan finished successfully." = "The folder scan finished successfully.";
 "The sync engine stopped unexpectedly." = "The sync engine stopped unexpectedly.";
 "This Device" = "This Device";
@@ -349,7 +349,7 @@
 "VaultSync can no longer read your Obsidian directory. Reconnect the folder to restore sync access." = "VaultSync can no longer read your Obsidian directory. Reconnect the folder to restore sync access.";
 "VaultSync can no longer resolve the saved Obsidian folder permission. Reconnect the Obsidian directory to continue syncing." = "VaultSync can no longer resolve the saved Obsidian folder permission. Reconnect the Obsidian directory to continue syncing.";
 "VaultSync cannot access the saved Obsidian folder anymore. Reconnect the Obsidian directory to continue syncing." = "VaultSync cannot access the saved Obsidian folder anymore. Reconnect the Obsidian directory to continue syncing.";
-"VaultSync cannot access this folder%@." = "VaultSync cannot access this folder%@.";
+"VaultSync cannot access this folder." = "VaultSync cannot access this folder.";
 "VaultSync cannot read this folder. Reopen the picker, tap Browse at the bottom, then select \"On My iPhone\" → \"Obsidian\"." = "VaultSync cannot read this folder. Reopen the picker, tap Browse at the bottom, then select \"On My iPhone\" → \"Obsidian\".";
 "VaultSync cannot talk to Syncthing right now." = "VaultSync cannot talk to Syncthing right now.";
 "VaultSync could not complete the request due to a network issue." = "VaultSync could not complete the request due to a network issue.";
@@ -655,8 +655,8 @@
 "Folder Already Contains Files" = "Folder Already Contains Files";
 "The folder \"%@\" already contains files. Accepting this share would combine its contents with the shared vault and sync the result to the other devices." = "The folder \"%@\" already contains files. Accepting this share would combine its contents with the shared vault and sync the result to the other devices.";
 "Vault Folder Was Moved or Deleted" = "Vault Folder Was Moved or Deleted";
-"VaultSync can no longer verify that this folder still holds this vault's data%@ — the folder was likely moved, renamed, replaced, or deleted outside VaultSync. Syncing has stopped to protect your notes." = "VaultSync can no longer verify that this folder still holds this vault's data%@ — the folder was likely moved, renamed, replaced, or deleted outside VaultSync. Syncing has stopped to protect your notes.";
-"If you moved or renamed the folder, move it back to its original place. If it is gone, remove this vault on this iPhone, wait ten seconds, close VaultSync in the app switcher and open it again, and accept the vault again under Pending Shares once it shows there. VaultSync never moves, recreates, or deletes folders on its own." = "If you moved or renamed the folder, move it back to its original place. If it is gone, remove this vault on this iPhone, wait ten seconds, close VaultSync in the app switcher and open it again, and accept the vault again under Pending Shares once it shows there. VaultSync never moves, recreates, or deletes folders on its own.";
+"VaultSync can no longer verify that this folder still holds this vault's data — the folder was likely moved, renamed, replaced, or deleted outside VaultSync. Syncing has stopped to protect your notes." = "VaultSync can no longer verify that this folder still holds this vault's data — the folder was likely moved, renamed, replaced, or deleted outside VaultSync. Syncing has stopped to protect your notes.";
+"If you moved or renamed the folder, move it back to its original place. That place is shown under Location on the vault's page. If it is gone, remove this vault on this iPhone, wait ten seconds, close VaultSync in the app switcher and open it again, and accept the vault again under Pending Shares once it shows there. VaultSync never moves, recreates, or deletes folders on its own." = "If you moved or renamed the folder, move it back to its original place. That place is shown under Location on the vault's page. If it is gone, remove this vault on this iPhone, wait ten seconds, close VaultSync in the app switcher and open it again, and accept the vault again under Pending Shares once it shows there. VaultSync never moves, recreates, or deletes folders on its own.";
 "Follow the recovery steps shown with the affected vault — rescanning cannot fix a vault folder that was moved or deleted." = "Follow the recovery steps shown with the affected vault — rescanning cannot fix a vault folder that was moved or deleted.";
 "Offer “%@” received — accepting…" = "Offer “%@” received — accepting…";
 "Offer “%@” received — connect your Obsidian folder first." = "Offer “%@” received — connect your Obsidian folder first.";

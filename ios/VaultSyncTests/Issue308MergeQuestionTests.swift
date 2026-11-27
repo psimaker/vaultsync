@@ -176,7 +176,7 @@ struct Issue308MergeQuestionTests {
 
     @Test("A vault whose folder is missing is not told to recreate the folder")
     func folderPathMissingDoesNotSayRecreate() {
-        let missing = SyncUserError.fromFolderStatus(reason: "folder_path_missing", message: "folder path missing", path: nil)
+        let missing = SyncUserError.fromFolderStatus(reason: "folder_path_missing", message: "folder path missing")
         #expect(missing.title == L10n.tr("Folder Path Missing"))
         #expect(!missing.remediation.localizedCaseInsensitiveContains("recreate the folder"))
         #expect(!missing.remediation.localizedCaseInsensitiveContains("recreate or reselect"))
