@@ -669,6 +669,7 @@ private struct HubDoneStep: View {
             pendingFolderIDs: Set(syncthingManager.pendingFolders.map(\.id)),
             autoAcceptEligibleIDs: Set(syncthingManager.autoAcceptEligiblePendingFolders.map(\.id)),
             recordedFailureIDs: Set(shareAccept.pendingShareFailures.keys),
+            awaitingConfirmationIDs: Set(syncthingManager.acceptsAwaitingConfirmation.keys),
             obsidianConnected: vaultManager.isAccessible
         )
     }

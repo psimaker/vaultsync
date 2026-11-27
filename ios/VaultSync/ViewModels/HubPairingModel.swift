@@ -499,10 +499,14 @@ enum HubShareHandoff: Equatable {
         pendingFolderIDs: Set<String>,
         autoAcceptEligibleIDs: Set<String>,
         recordedFailureIDs: Set<String>,
+        awaitingConfirmationIDs: Set<String> = [],
         obsidianConnected: Bool
     ) -> HubShareHandoff {
         if configuredFolderIDs.contains(folderID) { return .syncing }
         guard pendingFolderIDs.contains(folderID) else { return .waitingForShare }
+        // Its accept is queued in the engine: it is being added, and asks
+        // nothing of the user (#341).
+        if awaitingConfirmationIDs.contains(folderID) { return .accepting }
         if recordedFailureIDs.contains(folderID) || !autoAcceptEligibleIDs.contains(folderID) {
             return .needsDecision
         }

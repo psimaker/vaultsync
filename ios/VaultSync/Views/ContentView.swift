@@ -60,6 +60,8 @@ struct ContentView: View {
     /// Non-error notice (e.g. "you selected a single vault") — its own alert so
     /// it is not presented under the "Error" title.
     @State private var infoMessage: String?
+    /// The info alert's title when a note brings its own (#341).
+    @State private var infoTitle: String?
     @State private var showInfoAlert = false
     @State private var shareTargetPickerFolder: SyncthingManager.PendingFolderInfo?
     @State private var pendingFilterSheetFolder: SyncthingManager.FolderInfo?
@@ -136,8 +138,8 @@ struct ContentView: View {
         } message: {
             Text(alertMessage ?? "")
         }
-        .alert(L10n.tr("Note"), isPresented: $showInfoAlert) {
-            Button("OK") { }
+        .alert(infoTitle ?? L10n.tr("Note"), isPresented: $showInfoAlert) {
+            Button("OK") { infoTitle = nil }
         } message: {
             Text(infoMessage ?? "")
         }
@@ -304,6 +306,21 @@ struct ContentView: View {
             shareAccept.alertMessage = nil
             alertMessage = message
             showAlert = true
+        }
+        .onChange(of: shareAccept.noteAlert) { _, note in
+            // A note, not a failure (#341): the info alert, under its title.
+            guard let note else { return }
+            shareAccept.noteAlert = nil
+            infoTitle = note.title
+            infoMessage = note.message
+            showInfoAlert = true
+        }
+        .onChange(of: syncthingManager.acceptsAwaitingConfirmation) { _, _ in
+            // An accept the engine has not confirmed was settled (#341):
+            // once refused, the share is an ordinary pending one again.
+            if syncthingManager.pathSettlement.settled {
+                shareAccept.runAutomaticPass()
+            }
         }
         .onChange(of: syncthingManager.lastSyncTime, initial: true) { old, new in
             maybePresentRelayUpsell()
@@ -1400,6 +1417,7 @@ struct ContentView: View {
                 failureByFolderID: shareAccept.pendingShareFailures,
                 destinationByFolderID: pendingShareDestinationLines,
                 inFlightFolderIDs: shareAccept.pendingShareInFlight,
+                awaitingFolderIDs: Set(syncthingManager.acceptsAwaitingConfirmation.keys),
                 obsidianAccessible: vaultManager.isAccessible,
                 onAccept: { folder in
                     shareAccept.accept(folder, source: .manual)
@@ -1436,6 +1454,7 @@ struct ContentView: View {
             + syncthingManager.actionablePendingFolders.map { "share|\($0.id)|\($0.label)" }
             + syncthingManager.folders.map { "folder|\($0.id)|\($0.path)" }
             + shareAccept.pendingShareFailures.keys.sorted().map { "parked|\($0)" }
+            + syncthingManager.acceptsAwaitingConfirmation.keys.sorted().map { "awaiting|\($0)" }
     }
 
     /// Where each pending share would arrive, by the accept's own decision
@@ -1456,7 +1475,9 @@ struct ContentView: View {
             return holds
         }
         var lines: [String: PendingShareDestination.Line] = [:]
-        for folder in folders where shareAccept.pendingShareFailures[folder.id] == nil {
+        // Nor does one whose accept is queued: it says what it waits for (#341).
+        for folder in folders where shareAccept.pendingShareFailures[folder.id] == nil
+            && syncthingManager.acceptsAwaitingConfirmation[folder.id] == nil {
             let decision = vaultManager.previewShareDestination(
                 folderID: folder.id,
                 label: folder.label,

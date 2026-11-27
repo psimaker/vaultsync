@@ -186,6 +186,16 @@ func AcceptPendingFolder(folderID, label, path, root string, allowNonEmpty bool)
 			return msg
 		}
 	}
+	// An accept still queued in the engine counts as a folder already: its
+	// path is not in the configuration yet, and a second share accepted into
+	// it, or into a folder in or around it, would sync one directory with it
+	// once both have landed (#341, decision 001). The same comparison and the
+	// same refusal as for a configured folder; a target a queued accept is
+	// headed for is taken, so the non-empty check below never has to judge
+	// it, merge consent or not.
+	if msg := queuedAcceptOverlapError(path, ""); msg != "" {
+		return msg
+	}
 
 	// Reject a target directory that already holds content unless the caller
 	// carries the user's explicit confirmation: syncing into it merges two
@@ -242,19 +252,26 @@ func AcceptPendingFolder(folderID, label, path, root string, allowNonEmpty bool)
 		Devices:          devices,
 	}
 
-	markAcceptInFlight(folderID)
-	err = commitConfigLocked(func(cfg *config.Configuration) {
-		// Runs on the engine's configuration loop when the change is taken
-		// from its queue: from here on the folder is configured, or the
-		// engine refuses the change — a second folder of one ID among them.
-		clearAcceptInFlight(folderID)
+	markAcceptInFlight(folderID, path)
+	err = commitConfigLockedTaken(func(cfg *config.Configuration) {
 		cfg.Folders = append(cfg.Folders, newFolder)
+	}, func() {
+		// The engine has taken the change from its queue: it is in the
+		// configuration now, or the engine refused it — a second folder of
+		// one ID among the refusals. Only from here on does the floor above
+		// see the folder itself instead of the queued accept.
+		clearAcceptInFlight(folderID)
 	})
 	// The engine takes a change into its configuration first and then waits
 	// for its services: an accept that reached the configuration before the
 	// wait ended is accepted, whatever the services still do (#341, as for
-	// a removal in #343).
-	if _, ok := stCfg.Folder(folderID); ok {
+	// a removal in #343). Only a folder at this accept's own path is this
+	// accept: another one of the ID is an earlier accept that landed, and
+	// this one was refused as its duplicate.
+	if f, ok := stCfg.Folder(folderID); ok {
+		if filepath.Clean(f.Path) != filepath.Clean(path) {
+			return "folder already exists"
+		}
 		noteFolderStorageLocked(newFolder)
 		return ""
 	}
@@ -262,13 +279,15 @@ func AcceptPendingFolder(folderID, label, path, root string, allowNonEmpty bool)
 		// Applied and gone again, or never applied: nothing to confirm.
 		return "accept did not reach the configuration"
 	}
-	if errors.Is(err, errWaitTimedOut) {
+	if errors.Is(err, errWaitTimedOut) && acceptInFlight(folderID) {
 		// Still queued behind another change. It lands once that one is
-		// through, or the engine refuses it, or the engine stops first and
-		// it never lands. Until then every accept of it gets this answer.
+		// through, or the engine refuses it. The engine works through its
+		// queue while it stops and saves what it applied, so it may also be
+		// configured at the next start; only a stop that ends before the
+		// change is taken loses it. Until it is taken every accept of the
+		// share gets this answer.
 		return folderAcceptNotConfirmed
 	}
-	clearAcceptInFlight(folderID)
 	return fmt.Sprintf("modify config: %v", err)
 }
 
@@ -284,13 +303,22 @@ func FolderAcceptNotConfirmedError() string {
 	return folderAcceptNotConfirmed
 }
 
+// AcceptInFlight reports whether an accept of the share the bridge answered
+// with FolderAcceptNotConfirmedError is still waiting in the engine's queue.
+// Once it is not, the share is configured — the accept landed — or it is
+// not, and the engine refused it or a stop lost it (#341). It takes no
+// engine lock and never waits.
+func AcceptInFlight(folderID string) bool {
+	return acceptInFlight(folderID)
+}
+
 // The shares whose accept the bridge handed to the engine and has not seen
-// taken from the engine's queue. Guarded by its own lock, not mu: the
-// engine's configuration loop clears an entry while a later bridge call may
-// hold mu and wait for that same loop.
+// taken from the engine's queue, with the path each is headed for. Guarded
+// by its own lock, not mu: the engine's configuration loop clears an entry
+// while a later bridge call may hold mu and wait for that same loop.
 var (
 	acceptsInFlightMu sync.Mutex
-	acceptsInFlight   = map[string]struct{}{}
+	acceptsInFlight   = map[string]string{}
 )
 
 func acceptInFlight(folderID string) bool {
@@ -300,10 +328,27 @@ func acceptInFlight(folderID string) bool {
 	return ok
 }
 
-func markAcceptInFlight(folderID string) {
+func markAcceptInFlight(folderID, path string) {
 	acceptsInFlightMu.Lock()
-	acceptsInFlight[folderID] = struct{}{}
+	acceptsInFlight[folderID] = path
 	acceptsInFlightMu.Unlock()
+}
+
+// queuedAcceptOverlapError holds path against every accept still queued in
+// the engine, except the one of folder except, as against a configured
+// folder: folderPathOverlapError's comparison and its refusal.
+func queuedAcceptOverlapError(path, except string) string {
+	acceptsInFlightMu.Lock()
+	defer acceptsInFlightMu.Unlock()
+	for id, queued := range acceptsInFlight {
+		if id == except {
+			continue
+		}
+		if msg := folderPathOverlapError(queued, path); msg != "" {
+			return msg
+		}
+	}
+	return ""
 }
 
 func clearAcceptInFlight(folderID string) {
@@ -316,7 +361,7 @@ func clearAcceptInFlight(folderID string) {
 // and an accept the last one never took is gone with it.
 func forgetAcceptsInFlight() {
 	acceptsInFlightMu.Lock()
-	acceptsInFlight = map[string]struct{}{}
+	acceptsInFlight = map[string]string{}
 	acceptsInFlightMu.Unlock()
 }
 

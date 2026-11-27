@@ -499,6 +499,19 @@ final class VaultManager {
         syncthingManager: SyncthingManager,
         mergeConfirmed: Bool
     ) -> PendingShareAcceptOutcome {
+        // An accept of this share the engine has not confirmed yet is
+        // settled before anything is decided (#341): one that landed
+        // meanwhile is this accept having worked, and one still queued
+        // would only get the same answer — and its folder, holding the
+        // engine's marker by now, would read as one with files.
+        switch syncthingManager.settleAwaitedAccept(folder.id) {
+        case .landed:
+            return .accepted
+        case .stillQueued:
+            return .notConfirmed(note: SyncthingManager.acceptNotConfirmedNote)
+        case .notAwaited, .gone:
+            break
+        }
         let placement: SharePlacement
         switch sharePlacement(
             folderID: folder.id,
@@ -970,6 +983,17 @@ final class VaultManager {
         intoTargetNamed targetName: String,
         syncthingManager: SyncthingManager
     ) -> String? {
+        // The same settling as the default path's (#341): a landed accept is
+        // done, one still queued gets its note, and no second folder is
+        // chosen for it.
+        switch syncthingManager.settleAwaitedAccept(folder.id) {
+        case .landed:
+            return nil
+        case .stillQueued:
+            return SyncthingManager.acceptNotConfirmedNote
+        case .notAwaited, .gone:
+            break
+        }
         guard let basePath = obsidianBasePath,
               let baseURL = obsidianDirectoryURL else {
             return L10n.tr("Obsidian directory not accessible.")
