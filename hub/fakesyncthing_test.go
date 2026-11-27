@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // fakeSyncthing is an in-memory stand-in for the REST subset the Hub uses.
@@ -36,8 +37,11 @@ type fakeSyncthing struct {
 	pending        map[string][]string // folder → offered by
 	devicePatches  []map[string]any
 	optionPatches  []map[string]any
-	failDeviceAdd  bool   // POST /rest/config/devices answers 500
-	deviceAddError string // with failDeviceAdd: the answer's text ("config locked" when empty)
+	failDeviceAdd  bool                 // POST /rest/config/devices answers 500
+	deviceAddError string               // with failDeviceAdd: the answer's text ("config locked" when empty)
+	lastSeen       map[string]time.Time // device → /rest/stats/device lastSeen; absent: not listed
+	statsFail      bool                 // /rest/stats/device answers 500
+	statsDelay     time.Duration        // /rest/stats/device answers this late (or when the request ends)
 }
 
 const (
@@ -65,6 +69,7 @@ func newFakeSyncthing(t *testing.T, myID string) (*fakeSyncthing, *httptest.Serv
 		dbStatusFail:   map[string]bool{},
 		connected:      map[string]bool{},
 		pending:        map[string][]string{},
+		lastSeen:       map[string]time.Time{},
 	}
 	srv := httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(srv.Close)
@@ -79,6 +84,16 @@ func (f *fakeSyncthing) serve(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("X-API-Key") != f.apiKey {
 		http.Error(w, "Not Authorized", http.StatusForbidden)
 		return
+	}
+	f.mu.Lock()
+	delay := f.statsDelay
+	f.mu.Unlock()
+	if r.URL.Path == "/rest/stats/device" && delay > 0 {
+		select {
+		case <-time.After(delay):
+		case <-r.Context().Done():
+			return
+		}
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -244,6 +259,16 @@ func (f *fakeSyncthing) serve(w http.ResponseWriter, r *http.Request) {
 			"localSymlinks": f.dbLocalLinks[id], "globalSymlinks": f.dbSymlinks[id],
 			"localDeleted": f.dbDeleted[id], "globalDeleted": f.dbDeleted[id],
 		})
+	case path == "/rest/stats/device":
+		if f.statsFail {
+			http.Error(w, "database unavailable", http.StatusInternalServerError)
+			return
+		}
+		out := map[string]any{}
+		for id, seen := range f.lastSeen {
+			out[id] = map[string]any{"lastSeen": seen.Format(time.RFC3339), "lastConnectionDurationS": 0}
+		}
+		write(out)
 	case path == "/rest/cluster/pending/folders":
 		out := map[string]any{}
 		for id, devs := range f.pending {
