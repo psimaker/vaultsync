@@ -264,6 +264,9 @@ struct OnboardingView: View {
             ForEach(syncthingManager.actionablePendingFolders) { folder in
                 offerStatusRow(folder)
             }
+            if syncthingManager.pendingFoldersUnreadable {
+                PendingSharesUnreadableNotice()
+            }
         }
 
         VaultNotice(

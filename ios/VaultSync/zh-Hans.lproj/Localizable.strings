@@ -1054,3 +1054,6 @@
 /* A vault's own folder found where another vault syncs it, a folder inside it or one around it (#330) */
 "The Folder Found Overlaps Another Vault" = "找到的文件夹与另一个 Vault 重叠";
 "This vault's folder was found, but it is another vault's folder too, or lies inside or around another vault's folder. Two vaults never sync in one place, so VaultSync does not continue this vault there; when one of the two is removed, the other goes on there. To bring this vault back, remove it, wait ten seconds, close VaultSync in the app switcher and open it again, and accept the vault again under Pending Shares once it shows there — it gets a folder of its own. If the share then says that its folder already holds files, do not combine them: tap \"Choose Vault…\" and give the vault another folder name." = "已找到此 Vault 的文件夹，但它同时也是另一个 Vault 的文件夹，或者位于另一个 Vault 的文件夹之内或包含它。两个 Vault 绝不会在同一位置同步，因此 VaultSync 不会在那里继续同步此 Vault；移除其中一个后，另一个会在那里继续同步。要找回此 Vault，请移除它，等待十秒，在应用切换器中关闭 VaultSync 并重新打开，待它出现在“待处理共享”中后重新接受它——它会获得自己的文件夹。如果共享随后提示其文件夹已包含文件，请不要合并：轻点“选择 Vault…”，为这个 Vault 另取一个文件夹名称。";
+
+/* The offered shares could not be read (#464) */
+"VaultSync could not read the shares offered to this iPhone just now. It tries again in a moment." = "VaultSync 暂时无法读取提供给此 iPhone 的共享。稍后会再试一次。";

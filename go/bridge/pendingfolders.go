@@ -3,6 +3,7 @@ package bridge
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -32,17 +33,31 @@ type PendingDeviceInfo struct {
 // devices that have not yet been accepted (i.e. not configured locally).
 // The folders, and the devices offering each, come in the same order on every
 // call for the same offers (#342): see sortPendingFolders.
+//
+// Only a read of the offers that succeeded answers a list; "[]" means that
+// nothing is offered. A stopped engine and a failed read answer
+// {"error": …}, which no caller can take for a list: the app cuts its record
+// of shares set aside with "Ignore for Now" down to the list it reads, and an
+// empty list from a stopped engine made it forget every one of them — the
+// automatic accept then took them once they were listed again (#464,
+// decision 039). The error text names no folder, device or path.
 func GetPendingFoldersJSON() string {
 	mu.Lock()
 	defer mu.Unlock()
 
 	if !engineUpLocked() || stApp == nil || stApp.Internals == nil {
-		return "[]"
+		return pendingFoldersError("syncthing not running")
 	}
 
-	pending, err := stApp.Internals.PendingFolders(protocol.EmptyDeviceID)
+	pending, err := pendingFoldersRead(stApp.Internals, protocol.EmptyDeviceID)
 	if err != nil {
-		return "[]"
+		// The engine's database error, without the path an OS error would
+		// carry: the scan reads every offer, so it names no folder or device.
+		var pathErr *os.PathError
+		if errors.As(err, &pathErr) {
+			err = pathErr.Err
+		}
+		return pendingFoldersError("read pending folder offers: " + err.Error())
 	}
 
 	if len(pending) == 0 {
@@ -77,7 +92,22 @@ func GetPendingFoldersJSON() string {
 
 	data, err := json.Marshal(infos)
 	if err != nil {
-		return "[]"
+		return pendingFoldersError("encode pending folder offers")
+	}
+	return string(data)
+}
+
+// pendingFoldersRead reads every offer the engine holds. A variable so tests
+// can inject a failed read (#464).
+var pendingFoldersRead = (*syncthing.Internals).PendingFolders
+
+// pendingFoldersError encodes a failed read of the offers as {"error": …}.
+func pendingFoldersError(msg string) string {
+	data, err := json.Marshal(struct {
+		Error string `json:"error"`
+	}{Error: msg})
+	if err != nil {
+		return `{"error":"read pending folder offers failed"}`
 	}
 	return string(data)
 }

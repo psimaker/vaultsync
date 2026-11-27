@@ -1392,7 +1392,7 @@ struct ContentView: View {
     private var pendingSharesSection: some View {
         let pendingFolders = syncthingManager.actionablePendingFolders
         let ignoredFolders = syncthingManager.ignoredPendingFolders
-        if !pendingFolders.isEmpty || !ignoredFolders.isEmpty {
+        if !pendingFolders.isEmpty || !ignoredFolders.isEmpty || syncthingManager.pendingFoldersUnreadable {
             VaultSectionHeader(L10n.tr("Pending Shares"))
             PendingSharesView(
                 pendingFolders: pendingFolders,
@@ -1401,6 +1401,7 @@ struct ContentView: View {
                 destinationByFolderID: pendingShareDestinationLines,
                 inFlightFolderIDs: shareAccept.pendingShareInFlight,
                 obsidianAccessible: vaultManager.isAccessible,
+                listUnreadable: syncthingManager.pendingFoldersUnreadable,
                 onAccept: { folder in
                     shareAccept.accept(folder, source: .manual)
                 },

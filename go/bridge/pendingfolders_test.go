@@ -9,9 +9,10 @@ import (
 )
 
 func TestGetPendingFoldersJSONNotRunning(t *testing.T) {
-	// Should return empty array when not running.
-	if got := GetPendingFoldersJSON(); got != "[]" {
-		t.Fatalf("GetPendingFoldersJSON() when stopped = %q, want '[]'", got)
+	// Without an engine nothing is known about the offers: an error, never
+	// the empty list that means "nothing is offered" (#464).
+	if got := GetPendingFoldersJSON(); got != `{"error":"syncthing not running"}` {
+		t.Fatalf("GetPendingFoldersJSON() when stopped = %q, want the not-running error", got)
 	}
 }
 

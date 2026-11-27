@@ -133,7 +133,7 @@ In the app: **Plus** tab (**Relay** before 3.0.1) → **Relay health & diagnosti
 2. On desktop Syncthing, open the folder → **Sharing**, and confirm the iOS Device ID is listed.
 3. Confirm that Device ID matches the one VaultSync shows.
 4. Ensure desktop Syncthing is online and the folder isn't paused.
-5. In VaultSync, pull to refresh (or close VaultSync in the app switcher and open it again) and check **Pending Shares**; accept manually if shown.
+5. In VaultSync, pull to refresh (or close VaultSync in the app switcher and open it again) and check **Pending Shares**; accept manually if shown. If it says that VaultSync could not read the shares offered to this iPhone, wait a moment: it reads them again by itself, and a share you set aside with **Ignore for Now** stays set aside meanwhile.
 6. Still empty? Unshare and re-share the folder from the desktop.
 
 ---
