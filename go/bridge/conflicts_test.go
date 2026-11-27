@@ -374,7 +374,7 @@ func TestIssue143ResolveConflictPreservesModeAndSupportsMissingOriginal(t *testi
 				t.Fatalf("write conflict: %v", err)
 			}
 
-			if err := replaceConflictAndRemoveSource(conflictPath, originalPath, systemConflictFileOperations()); err != nil {
+			if err := replaceConflictAndRemoveSource(filepath.Base(conflictPath), filepath.Base(originalPath), systemConflictFileOperations(issue143Root(t, dir))); err != nil {
 				t.Fatalf("replaceConflictAndRemoveSource() failed: %v", err)
 			}
 
@@ -488,7 +488,7 @@ func TestIssue143ResolveConflictDoesNotTouchLegacyTempNodes(t *testing.T) {
 			}
 			verifyLegacy := tt.setup(t, legacyPath)
 
-			if err := replaceConflictAndRemoveSource(conflictPath, originalPath, systemConflictFileOperations()); err != nil {
+			if err := replaceConflictAndRemoveSource(filepath.Base(conflictPath), filepath.Base(originalPath), systemConflictFileOperations(issue143Root(t, dir))); err != nil {
 				t.Fatalf("replaceConflictAndRemoveSource() failed: %v", err)
 			}
 
@@ -522,7 +522,7 @@ func TestIssue143ResolveConflictPreCommitFailuresPreserveUserFiles(t *testing.T)
 			wantErrPrefix: "stat original file:",
 			wantTempCount: 0,
 			inject: func(ops *conflictFileOperations) {
-				ops.stat = func(string) (os.FileInfo, error) { return nil, syscall.EACCES }
+				ops.lstat = func(string) (os.FileInfo, error) { return nil, syscall.EACCES }
 			},
 		},
 		{
@@ -530,7 +530,7 @@ func TestIssue143ResolveConflictPreCommitFailuresPreserveUserFiles(t *testing.T)
 			wantErrPrefix: "create temp file:",
 			wantTempCount: 0,
 			inject: func(ops *conflictFileOperations) {
-				ops.createTemp = func(string, string) (conflictTempFile, error) {
+				ops.createTemp = func(string) (conflictTempFile, error) {
 					return nil, syscall.ENOSPC
 				}
 			},
@@ -611,10 +611,10 @@ func TestIssue143ResolveConflictPreCommitFailuresPreserveUserFiles(t *testing.T)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fixture := issue143NewFileFixture(t)
-			ops := systemConflictFileOperations()
+			ops := systemConflictFileOperations(issue143Root(t, fixture.dir))
 			tt.inject(&ops)
 
-			err := replaceConflictAndRemoveSource(fixture.conflictPath, fixture.originalPath, ops)
+			err := replaceConflictAndRemoveSource(filepath.Base(fixture.conflictPath), filepath.Base(fixture.originalPath), ops)
 			if err == nil {
 				t.Fatalf("replaceConflictAndRemoveSource() succeeded, want %q error", tt.wantErrPrefix)
 			}
@@ -642,16 +642,16 @@ func TestIssue143ResolveConflictPreCommitFailuresPreserveUserFiles(t *testing.T)
 
 func TestIssue143ResolveConflictPostCommitCleanupFailurePreservesDuplicate(t *testing.T) {
 	fixture := issue143NewFileFixture(t)
-	ops := systemConflictFileOperations()
+	ops := systemConflictFileOperations(issue143Root(t, fixture.dir))
 	realRemove := ops.remove
-	ops.remove = func(path string) error {
-		if path == fixture.conflictPath {
+	ops.remove = func(name string) error {
+		if name == filepath.Base(fixture.conflictPath) {
 			return syscall.EIO
 		}
-		return realRemove(path)
+		return realRemove(name)
 	}
 
-	err := replaceConflictAndRemoveSource(fixture.conflictPath, fixture.originalPath, ops)
+	err := replaceConflictAndRemoveSource(filepath.Base(fixture.conflictPath), filepath.Base(fixture.originalPath), ops)
 	if err == nil {
 		t.Fatal("replaceConflictAndRemoveSource() succeeded, want cleanup error")
 	}
@@ -668,23 +668,23 @@ func TestIssue143ResolveConflictPostCommitCleanupFailurePreservesDuplicate(t *te
 
 func TestIssue143ResolveConflictDoesNotRemoveReusedTempPathAfterCommit(t *testing.T) {
 	fixture := issue143NewFileFixture(t)
-	ops := systemConflictFileOperations()
+	ops := systemConflictFileOperations(issue143Root(t, fixture.dir))
 	createTemp := ops.createTemp
 	realRename := ops.rename
 	var tempPath string
-	ops.createTemp = func(dir, pattern string) (conflictTempFile, error) {
-		created, err := createTemp(dir, pattern)
+	ops.createTemp = func(pattern string) (conflictTempFile, error) {
+		created, err := createTemp(pattern)
 		if err == nil {
 			tempPath = created.Name()
 		}
 		return created, err
 	}
 	foreignBytes := []byte("issue-143-post-rename-foreign-sentinel")
-	ops.rename = func(oldPath, newPath string) error {
-		if err := realRename(oldPath, newPath); err != nil {
+	ops.rename = func(oldName, newName string) error {
+		if err := realRename(oldName, newName); err != nil {
 			return err
 		}
-		file, err := os.OpenFile(oldPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		file, err := os.OpenFile(filepath.Join(fixture.dir, oldName), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if err != nil {
 			return err
 		}
@@ -695,7 +695,7 @@ func TestIssue143ResolveConflictDoesNotRemoveReusedTempPathAfterCommit(t *testin
 		return file.Close()
 	}
 
-	if err := replaceConflictAndRemoveSource(fixture.conflictPath, fixture.originalPath, ops); err != nil {
+	if err := replaceConflictAndRemoveSource(filepath.Base(fixture.conflictPath), filepath.Base(fixture.originalPath), ops); err != nil {
 		t.Fatalf("replaceConflictAndRemoveSource() failed: %v", err)
 	}
 	if tempPath == "" {
@@ -749,8 +749,8 @@ func (file *issue143FaultingTempFile) Close() error {
 
 func issue143InjectTempFault(ops *conflictFileOperations, configure func(*issue143FaultingTempFile)) {
 	createTemp := ops.createTemp
-	ops.createTemp = func(dir, pattern string) (conflictTempFile, error) {
-		created, err := createTemp(dir, pattern)
+	ops.createTemp = func(pattern string) (conflictTempFile, error) {
+		created, err := createTemp(pattern)
 		if err != nil {
 			return nil, err
 		}
@@ -832,6 +832,17 @@ func issue143AssertNoOperationTemps(t *testing.T, dir string) {
 	if len(temps) != 0 {
 		t.Errorf("successful resolution left VaultSync temporary files: %v", temps)
 	}
+}
+
+// issue143Root opens dir as the directory the conflict functions work in.
+func issue143Root(t *testing.T, dir string) *os.Root {
+	t.Helper()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatalf("open %q: %v", filepath.Base(dir), err)
+	}
+	t.Cleanup(func() { root.Close() })
+	return root
 }
 
 func issue143OperationTemps(t *testing.T, dir string) []string {
@@ -1066,7 +1077,7 @@ func TestIssue144KeepBothSuccessPreservesAllContents(t *testing.T) {
 	issue144WriteAndReadBack(t, conflictPath, conflictBytes)
 	issue144WriteAndReadBack(t, unrelatedPath, unrelatedBytes)
 
-	if errMsg := keepBothConflictFile(conflictPath, conflictName, systemKeepBothFileOperations()); errMsg != "" {
+	if errMsg := keepBothConflictFile(conflictName, systemKeepBothFileOperations(issue143Root(t, dir))); errMsg != "" {
 		t.Fatalf("keepBothConflictFile failed: %s", errMsg)
 	}
 
@@ -1140,6 +1151,7 @@ func TestIssue144KeepBothParallelCollisionPreservesAllContents(t *testing.T) {
 		candidate parallelCandidate
 		errMsg    string
 	}
+	root := issue143Root(t, folderPath)
 	start := make(chan struct{})
 	results := make(chan result, len(candidates))
 	var workers sync.WaitGroup
@@ -1151,9 +1163,8 @@ func TestIssue144KeepBothParallelCollisionPreservesAllContents(t *testing.T) {
 			results <- result{
 				candidate: candidate,
 				errMsg: keepBothConflictFile(
-					candidate.path,
 					candidate.name,
-					systemKeepBothFileOperations(),
+					systemKeepBothFileOperations(root),
 				),
 			}
 		}(candidate)
@@ -1197,13 +1208,13 @@ func TestIssue144KeepBothRacingTargetCreationPreservesAllContents(t *testing.T) 
 	foreignBytes := []byte("issue-144-racing-foreign-target")
 	issue144WriteAndReadBack(t, conflictPath, conflictBytes)
 
-	ops := systemKeepBothFileOperations()
+	ops := systemKeepBothFileOperations(issue143Root(t, dir))
 	nativeRenameNoReplace := ops.renameNoReplace
-	ops.renameNoReplace = func(oldPath, newPath string) error {
-		if oldPath != conflictPath || newPath != targetPath {
-			t.Errorf("rename paths = (%q, %q), want (%q, %q)", oldPath, newPath, conflictPath, targetPath)
+	ops.renameNoReplace = func(oldName, newName string) error {
+		if oldName != filepath.Base(conflictPath) || newName != filepath.Base(targetPath) {
+			t.Errorf("rename names = (%q, %q), want (%q, %q)", oldName, newName, filepath.Base(conflictPath), filepath.Base(targetPath))
 		}
-		file, err := os.OpenFile(newPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		file, err := os.OpenFile(filepath.Join(dir, newName), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if err != nil {
 			t.Fatalf("create racing target: %v", err)
 		}
@@ -1218,10 +1229,10 @@ func TestIssue144KeepBothRacingTargetCreationPreservesAllContents(t *testing.T) 
 		if err := file.Close(); err != nil {
 			t.Fatalf("close racing target: %v", err)
 		}
-		return nativeRenameNoReplace(oldPath, newPath)
+		return nativeRenameNoReplace(oldName, newName)
 	}
 
-	if errMsg := keepBothConflictFile(conflictPath, conflictName, ops); errMsg != keepBothTargetExistsError {
+	if errMsg := keepBothConflictFile(conflictName, ops); errMsg != keepBothTargetExistsError {
 		t.Fatalf("racing Keep Both error = %q, want %q", errMsg, keepBothTargetExistsError)
 	}
 	issue144AssertFileBytes(t, conflictPath, conflictBytes)
@@ -1239,7 +1250,7 @@ func TestIssue144KeepBothOperationFailuresPreserveAllContents(t *testing.T) {
 
 		renameCalled := false
 		ops := keepBothFileOperations{
-			stat: func(string) (os.FileInfo, error) {
+			lstat: func(string) (os.FileInfo, error) {
 				return nil, &os.PathError{Op: "stat", Path: conflictPath, Err: syscall.EIO}
 			},
 			renameNoReplace: func(string, string) error {
@@ -1247,7 +1258,7 @@ func TestIssue144KeepBothOperationFailuresPreserveAllContents(t *testing.T) {
 				return nil
 			},
 		}
-		errMsg := keepBothConflictFile(conflictPath, conflictName, ops)
+		errMsg := keepBothConflictFile(conflictName, ops)
 		if !strings.HasPrefix(errMsg, "inspect conflict file: ") || !strings.Contains(errMsg, syscall.EIO.Error()) {
 			t.Errorf("inspection error = %q, want path-free EIO", errMsg)
 		}
@@ -1290,15 +1301,15 @@ func TestIssue144KeepBothOperationFailuresPreserveAllContents(t *testing.T) {
 			issue144WriteAndReadBack(t, unrelatedPath, unrelatedBytes)
 
 			renameCalls := 0
-			ops := systemKeepBothFileOperations()
-			ops.renameNoReplace = func(oldPath, newPath string) error {
+			ops := systemKeepBothFileOperations(issue143Root(t, dir))
+			ops.renameNoReplace = func(oldName, newName string) error {
 				renameCalls++
-				if oldPath != conflictPath || newPath != targetPath {
-					t.Errorf("rename paths = (%q, %q), want (%q, %q)", oldPath, newPath, conflictPath, targetPath)
+				if oldName != filepath.Base(conflictPath) || newName != filepath.Base(targetPath) {
+					t.Errorf("rename names = (%q, %q), want (%q, %q)", oldName, newName, filepath.Base(conflictPath), filepath.Base(targetPath))
 				}
 				return testCase.injectedError
 			}
-			errMsg := keepBothConflictFile(conflictPath, conflictName, ops)
+			errMsg := keepBothConflictFile(conflictName, ops)
 			if testCase.wantExact != "" {
 				if errMsg != testCase.wantExact {
 					t.Errorf("mutation error = %q, want %q", errMsg, testCase.wantExact)
@@ -1356,7 +1367,7 @@ func TestIssue144KeepBothPreservesUnexpectedTargetNodes(t *testing.T) {
 		}
 		issue144WriteAndReadBack(t, childPath, childBytes)
 
-		if errMsg := keepBothConflictFile(conflictPath, conflictName, systemKeepBothFileOperations()); errMsg != keepBothTargetExistsError {
+		if errMsg := keepBothConflictFile(conflictName, systemKeepBothFileOperations(issue143Root(t, dir))); errMsg != keepBothTargetExistsError {
 			t.Fatalf("directory target error = %q, want %q", errMsg, keepBothTargetExistsError)
 		}
 		issue144AssertFileBytes(t, conflictPath, conflictBytes)
@@ -1378,7 +1389,7 @@ func TestIssue144KeepBothPreservesUnexpectedTargetNodes(t *testing.T) {
 			t.Fatalf("create target symlink: %v", err)
 		}
 
-		if errMsg := keepBothConflictFile(conflictPath, conflictName, systemKeepBothFileOperations()); errMsg != keepBothTargetExistsError {
+		if errMsg := keepBothConflictFile(conflictName, systemKeepBothFileOperations(issue143Root(t, dir))); errMsg != keepBothTargetExistsError {
 			t.Fatalf("symlink target error = %q, want %q", errMsg, keepBothTargetExistsError)
 		}
 		issue144AssertFileBytes(t, conflictPath, conflictBytes)

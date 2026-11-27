@@ -17,6 +17,7 @@ The VaultSync Hub (its image and the `vaultsync-hub` program, `hub-vX.Y.Z` relea
 ### Changed
 
 - **The wake-up helper's installer and self-check point to the Plus tab** — when the installer finishes (Linux, macOS, Windows), it says the iPhone shows "Background Sync active" on the Plus tab, or "Cloud Relay active" on the Relay tab in VaultSync 3.0.0 and earlier. `vaultsync-notify --doctor` sends a device without a subscription to the Plus tab (the Relay tab in VaultSync 3.0.0 and earlier). The installer's change is live once merged, because the install link serves the main branch; the self-check's arrives with the helper's next release.
+- **The conflict list and the conflict actions work on regular files inside the vault's own folder** — an entry that is not a regular file is not listed and not acted on. Recorded in decision 095. (#151)
 
 ### Fixed
 
