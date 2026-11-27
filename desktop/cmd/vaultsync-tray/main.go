@@ -137,6 +137,7 @@ func run(args []string) error {
 	ui.onQuit = stop
 	c := &tray.Controller{
 		Home:         home,
+		Mac:          runtime.GOOS == "darwin",
 		Layout:       lay,
 		UI:           ui,
 		Asker:        tray.NewAsker(runtime.GOOS, home, exec.LookPath),

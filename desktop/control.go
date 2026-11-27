@@ -99,7 +99,17 @@ func (c *controlServer) handler() http.Handler {
 	mux.HandleFunc("POST /v1/pause", func(w http.ResponseWriter, r *http.Request) { c.setPaused(w, r, true) })
 	mux.HandleFunc("POST /v1/resume", func(w http.ResponseWriter, r *http.Request) { c.setPaused(w, r, false) })
 	mux.HandleFunc("POST /v1/pair", c.pair)
-	return mux
+	// Every answer says which build gives it — the 404 start asks for
+	// included — so start and status learn which build runs from the run
+	// itself, never from the file at its program's path (#416, decision
+	// 093).
+	build := c.a.mark()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if build != "" {
+			w.Header().Set(control.BuildHeader, build)
+		}
+		mux.ServeHTTP(w, r)
+	})
 }
 
 // serve listens on the control socket and serves until stop is called. The
@@ -669,30 +679,79 @@ var errAgentAnswered = errors.New("the running agent answered")
 // Any answer counts: what it says about syncing is status's to tell. An
 // ask that gets no answer in its time ends the wait: something takes the
 // request and says nothing, and a second ask would only double the wait
-// (the menu-bar app does the same since #288).
-func (a *app) agentAnswers() bool {
+// (the menu-bar app does the same since #288). It returns the answer's
+// build mark too (control.BuildHeader; "" where it sent none).
+func (a *app) agentAnswers() (answered bool, build string) {
 	for i := 0; i < startAnswerLooks; i++ {
 		if i > 0 {
 			a.svc.wait(startAnswerEvery)
 		}
-		path := a.lay.Socket
-		if st, err := loadState(a.lay.State); err == nil && st.ControlSocket != "" {
-			path = st.ControlSocket
+		answered, timedOut, build := a.askAgent(context.Background(), startAskTimeout)
+		if answered {
+			return true, build
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), startAskTimeout)
-		err := control.New(path, errAgentAnswered).Do(ctx, http.MethodGet, startAskPath, nil, nil)
-		timedOut := ctx.Err() != nil
-		cancel()
-		var said *control.AnswerError
-		switch {
-		case err == nil, errors.Is(err, errAgentAnswered), errors.As(err, &said):
-			return true
-		case timedOut:
-			return false
+		if timedOut {
+			return false, ""
 		}
 	}
-	return false
+	return false, ""
 }
+
+// askAgent asks the agent once for startAskPath — at the place agent.json
+// records now — and says whether it answered, whether the ask ran out of
+// time instead, and the build mark it answered with. It ends with parent,
+// and after timeout at the latest.
+func (a *app) askAgent(parent context.Context, timeout time.Duration) (answered, timedOut bool, build string) {
+	path := a.lay.Socket
+	if st, err := loadState(a.lay.State); err == nil && st.ControlSocket != "" {
+		path = st.ControlSocket
+	}
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
+	build, err := control.New(path, errAgentAnswered).Ask(ctx, http.MethodGet, startAskPath, nil, nil)
+	var said *control.AnswerError
+	switch {
+	case err == nil, errors.Is(err, errAgentAnswered), errors.As(err, &said):
+		return true, false, build
+	}
+	return false, ctx.Err() != nil, ""
+}
+
+// runningBuild is what an agent's answer says of the build the background
+// service runs, held against this one's mark (decision 093).
+type runningBuild int
+
+const (
+	buildNotKnown runningBuild = iota // no answer, or neither build has a mark
+	buildThis                         // the answer carries this build's mark
+	buildAnother                      // another mark, or none beside this build's
+)
+
+// runningBuildOf: an answer with this build's mark comes from this build;
+// one with another mark, or with none where this build has one, from
+// another — every build that has a mark says it on every answer. Without
+// an answer, or with no mark on either side, it is not known.
+func (a *app) runningBuildOf(answered bool, build string) runningBuild {
+	switch {
+	case !answered || (a.mark() == "" && build == ""):
+		return buildNotKnown
+	case build == a.mark():
+		return buildThis
+	default:
+		return buildAnother
+	}
+}
+
+// serviceSaysThisBuild: the background service's agent, asked once, says it
+// runs this very build. No answer, or no mark, is not this build.
+func (a *app) serviceSaysThisBuild(ctx context.Context) bool {
+	answered, _, build := a.askAgent(ctx, serviceBuildAskTimeout)
+	return a.runningBuildOf(answered, build) == buildThis
+}
+
+// serviceBuildAskTimeout bounds status's one ask for the service's build:
+// an agent that is up answers it at once, without a word to the engine.
+var serviceBuildAskTimeout = 3 * time.Second
 
 // logSocketError says in the service's log that there is no control socket
 // — without the error's words, which name paths (the log is read by
@@ -806,17 +865,41 @@ func (a *app) noAgentForPause(ctx context.Context, st agentState, pause bool) er
 // --- pause / resume from the terminal ----------------------------------------
 
 func (a *app) pauseSync(ctx context.Context, pause bool) error {
-	st, err := loadState(a.lay.State)
-	if err != nil {
-		return err
+	command := "resume"
+	if pause {
+		command = "pause"
 	}
-	if st.GUIPort == 0 {
+	st, loadErr := loadState(a.lay.State)
+	// A build older than the one set up here pauses and resumes through a
+	// running agent, which does the pausing and writes what it writes; this
+	// program writes nothing. Where no agent answers, it refuses: it would
+	// read agent.json and ask the engine itself (decision 091).
+	older := olderThanSetUp(st, loadErr)
+	var client *control.Client
+	switch {
+	case older && loadErr != nil:
+		// A newer format: the agent is asked only where the place of its
+		// socket reads in this build's shape — the recorded place, or the
+		// layout's own where none is recorded — as the menu-bar app reads
+		// it (control.SocketPath). Nowhere else.
+		path, err := control.SocketPath(a.lay)
+		if err != nil {
+			return a.olderRefusal(command, nil, st, loadErr)
+		}
+		client = newControlClient(path)
+	case loadErr != nil:
+		return loadErr
+	case st.GUIPort == 0:
 		return refuse("VaultSync is not set up on this computer yet. Run vaultsync setup.")
+	default:
+		client = a.controlClient(st)
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	res, err := a.controlClient(st).SetPaused(ctx, pause)
+	res, err := client.SetPaused(ctx, pause)
 	switch {
+	case errors.Is(err, errNoAgent) && older:
+		return a.olderRefusal(command, nil, st, loadErr)
 	case errors.Is(err, errNoAgent):
 		return a.noAgentForPause(ctx, st, pause)
 	case err != nil:

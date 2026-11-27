@@ -136,6 +136,11 @@ final class SyncthingManager {
     /// exists". Replaced by the reconcile that began last, emptied when the
     /// engine stops.
     private(set) var foldersWithoutTheirStorage: Set<String> = []
+    /// Folders the path reconcile left where they are although their own
+    /// directory was found under the selected folder: another folder syncs
+    /// it, a folder inside it or one around it, and two folders never
+    /// overlap (#330, decision 082). Kept like `foldersWithoutTheirStorage`.
+    private(set) var foldersOverlappingAnotherFolder: Set<String> = []
     private(set) var conflictFiles: [String: [ConflictInfo]] = [:]
     private(set) var pendingFolders: [PendingFolderInfo] = []
     private(set) var ignoredPendingFolderIDs: Set<String> = []
@@ -1101,6 +1106,7 @@ final class SyncthingManager {
             // folders that are still configured (#315).
             if pathSettlement.reconcileFinished(token: token) {
                 foldersWithoutTheirStorage = outcome.cut(to: folders.map(\.id)).notTheirStorage
+                foldersOverlappingAnotherFolder = outcome.cut(to: folders.map(\.id)).overlapsAnotherFolder
             }
             refreshObsidianVisibility()
         } else {
@@ -1132,6 +1138,7 @@ final class SyncthingManager {
         // (#56).
         pathSettlement.reset()
         foldersWithoutTheirStorage = []
+        foldersOverlappingAnotherFolder = []
         obsidianVisibilityFindings = []
         obsidianVisibilityInputs = []
         lastBridgeEventID = 0
@@ -1180,49 +1187,96 @@ final class SyncthingManager {
 
     /// Remove a folder by ID.
     func removeFolder(id: String) -> String? {
-        let result = SyncBridgeService.removeFolder(id: id)
-        if result == nil {
-            refreshFolders()
-            folderStatuses.removeValue(forKey: id)
-            // Drop the path mapping so a future folder reusing this ID does not
-            // inherit a stale relative path.
-            FolderPathReconciler.removeRel(forFolder: id)
-            // Nor what the last reconcile found for the folder that had it.
-            // If that was a copy in its place, a folder name remembered for
-            // its share stops standing for consent: the directory of that
-            // name is the copy, and accepting the share into it has to ask
-            // (#315, decision 007). The same while a reconcile is still
-            // under way: what it is about to find is not known yet, and a
-            // question too many costs less than a copy combined unasked.
-            let copyFound = foldersWithoutTheirStorage.remove(id) != nil
-            if copyFound || !pathSettlement.settled {
-                ManualShareTargetStore.forgetConsent(forFolder: id)
-            }
-            // Forget any #45 auto-pause record so a future folder reusing this
-            // ID can be paused again if it collides (removing a colliding vault
-            // is the sanctioned recovery; accepting the returning share re-adds
-            // it unpaused into its own folder).
-            PathCollisionGuard.clearAutoPaused(id)
-            // Never auto-re-accept a share the user just removed: while a peer
-            // still shares the folder, its offer comes back once the peer
-            // announces the folder again, and silently pulling it back in
-            // would undo the removal (doctrine 002 / #52). The removal sends
-            // our configuration without the folder and discards its pending
-            // offer, but gives the peer no cause to send its own: the offer
-            // returns when a connection to the peer is set up or its own
-            // configuration changes — in practice once VaultSync was closed
-            // and opened again, which is why the texts that say to accept it
-            // again say to reopen VaultSync first (#316). The share then
-            // stays under Pending Shares until the user explicitly accepts
-            // it — which honours a manually chosen target.
-            userRemovedFolderIDs.insert(id)
-            persistUserRemovedFolderIDs()
-            // What was kept or reported belongs to the folder that was
-            // removed (#270): a later folder with this ID is judged afresh.
-            ObsidianVisibility.forget(folderID: id)
-            refreshObsidianVisibility()
+        // Never auto-re-accept a share the user just removed: while a peer
+        // still shares the folder, its offer comes back once the peer
+        // announces the folder again, and silently pulling it back in
+        // would undo the removal (doctrine 002 / #52). The removal sends
+        // our configuration without the folder and discards its pending
+        // offer, but gives the peer no cause to send its own: the offer
+        // returns when a connection to the peer is set up or its own
+        // configuration changes — in practice once VaultSync was closed
+        // and opened again, which is why the texts that say to accept it
+        // again say to reopen VaultSync first (#316). The share then
+        // stays under Pending Shares until the user explicitly accepts
+        // it — which honours a manually chosen target.
+        //
+        // Recorded before the engine is asked, and kept whatever it answers
+        // (#343, decision 006): a removal can go ahead after a failed
+        // answer — the engine takes the change into its configuration first
+        // and then waits for its services, while the bridge waits at most
+        // 30 seconds — and an app ended during that wait must not leave a
+        // removal on disk without its record. A record for a removal that
+        // never landed costs nothing: a configured folder is not offered as
+        // a new share.
+        userRemovedFolderIDs.insert(id)
+        persistUserRemovedFolderIDs()
+        // If a copy was found in the folder's place, a folder name
+        // remembered for its share stops standing for consent: the
+        // directory of that name is the copy, and accepting the share into
+        // it has to ask (#315, decision 007). The same while a reconcile is
+        // still under way: what it is about to find is not known yet, and a
+        // question too many costs less than a copy combined unasked. So it
+        // goes for a vault refused for an overlap (#330): another vault
+        // synced in its folder or around it, and what the folder holds by
+        // the time the share is accepted again is not known. Before the
+        // engine is asked too, since it only adds a question.
+        if foldersWithoutTheirStorage.contains(id)
+            || foldersOverlappingAnotherFolder.contains(id)
+            || !pathSettlement.settled {
+            ManualShareTargetStore.forgetConsent(forFolder: id)
         }
-        return result
+
+        let result = bridgeRemoveFolder(id)
+        // A folder that is not configured is what the user asked for —
+        // after a removal the engine had not confirmed and that has landed
+        // since, this is the answer to asking again. Every other answer
+        // leaves the folder possibly configured, and what describes it
+        // stays (#343).
+        guard result == nil || result == SyncBridgeService.folderNotFoundError else { return result }
+
+        refreshFolders()
+        folderStatuses.removeValue(forKey: id)
+        // Drop the path mapping so a future folder reusing this ID does not
+        // inherit a stale relative path.
+        FolderPathReconciler.removeRel(forFolder: id)
+        // Nor what the last reconcile found for the folder that had it.
+        foldersWithoutTheirStorage.remove(id)
+        foldersOverlappingAnotherFolder.remove(id)
+        // Forget any #45 auto-pause record so a future folder reusing this
+        // ID can be paused again if it collides (removing a colliding vault
+        // is the sanctioned recovery; accepting the returning share re-adds
+        // it unpaused into its own folder).
+        PathCollisionGuard.clearAutoPaused(id)
+        // What was kept or reported belongs to the folder that was
+        // removed (#270): a later folder with this ID is judged afresh.
+        ObsidianVisibility.forget(folderID: id)
+        refreshObsidianVisibility()
+        return nil
+    }
+
+    /// The note shown for a removal the engine has not confirmed yet, or nil
+    /// for every other answer of `removeFolder` (#343). It is no failure: the
+    /// removal may still land, and the vault is already recorded as removed.
+    static func removalNotConfirmedNote(forAnswer answer: String) -> String? {
+        guard answer == SyncBridgeService.folderRemovalNotConfirmedError else { return nil }
+        return L10n.tr("VaultSync has asked the sync engine to stop syncing this vault on this iPhone, and the engine has not confirmed it yet. If the vault is still listed in a minute, remove it again. If its share is offered again, VaultSync does not accept it by itself.")
+    }
+
+    /// The bridge's removal, or what a test put in its place (#343).
+    private func bridgeRemoveFolder(_ id: String) -> String? {
+        #if DEBUG
+        if let removal = _testRemoval { return removal.bridge(id) }
+        #endif
+        return SyncBridgeService.removeFolder(id: id)
+    }
+
+    /// Where the record of removed folders is kept: the standard defaults,
+    /// or a test's own (#343).
+    private var userRemovedRecordDefaults: UserDefaults {
+        #if DEBUG
+        if let removal = _testRemoval { return removal.defaults }
+        #endif
+        return .standard
     }
 
     /// Share a folder with a device.
@@ -1364,6 +1418,7 @@ final class SyncthingManager {
         // as unsettled until its own reconcile completes (#56).
         pathSettlement.reset()
         foldersWithoutTheirStorage = []
+        foldersOverlappingAnotherFolder = []
         obsidianVisibilityFindings = []
         obsidianVisibilityInputs = []
         lastBridgeEventID = 0
@@ -2489,6 +2544,12 @@ final class SyncthingManager {
                 explanation: UnreachableFolder.copyExplanation(syncsSelectedFolderItself: wholeFolder)
             )
         }
+        // The same for a vault whose own folder overlaps another vault's
+        // (#330).
+        if foldersOverlappingAnotherFolder.contains(folderID),
+           let reason = status.errorReason, Self.pathErrorReasons.contains(reason) {
+            return .folderOverlapsAnotherFolder(explanation: UnreachableFolder.overlapExplanation)
+        }
         return SyncUserError.fromFolderStatus(
             reason: status.errorReason,
             message: status.errorMessage,
@@ -2529,6 +2590,18 @@ final class SyncthingManager {
         /// from before 3.0 can: what was refused is then the selected folder,
         /// not a folder in it.
         let syncsSelectedFolderItself: Bool
+        /// True if the vault's own folder was found under the selected
+        /// folder and refused because another vault syncs it, a folder
+        /// inside it or one around it (#330).
+        var foundDirectoryOverlapsAnotherFolder = false
+
+        /// Whether the card offers to select the Obsidian folder again. Not
+        /// for an overlap: the vault's own folder was found, so no other
+        /// selection holds it, and a reconnect only repeats the refusal. The
+        /// card's way on is the one its text names (#330).
+        var offersReconnect: Bool {
+            hasObsidianMapping && !foundDirectoryOverlapsAnotherFolder
+        }
 
         /// What the vault's card says is wrong. A directory that was found
         /// and refused gets its own text: "storage no longer exists" would
@@ -2537,16 +2610,34 @@ final class SyncthingManager {
             if foundDirectoryIsNotItsStorage {
                 return Self.copyExplanation(syncsSelectedFolderItself: syncsSelectedFolderItself)
             }
+            if foundDirectoryOverlapsAnotherFolder {
+                return Self.overlapExplanation
+            }
             return L10n.tr("This vault points to storage that no longer exists on this iPhone, so it can no longer sync.")
         }
 
         /// Where the rest is said — what selecting another folder does to
         /// the other vaults, and what to do with the copy afterwards. Only
-        /// the copy's card has a section of its own.
+        /// the cards for a copy and for an overlap have a section of their
+        /// own.
         var troubleshootingURL: URL? {
-            foundDirectoryIsNotItsStorage
-                ? SyncUserError.troubleshootingURL(anchor: SyncUserError.folderIsACopyAnchor)
-                : nil
+            if foundDirectoryIsNotItsStorage {
+                return SyncUserError.troubleshootingURL(anchor: SyncUserError.folderIsACopyAnchor)
+            }
+            if foundDirectoryOverlapsAnotherFolder {
+                return SyncUserError.troubleshootingURL(anchor: SyncUserError.folderOverlapsAnotherFolderAnchor)
+            }
+            return nil
+        }
+
+        /// What was found and the way on, for a vault whose own folder
+        /// overlaps another vault's — where that one is, or where it would
+        /// have been repaired to with this one (#330, decision 082). Removing
+        /// either vault lets the other go on at the next reconcile; removing
+        /// this one changes nothing on disk, and accepted again it arrives
+        /// in a folder of its own — never combined with what a folder holds.
+        static var overlapExplanation: String {
+            L10n.tr("This vault's folder was found, but it is another vault's folder too, or lies inside or around another vault's folder. Two vaults never sync in one place, so VaultSync does not continue this vault there; when one of the two is removed, the other goes on there. To bring this vault back, remove it, wait ten seconds, close VaultSync in the app switcher and open it again, and accept the vault again under Pending Shares once it shows there — it gets a folder of its own. If the share then says that its folder already holds files, do not combine them: tap \"Choose Vault…\" and give the vault another folder name.")
         }
 
         /// What was found and the way on. Never to combine the share with
@@ -2576,10 +2667,15 @@ final class SyncthingManager {
 
     /// Where, under the selected folder, the copies lie that were refused in
     /// a vault's place — relative paths, "" for the selected folder itself.
-    /// They are no vaults waiting to be shared (#315).
+    /// They are no vaults waiting to be shared (#315). Nor is a vault's own
+    /// folder that was refused because it overlaps another vault's (#330):
+    /// its card speaks for it.
     var refusedCopyRels: [String] {
-        let rel = FolderPathReconciler.loadRel()
-        return foldersWithoutTheirStorage.compactMap { rel[$0] }
+        refusedCopyRels(rel: FolderPathReconciler.loadRel())
+    }
+
+    func refusedCopyRels(rel: [String: String]) -> [String] {
+        foldersWithoutTheirStorage.union(foldersOverlappingAnotherFolder).compactMap { rel[$0] }
     }
 
     /// A copy found in a vault's place is a finding about folders the user
@@ -2587,10 +2683,11 @@ final class SyncthingManager {
     /// copy deleted, the vault's own folder put where the copy was. A return
     /// to the app over a running engine reconciles nothing by itself, so the
     /// card would go on describing what is no longer there. Reconciles again
-    /// while a finding is shown; nil when there is none.
+    /// while a finding is shown — a copy, or an overlap with another vault's
+    /// folder (#330); nil when there is none.
     @discardableResult
     func recheckCopiesFound(obsidianRoot: String?) -> Task<Void, Never>? {
-        guard !foldersWithoutTheirStorage.isEmpty else { return nil }
+        guard !foldersWithoutTheirStorage.isEmpty || !foldersOverlappingAnotherFolder.isEmpty else { return nil }
         return reconcileFolderPaths(obsidianRoot: obsidianRoot)
     }
 
@@ -2607,7 +2704,8 @@ final class SyncthingManager {
                 reason: reason,
                 hasObsidianMapping: rel[folder.id] != nil,
                 foundDirectoryIsNotItsStorage: foldersWithoutTheirStorage.contains(folder.id),
-                syncsSelectedFolderItself: rel[folder.id] == ""
+                syncsSelectedFolderItself: rel[folder.id] == "",
+                foundDirectoryOverlapsAnotherFolder: foldersOverlappingAnotherFolder.contains(folder.id)
             )
         }
     }
@@ -2646,11 +2744,11 @@ final class SyncthingManager {
     }
 
     private func persistUserRemovedFolderIDs() {
-        UserDefaults.standard.set(Array(userRemovedFolderIDs).sorted(), forKey: Self.userRemovedFoldersDefaultsKey)
+        userRemovedRecordDefaults.set(Array(userRemovedFolderIDs).sorted(), forKey: Self.userRemovedFoldersDefaultsKey)
     }
 
-    private static func loadUserRemovedFolderIDs() -> Set<String> {
-        guard let values = UserDefaults.standard.array(forKey: userRemovedFoldersDefaultsKey) as? [String] else {
+    private static func loadUserRemovedFolderIDs(from defaults: UserDefaults = .standard) -> Set<String> {
+        guard let values = defaults.array(forKey: userRemovedFoldersDefaultsKey) as? [String] else {
             return []
         }
         return Set(values)
@@ -2962,6 +3060,21 @@ final class SyncthingManager {
     // MARK: - Test hooks
 
     #if DEBUG
+    /// What `_testUseRemoval` put in the place of the bridge's removal and
+    /// of the defaults the removal record is kept in. Compiled for tests
+    /// only: a release build has neither.
+    @ObservationIgnored private var _testRemoval: (bridge: (String) -> String?, defaults: UserDefaults)?
+
+    /// Answers every removal with `bridge` instead of the engine and keeps
+    /// the record of removed folders in `defaults`, read from there at once
+    /// the way a manager reads it at launch (#343). A test then needs
+    /// neither the engine nor the standard defaults, which other suites
+    /// write at the same time.
+    func _testUseRemoval(bridge: @escaping (String) -> String?, defaults: UserDefaults) {
+        _testRemoval = (bridge, defaults)
+        userRemovedFolderIDs = Self.loadUserRemovedFolderIDs(from: defaults)
+    }
+
     func _testApplyDeviceList(_ newDevices: [DeviceInfo]) {
         applyDeviceList(newDevices)
     }
@@ -3006,6 +3119,10 @@ final class SyncthingManager {
 
     func _testSetFoldersWithoutTheirStorage(_ folderIDs: Set<String>) {
         foldersWithoutTheirStorage = folderIDs
+    }
+
+    func _testSetFoldersOverlappingAnotherFolder(_ folderIDs: Set<String>) {
+        foldersOverlappingAnotherFolder = folderIDs
     }
 
     /// Begins a reconcile pass the way `reconcileFolderPaths` does, without

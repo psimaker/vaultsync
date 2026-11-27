@@ -4,6 +4,7 @@ package bridge
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -89,8 +90,38 @@ func AddFolder(id, label, path string) string {
 	return ""
 }
 
+// folderRemovalNotConfirmed is how RemoveFolder answers a removal it handed
+// to the engine and did not see reach the configuration within its wait.
+// It is queued behind another change, and once that one is through it
+// lands, or the engine refuses it; if the engine stops first, it never
+// lands (#343).
+const folderRemovalNotConfirmed = "folder removal not confirmed yet"
+
+// folderNotFound is how RemoveFolder answers for a folder that is not
+// configured: also when a removal it could not confirm has landed since.
+const folderNotFound = "folder not found"
+
+// FolderNotFoundError returns the text RemoveFolder answers a folder that is
+// not configured with. The app takes it for a removal that is done, and
+// reads the text here instead of keeping a copy of it (#343).
+func FolderNotFoundError() string {
+	return folderNotFound
+}
+
+// FolderRemovalNotConfirmedError returns the text RemoveFolder answers such a
+// removal with. The app tells it from a refusal — the removal may still land
+// — and reads the text here instead of keeping a copy of it.
+func FolderRemovalNotConfirmedError() string {
+	return folderRemovalNotConfirmed
+}
+
 // RemoveFolder removes a folder by its ID.
-// Returns empty string on success, error message on failure.
+// Returns empty string once the folder is gone from the engine's
+// configuration in memory, folderRemovalNotConfirmed while the removal is
+// still on its way, folderNotFound for a folder that is not configured, or
+// the reason the engine refused it (#343). The configuration reaches
+// config.xml only once the engine's services are through with the change
+// (the wrapper's save timer, #151).
 func RemoveFolder(id string) string {
 	mu.Lock()
 	defer mu.Unlock()
@@ -102,10 +133,10 @@ func RemoveFolder(id string) string {
 	// Check if folder exists.
 	folders := stCfg.Folders()
 	if _, exists := folders[id]; !exists {
-		return "folder not found"
+		return folderNotFound
 	}
 
-	if err := commitConfigLocked(func(cfg *config.Configuration) {
+	err := commitConfigLocked(func(cfg *config.Configuration) {
 		filtered := make([]config.FolderConfiguration, 0, len(cfg.Folders))
 		for _, f := range cfg.Folders {
 			if f.ID != id {
@@ -113,11 +144,21 @@ func RemoveFolder(id string) string {
 			}
 		}
 		cfg.Folders = filtered
-	}); err != nil {
-		return fmt.Sprintf("modify config: %v", err)
+	})
+	if err == nil {
+		return ""
 	}
-
-	return ""
+	// The engine takes a change into its configuration first and then waits
+	// for its services: the model stops the folder and drops its database.
+	// When that outlasts the wait, the folder is already gone from the
+	// configuration, and the removal the user asked for has happened.
+	if _, still := stCfg.Folder(id); !still {
+		return ""
+	}
+	if errors.Is(err, errWaitTimedOut) {
+		return folderRemovalNotConfirmed
+	}
+	return fmt.Sprintf("modify config: %v", err)
 }
 
 // SetFolderPath rewrites the on-disk path of an existing folder IN PLACE,
@@ -143,6 +184,10 @@ func RemoveFolder(id string) string {
 //   - the directory is not known to be another one than the folder synced in
 //     (folderStorageRefusalLocked). The marker alone cannot tell: a copy made
 //     by hand carries it (#315, decision 063).
+//
+// And whatever the target is, it never overlaps another folder's path: the
+// floor of AddFolder and AcceptPendingFolder holds for the repair too
+// (decision 082).
 //
 // Returns empty string on success — including a no-op when the path is already
 // equivalent — or an error message on failure.
@@ -197,6 +242,23 @@ func SetFolderPath(folderID, newPath string) string {
 		return refusal
 	}
 
+	// The folder's own directory may by now be another folder's, or lie in
+	// or around one — an earlier version's overlapping pair, moved with the
+	// container, or a share accepted there while this folder could not reach
+	// it. Every overlap is refused, one that was there before the move too:
+	// the bridge cannot tell which was there, and the shield that pauses an
+	// overlap runs after this, never twice for a folder and not in a
+	// background run (#330, decision 082). Dead paths count, as they do when
+	// a folder is added: a directory that comes back would overlap. The floor
+	// sees only where the other folders are now, not where a repair in the
+	// same pass is about to put them: the app's reconcile holds both folders
+	// of such a pair back before it asks for either.
+	for id, other := range folders {
+		if id != folderID && folderPathOverlapError(other.Path, newPath) != "" {
+			return folderPathOverlap
+		}
+	}
+
 	if err := commitConfigLocked(func(cfg *config.Configuration) {
 		for i := range cfg.Folders {
 			if cfg.Folders[i].ID == folderID {
@@ -214,6 +276,18 @@ func SetFolderPath(folderID, newPath string) string {
 	noteFolderStorageLocked(folder)
 
 	return ""
+}
+
+// folderPathOverlap is how SetFolderPath refuses a path that is another
+// folder's, or lies in or around one (#330, decision 082).
+const folderPathOverlap = "target overlaps a directory another folder syncs"
+
+// FolderPathOverlapError returns the text SetFolderPath refuses such a path
+// with. The app tells this refusal from the others — its user gets the way on
+// from a folder two vaults would share — and reads the text here instead of
+// keeping a copy of it.
+func FolderPathOverlapError() string {
+	return folderPathOverlap
 }
 
 // folderMarkerPath returns the entry whose presence in root marks it as the

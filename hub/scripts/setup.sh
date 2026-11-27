@@ -611,38 +611,83 @@ check_app_place() {
 		fail "$1 is not VaultSync for Mac (its bundle identifier is ${id:-not readable}) — it was not replaced. Move it elsewhere, then run the setup again."
 }
 
+# inode_of PATH prints the inode number of PATH itself (a link's own, not
+# what it leads to): ls -di, which BSD and GNU share (find -printf and stat
+# do not). The number leads the first line, whatever the name holds. It
+# fails, printing nothing, when that cannot be read as a number.
+inode_of() {
+	# shellcheck disable=SC2012 # ls -di is the one inode reading BSD and GNU share
+	inode=$(ls -di -- "$1" 2>/dev/null | awk 'NR == 1 { print $1 }') || return 1
+	case "$inode" in
+		"" | *[!0-9]*) return 1 ;;
+	esac
+	printf '%s\n' "$inode"
+}
+
+# own_app_at_place: what stands at APP is the app this run unpacked. Moving
+# it into place is one rename, never a copy (it is unpacked beside its
+# place), and a rename keeps the inode, which install_app reads before the
+# move (NEW_INODE). An inode that cannot be read, there or here, is not
+# this run's: such an app is never removed (#268).
+own_app_at_place() {
+	{ [ -n "$NEW_INODE" ] && [ -d "$APP" ] && [ ! -L "$APP" ]; } || return 1
+	at_place=$(inode_of "$APP") || return 1
+	[ "$at_place" = "$NEW_INODE" ]
+}
+
 # Where an update of the app stands (STAGE), set before each step: aside
 # — the installed app is being set aside as REPLACED, in a folder of its
 # own beside it (ASIDE, new for this run, so the name is free); placing —
 # the new app is being moved into its place; restoring — the set-aside app
-# is being moved back; placed — the new one is in place. A move across
-# disks copies, and a full disk, an I/O error, Ctrl-C, a closed Terminal or
-# a logout can stop any step halfway — restore_app's too, which a second
-# signal then enters again. restore_app — run by the traps and by a failed
-# move — undoes what the stage leaves, deciding from what is on disk:
-# before placed, whatever stands at the app's place came from this run, so
-# it goes and the set-aside app is put back (a first install leaves
-# nothing); restoring only finishes that move, so it never removes the app
-# it put back; once placed, the set-aside app goes. What it cannot put back
-# it says where it is. It clears STAGE, so the EXIT trap after another trap
-# undoes nothing twice. The background service and the menu-bar app never
-# lose their program to an interrupted update.
+# is being moved back; placed — the new one is in place. Each step is one
+# rename; a failed one, Ctrl-C, a closed Terminal or a logout can stop the
+# update between any two of them — restore_app too, which a second signal
+# then enters again. restore_app — run by the traps and by a failed move —
+# undoes what the stage leaves, deciding from what is on disk. Before
+# placed it removes the app at the place only when it is this run's own
+# (own_app_at_place): what another setup at the same time, or the person,
+# put there stays, and is named (decision 053 (6), #268). The set-aside app
+# goes back only into an empty place; where it cannot, it stays where it
+# was set aside, and is named. A first install leaves nothing. restoring
+# only finishes that move, so it never removes the app it put back; once
+# placed, the set-aside app goes. It clears STAGE, so the EXIT trap after
+# another trap undoes nothing twice. The background service and the
+# menu-bar app never lose their program to an interrupted update.
 STAGE=""
 ASIDE=""
 REPLACED=""
 UNPACKED=""
+NEW_INODE=""
 restore_app() {
 	case "$STAGE" in
 		aside | placing)
 			if [ -n "$REPLACED" ] && { [ -e "$REPLACED" ] || [ -L "$REPLACED" ]; }; then
-				rm -rf "$APP" 2>/dev/null || true
-				STAGE=restoring
-				put_back
-			elif [ "$STAGE" = placing ]; then
+				set_aside=1
+			else
+				set_aside=""
+			fi
+			if [ "$STAGE" = aside ] && [ -z "$set_aside" ]; then
+				# The set-aside did not happen (it failed, or the signal came
+				# first): what stands at the place is the app installed before,
+				# as it was. Nothing to undo, nothing to say.
+				:
+			elif own_app_at_place; then
 				rm -rf "$APP" 2>/dev/null || true
 				if [ -e "$APP" ] || [ -L "$APP" ]; then
-					warn "Part of a VaultSync for Mac that could not be installed stays at $APP — move it to the Trash."
+					warn "The VaultSync for Mac this setup was installing could not be removed from $APP — move it to the Trash."
 				fi
+			elif ! inode_of "$APP" >/dev/null && { [ -e "$APP" ] || [ -L "$APP" ]; }; then
+				warn "Whether what is at $APP now is the VaultSync for Mac this setup was installing cannot be told — it was left as it is."
+			elif [ -e "$APP" ] || [ -L "$APP" ]; then
+				warn "Something else is at $APP now — another setup at the same time? It was left as it is."
+				in_it=$(inode_of "$APP/$APP_NAME") || in_it=""
+				if [ -n "$NEW_INODE" ] && [ "$in_it" = "$NEW_INODE" ]; then
+					warn "The VaultSync for Mac this setup was installing is inside it, at $APP/$APP_NAME — move it to the Trash."
+				fi
+			fi
+			if [ -n "$set_aside" ]; then
+				STAGE=restoring
+				put_back
 			fi
 			;;
 		restoring)
@@ -658,15 +703,21 @@ restore_app() {
 	STAGE=""
 }
 
-# put_back moves the set-aside app back to its place — only into an empty
+# put_back moves what was set aside back to its place — only into an empty
 # one: mv would move it into a folder standing there — and says where it is
-# when it cannot.
+# when it cannot, as what it is: the VaultSync for Mac installed before, or
+# something else that took the place in the instant before the set-aside.
 put_back() {
 	{ [ -e "$REPLACED" ] || [ -L "$REPLACED" ]; } || return 0
+	if [ ! -L "$REPLACED" ] && [ "$(bundle_id "$REPLACED")" = "$APP_ID" ]; then
+		what="The VaultSync for Mac installed before"
+	else
+		what="What was set aside from $APP (it is not VaultSync for Mac)"
+	fi
 	if [ -e "$APP" ] || [ -L "$APP" ]; then
-		warn "The VaultSync for Mac installed before could not be put back: $APP could not be removed. It is at $REPLACED — move what is at $APP to the Trash, then move it there."
+		warn "$what could not be put back, because $APP is not free. It is at $REPLACED — once $APP is free, move it there."
 	elif ! mv "$REPLACED" "$APP" 2>/dev/null; then
-		warn "The VaultSync for Mac installed before could not be put back: it is at $REPLACED — move it to $APP."
+		warn "$what could not be put back: it is at $REPLACED — move it to $APP."
 	fi
 }
 
@@ -803,16 +854,36 @@ install_app() {
 		UNPACKED=""
 		return 0
 	fi
-	[ ! -e "$APP" ] || keep_newer_app "$2" "$new_line"
+	if [ -e "$APP" ] || [ -L "$APP" ]; then
+		# Again before the installed agent is asked its version: a bundle
+		# that took the place while the download's agent ran is refused
+		# before its own program runs.
+		check_app_place "$APP"
+		keep_newer_app "$2" "$new_line"
+	fi
+	# Read before anything moves: without it no app at the place is known to
+	# be this run's, and none would be removed (own_app_at_place).
+	NEW_INODE=$(inode_of "$new") ||
+		fail "Could not read the downloaded VaultSync for Mac in $2 — nothing was changed; a VaultSync already installed keeps running."
 	if [ -e "$APP" ]; then
 		ASIDE=$(mktemp -d "$2/.$APP_NAME.replaced.XXXXXXXX") ||
 			fail "Could not move the installed VaultSync for Mac aside — nothing was changed."
+		# Again: something else may have taken the place since the look
+		# above, while the installed agent ran (#268).
+		check_app_place "$APP"
 		REPLACED="$ASIDE/$APP_NAME"
 		STAGE=aside
 		mv "$APP" "$REPLACED" || {
 			restore_app
 			fail "Could not move the installed VaultSync for Mac aside — nothing was changed."
 		}
+		# And what was set aside: something else that took the place in the
+		# instant after that look goes back (only into an empty place), and
+		# is never replaced.
+		if [ -L "$REPLACED" ] || [ "$(bundle_id "$REPLACED")" != "$APP_ID" ]; then
+			restore_app
+			fail "Something else was put at $APP while VaultSync for Mac was being installed — it was not replaced. Run the setup again once that is done."
+		fi
 	fi
 	STAGE=placing
 	if ! mv "$new" "$APP"; then
@@ -827,12 +898,34 @@ install_app() {
 		fail "Could not install VaultSync for Mac into $2 — nothing was installed."
 	fi
 	if [ -e "$APP/$APP_NAME" ] || [ -L "$APP/$APP_NAME" ]; then
-		# Something took the app's place after the checks above — another
-		# setup at the same time, say — and mv put this app inside it. Taken
-		# back out; what stands there is not this run's, so nothing removes
-		# it, and the app set aside stays where it is.
-		mv "$APP/$APP_NAME" "$new" 2>/dev/null ||
-			warn "The new VaultSync for Mac could not be taken back out of $APP — it is at $APP/$APP_NAME."
+		# VaultSync for Mac holds no entry of its own name at its top, so
+		# one there says the move went inside something that took the
+		# app's place after the checks above — another setup at the same
+		# time, say. The update stops, and the app set aside stays where
+		# it is. Taken back out only when it carries this run's inode; one
+		# that cannot be told to be this run's is left as it is. Nothing at that name: the move put
+		# this app at the place, as it reported, and the update goes on —
+		# also when the look at the place cannot tell whose the app there
+		# is: one not known to be this run's is only never removed.
+		nested=$(inode_of "$APP/$APP_NAME") || nested=""
+		if [ -n "$nested" ] && [ "$nested" = "$NEW_INODE" ]; then
+			# Taken out into a folder of its own beside the place — never
+			# into the unpack folder, which the exit removes — and removed
+			# only once it carries this run's inode there: what another hand
+			# put at that name in the instant since the look stays there,
+			# and is named.
+			held=$(mktemp -d "$2/.$APP_NAME.held.XXXXXXXX") || held=""
+			if [ -z "$held" ] || ! mv "$APP/$APP_NAME" "$held/$APP_NAME" 2>/dev/null; then
+				[ -z "$held" ] || rmdir "$held" 2>/dev/null || true
+				warn "The new VaultSync for Mac could not be taken back out of $APP — it is at $APP/$APP_NAME."
+			elif [ "$(inode_of "$held/$APP_NAME" || echo none)" = "$NEW_INODE" ]; then
+				rm -rf "$held"
+			else
+				warn "What was at $APP/$APP_NAME when this setup took its app back out is not known to be that app — it was kept at $held/$APP_NAME."
+			fi
+		else
+			warn "What is at $APP/$APP_NAME is not known to be the VaultSync for Mac this setup was installing — it was left as it is."
+		fi
 		STAGE=""
 		if [ -n "$REPLACED" ] && { [ -e "$REPLACED" ] || [ -L "$REPLACED" ]; }; then
 			warn "The VaultSync for Mac installed before is at $REPLACED."
@@ -845,6 +938,7 @@ install_app() {
 	UNPACKED=""
 	ASIDE=""
 	REPLACED=""
+	NEW_INODE=""
 }
 
 # --- 2) Hub ------------------------------------------------------------------

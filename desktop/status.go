@@ -107,8 +107,10 @@ func (a *app) status(ctx context.Context) error {
 		fmt.Fprintf(w, "VaultSync %s — sync engine Syncthing %s\n", version, installed)
 		// What installs the pin depends on what the service runs: this
 		// build tries it at its next start; anything else needs setup with
-		// this one.
-		if self, err := ownProgram(a.appEnv); err == nil && a.svc.installed() && a.serviceRunsThisBuild(self) {
+		// this one. Which build runs is what the service's agent says, not
+		// the files at the programs' paths (#416, decision 093); without
+		// an answer, setup is what is sure to install it.
+		if a.svc.installed() && a.serviceSaysThisBuild(ctx) {
 			fmt.Fprintf(w, "Note: this VaultSync brings Syncthing %s, which its background service tries to install at its next start — vaultsync stop, then vaultsync start.\n", strings.TrimPrefix(syncthingVersion, "v"))
 		} else {
 			fmt.Fprintf(w, "Note: this VaultSync brings Syncthing %s, which vaultsync setup installs.\n", strings.TrimPrefix(syncthingVersion, "v"))
@@ -179,9 +181,12 @@ func (a *app) status(ctx context.Context) error {
 			fmt.Fprintln(w, "Background service: stopped — vaultsync start resumes it")
 		}
 	}
+	// An older build's service on the copy parks and notes nothing (054):
+	// "will not stop it" would say it syncs. The older note says what is
+	// (#281).
 	if note := a.parkedNote(); note != "" && !gone {
 		fmt.Fprintln(w, "  It does not sync: "+note)
-	} else if note := a.copyBesideAppNote(gone); note != "" {
+	} else if note := a.copyBesideAppNote(gone); note != "" && !older {
 		fmt.Fprintln(w, note)
 	}
 	st, err := loadState(a.lay.State)
