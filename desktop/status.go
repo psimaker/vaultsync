@@ -103,7 +103,14 @@ func (a *app) status(ctx context.Context) error {
 	// (#267, decision 078).
 	if recErr == nil && a.engineToKeep(rec) {
 		fmt.Fprintf(w, "VaultSync %s — sync engine Syncthing %s\n", version, strings.TrimPrefix(rec.Syncthing.Version, "v"))
-		fmt.Fprintf(w, "Note: this VaultSync brings Syncthing %s, which the next start of VaultSync tries to install — vaultsync stop, then vaultsync start.\n", strings.TrimPrefix(syncthingVersion, "v"))
+		// What installs the pin depends on what the service runs: this
+		// build tries it at its next start; anything else needs setup with
+		// this one.
+		if self, err := ownProgram(a.appEnv); err == nil && a.svc.installed() && a.serviceRunsThisBuild(self) {
+			fmt.Fprintf(w, "Note: this VaultSync brings Syncthing %s, which its background service tries to install at its next start — vaultsync stop, then vaultsync start.\n", strings.TrimPrefix(syncthingVersion, "v"))
+		} else {
+			fmt.Fprintf(w, "Note: this VaultSync brings Syncthing %s, which vaultsync setup installs.\n", strings.TrimPrefix(syncthingVersion, "v"))
+		}
 	} else {
 		fmt.Fprintf(w, "VaultSync %s — sync engine Syncthing %s\n", version, strings.TrimPrefix(syncthingVersion, "v"))
 	}

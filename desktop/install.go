@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -40,6 +41,28 @@ type installer struct {
 	pin     syncthingPin
 	binDir  string // where `syncthing` lands
 	client  *http.Client
+	// stallAfter > 0: a download that makes no progress that long — no
+	// answer, or no byte — fails with errDownloadStalled. A run that has an
+	// engine to keep sets it (#267): a slow download that goes on finishes.
+	stallAfter time.Duration
+}
+
+// errDownloadStalled ends a download that made no progress for its
+// installer's stallAfter (#267).
+var errDownloadStalled = errors.New("the download made no progress")
+
+// progressReader tells of each read that brought a byte.
+type progressReader struct {
+	r        io.Reader
+	progress func()
+}
+
+func (p progressReader) Read(b []byte) (int, error) {
+	n, err := p.r.Read(b)
+	if n > 0 {
+		p.progress()
+	}
+	return n, err
 }
 
 // newInstaller is a variable so that a test can install from its own
@@ -127,6 +150,24 @@ func (in installer) install(ctx context.Context, replace func(binSum string) err
 }
 
 func (in installer) download(ctx context.Context, dst *os.File) (string, error) {
+	// A watchdog, where the installer has one, ends a download that makes no
+	// progress: the answer and every byte read set it back (#267).
+	var stalled atomic.Bool
+	progress := func() {}
+	if in.stallAfter > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(ctx)
+		defer cancel()
+		watchdog := time.AfterFunc(in.stallAfter, func() { stalled.Store(true); cancel() })
+		defer watchdog.Stop()
+		progress = func() { watchdog.Reset(in.stallAfter) }
+	}
+	failed := func(err error) error {
+		if stalled.Load() {
+			return fmt.Errorf("download %s: %w for %s", in.pin.archive, errDownloadStalled, in.stallAfter)
+		}
+		return fmt.Errorf("download %s: %w", in.pin.archive, err)
+	}
 	url := strings.TrimSuffix(in.baseURL, "/") + "/" + in.pin.archive
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -134,8 +175,9 @@ func (in installer) download(ctx context.Context, dst *os.File) (string, error) 
 	}
 	resp, err := in.client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("download %s: %w", in.pin.archive, err)
+		return "", failed(err)
 	}
+	progress()
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("download %s: HTTP %d", in.pin.archive, resp.StatusCode)
@@ -144,9 +186,9 @@ func (in installer) download(ctx context.Context, dst *os.File) (string, error) 
 		return "", fmt.Errorf("download %s: %d bytes is larger than any pinned archive", in.pin.archive, resp.ContentLength)
 	}
 	h := sha256.New()
-	n, err := io.Copy(io.MultiWriter(dst, h), io.LimitReader(resp.Body, maxArchiveBytes+1))
+	n, err := io.Copy(io.MultiWriter(dst, h), progressReader{io.LimitReader(resp.Body, maxArchiveBytes+1), progress})
 	if err != nil {
-		return "", fmt.Errorf("download %s: %w", in.pin.archive, err)
+		return "", failed(err)
 	}
 	if n > maxArchiveBytes {
 		return "", fmt.Errorf("download %s: larger than any pinned archive", in.pin.archive)

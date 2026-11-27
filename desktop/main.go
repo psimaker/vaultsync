@@ -22,6 +22,7 @@ import (
 	"io/fs"
 	"log"
 	"maps"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -1259,21 +1260,23 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 		return err
 	}
 	defer unlock()
+	kept := false
 	sum, sumErr := fileSHA256(a.lay.Syncthing)
 	if st.Syncthing.Version != syncthingVersion || sumErr != nil || sum != st.Syncthing.BinarySHA256 {
 		// Missing, another version, or changed since it was installed:
 		// install the pinned one again (verified against the checksum).
 		logf("vaultsync %s: installing Syncthing %s", version, syncthingVersion)
-		// An older engine its record names, unchanged and with its config,
-		// runs on should the pin fail to install (#267, decision 078):
-		// nothing syncs while the attempt runs, so it is bounded then.
-		keep := a.engineToKeep(st)
-		ictx, cancel := ctx, context.CancelFunc(func() {})
+		// The service runs on with an older engine its record names,
+		// unchanged and with its config, should the pin fail to install
+		// (#267, decision 078); a run in a terminal ends and says why, as
+		// setup does, to the person who started it. Nothing syncs while the
+		// attempt runs, so a download that makes no progress ends then.
+		keep := serviceMode && a.engineToKeep(st)
+		stall := time.Duration(0)
 		if keep {
-			ictx, cancel = context.WithTimeout(ctx, keepEngineInstallWait)
+			stall = keepEngineStallWait
 		}
-		got, err := a.installPin(ictx)
-		cancel()
+		got, err := a.installPin(ctx, stall)
 		switch {
 		case err == nil:
 			st.Syncthing.Version, st.Syncthing.BinarySHA256 = syncthingVersion, got.SHA256
@@ -1285,6 +1288,7 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 			// Not stopped, no build missing for this computer, and the
 			// engine hashed again — a failed install leaves it as it was,
 			// and only that very engine runs on. The record stays.
+			kept = true
 			logf("vaultsync %s: Syncthing %s could not be installed — %s; the installed Syncthing %s runs on, and the next start tries again (vaultsync stop, then vaultsync start)", version, strings.TrimPrefix(syncthingVersion, "v"), installFailureSummary(err), strings.TrimPrefix(st.Syncthing.Version, "v"))
 		default:
 			unlockSetup()
@@ -1346,8 +1350,13 @@ func (a *app) run(ctx context.Context, args []string) (retErr error) {
 			return err
 		}
 	}
-	if err := a.keepCopyAtAppBuild(); err != nil {
-		logf("VaultSync's own copy could not be brought to the app's build — %s", serviceSummary(err))
+	// The copy follows the app's build where this build has taken over:
+	// with its engine kept, it has not — the copy and agent.json's format
+	// stay as they were until the pin is installed (#264, #267).
+	if !kept {
+		if err := a.keepCopyAtAppBuild(); err != nil {
+			logf("VaultSync's own copy could not be brought to the app's build — %s", serviceSummary(err))
+		}
 	}
 	unlockSetup()
 	logf("vaultsync %s: running the sync engine", version)
@@ -1527,18 +1536,21 @@ func (a *app) olderNote(st agentState, loadErr error) string {
 	return a.olderFact(st, loadErr) + " Nothing was changed — run the setup link to get the current VaultSync."
 }
 
-// keepEngineInstallWait bounds a run's attempt to install its pin where an
-// engine is there to keep (#267, decision 078): the download client waits up
-// to ten minutes on a connection that never answers, and no engine runs
-// meanwhile. A test shortens it.
-var keepEngineInstallWait = 2 * time.Minute
+// keepEngineStallWait ends a run's attempt to install its pin where an
+// engine is there to keep, once the download makes no progress that long
+// (#267, decision 078): the download client alone waits up to ten minutes on
+// a connection that never answers, and no engine runs meanwhile. A slow
+// download that goes on is not cut. A test shortens it.
+var keepEngineStallWait = 30 * time.Second
 
-// installPin installs this build's pinned Syncthing into bin.
-func (a *app) installPin(ctx context.Context) (installedEngine, error) {
+// installPin installs this build's pinned Syncthing into bin; stallAfter > 0
+// ends a download that makes no progress that long.
+func (a *app) installPin(ctx context.Context, stallAfter time.Duration) (installedEngine, error) {
 	in, err := newInstaller(a.lay.Bin, a.goos, runtime.GOARCH)
 	if err != nil {
 		return installedEngine{}, err
 	}
+	in.stallAfter = stallAfter
 	return in.install(ctx, nil)
 }
 
@@ -1564,13 +1576,20 @@ func (a *app) engineToKeep(st agentState) bool {
 // with no path or address, for the line a run logs when it keeps its engine
 // (#267).
 func installFailureSummary(err error) string {
+	var ue *url.Error
 	var pe *fs.PathError
 	var le *os.LinkError
 	var se *os.SyscallError
 	switch {
-	case errors.Is(err, context.DeadlineExceeded):
-		return "the download did not finish within " + keepEngineInstallWait.String()
-	case errors.Is(err, ErrChecksumMismatch), errors.As(err, &pe), errors.As(err, &le), errors.As(err, &se):
+	case errors.Is(err, errDownloadStalled):
+		return "the download made no progress for " + keepEngineStallWait.String()
+	case errors.Is(err, ErrChecksumMismatch):
+		return serviceSummary(err)
+	case errors.As(err, &ue):
+		// Before the file errors: a refused or unreachable address wraps a
+		// system call's error, and is the download's trouble all the same.
+		return "the download did not get through"
+	case errors.As(err, &pe), errors.As(err, &le), errors.As(err, &se):
 		return serviceSummary(err)
 	}
 	return "the download did not get through"

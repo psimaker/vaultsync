@@ -433,15 +433,20 @@ var keptEnginePins = map[string]syncthingPin{
 }
 
 // The older engine a run keeps — Syncthing at keepEngineFrom — runs under
-// this agent as its own: the run starts it where this build's pin cannot be
-// installed, and it pairs with a Hub and syncs both ways, the agent editing
-// its config through the engine's API as pairing does (#267). Set
-// VAULTSYNC_DESKTOP_SYNCTHING_KEPT_ARCHIVE to that version's archive for
-// this platform.
+// this agent as its own: the service starts it where this build's pin cannot
+// be installed, and it pairs with a Hub on the current pin's engine and syncs
+// both ways, the agent editing its config through the engine's API as
+// pairing does (#267). Set VAULTSYNC_DESKTOP_SYNCTHING_KEPT_ARCHIVE to that
+// version's archive for this platform, and VAULTSYNC_DESKTOP_SYNCTHING_ARCHIVE
+// to the pinned one.
 func TestIssue267_E2EAKeptOlderEnginePairsAndSyncs(t *testing.T) {
 	archivePath := os.Getenv("VAULTSYNC_DESKTOP_SYNCTHING_KEPT_ARCHIVE")
-	if archivePath == "" {
-		t.Skip("set VAULTSYNC_DESKTOP_SYNCTHING_KEPT_ARCHIVE to the Syncthing " + keepEngineFrom + " archive for this platform")
+	pinArchivePath := os.Getenv("VAULTSYNC_DESKTOP_SYNCTHING_ARCHIVE")
+	if archivePath == "" || pinArchivePath == "" {
+		t.Skip("set VAULTSYNC_DESKTOP_SYNCTHING_KEPT_ARCHIVE to the Syncthing " + keepEngineFrom + " archive for this platform, and VAULTSYNC_DESKTOP_SYNCTHING_ARCHIVE to the pinned one")
+	}
+	if keepEngineFrom == syncthingVersion {
+		t.Skip("this build keeps no older engine: keepEngineFrom is the pin")
 	}
 	pin, ok := keptEnginePins[runtime.GOOS+"/"+runtime.GOARCH]
 	if !ok {
@@ -452,7 +457,7 @@ func TestIssue267_E2EAKeptOlderEnginePairsAndSyncs(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
-	inATerminal(t)
+	asTheService(t)
 
 	tmp, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -489,7 +494,24 @@ func TestIssue267_E2EAKeptOlderEnginePairsAndSyncs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// This build's pin cannot be installed; the run keeps the older engine.
+	// The Hub runs the current pin's engine, as a Hub in the field does:
+	// only this computer's engine is the kept one.
+	hubIn, err := newInstaller(filepath.Join(tmp, "hub-bin"), runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinData, err := os.ReadFile(pinArchivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hubIn.baseURL = serveArchive(t, hubIn.pin.archive, pinData).URL
+	hubEngine, err := hubIn.install(ctx, nil)
+	if err != nil {
+		t.Fatalf("installing the pinned Syncthing for the Hub: %v", err)
+	}
+
+	// This build's pin cannot be installed; the service keeps the older
+	// engine.
 	pinServedBy(t, http.NotFound)
 	runtimeDir := shortDir(t)
 	env := envOf(map[string]string{"XDG_RUNTIME_DIR": runtimeDir})
@@ -524,7 +546,7 @@ func TestIssue267_E2EAKeptOlderEnginePairsAndSyncs(t *testing.T) {
 	if v := e2eEngineVersion(t, ctx, prep, st); v != keepEngineFrom {
 		t.Fatalf("the engine that runs is Syncthing %s, not the kept %s", v, keepEngineFrom)
 	}
-	e2ePairAndSync(t, ctx, home, lay, client, got.Path)
+	e2ePairAndSync(t, ctx, home, lay, client, hubEngine.Path)
 }
 
 // e2eEngineVersion asks the engine on its loopback API which Syncthing it is.

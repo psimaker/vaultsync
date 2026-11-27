@@ -165,7 +165,8 @@ agent uses also raises `keepEngineFrom` to the new pin (decision 078): a run
 then keeps no older engine when the new pin cannot be installed. Otherwise
 `keepEngineFrom` stays at a version whose archive passed
 `TestIssue267_E2EAKeptOlderEnginePairsAndSyncs`
-(`VAULTSYNC_DESKTOP_SYNCTHING_KEPT_ARCHIVE`). First verify
+(`VAULTSYNC_DESKTOP_SYNCTHING_KEPT_ARCHIVE`; CI's Desktop Syncthing E2E fetches
+that version's archive from `keepEngineFrom`). First verify
 the release's `sha256sum.txt.asc` with Syncthing's release key
 (`curl -fsSL https://syncthing.net/release-key.txt | gpg --import`, then
 `gpg --verify sha256sum.txt.asc`). From v2.1.6 on the file is signed by

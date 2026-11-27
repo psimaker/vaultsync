@@ -306,9 +306,9 @@ func (e engine) superviseLocked(ctx context.Context, st agentState, logf func(st
 }
 
 // runOnce starts the engine and waits for it to exit (or stops it when ctx
-// ends). It returns the engine's exit code.
-// runOnce runs the engine once; running is the Syncthing that runs — the
-// pin, or the older engine a run kept (#267) — for the log. Empty: the pin.
+// ends). It returns the engine's exit code. running is the Syncthing that
+// runs, for the log: the pin, or the older engine a run kept (#267); empty
+// is the pin.
 func (e engine) runOnce(ctx context.Context, guiPort int, running string, logf func(string, ...any)) (int, error) {
 	if running == "" {
 		running = syncthingVersion
