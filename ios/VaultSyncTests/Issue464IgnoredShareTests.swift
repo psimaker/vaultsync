@@ -120,6 +120,8 @@ extension EngineBridgeSuites {
             let removedDefaults = TestSupport.makeIsolatedDefaults(label: "issue464")
             let manager = SyncthingManager()
             manager._testUseRemoval(bridge: { _ in nil }, defaults: removedDefaults)
+            // As while the poll runs, which reads the offers again.
+            manager._testSetRunning(true)
 
             let setAside = Self.offer("issue464-\(UUID().uuidString)")
             let removed = Self.offer("issue464-removed-\(UUID().uuidString)", "Removed")
@@ -189,11 +191,90 @@ extension EngineBridgeSuites {
                 vaultManager: VaultManager(),
                 subscriptionManager: SubscriptionManager()
             )
+            manager._testSetRunning(true)
             manager._testApplyPolledPendingRead(.unreadable)
             let item = viewModel.items.first { $0.requirement == .firstShareDetectedOrAccepted }
             #expect(item?.isComplete == false)
             #expect(item?.description == SyncthingManager.pendingFoldersUnreadableNote)
             #expect(item?.remediation.contains("Share your Obsidian vault") != true)
+        }
+
+        @Test("The notice that the list could not be read shows only while the manager polls, which reads it again")
+        func noticeOnlyWhilePolling() {
+            TestSupport.resetSyncthingState()
+            defer { TestSupport.resetSyncthingState() }
+            let manager = SyncthingManager()
+
+            // Not polling: nothing would end the notice, and the engine that
+            // does not run has its own card.
+            manager._testApplyPolledPendingRead(.unreadable)
+            #expect(!manager.pendingFoldersUnreadable)
+            #expect(!manager.pendingSharesNeedAttention)
+
+            manager._testSetRunning(true)
+            manager._testApplyPolledPendingRead(.unreadable)
+            #expect(manager.pendingFoldersUnreadable)
+            // The rating prompt waits while it shows (decision 067).
+            #expect(manager.pendingSharesNeedAttention)
+
+            manager.resetForRestart()
+            #expect(!manager.pendingFoldersUnreadable)
+        }
+
+        @Test("While the list cannot be read, nothing is accepted from the rows last read, and a tap is told to try again")
+        func nothingIsAcceptedFromTheLastRowsRead() {
+            let offer = Self.offer("issue464-\(UUID().uuidString)")
+            var unreadable = true
+            var accepted: [String] = []
+            let coordinator = ShareAcceptCoordinator(environment: ShareAcceptCoordinator.Environment(
+                settled: { true },
+                vaultAccessible: { true },
+                pendingFolders: { [offer] },
+                autoAcceptEligible: { [offer] },
+                accept: { folder, _ in
+                    accepted.append(folder.id)
+                    return .accepted
+                },
+                acceptIntoTarget: { folder, _ in
+                    accepted.append(folder.id)
+                    return nil
+                },
+                unignorePendingFolder: { _ in },
+                ignorePendingFolder: { _ in },
+                offersUnreadable: { unreadable }
+            ))
+
+            coordinator.runAutomaticPass()
+            coordinator.accept(offer, source: .automatic)
+            #expect(coordinator.alertMessage == nil)
+            coordinator.accept(offer, source: .manual)
+            #expect(coordinator.alertMessage == SyncthingManager.pendingFoldersUnreadableTapNote)
+            coordinator.alertMessage = nil
+            coordinator.retry(offer)
+            #expect(coordinator.alertMessage == SyncthingManager.pendingFoldersUnreadableTapNote)
+            #expect(coordinator.acceptManually(folder: offer, intoTargetNamed: "Elsewhere") == SyncthingManager.pendingFoldersUnreadableTapNote)
+            #expect(accepted.isEmpty)
+            #expect(coordinator.pendingShareFailures.isEmpty, "no failure card beside the notice")
+
+            // A list is read again: the pass goes on.
+            unreadable = false
+            coordinator.runAutomaticPass()
+            #expect(accepted == [offer.id])
+        }
+
+        @Test("The Hub step says the shares could not be read instead of waiting for one")
+        func hubStepSaysTheSharesCouldNotBeRead() {
+            func status(configured: Set<String> = [], pending: Set<String> = [], unreadable: Bool) -> HubShareHandoff {
+                HubShareHandoff.status(
+                    folderID: "vs-a", configuredFolderIDs: configured, pendingFolderIDs: pending,
+                    autoAcceptEligibleIDs: pending, recordedFailureIDs: [], obsidianConnected: true,
+                    offersUnreadable: unreadable
+                )
+            }
+            #expect(status(unreadable: true) == .offersUnreadable)
+            #expect(status(pending: ["vs-a"], unreadable: true) == .offersUnreadable)
+            #expect(status(configured: ["vs-a"], unreadable: true) == .syncing)
+            #expect(status(unreadable: false) == .waitingForShare)
         }
 
         @Test("refreshPendingFolders: an engine that stops during the read, and a failed read, keep the share set aside; a running engine's list cuts it")
@@ -213,6 +294,8 @@ extension EngineBridgeSuites {
             // Not attached: no poll reads the offers, only the refresh after
             // each accept does.
             let manager = SyncthingManager()
+            // Counted as polling, so a failed read is said; no poll runs.
+            manager._testSetRunning(true)
             let setAside = Self.offer("issue464-\(UUID().uuidString)")
             manager._testSetPendingFolders([setAside])
             manager.ignorePendingFolder(id: setAside.id)

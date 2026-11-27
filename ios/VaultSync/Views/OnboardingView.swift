@@ -143,6 +143,12 @@ struct OnboardingView: View {
                 shareAccept.runAutomaticPass()
             }
         }
+        .onChange(of: syncthingManager.pendingFoldersUnreadable) { _, unreadable in
+            // Same trigger as ContentView (decision 015, #464).
+            if !unreadable {
+                shareAccept.runAutomaticPass()
+            }
+        }
         .onChange(of: syncthingManager.selectedFolderHidesVaultsFromObsidian) { _, hides in
             // Same trigger as ContentView (decision 015): what waited only
             // for the selected folder goes on (#270).

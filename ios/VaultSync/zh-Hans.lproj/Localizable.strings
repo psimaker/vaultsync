@@ -1057,3 +1057,4 @@
 
 /* The offered shares could not be read (#464) */
 "VaultSync could not read the shares offered to this iPhone just now. It tries again in a moment." = "VaultSync 暂时无法读取提供给此 iPhone 的共享。稍后会再试一次。";
+"VaultSync could not read the shares offered to this iPhone just now. Try again in a moment." = "VaultSync 暂时无法读取提供给此 iPhone 的共享。请稍后再试。";

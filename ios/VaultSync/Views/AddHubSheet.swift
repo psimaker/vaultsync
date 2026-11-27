@@ -669,7 +669,8 @@ private struct HubDoneStep: View {
             pendingFolderIDs: Set(syncthingManager.pendingFolders.map(\.id)),
             autoAcceptEligibleIDs: Set(syncthingManager.autoAcceptEligiblePendingFolders.map(\.id)),
             recordedFailureIDs: Set(shareAccept.pendingShareFailures.keys),
-            obsidianConnected: vaultManager.isAccessible
+            obsidianConnected: vaultManager.isAccessible,
+            offersUnreadable: syncthingManager.pendingFoldersUnreadable
         )
     }
 
@@ -691,9 +692,10 @@ private struct HubDoneStep: View {
                 .padding(.vertical, VaultSpacing.s)
                 .accessibilityElement(children: .combine)
             } else {
+                let needsAttention = state == .needsDecision || state == .waitingForObsidian || state == .offersUnreadable
                 VaultHeroHeader(
-                    tone: state == .syncing ? .success : (state == .needsDecision || state == .waitingForObsidian ? .attention : .accent),
-                    systemImage: state == .syncing ? "checkmark" : (state == .needsDecision || state == .waitingForObsidian ? "exclamationmark" : "arrow.down"),
+                    tone: state == .syncing ? .success : (needsAttention ? .attention : .accent),
+                    systemImage: state == .syncing ? "checkmark" : (needsAttention ? "exclamationmark" : "arrow.down"),
                     title: title(state, label: label),
                     subtitle: subtitle(state, label: label),
                     busy: state == .waitingForShare || state == .accepting
@@ -739,6 +741,8 @@ private struct HubDoneStep: View {
                 : L10n.tr("It needs your decision — review it under Pending Shares on the Sync tab.")
         case .syncing:
             return L10n.tr("It syncs with your Hub from now on.")
+        case .offersUnreadable:
+            return SyncthingManager.pendingFoldersUnreadableNote
         }
     }
 }

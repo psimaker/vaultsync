@@ -492,6 +492,9 @@ enum HubShareHandoff: Equatable {
     case needsDecision
     /// The vault is configured on this iPhone.
     case syncing
+    /// The offers could not be read just now (#464): whether the share has
+    /// arrived is not known, and nothing is accepted until it is.
+    case offersUnreadable
 
     static func status(
         folderID: String,
@@ -499,9 +502,11 @@ enum HubShareHandoff: Equatable {
         pendingFolderIDs: Set<String>,
         autoAcceptEligibleIDs: Set<String>,
         recordedFailureIDs: Set<String>,
-        obsidianConnected: Bool
+        obsidianConnected: Bool,
+        offersUnreadable: Bool = false
     ) -> HubShareHandoff {
         if configuredFolderIDs.contains(folderID) { return .syncing }
+        if offersUnreadable { return .offersUnreadable }
         guard pendingFolderIDs.contains(folderID) else { return .waitingForShare }
         if recordedFailureIDs.contains(folderID) || !autoAcceptEligibleIDs.contains(folderID) {
             return .needsDecision

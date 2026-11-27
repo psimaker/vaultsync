@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -102,5 +103,61 @@ func TestIssue464_SuccessfulReadWithoutOffersIsStillAnEmptyList(t *testing.T) {
 	raw := GetPendingFoldersJSON()
 	if raw != "[]" {
 		t.Fatalf("GetPendingFoldersJSON() of a running engine without offers = %q, want []", raw)
+	}
+}
+
+// No answer of the file that reads and accepts the offers names a path: the
+// app shows and logs what the bridge answers, and an OS error carries the
+// vault's place on this iPhone (safety rule 6). Each answer that passes an
+// error on is fed one that carries a path. The configuration commit's error
+// is not among them: the engine's configuration answers with folder IDs only.
+func TestIssue464_NoAnswerNamesAPath(t *testing.T) {
+	configDir := testConfigDir(t)
+	if errMsg := StartSyncthing(configDir); errMsg != "" {
+		t.Fatalf("StartSyncthing() failed: %s", errMsg)
+	}
+	const secret = "Vault Of Someone"
+	root := filepath.Join(configDir, secret)
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	namesAPath := func(answer string) bool {
+		return strings.Contains(answer, secret) || strings.Contains(answer, configDir)
+	}
+
+	// The accept's read of the offers.
+	saved := offeringDevicesFor
+	t.Cleanup(func() { offeringDevicesFor = saved })
+	offeringDevicesFor = func(*syncthing.Internals, string) ([]protocol.DeviceID, error) {
+		return nil, &os.PathError{Op: "open", Path: filepath.Join(root, "index-v2", "main.db"), Err: errors.New("input/output error")}
+	}
+	answer := acceptAsDirectChild("issue464-offers", "Offers", filepath.Join(root, "Offers"), false)
+	if answer != "read pending folder offers: input/output error" || namesAPath(answer) {
+		t.Fatalf("accept on a failed read of the offers = %q, want the error without its path", answer)
+	}
+	offeringDevicesFor = saved
+
+	// The accept's read of the target: a file where the folder would be.
+	if err := os.WriteFile(filepath.Join(root, "File"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	answer = acceptAsDirectChild("issue464-file", "File", filepath.Join(root, "File"), false)
+	if !strings.HasPrefix(answer, "read folder path: ") || namesAPath(answer) {
+		t.Fatalf("accept into a file = %q, want the read error without its path", answer)
+	}
+
+	// The accept's creation of the target, in a folder it may not write.
+	if os.Geteuid() == 0 {
+		t.Log("running as root: a folder without write access cannot refuse the creation; that case is left out")
+		return
+	}
+	locked := filepath.Join(root, "Locked")
+	if err := os.MkdirAll(locked, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+	answer = AcceptPendingFolder("issue464-locked", "Locked", filepath.Join(locked, "Vault"), locked, false)
+	if !strings.HasPrefix(answer, "create folder path: ") || namesAPath(answer) {
+		t.Fatalf("accept into a folder it may not write = %q, want the creation error without its path", answer)
 	}
 }

@@ -3,7 +3,6 @@ package bridge
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -51,13 +50,9 @@ func GetPendingFoldersJSON() string {
 
 	pending, err := pendingFoldersRead(stApp.Internals, protocol.EmptyDeviceID)
 	if err != nil {
-		// The engine's database error, without the path an OS error would
-		// carry: the scan reads every offer, so it names no folder or device.
-		var pathErr *os.PathError
-		if errors.As(err, &pathErr) {
-			err = pathErr.Err
-		}
-		return pendingFoldersError("read pending folder offers: " + err.Error())
+		// The scan reads every offer, so the engine's error names no folder
+		// or device; withoutPath drops what an OS error would carry.
+		return pendingFoldersError("read pending folder offers: " + withoutPath(err).Error())
 	}
 
 	if len(pending) == 0 {
@@ -231,12 +226,12 @@ func AcceptPendingFolder(folderID, label, path, root string, allowNonEmpty bool)
 	}
 	offeringDevices, err := offeringDevicesFor(stApp.Internals, folderID)
 	if err != nil {
-		return fmt.Sprintf("read pending folder offers: %v", err)
+		return fmt.Sprintf("read pending folder offers: %v", withoutPath(err))
 	}
 
 	// Ensure folder path exists.
 	if err := os.MkdirAll(path, 0o700); err != nil {
-		return fmt.Sprintf("create folder path: %v", err)
+		return fmt.Sprintf("create folder path: %v", withoutPath(err))
 	}
 
 	// Build device list: local device + all offering devices.
@@ -303,7 +298,7 @@ func nonEmptyTargetError(path string) string {
 		if os.IsNotExist(err) {
 			return ""
 		}
-		return fmt.Sprintf("read folder path: %v", err)
+		return fmt.Sprintf("read folder path: %v", withoutPath(err))
 	}
 	for _, entry := range entries {
 		if !strings.EqualFold(entry.Name(), ".obsidian") {
