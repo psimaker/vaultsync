@@ -445,7 +445,7 @@ func cmdStatus(ctx context.Context, cfg config) error {
 	fmt.Println()
 	fmt.Printf("Vaults (%d):\n", len(vaults))
 	for _, v := range vaults {
-		fmt.Printf("  %-32s %14s   shared with %d device(s)\n", v.Label, fileCount(v.Files), len(v.SharedWith))
+		fmt.Printf("  %-32s %14s   shared with %d device(s)\n", vaultRowName(v), fileCount(v.Files), len(v.SharedWith))
 	}
 	fmt.Println()
 	// Like the connections, when each device was last seen is a hint: a
@@ -481,7 +481,8 @@ func deviceRow(d deviceConfig, connected bool, lastSeen time.Time, lastSeenKnown
 			// Syncthing reports 1970-01-01 for a device it has never seen.
 			state += ", never seen"
 		default:
-			state += ", last seen " + lastSeen.Local().Format("2006-01-02 15:04")
+			// With its zone: the Hub's image has no zone data, so it is UTC there.
+			state += ", last seen " + lastSeen.Local().Format("2006-01-02 15:04 MST")
 		}
 	}
 	return fmt.Sprintf("  %-7s  %-32s %s", shortDeviceID(d.DeviceID), name, state)
@@ -494,9 +495,25 @@ func shortDeviceID(id string) string {
 	return short
 }
 
+// vaultRowName is a vault's name in `status`, cleaned like a device's name
+// beside it (decision 061): a device that creates a vault names it. One
+// that cleans to nothing shows the vault's ID.
+func vaultRowName(v vaultInfo) string {
+	if name := sanitizeName(v.Label); name != "" {
+		return name
+	}
+	return v.ID
+}
+
+// lastSeenWait bounds the read of the device statistics: a hint must not
+// hold up `status`, which the setup link calls in a loop until it answers.
+var lastSeenWait = 3 * time.Second
+
 // readLastSeen returns when Syncthing last saw each device, or nothing when
-// it cannot be read.
+// it cannot be read within lastSeenWait.
 func readLastSeen(ctx context.Context, client *SyncthingClient) map[string]time.Time {
+	ctx, cancel := context.WithTimeout(ctx, lastSeenWait)
+	defer cancel()
 	var stats map[string]struct {
 		LastSeen time.Time `json:"lastSeen"`
 	}

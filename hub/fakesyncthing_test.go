@@ -41,6 +41,7 @@ type fakeSyncthing struct {
 	deviceAddError string               // with failDeviceAdd: the answer's text ("config locked" when empty)
 	lastSeen       map[string]time.Time // device → /rest/stats/device lastSeen; absent: not listed
 	statsFail      bool                 // /rest/stats/device answers 500
+	statsDelay     time.Duration        // /rest/stats/device answers this late (or when the request ends)
 }
 
 const (
@@ -83,6 +84,16 @@ func (f *fakeSyncthing) serve(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("X-API-Key") != f.apiKey {
 		http.Error(w, "Not Authorized", http.StatusForbidden)
 		return
+	}
+	f.mu.Lock()
+	delay := f.statsDelay
+	f.mu.Unlock()
+	if r.URL.Path == "/rest/stats/device" && delay > 0 {
+		select {
+		case <-time.After(delay):
+		case <-r.Context().Done():
+			return
+		}
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()

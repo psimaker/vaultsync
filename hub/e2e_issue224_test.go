@@ -42,6 +42,20 @@ func e2eIssue224Bins(t *testing.T) (hubBin, peerBin string) {
 	return hubBin, peerBin
 }
 
+// e2eIssue224Budget is each test's own time: well under the package's limit
+// in CI (-timeout 6m), so a hang ends in the test's failure and its cleanup
+// ends the engines. A run takes 20 to 40 seconds.
+const e2eIssue224Budget = 2 * time.Minute
+
+// waitFor is waitUntil bounded by the test's own context too.
+func waitFor(ctx context.Context, t *testing.T, what string, timeout time.Duration, cond func() bool) {
+	t.Helper()
+	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < timeout {
+		timeout = time.Until(deadline)
+	}
+	waitUntil(t, what, timeout, cond)
+}
+
 type e2eHub struct {
 	st      *stInstance
 	vaults  string
@@ -74,17 +88,7 @@ func startE2EHub(t *testing.T, ctx context.Context, bin string) *e2eHub {
 // share into dir — or keeps the folder it has when dir is empty.
 func (h *e2eHub) pair(t *testing.T, ctx context.Context, dev *stInstance, name, vault string, create bool, dir string) vaultInfo {
 	t.Helper()
-	code, err := pairing.GenerateCode()
-	if err != nil {
-		t.Fatal(err)
-	}
-	now := time.Now()
-	if _, err := h.store.update(func(st *hubState) error {
-		st.Pairing = &pairingCodeState{Scalar: passwordScalarForCode(code), CreatedAt: now, ExpiresAt: now.Add(pairingCodeTTL)}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
+	code := h.issueCode(t)
 	client := pairing.NewClient(strings.TrimPrefix(h.pairing.URL, "http://"))
 	hello, err := client.Handshake(ctx, code)
 	if err != nil {
@@ -112,6 +116,23 @@ func (h *e2eHub) pair(t *testing.T, ctx context.Context, dev *stInstance, name, 
 	return *reply.Provisioned
 }
 
+// issueCode opens a new pairing code on the Hub, as `vaultsync-hub code` does.
+func (h *e2eHub) issueCode(t *testing.T) string {
+	t.Helper()
+	code, err := pairing.GenerateCode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if _, err := h.store.update(func(st *hubState) error {
+		st.Pairing = &pairingCodeState{Scalar: passwordScalarForCode(code), CreatedAt: now, ExpiresAt: now.Add(pairingCodeTTL)}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return code
+}
+
 // rest sends one request to an instance's API and returns status and body.
 func rest(t *testing.T, ctx context.Context, inst *stInstance, method, path string) (int, []byte) {
 	t.Helper()
@@ -135,7 +156,7 @@ func rescanAndSettle(t *testing.T, ctx context.Context, inst *stInstance, folder
 	if code, body := rest(t, ctx, inst, http.MethodPost, "/rest/db/scan?folder="+url.QueryEscape(folderID)); code != http.StatusOK {
 		t.Fatalf("scan: HTTP %d %s", code, body)
 	}
-	waitUntil(t, "folder "+folderID+" to settle", 60*time.Second, func() bool {
+	waitFor(ctx, t, "folder "+folderID+" to settle", 60*time.Second, func() bool {
 		var st struct {
 			State     string `json:"state"`
 			NeedTotal int64  `json:"needTotalItems"`
@@ -269,7 +290,7 @@ func sortedIDs(ids ...string) []string {
 // they were; the new identity syncs on.
 func TestE2EIssue224_TheOldIdentityGoesAndTheVaultStaysAsItWas(t *testing.T) {
 	hubBin, peerBin := e2eIssue224Bins(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), e2eIssue224Budget)
 	defer cancel()
 	hub := startE2EHub(t, ctx, hubBin)
 
@@ -277,23 +298,23 @@ func TestE2EIssue224_TheOldIdentityGoesAndTheVaultStaysAsItWas(t *testing.T) {
 	oldDir := filepath.Join(t.TempDir(), "hermes-before", "Notes")
 	vault := hub.pair(t, ctx, oldDev, "hermes", "Notes", true, oldDir)
 	hubDir := filepath.Join(hub.vaults, "notes")
-	waitUntil(t, "hermes to connect", 60*time.Second, func() bool { return connectedTo(ctx, hub.st, oldDev.id) })
+	waitFor(ctx, t, "hermes to connect", 60*time.Second, func() bool { return connectedTo(ctx, hub.st, oldDev.id) })
 	if err := os.WriteFile(filepath.Join(oldDir, "from-hermes.md"), []byte("# hermes\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	waitUntil(t, "hermes's note on the Hub", 90*time.Second, func() bool { return fileIs(filepath.Join(hubDir, "from-hermes.md"), "# hermes\n") })
+	waitFor(ctx, t, "hermes's note on the Hub", 90*time.Second, func() bool { return fileIs(filepath.Join(hubDir, "from-hermes.md"), "# hermes\n") })
 
 	// uninstall --remove-data: the engine stops, its identity and database go.
 	oldDev.stop()
-	waitUntil(t, "the Hub to lose the old identity's connection", 30*time.Second, func() bool { return !connectedTo(ctx, hub.st, oldDev.id) })
+	waitFor(ctx, t, "the Hub to lose the old identity's connection", 30*time.Second, func() bool { return !connectedTo(ctx, hub.st, oldDev.id) })
 	if err := os.RemoveAll(oldDev.home); err != nil {
 		t.Fatal(err)
 	}
 	newDev := startSyncthing(t, peerBin, "hermes-new")
 	newDir := filepath.Join(t.TempDir(), "hermes-after", "Notes")
 	hub.pair(t, ctx, newDev, "hermes", "Notes", false, newDir)
-	waitUntil(t, "the new hermes to connect", 60*time.Second, func() bool { return connectedTo(ctx, hub.st, newDev.id) })
-	waitUntil(t, "the vault on the new hermes", 90*time.Second, func() bool { return fileIs(filepath.Join(newDir, "from-hermes.md"), "# hermes\n") })
+	waitFor(ctx, t, "the new hermes to connect", 60*time.Second, func() bool { return connectedTo(ctx, hub.st, newDev.id) })
+	waitFor(ctx, t, "the vault on the new hermes", 90*time.Second, func() bool { return fileIs(filepath.Join(newDir, "from-hermes.md"), "# hermes\n") })
 
 	// What the issue reports: two devices of one name, both on the vault.
 	if got, want := folderDeviceIDs(t, ctx, hub.st, vault.ID), sortedIDs(hub.st.id, oldDev.id, newDev.id); !reflect.DeepEqual(got, want) {
@@ -347,7 +368,7 @@ func TestE2EIssue224_TheOldIdentityGoesAndTheVaultStaysAsItWas(t *testing.T) {
 
 	// The new identity syncs on, both ways.
 	if !connectedTo(ctx, hub.st, newDev.id) {
-		waitUntil(t, "the new hermes to reconnect", 60*time.Second, func() bool { return connectedTo(ctx, hub.st, newDev.id) })
+		waitFor(ctx, t, "the new hermes to reconnect", 60*time.Second, func() bool { return connectedTo(ctx, hub.st, newDev.id) })
 	}
 	if err := os.WriteFile(filepath.Join(newDir, "after-removal.md"), []byte("# after\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -355,8 +376,8 @@ func TestE2EIssue224_TheOldIdentityGoesAndTheVaultStaysAsItWas(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(hubDir, "hub-after-removal.md"), []byte("# hub after\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	waitUntil(t, "the new note on the Hub", 90*time.Second, func() bool { return fileIs(filepath.Join(hubDir, "after-removal.md"), "# after\n") })
-	waitUntil(t, "the Hub's note on the new hermes", 90*time.Second, func() bool { return fileIs(filepath.Join(newDir, "hub-after-removal.md"), "# hub after\n") })
+	waitFor(ctx, t, "the new note on the Hub", 90*time.Second, func() bool { return fileIs(filepath.Join(hubDir, "after-removal.md"), "# after\n") })
+	waitFor(ctx, t, "the Hub's note on the new hermes", 90*time.Second, func() bool { return fileIs(filepath.Join(newDir, "hub-after-removal.md"), "# hub after\n") })
 	if !fileIs(filepath.Join(hubDir, "from-hermes.md"), "# hermes\n") || !fileIs(filepath.Join(newDir, "from-hermes.md"), "# hermes\n") {
 		t.Fatal("the old identity's note is gone")
 	}
@@ -366,13 +387,15 @@ func TestE2EIssue224_TheOldIdentityGoesAndTheVaultStaysAsItWas(t *testing.T) {
 // The Hub closes the connection and sends it nothing: the device's folder, its
 // settings and its files stay as they were, its retries land in the Hub's
 // pending devices, and nothing crosses either way. The vault it was the only
-// device of stays on the Hub with every file. Only a new pairing takes it
-// back, and then what changed on either side in between syncs as after any
-// absence: a deletion made on the device reaches the Hub, which keeps the
-// deleted note in .stversions.
-func TestE2EIssue224_ARemovedDeviceKeepsItsFilesAndComesBackOnlyByPairing(t *testing.T) {
+// device of stays on the Hub with every file. When the Hub's engine is asked
+// to share the vault with it again — what the Hub's Syncthing Web UI does,
+// and what a pairing for that vault asks, which no VaultSync client sends for
+// a vault it already has (the next test) — it shares again, and what changed
+// on either side in between syncs as after any absence: a deletion made on
+// the device reaches the Hub, which keeps the deleted note in .stversions.
+func TestE2EIssue224_ARemovedDeviceKeepsItsFilesAndTheHubSharesAgainWhenAsked(t *testing.T) {
 	hubBin, peerBin := e2eIssue224Bins(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), e2eIssue224Budget)
 	defer cancel()
 	hub := startE2EHub(t, ctx, hubBin)
 
@@ -384,15 +407,15 @@ func TestE2EIssue224_ARemovedDeviceKeepsItsFilesAndComesBackOnlyByPairing(t *tes
 	devDir := filepath.Join(t.TempDir(), "laptop", "Solo")
 	vault := hub.pair(t, ctx, dev, "laptop", "Solo", true, devDir)
 	hubDir := filepath.Join(hub.vaults, "solo")
-	waitUntil(t, "the laptop to connect", 60*time.Second, func() bool { return connectedTo(ctx, hub.st, dev.id) })
+	waitFor(ctx, t, "the laptop to connect", 60*time.Second, func() bool { return connectedTo(ctx, hub.st, dev.id) })
 	if err := os.WriteFile(filepath.Join(devDir, "from-laptop.md"), []byte("# laptop\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(hubDir, "from-hub.md"), []byte("# hub\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	waitUntil(t, "the laptop's note on the Hub", 90*time.Second, func() bool { return fileIs(filepath.Join(hubDir, "from-laptop.md"), "# laptop\n") })
-	waitUntil(t, "the Hub's note on the laptop", 90*time.Second, func() bool { return fileIs(filepath.Join(devDir, "from-hub.md"), "# hub\n") })
+	waitFor(ctx, t, "the laptop's note on the Hub", 90*time.Second, func() bool { return fileIs(filepath.Join(hubDir, "from-laptop.md"), "# laptop\n") })
+	waitFor(ctx, t, "the Hub's note on the laptop", 90*time.Second, func() bool { return fileIs(filepath.Join(devDir, "from-hub.md"), "# hub\n") })
 	rescanAndSettle(t, ctx, dev, vault.ID)
 	rescanAndSettle(t, ctx, hub.st, vault.ID)
 
@@ -415,8 +438,8 @@ func TestE2EIssue224_ARemovedDeviceKeepsItsFilesAndComesBackOnlyByPairing(t *tes
 	if code, body := rest(t, ctx, hub.st, http.MethodDelete, "/rest/config/devices/"+dev.id); code != http.StatusOK {
 		t.Fatalf("remove the laptop: HTTP %d %s", code, body)
 	}
-	waitUntil(t, "the Hub to drop the laptop's connection", 30*time.Second, func() bool { return !connectedTo(ctx, hub.st, dev.id) })
-	waitUntil(t, "the laptop's retry to land in the Hub's pending devices", 90*time.Second, func() bool {
+	waitFor(ctx, t, "the Hub to drop the laptop's connection", 30*time.Second, func() bool { return !connectedTo(ctx, hub.st, dev.id) })
+	waitFor(ctx, t, "the laptop's retry to land in the Hub's pending devices", 90*time.Second, func() bool {
 		var pending map[string]any
 		return hub.st.client.Get(ctx, "/rest/cluster/pending/devices", &pending) == nil && pending[dev.id] != nil
 	})
@@ -466,16 +489,17 @@ func TestE2EIssue224_ARemovedDeviceKeepsItsFilesAndComesBackOnlyByPairing(t *tes
 		t.Fatalf("a note reached the removed laptop from the Hub (%v)", err)
 	}
 
-	// Only a new pairing takes it back; then the absence syncs out.
+	// The Hub is asked to share the vault with it again; then the absence
+	// syncs out.
 	hub.pair(t, ctx, dev, "laptop", "Solo", false, "")
-	waitUntil(t, "the laptop to connect again", 90*time.Second, func() bool { return connectedTo(ctx, hub.st, dev.id) })
-	waitUntil(t, "the laptop's note from the absence on the Hub", 90*time.Second, func() bool {
+	waitFor(ctx, t, "the laptop to connect again", 90*time.Second, func() bool { return connectedTo(ctx, hub.st, dev.id) })
+	waitFor(ctx, t, "the laptop's note from the absence on the Hub", 90*time.Second, func() bool {
 		return fileIs(filepath.Join(hubDir, "while-removed.md"), "# laptop alone\n")
 	})
-	waitUntil(t, "the Hub's note from the absence on the laptop", 90*time.Second, func() bool {
+	waitFor(ctx, t, "the Hub's note from the absence on the laptop", 90*time.Second, func() bool {
 		return fileIs(filepath.Join(devDir, "hub-while-removed.md"), "# hub alone\n")
 	})
-	waitUntil(t, "the laptop's deletion on the Hub", 90*time.Second, func() bool {
+	waitFor(ctx, t, "the laptop's deletion on the Hub", 90*time.Second, func() bool {
 		_, err := os.Stat(filepath.Join(hubDir, "from-hub.md"))
 		return os.IsNotExist(err)
 	})
@@ -485,5 +509,110 @@ func TestE2EIssue224_ARemovedDeviceKeepsItsFilesAndComesBackOnlyByPairing(t *tes
 	}
 	if !fileIs(filepath.Join(hubDir, "from-laptop.md"), "# laptop\n") || !fileIs(filepath.Join(devDir, "from-laptop.md"), "# laptop\n") {
 		t.Fatal("a note that nobody touched changed")
+	}
+}
+
+// Pairing again, as VaultSync's clients pair for a vault they already have,
+// leaves a removed device cut off today (decision 094 (7)). The laptop is
+// asleep when it is removed, wakes, and its owner pairs again:
+//   - VaultSync for Mac and Linux finds the vault already set up and sends
+//     the Hub nothing after the handshake (desktop/pair.go, downloadPlanIn);
+//   - VaultSync on iPhone, with every vault there, only registers: a
+//     Provision without a vault (go/bridge/hubpairing.go, registerOnly).
+//
+// Neither shares the vault again. After the registration the Hub knows the
+// device and lets it connect, but the vault stays shared with the Hub alone,
+// the device's offer waits among the Hub's pending folders, and no note
+// crosses. This pins today's answer: it turns red the day pairing learns to
+// bring such a device back, and moves with that change.
+func TestE2EIssue224_PairingAgainLeavesARemovedDeviceCutOff(t *testing.T) {
+	hubBin, peerBin := e2eIssue224Bins(t)
+	ctx, cancel := context.WithTimeout(context.Background(), e2eIssue224Budget)
+	defer cancel()
+	hub := startE2EHub(t, ctx, hubBin)
+
+	dev := startSyncthing(t, peerBin, "laptop")
+	if err := dev.client.PatchOptions(ctx, map[string]any{"reconnectionIntervalS": 3}); err != nil {
+		t.Fatal(err)
+	}
+	devDir := filepath.Join(t.TempDir(), "laptop", "Solo")
+	vault := hub.pair(t, ctx, dev, "laptop", "Solo", true, devDir)
+	hubDir := filepath.Join(hub.vaults, "solo")
+	waitFor(ctx, t, "the laptop to connect", 60*time.Second, func() bool { return connectedTo(ctx, hub.st, dev.id) })
+	if err := os.WriteFile(filepath.Join(devDir, "from-laptop.md"), []byte("# laptop\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(ctx, t, "the laptop's note on the Hub", 90*time.Second, func() bool { return fileIs(filepath.Join(hubDir, "from-laptop.md"), "# laptop\n") })
+
+	// Asleep: the laptop stops talking to the Hub, and is removed meanwhile.
+	if err := dev.client.PatchDevice(ctx, hub.st.id, map[string]any{"paused": true}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(ctx, t, "the Hub to see the laptop go", 30*time.Second, func() bool { return !connectedTo(ctx, hub.st, dev.id) })
+	if code, body := rest(t, ctx, hub.st, http.MethodDelete, "/rest/config/devices/"+dev.id); code != http.StatusOK {
+		t.Fatalf("remove the laptop: HTTP %d %s", code, body)
+	}
+	if err := dev.client.PatchDevice(ctx, hub.st.id, map[string]any{"paused": false}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(ctx, t, "the woken laptop's retry to land in the Hub's pending devices", 60*time.Second, func() bool {
+		var pending map[string]any
+		return hub.st.client.Get(ctx, "/rest/cluster/pending/devices", &pending) == nil && pending[dev.id] != nil
+	})
+
+	// VaultSync for Mac and Linux: the handshake, then nothing for a vault
+	// that is already set up.
+	client := pairing.NewClient(strings.TrimPrefix(hub.pairing.URL, "http://"))
+	hello, err := client.Handshake(ctx, hub.issueCode(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hello.Vaults) != 1 || hello.Vaults[0].ID != vault.ID {
+		t.Fatalf("the Hub lists %+v", hello.Vaults)
+	}
+	if hasDeviceEntry(t, ctx, hub.st, dev.id) {
+		t.Fatal("a handshake made the removed laptop a device of the Hub again")
+	}
+
+	// VaultSync on iPhone: a registration, without a vault.
+	reply, err := client.Provision(ctx, 1, dev.id, "laptop", "", false)
+	if err != nil || reply.Error != "" || reply.Provisioned != nil {
+		t.Fatalf("the registration: %+v %v", reply, err)
+	}
+	if !hasDeviceEntry(t, ctx, hub.st, dev.id) {
+		t.Fatal("the registration did not make the laptop a device of the Hub")
+	}
+	waitFor(ctx, t, "the registered laptop to connect", 60*time.Second, func() bool { return connectedTo(ctx, hub.st, dev.id) })
+	waitFor(ctx, t, "the laptop's offer of the vault among the Hub's pending folders", 60*time.Second, func() bool {
+		pending, err := hub.st.client.PendingFolders(ctx)
+		if err != nil {
+			return false
+		}
+		for _, d := range pending[vault.ID] {
+			if d == dev.id {
+				return true
+			}
+		}
+		return false
+	})
+	if got := folderDeviceIDs(t, ctx, hub.st, vault.ID); !reflect.DeepEqual(got, []string{hub.st.id}) {
+		t.Fatalf("pairing again shared the vault with %v; if pairing now brings a removed device back, this test moves with it", got)
+	}
+
+	// Nothing crosses in either direction.
+	if err := os.WriteFile(filepath.Join(devDir, "after-pairing-again.md"), []byte("# laptop\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hubDir, "hub-after-pairing-again.md"), []byte("# hub\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rescanAndSettle(t, ctx, dev, vault.ID)
+	rescanAndSettle(t, ctx, hub.st, vault.ID)
+	time.Sleep(10 * time.Second)
+	if _, err := os.Stat(filepath.Join(hubDir, "after-pairing-again.md")); !os.IsNotExist(err) {
+		t.Fatalf("a note reached the Hub from the laptop after pairing again (%v)", err)
+	}
+	if _, err := os.Stat(filepath.Join(devDir, "hub-after-pairing-again.md")); !os.IsNotExist(err) {
+		t.Fatalf("a note reached the laptop from the Hub after pairing again (%v)", err)
 	}
 }

@@ -10,7 +10,7 @@ What the setup link's **2) Hub** and the Hub's compose stack (`hub/scripts/setup
 
 ### Changed
 
-- **`vaultsync-hub status` tells devices apart** ([#224](https://github.com/psimaker/vaultsync/issues/224)) — a computer that runs `vaultsync uninstall --remove-data` and is set up again pairs under a new device identity, and `status` listed the old identity and the new one under the same name, with nothing to tell them apart. Each device's row now begins with its short ID, the first group of its device ID as Syncthing shows it, then its name, then "connected", or "offline" with when the Hub last saw it ("never seen" for a device that never connected). A name is shown cleaned like every name the Hub keeps, so it can neither break its row nor move the short ID. Recorded in decision 094.
+- **`vaultsync-hub status` tells devices apart** ([#224](https://github.com/psimaker/vaultsync/issues/224)) — a computer that runs `vaultsync uninstall --remove-data` and is set up again pairs under a new device identity, and `status` listed the old identity and the new one under the same name, with nothing to tell them apart. Each device's row now begins with its short ID, the first group of its device ID as Syncthing shows it, then its name, then "connected", or "offline" with when the Hub last saw it, with its time zone ("never seen" for a device that never connected). A device's name and a vault's name are shown cleaned like every name the Hub keeps, so neither can break its row or move the short ID. `status` waits at most a few seconds for when each device was last seen. Recorded in decision 094.
 
 ### Fixed
 

@@ -131,7 +131,7 @@ func TestIssue224_StatusTellsTwoDevicesOfOneNameApart(t *testing.T) {
 	// The first group of a device ID is what Syncthing shows as its short ID;
 	// it begins the row and tells one "hermes" from the other.
 	want := []string{
-		fmt.Sprintf("  BBBBBBB  %-32s offline, last seen %s", "hermes", seen.Local().Format("2006-01-02 15:04")),
+		fmt.Sprintf("  BBBBBBB  %-32s offline, last seen %s", "hermes", seen.Local().Format("2006-01-02 15:04 MST")),
 		fmt.Sprintf("  CCCCCCC  %-32s connected", "hermes"),
 	}
 	for i := range want {
@@ -162,7 +162,7 @@ func TestIssue224_StatusSaysWhenAnOfflineDeviceWasLastSeen(t *testing.T) {
 	rows := deviceSection(runStatus(t, fake, srv.URL))
 	want := []string{
 		fmt.Sprintf("  CCCCCCC  %-32s connected", "connected"),
-		fmt.Sprintf("  DDDDDDD  %-32s offline, last seen %s", "seen", seen.Local().Format("2006-01-02 15:04")),
+		fmt.Sprintf("  DDDDDDD  %-32s offline, last seen %s", "seen", seen.Local().Format("2006-01-02 15:04 MST")),
 		fmt.Sprintf("  EEEEEEE  %-32s offline, never seen", "never"),
 		fmt.Sprintf("  FFFFFFF  %-32s offline", "unlisted"),
 	}
@@ -218,6 +218,58 @@ func TestIssue224_ANameCanNeitherBreakNorMoveItsRow(t *testing.T) {
 	for _, r := range out {
 		hidden := r != '\n' && unicode.In(r, unicode.Cc, unicode.Cf, unicode.Zl, unicode.Zp)
 		if hidden {
+			t.Errorf("status printed U+%04X", r)
+		}
+	}
+}
+
+// A stalled statistics read must not hold up status: the setup link runs it
+// in a loop until it answers.
+func TestIssue224_StatusDoesNotWaitLongForTheDeviceStatistics(t *testing.T) {
+	saved := lastSeenWait
+	lastSeenWait = 200 * time.Millisecond
+	t.Cleanup(func() { lastSeenWait = saved })
+	fake, srv := newFakeSyncthing(t, fakeHubID)
+	fake.devices = append(fake.devices, deviceConfig{DeviceID: fakeDeviceID, Name: "hermes"})
+	fake.lastSeen[fakeDeviceID] = time.Now()
+	fake.statsDelay = 20 * time.Second
+
+	start := time.Now()
+	out := runStatus(t, fake, srv.URL)
+	if took := time.Since(start); took > 5*time.Second {
+		t.Fatalf("status took %s with the statistics stalled", took)
+	}
+	if rows := deviceSection(out); len(rows) != 1 || rows[0] != fmt.Sprintf("  BBBBBBB  %-32s offline", "hermes") {
+		t.Errorf("rows with the statistics stalled: %q", rows)
+	}
+	if lines := strings.Split(out, "\n"); len(lines) < 2 || lines[1] != "Device ID:   "+fakeHubID {
+		t.Errorf("the second line must be the Hub's device ID, for setup.sh:\n%s", out)
+	}
+}
+
+// A vault's name is cleaned like the device names beside it (decision 061):
+// a device that creates a vault names it.
+func TestIssue224_AVaultsNameIsCleanedLikeADevicesName(t *testing.T) {
+	fake, srv := newFakeSyncthing(t, fakeHubID)
+	names := []struct{ id, label, shown string }{
+		{"vs-000000000001", "two\u2028lines", "twolines"},
+		{"vs-000000000002", "\u202Eesrever", "esrever"},
+		{"vs-000000000003", "clear\x1b[2J", "clear[2J"},
+		{"vs-000000000004", "\u200b", "vs-000000000004"},
+	}
+	for _, n := range names {
+		fake.folders = append(fake.folders, folderConfig{ID: n.id, Label: n.label, Path: "/var/syncthing/vaults/" + n.id, Devices: []folderDevice{{DeviceID: fakeHubID}}})
+	}
+	out := runStatus(t, fake, srv.URL)
+	_, after, _ := strings.Cut(out, "Vaults (")
+	rows := strings.Split(after, "\n")[1 : 1+len(names)]
+	for i, n := range names {
+		if want := fmt.Sprintf("  %-32s %14s   shared with 0 device(s)", n.shown, "unknown"); rows[i] != want {
+			t.Errorf("vault row %d:\n got %q\nwant %q", i, rows[i], want)
+		}
+	}
+	for _, r := range out {
+		if r != '\n' && unicode.In(r, unicode.Cc, unicode.Cf, unicode.Zl, unicode.Zp) {
 			t.Errorf("status printed U+%04X", r)
 		}
 	}
