@@ -84,12 +84,12 @@ jobs:
         # separate runner needed.
         run: go test -tags noassets ./bridge -count=1
 
-      # The STUN race regression (#152, decision 043) has the race detector
-      # as its only oracle; without -race it just checks that a stop does not
-      # wait for the discovery.
-      - name: Run STUN race regression (race detector)
+      # The fork race regressions — STUN (#152) and NAT-PMP (#195), decision
+      # 043 — have the race detector as their only oracle; without -race they
+      # just check that a stop does not wait for the request in flight.
+      - name: Run fork race regressions (race detector)
         working-directory: go
-        run: go test -race -tags noassets ./bridge -run '^TestIssue152_' -count=1
+        run: go test -race -tags noassets ./bridge -run '^TestIssue(152|195)_' -count=1
 
   notify-tests:
     name: Notify Tests

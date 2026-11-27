@@ -46,4 +46,6 @@
 - A named program that is itself older and from an earlier release; one from this release on refuses in turn and names its own way on.
 - `stop`, `version` and `help` are not refused: they write nothing.
 
+**Amended.** By decision 093 (#416): point 3's bullet on a service that runs this very build no longer holds as written. No look tells whether the service runs this build, since a parked run never answers and the files may have been replaced. The refusal always names the program set up here, names `stop` for `uninstall` and `pause` wherever a service is installed, and where that program is not the one the service starts, `pair`, `pause` and `resume` say what holds if the service runs this build.
+
 **Links.** #281, #264 (PR #274), #276, #380; decisions 053, 054, 077, 078, 085.
