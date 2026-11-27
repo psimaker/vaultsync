@@ -543,6 +543,8 @@ func TestIssue380_SetupOnAComputerThatSyncsAsksForNoCode(t *testing.T) {
 			a, eng, searched := issue380AppWith(t, true, holdHome)
 			if !holdHome {
 				servedWhereTheEngineListens(t, a, eng)
+			} else {
+				theServicesRunAnswers(t, a)
 			}
 			typeLine := func(string) {}
 			if c.terminal {
@@ -609,6 +611,7 @@ func TestIssue380_SetupWithAPairingFlagPairsAsBefore(t *testing.T) {
 	} {
 		t.Run(strings.Join(c.args, " "), func(t *testing.T) {
 			a, _, searched := issue380App(t, true)
+			theServicesRunAnswers(t, a)
 			noTerminal(t)
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
@@ -656,6 +659,7 @@ func TestIssue380_SetupOnAComputerThatSyncsNothingYetPairs(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			a, eng, searched := issue380App(t, false)
+			theServicesRunAnswers(t, a)
 			eng.mu.Lock()
 			c.prepare(eng, a.home)
 			eng.mu.Unlock()
@@ -692,6 +696,7 @@ func TestIssue380_SetupSaysWhatIsPausedAndWhatWaits(t *testing.T) {
 	} {
 		t.Run(fmt.Sprintf("paused %v", c.paused), func(t *testing.T) {
 			a, eng, searched := issue380App(t, true)
+			theServicesRunAnswers(t, a)
 			eng.mu.Lock()
 			for i := range eng.devices {
 				if eng.devices[i].DeviceID == testHubID {
