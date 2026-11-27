@@ -60,6 +60,9 @@ type fakeAgent struct {
 	statusDelay time.Duration
 	// unreadable: status answers 200 with a body that is no report.
 	unreadable bool
+	// early: status answers with the report as it stood when the request
+	// arrived — an agent that read the engine before a change landed.
+	early bool
 }
 
 func newFakeAgent(t *testing.T) *fakeAgent {
@@ -80,6 +83,7 @@ func newFakeAgent(t *testing.T) *fakeAgent {
 		f.mu.Lock()
 		hold, delay := f.statusHold, f.statusDelay
 		f.statusAsks++
+		early, then := f.early, f.status
 		f.mu.Unlock()
 		if hold != nil {
 			select {
@@ -102,6 +106,10 @@ func newFakeAgent(t *testing.T) *fakeAgent {
 		}
 		if f.statusErr != "" {
 			writeJSON(w, 500, map[string]string{"error": f.statusErr})
+			return
+		}
+		if early {
+			writeJSON(w, 200, then)
 			return
 		}
 		writeJSON(w, 200, f.status)
