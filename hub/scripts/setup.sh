@@ -1032,10 +1032,10 @@ epoch_now() {
 	printf '%s' "$epoch"
 }
 
-# How long the wait follows a conversion: an hour. The slowest conversion
-# measured took 11 min 51 s (50,204 files, Syncthing held to a fiftieth of
-# a CPU); an hour is five times that, and still an end for a run nobody
-# watches (a script, a dropped session).
+# How long the wait follows a conversion: an hour. The slowest conversions
+# measured took 11 to 12 1/2 minutes (about 50,000 files, Syncthing held to
+# a fiftieth of a CPU); an hour is about five times that, and still an end
+# for a run nobody watches (a script, a dropped session).
 CONVERSION_WAIT_LIMIT=3600
 
 # The ways a wait during a conversion ends without the Hub answering. None
