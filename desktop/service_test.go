@@ -72,6 +72,10 @@ type fakeRunner struct {
 	// onCall runs at each action call, before it is answered: a test looks
 	// at what the state was when launchd was asked.
 	onCall func(call string)
+	// systemd models the user unit: enable --now, start and restart make it
+	// active, disable --now and stop inactive, and is-active answers from
+	// unitActive as systemctl does (exit 3 for an inactive unit).
+	systemd, unitActive bool
 }
 
 // trayJob is launchd for the menu-bar app's start at login.
@@ -194,6 +198,19 @@ func (f *fakeRunner) run(name string, args ...string) (string, error) {
 	}
 	if name == "launchctl" && strings.Contains(call, "/"+trayLabel) {
 		return f.trayJob(call)
+	}
+	if f.systemd && name == "systemctl" {
+		switch {
+		case strings.HasPrefix(call, "systemctl --user is-active"):
+			if f.unitActive {
+				return "active\n", nil
+			}
+			return "inactive\n", exitErr(3)
+		case strings.HasPrefix(call, "systemctl --user enable --now"), strings.HasPrefix(call, "systemctl --user start"), strings.HasPrefix(call, "systemctl --user restart"):
+			f.unitActive = true
+		case strings.HasPrefix(call, "systemctl --user disable --now"), strings.HasPrefix(call, "systemctl --user stop"):
+			f.unitActive = false
+		}
 	}
 	switch {
 	case strings.HasPrefix(call, "launchctl print"):
@@ -428,7 +445,9 @@ func TestIssue175_SystemdInstallIsIdempotent(t *testing.T) {
 		t.Fatalf("stop: %v %v", err, run.calls)
 	}
 	run.calls = nil
-	if _, err := svc.start(); err != nil || strings.Join(run.calls, "|") != "systemctl --user enable --now vaultsync.service" {
+	// One look first, which tells a unit that was already active (#290);
+	// the action is the same.
+	if _, err := svc.start(); err != nil || strings.Join(run.calls, "|") != "systemctl --user is-active vaultsync.service|systemctl --user enable --now vaultsync.service" {
 		t.Fatalf("start: %v %v", err, run.calls)
 	}
 	run.calls = nil

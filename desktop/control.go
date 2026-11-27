@@ -641,9 +641,12 @@ func (a *app) controlClient(st agentState) *control.Client {
 }
 
 // How long start waits for the agent of the run it started, or left alone,
-// to answer: startAnswerLooks looks, startAnswerEvery apart, each ask with
-// startAskTimeout. A run of this build answers within a second of its
-// start where its engine is installed. Variables for the tests.
+// to answer: startAnswerLooks looks, startAnswerEvery apart (about 10 s),
+// each ask with startAskTimeout. An ask that gets no answer in its time
+// ends the wait, so one wait lasts at most about 20 s (39 quick misses,
+// then one silent ask); decision 085's guard may wait once more. A run of
+// this build answers within a second of its start where its engine is
+// installed. Variables for the tests.
 var (
 	startAnswerLooks = 40
 	startAnswerEvery = 250 * time.Millisecond

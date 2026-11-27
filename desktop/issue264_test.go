@@ -270,10 +270,9 @@ func runsAs(t *testing.T, a *app, self, what string) {
 // every device), nor the current build's start "running again" beside an
 // older one that parks.
 func TestIssue264_StartJudgesTheServiceByWhatItRuns(t *testing.T) {
-	// systemd says the started unit runs.
-	active := func() *fakeRunner {
-		return &fakeRunner{answers: map[string]string{"systemctl --user is-active vaultsync.service": "active"}}
-	}
+	// systemd says the started unit runs (and, since #290, that it was not
+	// running before the start).
+	active := func() *fakeRunner { return &fakeRunner{systemd: true} }
 	text := func(a *app) string { return a.out.(*bytes.Buffer).String() }
 
 	// This very build, older than what is set up: it does not sync.

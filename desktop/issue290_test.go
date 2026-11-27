@@ -187,10 +187,10 @@ func darwinServiceOfThisBuild(t *testing.T) (*app, *fakeRunner) {
 }
 
 // linuxServiceOfThisBuild is a Linux computer whose unit runs VaultSync's
-// own copy, this very build, and whose manager says the unit is active.
+// own copy, this very build: inactive until start enables it.
 func linuxServiceOfThisBuild(t *testing.T) (*app, *fakeRunner) {
 	t.Helper()
-	run := &fakeRunner{answers: map[string]string{"systemctl --user is-active vaultsync.service": "active"}}
+	run := &fakeRunner{systemd: true}
 	a := installedApp(t, "linux", run)
 	runsAs(t, a, a.lay.Agent, "this build")
 	return a, run
@@ -305,25 +305,36 @@ func TestIssue290_StartLoadsAfreshWhatIsNoLivingRun(t *testing.T) {
 }
 
 // systemd leaves an active unit alone by itself (seen with a run on its way
-// up): start on Linux sends what it sent before, whatever the lock says.
+// up): start on Linux sends what it sent before, whatever the lock says,
+// and one look before it tells a unit that was already active, which is
+// "already running" as on a Mac (#290).
 func TestIssue290_StartOnLinuxIsEnableNowAsBefore(t *testing.T) {
-	a, run := linuxServiceOfThisBuild(t)
-	holdEngineLock(t, a)
-	answeringAgent(t, a)
-	if err := a.startService(); err != nil {
-		t.Fatal(err)
-	}
-	var actions []string
-	for _, c := range run.calls {
-		if !strings.Contains(c, "is-active") {
-			actions = append(actions, c)
+	for _, c := range []struct {
+		active bool
+		said   string
+	}{
+		{false, "✓ VaultSync is running again."},
+		{true, "✓ VaultSync is already running."},
+	} {
+		a, run := linuxServiceOfThisBuild(t)
+		run.unitActive = c.active
+		holdEngineLock(t, a)
+		answeringAgent(t, a)
+		if err := a.startService(); err != nil {
+			t.Fatal(err)
 		}
-	}
-	if strings.Join(actions, "|") != "systemctl --user enable --now vaultsync.service" {
-		t.Fatalf("start on Linux: %v", run.calls)
-	}
-	if out := startText(a); !strings.Contains(out, "✓ VaultSync is running again.") {
-		t.Fatalf("start:\n%s", out)
+		var actions []string
+		for _, call := range run.calls {
+			if !strings.Contains(call, "is-active") {
+				actions = append(actions, call)
+			}
+		}
+		if strings.Join(actions, "|") != "systemctl --user enable --now vaultsync.service" {
+			t.Fatalf("start on Linux: %v", run.calls)
+		}
+		if out := startText(a); !strings.Contains(out, c.said) {
+			t.Fatalf("start, the unit active before: %v:\n%s", c.active, out)
+		}
 	}
 }
 
@@ -340,8 +351,17 @@ func TestIssue290_StartSaysRunningOnlyOnceTheAgentAnswers(t *testing.T) {
 	} {
 		t.Run(goos, func(t *testing.T) {
 			a, _ := arrange(t)
+			// Only the answer wait's own pauses are counted: its interval
+			// is made one no other wait of start's uses.
+			orig := startAnswerEvery
+			startAnswerEvery = 7 * time.Millisecond
+			defer func() { startAnswerEvery = orig }()
 			looks := 0
-			a.svc.pause = func(time.Duration) { looks++ }
+			a.svc.pause = func(d time.Duration) {
+				if d == startAnswerEvery {
+					looks++
+				}
+			}
 			err := a.startService()
 			out := startText(a)
 			if err != nil || strings.Contains(out, "running again") || strings.Contains(out, "✓") {
@@ -352,11 +372,11 @@ func TestIssue290_StartSaysRunningOnlyOnceTheAgentAnswers(t *testing.T) {
 					t.Fatalf("%q missing:\n%s", want, out)
 				}
 			}
-			if looks < startAnswerLooks-1 {
-				t.Fatalf("start gave up after %d pauses", looks)
+			if looks != startAnswerLooks-1 {
+				t.Fatalf("start's answer wait paused %d times, not %d", looks, startAnswerLooks-1)
 			}
 
-			a.out = &bytes.Buffer{}
+			a, _ = arrange(t)
 			answeringAgent(t, a)
 			if err := a.startService(); err != nil || !strings.Contains(startText(a), "✓ VaultSync is running again.") {
 				t.Fatalf("start with the agent answering: %v\n%s", err, startText(a))
@@ -508,5 +528,121 @@ func TestIssue290_AnotherBuildThatDoesNotAnswer(t *testing.T) {
 	out := startText(a)
 	if !strings.Contains(out, "does not answer yet") || !strings.Contains(out, "runs another VaultSync build than this vaultsync — vaultsync status says whether it syncs") || strings.Contains(out, "✓") {
 		t.Fatalf("start beside another build that does not answer:\n%s", out)
+	}
+}
+
+// quickAnswerWait makes the answer wait's interval short and one no other
+// wait of start's uses, so a pause hook can tell its pauses apart.
+func quickAnswerWait(t *testing.T) {
+	t.Helper()
+	orig := startAnswerEvery
+	startAnswerEvery = 7 * time.Millisecond
+	t.Cleanup(func() { startAnswerEvery = orig })
+}
+
+// The guard behind leaving a run alone (decision 085): launchd's states
+// were measured on macOS 12.7.6 and 27.2 only. A job start took for a
+// living run, and that is gone, between two spawns or on its way out by
+// the end of the answer wait — one a stop was still removing, shown as
+// running by some version in between — is loaded afresh and waited for
+// once more. Left alone, the service would stay down until the next login
+// (#175, #290).
+func TestIssue290_ALivingRunThatIsGoneByTheEndOfTheWaitIsLoadedAfresh(t *testing.T) {
+	for name, vanish := range map[string]func(run *fakeRunner){
+		"gone":               func(run *fakeRunner) { run.loaded = false },
+		"on its way out":     func(run *fakeRunner) { run.loaded, run.lingering = false, 2 },
+		"between two spawns": func(run *fakeRunner) { run.neverRuns = true },
+	} {
+		t.Run(name, func(t *testing.T) {
+			a, run := darwinServiceOfThisBuild(t)
+			quickAnswerWait(t)
+			unlock, err := lockFile(a.lay.Lock)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var once sync.Once
+			release := func() { once.Do(unlock) }
+			t.Cleanup(release)
+			vanished, served := false, false
+			a.svc.pause = func(d time.Duration) {
+				if d == startAnswerEvery && !vanished {
+					vanished = true
+					release() // the run ends, and its lock with it
+					vanish(run)
+				}
+			}
+			bootstraps := 0
+			run.onCall = func(call string) {
+				if strings.HasPrefix(call, "launchctl bootstrap") {
+					bootstraps++
+					run.neverRuns = false
+					if !served {
+						served = true
+						answeringAgent(t, a) // the run loaded afresh answers
+					}
+				}
+			}
+			if err := a.startService(); err != nil {
+				t.Fatalf("start: %v\n%s", err, strings.Join(run.calls, "\n"))
+			}
+			if !vanished || bootstraps != 1 {
+				t.Fatalf("vanished=%v, bootstraps=%d:\n%s", vanished, bootstraps, strings.Join(run.calls, "\n"))
+			}
+			if out := startText(a); !strings.Contains(out, "✓ VaultSync is running again.") {
+				t.Fatalf("start:\n%s", out)
+			}
+		})
+	}
+}
+
+// A run left alone that still runs at the end of the answer wait stays as
+// it is: the guard looks once and loads nothing (#290).
+func TestIssue290_ALivingRunThatStaysIsLookedAtOnce(t *testing.T) {
+	a, run := darwinServiceOfThisBuild(t)
+	quickAnswerWait(t)
+	holdEngineLock(t, a)
+	if err := a.startService(); err != nil {
+		t.Fatal(err)
+	}
+	calls := strings.Join(run.calls, "\n")
+	if strings.Contains(calls, "launchctl bootout") || strings.Contains(calls, "launchctl bootstrap") {
+		t.Fatalf("a run that stays was loaded afresh:\n%s", calls)
+	}
+	if out := startText(a); !strings.Contains(out, "does not answer yet") || strings.Contains(out, "✓") {
+		t.Fatalf("start:\n%s", out)
+	}
+}
+
+// A run that could not open its control socket syncs on without it and
+// never answers there; a stop and start only makes the same socket fail
+// again. start says what is true instead: the recorded socket error, and
+// that status asks the engine itself (#290).
+func TestIssue290_ARunWithoutItsSocketIsNotToldToStopAndStart(t *testing.T) {
+	for goos, arrange := range map[string]func(t *testing.T) (*app, *fakeRunner){
+		"darwin": darwinServiceOfThisBuild,
+		"linux":  linuxServiceOfThisBuild,
+	} {
+		t.Run(goos, func(t *testing.T) {
+			a, run := arrange(t)
+			quickAnswerWait(t)
+			holdEngineLock(t, a)
+			run.unitActive = true
+			writeFile(t, a.lay.SocketErrorFile(), "listen unix: bind: address already in use\n")
+			if err := a.startService(); err != nil {
+				t.Fatal(err)
+			}
+			out := startText(a)
+			for _, want := range []string{"does not answer on its control socket", "could not open it", tildePath(a.home, a.lay.SocketErrorFile()), "vaultsync status asks the sync engine directly"} {
+				if !strings.Contains(out, want) {
+					t.Fatalf("%q missing:\n%s", want, out)
+				}
+			}
+			if strings.Contains(out, "vaultsync stop") || strings.Contains(out, "installing") || strings.Contains(out, "✓") {
+				t.Fatalf("start sends a run without its socket the wrong way:\n%s", out)
+			}
+			if calls := strings.Join(run.calls, "\n"); strings.Contains(calls, "launchctl bootout") {
+				t.Fatalf("a living run was loaded afresh:\n%s", calls)
+			}
+		})
 	}
 }

@@ -654,33 +654,71 @@ func (s service) start() (left bool, err error) {
 			}
 			return false, fmt.Errorf("launchctl enable: %v: %s", err, out)
 		}
-		if out, err := s.run.run("launchctl", "print", s.launchdTarget()); err == nil {
-			if s.livingRun(out, path) {
-				return true, nil
-			}
-			// Still loaded, and no run of its own that lives: between two
-			// spawns, idle, disabled while loaded, on its way out after a
-			// stop that ran out of time, a run that parks or has not taken
-			// the engine lock yet, or an older definition — the job is
-			// loaded afresh. Its bootout may fail when it is already going;
-			// waiting for it to be gone settles both.
-			_, _ = s.run.run("launchctl", "bootout", s.launchdTarget())
-			if err := s.launchdGone(); err != nil {
-				return false, err
-			}
+		out, err := s.run.run("launchctl", "print", s.launchdTarget())
+		if err == nil && s.livingRun(out, path) {
+			return true, nil
 		}
-		if out, err := s.run.run("launchctl", "bootstrap", "gui/"+strconv.Itoa(s.uid), path); err != nil {
-			return false, fmt.Errorf("launchctl bootstrap: %v: %s", err, out)
-		}
+		// Still loaded, and no run of its own that lives: between two
+		// spawns, idle, disabled while loaded, on its way out after a stop
+		// that ran out of time, a run that parks or has not taken the
+		// engine lock yet, or an older definition — the job is loaded
+		// afresh.
+		return false, s.loadAfresh(path, err == nil)
 	case "linux":
+		// systemd leaves an active unit alone by itself; one look before
+		// says whether this start found one.
+		left = s.running()
 		if out, err := s.run.run("systemctl", "--user", "enable", "--now", systemdUnit); err != nil {
 			if state, _ := s.session(); state == sessionAbsent {
 				return false, s.waitsForLogin()
 			}
 			return false, fmt.Errorf("systemctl --user enable --now: %v: %s", err, out)
 		}
+		return left, nil
 	}
 	return false, nil
+}
+
+// loadAfresh boots the service's job out where launchd still has it
+// (loaded), waits until it is gone, and bootstraps it from plist. The
+// bootout may fail when the job is already going; waiting for it to be
+// gone settles both.
+func (s service) loadAfresh(plist string, loaded bool) error {
+	if loaded {
+		_, _ = s.run.run("launchctl", "bootout", s.launchdTarget())
+		if err := s.launchdGone(); err != nil {
+			return err
+		}
+	}
+	if out, err := s.run.run("launchctl", "bootstrap", "gui/"+strconv.Itoa(s.uid), plist); err != nil {
+		return fmt.Errorf("launchctl bootstrap: %v: %s", err, out)
+	}
+	return nil
+}
+
+// startAgainIfGone is the guard behind leaving a run alone (decision 085):
+// a job start left alone whose agent gave no answer is looked at once more,
+// and where launchd no longer shows it running — gone, between two spawns,
+// on its way out — it is loaded afresh, as start loads any other. launchd's
+// states were measured on macOS 12.7.6 and 27.2 only: a version that showed
+// a job a stop is still removing as running would otherwise leave the
+// service down until the next login (#175). systemd restarts a unit by
+// itself.
+func (s service) startAgainIfGone() (bool, error) {
+	if s.goos != "darwin" {
+		return false, nil
+	}
+	path, err := s.unitPath()
+	if err != nil {
+		return false, err
+	}
+	out, err := s.run.run("launchctl", "print", s.launchdTarget())
+	if err == nil {
+		if state, _ := launchdState(out); state == "running" {
+			return false, nil
+		}
+	}
+	return true, s.loadAfresh(path, err == nil)
 }
 
 // livingRun: launchd's print of the service's job shows a run that lives
