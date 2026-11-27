@@ -8,6 +8,10 @@ VaultSync for Mac and Linux (the desktop agent and its menu-bar app, `desktop-vX
 
 ## [Unreleased]
 
+### Added
+
+- **A tested step moves an existing Hub from Syncthing 1.x to 2.x, with a copy first** — a Hub set up before new Hubs moved to Syncthing 2.x stays on 1.30.0, the last 1.x release, until its owner moves it. `docs/hub.md` → Move your Hub to Syncthing 2.x now describes that move: download 2.x, stop the Hub, copy its Syncthing (the way back), name 2.x in `.env`, start, and wait while Syncthing converts its database — 9 to 14 seconds for 50,000 notes on a server, minutes on a slow machine. The page says what the Hub shows meanwhile, what to do when the conversion stops halfway, and how to go back to 1.x: with the copy, or, for a Hub moved without one, while Syncthing still keeps its old database. Vaults, devices, ignore patterns and pairing carry over, and devices reconnect by themselves. The setup link still never moves a Hub. Recorded in decision 090. (#363)
+
 ### Changed
 
 - **The wake-up helper's installer and self-check point to the Plus tab** — when the installer finishes (Linux, macOS, Windows), it says the iPhone shows "Background Sync active" on the Plus tab, or "Cloud Relay active" on the Relay tab in VaultSync 3.0.0 and earlier. `vaultsync-notify --doctor` sends a device without a subscription to the Plus tab (the Relay tab in VaultSync 3.0.0 and earlier). The installer's change is live once merged, because the install link serves the main branch; the self-check's arrives with the helper's next release.
