@@ -39,4 +39,6 @@
 - VaultSync's own copy replaced outside setup, for example by hand, leaves its old process running: no watch ends it, as one ends a replaced VaultSync for Mac. start then leaves that run alone and says "already running". Which build a running service runs is #416's question.
 - Overlapping starts (#290's third point).
 
+**Amended.** By decision 093 (#416): point 3's third bullet no longer holds without an answer — `start` names no build then, since only a running agent says which build runs. With an answer, the agent's build mark decides between this build and another; a run left alone whose program was replaced since is another build.
+
 **Links.** #290, #267, #175, #288, #413; decisions 053, 077, 078, 079.
