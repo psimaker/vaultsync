@@ -1498,9 +1498,10 @@ struct ContentView: View {
 
     /// Detected vaults no Syncthing folder syncs yet (#79). Shown as passive
     /// rows so a connected-but-not-yet-shared setup doesn't read as "no
-    /// vaults found" — the exact misdiagnosis from the #79 report.
+    /// vaults found" — the exact misdiagnosis from the #79 report. Listed by
+    /// name like the rows above them (#345).
     private var unsyncedVaultNames: [String] {
-        UnsyncedVaultsModel.derive(
+        let names = UnsyncedVaultsModel.derive(
             detectedVaults: vaultManager.detectedVaults,
             folderPathsCanonLower: Set(syncthingManager.folders.map {
                 Self.canonicalPath($0.path).lowercased()
@@ -1510,6 +1511,7 @@ struct ContentView: View {
             },
             refusedCopyRels: syncthingManager.refusedCopyRels
         )
+        return SyncthingManager.inDisplayOrder(names, name: { $0 }, id: { $0 })
     }
 
     /// Not navigable on purpose: the missing step (sharing) happens on the
@@ -1599,7 +1601,7 @@ struct ContentView: View {
                 ))
             }
         }
-        return SyncthingManager.inDisplayOrder(rows, name: { $0.name }, id: \.id)
+        return SyncthingManager.inDisplayOrder(rows, name: { SyncthingManager.sortableName($0.name) ?? $0.id }, id: \.id)
     }
 
     /// Normalize a path so the Syncthing folder path (stored at accept time) and

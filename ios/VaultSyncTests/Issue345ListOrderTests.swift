@@ -170,6 +170,49 @@ struct Issue345ListOrderTests {
         #expect(ordered.suffix(2) == ["DEVICE-0", "DEVICE-5"])
     }
 
+    @Test("A name that shows nothing is no name: such a device goes with the unnamed ones, such a vault by its ID")
+    func blankNamesSortAsNoName() throws {
+        // Spaces only, a zero-width space, a tab and a no-break space: as
+        // names they would sort before every letter, blank rows at the top.
+        let devices = try [
+            Self.device("DEVICE-D", " "),
+            Self.device("DEVICE-B", "Hub"),
+            Self.device("DEVICE-A", "\u{200B}"),
+            Self.device("DEVICE-C", ""),
+            Self.device("DEVICE-E", "Zettelkasten"),
+        ]
+        let orderedDevices = SyncthingManager.devicesInDisplayOrder(devices, locale: Locale(identifier: "en_US")).map(\.deviceID)
+        #expect(orderedDevices == ["DEVICE-B", "DEVICE-E", "DEVICE-A", "DEVICE-C", "DEVICE-D"])
+
+        let folders = [
+            Self.folder("vault-m", "\t \u{00A0}"),
+            Self.folder("vault-z", "Zettel"),
+            Self.folder("vault-a", "archive"),
+        ]
+        let orderedFolders = SyncthingManager.foldersInDisplayOrder(folders, locale: Locale(identifier: "en_US")).map(\.id)
+        // "vault-m" sorts by its ID, between "archive" and "Zettel".
+        #expect(orderedFolders == ["vault-a", "vault-m", "vault-z"])
+
+        #expect(SyncthingManager.sortableName("") == nil)
+        #expect(SyncthingManager.sortableName("  \u{200B}\u{FEFF}") == nil)
+        #expect(SyncthingManager.sortableName(" Notes ") == " Notes ")
+        #expect(SyncthingManager.sortableName("\u{00C4}rzte") == "\u{00C4}rzte")
+    }
+
+    @Test("Two names that differ only in case sort as Finder sorts them, not by their IDs")
+    func caseOnlyPairsSortAsFinderDoes() throws {
+        // The ID order is the reverse of the order of the names: without the
+        // forced ordering the comparison would call the names equal and the
+        // IDs would decide.
+        let folders = [Self.folder("id-1", "Notes"), Self.folder("id-2", "notes")]
+        let orderedFolders = SyncthingManager.foldersInDisplayOrder(folders, locale: Locale(identifier: "en_US")).map(\.id)
+        #expect(orderedFolders == ["id-2", "id-1"])
+
+        let devices = try [Self.device("DEVICE-1", "Mac"), Self.device("DEVICE-2", "mac")]
+        let orderedDevices = SyncthingManager.devicesInDisplayOrder(devices, locale: Locale(identifier: "en_US")).map(\.deviceID)
+        #expect(orderedDevices == ["DEVICE-2", "DEVICE-1"])
+    }
+
     // MARK: - The vault rows
 
     @Test("The vault rows of a whole-directory folder sort by the vault names they show, among the other rows")
@@ -186,6 +229,14 @@ struct Issue345ListOrderTests {
         ]
         let ordered = SyncthingManager.inDisplayOrder(rows, name: { $0.name }, id: { $0.id }, locale: Locale(identifier: "en_US"))
         #expect(ordered.map(\.id) == ["root/archive", "root/Notes", "work", "root/Zettel"])
+    }
+
+    @Test("The vaults that do not sync yet are listed by name too")
+    func unsyncedVaultsListedByName() {
+        // The scan hands them out by code point: capitals first, Ä after z.
+        let scanned = ["Projects", "Zettel", "archive", "\u{00C4}rzte"]
+        let ordered = SyncthingManager.inDisplayOrder(scanned, name: { $0 }, id: { $0 }, locale: Locale(identifier: "de_DE"))
+        #expect(ordered == ["archive", "\u{00C4}rzte", "Projects", "Zettel"])
     }
 
     private static func permutations<T>(_ items: [T]) -> [[T]] {

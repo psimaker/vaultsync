@@ -490,6 +490,25 @@ final class SyncthingManager {
         inDisplayOrder(folders, name: { $0.label.isEmpty ? $0.id : $0.label }, id: \.id, locale: locale)
     }
 
+    /// A name as the lists sort by it (#345): nil when it shows nothing —
+    /// empty, only spaces, or only characters that draw nothing, such as a
+    /// zero-width space. Sorted as it is, such a name would come before every
+    /// letter, a blank row at the top. A device with it goes with the
+    /// unnamed ones, a vault by its folder ID.
+    nonisolated static func sortableName(_ name: String) -> String? {
+        let showsSomething = name.unicodeScalars.contains { scalar in
+            let properties = scalar.properties
+            if properties.isWhitespace || properties.isDefaultIgnorableCodePoint { return false }
+            switch properties.generalCategory {
+            case .control, .format, .lineSeparator, .paragraphSeparator, .spaceSeparator:
+                return false
+            default:
+                return true
+            }
+        }
+        return showsSomething ? name : nil
+    }
+
     /// The vaults in the order the lists show them (#345): by the label, or
     /// the folder ID without one, which is what a row without a label shows.
     /// Everything that reads `folders` gets this order — the vault rows, the
@@ -498,7 +517,7 @@ final class SyncthingManager {
         _ folders: [FolderInfo],
         locale: Locale = .current
     ) -> [FolderInfo] {
-        inDisplayOrder(folders, name: { $0.label.isEmpty ? $0.id : $0.label }, id: \.id, locale: locale)
+        inDisplayOrder(folders, name: { sortableName($0.label) ?? $0.id }, id: \.id, locale: locale)
     }
 
     /// The devices in the order the lists show them (#345): by name, then by
@@ -509,7 +528,7 @@ final class SyncthingManager {
         _ devices: [DeviceInfo],
         locale: Locale = .current
     ) -> [DeviceInfo] {
-        inDisplayOrder(devices, name: { $0.name.isEmpty ? nil : $0.name }, id: \.deviceID, locale: locale)
+        inDisplayOrder(devices, name: { sortableName($0.name) }, id: \.deviceID, locale: locale)
     }
 
     var staleSyncWarning: String? {
