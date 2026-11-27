@@ -144,6 +144,10 @@ func RemoveFolder(id string) string {
 //     (folderStorageRefusalLocked). The marker alone cannot tell: a copy made
 //     by hand carries it (#315, decision 063).
 //
+// And whatever the target is, it never overlaps another folder's path: the
+// floor of AddFolder and AcceptPendingFolder holds for the repair too
+// (decision 082).
+//
 // Returns empty string on success — including a no-op when the path is already
 // equivalent — or an error message on failure.
 func SetFolderPath(folderID, newPath string) string {
@@ -197,6 +201,20 @@ func SetFolderPath(folderID, newPath string) string {
 		return refusal
 	}
 
+	// The folder's own directory may by now be another folder's, or lie in
+	// or around one — an earlier version's overlapping pair, moved with the
+	// container, or a share accepted there while this folder could not reach
+	// it. Every overlap is refused, one that was there before the move too:
+	// the bridge cannot tell which was there, and the shield that pauses an
+	// overlap runs after this, never twice for a folder and not in a
+	// background run (#330, decision 082). Dead paths count, as they do when
+	// a folder is added: a directory that comes back would overlap.
+	for id, other := range folders {
+		if id != folderID && folderPathOverlapError(other.Path, newPath) != "" {
+			return folderPathOverlap
+		}
+	}
+
 	if err := commitConfigLocked(func(cfg *config.Configuration) {
 		for i := range cfg.Folders {
 			if cfg.Folders[i].ID == folderID {
@@ -214,6 +232,18 @@ func SetFolderPath(folderID, newPath string) string {
 	noteFolderStorageLocked(folder)
 
 	return ""
+}
+
+// folderPathOverlap is how SetFolderPath refuses a path that is another
+// folder's, or lies in or around one (#330, decision 082).
+const folderPathOverlap = "target overlaps a directory another folder syncs"
+
+// FolderPathOverlapError returns the text SetFolderPath refuses such a path
+// with. The app tells this refusal from the others — its user gets the way on
+// from a folder two vaults would share — and reads the text here instead of
+// keeping a copy of it.
+func FolderPathOverlapError() string {
+	return folderPathOverlap
 }
 
 // folderMarkerPath returns the entry whose presence in root marks it as the

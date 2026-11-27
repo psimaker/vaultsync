@@ -1047,3 +1047,7 @@
 "On My iPhone" = "Auf meinem iPhone";
 "iCloud Drive" = "iCloud Drive";
 "App Folder" = "App-Ordner";
+
+/* A vault's own folder found where another vault syncs it, a folder inside it or one around it (#330) */
+"The Folder Found Overlaps Another Vault" = "Der gefundene Ordner überschneidet sich mit einem anderen Vault";
+"This vault's folder was found, but another vault already syncs that folder, a folder inside it, or a folder around it. Two vaults never sync in one place, so VaultSync does not continue this vault there. Remove this vault, wait ten seconds, close VaultSync in the app switcher and open it again, and accept the vault again under Pending Shares once it shows there — it gets a folder of its own. If the share then says that its folder already holds files, do not combine them: tap \"Choose Vault…\" and give the vault another folder name." = "Der Ordner dieses Vaults wurde gefunden, aber ein anderer Vault synchronisiert bereits diesen Ordner, einen Ordner darin oder einen Ordner, der ihn enthält. Zwei Vaults synchronisieren nie an einem Ort, deshalb macht VaultSync mit diesem Vault dort nicht weiter. Entferne diesen Vault, warte zehn Sekunden, schließe VaultSync im App-Umschalter, öffne es erneut und nimm den Vault unter „Ausstehende Freigaben“ erneut an, sobald er dort erscheint – er bekommt einen eigenen Ordner. Zeigt die Freigabe dann an, dass ihr Ordner bereits Dateien enthält, führe sie nicht zusammen: Tippe auf „Vault wählen…“ und gib dem Vault einen anderen Ordnernamen.";

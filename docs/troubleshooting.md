@@ -15,6 +15,7 @@ Find your symptom, jump to the fix. After each fix, retry from the app to confir
 | The vault syncs, but Obsidian does not show it | [Vault Syncs but Never Appears in Obsidian](#vault-syncs-but-never-appears-in-obsidian) |
 | "Vault Folder Was Moved or Deleted" on a vault | [Vault Folder Was Moved or Deleted](#vault-folder-was-moved-or-deleted) |
 | A vault's card says the folder that was found is a copy | [The Folder Found Is a Copy](#the-folder-found-is-a-copy) |
+| A vault's card says another vault already syncs its folder, a folder inside it, or a folder around it | [The Folder Found Overlaps Another Vault](#the-folder-found-overlaps-another-vault) |
 | "Cannot access this folder" / reconnect needed | [Bookmark Access Expired](#bookmark-access-expired) |
 | Syncs in foreground but not when closed | [Background Sync Not Working](#background-sync-not-working) |
 | "Required device disconnected" | [Required Device Disconnected](#required-device-disconnected) |
@@ -245,6 +246,21 @@ VaultSync does not go on in a copy. A copy holds what the vault held when it was
 - The copy stays where it is, untouched. It may hold notes that exist nowhere else: written in the copy, or written on this iPhone and never synced before the vault's folder went away. Compare the two by hand first, then copy over in the Files app only the notes the vault's new folder does not have. If Files asks whether to replace a note, keep both: the one in the new folder is the one your other devices have. Delete the copy only after that.
 - Sync Filters belong to the vault's folder and start fresh in the new one. Set them again on the vault's page before large folders you had excluded start to sync.
 - Never put a copy in a vault's place yourself, under the vault's name in the folder it syncs in. There VaultSync cannot tell it from the vault, and what the copy lacks would be deleted on your other devices.
+
+---
+
+## The Folder Found Overlaps Another Vault
+
+**Looks like:** under **Sync Issues**, a vault's card says that the vault's folder was found, but that another vault already syncs that folder, a folder inside it, or a folder around it. The vault's folder is no longer where VaultSync had it — iOS moves an app's storage after a restore or a move to another iPhone, for one — and where it is now, it overlaps another vault's folder. That happens to two vaults an early version of VaultSync (before 1.7.2) put into one folder or one inside the other, and to a vault whose folder another vault was set up in while VaultSync could not reach it.
+
+VaultSync never lets two vaults sync in one place: the outer vault would send the inner vault's notes to its own devices as its own, and deleting that stray copy on any of them would delete those notes from the inner vault everywhere. So VaultSync goes on with the other vault and leaves this one where it is. Nothing was moved or deleted.
+
+**Fix:** tap **Remove This Vault**, wait ten seconds, close VaultSync in the app switcher and open it again, and accept the vault again under **Pending Shares** once it shows there. If the share says that its folder already holds files, do not combine them — tap **Choose Vault…** and give the vault another folder name. The vault then arrives in a folder of its own, complete, from your other devices.
+
+**Afterwards:**
+- The vault's old folder stays where it is, untouched. Notes written on this iPhone and never synced before its storage moved may exist only there: compare by hand, then copy over in the Files app only the notes the vault's new folder does not have.
+- If the old folder lies inside the other vault's folder, the other vault has synced its notes as its own. Delete that stray copy from the other vault only once this vault is back in a folder of its own: the deletion reaches every device the other vault syncs with.
+- Sync Filters belong to the vault's folder and start fresh in the new one. Set them again on the vault's page before large folders you had excluded start to sync.
 
 ---
 

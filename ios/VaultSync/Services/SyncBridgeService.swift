@@ -182,6 +182,13 @@ struct SyncBridgeService {
         BridgeFolderStorageMismatchError()
     }
 
+    /// The refusal `setFolderPath` returns for a path that another folder
+    /// syncs, or that lies inside or around one: two folders never overlap
+    /// (#330, decision 082). Read from the bridge, like the one above.
+    static var folderPathOverlapError: String {
+        BridgeFolderPathOverlapError()
+    }
+
     /// Pause or resume a configured folder. A paused folder is neither scanned
     /// nor exchanged with peers — the non-destructive way to halt a folder that
     /// shares a local path with another and is merging into it (issue #45).

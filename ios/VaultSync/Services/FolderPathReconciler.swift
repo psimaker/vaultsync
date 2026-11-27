@@ -125,6 +125,11 @@ enum FolderPathReconciler {
         /// the folder synced in — a copy of it (#315). The bridge leaves the
         /// folder where it is; the user is told why.
         case notItsStorage
+        /// The directory is the folder's, but another folder syncs it, a
+        /// folder inside it or a folder around it (#330, decision 082). Two
+        /// folders never overlap; the bridge leaves the folder where it is,
+        /// and the user is told why.
+        case overlapsAnotherFolder
         /// Any other refusal or failure.
         case failed
     }
@@ -135,12 +140,19 @@ enum FolderPathReconciler {
         /// exists under the selected folder that the bridge refused as a
         /// copy (#315).
         var notTheirStorage: Set<String> = []
+        /// Folders whose directory is gone while their own directory, found
+        /// under the selected folder, overlaps another folder's (#330).
+        var overlapsAnotherFolder: Set<String> = []
 
         /// What of this outcome still holds for the folders configured now.
         /// A reconcile runs beside the main actor, and a folder removed
         /// while it ran is no longer there to report.
         func cut(to configured: some Sequence<String>) -> Outcome {
-            Outcome(notTheirStorage: notTheirStorage.intersection(configured))
+            let configured = Set(configured)
+            return Outcome(
+                notTheirStorage: notTheirStorage.intersection(configured),
+                overlapsAnotherFolder: overlapsAnotherFolder.intersection(configured)
+            )
         }
     }
 
@@ -213,6 +225,9 @@ enum FolderPathReconciler {
                 case .notItsStorage:
                     outcome.notTheirStorage.insert(folder.id)
                     logger.warning("Skipped folder rebase because the target is a copy of the folder's directory")
+                case .overlapsAnotherFolder:
+                    outcome.overlapsAnotherFolder.insert(folder.id)
+                    logger.warning("Skipped folder rebase because the target overlaps another folder's directory")
                 case .failed:
                     logger.warning("Folder rebase failed")
                 }
@@ -261,13 +276,24 @@ enum FolderPathReconciler {
                 var isDir: ObjCBool = false
                 return FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
             },
-            setPath: { folderID, newPath in
-                guard let refusal = SyncBridgeService.setFolderPath(folderID: folderID, path: newPath) else {
-                    return .moved
-                }
-                return refusal == SyncBridgeService.folderStorageMismatchError ? .notItsStorage : .failed
-            }
+            setPath: bridgeSetPath
         )
         return reconcile(folders: folders, env: env)
+    }
+
+    /// Ask the bridge to re-point a folder, and tell its refusals apart by
+    /// the texts it hands out for them.
+    static func bridgeSetPath(folderID: String, newPath: String) -> SetPathResult {
+        guard let refusal = SyncBridgeService.setFolderPath(folderID: folderID, path: newPath) else {
+            return .moved
+        }
+        switch refusal {
+        case SyncBridgeService.folderStorageMismatchError:
+            return .notItsStorage
+        case SyncBridgeService.folderPathOverlapError:
+            return .overlapsAnotherFolder
+        default:
+            return .failed
+        }
     }
 }
