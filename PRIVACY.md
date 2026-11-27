@@ -6,7 +6,31 @@ VaultSync is designed to keep your data on your devices. This policy explains wh
 
 ## Data Collection
 
-VaultSync does not collect note content, usage analytics, advertising identifiers, or tracking data. All files are synchronized directly between your devices using Syncthing's peer-to-peer protocol. The optional Cloud Relay processes only the limited routing and subscription data described below.
+VaultSync does not collect note content, usage analytics, advertising identifiers, or tracking data. Your files are synchronized between your own devices using Syncthing's peer-to-peer protocol, over connections that are encrypted end to end between those devices. To find each other, and to connect when no direct connection is possible, your devices use public servers that VaultSync does not operate; [Sync Engine Connections](#sync-engine-connections) describes what they receive. The optional Cloud Relay processes only the limited routing and subscription data described below.
+
+## Sync Engine Connections
+
+VaultSync on iPhone, VaultSync for Mac and Linux, and the VaultSync Hub run Syncthing as their sync engine, with Syncthing's default servers. None of these servers receives note content, file names, or folder or vault names.
+
+- **Global discovery** — the engine announces its Device ID and the addresses at which it can be reached, including its addresses on your local network, to Syncthing's public discovery servers (`discovery-announce-v4.syncthing.net` and `discovery-announce-v6.syncthing.net`), and asks `discovery-lookup.syncthing.net` for the addresses of the devices it syncs with, by their Device IDs. These servers see your public IP address.
+- **Local discovery** — every 30 seconds the engine announces its Device ID and addresses on your local network, so that your devices on the same network find each other without a server. Every device on that network can receive these announcements.
+- **Relays** — when two of your devices cannot connect directly, their connection passes through a relay from Syncthing's public relay pool, whose list the engine fetches from `relays.syncthing.net`. A relay sees the Device IDs and IP addresses of both devices and how much data passes, but not the data itself: the connection stays encrypted end to end between your devices. While relays are enabled, the engine also keeps a connection to one relay so that your other devices can reach it.
+- **NAT traversal** — the engine may ask your router, on your local network, to forward its sync port (UPnP or NAT-PMP). To learn its public address, it sends requests to public STUN servers: Syncthing's own, found through `syncthing.net`, and a built-in list of public STUN servers run by other providers. A STUN server sees your public IP address and port.
+
+Discovery, relays, and NAT traversal let your devices find each other when they are not on the same network. They are on in the iPhone app and on the Hub, which turn them on again each time they start, and in VaultSync for Mac and Linux, which leaves them as Syncthing ships them.
+
+Syncthing's anonymous usage reporting, its crash reporting, and its automatic upgrades are switched off:
+
+- **VaultSync on iPhone and VaultSync for Mac and Linux** switch all three off before the engine first runs.
+- **The VaultSync Hub** switches crash reporting off each time it starts, and declines usage reporting unless the Hub's operator has already accepted or declined it in Syncthing's web interface. The Hub's engine never upgrades itself; it changes only with the Hub's container images.
+
+The engine in the iPhone app writes no log (see [Local Synchronization Diagnostics](#local-synchronization-diagnostics)). VaultSync for Mac and Linux keeps the engine's log, which can name vaults and file paths, in the engine's private folder on the computer and sends it nowhere.
+
+## Setup, Downloads, and Pairing
+
+- **Install links** — `https://vaultsync.eu/setup.sh`, `https://vaultsync.eu/notify.sh`, and `https://vaultsync.eu/notify.ps1` forward to the scripts on GitHub; the [website privacy notice](https://vaultsync.eu/privacy.html) covers that request to vaultsync.eu. On a computer, the setup script asks GitHub for the newest release of VaultSync for Mac and Linux and downloads it and its checksums from GitHub. On a Hub, Docker downloads the Hub's container images from GitHub Container Registry (the Hub and the wake-up helper) and Docker Hub (Syncthing). The wake-up helper's own install script downloads the helper from GitHub or GitHub Container Registry. GitHub and Docker Hub see your IP address and what is downloaded.
+- **VaultSync for Mac and Linux** downloads the Syncthing release it was built for from GitHub (`github.com/syncthing/syncthing/releases`) during setup, and again when its background service starts and finds that the engine is missing, has changed, or is not the version this release of VaultSync uses, as after an update. GitHub sees the computer's IP address and which archive (operating system and processor type) is downloaded. VaultSync checks the archive against a checksum built into VaultSync before installing it. Apart from this download and the sync engine described above, VaultSync for Mac and Linux connects to nothing on the internet.
+- **Pairing with a Hub** happens only on your local network. VaultSync on iPhone or on a computer finds the Hub with a broadcast on that network and sends it the device's Device ID, its name (the computer's name, or the name iOS reports for the iPhone), and the vault you chose, encrypted with a key derived from the pairing code. The Hub is your own server; none of this reaches a server run by VaultSync.
 
 ## Cloud Relay
 
@@ -29,6 +53,8 @@ the current signal is not cryptographically authenticated, this timestamp does
 not prove who sent it. It also does not confirm Apple push delivery or successful
 file synchronization; only the iPhone can record local wake-up receipt, and sync
 progress is evaluated separately. No file or vault metadata is added to this flow.
+
+Every VaultSync Hub includes the wake-up helper. It sends the Hub's Device ID to the relay when it starts and after changes in its vaults, and repeats it at intervals while one of your devices still waits for changes — also when no subscription is linked to that Device ID. Without an active subscription the relay declines the signal and does not store or log it. When the iPhone app shows its VaultSync Plus tab, it checks whether the relay is reachable; that request carries no Device ID or other identifier.
 
 ## Local Synchronization Diagnostics
 
@@ -303,9 +329,11 @@ Subscription billing is handled entirely by Apple through StoreKit. VaultSync do
 
 VaultSync uses **no tracking SDKs, no analytics, and no advertising**. VaultSync Plus subscriptions use Apple's App Store/StoreKit for purchase confirmation, Apple's App Store Server Notifications for renewals, refunds, and revocations, and Apple Push Notification service (APNs) for silent wake-ups.
 
+The sync engine uses Syncthing's public discovery servers, relays, and STUN servers, described under [Sync Engine Connections](#sync-engine-connections). Setup and VaultSync for Mac and Linux download from GitHub, and a Hub's container images come from GitHub Container Registry and Docker Hub. VaultSync does not operate any of these servers; their operators' privacy policies apply.
+
 ## Your Rights (GDPR)
 
-You can request deletion of all data associated with your device at any time by contacting us. Upon request, we will remove your Device ID, APNs registration, StoreKit verification record, last-signal time, and associated operational timestamps from the relay server.
+You can request deletion of all data associated with your device at any time by contacting us. Upon request, we will remove your Device ID, APNs registration, StoreKit verification record, last-signal time, and associated operational timestamps from the relay server. VaultSync does not operate the Syncthing, GitHub, or Docker Hub servers named above and holds nothing of what they receive.
 
 ## Contact
 
