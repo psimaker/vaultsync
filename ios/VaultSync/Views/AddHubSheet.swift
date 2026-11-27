@@ -91,6 +91,15 @@ struct AddHubSheet: View {
         .onAppear { model.start(link: link) }
         .onDisappear { model.stop() }
         .onChange(of: model.path) { _, _ in model.returnedToCode() }
+        #if DEBUG
+        .task {
+            // LAB: the design preview's scan step (#353).
+            guard UIAuditFixture.active == UIAuditFixture.designPreview,
+                  DesignPreviewFixture.addHubShowsScanner else { return }
+            try? await Task.sleep(for: .milliseconds(600))
+            showScanner = true
+        }
+        #endif
         .sheet(isPresented: $showScanner, onDismiss: applyScan) {
             QRScannerView(
                 title: L10n.tr("Scan Hub QR Code"),
@@ -205,7 +214,9 @@ private struct HubCodeStep: View {
                     }
                 }
             }
-            .buttonStyle(.vault(.primary))
+            // Busy, not dimmed: the spinner and "Pairing…" are the only sign
+            // that the Hub is being asked (#354). `canPair` still disables it.
+            .buttonStyle(.vault(.primary, busy: model.isWorking))
             .disabled(!model.canPair)
             .padding(.top, VaultSpacing.xs)
 
@@ -524,7 +535,7 @@ private struct HubVaultStep: View {
                         }
                     }
                 }
-                .buttonStyle(.vault(.primary))
+                .buttonStyle(.vault(.primary, busy: model.isWorking))
                 .disabled(!model.canReconnect)
                 .padding(.top, VaultSpacing.xs)
             } else {
@@ -548,7 +559,7 @@ private struct HubVaultStep: View {
                     }
                 }
             }
-            .buttonStyle(.vault(.primary))
+            .buttonStyle(.vault(.primary, busy: model.isWorking))
             .disabled(!model.canSync)
             .padding(.top, VaultSpacing.xs)
     }

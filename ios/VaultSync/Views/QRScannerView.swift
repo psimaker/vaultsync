@@ -87,12 +87,15 @@ struct QRScannerView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, VaultSpacing.xl)
 
+            // The kit's primary pair (#353): the system's prominent style
+            // draws white on the lifted dark-mode teal, 2.2:1.
             Button("Open Settings") {
                 if let url = URL(string: UIApplication.openSettingsURLString) {
                     UIApplication.shared.open(url)
                 }
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.vault(.primary))
+            .padding(.horizontal, VaultSpacing.xl)
         }
         .accessibilityElement(children: .contain)
     }
@@ -117,7 +120,8 @@ struct QRScannerView: View {
             Button(manualButtonTitle) {
                 dismiss()
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.vault(.primary))
+            .padding(.horizontal, VaultSpacing.xl)
         }
         .accessibilityElement(children: .contain)
     }

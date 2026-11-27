@@ -48,13 +48,19 @@ enum DesignPreviewFixture {
         /// from the computer is the next step.
         case onboardingShare = "onboarding-share"
         /// The Add Hub sheet (#174) over a first pairing — no device, no
-        /// vault yet. `-design-preview-add-hub-step code|code-found|code-keyboard|vault|done`
+        /// vault yet. `-design-preview-add-hub-step code|code-found|code-keyboard|scan|vault|done`
         /// picks the step (default: code, the search still running;
-        /// code-keyboard focuses the number field to show the number pad).
+        /// code-keyboard focuses the number field to show the number pad;
+        /// scan opens the QR scanner over the code step, in the camera state
+        /// `xcrun simctl privacy` gives the app — granted shows the camera
+        /// unavailable on a simulator, revoked shows the way to Settings).
         case addHub = "add-hub"
     }
 
-    /// The Add Hub step a design-preview run shows.
+    /// The Add Hub step a design-preview run shows. Besides the steps named
+    /// at `Screen.addHub`, three hold a step while the Hub is asked, with the
+    /// busy button (#354): code-pairing (Pair), vault-asking (Sync) and
+    /// reconnect-asking (Reconnect, every vault already on this iPhone).
     static var addHubStep: String {
         UserDefaults.standard.string(forKey: "design-preview-add-hub-step") ?? "code"
     }
@@ -63,6 +69,11 @@ enum DesignPreviewFixture {
     /// Done above it.
     static var addHubShowsKeyboard: Bool {
         addHubStep == "code-keyboard"
+    }
+
+    /// The code step with the QR scanner open over it (#353).
+    static var addHubShowsScanner: Bool {
+        addHubStep == "scan"
     }
 
     /// `-design-preview-line-diff YES` opens the resolve screen with the
@@ -220,12 +231,18 @@ enum DesignPreviewFixture {
             provision: { _, _, _ in .success(notes) },
             register: { _, _ in .success(()) },
             engineRunning: { true },
-            localFolderIDs: { [] },
+            localFolderIDs: { addHubStep == "reconnect-asking" ? [notes.id, work.id] : [] },
             deviceName: { "iPhone" }
         ))
         let fields = HubCodeFields(first: "TULIP", second: "ANCHOR", number: "42")
         let found = HubPairingModel.Discovery.found([HubCandidate(address: "192.168.1.20:8390", name: "VaultSync Hub")])
         switch addHubStep {
+        case "code-pairing":
+            model._previewSet(fields: fields, discovery: found, hello: nil, selectedVaultID: nil, provisioned: nil, path: [], working: true)
+        case "vault-asking":
+            model._previewSet(fields: fields, discovery: found, hello: hello, selectedVaultID: notes.id, provisioned: nil, path: [.vault], working: true)
+        case "reconnect-asking":
+            model._previewSet(fields: fields, discovery: found, hello: hello, selectedVaultID: nil, provisioned: nil, path: [.vault], working: true)
         case "vault":
             model._previewSet(fields: fields, discovery: found, hello: hello, selectedVaultID: notes.id, provisioned: nil, path: [.vault])
         case "done":
