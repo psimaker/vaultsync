@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/psimaker/vaultsync/desktop/internal/lock"
 	"github.com/psimaker/vaultsync/hub/syncthing"
 )
 
@@ -397,17 +398,29 @@ func portFree(port int) bool {
 }
 
 // apiPortForSetup is the API port setup starts the engine on (#413): the
-// recorded one, unless another program holds it while no vaultsync run
-// holds the engine lock — the engine started next would move off it, and
-// setup would wait at the old one. A run that holds the lock holds its
-// engine's port itself, and the port stays. No port recorded is left to
-// prepare, which picks one.
+// recorded one, unless another program holds it — the engine started next
+// would move off it, and setup would wait at the old one. VaultSync's own
+// engine keeps its port: one a vaultsync run holds the engine lock for, and
+// one that outlived its run (macOS stops no child when its parent dies),
+// told by the lock Syncthing holds on its home while it runs. Neither is
+// told by asking the port. A lock that cannot be looked at keeps the port
+// too. No port recorded is left to prepare, which picks one.
 func apiPortForSetup(lay layout, recorded int) (int, error) {
-	if recorded <= 0 || portFree(recorded) || engineLockHeld(lay) {
+	if recorded <= 0 || portFree(recorded) {
 		return recorded, nil
+	}
+	for _, held := range []string{lay.Lock, filepath.Join(lay.Home, syncthingHomeLock)} {
+		if h, err := lock.Probe(held); err != nil || h {
+			return recorded, nil
+		}
 	}
 	return freeLoopbackPort()
 }
+
+// syncthingHomeLock is the file Syncthing locks in its home while it runs
+// (its LockFile location, ${data}/syncthing.lock; data is the home here).
+// TestIssue413_E2EAnEngineLocksItsHome fails when a Syncthing bump moves it.
+const syncthingHomeLock = "syncthing.lock"
 
 // freeSyncPort finds a sync port next to Syncthing's default, free for TCP
 // and UDP (QUIC), so the user's own Syncthing keeps 22000.

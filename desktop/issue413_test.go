@@ -14,21 +14,37 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/psimaker/vaultsync/desktop/internal/lock"
 )
 
 // setup chooses the engine's API port before the engine starts (#413): the
-// recorded one, unless another program holds it while no vaultsync run
-// does. A run's own engine holds its port, and the port stays — told by the
-// real engine lock, never by asking the port.
+// recorded one, unless another program holds it. VaultSync's own engine
+// keeps its port — a run's, told by the real engine lock, and one that
+// outlived its run, told by the lock Syncthing holds on its home — and so
+// does a lock that cannot be looked at. Never by asking the port.
 func TestIssue413_SetupTakesAFreePortOnlyWhereAnotherProgramHoldsTheRecordedOne(t *testing.T) {
 	for _, c := range []struct {
-		name          string
-		held, running bool
-		moves         bool
+		name  string
+		held  bool
+		lock  func(t *testing.T, lay layout)
+		moves bool
 	}{
-		{"another program holds the recorded port", true, false, true},
-		{"a running vaultsync's engine holds it", true, true, false},
-		{"the recorded port is free", false, false, false},
+		{"another program holds the recorded port", true, nil, true},
+		{"a running vaultsync's engine holds it", true, func(t *testing.T, lay layout) { holdLock(t, lay.Lock) }, false},
+		{"an engine that outlived its run holds it", true, func(t *testing.T, lay layout) { holdLock(t, filepath.Join(lay.Home, syncthingHomeLock)) }, false},
+		{"the engine lock cannot be looked at", true, func(t *testing.T, lay layout) {
+			// O_NOFOLLOW: a lock that is a link cannot be opened.
+			target := filepath.Join(t.TempDir(), "elsewhere")
+			writeFile(t, target, "")
+			if err := os.MkdirAll(filepath.Dir(lay.Lock), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, lay.Lock); err != nil {
+				t.Fatal(err)
+			}
+		}, false},
+		{"the recorded port is free", false, nil, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			eng, st := engineFixture(t)
@@ -40,30 +56,40 @@ func TestIssue413_SetupTakesAFreePortOnlyWhereAnotherProgramHoldsTheRecordedOne(
 				}
 				t.Cleanup(func() { l.Close() })
 			}
-			if c.running {
-				unlock, err := lockFile(eng.lay.Lock)
-				if err != nil {
-					t.Fatal(err)
-				}
-				t.Cleanup(unlock)
+			if c.lock != nil {
+				c.lock(t, eng.lay)
 			}
 			got, err := apiPortForSetup(eng.lay, recordedPort)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if (got != recordedPort) != c.moves || got <= 0 || c.moves && !portFree(got) {
-				t.Fatalf("recorded %d (held %v, a run %v): setup takes %d", recordedPort, c.held, c.running, got)
+				t.Fatalf("recorded %d (held %v): setup takes %d", recordedPort, c.held, got)
 			}
 		})
 	}
 }
 
+// holdLock holds the lock at path for the rest of the test, making it.
+func holdLock(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := lockFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(unlock)
+}
+
 // setup over a record whose API port another program holds, with the real
 // engine (#413): setup waits for the engine where it runs, never at a port
 // another program holds, and agent.json follows the port the engine got.
-// Both ways the record outlives its engine's port: the engine's folder
-// moved aside (#276's way out), and an engine that was stopped while
-// another program took its port.
+// The ways the record outlives its engine's port: the engine's folder
+// moved aside (#276's way out), an engine that was stopped while another
+// program took its port, and a record without a port beside the engine's
+// folder, whose config names it.
 func TestIssue413_E2ESetupOverARecordedPortAnotherProgramHolds(t *testing.T) {
 	archivePath := os.Getenv("VAULTSYNC_DESKTOP_SYNCTHING_ARCHIVE")
 	if archivePath == "" {
@@ -74,11 +100,13 @@ func TestIssue413_E2ESetupOverARecordedPortAnotherProgramHolds(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, c := range []struct {
-		name         string
-		engineFolder bool
+		name            string
+		engineFolder    bool
+		portInTheRecord bool
 	}{
-		{"the engine's folder moved aside", false},
-		{"the engine's folder there", true},
+		{"the engine's folder moved aside", false, true},
+		{"the engine's folder there", true, true},
+		{"a record without a port beside the engine's folder", true, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
@@ -111,8 +139,12 @@ func TestIssue413_E2ESetupOverARecordedPortAnotherProgramHolds(t *testing.T) {
 			env := envOf(nil)
 			a := &app{goos: "linux", home: home, getenv: env, lay: lay, out: io.Discard,
 				svc: service{goos: "linux", home: home, getenv: env, lay: lay, run: &fakeRunner{}}}
-			// Every engine this test runs stays on loopback.
-			listenPort := e2eFreePort(t)
+			// Every engine this test runs stays on loopback, on a sync port
+			// outside the range the API port below is taken from (#403).
+			listenPort, err := freeSyncPort()
+			if err != nil {
+				t.Fatal(err)
+			}
 			saved := engineOptionsFor
 			engineOptionsFor = func(bool) engineOptions { return engineOptions{loopbackOnly: true, listenPort: listenPort} }
 			t.Cleanup(func() { engineOptionsFor = saved })
@@ -122,7 +154,11 @@ func TestIssue413_E2ESetupOverARecordedPortAnotherProgramHolds(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := saveState(lay.State, st); err != nil {
+			recorded := st
+			if !c.portInTheRecord {
+				recorded.GUIPort = 0
+			}
+			if err := saveState(lay.State, recorded); err != nil {
 				t.Fatal(err)
 			}
 			// Another program takes the recorded port while no engine runs.
@@ -166,5 +202,57 @@ func TestIssue413_E2ESetupOverARecordedPortAnotherProgramHolds(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The lock setup reads as VaultSync's own engine where no run holds the
+// engine lock is the one Syncthing holds on its home while it runs (#413).
+// A Syncthing bump that moves it would make setup take such an engine for
+// another program: this test fails first.
+func TestIssue413_E2EAnEngineLocksItsHome(t *testing.T) {
+	archivePath := os.Getenv("VAULTSYNC_DESKTOP_SYNCTHING_ARCHIVE")
+	if archivePath == "" {
+		t.Skip("set VAULTSYNC_DESKTOP_SYNCTHING_ARCHIVE to the pinned Syncthing archive for this platform")
+	}
+	data, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	lay, err := layoutFor("linux", t.TempDir(), envOf(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	in, err := newInstaller(lay.Bin, runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in.baseURL = serveArchive(t, in.pin.archive, data).URL
+	if _, err := in.install(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	listenPort, err := freeSyncPort()
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng := engine{lay: lay, opts: engineOptions{loopbackOnly: true, listenPort: listenPort}}
+	var st agentState
+	if err := eng.prepare(ctx, &st); err != nil {
+		t.Fatal(err)
+	}
+	runCtx, stop := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { done <- eng.supervise(runCtx, st, t.Logf) }()
+	t.Cleanup(func() { stop(); <-done })
+	client, err := eng.client(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := waitReady(ctx, client, 60*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if held, err := lock.Probe(filepath.Join(lay.Home, syncthingHomeLock)); err != nil || !held {
+		t.Fatalf("the running engine holds no lock on %s in its home: held %v, %v", syncthingHomeLock, held, err)
 	}
 }

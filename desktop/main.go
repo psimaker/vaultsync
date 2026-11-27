@@ -338,7 +338,17 @@ func (a *app) setup(ctx context.Context, args []string) error {
 	eng := a.engine()
 	// The engine started below moves off an API port another program
 	// holds, and this setup would wait at the old one (#413): the port is
-	// chosen here, so a fresh config gets it and agent.json records it.
+	// chosen here, so a fresh config gets it and agent.json records it. A
+	// record without a port beside a config has the config's port, which
+	// the choice holds like a recorded one.
+	if _, err := os.Stat(eng.configPath()); err == nil && st.GUIPort == 0 {
+		port, err := eng.guiPortFromConfig()
+		if err != nil {
+			unlockSetup()
+			return fmt.Errorf("could not set up the sync engine: %w", err)
+		}
+		st.GUIPort = port
+	}
 	port, err := apiPortForSetup(a.lay, st.GUIPort)
 	if err != nil {
 		unlockSetup()
