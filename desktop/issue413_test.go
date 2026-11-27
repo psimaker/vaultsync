@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -254,5 +256,108 @@ func TestIssue413_E2EAnEngineLocksItsHome(t *testing.T) {
 	}
 	if held, err := lock.Probe(filepath.Join(lay.Home, syncthingHomeLock)); err != nil || !held {
 		t.Fatalf("the running engine holds no lock on %s in its home: held %v, %v", syncthingHomeLock, held, err)
+	}
+}
+
+// anotherProgramAtTheRecordedPort is an app set up as setup leaves it, its
+// agent not answering, whose recorded API port a program that is not
+// VaultSync's engine holds: it answers every request and counts them.
+func anotherProgramAtTheRecordedPort(t *testing.T) (*app, *atomic.Int32) {
+	t.Helper()
+	var asked atomic.Int32
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked.Add(1)
+		_, _ = io.WriteString(w, `{"ping":"pong"}`)
+	}))
+	t.Cleanup(other.Close)
+	tmp, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(tmp, "home")
+	lay, err := layoutFor("linux", home, envOf(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := strings.TrimPrefix(other.URL, "http://")
+	_, port, _ := net.SplitHostPort(addr)
+	n, _ := strconv.Atoi(port)
+	writeFile(t, filepath.Join(lay.Home, "config.xml"), "<configuration><gui><address>"+addr+"</address><apikey>engine-key</apikey></gui></configuration>\n")
+	writeFile(t, lay.Syncthing, "the engine")
+	if err := saveState(lay.State, recorded(agentState{GUIPort: n, Env: map[string]string{}})); err != nil {
+		t.Fatal(err)
+	}
+	lay.Socket = filepath.Join(shortDir(t), "agent.sock")
+	return &app{goos: "linux", home: home, getenv: envOf(nil), lay: lay, out: &bytes.Buffer{},
+		svc: service{goos: "linux", home: home, getenv: envOf(nil), lay: lay, run: &fakeRunner{}}}, &asked
+}
+
+// A command that finds no agent asks the engine's recorded port only while
+// an engine of VaultSync's may run there: a run holds the engine lock, or a
+// Syncthing holds its lock on the engine's home (#413, decision 079). With
+// neither, it says the engine is not running, and nothing is asked; a lock
+// that cannot be looked at asks nothing either. With a lock held — an
+// older agent without a control socket — the engine is asked as before.
+func TestIssue413_CommandsWithoutAnAgentAskOnlyARunningEngine(t *testing.T) {
+	commands := []struct {
+		name string
+		run  func(a *app) (string, error)
+		// what each says with no lock held, and with a lock it cannot look at
+		notRunning, notKnown string
+	}{
+		{"pair", func(a *app) (string, error) {
+			err := a.pair(context.Background(), []string{"--code", "TULIP-ANCHOR-42", "--hub", "127.0.0.1:1"})
+			return a.out.(*bytes.Buffer).String(), err
+		}, "The sync engine is not running", "could not tell whether its sync engine runs"},
+		{"status", func(a *app) (string, error) {
+			err := a.status(context.Background())
+			return a.out.(*bytes.Buffer).String(), err
+		}, "Sync engine: not running", "Sync engine: not known"},
+		{"pause", func(a *app) (string, error) {
+			err := a.pauseSync(context.Background(), true)
+			return a.out.(*bytes.Buffer).String(), err
+		}, "nothing syncs while it is not running", "could not confirm whether the sync engine runs"},
+		{"resume", func(a *app) (string, error) {
+			err := a.pauseSync(context.Background(), false)
+			return a.out.(*bytes.Buffer).String(), err
+		}, "vaultsync start resumes the background service", "could not confirm whether the sync engine runs"},
+	}
+	locks := []struct {
+		name  string
+		set   func(t *testing.T, lay layout)
+		asked bool
+		says  func(notRunning, notKnown string) string
+	}{
+		{"no lock held", func(*testing.T, layout) {}, false, func(nr, _ string) string { return nr }},
+		{"a run holds the engine lock", func(t *testing.T, lay layout) { holdLock(t, lay.Lock) }, true, nil},
+		{"a Syncthing holds its home", func(t *testing.T, lay layout) { holdLock(t, filepath.Join(lay.Home, syncthingHomeLock)) }, true, nil},
+		{"the engine lock cannot be looked at", func(t *testing.T, lay layout) {
+			target := filepath.Join(t.TempDir(), "elsewhere")
+			writeFile(t, target, "")
+			if err := os.MkdirAll(filepath.Dir(lay.Lock), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, lay.Lock); err != nil {
+				t.Fatal(err)
+			}
+		}, false, func(_, nk string) string { return nk }},
+	}
+	for _, c := range commands {
+		for _, l := range locks {
+			t.Run(c.name+", "+l.name, func(t *testing.T) {
+				a, asked := anotherProgramAtTheRecordedPort(t)
+				l.set(t, a.lay)
+				out, err := c.run(a)
+				said := out + refusalText(err) + fmt.Sprint(err)
+				if n := asked.Load(); (n > 0) != l.asked {
+					t.Fatalf("the program at the recorded port was asked %d times:\n%s", n, said)
+				}
+				if l.says != nil {
+					if want := l.says(c.notRunning, c.notKnown); !strings.Contains(said, want) {
+						t.Fatalf("want %q in:\n%s", want, said)
+					}
+				}
+			})
+		}
 	}
 }

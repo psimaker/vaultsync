@@ -228,6 +228,17 @@ func (a *app) status(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// No engine of VaultSync's runs: its port is not asked (#413).
+	switch may, err := engineMayRun(a.lay); {
+	case err != nil:
+		fmt.Fprintf(w, "Sync engine: not known — VaultSync could not tell whether it runs (%s)\n", redactPaths(err.Error()))
+		_, err := io.WriteString(w, a.offlineReport().Text)
+		return err
+	case !may:
+		fmt.Fprintln(w, "Sync engine: not running — nothing syncs right now")
+		_, err := io.WriteString(w, a.offlineReport().Text)
+		return err
+	}
 	pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	up := client.Ping(pctx) == nil
 	cancel()

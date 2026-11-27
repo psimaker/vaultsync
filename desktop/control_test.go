@@ -42,7 +42,9 @@ func shortDir(t *testing.T) string {
 }
 
 // agentApp is an app whose engine is the fake (config.xml and agent.json
-// point at it) and whose control socket has a short address.
+// point at it) and whose control socket has a short address. The fake holds
+// the lock a running Syncthing holds on its home, as the real engine does:
+// without it, it is no engine of VaultSync's, and nothing asks it (#413).
 // recorded is st as a setup leaves it: with the engine it installed. A
 // record without one beside the engine's data is #276's case.
 func recorded(st agentState) agentState {
@@ -64,6 +66,7 @@ func agentApp(t *testing.T, eng *fakeEngine) *app {
 	_, port, _ := net.SplitHostPort(eng.addr)
 	n, _ := strconv.Atoi(port)
 	writeFile(t, filepath.Join(lay.Home, "config.xml"), "<configuration><gui><address>"+eng.addr+"</address><apikey>engine-key</apikey></gui></configuration>\n")
+	holdLock(t, filepath.Join(lay.Home, syncthingHomeLock))
 	// The engine's program beside its data and record, as setup leaves it
 	// (#276).
 	writeFile(t, lay.Syncthing, "the engine")

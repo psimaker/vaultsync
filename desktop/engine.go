@@ -417,6 +417,26 @@ func apiPortForSetup(lay layout, recorded int) (int, error) {
 	return freeLoopbackPort()
 }
 
+// engineMayRun says whether an engine of VaultSync's can be running here: a
+// vaultsync run holds the engine lock, or a Syncthing holds its lock on the
+// engine's home, one that outlived its run too (decision 079). A command
+// that finds no agent asks the engine's recorded port only then: with
+// neither lock held, whatever answers there is not VaultSync's engine
+// (#413). A lock that cannot be looked at is an error, and nothing is
+// asked.
+func engineMayRun(lay layout) (bool, error) {
+	for _, l := range []string{lay.Lock, filepath.Join(lay.Home, syncthingHomeLock)} {
+		held, err := lock.Probe(l)
+		if err != nil {
+			return false, err
+		}
+		if held {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // syncthingHomeLock is the file Syncthing locks in its home while it runs
 // (its LockFile location, ${data}/syncthing.lock; data is the home here).
 // TestIssue413_E2EAnEngineLocksItsHome fails when a Syncthing bump moves it.

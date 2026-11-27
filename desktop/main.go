@@ -967,6 +967,13 @@ func (a *app) pair(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	// No engine of VaultSync's runs: its port is not asked (#413).
+	switch may, err := engineMayRun(a.lay); {
+	case err != nil:
+		return refuse("VaultSync could not tell whether its sync engine runs (%s). Start it with vaultsync start (or vaultsync setup), then try again.", redactPaths(err.Error()))
+	case !may:
+		return refuse("The sync engine is not running. Start it with vaultsync start (or vaultsync setup), then try again.")
+	}
 	if err := waitReady(ctx, client, 10*time.Second); err != nil {
 		return refuse("The sync engine is not running. Start it with vaultsync start (or vaultsync setup), then try again.")
 	}

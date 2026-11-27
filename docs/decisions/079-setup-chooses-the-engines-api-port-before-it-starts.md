@@ -12,11 +12,13 @@
 
    A lock that cannot be looked at keeps the port too. `TestIssue413_E2EAnEngineLocksItsHome` fails when a Syncthing bump moves Syncthing's lock.
 3. **The supervisor's move stays.** A run still moves off a port taken between two of its starts. Every reader of the port follows `agent.json`, as the control server does.
+4. **A command that finds no agent asks the engine only while one of the two locks is held.** This covers `vaultsync pair`, `status`, `pause` and `resume` (`engineMayRun`). With neither lock held, no engine of VaultSync's runs: they say so, and the recorded port is not asked. A lock that cannot be looked at is not known either way, and nothing is asked. With a lock held, such as an older agent without a control socket, the engine is asked as before.
 
 **Why.**
 - `setup` must wait where the engine runs.
 - Choosing the port before the start brings the engine and `setup` to the same port, with no step in between to follow.
 - The engine lock tells a run's own engine from another program, and Syncthing's lock on its home tells an engine that outlived its run. Neither looks at the port's holder.
+- Whatever answers at a port no engine of VaultSync's holds is not the engine. What a command reads there about the engine, such as that it runs or what it syncs, would be wrong.
 
 **Rejected alternatives.**
 - **`setup` follows `agent.json` while it waits.** It would still wait at the old port until the supervisor had moved, and whatever answers there is not the engine.
