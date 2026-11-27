@@ -205,6 +205,13 @@ struct SyncBridgeService {
         BridgeFolderAcceptNotConfirmedError()
     }
 
+    /// Whether an accept of the share answered with
+    /// `folderAcceptNotConfirmedError` is still queued in the engine (#341).
+    /// Takes no engine lock and never waits, so the poll asks it freely.
+    static func acceptInFlight(folderID: String) -> Bool {
+        BridgeAcceptInFlight(folderID)
+    }
+
     /// What `removeFolder` answers for a folder that is not configured —
     /// also once a removal the engine had not confirmed has landed (#343).
     /// Read from the bridge, so the two cannot drift apart.

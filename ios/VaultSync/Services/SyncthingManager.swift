@@ -1664,7 +1664,7 @@ final class SyncthingManager {
     private func pollBridgeState() async {
         let currentEventCursor = lastBridgeEventID
         let awaitedAccepts = Set(acceptsAwaitingConfirmation.keys)
-        let snapshot: (String, String, String, String, FolderRead, Set<String>)? = await Task.detached {
+        let snapshot: (String, String, String, String, FolderRead, Set<String>)? = await Task.detached { () -> (String, String, String, String, FolderRead, Set<String>)? in
             // Taken before anything is read: a background outcome seen
             // after this moment is not answered by this poll (#210).
             let readStartedAt = SyncthingManager.monotonicNow()
