@@ -762,7 +762,7 @@ struct ContentView: View {
     private func openDesignPreviewScreen() {
         let notes = DesignPreviewFixture.notesID
         switch DesignPreviewFixture.screen {
-        case .home, .attention, .outsideObsidian, .earlierCopy, .syncing, .onboarding, .onboardingShare:
+        case .home, .attention, .outsideObsidian, .earlierCopy, .overlappingVault, .syncing, .onboarding, .onboardingShare:
             break
         case .devices:
             selectedTab = .devices
