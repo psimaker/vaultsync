@@ -14,6 +14,10 @@ import (
 // ErrNotSetUp: vaultsync setup never ran on this computer.
 var ErrNotSetUp = control.ErrNotSetUp
 
+// ErrOlderApp: a newer VaultSync is set up on this computer, and this
+// menu-bar app is older (control.SocketPath).
+var ErrOlderApp = control.ErrOlderApp
+
 // ErrAlreadyRunning: another menu-bar app of this user holds the lock —
 // or an uninstall, which takes it while it removes VaultSync's folder.
 var ErrAlreadyRunning = errors.New("the VaultSync menu-bar app is already running (or VaultSync is being removed right now)")

@@ -181,9 +181,12 @@ func (a *app) status(ctx context.Context) error {
 			fmt.Fprintln(w, "Background service: stopped — vaultsync start resumes it")
 		}
 	}
+	// An older build's service on the copy parks and notes nothing (054):
+	// "will not stop it" would say it syncs. The older note says what is
+	// (#281).
 	if note := a.parkedNote(); note != "" && !gone {
 		fmt.Fprintln(w, "  It does not sync: "+note)
-	} else if note := a.copyBesideAppNote(gone); note != "" {
+	} else if note := a.copyBesideAppNote(gone); note != "" && !older {
 		fmt.Fprintln(w, note)
 	}
 	st, err := loadState(a.lay.State)
