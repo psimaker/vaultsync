@@ -3,46 +3,77 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/psimaker/vaultsync/hub/pairing"
+	"github.com/psimaker/vaultsync/hub/pake"
 )
 
-// #490, decision 097: who a write leaves the state file to, decided from the
-// effective user, the file's owner and its folder's owner. Tested here for
-// every case; the real run as root is TestIssue490_AsRootAWriteKeepsTheStateFilesOwner.
-func TestIssue490_TheStateFileKeepsItsOwner(t *testing.T) {
-	const path = "/srv/vaultsync/hub/state.json"
+// #490, decision 097: who the state file and its lock file belong to, and
+// what a writer does about it, decided from the effective user and the
+// owners on disk. Tested here for every case; the real runs as root are
+// TestIssue490_AsRoot… in issue490_test.go.
+func TestIssue490_BothFilesBelongToTheServicesUser(t *testing.T) {
 	service := &ownerOf{uid: 1000, gid: 1000}
 	root := &ownerOf{uid: 0, gid: 0}
 	cases := []struct {
 		name      string
 		euid      int
 		file, dir *ownerOf
-		want      fileOwner
-		refused   bool
+		want      ownerOf
 	}{
-		{"the service's user writes its own file", 1000, service, service, fileOwner{}, false},
-		{"root writes the service's file and keeps its owner", 0, &ownerOf{uid: 1000, gid: 1001}, service, fileOwner{uid: 1000, gid: 1001, change: true}, false},
-		{"root writes its own file", 0, root, service, fileOwner{}, false},
-		{"another user may not change the owner", 2000, service, service, fileOwner{}, true},
-		{"the service's user may not take root's file", 1000, root, service, fileOwner{}, true},
-		{"root makes a new file for the folder's owner", 0, nil, &ownerOf{uid: 1000, gid: 1002}, fileOwner{uid: 1000, gid: 1002, change: true}, false},
-		{"root makes a new file in root's folder", 0, nil, root, fileOwner{}, false},
-		{"root makes a new file where the folder's owner is unknown", 0, nil, nil, fileOwner{}, false},
-		{"the service's user makes a new file", 1000, nil, root, fileOwner{}, false},
+		{"an existing file keeps its owner", 1000, &ownerOf{uid: 1000, gid: 1001}, service, ownerOf{uid: 1000, gid: 1001}},
+		{"also when root writes it", 0, &ownerOf{uid: 1000, gid: 1001}, root, ownerOf{uid: 1000, gid: 1001}},
+		{"a file left to root goes back to its folder's owner", 0, root, &ownerOf{uid: 1000, gid: 1002}, ownerOf{uid: 1000, gid: 1002}},
+		{"also when the service's user finds it", 1000, root, &ownerOf{uid: 1000, gid: 1002}, ownerOf{uid: 1000, gid: 1002}},
+		{"root's file in root's folder stays root's", 0, root, root, *root},
+		{"root's file where the folder's owner is unknown stays root's", 0, root, nil, *root},
+		{"root makes a new file for the folder's owner", 0, nil, &ownerOf{uid: 1000, gid: 1002}, ownerOf{uid: 1000, gid: 1002}},
+		{"root makes a new file in root's folder for itself", 0, nil, root, ownerOf{uid: 0, gid: -1}},
+		{"another user makes a new file for itself", 1000, nil, root, ownerOf{uid: 1000, gid: -1}},
 	}
 	for _, c := range cases {
-		got, err := decideStateOwner(path, c.euid, c.file, c.dir)
+		if got := stateTarget(c.euid, c.file, c.dir); got != c.want {
+			t.Errorf("%s: %+v, want %+v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestIssue490_AWriterHandsOverOrIsRefused(t *testing.T) {
+	const path = "/srv/vaultsync/hub/state.json.lock"
+	service := ownerOf{uid: 1000, gid: 1000}
+	cases := []struct {
+		name       string
+		euid       int
+		have, want ownerOf
+		got        fileOwner
+		refused    bool
+	}{
+		{"the service's user and its own file", 1000, service, service, fileOwner{}, false},
+		{"a group of its own is no reason to refuse", 1000, ownerOf{uid: 1000, gid: 1001}, service, fileOwner{}, false},
+		{"root hands its new file to the service's user", 0, ownerOf{uid: 0, gid: 0}, service, fileOwner{uid: 1000, gid: 1000, change: true}, false},
+		{"root puts a stray owner right", 0, ownerOf{uid: 2000, gid: 2000}, service, fileOwner{uid: 1000, gid: 1000, change: true}, false},
+		{"root and a file that is right", 0, service, service, fileOwner{}, false},
+		{"root keeps the writer's group where none is wanted", 0, ownerOf{uid: 0, gid: 0}, ownerOf{uid: 1000, gid: -1}, fileOwner{uid: 1000, gid: 0, change: true}, false},
+		{"the service's user and root's lock", 1000, ownerOf{uid: 0, gid: 0}, service, fileOwner{}, true},
+		{"another user writing the service's file", 2000, ownerOf{uid: 2000, gid: 2000}, service, fileOwner{}, true},
+	}
+	for _, c := range cases {
+		got, err := decideOwner(path, c.euid, c.have, c.want)
 		switch {
-		case c.refused && (err == nil || !strings.Contains(err.Error(), "belongs to another user") || !strings.Contains(err.Error(), "docker compose exec hub")):
-			t.Errorf("%s: want a refusal, got %+v %v", c.name, got, err)
-		case !c.refused && (err != nil || got != c.want):
-			t.Errorf("%s: got %+v %v, want %+v", c.name, got, err, c.want)
+		case c.refused && (err == nil || !strings.Contains(err.Error(), "nothing was changed") ||
+			!strings.Contains(err.Error(), "sudo chown --reference=hub hub/state.json hub/state.json.lock") ||
+			!strings.Contains(err.Error(), "docker compose exec -u 0 hub vaultsync-hub code")):
+			t.Errorf("%s: want a refusal that names the way back, got %+v %v", c.name, got, err)
+		case !c.refused && (err != nil || got != c.got):
+			t.Errorf("%s: got %+v %v, want %+v", c.name, got, err, c.got)
 		}
 	}
 }
@@ -163,8 +194,9 @@ func TestIssue490_TheFileCatchesUpWithTheCountOnItsNextWrite(t *testing.T) {
 	}
 }
 
-// A pairing whose record cannot be written is refused and shares nothing.
-func TestIssue490_APairingWhoseRecordCannotBeWrittenSharesNothing(t *testing.T) {
+// A pairing whose record cannot be written is refused before the device is
+// registered or a vault created: it leaves nothing behind, and says so.
+func TestIssue490_APairingWhoseRecordCannotBeWrittenLeavesNothing(t *testing.T) {
 	for _, create := range []bool{false, true} {
 		fx := newPairingFixture(t)
 		ctx := context.Background()
@@ -180,20 +212,200 @@ func TestIssue490_APairingWhoseRecordCannotBeWrittenSharesNothing(t *testing.T) 
 		restore := failWrites(fx)
 		reply, err := client.Provision(ctx, 1, fakeDeviceID, "Laptop", "Notes", create)
 		restore()
-		if err != nil || reply.Provisioned != nil || !strings.Contains(reply.Error, "could not record the pairing") {
+		if err != nil || reply.Provisioned != nil || !strings.Contains(reply.Error, "could not record the pairing") || !strings.Contains(reply.Error, "nothing was changed") {
 			t.Fatalf("create=%v: %+v %v", create, reply, err)
 		}
-		folder := fx.fake.folderByLabel("Notes")
-		if folder == nil {
-			t.Fatalf("create=%v: no vault", create)
+		if fx.fake.hasDevice(fakeDeviceID) {
+			t.Fatalf("create=%v: the device was registered", create)
 		}
-		for _, d := range folder.Devices {
-			if d.DeviceID == fakeDeviceID {
-				t.Fatalf("create=%v: the vault was shared although the pairing was refused", create)
-			}
+		folder := fx.fake.folderByLabel("Notes")
+		if create && folder != nil {
+			t.Fatalf("create=%v: a vault was created: %+v", create, folder)
+		}
+		if !create && len(folder.Devices) != 1 {
+			t.Fatalf("create=%v: the vault is shared with %+v", create, folder.Devices)
 		}
 		if st, _ := fx.store.load(); len(st.Devices) != 0 {
 			t.Fatalf("create=%v: records %+v", create, st.Devices)
 		}
+	}
+}
+
+// A step after the record that fails says what exists by then.
+func TestIssue490_AStepAfterTheRecordSaysWhatExists(t *testing.T) {
+	fx := newPairingFixture(t)
+	ctx := context.Background()
+	client := fx.client()
+	if _, err := client.Handshake(ctx, fx.code); err != nil {
+		t.Fatal(err)
+	}
+	fx.fake.failDeviceAdd = true
+	reply, err := client.Provision(ctx, 1, fakeDeviceID, "Laptop", "Notes", true)
+	if err != nil || reply.Provisioned != nil || !strings.HasPrefix(reply.Error, pairing.RegistrationRefusedPrefix) ||
+		!strings.Contains(reply.Error, "the Hub recorded this pairing; nothing else was changed") {
+		t.Fatalf("a registration that fails after the record: %+v %v", reply, err)
+	}
+	if fx.fake.folderByLabel("Notes") != nil {
+		t.Fatal("a vault was created for a device the Hub could not register")
+	}
+}
+
+// --- the count of wrong attempts -------------------------------------------
+
+// openSession starts a pairing session with guess as the code and returns
+// it with the confirmation to finish it with later, as a client that opens
+// sessions first and tries them afterwards would.
+func (fx *pairingFixture) openSession(t *testing.T, guess string) (id string, confirm []byte) {
+	t.Helper()
+	dev, err := pake.NewState(pake.RoleDevice, pake.PasswordScalar([]byte(guess)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pa, err := dev.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(pairing.StartRequest{PA: pairing.B64Encode(pa)})
+	resp, err := http.Post(fx.http.URL+"/v1/pair/start", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var started pairing.StartResponse
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&started) != nil {
+		t.Fatalf("start: HTTP %d", resp.StatusCode)
+	}
+	pb, err := pairing.B64Decode(started.PB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if confirm, err = dev.Finish(pb); err != nil {
+		t.Fatal(err)
+	}
+	return started.Session, confirm
+}
+
+// finishSession sends a session's finish; safe from any goroutine.
+func (fx *pairingFixture) finishSession(id string, confirm []byte) (int, string, error) {
+	body, _ := json.Marshal(pairing.FinishRequest{Session: id, Confirm: pairing.B64Encode(confirm)})
+	resp, err := http.Post(fx.http.URL+"/v1/pair/finish", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return 0, "", err
+	}
+	defer resp.Body.Close()
+	var e errorResponse
+	_ = json.NewDecoder(resp.Body).Decode(&e)
+	return resp.StatusCode, e.Error, nil
+}
+
+// The limit on wrong codes is held at every attempt: sessions opened first
+// and tried all at once count one step each, and exactly maxCodeFailures of
+// them are tried before the code locks — with the state file written or not.
+func TestIssue490_TheLimitIsHeldAtEveryAttempt(t *testing.T) {
+	for _, writable := range []bool{true, false} {
+		fx := newPairingFixture(t)
+		const sessions = 10
+		ids := make([]string, sessions)
+		confirms := make([][]byte, sessions)
+		for i := range ids {
+			ids[i], confirms[i] = fx.openSession(t, "TULIP-ANCHOR-00")
+		}
+		if !writable {
+			defer failWrites(fx)()
+		}
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		rejected, locked := 0, 0
+		for i := range ids {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				status, msg, err := fx.finishSession(ids[i], confirms[i])
+				mu.Lock()
+				defer mu.Unlock()
+				switch {
+				case err != nil || status != http.StatusForbidden:
+					t.Errorf("finish %d: HTTP %d %q %v", i, status, msg, err)
+				case strings.Contains(msg, "rejected"):
+					rejected++
+				case strings.Contains(msg, "locked"):
+					locked++
+				default:
+					t.Errorf("finish %d: %q", i, msg)
+				}
+			}(i)
+		}
+		wg.Wait()
+		if rejected != maxCodeFailures || locked != sessions-maxCodeFailures {
+			t.Fatalf("writable=%v: %d attempts tried and %d refused as locked, want %d and %d", writable, rejected, locked, maxCodeFailures, sessions-maxCodeFailures)
+		}
+		if n := fx.server.failures[string(passwordScalarForCode(fx.code))]; n != maxCodeFailures {
+			t.Fatalf("writable=%v: counted %d", writable, n)
+		}
+		want := maxCodeFailures
+		if !writable {
+			want = 0
+		}
+		if n := fileFailures(t, fx); n != want {
+			t.Fatalf("writable=%v: the state file holds %d failed attempts, want %d", writable, n, want)
+		}
+	}
+}
+
+// Wrong attempts counted at once give the exact count, one step each.
+func TestIssue490_TheCountIsExactUnderConcurrentWrongAttempts(t *testing.T) {
+	fx := newPairingFixture(t)
+	ids := make([]string, 3)
+	confirms := make([][]byte, 3)
+	for i := range ids {
+		ids[i], confirms[i] = fx.openSession(t, "TULIP-ANCHOR-00")
+	}
+	var wg sync.WaitGroup
+	for i := range ids {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, _, _ = fx.finishSession(ids[i], confirms[i])
+		}(i)
+	}
+	wg.Wait()
+	if n := fileFailures(t, fx); n != 3 {
+		t.Fatalf("three wrong attempts at once were counted as %d", n)
+	}
+	// Two more: the fifth locks the code, not an earlier one.
+	if _, err := fx.client().Handshake(context.Background(), "TULIP-ANCHOR-00"); !errors.Is(err, pairing.ErrCodeRejected) {
+		t.Fatalf("the fourth attempt: %v", err)
+	}
+	if _, err := fx.client().Handshake(context.Background(), "TULIP-ANCHOR-00"); !errors.Is(err, pairing.ErrCodeRejected) {
+		t.Fatalf("the fifth attempt: %v", err)
+	}
+	var apiErr *pairing.APIError
+	if _, err := fx.client().Handshake(context.Background(), fx.code); !errors.As(err, &apiErr) || !strings.Contains(apiErr.Body, "locked") {
+		t.Fatalf("after five: %v", err)
+	}
+}
+
+// A session from an older code counts against that code only: it neither
+// clears nor changes the count of the code that is open now.
+func TestIssue490_AnOlderCodesSessionLeavesTheCurrentCountAlone(t *testing.T) {
+	fx := newPairingFixture(t)
+	oldID, oldConfirm := fx.openSession(t, "TULIP-ANCHOR-00")
+	fx.issueCode(t)
+	defer failWrites(fx)()
+	for i := 1; i <= maxCodeFailures-1; i++ {
+		if _, err := fx.client().Handshake(context.Background(), "TULIP-ANCHOR-00"); !errors.Is(err, pairing.ErrCodeRejected) {
+			t.Fatalf("attempt %d: %v", i, err)
+		}
+	}
+	if status, msg, err := fx.finishSession(oldID, oldConfirm); err != nil || status != http.StatusForbidden {
+		t.Fatalf("the older code's session: HTTP %d %q %v", status, msg, err)
+	}
+	// The open code's fifth attempt is still the one that locks it.
+	if _, err := fx.client().Handshake(context.Background(), "TULIP-ANCHOR-00"); !errors.Is(err, pairing.ErrCodeRejected) {
+		t.Fatalf("the fifth attempt on the open code: %v", err)
+	}
+	var apiErr *pairing.APIError
+	if _, err := fx.client().Handshake(context.Background(), fx.code); !errors.As(err, &apiErr) || !strings.Contains(apiErr.Body, "locked") {
+		t.Fatalf("after five on the open code: %v", err)
 	}
 }

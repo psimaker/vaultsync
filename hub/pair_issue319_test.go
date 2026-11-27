@@ -185,7 +185,7 @@ func TestIssue319_WhatTheHubQuotesArrivesAsWritten(t *testing.T) {
 	h.fx.fake.folders = append(h.fx.fake.folders, folderConfig{ID: "vs-cccccccccccc", Label: label, Path: "/var/syncthing/vaults"})
 	h.fx.fake.mu.Unlock()
 	reply, err = c.Provision(ctx, 3, fakeDeviceID, "Laptop", "Recipes", true)
-	if err != nil || reply.Error != "could not create the vault: path overlaps an existing vault ("+label+")" {
+	if err != nil || reply.Error != "could not create the vault: path overlaps an existing vault ("+label+") (this device is registered with the Hub; nothing was shared)" {
 		t.Errorf("a label with wide spaces: %+q, %v", reply.Error, err)
 	}
 }

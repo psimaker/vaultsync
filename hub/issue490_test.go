@@ -162,36 +162,127 @@ func TestIssue490_AWriteWaitsABoundedTimeThenFailsClosed(t *testing.T) {
 	}
 }
 
-// flock needs no write access: a lock file another user made, which this one
-// may only read, still serves. One this process cannot open at all, a folder
-// it cannot make the lock file in, and a filesystem without file locks each
-// fail closed and say why.
-func TestIssue490_TheLockFileNeedsOnlyToBeReadable(t *testing.T) {
+// The lock file is private to the state's owner, opened for writing (an
+// exclusive lock on NFS needs that), never through a link, and a regular
+// file only (decision 097).
+func TestIssue490_ANewLockFileIsPrivate(t *testing.T) {
+	old := syscall.Umask(0)
+	t.Cleanup(func() { syscall.Umask(old) })
+	path := filepath.Join(t.TempDir(), "state.json")
+	seedCode(t, newStateStore(path))
+	for _, f := range []string{path, path + ".lock"} {
+		if fi, err := os.Stat(f); err != nil || fi.Mode().Perm() != 0o600 {
+			t.Fatalf("%s: %v %v, want 0600", f, fi.Mode().Perm(), err)
+		}
+	}
+}
+
+func TestIssue490_AStrayLockFileIsPutRight(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	store := newStateStore(path)
 	seedCode(t, store)
-	lockPath := path + ".lock"
-	if err := os.Chmod(lockPath, 0o444); err != nil {
+	if err := os.Chmod(path+".lock", 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.update(func(st *hubState) error { st.Pairing.Failures++; return nil }); err != nil {
-		t.Fatalf("a read-only lock file: %v", err)
+		t.Fatal(err)
 	}
-	if os.Geteuid() == 0 {
-		t.Skip("root opens every file; the unreadable cases need another user")
+	if fi, _ := os.Stat(path + ".lock"); fi.Mode().Perm() != 0o600 {
+		t.Fatalf("a stray 0644 lock file is %v after a write", fi.Mode().Perm())
 	}
+}
+
+func TestIssue490_ALockFileIsNeverALinkOrAnythingButAFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.json")
+	store := newStateStore(path)
+	seedCode(t, store)
+	lock := path + ".lock"
 	before, _ := os.ReadFile(path)
-	if err := os.Chmod(lockPath, 0); err != nil {
+	elsewhere := filepath.Join(t.TempDir(), "elsewhere")
+	existing := filepath.Join(t.TempDir(), "existing")
+	if err := os.WriteFile(existing, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name string
+		make func() error
+		says string
+	}{
+		{"a link to nothing", func() error { return os.Symlink(elsewhere, lock) }, "is a link"},
+		{"a link to a file", func() error { return os.Symlink(existing, lock) }, "is a link"},
+		{"a directory", func() error { return os.Mkdir(lock, 0o700) }, "not a regular file"},
+		{"a pipe", func() error { return syscall.Mkfifo(lock, 0o600) }, "not a regular file"},
+	}
+	for _, c := range cases {
+		if err := os.RemoveAll(lock); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.make(); err != nil {
+			t.Fatal(err)
+		}
+		_, err := store.update(func(st *hubState) error { st.Pairing.Failures++; return nil })
+		if err == nil || !strings.Contains(err.Error(), c.says) || !strings.Contains(err.Error(), "nothing was changed") {
+			t.Errorf("%s: %v", c.name, err)
+		}
+		if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
+			t.Errorf("%s: the state file changed", c.name)
+		}
+	}
+	if _, err := os.Lstat(elsewhere); !os.IsNotExist(err) {
+		t.Fatalf("a link's target was made: %v", err)
+	}
+	if fi, _ := os.Stat(existing); fi.Mode().Perm() != 0o644 {
+		t.Fatalf("a link's target was changed: %v", fi.Mode().Perm())
+	}
+}
+
+// A lock file or a state file this user cannot use, and a folder it cannot
+// make the lock in, fail closed; the words name the way back.
+func TestIssue490_UnusableStateFailsClosedAndNamesTheWayBack(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root opens every file; these cases need another user")
+	}
+	path := filepath.Join(t.TempDir(), "state.json")
+	store := newStateStore(path)
+	seedCode(t, store)
+	before, _ := os.ReadFile(path)
+	unchanged := func(what string) {
+		t.Helper()
+		if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
+			t.Fatalf("%s changed the state file", what)
+		}
+	}
+	wayBack := func(what string, err error) {
+		t.Helper()
+		if err == nil || (!strings.Contains(err.Error(), "nothing was changed") && !strings.Contains(err.Error(), "cannot be read by this user")) ||
+			!strings.Contains(err.Error(), "sudo chown --reference=hub hub/state.json hub/state.json.lock") ||
+			!strings.Contains(err.Error(), "docker compose exec -u 0 hub vaultsync-hub code") {
+			t.Fatalf("%s: %v", what, err)
+		}
+	}
+	lock := path + ".lock"
+	if err := os.Chmod(lock, 0); err != nil {
 		t.Fatal(err)
 	}
 	_, err := store.update(func(st *hubState) error { st.Pairing.Failures++; return nil })
-	if err == nil || !strings.Contains(err.Error(), "cannot be opened") || !strings.Contains(err.Error(), lockPath) {
-		t.Fatalf("an unreadable lock file: %v", err)
+	wayBack("an unusable lock file", err)
+	unchanged("an unusable lock file")
+	if err := os.Chmod(lock, 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
-		t.Fatal("a write without the lock changed the file")
+
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
 	}
-	if err := os.Remove(lockPath); err != nil {
+	_, err = store.update(func(st *hubState) error { st.Pairing.Failures++; return nil })
+	wayBack("an unreadable state file", err)
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	unchanged("an unreadable state file")
+
+	if err := os.Remove(lock); err != nil {
 		t.Fatal(err)
 	}
 	dir := filepath.Dir(path)
@@ -200,12 +291,10 @@ func TestIssue490_TheLockFileNeedsOnlyToBeReadable(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 	_, err = store.update(func(st *hubState) error { st.Pairing.Failures++; return nil })
-	if err == nil || !strings.Contains(err.Error(), "cannot be opened") {
+	if err == nil || !strings.Contains(err.Error(), "cannot be opened") || !strings.Contains(err.Error(), "nothing was changed") {
 		t.Fatalf("a folder without room for the lock file: %v", err)
 	}
-	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
-		t.Fatal("a write without the lock changed the file")
-	}
+	unchanged("a folder without room for the lock file")
 }
 
 func TestIssue490_AFilesystemWithoutFileLocksFailsClosed(t *testing.T) {
@@ -217,30 +306,11 @@ func TestIssue490_AFilesystemWithoutFileLocksFailsClosed(t *testing.T) {
 	flock = func(int, int) error { return syscall.ENOTSUP }
 	t.Cleanup(func() { flock = saved })
 	_, err := store.update(func(st *hubState) error { st.Pairing.Failures++; return nil })
-	if err == nil || !strings.Contains(err.Error(), "does not support file locks") {
+	if err == nil || !strings.Contains(err.Error(), "does not support the file lock") || !strings.Contains(err.Error(), "Keep the Hub's folder on a local disk") {
 		t.Fatalf("no flock: %v", err)
 	}
 	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {
 		t.Fatal("a write without the lock changed the file")
-	}
-}
-
-// A lock file is made 0644 whatever the umask: everyone who may write the
-// state must be able to open it.
-func TestIssue490_ANewLockFileIsOpenToEveryWriter(t *testing.T) {
-	old := syscall.Umask(0o077)
-	t.Cleanup(func() { syscall.Umask(old) })
-	path := filepath.Join(t.TempDir(), "state.json")
-	seedCode(t, newStateStore(path))
-	fi, err := os.Stat(path + ".lock")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if fi.Mode().Perm() != 0o644 {
-		t.Fatalf("lock file mode %v, want 0644", fi.Mode().Perm())
-	}
-	if st, _ := os.Stat(path); st.Mode().Perm() != 0o600 {
-		t.Fatalf("state file mode %v, want 0600", st.Mode().Perm())
 	}
 }
 
@@ -258,18 +328,53 @@ func TestIssue490_AsRootAWriteKeepsTheStateFilesOwner(t *testing.T) {
 	if err := os.Chown(path, uid, gid); err != nil {
 		t.Fatal(err)
 	}
+	// A stray lock file of an earlier build: root's, 0644.
+	if err := os.Chmod(path+".lock", 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := store.update(func(st *hubState) error { st.Pairing.Failures++; return nil }); err != nil {
 		t.Fatal(err)
 	}
 	ownerIs(t, path, uid, gid, 0o600)
+	ownerIs(t, path+".lock", uid, gid, 0o600)
 
-	// A new file takes its folder's owner.
+	// New files take their folder's owner.
 	if err := os.Chown(dir, uid, gid); err != nil {
 		t.Fatal(err)
 	}
 	fresh := filepath.Join(dir, "fresh.json")
 	seedCode(t, newStateStore(fresh))
 	ownerIs(t, fresh, uid, gid, 0o600)
+	ownerIs(t, fresh+".lock", uid, gid, 0o600)
+
+	// A state file left to root in a folder the service owns goes back to
+	// the folder's owner on root's next write — the way back the refusal names.
+	if err := os.Chown(fresh, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chown(fresh+".lock", 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := newStateStore(fresh).update(func(st *hubState) error { st.Pairing.Failures++; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	ownerIs(t, fresh, uid, gid, 0o600)
+	ownerIs(t, fresh+".lock", uid, gid, 0o600)
+
+	// As root, nothing is made or changed at a link's target.
+	target := filepath.Join(t.TempDir(), "target")
+	if err := os.Remove(path + ".lock"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path+".lock"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.update(func(st *hubState) error { st.Pairing.Failures++; return nil }); err == nil || !strings.Contains(err.Error(), "is a link") {
+		t.Fatalf("a linked lock file as root: %v", err)
+	}
+	if _, err := os.Lstat(target); !os.IsNotExist(err) {
+		t.Fatalf("root made the link's target: %v", err)
+	}
 }
 
 func ownerIs(t *testing.T, path string, uid, gid int, mode os.FileMode) {
@@ -294,8 +399,8 @@ func TestIssue490_AnotherUsersWriteThatCannotKeepTheOwnerIsRefused(t *testing.T)
 	geteuid = func() int { return os.Geteuid() + 1 }
 	t.Cleanup(func() { geteuid = saved })
 	_, err := store.update(func(st *hubState) error { st.Pairing.Failures++; return nil })
-	want := "belongs to another user (uid " + strconv.Itoa(os.Geteuid()) + ")"
-	if err == nil || !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "docker compose exec hub") {
+	want := "must belong to uid " + strconv.Itoa(os.Geteuid()) + ", the user the Hub's service runs as, and this user (uid " + strconv.Itoa(os.Geteuid()+1) + ") cannot make it so"
+	if err == nil || !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "docker compose exec -u 0 hub vaultsync-hub code") {
 		t.Fatalf("another user's write: %v", err)
 	}
 	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {

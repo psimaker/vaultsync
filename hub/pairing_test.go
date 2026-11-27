@@ -140,8 +140,10 @@ func TestPairingUnknownVaultWithoutCreateIsReportedNotCreated(t *testing.T) {
 	if reply.Error == "" || reply.Provisioned != nil || len(fx.fake.folders) != 0 {
 		t.Fatalf("unknown vault must not be created: %+v", reply)
 	}
-	if !fx.fake.hasDevice(fakeDeviceID) {
-		t.Fatal("device registration must still happen")
+	// A refused provision leaves nothing behind: the device is registered
+	// only after the pairing is recorded (#490, decision 097).
+	if fx.fake.hasDevice(fakeDeviceID) {
+		t.Fatal("a provision for an unknown vault registered the device")
 	}
 }
 

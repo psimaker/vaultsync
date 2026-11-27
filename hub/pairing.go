@@ -89,11 +89,15 @@ type pairingServer struct {
 	mu       sync.Mutex
 	sessions map[string]*pairingSession
 	starts   map[string][]time.Time // remote IP → recent start timestamps
-	// Wrong attempts on the code whose scalar is failedCode, counted for the
-	// life of this process as well as in the state file: a count the file
-	// cannot take still counts (#490).
-	failedCode []byte
-	failed     int
+
+	// countMu orders every attempt on a code: its check against the limit,
+	// the verification and the count are one step (decision 097).
+	countMu sync.Mutex
+	// failures counts wrong attempts per code, keyed by the code's scalar,
+	// for the life of this process; the state file holds the same count
+	// whenever its write succeeds. Codes are opened by hand, so the map
+	// holds a handful of entries at most.
+	failures map[string]int
 }
 
 func newPairingServer(store *stateStore, prov *provisioner, hubName, version string) *pairingServer {
@@ -106,6 +110,7 @@ func newPairingServer(store *stateStore, prov *provisioner, hubName, version str
 		logf:     log.Printf,
 		sessions: map[string]*pairingSession{},
 		starts:   map[string][]time.Time{},
+		failures: map[string]int{},
 	}
 }
 
@@ -172,8 +177,6 @@ func (s *pairingServer) handleStart(w http.ResponseWriter, r *http.Request) {
 	}
 	code, err := st.activePairing(s.now())
 	if err == nil && s.lockedHere(code.Scalar) {
-		// Locked here, not yet in the file: try to bring the file level.
-		s.writeCount(code.Scalar)
 		err = errCodeLocked
 	}
 	if err != nil {
@@ -220,13 +223,25 @@ func (s *pairingServer) handleFinish(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "unknown or expired pairing session")
 		return
 	}
+	// The limit on wrong codes is held at every attempt: the check, the
+	// verification and the count are one step, whatever session the attempt
+	// comes in on.
+	s.countMu.Lock()
+	if s.lockedLocked(sess.code) {
+		s.countMu.Unlock()
+		s.dropSession(sess.id)
+		writeError(w, http.StatusForbidden, errCodeLocked.Error())
+		return
+	}
 	key, err := sess.state.Verify(confirm)
 	if err != nil {
+		s.countFailureLocked(sess.code)
+		s.countMu.Unlock()
 		s.dropSession(sess.id)
-		s.countFailure(sess.code)
 		writeError(w, http.StatusForbidden, "pairing code rejected")
 		return
 	}
+	s.countMu.Unlock()
 	sess.key = key
 	sess.authenticated = true
 
@@ -269,10 +284,10 @@ func (s *pairingServer) handleProvision(w http.ResponseWriter, r *http.Request) 
 	ctx := r.Context()
 	var provisioned *vaultInfo
 	var provErr string
-	if err := s.prov.ensureDevice(ctx, sess.deviceID, sess.deviceName); err != nil {
-		provErr = "could not register the device: " + err.Error()
-	} else if strings.TrimSpace(p.Vault) != "" {
+	if strings.TrimSpace(p.Vault) != "" {
 		provisioned, provErr = s.provision(ctx, sess, p)
+	} else if err := s.prov.ensureDevice(ctx, sess.deviceID, sess.deviceName); err != nil {
+		provErr = "could not register the device: " + err.Error()
 	}
 	reply := s.hubPayload(ctx, provisioned, provErr)
 	box, err := sealBox(sess, "hub->device", reply)
@@ -283,45 +298,60 @@ func (s *pairingServer) handleProvision(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, boxResponse{Box: box})
 }
 
-// provision shares an existing vault or creates a new one, then records the
-// device in the Hub state. Errors are reported inside the encrypted reply so
-// the device can show them; they never abort the session.
+// provision shares an existing vault, or a new one it creates, with the
+// device. The record of the pairing comes first (decision 097): a pairing
+// whose record cannot be written is refused before the device is registered
+// or a vault created, so it leaves nothing behind. A later step that fails
+// says in the reply and the log what exists by then. Errors are reported
+// inside the encrypted reply so the device can show them; they never abort
+// the session.
 func (s *pairingServer) provision(ctx context.Context, sess *pairingSession, p provisionPayload) (*vaultInfo, string) {
 	folders, err := s.prov.client.Folders(ctx)
 	if err != nil {
 		return nil, "could not read vaults: " + err.Error()
 	}
 	target := findVaultByLabel(folders, p.Vault)
+	label := strings.TrimSpace(p.Vault)
 	if target == nil {
 		if !p.Create {
 			return nil, fmt.Sprintf("no vault named %q on this hub", p.Vault)
 		}
-		// Pairing may create only fresh, empty directories; adopting existing
-		// content is an operator decision made on the Hub's own shell.
-		created, err := s.prov.createVault(ctx, p.Vault, false)
-		if err != nil {
+		if _, err := slugify(p.Vault); err != nil {
 			return nil, "could not create the vault: " + err.Error()
 		}
-		target = &created
+	} else {
+		label = target.Label
 	}
-	// The record before the share (#490): a pairing whose record cannot be
-	// written is refused and shares nothing. A share that fails after it
-	// leaves a record naming a vault the device does not have; the next
-	// pairing adds to it, and nothing reads it to decide anything.
 	if _, err := s.store.update(func(st *hubState) error {
 		st.recordDevice(pairedDevice{
 			DeviceID: sess.deviceID,
 			Name:     sess.deviceName,
 			PairedAt: s.now(),
-			Vaults:   []string{target.Label},
+			Vaults:   []string{label},
 		})
 		return nil
 	}); err != nil {
-		s.logf("pairing: could not record device: %v", err)
-		return nil, "could not record the pairing in the Hub's state: " + err.Error()
+		s.logf("pairing: could not record the pairing, nothing was changed: %v", err)
+		return nil, "could not record the pairing in the Hub's state: " + err.Error() + " (nothing was changed)"
+	}
+	if err := s.prov.ensureDevice(ctx, sess.deviceID, sess.deviceName); err != nil {
+		s.logf("pairing: could not register a device whose pairing is recorded: %v", err)
+		return nil, pairing.RegistrationRefusedPrefix + ": " + err.Error() + " (the Hub recorded this pairing; nothing else was changed)"
+	}
+	if target == nil {
+		// Pairing may create only fresh, empty directories; adopting existing
+		// content is an operator decision made on the Hub's own shell.
+		created, err := s.prov.createVault(ctx, p.Vault, false)
+		if err != nil {
+			s.logf("pairing: could not create a vault for a registered device: %v", err)
+			return nil, "could not create the vault: " + err.Error() + " (this device is registered with the Hub; nothing was shared)"
+		}
+		target = &created
+		s.logf("pairing: created vault %s for a paired device", target.ID)
 	}
 	if err := s.prov.shareVault(ctx, target.ID, sess.deviceID); err != nil {
-		return nil, "could not share the vault: " + err.Error()
+		s.logf("pairing: could not share vault %s with a registered device: %v", target.ID, err)
+		return nil, "could not share the vault: " + err.Error() + fmt.Sprintf(" (this device is registered with the Hub and the vault %q exists; nothing was shared)", target.Label)
 	}
 	s.logf("pairing: shared vault %s with a paired device", target.ID)
 	// The device decides whether it may accept into a non-empty directory
@@ -405,43 +435,53 @@ func (s *pairingServer) allowStart(ip string) bool {
 	return true
 }
 
-// countFailure counts a wrong attempt on the code its session began with, in
-// this process and in the state file, and the higher count stands: one the
-// file cannot take still counts here, and the next write that works brings
-// the file up to it (#490). The file's count goes to whichever code is active
-// then, as it always did.
-func (s *pairingServer) countFailure(code []byte) {
-	s.mu.Lock()
-	if !bytes.Equal(s.failedCode, code) {
-		s.failedCode, s.failed = code, 0
-	}
-	s.failed++
-	counted := s.failed
-	s.mu.Unlock()
+// countFailureLocked counts one wrong attempt on the code whose scalar is
+// code, with countMu held: the new count is the higher of this process's and
+// the state file's, plus one. This process keeps it, and the file is written
+// with it, so each attempt is one step also when the write fails, and a
+// failed write is still counted here. An attempt on a session from an older
+// code counts against that code only.
+func (s *pairingServer) countFailureLocked(code []byte) {
+	next := s.failures[string(code)] + 1
 	_, err := s.store.update(func(st *hubState) error {
-		if st.Pairing != nil {
-			n := st.Pairing.Failures + 1
-			if bytes.Equal(st.Pairing.Scalar, code) && counted > n {
-				n = counted
-			}
-			st.Pairing.Failures = n
-			if n >= maxCodeFailures {
-				s.logf("pairing: code locked after %d wrong attempts — issue a new one with `vaultsync-hub code`", n)
-			}
+		if st.Pairing == nil || !bytes.Equal(st.Pairing.Scalar, code) {
+			return nil
+		}
+		if st.Pairing.Failures+1 > next {
+			next = st.Pairing.Failures + 1
+		}
+		st.Pairing.Failures = next
+		if next >= maxCodeFailures {
+			s.logf("pairing: code locked after %d wrong attempts — issue a new one with `vaultsync-hub code`", next)
 		}
 		return nil
 	})
+	s.failures[string(code)] = next
 	if err != nil {
 		s.logf("pairing: could not write the failed attempt to the state file, counted here: %v", err)
 	}
 }
 
-// writeCount raises the file's count for the code whose scalar is code to
-// what this process counted, when the file holds less.
-func (s *pairingServer) writeCount(code []byte) {
-	s.mu.Lock()
-	counted := s.failed
-	s.mu.Unlock()
+// lockedLocked reports, with countMu held, whether the code whose scalar is
+// code has reached the limit: in this process's count or in the state file's.
+func (s *pairingServer) lockedLocked(code []byte) bool {
+	if s.failures[string(code)] >= maxCodeFailures {
+		return true
+	}
+	st, err := s.store.load()
+	return err == nil && st.Pairing != nil && bytes.Equal(st.Pairing.Scalar, code) && st.Pairing.Failures >= maxCodeFailures
+}
+
+// lockedHere reports whether this process counted the limit for the code
+// whose scalar is code, and then brings the state file up to that count
+// where its write had failed.
+func (s *pairingServer) lockedHere(code []byte) bool {
+	s.countMu.Lock()
+	defer s.countMu.Unlock()
+	counted := s.failures[string(code)]
+	if counted < maxCodeFailures {
+		return false
+	}
 	_, err := s.store.update(func(st *hubState) error {
 		if st.Pairing != nil && bytes.Equal(st.Pairing.Scalar, code) && st.Pairing.Failures < counted {
 			st.Pairing.Failures = counted
@@ -451,14 +491,7 @@ func (s *pairingServer) writeCount(code []byte) {
 	if err != nil {
 		s.logf("pairing: could not write the failed attempts to the state file: %v", err)
 	}
-}
-
-// lockedHere reports whether this process counted maxCodeFailures wrong
-// attempts on the code whose scalar is code.
-func (s *pairingServer) lockedHere(code []byte) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return bytes.Equal(s.failedCode, code) && s.failed >= maxCodeFailures
+	return true
 }
 
 // --- boxes ------------------------------------------------------------------
