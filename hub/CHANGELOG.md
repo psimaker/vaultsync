@@ -8,6 +8,10 @@ What the setup link's **2) Hub** and the Hub's compose stack (`hub/scripts/setup
 
 ## [Unreleased]
 
+### Changed
+
+- **`vaultsync-hub status` tells devices apart** ([#224](https://github.com/psimaker/vaultsync/issues/224)) — a computer that runs `vaultsync uninstall --remove-data` and is set up again pairs under a new device identity, and `status` listed the old identity and the new one under the same name, with nothing to tell them apart. Each device's row now begins with its short ID, the first group of its device ID as Syncthing shows it, then its name, then "connected", or "offline" with when the Hub last saw it, with its time zone ("never seen" for a device that never connected). A device's name and a vault's name are shown cleaned like every name the Hub keeps, so neither can break its row or move the short ID. `status` waits at most a few seconds for when each device was last seen. Recorded in decision 094.
+
 ### Fixed
 
 - **`vaultsync-hub pair` prints an answer that is no proper HTTP as one short line, and nothing sent outside an answer** ([#323](https://github.com/psimaker/vaultsync/issues/323)) — when something at the Hub's address answers with what is not HTTP, the command printed what the HTTP library said about it, which quotes what came, as long as it came. Bytes sent behind an answer, or before the request, were written by the library to the terminal as a line of their own. The library's message is now one line of at most 300 bytes, and nothing sent outside an answer reaches the terminal. Pairing reads at most 64 KiB of an answer's head and opens a connection of its own for each step. A failure is told apart as before. Recorded in decision 062.
