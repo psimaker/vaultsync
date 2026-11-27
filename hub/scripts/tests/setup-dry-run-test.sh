@@ -632,7 +632,9 @@ $out"
 $out"
 }
 fresh_364
-if out=$(FAIL_STATUS=1 FAST_SLEEP=1 new_env_run); then
+# FAKE_EPOCH_STEP: an answer taken for a conversion by mistake ends the
+# wait within a few looks, and the case fails, instead of an hour's wait.
+if out=$(FAIL_STATUS=1 FAKE_EPOCH_STEP=600 FAST_SLEEP=1 new_env_run); then
 	fail "a Hub that never answers must stop the setup:
 $out"
 fi
@@ -647,7 +649,7 @@ for case_364 in "FAIL_HEALTH_EXEC=1:a Syncthing that cannot be asked" \
 	"HEALTH_ANSWER=near:the migration text not alone on its line" \
 	"HEALTH_ANSWER=second:the migration text on the second line"; do
 	fresh_364
-	if out=$(export "${case_364%%:*}"; FAIL_STATUS=1 FAST_SLEEP=1 new_env_run); then
+	if out=$(export "${case_364%%:*}"; FAIL_STATUS=1 FAKE_EPOCH_STEP=600 FAST_SLEEP=1 new_env_run); then
 		fail "${case_364#*:}: the setup did not stop:
 $out"
 	fi
