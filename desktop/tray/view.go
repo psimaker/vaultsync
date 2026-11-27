@@ -120,6 +120,13 @@ func Render(st Status, err error, o Options) View {
 		v.Headline = "VaultSync is not set up on this computer yet"
 		v.Detail = "Run vaultsync setup in a terminal"
 		return v
+	case errors.Is(err, ErrOlderApp):
+		// agent.json is in a newer format than this app reads: the
+		// VaultSync set up here is newer — never "damaged" (#281).
+		v.Glyph = GlyphAttention
+		v.Headline = "This VaultSync for Mac is older than the one set up here"
+		v.Detail = "Run the setup link to update it"
+		return v
 	case errors.Is(err, ErrNoSocket):
 		// The agent may well run and sync on without its socket: not the
 		// crossed ring that says nothing syncs.

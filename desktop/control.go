@@ -807,6 +807,16 @@ func (a *app) noAgentForPause(ctx context.Context, st agentState, pause bool) er
 
 func (a *app) pauseSync(ctx context.Context, pause bool) error {
 	st, err := loadState(a.lay.State)
+	// A build older than the one set up here pauses and resumes nothing, as
+	// its pair (decision 091): beside a newer format it would only end on
+	// the format, and its way on is the VaultSync set up here.
+	if olderThanSetUp(st, err) {
+		command := "resume"
+		if pause {
+			command = "pause"
+		}
+		return a.olderRefusal(command, st, err)
+	}
 	if err != nil {
 		return err
 	}

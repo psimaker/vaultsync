@@ -213,3 +213,170 @@ func TestIssue281_StatusOfAnOlderCopyBesideTheAppSaysNoCopyNote(t *testing.T) {
 		t.Errorf("status of an older copy beside the app says it syncs on:\n%s", out)
 	}
 }
+
+// planService writes the background service's file as setup does, naming
+// prog, and records prog as the program the last setup started it with.
+func planService(t *testing.T, a *app, prog string) {
+	t.Helper()
+	data, err := a.svc.unitFile(prog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, mustUnitPath(t, a.svc), string(data))
+	sum, err := fileSHA256(prog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := updateState(a.lay.State, func(s *agentState) { s.Started.Service = sum }); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The way on names the program that holds the VaultSync set up here, with
+// the command to run with it — the one agent.json records the last setup
+// started the service with, else VaultSync's own copy where it is another
+// build — and the setup link only where none is found. Where the
+// background service runs this very build, it parks: nothing syncs, and
+// pair, pause and resume go on only once the setup link brought a current
+// build; uninstall goes through the other program all the same.
+func TestIssue281_TheWayOnNamesTheVaultSyncSetUpHere(t *testing.T) {
+	t.Setenv("PATH", "/usr/bin:/bin")
+	refused := func(t *testing.T, err error, want ...string) {
+		t.Helper()
+		got := refusalText(err)
+		if !strings.Contains(got, "older than the one set up on this computer") || !strings.Contains(got, "Nothing was changed — ") {
+			t.Fatalf("not the older refusal: %v", err)
+		}
+		for _, w := range want {
+			if strings.HasPrefix(w, "!") {
+				if strings.Contains(got, w[1:]) {
+					t.Errorf("says %q:\n%s", w[1:], got)
+				}
+			} else if !strings.Contains(got, w) {
+				t.Errorf("does not say %q:\n%s", w, got)
+			}
+		}
+	}
+
+	t.Run("an older VaultSync for Mac that the service runs", func(t *testing.T) {
+		a, _, app := macSetupFixture(t)
+		writeFile(t, a.lay.Agent, "the newer build's copy")
+		planService(t, a, a.lay.Agent)
+		newerEngineHere(t, a.lay)
+		// The service's file names the app, which now holds this older
+		// build: what the last setup started is the copy's build.
+		data, err := a.svc.unitFile(filepath.Join(app, "Contents", "MacOS", "vaultsync"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, mustUnitPath(t, a.svc), string(data))
+		copyCmd := shellQuote(a.lay.Agent)
+		refused(t, a.uninstall(context.Background(), []string{"--yes"}),
+			"to remove VaultSync, run "+copyCmd+" uninstall, the VaultSync set up here.",
+			"Nothing syncs here meanwhile: the background service runs this VaultSync too.",
+			"!setup link")
+		refused(t, a.pair(context.Background(), nil),
+			"run the setup link to get the current VaultSync, then vaultsync pair.",
+			"Nothing syncs here meanwhile: the background service runs this VaultSync too.")
+	})
+
+	t.Run("an older download beside the app the service runs", func(t *testing.T) {
+		a, _, app := macSetupFixture(t)
+		agent := filepath.Join(app, "Contents", "MacOS", "vaultsync")
+		writeFile(t, a.lay.Agent, "a copy of yet another build")
+		planService(t, a, agent)
+		newerEngineHere(t, a.lay)
+		runsAs(t, a, filepath.Join(t.TempDir(), "vaultsync"), "an older download")
+		appCmd := shellQuote(agent)
+		refused(t, a.pair(context.Background(), nil),
+			"run "+appCmd+" pair, the VaultSync set up here.", "!Nothing syncs here", "!setup link")
+		refused(t, a.uninstall(context.Background(), []string{"--yes"}),
+			"to remove VaultSync, run "+appCmd+" uninstall, the VaultSync set up here.",
+			appCmd+" stop stops syncing now.")
+	})
+
+	t.Run("an older download beside a newer agent.json format on Linux", func(t *testing.T) {
+		a := installedApp(t, "linux", &fakeRunner{})
+		writeFile(t, a.lay.Agent, "the newer copy")
+		writeFile(t, a.lay.State, `{"version": 3, "guiPort": 8384}`+"\n")
+		runsAs(t, a, filepath.Join(t.TempDir(), "vaultsync"), "an older download")
+		copyCmd := shellQuote(a.lay.Agent)
+		refused(t, a.pauseSync(context.Background(), true),
+			"run "+copyCmd+" pause, the VaultSync set up here.", copyCmd+" stop stops syncing now.")
+		refused(t, a.pauseSync(context.Background(), false),
+			"run "+copyCmd+" resume, the VaultSync set up here.", "!stop stops")
+	})
+
+	t.Run("no other program of VaultSync's", func(t *testing.T) {
+		a := installedApp(t, "linux", &fakeRunner{})
+		newerEngineHere(t, a.lay)
+		runsAs(t, a, filepath.Join(t.TempDir(), "vaultsync"), "an older download")
+		refused(t, a.pair(context.Background(), nil),
+			"run the setup link to get the current VaultSync, then vaultsync pair.", "!Nothing syncs here")
+		refused(t, a.uninstall(context.Background(), []string{"--yes"}),
+			"run the setup link to get the current VaultSync, then vaultsync uninstall.", "vaultsync stop stops syncing now.")
+	})
+
+	t.Run("an older copy that the service runs on Linux", func(t *testing.T) {
+		a := installedApp(t, "linux", &fakeRunner{})
+		newerEngineHere(t, a.lay)
+		runsAs(t, a, a.lay.Agent, "the older copy")
+		refused(t, a.pauseSync(context.Background(), false),
+			"run the setup link to get the current VaultSync, then vaultsync resume.",
+			"Nothing syncs here meanwhile: the background service runs this VaultSync too.")
+	})
+}
+
+// pause and resume of an older build ask no agent and write nothing: the
+// same refusal as pair, beside a newer engine or a newer format — not the
+// raw format error.
+func TestIssue281_AnOlderPauseOrResumeAsksNothing(t *testing.T) {
+	for _, how := range olderWays {
+		t.Run(how, func(t *testing.T) {
+			f := newFakeAgent(t)
+			a := terminalApp(t, f.path)
+			before := olderHere(t, a, how)
+			for _, pause := range []bool{true, false} {
+				err := a.pauseSync(context.Background(), pause)
+				if got := refusalText(err); !strings.Contains(got, "older than the one set up on this computer") || !strings.Contains(got, "Nothing was changed") {
+					t.Errorf("pause %v of an older build: %v", pause, err)
+				}
+			}
+			if len(f.calls) != 0 {
+				t.Errorf("an older build asked the agent: %v", f.calls)
+			}
+			if after, _ := os.ReadFile(a.lay.State); !bytes.Equal(before, after) {
+				t.Errorf("an older build rewrote agent.json:\n%s", after)
+			}
+		})
+	}
+}
+
+// The menu-bar app and the agent read agent.json by one format: what this
+// build writes reads, and a newer format whose fields read as this build's
+// is used — the menu-bar app only reads it.
+func TestIssue281_TheMenuBarAppReadsByTheAgentsFormat(t *testing.T) {
+	if agentStateVersion != control.StateFormat {
+		t.Fatalf("the agent writes format %d, the menu-bar app reads up to %d", agentStateVersion, control.StateFormat)
+	}
+	lay, err := layoutFor("darwin", t.TempDir(), envOf(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saveState(lay.State, agentState{GUIPort: 8384, ControlSocket: "/elsewhere/agent.sock"}); err != nil {
+		t.Fatal(err)
+	}
+	if p, err := control.SocketPath(lay); err != nil || p != "/elsewhere/agent.sock" {
+		t.Fatalf("this build's agent.json: %q %v", p, err)
+	}
+	writeFile(t, lay.State, `{"version": 3, "guiPort": 8384, "controlSocket": "/elsewhere/agent.sock", "laterField": {}}`+"\n")
+	if p, err := control.SocketPath(lay); err != nil || p != "/elsewhere/agent.sock" {
+		t.Fatalf("a newer agent.json that reads: %q %v", p, err)
+	}
+	// A newer format without the port where this build reads it is newer,
+	// not "not set up".
+	writeFile(t, lay.State, `{"version": 3, "engine": {"guiPort": 8384}}`+"\n")
+	if _, err := control.SocketPath(lay); !errors.Is(err, control.ErrOlderApp) {
+		t.Fatalf("a newer agent.json without the port here: %v", err)
+	}
+}

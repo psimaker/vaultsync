@@ -1075,6 +1075,12 @@ func (a *app) keepCopyAtAppBuild() error {
 	if _, err := os.Stat(a.lay.State); err != nil {
 		return nil
 	}
+	// An older build writes nothing (054): not its program over the newer
+	// one's copy, not agent.json (decision 091). Its run parks before this,
+	// and its uninstall refuses; this holds for every caller.
+	if a.olderBuild() {
+		return nil
+	}
 	if _, err := installAgentCopy(a.lay.Agent); err != nil {
 		return err
 	}
@@ -1098,6 +1104,13 @@ func (a *app) pair(ctx context.Context, args []string) error {
 	var opts pairOptions
 	if err := parseFlags(pairFlags("pair", &opts), args); err != nil {
 		return err
+	}
+	// A build older than the one set up here pairs nothing: it would write
+	// agent.json and the newer engine's configuration in its own shape,
+	// behind its own older checks (decision 091). Before any lock, any look
+	// at the engine and any question.
+	if st, err := loadState(a.lay.State); olderThanSetUp(st, err) {
+		return a.olderRefusal("pair", st, err)
 	}
 	st, err := loadState(a.lay.State)
 	if err != nil {
@@ -1761,6 +1774,86 @@ func (a *app) olderBuild() bool {
 // olderNote says so for a person, with the versions where they are known.
 func (a *app) olderNote(st agentState, loadErr error) string {
 	return a.olderFact(st, loadErr) + " Nothing was changed — run the setup link to get the current VaultSync."
+}
+
+// olderRefusal refuses a command of a build older than the one set up here
+// (decision 091): pair, pause and resume would write agent.json in this
+// build's shape, or the newer engine's configuration through a pairing;
+// uninstall would remove what the newer build set up with this build's
+// knowledge of it, and put this build's program over VaultSync's copy.
+// Nothing is changed, locked or asked. The way on names the program that
+// holds the VaultSync set up here, with the command to run with it; only
+// where none is found, the setup link. Where the background service runs
+// this very build, it parks (054): nothing syncs, and only the setup link
+// brings a current build to the service — uninstall can still go through
+// another program.
+func (a *app) olderRefusal(command string, st agentState, loadErr error) error {
+	self, selfErr := ownProgram(a.appEnv)
+	serviceIsThis := selfErr == nil && a.svc.installed() && a.serviceRunsThisBuild(self)
+	prog, found := "", false
+	if selfErr == nil && (command == "uninstall" || !serviceIsThis) {
+		prog, found = a.setUpProgram(self, st, loadErr)
+	}
+	stopper := "vaultsync"
+	var way string
+	switch {
+	case found:
+		stopper = a.commandFor(prog)
+		way = fmt.Sprintf("run %s %s, the VaultSync set up here.", stopper, command)
+		if command == "uninstall" {
+			way = fmt.Sprintf("to remove VaultSync, run %s uninstall, the VaultSync set up here.", stopper)
+		}
+	default:
+		way = fmt.Sprintf("run the setup link to get the current VaultSync, then vaultsync %s.", command)
+	}
+	msg := a.olderFact(st, loadErr) + " Nothing was changed — " + way
+	switch {
+	case serviceIsThis:
+		msg += " Nothing syncs here meanwhile: the background service runs this VaultSync too."
+	case command == "uninstall" || command == "pause":
+		msg += fmt.Sprintf(" %s stop stops syncing now.", stopper)
+	}
+	return refuse("%s", msg)
+}
+
+// setUpProgram is the program that holds the VaultSync set up here, for an
+// older build's way on (decision 091): the program the background service
+// runs (on a Mac, the one its LaunchAgent names) or VaultSync's own copy —
+// one that is not this build, and is the very program agent.json records
+// the last setup started the service with (Started.Service); failing that,
+// VaultSync's own copy where it is not this build, since every build that
+// takes over keeps the copy at its own (setup, and VaultSync for Mac's run
+// and uninstall). agent.json records no place, and a newer format is not
+// read for one. None found: "", false.
+func (a *app) setUpProgram(self []byte, st agentState, loadErr error) (string, bool) {
+	another := func(p string) bool {
+		if info, err := os.Stat(p); err != nil || !info.Mode().IsRegular() {
+			return false
+		}
+		have, err := os.ReadFile(p)
+		return err == nil && !sameBuild(have, self)
+	}
+	var candidates []string
+	if a.goos == "darwin" {
+		if prog := a.svc.program(); prog != "" {
+			candidates = append(candidates, prog)
+		}
+	}
+	candidates = append(candidates, a.lay.Agent)
+	if loadErr == nil && st.Started.Service != "" {
+		for _, p := range candidates {
+			if !another(p) {
+				continue
+			}
+			if sum, err := fileSHA256(p); err == nil && sum == st.Started.Service {
+				return p, true
+			}
+		}
+	}
+	if another(a.lay.Agent) {
+		return a.lay.Agent, true
+	}
+	return "", false
 }
 
 // keepEngineStallWait ends a run's attempt to install its pin where an

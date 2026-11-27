@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/psimaker/vaultsync/desktop/internal/control"
 	layoutpkg "github.com/psimaker/vaultsync/desktop/internal/layout"
 )
 
@@ -140,7 +141,8 @@ func updateStateIfSetUp(path string, fn func(*agentState)) error {
 // format but its own, so once a later VaultSync took over, a kept v0.1.0
 // changes nothing — it knows neither VaultSync for Mac (decision 053) nor
 // that an older engine must not go over a newer one's state (decision 054).
-const agentStateVersion = 2
+// It is control.StateFormat, which the menu-bar app reads agent.json by.
+const agentStateVersion = control.StateFormat
 
 // v010StateVersion is desktop-v0.1.0's agent.json format, which writes keep
 // until this build takes over (writtenFormat).
