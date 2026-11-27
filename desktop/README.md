@@ -64,7 +64,7 @@ k=$(sed -n 's/^const keepEngineFrom = "\(v[0-9.]*\)"$/\1/p' pins.go)
 curl -fsSLO "https://github.com/syncthing/syncthing/releases/download/$k/syncthing-linux-amd64-$k.tar.gz"
 VAULTSYNC_DESKTOP_SYNCTHING_ARCHIVE=$PWD/syncthing-linux-amd64-$v.tar.gz \
 VAULTSYNC_DESKTOP_SYNCTHING_KEPT_ARCHIVE=$PWD/syncthing-linux-amd64-$k.tar.gz \
-  go test . -run '^TestIssue175_(E2E|RealArchive)|^TestIssue267_E2E' -count=1 -v
+  go test . -run '^TestIssue175_(E2E|RealArchive)|^TestIssue267_E2E|^TestIssue413_E2E' -count=1 -v
 ```
 
 On a Mac, use `syncthing-macos-arm64-$v.zip` (or `-amd64`).
@@ -170,7 +170,9 @@ then keeps no older engine when the new pin cannot be installed. Otherwise
 `keepEngineFrom` stays at a version whose archive passed
 `TestIssue267_E2EAKeptOlderEnginePairsAndSyncs`
 (`VAULTSYNC_DESKTOP_SYNCTHING_KEPT_ARCHIVE`; CI's Desktop Syncthing E2E fetches
-that version's archive from `keepEngineFrom`). First verify
+that version's archive from `keepEngineFrom`). `TestIssue413_E2EAnEngineLocksItsHome`
+checks that the new Syncthing still locks `syncthing.lock` in its home, which
+setup reads as VaultSync's own engine (decision 079). First verify
 the release's `sha256sum.txt.asc` with Syncthing's release key
 (`curl -fsSL https://syncthing.net/release-key.txt | gpg --import`, then
 `gpg --verify sha256sum.txt.asc`). From v2.1.6 on the file is signed by

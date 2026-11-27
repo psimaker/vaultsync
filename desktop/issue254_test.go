@@ -653,7 +653,9 @@ func TestIssue254_RemoveDataStopsAtAHandOpenedAppBeforeTheServiceGoes(t *testing
 
 // macSetupFixture is a Mac where VaultSync's engine is prepared (its binary
 // recorded, a config answered by a fake engine) and VaultSync for Mac is in
-// ~/Applications; the service manager is a fake.
+// ~/Applications; the service manager is a fake. The fake engine holds the
+// lock a running Syncthing holds on its home: without it, setup would take
+// it for another program at the recorded port and move off it (#413).
 func macSetupFixture(t *testing.T) (*app, *fakeRunner, string) {
 	t.Helper()
 	eng := newFakeEngine(t)
@@ -672,6 +674,11 @@ func macSetupFixture(t *testing.T) (*app, *fakeRunner, string) {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(lay.Home, "config.xml"), "<configuration><gui><address>"+eng.addr+"</address><apikey>engine-key</apikey></gui></configuration>\n")
+	unlockHome, err := lockFile(filepath.Join(lay.Home, syncthingHomeLock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(unlockHome)
 	_, port, _ := strings.Cut(eng.addr, ":")
 	n, _ := strconv.Atoi(port)
 	st := agentState{GUIPort: n, Env: map[string]string{}}
