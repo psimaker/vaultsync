@@ -109,7 +109,7 @@ func TestIssue320_ANewVaultsNamePastTheHubsLimitIsRefusedNotCut(t *testing.T) {
 func TestIssue320_TheDefaultNameShownIsTheNameUsed(t *testing.T) {
 	eng := newFakeEngine(t)
 	s, out := testSession(t, eng, nil, pairOptions{}, "")
-	name, err := s.askHubName(issue320Whole, false)
+	name, err := s.askHubName(context.Background(), issue320Whole, false)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -125,7 +125,7 @@ func TestIssue320_TheDefaultNameShownIsTheNameUsed(t *testing.T) {
 func TestIssue320_ATypedNamePastTheHubsLimitIsAskedAgain(t *testing.T) {
 	eng := newFakeEngine(t)
 	s, out := testSession(t, eng, nil, pairOptions{}, issue320TooLong, "Short")
-	name, err := s.askHubName("Notes", false)
+	name, err := s.askHubName(context.Background(), "Notes", false)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
