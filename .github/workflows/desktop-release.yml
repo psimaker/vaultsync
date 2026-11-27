@@ -13,7 +13,8 @@ name: Desktop Release
 #                    Developer ID, notarizes them and makes a GitHub release
 #                    with vaultsync_<os>_<arch>, vaultsync-tray_linux_<arch>,
 #                    VaultSync_darwin_<arch>.zip and one SHA256SUMS —
-#                    vaultsync_<os>_<arch> is the asset setup.sh downloads.
+#                    vaultsync_<os>_<arch> is the asset setup.sh downloads;
+#                    its text is the version's desktop/CHANGELOG.md section.
 #                    desktop-vX.Y.Z-<suffix> makes a draft release: a test
 #                    run of the signing that nobody downloads.
 #
@@ -81,6 +82,15 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           persist-credentials: false
+
+      # A release's text is its version's section of desktop/CHANGELOG.md
+      # (#283), and a candidate's tag needs the section too: the final tag
+      # goes on the candidate's commit, so a section missing there stops
+      # this run before anything is signed, not the release's after
+      # Apple's verdict. The log shows the text the release will have.
+      - name: Check the changelog section
+        if: github.ref_type == 'tag'
+        run: desktop/scripts/release-notes.sh "${GITHUB_REF_NAME#desktop-v}"
 
       # No build cache on a tag: what ships in a release is built from the
       # module cache alone, never from a cache another run could have
@@ -409,6 +419,12 @@ jobs:
       - name: Collect and sum the assets
         run: desktop/scripts/release-assets.sh plain signed dist
 
+      # The release job writes its text in this same checkout (cone mode
+      # holds desktop/CHANGELOG.md beside desktop/scripts): the script's
+      # cases, and every released section must still give a text (#283).
+      - name: Test the release text
+        run: desktop/scripts/tests/release-notes-test.sh
+
   # Explicit results, not the implicit success(): on a tag sign-check is
   # skipped, and a skipped job anywhere upstream (here through verify)
   # makes GitHub skip a job whose condition has no status function — the
@@ -454,6 +470,11 @@ jobs:
             exit 1
           fi
 
+      # The version's desktop/CHANGELOG.md section, the build job's check
+      # (#283); a candidate's draft gets the text its release will have.
+      - name: Write the release text
+        run: desktop/scripts/release-notes.sh "${GITHUB_REF_NAME#desktop-v}" >"$RUNNER_TEMP/release-notes.md"
+
       # --latest=false: "Latest" on the repository is the iOS app's release.
       # A tag with a suffix is a test run of the signing: a draft, which
       # setup.sh never sees.
@@ -467,5 +488,5 @@ jobs:
           esac
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --latest=false "${draft[@]}" \
             --title "VaultSync for Mac and Linux ${GITHUB_REF_NAME#desktop-v}" \
-            --notes "The desktop agent \`vaultsync\` for macOS and Linux: it installs its own pinned Syncthing, pairs with your VaultSync Hub by code and keeps your Obsidian vaults in sync. Set it up with the setup link (docs/hub.md): on a Mac it installs VaultSync for Mac (\`VaultSync_darwin_<arch>.zip\`) into Applications — the background service runs from it and its menu-bar icon opens at login — and on Linux it downloads \`vaultsync_linux_<arch>\`, with the menu-bar icon in \`vaultsync-tray_linux_<arch>\`. Everything for macOS is signed with a Developer ID and notarized by Apple. Check downloads against SHA256SUMS." \
+            --notes-file "$RUNNER_TEMP/release-notes.md" \
             dist/*

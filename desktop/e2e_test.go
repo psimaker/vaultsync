@@ -41,14 +41,22 @@ import (
 // Runs when VAULTSYNC_DESKTOP_SYNCTHING_ARCHIVE names the pinned archive for
 // this platform (CI's Desktop Syncthing E2E downloads it).
 
-func e2eFreePort(t *testing.T) int {
+// e2eHoldPort picks a free loopback port and keeps it bound until release
+// is called (#403). A pick that closes its listener at once can return the
+// same port as the next pick: Linux hands out one of a few thousand ports
+// at random. While a port is held, no other pick returns it: not another
+// e2eHoldPort, not freeLoopbackPort (prepare's pick of the engine's API
+// port) and not an httptest server. A test releases each port right before
+// the process that binds it starts; t.Cleanup releases what is left.
+func e2eHoldPort(t *testing.T) (int, func()) {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
+	release := func() { _ = l.Close() }
+	t.Cleanup(release)
+	return l.Addr().(*net.TCPAddr).Port, release
 }
 
 func e2eWait(t *testing.T, what string, timeout time.Duration, cond func() bool) {
@@ -106,8 +114,13 @@ func startE2EHub(t *testing.T, ctx context.Context, syncthingBin string) *e2eHub
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.listen = "tcp://127.0.0.1:" + strconv.Itoa(e2eFreePort(t))
-	gui := "127.0.0.1:" + strconv.Itoa(e2eFreePort(t))
+	// The Hub's three ports are held from here until the process that binds
+	// each one starts, so no two of them can be the same (#403).
+	listenPort, releaseListen := e2eHoldPort(t)
+	guiPort, releaseGUI := e2eHoldPort(t)
+	pairPort, releasePair := e2eHoldPort(t)
+	h.listen = "tcp://127.0.0.1:" + strconv.Itoa(listenPort)
+	gui := "127.0.0.1:" + strconv.Itoa(guiPort)
 	cfg := string(raw)
 	for old, repl := range map[string]string{
 		"<listenAddress>default</listenAddress>":              "<listenAddress>" + h.listen + "</listenAddress>",
@@ -142,6 +155,8 @@ func startE2EHub(t *testing.T, ctx context.Context, syncthingBin string) *e2eHub
 		"--no-browser", "--no-restart", "--no-upgrade", "--log-file="+filepath.Join(h.home, "syncthing.log"))
 	st.Env = engineEnv()
 	st.Stdout, st.Stderr = io.Discard, io.Discard
+	releaseListen()
+	releaseGUI()
 	if err := st.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -161,14 +176,13 @@ func startE2EHub(t *testing.T, ctx context.Context, syncthingBin string) *e2eHub
 		t.Fatal(err)
 	}
 
-	port := e2eFreePort(t)
-	h.pairAddr = "127.0.0.1:" + strconv.Itoa(port)
+	h.pairAddr = "127.0.0.1:" + strconv.Itoa(pairPort)
 	h.env = append(os.Environ(),
 		"SYNCTHING_CONFIG="+cfgPath,
 		"SYNCTHING_API_URL=http://"+gui,
 		"VAULTSYNC_HUB_STATE="+filepath.Join(h.home, "hub-state.json"),
 		"VAULTSYNC_HUB_VAULTS="+h.vaults,
-		"VAULTSYNC_HUB_PORT="+strconv.Itoa(port),
+		"VAULTSYNC_HUB_PORT="+strconv.Itoa(pairPort),
 		"VAULTSYNC_HUB_NAME=E2E Hub",
 	)
 	serveCtx, cancel := context.WithCancel(ctx)
@@ -176,6 +190,7 @@ func startE2EHub(t *testing.T, ctx context.Context, syncthingBin string) *e2eHub
 	serve.Env = h.env
 	var serveLog bytes.Buffer
 	serve.Stdout, serve.Stderr = &serveLog, &serveLog
+	releasePair()
 	if err := serve.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +279,10 @@ func TestIssue175_E2EFreshHomeInstallsPairsAndSyncs(t *testing.T) {
 	st.Syncthing.Version, st.Syncthing.BinarySHA256 = syncthingVersion, got.SHA256
 
 	// The agent's engine, pinned to loopback, run by its own supervisor.
-	eng := engine{lay: lay, opts: engineOptions{loopbackOnly: true, listenPort: e2eFreePort(t)}}
+	// Its sync port is held while prepare picks the API port, so the two
+	// cannot be the same (#403).
+	listenPort, releaseListen := e2eHoldPort(t)
+	eng := engine{lay: lay, opts: engineOptions{loopbackOnly: true, listenPort: listenPort}}
 	if err := eng.prepare(ctx, &st); err != nil {
 		t.Fatal(err)
 	}
@@ -283,6 +301,7 @@ func TestIssue175_E2EFreshHomeInstallsPairsAndSyncs(t *testing.T) {
 		serviceLog.WriteString(fmt.Sprintf(format, args...) + "\n")
 		t.Logf(format, args...)
 	}
+	releaseListen()
 	go func() { engineDone <- eng.supervise(runCtx, st, logf) }()
 	t.Cleanup(func() {
 		stopEngine()
@@ -485,8 +504,13 @@ func TestIssue267_E2EAKeptOlderEnginePairsAndSyncs(t *testing.T) {
 	var st agentState
 	st.Syncthing.Version, st.Syncthing.BinarySHA256 = keepEngineFrom, got.SHA256
 	// Its home prepared loopback-only first: the run keeps that config, so
-	// the real engine never leaves the loopback.
-	prep := engine{lay: lay, opts: engineOptions{loopbackOnly: true, listenPort: e2eFreePort(t)}}
+	// the real engine never leaves the loopback. Both of its ports are held
+	// until the run starts it, so they differ from each other and from the
+	// ports of the two download servers started below (#403).
+	listenPort, releaseListen := e2eHoldPort(t)
+	apiPort, releaseAPI := e2eHoldPort(t)
+	st.GUIPort = apiPort
+	prep := engine{lay: lay, opts: engineOptions{loopbackOnly: true, listenPort: listenPort}}
 	if err := prep.prepare(ctx, &st); err != nil {
 		t.Fatal(err)
 	}
@@ -519,6 +543,8 @@ func TestIssue267_E2EAKeptOlderEnginePairsAndSyncs(t *testing.T) {
 	a := &app{goos: runtime.GOOS, home: home, getenv: env, lay: lay, out: io.Discard,
 		svc: service{goos: runtime.GOOS, home: home, getenv: env, lay: lay, run: &fakeRunner{}}}
 	var stop func() error
+	releaseListen()
+	releaseAPI()
 	logged := serviceLogOf(t, func() {
 		stop = inBackground(t, func(ctx context.Context) error { return a.run(ctx, nil) })
 		untilTheRunServes(t, a)

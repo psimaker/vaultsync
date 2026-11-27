@@ -107,6 +107,10 @@ extension EngineBridgeSuites {
             let folderID = "skip-flow-\(UUID().uuidString.prefix(8))"
             let folderURL = Self.makeFolderURL(folderID)
             #expect(manager.addFolder(id: folderID, label: "Skip Flow", path: folderURL.path) == nil)
+            // Right after an engine start the folder can get its marker a
+            // moment after the add; the skip's filter write would be refused
+            // until then (#225, #398).
+            try #require(await TestSupport.waitForFolderMarker(folderID: folderID, in: folderURL))
 
             let original = "Note.md"
             let copy = "Note.sync-conflict-20260915-120000-ABCDEFG.md"
@@ -145,6 +149,9 @@ extension EngineBridgeSuites {
             let folderID = "ignore-race-\(UUID().uuidString.prefix(8))"
             let folderURL = Self.makeFolderURL(folderID)
             #expect(manager.addFolder(id: folderID, label: "Ignore Race", path: folderURL.path) == nil)
+            // Round 0 wrote at once, and was refused as "marker missing" when
+            // the folder got its marker a moment after the add (#398).
+            try #require(await TestSupport.waitForFolderMarker(folderID: folderID, in: folderURL))
 
             for round in 0..<20 {
                 let skipped = "skipped-\(round).md"

@@ -21,9 +21,12 @@ type fakeRunner struct {
 	fail   map[string]error
 	// answers holds the output of a command (by its full text).
 	answers map[string]string
-	// Like launchd: a disabled job cannot be bootstrapped; a booted-out job
-	// still answers lingerAfterBootout prints before it is gone; an idle job
-	// is loaded without running; neverRuns keeps every job idle.
+	// Like launchd (measured on macOS 12.7.6 and 27.2, #290): a disabled job
+	// cannot be bootstrapped; a booted-out job whose process has not ended
+	// yet still answers lingerAfterBootout prints, as `state = SIGTERMed`,
+	// before it is gone; an idle job is loaded without running; neverRuns
+	// makes every run exit at once, so launchd shows the job between two
+	// spawns, `state = spawn scheduled`.
 	disabled           bool
 	idle, neverRuns    bool
 	lingerAfterBootout int
@@ -59,8 +62,8 @@ type fakeRunner struct {
 	// afresh), and bootout says so.
 	trayOverride, trayBootoutVanishes bool
 	// trayLingerAfterBootout: a booted-out job still answers that many
-	// prints, its app still running; the app ends (onTrayBootout) as
-	// launchd lets go of the job.
+	// prints, as `state = SIGTERMed`, its app still running; the app ends
+	// (onTrayBootout) as launchd lets go of the job.
 	trayLingerAfterBootout, trayLingering int
 	// loadedProgram is the program of the service's definition launchd
 	// loaded at its last bootstrap — which `launchctl print` names — kept
@@ -69,6 +72,10 @@ type fakeRunner struct {
 	// onCall runs at each action call, before it is answered: a test looks
 	// at what the state was when launchd was asked.
 	onCall func(call string)
+	// systemd models the user unit: enable --now, start and restart make it
+	// active, disable --now and stop inactive, and is-active answers from
+	// unitActive as systemctl does (exit 3 for an inactive unit).
+	systemd, unitActive bool
 }
 
 // trayJob is launchd for the menu-bar app's start at login.
@@ -79,7 +86,7 @@ func (f *fakeRunner) trayJob(call string) (string, error) {
 			if f.trayLingering--; f.trayLingering == 0 && f.onTrayBootout != nil && !f.trayIdle {
 				f.onTrayBootout()
 			}
-			return "\tstate = running\n", nil // still on its way out
+			return "\tstate = SIGTERMed\n", nil // still on its way out
 		}
 		if !f.trayLoaded {
 			return "", errors.New("not loaded")
@@ -192,11 +199,24 @@ func (f *fakeRunner) run(name string, args ...string) (string, error) {
 	if name == "launchctl" && strings.Contains(call, "/"+trayLabel) {
 		return f.trayJob(call)
 	}
+	if f.systemd && name == "systemctl" {
+		switch {
+		case strings.HasPrefix(call, "systemctl --user is-active"):
+			if f.unitActive {
+				return "active\n", nil
+			}
+			return "inactive\n", exitErr(3)
+		case strings.HasPrefix(call, "systemctl --user enable --now"), strings.HasPrefix(call, "systemctl --user start"), strings.HasPrefix(call, "systemctl --user restart"):
+			f.unitActive = true
+		case strings.HasPrefix(call, "systemctl --user disable --now"), strings.HasPrefix(call, "systemctl --user stop"):
+			f.unitActive = false
+		}
+	}
 	switch {
 	case strings.HasPrefix(call, "launchctl print"):
 		if f.lingering > 0 {
 			f.lingering--
-			return "\tstate = running\n", nil // still on its way out
+			return "\tstate = SIGTERMed\n", nil // still on its way out
 		}
 		if !f.loaded {
 			return "", errors.New("not loaded")
@@ -205,7 +225,10 @@ func (f *fakeRunner) run(name string, args ...string) (string, error) {
 		if f.loadedProgram != "" {
 			program = "\tprogram = " + f.loadedProgram + "\n"
 		}
-		if f.idle || f.neverRuns {
+		switch {
+		case f.neverRuns:
+			return "\tstate = spawn scheduled\n" + program, nil
+		case f.idle:
 			return "\tstate = not running\n" + program, nil
 		}
 		return "\tstate = running\n" + program, nil
@@ -380,7 +403,7 @@ func TestIssue175_LaunchAgentInstallIsIdempotent(t *testing.T) {
 		t.Fatalf("stop: %v %v", err, run.calls)
 	}
 	run.calls = nil
-	if err := svc.start(); err != nil || strings.Join(run.calls, "|") != "launchctl enable gui/501/eu.vaultsync.agent|launchctl print gui/501/eu.vaultsync.agent|launchctl bootstrap gui/501 "+mustUnitPath(t, svc) {
+	if _, err := svc.start(); err != nil || strings.Join(run.calls, "|") != "launchctl enable gui/501/eu.vaultsync.agent|launchctl print gui/501/eu.vaultsync.agent|launchctl bootstrap gui/501 "+mustUnitPath(t, svc) {
 		t.Fatalf("start: %v %v", err, run.calls)
 	}
 
@@ -422,7 +445,9 @@ func TestIssue175_SystemdInstallIsIdempotent(t *testing.T) {
 		t.Fatalf("stop: %v %v", err, run.calls)
 	}
 	run.calls = nil
-	if err := svc.start(); err != nil || strings.Join(run.calls, "|") != "systemctl --user enable --now vaultsync.service" {
+	// One look first, which tells a unit that was already active (#290);
+	// the action is the same.
+	if _, err := svc.start(); err != nil || strings.Join(run.calls, "|") != "systemctl --user is-active vaultsync.service|systemctl --user enable --now vaultsync.service" {
 		t.Fatalf("start: %v %v", err, run.calls)
 	}
 	run.calls = nil
