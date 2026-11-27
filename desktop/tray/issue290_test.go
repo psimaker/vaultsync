@@ -188,3 +188,114 @@ func TestIssue290_NothingToStartNamesNoCommandThatIsGone(t *testing.T) {
 		})
 	}
 }
+
+// drain takes every view rendered so far.
+func drain(ui *fakeUI) {
+	for {
+		select {
+		case <-ui.views:
+		default:
+			return
+		}
+	}
+}
+
+// One ask is out at a time: whatever asks for a look while one is out — the
+// menu opened again and again, a poll — is one more ask once it is answered,
+// not one each (#290).
+func TestIssue290_OneAskAtATime(t *testing.T) {
+	agent := syncingAgent(t)
+	ui := newFakeUI(t)
+	controllerFor(t, agent, ui, &Controller{})
+	ui.view(t, "up to date", upToDate)
+	askInFlight(t, agent, ui)
+	for i := 0; i < 5; i++ {
+		ui.click(EventOpened, 0)
+	}
+	// The one out, then the one the five were folded into.
+	agent.asked(3)
+	time.Sleep(slowStatus + slowStatus/2)
+	agent.set(func(f *fakeAgent) {
+		if f.statusAsks != 3 {
+			t.Fatalf("asked %d times: the menu opened five times while an ask was out", f.statusAsks)
+		}
+	})
+}
+
+// An answer to an ask begun before a pause's request returned may tell the
+// state from before it: it is not shown, or the menu would offer to pause
+// again for as long as the next ask takes. The next answer is (#290).
+func TestIssue290_APauseShowsNoAnswerFromBeforeIt(t *testing.T) {
+	agent := syncingAgent(t)
+	agent.set(func(f *fakeAgent) { f.early = true })
+	ui := newFakeUI(t)
+	controllerFor(t, agent, ui, &Controller{})
+	ui.view(t, "up to date", upToDate)
+	askInFlight(t, agent, ui)
+	drain(ui)
+	ui.send(Event{Kind: EventPause, Pause: true})
+	select {
+	case v := <-ui.views:
+		if !v.Paused || v.Pause.Title != "Resume Syncing" {
+			t.Fatalf("the first view after the pause is from before it: %+v", v)
+		}
+	case <-time.After(4 * slowStatus):
+		t.Fatal("no view after the pause")
+	}
+}
+
+// A click on Pair acts on the answer to an ask begun after it, not on one
+// already out: that one may tell the state before something changed — here a
+// pause from a terminal, under which pairing is refused — and the menu would
+// ask the person for a code for a pairing the agent then refuses (#290).
+func TestIssue290_PairActsOnALookBegunAfterTheClick(t *testing.T) {
+	agent := syncingAgent(t)
+	agent.set(func(f *fakeAgent) { f.early = true })
+	ui := newFakeUI(t)
+	asker := &fakeAsker{cancel: "code"}
+	controllerFor(t, agent, ui, &Controller{Asker: asker})
+	if v := ui.view(t, "up to date", upToDate); !v.Pair.Enabled {
+		t.Fatalf("no Pair to click: %+v", v)
+	}
+	askInFlight(t, agent, ui) // answers "not paused"
+	agent.set(func(f *fakeAgent) { f.status.Paused = true })
+	ui.send(Event{Kind: EventPair})
+	ui.view(t, "paused", func(v View) bool { return v.Paused })
+	time.Sleep(100 * time.Millisecond)
+	if asked := asker.sequence(); len(asked) != 0 {
+		t.Fatalf("a pairing began on an answer from before the click: %v", asked)
+	}
+}
+
+// The menu's Start runs in the menu's own VaultSync folder: the one its
+// --state-dir names, which the program it runs would otherwise take from the
+// environment (#290, point 5).
+func TestIssue290_TheMenusStartNamesItsFolder(t *testing.T) {
+	if got := StartArgs("/home/me/state/vaultsync"); strings.Join(got, " ") != "start --state-dir /home/me/state/vaultsync" {
+		t.Fatalf("the command line: %q", got)
+	}
+	if got := StartArgs(""); strings.Join(got, " ") != "start" {
+		t.Fatalf("without a folder: %q", got)
+	}
+	agent := newFakeAgent(t)
+	agent.stop()
+	ui := newFakeUI(t)
+	started := &fakeStart{said: "✓ VaultSync is running again."}
+	controllerFor(t, agent, ui, &Controller{
+		StartProgram: func() string { return "/x/vaultsync" },
+		Start:        started.start,
+		StartWaits:   []time.Duration{time.Millisecond},
+	})
+	ui.view(t, "not running", notRunning)
+	ui.send(Event{Kind: EventStart})
+	for deadline := time.Now().Add(10 * time.Second); len(started.runs()) == 0; time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("nothing was started")
+		}
+	}
+	started.mu.Lock()
+	defer started.mu.Unlock()
+	if len(started.dirs) != 1 || started.dirs[0] != agent.layout.Base {
+		t.Fatalf("started in %q, the menu's folder is %q", started.dirs, agent.layout.Base)
+	}
+}
