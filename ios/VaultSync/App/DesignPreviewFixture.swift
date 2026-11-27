@@ -50,7 +50,10 @@ enum DesignPreviewFixture {
         case addHub = "add-hub"
     }
 
-    /// The Add Hub step a design-preview run shows.
+    /// The Add Hub step a design-preview run shows. Besides the steps named
+    /// at `Screen.addHub`, three hold a step while the Hub is asked, with the
+    /// busy button (#354): code-pairing (Pair), vault-asking (Sync) and
+    /// reconnect-asking (Reconnect, every vault already on this iPhone).
     static var addHubStep: String {
         UserDefaults.standard.string(forKey: "design-preview-add-hub-step") ?? "code"
     }
@@ -206,12 +209,18 @@ enum DesignPreviewFixture {
             provision: { _, _, _ in .success(notes) },
             register: { _, _ in .success(()) },
             engineRunning: { true },
-            localFolderIDs: { [] },
+            localFolderIDs: { addHubStep == "reconnect-asking" ? [notes.id, work.id] : [] },
             deviceName: { "iPhone" }
         ))
         let fields = HubCodeFields(first: "TULIP", second: "ANCHOR", number: "42")
         let found = HubPairingModel.Discovery.found([HubCandidate(address: "192.168.1.20:8390", name: "VaultSync Hub")])
         switch addHubStep {
+        case "code-pairing":
+            model._previewSet(fields: fields, discovery: found, hello: nil, selectedVaultID: nil, provisioned: nil, path: [], working: true)
+        case "vault-asking":
+            model._previewSet(fields: fields, discovery: found, hello: hello, selectedVaultID: notes.id, provisioned: nil, path: [.vault], working: true)
+        case "reconnect-asking":
+            model._previewSet(fields: fields, discovery: found, hello: hello, selectedVaultID: nil, provisioned: nil, path: [.vault], working: true)
         case "vault":
             model._previewSet(fields: fields, discovery: found, hello: hello, selectedVaultID: notes.id, provisioned: nil, path: [.vault])
         case "done":
