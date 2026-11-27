@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"regexp"
 	"slices"
 	"strconv"
@@ -30,19 +31,67 @@ type runner func(ctx context.Context, name string, args []string, stdin string) 
 // Linux zenity, else kdialog — nil when there are none, and the menu then
 // says to pair in a terminal.
 func NewAsker(goos, home string, lookPath func(string) (string, error)) Asker {
+	return newAsker(goos, home, lookPath, os.Getenv, envRunner)
+}
+
+// newAsker is NewAsker with this app's environment (getenv) and the runner of
+// a program with extra environment entries (run) given.
+func newAsker(goos, home string, lookPath func(string) (string, error), getenv func(string) string, run func(extra []string) runner) Asker {
 	switch goos {
 	case "darwin":
-		return &scriptAsker{run: execRunner, home: home}
+		return &scriptAsker{run: run(nil), home: home}
 	case "linux":
 		if _, err := lookPath("zenity"); err == nil {
-			return &zenityAsker{run: execRunner, home: home}
+			return &zenityAsker{run: run(zenityEnv(getenv)), home: home}
 		}
 		if _, err := lookPath("kdialog"); err == nil {
-			return &kdialogAsker{run: execRunner, home: home}
+			return &kdialogAsker{run: run(kdialogEnv), home: home}
 		}
 	}
 	return nil
 }
+
+// zenityEnv is what zenity's environment needs beside this app's: a UTF-8
+// locale where the session has none (#479). zenity reads every --text in the
+// locale's character set, and refuses one with a character outside ASCII in
+// C or POSIX — status 255 and "This option is not available", every version
+// measured, 3.42.1 to 4.2.2 — while nearly every text the pairing shows holds
+// one (a dash, a quote mark, "✓", a vault's name). LC_ALL, because it outranks
+// what the session sets, and because LC_CTYPE alone did not help where LANG
+// named a locale that is not installed. C.UTF-8 is built into glibc since 2.35
+// and was in Debian and Ubuntu before. Its buttons' words, where zenity's own,
+// are then English, as every text of the menu's is. A session whose locale is
+// UTF-8 keeps it, and so its dialogs as they were.
+func zenityEnv(getenv func(string) string) []string {
+	if utf8Locale(getenv) {
+		return nil
+	}
+	return []string{"LC_ALL=C.UTF-8"}
+}
+
+// utf8Locale reports whether the session's character set is UTF-8: the
+// codeset of the locale LC_ALL, else LC_CTYPE, else LANG names — the order in
+// which a program takes them. None set is the C locale, which is ASCII.
+func utf8Locale(getenv func(string) string) bool {
+	for _, name := range []string{"LC_ALL", "LC_CTYPE", "LANG"} {
+		if v := getenv(name); v != "" {
+			_, codeset, _ := strings.Cut(v, ".")
+			codeset, _, _ = strings.Cut(codeset, "@")
+			return strings.EqualFold(codeset, "UTF-8") || strings.EqualFold(codeset, "utf8")
+		}
+	}
+	return false
+}
+
+// kdialogEnv is what kdialog's environment needs beside this app's: Qt's
+// messages on its standard error (#480). Qt 6 built to log to the journal
+// (Arch's 6.12) writes them there when the process has no controlling
+// terminal, as a menu-bar app started by the desktop has none, and kdialog
+// that found no display then aborts with nothing for the menu to say. With
+// the variable, Qt writes them to standard error, where the menu finds the
+// line that names the display (programFailed). Qt 5 and a Qt 6 built without
+// the journal write there anyway.
+var kdialogEnv = []string{"QT_FORCE_STDERR_LOGGING=1"}
 
 // --- the texts both share ---------------------------------------------------
 
