@@ -46,11 +46,13 @@ func menuStartChild(t *testing.T) (service, child *app) {
 // The menu-bar app on Linux, started with --state-dir in a session whose
 // XDG_STATE_HOME names another place, ran a bare `start`, which took its
 // folder from the environment — and start dispatched no argument at all. It
-// read another agent.json than the menu and the service: no copy there to
-// judge the service by, its whole answer wait on a socket nobody serves, and
-// "runs another build … does not answer yet" while the service's agent
-// answered (9.9 s on a real systemd, against 0.4 s). The menu now names its
-// folder, and start takes it (#290, point 5).
+// read another agent.json than the menu and the service, waited its whole
+// answer wait on a socket nobody serves and said the service does not answer
+// yet (before #416 also that it runs another build), while the service's
+// agent answered: 9.9 s on a real systemd, against 0.4 s. The menu now names
+// its folder, and start takes it (#290, point 5). There it hears the agent of
+// the service, which runs this very build, the copy the menu runs: "running
+// again".
 func TestIssue290_TheMenusStartReadsTheFolderTheMenuReads(t *testing.T) {
 	a, child := menuStartChild(t)
 	args := tray.StartArgs(a.lay.Base)
@@ -69,19 +71,22 @@ func TestIssue290_TheMenusStartReadsTheFolderTheMenuReads(t *testing.T) {
 }
 
 // An older menu-bar app (desktop-v0.3.0) beside this agent runs a bare
-// `start`: it takes its folder from the environment, as it always did. (A
-// menu of this build beside a desktop-v0.2.0 or v0.3.0 agent gives a flag
-// those ignore, as they ignore every argument after start: also as before.)
+// `start`: no flag is needed, and start takes its folder from the
+// environment, as it always did. In a session that names another folder no
+// agent answers there, so start claims nothing of the service: it says it
+// does not answer yet, and names no build (decision 093). (A menu of this
+// build beside a desktop-v0.2.0 or v0.3.0 agent gives a flag those ignore, as
+// they ignore every argument after start: also as before.)
 func TestIssue290_AnOlderMenusBareStartIsAsBefore(t *testing.T) {
 	_, child := menuStartChild(t)
 	if err := child.startCommand(nil); err != nil {
 		t.Fatalf("a bare start: %v", err)
 	}
-	if out := startText(child); !strings.Contains(out, "It runs another VaultSync build than this vaultsync") {
-		t.Fatalf("a bare start in a session that names another folder:\n%s", out)
+	if !strings.HasSuffix(child.lay.Base, filepath.Join("session-state", "vaultsync")) || child.svc.lay.Base != child.lay.Base {
+		t.Fatalf("a bare start took its folder from %q (its service's %q), not the environment", child.lay.Base, child.svc.lay.Base)
 	}
-	if !strings.HasSuffix(child.lay.Base, filepath.Join("session-state", "vaultsync")) {
-		t.Fatalf("a bare start took its folder from %q, not the environment", child.lay.Base)
+	if out := startText(child); !strings.Contains(out, "does not answer yet") || strings.Contains(out, "✓") {
+		t.Fatalf("a bare start in a session that names another folder:\n%s", out)
 	}
 }
 
