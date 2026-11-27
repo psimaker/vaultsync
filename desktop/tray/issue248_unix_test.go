@@ -25,7 +25,7 @@ func TestIssue248_AStartIsNotInTheMenusProcessGroup(t *testing.T) {
 	if err := os.WriteFile(program, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	said, err := Start(context.Background(), program)
+	said, err := Start(context.Background(), program, "")
 	if err != nil || said != "ok" {
 		t.Fatalf("said %q, %v", said, err)
 	}

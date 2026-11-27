@@ -277,7 +277,7 @@ func runCLI(args []string) error {
 	case "stop":
 		return app.stopService()
 	case "start":
-		return app.startService()
+		return app.startCommand(args)
 	case "uninstall":
 		return app.uninstall(ctx, args)
 	case "run":
@@ -2276,6 +2276,30 @@ func withAppGone(err error) error {
 var beforeSocketPublish func()
 
 // --- stop / start -----------------------------------------------------------
+
+// startCommand is `vaultsync start`, with --state-dir naming VaultSync's
+// folder as the menu-bar app knows it (tray.StartArgs). The program the
+// menu runs inherits the menu's environment and took its folder from it: on
+// Linux, a menu started with --state-dir in a session whose XDG_STATE_HOME
+// names another place made start read another agent.json than the menu and
+// the service, and wait its whole answer wait on a socket nobody serves
+// (#290). Any other argument is refused, as setup, pair, uninstall and run
+// refuse theirs; until then start ignored all of them, and released builds
+// still do. (status, pause, resume and stop still ignore theirs.)
+func (a *app) startCommand(args []string) error {
+	fs := flag.NewFlagSet("start", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	stateDir := fs.String("state-dir", "", "")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	lay, err := a.lay.AtStateDir(*stateDir)
+	if err != nil {
+		return err
+	}
+	a.lay, a.svc.lay = lay, lay
+	return a.startService()
+}
 
 func (a *app) stopService() error {
 	if !a.svc.installed() {

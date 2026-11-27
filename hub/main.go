@@ -445,25 +445,86 @@ func cmdStatus(ctx context.Context, cfg config) error {
 	fmt.Println()
 	fmt.Printf("Vaults (%d):\n", len(vaults))
 	for _, v := range vaults {
-		fmt.Printf("  %-32s %14s   shared with %d device(s)\n", v.Label, fileCount(v.Files), len(v.SharedWith))
+		fmt.Printf("  %-32s %14s   shared with %d device(s)\n", vaultRowName(v), fileCount(v.Files), len(v.SharedWith))
 	}
 	fmt.Println()
+	// Like the connections, when each device was last seen is a hint: a
+	// status that cannot read it still answers (setup waits for status).
+	lastSeen := readLastSeen(ctx, client)
 	fmt.Printf("Devices (%d):\n", len(devices)-1)
 	for _, d := range devices {
 		if d.DeviceID == myID {
 			continue
 		}
-		state := "offline"
-		if connected[d.DeviceID] {
-			state = "connected"
-		}
-		name := d.Name
-		if name == "" {
-			name = "(unnamed)"
-		}
-		fmt.Printf("  %-32s %s\n", name, state)
+		seen, known := lastSeen[d.DeviceID]
+		fmt.Println(deviceRow(d, connected[d.DeviceID], seen, known))
 	}
 	return nil
+}
+
+// deviceRow is one device in `status`: its short ID first — the one field a
+// name cannot write, so no name can move it (decision 061) — then its name,
+// cleaned like every name the Hub keeps, then "connected" or when it was last
+// seen. Two devices of one name, such as a computer set up again under a new
+// identity, differ by their short IDs (#224, decision 094).
+func deviceRow(d deviceConfig, connected bool, lastSeen time.Time, lastSeenKnown bool) string {
+	name := sanitizeName(d.Name)
+	if name == "" {
+		name = "(unnamed)"
+	}
+	state := "connected"
+	if !connected {
+		state = "offline"
+		switch {
+		case !lastSeenKnown:
+		case !lastSeen.After(time.Unix(0, 0)):
+			// Syncthing reports 1970-01-01 for a device it has never seen.
+			state += ", never seen"
+		default:
+			// With its zone: the Hub's image has no zone data, so it is UTC there.
+			state += ", last seen " + lastSeen.Local().Format("2006-01-02 15:04 MST")
+		}
+	}
+	return fmt.Sprintf("  %-7s  %-32s %s", shortDeviceID(d.DeviceID), name, state)
+}
+
+// shortDeviceID is the first group of a device ID: what Syncthing shows as a
+// device's short ID.
+func shortDeviceID(id string) string {
+	short, _, _ := strings.Cut(id, "-")
+	return short
+}
+
+// vaultRowName is a vault's name in `status`, cleaned like a device's name
+// beside it (decision 061): a device that creates a vault names it. One
+// that cleans to nothing shows the vault's ID.
+func vaultRowName(v vaultInfo) string {
+	if name := sanitizeName(v.Label); name != "" {
+		return name
+	}
+	return v.ID
+}
+
+// lastSeenWait bounds the read of the device statistics: a hint must not
+// hold up `status`, which the setup link calls in a loop until it answers.
+var lastSeenWait = 3 * time.Second
+
+// readLastSeen returns when Syncthing last saw each device, or nothing when
+// it cannot be read within lastSeenWait.
+func readLastSeen(ctx context.Context, client *SyncthingClient) map[string]time.Time {
+	ctx, cancel := context.WithTimeout(ctx, lastSeenWait)
+	defer cancel()
+	var stats map[string]struct {
+		LastSeen time.Time `json:"lastSeen"`
+	}
+	if err := client.Get(ctx, "/rest/stats/device", &stats); err != nil {
+		return nil
+	}
+	out := make(map[string]time.Time, len(stats))
+	for id, s := range stats {
+		out[id] = s.LastSeen
+	}
+	return out
 }
 
 // --- vault ------------------------------------------------------------------
