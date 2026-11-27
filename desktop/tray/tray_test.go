@@ -1119,12 +1119,12 @@ func TestIssue176_TrayDialogsCarryTextAsData(t *testing.T) {
 	if c := calls[len(calls)-1]; !strings.Contains(c.stdin, appleScriptList([]string{"1) " + items[0], "2) " + items[1], "3) " + items[2]})) || !strings.Contains(c.stdin, "if c is false then error number -128") {
 		t.Fatalf("the list script: %s", c.stdin)
 	}
+	// The pairing says that there is nothing to choose (#291); the list opens
+	// no dialog for it.
 	a = &scriptAsker{run: script("", "", 0)}
-	if c, ok, err := a.ChooseVault(ctx, Menu{}); ok || err != nil || c != (Choice{}) {
-		t.Fatalf("an empty menu: %+v %v %v", c, ok, err)
-	}
-	if c := calls[len(calls)-1]; !strings.Contains(c.stdin, "Nothing to choose") {
-		t.Fatalf("an empty menu is told: %s", c.stdin)
+	before := len(calls)
+	if c, ok, err := a.ChooseVault(ctx, Menu{}); ok || err != nil || c != (Choice{}) || len(calls) != before {
+		t.Fatalf("an empty menu: %+v %v %v, %d dialogs", c, ok, err, len(calls)-before)
 	}
 	a = &scriptAsker{run: script("9) nothing\n", "", 0)}
 	if _, _, err := a.ChooseVault(ctx, m); err == nil {

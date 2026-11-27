@@ -44,8 +44,12 @@ type Choice struct {
 
 // Pair runs the conversation and returns what it ended with for the
 // menu's notice: the agent's last line when a vault was set up, the
-// refusal otherwise, "" when the person cancelled. A dialog that could
-// not be shown, or an agent that could not be asked, is the error.
+// refusal or the menu's own words otherwise, "" when the person
+// cancelled. The error is a question that could not be put — the dialog
+// for the code, the Hub, the vault or the consent could not be shown —,
+// an agent that could not be asked or did not answer in time, or the end
+// of ctx. A message that could not be shown is none: the line it held
+// is returned all the same, and the notice says it.
 func Pair(ctx context.Context, c *Client, ask Asker) (string, error) {
 	code, ok, err := ask.AskCode(ctx)
 	if err != nil || !ok {
@@ -116,6 +120,13 @@ func Pair(ctx context.Context, c *Client, ask Asker) (string, error) {
 		case "vault":
 			if res.Menu == nil {
 				return refused(ctx, ask, res.Refusal)
+			}
+			// Nothing to choose is said in the menu's own words, and they
+			// stay in the notice when the message cannot be shown: zenity
+			// shows no text outside ASCII without a UTF-8 locale (#291, #381).
+			if line, text, ok := nothingToChoose(*res.Menu); ok {
+				_ = ask.Inform(ctx, text)
+				return line, nil
 			}
 			choice, ok, err := ask.ChooseVault(ctx, *res.Menu)
 			if err != nil || !ok {

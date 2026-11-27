@@ -18,7 +18,9 @@
 #      Mac into Applications when the release has it and runs the setup from
 #      there, falls back to the bare agent when it has not, and never replaces
 #      a bundle that is not VaultSync for Mac, nor a VaultSync for Mac newer
-#      than the release or one whose release it cannot tell (#277).
+#      than the release or one whose release it cannot tell (#277); an
+#      interrupted or failed update removes only the app it moved into place
+#      itself (#268).
 set -eu
 
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
@@ -235,13 +237,39 @@ fi
 # sleep): a shell runs the trap once the command it waits for is done, and
 # without the wait it may see the exit status first.
 # INT_AFTER_ASIDE: Ctrl-C right after the installed app was set aside, before
-# the new one moves. FAIL_MV_BACK: putting the set-aside app back fails.
-# HUP_AFTER_BACK: a second signal (Terminal closed) right after the
-# set-aside app went back, while the first one's restore is still running.
+# the new one moves; with OTHER_AFTER_ASIDE another setup at the same time
+# puts its app at the place in between. FAIL_MV_BACK: putting the set-aside
+# app back fails. HUP_AFTER_BACK: a second signal (Terminal closed) right
+# after the set-aside app went back, while the first one's restore is still
+# running.
+# FOREIGN_AT_ASIDE=DIR: in the instant before the set-aside rename, the
+# installed app is moved to DIR and a bundle with another identifier takes
+# its place, so that bundle is what the rename sets aside. FAIL_MV_ASIDE:
+# the set-aside rename fails; INT_BEFORE_ASIDE: Ctrl-C comes while it runs,
+# before it happened.
+case "\$2" in
+	*/.VaultSync\ for\ Mac.app.replaced.*)
+		[ -z "\${FAIL_MV_ASIDE:-}" ] || exit 1
+		if [ -n "\${INT_BEFORE_ASIDE:-}" ]; then
+			kill -INT \$PPID
+			sleep 1
+			exit 1
+		fi
+		if [ -n "\${FOREIGN_AT_ASIDE:-}" ]; then
+			"$REAL_MV" "\$1" "\$FOREIGN_AT_ASIDE" || exit 1
+			mkdir -p "\$1/Contents"
+			"$REAL_SED" -e 's/eu\\.vaultsync\\.desktop/com.example.other/' "$REPO_ROOT/desktop/macos/Info.plist" >"\$1/Contents/Info.plist"
+		fi
+		;;
+esac
 case "\$2" in
 	*/.VaultSync\ for\ Mac.app.replaced.*)
 		if [ -n "\${INT_AFTER_ASIDE:-}" ]; then
 			"$REAL_MV" "\$@" || exit 1
+			if [ -n "\${OTHER_AFTER_ASIDE:-}" ]; then
+				mkdir -p "\$1/Contents/MacOS"
+				printf 'another setup\\n' >"\$1/marker"
+			fi
 			kill -INT \$PPID
 			sleep 1
 			exit 0
@@ -259,13 +287,18 @@ case "\$1" in
 		fi
 		;;
 esac
-# A move of the unpacked app that copies across disks and stops halfway:
-# part of the bundle is at the destination, then the copy fails
-# (FAIL_MV_PARTIAL) or the setup is interrupted (INT_MV_PARTIAL, Ctrl-C).
-# STUCK_PARTIAL: that part cannot be removed (a folder in it this account
-# may not change). APPEAR_AT_APP: something else takes the app's place just
-# before the move (another setup at the same time). MV_PLACE_LOG: where the
-# move into place took the app from is written there.
+# The unpacked app's move into its place is one rename (it is unpacked
+# beside its place), held for the cases: INT_BEFORE_PLACE — Ctrl-C while it
+# runs, before it happened; INT_AFTER_PLACE — Ctrl-C right after it, before
+# the setup goes on; STUCK_PLACED (with INT_AFTER_PLACE) — the app now in
+# place cannot be removed (a folder in it this account may not change);
+# SWAP_AFTER_PLACE=DIR — right after the rename another hand moves this
+# run's app to DIR and puts a folder at the place that holds a VaultSync for
+# Mac.app of its own.
+# APPEAR_AT_APP: something else takes the app's place just
+# before the move (another setup at the same time); FILE_AT_APP: a file does,
+# so the move fails. MV_PLACE_LOG: where the move into place took the app
+# from is written there.
 case "\$1" in
 	*/unpacked/*)
 		[ -z "\${MV_PLACE_LOG:-}" ] || printf '%s\n' "\$1" >>"\$MV_PLACE_LOG"
@@ -273,16 +306,41 @@ case "\$1" in
 			mkdir -p "\$2"
 			printf 'someone else\\n' >"\$2/marker"
 		fi
+		[ -z "\${FILE_AT_APP:-}" ] || printf 'a file\\n' >"\$2"
 		;;
 esac
 case "\$1" in
 	*/unpacked/*)
-		if [ -n "\${FAIL_MV_PARTIAL:-}\${INT_MV_PARTIAL:-}" ]; then
-			mkdir -p "\$2/Contents/MacOS"
-			printf 'half\\n' >"\$2/Contents/MacOS/vaultsync"
-			[ -z "\${STUCK_PARTIAL:-}" ] || chmod 555 "\$2/Contents/MacOS"
-			[ -z "\${INT_MV_PARTIAL:-}" ] || { kill -INT \$PPID; sleep 1; }
+		if [ -n "\${INT_BEFORE_PLACE:-}" ]; then
+			kill -INT \$PPID
+			sleep 1
 			exit 1
+		fi
+		if [ -n "\${INT_AFTER_PLACE:-}" ]; then
+			"$REAL_MV" "\$@" || exit 1
+			[ -z "\${STUCK_PLACED:-}" ] || chmod 555 "\$2/Contents/MacOS"
+			kill -INT \$PPID
+			sleep 1
+			exit 0
+		fi
+		if [ -n "\${SWAP_AFTER_PLACE:-}" ]; then
+			"$REAL_MV" "\$@" || exit 1
+			"$REAL_MV" "\$2" "\$SWAP_AFTER_PLACE" || exit 1
+			mkdir -p "\$2/VaultSync for Mac.app"
+			printf 'another hand\\n' >"\$2/VaultSync for Mac.app/marker"
+			exit 0
+		fi
+		;;
+esac
+# SWAP_AT_TAKEBACK=DIR: as the setup takes its app back out of something at
+# the place, another hand has just moved that app to DIR and put a folder of
+# its own at that name, so the take-back moves that folder.
+case "\$1" in
+	*/VaultSync\ for\ Mac.app/VaultSync\ for\ Mac.app)
+		if [ -n "\${SWAP_AT_TAKEBACK:-}" ]; then
+			"$REAL_MV" "\$1" "\$SWAP_AT_TAKEBACK" || exit 1
+			mkdir -p "\$1"
+			printf 'slipped in\\n' >"\$1/marker"
 		fi
 		;;
 esac
@@ -292,6 +350,20 @@ REAL_MKTEMP=$(command -v mktemp)
 cat >"$SANDBOX/bin/mktemp" <<SHIM
 #!/usr/bin/env sh
 [ -z "\${FAIL_MKTEMP:-}" ] || exit 1
+# FOREIGN_BEFORE_ASIDE=DIR: as the folder the installed app is set aside in
+# is made, that app is moved to DIR and a bundle with another identifier
+# takes its place (the person, or another program, in the meantime).
+if [ -n "\${FOREIGN_BEFORE_ASIDE:-}" ]; then
+	for mt_last in "\$@"; do :; done
+	case "\$mt_last" in
+		*/.VaultSync\ for\ Mac.app.replaced.*)
+			place="\${mt_last%/*}/VaultSync for Mac.app"
+			"$REAL_MV" "\$place" "\$FOREIGN_BEFORE_ASIDE" || exit 1
+			mkdir -p "\$place/Contents"
+			"$REAL_SED" -e 's/eu\\.vaultsync\\.desktop/com.example.other/' "$REPO_ROOT/desktop/macos/Info.plist" >"\$place/Contents/Info.plist"
+			;;
+	esac
+fi
 exec "$REAL_MKTEMP" "\$@"
 SHIM
 # FAIL_RM_TMP: removing a .env.setup.* file fails (the file stays).
@@ -303,7 +375,21 @@ if [ -n "\${FAIL_RM_TMP:-}" ]; then
 fi
 exec "$REAL_RM" "\$@"
 SHIM
-chmod +x "$SANDBOX/bin/sed" "$SANDBOX/bin/mv" "$SANDBOX/bin/mktemp" "$SANDBOX/bin/rm"
+# FAIL_LS_INODE_UNPACKED / FAIL_LS_INODE_PLACE: the inode of the unpacked
+# app, or of what stands at the app's place, cannot be read (ls -di fails).
+REAL_LS=$(command -v ls)
+cat >"$SANDBOX/bin/ls" <<SHIM
+#!/usr/bin/env sh
+if [ "\$1" = -di ]; then
+	for ls_last in "\$@"; do :; done
+	case "\$ls_last" in
+		*/unpacked/*) [ -z "\${FAIL_LS_INODE_UNPACKED:-}" ] || exit 1 ;;
+		*/VaultSync\ for\ Mac.app) [ -z "\${FAIL_LS_INODE_PLACE:-}" ] || exit 1 ;;
+	esac
+fi
+exec "$REAL_LS" "\$@"
+SHIM
+chmod +x "$SANDBOX/bin/sed" "$SANDBOX/bin/mv" "$SANDBOX/bin/mktemp" "$SANDBOX/bin/rm" "$SANDBOX/bin/ls"
 # setup.sh reads a bundle's identifier with plutil, which every Mac has. On
 # a host without it (the Linux CI run) a stand-in answers the one question
 # setup.sh asks — `plutil -extract CFBundleIdentifier raw -expect string -o
@@ -1293,7 +1379,9 @@ mkdir -p "$MAC_RELEASE" "$APPS" "$SANDBOX/zipwork"
 # identifier ID into DIR, its agent marked MARK (the cases look for the line
 # "# build: vaultsync MARK" in it) and saying, asked for its version, what
 # the release build's agent says: "vaultsync VERSION (Syncthing x.y.z)",
-# VERSION 0.10.0 unless given; "fails" makes that ask fail.
+# VERSION 0.10.0 unless given; "fails" makes that ask fail. With
+# SWAP_ON_VERSION=SCRIPT, the downloaded app's agent runs SCRIPT when asked
+# its version (another hand at work while it runs).
 make_app() {
 	app="$1/VaultSync for Mac.app"
 	mkdir -p "$app/Contents/MacOS"
@@ -1303,6 +1391,9 @@ make_app() {
 # build: vaultsync $3
 if [ "\$1" = version ]; then
 	[ -z "\${AGENT_CANNOT_RUN:-}" ] || exit 1
+	if [ -n "\${SWAP_ON_VERSION:-}" ]; then
+		case "\$0" in */unpacked/*) sh "\$SWAP_ON_VERSION" ;; esac
+	fi
 	[ "${4:-0.10.0}" != fails ] || exit 1
 	echo "vaultsync ${4:-0.10.0} (Syncthing 2.1.7)"
 	exit 0
@@ -1431,14 +1522,14 @@ fi
 [ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "a failed move left temporary files: $(ls -A "$SANDBOX/tmp")"
 pass "an app set aside for an update is back when the new one cannot take its place"
 
-# A move into place that stops halfway — a copy across disks that fails, or
-# the setup interrupted (Ctrl-C) — leaves part of the new app at the app's
-# place: that part goes, and the app set aside is put back.
-for how in FAIL_MV_PARTIAL INT_MV_PARTIAL; do
+# The move into place is one rename (the app is unpacked beside its place).
+# Ctrl-C while it runs, before it happened, or right after it: what this run
+# put at the place goes, and the app set aside is put back, whole.
+for how in INT_BEFORE_PLACE INT_AFTER_PLACE; do
 	release_with half-way
 	# (A subshell: an assignment before a function call outlives the call.)
 	if (export "$how=1"; mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
-		fail "a move that stopped halfway ($how) must stop the setup"
+		fail "an update interrupted at the move into place ($how) must stop the setup"
 	fi
 	grep -q "vaultsync second" "$installed/Contents/MacOS/vaultsync" || fail "$how: the app installed before is not back:
 $(find "$installed" 2>&1 | head -20)"
@@ -1449,7 +1540,7 @@ done
 # (Which words an interrupted run prints depends on when the shell runs the
 # trap — bash may finish the failed move's branch first; what is on disk is
 # the same, and that is what the loop above checks.)
-pass "a move into place that stops halfway leaves the app installed before, whole"
+pass "an update interrupted before or right after the move into place leaves the app installed before, whole"
 
 # Ctrl-C right after the installed app was set aside, before the new one
 # moves: the set-aside app is the only copy, and it goes back.
@@ -1466,7 +1557,7 @@ pass "an interrupt right after the set-aside puts the installed app back"
 # right after Ctrl-C — enters the restore again: the app it already put
 # back stays.
 release_with signalled-twice
-if (INT_MV_PARTIAL=1 HUP_AFTER_BACK=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+if (INT_AFTER_PLACE=1 HUP_AFTER_BACK=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
 	fail "an interrupted update must stop the setup"
 fi
 grep -q "vaultsync second" "$installed/Contents/MacOS/vaultsync" 2>/dev/null || fail "a second signal during the restore lost the app installed before:
@@ -1479,7 +1570,7 @@ pass "a second signal during the restore keeps the app it put back"
 # Putting the set-aside app back fails too: it is kept where it is, never
 # removed, and the setup says where.
 release_with no-way-back
-if (FAIL_MV_PARTIAL=1 FAIL_MV_BACK=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+if (FAIL_MV_UNPACKED=1 FAIL_MV_BACK=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
 	fail "a failed update must stop the setup"
 fi
 grep -q "could not be put back: it is at" "$SANDBOX/results/run.log" || fail "the setup does not say where the old app is:
@@ -1492,12 +1583,12 @@ $(cat "$SANDBOX/results/run.log")"
 mv "$kept/VaultSync for Mac.app" "$installed" && rmdir "$kept"
 pass "an old app that cannot be put back is kept and named"
 
-# Part of the new app that cannot be removed stands in the app's place: the
-# old app is not moved into it — it stays where it was set aside, whole,
-# and the setup says where both are.
+# This run's app, in place when Ctrl-C comes, cannot be removed: the old app
+# is not moved into it — it stays where it was set aside, whole, and the
+# setup says where both are.
 if [ "$("$REAL_ID" -u)" != 0 ]; then
 	release_with stuck
-	if (FAIL_MV_PARTIAL=1 STUCK_PARTIAL=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+	if (INT_AFTER_PLACE=1 STUCK_PLACED=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
 		chmod -R u+w "$APPS"
 		fail "a failed update must stop the setup"
 	fi
@@ -1506,16 +1597,308 @@ if [ "$("$REAL_ID" -u)" != 0 ]; then
 	{ [ -n "$kept" ] && grep -q "vaultsync second" "$kept/VaultSync for Mac.app/Contents/MacOS/vaultsync"; } ||
 		fail "the old app is not kept where it was set aside:
 $(find "$APPS" 2>&1 | head -20)"
-	[ -z "$(find "$installed" -mindepth 1 -name 'VaultSync for Mac.app' 2>/dev/null)" ] || fail "the old app was moved into the part that stayed:
+	[ -z "$(find "$installed" -mindepth 1 -name 'VaultSync for Mac.app' 2>/dev/null)" ] || fail "the old app was moved into the app that stayed:
 $(find "$APPS" 2>&1 | head -20)"
-	grep -q "could not be removed. It is at $kept/VaultSync for Mac.app" "$SANDBOX/results/run.log" || fail "the setup does not say where the old app is:
+	grep -qF "could not be removed from $installed" "$SANDBOX/results/run.log" || fail "the setup does not say that this run's app stays:
+$(cat "$SANDBOX/results/run.log")"
+	grep -qF "is not free. It is at $kept/VaultSync for Mac.app" "$SANDBOX/results/run.log" || fail "the setup does not say where the old app is:
 $(cat "$SANDBOX/results/run.log")"
 	rm -rf "$installed"
 	mv "$kept/VaultSync for Mac.app" "$installed" && rmdir "$kept"
-	pass "an old app is never moved into a part of the new one that stayed"
+	pass "an old app is never moved into the new one that stayed"
 else
-	pass "the part-that-stayed case skipped (root removes anything)"
+	pass "the app-that-stayed case skipped (root removes anything)"
 fi
+
+# An interrupted or failed update removes only what this run put at the
+# app's place (#268). Another setup at the same time puts its app there once
+# this run has set the installed one aside, and this run is interrupted
+# (Ctrl-C): the other setup's app stays as it is, and the app this run set
+# aside is kept where it was set aside, and named.
+rm -rf "$installed"
+make_app "$APPS" eu.vaultsync.desktop installed-268-other 0.10.0
+release_with offered-268-other "" 0.10.0
+if (INT_AFTER_ASIDE=1 OTHER_AFTER_ASIDE=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+	fail "an interrupted update must stop the setup"
+fi
+[ "$(cat "$installed/marker" 2>/dev/null)" = "another setup" ] || fail "an interrupted update removed the app another setup put at the app's place:
+$(find "$APPS" 2>&1 | head -20)
+$(cat "$SANDBOX/results/run.log")"
+kept=$(find "$APPS" -maxdepth 1 -name '.VaultSync for Mac.app.replaced.*')
+{ [ -n "$kept" ] && grep -q "build: vaultsync installed-268-other\$" "$kept/VaultSync for Mac.app/Contents/MacOS/vaultsync"; } ||
+	fail "the app set aside before the interrupt is not kept where it was set aside:
+$(find "$APPS" 2>&1 | head -20)"
+grep -qF "$kept/VaultSync for Mac.app" "$SANDBOX/results/run.log" || fail "the setup does not say where the app set aside is:
+$(cat "$SANDBOX/results/run.log")"
+[ -z "$(find "$APPS" -maxdepth 1 -name '.VaultSync for Mac.app.new.*')" ] || fail "the new app was left unpacked: $(ls -A "$APPS")"
+[ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "an interrupt beside another setup left temporary files: $(ls -A "$SANDBOX/tmp")"
+rm -rf "$installed" "$kept"
+pass "an interrupted update leaves the app another setup put at the place, and keeps the one it set aside"
+
+# A file put at the app's place before the new app moves there: the move
+# fails, the file stays as it is, and the app set aside is kept and named.
+make_app "$APPS" eu.vaultsync.desktop installed-268-file 0.10.0
+release_with offered-268-file "" 0.10.0
+if (FILE_AT_APP=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+	fail "an update whose place was taken by a file must stop"
+fi
+{ [ -f "$installed" ] && [ "$(cat "$installed")" = "a file" ]; } || fail "a failed update removed the file put at the app's place:
+$(find "$APPS" 2>&1 | head -20)
+$(cat "$SANDBOX/results/run.log")"
+kept=$(find "$APPS" -maxdepth 1 -name '.VaultSync for Mac.app.replaced.*')
+{ [ -n "$kept" ] && grep -q "build: vaultsync installed-268-file\$" "$kept/VaultSync for Mac.app/Contents/MacOS/vaultsync"; } ||
+	fail "the app set aside is not kept beside the file:
+$(find "$APPS" 2>&1 | head -20)"
+grep -qF "$kept/VaultSync for Mac.app" "$SANDBOX/results/run.log" || fail "the setup does not say where the app set aside is:
+$(cat "$SANDBOX/results/run.log")"
+[ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "a failed update beside a file left temporary files: $(ls -A "$SANDBOX/tmp")"
+rm -rf "$installed" "$kept"
+pass "a file put at the app's place stays, and the app set aside is kept"
+
+# A bundle that is not VaultSync for Mac takes the app's place after the
+# first look at it, while the downloaded agent runs, say: the setup looks
+# again right before the set-aside, so it is never set aside (and removed
+# with the set-aside folder). Nothing is changed.
+rm -rf "$SANDBOX/moved-away"
+make_app "$APPS" eu.vaultsync.desktop installed-268-foreign 0.10.0
+release_with offered-268-foreign "" 0.10.0
+if (FOREIGN_BEFORE_ASIDE="$SANDBOX/moved-away" mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+	fail "an update whose place was taken by another bundle must stop"
+fi
+grep -q "com.example.other" "$installed/Contents/Info.plist" 2>/dev/null || fail "the bundle put at the app's place was set aside or removed:
+$(find "$APPS" 2>&1 | head -20)
+$(cat "$SANDBOX/results/run.log")"
+[ -z "$(find "$APPS" -maxdepth 1 -name '.VaultSync for Mac.app.*')" ] || fail "something was set aside or left unpacked beside another bundle: $(ls -A "$APPS")"
+grep -q "is not VaultSync for Mac" "$SANDBOX/results/run.log" || fail "the refusal does not say why:
+$(cat "$SANDBOX/results/run.log")"
+grep -q "build: vaultsync installed-268-foreign\$" "$SANDBOX/moved-away/Contents/MacOS/vaultsync" || fail "the app moved away was changed"
+rm -rf "$installed" "$SANDBOX/moved-away"
+pass "a bundle that takes the app's place before the set-aside is never set aside"
+
+# One that takes the place in the instant between that look and the set-aside
+# rename is set aside — and checked there: it goes back, and nothing is
+# replaced.
+rm -rf "$SANDBOX/moved-away"
+make_app "$APPS" eu.vaultsync.desktop installed-268-at-aside 0.10.0
+release_with offered-268-at-aside "" 0.10.0
+if (FOREIGN_AT_ASIDE="$SANDBOX/moved-away" mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+	fail "an update that set aside another bundle must stop"
+fi
+grep -q "com.example.other" "$installed/Contents/Info.plist" 2>/dev/null || fail "the bundle set aside in the instant before the rename is not back:
+$(find "$APPS" 2>&1 | head -20)
+$(cat "$SANDBOX/results/run.log")"
+[ -z "$(find "$APPS" -maxdepth 1 -name '.VaultSync for Mac.app.*')" ] || fail "something was kept aside or left unpacked: $(ls -A "$APPS")"
+grep -q "Something else was put at $installed while VaultSync for Mac was being installed — it was not replaced" "$SANDBOX/results/run.log" ||
+	fail "the stop does not say why:
+$(cat "$SANDBOX/results/run.log")"
+grep -q "build: vaultsync installed-268-at-aside\$" "$SANDBOX/moved-away/Contents/MacOS/vaultsync" || fail "the app moved away was changed"
+[ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "an update that set aside another bundle left temporary files: $(ls -A "$SANDBOX/tmp")"
+rm -rf "$installed" "$SANDBOX/moved-away"
+pass "a bundle set aside in the instant before the rename goes back, and nothing is replaced"
+
+# Whose the app at the place is, is told by the unpacked app's inode. When
+# that cannot be read, no app at the place could be told to be this run's:
+# the setup stops before anything moves. When the one at the place cannot be
+# read after the move, it is not known to be this run's: it is never
+# removed, and the app set aside is kept and named.
+make_app "$APPS" eu.vaultsync.desktop installed-268-noinode 0.10.0
+release_with offered-268-noinode "" 0.10.0
+before=$(tree "$APPS")
+if (FAIL_LS_INODE_UNPACKED=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+	fail "an update whose download's inode cannot be read must stop"
+fi
+grep -q "Could not read the downloaded VaultSync for Mac in $APPS — nothing was changed" "$SANDBOX/results/run.log" || fail "the stop does not say why:
+$(cat "$SANDBOX/results/run.log")"
+[ "$before" = "$(tree "$APPS")" ] || fail "an update whose download's inode cannot be read changed something:
+$(find "$APPS" 2>&1 | head -20)"
+release_with offered-268-noinode-place "" 0.10.0
+if (INT_AFTER_PLACE=1 FAIL_LS_INODE_PLACE=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+	fail "an interrupted update must stop the setup"
+fi
+grep -q "build: vaultsync offered-268-noinode-place\$" "$installed/Contents/MacOS/vaultsync" 2>/dev/null || fail "an app at the place not known to be this run's was removed:
+$(find "$APPS" 2>&1 | head -20)
+$(cat "$SANDBOX/results/run.log")"
+kept=$(find "$APPS" -maxdepth 1 -name '.VaultSync for Mac.app.replaced.*')
+{ [ -n "$kept" ] && grep -q "build: vaultsync installed-268-noinode\$" "$kept/VaultSync for Mac.app/Contents/MacOS/vaultsync"; } ||
+	fail "the app set aside is not kept: $(ls -A "$APPS")"
+grep -qF "cannot be told — it was left as it is" "$SANDBOX/results/run.log" || fail "the setup does not say why it left the app at the place:
+$(cat "$SANDBOX/results/run.log")"
+grep -qF "It is at $kept/VaultSync for Mac.app" "$SANDBOX/results/run.log" || fail "the setup does not say where the app set aside is:
+$(cat "$SANDBOX/results/run.log")"
+rm -rf "$installed" "$kept"
+pass "an inode that cannot be read stops the update before anything moves, or keeps everything after"
+
+# A move into place that worked goes on, also when the look at the place
+# cannot tell whose the app there is: the update finishes, the setup runs
+# from the new app, and nothing is left set aside.
+make_app "$APPS" eu.vaultsync.desktop installed-268-unread-ok 0.10.0
+release_with offered-268-unread-ok "" 0.10.0
+rm -f "$AGENT_MARK"
+(FAIL_LS_INODE_PLACE=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1 || fail "an update whose move worked stopped where the inode at the place cannot be read:
+$(cat "$SANDBOX/results/run.log")"
+[ "$(cat "$AGENT_MARK" 2>/dev/null)" = offered-268-unread-ok ] || fail "the setup did not run from the new app: $(cat "$AGENT_MARK" 2>/dev/null)"
+grep -q "build: vaultsync offered-268-unread-ok\$" "$installed/Contents/MacOS/vaultsync" || fail "the new app is not in place"
+[ "$(ls -A "$APPS")" = "VaultSync for Mac.app" ] || fail "an update with an unreadable inode at the place left more than the app: $(ls -A "$APPS")"
+[ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "an update with an unreadable inode at the place left temporary files: $(ls -A "$SANDBOX/tmp")"
+if grep -q -e "Something else" -e "could not be taken back" "$SANDBOX/results/run.log"; then
+	fail "an update that worked says something went wrong:
+$(cat "$SANDBOX/results/run.log")"
+fi
+rm -rf "$installed"
+pass "a move into place that worked finishes the update, also when the inode at the place cannot be read"
+
+# Something of the app's name inside what stands at the place says the move
+# went inside something another hand put there; VaultSync for Mac holds no
+# such entry. The update stops, and the app set aside stays where it is,
+# named. Taken back out is only an app with this run's inode, so one that is
+# not this run's is never moved into the unpack folder, which the exit
+# removes. Here another hand, right after the move, puts a folder at the
+# place that holds a VaultSync for Mac.app of its own.
+rm -rf "$SANDBOX/swapped-away"
+make_app "$APPS" eu.vaultsync.desktop installed-268-swap 0.10.0
+release_with offered-268-swap "" 0.10.0
+if (SWAP_AFTER_PLACE="$SANDBOX/swapped-away" mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+	fail "an update with something of the app's name at the place must stop"
+fi
+[ "$(cat "$installed/VaultSync for Mac.app/marker" 2>/dev/null)" = "another hand" ] || fail "an app nested at the place that is not this run's was moved or removed:
+$(find "$APPS" 2>&1 | head -20)
+$(cat "$SANDBOX/results/run.log")"
+grep -q "build: vaultsync offered-268-swap\$" "$SANDBOX/swapped-away/Contents/MacOS/vaultsync" || fail "this run's app moved away by the other hand was changed"
+kept=$(find "$APPS" -maxdepth 1 -name '.VaultSync for Mac.app.replaced.*')
+{ [ -n "$kept" ] && grep -q "build: vaultsync installed-268-swap\$" "$kept/VaultSync for Mac.app/Contents/MacOS/vaultsync"; } ||
+	fail "the app installed before is not kept where it was set aside:
+$(find "$APPS" 2>&1 | head -20)"
+grep -qF "The VaultSync for Mac installed before is at $kept/VaultSync for Mac.app" "$SANDBOX/results/run.log" || fail "the setup does not say where the app installed before is:
+$(cat "$SANDBOX/results/run.log")"
+grep -qF "is not known to be the VaultSync for Mac this setup was installing — it was left as it is" "$SANDBOX/results/run.log" || fail "the setup does not say why it left what is nested:
+$(cat "$SANDBOX/results/run.log")"
+[ -z "$(find "$APPS" -maxdepth 1 -name '.VaultSync for Mac.app.new.*')" ] || fail "the unpack folder was left: $(ls -A "$APPS")"
+rm -rf "$installed" "$SANDBOX/swapped-away" "$kept"
+pass "an app nested at the place that is not this run's is never taken into the unpack folder, and the update stops"
+
+# The move went inside a folder another hand put at the place, and the inode
+# of what is nested there cannot be read: not known to be this run's, it is
+# left as it is, the update stops, and the app installed before stays in the
+# set-aside folder — nothing is removed.
+make_app "$APPS" eu.vaultsync.desktop installed-268-nested-unread 0.10.0
+release_with offered-268-nested-unread "" 0.10.0
+if (APPEAR_AT_APP=1 FAIL_LS_INODE_PLACE=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+	fail "an update whose move went inside something at the place must stop"
+fi
+[ "$(cat "$installed/marker" 2>/dev/null)" = "someone else" ] || fail "what another hand put at the place was changed:
+$(find "$APPS" 2>&1 | head -20)"
+grep -q "build: vaultsync offered-268-nested-unread\$" "$installed/VaultSync for Mac.app/Contents/MacOS/vaultsync" 2>/dev/null || fail "what is nested at the place was moved or removed:
+$(find "$APPS" 2>&1 | head -20)
+$(cat "$SANDBOX/results/run.log")"
+kept=$(find "$APPS" -maxdepth 1 -name '.VaultSync for Mac.app.replaced.*')
+{ [ -n "$kept" ] && grep -q "build: vaultsync installed-268-nested-unread\$" "$kept/VaultSync for Mac.app/Contents/MacOS/vaultsync"; } ||
+	fail "the app installed before is not kept where it was set aside:
+$(find "$APPS" 2>&1 | head -20)
+$(cat "$SANDBOX/results/run.log")"
+grep -qF "The VaultSync for Mac installed before is at $kept/VaultSync for Mac.app" "$SANDBOX/results/run.log" || fail "the setup does not say where the app installed before is:
+$(cat "$SANDBOX/results/run.log")"
+rm -rf "$installed" "$kept"
+pass "a move that went inside something at the place, with an unreadable inode there, stops and removes nothing"
+
+# The take-back of this run's nested app moves it into a folder of its own
+# and removes it only once its inode there is this run's: what another hand
+# put at that name in the instant since the look is kept there, and named —
+# never removed with the unpack folder.
+rm -rf "$SANDBOX/taken-away"
+make_app "$APPS" eu.vaultsync.desktop installed-268-takeback 0.10.0
+release_with offered-268-takeback "" 0.10.0
+if (APPEAR_AT_APP=1 SWAP_AT_TAKEBACK="$SANDBOX/taken-away" mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+	fail "an update whose move went inside something at the place must stop"
+fi
+held=$(find "$APPS" -maxdepth 1 -name '.VaultSync for Mac.app.held.*')
+{ [ -n "$held" ] && [ "$(cat "$held/VaultSync for Mac.app/marker" 2>/dev/null)" = "slipped in" ]; } ||
+	fail "what another hand put at the take-back's name was removed, or not kept:
+$(find "$APPS" 2>&1 | head -20)
+$(cat "$SANDBOX/results/run.log")"
+grep -qF "it was kept at $held/VaultSync for Mac.app" "$SANDBOX/results/run.log" || fail "the setup does not say where it kept it:
+$(cat "$SANDBOX/results/run.log")"
+grep -q "build: vaultsync offered-268-takeback\$" "$SANDBOX/taken-away/Contents/MacOS/vaultsync" || fail "this run's app the other hand moved away was changed"
+kept=$(find "$APPS" -maxdepth 1 -name '.VaultSync for Mac.app.replaced.*')
+{ [ -n "$kept" ] && grep -q "build: vaultsync installed-268-takeback\$" "$kept/VaultSync for Mac.app/Contents/MacOS/vaultsync"; } ||
+	fail "the app installed before is not kept where it was set aside:
+$(find "$APPS" 2>&1 | head -20)"
+rm -rf "$installed" "$held" "$kept" "$SANDBOX/taken-away"
+pass "a take-back moves this run's nested app into a folder of its own and keeps anything else there"
+
+# The set-aside rename fails, or Ctrl-C comes before it happened: what
+# stands at the place is the app installed before, as it was — the setup
+# says nothing of something else there, and leaves nothing behind.
+for how in FAIL_MV_ASIDE INT_BEFORE_ASIDE; do
+	make_app "$APPS" eu.vaultsync.desktop "installed-268-$how" 0.10.0
+	release_with "offered-268-$how" "" 0.10.0
+	before=$(tree "$APPS")
+	if (export "$how=1"; mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+		fail "$how: an update whose set-aside did not happen must stop"
+	fi
+	[ "$before" = "$(tree "$APPS")" ] || fail "$how: the app installed before was changed, or something was left:
+$(find "$APPS" 2>&1 | head -20)"
+	if grep -q -e "Something else" -e "cannot be told" -e "could not be put back" "$SANDBOX/results/run.log"; then
+		fail "$how: the setup says something untrue about the app at the place:
+$(cat "$SANDBOX/results/run.log")"
+	fi
+	if [ "$how" = FAIL_MV_ASIDE ]; then
+		grep -q "Could not move the installed VaultSync for Mac aside — nothing was changed" "$SANDBOX/results/run.log" ||
+			fail "a failed set-aside does not say so:
+$(cat "$SANDBOX/results/run.log")"
+	fi
+	[ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "$how left temporary files: $(ls -A "$SANDBOX/tmp")"
+	rm -rf "$installed"
+done
+pass "a set-aside that did not happen leaves the app installed before, and says nothing untrue"
+
+# Something that is not VaultSync for Mac, set aside in the instant before
+# the rename, cannot be put back: it is named as what it is, never as the
+# VaultSync for Mac installed before.
+rm -rf "$SANDBOX/moved-away"
+make_app "$APPS" eu.vaultsync.desktop installed-268-foreign-back 0.10.0
+release_with offered-268-foreign-back "" 0.10.0
+if (FOREIGN_AT_ASIDE="$SANDBOX/moved-away" FAIL_MV_BACK=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+	fail "an update that set aside another bundle must stop"
+fi
+kept=$(find "$APPS" -maxdepth 1 -name '.VaultSync for Mac.app.replaced.*')
+{ [ -n "$kept" ] && grep -q "com.example.other" "$kept/VaultSync for Mac.app/Contents/Info.plist"; } || fail "the bundle set aside is not kept:
+$(find "$APPS" 2>&1 | head -20)"
+grep -qF "What was set aside from $installed (it is not VaultSync for Mac) could not be put back: it is at $kept/VaultSync for Mac.app" "$SANDBOX/results/run.log" ||
+	fail "the bundle that could not be put back is not named as what it is:
+$(cat "$SANDBOX/results/run.log")"
+if grep -q "The VaultSync for Mac installed before" "$SANDBOX/results/run.log"; then
+	fail "another bundle is called the VaultSync for Mac installed before:
+$(cat "$SANDBOX/results/run.log")"
+fi
+rm -rf "$installed" "$kept" "$SANDBOX/moved-away"
+pass "another bundle that cannot be put back is named as what it is"
+
+# A bundle with another identifier takes the place while the downloaded
+# agent runs: the setup looks at the place again before it asks the
+# installed agent its version, so that bundle's program never runs.
+rm -rf "$SANDBOX/moved-away"
+cat >"$SANDBOX/swap-on-version.sh" <<SWAP
+place="$APPS/VaultSync for Mac.app"
+"$REAL_MV" "\$place" "$SANDBOX/moved-away" || exit 1
+mkdir -p "\$place/Contents/MacOS"
+"$REAL_SED" -e 's/eu\\.vaultsync\\.desktop/com.example.other/' "$REPO_ROOT/desktop/macos/Info.plist" >"\$place/Contents/Info.plist"
+printf '#!/bin/sh\n: >"%s"\necho "vaultsync 9.9.9 (Syncthing 2.1.7)"\n' "$SANDBOX/results/foreign-ran" >"\$place/Contents/MacOS/vaultsync"
+chmod 755 "\$place/Contents/MacOS/vaultsync"
+SWAP
+make_app "$APPS" eu.vaultsync.desktop installed-268-on-version 0.10.0
+release_with offered-268-on-version "" 0.10.0
+rm -f "$SANDBOX/results/foreign-ran"
+if (SWAP_ON_VERSION="$SANDBOX/swap-on-version.sh" mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+	fail "an update whose place was taken while the download's agent ran must stop"
+fi
+[ ! -e "$SANDBOX/results/foreign-ran" ] || fail "the program of a bundle that is not VaultSync for Mac was run"
+grep -q "is not VaultSync for Mac" "$SANDBOX/results/run.log" || fail "the refusal does not say why:
+$(cat "$SANDBOX/results/run.log")"
+grep -q "com.example.other" "$installed/Contents/Info.plist" || fail "the bundle at the place was changed"
+[ -z "$(find "$APPS" -maxdepth 1 -name '.VaultSync for Mac.app.*')" ] || fail "something was set aside or left unpacked: $(ls -A "$APPS")"
+grep -q "build: vaultsync installed-268-on-version\$" "$SANDBOX/moved-away/Contents/MacOS/vaultsync" || fail "the app moved away was changed"
+rm -rf "$installed" "$SANDBOX/moved-away" "$SANDBOX/swap-on-version.sh"
+pass "a bundle that takes the place while the download's agent runs is refused before its program runs"
 
 # A VaultSync for Mac newer than the release the link offers — from a
 # release withdrawn after it reached this Mac, say — is never replaced by
@@ -1759,16 +2142,22 @@ $(cat "$SANDBOX/results/run.log")"
 pass "a download that is not VaultSync for Mac, or does not match, installs nothing"
 
 # A first install whose move into place fails says that nothing was
-# installed — there was nothing before to stay.
+# installed — there was nothing before to stay. Interrupted right after the
+# move, this run's app goes again.
 rm -rf "$installed"
 release_with first-try
-if (FAIL_MV_PARTIAL=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+if (FAIL_MV_UNPACKED=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
 	fail "a failed first install must stop the setup"
 fi
 grep -q "nothing was installed" "$SANDBOX/results/run.log" || fail "a failed first install does not say so:
 $(cat "$SANDBOX/results/run.log")"
 [ -z "$(ls -A "$APPS")" ] || fail "a failed first install left something: $(ls -A "$APPS")"
-pass "a first install that cannot be moved into place leaves nothing and says so"
+if (INT_AFTER_PLACE=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+	fail "an interrupted first install must stop the setup"
+fi
+[ -z "$(ls -A "$APPS")" ] || fail "an interrupted first install left something: $(ls -A "$APPS")"
+[ -z "$(ls -A "$SANDBOX/tmp")" ] || fail "an interrupted first install left temporary files: $(ls -A "$SANDBOX/tmp")"
+pass "a first install that cannot be moved into place, or is interrupted right after, leaves nothing"
 
 # An app another account installed (its owner another — the id stand-in
 # makes this account another one): left alone, and this account's goes into
