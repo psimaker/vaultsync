@@ -133,7 +133,7 @@ func TestIssue323_AnAnswerThatIsNoProperHTTPIsOneCleanShortLine(t *testing.T) {
 		{"a status code that is no number", "HTTP/1.1 2" + strings.Repeat("9", 2000) + " OK\r\n\r\n"},
 		{"a header with a control character in its name", "HTTP/1.1 200 OK\r\nX-" + dirt + ": y\r\n\r\n"},
 		{"a header line without a colon", "HTTP/1.1 200 OK\r\n" + dirt + "\r\n\r\n"},
-		{"a status line longer than an answer's head may be", "\x1b[2J" + strings.Repeat("я", 30000) + "\r\n\r\n"},
+		{"a status line of 60 KB, within the bound on an answer's head", "\x1b[2J" + strings.Repeat("я", 30000) + "\r\n\r\n"},
 	}
 	for _, c := range cases {
 		addr, _ := rawHub(t, answerWith(c.answer))
@@ -357,9 +357,9 @@ func TestIssue323_ACutTextKeepsTheErrorsUnderIt(t *testing.T) {
 	}
 }
 
-// askedFirstPair dials a listener that greets at once and returns the
-// client's end, wrapped as the client wraps it, and the greeting.
-func askedFirstPair(t *testing.T) (*askedFirst, string) {
+// greetedConn dials a listener that greets at once and returns the client's
+// end and the greeting.
+func greetedConn(t *testing.T) (net.Conn, string) {
 	t.Helper()
 	const greeting = "a greeting before the request"
 	addr, _ := rawHub(t, func(conn net.Conn, _ *bufio.Reader) { _, _ = io.WriteString(conn, greeting) })
@@ -368,7 +368,83 @@ func askedFirstPair(t *testing.T) (*askedFirst, string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
+	return conn, greeting
+}
+
+// askedFirstPair is greetedConn's connection, wrapped as the client wraps it.
+func askedFirstPair(t *testing.T) (*askedFirst, string) {
+	t.Helper()
+	conn, greeting := greetedConn(t)
 	return newAskedFirst(conn), greeting
+}
+
+// closeAfterARead is a connection whose Close lets a read that starts within
+// a moment finish first. A wait that a Close let go before it closed the
+// connection reads in that moment.
+type closeAfterARead struct {
+	net.Conn
+	once sync.Once
+	read chan struct{} // closed once a read has returned
+}
+
+func (c *closeAfterARead) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	c.once.Do(func() { close(c.read) })
+	return n, err
+}
+
+func (c *closeAfterARead) Close() error {
+	select {
+	case <-c.read:
+	case <-time.After(300 * time.Millisecond):
+	}
+	return c.Conn.Close()
+}
+
+// A Close let a read that waited for the request go on before it closed the
+// connection: in between, that read took the greeting. It now finds the
+// connection closed and takes nothing.
+func TestIssue323_AReadReleasedByCloseFindsTheConnectionClosed(t *testing.T) {
+	conn, _ := greetedConn(t)
+	c := newAskedFirst(&closeAfterARead{Conn: conn, read: make(chan struct{})})
+	type result struct {
+		n   int
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		n, err := c.Read(make([]byte, 64))
+		done <- result{n, err}
+	}()
+	waitForReaders(t, 1)
+	_ = c.Close()
+	select {
+	case r := <-done:
+		if r.n != 0 || r.err == nil {
+			t.Errorf("the read released by Close took %d bytes (%v)", r.n, r.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a read before the request outlived Close")
+	}
+}
+
+// noLocalAddr is a connection that names no local address.
+type noLocalAddr struct{ net.Conn }
+
+func (noLocalAddr) LocalAddr() net.Addr { return nil }
+
+// A read whose deadline passes before the request is a timeout also on a
+// connection that names no local address; it must not take down the
+// transport's reading goroutine.
+func TestIssue323_ATimeoutWithoutALocalAddressIsATimeout(t *testing.T) {
+	conn, _ := greetedConn(t)
+	c := newAskedFirst(noLocalAddr{conn})
+	_ = c.SetReadDeadline(time.Now().Add(20 * time.Millisecond))
+	_, err := c.Read(make([]byte, 64))
+	var netErr net.Error
+	if !errors.As(err, &netErr) || !netErr.Timeout() {
+		t.Errorf("past its deadline: %v", err)
+	}
 }
 
 // readAsync reads once from c in the background.

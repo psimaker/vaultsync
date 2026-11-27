@@ -285,9 +285,9 @@ func shortened(err error) error {
 // askedFirst is a connection that is read only once something has been
 // written on it, so nothing the other side sends before the request reaches
 // Go's transport (newClient). A read that waits for the first write returns
-// when the connection is closed or its read deadline passes: the transport
-// closes every connection it does not use, and a deadline is kept as it is
-// set.
+// when the connection is closed, which happens before the read is let go, or
+// when its read deadline passes: the transport closes every connection it
+// does not use, and a deadline is kept as it is set.
 type askedFirst struct {
 	net.Conn
 	once  sync.Once
@@ -307,9 +307,14 @@ func (c *askedFirst) Write(p []byte) (int, error) {
 	return c.Conn.Write(p)
 }
 
+// Close closes the connection before it lets a waiting read go on, so that
+// read finds the connection closed and takes nothing the other side sent.
+// Released first, it could read a greeting before the close, and whether
+// that reached the log would hang on how the transport orders its own close.
 func (c *askedFirst) Close() error {
+	err := c.Conn.Close()
 	c.once.Do(func() { close(c.asked) })
-	return c.Conn.Close()
+	return err
 }
 
 func (c *askedFirst) Read(p []byte) (int, error) {
@@ -348,8 +353,13 @@ func (c *askedFirst) waitOnce(deadline time.Time, moved <-chan struct{}) (done b
 	case <-c.asked:
 		return true, nil
 	case <-passed:
-		local := c.LocalAddr()
-		return true, &net.OpError{Op: "read", Net: local.Network(), Source: local, Addr: c.RemoteAddr(), Err: os.ErrDeadlineExceeded}
+		timeout := &net.OpError{Op: "read", Net: "tcp", Addr: c.RemoteAddr(), Err: os.ErrDeadlineExceeded}
+		// A connection without a local address must not take down the
+		// transport's reading goroutine.
+		if local := c.LocalAddr(); local != nil {
+			timeout.Net, timeout.Source = local.Network(), local
+		}
+		return true, timeout
 	case <-moved:
 		return false, nil
 	}
