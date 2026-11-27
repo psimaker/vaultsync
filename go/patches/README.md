@@ -72,6 +72,19 @@ Two safety nets compensate:
   them; the bridge never enables auto-accept. VaultSync doctrine, not for
   upstreaming; `TestIssue371_TheEnginesOwnWriteMakesNoFolder` fails without
   it.
+- `syncthing/010-natpmp-result-after-cancel.patch` — the NAT-PMP device runs
+  its blocking requests (`AddPortMapping`, `GetExternalIPv4Address`) through
+  `svcutil.CallWithContext` too, and upstream read the request's result after
+  the call whatever its error, while a request outliving a canceled call
+  could still assign it — a data race on every engine stop during a request
+  to a gateway that speaks NAT-PMP (#195, decision 043). The result is now
+  read only when the call returned nil, which it does only after the request
+  completed; every value the methods return is unchanged. Unfixed upstream as
+  of v2.1.7: carry it across a bump, and drop it only once upstream changes
+  both reads and `TestIssue195_*` stays green under `-race`. The test calls
+  the unexported device by its linker names and first checks its copy of the
+  type against `lib/pmp`'s source, so a bump that changes the type fails it.
+  Worth reporting upstream.
 - `go-stun/001-nil-safe-host-methods.patch` — nil-safe host methods.
 
 ## Before each release

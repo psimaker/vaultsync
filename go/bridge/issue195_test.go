@@ -8,6 +8,7 @@ import (
 	"go/token"
 	"go/types"
 	"net"
+	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -128,7 +129,8 @@ func TestIssue195_AnsweredNATPMPRequestReturnsTheAnswer(t *testing.T) {
 // the device itself: pmpDevice mirrors the type's fields, and its methods are
 // called by their linker names. requirePMPDeviceMirror holds both against the
 // engine's source before any call, so a Syncthing bump that changes them
-// fails the test instead of running a method on the wrong memory.
+// fails the test instead of running a method on the wrong memory; a method
+// the engine no longer defines on *wrapper fails the build at link time.
 type pmpDevice struct {
 	renewal   time.Duration
 	localIP   net.IP
@@ -151,42 +153,63 @@ func newPMPDevice(gateway net.IP) *pmpDevice {
 	}
 }
 
-// requirePMPDeviceMirror fails the test unless lib/pmp's device type has the
-// fields of pmpDevice, in their order, and the linked methods the signatures
-// declared above. It reads the engine's source: run `make patch` first.
+// requirePMPDeviceMirror fails the test unless lib/pmp declares its device
+// type exactly once, with the fields of pmpDevice in their order, and each
+// linked method exactly once with the signature declared above. It fails
+// closed: a source it cannot read or parse, and any difference, end the test
+// before the first linked call. It reads the engine's source, so run `make
+// patch` first.
 func requirePMPDeviceMirror(t *testing.T) {
 	t.Helper()
-	path := filepath.Join("..", "_syncthing_patched", "lib", "pmp", "pmp.go")
-	file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+	dir := filepath.Join("..", "_syncthing_patched", "lib", "pmp")
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("read lib/pmp (run `make patch` first): %v", err)
 	}
 
 	var engineFields []string
-	engineMethods := map[string]string{}
-	for _, decl := range file.Decls {
-		switch d := decl.(type) {
-		case *ast.GenDecl:
-			for _, spec := range d.Specs {
-				ts, ok := spec.(*ast.TypeSpec)
-				if !ok || ts.Name.Name != "wrapper" {
-					continue
-				}
-				st, ok := ts.Type.(*ast.StructType)
-				if !ok {
-					t.Fatalf("lib/pmp's wrapper is no longer a struct: %s", types.ExprString(ts.Type))
-				}
-				for _, f := range st.Fields.List {
-					for _, name := range f.Names {
-						engineFields = append(engineFields, name.Name+" "+types.ExprString(f.Type))
+	wrappers := 0
+	engineMethods := map[string][]string{}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), filepath.Join(dir, name), nil, 0)
+		if err != nil {
+			t.Fatalf("read lib/pmp/%s: %v", name, err)
+		}
+		for _, decl := range file.Decls {
+			switch d := decl.(type) {
+			case *ast.GenDecl:
+				for _, spec := range d.Specs {
+					ts, ok := spec.(*ast.TypeSpec)
+					if !ok || ts.Name.Name != "wrapper" {
+						continue
+					}
+					wrappers++
+					st, ok := ts.Type.(*ast.StructType)
+					if !ok || ts.Assign.IsValid() || ts.TypeParams != nil {
+						t.Fatalf("lib/pmp's wrapper is no longer a plain struct: %s", types.ExprString(ts.Type))
+					}
+					for _, f := range st.Fields.List {
+						if len(f.Names) == 0 {
+							engineFields = append(engineFields, "(embedded) "+types.ExprString(f.Type))
+						}
+						for _, field := range f.Names {
+							engineFields = append(engineFields, field.Name+" "+types.ExprString(f.Type))
+						}
 					}
 				}
-			}
-		case *ast.FuncDecl:
-			if d.Recv != nil && len(d.Recv.List) == 1 && types.ExprString(d.Recv.List[0].Type) == "*wrapper" {
-				engineMethods[d.Name.Name] = astSignature("*wrapper", d.Type)
+			case *ast.FuncDecl:
+				if d.Recv != nil && len(d.Recv.List) == 1 && types.ExprString(d.Recv.List[0].Type) == "*wrapper" {
+					engineMethods[d.Name.Name] = append(engineMethods[d.Name.Name], astSignature("*wrapper", d.Type))
+				}
 			}
 		}
+	}
+	if wrappers != 1 {
+		t.Fatalf("lib/pmp declares its wrapper type %d times, the test's mirror expects 1: update pmpDevice", wrappers)
 	}
 
 	var mirrorFields []string
@@ -203,7 +226,7 @@ func requirePMPDeviceMirror(t *testing.T) {
 		"GetExternalIPv4Address": pmpGetExternalIPv4Address,
 	} {
 		want := strings.Replace(reflect.TypeOf(linked).String(), "*"+mirror.String(), "*wrapper", 1)
-		if got := engineMethods[name]; got != want {
+		if got := engineMethods[name]; len(got) != 1 || got[0] != want {
 			t.Fatalf("lib/pmp's (*wrapper).%s is %q, the test links it as %q: update the declaration", name, got, want)
 		}
 	}
