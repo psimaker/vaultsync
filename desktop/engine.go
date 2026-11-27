@@ -235,13 +235,17 @@ func waitReady(ctx context.Context, c *syncthing.Client, timeout time.Duration) 
 
 // waitReadyGated is waitReady asking the engine only while gate, when not
 // nil, says nothing against it: gate's error says why the port is not to be
-// asked yet, and is what the wait ends with when the timeout passes first.
+// asked yet, and is what the wait ends with when the timeout passes first —
+// or at once, where it wraps errStopWaiting.
 func waitReadyGated(ctx context.Context, c *syncthing.Client, timeout time.Duration, gate func(context.Context) error) error {
 	deadline := time.Now().Add(timeout)
 	for {
 		var err error
 		if gate != nil {
 			err = gate(ctx)
+		}
+		if errors.Is(err, errStopWaiting) {
+			return err
 		}
 		if err == nil {
 			pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
@@ -375,38 +379,42 @@ func (e engine) leaveATakenPortWith(st *agentState, logf func(string, ...any), w
 
 // runStateLockWait is how long a run waits for state.lock as it takes the
 // engine lock. Its holders hold it for a moment; past the wait the run
-// goes on without it and says so. A variable for the tests.
+// ends, owning nothing, and the service manager starts it again. A
+// variable for the tests.
 var runStateLockWait = 10 * time.Second
+
+// errRunStateLockHeld: a run found state.lock held past runStateLockWait.
+var errRunStateLockHeld = errors.New("state.lock, the lock on VaultSync's record, stayed held by another VaultSync process, so the sync engine was not started — try again in a moment; the background service starts again by itself")
 
 // takeEngineLockLeavingATakenPort takes the engine lock and leaves a taken
 // port, both under state.lock: taken just before the engine lock and let go
 // once the port is recorded. A command looks at the engine lock and reads
-// the port under state.lock too (engineMayRunAtItsPort), so it does not
-// read the recorded port in the instant a run moves off it (#419). The wait
-// for state.lock ends with ctx and after runStateLockWait; past that the
-// run goes on without it and logs one line. The engine lock still comes
-// before anything slow, a pin's download among them. A refusal at the
-// engine lock is ErrEngineRunning, and the run then owns nothing.
+// the port under state.lock too (lookAtTheEngine), so it does not read the
+// recorded port in the instant a run moves off it (#419); a record of a
+// control socket an earlier run could not make goes in the same hold, so a
+// command takes the new run for one on its way up. The wait for state.lock
+// ends with ctx, and after runStateLockWait with errRunStateLockHeld: the
+// run then owns nothing, and every later write of agent.json would wait
+// for the same holder. The engine lock still comes before anything slow, a
+// pin's download among them. A refusal at the engine lock is
+// ErrEngineRunning, and the run then owns nothing.
 func (e engine) takeEngineLockLeavingATakenPort(ctx context.Context, st *agentState, logf func(string, ...any)) (func(), error) {
-	path := stateLockOf(e.lay.State)
-	write := updateStateHeld
-	h, err := takeStateLock(ctx, path, runStateLockWait)
+	h, err := takeStateLock(ctx, stateLockOf(e.lay.State), runStateLockWait)
 	switch {
 	case ctx.Err() != nil:
 		return nil, ctx.Err()
 	case errors.Is(err, errStateLockHeld):
-		logf("state.lock stayed held for %s; going on without it", runStateLockWait)
-		write = updateState
+		return nil, errRunStateLockHeld
 	case err != nil:
 		return nil, err
-	default:
-		defer h.Release()
 	}
+	defer h.Release()
 	unlock, err := takeEngineLock(e.lay.Lock)
 	if err != nil {
 		return nil, err
 	}
-	if err := e.leaveATakenPortWith(st, logf, write); err != nil {
+	removeEarlierSocketRecord(e.lay)
+	if err := e.leaveATakenPortWith(st, logf, updateStateHeld); err != nil {
 		unlock()
 		return nil, err
 	}
@@ -593,18 +601,25 @@ func engineHomeHeld(lay layout) bool {
 // no Syncthing of VaultSync's can be starting. A lock that cannot be looked
 // at is a *lockLookError.
 func engineMayRun(lay layout) (bool, error) {
+	_, may, err := engineLocks(lay)
+	return may, err
+}
+
+// engineLocks is engineMayRun, also telling whether it is a vaultsync run
+// that holds the engine lock (run).
+func engineLocks(lay layout) (run, may bool, err error) {
 	held, err := lock.Probe(lay.Lock)
 	if err != nil {
-		return false, &lockLookError{path: lay.Lock, err: err}
+		return false, false, &lockLookError{path: lay.Lock, err: err}
 	}
 	if held {
-		return true, nil
+		return true, true, nil
 	}
 	home := filepath.Join(lay.Home, syncthingHomeLock)
 	if held, err = lock.Probe(home); err != nil {
-		return false, &lockLookError{path: home, err: err}
+		return false, false, &lockLookError{path: home, err: err}
 	}
-	return held, nil
+	return false, held, nil
 }
 
 // stateLockWait is how long a command waits for state.lock before it looks
@@ -629,31 +644,84 @@ var errStateLockHeld = errors.New("another VaultSync process held it throughout"
 // has none recorded. An agent.json that cannot be read is returned as that
 // error.
 func engineMayRunAtItsPort(ctx context.Context, lay layout) (bool, agentState, error) {
+	l, err := lookAtTheEngine(ctx, lay)
+	return l.may, l.st, err
+}
+
+// engineLook is what a command reads of VaultSync's engine, under
+// state.lock, before it asks the engine's port (lookAtTheEngine).
+type engineLook struct {
+	// may: an engine of VaultSync's may run here (engineMayRun).
+	may bool
+	// run: a vaultsync run, or setup's own engine, holds the engine lock.
+	run bool
+	// starting: a vaultsync run — or setup's own engine — holds the engine
+	// lock, and nothing says it answers nowhere: a run that has not served
+	// its control socket yet is on its way up, its engine perhaps not
+	// started — a pin still to install, an engine an earlier run left
+	// behind to wait for. A command whose agent does not answer asks no
+	// port then (#419, decision 086).
+	starting bool
+	// st: agent.json, read when an engine may run.
+	st agentState
+}
+
+// lookAtTheEngine is engineMayRunAtItsPort, also telling whether a run that
+// holds the engine lock is on its way up (engineLook.starting). A run that
+// holds it and answers nowhere — it recorded that it could not make its
+// control socket, or the record is desktop-v0.1.0's, whose run serves none
+// — is asked as decision 079 says. A record of a socket that could not be
+// made is removed by the run that takes the engine lock, under the same
+// state.lock, before it is read here: one an earlier run left is never
+// taken for the new run's.
+func lookAtTheEngine(ctx context.Context, lay layout) (engineLook, error) {
 	path := stateLockOf(lay.State)
 	h, err := takeStateLock(ctx, path, stateLockWait)
 	switch {
 	case ctx.Err() != nil:
-		return false, agentState{}, ctx.Err()
+		return engineLook{}, ctx.Err()
 	case errors.Is(err, fs.ErrNotExist):
-		return false, agentState{}, nil
+		return engineLook{}, nil
 	case err != nil:
-		return false, agentState{}, &lockLookError{path: path, err: err}
+		return engineLook{}, &lockLookError{path: path, err: err}
 	}
 	if _, err := os.Stat(lay.State); errors.Is(err, fs.ErrNotExist) {
 		_, _ = h.Discard()
 		may, err := engineMayRun(lay)
-		return may, agentState{}, err
+		return engineLook{may: may}, err
 	}
 	defer h.Release()
-	may, err := engineMayRun(lay)
+	run, may, err := engineLocks(lay)
 	if err != nil || !may {
-		return false, agentState{}, err
+		return engineLook{}, err
 	}
 	st, err := loadState(lay.State)
 	if err != nil {
-		return false, agentState{}, err
+		return engineLook{}, err
 	}
-	return true, st, nil
+	return engineLook{may: true, run: run, starting: run && !runAnswersNowhere(lay, st), st: st}, nil
+}
+
+// runAnswersNowhere says whether a vaultsync run that holds the engine lock
+// runs its engine with no control socket that will answer: it recorded
+// that it could not make one (control-socket-error.txt), or the record is
+// desktop-v0.1.0's, whose run serves none. Its engine is then asked as
+// decision 079 says.
+func runAnswersNowhere(lay layout, st agentState) bool {
+	if _, err := os.Lstat(lay.SocketErrorFile()); err == nil {
+		return true
+	}
+	return st.Version == v010StateVersion
+}
+
+// removeEarlierSocketRecord removes the record of a control socket that
+// could not be made, which a run that ended without its way out left: it
+// is no longer true once the engine lock is taken again, and a command
+// reads it as "this run answers nowhere" (lookAtTheEngine). Called under
+// state.lock, right after the engine lock; a record that cannot be removed
+// stays, and the run says so as it makes its socket.
+func removeEarlierSocketRecord(lay layout) {
+	_ = os.Remove(lay.SocketErrorFile())
 }
 
 // takeStateLock takes state.lock without making VaultSync's folder,
@@ -662,6 +730,11 @@ func takeStateLock(ctx context.Context, path string, wait time.Duration) (*lock.
 	deadline := time.Now().Add(wait)
 	for {
 		h, err := lockFileNoCreate(path)
+		if err == nil && ctx.Err() != nil {
+			// Taken as ctx ended: let go, so no caller holds it unseen.
+			h.Release()
+			return nil, ctx.Err()
+		}
 		if !errors.Is(err, ErrEngineRunning) {
 			return h, err
 		}

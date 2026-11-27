@@ -208,7 +208,7 @@ func (a *app) status(ctx context.Context) error {
 		fmt.Fprintln(w, earlierEngineLine)
 		return nil
 	case aerr == nil && cs.Engine != "running":
-		fmt.Fprintln(w, "Sync engine: starting — VaultSync is bringing it up")
+		fmt.Fprintln(w, startingLine)
 		_, err := io.WriteString(w, cs.Text)
 		return err
 	case aerr == nil:
@@ -243,7 +243,7 @@ func (a *app) status(ctx context.Context) error {
 	// VaultSync's may run, and then the one agent.json records now, both
 	// read under state.lock (#413, #419). A record that cannot be read, or
 	// names no port, leaves nothing to ask: never the port read before.
-	may, now, err := engineMayRunAtItsPort(ctx, a.lay)
+	look, err := lookAtTheEngine(ctx, a.lay)
 	var lookErr *lockLookError
 	switch {
 	case errors.As(err, &lookErr):
@@ -253,12 +253,21 @@ func (a *app) status(ctx context.Context) error {
 		return err
 	case err != nil:
 		return err
-	case !may:
+	case !look.may:
 		fmt.Fprintln(w, "Sync engine: not running — nothing syncs right now")
 		_, err := io.WriteString(w, a.offlineReport().Text)
 		return err
+	case look.starting:
+		// A run holds the engine lock and its agent does not answer yet: it
+		// is on its way up, its engine perhaps not started — a pin to
+		// install, or an engine an earlier run left behind to wait for. No
+		// port is asked (#419, decision 086); the vaults are listed from the
+		// engine's config, not called stopped.
+		fmt.Fprintln(w, startingLine)
+		_, err := io.WriteString(w, a.configuredReport("Vaults (whether they sync right now is not known)", "not known whether it syncs").Text)
+		return err
 	}
-	if client, err = eng.client(now); err != nil {
+	if client, err = eng.client(look.st); err != nil {
 		return err
 	}
 	pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
@@ -413,11 +422,16 @@ func connectionState(state string) bool {
 	return state == "up to date" || state == "paused on your Hub" || strings.HasPrefix(state, "waiting for your Hub") || strings.HasPrefix(state, "uploading to your Hub")
 }
 
-// emptyReport is a report with every list present (never null in JSON).
 // earlierEngineLine is what status says while the run waits for an engine
 // an earlier run left behind (#419, decision 086).
 const earlierEngineLine = "Sync engine: starting — an engine an earlier vaultsync run left behind still holds the engine's folder and may still sync; VaultSync starts its own once that one has ended"
 
+// startingLine is what status says while the run has not started its
+// engine yet: its agent says so, or no agent answers yet while a run holds
+// the engine lock (#419, decision 086).
+const startingLine = "Sync engine: starting — VaultSync is bringing it up"
+
+// emptyReport is a report with every list present (never null in JSON).
 func emptyReport() statusReport {
 	return statusReport{Hubs: []hubStatus{}, Vaults: []vaultStatus{}, Waiting: []waitingStatus{}, Attempts: []attemptStatus{}}
 }

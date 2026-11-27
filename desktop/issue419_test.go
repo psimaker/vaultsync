@@ -26,9 +26,9 @@ import (
 	"github.com/psimaker/vaultsync/hub/syncthing"
 )
 
-// listenerAtTheRecordedPort listens on 127.0.0.1:port and counts every
-// request that reaches it; it answers each as an engine's ping would.
-func listenerAtTheRecordedPort(t *testing.T, port int) (*atomic.Int32, *httptest.Server) {
+// answeringAtTheRecordedPort answers on 127.0.0.1:port as an engine's ping
+// would, and tells how many requests reached it.
+func answeringAtTheRecordedPort(t *testing.T, port int) (*atomic.Int32, *httptest.Server) {
 	t.Helper()
 	var reached atomic.Int32
 	l, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(port))
@@ -150,7 +150,7 @@ func TestIssue419_ARunWaitsForAnEngineAnEarlierRunLeft(t *testing.T) {
 			t.Fatal(err)
 		}
 		port := st.GUIPort
-		reached, earlier := listenerAtTheRecordedPort(t, port)
+		reached, earlier := answeringAtTheRecordedPort(t, port)
 		homeLock, err := lockFile(filepath.Join(a.lay.Home, syncthingHomeLock))
 		if err != nil {
 			t.Fatal(err)
@@ -217,7 +217,7 @@ func TestIssue419_ARunWaitsForAnEngineAnEarlierRunLeft(t *testing.T) {
 		if err := saveState(eng.lay.State, st); err != nil {
 			t.Fatal(err)
 		}
-		reached, earlier := listenerAtTheRecordedPort(t, st.GUIPort)
+		reached, earlier := answeringAtTheRecordedPort(t, st.GUIPort)
 		homeLock, err := lockFile(filepath.Join(eng.lay.Home, syncthingHomeLock))
 		if err != nil {
 			t.Fatal(err)
@@ -275,7 +275,7 @@ func TestIssue419_ALockThatCannotBeLookedAtMakesNoRunWait(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reached, _ := listenerAtTheRecordedPort(t, st.GUIPort)
+	reached, _ := answeringAtTheRecordedPort(t, st.GUIPort)
 	linkInPlaceOf(t, filepath.Join(a.lay.Home, syncthingHomeLock))
 	stop := inBackground(t, func(ctx context.Context) error { return a.run(ctx, nil) })
 	e2eWait(t, "the run to start its engine", 10*time.Second, func() bool { return len(fakeEnginePIDs(t, a.lay)) > 0 })
@@ -302,7 +302,7 @@ func TestIssue419_TheSocketAsksNoPortBeforeTheRunsEngineStarts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reached, _ := listenerAtTheRecordedPort(t, st.GUIPort)
+	reached, _ := answeringAtTheRecordedPort(t, st.GUIPort)
 	rs := &runState{}
 	c := &controlServer{a: a, eng: a.engine(), logf: t.Logf, rs: rs, ctx: context.Background()}
 	cs, err := c.currentStatus(context.Background())
@@ -347,7 +347,7 @@ func TestIssue419_StartLeavesARunThatWaitsForAnEarlierEngineAlone(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	reached, earlier := listenerAtTheRecordedPort(t, st.GUIPort)
+	reached, earlier := answeringAtTheRecordedPort(t, st.GUIPort)
 	homeLock, err := lockFile(filepath.Join(a.lay.Home, syncthingHomeLock))
 	if err != nil {
 		t.Fatal(err)
@@ -396,8 +396,9 @@ func TestIssue419_StartLeavesARunThatWaitsForAnEarlierEngineAlone(t *testing.T) 
 }
 
 // A run waits for state.lock only so long, and not past a stop (#419): a
-// holder that keeps it past runStateLockWait leaves the run going on
-// without it, with one line in its log; a stop ends the wait at once.
+// holder that keeps it past runStateLockWait ends the run with a line that
+// says so and an error, owning nothing and with nothing started — no wait
+// on past the bound; a stop ends the wait at once.
 func TestIssue419_ARunsWaitForStateLockIsBounded(t *testing.T) {
 	asTheService(t)
 	t.Run("past the bound", func(t *testing.T) {
@@ -405,23 +406,28 @@ func TestIssue419_ARunsWaitForStateLockIsBounded(t *testing.T) {
 		runStateLockWait = 300 * time.Millisecond
 		t.Cleanup(func() { runStateLockWait = saved })
 		a, _ := runFixture(t)
-		unlock, err := lockFile(stateLockOf(a.lay.State))
+		before, err := os.ReadFile(a.lay.State)
 		if err != nil {
 			t.Fatal(err)
 		}
-		let := sync.OnceFunc(unlock)
-		t.Cleanup(let)
-		var stop func() error
-		logged := serviceLogOf(t, func() {
-			stop = inBackground(t, func(ctx context.Context) error { return a.run(ctx, nil) })
-			e2eWait(t, "the run to take the engine lock", 10*time.Second, func() bool { return engineLockHeld(a.lay) })
-		})
-		if !strings.Contains(logged, "state.lock stayed held for 300ms; going on without it") {
-			t.Fatalf("the run's log:\n%s", logged)
+		holdLock(t, stateLockOf(a.lay.State))
+		ended := make(chan error, 1)
+		start := time.Now()
+		go func() { ended <- a.run(context.Background(), nil) }()
+		select {
+		case err = <-ended:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the run still waits 10s after a bound of 300ms")
 		}
-		let()
-		e2eWait(t, "the run to start its engine", 10*time.Second, func() bool { return len(fakeEnginePIDs(t, a.lay)) > 0 })
-		_ = stop()
+		if !errors.Is(err, errRunStateLockHeld) || !strings.Contains(serviceSummary(err), "state.lock") {
+			t.Fatalf("the run ended after %s with %v", time.Since(start).Round(time.Millisecond), err)
+		}
+		if engineLockHeld(a.lay) || len(fakeEnginePIDs(t, a.lay)) > 0 {
+			t.Fatalf("the run left the engine lock held (%v) or an engine (%v)", engineLockHeld(a.lay), fakeEnginePIDs(t, a.lay))
+		}
+		if after, err := os.ReadFile(a.lay.State); err != nil || !bytes.Equal(after, before) {
+			t.Fatalf("agent.json changed (%v):\n%s", err, after)
+		}
 	})
 	t.Run("a stop", func(t *testing.T) {
 		saved := runStateLockWait
@@ -469,8 +475,9 @@ func holdTheRunAtItsEngineLock(t *testing.T, lay layout) (held <-chan struct{}, 
 // recorded the port it moves to does not read the recorded port: nothing
 // reaches the port the run moves off (#419), for a run and setup's engine
 // alike. The run is held in that instant at its take of the engine lock.
-// Let go within the command's wait, the command reads the port the run
-// moved to; held past it, the command says it cannot tell and asks nothing.
+// Let go within the command's wait, the command reads what the run left —
+// the port it moved to, or a run still on its way up, which it asks
+// nothing; held past it, the command says it cannot tell and asks nothing.
 func TestIssue419_ACommandAsksNoPortARunIsMovingOff(t *testing.T) {
 	saved, savedWait := pairEngineWait, stateLockWait
 	pairEngineWait, stateLockWait = 300*time.Millisecond, 500*time.Millisecond
@@ -514,9 +521,9 @@ func TestIssue419_ACommandAsksNoPortARunIsMovingOff(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					// The recorded port is taken while no engine runs; what
-					// reaches it is counted.
-					reached, _ := listenerAtTheRecordedPort(t, st.GUIPort)
+					// The test answers at the recorded port, to see whether a
+					// command asks it there.
+					reached, _ := answeringAtTheRecordedPort(t, st.GUIPort)
 					// Held between its engine lock and its record of the port
 					// it moves to.
 					held, let := holdTheRunAtItsEngineLock(t, a.lay)
@@ -633,6 +640,210 @@ func TestIssue419_ARecordGoneMeanwhileIsNotTakenForNothingRunning(t *testing.T) 
 	}
 	if _, err := os.Stat(stateLockOf(a.lay.State)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the look left state.lock behind a removed record: %v", err)
+	}
+}
+
+// A look whose context ends just as it takes state.lock lets it go again:
+// no lock is left held behind a Ctrl-C or a stop, for a command's look and
+// a run's take of the engine lock alike (#419).
+func TestIssue419_AStopAsStateLockIsTakenLetsItGo(t *testing.T) {
+	a, _ := runFixture(t)
+	path := stateLockOf(a.lay.State)
+	unlock, err := lockFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, err := engineMayRunAtItsPort(ctx, a.lay); !errors.Is(err, context.Canceled) {
+		t.Fatalf("a command's look after a Ctrl-C: %v", err)
+	}
+	if held, err := lock.Probe(path); err != nil || held {
+		t.Fatalf("a command's look left state.lock held: %v %v", held, err)
+	}
+	st, err := loadState(a.lay.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.engine().takeEngineLockLeavingATakenPort(ctx, &st, t.Logf); !errors.Is(err, context.Canceled) {
+		t.Fatalf("a run's take after a stop: %v", err)
+	}
+	if held, err := lock.Probe(path); err != nil || held {
+		t.Fatalf("a run's take left state.lock held: %v %v", held, err)
+	}
+	if engineLockHeld(a.lay) {
+		t.Fatal("a run's take after a stop left the engine lock held")
+	}
+}
+
+// agentSaying serves a control socket at the place a's agent.json records,
+// answering status, with this build's mark, as say says at that moment.
+func agentSaying(t *testing.T, a *app, say func() controlStatus) {
+	t.Helper()
+	path := filepath.Join(shortDir(t), "agent.sock")
+	l, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mark := a.mark()
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(control.BuildHeader, mark)
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/status" {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, http.StatusOK, say())
+	})}
+	go func() { _ = srv.Serve(l) }()
+	t.Cleanup(func() { _ = srv.Close() })
+	recordSocket(t, a, path)
+}
+
+// pinHeldBack makes a's run install its pin, and holds the download until
+// release: the run is held after its engine lock and its record of the
+// port, before its control socket — the stretch a pin's download lasts.
+// asked is closed once the run asks for the pin.
+func pinHeldBack(t *testing.T, a *app) (asked <-chan struct{}, release func()) {
+	t.Helper()
+	olderEngineHere(t, a, "v0.0.1")
+	reached, let := make(chan struct{}), make(chan struct{})
+	var once, letOnce sync.Once
+	pinServedBy(t, func(w http.ResponseWriter, r *http.Request) {
+		once.Do(func() { close(reached) })
+		select {
+		case <-let:
+		case <-r.Context().Done():
+		}
+		http.NotFound(w, r)
+	})
+	release = func() { letOnce.Do(func() { close(let) }) }
+	// Before the server closes, which waits for the download held here.
+	t.Cleanup(release)
+	return reached, release
+}
+
+// Between a run's engine lock and its control socket — as long as a pin's
+// download lasts — no command asks the recorded port (#419, decision 086).
+// Beside an engine an earlier run left behind, whose port the run keeps,
+// status says the engine is starting, pause and resume say so and change
+// nothing, vaultsync pair waits and then says the same, a pairing through
+// the agent finds no socket to ask, and setup's wait for the service's
+// engine asks nothing. A record of a socket an earlier run could not make
+// is not taken for this run's: the run removes it as it takes the engine
+// lock.
+func TestIssue419_NoCommandAsksThePortBeforeTheRunsSocket(t *testing.T) {
+	saved := pairEngineWait
+	pairEngineWait = 300 * time.Millisecond
+	t.Cleanup(func() { pairEngineWait = saved })
+	inATerminal(t)
+	a, _ := runFixture(t)
+	st, err := loadState(a.lay.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := st.GUIPort
+	// The engine an earlier run left behind: it holds the engine's home and
+	// answers at the recorded port.
+	reached, _ := answeringAtTheRecordedPort(t, port)
+	holdLock(t, filepath.Join(a.lay.Home, syncthingHomeLock))
+	writeFile(t, a.lay.SocketErrorFile(), "listen unix: bind: address already in use\n")
+	asked, _ := pinHeldBack(t, a)
+	stop := inBackground(t, func(ctx context.Context) error { return a.run(ctx, nil) })
+	select {
+	case <-asked:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the run never asked for its pin")
+	}
+	if !engineLockHeld(a.lay) {
+		t.Fatal("the run downloads its pin without the engine lock")
+	}
+	if _, err := os.Stat(a.lay.SocketErrorFile()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the record an earlier run left stayed: %v", err)
+	}
+	for _, c := range []struct {
+		name, says string
+		run        func(b *app) error
+	}{
+		{"status", startingLine, func(b *app) error { return b.status(context.Background()) }},
+		{"pause", "still starting its sync engine, and nothing was paused", func(b *app) error { return b.pauseSync(context.Background(), true) }},
+		{"resume", "still starting its sync engine, and nothing was resumed", func(b *app) error { return b.pauseSync(context.Background(), false) }},
+		{"vaultsync pair", "still starting its sync engine", func(b *app) error {
+			return b.pair(context.Background(), []string{"--code", "TULIP-ANCHOR-42", "--hub", "127.0.0.1:1"})
+		}},
+	} {
+		if said := withCopy(a, c.run); !strings.Contains(said, c.says) {
+			t.Fatalf("%s before the run's socket:\n%s", c.name, said)
+		}
+	}
+	if _, err := socketOf(t, a).Pair(context.Background(), control.PairRequest{Code: "TULIP-ANCHOR-42", Hub: "127.0.0.1:1"}); !errors.Is(err, errNoAgent) {
+		t.Fatalf("a pairing through the agent before its socket: %v", err)
+	}
+	// setup's wait for the engine of the service it started, as setup waits.
+	b := *a
+	if err := waitEngine(context.Background(), syncthingClientAt(port), 700*time.Millisecond, nil, b.runEngineGate); !errors.Is(err, errEngineNotStarted) {
+		t.Fatalf("setup's wait before the run's socket: %v", err)
+	}
+	if n := reached.Load(); n > 0 {
+		t.Fatalf("the recorded port was asked %d times before the run's socket", n)
+	}
+	if now, err := loadState(a.lay.State); err != nil || now.GUIPort != port {
+		t.Fatalf("agent.json records port %d (%v); the run keeps %d", now.GUIPort, err, port)
+	}
+	_ = stop()
+}
+
+// vaultsync pair waits for a run that is starting its engine, as it waits
+// for the engine (#413), and pairs once the run's agent says its engine
+// runs. Beside an engine an earlier run left behind it says so at once,
+// without waiting out its wait (#419).
+func TestIssue419_PairWaitsForARunStartingItsEngine(t *testing.T) {
+	saved := pairEngineWait
+	pairEngineWait = 5 * time.Second
+	t.Cleanup(func() { pairEngineWait = saved })
+	pair := func(a *app) error {
+		return a.pair(context.Background(), []string{"--code", "TULIP-ANCHOR-42", "--hub", "127.0.0.1:1"})
+	}
+	t.Run("starting", func(t *testing.T) {
+		a := agentApp(t, newFakeEngine(t))
+		var running atomic.Bool
+		agentSaying(t, a, func() controlStatus {
+			if running.Load() {
+				return controlStatus{Engine: "running"}
+			}
+			return controlStatus{Engine: "starting"}
+		})
+		time.AfterFunc(600*time.Millisecond, func() { running.Store(true) })
+		start := time.Now()
+		err := pair(a)
+		took := time.Since(start)
+		if took < 600*time.Millisecond || strings.Contains(refusalText(err), "still starting") || strings.Contains(refusalText(err), "not ready yet") {
+			t.Fatalf("pair beside a run starting its engine ended after %s with: %v", took.Round(time.Millisecond), err)
+		}
+	})
+	t.Run("beside an engine an earlier run left behind", func(t *testing.T) {
+		a := agentApp(t, newFakeEngine(t))
+		agentSaying(t, a, func() controlStatus { return controlStatus{Engine: "starting", EarlierRun: true} })
+		start := time.Now()
+		err := pair(a)
+		if took := time.Since(start); took > 2*time.Second || !strings.Contains(refusalText(err), "an engine an earlier vaultsync run left behind still holds the engine's folder") {
+			t.Fatalf("pair beside a run that waits for an earlier engine ended after %s with: %v", took.Round(time.Millisecond), err)
+		}
+	})
+}
+
+// setup --no-service beside a vaultsync run that runs the engine, as before
+// #419: setup's own engine finds the engine lock held, and setup goes on
+// with the run's engine once that run's agent says it runs.
+func TestIssue419_SetupWithoutTheServiceBesideARun(t *testing.T) {
+	a, _, _ := macSetupFixture(t)
+	holdLock(t, a.lay.Lock)
+	agentSaying(t, a, func() controlStatus { return controlStatus{Engine: "running"} })
+	out, err := setupFrom(t, a, "--no-service")
+	// No Hub answers at this address: setup stops at the pairing, after
+	// its wait for the engine.
+	if strings.Contains(fmt.Sprint(err), "did not start") || !strings.Contains(refusalText(err)+fmt.Sprint(err), "did not answer") {
+		t.Fatalf("setup --no-service beside a run: %v\n%s", err, out)
 	}
 }
 

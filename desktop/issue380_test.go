@@ -122,8 +122,19 @@ func issue380AppWith(t *testing.T, syncs, holdHome bool) (*app, *fakeEngine, *at
 func servedWhereTheEngineListens(t *testing.T, a *app, eng *fakeEngine) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
+	// What goes wrong is said by the test itself, once the server is down:
+	// never from the goroutine, which may outlive the test.
+	done := make(chan struct{})
+	var serveErr error
+	t.Cleanup(func() {
+		cancel()
+		<-done
+		if serveErr != nil {
+			t.Error(serveErr)
+		}
+	})
 	go func() {
+		defer close(done)
 		for ctx.Err() == nil {
 			data, err := os.ReadFile(a.lay.Syncthing + ".args")
 			_, after, found := strings.Cut(string(data), "--gui-address=http://")
@@ -134,7 +145,7 @@ func servedWhereTheEngineListens(t *testing.T, a *app, eng *fakeEngine) {
 			}
 			l, err := net.Listen("tcp", addr)
 			if err != nil {
-				t.Errorf("serving the fake where the engine listens (%s): %v", addr, err)
+				serveErr = fmt.Errorf("serving the fake where the engine listens (%s): %w", addr, err)
 				return
 			}
 			srv := &http.Server{Handler: http.HandlerFunc(eng.serve)}

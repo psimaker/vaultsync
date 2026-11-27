@@ -591,7 +591,9 @@ func TestIssue413_TakeEngineLockWaitsOnlyItsGrace(t *testing.T) {
 
 // With a lock held, pair says what the engine does when it does not answer
 // (#413): nothing listening yet is a run still starting; an answer that is
-// no engine's is said as the engine not answering; a Ctrl-C ends the wait.
+// no engine's, beside a run that could not make its control socket and
+// is asked as before (#419), is said as the engine not answering; a Ctrl-C
+// ends the wait.
 func TestIssue413_PairSaysWhatTheEngineDoesWhenItDoesNotAnswer(t *testing.T) {
 	saved := pairEngineWait
 	pairEngineWait = 300 * time.Millisecond
@@ -610,6 +612,7 @@ func TestIssue413_PairSaysWhatTheEngineDoesWhenItDoesNotAnswer(t *testing.T) {
 	t.Run("an answer that is no engine's", func(t *testing.T) {
 		a, _, _ := aProgramAtTheRecordedPort(t, func(w http.ResponseWriter, r *http.Request) { http.Error(w, "forbidden", http.StatusForbidden) })
 		holdLock(t, a.lay.Lock)
+		writeFile(t, a.lay.SocketErrorFile(), "listen unix: bind: address already in use\n")
 		if err := pair(context.Background(), a); !strings.Contains(refusalText(err), "The sync engine does not answer") || strings.Contains(refusalText(err), "still starting") {
 			t.Fatalf("a refused answer: %v", err)
 		}

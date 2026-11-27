@@ -182,6 +182,8 @@ func serviceSummary(err error) string {
 		return errAppGone.Error()
 	case errors.Is(err, errOlderAgent):
 		return errOlderAgent.Error()
+	case errors.Is(err, errRunStateLockHeld):
+		return errRunStateLockHeld.Error()
 	case errors.As(err, &ee):
 		return "the sync engine stopped (" + ee.String() + ")"
 	case errors.As(err, &pe):
@@ -577,8 +579,13 @@ func (a *app) setup(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	gate := a.agentNotReadyYet
+	// The engine's port is asked only once the engine setup waits for has
+	// been started by the run that runs it, as that run's agent or setup's
+	// own engine says: never in a run's stretch before its socket, nor
+	// beside an engine an earlier run left behind (#419, decision 086).
+	gate := a.runEngineGate
 	if temporary != nil {
+		temporary.beside = a.runEngineGate
 		gate = temporary.notReadyYet
 	}
 	if err := waitEngine(ctx, client, setupEngineWait, temporary, gate); err != nil {
@@ -804,12 +811,15 @@ func ownProgram(env appEnv) ([]byte, error) {
 
 // supervision is an engine supervisor running in the background; done is
 // closed when it returned, err holds what it returned, and rs says whether
-// it has started its engine yet.
+// it has started its engine yet. beside, when not nil, is what a supervisor
+// that found another run of VaultSync's holding the engine defers to: that
+// run's agent, through the gate it gives (#419).
 type supervision struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 	err    error
 	rs     *runState
+	beside func(context.Context) error
 }
 
 func superviseInBackground(ctx context.Context, eng engine, st agentState) *supervision {
@@ -824,8 +834,17 @@ func superviseInBackground(ctx context.Context, eng engine, st agentState) *supe
 
 // notReadyYet says why the engine's port is not to be asked yet, or nil:
 // the supervisor has not started its engine — it waits for one an earlier
-// run left behind, or is about to start its own (#419, decision 086).
-func (s *supervision) notReadyYet(context.Context) error {
+// run left behind, or is about to start its own (#419, decision 086). A
+// supervisor that found another run of VaultSync's holding the engine
+// defers to that run's agent (beside).
+func (s *supervision) notReadyYet(ctx context.Context) error {
+	select {
+	case <-s.done:
+		if errors.Is(s.err, ErrEngineRunning) && s.beside != nil {
+			return s.beside(ctx)
+		}
+	default:
+	}
 	switch {
 	case s.rs.waitsForAnEarlierEngine():
 		return errEarlierEngine
@@ -835,12 +854,27 @@ func (s *supervision) notReadyYet(context.Context) error {
 	return nil
 }
 
-// agentNotReadyYet asks the background service's agent, briefly, whether
-// it has started its engine: an agent that answers that it has not says
-// why, and the engine's port is not asked (#419, decision 086). No agent,
-// an older one, one busy asking its engine, or any other failure: nil, and
-// the port is asked as before.
-func (a *app) agentNotReadyYet(ctx context.Context) error {
+// errStopWaiting, wrapped into a gate's error, ends a wait for the engine
+// at once instead of at its deadline.
+var errStopWaiting = errors.New("stop waiting")
+
+// agentEngineGate asks, briefly, the agent of the vaultsync run that may
+// run the engine whether that run has started its engine, and is the gate
+// for a wait for the engine's API (waitReadyGated): nil lets the caller ask
+// the recorded port (#419, decision 086).
+//   - An agent that answers its engine runs: nil.
+//   - One that answers it waits for an engine an earlier run left behind:
+//     errEarlierEngine; one that answers starting: errEngineNotStarted.
+//   - No agent (lookAtTheEngine): a run that holds the engine lock is on
+//     its way up, errEngineNotStarted, unless it answers nowhere, and is
+//     then asked as before. With the engine lock free no run of VaultSync's
+//     is there: noRunAsks says whether an engine that outlived its run is
+//     asked (decision 079, vaultsync pair) or waited past (setup, which has
+//     just started the service whose agent it waits for). Nothing that may
+//     run, or locks that cannot be looked at: errEngineNotStarted.
+//   - An agent busy asking its engine (its answer takes longer), an older
+//     one, or any other failure: nil, as before.
+func (a *app) agentEngineGate(ctx context.Context, noRunAsks bool) error {
 	st, err := loadState(a.lay.State)
 	if err != nil {
 		return nil
@@ -849,14 +883,41 @@ func (a *app) agentNotReadyYet(ctx context.Context) error {
 	defer cancel()
 	cs, err := a.controlClient(st).Status(actx)
 	switch {
-	case err != nil:
-		return nil
-	case cs.EarlierRun:
+	case err == nil && cs.EarlierRun:
 		return errEarlierEngine
-	case cs.Engine != "running":
+	case err == nil && cs.Engine == "running":
+		return nil
+	case err == nil:
 		return errEngineNotStarted
+	case !errors.Is(err, errNoAgent):
+		return nil
 	}
-	return nil
+	l, err := lookAtTheEngine(ctx, a.lay)
+	switch {
+	case err != nil, !l.may, l.starting:
+		return errEngineNotStarted
+	case l.run, noRunAsks:
+		return nil
+	}
+	return errEngineNotStarted
+}
+
+// runEngineGate is setup's gate for the run that runs its engine — the
+// background service it started, or a vaultsync run in a terminal beside
+// setup --no-service: the port is asked once that run's agent says its
+// engine runs.
+func (a *app) runEngineGate(ctx context.Context) error {
+	return a.agentEngineGate(ctx, false)
+}
+
+// pairEngineGate is vaultsync pair's gate: as the service's, and a run that
+// waits for an engine an earlier run left behind ends the wait at once.
+func (a *app) pairEngineGate(ctx context.Context) error {
+	err := a.agentEngineGate(ctx, true)
+	if errors.Is(err, errEarlierEngine) {
+		return fmt.Errorf("%w: %w", errStopWaiting, err)
+	}
+	return err
 }
 
 // stop ends the engine and waits for it (at most grace).
@@ -882,14 +943,24 @@ func waitEngine(ctx context.Context, c *syncthing.Client, timeout time.Duration,
 	if sup != nil {
 		gaveUp = sup.done
 	}
-	select {
-	case err := <-ready:
-		return err
-	case <-gaveUp:
-		if sup.err != nil {
-			return sup.err
+	for {
+		select {
+		case err := <-ready:
+			return err
+		case <-gaveUp:
+			// Another run of VaultSync's holds the engine — a vaultsync run
+			// in a terminal: setup waits for that run's engine instead, as
+			// it does for the service's, its port asked once that run's
+			// agent says its engine runs (the gate defers to beside, #419).
+			if errors.Is(sup.err, ErrEngineRunning) && sup.beside != nil {
+				gaveUp = nil
+				continue
+			}
+			if sup.err != nil {
+				return sup.err
+			}
+			return errors.New("it stopped")
 		}
-		return errors.New("it stopped")
 	}
 }
 
@@ -1245,7 +1316,8 @@ func (a *app) pair(ctx context.Context, args []string) error {
 	// as it takes the engine lock, under that same lock (#413, #419). pair
 	// waits for a lock as long as it waited for the engine before. The wait
 	// for the engine's API shares that deadline, and gets at least three
-	// seconds once a lock is seen.
+	// seconds once a lock is seen. Within it, the port is asked only once
+	// the run's agent says its engine runs (pairEngineGate, #419).
 	deadline := time.Now().Add(pairEngineWait)
 	may, st, err := waitEngineMayRun(ctx, a.lay, deadline)
 	var lookErr *lockLookError
@@ -1261,23 +1333,21 @@ func (a *app) pair(ctx context.Context, args []string) error {
 	case !may:
 		return refuse("The sync engine is not running. Start it with vaultsync start (or vaultsync setup), then try again.")
 	}
-	// A run that has not started its own engine yet asks no port, and nor
-	// does pair: its agent says so (#419, decision 086).
-	switch err := a.agentNotReadyYet(ctx); {
-	case errors.Is(err, errEarlierEngine):
-		return refuse("The sync engine is not ready yet: an engine an earlier vaultsync run left behind still holds the engine's folder, and VaultSync starts its own once that one has ended. Try again shortly; vaultsync status says more.")
-	case err != nil:
-		return refuse("VaultSync is still starting its sync engine. Try again in a moment; vaultsync status says more.")
-	}
 	client, err := eng.client(st)
 	if err != nil {
 		return err
 	}
-	if err := waitReady(ctx, client, max(time.Until(deadline), 3*time.Second)); err != nil {
+	// A run that has not started its own engine yet asks no port, and nor
+	// does pair: it waits while that run is on its way up, and stops at once
+	// where the run waits for an engine an earlier run left behind (#419,
+	// decision 086).
+	if err := waitReadyGated(ctx, client, max(time.Until(deadline), 3*time.Second), a.pairEngineGate); err != nil {
 		switch {
 		case ctx.Err() != nil:
 			return ctx.Err()
-		case nobodyListens(err):
+		case errors.Is(err, errEarlierEngine):
+			return refuse("The sync engine is not ready yet: an engine an earlier vaultsync run left behind still holds the engine's folder, and VaultSync starts its own once that one has ended. Try again shortly; vaultsync status says more.")
+		case errors.Is(err, errEngineNotStarted), nobodyListens(err):
 			// A lock is held, and nothing listens yet: a run still starting.
 			return refuse("VaultSync is still starting its sync engine. Try again in a moment; vaultsync status says more.")
 		}
