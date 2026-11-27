@@ -129,3 +129,37 @@ func TestIssue290_StartJudgesBothLooksAgainstThisBuildAsItWas(t *testing.T) {
 		t.Fatalf("start while the app and the copy were replaced: %v\n%s", err, out)
 	}
 }
+
+// A service whose program becomes this very build only while start loads its
+// job — VaultSync for Mac replaced by this build meanwhile — is not taken
+// for this build either: the looks before and after the start differ, and
+// start says only that another build runs (#290).
+func TestIssue290_StartSaysAnotherBuildWhereTheLooksDiffer(t *testing.T) {
+	run := &fakeRunner{}
+	a := installedApp(t, "darwin", run)
+	app := fakeMacApp(t, filepath.Join(a.home, "Applications"), appBundleName, shippedInfoPlist(t))
+	appAgent := filepath.Join(app, "Contents", "MacOS", "vaultsync")
+	data, err := a.svc.unitFile(appAgent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, mustUnitPath(t, a.svc), string(data))
+	runsAs(t, a, a.lay.Agent, "this very build")
+	replaced := false
+	run.onCall = func(call string) {
+		if !strings.Contains(call, "bootstrap") {
+			return
+		}
+		replaced = true
+		writeFile(t, appAgent, "this very build")
+		newerEngineHere(t, a.lay)
+	}
+	err = a.startService()
+	if !replaced {
+		t.Fatal("start loaded no job: the app was never replaced, so this test tests nothing")
+	}
+	out := a.out.(*bytes.Buffer).String()
+	if err != nil || strings.Contains(out, "does not sync") || !strings.Contains(out, "runs another VaultSync build than this vaultsync") {
+		t.Fatalf("start where the looks differ: %v\n%s", err, out)
+	}
+}
