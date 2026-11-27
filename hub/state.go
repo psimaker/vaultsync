@@ -128,7 +128,7 @@ func decideOwner(path string, euid int, have, want ownerOf) (fileOwner, error) {
 }
 
 // handBack says how the Hub's state goes back to the service's user.
-const handBack = "Hand the Hub's state back to the user its service runs as, once, as root: on the host, in the Hub's folder, `sudo chown --reference=hub hub/state.json hub/state.json.lock`; or `docker compose exec -u 0 hub vaultsync-hub code`, which as root gives both files to the owner of their folder (and opens a new pairing code)."
+const handBack = "Hand the Hub's state back to the user its service runs as, once, as root: on the host, in the Hub's folder, `sudo chown --reference=hub hub/state.json hub/state.json.lock`; or `docker compose run --rm --no-deps -u 0 hub code`, which as root gives both files to the owner of their folder (and opens a new pairing code)."
 
 func (s *stateStore) load() (*hubState, error) {
 	data, err := os.ReadFile(s.path)

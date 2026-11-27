@@ -262,7 +262,7 @@ func TestIssue490_UnusableStateFailsClosedAndNamesTheWayBack(t *testing.T) {
 		t.Helper()
 		if err == nil || (!strings.Contains(err.Error(), "nothing was changed") && !strings.Contains(err.Error(), "cannot be read by this user")) ||
 			!strings.Contains(err.Error(), "sudo chown --reference=hub hub/state.json hub/state.json.lock") ||
-			!strings.Contains(err.Error(), "docker compose exec -u 0 hub vaultsync-hub code") {
+			!strings.Contains(err.Error(), "docker compose run --rm --no-deps -u 0 hub code") {
 			t.Fatalf("%s: %v", what, err)
 		}
 	}
@@ -405,7 +405,7 @@ func TestIssue490_AnotherUsersWriteThatCannotKeepTheOwnerIsRefused(t *testing.T)
 	t.Cleanup(func() { geteuid = saved })
 	_, err := store.update(func(st *hubState) error { st.Pairing.Failures++; return nil })
 	want := "must belong to uid " + strconv.Itoa(os.Geteuid()) + ", the user the Hub's service runs as, and this user (uid " + strconv.Itoa(os.Geteuid()+1) + ") cannot make it so"
-	if err == nil || !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "docker compose exec -u 0 hub vaultsync-hub code") {
+	if err == nil || !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "docker compose run --rm --no-deps -u 0 hub code") {
 		t.Fatalf("another user's write: %v", err)
 	}
 	if after, _ := os.ReadFile(path); !bytes.Equal(before, after) {

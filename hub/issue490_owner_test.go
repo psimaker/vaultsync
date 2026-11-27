@@ -70,7 +70,7 @@ func TestIssue490_AWriterHandsOverOrIsRefused(t *testing.T) {
 		switch {
 		case c.refused && (err == nil || !strings.Contains(err.Error(), "nothing was changed") ||
 			!strings.Contains(err.Error(), "sudo chown --reference=hub hub/state.json hub/state.json.lock") ||
-			!strings.Contains(err.Error(), "docker compose exec -u 0 hub vaultsync-hub code")):
+			!strings.Contains(err.Error(), "docker compose run --rm --no-deps -u 0 hub code")):
 			t.Errorf("%s: want a refusal that names the way back, got %+v %v", c.name, got, err)
 		case !c.refused && (err != nil || got != c.got):
 			t.Errorf("%s: got %+v %v, want %+v", c.name, got, err, c.got)
