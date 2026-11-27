@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unicode"
@@ -79,10 +80,33 @@ func NewLocalClient(hubAddress string) *Client {
 	})
 }
 
+// maxAnswerHead bounds what the client reads of an answer's head, its status
+// line and headers, in bytes. A Hub's own head is under 200 bytes; a reverse
+// proxy in front of one can add a few KiB. Go's default is 10 MiB, which it
+// reads and holds before it gives up (#323).
+const maxAnswerHead = 64 << 10
+
 func newClient(hubAddress string, dialer *net.Dialer) *Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil // a LAN peer, never through a proxy
-	transport.DialContext = dialer.DialContext
+	transport.MaxResponseHeaderBytes = maxAnswerHead
+	// Go's transport writes a line to the program's log for bytes that reach
+	// it while it waits for no answer: bytes behind an answer on a connection
+	// it keeps for the next request, and bytes that arrive before it has
+	// counted the request it is about to send. Whatever answers at the
+	// address can send both. So each request has a connection of its own,
+	// and a connection is read only once the request is written on it: the
+	// transport counts a request before it writes it (#323, decision 062).
+	transport.DisableKeepAlives = true
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		conn, err := dialer.DialContext(ctx, network, address)
+		if err != nil {
+			// As it is: callers tell a refused dial, and an address outside
+			// the local network, by this error.
+			return nil, err
+		}
+		return newAskedFirst(conn), nil
+	}
 	return &Client{
 		baseURL: "http://" + strings.TrimSuffix(hubAddress, "/"),
 		http: &http.Client{
@@ -206,12 +230,12 @@ func (c *Client) post(ctx context.Context, path string, in, out any) error {
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return shortened(err)
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, MaxBody))
 	if err != nil {
-		return err
+		return shortened(err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		var e ErrorResponse
@@ -224,7 +248,118 @@ func (c *Client) post(ctx context.Context, path string, in, out any) error {
 		}
 		return &APIError{Status: resp.StatusCode, Body: text}
 	}
-	return json.Unmarshal(data, out)
+	if err := json.Unmarshal(data, out); err != nil {
+		return shortened(err)
+	}
+	return nil
+}
+
+// answerError is an error about an answer — what Go's HTTP client says of
+// one that is no proper HTTP or broke off, or a body that is no JSON — with
+// its text as errorText leaves it. The library quotes what came from the
+// dialled address in it, as long as it came (#323, decision 062). Unwrap
+// keeps the error itself: callers sort a failure by the errors in its chain,
+// a refused dial, an address outside the local network, no route to host, a
+// deadline.
+type answerError struct {
+	err  error
+	text string
+}
+
+func (e *answerError) Error() string { return e.text }
+func (e *answerError) Unwrap() error { return e.err }
+
+// unreadableAnswer stands for an error about an answer whose text holds
+// nothing that can be shown.
+const unreadableAnswer = "the hub's answer could not be read"
+
+func shortened(err error) error {
+	text := errorText(err.Error())
+	if text == "" {
+		text = unreadableAnswer
+	}
+	return &answerError{err: err, text: text}
+}
+
+// askedFirst is a connection that is read only once something has been
+// written on it, so nothing the other side sends before the request reaches
+// Go's transport (newClient). A read that waits for the first write returns
+// when the connection is closed or its read deadline passes: the transport
+// closes every connection it does not use, and a deadline is kept as it is
+// set.
+type askedFirst struct {
+	net.Conn
+	once  sync.Once
+	asked chan struct{} // closed by the first write or by Close
+
+	mu       sync.Mutex
+	deadline time.Time
+	moved    chan struct{} // closed when the read deadline changes
+}
+
+func newAskedFirst(conn net.Conn) *askedFirst {
+	return &askedFirst{Conn: conn, asked: make(chan struct{}), moved: make(chan struct{})}
+}
+
+func (c *askedFirst) Write(p []byte) (int, error) {
+	c.once.Do(func() { close(c.asked) })
+	return c.Conn.Write(p)
+}
+
+func (c *askedFirst) Close() error {
+	c.once.Do(func() { close(c.asked) })
+	return c.Conn.Close()
+}
+
+func (c *askedFirst) Read(p []byte) (int, error) {
+	for !c.mayRead() {
+	}
+	return c.Conn.Read(p)
+}
+
+// mayRead waits until a write, Close or the read deadline lets the
+// connection be read, and reports true then; false when the deadline moved
+// while it waited.
+func (c *askedFirst) mayRead() bool {
+	c.mu.Lock()
+	deadline, moved := c.deadline, c.moved
+	c.mu.Unlock()
+	var passed <-chan time.Time
+	if !deadline.IsZero() {
+		timer := time.NewTimer(time.Until(deadline))
+		defer timer.Stop()
+		passed = timer.C
+	}
+	select {
+	case <-c.asked:
+		return true
+	case <-passed:
+		// The connection's own read returns its timeout, and reads
+		// nothing, once its deadline has passed.
+		return true
+	case <-moved:
+		return false
+	}
+}
+
+func (c *askedFirst) SetDeadline(t time.Time) error {
+	err := c.Conn.SetDeadline(t)
+	c.setReadDeadline(t)
+	return err
+}
+
+func (c *askedFirst) SetReadDeadline(t time.Time) error {
+	err := c.Conn.SetReadDeadline(t)
+	c.setReadDeadline(t)
+	return err
+}
+
+func (c *askedFirst) setReadDeadline(t time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.deadline = t
+	close(c.moved)
+	c.moved = make(chan struct{})
 }
 
 // maxErrorText bounds an error text the client hands out, in bytes. What a
