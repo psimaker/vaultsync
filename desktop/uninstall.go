@@ -777,8 +777,15 @@ func removeOwnData(lay layout, vaults []string, goos string) ([]string, *keptFol
 			if errors.As(err, &le) {
 				folder = filepath.Join(lay.Base, filepath.FromSlash(le.folder))
 			}
-			if errors.Is(err, fs.ErrPermission) {
+			switch {
+			case errors.Is(err, syscall.EACCES):
+				// The folder's own permissions: the person can put them right.
 				return refuse("VaultSync may not look into %s (%v), so it stopped removing its files there; give your user access to that folder.", folder, errnoOf(err))
+			case errors.Is(err, syscall.EPERM):
+				// The system keeps the program out — macOS's privacy
+				// protection, a sandbox — which no change of the folder's
+				// permissions undoes: no advice that would be false.
+				return refuse("The system does not let VaultSync look into %s (%v), so it stopped removing its files there.", folder, errnoOf(err))
 			}
 			return refuse("VaultSync could not look into %s (%v), so it stopped removing its files there.", folder, errnoOf(err))
 		}
