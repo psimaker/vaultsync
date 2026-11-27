@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"syscall"
@@ -312,18 +313,31 @@ func (c *askedFirst) Close() error {
 }
 
 func (c *askedFirst) Read(p []byte) (int, error) {
-	for !c.mayRead() {
+	if err := c.waitForRequest(); err != nil {
+		return 0, err
 	}
 	return c.Conn.Read(p)
 }
 
-// mayRead waits until a write, Close or the read deadline lets the
-// connection be read, and reports true then; false when the deadline moved
-// while it waited.
-func (c *askedFirst) mayRead() bool {
-	c.mu.Lock()
-	deadline, moved := c.deadline, c.moved
-	c.mu.Unlock()
+// waitForRequest returns nil once the request is written or the connection
+// is closed, and the timeout the connection's own read returns once its read
+// deadline passes first. The timeout is made here: the connection's own
+// timer for the same deadline may not have run yet, and its read would then
+// take what the other side sent.
+func (c *askedFirst) waitForRequest() error {
+	for {
+		c.mu.Lock()
+		deadline, moved := c.deadline, c.moved
+		c.mu.Unlock()
+		if done, err := c.waitOnce(deadline, moved); done {
+			return err
+		}
+	}
+}
+
+// waitOnce waits for the request, the deadline or a new deadline; done is
+// false for a new one.
+func (c *askedFirst) waitOnce(deadline time.Time, moved <-chan struct{}) (done bool, err error) {
 	var passed <-chan time.Time
 	if !deadline.IsZero() {
 		timer := time.NewTimer(time.Until(deadline))
@@ -332,13 +346,12 @@ func (c *askedFirst) mayRead() bool {
 	}
 	select {
 	case <-c.asked:
-		return true
+		return true, nil
 	case <-passed:
-		// The connection's own read returns its timeout, and reads
-		// nothing, once its deadline has passed.
-		return true
+		local := c.LocalAddr()
+		return true, &net.OpError{Op: "read", Net: local.Network(), Source: local, Addr: c.RemoteAddr(), Err: os.ErrDeadlineExceeded}
 	case <-moved:
-		return false
+		return false, nil
 	}
 }
 

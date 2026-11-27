@@ -388,6 +388,7 @@ func readAsync(c net.Conn) <-chan error {
 func TestIssue323_AReadBeforeTheRequestEndsWithItsConnection(t *testing.T) {
 	c, _ := askedFirstPair(t)
 	done := readAsync(c)
+	waitForReaders(t, 1)
 	select {
 	case err := <-done:
 		t.Fatalf("a read before the request returned: %v", err)
@@ -406,8 +407,10 @@ func TestIssue323_AReadBeforeTheRequestEndsWithItsConnection(t *testing.T) {
 	for _, set := range []func(net.Conn, time.Time) error{net.Conn.SetReadDeadline, net.Conn.SetDeadline} {
 		c, greeting := askedFirstPair(t)
 		done := readAsync(c)
-		// A deadline set while the read waits, and one moved further.
+		// A deadline set while the read waits, and then moved nearer.
+		waitForReaders(t, 1)
 		_ = set(c, time.Now().Add(time.Hour))
+		time.Sleep(20 * time.Millisecond)
 		_ = set(c, time.Now().Add(50*time.Millisecond))
 		select {
 		case err := <-done:
@@ -434,7 +437,19 @@ func TestIssue323_AReadBeforeTheRequestEndsWithItsConnection(t *testing.T) {
 // readersLeft counts the goroutines that wait in a read for a request.
 func readersLeft() int {
 	buf := make([]byte, 1<<20)
-	return strings.Count(string(buf[:runtime.Stack(buf, true)]), "(*askedFirst).mayRead")
+	return strings.Count(string(buf[:runtime.Stack(buf, true)]), "(*askedFirst).waitOnce")
+}
+
+// waitForReaders waits until at least n reads wait for a request.
+func waitForReaders(t *testing.T, n int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for readersLeft() < n {
+		if time.Now().After(deadline) {
+			t.Fatal("the read did not start waiting")
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 // A connection the transport dials for a request that is gone by the time
