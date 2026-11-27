@@ -700,6 +700,15 @@ func agentSaying(t *testing.T, a *app, say func() controlStatus) {
 	recordSocket(t, a, path)
 }
 
+// theServicesRunAnswers stands for the run of the background service that
+// setup starts, which a fake service manager does not start: its agent says
+// its engine runs, and setup asks the engine's port only then (#419,
+// decision 086).
+func theServicesRunAnswers(t *testing.T, a *app) {
+	t.Helper()
+	agentSaying(t, a, func() controlStatus { return controlStatus{Engine: "running"} })
+}
+
 // pinHeldBack makes a's run install its pin, and holds the download until
 // release: the run is held after its engine lock and its record of the
 // port, before its control socket — the stretch a pin's download lasts.

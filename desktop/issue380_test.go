@@ -366,6 +366,7 @@ func TestIssue380_TheCommandsContextNamesTheSignal(t *testing.T) {
 // turns into exit 130 (#380).
 func TestIssue380_AnInterruptEndsSetupsQuestion(t *testing.T) {
 	a, _, _ := issue380App(t, false)
+	theServicesRunAnswers(t, a)
 	typeLine := fifoTerminal(t)
 	ctx, send := signalled(t)
 	out, done := printingInBackground(a, func() error { return a.setup(ctx, nil) })
@@ -386,6 +387,7 @@ func TestIssue380_AnInterruptEndsSetupsQuestion(t *testing.T) {
 // interrupt's words: errTerminated, which main turns into exit 143 (#380).
 func TestIssue380_ATerminationSignalEndsSetupsQuestion(t *testing.T) {
 	a, _, _ := issue380App(t, false)
+	theServicesRunAnswers(t, a)
 	typeLine := fifoTerminal(t)
 	ctx, send := signalled(t)
 	out, done := printingInBackground(a, func() error { return a.setup(ctx, nil) })
