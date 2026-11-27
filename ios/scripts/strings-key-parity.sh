@@ -18,6 +18,14 @@
 
 set -euo pipefail
 
+# Byte order under every host locale (#202). macOS's uniq compares lines by
+# collation, and in its UTF-8 locales (de_DE and en_US alike) "…" carries no
+# weight: "Starting" and "Starting…" were reported as one duplicated key on a
+# Mac while CI passed. The app looks a key up by exact equality, so byte order
+# is also the right meaning of "the same key". LC_ALL rather than LC_COLLATE,
+# because an LC_ALL in the caller's environment would win over LC_COLLATE.
+export LC_ALL=C
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LOCALES=(en de es zh-Hans)
 
