@@ -874,11 +874,13 @@ func (s *pairSession) printMenu(m vaultMenu) {
 
 func (s *pairSession) chooseOtherFolder(ctx context.Context) (plan, error) {
 	a, err := s.t.ask(ctx, "  Folder on this computer (Enter to go back): ")
-	if err != nil {
-		// An interrupt ends the pairing; only an empty answer goes back.
+	if err != nil && ctx.Err() != nil {
+		// The command's context ended — Ctrl-C, a stop: the pairing ends,
+		// never back to the menu.
 		return plan{}, err
 	}
-	if a == "" {
+	if err != nil || a == "" {
+		// An empty answer, or an end of input, goes back to the menu.
 		return plan{}, errCancelled
 	}
 	path, err := expandPath(s.env.home, a)

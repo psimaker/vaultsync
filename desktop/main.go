@@ -53,6 +53,10 @@ func main() {
 			// Ctrl-C at a question: the terminal shows it, and the command
 			// said what stays (#380). 128 + SIGINT, as a shell reports it.
 			os.Exit(130)
+		case errors.Is(err, errTerminated):
+			// A termination signal at a question: nobody is there to read
+			// words. 128 + SIGTERM.
+			os.Exit(143)
 		case serviceMode:
 			// A log or the journal: a fixed summary per cause that carries
 			// no path or name; the whole message stays in VaultSync's own
@@ -145,8 +149,8 @@ func usage(w io.Writer) {
   vaultsync setup        install the sync engine and the background service,
                          pair with your Hub and choose a vault; run again on
                          a computer that syncs, it updates VaultSync and pairs
-                         only when a flag below asks
-  vaultsync pair       sync another vault, or pair with another Hub
+                         only when a flag below other than --no-service is given
+  vaultsync pair         sync another vault, or pair with another Hub
   vaultsync status       what syncs where, and whether your Hub is connected
   vaultsync pause        pause syncing on this computer (until vaultsync resume)
   vaultsync resume       resume it
@@ -188,7 +192,7 @@ func runCLI(args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signalContext()
 	defer stop()
 	switch cmd {
 	case "setup":
@@ -213,6 +217,33 @@ func runCLI(args []string) error {
 	usage(os.Stderr)
 	return fmt.Errorf("unknown command %q", cmd)
 }
+
+// signalContext is a command's context: it ends on Ctrl-C (SIGINT) or a
+// termination signal (SIGTERM), with the signal as its cause, so that a
+// question can tell the person's interrupt from a stop (#380). Like
+// signal.NotifyContext, which names the signal only in an unexported error:
+// later signals are caught too, until stop.
+func signalContext() (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		select {
+		case s := <-ch:
+			cancel(stoppedBy{s})
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, func() {
+		cancel(nil)
+		signal.Stop(ch)
+	}
+}
+
+// stoppedBy is the cause of a command's context that a signal ended.
+type stoppedBy struct{ sig os.Signal }
+
+func (e stoppedBy) Error() string { return e.sig.String() + " signal received" }
 
 // app is the live environment: this computer, this user.
 type app struct {
@@ -290,6 +321,7 @@ func (a *app) setup(ctx context.Context, args []string) error {
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
+	asksToPair := pairingFlagGiven(fs)
 	t, closeTerm := openTerm(a.out)
 	defer closeTerm()
 	t.blank()
@@ -487,7 +519,7 @@ func (a *app) setup(ctx context.Context, args []string) error {
 	// updating has a code at hand: on a computer that already syncs a vault
 	// with a Hub, setup ends here, unless a flag asks for a pairing.
 	// vaultsync pair syncs another vault or Hub (#380, decision 081).
-	if !opts.asksToPair() {
+	if !asksToPair {
 		if synced, ok := syncedWithAHub(ctx, client); ok {
 			synced.say(t, command)
 			noServiceNote()
@@ -519,10 +551,20 @@ func (a *app) setup(ctx context.Context, args []string) error {
 	return err
 }
 
-// asksToPair: a flag of the pairing was given — the code, a Hub, a vault, a
-// folder, a name or the consent. Each means a pairing only, so setup then
-// pairs, also on a computer that already syncs (decision 081).
-func (o pairOptions) asksToPair() bool { return o != pairOptions{} }
+// pairingFlagGiven: a flag of the pairing was given — the code, a Hub, a
+// vault, a folder, a name or the consent — whatever its value. Each means a
+// pairing only, so setup then pairs, also on a computer that already syncs,
+// and an empty value (--code "") meets what it met before (decision 081).
+// --no-service is setup's own.
+func pairingFlagGiven(fs *flag.FlagSet) bool {
+	given := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name != "no-service" {
+			given = true
+		}
+	})
+	return given
+}
 
 // syncedHere is what this computer's engine syncs with a Hub, for setup run
 // again on a computer that already syncs (decision 081).
@@ -582,8 +624,13 @@ func (s syncedHere) say(t *term, command string) {
 	if s.paused {
 		t.say("  Syncing is paused on this computer: %s resume starts it again.", command)
 	}
+	// pair refuses while syncing is paused here: the way is resume first.
+	way := command + " pair sets it up"
+	if s.paused {
+		way = fmt.Sprintf("run %s resume, then %s pair, to set it up", command, command)
+	}
 	for _, w := range s.waiting {
-		t.say("  Your Hub %s is sharing %s with this computer, but it is not set up here yet: %s pair sets it up.", quoted(pairing.SanitizeName(w.hub)), quoted(pairing.SanitizeName(w.label)), command)
+		t.say("  Your Hub %s is sharing %s with this computer, but it is not set up here yet: %s.", quoted(pairing.SanitizeName(w.hub)), quoted(pairing.SanitizeName(w.label)), way)
 	}
 	t.blank()
 	t.say("  Check on it any time:  %s status", command)

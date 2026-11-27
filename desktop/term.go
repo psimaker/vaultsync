@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	layoutpkg "github.com/psimaker/vaultsync/desktop/internal/layout"
 )
@@ -16,10 +17,32 @@ import (
 // errNoTerminal means a question needs an answer and nobody can give one.
 var errNoTerminal = errors.New("no terminal to ask on")
 
-// errInterrupted: Ctrl-C (or a stop) came while a question waited for its
-// answer. It ends the command — it is never an answer, and never the "go
-// back" an empty answer can be (#380, decision 081).
+// errInterrupted: Ctrl-C came while a question waited for its answer. It
+// ends the command, which says what stays and exits 130 — it is never an
+// answer, and never the "go back" an empty answer can be (#380, decision
+// 081).
 var errInterrupted = errors.New("interrupted")
+
+// errTerminated: a termination signal came while a question waited. It ends
+// the command without the interrupt's words, exit 143.
+var errTerminated = errors.New("terminated")
+
+// questionEnded is what a question returns when the command's context
+// ended: errInterrupted for Ctrl-C, errTerminated for a termination signal
+// (signalContext names the signal), and the context's own error for any
+// other end, as every other step of the command returns it.
+func questionEnded(ctx context.Context) error {
+	var s stoppedBy
+	if errors.As(context.Cause(ctx), &s) {
+		switch s.sig {
+		case os.Interrupt:
+			return errInterrupted
+		case syscall.SIGTERM:
+			return errTerminated
+		}
+	}
+	return ctx.Err()
+}
 
 // term is the person at the terminal. Without one (in is nil) every
 // question that needs an answer becomes a refusal naming the flag to pass.
@@ -55,16 +78,16 @@ func (t *term) say(format string, a ...any) { fmt.Fprintf(t.out, format+"\n", a.
 
 func (t *term) blank() { fmt.Fprintln(t.out) }
 
-// ask prints prompt and returns the trimmed answer. It returns
-// errInterrupted as soon as ctx ends — the command's context, which Ctrl-C
-// cancels — rather than wait for Return: a read of the terminal does not
-// look at ctx (#380).
+// ask prints prompt and returns the trimmed answer. It returns as soon as
+// ctx ends — the command's context, which Ctrl-C cancels — rather than wait
+// for Return: a read of the terminal does not look at ctx (#380). What it
+// returns then is questionEnded's.
 func (t *term) ask(ctx context.Context, prompt string) (string, error) {
 	if t.in == nil {
 		return "", errNoTerminal
 	}
 	if ctx.Err() != nil {
-		return "", errInterrupted
+		return "", questionEnded(ctx)
 	}
 	fmt.Fprint(t.out, prompt)
 	read := t.reading
@@ -76,18 +99,33 @@ func (t *term) ask(ctx context.Context, prompt string) (string, error) {
 			read <- readResult{line, err}
 		}(t.in)
 	}
+	ended := func() (string, error) {
+		err := questionEnded(ctx)
+		if errors.Is(err, errInterrupted) {
+			// The terminal shows ^C after the prompt; what follows starts on
+			// a line of its own.
+			fmt.Fprintln(t.out)
+		}
+		return "", err
+	}
 	select {
 	case r := <-read:
+		// A line and the end of ctx that come together: the end wins and
+		// the line is dropped, whichever of the two the select took. That
+		// is harmless: the command ends either way, and every question comes
+		// before the Hub is asked to share or start a vault and before the
+		// engine changes — an answer taken here would only meet the ended
+		// context at the next step.
+		if ctx.Err() != nil {
+			return ended()
+		}
 		if r.err != nil && (!errors.Is(r.err, io.EOF) || r.line == "") {
 			return "", r.err
 		}
 		return strings.TrimSpace(r.line), nil
 	case <-ctx.Done():
 		t.reading = read
-		// The terminal shows ^C after the prompt; what follows starts on a
-		// line of its own.
-		fmt.Fprintln(t.out)
-		return "", errInterrupted
+		return ended()
 	}
 }
 
