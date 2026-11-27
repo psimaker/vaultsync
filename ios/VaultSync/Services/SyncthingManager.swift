@@ -143,6 +143,11 @@ final class SyncthingManager {
     private(set) var foldersOverlappingAnotherFolder: Set<String> = []
     private(set) var conflictFiles: [String: [ConflictInfo]] = [:]
     private(set) var pendingFolders: [PendingFolderInfo] = []
+    /// Shares whose accept the engine had not confirmed when the bridge's
+    /// wait ended, with the path each accept asked for (#341). Such an accept
+    /// is still queued in the engine; the poll settles it once the engine
+    /// has taken it. Kept in memory only: a new engine has an empty queue.
+    private(set) var acceptsAwaitingConfirmation: [String: String] = [:]
     private(set) var ignoredPendingFolderIDs: Set<String> = []
     /// Folder IDs the user removed on this iPhone. While a peer still shares
     /// such a folder, its offer reappears as pending once the peer announces
@@ -1195,6 +1200,7 @@ final class SyncthingManager {
         folderStatuses = [:]
         conflictFiles = [:]
         pendingFolders = []
+        acceptsAwaitingConfirmation = [:]
         // New generation: accepts hold until the next start's reconcile
         // completes, and a still-running reconcile's late outcome is ignored
         // (#56).
@@ -1324,6 +1330,50 @@ final class SyncthingManager {
         return L10n.tr("VaultSync has asked the sync engine to stop syncing this vault on this iPhone, and the engine has not confirmed it yet. If the vault is still listed in a minute, remove it again. If its share is offered again, VaultSync does not accept it by itself.")
     }
 
+    /// The note shown for an accept the engine has not confirmed yet, or nil
+    /// for every other answer of `acceptPendingFolder` (#341). It is no
+    /// failure: the accept may still land, and the bridge queues no second
+    /// accept of the share meanwhile.
+    static func acceptNotConfirmedNote(forAnswer answer: String) -> String? {
+        guard answer == SyncBridgeService.folderAcceptNotConfirmedError else { return nil }
+        return acceptNotConfirmedNote
+    }
+
+    /// The note a share whose accept the engine has not confirmed shows, on
+    /// its row and in the alert a tap opens, under `acceptNotConfirmedTitle`.
+    static var acceptNotConfirmedNote: String {
+        L10n.tr("VaultSync has asked the sync engine to sync this vault on this iPhone, and the engine has not confirmed it yet. The vault shows in the list once it has; accepting it again meanwhile changes nothing. If it is not listed in a minute, accept it again.")
+    }
+
+    static var acceptNotConfirmedTitle: String {
+        L10n.tr("Accept Not Confirmed Yet")
+    }
+
+    /// The bridge's folder list, or what a test put in its place (#341).
+    private func bridgeFoldersJSON() -> String {
+        #if DEBUG
+        if let read = _testFolderRead { return read() }
+        #endif
+        return SyncBridgeService.getFoldersJSON()
+    }
+
+    /// Whether the bridge still holds an accept of the share in the engine's
+    /// queue, or what a test put in its place (#341).
+    private func bridgeAcceptInFlight(_ folderID: String) -> Bool {
+        #if DEBUG
+        if let inFlight = _testAcceptInFlight { return inFlight(folderID) }
+        #endif
+        return SyncBridgeService.acceptInFlight(folderID: folderID)
+    }
+
+    /// The bridge's accept, or what a test put in its place (#341).
+    private func bridgeAcceptPendingFolder(_ folderID: String, _ label: String, _ path: String, _ root: String, _ allowNonEmpty: Bool) -> String? {
+        #if DEBUG
+        if let accept = _testAccept { return accept(folderID) }
+        #endif
+        return SyncBridgeService.acceptPendingFolder(folderID: folderID, label: label, path: path, root: root, allowNonEmpty: allowNonEmpty)
+    }
+
     /// The bridge's removal, or what a test put in its place (#343).
     private func bridgeRemoveFolder(_ id: String) -> String? {
         #if DEBUG
@@ -1425,30 +1475,111 @@ final class SyncthingManager {
     /// `root` is the selected Obsidian folder: the Go hard floor accepts only
     /// into a direct subfolder of it (#270).
     func acceptPendingFolder(folderID: String, label: String, path: String, root: String, allowNonEmpty: Bool) -> String? {
-        let result = SyncBridgeService.acceptPendingFolder(folderID: folderID, label: label, path: path, root: root, allowNonEmpty: allowNonEmpty)
-        if result == nil {
-            // An explicit accept supersedes an earlier removal — lift the
-            // auto-accept suppression for this folder ID (#52).
-            if userRemovedFolderIDs.contains(folderID) {
-                userRemovedFolderIDs.remove(folderID)
-                persistUserRemovedFolderIDs()
-            }
+        var result = bridgeAcceptPendingFolder(folderID, label, path, root, allowNonEmpty)
+        if result == SyncBridgeService.folderAcceptNotConfirmedError {
+            // Still queued in the engine (#341). It lands once the change
+            // before it is through, or the engine refuses it; the engine
+            // works through its queue while it stops, so it may also be
+            // there at the next start. Nothing that only follows a confirmed
+            // accept runs until it lands — the record of a removal stays, so
+            // the automatic pass leaves the share alone — and the share waits
+            // as one whose accept is on its way, which the poll settles.
+            acceptsAwaitingConfirmation[folderID] = path
             refreshFolders()
-            refreshObsidianVisibility()
             refreshPendingFolders()
-            // Trigger a rescan after a short delay to kick-start initial sync.
-            // The delay gives Syncthing time to initialize the folder model
-            // before we request the scan.
-            let id = folderID
-            rescanTask?.cancel()
-            rescanTask = Task.detached {
-                try? await Task.sleep(for: .seconds(2))
-                guard !Task.isCancelled else { return }
-                Self.applyDefaultIgnoresIfNeeded(folderID: id)
-                _ = SyncBridgeService.rescanFolder(folderID: id)
+            return result
+        }
+        // Accepted again after such an accept landed, before the poll saw it:
+        // the bridge finds the folder configured. At the path the waiting
+        // accept was headed for, that is the accept having worked (#341).
+        if result == Self.folderAlreadyExists, let awaited = acceptsAwaitingConfirmation[folderID] {
+            refreshFolders()
+            if folders.contains(where: { $0.id == folderID && Self.samePath($0.path, awaited) }) {
+                result = nil
             }
         }
+        if result == nil {
+            acceptsAwaitingConfirmation.removeValue(forKey: folderID)
+            finishConfirmedAccept(folderID)
+        }
         return result
+    }
+
+    /// What the bridge answers an accept of a share that is already
+    /// configured with.
+    static let folderAlreadyExists = "folder already exists"
+
+    /// What follows a confirmed accept: at once on success, or once an
+    /// accept that was not confirmed in time is seen to have landed (#341).
+    private func finishConfirmedAccept(_ folderID: String) {
+        // An explicit accept supersedes an earlier removal — lift the
+        // auto-accept suppression for this folder ID (#52).
+        if userRemovedFolderIDs.contains(folderID) {
+            userRemovedFolderIDs.remove(folderID)
+            persistUserRemovedFolderIDs()
+        }
+        refreshFolders()
+        refreshObsidianVisibility()
+        refreshPendingFolders()
+        // Trigger a rescan after a short delay to kick-start initial sync.
+        // The delay gives Syncthing time to initialize the folder model
+        // before we request the scan.
+        let id = folderID
+        rescanTask?.cancel()
+        rescanTask = Task.detached {
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            Self.applyDefaultIgnoresIfNeeded(folderID: id)
+            _ = SyncBridgeService.rescanFolder(folderID: id)
+        }
+    }
+
+    /// Where an accept the engine had not confirmed stands now (#341).
+    enum AwaitedAccept: Equatable {
+        /// No accept of the share is waiting.
+        case notAwaited
+        /// Still queued in the engine: another accept would only get the
+        /// same answer.
+        case stillQueued
+        /// It landed; what follows a confirmed accept has run.
+        case landed
+        /// The engine took it and refused it, or a stop lost it: the share
+        /// is an ordinary pending one again.
+        case gone
+    }
+
+    /// Settles a waiting accept of one share before another accept of it
+    /// runs: a tap on a share whose accept landed meanwhile is that accept
+    /// having worked, and one still queued is told so again (#341).
+    func settleAwaitedAccept(_ folderID: String) -> AwaitedAccept {
+        guard acceptsAwaitingConfirmation[folderID] != nil else { return .notAwaited }
+        if bridgeAcceptInFlight(folderID) { return .stillQueued }
+        refreshFolders()
+        return settleAcceptsAwaitingConfirmation(stillQueued: [], checked: [folderID])[folderID] ?? .gone
+    }
+
+    /// Settles the waiting accepts in `checked`, whose state in the engine
+    /// was read before the folder list: one no longer queued landed if the
+    /// folder is configured at the path the accept asked for, and is gone
+    /// otherwise. Reading the queue first means a landing between the two
+    /// reads is seen as a landing, never as a refusal.
+    @discardableResult
+    func settleAcceptsAwaitingConfirmation(stillQueued: Set<String>, checked: Set<String>) -> [String: AwaitedAccept] {
+        var outcome: [String: AwaitedAccept] = [:]
+        for id in checked where !stillQueued.contains(id) {
+            guard let path = acceptsAwaitingConfirmation.removeValue(forKey: id) else { continue }
+            if folders.contains(where: { $0.id == id && Self.samePath($0.path, path) }) {
+                finishConfirmedAccept(id)
+                outcome[id] = .landed
+            } else {
+                outcome[id] = .gone
+            }
+        }
+        return outcome
+    }
+
+    nonisolated static func samePath(_ a: String, _ b: String) -> Bool {
+        URL(fileURLWithPath: a).standardizedFileURL.path == URL(fileURLWithPath: b).standardizedFileURL.path
     }
 
     // MARK: - Device rename
@@ -1476,6 +1607,7 @@ final class SyncthingManager {
         folderStatuses = [:]
         conflictFiles = [:]
         pendingFolders = []
+        acceptsAwaitingConfirmation = [:]
         // New generation, same as stop(): the restarted engine's paths count
         // as unsettled until its own reconcile completes (#56).
         pathSettlement.reset()
@@ -1593,7 +1725,8 @@ final class SyncthingManager {
     /// Run bridge calls off the main thread, then update @MainActor properties.
     private func pollBridgeState() async {
         let currentEventCursor = lastBridgeEventID
-        let snapshot: (String, String, String, String, FolderRead)? = await Task.detached {
+        let awaitedAccepts = Set(acceptsAwaitingConfirmation.keys)
+        let snapshot: (String, String, String, String, FolderRead, Set<String>)? = await Task.detached { () -> (String, String, String, String, FolderRead, Set<String>)? in
             // Taken before anything is read: a background outcome seen
             // after this moment is not answered by this poll (#210).
             let readStartedAt = SyncthingManager.monotonicNow()
@@ -1603,6 +1736,9 @@ final class SyncthingManager {
             // never poll empty JSON into a healthy-looking "Ready" display
             // (#61). Detect it here, before decoding.
             guard SyncBridgeService.isRunning() else { return nil }
+            // Read before the folder list (#341): an accept the engine takes
+            // between the two reads then shows as landed, never as refused.
+            let stillQueued = awaitedAccepts.filter { SyncBridgeService.acceptInFlight(folderID: $0) }
             let devicesJSON = SyncBridgeService.getDevicesJSON()
             let generationBeforeFolders = SyncBridgeService.eventStreamGeneration()
             let foldersJSON = SyncBridgeService.getFoldersJSON()
@@ -1616,7 +1752,7 @@ final class SyncthingManager {
                 engineRunningAcrossRead: generationBeforeFolders != 0
                     && generationBeforeFolders == generationAfterFolders
             )
-            return (devicesJSON, foldersJSON, pendingJSON, eventsJSON, folderRead)
+            return (devicesJSON, foldersJSON, pendingJSON, eventsJSON, folderRead, stillQueued)
         }.value
 
         guard let snapshot else {
@@ -1662,6 +1798,7 @@ final class SyncthingManager {
             }
             pruneIgnoredPendingFolders(availableFolderIDs: Set(decoded.map(\.id)))
         }
+        settleAcceptsAwaitingConfirmation(stillQueued: snapshot.5, checked: awaitedAccepts)
 
         let bridgeEvents = decodeBridgeEvents(snapshot.3)
         if let latestEventID = bridgeEvents.map(\.id).max() {
@@ -1894,7 +2031,7 @@ final class SyncthingManager {
     private func refreshFolders() {
         let readStartedAt = Self.monotonicNow()
         let generationBefore = SyncBridgeService.eventStreamGeneration()
-        let json = SyncBridgeService.getFoldersJSON()
+        let json = bridgeFoldersJSON()
         let generationAfter = SyncBridgeService.eventStreamGeneration()
         applyFolderRead(
             json: json,
@@ -3135,6 +3272,35 @@ final class SyncthingManager {
     func _testUseRemoval(bridge: @escaping (String) -> String?, defaults: UserDefaults) {
         _testRemoval = (bridge, defaults)
         userRemovedFolderIDs = Self.loadUserRemovedFolderIDs(from: defaults)
+    }
+
+    /// What `_testUseAccept` put in the place of the bridge's accept.
+    /// Compiled for tests only.
+    @ObservationIgnored private var _testAccept: ((String) -> String?)?
+
+    /// Answers every accept with `bridge` instead of the engine (#341).
+    func _testUseAccept(bridge: @escaping (String) -> String?) {
+        _testAccept = bridge
+    }
+
+    /// What `_testUseAcceptInFlight` put in the place of the bridge's answer
+    /// whether an accept is still queued. Compiled for tests only.
+    @ObservationIgnored private var _testAcceptInFlight: ((String) -> Bool)?
+
+    /// Answers whether an accept is still queued with `inFlight` instead of
+    /// the engine (#341).
+    func _testUseAcceptInFlight(_ inFlight: @escaping (String) -> Bool) {
+        _testAcceptInFlight = inFlight
+    }
+
+    /// What `_testUseFolderRead` put in the place of the bridge's folder
+    /// list. Compiled for tests only.
+    @ObservationIgnored private var _testFolderRead: (() -> String)?
+
+    /// Reads the folder list from `read` instead of the engine when the
+    /// manager refreshes it itself, as around an accept (#341).
+    func _testUseFolderRead(_ read: @escaping () -> String) {
+        _testFolderRead = read
     }
 
     func _testApplyDeviceList(_ newDevices: [DeviceInfo]) {

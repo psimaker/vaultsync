@@ -19,6 +19,8 @@ struct OnboardingView: View {
     /// it is not presented under the "Error" title.
     @State private var infoMessage: String?
     @State private var showInfoAlert = false
+    /// The info alert's title when a note brings its own (#341).
+    @State private var infoTitle: String?
     /// Set when AddDeviceSheet reports a successful add; presented from the
     /// sheet's onDismiss (#95).
     @State private var showDeviceAddedHint = false
@@ -105,8 +107,8 @@ struct OnboardingView: View {
             } message: {
                 Text(alertMessage ?? "")
             }
-            .alert(L10n.tr("Note"), isPresented: $showInfoAlert) {
-                Button("OK") { }
+            .alert(infoTitle ?? L10n.tr("Note"), isPresented: $showInfoAlert) {
+                Button("OK") { infoTitle = nil }
             } message: {
                 Text(infoMessage ?? "")
             }
@@ -155,6 +157,21 @@ struct OnboardingView: View {
             shareAccept.alertMessage = nil
             alertMessage = message
             showAlert = true
+        }
+        .onChange(of: shareAccept.noteAlert) { _, note in
+            // A note, not a failure (#341): the info alert, under its title.
+            guard let note else { return }
+            shareAccept.noteAlert = nil
+            infoTitle = note.title
+            infoMessage = note.message
+            showInfoAlert = true
+        }
+        .onChange(of: syncthingManager.acceptsAwaitingConfirmation) { _, _ in
+            // Same trigger as ContentView (#341): a refused accept leaves the
+            // share to the pass again.
+            if syncthingManager.pathSettlement.settled {
+                shareAccept.runAutomaticPass()
+            }
         }
         // A pairing link from the Camera app (#174) opens the Add Hub sheet
         // here too — once no other sheet or alert is up.
@@ -406,8 +423,11 @@ struct OnboardingView: View {
     /// pending-shares UI can take, e.g. a non-empty target — #54).
     private func offerStatusRow(_ folder: SyncthingManager.PendingFolderInfo) -> some View {
         let name = folder.label.isEmpty ? folder.id : folder.label
-        let needsAttention = shareAccept.pendingShareFailures[folder.id] != nil
-            || !syncthingManager.autoAcceptEligiblePendingFolders.contains(where: { $0.id == folder.id })
+        // An accept already queued in the engine is on its way, not a
+        // decision waiting for the user (#341).
+        let awaiting = syncthingManager.acceptsAwaitingConfirmation[folder.id] != nil
+        let needsAttention = !awaiting && (shareAccept.pendingShareFailures[folder.id] != nil
+            || !syncthingManager.autoAcceptEligiblePendingFolders.contains(where: { $0.id == folder.id }))
         return HStack(alignment: .top, spacing: VaultSpacing.m) {
             if needsAttention {
                 Image(systemName: "exclamationmark.triangle.fill")
@@ -418,7 +438,7 @@ struct OnboardingView: View {
                     .font(.subheadline)
                     .foregroundStyle(Color.vaultLabel)
                     .fixedSize(horizontal: false, vertical: true)
-            } else if !obsidianConnected {
+            } else if !obsidianConnected && !awaiting {
                 Image(systemName: "folder.badge.questionmark")
                     .font(.body.weight(.semibold))
                     .foregroundStyle(Color.statusAttention)

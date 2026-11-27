@@ -3,11 +3,13 @@ package bridge
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/protocol"
@@ -155,6 +157,13 @@ func AcceptPendingFolder(folderID, label, path, root string, allowNonEmpty bool)
 	if _, exists := stCfg.Folders()[folderID]; exists {
 		return "folder already exists"
 	}
+	// An accept of this share the bridge handed to the engine earlier and has
+	// not seen reach the configuration is still queued: queueing a second
+	// one could configure the share twice, or in another place than the one
+	// the first accept chose (#341). Nothing is created or queued for it.
+	if acceptInFlight(folderID) {
+		return folderAcceptNotConfirmed
+	}
 
 	// Reject any path that is not a direct subfolder of the selected folder.
 	// The client maps every share to `root/<name>`; this floor holds even if
@@ -176,6 +185,16 @@ func AcceptPendingFolder(folderID, label, path, root string, allowNonEmpty bool)
 		if msg := folderPathOverlapError(f.Path, path); msg != "" {
 			return msg
 		}
+	}
+	// An accept still queued in the engine counts as a folder already: its
+	// path is not in the configuration yet, and a second share accepted into
+	// it, or into a folder in or around it, would sync one directory with it
+	// once both have landed (#341, decision 001). The same comparison and the
+	// same refusal as for a configured folder; a target a queued accept is
+	// headed for is taken, so the non-empty check below never has to judge
+	// it, merge consent or not.
+	if msg := queuedAcceptOverlapError(path, ""); msg != "" {
+		return msg
 	}
 
 	// Reject a target directory that already holds content unless the caller
@@ -233,14 +252,117 @@ func AcceptPendingFolder(folderID, label, path, root string, allowNonEmpty bool)
 		Devices:          devices,
 	}
 
-	if err := commitConfigLocked(func(cfg *config.Configuration) {
+	markAcceptInFlight(folderID, path)
+	err = commitConfigLockedTaken(func(cfg *config.Configuration) {
 		cfg.Folders = append(cfg.Folders, newFolder)
-	}); err != nil {
-		return fmt.Sprintf("modify config: %v", err)
+	}, func() {
+		// The engine has taken the change from its queue: it is in the
+		// configuration now, or the engine refused it — a second folder of
+		// one ID among the refusals. Only from here on does the floor above
+		// see the folder itself instead of the queued accept.
+		clearAcceptInFlight(folderID)
+	})
+	// The engine takes a change into its configuration first and then waits
+	// for its services: an accept that reached the configuration before the
+	// wait ended is accepted, whatever the services still do (#341, as for
+	// a removal in #343). Only a folder at this accept's own path is this
+	// accept: another one of the ID is an earlier accept that landed, and
+	// this one was refused as its duplicate.
+	if f, ok := stCfg.Folder(folderID); ok {
+		if filepath.Clean(f.Path) != filepath.Clean(path) {
+			return "folder already exists"
+		}
+		noteFolderStorageLocked(newFolder)
+		return ""
 	}
-	noteFolderStorageLocked(newFolder)
+	if err == nil {
+		// Applied and gone again, or never applied: nothing to confirm.
+		return "accept did not reach the configuration"
+	}
+	if errors.Is(err, errWaitTimedOut) && acceptInFlight(folderID) {
+		// Still queued behind another change. It lands once that one is
+		// through, or the engine refuses it. The engine works through its
+		// queue while it stops and saves what it applied, so it may also be
+		// configured at the next start; only a stop that ends before the
+		// change is taken loses it. Until it is taken every accept of the
+		// share gets this answer.
+		return folderAcceptNotConfirmed
+	}
+	return fmt.Sprintf("modify config: %v", err)
+}
 
+// folderAcceptNotConfirmed is how AcceptPendingFolder answers an accept it
+// handed to the engine and did not see reach the configuration within its
+// wait, and every further accept of that share until it has (#341).
+const folderAcceptNotConfirmed = "folder accept not confirmed yet"
+
+// FolderAcceptNotConfirmedError returns the text AcceptPendingFolder answers
+// such an accept with. The app tells it from a refusal — the accept may
+// still land — and reads the text here instead of keeping a copy of it.
+func FolderAcceptNotConfirmedError() string {
+	return folderAcceptNotConfirmed
+}
+
+// AcceptInFlight reports whether an accept of the share the bridge answered
+// with FolderAcceptNotConfirmedError is still waiting in the engine's queue.
+// Once it is not, the share is configured — the accept landed — or it is
+// not, and the engine refused it or a stop lost it (#341). It takes no
+// engine lock and never waits.
+func AcceptInFlight(folderID string) bool {
+	return acceptInFlight(folderID)
+}
+
+// The shares whose accept the bridge handed to the engine and has not seen
+// taken from the engine's queue, with the path each is headed for. Guarded
+// by its own lock, not mu: the engine's configuration loop clears an entry
+// while a later bridge call may hold mu and wait for that same loop.
+var (
+	acceptsInFlightMu sync.Mutex
+	acceptsInFlight   = map[string]string{}
+)
+
+func acceptInFlight(folderID string) bool {
+	acceptsInFlightMu.Lock()
+	defer acceptsInFlightMu.Unlock()
+	_, ok := acceptsInFlight[folderID]
+	return ok
+}
+
+func markAcceptInFlight(folderID, path string) {
+	acceptsInFlightMu.Lock()
+	acceptsInFlight[folderID] = path
+	acceptsInFlightMu.Unlock()
+}
+
+// queuedAcceptOverlapError holds path against every accept still queued in
+// the engine, except the one of folder except, as against a configured
+// folder: folderPathOverlapError's comparison and its refusal.
+func queuedAcceptOverlapError(path, except string) string {
+	acceptsInFlightMu.Lock()
+	defer acceptsInFlightMu.Unlock()
+	for id, queued := range acceptsInFlight {
+		if id == except {
+			continue
+		}
+		if msg := folderPathOverlapError(queued, path); msg != "" {
+			return msg
+		}
+	}
 	return ""
+}
+
+func clearAcceptInFlight(folderID string) {
+	acceptsInFlightMu.Lock()
+	delete(acceptsInFlight, folderID)
+	acceptsInFlightMu.Unlock()
+}
+
+// forgetAcceptsInFlight drops every entry: a new engine has an empty queue,
+// and an accept the last one never took is gone with it.
+func forgetAcceptsInFlight() {
+	acceptsInFlightMu.Lock()
+	acceptsInFlight = map[string]string{}
+	acceptsInFlightMu.Unlock()
 }
 
 // offeringDevicesFor lists the devices currently offering folderID. A

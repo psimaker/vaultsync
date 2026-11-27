@@ -66,6 +66,10 @@ final class ShareAcceptCoordinator {
         /// The selected folder still holds a vault's earlier copy
         /// (`ObsidianVisibility.holdsEarlierCopy`, #308).
         var selectedFolderHoldsEarlierCopy: @MainActor () -> Bool = { false }
+        /// An accept of the share was handed to the engine and is not
+        /// confirmed yet (#341): the share waits for it, and nothing accepts
+        /// it a second time.
+        var acceptAwaitingConfirmation: @MainActor (_ folderID: String) -> Bool = { _ in false }
 
         static func live(
             syncthingManager: SyncthingManager,
@@ -98,7 +102,8 @@ final class ShareAcceptCoordinator {
                 selectedFolderHidesVaults: { syncthingManager.selectedFolderHidesVaultsFromObsidian },
                 selectedFolderHoldsEarlierCopy: {
                     ObsidianVisibility.selectedFolderHoldsEarlierCopy(vaultManager.obsidianBasePath)
-                }
+                },
+                acceptAwaitingConfirmation: { syncthingManager.acceptsAwaitingConfirmation[$0] != nil }
             )
         }
     }
@@ -121,6 +126,10 @@ final class ShareAcceptCoordinator {
     /// One-shot message for whichever host view is mounted: it presents the
     /// text in its own alert and resets this to nil.
     var alertMessage: String?
+
+    /// One-shot note — no failure — for whichever host view is mounted: it
+    /// presents it under its own title and resets this to nil (#341).
+    var noteAlert: ShareAcceptNote?
 
     private let environment: Environment
 
@@ -150,7 +159,8 @@ final class ShareAcceptCoordinator {
         // It is a decision waiting for the user, not an error: the row says
         // what to do, no alert. An explicit accept still goes through.
         if environment.selectedFolderHidesVaults() {
-            for folder in environment.autoAcceptEligible() where pendingShareFailures[folder.id] == nil {
+            for folder in environment.autoAcceptEligible() where pendingShareFailures[folder.id] == nil
+                && !environment.acceptAwaitingConfirmation(folder.id) {
                 pendingShareFailures[folder.id] = SyncUserError(
                     category: .fileAccess,
                     title: L10n.tr("Obsidian Would Not Show This Vault"),
@@ -170,8 +180,12 @@ final class ShareAcceptCoordinator {
         // Auto-accept skips shares whose folder the user removed on this
         // iPhone (doctrine 002 / #52) — those stay visible as pending rows
         // until the user accepts them explicitly.
+        // Nor a share whose accept is queued in the engine (#341): it waits
+        // for that accept, and once the engine has refused it the share is
+        // an ordinary pending one again and the pass may take it.
         for folder in environment.autoAcceptEligible() where pendingShareFailures[folder.id] == nil {
-            guard !pendingShareInFlight.contains(folder.id) else { continue }
+            guard !pendingShareInFlight.contains(folder.id),
+                  !environment.acceptAwaitingConfirmation(folder.id) else { continue }
             accept(folder, source: .automatic)
         }
     }
@@ -268,6 +282,17 @@ final class ShareAcceptCoordinator {
                 )
             }
 
+        case .notConfirmed(let note):
+            // The accept is queued in the engine and may still land (#341).
+            // It is no failure: the share waits for it — the row, the Hub's
+            // hand-off and onboarding read that from the manager, which also
+            // keeps the automatic pass away — and a tap gets the note under
+            // its own title.
+            pendingShareFailures.removeValue(forKey: folder.id)
+            if source == .manual {
+                noteAlert = ShareAcceptNote(title: SyncthingManager.acceptNotConfirmedTitle, message: note)
+            }
+
         case .accepted:
             pendingShareFailures.removeValue(forKey: folder.id)
             // A future refusal after a successful accept is a new situation —
@@ -295,6 +320,13 @@ final class ShareAcceptCoordinator {
         let err = environment.acceptIntoTarget(folder, targetName)
         pendingShareInFlight.remove(folder.id)
 
+        if err != nil, environment.acceptAwaitingConfirmation(folder.id) {
+            // Queued in the engine, not refused (#341): the picker closes and
+            // the share waits for the accept, as after any other tap.
+            pendingShareFailures.removeValue(forKey: folder.id)
+            noteAlert = ShareAcceptNote(title: SyncthingManager.acceptNotConfirmedTitle, message: SyncthingManager.acceptNotConfirmedNote)
+            return nil
+        }
         if let err {
             // Written for the user, shown as it is (#270).
             return err
@@ -333,4 +365,11 @@ final class ShareAcceptCoordinator {
         pendingShareFailures.removeAll()
         parkedForPlace.removeAll()
     }
+}
+
+/// A note the coordinator hands its host: not a failure, so the host shows
+/// it under its own title instead of the failure alert's (#341).
+struct ShareAcceptNote: Equatable, Sendable {
+    let title: String
+    let message: String
 }

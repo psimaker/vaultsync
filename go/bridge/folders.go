@@ -46,19 +46,24 @@ func AddFolder(id, label, path string) string {
 		return "folder ID is required"
 	}
 
-	// Check if folder already exists.
+	// Check if folder already exists — or is on its way, an accept of it
+	// still queued in the engine (#341).
 	folders := stCfg.Folders()
-	if _, exists := folders[id]; exists {
+	if _, exists := folders[id]; exists || acceptInFlight(id) {
 		return "folder already exists"
 	}
 
 	// Same hard floor as AcceptPendingFolder: never let two folders overlap on
 	// disk — equal paths merge two vaults into one directory (issue #45), and
 	// nested paths make the outer folder sync the inner one's files as its own.
+	// An accept still queued in the engine counts as a folder (#341).
 	for _, f := range folders {
 		if msg := folderPathOverlapError(f.Path, path); msg != "" {
 			return msg
 		}
+	}
+	if msg := queuedAcceptOverlapError(path, ""); msg != "" {
+		return msg
 	}
 
 	// Ensure folder path exists.
@@ -259,6 +264,11 @@ func SetFolderPath(folderID, newPath string) string {
 		if id != folderID && folderPathOverlapError(other.Path, newPath) != "" {
 			return folderPathOverlap
 		}
+	}
+	// An accept still queued in the engine counts as a folder: once it lands
+	// it syncs its path (#341).
+	if queuedAcceptOverlapError(newPath, folderID) != "" {
+		return folderPathOverlap
 	}
 
 	if err := commitConfigLocked(func(cfg *config.Configuration) {

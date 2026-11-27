@@ -7,6 +7,8 @@ struct PendingSharesView: View {
     /// Where each share would arrive if it were accepted now (#270).
     var destinationByFolderID: [String: PendingShareDestination.Line] = [:]
     let inFlightFolderIDs: Set<String>
+    /// Shares whose accept the engine has not confirmed yet (#341).
+    var awaitingFolderIDs: Set<String> = []
     let obsidianAccessible: Bool
     var onAccept: (SyncthingManager.PendingFolderInfo) -> Void
     var onRetry: (SyncthingManager.PendingFolderInfo) -> Void
@@ -48,12 +50,15 @@ struct PendingSharesView: View {
     /// automatic pass parked it, so a share waiting on a decision reads
     /// differently from one that is simply ready.
     private func pendingCard(_ folder: SyncthingManager.PendingFolderInfo) -> some View {
-        let failure = failureByFolderID[folder.id]
+        // A share whose accept is queued in the engine waits for it: no
+        // failure, and nothing a failure shows (#341).
+        let awaiting = awaitingFolderIDs.contains(folder.id)
+        let failure = awaiting ? nil : failureByFolderID[folder.id]
         let hasFailure = failure != nil
         let inFlight = inFlightFolderIDs.contains(folder.id)
         return VStack(alignment: .leading, spacing: VaultSpacing.m) {
             HStack(alignment: .top, spacing: VaultSpacing.m) {
-                Image(systemName: hasFailure ? "exclamationmark.circle.fill" : "tray.and.arrow.down.fill")
+                Image(systemName: hasFailure ? "exclamationmark.circle.fill" : (awaiting ? "hourglass" : "tray.and.arrow.down.fill"))
                     .font(.title3)
                     .foregroundStyle(hasFailure ? Color.statusAttention : Color.statusInfo)
                     .vaultLeadingSlot()
@@ -64,7 +69,9 @@ struct PendingSharesView: View {
                         .font(.body.weight(.semibold))
                         .foregroundStyle(Color.vaultLabel)
                     StatusChip(
-                        text: hasFailure ? L10n.tr("Needs Attention") : L10n.tr("Ready"),
+                        text: hasFailure
+                            ? L10n.tr("Needs Attention")
+                            : (awaiting ? SyncthingManager.acceptNotConfirmedTitle : L10n.tr("Ready")),
                         tone: hasFailure ? .attention : .info
                     )
                     Text(offeredByDescription(for: folder))
@@ -77,6 +84,12 @@ struct PendingSharesView: View {
                         Text(destination.text)
                             .font(.footnote)
                             .foregroundStyle(destination.isCaution ? Color.statusAttentionText : Color.vaultSecondaryLabel)
+                    }
+
+                    if awaiting {
+                        Text(SyncthingManager.acceptNotConfirmedNote)
+                            .font(.subheadline)
+                            .foregroundStyle(Color.vaultSecondaryLabel)
                     }
 
                     if let failure {
@@ -123,16 +136,18 @@ struct PendingSharesView: View {
                     .disabled(!obsidianAccessible)
                 }
 
-                Button(L10n.tr("Ignore for Now")) {
-                    onIgnore(folder)
+                if Self.offersIgnoreAndChooseVault(awaiting: awaiting) {
+                    Button(L10n.tr("Ignore for Now")) {
+                        onIgnore(folder)
+                    }
+                    .buttonStyle(.vault(.neutral, compact: true))
+                    .disabled(inFlight)
                 }
-                .buttonStyle(.vault(.neutral, compact: true))
-                .disabled(inFlight)
             }
 
             // The per-share manual path (#52): pick an existing empty vault or
             // create a custom-named folder instead of the share-label default.
-            if !inFlight {
+            if !inFlight && Self.offersIgnoreAndChooseVault(awaiting: awaiting) {
                 Button(L10n.tr("Choose Vault…")) {
                     onChooseTarget(folder)
                 }
@@ -143,6 +158,14 @@ struct PendingSharesView: View {
         .padding(VaultSpacing.l)
         .frame(maxWidth: .infinity, alignment: .leading)
         .vaultCard(tone: hasFailure ? .attention : .info)
+    }
+
+    /// Whether a row offers "Ignore for Now" and "Choose Vault…". Not while
+    /// its accept is queued in the engine (#341): ignoring the share does not
+    /// withdraw that accept, and another folder cannot replace the one it
+    /// asked for, so neither button may look as if it could.
+    static func offersIgnoreAndChooseVault(awaiting: Bool) -> Bool {
+        !awaiting
     }
 
     private var ignoredSharesCard: some View {

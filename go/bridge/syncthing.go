@@ -135,10 +135,22 @@ var stConfigCommits uint64
 // caller has already reported the failure, and the next poll shows the
 // actual state.
 func commitConfigLocked(fn config.ModifyFunction) error {
+	return commitConfigLockedTaken(fn, nil)
+}
+
+// commitConfigLockedTaken is commitConfigLocked with taken, when not nil,
+// run as soon as the engine has taken the change from its queue — it is in
+// the configuration then, or the engine refused it — and before its
+// services are waited for. It runs on the commit's own goroutine, also after
+// a wait that timed out, so it must not take mu.
+func commitConfigLockedTaken(fn config.ModifyFunction, taken func()) error {
 	cfg := stCfg
 	stConfigCommits++
 	return awaitWithin("config commit", lifecycleTimeouts.configCommit, func() error {
 		waiter, err := cfg.Modify(fn)
+		if taken != nil {
+			taken()
+		}
 		if err != nil {
 			return err
 		}
@@ -205,6 +217,9 @@ func StartSyncthing(configDir string) string {
 	}
 	stExited = false
 	stExitReason = ""
+	// An accept the previous engine never took from its queue is gone with
+	// it (#341): the share may be accepted again.
+	forgetAcceptsInFlight()
 
 	// Set base directories so locations.Get() resolves correctly.
 	if err := locations.SetBaseDir(locations.ConfigBaseDir, configDir); err != nil {

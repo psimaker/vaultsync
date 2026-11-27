@@ -499,6 +499,19 @@ final class VaultManager {
         syncthingManager: SyncthingManager,
         mergeConfirmed: Bool
     ) -> PendingShareAcceptOutcome {
+        // An accept of this share the engine has not confirmed yet is
+        // settled before anything is decided (#341): one that landed
+        // meanwhile is this accept having worked, and one still queued
+        // would only get the same answer — and its folder, holding the
+        // engine's marker by now, would read as one with files.
+        switch syncthingManager.settleAwaitedAccept(folder.id) {
+        case .landed:
+            return .accepted
+        case .stillQueued:
+            return .notConfirmed(note: SyncthingManager.acceptNotConfirmedNote)
+        case .notAwaited, .gone:
+            break
+        }
         let placement: SharePlacement
         switch sharePlacement(
             folderID: folder.id,
@@ -553,6 +566,13 @@ final class VaultManager {
             root: basePath,
             allowNonEmpty: manualTargetConsented || mergeConfirmed
         ) {
+            if let note = SyncthingManager.acceptNotConfirmedNote(forAnswer: err) {
+                // Not a refusal: the accept may still land (#341). What only
+                // a confirmed accept records — the chosen name, the path
+                // mapping — is left out; the launch reconcile fills in the
+                // mapping for a folder that landed.
+                return .notConfirmed(note: note)
+            }
             return .refused(message: Self.presentable(engineRefusal: err))
         }
 
@@ -963,6 +983,17 @@ final class VaultManager {
         intoTargetNamed targetName: String,
         syncthingManager: SyncthingManager
     ) -> String? {
+        // The same settling as the default path's (#341): a landed accept is
+        // done, one still queued gets its note, and no second folder is
+        // chosen for it.
+        switch syncthingManager.settleAwaitedAccept(folder.id) {
+        case .landed:
+            return nil
+        case .stillQueued:
+            return SyncthingManager.acceptNotConfirmedNote
+        case .notAwaited, .gone:
+            break
+        }
         guard let basePath = obsidianBasePath,
               let baseURL = obsidianDirectoryURL else {
             return L10n.tr("Obsidian directory not accessible.")
@@ -1008,7 +1039,10 @@ final class VaultManager {
                 root: basePath,
                 allowNonEmpty: false
             ) {
-                return Self.presentable(engineRefusal: err)
+                // Shown in the picker as it is, a note and not a refusal
+                // (#341); nothing is recorded for a target not confirmed.
+                return SyncthingManager.acceptNotConfirmedNote(forAnswer: err)
+                    ?? Self.presentable(engineRefusal: err)
             }
             // Only a successful accept records the choice — a failed one must
             // not pin future auto-accepts to a target that never materialized.
@@ -1264,6 +1298,9 @@ enum PendingShareAcceptOutcome: Equatable, Sendable {
     case accepted
     case refused(message: String)
     case needsMergeConfirmation(targetName: String)
+    /// Handed to the engine and not confirmed within the bridge's wait: it
+    /// may still land, and is not sent again meanwhile (#341).
+    case notConfirmed(note: String)
 }
 
 /// Sidecar: the local folder name the user manually picked for a share
