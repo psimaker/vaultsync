@@ -3,6 +3,7 @@ package pairing
 import (
 	"strings"
 	"testing"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -62,15 +63,70 @@ func TestIssue320_CleanLabelDropsWhatHidesAndCutsNothing(t *testing.T) {
 }
 
 // sanitizeNameBefore320 is SanitizeName as it was before #320 built it from
-// CleanLabel. The fuzz target holds the two equal: a Hub's and a device's
-// name are cleaned and cut as before.
+// CleanLabel, with the helpers it called then copied below as they were: the
+// fuzz target holds the two equal, so a Hub's and a device's name are cleaned
+// and cut as before, and a later change to a live helper cannot move this
+// side with it.
 func sanitizeNameBefore320(name string) string {
-	out := strings.TrimSpace(withoutHidden(name))
-	out = strings.TrimSpace(cutTo(out, 64))
-	if drawsNothing(out) {
+	out := strings.TrimSpace(withoutHiddenBefore320(name))
+	out = strings.TrimSpace(cutToBefore320(out, 64))
+	if drawsNothingBefore320(out) {
 		return ""
 	}
 	return out
+}
+
+// The helpers as they were on main before #320.
+
+func withoutHiddenBefore320(text string) string {
+	var b strings.Builder
+	flag := false // inside the tags that follow U+1F3F4 in an emoji flag
+	for _, r := range text {
+		switch {
+		case flag && flagTagBefore320(r):
+			flag = r != cancelTagBefore320
+		case hidesBefore320(r):
+			flag = false
+			continue
+		default:
+			flag = r == blackFlagBefore320
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+func cutToBefore320(text string, limit int) string {
+	if len(text) <= limit {
+		return text
+	}
+	end := limit
+	for end > 0 && !utf8.RuneStart(text[end]) {
+		end--
+	}
+	return text[:end]
+}
+
+func drawsNothingBefore320(text string) bool {
+	return strings.TrimFunc(text, func(r rune) bool { return unicode.IsSpace(r) || joinerBefore320(r) }) == ""
+}
+
+func hidesBefore320(r rune) bool {
+	if joinerBefore320(r) {
+		return false
+	}
+	return unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp)
+}
+
+func joinerBefore320(r rune) bool { return r == 0x200c || r == 0x200d }
+
+const (
+	blackFlagBefore320 = 0x1f3f4
+	cancelTagBefore320 = 0xe007f
+)
+
+func flagTagBefore320(r rune) bool {
+	return r >= 0xe0030 && r <= 0xe0039 || r >= 0xe0061 && r <= 0xe007a || r == cancelTagBefore320
 }
 
 func FuzzIssue320_CleanLabel(f *testing.F) {
