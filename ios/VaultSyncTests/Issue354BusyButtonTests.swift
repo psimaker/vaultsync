@@ -6,26 +6,27 @@ import UIKit
 /// A disabled kit button is drawn at 40 %, its label included. Add Hub's
 /// Pair, Sync and Reconnect buttons are disabled while the Hub is asked and
 /// show a `vaultOnAccent` spinner with "Pairing…" or "Asking your Hub…"
-/// inside: dimmed with the button, the dark label fell to about 1.3:1 on the
-/// teal in dark mode, and it is the only sign that something runs. A busy
-/// button stays disabled for taps and is drawn at full strength.
+/// inside: dimmed with the button, the label fell to about 1.3:1 on the
+/// teal, in light and in dark, and it is the only sign that something runs.
+/// A busy button stays disabled for taps and is drawn at full strength.
 @Suite("A busy button's spinner and text stay readable (#354)")
 struct Issue354BusyButtonTests {
     /// Add Hub's page.
     static let page = WCAGContrast.Ink.token(.vaultBackground)
 
-    /// Contrast of the kit's primary label on its fill, both drawn at
-    /// `opacity` over the page — the way `.opacity` composites the button.
+    /// Contrast of the kit's primary label on its fill as the style draws
+    /// them at `opacity`. `.opacity` dims each layer on its own, not the
+    /// button as one picture: the fill at `opacity` over the page, the label
+    /// at `opacity` over that dimmed fill. A screenshot of the dimmed button
+    /// measures the same: 1.38:1 in dark, 1.30:1 in light.
     static func drawnRatio(opacity: Double, in appearance: WCAGContrast.Appearance) -> Double {
-        let ground = WCAGContrast.resolve(page, in: appearance)
-        func drawn(_ ink: WCAGContrast.Ink) -> WCAGContrast.RGBA {
-            var color = WCAGContrast.composite(WCAGContrast.resolve(ink, in: appearance), over: ground)
-            color.alpha = opacity
-            return WCAGContrast.composite(color, over: ground)
-        }
-        let fill = drawn(.token(.vaultAccentProminent))
-        let label = drawn(.token(.vaultOnAccent))
-        let (first, second) = (WCAGContrast.luminance(label), WCAGContrast.luminance(fill))
+        var fill = WCAGContrast.resolve(.token(.vaultAccentProminent), in: appearance)
+        fill.alpha *= opacity
+        let ground = WCAGContrast.composite(fill, over: WCAGContrast.resolve(page, in: appearance))
+        var label = WCAGContrast.resolve(.token(.vaultOnAccent), in: appearance)
+        label.alpha *= opacity
+        let ink = WCAGContrast.composite(label, over: ground)
+        let (first, second) = (WCAGContrast.luminance(ink), WCAGContrast.luminance(ground))
         return (max(first, second) + 0.05) / (min(first, second) + 0.05)
     }
 
