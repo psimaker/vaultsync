@@ -252,12 +252,11 @@ func TestIssue490_AStepAfterTheRecordSaysWhatExists(t *testing.T) {
 
 // --- the count of wrong attempts -------------------------------------------
 
-// openSession starts a pairing session with guess as the code and returns
-// it with the confirmation to finish it with later, as a client that opens
-// sessions first and tries them afterwards would.
-func (fx *pairingFixture) openSession(t *testing.T, guess string) (id string, confirm []byte) {
+// openSession starts a pairing session for code and returns it with the
+// confirmation to finish it with.
+func (fx *pairingFixture) openSession(t *testing.T, code string) (id string, confirm []byte) {
 	t.Helper()
-	dev, err := pake.NewState(pake.RoleDevice, pake.PasswordScalar([]byte(guess)))
+	dev, err := pake.NewState(pake.RoleDevice, pake.PasswordScalar([]byte(code)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,9 +297,9 @@ func (fx *pairingFixture) finishSession(id string, confirm []byte) (int, string,
 	return resp.StatusCode, e.Error, nil
 }
 
-// The limit on wrong codes is held at every attempt: sessions opened first
-// and tried all at once count one step each, and exactly maxCodeFailures of
-// them are tried before the code locks — with the state file written or not.
+// The limit on wrong codes is held at every attempt: attempts finished at
+// once count one step each, and exactly maxCodeFailures of them are taken
+// before the code locks — with the state file written or not.
 func TestIssue490_TheLimitIsHeldAtEveryAttempt(t *testing.T) {
 	for _, writable := range []bool{true, false} {
 		fx := newPairingFixture(t)
