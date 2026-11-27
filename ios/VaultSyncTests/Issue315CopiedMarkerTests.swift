@@ -330,6 +330,33 @@ extension EngineBridgeSuites {
                 return folders.first { $0.id == folderID }.map { FolderPathReconciler.canonical($0.path) }
             }
 
+            /// Makes the folder's marker file anew in its place: the same
+            /// content under another file number. The new one is written
+            /// before the old one goes, so it cannot be handed the old one's
+            /// number.
+            func makeTheMarkerAnew() throws {
+                let marker = TestSupport.folderMarkerFile(folderID: folderID, in: own)
+                let replacement = marker.appendingPathExtension("new")
+                try Data(contentsOf: marker).write(to: replacement)
+                try FileManager.default.removeItem(at: marker)
+                try FileManager.default.moveItem(at: replacement, to: marker)
+            }
+
+            /// Rescans until the engine's error reason for the folder is
+            /// `reason`, or until it is idle without an error for nil.
+            func engineSays(reason: String?) async -> Bool {
+                for _ in 0..<100 {
+                    _ = SyncBridgeService.rescanFolder(folderID: folderID)
+                    if let status = SyncBridgeService.getFolderStatus(folderID: folderID),
+                       status.errorReason == reason,
+                       reason != nil || status.state == "idle" {
+                        return true
+                    }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                return false
+            }
+
             /// A copy made by hand, hidden entries included, and then the
             /// vault's own folder is gone: what the repair finds is the copy.
             func leaveOnlyACopy() async throws {
@@ -508,27 +535,53 @@ extension EngineBridgeSuites {
         }
 
         @MainActor
-        @Test("What a vault's folder is known by is read again at every reconcile")
-        func everyReconcileNotesTheFolder() async throws {
+        @Test("A marker made anew in a vault's place moves no record: the engine stops syncing the folder there, and moved afterwards it is a copy (#329)")
+        func aMarkerMadeAnewMovesNoRecord() async throws {
             let rig = try await Rig()
             defer { rig.tearDown() }
 
             // The marker is made anew in its place, so the folder is known
-            // by another file than the one recorded when it was added. A
-            // reconcile while the folder is there records the new one.
-            let markerDirectory = rig.own.appendingPathComponent(".stfolder", isDirectory: true)
-            let markerName = try #require(try FileManager.default.contentsOfDirectory(atPath: markerDirectory.path).first)
-            let marker = markerDirectory.appendingPathComponent(markerName)
-            let content = try Data(contentsOf: marker)
-            // The new one is written before the old one goes, so it cannot
-            // be handed the old one's file number.
-            try content.write(to: markerDirectory.appendingPathComponent("\(markerName).new"))
-            try FileManager.default.removeItem(at: marker)
-            try FileManager.default.moveItem(at: markerDirectory.appendingPathComponent("\(markerName).new"), to: marker)
+            // by another file than the one recorded when it was added — what
+            // a copy put in the vault's place looks like (#329). The
+            // reconcile leaves the record as it is, and the engine refuses
+            // the directory before its next scan.
+            try rig.makeTheMarkerAnew()
             await rig.manager.reconcileFolderPaths(obsidianRoot: rig.firstRoot.path).value
+            #expect(await rig.engineSays(reason: "folder_not_its_directory"))
 
-            // Moved afterwards, the folder is taken where it is. With the
-            // record from the add it would be refused as a copy.
+            // Moved afterwards, the folder is not the directory it synced
+            // in, and the repair does not re-point it.
+            try FileManager.default.moveItem(at: rig.own, to: rig.other)
+            await rig.manager.reconcileFolderPaths(obsidianRoot: rig.secondRoot.path).value
+
+            #expect(rig.manager.foldersWithoutTheirStorage == [rig.folderID])
+            #expect(rig.configuredPath() == FolderPathReconciler.canonical(rig.own.path))
+        }
+
+        @MainActor
+        @Test("Where no record applies, a reconcile records the folder by the marker it has now (#329)")
+        func aReconcileRecordsTheFolderWhereNoRecordApplies() async throws {
+            let rig = try await Rig()
+            defer { rig.tearDown() }
+
+            // What a restore does to this install's anchor: no record written
+            // before it applies once the engine starts again (decision 063).
+            rig.manager.stop()
+            let anchor = URL(fileURLWithPath: TestSupport.syncthingConfigPath())
+                .appendingPathComponent("vaultsync-storage-anchor")
+            // Kept under another name, so its file number is not handed out
+            // to the new one.
+            try FileManager.default.moveItem(at: anchor, to: anchor.appendingPathExtension("kept"))
+            #expect(SyncBridgeService.startSyncthing(configDir: TestSupport.syncthingConfigPath()) == nil)
+            #expect(rig.manager.adoptRunningEngine())
+
+            // The marker made anew: with no record that applies, the
+            // reconcile records the folder by it, and the engine syncs on.
+            try rig.makeTheMarkerAnew()
+            await rig.manager.reconcileFolderPaths(obsidianRoot: rig.firstRoot.path).value
+            #expect(await rig.engineSays(reason: nil))
+
+            // Moved afterwards, the folder is taken where it is.
             try FileManager.default.moveItem(at: rig.own, to: rig.other)
             await rig.manager.reconcileFolderPaths(obsidianRoot: rig.secondRoot.path).value
 
