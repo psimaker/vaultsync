@@ -456,8 +456,9 @@ final class HubPairingModel {
 
     #if DEBUG
     /// DEBUG only: the design-preview fixture shows a step without a network.
-    func _previewSet(fields: HubCodeFields, discovery: Discovery, hello: HubHello?, selectedVaultID: String?, provisioned: HubVault?, path: [Step]) {
+    func _previewSet(fields: HubCodeFields, discovery: Discovery, hello: HubHello?, selectedVaultID: String?, provisioned: HubVault?, path: [Step], working: Bool = false) {
         searchToken += 1
+        isWorking = working
         flow = "design-preview"
         self.fields = fields
         self.discovery = discovery
