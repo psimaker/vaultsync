@@ -320,6 +320,13 @@ func (a *app) uninstall(ctx context.Context, args []string) error {
 	if err := parseFlags(flags, args); err != nil {
 		return err
 	}
+	// A build older than the one set up here removes nothing: it knows only
+	// what it set up itself, removes in its own order, and would put its
+	// program over the newer one's copy (decision 091). Before anything is
+	// asked or looked at.
+	if st, err := loadState(a.lay.State); olderThanSetUp(st, err) {
+		return a.olderRefusal("uninstall", args, st, err)
+	}
 	t, closeTerm := openTerm(a.out)
 	defer closeTerm()
 	confirm := func(q string) (bool, error) {
