@@ -122,13 +122,15 @@ func TestIssue291_ALineIsNeverBrokenInsideACharacter(t *testing.T) {
 		"a flag":             "\U0001F1E9\U0001F1EA",
 		"a plain letter":     "x",
 	} {
-		word := strings.Repeat(unit, 150)
+		// One plain letter first: a break counted in runes then falls inside
+		// a character of two runes.
+		word := "y" + strings.Repeat(unit, 150)
 		lines := MenuLines(word)
 		if len(lines) == 0 || len(lines) > MenuLinesMost {
 			t.Fatalf("%s: %d lines", name, len(lines))
 		}
 		for i, l := range lines {
-			body := strings.TrimSuffix(l.Text, cutMark)
+			body := strings.TrimPrefix(strings.TrimSuffix(l.Text, cutMark), "y")
 			if body != strings.Repeat(unit, strings.Count(body, unit)) {
 				t.Errorf("%s: line %d broken inside a character: %q", name, i, l.Text)
 			}

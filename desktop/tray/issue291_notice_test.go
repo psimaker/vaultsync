@@ -125,7 +125,9 @@ func TestIssue291_AStartsNoteIsNotified(t *testing.T) {
 	ui.view(t, "not running", notRunning)
 	ui.send(Event{Kind: EventStart})
 	ui.view(t, "what start said", func(v View) bool { return v.Notice != "" })
-	if got := noted(notes, 5*time.Second); !strings.Contains(got, "Note: VaultSync 9.9.9 is set up on this computer") {
+	// On one line, as every notification: it leaves this app for the
+	// system's notification service.
+	if got := noted(notes, 5*time.Second); got != "✓ VaultSync is running again. Note: VaultSync 9.9.9 is set up on this computer, newer than this one. Run the setup link to get the current VaultSync." {
 		t.Fatalf("notified %q", got)
 	}
 }
