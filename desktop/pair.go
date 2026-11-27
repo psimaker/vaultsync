@@ -38,7 +38,6 @@ const (
 	// code was entered; past four, this side reconnects first.
 	hubSessionDeadline = 4 * time.Minute
 	defaultHubSyncPort = 22000
-	maxHubNameRunes    = 64
 	attemptsKept       = 10
 )
 
@@ -989,10 +988,12 @@ func (s *pairSession) askHubName(def string, hasFiles bool) (string, error) {
 		if a == "" {
 			a = def
 		}
-		name := pairing.SanitizeName(a)
+		// Counted in characters and never cut: the name sent is the one
+		// typed, or the default shown (decision 089).
+		name := pairing.CleanLabel(a)
 		switch {
-		case name == "" || utf8.RuneCountInString(name) > maxHubNameRunes:
-			s.t.say("  Use a name of 1 to %d characters.", maxHubNameRunes)
+		case name == "" || utf8.RuneCountInString(name) > pairing.MaxVaultName:
+			s.t.say("  Use a name of 1 to %d characters.", pairing.MaxVaultName)
 			continue
 		case s.catalogueMatches(name) > 0:
 			if hasFiles {
@@ -1134,7 +1135,7 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 	// pasted zero-width space, a direction mark) would otherwise pass here
 	// as new and join that vault on the Hub (#292).
 	named := func(v pairing.VaultInfo) bool { return matchesSelector(v, s.opts.vault) }
-	if cleaned := pairing.SanitizeName(s.opts.vault); s.opts.create && cleaned != "" {
+	if cleaned := pairing.CleanLabel(s.opts.vault); s.opts.create && cleaned != "" {
 		named = func(v pairing.VaultInfo) bool {
 			return matchesSelector(v, s.opts.vault) || matchesSelector(v, cleaned)
 		}
@@ -1185,9 +1186,11 @@ func (s *pairSession) chooseFromFlags(ctx context.Context) (plan, error) {
 		}
 		return plan{}, refuseNeeding("create", "Your Hub has no vault named %s. Add --create to start it as a new vault.", quoted(s.opts.vault))
 	}
-	name := pairing.SanitizeName(s.opts.vault)
-	if name == "" || utf8.RuneCountInString(name) > maxHubNameRunes {
-		return plan{}, refuse("Use a vault name of 1 to %d characters.", maxHubNameRunes)
+	// Counted in characters and never cut: the Hub is asked for the name
+	// as it was typed, without what hides (decision 089).
+	name := pairing.CleanLabel(s.opts.vault)
+	if name == "" || utf8.RuneCountInString(name) > pairing.MaxVaultName {
+		return plan{}, refuse("Use a vault name of 1 to %d characters.", pairing.MaxVaultName)
 	}
 	enginePaths, err := s.enginePaths(ctx)
 	if err != nil {
@@ -1661,7 +1664,7 @@ func safeVaultName(label string) string {
 	}
 	name := strings.Join(strings.Fields(b.String()), " ")
 	name = strings.TrimLeft(name, ". ")
-	for utf8.RuneCountInString(name) > maxHubNameRunes {
+	for utf8.RuneCountInString(name) > pairing.MaxVaultName {
 		_, size := utf8.DecodeLastRuneInString(name)
 		name = name[:len(name)-size]
 	}
