@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/psimaker/vaultsync/desktop/internal/control"
@@ -107,6 +108,9 @@ type Controller struct {
 	// not ended. A click now would restart a service on its way up.
 	settling    bool
 	startNotice string
+	// agentNotice: the notice a pairing's end or a pause's answer set — the
+	// agent's words, which a look that finds no agent takes back (#291).
+	agentNotice string
 	// owed: vaultsync start has said the service runs, and what came of it
 	// is not settled yet (startVerdict).
 	owed     bool
@@ -184,7 +188,7 @@ func (c *Controller) Run(ctx context.Context) error {
 			c.cl.CloseIdleConnections()
 		}
 	}()
-	pairDone := make(chan string, 1)
+	pairDone := make(chan pairingEnd, 1)
 	openDone := make(chan openOutcome, 8)
 	startDone := make(chan startOutcome, 1)
 	// One ask is out at a time, so one answer fits.
@@ -227,8 +231,12 @@ func (c *Controller) Run(ctx context.Context) error {
 			c.starting = false
 			c.notice, c.startNotice = out.notice, out.notice
 			c.owed = !out.failed
-			if out.failed {
+			// A refusal is notified, and so is a note start adds to a start
+			// that worked (#291): both may need the person to act.
+			if out.failed || hasNote(out.notice) {
 				c.notify(ctx, out.notice)
+			}
+			if out.failed {
 				_, err = c.look(ctx)
 			} else {
 				c.settling = true
@@ -238,9 +246,15 @@ func (c *Controller) Run(ctx context.Context) error {
 		case <-askAgain:
 			askAgain = nil
 			c.waitFrom, err = c.look(ctx)
-		case line := <-pairDone:
+		case end := <-pairDone:
+			// What a pairing says reaches the menu here, on the loop, and
+			// nowhere else: the notice, and its notification where no dialog
+			// showed how the pairing ended (#291).
 			c.pairing = false
-			c.notice = line
+			c.notice, c.agentNotice = end.line, end.line
+			if end.unseen {
+				c.notify(ctx, end.line)
+			}
 			_, err = c.look(ctx)
 		case out := <-openDone:
 			switch {
@@ -337,10 +351,25 @@ func (c *Controller) logf(format string, args ...any) {
 	}
 }
 
+// notify shows text in a notification, on one line, cleaned and bounded
+// (notificationText): it leaves this app for the system's notification
+// service. Called on the loop only.
 func (c *Controller) notify(ctx context.Context, text string) {
 	if c.Notify != nil {
-		c.Notify(ctx, text)
+		c.Notify(ctx, notificationText(text))
 	}
+}
+
+// hasNote reports whether what vaultsync start said holds a line of its own
+// that begins with "Note:" — after a start that worked, what the person has to
+// know besides: that the VaultSync set up here is newer, and what to do.
+func hasNote(said string) bool {
+	for _, l := range strings.Split(said, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(l), "Note:") {
+			return true
+		}
+	}
+	return false
 }
 
 // look asks the agent for its status, off the loop: the answer comes back on
@@ -435,6 +464,11 @@ func (c *Controller) apply(ctx context.Context, st Status, err error) {
 	// back: a failed start's reason would be gone before it was shown.
 	if c.startNotice != "" && c.notice == c.startNotice && answered(err) {
 		c.notice, c.startNotice = "", ""
+	}
+	// A pairing's end and a pause's answer were the agent's words: under
+	// "VaultSync is not running" they would speak for an agent that is gone.
+	if c.agentNotice != "" && c.notice == c.agentNotice && nobodyThere(err) {
+		c.notice, c.agentNotice = "", ""
 	}
 	c.startVerdict(ctx)
 	c.render()
@@ -692,6 +726,7 @@ func (c *Controller) setPaused(ctx context.Context, pause bool) error {
 	default:
 		c.notice = ""
 	}
+	c.agentNotice = c.notice
 	// An ask begun before the request returned may tell the state from
 	// before it: only the ones from here on are shown.
 	c.shownFrom = c.asks + 1
@@ -721,7 +756,7 @@ func (c *Controller) startPairing(ctx context.Context) error {
 // showing the agent's status meanwhile. The agent runs the pairing on its own
 // lifetime, so quitting the menu-bar app mid-way does not abort an accept
 // (decision 049).
-func (c *Controller) beginPairing(ctx context.Context, done chan<- string) {
+func (c *Controller) beginPairing(ctx context.Context, done chan<- pairingEnd) {
 	// Known means the answer just shown reached the agent: c.cl is the
 	// client it went through (no ask has begun since, one at a time; a
 	// pause makes a new client only for a socket agent.json moved, and
@@ -734,7 +769,8 @@ func (c *Controller) beginPairing(ctx context.Context, done chan<- string) {
 	c.notice = ""
 	c.render()
 	go func() {
-		line, err := Pair(ctx, cl, asker)
+		seen := &shownAsker{Asker: asker}
+		line, err := Pair(ctx, cl, seen)
 		if err != nil && !errors.Is(err, context.Canceled) {
 			// The fact for the log; the words — which may name a vault or
 			// a folder — go to the menu's notice and the dialog. A quit is
@@ -742,13 +778,59 @@ func (c *Controller) beginPairing(ctx context.Context, done chan<- string) {
 			c.logf("pairing: ended with an error; the menu says which")
 		}
 		line = pairingOutcome(line, err)
-		// The time limit is the one end no dialog told the person about;
-		// every other failure was shown as it happened.
-		if errors.Is(err, context.DeadlineExceeded) {
-			c.notify(ctx, line)
-		}
-		done <- line
+		// Everything else goes to the loop, which shows it and notifies
+		// it: this goroutine touches nothing of the menu's.
+		done <- pairingEnd{line: line, unseen: line != "" && !seen.shown}
 	}()
+}
+
+// pairingEnd is how a pairing from the menu ended: line for the notice, ""
+// for a cancel or a quit, and unseen when no dialog showed it. The person who
+// clicked Pair a Vault… has seen nothing of that end then: the time limit, a
+// question that could not be shown (no display), a closing message that
+// could not be shown (zenity without a UTF-8 locale) — so it is notified.
+type pairingEnd struct {
+	line   string
+	unseen bool
+}
+
+// shownAsker passes a pairing's dialogs on and notes whether the last word
+// was shown: a message shown since the last question. One pairing's, on its
+// own goroutine, read there once the pairing is over.
+type shownAsker struct {
+	Asker
+	shown bool
+}
+
+func (a *shownAsker) AskCode(ctx context.Context) (string, bool, error) {
+	a.shown = false
+	return a.Asker.AskCode(ctx)
+}
+
+func (a *shownAsker) ChooseHub(ctx context.Context, hubs []HubChoice) (string, bool, error) {
+	a.shown = false
+	return a.Asker.ChooseHub(ctx, hubs)
+}
+
+func (a *shownAsker) AskHub(ctx context.Context, refusal string) (string, bool, error) {
+	a.shown = false
+	return a.Asker.AskHub(ctx, refusal)
+}
+
+func (a *shownAsker) ChooseVault(ctx context.Context, m Menu) (Choice, bool, error) {
+	a.shown = false
+	return a.Asker.ChooseVault(ctx, m)
+}
+
+func (a *shownAsker) Confirm(ctx context.Context, text string) (bool, error) {
+	a.shown = false
+	return a.Asker.Confirm(ctx, text)
+}
+
+func (a *shownAsker) Inform(ctx context.Context, text string) error {
+	err := a.Asker.Inform(ctx, text)
+	a.shown = err == nil
+	return err
 }
 
 // errNoAnswer: the agent took longer than the request's limit — busy, or

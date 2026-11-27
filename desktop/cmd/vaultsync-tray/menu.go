@@ -40,8 +40,10 @@ type menu struct {
 
 	mu       sync.Mutex
 	headline *systray.MenuItem
-	detail   *systray.MenuItem
-	notice   *systray.MenuItem
+	// detail and notice are a few lines each: a menu item is one line, and
+	// a long one is cut in its middle (tray.MenuLines, #291).
+	detail   []item
+	notice   []item
 	hubs     []item
 	noVault  *systray.MenuItem
 	vaults   []item
@@ -80,8 +82,8 @@ func (m *menu) build() {
 	systray.SetTemplateIcon(tray.Icon(tray.GlyphOffline, true), tray.Icon(tray.GlyphOffline, false))
 	systray.SetTooltip("VaultSync")
 	m.headline = disabledItem("VaultSync")
-	m.detail = disabledItem("")
-	m.notice = disabledItem("")
+	m.detail = m.pool(tray.MenuLinesMost, nil)
+	m.notice = m.pool(tray.MenuLinesMost, nil)
 	m.hubs = m.pool(hubSlots, nil)
 	systray.AddSeparator()
 	m.noVault = disabledItem("")
@@ -208,8 +210,8 @@ func (m *menu) Render(v tray.View) {
 		systray.SetTooltip("VaultSync — " + v.Headline)
 		m.headline.SetTitle(v.Headline)
 	}
-	setLine(m.detail, first, tray.Line{Text: last.Detail}, tray.Line{Text: v.Detail})
-	setLine(m.notice, first, tray.Line{Text: last.Notice}, tray.Line{Text: v.Notice})
+	fillText(m.detail, first, last.Detail, v.Detail)
+	fillText(m.notice, first, last.Notice, v.Notice)
 	fillPool(m.hubs, first, last.Hubs, v.Hubs, false)
 	setLine(m.noVault, first, tray.Line{Text: last.NoVaultLine}, tray.Line{Text: v.NoVaultLine})
 	fillPool(m.vaults, first, vaultLines(last.Vaults), vaultLines(v.Vaults), true)
@@ -244,6 +246,13 @@ func setLine(it item, force bool, was, now tray.Line) {
 	it.SetTitle(now.Text)
 	it.SetTooltip(now.Tooltip)
 	it.Show()
+}
+
+// fillText shows a text on the pool's lines as tray.MenuLines breaks it, which
+// never gives more lines than the pool has (tray.MenuLinesMost), and hides the
+// rest.
+func fillText(pool []item, force bool, was, now string) {
+	fillPool(pool, force, tray.MenuLines(was), tray.MenuLines(now), false)
 }
 
 // moreLine stands in the last slot when there are more lines than slots.
