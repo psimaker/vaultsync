@@ -187,7 +187,7 @@ func TestIssue249_NothingToChooseIsSaid(t *testing.T) {
 		if _, ok, err := a(r).ChooseVault(ctx, Menu{}); ok || err != nil || r.calls != 0 {
 			t.Errorf("%s: an empty list: %v %v, %d dialogs", name, ok, err, r.calls)
 		}
-		agent := vaultMenuAgent(t, Menu{Already: []MenuEntry{{Label: "Notes", Note: "~/Vaults/Notes"}}})
+		agent := vaultMenuAgent(t, Menu{Already: []MenuEntry{{Label: "Notes", Vault: "vs-1", Note: "~/Vaults/Notes"}}})
 		r = &recorder{stdouts: []string{"TULIP-ANCHOR-42\n", ""}}
 		if line, err := Pair(ctx, NewClient(agent.socket), a(r)); err != nil || line != everyVaultSyncs || r.calls != 2 {
 			t.Errorf("%s: %q %v, %d dialogs", name, line, err, r.calls)
@@ -328,9 +328,10 @@ func TestIssue249_AFailureSaysItsCausePastTheFirstLine(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "could not connect to display") {
 		t.Fatalf("%v", err)
 	}
-	r = &recorder{status: 3, stderr: "Detected locale \"C\" with character encoding \"ANSI_X3.4-1968\", which is not UTF-8.\nkdialog: the cause\n"}
+	// Qt's real four lines first, 247 characters on one line, then the cause.
+	r = &recorder{status: 3, stderr: qtLocaleLines + "kdialog: the cause\n"}
 	_, _, err = (&kdialogAsker{run: r.run}).AskCode(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "Detected locale") || !strings.Contains(err.Error(), "kdialog: the cause") {
+	if err == nil || !strings.Contains(err.Error(), "kdialog: the cause") {
 		t.Fatalf("%v", err)
 	}
 }

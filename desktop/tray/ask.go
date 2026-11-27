@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -67,14 +68,24 @@ func menuPrompt(m Menu) string {
 // to choose (#381): line for the menu's notice and text for the message, which
 // adds what the agent listed. The line stays in the notice when the message
 // cannot be shown (#291). ok is false when there is something to choose.
-// Every vault from the Hub that is not set up here is in m.Hub, so with none
-// there and none under Already, the Hub has none.
+// Every vault from the Hub that is not set up here is in m.Hub, and every one
+// that is, under Already: with ID where it came from the Hub's list, without
+// where Obsidian's list named it first. With none under Already, the Hub has
+// none.
 func nothingToChoose(m Menu) (line, text string, ok bool) {
 	if len(m.Local)+len(m.Hub) > 0 {
 		return "", "", false
 	}
-	line = "Every vault on your Hub already syncs here."
-	if len(m.Already) == 0 {
+	switch {
+	case slices.ContainsFunc(m.Already, func(e MenuEntry) bool { return e.Vault != "" }):
+		// A vault of the Hub's, by its ID, syncs here, and m.Hub is empty.
+		line = "Every vault on your Hub already syncs here."
+	case len(m.Already) > 0:
+		// Vaults from Obsidian's list that sync, which come without the
+		// Hub's ID — also this Hub's own, and those of another Hub. Whether
+		// this Hub has a vault cannot be told from them.
+		line = "No vault to choose: the vaults found here already sync, and your Hub offers no other; run vaultsync pair in a terminal to start one from another folder."
+	default:
 		line = "Your Hub has no vault yet, and VaultSync found none on this computer to start one from; run vaultsync pair in a terminal to choose another folder."
 	}
 	return line, line + menuLists(m), true
@@ -382,31 +393,55 @@ const failureWords = 200
 // repeats in a warning of its own cannot pass for it.
 var noDisplayLine = regexp.MustCompile(`(?m)^(?:\(\S+:\d+\): Gtk-WARNING \*\*: (?:[\d:.]+: )?|qt\.qpa\.xcb: )((?:cannot open|Failed to open|could not connect to) display)([^\n]*)`)
 
-// noDisplay returns that line's words, from the toolkit's own phrase on,
-// without what hides; the display's name only when the whole fits in
+// noDisplay returns that line's words, from the toolkit's own phrase on, as
+// oneLine makes them; the display's name only when the whole fits in
 // failureWords, so a cut never falls inside the line.
 func noDisplay(stderr string) (string, bool) {
 	m := noDisplayLine.FindStringSubmatch(stderr)
 	if m == nil {
 		return "", false
 	}
-	words := strings.TrimRight(withoutHides(m[1]+m[2]), " :")
+	words := strings.TrimRight(oneLine(m[1]+m[2]), " :")
 	if utf8.RuneCountInString(words) > failureWords {
 		words = m[1]
 	}
 	return words, true
 }
 
-// said is what a program wrote, on one line: each line without what hides,
-// the empty ones left out, at most failureWords characters.
-func said(stderr string) string {
-	var lines []string
-	for _, l := range strings.Split(stderr, "\n") {
-		if l = strings.TrimSpace(withoutHides(l)); l != "" {
-			lines = append(lines, l)
+// qtLocaleWarning is what Qt 6 writes first in a locale that is not UTF-8,
+// four lines and 247 characters, also ahead of a run that works: "Detected
+// locale … which is not UTF-8." through "for more information.", with "has
+// switched to" or "has failed to switch to" in between. It names no cause, and
+// a cut at failureWords would leave nothing else.
+var qtLocaleWarning = regexp.MustCompile(`(?m)^Detected locale "[^"\n]*" with character encoding "[^"\n]*", which is not UTF-8\.\n(?:[^\n]*\n){0,2}for more information\.$`)
+
+// escapeSequence is a terminal's escape sequence: a CSI one (colours, the
+// cursor), an OSC one (a window's title) and the short ones. Taken out whole:
+// hides takes only its first character, and the rest would be read.
+var escapeSequence = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[ -/]*[0-~]|\x{9b}[0-?]*[ -/]*[@-~]`)
+
+// breaksLine reports white space that ends a line or jumps within one: a tab,
+// a line feed, a carriage return, NEL and the line and paragraph separators —
+// the white space hides takes out.
+func breaksLine(r rune) bool { return unicode.IsSpace(r) && hides(r) }
+
+// oneLine is text from outside on one line, as a Hub's error text is made
+// (decision 062): escape sequences out, white space that breaks a line one
+// space, so that two lines stay two words, and then what hides out.
+func oneLine(s string) string {
+	var kept []string
+	for _, piece := range strings.FieldsFunc(escapeSequence.ReplaceAllString(s, ""), breaksLine) {
+		if piece = strings.TrimSpace(withoutHides(piece)); piece != "" {
+			kept = append(kept, piece)
 		}
 	}
-	s := strings.Join(lines, " ")
+	return strings.Join(kept, " ")
+}
+
+// said is what a program wrote, on one line, without Qt's warning about the
+// locale, at most failureWords characters.
+func said(stderr string) string {
+	s := oneLine(qtLocaleWarning.ReplaceAllString(stderr, ""))
 	if r := []rune(s); len(r) > failureWords {
 		s = strings.TrimRight(string(r[:failureWords-1]), " ") + "…"
 	}
@@ -649,7 +684,12 @@ func (a *kdialogAsker) kdialog(ctx context.Context, what string, args ...string)
 	case 0:
 		return strings.TrimRight(stdout, "\n"), true, nil
 	case 1, 2:
-		return "", false, nil
+		// As for zenity: a cancel only without the toolkit's line that it
+		// found no display. Every kdialog measured aborts without one; a
+		// build that exits with 1 or 2 instead is not read as a cancel.
+		if _, gone := noDisplay(stderr); !gone {
+			return "", false, nil
+		}
 	}
 	// Without a display kdialog aborts, and Qt's line about it may be the
 	// fifth: programFailed finds it.

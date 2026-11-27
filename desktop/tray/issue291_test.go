@@ -220,14 +220,15 @@ func vaultMenuAgent(t *testing.T, menu Menu) *fakeAgent {
 
 const everyVaultSyncs = "Every vault on your Hub already syncs here."
 
-// #291 and #381: with nothing to choose, the pairing ends on the menu's own
+// #381 (and #291): with nothing to choose, the pairing ends on the menu's own
 // words, in the notice as in the message: "Every vault on your Hub already
-// syncs here." where the Hub's vaults all sync, not "Nothing to choose:
-// Choose a vault to sync." A message zenity cannot show — a name outside
-// ASCII in a session without a UTF-8 locale — leaves the notice as it is.
-func TestIssue291_NothingToChooseIsSaidInTheMenusOwnWords(t *testing.T) {
+// syncs here." where the agent's answer names a vault of the Hub that syncs
+// here, not "Nothing to choose: Choose a vault to sync." A message zenity
+// cannot show — a name outside ASCII in a session without a UTF-8 locale —
+// leaves the notice as it is (#291).
+func TestIssue381_NothingToChooseIsSaidInTheMenusOwnWords(t *testing.T) {
 	menu := Menu{
-		Already:     []MenuEntry{{Label: "Café", Note: "~/Vaults/Café"}},
+		Already:     []MenuEntry{{Label: "Café", Vault: "vs-cafe", Note: "~/Vaults/Café"}, {Label: "Work", Path: "/home/me/Vaults/Work", Note: "~/Vaults/Work"}},
 		Unavailable: []MenuEntry{{Label: "Cloudy", Note: "~/iCloud/Cloudy — iCloud Drive"}},
 	}
 	for name, c := range map[string]struct {
@@ -260,14 +261,35 @@ func TestIssue291_NothingToChooseIsSaidInTheMenusOwnWords(t *testing.T) {
 	}
 }
 
+const hubHasNone = "Your Hub has no vault yet, and VaultSync found none on this computer to start one from; run vaultsync pair in a terminal to choose another folder."
+
 // A Hub with no vault yet, and none found on this computer: the notice says
-// that, and where a vault can come from.
-func TestIssue291_NothingOnEitherSideIsSaid(t *testing.T) {
+// that, and where a vault can come from. Every vault of the Hub that is set up
+// here is listed under Already, so with none there the Hub has none.
+func TestIssue381_NothingOnEitherSideIsSaid(t *testing.T) {
 	agent := vaultMenuAgent(t, Menu{})
 	r := &recorder{stdouts: []string{"TULIP-ANCHOR-42\n", ""}}
 	line, err := Pair(context.Background(), NewClient(agent.socket), &zenityAsker{run: r.run})
-	if err != nil || line == "" || line == everyVaultSyncs || strings.Contains(line, "Nothing to choose") || !strings.Contains(line, "vaultsync pair") {
+	if err != nil || line != hubHasNone {
 		t.Fatalf("%q %v", line, err)
+	}
+}
+
+// The agent lists under Already every vault in Obsidian's list that already
+// syncs, whichever Hub it came from, without a vault of the Hub's ID: a vault
+// synced with another Hub, or one this Hub no longer has. From such entries
+// alone the menu cannot tell whether this Hub has a vault at all, so it makes
+// no claim about the Hub's vaults, and keeps the one way on: a vault from
+// another folder, in a terminal.
+func TestIssue381_VaultsFoundHereSayNothingAboutTheHubsVaults(t *testing.T) {
+	agent := vaultMenuAgent(t, Menu{Already: []MenuEntry{{Label: "Work", Path: "/home/me/Vaults/Work", Note: "~/Vaults/Work"}}})
+	r := &recorder{stdouts: []string{"TULIP-ANCHOR-42\n", ""}}
+	line, err := Pair(context.Background(), NewClient(agent.socket), &zenityAsker{run: r.run})
+	if err != nil || line != "No vault to choose: the vaults found here already sync, and your Hub offers no other; run vaultsync pair in a terminal to start one from another folder." {
+		t.Fatalf("%q %v", line, err)
+	}
+	if msg := strings.Join(r.args, " "); !strings.Contains(msg, wrapLines(line, lineWidth)) || !strings.Contains(msg, "Already syncing: Work (~/Vaults/Work)") {
+		t.Fatalf("the message: %q", r.args)
 	}
 }
 
@@ -288,10 +310,53 @@ func TestIssue291_TheDisplayLineIsCleanedAndNeverCut(t *testing.T) {
 	if err == nil || err.Error() != "the code dialog could not be shown: zenity found no display to open it on (cannot open display); run vaultsync pair in a terminal" {
 		t.Fatalf("%q", err)
 	}
-	// Any other failure is cleaned the same way.
-	r = &recorder{status: 255, stderr: "bad\x07 option\u2028\x1b[31m\n\n\tsee --help\n"}
+	// Any other failure is cleaned the same way: white space that breaks a
+	// line (a tab, a line or paragraph separator) is one space, as in a Hub's
+	// error text (decision 062), so two words stay two; a terminal's escape
+	// sequence goes whole, not only its first character.
+	r = &recorder{status: 255, stderr: "error:\tbad\x07 option\u2028see\x1b[1;31m --help\u2029done\x1b]0;title\x07!\n\x1b[0m\n"}
 	_, _, err = (&zenityAsker{run: r.run}).AskCode(ctx)
-	if err == nil || strings.ContainsFunc(err.Error(), hides) || !strings.Contains(err.Error(), "bad option[31m see --help") {
+	if err == nil || err.Error() != "the code dialog could not be shown: zenity exited with status 255: error: bad option see --help done!" {
+		t.Fatalf("%q", err)
+	}
+}
+
+// kdialog follows the rule zenity does: a status that is a cancel is one only
+// without the toolkit's own line that it found no display. kdialog aborts
+// without one on every version measured; a build that exits with 1 or 2
+// instead would otherwise do nothing and say nothing again.
+func TestIssue291_KdialogFollowsTheSameRule(t *testing.T) {
+	ctx := context.Background()
+	for _, status := range []int{1, 2} {
+		r := &recorder{status: status, stderr: kdialogNoDisplay["kdialog 22.12.3, Qt 5.15"]}
+		if _, ok, err := (&kdialogAsker{run: r.run}).AskCode(ctx); ok || err == nil || !strings.Contains(err.Error(), "kdialog found no display") {
+			t.Errorf("status %d with the display line: %v %v", status, ok, err)
+		}
+		r = &recorder{status: status, stderr: qtLocaleLines}
+		if _, ok, err := (&kdialogAsker{run: r.run}).AskCode(ctx); ok || err != nil {
+			t.Errorf("status %d, a cancel: %v %v", status, ok, err)
+		}
+	}
+}
+
+// Qt's four lines about a locale that is not UTF-8, as Qt 6 writes them
+// before anything else.
+const qtLocaleLines = "Detected locale \"C\" with character encoding \"ANSI_X3.4-1968\", which is not UTF-8.\nQt depends on a UTF-8 locale, and has switched to \"C.UTF-8\" instead.\nIf this causes problems, reconfigure your locale. See the locale(1) manual\nfor more information.\n"
+
+// In a locale that is not UTF-8 Qt's warning about it comes first, 247
+// characters on one line: cut at 200 it would be all a failure said. It is
+// left out, and the cause after it is said — here a plugin Qt 6.5 and newer
+// needs for X11, a failure with a display.
+func TestIssue291_QtsLocaleWarningDoesNotTakeTheCausesPlace(t *testing.T) {
+	stderr := qtLocaleLines + "qt.qpa.plugin: From 6.5.0, xcb-cursor0 or libxcb-cursor0 is needed to load the Qt xcb platform plugin.\nqt.qpa.plugin: Could not load the Qt platform plugin \"xcb\" in \"\" even though it was found.\nThis application failed to start because no Qt platform plugin could be initialized. Reinstalling the application may fix this problem.\n"
+	r := &recorder{status: -1, stderr: stderr}
+	_, _, err := (&kdialogAsker{run: r.run}).AskCode(context.Background())
+	if err == nil || !strings.HasPrefix(err.Error(), "the code dialog could not be shown: kdialog exited with status -1: qt.qpa.plugin: From 6.5.0, xcb-cursor0 or libxcb-cursor0 is needed") || strings.Contains(err.Error(), "locale") {
+		t.Fatalf("%q", err)
+	}
+	// Qt's other wording, where it could not switch to a UTF-8 locale.
+	r = &recorder{status: -1, stderr: strings.Replace(qtLocaleLines, "and has switched to \"C.UTF-8\" instead.", "but has failed to switch to one.", 1) + "kdialog: the cause\n"}
+	if _, _, err := (&kdialogAsker{run: r.run}).AskCode(context.Background()); err == nil || err.Error() != "the code dialog could not be shown: kdialog exited with status -1: kdialog: the cause" {
 		t.Fatalf("%q", err)
 	}
 }
@@ -314,11 +379,11 @@ func TestIssue291_OnlyTheToolkitsOwnLineCounts(t *testing.T) {
 // Vaults found here that cannot sync do not make the Hub's empty list read as
 // "every vault syncs": the message lists them under the line that says why
 // there is nothing to choose.
-func TestIssue291_NothingToChooseWithOnlyVaultsThatCannotSync(t *testing.T) {
+func TestIssue381_NothingToChooseWithOnlyVaultsThatCannotSync(t *testing.T) {
 	agent := vaultMenuAgent(t, Menu{Unavailable: []MenuEntry{{Label: "Cloudy", Note: "~/iCloud/Cloudy — iCloud Drive"}}, Note: "Obsidian’s list of vaults could not be read; vaults it lists may be missing here."})
 	r := &recorder{stdouts: []string{"TULIP-ANCHOR-42\n", ""}}
 	line, err := Pair(context.Background(), NewClient(agent.socket), &kdialogAsker{run: r.run})
-	if err != nil || line != "Your Hub has no vault yet, and VaultSync found none on this computer to start one from; run vaultsync pair in a terminal to choose another folder." {
+	if err != nil || line != hubHasNone {
 		t.Fatalf("%q %v", line, err)
 	}
 	if msg := r.args[len(r.args)-1]; !strings.Contains(msg, "Unavailable: Cloudy") || !strings.Contains(msg, "could not be read") || !strings.HasPrefix(msg, `<qt><p align="left" style="white-space:pre-wrap">Your Hub has no vault yet`) {
