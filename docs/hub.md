@@ -150,8 +150,10 @@ allow it once under System Settings → Privacy & Security.
    never over a newer one a newer VaultSync installed: an older
    `vaultsync` (an old download, an older VaultSync for Mac) stops and
    says to run the setup link. A background service whose newer Syncthing
-   cannot be downloaded keeps running the one it has, and `vaultsync
-   status` says which runs,
+   cannot be downloaded keeps running the one it has, where that is the
+   one VaultSync installed and recorded, unchanged, not older than
+   Syncthing 2.1.6, with its configuration; `vaultsync status` says which
+   is installed,
 2. installs a background service — a LaunchAgent on macOS, a systemd user
    service on Linux; no administrator rights — which runs that Syncthing with
    its own settings, next to (and never touching) a Syncthing you may run

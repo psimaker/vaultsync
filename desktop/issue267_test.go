@@ -420,6 +420,19 @@ func TestIssue267_ASlowDownloadThatGoesOnInstallsThePin(t *testing.T) {
 	t.Cleanup(func() { syncthingPins[key] = pin })
 	chunk := max(1, len(data)/12)
 	pinServedBy(t, slowly(data, chunk, 100*time.Millisecond))
+	// A total timeout shorter than the whole slow download, as the
+	// client's ten minutes are on a slow link: it must not cut it.
+	served := newInstaller
+	newInstaller = func(binDir, goos, goarch string) (installer, error) {
+		in, err := served(binDir, goos, goarch)
+		if err == nil {
+			c := *in.client
+			c.Timeout = 400 * time.Millisecond
+			in.client = &c
+		}
+		return in, err
+	}
+	t.Cleanup(func() { newInstaller = served })
 	logged, stop := keptRun(t, a)
 	if err := stop(); err != nil {
 		t.Fatalf("the run ended with %v", err)
@@ -507,5 +520,21 @@ func TestIssue267_AKeptEngineBesideTheAppLeavesTheCopyAndTheFormat(t *testing.T)
 	}
 	if _, err := os.Lstat(a.lay.Agent); (err == nil) != (copyErr == nil) {
 		t.Fatalf("a kept engine beside the app put a copy in place or took it: before %v, after %v", copyErr, err)
+	}
+}
+
+// Where the agent that answers runs another Syncthing than the one
+// installed — a service not started again since setup installed its pin —
+// status says which runs, by the agent's own word (#267).
+func TestIssue267_StatusSaysWhichEngineRunsWhereTheAgentRunsAnother(t *testing.T) {
+	agent := newFakeAgent(t)
+	agent.status = controlStatus{Version: "9.9.9", Syncthing: "2.1.6", Engine: "running", Report: statusReport{Text: "\nVaults\n"}}
+	a := terminalApp(t, agent.path)
+	if err := a.status(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	out := a.out.(*bytes.Buffer).String()
+	if !strings.Contains(out, "Sync engine: running Syncthing 2.1.6 — the installed Syncthing "+strings.TrimPrefix(syncthingVersion, "v")+" runs from the service's next start") {
+		t.Fatalf("status where the agent runs another engine:\n%s", out)
 	}
 }

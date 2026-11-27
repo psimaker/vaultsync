@@ -1551,6 +1551,14 @@ func (a *app) installPin(ctx context.Context, stallAfter time.Duration) (install
 		return installedEngine{}, err
 	}
 	in.stallAfter = stallAfter
+	if stallAfter > 0 {
+		// The watchdog ends a download that makes no progress; the client's
+		// total timeout would also cut a slow one that goes on, at every
+		// start (#267). Its redirect checks stay.
+		c := *in.client
+		c.Timeout = 0
+		in.client = &c
+	}
 	return in.install(ctx, nil)
 }
 

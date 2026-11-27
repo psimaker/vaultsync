@@ -101,8 +101,10 @@ func (a *app) status(ctx context.Context) error {
 	// program and config there, is what a run keeps where this build's pin
 	// could not be installed, and what runs until the next start does
 	// (#267, decision 078).
+	installed := strings.TrimPrefix(syncthingVersion, "v")
 	if recErr == nil && a.engineToKeep(rec) {
-		fmt.Fprintf(w, "VaultSync %s — sync engine Syncthing %s\n", version, strings.TrimPrefix(rec.Syncthing.Version, "v"))
+		installed = strings.TrimPrefix(rec.Syncthing.Version, "v")
+		fmt.Fprintf(w, "VaultSync %s — sync engine Syncthing %s\n", version, installed)
 		// What installs the pin depends on what the service runs: this
 		// build tries it at its next start; anything else needs setup with
 		// this one.
@@ -199,7 +201,14 @@ func (a *app) status(ctx context.Context) error {
 		_, err := io.WriteString(w, cs.Text)
 		return err
 	case aerr == nil:
-		fmt.Fprintln(w, "Sync engine: running")
+		if cs.Syncthing != "" && cs.Syncthing != installed {
+			// The agent runs another Syncthing than the one installed — a
+			// service not started again since setup installed its pin
+			// (#267): what runs is said by the agent that runs it.
+			fmt.Fprintf(w, "Sync engine: running Syncthing %s — the installed Syncthing %s runs from the service's next start\n", cs.Syncthing, installed)
+		} else {
+			fmt.Fprintln(w, "Sync engine: running")
+		}
 		_, err := io.WriteString(w, cs.Text)
 		return err
 	case !errors.Is(aerr, errNoAgent):
