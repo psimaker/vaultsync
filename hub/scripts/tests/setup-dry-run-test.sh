@@ -1735,21 +1735,58 @@ fi
 rm -rf "$installed"
 pass "a move into place that worked finishes the update, also when the inode at the place cannot be read"
 
-# Right after a move into place that worked, another hand puts a folder at
-# the place that holds a VaultSync for Mac.app of its own: that app is not
-# this run's (another inode), so it is never moved into the unpack folder,
-# which the exit removes.
+# Something of the app's name inside what stands at the place says the move
+# went inside something another hand put there; VaultSync for Mac holds no
+# such entry. The update stops, and the app set aside stays where it is,
+# named. Taken back out is only an app with this run's inode, so one that is
+# not this run's is never moved into the unpack folder, which the exit
+# removes. Here another hand, right after the move, puts a folder at the
+# place that holds a VaultSync for Mac.app of its own.
 rm -rf "$SANDBOX/swapped-away"
 make_app "$APPS" eu.vaultsync.desktop installed-268-swap 0.10.0
 release_with offered-268-swap "" 0.10.0
-(SWAP_AFTER_PLACE="$SANDBOX/swapped-away" mac_setup) >"$SANDBOX/results/run.log" 2>&1 || true
+if (SWAP_AFTER_PLACE="$SANDBOX/swapped-away" mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+	fail "an update with something of the app's name at the place must stop"
+fi
 [ "$(cat "$installed/VaultSync for Mac.app/marker" 2>/dev/null)" = "another hand" ] || fail "an app nested at the place that is not this run's was moved or removed:
 $(find "$APPS" 2>&1 | head -20)
 $(cat "$SANDBOX/results/run.log")"
 grep -q "build: vaultsync offered-268-swap\$" "$SANDBOX/swapped-away/Contents/MacOS/vaultsync" || fail "this run's app moved away by the other hand was changed"
+kept=$(find "$APPS" -maxdepth 1 -name '.VaultSync for Mac.app.replaced.*')
+{ [ -n "$kept" ] && grep -q "build: vaultsync installed-268-swap\$" "$kept/VaultSync for Mac.app/Contents/MacOS/vaultsync"; } ||
+	fail "the app installed before is not kept where it was set aside:
+$(find "$APPS" 2>&1 | head -20)"
+grep -qF "The VaultSync for Mac installed before is at $kept/VaultSync for Mac.app" "$SANDBOX/results/run.log" || fail "the setup does not say where the app installed before is:
+$(cat "$SANDBOX/results/run.log")"
+grep -qF "is not known to be the VaultSync for Mac this setup was installing — it was left as it is" "$SANDBOX/results/run.log" || fail "the setup does not say why it left what is nested:
+$(cat "$SANDBOX/results/run.log")"
 [ -z "$(find "$APPS" -maxdepth 1 -name '.VaultSync for Mac.app.new.*')" ] || fail "the unpack folder was left: $(ls -A "$APPS")"
-rm -rf "$installed" "$SANDBOX/swapped-away" "$APPS"/.VaultSync\ for\ Mac.app.replaced.*
-pass "an app nested at the place that is not this run's is never taken into the unpack folder"
+rm -rf "$installed" "$SANDBOX/swapped-away" "$kept"
+pass "an app nested at the place that is not this run's is never taken into the unpack folder, and the update stops"
+
+# The move went inside a folder another hand put at the place, and the inode
+# of what is nested there cannot be read: not known to be this run's, it is
+# left as it is, the update stops, and the app installed before stays in the
+# set-aside folder — nothing is removed.
+make_app "$APPS" eu.vaultsync.desktop installed-268-nested-unread 0.10.0
+release_with offered-268-nested-unread "" 0.10.0
+if (APPEAR_AT_APP=1 FAIL_LS_INODE_PLACE=1 mac_setup) >"$SANDBOX/results/run.log" 2>&1; then
+	fail "an update whose move went inside something at the place must stop"
+fi
+[ "$(cat "$installed/marker" 2>/dev/null)" = "someone else" ] || fail "what another hand put at the place was changed:
+$(find "$APPS" 2>&1 | head -20)"
+grep -q "build: vaultsync offered-268-nested-unread\$" "$installed/VaultSync for Mac.app/Contents/MacOS/vaultsync" 2>/dev/null || fail "what is nested at the place was moved or removed:
+$(find "$APPS" 2>&1 | head -20)
+$(cat "$SANDBOX/results/run.log")"
+kept=$(find "$APPS" -maxdepth 1 -name '.VaultSync for Mac.app.replaced.*')
+{ [ -n "$kept" ] && grep -q "build: vaultsync installed-268-nested-unread\$" "$kept/VaultSync for Mac.app/Contents/MacOS/vaultsync"; } ||
+	fail "the app installed before is not kept where it was set aside:
+$(find "$APPS" 2>&1 | head -20)
+$(cat "$SANDBOX/results/run.log")"
+grep -qF "The VaultSync for Mac installed before is at $kept/VaultSync for Mac.app" "$SANDBOX/results/run.log" || fail "the setup does not say where the app installed before is:
+$(cat "$SANDBOX/results/run.log")"
+rm -rf "$installed" "$kept"
+pass "a move that went inside something at the place, with an unreadable inode there, stops and removes nothing"
 
 # The set-aside rename fails, or Ctrl-C comes before it happened: what
 # stands at the place is the app installed before, as it was — the setup

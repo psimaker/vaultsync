@@ -897,18 +897,24 @@ install_app() {
 		fi
 		fail "Could not install VaultSync for Mac into $2 — nothing was installed."
 	fi
-	nested=$(inode_of "$APP/$APP_NAME") || nested=""
-	if [ -n "$nested" ] && [ "$nested" = "$NEW_INODE" ]; then
-		# Something took the app's place after the checks above — another
-		# setup at the same time, say — and mv put this app inside it: this
-		# run's inode is there. Taken back out (only this run's: it then goes
-		# with the unpack folder); what stands there is not this run's, so
-		# nothing removes it, and the app set aside stays where it is.
-		# Otherwise the move put this app at the place, as it reported, and
-		# the update goes on — also when the look at the place cannot tell:
-		# an app there not known to be this run's is only never removed.
-		mv "$APP/$APP_NAME" "$new" 2>/dev/null ||
-			warn "The new VaultSync for Mac could not be taken back out of $APP — it is at $APP/$APP_NAME."
+	if [ -e "$APP/$APP_NAME" ] || [ -L "$APP/$APP_NAME" ]; then
+		# VaultSync for Mac holds no entry of its own name at its top, so
+		# one there says the move went inside something that took the
+		# app's place after the checks above — another setup at the same
+		# time, say. The update stops, and the app set aside stays where
+		# it is. Taken back out only when it carries this run's inode (it
+		# then goes with the unpack folder); one that cannot be told to be
+		# this run's is left as it is. Nothing at that name: the move put
+		# this app at the place, as it reported, and the update goes on —
+		# also when the look at the place cannot tell whose the app there
+		# is: one not known to be this run's is only never removed.
+		nested=$(inode_of "$APP/$APP_NAME") || nested=""
+		if [ -n "$nested" ] && [ "$nested" = "$NEW_INODE" ]; then
+			mv "$APP/$APP_NAME" "$new" 2>/dev/null ||
+				warn "The new VaultSync for Mac could not be taken back out of $APP — it is at $APP/$APP_NAME."
+		else
+			warn "What is at $APP/$APP_NAME is not known to be the VaultSync for Mac this setup was installing — it was left as it is."
+		fi
 		STAGE=""
 		if [ -n "$REPLACED" ] && { [ -e "$REPLACED" ] || [ -L "$REPLACED" ]; }; then
 			warn "The VaultSync for Mac installed before is at $REPLACED."
