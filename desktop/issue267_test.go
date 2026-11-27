@@ -296,3 +296,24 @@ func TestIssue267_SetupFromTheAppNamesTheAppToRunAgain(t *testing.T) {
 		t.Fatalf("setup's refusal from the app: %v", err)
 	}
 }
+
+// The program is hashed again after the failed attempt: one changed while
+// the run waited for its pin is no longer the engine its record names, and
+// is not kept (#267).
+func TestIssue267_AProgramChangedDuringTheAttemptIsNotKept(t *testing.T) {
+	inATerminal(t)
+	a, _ := runFixture(t)
+	olderEngineHere(t, a, "v2.1.6")
+	pinServedBy(t, func(w http.ResponseWriter, r *http.Request) {
+		writeFile(t, a.lay.Syncthing, "changed while the run waited")
+		http.NotFound(w, r)
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := a.run(ctx, nil); err == nil {
+		t.Fatal("the run kept a program changed during the attempt")
+	}
+	if st, err := loadState(a.lay.State); err != nil || st.ControlSocket != "" {
+		t.Fatalf("the run served: %+v %v", st, err)
+	}
+}
