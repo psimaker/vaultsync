@@ -1246,7 +1246,7 @@ final class SyncthingManager {
     /// removal may still land, and the vault is already recorded as removed.
     static func removalNotConfirmedNote(forAnswer answer: String) -> String? {
         guard answer == SyncBridgeService.folderRemovalNotConfirmedError else { return nil }
-        return L10n.tr("VaultSync has asked the sync engine to stop syncing this vault on this iPhone, and the engine has not confirmed it yet. If the vault is still listed in a minute, remove it again. If its share is offered again, it waits under Pending Shares until you accept it.")
+        return L10n.tr("VaultSync has asked the sync engine to stop syncing this vault on this iPhone, and the engine has not confirmed it yet. If the vault is still listed in a minute, remove it again. If its share is offered again, VaultSync does not accept it by itself.")
     }
 
     /// The bridge's removal, or what a test put in its place (#343).

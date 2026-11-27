@@ -1049,4 +1049,4 @@
 "App Folder" = "App 文件夹";
 
 /* Remove Vault: the engine has not confirmed the removal yet (#343) */
-"VaultSync has asked the sync engine to stop syncing this vault on this iPhone, and the engine has not confirmed it yet. If the vault is still listed in a minute, remove it again. If its share is offered again, it waits under Pending Shares until you accept it." = "VaultSync 已请求同步引擎停止在此 iPhone 上同步此 Vault，但引擎尚未确认。如果一分钟后该 Vault 仍在列表中，请再次移除它。如果它的共享再次出现，它会留在“待处理共享”中，直到你接受它。";
+"VaultSync has asked the sync engine to stop syncing this vault on this iPhone, and the engine has not confirmed it yet. If the vault is still listed in a minute, remove it again. If its share is offered again, VaultSync does not accept it by itself." = "VaultSync 已请求同步引擎停止在此 iPhone 上同步此 Vault，但引擎尚未确认。如果一分钟后该 Vault 仍在列表中，请再次移除它。如果它的共享再次出现，VaultSync 不会自动接受它。";
