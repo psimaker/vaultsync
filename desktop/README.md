@@ -76,8 +76,10 @@ What a person meets of this agent goes into [CHANGELOG.md](CHANGELOG.md), one
 **1) Obsidian device** changes, with the note that it is live once merged: the
 setup link serves `main`. The repository's root changelog is
 the iOS app's, the helper's and that of the setup link's **2) Hub**, and
-[hub/CHANGELOG.md](../hub/CHANGELOG.md) that of the Hub's releases; a change
-that spans every component goes into the root changelog, with one line here.
+[hub/CHANGELOG.md](../hub/CHANGELOG.md) that of the Hub's releases. A change
+that spans every component goes into the root changelog, with one line here
+and one in the Hub's when a Hub release ships it too, as a fix in
+`hub/pairing` or a new Go runtime does.
 
 Tag `desktop-vX.Y.Z` on `main`. `desktop-release.yml` publishes a GitHub
 release (not marked Latest — that stays the iOS app's release) with
