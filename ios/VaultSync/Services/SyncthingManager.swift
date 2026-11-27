@@ -457,35 +457,97 @@ final class SyncthingManager {
         pendingFolders.filter { ignoredPendingFolderIDs.contains($0.id) }
     }
 
-    /// Pending shares in the order the lists show them (#342): by the name a
-    /// row shows — the label, or the folder ID without one (`PendingSharesView`)
-    /// — compared the way Finder sorts names in the user's language, then by
-    /// folder ID, which is unique, so no two shares tie. Every poll then puts
-    /// the same shares in the same places: in the order they came, rows
-    /// swapped under a tap meant for another share, and each new order counted
-    /// as a change of `pendingFolders` and ran the automatic accept pass
-    /// again. The bridge answers sorted by ID; only here is the user's
-    /// language known. The comparison is the one `localizedStandardCompare`
-    /// makes, with the locale passed in so that tests can pin it: where a
-    /// letter with an accent goes depends on the language (Swedish puts Ä
-    /// after Z).
+    /// The order every list of shares, vaults and devices is shown in (#342,
+    /// #345): by the name a row shows, compared the way Finder sorts names in
+    /// the user's language, then by the row's ID, which is unique, so no two
+    /// rows tie. A row without a name (`name` returns nil) comes after every
+    /// row with one, by its ID: its row shows no name it could sort by.
+    /// Every poll then puts the same rows in the same places: in the order
+    /// the engine handed them out, rows swapped places between two polls,
+    /// under a tap meant for another row. The bridge answers sorted by ID;
+    /// only here is the user's language known. The comparison is the one
+    /// `localizedStandardCompare` makes, with the locale passed in so that
+    /// tests can pin it: where a letter with an accent goes depends on the
+    /// language (Swedish puts Ä after Z).
+    nonisolated static func inDisplayOrder<Row>(
+        _ rows: [Row],
+        name: (Row) -> String?,
+        id: (Row) -> String,
+        locale: Locale = .current
+    ) -> [Row] {
+        rows.sorted { lhs, rhs in
+            switch (name(lhs), name(rhs)) {
+            case (nil, nil):
+                return id(lhs) < id(rhs)
+            case (nil, _?):
+                return false
+            case (_?, nil):
+                return true
+            case let (lhsName?, rhsName?):
+                switch lhsName.compare(
+                    rhsName,
+                    options: [.caseInsensitive, .numeric, .widthInsensitive, .forcedOrdering],
+                    locale: locale
+                ) {
+                case .orderedAscending: return true
+                case .orderedDescending: return false
+                case .orderedSame: return id(lhs) < id(rhs)
+                }
+            }
+        }
+    }
+
+    /// Pending shares in the order the lists show them (#342): by the label,
+    /// or the folder ID without one, which is what the row shows
+    /// (`PendingSharesView`). In the order they came, each new order also
+    /// counted as a change of `pendingFolders` and ran the automatic accept
+    /// pass again.
     nonisolated static func pendingFoldersInDisplayOrder(
         _ folders: [PendingFolderInfo],
         locale: Locale = .current
     ) -> [PendingFolderInfo] {
-        folders.sorted { lhs, rhs in
-            let lhsName = lhs.label.isEmpty ? lhs.id : lhs.label
-            let rhsName = rhs.label.isEmpty ? rhs.id : rhs.label
-            switch lhsName.compare(
-                rhsName,
-                options: [.caseInsensitive, .numeric, .widthInsensitive, .forcedOrdering],
-                locale: locale
-            ) {
-            case .orderedAscending: return true
-            case .orderedDescending: return false
-            case .orderedSame: return lhs.id < rhs.id
+        inDisplayOrder(folders, name: { $0.label.isEmpty ? $0.id : $0.label }, id: \.id, locale: locale)
+    }
+
+    /// A name as the lists sort by it (#345): nil when it shows nothing —
+    /// empty, only spaces, or only characters that draw nothing, such as a
+    /// zero-width space. Sorted as it is, such a name would come before every
+    /// letter, a blank row at the top. A device with it goes with the
+    /// unnamed ones, a vault by its folder ID.
+    nonisolated static func sortableName(_ name: String) -> String? {
+        let showsSomething = name.unicodeScalars.contains { scalar in
+            let properties = scalar.properties
+            if properties.isWhitespace || properties.isDefaultIgnorableCodePoint { return false }
+            switch properties.generalCategory {
+            case .control, .format, .lineSeparator, .paragraphSeparator, .spaceSeparator:
+                return false
+            default:
+                return true
             }
         }
+        return showsSomething ? name : nil
+    }
+
+    /// The vaults in the order the lists show them (#345): by the label, or
+    /// the folder ID without one, which is what a row without a label shows.
+    /// Everything that reads `folders` gets this order — the vault rows, the
+    /// cards of vaults that cannot be reached, the pickers.
+    nonisolated static func foldersInDisplayOrder(
+        _ folders: [FolderInfo],
+        locale: Locale = .current
+    ) -> [FolderInfo] {
+        inDisplayOrder(folders, name: { sortableName($0.label) ?? $0.id }, id: \.id, locale: locale)
+    }
+
+    /// The devices in the order the lists show them (#345): by name, then by
+    /// device ID; a device without a name after every named one, by device
+    /// ID — the Devices tab shows it as "Unnamed", and its ID among the names
+    /// would put it in a place nobody can tell from the row.
+    nonisolated static func devicesInDisplayOrder(
+        _ devices: [DeviceInfo],
+        locale: Locale = .current
+    ) -> [DeviceInfo] {
+        inDisplayOrder(devices, name: { sortableName($0.name) }, id: \.deviceID, locale: locale)
     }
 
     var staleSyncWarning: String? {
@@ -1782,7 +1844,7 @@ final class SyncthingManager {
     /// dictionary. Single entry point for both `pollBridgeState` and
     /// `refreshDevices` so the timestamp accounting can't drift.
     private func applyDeviceList(_ newDevices: [DeviceInfo]) {
-        devices = newDevices
+        devices = Self.devicesInDisplayOrder(newDevices)
 
         let nowDate = now()
 
@@ -1858,7 +1920,7 @@ final class SyncthingManager {
               let decoded = try? JSONDecoder().decode([FolderInfo].self, from: data) else {
             return false
         }
-        folders = decoded
+        folders = Self.foldersInDisplayOrder(decoded)
 
         // The `!=` keeps the log to the one read that retires the outcome,
         // not one line every poll after it.
