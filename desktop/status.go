@@ -107,8 +107,10 @@ func (a *app) status(ctx context.Context) error {
 		fmt.Fprintf(w, "VaultSync %s — sync engine Syncthing %s\n", version, installed)
 		// What installs the pin depends on what the service runs: this
 		// build tries it at its next start; anything else needs setup with
-		// this one.
-		if self, err := ownProgram(a.appEnv); err == nil && a.svc.installed() && a.serviceRunsThisBuild(self) {
+		// this one. Which build runs is what the service's agent says, not
+		// the files at the programs' paths (#416, decision 093); without
+		// an answer, setup is what is sure to install it.
+		if a.svc.installed() && a.serviceSaysThisBuild(ctx) {
 			fmt.Fprintf(w, "Note: this VaultSync brings Syncthing %s, which its background service tries to install at its next start — vaultsync stop, then vaultsync start.\n", strings.TrimPrefix(syncthingVersion, "v"))
 		} else {
 			fmt.Fprintf(w, "Note: this VaultSync brings Syncthing %s, which vaultsync setup installs.\n", strings.TrimPrefix(syncthingVersion, "v"))

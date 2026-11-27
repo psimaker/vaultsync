@@ -15,14 +15,16 @@ import (
 
 // A copy of VaultSync started by its path beside a newer VaultSync for Mac
 // — whose run, the moment the service starts, puts its own build in the
-// copy's place and installs a newer engine — is judged before the start:
-// the service runs another build than this one, and start says so, not
-// "does not sync", which the newer service belies (#290).
-func TestIssue290_StartJudgesTheBuildBeforeTheServiceRuns(t *testing.T) {
+// copy's place and installs a newer engine — must not take that service
+// for itself: the newer service syncs, and the copy's "does not sync" would
+// be read as true. Since #416 the run that came up says which build it is,
+// and start says that another build runs (#290).
+func TestIssue290_AnOlderCopyBesideANewerAppSaysAnotherBuildRuns(t *testing.T) {
 	run := &fakeRunner{}
 	a := installedApp(t, "darwin", run)
 	app := fakeMacApp(t, filepath.Join(a.home, "Applications"), appBundleName, shippedInfoPlist(t))
 	appAgent := filepath.Join(app, "Contents", "MacOS", "vaultsync")
+	writeFile(t, appAgent, "a newer VaultSync for Mac")
 	data, err := a.svc.unitFile(appAgent)
 	if err != nil {
 		t.Fatal(err)
@@ -36,14 +38,10 @@ func TestIssue290_StartJudgesTheBuildBeforeTheServiceRuns(t *testing.T) {
 		}
 		replaced = true
 		// The newer app's run as it comes up: its build in the copy's
-		// place (keepCopyAtAppBuild), and its engine recorded.
-		build, err := os.ReadFile(appAgent)
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		writeFile(t, a.lay.Agent, string(build))
+		// place (keepCopyAtAppBuild), its engine recorded, its socket.
+		writeFile(t, a.lay.Agent, "a newer VaultSync for Mac")
 		newerEngineHere(t, a.lay)
+		agentOfBuild(t, a, "a newer VaultSync for Mac")
 	}
 	err = a.startService()
 	if !replaced {
@@ -51,7 +49,7 @@ func TestIssue290_StartJudgesTheBuildBeforeTheServiceRuns(t *testing.T) {
 	}
 	out := a.out.(*bytes.Buffer).String()
 	if err != nil || strings.Contains(out, "does not sync") {
-		t.Fatalf("a stale copy judged the newer service by the copy that service had just replaced: %v\n%s", err, out)
+		t.Fatalf("a stale copy took the newer service for itself: %v\n%s", err, out)
 	}
 	if !strings.Contains(out, "runs another VaultSync build than this vaultsync") || strings.Contains(out, "Nothing was changed") {
 		t.Fatalf("start beside a newer app: %v\n%s", err, out)
@@ -60,23 +58,20 @@ func TestIssue290_StartJudgesTheBuildBeforeTheServiceRuns(t *testing.T) {
 
 // VaultSync for Mac replaced while start loads its job — dragged over in
 // the Finder, or updated by the setup link — runs the newer build launchd
-// finds at the path then: start, whose look before the start saw this very
-// build, says only that another build runs, not "does not sync" (#290).
-func TestIssue290_StartTakesThisBuildOnlyWhereBothLooksAgree(t *testing.T) {
+// finds at the path then. That run says which build it is, and start says
+// only that another build runs, not "does not sync" (#290).
+func TestIssue290_AnAppReplacedWhileStartLoadsItIsAnotherBuild(t *testing.T) {
 	run := &fakeRunner{}
 	a := installedApp(t, "darwin", run)
 	app := fakeMacApp(t, filepath.Join(a.home, "Applications"), appBundleName, shippedInfoPlist(t))
 	appAgent := filepath.Join(app, "Contents", "MacOS", "vaultsync")
+	writeFile(t, appAgent, "the app's build")
 	data, err := a.svc.unitFile(appAgent)
 	if err != nil {
 		t.Fatal(err)
 	}
 	writeFile(t, mustUnitPath(t, a.svc), string(data))
-	build, err := os.ReadFile(appAgent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	runsAs(t, a, a.lay.Agent, string(build)) // the copy at the app's build
+	runsAs(t, a, a.lay.Agent, "the app's build") // the copy at the app's build
 	replaced := false
 	run.onCall = func(call string) {
 		if !strings.Contains(call, "bootstrap") {
@@ -85,6 +80,7 @@ func TestIssue290_StartTakesThisBuildOnlyWhereBothLooksAgree(t *testing.T) {
 		replaced = true
 		writeFile(t, appAgent, "a newer VaultSync for Mac")
 		newerEngineHere(t, a.lay)
+		agentOfBuild(t, a, "a newer VaultSync for Mac")
 	}
 	err = a.startService()
 	if !replaced {
@@ -97,24 +93,21 @@ func TestIssue290_StartTakesThisBuildOnlyWhereBothLooksAgree(t *testing.T) {
 }
 
 // VaultSync for Mac replaced while start loads its job, and its run putting
-// its own build in the copy's place as it comes up: the look after the start
-// compares the service with this build as it was when start began, not with
-// the file at its path, which is the newer build by then (#290).
-func TestIssue290_StartJudgesBothLooksAgainstThisBuildAsItWas(t *testing.T) {
+// its own build in the copy's place as it comes up: by then the files at
+// both paths are the newer build. start goes by what the run says, which
+// is the newer build, not this one (#290).
+func TestIssue290_AnAppAndCopyReplacedWhileStartLoadsThemAreAnotherBuild(t *testing.T) {
 	run := &fakeRunner{}
 	a := installedApp(t, "darwin", run)
 	app := fakeMacApp(t, filepath.Join(a.home, "Applications"), appBundleName, shippedInfoPlist(t))
 	appAgent := filepath.Join(app, "Contents", "MacOS", "vaultsync")
+	writeFile(t, appAgent, "the app's build")
 	data, err := a.svc.unitFile(appAgent)
 	if err != nil {
 		t.Fatal(err)
 	}
 	writeFile(t, mustUnitPath(t, a.svc), string(data))
-	build, err := os.ReadFile(appAgent)
-	if err != nil {
-		t.Fatal(err)
-	}
-	runsAs(t, a, a.lay.Agent, string(build)) // the copy at the app's build
+	runsAs(t, a, a.lay.Agent, "the app's build") // the copy at the app's build
 	replaced := false
 	run.onCall = func(call string) {
 		if !strings.Contains(call, "bootstrap") {
@@ -124,6 +117,7 @@ func TestIssue290_StartJudgesBothLooksAgainstThisBuildAsItWas(t *testing.T) {
 		writeFile(t, appAgent, "a newer VaultSync for Mac")
 		writeFile(t, a.lay.Agent, "a newer VaultSync for Mac")
 		newerEngineHere(t, a.lay)
+		agentOfBuild(t, a, "a newer VaultSync for Mac")
 	}
 	err = a.startService()
 	if !replaced {
@@ -136,14 +130,16 @@ func TestIssue290_StartJudgesBothLooksAgainstThisBuildAsItWas(t *testing.T) {
 }
 
 // A service whose program becomes this very build only while start loads its
-// job — VaultSync for Mac replaced by this build meanwhile — is not taken
-// for this build either: the looks before and after the start differ, and
-// start says only that another build runs (#290).
-func TestIssue290_StartSaysAnotherBuildWhereTheLooksDiffer(t *testing.T) {
+// job — VaultSync for Mac replaced by this build meanwhile — runs this
+// build: launchd starts what is at the path then. Before #416 start went by
+// the files before and after the start, which differed, and said only that
+// another build runs; the run that came up says it is this build (#290).
+func TestIssue290_AServiceReplacedByThisBuildWhileStartLoadsItIsThisBuild(t *testing.T) {
 	run := &fakeRunner{}
 	a := installedApp(t, "darwin", run)
 	app := fakeMacApp(t, filepath.Join(a.home, "Applications"), appBundleName, shippedInfoPlist(t))
 	appAgent := filepath.Join(app, "Contents", "MacOS", "vaultsync")
+	writeFile(t, appAgent, "another build")
 	data, err := a.svc.unitFile(appAgent)
 	if err != nil {
 		t.Fatal(err)
@@ -157,15 +153,15 @@ func TestIssue290_StartSaysAnotherBuildWhereTheLooksDiffer(t *testing.T) {
 		}
 		replaced = true
 		writeFile(t, appAgent, "this very build")
-		newerEngineHere(t, a.lay)
+		agentOfBuild(t, a, "this very build")
 	}
 	err = a.startService()
 	if !replaced {
 		t.Fatal("start loaded no job: the app was never replaced, so this test tests nothing")
 	}
 	out := a.out.(*bytes.Buffer).String()
-	if err != nil || strings.Contains(out, "does not sync") || !strings.Contains(out, "runs another VaultSync build than this vaultsync") {
-		t.Fatalf("start where the looks differ: %v\n%s", err, out)
+	if err != nil || !strings.Contains(out, "✓ VaultSync is running again.") {
+		t.Fatalf("start where this build came up: %v\n%s", err, out)
 	}
 }
 
@@ -208,10 +204,11 @@ func holdEngineLock(t *testing.T, a *app) {
 }
 
 // answeringAgent serves a control socket that answers, at the place
-// agent.json records.
+// agent.json records, as a run of this very build: with its build mark.
 func answeringAgent(t *testing.T, a *app) *fakeAgent {
 	t.Helper()
 	f := newFakeAgent(t)
+	f.build = a.mark()
 	recordSocket(t, a, f.path)
 	return f
 }
@@ -367,7 +364,7 @@ func TestIssue290_StartSaysRunningOnlyOnceTheAgentAnswers(t *testing.T) {
 			if err != nil || strings.Contains(out, "running again") || strings.Contains(out, "✓") {
 				t.Fatalf("start with no agent answering: %v\n%s", err, out)
 			}
-			for _, want := range []string{"does not answer yet", "vaultsync status says where it stands", "run vaultsync stop, then vaultsync start", a.logHint()} {
+			for _, want := range []string{"does not answer yet", "vaultsync status says what it does", "run vaultsync stop, then vaultsync start", "run the setup link, which brings the current VaultSync to the service", a.logHint()} {
 				if !strings.Contains(out, want) {
 					t.Fatalf("%q missing:\n%s", want, out)
 				}
@@ -404,7 +401,9 @@ func TestIssue290_StartHearsAnAgentThatComesUpWhileItWaits(t *testing.T) {
 	}
 }
 
-// serveSocket serves h on a control socket at the place agent.json records.
+// serveSocket serves h on a control socket at the place agent.json records,
+// as an agent of a's build: every answer says a's mark unless h sets
+// another or removes it (decision 093).
 func serveSocket(t *testing.T, a *app, h http.Handler) {
 	t.Helper()
 	path := filepath.Join(shortDir(t), "agent.sock")
@@ -412,7 +411,7 @@ func serveSocket(t *testing.T, a *app, h http.Handler) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := &http.Server{Handler: h}
+	srv := &http.Server{Handler: ofBuild(a.mark(), h)}
 	go func() { _ = srv.Serve(l) }()
 	t.Cleanup(func() { _ = srv.Close() })
 	recordSocket(t, a, path)
@@ -515,19 +514,21 @@ func TestIssue290_ASilentSocketCostsOneAsk(t *testing.T) {
 	}
 }
 
-// Beside a service of another build that does not answer, start says so and
-// keeps its line about the other build, which leaves syncing to status
-// (#290, #264).
+// Beside a service that does not answer, start says so and names no build:
+// only a running agent says which build runs, and the program at the
+// service's path — another build here — may not be the one that runs
+// (#290, #416). It refuses nothing.
 func TestIssue290_AnotherBuildThatDoesNotAnswer(t *testing.T) {
 	a, _ := linuxServiceOfThisBuild(t)
+	quickAnswerWait(t)
 	writeFile(t, a.lay.Agent, "another build the service runs")
 	runsAs(t, a, filepath.Join(t.TempDir(), "vaultsync"), "this build")
 	if err := a.startService(); err != nil {
 		t.Fatal(err)
 	}
 	out := startText(a)
-	if !strings.Contains(out, "does not answer yet") || !strings.Contains(out, "runs another VaultSync build than this vaultsync — vaultsync status says whether it syncs") || strings.Contains(out, "✓") {
-		t.Fatalf("start beside another build that does not answer:\n%s", out)
+	if !strings.Contains(out, "does not answer yet") || strings.Contains(out, "another VaultSync build") || strings.Contains(out, "✓") {
+		t.Fatalf("start beside a service that does not answer:\n%s", out)
 	}
 }
 

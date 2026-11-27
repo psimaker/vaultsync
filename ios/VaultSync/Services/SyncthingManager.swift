@@ -136,6 +136,11 @@ final class SyncthingManager {
     /// exists". Replaced by the reconcile that began last, emptied when the
     /// engine stops.
     private(set) var foldersWithoutTheirStorage: Set<String> = []
+    /// Folders the path reconcile left where they are although their own
+    /// directory was found under the selected folder: another folder syncs
+    /// it, a folder inside it or one around it, and two folders never
+    /// overlap (#330, decision 082). Kept like `foldersWithoutTheirStorage`.
+    private(set) var foldersOverlappingAnotherFolder: Set<String> = []
     private(set) var conflictFiles: [String: [ConflictInfo]] = [:]
     private(set) var pendingFolders: [PendingFolderInfo] = []
     private(set) var ignoredPendingFolderIDs: Set<String> = []
@@ -1101,6 +1106,7 @@ final class SyncthingManager {
             // folders that are still configured (#315).
             if pathSettlement.reconcileFinished(token: token) {
                 foldersWithoutTheirStorage = outcome.cut(to: folders.map(\.id)).notTheirStorage
+                foldersOverlappingAnotherFolder = outcome.cut(to: folders.map(\.id)).overlapsAnotherFolder
             }
             refreshObsidianVisibility()
         } else {
@@ -1132,6 +1138,7 @@ final class SyncthingManager {
         // (#56).
         pathSettlement.reset()
         foldersWithoutTheirStorage = []
+        foldersOverlappingAnotherFolder = []
         obsidianVisibilityFindings = []
         obsidianVisibilityInputs = []
         lastBridgeEventID = 0
@@ -1208,9 +1215,14 @@ final class SyncthingManager {
         // directory of that name is the copy, and accepting the share into
         // it has to ask (#315, decision 007). The same while a reconcile is
         // still under way: what it is about to find is not known yet, and a
-        // question too many costs less than a copy combined unasked. Before
-        // the engine is asked too, since it only adds a question.
-        if foldersWithoutTheirStorage.contains(id) || !pathSettlement.settled {
+        // question too many costs less than a copy combined unasked. So it
+        // goes for a vault refused for an overlap (#330): another vault
+        // synced in its folder or around it, and what the folder holds by
+        // the time the share is accepted again is not known. Before the
+        // engine is asked too, since it only adds a question.
+        if foldersWithoutTheirStorage.contains(id)
+            || foldersOverlappingAnotherFolder.contains(id)
+            || !pathSettlement.settled {
             ManualShareTargetStore.forgetConsent(forFolder: id)
         }
 
@@ -1229,6 +1241,7 @@ final class SyncthingManager {
         FolderPathReconciler.removeRel(forFolder: id)
         // Nor what the last reconcile found for the folder that had it.
         foldersWithoutTheirStorage.remove(id)
+        foldersOverlappingAnotherFolder.remove(id)
         // Forget any #45 auto-pause record so a future folder reusing this
         // ID can be paused again if it collides (removing a colliding vault
         // is the sanctioned recovery; accepting the returning share re-adds
@@ -1405,6 +1418,7 @@ final class SyncthingManager {
         // as unsettled until its own reconcile completes (#56).
         pathSettlement.reset()
         foldersWithoutTheirStorage = []
+        foldersOverlappingAnotherFolder = []
         obsidianVisibilityFindings = []
         obsidianVisibilityInputs = []
         lastBridgeEventID = 0
@@ -2530,6 +2544,12 @@ final class SyncthingManager {
                 explanation: UnreachableFolder.copyExplanation(syncsSelectedFolderItself: wholeFolder)
             )
         }
+        // The same for a vault whose own folder overlaps another vault's
+        // (#330).
+        if foldersOverlappingAnotherFolder.contains(folderID),
+           let reason = status.errorReason, Self.pathErrorReasons.contains(reason) {
+            return .folderOverlapsAnotherFolder(explanation: UnreachableFolder.overlapExplanation)
+        }
         return SyncUserError.fromFolderStatus(
             reason: status.errorReason,
             message: status.errorMessage,
@@ -2570,6 +2590,18 @@ final class SyncthingManager {
         /// from before 3.0 can: what was refused is then the selected folder,
         /// not a folder in it.
         let syncsSelectedFolderItself: Bool
+        /// True if the vault's own folder was found under the selected
+        /// folder and refused because another vault syncs it, a folder
+        /// inside it or one around it (#330).
+        var foundDirectoryOverlapsAnotherFolder = false
+
+        /// Whether the card offers to select the Obsidian folder again. Not
+        /// for an overlap: the vault's own folder was found, so no other
+        /// selection holds it, and a reconnect only repeats the refusal. The
+        /// card's way on is the one its text names (#330).
+        var offersReconnect: Bool {
+            hasObsidianMapping && !foundDirectoryOverlapsAnotherFolder
+        }
 
         /// What the vault's card says is wrong. A directory that was found
         /// and refused gets its own text: "storage no longer exists" would
@@ -2578,16 +2610,34 @@ final class SyncthingManager {
             if foundDirectoryIsNotItsStorage {
                 return Self.copyExplanation(syncsSelectedFolderItself: syncsSelectedFolderItself)
             }
+            if foundDirectoryOverlapsAnotherFolder {
+                return Self.overlapExplanation
+            }
             return L10n.tr("This vault points to storage that no longer exists on this iPhone, so it can no longer sync.")
         }
 
         /// Where the rest is said — what selecting another folder does to
         /// the other vaults, and what to do with the copy afterwards. Only
-        /// the copy's card has a section of its own.
+        /// the cards for a copy and for an overlap have a section of their
+        /// own.
         var troubleshootingURL: URL? {
-            foundDirectoryIsNotItsStorage
-                ? SyncUserError.troubleshootingURL(anchor: SyncUserError.folderIsACopyAnchor)
-                : nil
+            if foundDirectoryIsNotItsStorage {
+                return SyncUserError.troubleshootingURL(anchor: SyncUserError.folderIsACopyAnchor)
+            }
+            if foundDirectoryOverlapsAnotherFolder {
+                return SyncUserError.troubleshootingURL(anchor: SyncUserError.folderOverlapsAnotherFolderAnchor)
+            }
+            return nil
+        }
+
+        /// What was found and the way on, for a vault whose own folder
+        /// overlaps another vault's — where that one is, or where it would
+        /// have been repaired to with this one (#330, decision 082). Removing
+        /// either vault lets the other go on at the next reconcile; removing
+        /// this one changes nothing on disk, and accepted again it arrives
+        /// in a folder of its own — never combined with what a folder holds.
+        static var overlapExplanation: String {
+            L10n.tr("This vault's folder was found, but it is another vault's folder too, or lies inside or around another vault's folder. Two vaults never sync in one place, so VaultSync does not continue this vault there; when one of the two is removed, the other goes on there. To bring this vault back, remove it, wait ten seconds, close VaultSync in the app switcher and open it again, and accept the vault again under Pending Shares once it shows there — it gets a folder of its own. If the share then says that its folder already holds files, do not combine them: tap \"Choose Vault…\" and give the vault another folder name.")
         }
 
         /// What was found and the way on. Never to combine the share with
@@ -2617,10 +2667,15 @@ final class SyncthingManager {
 
     /// Where, under the selected folder, the copies lie that were refused in
     /// a vault's place — relative paths, "" for the selected folder itself.
-    /// They are no vaults waiting to be shared (#315).
+    /// They are no vaults waiting to be shared (#315). Nor is a vault's own
+    /// folder that was refused because it overlaps another vault's (#330):
+    /// its card speaks for it.
     var refusedCopyRels: [String] {
-        let rel = FolderPathReconciler.loadRel()
-        return foldersWithoutTheirStorage.compactMap { rel[$0] }
+        refusedCopyRels(rel: FolderPathReconciler.loadRel())
+    }
+
+    func refusedCopyRels(rel: [String: String]) -> [String] {
+        foldersWithoutTheirStorage.union(foldersOverlappingAnotherFolder).compactMap { rel[$0] }
     }
 
     /// A copy found in a vault's place is a finding about folders the user
@@ -2628,10 +2683,11 @@ final class SyncthingManager {
     /// copy deleted, the vault's own folder put where the copy was. A return
     /// to the app over a running engine reconciles nothing by itself, so the
     /// card would go on describing what is no longer there. Reconciles again
-    /// while a finding is shown; nil when there is none.
+    /// while a finding is shown — a copy, or an overlap with another vault's
+    /// folder (#330); nil when there is none.
     @discardableResult
     func recheckCopiesFound(obsidianRoot: String?) -> Task<Void, Never>? {
-        guard !foldersWithoutTheirStorage.isEmpty else { return nil }
+        guard !foldersWithoutTheirStorage.isEmpty || !foldersOverlappingAnotherFolder.isEmpty else { return nil }
         return reconcileFolderPaths(obsidianRoot: obsidianRoot)
     }
 
@@ -2648,7 +2704,8 @@ final class SyncthingManager {
                 reason: reason,
                 hasObsidianMapping: rel[folder.id] != nil,
                 foundDirectoryIsNotItsStorage: foldersWithoutTheirStorage.contains(folder.id),
-                syncsSelectedFolderItself: rel[folder.id] == ""
+                syncsSelectedFolderItself: rel[folder.id] == "",
+                foundDirectoryOverlapsAnotherFolder: foldersOverlappingAnotherFolder.contains(folder.id)
             )
         }
     }
@@ -3062,6 +3119,10 @@ final class SyncthingManager {
 
     func _testSetFoldersWithoutTheirStorage(_ folderIDs: Set<String>) {
         foldersWithoutTheirStorage = folderIDs
+    }
+
+    func _testSetFoldersOverlappingAnotherFolder(_ folderIDs: Set<String>) {
+        foldersOverlappingAnotherFolder = folderIDs
     }
 
     /// Begins a reconcile pass the way `reconcileFolderPaths` does, without
