@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"net"
 	"net/http"
 	"os"
@@ -383,32 +384,71 @@ func TestIssue290_StartHearsAnAgentThatComesUpWhileItWaits(t *testing.T) {
 	}
 }
 
-// What counts as an answer besides a report: the agent's error in its own
-// words, and an older agent's 404 — VaultSync's agent answered, and status
-// says the rest (#290).
-func TestIssue290_AnErrorOrAnOlderAgentIsAnAnswer(t *testing.T) {
-	t.Run("an error in its words", func(t *testing.T) {
-		a, _ := linuxServiceOfThisBuild(t)
-		answeringAgent(t, a).broken = true
-		if err := a.startService(); err != nil || !strings.Contains(startText(a), "✓ VaultSync is running again.") {
-			t.Fatalf("%v\n%s", err, startText(a))
+// serveSocket serves h on a control socket at the place agent.json records.
+func serveSocket(t *testing.T, a *app, h http.Handler) {
+	t.Helper()
+	path := filepath.Join(shortDir(t), "agent.sock")
+	l, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: h}
+	go func() { _ = srv.Serve(l) }()
+	t.Cleanup(func() { _ = srv.Close() })
+	recordSocket(t, a, path)
+}
+
+// Any answer of the agent's counts — what it says about syncing is
+// status's to tell: the 404 every agent from desktop-v0.2.0 on gives for a
+// path it does not serve, and an error it answers with (#290).
+func TestIssue290_AnyAnswerOfTheAgentCounts(t *testing.T) {
+	for name, h := range map[string]http.Handler{
+		"its 404": http.NotFoundHandler(),
+		"an error": http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			fail(w, http.StatusInternalServerError, errors.New("boom"))
+		}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			a, _ := linuxServiceOfThisBuild(t)
+			serveSocket(t, a, h)
+			if err := a.startService(); err != nil || !strings.Contains(startText(a), "✓ VaultSync is running again.") {
+				t.Fatalf("%v\n%s", err, startText(a))
+			}
+		})
+	}
+}
+
+// start asks nothing the agent has to ask its engine for: status asks the
+// engine first and took up to 8 s right after a start on a macOS VM, and
+// an agent that has come up has answered whatever its engine says (#290).
+func TestIssue290_StartDoesNotWaitForTheEngine(t *testing.T) {
+	a, _ := linuxServiceOfThisBuild(t)
+	release := make(chan struct{})
+	defer close(release)
+	var mu sync.Mutex
+	asked := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		asked++
+		mu.Unlock()
+		select { // an engine that takes its time
+		case <-release:
+		case <-r.Context().Done():
 		}
 	})
-	t.Run("an older agent's 404", func(t *testing.T) {
-		a, _ := linuxServiceOfThisBuild(t)
-		path := filepath.Join(shortDir(t), "agent.sock")
-		l, err := net.Listen("unix", path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		srv := &http.Server{Handler: http.NotFoundHandler()}
-		go func() { _ = srv.Serve(l) }()
-		t.Cleanup(func() { _ = srv.Close() })
-		recordSocket(t, a, path)
-		if err := a.startService(); err != nil || !strings.Contains(startText(a), "✓ VaultSync is running again.") {
-			t.Fatalf("%v\n%s", err, startText(a))
-		}
-	})
+	serveSocket(t, a, mux)
+	orig := startAskTimeout
+	startAskTimeout = 2 * time.Second
+	defer func() { startAskTimeout = orig }()
+	if err := a.startService(); err != nil || !strings.Contains(startText(a), "✓ VaultSync is running again.") {
+		t.Fatalf("%v\n%s", err, startText(a))
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if asked != 0 {
+		t.Fatalf("start asked the agent's status %d times", asked)
+	}
 }
 
 // A socket that takes the request and never answers costs start one ask,

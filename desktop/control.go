@@ -650,16 +650,23 @@ var (
 	startAskTimeout  = 10 * time.Second
 )
 
-// errAgentTooOld is what a 404 is to start: an agent answered, older than
-// the request — an answer all the same.
-var errAgentTooOld = errors.New("the running agent is older than this vaultsync")
+// startAskPath is what start asks the agent for: a path no agent of
+// VaultSync's serves, so the agent's own HTTP server answers it — with a
+// 404 — without a word to the engine. GET /v1/status asks the engine
+// first: right after a start it took up to 8 s on a macOS VM with two
+// cores, where this took at most 1.3 s, and beside desktop-v0.2.0 start got
+// no answer to it within startAskTimeout while its socket was there (#290).
+const startAskPath = "/v1/"
+
+// errAgentAnswered is the agent's 404 for startAskPath: its answer.
+var errAgentAnswered = errors.New("the running agent answered")
 
 // agentAnswers waits for an agent to answer on the control socket — at the
 // place agent.json records at each look, which a run writes as it comes up.
-// An answer is its report, an error in its own words, or an older agent's
-// 404. An ask that gets no answer in its time ends the wait: something
-// takes the request and says nothing, and a second ask would only double
-// the wait (the menu-bar app does the same since #288).
+// Any answer counts: what it says about syncing is status's to tell. An
+// ask that gets no answer in its time ends the wait: something takes the
+// request and says nothing, and a second ask would only double the wait
+// (the menu-bar app does the same since #288).
 func (a *app) agentAnswers() bool {
 	for i := 0; i < startAnswerLooks; i++ {
 		if i > 0 {
@@ -670,12 +677,12 @@ func (a *app) agentAnswers() bool {
 			path = st.ControlSocket
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), startAskTimeout)
-		err := control.New(path, errAgentTooOld).Do(ctx, http.MethodGet, "/v1/status", nil, nil)
+		err := control.New(path, errAgentAnswered).Do(ctx, http.MethodGet, startAskPath, nil, nil)
 		timedOut := ctx.Err() != nil
 		cancel()
 		var said *control.AnswerError
 		switch {
-		case err == nil, errors.Is(err, errAgentTooOld), errors.As(err, &said):
+		case err == nil, errors.Is(err, errAgentAnswered), errors.As(err, &said):
 			return true
 		case timedOut:
 			return false
