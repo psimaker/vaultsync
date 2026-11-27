@@ -1180,7 +1180,7 @@ final class SyncthingManager {
 
     /// Remove a folder by ID.
     func removeFolder(id: String) -> String? {
-        let result = SyncBridgeService.removeFolder(id: id)
+        let result = bridgeRemoveFolder(id)
         if result == nil {
             refreshFolders()
             folderStatuses.removeValue(forKey: id)
@@ -1223,6 +1223,23 @@ final class SyncthingManager {
             refreshObsidianVisibility()
         }
         return result
+    }
+
+    /// The bridge's removal, or what a test put in its place (#343).
+    private func bridgeRemoveFolder(_ id: String) -> String? {
+        #if DEBUG
+        if let removal = _testRemoval { return removal.bridge(id) }
+        #endif
+        return SyncBridgeService.removeFolder(id: id)
+    }
+
+    /// Where the record of removed folders is kept: the standard defaults,
+    /// or a test's own (#343).
+    private var userRemovedRecordDefaults: UserDefaults {
+        #if DEBUG
+        if let removal = _testRemoval { return removal.defaults }
+        #endif
+        return .standard
     }
 
     /// Share a folder with a device.
@@ -2646,11 +2663,11 @@ final class SyncthingManager {
     }
 
     private func persistUserRemovedFolderIDs() {
-        UserDefaults.standard.set(Array(userRemovedFolderIDs).sorted(), forKey: Self.userRemovedFoldersDefaultsKey)
+        userRemovedRecordDefaults.set(Array(userRemovedFolderIDs).sorted(), forKey: Self.userRemovedFoldersDefaultsKey)
     }
 
-    private static func loadUserRemovedFolderIDs() -> Set<String> {
-        guard let values = UserDefaults.standard.array(forKey: userRemovedFoldersDefaultsKey) as? [String] else {
+    private static func loadUserRemovedFolderIDs(from defaults: UserDefaults = .standard) -> Set<String> {
+        guard let values = defaults.array(forKey: userRemovedFoldersDefaultsKey) as? [String] else {
             return []
         }
         return Set(values)
@@ -2962,6 +2979,21 @@ final class SyncthingManager {
     // MARK: - Test hooks
 
     #if DEBUG
+    /// What `_testUseRemoval` put in the place of the bridge's removal and
+    /// of the defaults the removal record is kept in. Compiled for tests
+    /// only: a release build has neither.
+    @ObservationIgnored private var _testRemoval: (bridge: (String) -> String?, defaults: UserDefaults)?
+
+    /// Answers every removal with `bridge` instead of the engine and keeps
+    /// the record of removed folders in `defaults`, read from there at once
+    /// the way a manager reads it at launch (#343). A test then needs
+    /// neither the engine nor the standard defaults, which other suites
+    /// write at the same time.
+    func _testUseRemoval(bridge: @escaping (String) -> String?, defaults: UserDefaults) {
+        _testRemoval = (bridge, defaults)
+        userRemovedFolderIDs = Self.loadUserRemovedFolderIDs(from: defaults)
+    }
+
     func _testApplyDeviceList(_ newDevices: [DeviceInfo]) {
         applyDeviceList(newDevices)
     }
