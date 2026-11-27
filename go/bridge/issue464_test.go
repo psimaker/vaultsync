@@ -116,13 +116,13 @@ func TestIssue464_NoAnswerNamesAPath(t *testing.T) {
 	if errMsg := StartSyncthing(configDir); errMsg != "" {
 		t.Fatalf("StartSyncthing() failed: %s", errMsg)
 	}
-	const secret = "Vault Of Someone"
-	root := filepath.Join(configDir, secret)
+	const vaultName = "Vault Of Someone"
+	root := filepath.Join(configDir, vaultName)
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	namesAPath := func(answer string) bool {
-		return strings.Contains(answer, secret) || strings.Contains(answer, configDir)
+		return strings.Contains(answer, vaultName) || strings.Contains(answer, configDir)
 	}
 
 	// The accept's read of the offers.
