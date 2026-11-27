@@ -119,9 +119,10 @@ func FolderRemovalNotConfirmedError() string {
 // Returns empty string once the folder is gone from the engine's
 // configuration in memory, folderRemovalNotConfirmed while the removal is
 // still on its way, folderNotFound for a folder that is not configured, or
-// the reason the engine refused it (#343). The configuration reaches
-// config.xml only once the engine's services are through with the change
-// (the wrapper's save timer, #151).
+// the reason the engine refused it (#343). config.xml is written without the
+// folder as soon as the engine has taken the removal, before the bridge
+// waits for the model to stop the folder and drop its database (#465,
+// decision 096).
 func RemoveFolder(id string) string {
 	mu.Lock()
 	defer mu.Unlock()

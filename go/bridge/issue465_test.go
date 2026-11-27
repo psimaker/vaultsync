@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -291,8 +292,181 @@ func TestIssue465_AStartCompletesARemovalTheFileNamesBeforeTheDatabaseDropsIt(t 
 	if _, err := os.Stat(filepath.Join(dir, "note.md")); err != nil {
 		t.Fatalf("the vault's note: %v", err)
 	}
-	_, markerErr := os.Stat(filepath.Join(dir, config.DefaultMarkerName))
-	t.Logf("the vault's directory keeps its note; its marker is there: %t", markerErr == nil)
+	// The model never got to take the marker away: it stays behind.
+	marker := filepath.Join(dir, config.DefaultMarkerName)
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("the vault's marker: %v", err)
+	}
+
+	// An accept into that directory asks first (rule 7): with the notes,
+	// and with nothing but the marker left behind.
+	issue465OfferFrom(t, issue465Peer)
+	const refused = "the target folder already contains files"
+	if answer := AcceptPendingFolder(issue465Removed, "Vault", dir, filepath.Dir(dir), false); answer != refused {
+		t.Fatalf("an accept without the user's yes into the directory with the vault's notes = %q, want %q", answer, refused)
+	}
+	if err := os.Remove(filepath.Join(dir, "note.md")); err != nil {
+		t.Fatal(err)
+	}
+	if answer := AcceptPendingFolder(issue465Removed, "Vault", dir, filepath.Dir(dir), false); answer != refused {
+		t.Fatalf("an accept without the user's yes into a directory that holds only the marker left behind = %q, want %q", answer, refused)
+	}
+}
+
+// A write that fails leaves a change the engine has taken live, and the
+// answer says so (#343): the wrapper's timer writes the file again. The one
+// log line names neither the path nor the vault.
+func TestIssue465_AFailedWriteKeepsTheAnswerAndTheTimerWritesItAgain(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a read-only directory does not stop root")
+	}
+	configDir := testConfigDir(t)
+	root := filepath.Join(configDir, "Vaults")
+	issue465StartWithVaultOnDisk(t, configDir, issue465Removed, filepath.Join(root, "Kept"))
+
+	var logged bytes.Buffer
+	configWriteLog.SetOutput(&logged)
+	t.Cleanup(func() { configWriteLog.SetOutput(os.Stderr) })
+
+	// config.xml is replaced by a new file in its directory: a directory
+	// that cannot be written fails the write, and nothing else.
+	if err := os.Chmod(configDir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(configDir, 0o700) })
+
+	const label = "Secret Vault Name"
+	if answer := AddFolder(issue465Added, label, filepath.Join(root, "Added")); answer != "" {
+		t.Fatalf("AddFolder() with config.xml not writable = %q, want success: the engine has taken the change", answer)
+	}
+	if !configuredFolderIDs(t)[issue465Added] {
+		t.Fatal("the folder is not configured")
+	}
+	if issue302Persisted(configDir, issue465Added) {
+		t.Fatal("config.xml names the folder although its directory could not be written")
+	}
+	line := logged.String()
+	if !strings.Contains(line, "config.xml was not written (permission denied)") {
+		t.Fatalf("log = %q, want the one line that config.xml was not written, with the error's kind", line)
+	}
+	for _, private := range []string{configDir, root, label, issue465Added} {
+		if strings.Contains(line, private) {
+			t.Fatalf("log = %q names %q", line, private)
+		}
+	}
+	if n := strings.Count(line, "\n"); n != 1 {
+		t.Fatalf("log has %d lines, want 1: %q", n, line)
+	}
+
+	if err := os.Chmod(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writable := time.Now()
+	issue465Poll(t, "the wrapper's timer to write the folder", 15*time.Second, func() bool {
+		return issue302Persisted(configDir, issue465Added)
+	})
+	t.Logf("the timer wrote config.xml %v after its directory was writable again", time.Since(writable))
+}
+
+// A call that changes nothing writes nothing: a start over a current
+// config.xml — every launch and every background run — and a change to
+// values the configuration already has. The file is replaced by each write,
+// so its number tells.
+func TestIssue465_ACallThatChangesNothingDoesNotWriteTheFile(t *testing.T) {
+	configDir := testConfigDir(t)
+	path := filepath.Join(configDir, "config.xml")
+	if errMsg := StartSyncthing(configDir); errMsg != "" {
+		t.Fatalf("StartSyncthing() = %q", errMsg)
+	}
+	if errMsg := AddFolder(issue465Added, "Vault", filepath.Join(configDir, "Vaults", "Added")); errMsg != "" {
+		t.Fatalf("AddFolder() = %q", errMsg)
+	}
+	if errMsg := StopSyncthing(); errMsg != "" {
+		t.Fatalf("StopSyncthing() = %q", errMsg)
+	}
+	before := issue465FileNumber(t, path)
+
+	if errMsg := StartSyncthing(configDir); errMsg != "" {
+		t.Fatalf("StartSyncthing() again = %q", errMsg)
+	}
+	if now := issue465FileNumber(t, path); now != before {
+		t.Fatal("a start over a current config.xml wrote it")
+	}
+
+	// The start turned both kinds of discovery on: asking for that again
+	// commits a change that alters nothing.
+	if errMsg := SetDiscoveryEnabled(true, true); errMsg != "" {
+		t.Fatalf("SetDiscoveryEnabled(true, true) = %q", errMsg)
+	}
+	if now := issue465FileNumber(t, path); now != before {
+		t.Fatal("a change that altered nothing wrote config.xml")
+	}
+
+	// And a change that alters it is written: the file number tells.
+	if errMsg := SetDiscoveryEnabled(false, false); errMsg != "" {
+		t.Fatalf("SetDiscoveryEnabled(false, false) = %q", errMsg)
+	}
+	if now := issue465FileNumber(t, path); now == before {
+		t.Fatal("a change that altered the configuration did not write config.xml")
+	}
+}
+
+// The bridge's writes race the wrapper's own: its timer and the last write
+// at a stop are the same Save. Each writes the configuration as it is under
+// the wrapper's lock, and the configuration only moves forward, so the file
+// a call leaves is never older than the call: here a Save runs without a
+// pause beside the calls, and after each answer the file names every folder
+// added so far.
+func TestIssue465_NoOlderFileWinsWhenWritesRace(t *testing.T) {
+	configDir := testConfigDir(t)
+	if errMsg := StartSyncthing(configDir); errMsg != "" {
+		t.Fatalf("StartSyncthing() = %q", errMsg)
+	}
+	mu.Lock()
+	cfg := stCfg
+	mu.Unlock()
+	stop := make(chan struct{})
+	saved := make(chan int)
+	go func() {
+		n := 0
+		for {
+			select {
+			case <-stop:
+				saved <- n
+				return
+			default:
+			}
+			if err := cfg.Save(); err == nil {
+				n++
+			}
+		}
+	}()
+
+	var added []string
+	for i := 0; i < 30; i++ {
+		id := fmt.Sprintf("issue465-race-%02d", i)
+		if errMsg := AddFolder(id, "Vault", filepath.Join(configDir, "Vaults", id)); errMsg != "" {
+			close(stop)
+			<-saved
+			t.Fatalf("AddFolder(%s) = %q", id, errMsg)
+		}
+		added = append(added, id)
+		onDisk, err := issue465ReadConfigXML(configDir)
+		if err != nil {
+			close(stop)
+			<-saved
+			t.Fatalf("after AddFolder(%s): config.xml unreadable: %v", id, err)
+		}
+		for _, want := range added {
+			if _, ok := onDisk.folders[want]; !ok {
+				close(stop)
+				<-saved
+				t.Fatalf("after AddFolder(%s): config.xml lacks %s", id, want)
+			}
+		}
+	}
+	close(stop)
+	t.Logf("%d racing saves beside 30 calls", <-saved)
 }
 
 // --- helpers -----------------------------------------------------------------
@@ -457,6 +631,18 @@ func issue465IndexID(t *testing.T, id string) protocol.IndexID {
 		t.Fatalf("GetIndexID: %v", err)
 	}
 	return index
+}
+
+func issue465FileNumber(t *testing.T, path string) uint64 {
+	t.Helper()
+	n, err := fileNumber(path)
+	if errors.Is(err, errNoFileNumbers) {
+		t.Skip("this file system gives no file numbers")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
 }
 
 // issue465DatabaseLists reports whether the engine's database holds a folder.
