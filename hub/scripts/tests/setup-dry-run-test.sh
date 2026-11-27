@@ -68,8 +68,33 @@ if [ -n "${ALLOW_COMPOSE:-}" ]; then
 			[ -z "${MUTATE_DURING_PULL:-}" ] || sh -c "$MUTATE_DURING_PULL"
 			exit 0 ;;
 		"compose --project-directory "*" up -d") [ -z "${FAIL_COMPOSE_UP:-}" ] || exit 1; exit 0 ;;
+		# What a container wrote may carry escape sequences, which setup
+		# must not pass to the terminal (#364).
+		"compose --project-directory "*" logs --no-color --tail 30 "*)
+			printf '%s log: test \033[2J\033]0;title\007end\n' "${*##* }"; exit 0 ;;
 		"compose --project-directory "*" logs --tail 30 "*) echo "syncthing log: test"; exit 0 ;;
-		"compose --project-directory "*" exec -T hub vaultsync-hub status") printf 'VaultSync Hub test\nDevice ID:   TEST\n'; exit 0 ;;
+		# Syncthing 2.x converting a 1.x database (decision 090): for its first
+		# CONVERTING_TRIES health checks it answers with the migration text,
+		# and the Hub's status fails until then. CONVERSION_COUNTER counts the
+		# answers given. The progress line carries the count.
+		"compose --project-directory "*" logs --no-color --tail 20 syncthing")
+			printf 'vaultsync-hub-syncthing  | 2026-11-27 10:49:38 INF Still migrating folder (folder=vs-test files=%s000 blocks=1 duration=3m56s log.pkg=syncthing)\n' "$(cat "$CONVERSION_COUNTER" 2>/dev/null || echo 0)"
+			exit 0 ;;
+		"compose --project-directory "*" exec -T syncthing curl -fsS -m 10 http://127.0.0.1:8384/rest/noauth/health")
+			[ -z "${FAIL_HEALTH_EXEC:-}" ] || exit 1
+			n=$(cat "$CONVERSION_COUNTER" 2>/dev/null || echo 0)
+			if [ -n "${CONVERTING_TRIES:-}" ] && [ "$n" -lt "$CONVERTING_TRIES" ]; then
+				echo $((n + 1)) >"$CONVERSION_COUNTER"
+				echo '*** Database migration in progress ***'
+				exit 0
+			fi
+			echo '{"status": "OK"}'
+			exit 0 ;;
+		"compose --project-directory "*" exec -T hub vaultsync-hub status")
+			n=$(cat "$CONVERSION_COUNTER" 2>/dev/null || echo 0)
+			if [ -n "${CONVERTING_TRIES:-}" ] && [ "$n" -lt "$CONVERTING_TRIES" ]; then exit 1; fi
+			[ -z "${FAIL_STATUS:-}" ] || exit 1
+			printf 'VaultSync Hub test\nDevice ID:   TEST\n'; exit 0 ;;
 		"compose --project-directory "*" exec -T hub vaultsync-hub code") printf 'Pairing code: TULIP-ANCHOR-42\n'; exit 0 ;;
 	esac
 fi
@@ -389,7 +414,15 @@ if [ "\$1" = -di ]; then
 fi
 exec "$REAL_LS" "\$@"
 SHIM
-chmod +x "$SANDBOX/bin/sed" "$SANDBOX/bin/mv" "$SANDBOX/bin/mktemp" "$SANDBOX/bin/rm" "$SANDBOX/bin/ls"
+# FAST_SLEEP: the readiness wait's pauses take no time (#364). The signal
+# shims above keep their real sleep: they wait for the trap to run.
+REAL_SLEEP=$(command -v sleep)
+cat >"$SANDBOX/bin/sleep" <<SHIM
+#!/usr/bin/env sh
+[ -z "\${FAST_SLEEP:-}" ] || exit 0
+exec "$REAL_SLEEP" "\$@"
+SHIM
+chmod +x "$SANDBOX/bin/sed" "$SANDBOX/bin/mv" "$SANDBOX/bin/mktemp" "$SANDBOX/bin/rm" "$SANDBOX/bin/ls" "$SANDBOX/bin/sleep"
 # setup.sh reads a bundle's identifier with plutil, which every Mac has. On
 # a host without it (the Linux CI run) a stand-in answers the one question
 # setup.sh asks — `plutil -extract CFBundleIdentifier raw -expect string -o
@@ -504,6 +537,57 @@ $(cat "$COMPOSE_LOG")"
 printf '%s\n' "$out" | grep -q "set VAULTSYNC_HUB_SYNCTHING_IMAGE=syncthing/syncthing:2" || fail "a failed start does not name the .env line:
 $out"
 pass "a failed start shows Syncthing's log and names the .env line"
+
+# The readiness wait (#364). Syncthing has passed its healthcheck by then
+# (the hub waits for it), so a Hub that never answers is explained by the
+# hub's own log; Syncthing's log names vaults and addresses and says nothing
+# about it, and the 1.x-on-2.x hint belongs to a failed start only.
+CONVERSION_COUNTER="$SANDBOX/results/conversion-count"
+export CONVERSION_COUNTER
+rm -rf "$ST_HUB"; rm -f "$CONVERSION_COUNTER"
+if out=$(FAIL_STATUS=1 FAST_SLEEP=1 new_env_run); then
+	fail "a Hub that never answers must stop the setup:
+$out"
+fi
+grep " logs " "$COMPOSE_LOG" | grep -q " hub (VAULTSYNC" || fail "a Hub that never answers does not show the hub's log (#364):
+$(cat "$COMPOSE_LOG")"
+if grep " logs " "$COMPOSE_LOG" | grep -q "syncthing"; then
+	fail "a Hub that never answers shows Syncthing's log (#364):
+$(cat "$COMPOSE_LOG")"
+fi
+if printf '%s\n' "$out" | grep -q "VAULTSYNC_HUB_SYNCTHING_IMAGE"; then
+	fail "a Hub that never answers is given the 1.x-on-2.x hint (#364):
+$out"
+fi
+if printf '%s' "$out" | LC_ALL=C grep -q "$(printf '\033')"; then
+	fail "a container's log reaches the terminal with its escape sequences (#364):
+$out"
+fi
+printf '%s\n' "$out" | grep -q "hub log: test" || fail "the hub's log is not shown (#364):
+$out"
+printf '%s\n' "$out" | grep -q "The Hub did not become ready" || fail "a Hub that never answers is not said to (#364):
+$out"
+pass "a Hub that never answers shows the hub's log alone, cleaned, without the 1.x-on-2.x hint (#364)"
+
+# Syncthing 2.x converting a 1.x database answers its healthcheck with the
+# migration text, and the Hub cannot answer until it is done: minutes on a
+# slow machine (decision 090). The wait does not count that time, says what
+# happens and how far it is, and never gives the 1.x-on-2.x hint (#364).
+rm -rf "$ST_HUB"; rm -f "$CONVERSION_COUNTER"
+out=$(CONVERTING_TRIES=60 FAST_SLEEP=1 new_env_run) || fail "a conversion longer than the readiness wait stopped the setup (#364):
+$out"
+[ "$(cat "$CONVERSION_COUNTER")" = 60 ] || fail "the wait did not last the conversion (#364): $(cat "$CONVERSION_COUNTER") answers"
+if printf '%s\n' "$out" | grep -q "VAULTSYNC_HUB_SYNCTHING_IMAGE"; then
+	fail "a converting Syncthing is given the 1.x-on-2.x hint (#364):
+$out"
+fi
+printf '%s\n' "$out" | grep -q "converting" || fail "the conversion is not said (#364):
+$out"
+printf '%s\n' "$out" | grep -q "[0-9]000 files" || fail "the conversion's progress is not shown (#364):
+$out"
+printf '%s\n' "$out" | grep -q "Hub is running" || fail "the Hub is not reported running after the conversion (#364):
+$out"
+pass "a conversion longer than the readiness wait is waited for, with its progress, without the 1.x-on-2.x hint (#364)"
 
 lost_env() { # NAME EXPECTED-IMAGE: a Hub directory without .env, as prepared
 	out=$(new_env_run) || fail "$1: setup exited non-zero:
