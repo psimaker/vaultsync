@@ -1571,7 +1571,9 @@ struct ContentView: View {
     /// Build the displayed vault list from the detected vaults inside the synced
     /// Obsidian directory, mapped onto whichever Syncthing folder actually syncs
     /// them. Falls back to the folder itself when it isn't the Obsidian root
-    /// (per-vault sync, or the root is itself a single vault).
+    /// (per-vault sync, or the root is itself a single vault). Listed by the
+    /// name each row shows (#345): the rows of a whole-directory folder carry
+    /// the names of its vaults, not the folder's label.
     private var vaultRows: [VaultRowItem] {
         let base = vaultManager.obsidianBasePath.map(Self.canonicalPath)
         var rows: [VaultRowItem] = []
@@ -1597,7 +1599,7 @@ struct ContentView: View {
                 ))
             }
         }
-        return rows
+        return SyncthingManager.inDisplayOrder(rows, name: { $0.name }, id: \.id)
     }
 
     /// Normalize a path so the Syncthing folder path (stored at accept time) and
