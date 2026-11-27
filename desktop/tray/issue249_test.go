@@ -173,7 +173,9 @@ func TestIssue249_ARowShowsNoNumberAndAHiddenTagIsReadBack(t *testing.T) {
 	}
 }
 
-// With nothing to choose, each program says so, and asks nothing.
+// With nothing to choose, each program says so, and asks nothing. Since #291
+// the pairing says it, before it would ask (#381), and a list handed nothing
+// to choose opens no dialog at all.
 func TestIssue249_NothingToChooseIsSaid(t *testing.T) {
 	ctx := context.Background()
 	for name, a := range map[string]func(*recorder) Asker{
@@ -182,10 +184,15 @@ func TestIssue249_NothingToChooseIsSaid(t *testing.T) {
 		"mac":     func(r *recorder) Asker { return &scriptAsker{run: r.run} },
 	} {
 		r := &recorder{}
-		if _, ok, err := a(r).ChooseVault(ctx, Menu{}); ok || err != nil || r.calls != 1 {
-			t.Errorf("%s: %v %v, %d times", name, ok, err, r.calls)
+		if _, ok, err := a(r).ChooseVault(ctx, Menu{}); ok || err != nil || r.calls != 0 {
+			t.Errorf("%s: an empty list: %v %v, %d dialogs", name, ok, err, r.calls)
 		}
-		if !strings.Contains(strings.Join(r.args, " ")+r.stdin, "Nothing to choose") {
+		agent := vaultMenuAgent(t, Menu{Already: []MenuEntry{{Label: "Notes", Note: "~/Vaults/Notes"}}})
+		r = &recorder{stdouts: []string{"TULIP-ANCHOR-42\n", ""}}
+		if line, err := Pair(ctx, NewClient(agent.socket), a(r)); err != nil || line != everyVaultSyncs || r.calls != 2 {
+			t.Errorf("%s: %q %v, %d dialogs", name, line, err, r.calls)
+		}
+		if !strings.Contains(strings.Join(r.args, " ")+r.stdin, everyVaultSyncs) {
 			t.Errorf("%s: %q %q", name, r.args, r.stdin)
 		}
 		if strings.Contains(strings.Join(r.args, " ")+r.stdin, "choose from list") || strings.Contains(strings.Join(r.args, " "), "--list") || strings.Contains(strings.Join(r.args, " "), "--menu") {
@@ -311,12 +318,19 @@ func TestIssue249_ARowThatBeginsWithADashIsNoOption(t *testing.T) {
 	}
 }
 
-// A failure says all that the program wrote: Qt's first line may be a warning
-// that also heads a run that works, with the cause further down.
-func TestIssue249_AFailureSaysAllThatWasWritten(t *testing.T) {
+// A failure says its cause, not only the program's first line: Qt's first line
+// may be a warning that also heads a run that works, with the cause further
+// down. Since #291 the line that names the display is said alone, and any
+// other failure on one line of at most failureWords characters.
+func TestIssue249_AFailureSaysItsCausePastTheFirstLine(t *testing.T) {
 	r := &recorder{status: -1, stderr: "Detected locale \"C\" with character encoding \"ANSI_X3.4-1968\", which is not UTF-8.\nqt.qpa.xcb: could not connect to display\n"}
 	_, _, err := (&kdialogAsker{run: r.run}).AskCode(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "Detected locale") || !strings.Contains(err.Error(), "could not connect to display") {
+	if err == nil || !strings.Contains(err.Error(), "could not connect to display") {
+		t.Fatalf("%v", err)
+	}
+	r = &recorder{status: 3, stderr: "Detected locale \"C\" with character encoding \"ANSI_X3.4-1968\", which is not UTF-8.\nkdialog: the cause\n"}
+	_, _, err = (&kdialogAsker{run: r.run}).AskCode(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "Detected locale") || !strings.Contains(err.Error(), "kdialog: the cause") {
 		t.Fatalf("%v", err)
 	}
 }
@@ -370,9 +384,11 @@ func TestIssue249_KdialogArguments(t *testing.T) {
 	if got := r.args[4:]; !reflect.DeepEqual(got, []string{noChoiceTag, noVaultRow, linuxTag(0), awkward + " — on this computer", linuxTag(1), "Notes — on your Hub → ~/Vaults/Notes"}) {
 		t.Fatalf("rows: %q", got)
 	}
-	// Nothing to choose says so; a tag not in the list is a failure.
-	if _, ok, err := k.ChooseVault(ctx, Menu{}); ok || err != nil || r.args[2] != "--msgbox" {
-		t.Fatalf("nothing to choose: %v %v %q", ok, err, r.args)
+	// Nothing to choose opens no list (the pairing says it, #291); a tag not
+	// in the list is a failure.
+	n := r.calls
+	if _, ok, err := k.ChooseVault(ctx, Menu{}); ok || err != nil || r.calls != n {
+		t.Fatalf("nothing to choose: %v %v, %d dialogs", ok, err, r.calls-n)
 	}
 	r.stdout = linuxTag(8) + "\n"
 	if _, _, err := k.ChooseVault(ctx, m); err == nil {

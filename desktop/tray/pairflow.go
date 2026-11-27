@@ -117,6 +117,13 @@ func Pair(ctx context.Context, c *Client, ask Asker) (string, error) {
 			if res.Menu == nil {
 				return refused(ctx, ask, res.Refusal)
 			}
+			// Nothing to choose is said in the menu's own words, and they
+			// stay in the notice when the message cannot be shown: zenity
+			// shows no text outside ASCII without a UTF-8 locale (#291, #381).
+			if line, text, ok := nothingToChoose(*res.Menu); ok {
+				_ = ask.Inform(ctx, text)
+				return line, nil
+			}
 			choice, ok, err := ask.ChooseVault(ctx, *res.Menu)
 			if err != nil || !ok {
 				return "", err

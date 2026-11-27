@@ -270,3 +270,58 @@ func TestIssue291_NothingOnEitherSideIsSaid(t *testing.T) {
 		t.Fatalf("%q %v", line, err)
 	}
 }
+
+// The program's line is shown as it came, cleaned as every text from outside
+// is in this menu (what hides goes, line breaks with it), and the cut never
+// falls inside it: what comes before it does not count, and a display name too
+// long for the notice is left out rather than cut.
+func TestIssue291_TheDisplayLineIsCleanedAndNeverCut(t *testing.T) {
+	ctx := context.Background()
+	noise := strings.Repeat("Detected locale \"C\" with character encoding \"ANSI_X3.4-1968\", which is not UTF-8.\n", 6)
+	r := &recorder{status: -1, stderr: noise + "qt.qpa.xcb: could not connect to display :5\u202e\x07\r\nAvailable platform plugins are: xcb.\n"}
+	_, _, err := (&kdialogAsker{run: r.run}).AskCode(ctx)
+	if err == nil || err.Error() != "the code dialog could not be shown: kdialog found no display to open it on (could not connect to display :5); run vaultsync pair in a terminal" {
+		t.Fatalf("%q", err)
+	}
+	r = &recorder{status: 1, stderr: "\n(zenity:19): Gtk-WARNING **: 12:52:58.776: cannot open display: " + strings.Repeat("x", 300) + "\n"}
+	_, _, err = (&zenityAsker{run: r.run}).AskCode(ctx)
+	if err == nil || err.Error() != "the code dialog could not be shown: zenity found no display to open it on (cannot open display); run vaultsync pair in a terminal" {
+		t.Fatalf("%q", err)
+	}
+	// Any other failure is cleaned the same way.
+	r = &recorder{status: 255, stderr: "bad\x07 option\u2028\x1b[31m\n\n\tsee --help\n"}
+	_, _, err = (&zenityAsker{run: r.run}).AskCode(ctx)
+	if err == nil || strings.ContainsFunc(err.Error(), hides) || !strings.Contains(err.Error(), "bad option[31m see --help") {
+		t.Fatalf("%q", err)
+	}
+}
+
+// Only the toolkit's own line counts: the same words in a warning of another
+// kind, or a line without GLib's head, leave a cancel a cancel.
+func TestIssue291_OnlyTheToolkitsOwnLineCounts(t *testing.T) {
+	for name, stderr := range map[string]string{
+		"in another warning":  "(zenity:5): Gtk-WARNING **: 12:00:00.000: Failed to set text 'cannot open display' from markup\n",
+		"without GLib's head": "Notes: cannot open display\n",
+		"as a plugin's name":  "Available platform plugins are: vkkhrdisplay, xcb.\n",
+	} {
+		r := &recorder{status: 1, stderr: stderr}
+		if _, ok, err := (&zenityAsker{run: r.run}).AskCode(context.Background()); ok || err != nil {
+			t.Errorf("%s: %v %v", name, ok, err)
+		}
+	}
+}
+
+// Vaults found here that cannot sync do not make the Hub's empty list read as
+// "every vault syncs": the message lists them under the line that says why
+// there is nothing to choose.
+func TestIssue291_NothingToChooseWithOnlyVaultsThatCannotSync(t *testing.T) {
+	agent := vaultMenuAgent(t, Menu{Unavailable: []MenuEntry{{Label: "Cloudy", Note: "~/iCloud/Cloudy — iCloud Drive"}}, Note: "Obsidian’s list of vaults could not be read; vaults it lists may be missing here."})
+	r := &recorder{stdouts: []string{"TULIP-ANCHOR-42\n", ""}}
+	line, err := Pair(context.Background(), NewClient(agent.socket), &kdialogAsker{run: r.run})
+	if err != nil || line != "Your Hub has no vault yet, and VaultSync found none on this computer to start one from; run vaultsync pair in a terminal to choose another folder." {
+		t.Fatalf("%q %v", line, err)
+	}
+	if msg := r.args[len(r.args)-1]; !strings.Contains(msg, "Unavailable: Cloudy") || !strings.Contains(msg, "could not be read") || !strings.HasPrefix(msg, `<qt><p align="left" style="white-space:pre-wrap">Your Hub has no vault yet`) {
+		t.Fatalf("the message: %q", msg)
+	}
+}

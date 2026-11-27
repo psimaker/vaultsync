@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/psimaker/vaultsync/desktop/internal/layout"
 )
@@ -58,8 +60,30 @@ const (
 
 // menuPrompt is the text above the list of vaults.
 func menuPrompt(m Menu) string {
+	return "Choose a vault to sync.\n\nA vault from this computer becomes a new vault on your Hub. A vault from your Hub is downloaded into the folder shown." + menuLists(m)
+}
+
+// nothingToChoose is what the menu says when the agent's menu holds no vault
+// to choose (#381): line for the menu's notice and text for the message, which
+// adds what the agent listed. The line stays in the notice when the message
+// cannot be shown (#291). ok is false when there is something to choose.
+// Every vault from the Hub that is not set up here is in m.Hub, so with none
+// there and none under Already, the Hub has none.
+func nothingToChoose(m Menu) (line, text string, ok bool) {
+	if len(m.Local)+len(m.Hub) > 0 {
+		return "", "", false
+	}
+	line = "Every vault on your Hub already syncs here."
+	if len(m.Already) == 0 {
+		line = "Your Hub has no vault yet, and VaultSync found none on this computer to start one from; run vaultsync pair in a terminal to choose another folder."
+	}
+	return line, line + menuLists(m), true
+}
+
+// menuLists is what the agent says beside the vaults to choose: its note, and
+// the vaults already syncing and those it cannot sync.
+func menuLists(m Menu) string {
 	var b strings.Builder
-	b.WriteString("Choose a vault to sync.\n\nA vault from this computer becomes a new vault on your Hub. A vault from your Hub is downloaded into the folder shown.")
 	if m.Note != "" {
 		b.WriteString("\n\n" + m.Note)
 	}
@@ -123,8 +147,9 @@ type rowChooser interface {
 func chooseVault(ctx context.Context, a rowChooser, home string, m Menu) (Choice, bool, error) {
 	items, choices := menuItems(m, home)
 	if len(items) == 0 {
-		err := a.Inform(ctx, "Nothing to choose: "+menuPrompt(m))
-		return Choice{}, false, err
+		// Pair says that there is nothing to choose before it asks (#381); a
+		// list of only the row that chooses nothing is never shown.
+		return Choice{}, false, nil
 	}
 	i, ok, err := chooseRow(ctx, a, "vault", menuPrompt(m), noVaultRow, items)
 	if err != nil || !ok {
@@ -162,16 +187,22 @@ func shownWords(s string) string {
 // characters and go with them; a name is a hint, and the row is found by its
 // address.
 func hubRowName(name string) string {
-	clean := strings.Map(func(r rune) rune {
-		if hides(r) {
-			return -1
-		}
-		return r
-	}, name)
+	clean := withoutHides(name)
 	if strings.TrimSpace(clean) == "" {
 		return "your Hub"
 	}
 	return clean
+}
+
+// withoutHides is s without what hides, its line breaks too: text from
+// outside for one line.
+func withoutHides(s string) string {
+	return strings.Map(func(r rune) rune {
+		if hides(r) {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // leftToRight makes a row read from the left whatever the name holds: an IPv4
@@ -337,6 +368,65 @@ func wrapLines(s string, width int) string {
 	return strings.Join(out, "\n")
 }
 
+// --- what a program that failed said ----------------------------------------
+
+// failureWords is how much of what a dialog program wrote its failure says, in
+// characters: the menu shows the failure as its notice, on one line (#291).
+const failureWords = 200
+
+// noDisplayLine is the line in which a dialog program says it found no
+// display, as the toolkit itself writes it: GTK 3's "cannot open display:
+// NAME" and GTK 4's "Failed to open display" behind GLib's head (zenity 3.42.1
+// to 4.2.2), Qt's "could not connect to display NAME" (kdialog 21.12.3 to
+// 26.08.3, Qt 5.15 to 6.12). Held to that head, so that a text a program
+// repeats in a warning of its own cannot pass for it.
+var noDisplayLine = regexp.MustCompile(`(?m)^(?:\(\S+:\d+\): Gtk-WARNING \*\*: (?:[\d:.]+: )?|qt\.qpa\.xcb: )((?:cannot open|Failed to open|could not connect to) display)([^\n]*)`)
+
+// noDisplay returns that line's words, from the toolkit's own phrase on,
+// without what hides; the display's name only when the whole fits in
+// failureWords, so a cut never falls inside the line.
+func noDisplay(stderr string) (string, bool) {
+	m := noDisplayLine.FindStringSubmatch(stderr)
+	if m == nil {
+		return "", false
+	}
+	words := strings.TrimRight(withoutHides(m[1]+m[2]), " :")
+	if utf8.RuneCountInString(words) > failureWords {
+		words = m[1]
+	}
+	return words, true
+}
+
+// said is what a program wrote, on one line: each line without what hides,
+// the empty ones left out, at most failureWords characters.
+func said(stderr string) string {
+	var lines []string
+	for _, l := range strings.Split(stderr, "\n") {
+		if l = strings.TrimSpace(withoutHides(l)); l != "" {
+			lines = append(lines, l)
+		}
+	}
+	s := strings.Join(lines, " ")
+	if r := []rune(s); len(r) > failureWords {
+		s = strings.TrimRight(string(r[:failureWords-1]), " ") + "…"
+	}
+	return s
+}
+
+// programFailed says why a dialog program did not show its dialog: the line
+// that names the display when there is one — Qt's may be the fifth, behind a
+// warning that also heads a run that works (#249) — and pairing in a terminal,
+// which needs none; otherwise its status and what it wrote.
+func programFailed(program string, status int, stderr string) error {
+	if words, ok := noDisplay(stderr); ok {
+		return fmt.Errorf("%s found no display to open it on (%s); run vaultsync pair in a terminal", program, words)
+	}
+	if s := said(stderr); s != "" {
+		return fmt.Errorf("%s exited with status %d: %s", program, status, s)
+	}
+	return fmt.Errorf("%s exited with status %d", program, status)
+}
+
 // --- macOS: osascript --------------------------------------------------------
 
 type scriptAsker struct {
@@ -377,7 +467,7 @@ func (a *scriptAsker) osascript(ctx context.Context, what, script string) (out s
 		if strings.Contains(stderr, "(-128)") {
 			return "", false, nil
 		}
-		return "", false, dialogError(what, fmt.Errorf("osascript exited with status %d: %s", status, strings.TrimSpace(stderr)))
+		return "", false, dialogError(what, programFailed("osascript", status, stderr))
 	}
 	return strings.TrimRight(stdout, "\n"), true, nil
 }
@@ -451,7 +541,10 @@ func zenityListText(s string) string {
 }
 
 // zenity runs zenity with args and tells a cancel (status 1) from a
-// failure.
+// failure. Without a display zenity exits with 1 too, and the line GTK writes
+// about it is all that tells the two apart (#291): a window that was shown and
+// cancelled has a display, and what zenity 4 writes beside it (the graphics
+// stack's warnings, a session bus it could not reach) names none.
 func (a *zenityAsker) zenity(ctx context.Context, what string, args ...string) (out string, ok bool, err error) {
 	stdout, stderr, status, err := a.run(ctx, "zenity", append([]string{"--title=" + dialogTitle}, args...), "")
 	if err != nil {
@@ -461,9 +554,11 @@ func (a *zenityAsker) zenity(ctx context.Context, what string, args ...string) (
 	case 0:
 		return strings.TrimRight(stdout, "\n"), true, nil
 	case 1:
-		return "", false, nil
+		if _, gone := noDisplay(stderr); !gone {
+			return "", false, nil
+		}
 	}
-	return "", false, dialogError(what, fmt.Errorf("zenity exited with status %d: %s", status, strings.TrimSpace(stderr)))
+	return "", false, dialogError(what, programFailed("zenity", status, stderr))
 }
 
 func (a *zenityAsker) AskCode(ctx context.Context) (string, bool, error) {
@@ -556,9 +651,9 @@ func (a *kdialogAsker) kdialog(ctx context.Context, what string, args ...string)
 	case 1, 2:
 		return "", false, nil
 	}
-	// All of it: Qt's first line may be a warning that also heads a run that
-	// works, with the cause further down.
-	return "", false, dialogError(what, fmt.Errorf("kdialog exited with status %d: %s", status, strings.TrimSpace(stderr)))
+	// Without a display kdialog aborts, and Qt's line about it may be the
+	// fifth: programFailed finds it.
+	return "", false, dialogError(what, programFailed("kdialog", status, stderr))
 }
 
 func (a *kdialogAsker) entry(ctx context.Context, what, text string) (string, bool, error) {
