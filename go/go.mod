@@ -39,7 +39,7 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/jackpal/gateway v1.1.1 // indirect
-	github.com/jackpal/go-nat-pmp v1.0.2 // indirect
+	github.com/jackpal/go-nat-pmp v1.0.2
 	github.com/jmoiron/sqlx v1.4.0 // indirect
 	github.com/julienschmidt/httprouter v1.3.0 // indirect
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51 // indirect
