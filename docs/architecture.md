@@ -250,19 +250,32 @@ How peers are reached, fastest first:
 
 1. **Direct LAN (TCP/QUIC to a private address)** — requires the iOS *Local
    Network* permission (`NSLocalNetworkUsageDescription`, prompt shown on first
-   LAN dial). Peer LAN addresses come from global discovery; without this
-   permission iOS silently blocks LAN dials — peers reachable over a direct
-   WAN path (2) still connect directly, only the rest fall back to a relay (3).
+   LAN dial); without it iOS silently blocks LAN dials — peers reachable over a
+   direct WAN path (2) still connect directly, only the rest fall back to a
+   relay (3).
 2. **Direct WAN (TCP/QUIC)** — depends on the peer's NAT/port-mapping.
 3. **Syncthing relays** — slowest; the fallback when 1–2 fail.
 
-Syncthing's *local* (multicast/broadcast) discovery additionally needs the
-restricted `com.apple.developer.networking.multicast` entitlement, which Apple
-grants only on request (Developer portal → entitlement request form). Until
-that is granted, LAN peers are found via **global discovery + direct LAN dial**,
-which is nearly as fast. After a connection succeeds, the bridge caches the
-dialed address in the device's config (`addresscache.go`), so the next cold
-start dials it immediately without waiting for discovery.
+A peer's LAN addresses reach the app in three ways:
+
+- **Local discovery** — the engine announces itself on the local network and
+  listens for its peers' announcements (IPv4 broadcast and IPv6 multicast,
+  port 21027, every 30 seconds), so a peer on the same Wi-Fi is found without
+  any server. On iOS this needs the restricted
+  `com.apple.developer.networking.multicast` entitlement, which Apple grants
+  on request: VaultSync has it and ships it since 1.7.1
+  (`ios/VaultSync/VaultSync.entitlements`, `ios/project.yml`). Like the LAN
+  dial, it works only with the Local Network permission.
+- **Global discovery** — the engine announces its LAN addresses to the global
+  discovery servers along with its public ones (`announceLANAddresses`), so a
+  lookup of a peer returns its LAN addresses too.
+- **Address cache** — after a connection succeeds, the bridge caches the
+  dialed address in the device's config (`addresscache.go`), so the next cold
+  start dials it immediately without waiting for discovery.
+
+The bridge turns local discovery, global discovery and the announcement of LAN
+addresses on at every engine start (`StartSyncthing` in
+`go/bridge/syncthing.go`).
 
 ## 🌉 Go bridge (`go/bridge/`)
 
