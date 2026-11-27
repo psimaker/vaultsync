@@ -33,9 +33,11 @@ func TestIssue334_APeerLeavesNoProcessWhenItsTestEnds(t *testing.T) {
 	var home string
 	t.Run("peer", func(t *testing.T) {
 		home = startPeer(t, bin, "issue334-peer").home
-		if running := processesNaming(t, "--home="+home, 0); len(running) == 0 {
+		running := processesNaming(t, "--home="+home, 0)
+		if len(running) == 0 {
 			t.Fatal("no process names the running peer's home — the check after this test would prove nothing")
 		}
+		t.Logf("while the peer runs, %d processes name its home:\n%s", len(running), describeProcesses(running))
 		// Let the peer finish starting. An engine whose monitor was killed
 		// dies of SIGPIPE at the next line it logs into the monitor's pipe;
 		// one that has gone quiet — every peer at the end of a real test —
