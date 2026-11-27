@@ -125,6 +125,11 @@ enum FolderPathReconciler {
         /// the folder synced in — a copy of it (#315). The bridge leaves the
         /// folder where it is; the user is told why.
         case notItsStorage
+        /// The directory is the folder's, but another folder syncs it, a
+        /// folder inside it or a folder around it (#330, decision 082). Two
+        /// folders never overlap; the bridge leaves the folder where it is,
+        /// and the user is told why.
+        case overlapsAnotherFolder
         /// Any other refusal or failure.
         case failed
     }
@@ -135,12 +140,20 @@ enum FolderPathReconciler {
         /// exists under the selected folder that the bridge refused as a
         /// copy (#315).
         var notTheirStorage: Set<String> = []
+        /// Folders whose directory is gone while their own directory, found
+        /// under the selected folder, overlaps another folder's — where that
+        /// one is, or where this reconcile would have repaired it to (#330).
+        var overlapsAnotherFolder: Set<String> = []
 
         /// What of this outcome still holds for the folders configured now.
         /// A reconcile runs beside the main actor, and a folder removed
         /// while it ran is no longer there to report.
         func cut(to configured: some Sequence<String>) -> Outcome {
-            Outcome(notTheirStorage: notTheirStorage.intersection(configured))
+            let configured = Set(configured)
+            return Outcome(
+                notTheirStorage: notTheirStorage.intersection(configured),
+                overlapsAnotherFolder: overlapsAnotherFolder.intersection(configured)
+            )
         }
     }
 
@@ -160,7 +173,13 @@ enum FolderPathReconciler {
     ///    folder synced in is the bridge's decision (its marker, and the
     ///    marker's file number where the bridge recorded it — decision 063);
     ///    a directory it refuses as a copy is reported in the outcome, and
-    ///    the folder stays where it is (#315).
+    ///    the folder stays where it is (#315). Two folders never overlap
+    ///    (decision 082): before the bridge is asked for any repair, a
+    ///    folder whose new path is, holds or lies in another folder's path is
+    ///    held where it is, and where two new paths overlap both folders are
+    ///    — whatever order the folders come in (#330). One that overlaps only
+    ///    the old path of a folder moving away in the same pass waits for
+    ///    the next pass, without a finding.
     ///  - **no mapping but currently under the root**: backfill the sidecar
     ///    (no path change) — this adopts already-healthy folders on first launch
     ///    after the update.
@@ -179,6 +198,10 @@ enum FolderPathReconciler {
         // Snapshot used only for per-folder decisions; writes go through the
         // atomic `recordRel`, so a concurrent reconcile/setRel can't be clobbered.
         let rel = env.loadRel()
+
+        // The repairs this pass would ask the bridge for, in folder order.
+        // They are asked for only once all of them are known (#330).
+        var repairs: [(id: String, target: String)] = []
 
         for folder in folders {
             let storedCanon = canonical(folder.path)
@@ -207,15 +230,7 @@ enum FolderPathReconciler {
                     logger.warning("Skipped folder rebase because the target is missing")
                     continue
                 }
-                switch env.setPath(folder.id, desired) {
-                case .moved:
-                    logger.info("Rebased a folder to the current Obsidian location")
-                case .notItsStorage:
-                    outcome.notTheirStorage.insert(folder.id)
-                    logger.warning("Skipped folder rebase because the target is a copy of the folder's directory")
-                case .failed:
-                    logger.warning("Folder rebase failed")
-                }
+                repairs.append((id: folder.id, target: desired))
                 continue
             }
 
@@ -225,7 +240,99 @@ enum FolderPathReconciler {
                 env.recordRel(folder.id, r)
             }
         }
+
+        let holds = heldRepairs(repairs, folders: folders)
+        for repair in repairs {
+            if holds.held.contains(repair.id) {
+                outcome.overlapsAnotherFolder.insert(repair.id)
+                logger.warning("Held a folder rebase back because the target overlaps another folder's directory")
+                continue
+            }
+            if holds.waiting.contains(repair.id) {
+                logger.info("Deferred a folder rebase until a folder in its target has moved away")
+                continue
+            }
+            switch env.setPath(repair.id, repair.target) {
+            case .moved:
+                logger.info("Rebased a folder to the current Obsidian location")
+            case .notItsStorage:
+                outcome.notTheirStorage.insert(repair.id)
+                logger.warning("Skipped folder rebase because the target is a copy of the folder's directory")
+            case .overlapsAnotherFolder:
+                outcome.overlapsAnotherFolder.insert(repair.id)
+                logger.warning("Skipped folder rebase because the target overlaps another folder's directory")
+            case .failed:
+                logger.warning("Folder rebase failed")
+            }
+        }
         return outcome
+    }
+
+    /// The repairs of one pass that would leave two folders overlapping on
+    /// disk (decision 001), held back before the bridge is asked for any
+    /// (#330, decision 082). The bridge's own floor sees only where the
+    /// other folders are now; in a container move every folder of an
+    /// overlapping pair still has its old path until its repair, so the
+    /// floor alone takes whichever comes first.
+    ///
+    /// Every repair counts whose target exists, whether or not the folder's
+    /// marker is there: an earlier version that put two folders into one
+    /// directory left a marker for the first only — the engine writes one
+    /// only where `.stfolder` is missing — and a pair must not come apart over
+    /// that.
+    ///
+    /// - **held**: where two repairs' targets overlap, both — neither folder
+    ///   goes there, and each keeps its old path, with the finding, until one
+    ///   of the two is removed. A repair whose target is, holds or lies in
+    ///   the configured path of a folder that is not being repaired: that
+    ///   folder stays there.
+    /// - **waiting**: a repair whose target overlaps only the old path of a
+    ///   folder that is itself being repaired in this pass. It is not asked
+    ///   for and gets no finding: the next pass repairs it once that folder
+    ///   has moved away.
+    static func heldRepairs(
+        _ repairs: [(id: String, target: String)],
+        folders: [(id: String, path: String)]
+    ) -> (held: Set<String>, waiting: Set<String>) {
+        let targets = Dictionary(
+            repairs.map { ($0.id, overlapKey($0.target)) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        var held = Set<String>()
+        var waiting = Set<String>()
+        for repair in repairs {
+            guard let key = targets[repair.id] else { continue }
+            for other in folders where other.id != repair.id && keysOverlap(key, overlapKey(other.path)) {
+                if targets[other.id] != nil {
+                    waiting.insert(repair.id)
+                } else {
+                    held.insert(repair.id)
+                }
+            }
+            for other in repairs where other.id != repair.id {
+                if let otherKey = targets[other.id], keysOverlap(key, otherKey) {
+                    held.insert(repair.id)
+                    held.insert(other.id)
+                }
+            }
+        }
+        return (held, waiting.subtracting(held))
+    }
+
+    /// A path in the form two paths are compared in for an overlap: canonical
+    /// and lowercased, as `PathCollisionGuard` compares them — the iOS data
+    /// volume is case-folding APFS. `canonical` drops a leading `/private`
+    /// only from a path that exists; dropping it here too lets a folder's
+    /// old path, gone, compare in the same form as a target that exists.
+    private static func overlapKey(_ path: String) -> String {
+        let key = canonical(path).lowercased()
+        return key.hasPrefix("/private/") ? String(key.dropFirst("/private".count)) : key
+    }
+
+    /// The same directory, or one inside the other. Boundary-aware: "/vaulta"
+    /// does not lie in "/vault".
+    private static func keysOverlap(_ a: String, _ b: String) -> Bool {
+        a == b || a.hasPrefix(b + "/") || b.hasPrefix(a + "/")
     }
 
     // MARK: - Live reconcile (wired to the bridge)
@@ -261,13 +368,24 @@ enum FolderPathReconciler {
                 var isDir: ObjCBool = false
                 return FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
             },
-            setPath: { folderID, newPath in
-                guard let refusal = SyncBridgeService.setFolderPath(folderID: folderID, path: newPath) else {
-                    return .moved
-                }
-                return refusal == SyncBridgeService.folderStorageMismatchError ? .notItsStorage : .failed
-            }
+            setPath: bridgeSetPath
         )
         return reconcile(folders: folders, env: env)
+    }
+
+    /// Ask the bridge to re-point a folder, and tell its refusals apart by
+    /// the texts it hands out for them.
+    static func bridgeSetPath(folderID: String, newPath: String) -> SetPathResult {
+        guard let refusal = SyncBridgeService.setFolderPath(folderID: folderID, path: newPath) else {
+            return .moved
+        }
+        switch refusal {
+        case SyncBridgeService.folderStorageMismatchError:
+            return .notItsStorage
+        case SyncBridgeService.folderPathOverlapError:
+            return .overlapsAnotherFolder
+        default:
+            return .failed
+        }
     }
 }

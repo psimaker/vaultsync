@@ -182,6 +182,13 @@ struct SyncBridgeService {
         BridgeFolderStorageMismatchError()
     }
 
+    /// The refusal `setFolderPath` returns for a path that another folder
+    /// syncs, or that lies inside or around one: two folders never overlap
+    /// (#330, decision 082). Read from the bridge, like the one above.
+    static var folderPathOverlapError: String {
+        BridgeFolderPathOverlapError()
+    }
+
     /// What `removeFolder` answers for a removal the engine has not
     /// confirmed within the bridge's wait: it may still land (#343). Read
     /// from the bridge, so the two cannot drift apart.
